@@ -22,7 +22,8 @@ class TestRustIntHopState:
         assert hop.gamma_numer == 997  # Retained fraction
         assert hop.fee_numer == 3  # Actual fee taken (1000 - 997)
         assert hop.fee_denom == 1000
-        # Invariant: gamma + fee == denom # noqa: ERA001
+
+        # Invariant: gamma plus fee equals denom
         assert hop.gamma_numer + hop.fee_numer == hop.fee_denom
 
         # 0.05% fee: gamma=9995/10000 (retained), fee=5/10000 (taken)

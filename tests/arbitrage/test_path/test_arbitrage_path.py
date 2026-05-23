@@ -157,10 +157,18 @@ class TestArbitragePathConstruction:
         t0 = _make_token("0xtokenA")
         t1 = _make_token("0xtokenB")
         pool0 = _make_v2_pool(
-            t0, t1, reserve0=2_000_000, reserve1=1_000_000_000, address="0x00000000000000000000000000000000000000a0"
+            t0,
+            t1,
+            reserve0=2_000_000,
+            reserve1=1_000_000_000,
+            address="0x00000000000000000000000000000000000000a0",
         )
         pool1 = _make_v2_pool(
-            t1, t0, reserve0=1_500_000, reserve1=800_000_000, address="0x00000000000000000000000000000000000000a1"
+            t1,
+            t0,
+            reserve0=1_500_000,
+            reserve1=800_000_000,
+            address="0x00000000000000000000000000000000000000a1",
         )
         return t0, t1, pool0, pool1
 
@@ -438,11 +446,17 @@ class TestArbitragePathClose:
         t0 = _make_token("0xtokenA")
         t1 = _make_token("0xtokenB")
         pool0 = _make_v2_pool(
-            t0, t1, reserve0=2_000_000, reserve1=1_000_000_000,
+            t0,
+            t1,
+            reserve0=2_000_000,
+            reserve1=1_000_000_000,
             address="0x00000000000000000000000000000000000000a0",
         )
         pool1 = _make_v2_pool(
-            t1, t0, reserve0=1_500_000, reserve1=800_000_000,
+            t1,
+            t0,
+            reserve0=1_500_000,
+            reserve1=800_000_000,
             address="0x00000000000000000000000000000000000000a1",
         )
 
@@ -465,10 +479,14 @@ class TestArbitragePathClose:
         t0 = _make_token("0xtokenA")
         t1 = _make_token("0xtokenB")
         pool0 = _make_v2_pool(
-            t0, t1, address="0x00000000000000000000000000000000000000a0",
+            t0,
+            t1,
+            address="0x00000000000000000000000000000000000000a0",
         )
         pool1 = _make_v2_pool(
-            t1, t0, address="0x00000000000000000000000000000000000000a1",
+            t1,
+            t0,
+            address="0x00000000000000000000000000000000000000a1",
         )
 
         solver = MobiusSolver()

@@ -20,6 +20,9 @@ if TYPE_CHECKING:
     from degenbot.aave.operations import Operation, ScaledTokenEvent
 
 
+_DEFAULT_USER_ADDRESS = ChecksumAddress("0x" + "1" * 40)
+
+
 class TestBalanceTransferHandler:
     """Tests for BalanceTransferHandler."""
 
@@ -125,7 +128,7 @@ def _create_mock_scaled_event(
     amount: int,
     from_address: ChecksumAddress | None = None,
     to_address: ChecksumAddress | None = None,
-    user_address: ChecksumAddress = ChecksumAddress("0x" + "1" * 40),
+    user_address: ChecksumAddress = _DEFAULT_USER_ADDRESS,
 ) -> "ScaledTokenEvent":
     """Create a minimal mock ScaledTokenEvent."""
 

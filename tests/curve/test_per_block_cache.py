@@ -44,7 +44,7 @@ class TestCacheMissCallsProvider:
 
     def test_contract_d(self) -> None:
         """Contract D is fetched from provider on miss, then cached."""
-        fake = FakeCurveDataProvider(D=10**18)
+        fake = FakeCurveDataProvider(d=10**18)
         cache = _make_cache(data_provider=fake)
         result = cache.get_cached_contract_d(100)
         assert result == 10**18
@@ -206,7 +206,7 @@ class TestPickleSupport:
 
     def test_pickle_round_trip_drops_provider(self) -> None:
         """Pickled PerBlockCache drops provider; cached data survives."""
-        fake = FakeCurveDataProvider(D=10**18)
+        fake = FakeCurveDataProvider(d=10**18)
         cache = _make_cache(data_provider=fake)
         cache.get_cached_contract_d(100)
 
@@ -218,7 +218,7 @@ class TestPickleSupport:
 
     def test_pickle_restored_cache_miss_raises(self) -> None:
         """A restored cache has no provider, so new misses raise MissingCurveData."""
-        fake = FakeCurveDataProvider(D=10**18)
+        fake = FakeCurveDataProvider(d=10**18)
         cache = _make_cache(data_provider=fake)
         cache.get_cached_contract_d(100)
 

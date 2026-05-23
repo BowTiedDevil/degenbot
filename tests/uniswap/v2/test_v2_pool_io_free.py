@@ -256,7 +256,8 @@ class TestBotBuildV2Pool:
             if data in call_responses:
                 if data == slot0_calldata:
                     # V3 slot0() reverts on a V2 pool
-                    raise Web3Exception("revert")
+                    msg = "revert"
+                    raise Web3Exception(msg)
                 return call_responses[data]
             if data == reserves_calldata:
                 # getReserves returns (uint112, uint112, uint32)
@@ -372,7 +373,8 @@ class TestV2PoolTrackerWithBot:
         def mock_call(*, to, data, block=None):
             if data in call_responses:
                 if data == slot0_calldata:
-                    raise Web3Exception("revert")
+                    msg = "revert"
+                    raise Web3Exception(msg)
                 return call_responses[data]
             if data == reserves_calldata:
                 return eth_abi.abi.encode(

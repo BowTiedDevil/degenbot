@@ -43,7 +43,7 @@ class FakeAsyncProvider:
     def set_response(self, data_hex: str, response: HexBytes) -> None:
         self._responses[data_hex] = response
 
-    async def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:  # noqa: ARG002
+    async def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
         key = data.hex()
         if key in self._responses:
             return self._responses[key]
@@ -53,7 +53,7 @@ class FakeAsyncProvider:
     async def get_block_number(self) -> int:
         return self.block_number
 
-    async def get_balance(self, address: str, block: int | None = None) -> int:  # noqa: ARG002
+    async def get_balance(self, address: str, block: int | None = None) -> int:
         return self.balance
 
 
@@ -68,9 +68,7 @@ class TestAsyncErc20BuilderGetTokenBalance:
 
         provider = FakeAsyncProvider()
         holder_checksum = holder  # already in correct format
-        balance_calldata = encode_function_calldata(
-            "balanceOf(address)", [holder_checksum]
-        )
+        balance_calldata = encode_function_calldata("balanceOf(address)", [holder_checksum])
         expected_balance = 5 * 10**18
         provider.set_response(
             balance_calldata.hex(),
@@ -84,9 +82,7 @@ class TestAsyncErc20BuilderGetTokenBalance:
             tokens=TokenRegistry(),
         )
 
-        result = await builder.get_token_balance(
-            token, holder, block_identifier=None, io=io
-        )
+        result = await builder.get_token_balance(token, holder, block_identifier=None, io=io)
         assert result == expected_balance
         # Should be cached now
         assert token.get_cached_balance(holder, provider.block_number) == expected_balance
@@ -109,9 +105,7 @@ class TestAsyncErc20BuilderGetTokenBalance:
             tokens=TokenRegistry(),
         )
 
-        result = await builder.get_token_balance(
-            token, holder, block_identifier=100, io=io
-        )
+        result = await builder.get_token_balance(token, holder, block_identifier=100, io=io)
         assert result == cached_balance
 
     @pytest.mark.asyncio
@@ -122,9 +116,7 @@ class TestAsyncErc20BuilderGetTokenBalance:
         block_number = 99
 
         provider = FakeAsyncProvider()
-        balance_calldata = encode_function_calldata(
-            "balanceOf(address)", [holder]
-        )
+        balance_calldata = encode_function_calldata("balanceOf(address)", [holder])
         expected_balance = 7 * 10**18
         provider.set_response(
             balance_calldata.hex(),
@@ -206,9 +198,7 @@ class TestAsyncErc20BuilderGetTokenApproval:
         spender = "0x" + "22" * 20
 
         provider = FakeAsyncProvider()
-        approval_calldata = encode_function_calldata(
-            "allowance(address,address)", [owner, spender]
-        )
+        approval_calldata = encode_function_calldata("allowance(address,address)", [owner, spender])
         expected_approval = 500000000
         provider.set_response(
             approval_calldata.hex(),
@@ -235,7 +225,12 @@ class TestAsyncErc20BuilderGetTokenApproval:
         owner = "0x" + "11" * 20
         spender = "0x" + "22" * 20
         cached_approval = 42
-        token.set_cached_approval(block_number=100, owner=owner, spender=spender, amount=cached_approval)
+        token.set_cached_approval(
+            block_number=100,
+            owner=owner,
+            spender=spender,
+            amount=cached_approval,
+        )
 
         provider = FakeAsyncProvider()
         io = AsyncPoolIO(provider)
@@ -275,9 +270,7 @@ class TestAsyncErc20BuilderGetTokenTotalSupply:
             tokens=TokenRegistry(),
         )
 
-        result = await builder.get_token_total_supply(
-            token, block_identifier=None, io=io
-        )
+        result = await builder.get_token_total_supply(token, block_identifier=None, io=io)
         assert result == expected_total_supply
         assert token.get_cached_total_supply(provider.block_number) == expected_total_supply
 
@@ -297,7 +290,5 @@ class TestAsyncErc20BuilderGetTokenTotalSupply:
             tokens=TokenRegistry(),
         )
 
-        result = await builder.get_token_total_supply(
-            token, block_identifier=100, io=io
-        )
+        result = await builder.get_token_total_supply(token, block_identifier=100, io=io)
         assert result == cached_supply

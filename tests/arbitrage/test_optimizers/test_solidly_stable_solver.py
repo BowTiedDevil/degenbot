@@ -9,6 +9,7 @@ Tests cover:
 - Edge cases (not profitable, zero reserves, etc.)
 """
 
+import math
 from collections.abc import Callable
 from fractions import Fraction
 from typing import Literal
@@ -411,7 +412,7 @@ class TestAsymmetricFees:
             fee=Fraction(2, 1000),  # 0.2% fee_in
             fee_out=Fraction(5, 1000),  # 0.5% fee_out
         )
-        assert hop.gamma == 1.0 - 0.002  # gamma uses fee (input direction)
+        assert math.isclose(hop.gamma, 1.0 - 0.002)  # gamma uses fee (input direction)
 
     def test_constant_product_hop_without_fee_out(self):
         """ConstantProductHop without fee_out should default to None."""

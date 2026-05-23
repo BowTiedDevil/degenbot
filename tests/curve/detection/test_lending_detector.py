@@ -1,16 +1,15 @@
-from web3.exceptions import Web3Exception
-
-from tests.curve.detection.fake_provider import make_fake_pool_io
-
 """Tests for Curve pool lending token detection."""
 
+from dataclasses import dataclass
 from itertools import starmap
 
 import eth_abi.abi
+from web3.exceptions import Web3Exception
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.lending_detector import detect_lending_tokens
 from degenbot.provider.call_helpers import encode_function_calldata
+from tests.curve.detection.fake_provider import make_fake_pool_io
 
 # Well-known addresses
 CDAI = get_checksum_address("0x5d3a536E4D6DbD6114cc1Ead35777bAB948E3643")
@@ -29,39 +28,35 @@ DECIMALS = encode_function_calldata("decimals()", [])[:4]
 TOKEN = encode_function_calldata("token()", [])[:4]
 
 
-def _encode_uint256(val: int) -> bytes:
-    return eth_abi.abi.encode(["uint256"], [val])
-
-
 def _encode_address(addr: str) -> bytes:
     return eth_abi.abi.encode(["address"], [addr])
 
 
-def _encode_bool(val: bool) -> bytes:
-    return eth_abi.abi.encode(["bool"], [val])
+def _encode_bool(*, value: bool) -> bytes:
+    return eth_abi.abi.encode(["bool"], [value])
 
 
-def _encode_uint8(val: int) -> bytes:
-    return eth_abi.abi.encode(["uint8"], [val])
+def _encode_uint8(value: int) -> bytes:
+    return eth_abi.abi.encode(["uint8"], [value])
 
 
+@dataclass
 class FakeErc20Token:
     """Minimal fake ERC-20 token with just address and decimals."""
 
-    def __init__(self, address: str, decimals: int) -> None:
-        self.address = address
-        self.decimals = decimals
+    address: str
+    decimals: int
 
 
 class TestDetectLendingTokens:
-    def testNoLendingTokens(self):
+    def test_no_lending_tokens(self):
         """Plain pool with no cTokens or yTokens."""
         token_addresses = (DAI, USDC, USDT)
         tokens = tuple(starmap(FakeErc20Token, [(DAI, 18), (USDC, 6), (USDT, 6)]))
 
         # isCToken() returns False for all, token() reverts for all
         io = make_fake_pool_io({
-            IS_CTOKEN: _encode_bool(False),
+            IS_CTOKEN: _encode_bool(value=False),
         })
 
         result = detect_lending_tokens(
@@ -74,7 +69,7 @@ class TestDetectLendingTokens:
         assert result.use_lending == (False, False, False)
         assert result.precision_multipliers is None
 
-    def testCTokenDetection(self):
+    def test_c_token_detection(self):
         """CToken detection via isCToken(), with underlying decimals for precision."""
         # Pool with cDAI (8 decimals) and USDC (6 decimals)
         token_addresses = (CDAI, USDC)
@@ -86,8 +81,8 @@ class TestDetectLendingTokens:
             call_count["is_ctoken"] += 1
             # First call for cDAI → True, second call for USDC → False
             if to == CDAI:
-                return _encode_bool(True)
-            return _encode_bool(False)
+                return _encode_bool(value=True)
+            return _encode_bool(value=False)
 
         def handle_underlying(to: str, data: bytes, block: int) -> bytes:
             return _encode_address(DAI)
@@ -116,15 +111,15 @@ class TestDetectLendingTokens:
         assert result.precision_multipliers[0] == 1  # 10^(18-18) for DAI underlying
         assert result.precision_multipliers[1] == 10**12  # 10^(18-6) for USDC
 
-    def testCTokenWithDifferentUnderlyingDecimals(self):
+    def test_c_token_with_different_underlying_decimals(self):
         """CUSDC has 8 decimals, USDC underlying has 6 → precision = 10^12."""
         token_addresses = (CUSDC, DAI)
         tokens = tuple(starmap(FakeErc20Token, [(CUSDC, 8), (DAI, 18)]))
 
         def handle_is_ctoken(to: str, data: bytes, block: int) -> bytes:
             if to == CUSDC:
-                return _encode_bool(True)
-            return _encode_bool(False)
+                return _encode_bool(value=True)
+            return _encode_bool(value=False)
 
         def handle_underlying(to: str, data: bytes, block: int) -> bytes:
             return _encode_address(USDC)
@@ -149,17 +144,18 @@ class TestDetectLendingTokens:
         )
         assert result.use_lending == (True, False)
         assert result.precision_multipliers is not None
-        # cUSDC: 10^(18-6) = 10^12
+        # cUSDC decimals: 10^(18-6) = 10^12
         assert result.precision_multipliers[0] == 10**12
 
-    def testYTokenDetection(self):
+    def test_y_token_detection(self):
         """YToken detection via token() returning a non-zero address."""
         token_addresses = (YDAI, USDC)
         tokens = tuple(starmap(FakeErc20Token, [(YDAI, 18), (USDC, 6)]))
 
         def handle_is_ctoken(to: str, data: bytes, block: int) -> bytes:
             # yTokens don't respond to isCToken()
-            raise Web3Exception("revert")
+            msg = "revert"
+            raise Web3Exception(msg)
 
         def handle_token(to: str, data: bytes, block: int) -> bytes:
             if to == YDAI:
@@ -183,13 +179,14 @@ class TestDetectLendingTokens:
         # But precision_multipliers should still be returned since we have lending
         assert result.precision_multipliers is not None
 
-    def testYTokenWithZeroAddressNotLending(self):
+    def test_y_token_with_zero_address_not_lending(self):
         """YToken where token() returns zero address is not treated as lending."""
         token_addresses = (DAI, USDC)
         tokens = tuple(starmap(FakeErc20Token, [(DAI, 18), (USDC, 6)]))
 
         def handle_is_ctoken(to: str, data: bytes, block: int) -> bytes:
-            raise Web3Exception("revert")
+            msg = "revert"
+            raise Web3Exception(msg)
 
         def handle_token(to: str, data: bytes, block: int) -> bytes:
             # Returns zero address — not a yToken

@@ -30,7 +30,7 @@ class FakeCurveDataProvider:
         block_timestamp: int = 1_700_000_000,
         redemption_price: int | None = None,
         admin_balances: tuple[int, ...] | None = None,
-        D: int | None = None,
+        d: int | None = None,
         gamma: int | None = None,
         price_scale: tuple[int, ...] | None = None,
         lending_rates: tuple[int, ...] | None = None,
@@ -41,78 +41,74 @@ class FakeCurveDataProvider:
         self._block_timestamp = block_timestamp
         self._redemption_price = redemption_price
         self._admin_balances = admin_balances
-        self._D = D
+        self._d_value = d
         self._gamma = gamma
         self._price_scale = price_scale
         self._lending_rates = lending_rates
 
-    def virtual_price(self, block_number: int) -> int:  # noqa: ARG002
+    def virtual_price(self, block_number: int) -> int:
         if self._virtual_price is None:
             msg = "virtual_price not configured"
             raise ValueError(msg)
         return self._virtual_price
 
-    def base_virtual_price(self, block_number: int) -> int:  # noqa: ARG002
+    def base_virtual_price(self, block_number: int) -> int:
         if self._base_virtual_price is None:
             msg = "base_virtual_price not configured"
             raise ValueError(msg)
         return self._base_virtual_price
 
-    def base_cache_updated(self, block_number: int) -> int:  # noqa: ARG002
+    def base_cache_updated(self, block_number: int) -> int:
         if self._base_cache_updated is None:
             msg = "base_cache_updated not configured"
             raise ValueError(msg)
         return self._base_cache_updated
 
-    def block_timestamp(self, block_number: int) -> int:  # noqa: ARG002
+    def block_timestamp(self, block_number: int) -> int:
         return self._block_timestamp
 
     def block_number(self) -> int:
         return 18_000_000
 
-    def token_balance(self, token_address: str, holder_address: str, block_number: int) -> int:  # noqa: ARG002
+    def token_balance(self, token_address: str, holder_address: str, block_number: int) -> int:
         msg = "token_balance not configured"
         raise ValueError(msg)
 
-    def token_total_supply(self, token_address: str, block_number: int) -> int:  # noqa: ARG002
+    def token_total_supply(self, token_address: str, block_number: int) -> int:
         msg = "token_total_supply not configured"
         raise ValueError(msg)
 
-    def lending_rates(self, block_number: int) -> tuple[int, ...]:  # noqa: ARG002
+    def lending_rates(self, block_number: int) -> tuple[int, ...]:
         if self._lending_rates is None:
             msg = "lending_rates not configured"
             raise ValueError(msg)
         return self._lending_rates
 
-    def redemption_price(self, block_number: int) -> int:  # noqa: ARG002
+    def redemption_price(self, block_number: int) -> int:
         if self._redemption_price is None:
             msg = "redemption_price not configured"
             raise ValueError(msg)
         return self._redemption_price
 
-    def admin_balances(self, block_number: int) -> tuple[int, ...]:  # noqa: ARG002
+    def admin_balances(self, block_number: int) -> tuple[int, ...]:
         if self._admin_balances is None:
             msg = "admin_balances not configured"
             raise ValueError(msg)
         return self._admin_balances
 
-    def D(self, block_number: int) -> int:  # noqa: ARG002
-        if self._D is None:
+    def d(self, block_number: int) -> int:
+        if self._d_value is None:
             msg = "D not configured"
             raise ValueError(msg)
-        return self._D
+        return self._d_value
 
-    # Alias matching the CurveDataProvider protocol's lowercase `d`
-    def d(self, block_number: int) -> int:
-        return self.D(block_number)
-
-    def gamma(self, block_number: int) -> int:  # noqa: ARG002
+    def gamma(self, block_number: int) -> int:
         if self._gamma is None:
             msg = "gamma not configured"
             raise ValueError(msg)
         return self._gamma
 
-    def price_scale(self, block_number: int) -> tuple[int, ...]:  # noqa: ARG002
+    def price_scale(self, block_number: int) -> tuple[int, ...]:
         if self._price_scale is None:
             msg = "price_scale not configured"
             raise ValueError(msg)

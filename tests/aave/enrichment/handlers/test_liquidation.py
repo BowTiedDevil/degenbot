@@ -21,6 +21,10 @@ if TYPE_CHECKING:
     from degenbot.aave.operations import Operation, ScaledTokenEvent
 
 
+_DEFAULT_USER_ADDRESS = ChecksumAddress("0x" + "1" * 40)
+_RAY = 10**27
+
+
 class TestLiquidationHandler:
     # ERC20 transfer events within a LIQUIDATION operation have no index.
     # They should be treated as no-scaling transfers (raw_amount = scaled_amount).
@@ -87,8 +91,7 @@ class TestLiquidationHandler:
         assert isinstance(handler, OperationHandler)
 
     def test_debt_burn_uses_debt_extractor(self, handler: LiquidationHandler) -> None:
-        """LIQUIDATION debt events use debtToCover from LiquidationCall event.
-        """
+        """LIQUIDATION debt events use debtToCover from LiquidationCall event."""
         index = 2_000_000_000_000_000_000_000_000_000
         debt_to_cover = 1_000_000_000_000_000_000
         collateral_liquidated = 1_100_000_000_000_000_000  # Slightly more due to liquidation bonus
@@ -111,8 +114,7 @@ class TestLiquidationHandler:
         assert result.event_type == ScaledTokenEventType.DEBT_BURN
 
     def test_collateral_burn_uses_collateral_extractor(self, handler: LiquidationHandler) -> None:
-        """LIQUIDATION collateral events use liquidatedCollateralAmount.
-        """
+        """LIQUIDATION collateral events use liquidatedCollateralAmount."""
         index = 2_000_000_000_000_000_000_000_000_000
         debt_to_cover = 1_000_000_000_000_000_000
         collateral_liquidated = 1_100_000_000_000_000_000
@@ -219,7 +221,7 @@ def _create_mock_scaled_event(
     amount: int,
     index: int,
     balance_increase: int | None = None,
-    user_address: ChecksumAddress = ChecksumAddress("0x" + "1" * 40),
+    user_address: ChecksumAddress = _DEFAULT_USER_ADDRESS,
 ) -> "ScaledTokenEvent":
     @dataclass
     class MockScaledEvent:
@@ -257,7 +259,7 @@ def _create_mock_liquidation_pool_event(
 ) -> LogReceipt:
     """Create a mock LiquidationCall Pool event."""
     # LiquidationCall event:
-    # (debtToCover, liquidatedCollateralAmount, liquidator, receiveAToken)
+    #   debtToCover, liquidatedCollateralAmount, liquidator, receiveAToken
     data = eth_abi.abi.encode(
         ["uint256", "uint256", "address", "bool"],
         [debt_to_cover, collateral_liquidated, "0x1111111111111111111111111111111111111111", True],
@@ -328,8 +330,7 @@ def _create_mock_context_debt() -> MagicMock:
     def mock_calculate(
         event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int
     ) -> int:
-        RAY = 10**27
-        return raw_amount * RAY // index
+        return raw_amount * _RAY // index
 
     def mock_build_enriched_event(
         event: "ScaledTokenEvent",
@@ -389,8 +390,7 @@ def _create_mock_context_debt_rev9() -> MagicMock:
     def mock_calculate(
         event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int
     ) -> int:
-        RAY = 10**27
-        return raw_amount * RAY // index
+        return raw_amount * _RAY // index
 
     def mock_build_enriched_event(
         event: "ScaledTokenEvent",
@@ -450,8 +450,7 @@ def _create_mock_context_collateral() -> MagicMock:
     def mock_calculate(
         event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int
     ) -> int:
-        RAY = 10**27
-        return raw_amount * RAY // index
+        return raw_amount * _RAY // index
 
     def mock_build_enriched_event(
         event: "ScaledTokenEvent",
@@ -511,8 +510,7 @@ def _create_mock_context_debt_mint() -> MagicMock:
     def mock_calculate(
         event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int
     ) -> int:
-        RAY = 10**27
-        return raw_amount * RAY // index
+        return raw_amount * _RAY // index
 
     def mock_build_enriched_event(
         event: "ScaledTokenEvent",
@@ -618,8 +616,7 @@ def _create_mock_context_gho_debt() -> MagicMock:
     def mock_calculate(
         event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int
     ) -> int:
-        RAY = 10**27
-        return raw_amount * RAY // index
+        return raw_amount * _RAY // index
 
     def mock_build_enriched_event(
         event: "ScaledTokenEvent",

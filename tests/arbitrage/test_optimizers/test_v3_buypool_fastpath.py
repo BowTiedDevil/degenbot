@@ -24,10 +24,10 @@ class TestV3BuyPoolFastPath:
 
     def test_v3_buypool_detected_as_bounded_product(self):
         """V3 buy pool should be detected as BoundedProductHop."""
-        L = 1_000_000_000_000_000_000
+        liquidity = 1_000_000_000_000_000_000
         sqrt_price_x96 = 2**96
         r_in, r_out = _v3_virtual_reserves(
-            liquidity=L,
+            liquidity=liquidity,
             sqrt_price_x96=sqrt_price_x96,
             zero_for_one=True,
         )
@@ -36,7 +36,7 @@ class TestV3BuyPoolFastPath:
             reserve_in=r_in,
             reserve_out=r_out,
             fee=FEE_0_3_PCT,
-            liquidity=L,
+            liquidity=liquidity,
             sqrt_price=sqrt_price_x96,
             tick_lower=0,
             tick_upper=0,
@@ -46,10 +46,10 @@ class TestV3BuyPoolFastPath:
 
     def test_v3_buypool_with_v2_sell_path_completes(self, solver):
         """V3 buy + V2 sell path should complete without error."""
-        L = 1_000_000_000_000_000_000
+        liquidity = 1_000_000_000_000_000_000
         sqrt_price_x96 = 2**96
         v3_r_in, v3_r_out = _v3_virtual_reserves(
-            liquidity=L,
+            liquidity=liquidity,
             sqrt_price_x96=sqrt_price_x96,
             zero_for_one=True,
         )
@@ -59,7 +59,7 @@ class TestV3BuyPoolFastPath:
                 reserve_in=v3_r_in,
                 reserve_out=v3_r_out,
                 fee=FEE_0_3_PCT,
-                liquidity=L,
+                liquidity=liquidity,
                 sqrt_price=sqrt_price_x96,
                 tick_lower=0,
                 tick_upper=0,
@@ -78,10 +78,10 @@ class TestV3BuyPoolFastPath:
 
     def test_v3_buypool_solver_selects_mobius_or_piecewise(self, solver):
         """For V3+V2 paths, solver should use Mobius or PiecewiseMobius."""
-        L = 2_000_000_000_000_000_000
+        liquidity = 2_000_000_000_000_000_000
         sqrt_price_x96 = int(1.5 * (2**96))  # price = 2.25
         v3_r_in, v3_r_out = _v3_virtual_reserves(
-            liquidity=L,
+            liquidity=liquidity,
             sqrt_price_x96=sqrt_price_x96,
             zero_for_one=True,
         )
@@ -91,7 +91,7 @@ class TestV3BuyPoolFastPath:
                 reserve_in=v3_r_in,
                 reserve_out=v3_r_out,
                 fee=FEE_0_3_PCT,
-                liquidity=L,
+                liquidity=liquidity,
                 sqrt_price=sqrt_price_x96,
                 tick_lower=0,
                 tick_upper=0,
@@ -112,10 +112,10 @@ class TestV3BuyPoolFastPath:
         """Constant-product approximation should be close to actual V3 output."""
         # For a single V3 tick range, the constant-product formula using
         # virtual reserves should match the actual V3 swap math exactly.
-        L = 1_000_000_000_000_000_000
+        liquidity = 1_000_000_000_000_000_000
         sqrt_price_x96 = 2**96  # price = 1.0
         v3_r_in, v3_r_out = _v3_virtual_reserves(
-            liquidity=L,
+            liquidity=liquidity,
             sqrt_price_x96=sqrt_price_x96,
             zero_for_one=True,
         )
@@ -130,10 +130,10 @@ class TestV3BuyPoolFastPath:
         denom = r_in + x_in * gamma
         cp_output = x_in * gamma * r_out / denom
 
-        L_float = float(L)
+        l_as_float = float(liquidity)
         sqrt_p = 1.0
-        delta_sqrt_p = x_in * gamma / (L_float + x_in * gamma * sqrt_p)
-        v3_output = L_float * delta_sqrt_p
+        delta_sqrt_p = x_in * gamma / (l_as_float + x_in * gamma * sqrt_p)
+        v3_output = l_as_float * delta_sqrt_p
 
         # Should be very close (both are valid Möbius transforms)
         rel_diff = abs(cp_output - v3_output) / max(v3_output, 1)
@@ -158,10 +158,10 @@ class TestV3SellPool:
 
     def test_v2_buypool_v3_sellpool_path(self, solver):
         """V2 buy + V3 sell should complete."""
-        L = 2_000_000_000_000_000_000
+        liquidity = 2_000_000_000_000_000_000
         sqrt_price_x96 = int(2.0 * (2**96))
         v3_r_in, v3_r_out = _v3_virtual_reserves(
-            liquidity=L,
+            liquidity=liquidity,
             sqrt_price_x96=sqrt_price_x96,
             zero_for_one=True,
         )
@@ -176,7 +176,7 @@ class TestV3SellPool:
                 reserve_in=v3_r_in,
                 reserve_out=v3_r_out,
                 fee=FEE_0_3_PCT,
-                liquidity=L,
+                liquidity=liquidity,
                 sqrt_price=sqrt_price_x96,
                 tick_lower=0,
                 tick_upper=0,

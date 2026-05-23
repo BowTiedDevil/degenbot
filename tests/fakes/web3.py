@@ -6,6 +6,7 @@ Provides sync and async Web3 doubles that return deterministic values
 without requiring a live RPC connection.
 """
 
+import asyncio
 from typing import Any
 
 from hexbytes import HexBytes
@@ -78,7 +79,8 @@ class FakeAsyncW3Eth(FakeW3Eth):
 
     @property
     def chain_id(self):
-        async def _inner() -> int:  # noqa: RUF029
+        async def _inner() -> int:
+            await asyncio.sleep(0)
             return 1
 
         return _inner()

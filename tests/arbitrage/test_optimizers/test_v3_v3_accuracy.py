@@ -113,7 +113,8 @@ def simulate_v3_hop_with_crossings(
     current_tick: int,
     current_range_index: int,
     fee_pips: int,
-    zero_for_one: bool,  # noqa: FBT001
+    *,
+    zero_for_one: bool,
 ) -> tuple[int, int]:
     """Simulate a V3 swap with tick crossing support using compute_swap_step.
 
@@ -167,14 +168,15 @@ def simulate_v3_hop_with_crossings(
 
 
 def v3_v3_brute_force_solver(
+    *,
     tick_data_1: list[tuple[int, int, int]],
     tick_data_2: list[tuple[int, int, int]],
     current_tick_1: int,
     current_tick_2: int,
     fee_pips_1: int,
     fee_pips_2: int,
-    zfo_1: bool,  # noqa: FBT001
-    zfo_2: bool,  # noqa: FBT001
+    zfo_1: bool,
+    zfo_2: bool,
     max_input_wei: int | None = None,
     scan_steps: int = 200,
 ) -> tuple[int, int]:
@@ -284,11 +286,12 @@ def v3_v3_brute_force_solver(
 
 
 def build_seq_from_tick_data(
+    *,
     tick_data: list[tuple[int, int, int]],
     current_tick: int,
     current_range_idx: int,
     fee: float,
-    zero_for_one: bool,  # noqa: FBT001
+    zero_for_one: bool,
 ) -> rs_mobius.RustV3TickRangeSequence:
     """Build a RustV3TickRangeSequence from integer tick data,
     ordering ranges in the swap direction.
@@ -1051,11 +1054,11 @@ class TestV3V3VsV3IntegerMath:
                 range_idx_2 = i
                 break
 
-        __bf_input, bf_profit = v3_v3_brute_force_solver(
-            tick_data_1,
-            tick_data_2,
-            current_tick_1,
-            current_tick_2,
+        _, bf_profit = v3_v3_brute_force_solver(
+            tick_data_1=tick_data_1,
+            tick_data_2=tick_data_2,
+            current_tick_1=current_tick_1,
+            current_tick_2=current_tick_2,
             fee_pips_1=3000,
             fee_pips_2=3000,
             zfo_1=True,
@@ -1413,8 +1416,7 @@ class TestV3V3EdgeCases:
             assert result.profit > 0, "Successful result must have positive profit"
 
     def test_mixed_fee_tiers(self):
-        """Mixed fee tiers: 0.05% + 1% cross-tier arbitrage.
-        """
+        """Mixed fee tiers: 0.05% + 1% cross-tier arbitrage."""
         sqrt_pa = math.sqrt(2200.0)
         sqrt_pb = math.sqrt(2000.0)
 

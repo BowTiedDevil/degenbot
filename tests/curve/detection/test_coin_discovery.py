@@ -1,14 +1,12 @@
-from web3.exceptions import Web3Exception
-
-from tests.curve.detection.fake_provider import make_fake_pool_io
-
 """Tests for Curve pool coin discovery."""
 
 import eth_abi.abi
+from web3.exceptions import Web3Exception
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.coin_discovery import discover_coins
 from degenbot.provider.call_helpers import encode_function_calldata
+from tests.curve.detection.fake_provider import make_fake_pool_io
 
 # Well-known token addresses for tests
 USDC = get_checksum_address("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
@@ -24,18 +22,18 @@ BALANCES_UINT256 = encode_function_calldata("balances(uint256)", [0])[:4]
 BALANCES_INT128 = encode_function_calldata("balances(int128)", [0])[:4]
 
 
-def _encode_addr(addr: str) -> bytes:
-    return eth_abi.abi.encode(["address"], [addr])
+def _encode_addr(address: str) -> bytes:
+    return eth_abi.abi.encode(["address"], [address])
 
 
-def _encode_uint256(val: int) -> bytes:
-    return eth_abi.abi.encode(["uint256"], [val])
+def _encode_uint256(value: int) -> bytes:
+    return eth_abi.abi.encode(["uint256"], [value])
 
 
 class TestDiscoverCoinsUint256:
     """Coin discovery when the pool uses coins(uint256)."""
 
-    def testTwoCoinPool(self):
+    def test_two_coin_pool(self):
         """A 2-coin pool returning USDC and DAI with balances."""
         coins = [USDC, DAI]
         balances = [1_000_000, 2_000_000]
@@ -67,7 +65,7 @@ class TestDiscoverCoinsUint256:
         assert result.coin_prototype == "coins(uint256)"
         assert result.balance_prototype == "balances(uint256)"
 
-    def testThreeCoinPool(self):
+    def test_three_coin_pool(self):
         """A 3-coin pool (like the Curve tripool)."""
         coins = [DAI, USDC, USDT]
 
@@ -95,7 +93,7 @@ class TestDiscoverCoinsUint256:
 class TestDiscoverCoinsInt128:
     """Coin discovery when the pool uses coins(int128)."""
 
-    def testTwoCoinInt128Pool(self):
+    def test_two_coin_int128_pool(self):
         """A pool that reverts on coins(uint256) but works with coins(int128)."""
         coins = [DAI, USDC]
 
@@ -106,7 +104,6 @@ class TestDiscoverCoinsInt128:
             return _encode_addr(ZERO_ADDR)
 
         def handle_balances_int128(to: str, data: bytes, block: int) -> bytes:
-            (idx,) = eth_abi.abi.decode(["int128"], data[4:])
             return _encode_uint256(5000)
 
         io = make_fake_pool_io({
@@ -120,7 +117,7 @@ class TestDiscoverCoinsInt128:
         assert result.balance_prototype == "balances(int128)"
         assert len(result.token_addresses) == 2
 
-    def testUint256FailsThenInt128Works(self):
+    def test_uint256_fails_then_int128_works(self):
         """Pool that reverts on uint256, works on int128 — confirms fallback."""
         coins = [DAI, USDC]
 
@@ -128,7 +125,8 @@ class TestDiscoverCoinsInt128:
 
         def handle_coins_uint256(to: str, data: bytes, block: int) -> bytes:
             call_count["uint256_tries"] += 1
-            raise Web3Exception("revert")
+            msg = "revert"
+            raise Web3Exception(msg)
 
         def handle_coins_int128(to: str, data: bytes, block: int) -> bytes:
             (idx,) = eth_abi.abi.decode(["int128"], data[4:])
@@ -154,7 +152,7 @@ class TestDiscoverCoinsInt128:
 class TestDiscoverCoinsEdgeCases:
     """Edge cases in coin discovery."""
 
-    def testStopsAtZeroAddress(self):
+    def test_stops_at_zero_address(self):
         """Coin discovery stops when it encounters a zero address."""
         coins = [DAI, USDC]  # Only 2 coins; index 2 returns zero
 
@@ -175,14 +173,15 @@ class TestDiscoverCoinsEdgeCases:
         result = discover_coins(io, POOL_ADDR, block_identifier=18_000_000)
         assert len(result.token_addresses) == 2
 
-    def testStopsAtRevert(self):
+    def test_stops_at_revert(self):
         """Coin discovery stops when a coin call reverts after prototype is known."""
         coins = [DAI, USDC]
 
         def handle_coins_uint256(to: str, data: bytes, block: int) -> bytes:
             (idx,) = eth_abi.abi.decode(["uint256"], data[4:])
             if idx >= len(coins):
-                raise Web3Exception("revert")
+                msg = "revert"
+                raise Web3Exception(msg)
             return _encode_addr(coins[idx])
 
         def handle_balances_uint256(to: str, data: bytes, block: int) -> bytes:
@@ -196,7 +195,7 @@ class TestDiscoverCoinsEdgeCases:
         result = discover_coins(io, POOL_ADDR, block_identifier=18_000_000)
         assert len(result.token_addresses) == 2
 
-    def testNoCoinsAtAll(self):
+    def test_no_coins_at_all(self):
         """Both uint256 and int128 revert on the first call returns empty result."""
         io = make_fake_pool_io({})  # No handlers — all calls revert
 
@@ -204,7 +203,7 @@ class TestDiscoverCoinsEdgeCases:
         assert len(result.token_addresses) == 0
         assert len(result.balances) == 0
 
-    def testBalanceRevertStopsIteration(self):
+    def test_balance_revert_stops_iteration(self):
         """If a balance call reverts, iteration stops at that point.
 
         Note: the coin address for the current index is already appended

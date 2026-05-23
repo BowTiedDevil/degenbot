@@ -135,6 +135,6 @@ class TestPoolUpdaterDispatch:
 
     def test_pool_updater_covers_all_chains(self):
         """POOL_UPDATER has entries for both Base and Ethereum."""
-        chains = {chain_id for chain_id, _ in POOL_UPDATER.keys()}
+        chains = {chain_id for chain_id, _ in POOL_UPDATER}
         # BASE = 8453, ETH (mainnet) = 1
         assert len(chains) == 2

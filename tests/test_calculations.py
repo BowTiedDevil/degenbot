@@ -152,7 +152,10 @@ class TestSolidlyCalcK:
     """Test the Solidly stable calc_k function."""
 
     def test_known_value(self):
-        """With equal 18-decimal reserves (1e18, 2e18), k = xy·(x²+y²)/1e18 = 2e18·5e18/1e18 = 10e18."""
+        """
+        With equal 18-decimal reserves (1e18, 2e18),
+        k = xy·(x²+y²)/1e18 = 2e18·5e18/1e18 = 10e18.
+        """
         result = calc_k(
             balance_0=1_000_000_000_000_000_000,
             balance_1=2_000_000_000_000_000_000,

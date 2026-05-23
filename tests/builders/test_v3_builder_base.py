@@ -4,6 +4,8 @@ Verifies that decode, extract, and snapshot-loading helpers produce
 correct outputs from known inputs, independent of I/O.
 """
 
+from dataclasses import dataclass, field
+
 import eth_abi.abi
 
 from degenbot.builders.v3_builder_base import (
@@ -186,10 +188,11 @@ class TestLoadTickSnapshot:
     def test_returns_empty_and_not_loaded_when_no_data(self):
         """If re-queried row has empty relationships, returns (empty, empty, False)."""
 
+        @dataclass
         class FakePoolWithData:
-            initialization_maps = []
-            liquidity_positions = []
-            liquidity_update_block = 0
+            initialization_maps: list = field(default_factory=list)
+            liquidity_positions: list = field(default_factory=list)
+            liquidity_update_block: int = 0
 
         bitmap, tick_data, loaded = V3BuilderBase.load_tick_snapshot(FakePoolWithData())
         assert bitmap == {}
@@ -208,12 +211,18 @@ class TestLoadTickSnapshot:
             liquidity_net = -1000
             liquidity_gross = 2000
 
+        @dataclass
         class FakePoolWithData:
-            initialization_maps = [FakeInitMap()]
-            liquidity_positions = [FakeLiqPosition()]
-            liquidity_update_block = 42
+            initialization_maps: list = field(default_factory=list)
+            liquidity_positions: list = field(default_factory=list)
+            liquidity_update_block: int = 42
 
-        bitmap, tick_data, loaded = V3BuilderBase.load_tick_snapshot(FakePoolWithData())
+        bitmap, tick_data, loaded = V3BuilderBase.load_tick_snapshot(
+            FakePoolWithData(
+                initialization_maps=[FakeInitMap()],
+                liquidity_positions=[FakeLiqPosition()],
+            )
+        )
 
         assert loaded is True
         assert 0 in bitmap
@@ -233,12 +242,17 @@ class TestLoadTickSnapshot:
             word = 0
             bitmap = 255
 
+        @dataclass
         class FakePoolWithData:
-            initialization_maps = [FakeInitMap()]
-            liquidity_positions = []  # empty
-            liquidity_update_block = 1
+            initialization_maps: list = field(default_factory=list)
+            liquidity_positions: list = field(default_factory=list)
+            liquidity_update_block: int = 1
 
-        _, _, loaded = V3BuilderBase.load_tick_snapshot(FakePoolWithData())
+        _, _, loaded = V3BuilderBase.load_tick_snapshot(
+            FakePoolWithData(
+                initialization_maps=[FakeInitMap()],
+            )
+        )
         assert loaded is False
 
     def test_returns_not_loaded_when_positions_exist_but_maps_empty(self):
@@ -249,12 +263,17 @@ class TestLoadTickSnapshot:
             liquidity_net = -1000
             liquidity_gross = 2000
 
+        @dataclass
         class FakePoolWithData:
-            initialization_maps = []  # empty
-            liquidity_positions = [FakeLiqPosition()]
-            liquidity_update_block = 1
+            initialization_maps: list = field(default_factory=list)
+            liquidity_positions: list = field(default_factory=list)
+            liquidity_update_block: int = 1
 
-        _, _, loaded = V3BuilderBase.load_tick_snapshot(FakePoolWithData())
+        _, _, loaded = V3BuilderBase.load_tick_snapshot(
+            FakePoolWithData(
+                liquidity_positions=[FakeLiqPosition()],
+            )
+        )
         assert loaded is False
 
     def test_liquidity_update_block_defaults_to_zero(self):
@@ -269,12 +288,18 @@ class TestLoadTickSnapshot:
             liquidity_net = 100
             liquidity_gross = 200
 
+        @dataclass
         class FakePoolWithData:
-            initialization_maps = [FakeInitMap()]
-            liquidity_positions = [FakeLiqPosition()]
-            liquidity_update_block = None
+            initialization_maps: list = field(default_factory=list)
+            liquidity_positions: list = field(default_factory=list)
+            liquidity_update_block: int | None = None
 
-        bitmap, tick_data, loaded = V3BuilderBase.load_tick_snapshot(FakePoolWithData())
+        bitmap, tick_data, loaded = V3BuilderBase.load_tick_snapshot(
+            FakePoolWithData(
+                initialization_maps=[FakeInitMap()],
+                liquidity_positions=[FakeLiqPosition()],
+            )
+        )
 
         assert loaded is True
         assert bitmap[0].block == 0
@@ -285,7 +310,9 @@ class TestLoadTickSnapshot:
 
 
 class TestResolveTickDataArgs:
-    """V3BuilderBase.resolve_tick_data_args decides whether to pass tick data to pool constructor."""
+    """
+    V3BuilderBase.resolve_tick_data_args decides whether to pass tick data to pool constructor.
+    """
 
     def test_returns_none_when_not_loaded(self):
         tick_bitmap, tick_data_arg = V3BuilderBase.resolve_tick_data_args(

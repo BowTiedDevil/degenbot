@@ -15,8 +15,9 @@ from .conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 def test_disconnected_web3():
     w3 = web3.Web3(web3.HTTPProvider("https://google.com"))
     cm = ConnectionManager()
+
+    provider = ProviderAdapter.from_web3(w3)
     with pytest.raises(DegenbotValueError, match=r"Provider is not connected."):
-        provider = ProviderAdapter.from_web3(w3)
         cm.register_provider(provider)
 
 

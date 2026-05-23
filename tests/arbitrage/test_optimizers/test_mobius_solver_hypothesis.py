@@ -142,7 +142,7 @@ class TestMobius2PoolProperties:
         hops = [hop_from_def(pool_a), hop_from_def(pool_b)]
 
         # Möbius solve
-        x_mobius, profit_mobius, iterations = mobius_solve(hops)
+        x_mobius, profit_mobius, _iterations = mobius_solve(hops)
 
         # Brent solve
         x_brent, profit_brent, _ = brent_solve(hops)
@@ -177,7 +177,7 @@ class TestMobius2PoolProperties:
         pool = PoolDef(reserve_in=base_reserve, reserve_out=base_reserve, fee=fee)
         hops = [hop_from_def(pool), hop_from_def(pool)]
 
-        x_opt, profit, iterations = mobius_solve(hops)
+        x_opt, profit, _iterations = mobius_solve(hops)
 
         # No profitable arbitrage
         assert profit <= 0 or x_opt == 0, f"Expected no profit, got {profit}"
@@ -202,7 +202,7 @@ class TestMobius2PoolProperties:
         pool_a, pool_b = make_profitable_pair(base_reserve, price_ratio, fee)
         hops = [hop_from_def(pool_a), hop_from_def(pool_b)]
 
-        x_opt, profit, iterations = mobius_solve(hops)
+        _x_opt, profit, _iterations = mobius_solve(hops)
 
         # Price spread must exceed 2*fee for profitability
         min_profitable_spread = 2 * fee * 1.001
@@ -240,7 +240,7 @@ class TestMobiusMultiPoolProperties:
         hops = [hop_from_def(p) for p in pools]
 
         # Möbius solve
-        x_mobius, profit_mobius, iterations = mobius_solve(hops)
+        x_mobius, profit_mobius, _iterations = mobius_solve(hops)
 
         # Brent solve
         x_brent, profit_brent, _ = brent_solve(hops)
@@ -329,7 +329,7 @@ class TestMobiusCoefficientProperties:
         fee=fee_strategy,
     )
     @hypothesis.settings(deadline=None, max_examples=25)
-    def test_profitable_path_K_greater_than_M(
+    def test_profitable_path_k_greater_than_m(
         self,
         base_reserve: float,
         price_ratio: float,
@@ -427,7 +427,7 @@ class TestMobiusEdgeCases:
         hops = [hop_from_def(pool), hop_from_def(pool)]
 
         output = simulate_path(0.0, hops)
-        assert output == 0.0
+        assert math.isclose(output, 0.0)
 
     def test_very_small_input(self):
         """Very small input should produce small but positive output."""
@@ -454,7 +454,7 @@ class TestMobiusEdgeCases:
         pool_a, pool_b = make_profitable_pair(base_reserve, price_ratio, fee)
         hops = [hop_from_def(pool_a), hop_from_def(pool_b)]
 
-        x_opt, profit, iterations = mobius_solve(hops)
+        x_opt, profit, _iterations = mobius_solve(hops)
 
         # Should be unprofitable with very high fees
         # (2x 30%+ fee = 60%+ round-trip cost, far exceeds 1% spread)
@@ -478,7 +478,7 @@ class TestMobiusEdgeCases:
         pool_a, pool_b = make_profitable_pair(base_reserve, price_ratio, fee)
         hops = [hop_from_def(pool_a), hop_from_def(pool_b)]
 
-        x_opt, profit, iterations = mobius_solve(hops)
+        x_opt, profit, _iterations = mobius_solve(hops)
 
         # Should find profitable arbitrage
         assert profit > 0, f"Expected profit for base_reserve={base_reserve}"

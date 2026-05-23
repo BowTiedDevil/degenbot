@@ -21,6 +21,10 @@ if TYPE_CHECKING:
     from degenbot.aave.operations import Operation, ScaledTokenEvent
 
 
+_DEFAULT_USER_ADDRESS = ChecksumAddress("0x" + "1" * 40)
+_RAY = 10**27
+
+
 class TestRepayWithAtokensHandler:
     """Tests for RepayWithAtokensHandler."""
 
@@ -151,7 +155,7 @@ def _create_mock_scaled_event(
     amount: int,
     index: int,
     balance_increase: int | None = None,
-    user_address: ChecksumAddress = ChecksumAddress("0x" + "1" * 40),
+    user_address: ChecksumAddress = _DEFAULT_USER_ADDRESS,
 ) -> "ScaledTokenEvent":
     @dataclass
     class MockScaledEvent:
@@ -234,8 +238,7 @@ def _create_mock_context_collateral() -> MagicMock:
     def mock_calculate(
         event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int
     ) -> int:
-        RAY = 10**27
-        return raw_amount * RAY // index
+        return raw_amount * _RAY // index
 
     def mock_build_enriched_event(
         event: "ScaledTokenEvent",
@@ -289,8 +292,7 @@ def _create_mock_context_collateral_mint() -> MagicMock:
     def mock_calculate(
         event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int
     ) -> int:
-        RAY = 10**27
-        return raw_amount * RAY // index
+        return raw_amount * _RAY // index
 
     def mock_build_enriched_event(
         event: "ScaledTokenEvent",
@@ -343,8 +345,7 @@ def _create_mock_context_debt() -> MagicMock:
     def mock_calculate(
         event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int
     ) -> int:
-        RAY = 10**27
-        return raw_amount * RAY // index
+        return raw_amount * _RAY // index
 
     def mock_build_enriched_event(
         event: "ScaledTokenEvent",
@@ -398,8 +399,7 @@ def _create_mock_context_debt_mint() -> MagicMock:
     def mock_calculate(
         event_type: ScaledTokenEventType, raw_amount: int, index: int, token_revision: int
     ) -> int:
-        RAY = 10**27
-        return raw_amount * RAY // index
+        return raw_amount * _RAY // index
 
     def mock_build_enriched_event(
         event: "ScaledTokenEvent",

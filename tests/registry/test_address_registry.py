@@ -1,5 +1,7 @@
 """Tests for the generic AddressRegistry base classes."""
 
+from dataclasses import dataclass
+
 import pytest
 from hexbytes import HexBytes
 
@@ -7,11 +9,11 @@ from degenbot.exceptions import DegenbotValueError
 from degenbot.registry.base import AddressRegistry, MultiKeyAddressRegistry
 
 
+@dataclass(frozen=True)
 class FakeItem:
     """A simple item for testing registry storage."""
 
-    def __init__(self, address: str):
-        self.address = address
+    address: str
 
 
 # Valid test addresses (20 bytes / 40 hex chars)

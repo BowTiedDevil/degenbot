@@ -21,6 +21,10 @@ if TYPE_CHECKING:
     from degenbot.aave.operations import Operation, ScaledTokenEvent
 
 
+_DEFAULT_USER_ADDRESS = ChecksumAddress("0x" + "1" * 40)
+_RAY = 10**27
+
+
 class TestGhoFlashLoanHandler:
     """Tests for GhoFlashLoanHandler."""
 
@@ -71,7 +75,7 @@ def _create_mock_scaled_event(
     amount: int,
     index: int,
     balance_increase: int | None = None,
-    user_address: ChecksumAddress = ChecksumAddress("0x" + "1" * 40),
+    user_address: ChecksumAddress = _DEFAULT_USER_ADDRESS,
 ) -> "ScaledTokenEvent":
     """Create a minimal mock ScaledTokenEvent."""
 
@@ -173,8 +177,7 @@ def _create_mock_context() -> MagicMock:
         token_revision: int,
     ) -> int:
         """Calculate scaled amount using TokenMath."""
-        RAY = 10**27
-        return raw_amount * RAY // index
+        return raw_amount * _RAY // index
 
     def mock_build_enriched_event(
         event: "ScaledTokenEvent",

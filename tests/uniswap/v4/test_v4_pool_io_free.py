@@ -1,5 +1,4 @@
-"""Tests for Phase 5: I/O-free UniswapV4Pool construction via Bot.
-"""
+"""Tests for Phase 5: I/O-free UniswapV4Pool construction via Bot."""
 
 import pathlib
 import pickle
@@ -282,23 +281,23 @@ class TestBotBuildV4Pool:
         usdc = _make_usdc()
         bot.tokens.add(token_address=ZERO_ADDRESS, chain_id=1, token=native_eth)
         bot.tokens.add(
-            token_address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            token_address=get_checksum_address("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
             chain_id=1,
             token=usdc,
         )
 
         # Mock RPC responses
-        _sqrt_price = 2198666895605149686863
-        _tick = -76020
-        _protocol_fee = 0  # packed as (zero_for_one << 12) | one_for_zero
-        _lp_fee = 500000
-        _liquidity = 1234567890
+        sqrt_price = 2198666895605149686863
+        tick = -76020
+        protocol_fee = 0  # packed as (zero_for_one << 12) | one_for_zero
+        lp_fee = 500000
+        liquidity = 1234567890
 
         slot0_encoded = eth_abi.abi.encode(
             types=["uint160", "int24", "uint24", "uint24"],
-            args=[_sqrt_price, _tick, _protocol_fee, _lp_fee],
+            args=[sqrt_price, tick, protocol_fee, lp_fee],
         )
-        liquidity_encoded = eth_abi.abi.encode(types=["uint256"], args=[_liquidity])
+        liquidity_encoded = eth_abi.abi.encode(types=["uint256"], args=[liquidity])
 
         # Build call matchers for getSlot0(bytes32) and getLiquidity(bytes32)
         slot0_calldata = encode_function_calldata("getSlot0(bytes32)", [HexBytes(V4_POOL_ID)])
@@ -338,10 +337,10 @@ class TestBotBuildV4Pool:
         assert pool.address == get_checksum_address(V4_POOL_MANAGER)
         assert pool.fee == V4_FEE
         assert pool.tick_spacing == V4_TICK_SPACING
-        assert pool.sqrt_price_x96 == _sqrt_price
-        assert pool.tick == _tick
-        assert pool.liquidity == _liquidity
-        assert pool.lp_fee == _lp_fee
+        assert pool.sqrt_price_x96 == sqrt_price
+        assert pool.tick == tick
+        assert pool.liquidity == liquidity
+        assert pool.lp_fee == lp_fee
 
         # Pool should be registered in bot's managed pool registry
         found = bot.managed_pools.get(

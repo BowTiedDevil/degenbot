@@ -2,6 +2,7 @@
 Updated for Plan 048, Slice 4: AsyncBot delegates to async builders via build_pool().
 """
 
+import asyncio
 import pathlib
 from unittest.mock import AsyncMock
 
@@ -103,7 +104,8 @@ class TestAsyncBotBuildErc20Token:
             decimals_calldata: decimals_encoded,
         }
 
-        async def mock_call(*, to, data, block=None):  # noqa: RUF029, ARG001
+        async def mock_call(*, to, data, block=None):
+            await asyncio.sleep(0)
             return responses[data]
 
         provider.call = AsyncMock(side_effect=mock_call)
@@ -162,7 +164,8 @@ class TestAsyncBotBuildPoolV2:
             reserves_calldata: reserves_encoded,
         }
 
-        async def mock_call(*, to, data, block=None):  # noqa: RUF029, ARG001
+        async def mock_call(*, to, data, block=None):
+            await asyncio.sleep(0)
             return responses[data]
 
         provider.call = AsyncMock(side_effect=mock_call)
@@ -230,7 +233,8 @@ class TestAsyncBotBuildPoolV3:
             liquidity_calldata: liquidity_encoded,
         }
 
-        async def mock_call(*, to, data, block=None):  # noqa: RUF029, ARG001
+        async def mock_call(*, to, data, block=None):
+            await asyncio.sleep(0)
             if data in responses:
                 return responses[data]
             if data[:4] == tick_bitmap_selector:
@@ -305,7 +309,8 @@ class TestAsyncBotBuildPoolV4:
             liquidity_calldata: liquidity_encoded,
         }
 
-        async def mock_call(*, to, data, block=None):  # noqa: RUF029, ARG001
+        async def mock_call(*, to, data, block=None):
+            await asyncio.sleep(0)
             if data in responses:
                 return responses[data]
             if data[:4] == tick_bitmap_selector:
@@ -353,7 +358,8 @@ class TestAsyncBotIOMethods:
         balance_calldata = encode_function_calldata("balanceOf(address)", [holder_address])
         balance_encoded = eth_abi.abi.encode(types=["uint256"], args=[1000000000])
 
-        async def mock_call(*, to, data, block=None):  # noqa: RUF029, ARG001
+        async def mock_call(*, to, data, block=None):
+            await asyncio.sleep(0)
             if data == balance_calldata:
                 return balance_encoded
             msg = f"Unexpected call: data={data!r}"
@@ -391,7 +397,8 @@ class TestAsyncBotIOMethods:
         )
         approval_encoded = eth_abi.abi.encode(types=["uint256"], args=[500000000])
 
-        async def mock_call(*, to, data, block=None):  # noqa: RUF029, ARG001
+        async def mock_call(*, to, data, block=None):
+            await asyncio.sleep(0)
             if data == approval_calldata:
                 return approval_encoded
             msg = f"Unexpected call: data={data!r}"
@@ -426,7 +433,8 @@ class TestAsyncBotIOMethods:
         total_supply_calldata = encode_function_calldata("totalSupply()", None)
         total_supply_encoded = eth_abi.abi.encode(types=["uint256"], args=[10**27])
 
-        async def mock_call(*, to, data, block=None):  # noqa: RUF029, ARG001
+        async def mock_call(*, to, data, block=None):
+            await asyncio.sleep(0)
             if data == total_supply_calldata:
                 return total_supply_encoded
             msg = f"Unexpected call: data={data!r}"

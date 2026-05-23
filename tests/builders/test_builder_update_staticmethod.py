@@ -162,14 +162,15 @@ class FakeSyncProvider:
         self._responses = responses
 
     def make_request(
-        self, method: str, params: list  # noqa: ARG002
+        self, method: str, params: list
     ) -> HexBytes:
         if method == "eth_getCode":
             return HexBytes(b"\x60\x00")
-        raise ValueError(f"Unexpected method: {method}")
+        msg = f"Unexpected method: {method}"
+        raise ValueError(msg)
 
     def call(
-        self, *, to: str, data: bytes, block: int | None = None  # noqa: ARG002
+        self, *, to: str, data: bytes, block: int | None = None
     ) -> HexBytes:
         selector = data[:4].hex()
         if selector in self._responses:
@@ -188,7 +189,7 @@ class FakeAsyncProvider:
         self._responses = responses
 
     async def call(
-        self, *, to: str, data: bytes, block: int | None = None  # noqa: ARG002
+        self, *, to: str, data: bytes, block: int | None = None
     ) -> HexBytes:
         selector = data[:4].hex()
         if selector in self._responses:

@@ -21,6 +21,10 @@ if TYPE_CHECKING:
     from degenbot.aave.operations import Operation, ScaledTokenEvent
 
 
+_DEFAULT_USER_ADDRESS = ChecksumAddress("0x" + "1" * 40)
+_RAY = 10**27
+
+
 class TestSupplyHandler:
     """Tests for SupplyHandler."""
 
@@ -54,7 +58,10 @@ class TestSupplyHandler:
         )
 
         pool_event = _create_mock_pool_event(
-            event_topic="0x2b627736bca15cd5381dcf80b0bf11fd197d01a037c52b927a881a10fb73ba61",  # SUPPLY
+            event_topic=(
+                # SUPPLY
+                "0x2b627736bca15cd5381dcf80b0bf11fd197d01a037c52b927a881a10fb73ba61"
+            ),
             amount=raw_amount,
         )
         operation = _create_mock_operation(OperationType.SUPPLY, pool_event)
@@ -76,7 +83,7 @@ def _create_mock_scaled_event(
     amount: int,
     index: int,
     balance_increase: int | None = None,
-    user_address: ChecksumAddress = ChecksumAddress("0x" + "1" * 40),
+    user_address: ChecksumAddress = _DEFAULT_USER_ADDRESS,
 ) -> "ScaledTokenEvent":
     """Create a minimal mock ScaledTokenEvent."""
 
@@ -181,8 +188,7 @@ def _create_mock_context() -> MagicMock:
     ) -> int:
         """Calculate scaled amount using TokenMath."""
         # For testing, use simple floor division for collateral mint
-        RAY = 10**27
-        return raw_amount * RAY // index
+        return raw_amount * _RAY // index
 
     def mock_build_enriched_event(
         event: "ScaledTokenEvent",

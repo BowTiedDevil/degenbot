@@ -269,13 +269,8 @@ class TestCVXPY2PoolKnownValues:
             compressed_reserves_pre_swap + deposits - withdrawals - fees_removed
         )
 
-        final_reserves = compressed_reserves_post_swap + fees_removed
-
         pool_hi_post_swap_k = geo_mean(compressed_reserves_post_swap[pool_hi_index])
         pool_lo_post_swap_k = geo_mean(compressed_reserves_post_swap[pool_lo_index])
-
-        pool_hi_final_k = geo_mean(final_reserves[pool_hi_index])
-        pool_lo_final_k = geo_mean(final_reserves[pool_lo_index])
 
         objective = cvxpy.Maximize(cvxpy_sum((withdrawals - deposits)[:, profit_token_index]))
         constraints = [
@@ -438,13 +433,8 @@ class TestCVXPY2PoolKnownValues:
             compressed_reserves_pre_swap + deposits - withdrawals - fees_removed
         )
 
-        final_reserves = compressed_reserves_post_swap + fees_removed
-
         pool_hi_post_swap_k = geo_mean(compressed_reserves_post_swap[pool_hi_index])
         pool_lo_post_swap_k = geo_mean(compressed_reserves_post_swap[pool_lo_index])
-
-        pool_hi_final_k = geo_mean(final_reserves[pool_hi_index])
-        pool_lo_final_k = geo_mean(final_reserves[pool_lo_index])
 
         objective = cvxpy.Maximize(cvxpy_sum((withdrawals - deposits)[:, profit_token_index]))
         constraints = [
@@ -458,7 +448,6 @@ class TestCVXPY2PoolKnownValues:
 
         problem = cvxpy.Problem(objective, constraints)
         problem.solve(solver=cvxpy.CLARABEL)
-
         assert problem.status in cvxpy.settings.SOLUTION_PRESENT
 
         uncompressed_forward_token_amount = min(
@@ -559,7 +548,6 @@ class TestCVXPY2PoolPropertyBased:
         Tests that the optimizer doesn't fail or produce invalid results
         when tokens have different decimal places.
         """
-        decimals0, decimals1 = decimals_pair
 
         factory = FixtureFactory()
         fixture = factory.random_v2_pair(
@@ -602,8 +590,7 @@ class TestCVXPYMultiPoolPropertyBased:
     )
     @hypothesis.settings(deadline=None, max_examples=10)
     def test_4pool_cycle_finds_solution(self, seed: int):
-        """Property: 4-pool cycles can be solved by CVXPY.
-        """
+        """Property: 4-pool cycles can be solved by CVXPY."""
         factory = FixtureFactory()
         fixture = factory.random_multi_pool_cycle(
             seed=seed,
@@ -829,7 +816,6 @@ class TestBaseChainCVXPY:
         token0_decimals = pool_hi.token0.decimals
         token1_decimals = pool_hi.token1.decimals
 
-        forward_token = pool_hi.token1 if pool_hi.token0 == profit_token else pool_hi.token0
         forward_token_index = 1 if pool_hi.token0 == profit_token else 0
         profit_token_index = 0 if pool_hi.token0 == profit_token else 1
         assert forward_token_index != profit_token_index
@@ -848,12 +834,6 @@ class TestBaseChainCVXPY:
         compression_factor_token1 = max(
             Fraction(pool_hi.state.reserves_token1, 10**token1_decimals),
             Fraction(pool_lo.state.reserves_token1, 10**token1_decimals),
-        )
-        compression_factor_forward_token = (
-            compression_factor_token0 if forward_token_index == 0 else compression_factor_token1
-        )
-        compression_factor_profit_token = (
-            compression_factor_token0 if profit_token_index == 0 else compression_factor_token1
         )
 
         compressed_starting_reserves_pool_hi = (
@@ -925,8 +905,6 @@ class TestBaseChainCVXPY:
             compressed_reserves_pre_swap + deposits - withdrawals - fees_removed
         )
 
-        final_reserves = compressed_reserves_post_swap + fees_removed
-
         pool_hi_post_swap_k = geo_mean(compressed_reserves_post_swap[pool_hi_index])
         pool_lo_post_swap_k = geo_mean(compressed_reserves_post_swap[pool_lo_index])
 
@@ -942,32 +920,6 @@ class TestBaseChainCVXPY:
 
         problem = cvxpy.Problem(objective, constraints)
         problem.solve(solver=cvxpy.CLARABEL)
-
-        assert problem.status in cvxpy.settings.SOLUTION_PRESENT
-
-        uncompressed_forward_token_amount = min(
-            int(
-                cast("float", forward_token_amount.value)
-                * compression_factor_forward_token
-                * 10**forward_token.decimals
-            ),
-            (
-                pool_lo.state.reserves_token0
-                if forward_token_index == 0
-                else pool_lo.state.reserves_token1
-            )
-            - 1,
-        )
-
-        weth_out = pool_hi.calculate_tokens_out_from_tokens_in(
-            token_in=forward_token,
-            token_in_quantity=uncompressed_forward_token_amount,
-        )
-
-        weth_in = pool_lo.calculate_tokens_in_from_tokens_out(
-            token_out=forward_token,
-            token_out_quantity=uncompressed_forward_token_amount,
-        )
 
         # Verify the optimization found a solution
         assert problem.status in cvxpy.settings.SOLUTION_PRESENT

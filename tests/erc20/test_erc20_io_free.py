@@ -161,7 +161,7 @@ class TestEtherPlaceholderDataOnly:
 class TestBotTokenIOMethods:
     """Bot.get_token_balance/approval/total_supply use cache + RPC."""
 
-    def test_get_token_balance_cache_hit(self) -> None:
+    def test_get_token_balance_cache_hit(self, tmp_path: pathlib.Path) -> None:
         """Balance returned from cache without RPC call."""
         token = Erc20Token(
             "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
@@ -175,7 +175,7 @@ class TestBotTokenIOMethods:
 
         # Create a Bot with a mock provider — it should never be called
         config = DegenbotConfig(
-            database=DatabaseSettings(path=pathlib.Path("/tmp/test-bot-io")),
+            database=DatabaseSettings(path=tmp_path / "test-bot-io"),
             rpc={1: "https://eth.llamarpc.com/"},
         )
         bot = Bot(config)
@@ -189,7 +189,7 @@ class TestBotTokenIOMethods:
         assert balance == 10**18
         provider.call.assert_not_called()
 
-    def test_get_token_balance_cache_miss(self) -> None:
+    def test_get_token_balance_cache_miss(self, tmp_path: pathlib.Path) -> None:
         """Balance fetched from chain on cache miss, then cached."""
         token = Erc20Token(
             "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
@@ -201,7 +201,7 @@ class TestBotTokenIOMethods:
         holder = "0x" + "11" * 20
 
         config = DegenbotConfig(
-            database=DatabaseSettings(path=pathlib.Path("/tmp/test-bot-io2")),
+            database=DatabaseSettings(path=tmp_path / "test-bot-io2"),
             rpc={1: "https://eth.llamarpc.com/"},
         )
         bot = Bot(config)
@@ -222,7 +222,7 @@ class TestBotTokenIOMethods:
         # Now cached
         assert token.get_cached_balance(holder, block_number=200) == 5 * 10**18
 
-    def test_get_token_approval_cache_hit(self) -> None:
+    def test_get_token_approval_cache_hit(self, tmp_path: pathlib.Path) -> None:
         token = Erc20Token(
             "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
             chain_id=1,
@@ -235,7 +235,7 @@ class TestBotTokenIOMethods:
         token.set_cached_approval(block_number=100, owner=owner, spender=spender, amount=500)
 
         config = DegenbotConfig(
-            database=DatabaseSettings(path=pathlib.Path("/tmp/test-bot-io3")),
+            database=DatabaseSettings(path=tmp_path / "test-bot-io3"),
             rpc={1: "https://eth.llamarpc.com/"},
         )
         bot = Bot(config)
@@ -249,7 +249,7 @@ class TestBotTokenIOMethods:
         assert approval == 500
         provider.call.assert_not_called()
 
-    def test_get_token_total_supply_cache_hit(self) -> None:
+    def test_get_token_total_supply_cache_hit(self, tmp_path: pathlib.Path) -> None:
         token = Erc20Token(
             "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
             chain_id=1,
@@ -260,7 +260,7 @@ class TestBotTokenIOMethods:
         token.set_cached_total_supply(block_number=100, total_supply=10**27)
 
         config = DegenbotConfig(
-            database=DatabaseSettings(path=pathlib.Path("/tmp/test-bot-io4")),
+            database=DatabaseSettings(path=tmp_path / "test-bot-io4"),
             rpc={1: "https://eth.llamarpc.com/"},
         )
         bot = Bot(config)

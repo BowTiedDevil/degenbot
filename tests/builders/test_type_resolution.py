@@ -97,7 +97,7 @@ class FakeSyncProvider:
     def set_response(self, to: str, data: str, response: HexBytes) -> None:
         self._responses[to, data] = response
 
-    def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:  # noqa: ARG002
+    def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
         self.call_count += 1
         key = (to, data.hex())
         if key in self._responses:
@@ -105,13 +105,13 @@ class FakeSyncProvider:
         msg = "No mock response"
         raise Web3Exception(msg)
 
-    def call_raw(self, tx: TxParams, block: object = None) -> HexBytes:  # noqa: ARG002
+    def call_raw(self, tx: TxParams, block: object = None) -> HexBytes:
         return HexBytes(b"\x00" * 32)
 
     def get_block_number(self) -> int:
         return 18_000_000
 
-    def get_block(self, block_identifier: object = None) -> object:  # noqa: ARG002
+    def get_block(self, block_identifier: object = None) -> object:
         return {"number": 18_000_000}
 
 
@@ -125,7 +125,7 @@ class FakeAsyncProvider:
     def set_response(self, to: str, data: str, response: HexBytes) -> None:
         self._responses[to, data] = response
 
-    async def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:  # noqa: ARG002
+    async def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
         self.call_count += 1
         key = (to, data.hex())
         if key in self._responses:
@@ -133,13 +133,13 @@ class FakeAsyncProvider:
         msg = "No mock response"
         raise Web3Exception(msg)
 
-    async def call_raw(self, tx: TxParams, block: object = None) -> HexBytes:  # noqa: ARG002
+    async def call_raw(self, tx: TxParams, block: object = None) -> HexBytes:
         return HexBytes(b"\x00" * 32)
 
     async def get_block_number(self) -> int:
         return 18_000_000
 
-    async def get_block(self, block_identifier: object = None) -> object:  # noqa: ARG002
+    async def get_block(self, block_identifier: object = None) -> object:
         return {"number": 18_000_000}
 
 

@@ -1,5 +1,3 @@
-# ruff: noqa: E501
-
 import hypothesis
 import hypothesis.strategies
 
@@ -218,7 +216,7 @@ def test_compute_swap_step_not_entire_input_amount_taken_as_fee():
     assert sqrt_q == 2413
 
 
-def test_compute_swap_step_zero_for_one_handles_intermediate_insufficient_liquidity_in_exact_output_case():
+def test_compute_swap_step_zero_for_one_handles_intermediate_insufficient_liquidity_in_exact_output_case():  # noqa: E501
     sqrt_p = 20282409603651670423947251286016
     sqrt_p_target = (sqrt_p * 11) // 10
     liquidity = 1024
@@ -239,7 +237,7 @@ def test_compute_swap_step_zero_for_one_handles_intermediate_insufficient_liquid
     assert fee_amount == 79
 
 
-def test_compute_swap_step_one_for_zero_handles_intermediate_insufficient_liquidity_in_exact_output_case():
+def test_compute_swap_step_one_for_zero_handles_intermediate_insufficient_liquidity_in_exact_output_case():  # noqa: E501
     sqrt_p = 20282409603651670423947251286016
     sqrt_p_target = (sqrt_p * 9) // 10
     liquidity = 1024

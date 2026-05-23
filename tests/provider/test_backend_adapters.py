@@ -6,6 +6,7 @@ behavior. Each adapter is tested with a lightweight fake provider, with no live
 RPC calls.
 """
 
+import asyncio
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -336,7 +337,8 @@ class TestAsyncAlloyAdapter:
     """Test _AsyncAlloyAdapter delegates correctly to AsyncAlloyProvider."""
 
     def _make_async_alloy(self) -> MagicMock:
-        async def _return(val: Any) -> Any:  # noqa: RUF029
+        async def _return(val: Any) -> Any:
+            await asyncio.sleep(0)
             return val
 
         alloy = MagicMock()
@@ -380,7 +382,8 @@ class TestAsyncAlloyAdapter:
 def _return_fn(val: Any):
     """Helper to create an async mock returning a fixed value."""
 
-    async def _fn(*args: Any, **kwargs: Any) -> Any:  # noqa: RUF029
+    async def _fn(*args: Any, **kwargs: Any) -> Any:
+        await asyncio.sleep(0)
         return val
 
     return _fn
@@ -389,7 +392,8 @@ def _return_fn(val: Any):
 def _raise_fn(exc: Exception):
     """Helper to create an async mock raising an exception."""
 
-    async def _fn(*args: Any, **kwargs: Any) -> Any:  # noqa: RUF029
+    async def _fn(*args: Any, **kwargs: Any) -> Any:
+        await asyncio.sleep(0)
         raise exc
 
     return _fn

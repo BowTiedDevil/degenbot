@@ -40,10 +40,18 @@ def token_b():
 
 def _make_cyclic_path(token_a, token_b):
     pool0 = _make_v2_pool(
-        token_a, token_b, reserve0=2_000_000, reserve1=1_000_000_000, address="0x00000000000000000000000000000000000000b0"
+        token_a,
+        token_b,
+        reserve0=2_000_000,
+        reserve1=1_000_000_000,
+        address="0x00000000000000000000000000000000000000b0",
     )
     pool1 = _make_v2_pool(
-        token_b, token_a, reserve0=1_500_000, reserve1=800_000_000, address="0x00000000000000000000000000000000000000b1"
+        token_b,
+        token_a,
+        reserve0=1_500_000,
+        reserve1=800_000_000,
+        address="0x00000000000000000000000000000000000000b1",
     )
     solver = MobiusSolver()
     path = ArbitragePath(

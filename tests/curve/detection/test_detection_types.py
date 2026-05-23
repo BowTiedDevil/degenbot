@@ -16,7 +16,7 @@ from degenbot.curve.detection.types import (
 class TestCoinDiscoveryResult:
     """CoinDiscoveryResult is a frozen dataclass holding coin enumeration output."""
 
-    def testConstruction(self):
+    def test_construction(self):
         result = CoinDiscoveryResult(
             token_addresses=(
                 "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
@@ -31,7 +31,7 @@ class TestCoinDiscoveryResult:
         assert result.coin_prototype == "coins(uint256)"
         assert result.balance_prototype == "balances(uint256)"
 
-    def testFrozen(self):
+    def test_frozen(self):
         result = CoinDiscoveryResult(
             token_addresses=(),
             balances=(),
@@ -45,7 +45,7 @@ class TestCoinDiscoveryResult:
 class TestLendingDetectionResult:
     """LendingDetectionResult holds lending token detection output."""
 
-    def testNoLending(self):
+    def test_no_lending(self):
         result = LendingDetectionResult(
             use_lending=(False, False),
             precision_multipliers=None,
@@ -53,7 +53,7 @@ class TestLendingDetectionResult:
         assert result.use_lending == (False, False)
         assert result.precision_multipliers is None
 
-    def testWithLendingOverrides(self):
+    def test_with_lending_overrides(self):
         result = LendingDetectionResult(
             use_lending=(True, False),
             precision_multipliers=(10**2, 10**12),
@@ -61,7 +61,7 @@ class TestLendingDetectionResult:
         assert result.use_lending == (True, False)
         assert result.precision_multipliers == (100, 10**12)
 
-    def testFrozen(self):
+    def test_frozen(self):
         result = LendingDetectionResult(
             use_lending=(False,),
             precision_multipliers=None,
@@ -73,7 +73,7 @@ class TestLendingDetectionResult:
 class TestMetapoolDetectionResult:
     """MetapoolDetectionResult holds metapool detection output."""
 
-    def testNotMetapool(self):
+    def test_not_metapool(self):
         result = MetapoolDetectionResult(
             is_meta=False,
             base_pool_address=None,
@@ -83,7 +83,7 @@ class TestMetapoolDetectionResult:
         assert result.base_pool_address is None
         assert result.tokens_underlying is None
 
-    def testMetapool(self):
+    def test_metapool(self):
         result = MetapoolDetectionResult(
             is_meta=True,
             base_pool_address="0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
@@ -97,7 +97,7 @@ class TestMetapoolDetectionResult:
         assert result.base_pool_address is not None
         assert len(result.tokens_underlying) == 3
 
-    def testFrozen(self):
+    def test_frozen(self):
         result = MetapoolDetectionResult(
             is_meta=False,
             base_pool_address=None,
@@ -110,7 +110,7 @@ class TestMetapoolDetectionResult:
 class TestCryptoDetectionResult:
     """CryptoDetectionResult holds crypto pool parameter detection output."""
 
-    def testNotCrypto(self):
+    def test_not_crypto(self):
         result = CryptoDetectionResult(
             is_crypto=False,
             fee_gamma=None,
@@ -122,7 +122,7 @@ class TestCryptoDetectionResult:
         assert not result.is_crypto
         assert result.fee_gamma is None
 
-    def testCryptoPool(self):
+    def test_crypto_pool(self):
         result = CryptoDetectionResult(
             is_crypto=True,
             fee_gamma=5000000000000000,
@@ -135,7 +135,7 @@ class TestCryptoDetectionResult:
         assert result.fee_gamma == 5000000000000000
         assert result.mid_fee == 4000000
 
-    def testFrozen(self):
+    def test_frozen(self):
         result = CryptoDetectionResult(
             is_crypto=False,
             fee_gamma=None,
@@ -151,7 +151,7 @@ class TestCryptoDetectionResult:
 class TestARampingResult:
     """ARampingResult holds A ramping parameter detection output."""
 
-    def testNoRamping(self):
+    def test_no_ramping(self):
         result = ARampingResult(
             initial_a=None,
             initial_a_time=None,
@@ -162,7 +162,7 @@ class TestARampingResult:
         assert not result.has_ramping
         assert result.initial_a is None
 
-    def testWithRamping(self):
+    def test_with_ramping(self):
         result = ARampingResult(
             initial_a=1000,
             initial_a_time=1700000000,
@@ -174,7 +174,7 @@ class TestARampingResult:
         assert result.initial_a == 1000
         assert result.future_a == 2000
 
-    def testFrozen(self):
+    def test_frozen(self):
         result = ARampingResult(
             initial_a=None,
             initial_a_time=None,

@@ -73,11 +73,11 @@ def test_curve_lending_pool_with_data_provider():
         decimals=8,
     )
 
-    PRECISION = 10**18
+    precision = 10**18
 
     provider = FakeCurveDataProvider(
         block_timestamp=1_700_000_000,
-        lending_rates=(PRECISION * 102 // 100, PRECISION * 105 // 100),
+        lending_rates=(precision * 102 // 100, precision * 105 // 100),
     )
 
     pool = CurveStableswapPool(
@@ -119,11 +119,11 @@ def test_curve_metapool_with_data_provider():
         decimals=18,
     )
 
-    PRECISION = 10**18
+    precision = 10**18
 
     provider = FakeCurveDataProvider(
         block_timestamp=1_700_000_000,
-        base_virtual_price=PRECISION * 102 // 100,  # 1.02
+        base_virtual_price=precision * 102 // 100,  # 1.02
     )
 
     pool = CurveStableswapPool(
@@ -167,7 +167,7 @@ def test_curve_crypto_pool_with_data_provider():
 
     provider = FakeCurveDataProvider(
         block_timestamp=1_700_000_000,
-        D=10**20,
+        d=10**20,
         gamma=10**16,
         price_scale=(10**18,),
     )

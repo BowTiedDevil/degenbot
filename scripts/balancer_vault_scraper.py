@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # ruff: noqa: BLE001, G004, PLR0917, PLW0603, SIM105, S110, T201, TRY400
-"""
-Discover Balancer V2 pools from the Vault contract events.
+"""Discover Balancer V2 pools from the Vault contract events.
 
 Standalone one-off script — no degenbot imports.
 

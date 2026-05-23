@@ -49,17 +49,31 @@ def _make_pool_with_swap(
     fee: Fraction = FEE_03,
     address: str = ADDR_POOL0,
 ):
-    pool = _make_v2_pool(token0, token1, reserve0=reserve0, reserve1=reserve1, fee=fee, address=address)
-    return pool
+    return _make_v2_pool(
+        token0,
+        token1,
+        reserve0=reserve0,
+        reserve1=reserve1,
+        fee=fee,
+        address=address,
+    )
 
 
 class TestBuildSwapAmountsV2V2:
     def _make_path(self, token_a, token_b):
         pool0 = _make_pool_with_swap(
-            token_a, token_b, reserve0=2_000_000, reserve1=1_000_000_000, address=ADDR_POOL0
+            token_a,
+            token_b,
+            reserve0=2_000_000,
+            reserve1=1_000_000_000,
+            address=ADDR_POOL0,
         )
         pool1 = _make_pool_with_swap(
-            token_b, token_a, reserve0=1_500_000, reserve1=800_000_000, address=ADDR_POOL1
+            token_b,
+            token_a,
+            reserve0=1_500_000,
+            reserve1=800_000_000,
+            address=ADDR_POOL1,
         )
         solver = MobiusSolver()
         return ArbitragePath(

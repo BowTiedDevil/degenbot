@@ -122,7 +122,7 @@ class TestDecimalCompressionProperties:
         for token0 will be much smaller relative to token1.
         """
         decimals0, decimals1 = decimals_pair
-        decimal_diff = abs(decimals0 - decimals1)
+        _decimal_diff = abs(decimals0 - decimals1)
 
         single = compute_single_compression_factor(
             reserves0, reserves1, reserves0, reserves1, decimals0, decimals1
@@ -236,7 +236,7 @@ class TestDecimalCorrectionImpact:
         reserves1_b = reserves1_a
 
         # Compute compression factors
-        single = compute_single_compression_factor(
+        _single = compute_single_compression_factor(
             reserves0_a, reserves1_a, reserves0_b, reserves1_b, decimals0, decimals1
         )
 
@@ -245,16 +245,14 @@ class TestDecimalCorrectionImpact:
         )
 
         # The compression ratios should be different
-        # Single compression ratio for token0
-        compressed0_single = Fraction(reserves0_a, 10**decimals0) / single
         compressed0_double = Fraction(reserves0_a, 10**decimals0) / double0
+        compressed1_double = Fraction(reserves1_a, 10**decimals1) / double1
 
         # When decimals differ significantly, the compression ratios differ
         if abs(decimals0 - decimals1) >= 6:
             # Significant decimal difference
             # Double compression gives 1.0 for the max reserve token
-            # Single compression may give a smaller value
-            assert compressed0_double == Fraction(1) or compressed1_a / double1 == Fraction(1)
+            assert compressed0_double == Fraction(1) or compressed1_double == Fraction(1)
 
 
 class TestCompressionPrecision:
@@ -384,7 +382,7 @@ class TestCompressionEdgeCases:
         reserve1_b = 10**20
 
         # Should still compute valid compression factors
-        double0, double1 = compute_double_compression_factors(
+        _double0, double1 = compute_double_compression_factors(
             reserve0_a, reserve1_a, reserve0_b, reserve1_b, decimals0, decimals1
         )
 

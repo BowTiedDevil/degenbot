@@ -33,22 +33,23 @@ from degenbot.exceptions.pool import StaleRateResult
 
 # ---------- ABIs ----------
 
+
 POOL_ABI = json.loads(
     """
     [{"inputs":[],"name":"getAmplificationParameter","outputs":[{"internalType":"uint256","name":"value","type":"uint256"},{"internalType":"bool","name":"isUpdating","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getPoolId","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getSwapFeePercentage","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getRateProviders","outputs":[{"internalType":"contract IRateProvider[]","name":"","type":"address[]"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"token","type":"address"}],"name":"getTokenRateCache","outputs":[{"internalType":"uint256","name":"rate","type":"uint256"},{"internalType":"uint256","name":"oldRate","type":"uint256"},{"internalType":"uint256","name":"duration","type":"uint256"},{"internalType":"uint256","name":"expires","type":"uint256"}],"stateMutability":"view","type":"function"}]
-    """  # noqa:E501
+    """  # noqa: E501
 )
 
 VAULT_ABI = json.loads(
     """
     [{"inputs":[{"internalType":"bytes32","name":"poolId","type":"bytes32"}],"name":"getPoolTokens","outputs":[{"internalType":"contract IERC20[]","name":"tokens","type":"address[]"},{"internalType":"uint256[]","name":"balances","type":"uint256[]"},{"internalType":"uint256","name":"lastChangeBlock","type":"uint256"}],"stateMutability":"view","type":"function"}]
-    """  # noqa:E501
+    """  # noqa: E501
 )
 
 QUERIES_ABI = json.loads(
     """
     [{"inputs":[{"components":[{"internalType":"bytes32","name":"poolId","type":"bytes32"},{"internalType":"enum IVault.SwapKind","name":"kind","type":"uint8"},{"internalType":"contract IAsset","name":"assetIn","type":"address"},{"internalType":"contract IAsset","name":"assetOut","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"},{"internalType":"bytes","name":"userData","type":"bytes"}],"internalType":"struct IVault.SingleSwap","name":"singleSwap","type":"tuple"},{"components":[{"internalType":"address","name":"sender","type":"address"},{"internalType":"bool","name":"fromInternalBalance","type":"bool"},{"internalType":"address payable","name":"recipient","type":"address"},{"internalType":"bool","name":"toInternalBalance","type":"bool"}],"internalType":"struct IVault.FundManagement","name":"funds","type":"tuple"}],"name":"querySwap","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"nonpayable","type":"function"}]
-    """  # noqa:E501
+    """  # noqa: E501
 )
 
 RATE_ABI = json.loads(
@@ -93,7 +94,7 @@ class CacheAwareRateProvider:
     For BPT tokens and tokens without a rate provider, returns ONE (1e18).
     """
 
-    def __init__(  # noqa: PLR0917
+    def __init__(
         self,
         pool_address: str,
         pool_abi: list,
@@ -104,9 +105,7 @@ class CacheAwareRateProvider:
         *,
         zero_addr: str = "0x0000000000000000000000000000000000000000",
     ) -> None:
-        self._pool = w3.eth.contract(
-            address=get_checksum_address(pool_address), abi=pool_abi
-        )
+        self._pool = w3.eth.contract(address=get_checksum_address(pool_address), abi=pool_abi)
         self._rate_contracts = []
         self._bpt_idx = bpt_idx
         self._w3 = w3
@@ -136,24 +135,18 @@ class CacheAwareRateProvider:
                 continue
 
             try:
-                rate, _old_rate, _duration, expires = (
-                    self._pool.functions.getTokenRateCache(
-                        get_checksum_address(token_addr)
-                    ).call(block_identifier=block_identifier)
-                )
+                rate, _old_rate, _duration, expires = self._pool.functions.getTokenRateCache(
+                    get_checksum_address(token_addr)
+                ).call(block_identifier=block_identifier)
             except ContractLogicError:
                 # Token doesn't have a rate provider — fall back to getRate()
-                rate = rp_contract.functions.getRate().call(
-                    block_identifier=block_identifier
-                )
+                rate = rp_contract.functions.getRate().call(block_identifier=block_identifier)
                 rates.append(rate)
                 continue
 
             if block_ts > expires:
                 # Cache expired — on-chain would call provider.getRate()
-                fresh = rp_contract.functions.getRate().call(
-                    block_identifier=block_identifier
-                )
+                fresh = rp_contract.functions.getRate().call(block_identifier=block_identifier)
                 rates.append(fresh)
             else:
                 # Cache valid — on-chain uses the cached rate
@@ -208,22 +201,17 @@ def _build_stable_pool(
 
         rp = rate_providers[i]
         if rp != "0x0000000000000000000000000000000000000000":
-            rp_c = w3.eth.contract(
-                address=get_checksum_address(rp), abi=RATE_ABI
-            )
+            rp_c = w3.eth.contract(address=get_checksum_address(rp), abi=RATE_ABI)
             rate = rp_c.functions.getRate().call()
         else:
             rate = ONE
 
         fresh_rates.append(rate)
-        erc20_tokens.append(
-            Erc20Token(address=t, name=name, symbol=symbol, decimals=decimals)
-        )
+        erc20_tokens.append(Erc20Token(address=t, name=name, symbol=symbol, decimals=decimals))
 
     # Fresh scaling factors = base_sf * rate // ONE (mulDown)
     fresh_scaling_factors = [
-        bsf * rate // ONE
-        for bsf, rate in zip(base_scaling_factors, fresh_rates, strict=True)
+        bsf * rate // ONE for bsf, rate in zip(base_scaling_factors, fresh_rates, strict=True)
     ]
 
     # Auto-detect BPT index
@@ -261,7 +249,7 @@ def _build_stable_pool(
     )
 
 
-def _query_swap(  # noqa: PLR0917
+def _query_swap(
     fork: AnvilFork,
     pool_id: bytes,
     token_in: str,
@@ -328,9 +316,7 @@ class TestBalancerV2StablePoolMetaStable:
         )
 
         if on_chain_out > 0:
-            assert python_out == on_chain_out, (
-                f"pct=1/{pct}: diff={python_out - on_chain_out}"
-            )
+            assert python_out == on_chain_out, f"pct=1/{pct}: diff={python_out - on_chain_out}"
 
     @pytest.mark.parametrize("pct", [100, 1000])
     def test_given_in_weth_to_wsteth(self, wsteth_weth_pool, fork_mainnet_archive, pct):
@@ -353,9 +339,7 @@ class TestBalancerV2StablePoolMetaStable:
         )
 
         if on_chain_out > 0:
-            assert python_out == on_chain_out, (
-                f"pct=1/{pct}: diff={python_out - on_chain_out}"
-            )
+            assert python_out == on_chain_out, f"pct=1/{pct}: diff={python_out - on_chain_out}"
 
     @pytest.mark.parametrize("pct", [100, 1000])
     def test_given_in_cbeth_to_wsteth(self, cbeth_wsteth_pool, fork_mainnet_archive, pct):
@@ -378,9 +362,7 @@ class TestBalancerV2StablePoolMetaStable:
         )
 
         if on_chain_out > 0:
-            assert python_out == on_chain_out, (
-                f"pct=1/{pct}: diff={python_out - on_chain_out}"
-            )
+            assert python_out == on_chain_out, f"pct=1/{pct}: diff={python_out - on_chain_out}"
 
     @pytest.mark.parametrize("pct", [100, 1000])
     def test_given_out_weth_for_wsteth(self, wsteth_weth_pool, fork_mainnet_archive, pct):
@@ -403,9 +385,7 @@ class TestBalancerV2StablePoolMetaStable:
         )
 
         if on_chain_in > 0:
-            assert python_in == on_chain_in, (
-                f"pct=1/{pct}: diff={python_in - on_chain_in}"
-            )
+            assert python_in == on_chain_in, f"pct=1/{pct}: diff={python_in - on_chain_in}"
 
     @pytest.mark.parametrize("pct", [100, 1000])
     def test_given_out_wsteth_for_weth(self, wsteth_weth_pool, fork_mainnet_archive, pct):
@@ -428,9 +408,7 @@ class TestBalancerV2StablePoolMetaStable:
         )
 
         if on_chain_in > 0:
-            assert python_in == on_chain_in, (
-                f"pct=1/{pct}: diff={python_in - on_chain_in}"
-            )
+            assert python_in == on_chain_in, f"pct=1/{pct}: diff={python_in - on_chain_in}"
 
 
 class TestBalancerV2StablePoolComposableExact:
@@ -483,9 +461,7 @@ class TestBalancerV2StablePoolComposableExact:
         )
 
         if on_chain_out > 0:
-            assert python_out == on_chain_out, (
-                f"pct=1/{pct}: diff={python_out - on_chain_out}"
-            )
+            assert python_out == on_chain_out, f"pct=1/{pct}: diff={python_out - on_chain_out}"
 
     @pytest.mark.parametrize("pct", [100, 1000])
     def test_given_in_usdc_to_tusd(self, tusd_bsp_pool, fork_mainnet_archive, pct):
@@ -508,9 +484,7 @@ class TestBalancerV2StablePoolComposableExact:
         )
 
         if on_chain_out > 0:
-            assert python_out == on_chain_out, (
-                f"pct=1/{pct}: diff={python_out - on_chain_out}"
-            )
+            assert python_out == on_chain_out, f"pct=1/{pct}: diff={python_out - on_chain_out}"
 
     @pytest.mark.parametrize("pct", [100, 1000])
     def test_given_in_usdc_to_usdt(self, bb_s_usd_pool, fork_mainnet_archive, pct):
@@ -533,9 +507,7 @@ class TestBalancerV2StablePoolComposableExact:
         )
 
         if on_chain_out > 0:
-            assert python_out == on_chain_out, (
-                f"pct=1/{pct}: diff={python_out - on_chain_out}"
-            )
+            assert python_out == on_chain_out, f"pct=1/{pct}: diff={python_out - on_chain_out}"
 
     @pytest.mark.parametrize("pct", [100, 1000])
     def test_given_out_usdc_for_tusd(self, tusd_bsp_pool, fork_mainnet_archive, pct):
@@ -558,9 +530,7 @@ class TestBalancerV2StablePoolComposableExact:
         )
 
         if on_chain_in > 0:
-            assert python_in == on_chain_in, (
-                f"pct=1/{pct}: diff={python_in - on_chain_in}"
-            )
+            assert python_in == on_chain_in, f"pct=1/{pct}: diff={python_in - on_chain_in}"
 
     @pytest.mark.parametrize("pct", [100, 1000])
     def test_given_out_usdt_for_usdc(self, bb_s_usd_pool, fork_mainnet_archive, pct):
@@ -583,9 +553,7 @@ class TestBalancerV2StablePoolComposableExact:
         )
 
         if on_chain_in > 0:
-            assert python_in == on_chain_in, (
-                f"pct=1/{pct}: diff={python_in - on_chain_in}"
-            )
+            assert python_in == on_chain_in, f"pct=1/{pct}: diff={python_in - on_chain_in}"
 
 
 class TestBalancerV2StablePoolComposableStaleRates:
@@ -603,9 +571,7 @@ class TestBalancerV2StablePoolComposableStaleRates:
             invariant_version=INVARIANT_V1,
         )
 
-    def test_stale_rates_raise_possible_inaccurate_result(
-        self, tusd_bsp_pool_no_provider
-    ):
+    def test_stale_rates_raise_possible_inaccurate_result(self, tusd_bsp_pool_no_provider):
         """ComposableStablePool without rate_provider raises StaleRateResult."""
         pool = tusd_bsp_pool_no_provider
         amount_in = pool.balances[0] // 100
