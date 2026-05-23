@@ -85,7 +85,8 @@ class AsyncV4PoolBuilder:
         )
 
         # Try DB first
-        pool_from_db = None
+        db_values = None
+        pool_id_db: int | None = None
         with contextlib.suppress(Exception), self._db() as session:
             pool_manager_in_db = session.scalar(
                 select(PoolManagerTable).where(
@@ -100,10 +101,12 @@ class AsyncV4PoolBuilder:
                         UniswapV4PoolTable.manager.has(id=pool_manager_in_db.id),
                     )
                 )
+                if pool_from_db is not None:
+                    db_values = V4BuilderBase.extract_db_values(pool_from_db)
+                    pool_id_db = pool_from_db.id
 
         # Get immutable values
-        if pool_from_db is not None:
-            db_values = V4BuilderBase.extract_db_values(pool_from_db)
+        if db_values is not None:
             currency0_address = db_values.currency0_address
             currency1_address = db_values.currency1_address
             hook_address = db_values.hook_address
@@ -193,18 +196,17 @@ class AsyncV4PoolBuilder:
         else:
             # Try DB snapshot tables first
             db_snapshot_loaded = False
-            if pool_from_db is not None and hasattr(pool_from_db, "liquidity_positions"):
+            if pool_id_db is not None:
                 with contextlib.suppress(Exception), self._db() as session:
-                    if hasattr(pool_from_db, "managed_pool_id"):
-                        pool_with_data = session.scalar(
-                            select(type(pool_from_db)).where(
-                                UniswapV4PoolTable.id == pool_from_db.id
-                            )
+                    pool_with_data = session.scalar(
+                        select(UniswapV4PoolTable).where(
+                            UniswapV4PoolTable.id == pool_id_db
                         )
-                        if pool_with_data is not None:
-                            working_tick_bitmap, working_tick_data, db_snapshot_loaded = (
-                                V4BuilderBase.load_tick_snapshot(pool_with_data)
-                            )
+                    )
+                    if pool_with_data is not None:
+                        working_tick_bitmap, working_tick_data, db_snapshot_loaded = (
+                            V4BuilderBase.load_tick_snapshot(pool_with_data)
+                        )
 
             if not db_snapshot_loaded:
                 word, _ = get_tick_word_and_bit_position(
