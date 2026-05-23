@@ -28,7 +28,12 @@ from degenbot.types.aliases import BlockNumber
 def _build_topics_list(
     topic_signature: Sequence[Sequence[HexBytes] | HexBytes] | None,
 ) -> list[list[str]] | None:
-    """Convert topic signature to the list format expected by the RPC call."""
+    """Convert topic signature to the list format expected by the RPC call.
+
+    Returns:
+        The converted topics list, or None if no topic signature.
+
+    """
     if not topic_signature:
         return None
     return [
@@ -97,15 +102,12 @@ def fetch_logs_retrying(
     address: list[ChecksumAddress] | None = None,
     topic_signature: Sequence[Sequence[HexBytes] | HexBytes] | None = None,
 ) -> list[LogReceipt]:
-    """
-    Fetch all event logs for the given topic signature (or all logs, if omitted), inclusive for the.
-
-    given block range.
+    """Fetch event logs for a topic signature within a block range.
 
     Max blocks per request is set to 5,000 if not specified.
 
-    See `https://ethereum.org/developers/docs/apis/json-rpc/#eth_getfilterchanges` for formatting of
-    topic signatures.
+    See `https://ethereum.org/developers/docs/apis/json-rpc/#eth_getfilterchanges`
+    for formatting of topic signatures.
 
     Args:
         provider: ProviderAdapter instance
@@ -115,6 +117,13 @@ def fetch_logs_retrying(
         max_blocks_per_request: Maximum blocks per request
         address: Contract addresses to filter
         topic_signature: Event topic signatures
+
+    Returns:
+        List of event log receipts.
+
+    Raises:
+        ValueError: If end_block is earlier than start_block.
+        LogFetchingTimeout: If max retries are exceeded.
 
     """
     if end_block < start_block:
@@ -163,7 +172,7 @@ def fetch_logs_retrying(
         )
 
     while not fetcher.is_complete:
-        try:
+        try:  # noqa: PLW0717
             for attempt in retrier:
                 chunk_end = fetcher.chunk_end
 
@@ -206,7 +215,15 @@ async def fetch_logs_retrying_async(
     address: ChecksumAddress | None = None,
     topic_signature: Sequence[Sequence[HexBytes] | HexBytes] | None = None,
 ) -> list[LogReceipt]:
-    """Async version of fetch_logs_retrying."""
+    """Async version of fetch_logs_retrying.
+
+    Returns:
+        List of event log receipts.
+
+    Raises:
+        LogFetchingTimeout: If max retries are exceeded.
+
+    """
     if topic_signature is None:
         topic_signature = []
 
@@ -232,7 +249,13 @@ async def fetch_logs_retrying_async(
     )
 
     async def _fetch_chunk(attempt: object, chunk_end: int) -> None:
-        """Fetch a single chunk of logs within a retry attempt."""
+        """Fetch a single chunk of logs within a retry attempt.
+
+        Raises:
+            Timeout: If the RPC call times out.
+            Web3Exception: If the RPC call fails.
+
+        """
         with attempt:  # ty:ignore[invalid-context-manager]
             try:
                 logger.debug(

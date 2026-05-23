@@ -1,5 +1,4 @@
-"""
-Provider interface for abstracting Web3 and AlloyProvider.
+"""Provider interface for abstracting Web3 and AlloyProvider.
 
 This module defines a Protocol for Ethereum RPC providers and an adapter
 that can delegate to either web3.py's Web3 or degenbot's AlloyProvider.
@@ -52,8 +51,7 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class ProviderBackend(Protocol):
-    """
-    Protocol for sync provider backends.
+    """Protocol for sync provider backends.
 
     Merged public protocol for any sync Ethereum RPC backend.
     """
@@ -130,32 +128,28 @@ class ProviderBackend(Protocol):
     # --- Subscription stubs (sync providers do not support subscriptions) ---
 
     def subscribe_blocks(self) -> None:
-        """
-        Not available on sync providers.
+        """Not available on sync providers.
 
         Use AsyncProviderAdapter.subscribe_blocks() instead.
         """
         ...
 
     def subscribe_full_blocks(self) -> None:
-        """
-        Not available on sync providers.
+        """Not available on sync providers.
 
         Use AsyncProviderAdapter.subscribe_full_blocks() instead.
         """
         ...
 
     def subscribe_pending_transactions(self) -> None:
-        """
-        Not available on sync providers.
+        """Not available on sync providers.
 
         Use AsyncProviderAdapter.subscribe_pending_transactions() instead.
         """
         ...
 
     def subscribe_full_pending_transactions(self) -> None:
-        """
-        Not available on sync providers.
+        """Not available on sync providers.
 
         Use AsyncProviderAdapter.subscribe_full_pending_transactions() instead.
         """
@@ -166,8 +160,7 @@ class ProviderBackend(Protocol):
         _addresses: list[str] | None = None,
         _topics: list[list[str]] | None = None,
     ) -> None:
-        """
-        Not available on sync providers.
+        """Not available on sync providers.
 
         Use AsyncProviderAdapter.subscribe_logs() instead.
         """
@@ -180,8 +173,7 @@ class ProviderBackend(Protocol):
 
 
 class SyncSubscriptionSupport:
-    """
-    Mixin providing default subscription stubs for sync backends.
+    """Mixin providing default subscription stubs for sync backends.
 
     Sync providers never support subscriptions. This mixin satisfies
     the ProviderBackend protocol requirement without duplicating 5 identical
@@ -200,28 +192,48 @@ class SyncSubscriptionSupport:
         return "unknown"
 
     def subscribe_blocks(self) -> None:
-        """Not available on sync providers."""
+        """Not available on sync providers.
+
+        Raises:
+            SubscriptionNotSupported: Sync providers do not support subscriptions.
+
+        """
         raise SubscriptionNotSupported(
             transport=self._subscription_transport,
             rpc_url=self._subscription_rpc_url,
         )
 
     def subscribe_full_blocks(self) -> None:
-        """Not available on sync providers."""
+        """Not available on sync providers.
+
+        Raises:
+            SubscriptionNotSupported: Sync providers do not support subscriptions.
+
+        """
         raise SubscriptionNotSupported(
             transport=self._subscription_transport,
             rpc_url=self._subscription_rpc_url,
         )
 
     def subscribe_pending_transactions(self) -> None:
-        """Not available on sync providers."""
+        """Not available on sync providers.
+
+        Raises:
+            SubscriptionNotSupported: Sync providers do not support subscriptions.
+
+        """
         raise SubscriptionNotSupported(
             transport=self._subscription_transport,
             rpc_url=self._subscription_rpc_url,
         )
 
     def subscribe_full_pending_transactions(self) -> None:
-        """Not available on sync providers."""
+        """Not available on sync providers.
+
+        Raises:
+            SubscriptionNotSupported: Sync providers do not support subscriptions.
+
+        """
         raise SubscriptionNotSupported(
             transport=self._subscription_transport,
             rpc_url=self._subscription_rpc_url,
@@ -232,7 +244,12 @@ class SyncSubscriptionSupport:
         _addresses: list[str] | None = None,
         _topics: list[list[str]] | None = None,
     ) -> None:
-        """Not available on sync providers."""
+        """Not available on sync providers.
+
+        Raises:
+            SubscriptionNotSupported: Sync providers do not support subscriptions.
+
+        """
         raise SubscriptionNotSupported(
             transport=self._subscription_transport,
             rpc_url=self._subscription_rpc_url,
@@ -240,8 +257,7 @@ class SyncSubscriptionSupport:
 
 
 class AsyncSubscriptionSupport:
-    """
-    Mixin providing default subscription stubs for async backends.
+    """Mixin providing default subscription stubs for async backends.
 
     For providers that don't support WS/IPC subscriptions (e.g. AsyncWeb3 over HTTP).
 
@@ -258,28 +274,48 @@ class AsyncSubscriptionSupport:
         return "unknown"
 
     async def subscribe_blocks(self) -> Subscription:
-        """Not available — requires WS/IPC transport."""
+        """Not available — requires WS/IPC transport.
+
+        Raises:
+            SubscriptionNotSupported: Async provider lacks WS/IPC transport.
+
+        """
         raise SubscriptionNotSupported(
             transport=self._subscription_transport,
             rpc_url=self._subscription_rpc_url,
         )
 
     async def subscribe_full_blocks(self) -> Subscription:
-        """Not available — requires WS/IPC transport."""
+        """Not available — requires WS/IPC transport.
+
+        Raises:
+            SubscriptionNotSupported: Async provider lacks WS/IPC transport.
+
+        """
         raise SubscriptionNotSupported(
             transport=self._subscription_transport,
             rpc_url=self._subscription_rpc_url,
         )
 
     async def subscribe_pending_transactions(self) -> Subscription:
-        """Not available — requires WS/IPC transport."""
+        """Not available — requires WS/IPC transport.
+
+        Raises:
+            SubscriptionNotSupported: Async provider lacks WS/IPC transport.
+
+        """
         raise SubscriptionNotSupported(
             transport=self._subscription_transport,
             rpc_url=self._subscription_rpc_url,
         )
 
     async def subscribe_full_pending_transactions(self) -> Subscription:
-        """Not available — requires WS/IPC transport."""
+        """Not available — requires WS/IPC transport.
+
+        Raises:
+            SubscriptionNotSupported: Async provider lacks WS/IPC transport.
+
+        """
         raise SubscriptionNotSupported(
             transport=self._subscription_transport,
             rpc_url=self._subscription_rpc_url,
@@ -290,7 +326,12 @@ class AsyncSubscriptionSupport:
         addresses: list[str] | None = None,  # ruff: ignore[ARG002]
         topics: list[list[str]] | None = None,  # ruff: ignore[ARG002]
     ) -> Subscription:
-        """Not available — requires WS/IPC transport."""
+        """Not available — requires WS/IPC transport.
+
+        Raises:
+            SubscriptionNotSupported: Async provider lacks WS/IPC transport.
+
+        """
         raise SubscriptionNotSupported(
             transport=self._subscription_transport,
             rpc_url=self._subscription_rpc_url,
@@ -525,8 +566,7 @@ class _OfflineAdapter(SyncSubscriptionSupport):
 
 
 class ProviderAdapter(SyncSubscriptionSupport):
-    """
-    Adapter that wraps Web3, AlloyProvider, or OfflineProvider.
+    """Adapter that wraps Web3, AlloyProvider, or OfflineProvider.
 
     Provides a uniform interface for Ethereum RPC operations,
     allowing existing code to work with any backend.
@@ -544,8 +584,7 @@ class ProviderAdapter(SyncSubscriptionSupport):
         provider_type: Literal["web3", "alloy", "offline"],
         raw_provider: AlloyProvider | OfflineProvider | Web3 | None = None,
     ) -> None:
-        """
-        Initialize the adapter with a backend.
+        """Initialize the adapter with a backend.
 
         Args:
             backend: A provider backend satisfying ProviderBackend
@@ -566,7 +605,12 @@ class ProviderAdapter(SyncSubscriptionSupport):
     # --- Pickle support ---
 
     def __getstate__(self) -> dict[str, Any]:
-        """Pickle by storing only the type label; the provider must be re-acquired."""
+        """Pickle by storing only the type label; the provider must be re-acquired.
+
+        Returns:
+            A dict with the provider type and a None backend reference.
+
+        """
         return {
             "_provider_type": self._provider_type,
             "_backend": None,
@@ -588,17 +632,32 @@ class ProviderAdapter(SyncSubscriptionSupport):
 
     @classmethod
     def from_web3(cls, w3: Web3) -> Self:
-        """Create an adapter wrapping a Web3 instance."""
+        """Create an adapter wrapping a Web3 instance.
+
+        Returns:
+            A ProviderAdapter wrapping the given Web3 instance.
+
+        """
         return cls(_Web3Adapter(w3), provider_type="web3", raw_provider=w3)
 
     @classmethod
     def from_alloy(cls, alloy: AlloyProvider) -> Self:
-        """Create an adapter wrapping an AlloyProvider instance."""
+        """Create an adapter wrapping an AlloyProvider instance.
+
+        Returns:
+            A ProviderAdapter wrapping the given AlloyProvider.
+
+        """
         return cls(_AlloyAdapter(alloy), provider_type="alloy", raw_provider=alloy)
 
     @classmethod
     def from_offline(cls, offline: OfflineProvider) -> Self:
-        """Create an adapter wrapping an OfflineProvider instance."""
+        """Create an adapter wrapping an OfflineProvider instance.
+
+        Returns:
+            A ProviderAdapter wrapping the given OfflineProvider.
+
+        """
         return cls(_OfflineAdapter(offline), provider_type="offline", raw_provider=offline)
 
     # -------------------------------------------------------------------------
@@ -612,8 +671,7 @@ class ProviderAdapter(SyncSubscriptionSupport):
 
     @property
     def underlying(self) -> AlloyProvider | OfflineProvider | Web3 | None:
-        """
-        Get the underlying provider instance.
+        """Get the underlying provider instance.
 
         .. deprecated:: 0.x
             This escape hatch will be removed in a future release.
@@ -632,19 +690,34 @@ class ProviderAdapter(SyncSubscriptionSupport):
         return self._raw_provider
 
     def as_web3(self) -> Web3 | None:
-        """Return the underlying provider as Web3, or None if not a Web3 provider."""
+        """Return the underlying provider as Web3, or None if not a Web3 provider.
+
+        Returns:
+            The underlying Web3 instance, or None.
+
+        """
         if self._provider_type == "web3" and isinstance(self._raw_provider, Web3):
             return self._raw_provider
         return None
 
     def as_alloy(self) -> AlloyProvider | None:
-        """Return the underlying provider as AlloyProvider, or None if not an Alloy provider."""
+        """Return the underlying provider as AlloyProvider, or None if not an Alloy provider.
+
+        Returns:
+            The underlying AlloyProvider, or None.
+
+        """
         if self._provider_type == "alloy" and isinstance(self._raw_provider, AlloyProvider):
             return self._raw_provider
         return None
 
     def as_offline(self) -> OfflineProvider | None:
-        """Return the underlying provider as OfflineProvider, or None if not an Offline provider."""
+        """Return the underlying provider as OfflineProvider, or None if not an Offline provider.
+
+        Returns:
+            The underlying OfflineProvider, or None.
+
+        """
         if self._provider_type == "offline" and isinstance(self._raw_provider, OfflineProvider):
             return self._raw_provider
         return None
@@ -668,12 +741,16 @@ class ProviderAdapter(SyncSubscriptionSupport):
     # -------------------------------------------------------------------------
 
     def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
-        """Execute an eth_call."""
+        """Execute an eth_call.
+
+        Returns:
+            The raw return data from the contract call.
+
+        """
         return self._backend.call(to, data, block)
 
     def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes:
-        """
-        Execute an eth_call with a raw transaction dict.
+        """Execute an eth_call with a raw transaction dict.
 
         The dict must contain ``to`` (address string) and ``data`` (bytes).
         Additional keys (e.g. ``from``, ``value``) are passed through to the
@@ -683,12 +760,15 @@ class ProviderAdapter(SyncSubscriptionSupport):
         arguments. Prefer :meth:`call` for new code; use :meth:`call_raw` when
         migrating existing ``w3.eth.call({"to": ..., "data": ...})`` call
         sites.
+
+        Returns:
+            The raw return data from the contract call.
+
         """
         return self._backend.call_raw(tx, block)
 
     def batch_call(self, calls: list[TxParams], block: int | None = None) -> list[HexBytes]:
-        """
-        Execute multiple eth_calls and return results in input order.
+        """Execute multiple eth_calls and return results in input order.
 
         Each entry in ``calls`` is a transaction dict with at least ``to`` and
         ``data`` keys, matching the :meth:`call_raw` signature.
@@ -696,18 +776,24 @@ class ProviderAdapter(SyncSubscriptionSupport):
         The default implementation sends requests sequentially. Backends that
         support batching (e.g. multicall3) can override this for better
         performance.
+
+        Returns:
+            A list of raw return data from each call.
+
         """
         return [self._backend.call_raw(tx, block) for tx in calls]
 
     def get_block_timestamp(self, block: int | None = None) -> int:
-        """
-        Get the timestamp for a block.
+        """Get the timestamp for a block.
 
         Args:
             block: Block number, or None for latest.
 
         Returns:
             The block timestamp as an integer (Unix seconds).
+
+        Raises:
+            ValueError: If the block is not found.
 
         """
         block_data = self._backend.get_block(block if block is not None else "latest")
@@ -717,8 +803,7 @@ class ProviderAdapter(SyncSubscriptionSupport):
         return block_data["timestamp"]
 
     def make_request(self, method: str, params: list[Any]) -> Any:  # noqa: ANN401
-        """
-        Make a raw JSON-RPC request.
+        """Make a raw JSON-RPC request.
 
         This allows calling arbitrary RPC methods that don't have typed wrappers.
         Only available for AlloyProvider backends; raises AttributeError for others.
@@ -741,12 +826,16 @@ class ProviderAdapter(SyncSubscriptionSupport):
         raise AttributeError(msg)
 
     def get_block_number(self) -> int:
-        """Get the current block number."""
+        """Get the current block number.
+
+        Returns:
+            The current block number.
+
+        """
         return self._backend.get_block_number()
 
     def get_block(self, block_identifier: int | str) -> BlockData | None:
-        """
-        Get block data for a given block identifier.
+        """Get block data for a given block identifier.
 
         Args:
             block_identifier: Block number or string ('latest', 'earliest', 'pending').
@@ -764,8 +853,7 @@ class ProviderAdapter(SyncSubscriptionSupport):
         addresses: list[str] | None = None,
         topics: list[list[str]] | None = None,
     ) -> list[LogReceipt]:
-        """
-        Get logs matching the filter parameters.
+        """Get logs matching the filter parameters.
 
         Args:
             from_block: Starting block number (inclusive).
@@ -780,8 +868,7 @@ class ProviderAdapter(SyncSubscriptionSupport):
         return self._backend.get_logs(from_block, to_block, addresses, topics)
 
     def get_code(self, address: str, block: int | None = None) -> HexBytes:
-        """
-        Get the bytecode at an address.
+        """Get the bytecode at an address.
 
         Args:
             address: Contract address.
@@ -794,8 +881,7 @@ class ProviderAdapter(SyncSubscriptionSupport):
         return self._backend.get_code(address, block)
 
     def get_balance(self, address: str, block: int | None = None) -> int:
-        """
-        Get the ETH balance at an address.
+        """Get the ETH balance at an address.
 
         Args:
             address: Account address.
@@ -813,8 +899,7 @@ class ProviderAdapter(SyncSubscriptionSupport):
         position: int,
         block: int | None = None,
     ) -> HexBytes:
-        """
-        Get storage at a given position.
+        """Get storage at a given position.
 
         Args:
             address: Contract address.
@@ -828,8 +913,7 @@ class ProviderAdapter(SyncSubscriptionSupport):
         return self._backend.get_storage_at(address, position, block)
 
     def get_transaction_count(self, address: str, block: int | None = None) -> int:
-        """
-        Get the transaction count (nonce) for an address.
+        """Get the transaction count (nonce) for an address.
 
         Args:
             address: Account address.
@@ -842,8 +926,7 @@ class ProviderAdapter(SyncSubscriptionSupport):
         return self._backend.get_transaction_count(address, block)
 
     def is_connected(self) -> bool:
-        """
-        Check if the provider is connected.
+        """Check if the provider is connected.
 
         Returns:
             True if connected, False otherwise.
@@ -856,7 +939,12 @@ class ProviderAdapter(SyncSubscriptionSupport):
         self._backend.close()
 
     def __repr__(self) -> str:
-        """Return a string representation."""
+        """Return a string representation.
+
+        Returns:
+            A string representation of the adapter.
+
+        """
         return f"ProviderAdapter(type={self._provider_type})"
 
 
@@ -867,8 +955,7 @@ class ProviderAdapter(SyncSubscriptionSupport):
 
 @runtime_checkable
 class AsyncProviderBackend(Protocol):
-    """
-    Protocol for async provider backends.
+    """Protocol for async provider backends.
 
     Public, runtime-checkable protocol for async Ethereum RPC backends.
     """
@@ -928,32 +1015,28 @@ class AsyncProviderBackend(Protocol):
     # --- Subscription methods (optional — override in backend) ---
 
     async def subscribe_blocks(self) -> Subscription:
-        """
-        Subscribe to new block headers.
+        """Subscribe to new block headers.
 
         Raises SubscriptionNotSupported if transport doesn't support it.
         """
         ...
 
     async def subscribe_full_blocks(self) -> Subscription:
-        """
-        Subscribe to full block bodies.
+        """Subscribe to full block bodies.
 
         Raises SubscriptionNotSupported if transport doesn't support it.
         """
         ...
 
     async def subscribe_pending_transactions(self) -> Subscription:
-        """
-        Subscribe to pending transaction hashes.
+        """Subscribe to pending transaction hashes.
 
         Raises SubscriptionNotSupported if transport doesn't support it.
         """
         ...
 
     async def subscribe_full_pending_transactions(self) -> Subscription:
-        """
-        Subscribe to full pending transaction bodies.
+        """Subscribe to full pending transaction bodies.
 
         Raises SubscriptionNotSupported if transport doesn't support it.
         """
@@ -964,8 +1047,7 @@ class AsyncProviderBackend(Protocol):
         addresses: list[str] | None = None,
         topics: list[list[str]] | None = None,
     ) -> Subscription:
-        """
-        Subscribe to filtered log events.
+        """Subscribe to filtered log events.
 
         Raises SubscriptionNotSupported if transport doesn't support it.
         """
@@ -1103,22 +1185,42 @@ class _AsyncAlloyAdapter:
             self._alloy.close()
 
     async def subscribe_blocks(self) -> Subscription:
-        """Subscribe to new block headers via Alloy WS/IPC connection."""
+        """Subscribe to new block headers via Alloy WS/IPC connection.
+
+        Returns:
+            A Subscription for new block events.
+
+        """
         raw_sub = self._alloy.subscribe_blocks()
         return Subscription(_inner=raw_sub)
 
     async def subscribe_full_blocks(self) -> Subscription:
-        """Subscribe to full block bodies via Alloy WS/IPC connection."""
+        """Subscribe to full block bodies via Alloy WS/IPC connection.
+
+        Returns:
+            A Subscription for full block data.
+
+        """
         raw_sub = self._alloy.subscribe_full_blocks()
         return Subscription(_inner=raw_sub)
 
     async def subscribe_pending_transactions(self) -> Subscription:
-        """Subscribe to pending transaction hashes via Alloy WS/IPC connection."""
+        """Subscribe to pending transaction hashes via Alloy WS/IPC connection.
+
+        Returns:
+            A Subscription for pending transactions.
+
+        """
         raw_sub = self._alloy.subscribe_pending_transactions()
         return Subscription(_inner=raw_sub)
 
     async def subscribe_full_pending_transactions(self) -> Subscription:
-        """Subscribe to full pending transaction bodies via Alloy WS/IPC connection."""
+        """Subscribe to full pending transaction bodies via Alloy WS/IPC connection.
+
+        Returns:
+            A Subscription for full pending transaction data.
+
+        """
         raw_sub = self._alloy.subscribe_full_pending_transactions()
         return Subscription(_inner=raw_sub)
 
@@ -1127,7 +1229,12 @@ class _AsyncAlloyAdapter:
         addresses: list[str] | None = None,
         topics: list[list[str]] | None = None,
     ) -> Subscription:
-        """Subscribe to filtered log events via Alloy WS/IPC connection."""
+        """Subscribe to filtered log events via Alloy WS/IPC connection.
+
+        Returns:
+            A Subscription for event logs.
+
+        """
         raw_sub = self._alloy.subscribe_logs(addresses=addresses or [], topics=topics or [])
         return Subscription(_inner=raw_sub)
 
@@ -1138,8 +1245,7 @@ class _AsyncAlloyAdapter:
 
 
 class AsyncProviderAdapter:
-    """
-    Async adapter that wraps either AsyncWeb3 or AsyncAlloyProvider.
+    """Async adapter that wraps either AsyncWeb3 or AsyncAlloyProvider.
 
     Provides a uniform async interface for Ethereum RPC operations,
     allowing existing code to work with either backend.
@@ -1165,12 +1271,22 @@ class AsyncProviderAdapter:
 
     @classmethod
     def from_web3(cls, async_w3: AsyncWeb3[Any]) -> Self:
-        """Create an adapter wrapping an AsyncWeb3 instance."""
+        """Create an adapter wrapping an AsyncWeb3 instance.
+
+        Returns:
+            An AsyncProviderAdapter wrapping the given AsyncWeb3.
+
+        """
         return cls(_AsyncWeb3Adapter(async_w3), provider_type="web3", raw_provider=async_w3)
 
     @classmethod
     def from_alloy(cls, async_alloy: AsyncAlloyProvider) -> Self:
-        """Create an adapter wrapping a Rust AsyncAlloyProvider."""
+        """Create an adapter wrapping a Rust AsyncAlloyProvider.
+
+        Returns:
+            An AsyncProviderAdapter wrapping the given AsyncAlloyProvider.
+
+        """
         return cls(
             _AsyncAlloyAdapter(async_alloy),
             provider_type="alloy",
@@ -1186,8 +1302,7 @@ class AsyncProviderAdapter:
     def underlying(
         self,
     ) -> AsyncWeb3[Any] | AlloyProvider | AsyncAlloyProvider | OfflineProvider | None:
-        """
-        Get the underlying provider instance.
+        """Get the underlying provider instance.
 
         .. deprecated:: 0.x
             This escape hatch will be removed in a future release.
@@ -1202,13 +1317,23 @@ class AsyncProviderAdapter:
         return self._raw_provider
 
     def as_web3(self) -> AsyncWeb3[Any] | None:
-        """Return the underlying provider as AsyncWeb3, or None if not a Web3 provider."""
+        """Return the underlying provider as AsyncWeb3, or None if not a Web3 provider.
+
+        Returns:
+            The underlying AsyncWeb3 instance, or None.
+
+        """
         if self._provider_type == "web3" and isinstance(self._raw_provider, AsyncWeb3):
             return self._raw_provider
         return None
 
     def as_alloy(self) -> AlloyProvider | None:
-        """Return the underlying provider as AlloyProvider, or None if not an Alloy provider."""
+        """Return the underlying provider as AlloyProvider, or None if not an Alloy provider.
+
+        Returns:
+            The underlying AlloyProvider, or None.
+
+        """
         if self._provider_type == "alloy" and isinstance(self._raw_provider, AlloyProvider):
             return self._raw_provider
         return None
@@ -1229,8 +1354,7 @@ class AsyncProviderAdapter:
         raise NotImplementedError(msg)
 
     async def get_chain_id(self) -> int:
-        """
-        Get the chain ID.
+        """Get the chain ID.
 
         Returns:
             The chain ID as integer.
@@ -1239,8 +1363,7 @@ class AsyncProviderAdapter:
         return await self._backend.get_chain_id()
 
     async def get_block_number(self) -> int:
-        """
-        Get the current block number.
+        """Get the current block number.
 
         Returns:
             The current block number as integer.
@@ -1249,8 +1372,7 @@ class AsyncProviderAdapter:
         return await self._backend.get_block_number()
 
     async def get_block(self, block_identifier: int | str) -> BlockData | None:
-        """
-        Get block data for a given block identifier.
+        """Get block data for a given block identifier.
 
         Args:
             block_identifier: Block number or string ('latest', 'earliest', 'pending').
@@ -1268,8 +1390,7 @@ class AsyncProviderAdapter:
         addresses: list[str] | None = None,
         topics: list[list[str]] | None = None,
     ) -> list[LogReceipt]:
-        """
-        Get logs matching the filter parameters.
+        """Get logs matching the filter parameters.
 
         Args:
             from_block: Starting block number (inclusive).
@@ -1284,8 +1405,7 @@ class AsyncProviderAdapter:
         return await self._backend.get_logs(from_block, to_block, addresses, topics)
 
     async def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
-        """
-        Execute an eth_call.
+        """Execute an eth_call.
 
         Args:
             to: Contract address.
@@ -1299,8 +1419,7 @@ class AsyncProviderAdapter:
         return await self._backend.call(to, data, block)
 
     async def get_code(self, address: str, block: int | None = None) -> HexBytes:
-        """
-        Get the bytecode at an address.
+        """Get the bytecode at an address.
 
         Args:
             address: Contract address.
@@ -1313,8 +1432,7 @@ class AsyncProviderAdapter:
         return await self._backend.get_code(address, block)
 
     async def get_balance(self, address: str, block: int | None = None) -> int:
-        """
-        Get the ETH balance at an address.
+        """Get the ETH balance at an address.
 
         Args:
             address: Account address.
@@ -1332,8 +1450,7 @@ class AsyncProviderAdapter:
         position: int,
         block: int | None = None,
     ) -> HexBytes:
-        """
-        Get storage at a given position.
+        """Get storage at a given position.
 
         Args:
             address: Contract address.
@@ -1347,8 +1464,7 @@ class AsyncProviderAdapter:
         return await self._backend.get_storage_at(address, position, block)
 
     async def get_transaction_count(self, address: str, block: int | None = None) -> int:
-        """
-        Get the transaction count (nonce) for an address.
+        """Get the transaction count (nonce) for an address.
 
         Args:
             address: Account address.
@@ -1361,8 +1477,7 @@ class AsyncProviderAdapter:
         return await self._backend.get_transaction_count(address, block)
 
     def is_connected(self) -> bool:
-        """
-        Check if the provider is connected.
+        """Check if the provider is connected.
 
         Returns:
             True if connected, False otherwise.
@@ -1375,7 +1490,12 @@ class AsyncProviderAdapter:
         self._backend.close()
 
     def __repr__(self) -> str:
-        """Return a string representation."""
+        """Return a string representation.
+
+        Returns:
+            A string representation of the adapter.
+
+        """
         return f"AsyncProviderAdapter(type={self._provider_type})"
 
     # -------------------------------------------------------------------------
@@ -1383,7 +1503,12 @@ class AsyncProviderAdapter:
     # -------------------------------------------------------------------------
 
     def __getstate__(self) -> dict[str, Any]:
-        """Pickle by storing only the type label; subscriptions are not picklable."""
+        """Pickle by storing only the type label; subscriptions are not picklable.
+
+        Returns:
+            A dict with the provider type and None for non-picklable fields.
+
+        """
         state = self.__dict__.copy()
         # Remove unpicklable subscription manager
         # Backend and raw_provider are also not reliably picklable
@@ -1398,38 +1523,50 @@ class AsyncProviderAdapter:
     # --- Subscription methods ---
 
     async def subscribe_blocks(self) -> Subscription:
-        """
-        Subscribe to new block headers.
+        """Subscribe to new block headers.
 
         Requires a WS or IPC transport. Raises SubscriptionNotSupported
         if the underlying provider doesn't support eth_subscribe.
+
+        Returns:
+            A Subscription for new block events.
+
         """
         return await self._backend.subscribe_blocks()
 
     async def subscribe_full_blocks(self) -> Subscription:
-        """
-        Subscribe to full block bodies (with full transactions).
+        """Subscribe to full block bodies (with full transactions).
 
         Requires a WS or IPC transport. Raises SubscriptionNotSupported
         if the underlying provider doesn't support eth_subscribe.
+
+        Returns:
+            A Subscription for full block data.
+
         """
         return await self._backend.subscribe_full_blocks()
 
     async def subscribe_pending_transactions(self) -> Subscription:
-        """
-        Subscribe to pending transaction hashes.
+        """Subscribe to pending transaction hashes.
 
         Requires a WS or IPC transport. Raises SubscriptionNotSupported
         if the underlying provider doesn't support eth_subscribe.
+
+        Returns:
+            A Subscription for pending transactions.
+
         """
         return await self._backend.subscribe_pending_transactions()
 
     async def subscribe_full_pending_transactions(self) -> Subscription:
-        """
-        Subscribe to full pending transaction bodies.
+        """Subscribe to full pending transaction bodies.
 
         Requires a WS or IPC transport. Raises SubscriptionNotSupported
         if the underlying provider doesn't support eth_subscribe.
+
+        Returns:
+            A Subscription for full pending transaction data.
+
         """
         return await self._backend.subscribe_full_pending_transactions()
 
@@ -1438,8 +1575,7 @@ class AsyncProviderAdapter:
         addresses: list[str] | None = None,
         topics: list[list[str]] | None = None,
     ) -> Subscription:
-        """
-        Subscribe to filtered log events.
+        """Subscribe to filtered log events.
 
         Args:
             addresses: Contract addresses to filter.
@@ -1447,6 +1583,9 @@ class AsyncProviderAdapter:
 
         Requires a WS or IPC transport. Raises SubscriptionNotSupported
         if the underlying provider doesn't support eth_subscribe.
+
+        Returns:
+            A Subscription for event logs.
 
         """
         return await self._backend.subscribe_logs(addresses=addresses, topics=topics)
@@ -1461,7 +1600,15 @@ def _backend_for_type(
     provider_type: Literal["web3", "alloy", "offline"],
     provider: AlloyProvider | OfflineProvider | Web3,
 ) -> ProviderBackend:
-    """Create the correct backend adapter for a provider type label."""
+    """Create the correct backend adapter for a provider type label.
+
+    Returns:
+        The backend adapter for the given provider type.
+
+    Raises:
+        ValueError: If the provider type is unknown.
+
+    """
     match provider_type:
         case "web3":
             return _Web3Adapter(cast("Web3", provider))

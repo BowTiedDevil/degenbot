@@ -1,5 +1,4 @@
-"""
-Offline provider for testing without RPC calls.
+"""Offline provider for testing without RPC calls.
 
 This module provides a ProviderBackend implementation that serves
 pre-recorded chain data from JSON files, allowing tests to run without
@@ -46,8 +45,7 @@ class OfflineDataMissing(Exception):
 
 
 class OfflineCallReverted(Exception):
-    """
-    Raised when a recorded call reverted or the contract didn't exist at the block.
+    """Raised when a recorded call reverted or the contract didn't exist at the block.
 
     This is signaled by a `null` result in the recorded data.
     """
@@ -63,8 +61,7 @@ class OfflineCallReverted(Exception):
 
 
 class OfflineProvider:
-    """
-    Ethereum provider that serves pre-recorded chain data.
+    """Ethereum provider that serves pre-recorded chain data.
 
     This class implements the ProviderBackend Protocol (minus async methods)
     by loading recorded RPC responses from JSON files. It allows tests to
@@ -94,8 +91,7 @@ class OfflineProvider:
         chain_id: int,
         blocks: dict[str, dict[str, Any]],
     ) -> None:
-        """
-        Initialize the offline provider.
+        """Initialize the offline provider.
 
         Args:
             chain_id: The chain ID this provider serves data for
@@ -103,6 +99,9 @@ class OfflineProvider:
                 - "timestamp": int
                 - "calls": dict[str, str] - keyed by "address:data"
                 - "code": dict[str, str] - keyed by address
+
+        Raises:
+            ValueError: If no blocks are recorded in provider data.
 
         """
         self._chain_id = chain_id
@@ -115,8 +114,7 @@ class OfflineProvider:
 
     @classmethod
     def from_json_file(cls, path: Path) -> "OfflineProvider":
-        """
-        Load recorded data from a JSON file.
+        """Load recorded data from a JSON file.
 
         Supports both old multi-block format (with "blocks" key) and new single-block
         format (with "block_number" key).
@@ -125,11 +123,7 @@ class OfflineProvider:
             path: Path to the JSON file containing recorded data
 
         Returns:
-            An OfflineProvider instance with the loaded data
-
-        Raises:
-            FileNotFoundError: If the file doesn't exist
-            ValueError: If the JSON is malformed
+            An OfflineProvider instance loaded from the file.
 
         """
         with Path(path).open(encoding="utf-8") as f:
@@ -152,8 +146,7 @@ class OfflineProvider:
 
     @classmethod
     def from_json_string(cls, json_str: str) -> "OfflineProvider":
-        """
-        Load recorded data from a JSON string.
+        """Load recorded data from a JSON string.
 
         Args:
             json_str: JSON string containing recorded data
@@ -180,16 +173,25 @@ class OfflineProvider:
 
     @property
     def block_numbers(self) -> list[int]:
-        """Get list of all recorded block numbers."""
+        """Get list of all recorded block numbers.
+
+        Returns:
+            A copy of the list of recorded block numbers.
+
+        """
         return self._block_numbers.copy()
 
     def get_block_number(self) -> int:
-        """Get the current (latest recorded) block number."""
+        """Get the current (latest recorded) block number.
+
+        Returns:
+            The latest recorded block number.
+
+        """
         return self.block_number
 
     def _get_block_key(self, block: int | None) -> str:
-        """
-        Validate block number and return string key.
+        """Validate block number and return string key.
 
         Args:
             block: Block number, or None for latest
@@ -198,7 +200,7 @@ class OfflineProvider:
             String block key
 
         Raises:
-            BlockNotRecordedError: If the block was not recorded
+            BlockNotRecordedError: If the block is not in the recorded data.
 
         """
         if block is None:
@@ -217,8 +219,7 @@ class OfflineProvider:
         *,
         block_number: int | None = None,
     ) -> HexBytes:
-        """
-        Execute a contract call using recorded data.
+        """Execute a contract call using recorded data.
 
         Args:
             to: Contract address to call
@@ -229,7 +230,6 @@ class OfflineProvider:
             Raw return data from the contract call
 
         Raises:
-            BlockNotRecordedError: If the block was not recorded
             OfflineDataMissing: If the specific call was not recorded
             OfflineCallReverted: If the recorded call reverted (result is null)
 
@@ -255,8 +255,7 @@ class OfflineProvider:
         address: str,
         block_number: int | None = None,
     ) -> HexBytes:
-        """
-        Get contract bytecode at an address.
+        """Get contract bytecode at an address.
 
         Args:
             address: Contract address
@@ -276,8 +275,7 @@ class OfflineProvider:
         self,
         block_identifier: int | str,
     ) -> dict[str, Any] | None:
-        """
-        Get a block by number or identifier.
+        """Get a block by number or identifier.
 
         Args:
             block_identifier: Block number or "latest"
@@ -310,8 +308,7 @@ class OfflineProvider:
         address: str,
         block_number: int | None = None,
     ) -> int:
-        """
-        Get the balance of an address.
+        """Get the balance of an address.
 
         Note: Balance tracking is not implemented in OfflineProvider.
         This method always raises NotImplementedError.
@@ -336,8 +333,7 @@ class OfflineProvider:
         position: int,
         block_number: int | None = None,
     ) -> HexBytes:
-        """
-        Get storage at a given position.
+        """Get storage at a given position.
 
         Note: Storage tracking is not implemented in OfflineProvider.
         This method always raises NotImplementedError.
@@ -362,8 +358,7 @@ class OfflineProvider:
         address: str,
         block_number: int | None = None,
     ) -> int:
-        """
-        Get the transaction count (nonce) for an address.
+        """Get the transaction count (nonce) for an address.
 
         Note: Transaction counts are not implemented in OfflineProvider.
         This method always raises NotImplementedError.
@@ -389,8 +384,7 @@ class OfflineProvider:
         addresses: list[str] | None = None,
         topics: list[list[str]] | None = None,
     ) -> list[dict[str, Any]]:
-        """
-        Fetch event logs.
+        """Fetch event logs.
 
         Note: Log fetching is not implemented in OfflineProvider.
         This method always raises NotImplementedError.
@@ -407,15 +401,23 @@ class OfflineProvider:
 
     @staticmethod
     def is_connected() -> bool:
-        """
-        Check if the provider is connected.
+        """Check if the provider is connected.
 
         OfflineProvider is always considered connected.
+
+        Returns:
+            True, since the offline provider is always connected.
+
         """
         return True
 
     def __repr__(self) -> str:
-        """Return a string representation."""
+        """Return a string representation.
+
+        Returns:
+            A string representation of the offline provider.
+
+        """
         return f"OfflineProvider(chain_id={self._chain_id}, blocks={len(self._block_numbers)})"
 
 
