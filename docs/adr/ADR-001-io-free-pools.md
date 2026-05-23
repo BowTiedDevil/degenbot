@@ -44,10 +44,10 @@ Separate I/O from pool logic using **fetcher callbacks** injected at constructio
                     │  • Builds pools  │              │
                     │  • Creates       │              │
                     │  data_providers  │              ▼
-                    └─────────────────┘     ┌─────────────────┐
-                              │              │ CurveDataProvider│
-                              │              │  (I/O here)     │
-                              ▼              └─────────────────┘
+                    └─────────────────┘     ┌───────────────────┐
+                              │             │ CurveDataProvider │
+                              │             │  (I/O here)       │
+                              ▼             └───────────────────┘
                     ┌─────────────────┐
                     │  Registries     │
                     │  • pools        │
@@ -128,7 +128,7 @@ class CurveDataProvider(Protocol):
 - `ProviderBackend` protocol replaces `EthereumProvider` + `_SyncProviderBackend` mirror (Plan 042); `EthereumProvider` backward-compatibility alias removed (Plan 061); subscription stubs consolidated into `SyncSubscriptionSupport`/`AsyncSubscriptionSupport` mixins (Plan 058)
 - DyCalculator `pool` parameter replaced with `DyCalculationInputs` frozen dataclass; 77 SLF001 errors → 0; calculators are pure consumers of pre-resolved data (Plan 045). `DyCalculationInputs` is a pure value object — all fields are ints, tuples, enums, or None (zero callables); calculators call `stableswap_get_y()` / `stableswap_newton_y()` directly with `EVMRevertError` wrapping (Plan 069).
 - Old optimizer hierarchy deleted: `ArbitrageOptimizer` ABC, `OptimizerResult`/`OptimizerType`, and 7 concrete classes removed (zero production callers); pure Möbius math extracted to `_mobius_math.py` (Plan 053)
-- Curve on-chain caches consolidated into `CurveOnChainCache` (Plan 054), then absorbed back into `CurveStableswapPool` as `_cache_*` fields with `_get_cached_*` accessors (Plan 068)
+- Curve on-chain caches consolidated into `CurveOnChainCache` (Plan 054), absorbed into `CurveStableswapPool` (Plan 068), then extracted into `PerBlockCache` class with mirror-free design (Plan 077)
 - Deprecated `*Fetcher` protocol classes deleted from `curve/types.py`; superseded by `CurveDataProvider` (Plan 055)
 - Strategy enum factory methods: `make_calculator()` on `SwapStyle`/`MetapoolRateStyle`/`MetapoolUnderlyingStyle`; `PoolStrategies` auto-constructs calculators from enum values (Plan 056)
 - Calculation-time I/O boundary documented: `_build_calculation_inputs` → `_resolve_calculation_inputs_via_io`, `requires_io_at_calculation_time` property (Plan 057)
