@@ -64,7 +64,7 @@ class AsyncV2PoolBuilder:
         pool_address = get_checksum_address(pool_address)
 
         # Try DB first
-        pool_from_db = None
+        pool_found_in_db = False
         with contextlib.suppress(Exception), self._db() as session:
             pool_from_db = session.scalar(
                 select(LiquidityPoolTable).where(
@@ -72,13 +72,14 @@ class AsyncV2PoolBuilder:
                     LiquidityPoolTable.chain == chain_id,
                 )
             )
+            if pool_from_db is not None:
+                factory, token0_address, token1_address, fee_token0, fee_token1 = (
+                    V2BuilderBase.extract_db_values(pool_from_db)
+                )
+                pool_found_in_db = True
 
         # Get factory and token addresses
-        if pool_from_db is not None:
-            factory, token0_address, token1_address, fee_token0, fee_token1 = (
-                V2BuilderBase.extract_db_values(pool_from_db)
-            )
-        else:
+        if not pool_found_in_db:
             # Fetch immutable values from chain (async)
             try:
                 factory_result = await io.call(

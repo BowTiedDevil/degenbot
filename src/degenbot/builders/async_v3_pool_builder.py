@@ -83,7 +83,8 @@ class AsyncV3PoolBuilder:
         )
 
         # Try DB first
-        pool_from_db = None
+        db_values = None
+        pool_id_db: int | None = None
         with contextlib.suppress(Exception), self._db() as session:
             pool_from_db = session.scalar(
                 select(LiquidityPoolTable).where(
@@ -91,14 +92,16 @@ class AsyncV3PoolBuilder:
                     LiquidityPoolTable.chain == chain_id,
                 )
             )
+            if pool_from_db is not None:
+                if not isinstance(pool_from_db, UniswapV3PoolTableBase):
+                    msg = f"Expected UniswapV3PoolTableBase, got {type(pool_from_db).__name__}"
+                    raise DegenbotValueError(message=msg)
+
+                db_values = V3BuilderBase.extract_db_values(pool_from_db)
+                pool_id_db = pool_from_db.id
 
         # Get immutable values
-        if pool_from_db is not None:
-            if not isinstance(pool_from_db, UniswapV3PoolTableBase):
-                msg = f"Expected UniswapV3PoolTableBase, got {type(pool_from_db).__name__}"
-                raise DegenbotValueError(message=msg)
-
-            db_values = V3BuilderBase.extract_db_values(pool_from_db)
+        if db_values is not None:
             factory = db_values.factory
             token0_address = db_values.token0_address
             token1_address = db_values.token1_address
@@ -186,20 +189,19 @@ class AsyncV3PoolBuilder:
             raise DegenbotValueError(message="Provide both tick_bitmap and tick_data, or neither.")
         else:
             # Try DB snapshot tables first
-            if pool_from_db is not None and hasattr(pool_from_db, "liquidity_positions"):
+            if pool_id_db is not None:
                 with contextlib.suppress(Exception), self._db() as session:
-                    if hasattr(pool_from_db, "pool_id"):
-                        pool_with_data = session.scalar(
-                            select(type(pool_from_db)).where(
-                                LiquidityPoolTable.id == pool_from_db.id
-                            )
+                    pool_with_data = session.scalar(
+                        select(LiquidityPoolTable).where(
+                            LiquidityPoolTable.id == pool_id_db
                         )
-                        if pool_with_data is not None and isinstance(
-                            pool_with_data, UniswapV3PoolTableBase
-                        ):
-                            working_tick_bitmap, working_tick_data, db_snapshot_loaded = (
-                                V3BuilderBase.load_tick_snapshot(pool_with_data)
-                            )
+                    )
+                    if pool_with_data is not None and isinstance(
+                        pool_with_data, UniswapV3PoolTableBase
+                    ):
+                        working_tick_bitmap, working_tick_data, db_snapshot_loaded = (
+                            V3BuilderBase.load_tick_snapshot(pool_with_data)
+                        )
 
             if not db_snapshot_loaded:
                 word, _ = get_tick_word_and_bit_position(
