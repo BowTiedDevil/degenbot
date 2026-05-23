@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 from weakref import WeakSet
 
@@ -11,8 +12,50 @@ from degenbot.arbitrage.types import (
     AbstractSwapAmounts,
     ArbitrageCalculationResult,
 )
+from degenbot.constants import WRAPPED_NATIVE_TOKENS
+from degenbot.erc20 import Erc20Token, EtherPlaceholder
 from degenbot.exceptions import OptimizationError
 from degenbot.exceptions.arbitrage import IncompatiblePoolInvariant
+
+
+def _solve_in_subprocess(solve_input: SolveInput) -> SolveResult:
+    """Solve in a subprocess by constructing a fresh ArbSolver (no RustPoolCache pickling needed).
+
+    This is a module-level function so it can be pickled and sent to a ProcessPoolExecutor.
+    A fresh ArbSolver is constructed per-call, which is cheap since the RustPoolCache
+    is empty and the solve itself is CPU-bound.
+    """
+    from degenbot.arbitrage.optimizers.solver import ArbSolver
+
+    solver = ArbSolver()
+    return solver.solve(solve_input)
+
+
+def _tokens_equivalent(a: Erc20Token, b: Erc20Token) -> bool:
+    """Return True if two tokens are equivalent, treating EtherPlaceholder and WETH as the same.
+
+    On chains where native ETH exists, V4 pools use EtherPlaceholder while V3 pools
+    use the wrapped native ERC20 (WETH). For arbitrage path validation, these are
+    economically equivalent.
+    """
+    if a == b:
+        return True
+
+    # Check if one is EtherPlaceholder and the other is the wrapped native token
+    a_is_ether = isinstance(a, EtherPlaceholder)
+    b_is_ether = isinstance(b, EtherPlaceholder)
+    if a_is_ether != b_is_ether:
+        ether_token = a if a_is_ether else b
+        wrapped_token = b if a_is_ether else a
+        chain_id = wrapped_token.chain_id
+        if chain_id is not None:
+            weth_address = WRAPPED_NATIVE_TOKENS.get(chain_id)
+            if weth_address is not None and wrapped_token.address == weth_address:
+                return True
+
+    return False
+
+
 from degenbot.types.concrete import (
     AbstractPublisherMessage,
     PoolStateMessage,
@@ -110,10 +153,10 @@ class ArbitragePath(PublisherMixin):
         tokens: list[tuple[Any, Any]] = []
         current = self._input_token
         for pool in self._pools:
-            if current == pool.token0:
+            if _tokens_equivalent(current, pool.token0):
                 tokens.append((pool.token0, pool.token1))
                 current = pool.token1
-            elif current == pool.token1:
+            elif _tokens_equivalent(current, pool.token1):
                 tokens.append((pool.token1, pool.token0))
                 current = pool.token0
             else:
@@ -125,7 +168,7 @@ class ArbitragePath(PublisherMixin):
                 raise PathValidationError(msg)
 
         final_output = tokens[-1][1]
-        if final_output != self._input_token:
+        if not _tokens_equivalent(final_output, self._input_token):
             msg = f"Path is not cyclic: starts with {self._input_token}, ends with {final_output}"
             raise PathValidationError(msg)
 
@@ -134,7 +177,7 @@ class ArbitragePath(PublisherMixin):
         current = self._input_token
 
         for pool in self._pools:
-            if current == pool.token0:
+            if _tokens_equivalent(current, pool.token0):
                 zero_for_one = True
                 token_out = pool.token1
             else:
@@ -236,11 +279,17 @@ class ArbitragePath(PublisherMixin):
         executor: ProcessPoolExecutor | ThreadPoolExecutor,
         state_overrides: Mapping[ChecksumAddress, AbstractPoolState] | None = None,
     ) -> asyncio.Future[SolveResult]:
-        """Execute calculation in the given executor (ProcessPool recommended for CPU-bound work).
+        """Execute calculation in the given executor.
 
-        Unlike the legacy UniswapLpCycle.calculate_with_pool, this method serializes only
-        the lightweight SolveInput (tuple of frozen HopType dataclasses) — not full pool
-        objects. It therefore never fails on sparse V3 bitmaps or non-pickleable state.
+        Uses ProcessPoolExecutor for true multi-core parallelism. The Rust solver releases
+        the GIL so ThreadPoolExecutor also works, but the Python-side preamble (cache lookups,
+        dispatch logic) holds the GIL and serializes across threads. ProcessPoolExecutor avoids
+        this by running in a separate process with its own GIL.
+
+        A module-level ``_solve_in_subprocess`` function is submitted instead of a bound method
+        so that the ArbSolver (which contains an unpickleable RustPoolCache) is never serialized.
+        A fresh ArbSolver is constructed inside the subprocess — this is cheap since the cache
+        starts empty and the compute cost dominates.
 
         Returns:
             The computed value.
@@ -253,9 +302,15 @@ class ArbitragePath(PublisherMixin):
             hops = self._resolve_state_overrides(state_overrides)
 
         solve_input = self._build_solve_input(hops=hops)
+
+        if isinstance(executor, ProcessPoolExecutor):
+            callable_ = _solve_in_subprocess
+        else:
+            callable_ = self._solver.solve
+
         return asyncio.get_running_loop().run_in_executor(
             executor,
-            self._solver.solve,
+            callable_,
             solve_input,
         )
 
