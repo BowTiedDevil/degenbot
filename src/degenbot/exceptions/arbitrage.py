@@ -111,4 +111,4 @@ class OptimizationError(ArbitrageError):
 
         """
         # Pickling support for multiprocessing
-        return self.__class__, (self.message, self.iterations, self.method)
+        return self.__class__, (self.message,), {"iterations": self.iterations, "method": self.method}
