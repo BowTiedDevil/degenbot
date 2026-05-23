@@ -287,6 +287,7 @@ The legacy cycle classes (`UniswapLpCycle`, `UniswapCurveCycle`, etc.) have been
 | `provider/call_helpers.py` | `raw_call`, `async_raw_call`, `encode_function_calldata`, `extract_argument_types_from_function_prototype` |
 | `provider/log_fetching.py` | `fetch_logs_retrying`, `fetch_logs_retrying_async` |
 | `contract/addresses.py` | `create2_address`, `eip_1167_clone_address` |
+| `contract/decoding.py` | `decode_address` |
 | `calculations/evm_math.py` | `evm_divide`, `next_base_fee`, `raise_if_invalid_uint256` |
 | `provider/block_helpers.py` | `get_number_for_block_identifier`, `get_number_for_block_identifier_async` |
 

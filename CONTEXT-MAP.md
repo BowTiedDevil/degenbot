@@ -18,7 +18,7 @@ _Avoid_: Fork, local chain
 - [Tokens](src/degenbot/erc20/CONTEXT.md) — ERC-20 tokens, ether placeholder, and chain ID
 - [Pool Registries](src/degenbot/registry/CONTEXT.md) — address-based registries and the pool type registry
 - [Arbitrage, Solvers & Adapters](src/degenbot/arbitrage/CONTEXT.md) — arbitrage cycles, solvers, adapters, and swap encoding
-- [Aave](src/degenbot/aave/CONTEXT.md) — lending markets, assets, collateral, debt, and liquidation
+- [Aave](src/degenbot/aave/CONTEXT.md) — lending markets, assets, collateral, debt, and liquidation; domain types (`ScaledTokenEvent`, `Operation`, `TokenType`) in `aave/operations.py` and `aave/types.py`; boundary invariant: `aave/` must never import from `cli/`
 - [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — StableSwap pools, CurveDataProvider seam, DyCalculator, variant and strategy enums (with `make_calculator()` factory methods), per-block cache fields, pure-value DyCalculationInputs (zero callables)
 - [Connection Management](src/degenbot/connection/CONTEXT.md) — connection managers, provider references, and subscription primitives
 - [Chainlink](src/degenbot/chainlink/CONTEXT.md) — price feeds, aggregators, round data

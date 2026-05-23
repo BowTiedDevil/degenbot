@@ -209,15 +209,16 @@ user_index = result.new_index
 
 **Processing Pipeline:**
 
-1. **Event Fetching** (`aave_event_filtering.py`)
+1. **Event Fetching** (`aave/event_fetchers.py`)
    - Fetches logs from RPC
    - Categorizes events (Pool events, ScaledToken events, ERC20 transfers)
    - Groups by transaction
 
-2. **Operation Parsing** (`aave/operations_parser.py`)
+2. **Operation Parsing** (`aave/operations_parser.py` — in CLI layer)
    - Parses events into logical operations
    - Matches scaled token events to pool events
    - Determines operation types (SUPPLY, WITHDRAW, BORROW, REPAY, etc.)
+   - Uses domain types (`ScaledTokenEvent`, `Operation`) from `aave/operations.py`
 
 3. **Enrichment** (`aave/enrichment.py`)
    - Calculates scaled amounts using ScaledAmountCalculator
@@ -238,13 +239,12 @@ user_index = result.new_index
 ### Key Files and Their Roles
 
 **CLI Layer** (`src/degenbot/cli/`):
-- `aave/operations_parser.py` - Event parsing and operation classification
-- `aave/event_fetchers.py` - Event filtering and transaction context building
 - `database.py` - CLI database operations
 - `exchange.py` - Exchange-related CLI commands
 - `pool.py` - Pool-related CLI commands
 - `utils.py` - General CLI utilities
 - `aave/` - Aave-specific CLI subpackage
+  - `operations_parser.py` - Event-to-operation parsing (DB-aware; uses domain types from `aave/operations.py`)
   - `commands.py` - Aave CLI command definitions
   - `constants.py` - Aave-specific constants
   - `db_assets.py`, `db_market.py`, `db_positions.py`, `db_users.py`, `db_verification.py` - Database models/queries
@@ -259,6 +259,8 @@ user_index = result.new_index
   - `types.py`, `utils.py`, `erc20_utils.py` - Supporting types and utilities
 
 **Aave Module** (`src/degenbot/aave/`):
+- `operations.py` - Domain data types (`ScaledTokenEvent`, `Operation`, `TransactionOperations`, `TransactionValidationError`). No DB/Session/Provider dependencies.
+- `types.py` - `TokenType` enum (`A_TOKEN`, `V_TOKEN`, `GHO_DISCOUNT`)
 - `enrichment.py` - Amount calculation and validation
 - `extraction.py` - Raw amount extraction from pool events
 - `calculator.py` - ScaledAmountCalculator using TokenMath
@@ -269,6 +271,8 @@ user_index = result.new_index
 - `liquidation_patterns.py` - Liquidation event pattern recognition
 - `pattern_types.py` - Pattern type definitions
 - `position_analysis.py` - Position analysis logic
+
+**Boundary invariant:** `degenbot.aave` must never import from `degenbot.cli`. The dependency arrow points only downward: `cli/` → `aave/`.
 
 **Math Libraries** (`src/degenbot/aave/libraries/`):
 - `token_math.py` - TokenMath classes and TokenMathFactory
