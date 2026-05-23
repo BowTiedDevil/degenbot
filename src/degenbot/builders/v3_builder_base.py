@@ -19,8 +19,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class V3ImmutableData:
-    """
-    Decoded immutable V3 pool data from RPC calls.
+    """Decoded immutable V3 pool data from RPC calls.
 
     Produced by V3BuilderBase.decode_immutable_data().
     Consumed by V3 builder build() methods.
@@ -35,8 +34,7 @@ class V3ImmutableData:
 
 @dataclass(frozen=True)
 class V3Slot0Data:
-    """
-    Decoded V3 slot0 data.
+    """Decoded V3 slot0 data.
 
     Produced by V3BuilderBase.decode_slot0().
     Shared by both build() and update().
@@ -48,8 +46,7 @@ class V3Slot0Data:
 
 @dataclass(frozen=True)
 class V3DbValues:
-    """
-    Immutable values extracted from a V3 DB row.
+    """Immutable values extracted from a V3 DB row.
 
     Produced by V3BuilderBase.extract_db_values().
     """
@@ -63,8 +60,7 @@ class V3DbValues:
 
 
 class V3BuilderBase:
-    """
-    Shared pure-logic helpers for V3 pool builders.
+    """Shared pure-logic helpers for V3 pool builders.
 
     Both V3PoolBuilder (sync) and AsyncV3PoolBuilder (async) delegate
     decode/extract/snapshot steps to these helpers. Only the I/O
@@ -80,7 +76,12 @@ class V3BuilderBase:
         fee_result: HexBytes,
         tick_spacing_result: HexBytes,
     ) -> V3ImmutableData:
-        """Decode raw call results into typed immutable V3 pool data."""
+        """Decode raw call results into typed immutable V3 pool data.
+
+        Returns:
+            The computed value.
+
+        """
         (factory_raw,) = eth_abi.abi.decode(types=["address"], data=factory_result)
         (token0_raw,) = eth_abi.abi.decode(types=["address"], data=token0_result)
         (token1_raw,) = eth_abi.abi.decode(types=["address"], data=token1_result)
@@ -97,11 +98,14 @@ class V3BuilderBase:
 
     @staticmethod
     def decode_slot0(slot0_result: HexBytes) -> V3Slot0Data:
-        """
-        Decode sqrt_price_x96 and tick from a V3 slot0() call result.
+        """Decode sqrt_price_x96 and tick from a V3 slot0() call result.
 
         V3 slot0() returns [uint160 sqrtPriceX96, int24 tick, uint16, uint16,
         uint16, uint8, bool]. Only the first two fields are needed.
+
+        Returns:
+            The computed value.
+
         """
         sqrt_price_x96, tick, *_ = eth_abi.abi.decode(
             types=["uint160", "int24", "uint16", "uint16", "uint16", "uint8", "bool"],
@@ -114,7 +118,12 @@ class V3BuilderBase:
 
     @staticmethod
     def extract_db_values(pool_from_db: UniswapV3PoolTableBase) -> V3DbValues:
-        """Extract factory, token addresses, fee, tick_spacing, deployer from a DB row."""
+        """Extract factory, token addresses, fee, tick_spacing, deployer from a DB row.
+
+        Returns:
+            The computed value.
+
+        """
         return V3DbValues(
             factory=get_checksum_address(pool_from_db.exchange.factory),
             token0_address=get_checksum_address(pool_from_db.token0.address),
@@ -130,8 +139,7 @@ class V3BuilderBase:
     def load_tick_snapshot(
         pool_with_data: UniswapV3PoolTableBase,
     ) -> tuple[dict[int, BitmapAtWord], dict[int, LiquidityAtTick], bool]:
-        """
-        Load tick bitmap and tick data from a re-queried DB row with active relationships.
+        """Load tick bitmap and tick data from a re-queried DB row with active relationships.
 
         The caller is responsible for re-querying the pool row within an
         active SQLAlchemy session so that lazy-loaded relationships
@@ -139,6 +147,10 @@ class V3BuilderBase:
 
         Returns (working_tick_bitmap, working_tick_data, db_snapshot_loaded).
         If the snapshot cannot be loaded, returns ({}, {}, False).
+
+        Returns:
+            The computed value.
+
         """
         init_maps = pool_with_data.initialization_maps
         liq_positions = pool_with_data.liquidity_positions
@@ -172,11 +184,14 @@ class V3BuilderBase:
         working_tick_bitmap: dict[int, BitmapAtWord],
         working_tick_data: dict[int, LiquidityAtTick],
     ) -> tuple[dict[int, BitmapAtWord] | None, dict[int, LiquidityAtTick] | None]:
-        """
-        Decide whether to pass tick data to the pool constructor.
+        """Decide whether to pass tick data to the pool constructor.
 
         Returns (tick_bitmap_arg, tick_data_arg). Only passes data when
         we have a complete DB snapshot with actual tick data.
+
+        Returns:
+            The computed value.
+
         """
         if db_snapshot_loaded and working_tick_data:
             return working_tick_bitmap, working_tick_data

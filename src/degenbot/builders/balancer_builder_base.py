@@ -22,8 +22,7 @@ if TYPE_CHECKING:
 
 
 class _BalancerPoolType(IntEnum):
-    """
-    Internal enum for _detect_pool_type return values.
+    """Internal enum for _detect_pool_type return values.
 
     Used instead of string literals to enable type-checker
     exhaustiveness checking and prevent typos.
@@ -52,8 +51,7 @@ class VaultTokensResult:
 
 
 class BalancerBuilderBase:
-    """
-    Shared helpers for Balancer pool builders.
+    """Shared helpers for Balancer pool builders.
 
     Sync and async builders call these @staticmethod helpers
     without duplicating decode/extract logic. I/O helpers take
@@ -65,7 +63,12 @@ class BalancerBuilderBase:
 
     @staticmethod
     def decode_pool_id(raw: bytes) -> DecodedPoolId:
-        """Decode a 32-byte pool ID into typed components."""
+        """Decode a 32-byte pool ID into typed components.
+
+        Returns:
+            The computed value.
+
+        """
         pool_address = get_checksum_address(raw[:20])
         specialization = int.from_bytes(raw[20:22], byteorder="big")
         nonce = int.from_bytes(raw[22:32], byteorder="big")
@@ -77,7 +80,12 @@ class BalancerBuilderBase:
 
     @staticmethod
     def decode_vault_tokens(raw: bytes) -> VaultTokensResult:
-        """Decode getPoolTokens() response."""
+        """Decode getPoolTokens() response.
+
+        Returns:
+            The computed value.
+
+        """
         decoded = eth_abi.abi.decode(["address[]", "uint256[]", "uint256"], raw)
         return VaultTokensResult(
             tokens=decoded[0],
@@ -90,11 +98,14 @@ class BalancerBuilderBase:
         token_addresses: list[str] | tuple[str, ...],
         pool_address: str,
     ) -> int | None:
-        """
-        Detect the BPT index for ComposableStablePools.
+        """Detect the BPT index for ComposableStablePools.
 
         Heuristic: the token whose address matches the pool address is BPT.
         Returns None for MetaStablePools (no BPT in token list).
+
+        Returns:
+            The computed value.
+
         """
         checksummed_pool = get_checksum_address(pool_address)
         for i, addr in enumerate(token_addresses):
@@ -108,8 +119,7 @@ class BalancerBuilderBase:
         specialization: int,
         override: int | None = None,
     ) -> int:
-        """
-        Determine which StableMath invariant version to use.
+        """Determine which StableMath invariant version to use.
 
         specialization comes from the decoded pool ID:
         - 0 (General): most likely ComposableStablePool → INVARIANT_V1
@@ -118,6 +128,10 @@ class BalancerBuilderBase:
 
         The override parameter from BuildPoolRequest.invariant_version
         takes precedence over heuristics.
+
+        Returns:
+            The computed value.
+
         """
         if override is not None:
             return override
@@ -213,13 +227,19 @@ class BalancerBuilderBase:
         address: str,
         block: int,
     ) -> _BalancerPoolType:
-        """
-        Determine weighted vs stable by probing contract methods.
+        """Determine weighted vs stable by probing contract methods.
 
         Probes in order:
         1. getNormalizedWeights() → WEIGHTED
         2. getAmplificationParameter() → STABLE
         3. Neither → raise (don't default to stable)
+
+        Returns:
+            The computed value.
+
+        Raises:
+            DegenbotValueError: If the operation fails.
+
         """
         try:
             data = encode_function_calldata("getNormalizedWeights()", None)

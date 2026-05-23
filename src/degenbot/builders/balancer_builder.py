@@ -1,5 +1,4 @@
-"""
-Balancer V2 pool builder.
+"""Balancer V2 pool builder.
 
 Owns the full I/O choreography: RPC fetch → decode → construct → register.
 Pool type is determined via _detect_pool_type() which probes the contract
@@ -52,8 +51,7 @@ class _BuildContext:
 
 
 class BalancerBuilder(BalancerBuilderBase):
-    """
-    Builds and updates Balancer V2 pools (weighted, stable, composable).
+    """Builds and updates Balancer V2 pools (weighted, stable, composable).
 
     Owns the full I/O choreography: RPC fetch → decode → construct →
     register.
@@ -75,7 +73,16 @@ class BalancerBuilder(BalancerBuilderBase):
         io: PoolIO,
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
-        """Fetch pool data from RPC and construct an I/O-free Balancer pool."""
+        """Fetch pool data from RPC and construct an I/O-free Balancer pool.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            DegenbotValueError: If the operation fails.
+            BrokenPool: If the operation fails.
+
+        """
         pool_address = get_checksum_address(address)
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
@@ -247,7 +254,15 @@ class BalancerBuilder(BalancerBuilderBase):
         io: PoolIO | None = None,
         block_number: int | None = None,
     ) -> bool:
-        """Fetch new balances from Vault and update the pool."""
+        """Fetch new balances from Vault and update the pool.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            TypeError: If the operation fails.
+
+        """
         assert io is not None
 
         if isinstance(pool, BalancerV2Pool):

@@ -37,8 +37,7 @@ if TYPE_CHECKING:
 
 
 class V3PoolBuilder(V3BuilderBase):
-    """
-    Builds and updates V3-style concentrated-liquidity pools.
+    """Builds and updates V3-style concentrated-liquidity pools.
 
     Owns the full I/O choreography: DB lookup → RPC fetch → decode →
     construct pool → register.
@@ -59,7 +58,12 @@ class V3PoolBuilder(V3BuilderBase):
     def _make_tick_data_fetcher(
         self, pool_address: str, chain_id: int, io: PoolIO
     ) -> Callable[[int, int], None]:
-        """Create a tick data fetcher callback for a V3 pool."""
+        """Create a tick data fetcher callback for a V3 pool.
+
+        Returns:
+            The computed value.
+
+        """
         return make_tick_data_fetcher(
             pool_lookup=lambda _block: cast(
                 "UniswapV3Pool | None",
@@ -84,7 +88,17 @@ class V3PoolBuilder(V3BuilderBase):
         io: PoolIO,
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
-        """Fetch pool data from DB/RPC and construct an I/O-free V3-style pool."""
+        """Fetch pool data from DB/RPC and construct an I/O-free V3-style pool.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            ValueError: If the operation fails.
+            DegenbotValueError: If the operation fails.
+            LiquidityPoolError: If the operation fails.
+
+        """
         pool_address = get_checksum_address(address)
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
@@ -337,7 +351,15 @@ class V3PoolBuilder(V3BuilderBase):
         block_number: BlockIdentifier | None = None,
         io: PoolIO | None = None,
     ) -> bool:
-        """Fetch current state from chain and push update to the pool."""
+        """Fetch current state from chain and push update to the pool.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            TypeError: If the operation fails.
+
+        """
         if isinstance(pool, UniswapV4Pool):
             msg = f"V3PoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)

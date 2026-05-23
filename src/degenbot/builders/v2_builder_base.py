@@ -31,8 +31,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class V2CommonData:
-    """
-    Data fetched from DB/chain that all V2 variants need.
+    """Data fetched from DB/chain that all V2 variants need.
 
     Produced by V2BuilderBase._fetch_v2_common_data().
     Consumed by variant-specific build() methods.
@@ -53,8 +52,7 @@ class V2CommonData:
 
 
 class V2BuilderBase:
-    """
-    Base class for V2-style pool builders.
+    """Base class for V2-style pool builders.
 
     Provides shared I/O orchestration (DB lookup, chain fetch,
     token construction, reserve fetch, registry lookup).
@@ -75,7 +73,12 @@ class V2BuilderBase:
         token0_result: HexBytes,
         token1_result: HexBytes,
     ) -> tuple[ChecksumAddress, ChecksumAddress, ChecksumAddress]:
-        """Decode raw call results into typed addresses."""
+        """Decode raw call results into typed addresses.
+
+        Returns:
+            The computed value.
+
+        """
         (factory_raw,) = eth_abi.abi.decode(types=["address"], data=factory_result)
         (token0_raw,) = eth_abi.abi.decode(types=["address"], data=token0_result)
         (token1_raw,) = eth_abi.abi.decode(types=["address"], data=token1_result)
@@ -89,7 +92,12 @@ class V2BuilderBase:
     def extract_db_values(
         pool_from_db: LiquidityPoolTable,
     ) -> tuple[ChecksumAddress, ChecksumAddress, ChecksumAddress, Fraction, Fraction]:
-        """Extract factory, token addresses, and fees from a DB row."""
+        """Extract factory, token addresses, and fees from a DB row.
+
+        Returns:
+            The computed value.
+
+        """
         factory = get_checksum_address(pool_from_db.exchange.factory)
         token0_address = get_checksum_address(pool_from_db.token0.address)
         token1_address = get_checksum_address(pool_from_db.token1.address)
@@ -108,7 +116,12 @@ class V2BuilderBase:
         factory: ChecksumAddress,
         default_init_hash: str,
     ) -> tuple[str, str]:
-        """Resolve deployer address and init hash from the pool type registry."""
+        """Resolve deployer address and init hash from the pool type registry.
+
+        Returns:
+            The computed value.
+
+        """
         deployer = factory
         resolved_init_hash = default_init_hash
         registry_deployment = pool_type_registry.get_deployment(chain_id, factory)
@@ -128,11 +141,17 @@ class V2BuilderBase:
         state_block: int,
         io: PoolIO,
     ) -> V2CommonData:
-        """
-        Fetch data shared by all V2 variants.
+        """Fetch data shared by all V2 variants.
 
         Returns a frozen dataclass with all values needed
         for variant-specific construction.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            LiquidityPoolError: If the operation fails.
+
         """
         pool_address = get_checksum_address(pool_address)
 
@@ -242,7 +261,12 @@ class V2BuilderBase:
         *,
         block_identifier: int,
     ) -> tuple[int, int]:
-        """Fetch current reserves from chain via PoolIO."""
+        """Fetch current reserves from chain via PoolIO.
+
+        Returns:
+            The computed value.
+
+        """
         pool_address = get_checksum_address(pool_address)
 
         reserves_result = io.call(

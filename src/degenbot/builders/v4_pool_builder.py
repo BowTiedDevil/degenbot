@@ -39,8 +39,7 @@ if TYPE_CHECKING:
 
 
 class V4PoolBuilder(V4BuilderBase):
-    """
-    Builds and updates V4 singleton-architecture concentrated-liquidity pools.
+    """Builds and updates V4 singleton-architecture concentrated-liquidity pools.
 
     Owns the full I/O choreography: DB lookup → RPC fetch → decode →
     construct pool → register.
@@ -66,7 +65,12 @@ class V4PoolBuilder(V4BuilderBase):
         chain_id: int,
         io: PoolIO,
     ) -> Callable[[int, int], None]:
-        """Create a tick data fetcher callback for a V4 pool."""
+        """Create a tick data fetcher callback for a V4 pool.
+
+        Returns:
+            The computed value.
+
+        """
         pool_manager_address_ = get_checksum_address(pool_manager_address)
         return make_tick_data_fetcher(
             pool_lookup=lambda _: cast(
@@ -95,7 +99,16 @@ class V4PoolBuilder(V4BuilderBase):
         io: PoolIO,
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
-        """Fetch pool data from DB/RPC and construct an I/O-free UniswapV4Pool."""
+        """Fetch pool data from DB/RPC and construct an I/O-free UniswapV4Pool.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            DegenbotValueError: If the operation fails.
+            LiquidityPoolError: If the operation fails.
+
+        """
         assert isinstance(request, BuildManagedPoolRequest)
         pool_id_bytes = HexBytes(request.pool_id)
         pool_manager_address = get_checksum_address(address)
@@ -340,7 +353,15 @@ class V4PoolBuilder(V4BuilderBase):
         block_number: BlockIdentifier | None = None,
         io: PoolIO | None = None,
     ) -> bool:
-        """Fetch current state from chain and push update to the pool."""
+        """Fetch current state from chain and push update to the pool.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            TypeError: If the operation fails.
+
+        """
         if not isinstance(pool, UniswapV4Pool):
             msg = f"V4PoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)

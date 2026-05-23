@@ -34,8 +34,7 @@ if TYPE_CHECKING:
 
 
 class Erc20Builder:
-    """
-    Builds Erc20Token instances from DB lookups and RPC calls.
+    """Builds Erc20Token instances from DB lookups and RPC calls.
 
     Owns the full I/O choreography: check registry → check DB → fetch
     from chain → construct token → register.
@@ -61,7 +60,15 @@ class Erc20Builder:
         silent: bool = False,
         io: PoolIO | None = None,
     ) -> Erc20Token:
-        """Fetch token metadata from DB/RPC and construct an I/O-free Erc20Token."""
+        """Fetch token metadata from DB/RPC and construct an I/O-free Erc20Token.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            DegenbotValueError: If the operation fails.
+
+        """
         address = get_checksum_address(address)
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
@@ -186,7 +193,12 @@ class Erc20Builder:
         *,
         io: PoolIO | None = None,
     ) -> int:
-        """Retrieve the ERC-20 balance for the given address."""
+        """Retrieve the ERC-20 balance for the given address.
+
+        Returns:
+            The computed value.
+
+        """
         address = get_checksum_address(address)
         assert token.chain_id is not None
         assert io is not None
@@ -219,7 +231,12 @@ class Erc20Builder:
         *,
         io: PoolIO | None = None,
     ) -> int:
-        """Retrieve the amount that can be spent by `spender` on behalf of `owner`."""
+        """Retrieve the amount that can be spent by `spender` on behalf of `owner`.
+
+        Returns:
+            The computed value.
+
+        """
         owner = get_checksum_address(owner)
         spender = get_checksum_address(spender)
         assert token.chain_id is not None
@@ -251,7 +268,12 @@ class Erc20Builder:
         *,
         io: PoolIO | None = None,
     ) -> int:
-        """Retrieve the total supply for this token."""
+        """Retrieve the total supply for this token.
+
+        Returns:
+            The computed value.
+
+        """
         assert token.chain_id is not None
         assert io is not None
 
@@ -282,7 +304,12 @@ class Erc20Builder:
         *,
         io: PoolIO | None = None,
     ) -> int:
-        """Retrieve the native ETH balance for the given address."""
+        """Retrieve the native ETH balance for the given address.
+
+        Returns:
+            The computed value.
+
+        """
         address = get_checksum_address(address)
         assert io is not None
 
@@ -294,7 +321,12 @@ class Erc20Builder:
 
 
 def _resolve_block_number(io: PoolIO, block_identifier: BlockIdentifier | None) -> int:
-    """Resolve a block identifier to a block number."""
+    """Resolve a block identifier to a block number.
+
+    Returns:
+        The computed value.
+
+    """
     if block_identifier is None:
         return io.get_block_number()
     if isinstance(block_identifier, int):
@@ -304,7 +336,12 @@ def _resolve_block_number(io: PoolIO, block_identifier: BlockIdentifier | None) 
 
 
 def _fetch_name_symbol_decimals_batched(*, address: str, io: PoolIO) -> tuple[str, str, int]:
-    """Fetch token name, symbol, and decimals via batched RPC calls."""
+    """Fetch token name, symbol, and decimals via batched RPC calls.
+
+    Returns:
+        The computed value.
+
+    """
     name_calldata = encode_function_calldata(
         function_prototype="name()",
         function_arguments=None,
@@ -330,7 +367,12 @@ def _fetch_name_symbol_decimals_batched(*, address: str, io: PoolIO) -> tuple[st
 
 
 def _fetch_name(*, address: str, io: PoolIO, func_prototype: str = "name()") -> str:
-    """Fetch token name via RPC call."""
+    """Fetch token name via RPC call.
+
+    Returns:
+        The computed value.
+
+    """
     result = io.call(
         to=address,
         data=encode_function_calldata(
@@ -348,7 +390,12 @@ def _fetch_name(*, address: str, io: PoolIO, func_prototype: str = "name()") -> 
 
 
 def _fetch_symbol(*, address: str, io: PoolIO, func_prototype: str = "symbol()") -> str:
-    """Fetch token symbol via RPC call."""
+    """Fetch token symbol via RPC call.
+
+    Returns:
+        The computed value.
+
+    """
     result = io.call(
         to=address,
         data=encode_function_calldata(
@@ -366,7 +413,12 @@ def _fetch_symbol(*, address: str, io: PoolIO, func_prototype: str = "symbol()")
 
 
 def _fetch_decimals(*, address: str, io: PoolIO, func_prototype: str = "decimals()") -> int:
-    """Fetch token decimals via RPC call."""
+    """Fetch token decimals via RPC call.
+
+    Returns:
+        The computed value.
+
+    """
     (result,) = eth_abi.abi.decode(
         types=["uint256"],
         data=io.call(
