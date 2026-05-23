@@ -1,5 +1,4 @@
-"""
-Detection result types for Curve pool construction.
+"""Detection result types for Curve pool construction.
 
 Each frozen dataclass holds the output of one detection step, providing a
 narrow interface between detection sub-modules and the builder orchestrator.

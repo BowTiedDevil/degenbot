@@ -1,5 +1,4 @@
-"""
-Structured CurveDataProvider implementation.
+"""Structured CurveDataProvider implementation.
 
 Replaces the closure-based CurveFetcherFactory with a class where each
 CurveDataProvider protocol method is a real method. Shared I/O patterns
@@ -30,8 +29,7 @@ if TYPE_CHECKING:
 
 
 class CurveDataProviderImpl:
-    """
-    Production implementation of CurveDataProvider.
+    """Production implementation of CurveDataProvider.
 
     Each protocol method is a real method on this class. Shared I/O patterns
     (provider call → ABI decode → type cast) are concentrated in private helpers.
@@ -73,7 +71,12 @@ class CurveDataProviderImpl:
         return_types: list[str],
         block_number: int,
     ) -> tuple[Any, ...]:
-        """Call a contract method and decode the result."""
+        """Call a contract method and decode the result.
+
+        Returns:
+            The computed value.
+
+        """
         data = self._io.call_raw(
             {"to": to, "data": Web3.keccak(text=method_sig)[:4]},
             block=block_number,
@@ -87,7 +90,12 @@ class CurveDataProviderImpl:
         return_type: str,
         block_number: int,
     ) -> Any:
-        """Call a method returning a single value. Returns the unwrapped value."""
+        """Call a method returning a single value. Returns the unwrapped value.
+
+        Returns:
+            The computed value.
+
+        """
         (result,) = self._call(to, method_sig, [return_type], block_number)
         return result
 
@@ -98,7 +106,12 @@ class CurveDataProviderImpl:
         return_type: str,
         block_number: int,
     ) -> Any:
-        """Call with raw data, decode a single return value."""
+        """Call with raw data, decode a single return value.
+
+        Returns:
+            The computed value.
+
+        """
         result = self._io.call_raw(
             {"to": to, "data": data},
             block=block_number,
@@ -108,7 +121,12 @@ class CurveDataProviderImpl:
 
     @staticmethod
     def _wrap_revert(callable_fn: Any, *args: Any, **kwargs: Any) -> Any:
-        """Call a method, converting ContractLogicError to EVMRevertError."""
+        """Call a method, converting ContractLogicError to EVMRevertError.
+
+        Returns:
+            The computed value.
+
+        """
         try:
             return callable_fn(*args, **kwargs)
         except ContractLogicError as e:
@@ -117,7 +135,12 @@ class CurveDataProviderImpl:
     # ── CurveDataProvider protocol methods ──
 
     def virtual_price(self, block_number: int) -> int:
-        """Return virtual price."""
+        """Return virtual price.
+
+        Returns:
+            The computed integer value.
+
+        """
         target = self._base_pool_address or self._pool_address
         return cast(
             "int",
@@ -127,7 +150,12 @@ class CurveDataProviderImpl:
         )
 
     def base_virtual_price(self, block_number: int) -> int:
-        """Return base virtual price."""
+        """Return base virtual price.
+
+        Returns:
+            The computed integer value.
+
+        """
         return cast(
             "int",
             self._wrap_revert(
@@ -140,7 +168,12 @@ class CurveDataProviderImpl:
         )
 
     def base_cache_updated(self, block_number: int) -> int:
-        """Return base cache updated."""
+        """Return base cache updated.
+
+        Returns:
+            The computed integer value.
+
+        """
         return cast(
             "int",
             self._wrap_revert(
@@ -153,7 +186,12 @@ class CurveDataProviderImpl:
         )
 
     def admin_balances(self, block_number: int) -> tuple[int, ...]:
-        """Admin balances."""
+        """Admin balances.
+
+        Returns:
+            The computed value.
+
+        """
         balances: list[int] = []
         for token_index in range(8):  # max 8 tokens for Curve V1
             try:
@@ -172,7 +210,12 @@ class CurveDataProviderImpl:
         return tuple(balances)
 
     def d(self, block_number: int) -> int:
-        """Return d."""
+        """Return d.
+
+        Returns:
+            The computed integer value.
+
+        """
         return cast(
             "int",
             self._wrap_revert(
@@ -181,7 +224,12 @@ class CurveDataProviderImpl:
         )
 
     def gamma(self, block_number: int) -> int:
-        """Return gamma."""
+        """Return gamma.
+
+        Returns:
+            The computed integer value.
+
+        """
         return cast(
             "int",
             self._wrap_revert(
@@ -190,7 +238,12 @@ class CurveDataProviderImpl:
         )
 
     def price_scale(self, block_number: int) -> tuple[int, ...]:
-        """Price scale."""
+        """Price scale.
+
+        Returns:
+            The computed value.
+
+        """
         price_scale = [0] * (self._n_coins - 1)
         for token_index in range(self._n_coins - 1):
             data = Web3.keccak(text="price_scale(uint256)")[:4] + eth_abi.abi.encode(
@@ -204,15 +257,30 @@ class CurveDataProviderImpl:
         return tuple(price_scale)
 
     def block_timestamp(self, block_number: int) -> int:
-        """Return block timestamp."""
+        """Return block timestamp.
+
+        Returns:
+            The computed integer value.
+
+        """
         return self._io.get_block_timestamp(block=block_number)
 
     def block_number(self) -> int:
-        """Return block number."""
+        """Return block number.
+
+        Returns:
+            The computed integer value.
+
+        """
         return self._io.get_block_number()
 
     def token_balance(self, token_address: str, holder_address: str, block_number: int) -> int:
-        """Return token balance."""
+        """Return token balance.
+
+        Returns:
+            The computed integer value.
+
+        """
         data = encode_function_calldata(
             "balanceOf(address)", [get_checksum_address(holder_address)]
         )
@@ -225,7 +293,12 @@ class CurveDataProviderImpl:
         return cast("int", balance)
 
     def token_total_supply(self, token_address: str, block_number: int) -> int:
-        """Return token total supply."""
+        """Return token total supply.
+
+        Returns:
+            The computed integer value.
+
+        """
         data = encode_function_calldata("totalSupply()", None)
         result = self._io.call(
             to=get_checksum_address(token_address),
@@ -236,7 +309,12 @@ class CurveDataProviderImpl:
         return cast("int", total_supply)
 
     def lending_rates(self, block_number: int) -> tuple[int, ...]:
-        """Lending rates."""
+        """Lending rates.
+
+        Returns:
+            The computed value.
+
+        """
         if self._lending_rate_style == LendingRateStyle.NONE:
             msg = "lending_rates() not available for this pool type"
             raise ValueError(msg)
@@ -272,7 +350,12 @@ class CurveDataProviderImpl:
     PRECISION: int = 10**18
 
     def _fetch_ctoken_rates(self, block_number: int) -> tuple[int, ...]:
-        """Fetch cToken rates: exchangeRateStored + supply rate accrual."""
+        """Fetch cToken rates: exchangeRateStored + supply rate accrual.
+
+        Returns:
+            The computed value.
+
+        """
         result: list[int] = []
         for token_addr, is_lending, multiplier in zip(
             self._token_addresses, self._use_lending, self._precision_multipliers, strict=True
@@ -297,7 +380,12 @@ class CurveDataProviderImpl:
         return tuple(result)
 
     def _fetch_ytoken_rates(self, block_number: int) -> tuple[int, ...]:
-        """Fetch yToken rates: getPricePerFullShare."""
+        """Fetch yToken rates: getPricePerFullShare.
+
+        Returns:
+            The computed value.
+
+        """
         result: list[int] = []
         for token_addr, multiplier, is_lending in zip(
             self._token_addresses, self._precision_multipliers, self._use_lending, strict=True
@@ -315,7 +403,12 @@ class CurveDataProviderImpl:
         return tuple(result)
 
     def _fetch_cytoken_rates(self, block_number: int) -> tuple[int, ...]:
-        """Fetch cyToken rates: all tokens are lending, same as cToken but no is_lending check."""
+        """Fetch cyToken rates: all tokens are lending, same as cToken but no is_lending check.
+
+        Returns:
+            The computed value.
+
+        """
         result: list[int] = []
         for token_addr, precision_multiplier in zip(
             self._token_addresses, self._precision_multipliers, strict=True
@@ -337,7 +430,12 @@ class CurveDataProviderImpl:
         return tuple(result)
 
     def _fetch_reth_rates(self, block_number: int) -> tuple[int, ...]:
-        """Fetch rETH rates: getExchangeRate on the second token."""
+        """Fetch rETH rates: getExchangeRate on the second token.
+
+        Returns:
+            The computed value.
+
+        """
         ratio = cast(
             "int",
             self._call_single(
@@ -347,7 +445,12 @@ class CurveDataProviderImpl:
         return (self.PRECISION, ratio)
 
     def _fetch_aeth_rates(self, block_number: int) -> tuple[int, ...]:
-        """Fetch aETH rates: ratio() on second token, inverted."""
+        """Fetch aETH rates: ratio() on second token, inverted.
+
+        Returns:
+            The computed value.
+
+        """
         ratio = cast(
             "int",
             self._call_single(self._token_addresses[1], "ratio()", "uint256", block_number),
@@ -355,7 +458,12 @@ class CurveDataProviderImpl:
         return (self.PRECISION, self.PRECISION * self.PRECISION // ratio)
 
     def _fetch_oracle_rates(self, block_number: int) -> tuple[int, ...]:
-        """Fetch oracle rates: oracle_method() bitmask dispatch."""
+        """Fetch oracle rates: oracle_method() bitmask dispatch.
+
+        Returns:
+            The computed value.
+
+        """
         assert self._rate_multipliers is not None
 
         oracle_method_value = cast(
@@ -383,7 +491,12 @@ class CurveDataProviderImpl:
         )
 
     def redemption_price(self, block_number: int) -> int:
-        """Return redemption price."""
+        """Return redemption price.
+
+        Returns:
+            The computed integer value.
+
+        """
         (snap_contract_address,) = self._call(
             self._pool_address, "redemption_price_snap()", ["address"], block_number
         )

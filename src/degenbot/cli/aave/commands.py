@@ -90,8 +90,7 @@ def aave() -> None:
 
 @aave.group
 def activate() -> None:
-    """
-    Activate an Aave market.
+    """Activate an Aave market.
 
     Positions for activated markets are included when running `degenbot aave position update`.
     """
@@ -173,8 +172,7 @@ def activate_ethereum_aave_v3(bot: Bot, chain_id: ChainId = ChainId.ETH) -> None
 
 @aave.group
 def deactivate() -> None:
-    """
-    Deactivate an Aave market.
+    """Deactivate an Aave market.
 
     Positions for deactivated markets are not included when running `degenbot aave position update`.
     """
@@ -323,8 +321,7 @@ def aave_update(
     enable_backup: bool,
     backup_interval: int,
 ) -> None:
-    """
-    Update positions for active Aave markets.
+    """Update positions for active Aave markets.
 
     Processes blockchain events from the last updated block to the specified block,
     updating all user positions, interest rates, and indices in the database.
@@ -559,8 +556,7 @@ def position() -> None:
     help="Chain ID to query (default: 1 for Ethereum mainnet).",
 )
 def position_show(bot: Bot, address: str, market: str, chain_id: int) -> None:
-    """
-    Display current Aave positions for a user.
+    """Display current Aave positions for a user.
 
     Shows collateral and debt positions for the specified address on the given market.
     """
@@ -697,8 +693,7 @@ def position_risk(  # noqa: PLR0917
     show_positions: bool,  # noqa: FBT001
     skip_prices: bool,  # noqa: FBT001
 ) -> None:
-    """
-    Analyze positions for liquidation risk.
+    """Analyze positions for liquidation risk.
 
     Identifies users with low health factors who are at risk of liquidation.
     Users are categorized as:
@@ -833,8 +828,7 @@ def market() -> None:
     help="Filter by market name (default: show all markets).",
 )
 def market_show(bot: Bot, chain_id: int | None, name: str | None) -> None:
-    """
-    Display Aave market information.
+    """Display Aave market information.
 
     Shows all markets or filters by chain ID and/or market name.
     """
@@ -901,8 +895,7 @@ def update_aave_market(
     verify_chunk: bool,
     show_progress: bool,
 ) -> None:
-    """
-    Update the Aave V3 market.
+    """Update the Aave V3 market.
 
     Processes events in three phases:
     1. Bootstrap: Fetch and process proxy creation events to discover Pool and PoolConfigurator

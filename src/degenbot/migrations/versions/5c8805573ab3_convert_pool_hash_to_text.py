@@ -1,5 +1,4 @@
-"""
-Convert pool hash to text.
+"""Convert pool hash to text.
 
 Revision ID: 5c8805573ab3
 Revises: 87fd9fc7ae00

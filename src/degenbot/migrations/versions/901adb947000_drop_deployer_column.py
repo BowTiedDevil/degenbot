@@ -1,5 +1,4 @@
-"""
-drop deployer column.
+"""drop deployer column.
 
 Revision ID: 901adb947000
 Revises: 04f858f979a9

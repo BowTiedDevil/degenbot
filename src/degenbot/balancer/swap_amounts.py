@@ -21,8 +21,7 @@ _MAX_UINT256 = 2**256 - 1
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class BalancerV2SwapAmounts:
-    """
-    Swap amounts for a Balancer V2 Vault swap.
+    """Swap amounts for a Balancer V2 Vault swap.
 
     Encodes a call to Vault.swap() with:
     - SingleSwap: (poolId, kind, assetIn, assetOut, amount, userData)
@@ -46,22 +45,35 @@ class BalancerV2SwapAmounts:
             raise DegenbotValueError(message=msg)
 
     def input_amount(self) -> int:
-        """Return input amount."""
+        """Return input amount.
+
+        Returns:
+            The computed integer value.
+
+        """
         return self.amount_in
 
     def output_amount(self) -> int:
-        """Return output amount."""
+        """Return output amount.
+
+        Returns:
+            The computed integer value.
+
+        """
         return self.amount_out
 
     def encode(self, *, recipient: ChecksumAddress | None = None) -> EncodedCall:
-        """
-        Encode Vault.swap() call.
+        """Encode Vault.swap() call.
 
         FundManagement defaults:
         - sender: ZERO_ADDRESS (filled by executor at runtime)
         - fromInternalBalance: False
         - recipient: the ``recipient`` parameter (must be provided)
         - toInternalBalance: False
+
+        Returns:
+            The computed value.
+
         """
         if recipient is None:
             msg = "recipient is required for Balancer V2 swap encoding"

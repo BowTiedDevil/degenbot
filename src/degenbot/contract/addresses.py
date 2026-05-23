@@ -12,14 +12,17 @@ def create2_address(
     salt: bytes | str,
     init_code_hash: bytes | str,
 ) -> ChecksumAddress:
-    """
-    Generate the deterministic CREATE2 address for a given deployer, salt, and the keccak hash of.
+    """Generate the deterministic CREATE2 address.
 
-    the contract creation (init) bytecode.
+    Given a deployer, salt, and the keccak hash of the contract creation
+    (init) bytecode.
 
     References:
         - https://eips.ethereum.org/EIPS/eip-1014
         - https://docs.openzeppelin.com/cli/2.8/deploying-with-create2
+
+    Returns:
+        The computed value.
 
     """
     return get_checksum_address(
@@ -34,15 +37,18 @@ def eip_1167_clone_address(
     implementation_contract: ChecksumAddress | str | bytes,
     salt: bytes,
 ) -> ChecksumAddress:
-    """
-    Calculate the contract address for an EIP-1167 minimal proxy contract deployed by `deployer`,.
+    """Calculate the address for an EIP-1167 minimal proxy.
 
-    using `salt`, delegating calls to the contract at `implementation` address.
+    Uses `deployer`, `salt`, delegating calls to the contract
+    at `implementation` address.
 
     References:
         - https://github.com/ethereum/ercs/blob/master/ERCS/erc-1167.md
         - https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/proxy/Clones.sol
         - https://www.rareskills.io/post/eip-1167-minimal-proxy-standard-with-initialization-clone-pattern
+
+    Returns:
+        The computed value.
 
     """
     minimal_proxy_code = (

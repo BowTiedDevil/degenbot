@@ -9,8 +9,7 @@ MAX_POW_RELATIVE_ERROR = 10000
 
 
 class PowVersion(enum.Enum):
-    """
-    Identifies which FixedPoint.pow implementation a deployed pool contract uses.
+    """Identifies which FixedPoint.pow implementation a deployed pool contract uses.
 
     Different deployed versions of Balancer V2 WeightedPool contracts embed different
     versions of the FixedPoint library:

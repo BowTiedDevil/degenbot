@@ -1,5 +1,4 @@
-"""
-Add indexes for token0/token1 IDs.
+"""Add indexes for token0/token1 IDs.
 
 Revision ID: 66930706257e
 Revises: 6a77c4e07151

@@ -1,5 +1,4 @@
-"""
-Rename column.
+"""Rename column.
 
 Revision ID: 6a77c4e07151
 Revises: 082ee8a3d339

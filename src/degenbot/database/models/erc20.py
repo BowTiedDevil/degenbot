@@ -19,7 +19,12 @@ class Erc20TokenTable(Base):
     decimals: Mapped[int | None]
 
     def __repr__(self) -> str:
-        """Return a string representation."""
+        """Return a string representation.
+
+        Returns:
+            A string representation of the object.
+
+        """
         return (
             f"{self.__class__.__name__}("
             f"chain={self.chain!r}, "

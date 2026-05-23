@@ -38,12 +38,10 @@ class AbstractLiquidityPool(AddressComparable, ABC):
         ...
 
     def __str__(self) -> str:
-        """Tokens.
+        """Return a string representation.
 
         Returns:
-            The computed value.
+            A string representation of the object.
 
         """
-        """Simulate swap."""
-        """Return a string representation."""
         return self.name

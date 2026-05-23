@@ -1,5 +1,4 @@
-"""
-Coin and balance enumeration for Curve pools.
+"""Coin and balance enumeration for Curve pools.
 
 Discovers token addresses and balances by iterating the pool's coins() and
 balances() methods, trying both uint256 and int128 index prototypes.
@@ -30,11 +29,14 @@ def discover_coins(
     block_identifier: int,
     max_coins: int = 8,
 ) -> CoinDiscoveryResult:
-    """
-    Enumerate coins and balances for a Curve pool.
+    """Enumerate coins and balances for a Curve pool.
 
     Tries coins(uint256) first, falls back to coins(int128).
     Stops at first zero address or revert.
+
+    Returns:
+        The computed value.
+
     """
     token_addresses: list[ChecksumAddress] = []
     balances: list[int] = []

@@ -36,12 +36,7 @@ type AnvilOptions = list[str]
 
 
 class AnvilFork:
-    """Initialize the instance."""
-
-    """Initialize the instance."""
-
-    """
-    Launch an Anvil fork as a separate process and expose methods for commonly-used RPC calls.
+    """Launch an Anvil fork as a separate process and expose methods for commonly-used RPC calls.
 
     Provides a `Web3` connector to Anvil's IPC socket endpoint at the `.w3` attribute.
     """
@@ -326,8 +321,7 @@ class AnvilFork:
         block_number: BlockNumber | None = None,
         transaction_hash: str | None = None,
     ) -> None:
-        """
-        Fork from a new endpoint, block number, or transaction hash.
+        """Fork from a new endpoint, block number, or transaction hash.
 
         Resetting to a new block number only can be done in-place without relaunching the Anvil
         process or recreating the Web3 object. Resetting to a new endpoint or from a transaction
@@ -505,7 +499,12 @@ class AnvilFork:
             raise AnvilError(method=method, error=str(resp["error"]))
 
     def set_snapshot(self) -> int:
-        """Set snapshot."""
+        """Set snapshot.
+
+        Returns:
+            The computed integer value.
+
+        """
         return int(
             self.w3.provider.make_request(
                 method=RPCEndpoint("evm_snapshot"),

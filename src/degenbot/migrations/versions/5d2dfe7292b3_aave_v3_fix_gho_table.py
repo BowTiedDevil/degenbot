@@ -1,5 +1,4 @@
-"""
-Aave V3: fix GHO table.
+"""Aave V3: fix GHO table.
 
 Revision ID: 5d2dfe7292b3
 Revises: a512dbce9854

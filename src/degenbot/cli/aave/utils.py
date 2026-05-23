@@ -1,5 +1,4 @@
-"""
-Shared utility functions for Aave V3 CLI processing.
+"""Shared utility functions for Aave V3 CLI processing.
 
 This module contains helper functions that are used across multiple
 Aave CLI modules.
@@ -27,7 +26,12 @@ def _get_v_token_for_underlying(
     market: AaveV3Market,
     underlying_address: ChecksumAddress,
 ) -> ChecksumAddress | None:
-    """Get vToken address for an underlying asset."""
+    """Get vToken address for an underlying asset.
+
+    Returns:
+        The computed value.
+
+    """
     asset = session.scalar(
         select(AaveV3Asset).where(
             AaveV3Asset.market_id == market.id,
@@ -43,7 +47,12 @@ def _get_all_scaled_token_addresses(
     session: Session,
     chain_id: int,
 ) -> list[ChecksumAddress]:
-    """Get all aToken and vToken addresses for a given chain."""
+    """Get all aToken and vToken addresses for a given chain.
+
+    Returns:
+        A list of results.
+
+    """
     # Query from AaveV3Asset (small table, ~7 rows) instead of Erc20TokenTable
     # (572K+ rows) to avoid expensive full table scans.
     assets = (
@@ -79,7 +88,12 @@ def _build_transaction_contexts(
     gho_asset: AaveGhoToken,
     pool_contract: AaveV3Contract,
 ) -> dict[HexBytes, TransactionContext]:
-    """Group events by transaction with full categorization."""
+    """Group events by transaction with full categorization.
+
+    Returns:
+        The computed value.
+
+    """
     assert pool_contract.revision is not None
 
     contexts: dict[HexBytes, TransactionContext] = {}

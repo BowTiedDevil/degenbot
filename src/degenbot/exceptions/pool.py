@@ -1,5 +1,4 @@
-"""
-Pool-related exceptions.
+"""Pool-related exceptions.
 
 Includes exceptions for:
 - Generic pool operations (LiquidityPoolError, BrokenPool, ...)
@@ -136,7 +135,12 @@ class IncompleteSwap(LiquidityPoolError):
         super().__init__(message="Insufficient liquidity to swap for the requested amount.")
 
     def __reduce__(self) -> tuple[Any, ...]:
-        """Return pickling information."""
+        """Return pickling information.
+
+        Returns:
+            The computed value.
+
+        """
         # Pickling will raise an exception if a reduction method is not defined
         return self.__class__, (self.amount_in, self.amount_out)
 
@@ -146,10 +150,10 @@ class LateUpdateError(LiquidityPoolError):
 
 
 class NoPoolStateAvailable(LiquidityPoolError):
-    """
-    Raised by the `restore_state_before_block` method when a previous pool state is not available.
+    """Raised when a previous pool state is not available.
 
-    This can occur, e.g. if a pool was created in a block at or after a re-organization.
+    This can occur, e.g. if a pool was created in a block at or
+    after a re-organization.
     """
 
     def __init__(self, block: BlockNumber) -> None:
@@ -166,8 +170,7 @@ class InvalidSwapInputAmount(LiquidityPoolError):
 
 
 class PossibleInaccurateResult(LiquidityPoolError):
-    """
-    Raised when a swap calculation may not match the on-chain result.
+    """Raised when a swap calculation may not match the on-chain result.
 
     The computed ``amount_in`` and ``amount_out`` are available on the
     exception so callers can inspect or use the approximate values
@@ -183,14 +186,18 @@ class PossibleInaccurateResult(LiquidityPoolError):
         super().__init__(message=message)
 
     def __reduce__(self) -> tuple[Any, ...]:
-        """Return pickling information."""
+        """Return pickling information.
+
+        Returns:
+            The computed value.
+
+        """
         # Pickling will raise an exception if a reduction method is not defined
         return self.__class__, (self.amount_in, self.amount_out)
 
 
 class HookedPoolResult(PossibleInaccurateResult):
-    """
-    Raised when a V4 pool has active hooks that may mutate the swap result.
+    """Raised when a V4 pool has active hooks that may mutate the swap result.
 
     The pool's ``beforeSwap`` / ``afterSwap`` hooks can modify amounts or
     revert, so the pure-math result may differ from what the contract returns.
@@ -207,13 +214,17 @@ class HookedPoolResult(PossibleInaccurateResult):
         )
 
     def __reduce__(self) -> tuple[Any, ...]:
-        """Return pickling information."""
+        """Return pickling information.
+
+        Returns:
+            The computed value.
+
+        """
         return self.__class__, (self.amount_in, self.amount_out, self.hooks)
 
 
 class StaleRateResult(PossibleInaccurateResult):
-    """
-    Raised when a Balancer ComposableStablePool's rate cache is stale.
+    """Raised when a Balancer ComposableStablePool's rate cache is stale.
 
     ComposableStablePools with time-varying rates (e.g. bb-a-* yield tokens)
     cache rates in ``_tokenRateCaches`` and refresh them before each swap
@@ -231,16 +242,20 @@ class StaleRateResult(PossibleInaccurateResult):
         )
 
     def __reduce__(self) -> tuple[Any, ...]:
-        """Return pickling information."""
+        """Return pickling information.
+
+        Returns:
+            The computed value.
+
+        """
         return self.__class__, (self.amount_in, self.amount_out)
 
 
 class UnknownPool(LiquidityPoolError):
-    """
-    Raised by the liquidity snapshot class `update` methods when an update is provided for a pool.
+    """Raised when an update is provided for a pool not in the snapshot.
 
-    address not present in the existing snapshot. Updates of this kind can lead to inconsistent
-    state, because the pool state prior to the update is unknown.
+    Such updates can lead to inconsistent state because the pool
+    state prior to the update is unknown.
     """
 
     def __init__(self, pool: ChecksumAddress) -> None:
@@ -249,11 +264,10 @@ class UnknownPool(LiquidityPoolError):
 
 
 class UnknownPoolId(LiquidityPoolError):
-    """
-    Raised by the liquidity snapshot class `update` methods when an update is provided for a pool.
+    """Raised when an update is provided for a pool ID not in the snapshot.
 
-    address not present in the existing snapshot. Updates of this kind can lead to inconsistent
-    state, because the pool state prior to the update is unknown.
+    Such updates can lead to inconsistent state because the pool
+    state prior to the update is unknown.
     """
 
     def __init__(self, pool_id: bytes | str) -> None:

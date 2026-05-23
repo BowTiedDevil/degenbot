@@ -90,7 +90,12 @@ class TransactionContext:
         return self.gho_asset.v_token.address
 
     def is_gho_vtoken(self, token_address: ChecksumAddress) -> bool:
-        """Check if the given token address is the GHO vToken."""
+        """Check if the given token address is the GHO vToken.
+
+        Returns:
+            The computed boolean value.
+
+        """
         gho_addr = self.gho_vtoken_address
         return gho_addr is not None and token_address == gho_addr
 
@@ -100,8 +105,7 @@ class TransactionContext:
         log_index: int,
         default_discount: int,
     ) -> int:
-        """
-        Get the discount percent in effect at a specific log index.
+        """Get the discount percent in effect at a specific log index.
 
         When a user has multiple DiscountPercentUpdated events in a transaction,
         each Mint/Burn event must use the discount that was in effect at that

@@ -3,12 +3,15 @@ from degenbot.exceptions.pool import EVMRevertError
 
 
 def _truncated_div(a: int, b: int) -> int:
-    """
-    Integer division that matches Solidity's truncation-toward-zero semantics.
+    """Integer division that matches Solidity's truncation-toward-zero semantics.
 
     Python's // floors toward -infinity for negative dividends, but Solidity's /
     truncates toward zero. This helper replicates the Solidity behavior, which is
     required for all signed fixed-point arithmetic in the Balancer math libraries.
+
+    Returns:
+        The computed integer value.
+
     """
     # Equivalent to: int(Decimal(a) / Decimal(b)) without importing Decimal
     if (a >= 0) == (b >= 0):
@@ -72,7 +75,12 @@ a11 = 106449445891785942956  # e^(x11)
 
 
 def pow(x: int, y: int) -> int:  # noqa: A001
-    """Raise x to the power y using fixed-point exponentiation."""
+    """Raise x to the power y using fixed-point exponentiation.
+
+    Returns:
+        The computed integer value.
+
+    """
     if y == 0:
         """Return pow."""
         """Return pow."""
@@ -124,7 +132,12 @@ def pow(x: int, y: int) -> int:  # noqa: A001
 
 
 def exp(x: int) -> int:
-    """Return exp."""
+    """Return exp.
+
+    Returns:
+        The computed integer value.
+
+    """
     if not (MIN_NATURAL_EXPONENT <= x <= MAX_NATURAL_EXPONENT):
         raise EVMRevertError(error="Invalid exponent")
 
@@ -257,7 +270,12 @@ def exp(x: int) -> int:
 
 # @dev Logarithm (log(arg, base), with signed 18 decimal fixed point base and argument.
 def log(arg: int, base: int) -> int:
-    """Return log."""
+    """Return log.
+
+    Returns:
+        The computed integer value.
+
+    """
     # This performs a simple base change: log(arg, base) = ln(arg) / ln(base).
 
     # Both logBase and logArg are computed as 36 decimal fixed point numbers, either by using ln_36,
@@ -271,7 +289,12 @@ def log(arg: int, base: int) -> int:
 
 
 def ln(a: int) -> int:
-    """Return ln."""
+    """Return ln.
+
+    Returns:
+        The computed integer value.
+
+    """
     # The real natural logarithm is not defined for negative numbers or zero.
     if a <= 0:
         raise EVMRevertError(error="OUT_OF_BOUNDS")

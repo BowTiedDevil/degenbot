@@ -1,5 +1,4 @@
-"""
-Event listener for eth_subscribe log dispatch.
+"""Event listener for eth_subscribe log dispatch.
 
 Provides the `LogListener` dispatch registry — a pure Python mapping of
 `(address, topic0)` → handler set that receives raw log dicts and calls

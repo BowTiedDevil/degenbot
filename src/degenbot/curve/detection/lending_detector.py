@@ -1,5 +1,4 @@
-"""
-Lending token detection for Curve pools.
+"""Lending token detection for Curve pools.
 
 Detects cTokens (via isCToken()) and yTokens (via token()) in a Curve
 pool, and computes precision multiplier overrides for cTokens based on
@@ -33,13 +32,16 @@ def detect_lending_tokens(
     *,
     block_identifier: int,
 ) -> LendingDetectionResult:
-    """
-    Detect lending tokens (cTokens, yTokens) and compute precision multipliers.
+    """Detect lending tokens (cTokens, yTokens) and compute precision multipliers.
 
     For lending tokens, precision_multipliers must be based on the
     UNDERLYING token decimals, not the wrapped token decimals.
     e.g., cDAI has 8 decimals, but DAI has 18, so precision_multiplier = 10^0 = 1
     cUSDC has 8 decimals, but USDC has 6, so precision_multiplier = 10^12
+
+    Returns:
+        The computed value.
+
     """
     use_lending: list[bool] = []
     precision_multiplier_overrides: dict[int, int] = {}  # index -> override value

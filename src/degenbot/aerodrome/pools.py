@@ -47,10 +47,13 @@ if TYPE_CHECKING:
 
 
 def _decode_aerodrome_v2_sync(log: dict) -> Any:  # noqa: ANN401
-    """
-    Decode a V2 Sync event for Aerodrome pools.
+    """Decode a V2 Sync event for Aerodrome pools.
 
     Same format as Uniswap V2 Sync, but creates an AerodromeV2PoolExternalUpdate.
+
+    Returns:
+        The computed value.
+
     """
     reserve0, reserve1 = abi_decode(
         ["uint112", "uint112"],
@@ -145,13 +148,16 @@ class AerodromeV2Pool(
         self._subscribers: WeakSet[Subscriber] = WeakSet()
 
     def __repr__(self) -> str:  # pragma: no cover
-        """Return the canonical string representation."""
+        """Return the canonical string representation.
+
+        Returns:
+            A string representation of the object.
+
+        """
         return f"{self.__class__.__name__}(address={self.address}, token0={self._token0}, token1={self._token1}, stable={self._stable})"  # noqa:E501
 
     @property
     def chain_id(self) -> int | None:
-        """Return the canonical string representation."""
-        """Return a string representation."""
         """Return chain id."""
         return self._chain_id
 
@@ -182,7 +188,12 @@ class AerodromeV2Pool(
         state: PoolState,
         vector: UniswapPoolSwapVector,
     ) -> bool:
-        """Swap is viable."""
+        """Swap is viable.
+
+        Returns:
+            The computed boolean value.
+
+        """
         if state.reserves_token0 == 0 or state.reserves_token1 == 0:
             return False
         return state.reserves_token1 > 1 if vector.zero_for_one else state.reserves_token0 > 1
@@ -221,7 +232,12 @@ class AerodromeV2Pool(
         int,  # fee
         tuple[int, int],  # reserves
     ]:
-        """Return pool identity values."""
+        """Return pool identity values.
+
+        Returns:
+            The computed value.
+
+        """
         immutable_calls = [
             {
                 "to": self.address,
@@ -307,8 +323,7 @@ class AerodromeV2Pool(
         self,
         block: BlockNumber,
     ) -> None:
-        """
-        Restore the last pool state recorded prior to a target block.
+        """Restore the last pool state recorded prior to a target block.
 
         Use this method to maintain consistent state data following a chain re-organization.
 
@@ -329,7 +344,12 @@ class AerodromeV2Pool(
         token_out: ChecksumAddress,
         state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
-        """Simulate swap."""
+        """Simulate swap.
+
+        Returns:
+            The computed value.
+
+        """
         aero_state: AerodromeV2PoolState | None = None
         if state_override is not None:
             if not isinstance(state_override, AerodromeV2PoolState):
@@ -370,7 +390,12 @@ class AerodromeV2Pool(
         amount_out: int,
         state_override: AerodromeV2PoolState | None = None,
     ) -> SimulationResult:
-        """Simulate swap for output."""
+        """Simulate swap for output.
+
+        Returns:
+            The computed value.
+
+        """
         if token_out == self._token0.address:
             token_out_obj = self._token0
             expected_token_in = self._token1.address
@@ -398,11 +423,21 @@ class AerodromeV2Pool(
         )
 
     def reserves_for_cache(self) -> tuple[int, int]:
-        """Return (reserve_token0, reserve_token1) for the Rust solver cache."""
+        """Return (reserve_token0, reserve_token1) for the Rust solver cache.
+
+        Returns:
+            The computed value.
+
+        """
         return (self.state.reserves_token0, self.state.reserves_token1)
 
     def fee_for_cache(self) -> Fraction:
-        """Return the pool fee for the Rust solver cache."""
+        """Return the pool fee for the Rust solver cache.
+
+        Returns:
+            The computed value.
+
+        """
         return self._fee
 
     def to_hop_state(
@@ -413,7 +448,12 @@ class AerodromeV2Pool(
         token_in: Erc20Token | None = None,
         token_out: Erc20Token | None = None,  # noqa: ARG002
     ) -> HopType:
-        """Convert to hop state."""
+        """Convert to hop state.
+
+        Returns:
+            The computed value.
+
+        """
         # token_in/token_out unused — 2-token pools determine pair from zero_for_one.
         # Callers should ensure these match pool.token0/pool.token1 if provided.
         state = state_override or self.state
@@ -478,7 +518,12 @@ class AerodromeV2Pool(
         amount_in: int,
         amount_out: int,
     ) -> UniswapV2PoolSwapAmounts:
-        """Build swap amount."""
+        """Build swap amount.
+
+        Returns:
+            The computed value.
+
+        """
         return UniswapV2PoolSwapAmounts(
             pool=self.address,
             amounts_in=(amount_in, 0) if zero_for_one else (0, amount_in),

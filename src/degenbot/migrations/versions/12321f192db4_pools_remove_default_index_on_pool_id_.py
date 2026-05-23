@@ -1,5 +1,4 @@
-"""
-Pools: remove default index on pool ID foreign key.
+"""Pools: remove default index on pool ID foreign key.
 
 Revision ID: 12321f192db4
 Revises: 66930706257e

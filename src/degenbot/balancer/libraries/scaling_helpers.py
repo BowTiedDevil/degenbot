@@ -29,10 +29,13 @@ def _downscale_down(
     amount: int,
     scaling_factor: int,
 ) -> int:
-    """
-    Reverses the `scaling_factor` applied to `amount`, resulting in a smaller or equal value.
+    """Reverses the `scaling_factor` applied to `amount`, resulting in a smaller or equal value.
 
     depending on whether it needed scaling or not. The result is rounded down.
+
+    Returns:
+        The computed integer value.
+
     """
     return div_down(amount, scaling_factor)
 
@@ -41,10 +44,13 @@ def _downscale_up(
     amount: int,
     scaling_factor: int,
 ) -> int:
-    """
-    Reverses the `scaling_factor` applied to `amount`, resulting in a smaller or equal value.
+    """Reverses the `scaling_factor` applied to `amount`, resulting in a smaller or equal value.
 
     depending on whether it needed scaling or not. The result is rounded up.
+
+    Returns:
+        The computed integer value.
+
     """
     return div_up(amount, scaling_factor)
 
@@ -56,8 +62,7 @@ def _upscale_array(amounts: list[int], scaling_factors: Sequence[int]) -> None:
 
 
 def _downscale_down_array(amounts: list[int], scaling_factors: list[int]) -> None:
-    """
-    Downscale an entire array in-place (rounding down), equivalent to ``_downscale_down`` per.
+    """Downscale an entire array in-place (rounding down), equivalent to ``_downscale_down`` per.
 
     in-place.
     """
@@ -66,8 +71,7 @@ def _downscale_down_array(amounts: list[int], scaling_factors: list[int]) -> Non
 
 
 def _downscale_up_array(amounts: list[int], scaling_factors: list[int]) -> None:
-    """
-    Downscale an entire array in-place (rounding up), equivalent to ``_downscale_up`` per.
+    """Downscale an entire array in-place (rounding up), equivalent to ``_downscale_up`` per.
 
     in-place.
     """

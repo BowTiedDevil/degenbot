@@ -46,8 +46,7 @@ _V2_TWO_HEX = "1bc16d674ec80000"
 
 
 def detect_pow_version(bytecode: str) -> PowVersion:
-    """
-    Detect which FixedPoint library version a pool contract uses from its bytecode.
+    """Detect which FixedPoint library version a pool contract uses from its bytecode.
 
     V2 (WeightedPool) contracts include fast paths for y == ONE, TWO, FOUR in
     powDown/powUp. These reference the TWO and FOUR constants, which are absent
@@ -56,6 +55,10 @@ def detect_pow_version(bytecode: str) -> PowVersion:
     The detection works by checking for the TWO constant (0x1bc16d674ec80000)
     in the deployed bytecode. This constant is used in the `y == TWO` fast-path
     comparison and does not appear in V1 contracts.
+
+    Returns:
+        The computed value.
+
     """
     if _V2_TWO_HEX in bytecode:
         return PowVersion.V2
@@ -116,19 +119,25 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         self._subscribers: WeakSet[Subscriber] = WeakSet()
 
     def __repr__(self) -> str:  # pragma: no cover
-        """Return the canonical string representation."""
+        """Return the canonical string representation.
+
+        Returns:
+            A string representation of the object.
+
+        """
         return f"{self.__class__.__name__}(address={self.address}, tokens={len(self._tokens)})"
 
     def __str__(self) -> str:  # pragma: no cover
-        """Return a human-readable string representation."""
+        """Return a human-readable string representation.
+
+        Returns:
+            A string representation of the object.
+
+        """
         return f"{self.__class__.__name__} WeightedPool @ {self.address}"
 
     @property
     def balances(self) -> tuple[int, ...]:
-        """Return the canonical string representation."""
-        """Return a human-readable string representation."""
-        """Return a string representation."""
-        """Return a string representation."""
         """Balances."""
         return self.state.balances
 
@@ -154,7 +163,12 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         token_in_quantity: int,
         override_state: PoolState | None = None,
     ) -> int:
-        """Calculate tokens out from tokens in."""
+        """Calculate tokens out from tokens in.
+
+        Returns:
+            The computed integer value.
+
+        """
         token_in_index = self._tokens.index(token_in)
         token_out_index = self._tokens.index(token_out)
 
@@ -193,7 +207,12 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         token_out_quantity: int,
         override_state: PoolState | None = None,
     ) -> int:
-        """Compute how many tokens must be sent to take `token_out_quantity` out."""
+        """Compute how many tokens must be sent to take `token_out_quantity` out.
+
+        Returns:
+            The computed integer value.
+
+        """
         token_in_index = self._tokens.index(token_in)
         token_out_index = self._tokens.index(token_out)
 
@@ -239,7 +258,12 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         token_out: ChecksumAddress,
         state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
-        """Simulate swap."""
+        """Simulate swap.
+
+        Returns:
+            The computed value.
+
+        """
         balancer_state: BalancerV2PoolState | None = None
         if state_override is not None:
             if not isinstance(state_override, BalancerV2PoolState):
@@ -270,15 +294,18 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         )
 
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
-        """Return the pool fee regardless of direction."""
+        """Return the pool fee regardless of direction.
+
+        Returns:
+            The computed value.
+
+        """
         return self.fee
 
     def external_update(
         self,
         update: BalancerV2WeightedPoolExternalUpdate,
     ) -> None:
-        """Extract fee."""
-        """Extract fee."""
         """Apply an external state update with new balances."""
         if self.state.block is not None and update.block_number < self.state.block:
             return
@@ -303,11 +330,14 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         token_in: Erc20Token | None = None,
         token_out: Erc20Token | None = None,
     ) -> HopType:
-        """
-        Create a hop state for this pool.
+        """Create a hop state for this pool.
 
         For 2-token pools, zero_for_one maps to token[0] -> token[1] direction.
         For N-token pools, pass token_in/token_out to select the pair.
+
+        Returns:
+            The computed value.
+
         """
         state = state_override or self.state
 
@@ -358,11 +388,14 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         token_in: Erc20Token | None = None,
         token_out: Erc20Token | None = None,
     ) -> BalancerV2SwapAmounts:
-        """
-        Build a BalancerV2SwapAmounts for this pool's swap.
+        """Build a BalancerV2SwapAmounts for this pool's swap.
 
         For N > 2 token pools, token_in and token_out must be provided.
         Use BalancerPairView for ArbitragePathPool conformance.
+
+        Returns:
+            The computed value.
+
         """
         # Resolve token pair
         if token_in is not None and token_out is not None:

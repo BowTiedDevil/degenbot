@@ -1,5 +1,4 @@
-"""
-LogListener — dispatch registry for eth_subscribe log events.
+"""LogListener — dispatch registry for eth_subscribe log events.
 
 A pure Python lookup table mapping ``(address, topic0)`` → handler list.
 Receives raw log dicts via ``dispatch(log)``, looks up handlers, and
@@ -33,7 +32,12 @@ from collections.abc import Callable  # noqa: TC003
 
 
 def _normalize_hex(value: str | bytes) -> str:
-    """Normalize a hex value to lowercase with 0x prefix."""
+    """Normalize a hex value to lowercase with 0x prefix.
+
+    Returns:
+        The computed string value.
+
+    """
     if isinstance(value, bytes):
         return f"0x{value.hex()}"
     if value.startswith(("0x", "0X")):
@@ -42,8 +46,7 @@ def _normalize_hex(value: str | bytes) -> str:
 
 
 class LogListener:
-    """
-    Dispatch registry mapping ``(address, topic0)`` → handler list.
+    """Dispatch registry mapping ``(address, topic0)`` → handler list.
 
     Handlers are sync ``Callable[[dict], None]``. Registration and
     unregistration are O(1). Dispatch is O(handlers) for matched logs,
@@ -69,8 +72,7 @@ class LogListener:
         topic0: str,
         handler: Callable[[dict], None],
     ) -> None:
-        """
-        Register a handler for ``(address, topic0)``.
+        """Register a handler for ``(address, topic0)``.
 
         Args:
             address: Contract address (checksummed or lowercase —
@@ -100,8 +102,7 @@ class LogListener:
         topic0: str,
         handler: Callable[[dict], None],
     ) -> None:
-        """
-        Remove a handler for ``(address, topic0)``.
+        """Remove a handler for ``(address, topic0)``.
 
         No-op if the handler was not registered.
         """
@@ -119,8 +120,7 @@ class LogListener:
             del self._handler_sets[key]
 
     def dispatch(self, log: dict) -> None:
-        """
-        Dispatch a raw log dict to all matching handlers.
+        """Dispatch a raw log dict to all matching handlers.
 
         Looks up ``(log["address"], log["topics"][0])`` in the registry.
         If found, calls each handler sequentially in insertion order.
@@ -151,13 +151,28 @@ class LogListener:
             handler(log)
 
     def handler_count(self) -> int:
-        """Return the total number of registered handlers."""
+        """Return the total number of registered handlers.
+
+        Returns:
+            The computed integer value.
+
+        """
         return sum(len(hs) for hs in self._handlers.values())
 
     def key_count(self) -> int:
-        """Return the number of registered ``(address, topic0)`` keys."""
+        """Return the number of registered ``(address, topic0)`` keys.
+
+        Returns:
+            The computed integer value.
+
+        """
         return len(self._handlers)
 
     def __repr__(self) -> str:
-        """Return a string representation."""
+        """Return a string representation.
+
+        Returns:
+            A string representation of the object.
+
+        """
         return f"LogListener(keys={self.key_count()}, handlers={self.handler_count()})"

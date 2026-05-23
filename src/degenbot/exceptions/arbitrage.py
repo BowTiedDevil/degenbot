@@ -42,8 +42,7 @@ class InvalidForwardAmount(ArbitrageError):
 
 
 class IncompatiblePoolInvariant(ArbitrageError):
-    """
-    Raised when a pool's invariant type is not supported for.
+    """Raised when a pool's invariant type is not supported for.
 
     arbitrage path construction (e.g. Aerodrome stable pools).
     """
@@ -65,14 +64,18 @@ class NoSolverSolution(ArbitrageError):
         super().__init__(message=message)
 
     def __reduce__(self) -> tuple[Any, ...]:
-        """Return pickling information."""
+        """Return pickling information.
+
+        Returns:
+            The computed value.
+
+        """
         # Pickling will raise an exception if a reduction method is not defined
         return self.__class__, (self.message,)
 
 
 class OptimizationError(ArbitrageError):
-    """
-    Raised when an optimizer fails to find a profitable solution,.
+    """Raised when an optimizer fails to find a profitable solution,.
 
     fails to converge, or receives invalid inputs.
 
@@ -101,6 +104,11 @@ class OptimizationError(ArbitrageError):
         super().__init__(message=message)
 
     def __reduce__(self) -> tuple[Any, ...]:
-        """Return pickling information."""
+        """Return pickling information.
+
+        Returns:
+            The computed value.
+
+        """
         # Pickling support for multiprocessing
         return self.__class__, (self.message, self.iterations, self.method)

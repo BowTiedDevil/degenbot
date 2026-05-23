@@ -1,5 +1,4 @@
-"""
-drop factory column.
+"""drop factory column.
 
 Revision ID: 04f858f979a9
 Revises: 8b29ed99a2ac

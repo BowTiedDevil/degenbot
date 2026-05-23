@@ -1,5 +1,4 @@
-"""
-Parses transaction events into logical operations based on asset flows.
+"""Parses transaction events into logical operations based on asset flows.
 
 Provides strict validation with detailed plain-text error reporting.
 """
@@ -48,8 +47,7 @@ class TransactionOperationsParser:
         pool_address: ChecksumAddress,
         treasury_address: ChecksumAddress | None = None,
     ) -> None:
-        """
-        Initialize parser.
+        """Initialize parser.
 
         Args:
             market: Aave V3 market with assets containing aToken and vToken relationships.
@@ -72,7 +70,12 @@ class TransactionOperationsParser:
         )
 
     def _get_default_treasury_address(self) -> ChecksumAddress:
-        """Get default treasury address for known markets."""
+        """Get default treasury address for known markets.
+
+        Returns:
+            The computed value.
+
+        """
         # Known treasury addresses (should be added to deployments or stored in DB)
         known_treasuries: dict[int, ChecksumAddress] = {
             1: get_checksum_address("0x464C71f6c2F760DdA6093dCB91C24c39e5d6e18c"),  # Ethereum
@@ -82,7 +85,12 @@ class TransactionOperationsParser:
         return known_treasuries[self.market.chain_id]
 
     def _get_gho_asset(self) -> AaveGhoToken:
-        """Get GHO token asset for the current market."""
+        """Get GHO token asset for the current market.
+
+        Returns:
+            The computed value.
+
+        """
         # AaveGhoToken is a tiny table (1 row per chain). Query it directly
         # with eager-loaded relationships, then filter in Python to avoid
         # the expensive JOIN through Erc20TokenTable (572K+ rows).
@@ -106,8 +114,7 @@ class TransactionOperationsParser:
         raise ValueError(msg)
 
     def _get_token_type(self, token_address: ChecksumAddress) -> TokenType | None:
-        """
-        Get token type (aToken or vToken) for a given token address.
+        """Get token type (aToken or vToken) for a given token address.
 
         Queries the database directly to avoid stale ORM relationship cache issues.
 
@@ -160,7 +167,12 @@ class TransactionOperationsParser:
     def _get_reserve_for_debt_token(
         self, debt_token_address: ChecksumAddress
     ) -> ChecksumAddress | None:
-        """Get the underlying reserve address for a debt token."""
+        """Get the underlying reserve address for a debt token.
+
+        Returns:
+            The computed value.
+
+        """
         asset = self.session.scalar(
             select(AaveV3Asset)
             .join(AaveV3Asset.v_token)
@@ -174,7 +186,12 @@ class TransactionOperationsParser:
         return get_checksum_address(asset.underlying_token.address)
 
     def _get_a_token_for_asset(self, underlying_asset: ChecksumAddress) -> ChecksumAddress | None:
-        """Get the aToken address for an underlying asset."""
+        """Get the aToken address for an underlying asset.
+
+        Returns:
+            The computed value.
+
+        """
         asset = self.session.scalar(
             select(AaveV3Asset)
             .join(AaveV3Asset.underlying_token)
@@ -188,7 +205,12 @@ class TransactionOperationsParser:
         return get_checksum_address(asset.a_token.address)
 
     def _get_v_token_for_asset(self, underlying_asset: ChecksumAddress) -> ChecksumAddress | None:
-        """Get the vToken address for an underlying asset."""
+        """Get the vToken address for an underlying asset.
+
+        Returns:
+            The computed value.
+
+        """
         # Query database directly to avoid stale ORM cache
         asset = self.session.scalar(
             select(AaveV3Asset)
@@ -203,7 +225,12 @@ class TransactionOperationsParser:
         return get_checksum_address(asset.v_token.address)
 
     def _get_pool_revision(self) -> int:
-        """Get the Pool contract revision from the market."""
+        """Get the Pool contract revision from the market.
+
+        Returns:
+            The computed integer value.
+
+        """
         pool_contract = self.session.scalar(
             select(AaveV3Contract).where(
                 AaveV3Contract.market_id == self.market.id,
@@ -219,7 +246,12 @@ class TransactionOperationsParser:
         token_address: ChecksumAddress,
         token_type: TokenType,
     ) -> AaveV3Asset | None:
-        """Get the asset for a given token address."""
+        """Get the asset for a given token address.
+
+        Returns:
+            The computed value.
+
+        """
         # Select the appropriate relationship based on token type
         if token_type == TokenType.A_TOKEN:
             relationship = AaveV3Asset.a_token
@@ -239,7 +271,12 @@ class TransactionOperationsParser:
         )
 
     def _get_asset_by_a_token(self, a_token_address: ChecksumAddress) -> AaveV3Asset | None:
-        """Get the asset for a given aToken address."""
+        """Get the asset for a given aToken address.
+
+        Returns:
+            The computed value.
+
+        """
         return self._get_asset_by_token(a_token_address, TokenType.A_TOKEN)
 
     def _get_event_type_for_token(
@@ -247,10 +284,13 @@ class TransactionOperationsParser:
         token_address: ChecksumAddress,
         event_category: Literal["mint", "burn", "transfer"],
     ) -> ScaledTokenEventType:
-        """
-        Determine the event type based on token type and event category.
+        """Determine the event type based on token type and event category.
 
         Uses GHO token check first (special case), then falls back to token type lookup.
+
+        Returns:
+            The computed value.
+
         """
         if event_category == "mint":
             if token_address == self.gho_vtoken_address:
@@ -290,10 +330,13 @@ class TransactionOperationsParser:
         pool_revision: int,
         tolerance: int = TOKEN_AMOUNT_MATCH_TOLERANCE,
     ) -> bool:
-        """
-        Check if calculated amount matches expected, accounting for pool revision tolerance.
+        """Check if calculated amount matches expected, accounting for pool revision tolerance.
 
         Pool revision 9+ uses ray math with flooring which can cause ±2 wei deviations.
+
+        Returns:
+            The computed boolean value.
+
         """
         if pool_revision >= SCALED_AMOUNT_POOL_REVISION:
             return abs(calculated - expected) <= tolerance
@@ -304,11 +347,14 @@ class TransactionOperationsParser:
         ev1: ScaledTokenEvent,
         ev2: ScaledTokenEvent,
     ) -> bool:
-        """
-        Check if two transfer events are compatible (ERC20 Transfer + BalanceTransfer).
+        """Check if two transfer events are compatible (ERC20 Transfer + BalanceTransfer).
 
         Allows matching between ERC20 Transfer events and BalanceTransfer events
         of the same token type (collateral or debt).
+
+        Returns:
+            The computed boolean value.
+
         """
         collateral_pair = {
             ScaledTokenEventType.COLLATERAL_TRANSFER,
@@ -323,7 +369,12 @@ class TransactionOperationsParser:
         return event_types in (collateral_pair, debt_pair)
 
     def parse(self, events: list[LogReceipt], tx_hash: HexBytes) -> TransactionOperations:
-        """Parse events into operations."""
+        """Parse events into operations.
+
+        Returns:
+            The computed value.
+
+        """
         assert events
 
         block_number = events[0]["blockNumber"]
@@ -432,7 +483,12 @@ class TransactionOperationsParser:
 
     @staticmethod
     def _extract_pool_events(events: list[LogReceipt]) -> list[LogReceipt]:
-        """Extract pool-level events (SUPPLY, WITHDRAW, etc.)."""
+        """Extract pool-level events (SUPPLY, WITHDRAW, etc.).
+
+        Returns:
+            A list of results.
+
+        """
         pool_topics = {
             AaveV3PoolEvent.SUPPLY.value,
             AaveV3PoolEvent.WITHDRAW.value,
@@ -448,7 +504,12 @@ class TransactionOperationsParser:
         )
 
     def _extract_scaled_token_events(self, events: list[LogReceipt]) -> list[ScaledTokenEvent]:
-        """Extract and decode scaled token events."""
+        """Extract and decode scaled token events.
+
+        Returns:
+            A list of results.
+
+        """
         result = []
         for event in events:
             topic = event["topics"][0]
@@ -478,8 +539,7 @@ class TransactionOperationsParser:
         return sorted(result, key=lambda e: e.event["logIndex"])
 
     def _decode_mint_event(self, event: LogReceipt) -> ScaledTokenEvent:
-        """
-        Decode a Mint event.
+        """Decode a Mint event.
 
         Event definition:
             event Mint(
@@ -489,6 +549,10 @@ class TransactionOperationsParser:
                 uint256 balanceIncrease,
                 uint256 index
             );
+
+        Returns:
+            The computed value.
+
         """
         caller = decode_address(event["topics"][1])
         user = decode_address(event["topics"][2])
@@ -513,7 +577,12 @@ class TransactionOperationsParser:
         )
 
     def _decode_burn_event(self, event: LogReceipt) -> ScaledTokenEvent:
-        """Decode a Burn event."""
+        """Decode a Burn event.
+
+        Returns:
+            The computed value.
+
+        """
         from_addr = decode_address(event["topics"][1])
         target = decode_address(event["topics"][2])
         amount, balance_increase, index = eth_abi.abi.decode(
@@ -537,11 +606,14 @@ class TransactionOperationsParser:
         )
 
     def _decode_balance_transfer_event(self, event: LogReceipt) -> ScaledTokenEvent:
-        """
-        Decode a BalanceTransfer event.
+        """Decode a BalanceTransfer event.
 
         BalanceTransfer events represent internal scaled balance movements in aTokens.
         During liquidations, collateral may be transferred to the treasury instead of burned.
+
+        Returns:
+            The computed value.
+
         """
         from_addr = decode_address(event["topics"][1])
         to_addr = decode_address(event["topics"][2])
@@ -567,12 +639,15 @@ class TransactionOperationsParser:
         )
 
     def _decode_transfer_event(self, event: LogReceipt) -> ScaledTokenEvent | None:
-        """
-        Decode an ERC20 Transfer event for three specific token types.
+        """Decode an ERC20 Transfer event for three specific token types.
 
         - aToken
         - vToken
         - GHO vToken discount token.
+
+        Returns:
+            The computed value.
+
         """
         from_addr = decode_address(event["topics"][1])
         to_addr = decode_address(event["topics"][2])
@@ -623,7 +698,12 @@ class TransactionOperationsParser:
         assigned_indices: set[int],
         pool_revision: int,
     ) -> Operation | None:
-        """Create operation starting from a pool event."""
+        """Create operation starting from a pool event.
+
+        Returns:
+            The computed value.
+
+        """
         topic = pool_event["topics"][0]
 
         if topic == AaveV3PoolEvent.SUPPLY.value:
@@ -686,8 +766,7 @@ class TransactionOperationsParser:
         assigned_indices: set[int],
         pool_revision: int,
     ) -> Operation:
-        """
-        Create SUPPLY operation.
+        """Create SUPPLY operation.
 
         Event definition:
             event Supply(
@@ -697,6 +776,10 @@ class TransactionOperationsParser:
                 uint256 amount,
                 uint16 indexed referralCode
             );
+
+        Returns:
+            The computed value.
+
         """
         assert supply_event["topics"][0] == AaveV3PoolEvent.SUPPLY.value
 
@@ -792,8 +875,7 @@ class TransactionOperationsParser:
         assigned_indices: set[int],
         pool_revision: int,
     ) -> Operation:
-        """
-        Create WITHDRAW operation.
+        """Create WITHDRAW operation.
 
         Event definition:
             event Withdraw(
@@ -802,6 +884,10 @@ class TransactionOperationsParser:
                 address indexed to,
                 uint256 amount
             );
+
+        Returns:
+            The computed value.
+
         """
         assert withdraw_event["topics"][0] == AaveV3PoolEvent.WITHDRAW.value
 
@@ -935,8 +1021,7 @@ class TransactionOperationsParser:
         assigned_indices: set[int],
         pool_revision: int,
     ) -> Operation:
-        """
-        Create BORROW operation.
+        """Create BORROW operation.
 
         Event definition:
             event Borrow(
@@ -948,6 +1033,10 @@ class TransactionOperationsParser:
                 uint256 borrowRate,
                 uint16 indexed referralCode
             );
+
+        Returns:
+            The computed value.
+
         """
         assert borrow_event["topics"][0] == AaveV3PoolEvent.BORROW.value
 
@@ -1030,8 +1119,7 @@ class TransactionOperationsParser:
         assigned_indices: set[int],
         pool_revision: int,
     ) -> Operation:
-        """
-        Create REPAY operation.
+        """Create REPAY operation.
 
         Event definition:
             event Repay(
@@ -1041,6 +1129,10 @@ class TransactionOperationsParser:
                 uint256 amount,
                 bool useATokens
             );
+
+        Returns:
+            The computed value.
+
         """
         reserve = decode_address(repay_event["topics"][1])
         user = decode_address(repay_event["topics"][2])
@@ -1087,12 +1179,15 @@ class TransactionOperationsParser:
         assigned_indices: set[int],
         pool_revision: int,
     ) -> Operation:
-        """
-        Create standard REPAY or GHO_REPAY operation.
+        """Create standard REPAY or GHO_REPAY operation.
 
         Attaches the principal debt event (Burn or Mint) to the operation.
         The event contains the repayment data including any accrued interest
         (available via the balance_increase field).
+
+        Returns:
+            The computed value.
+
         """
         scaled_token_events: list[ScaledTokenEvent] = []
         local_assigned: set[int] = set()
@@ -1141,7 +1236,12 @@ class TransactionOperationsParser:
         assigned_indices: set[int],
         pool_revision: int,
     ) -> Operation:
-        """Create REPAY_WITH_ATOKENS operation (debt burn + collateral burn + balance transfer)."""
+        """Create REPAY_WITH_ATOKENS operation (debt burn + collateral burn + balance transfer).
+
+        Returns:
+            The computed value.
+
+        """
         scaled_token_events: list[ScaledTokenEvent] = []
         balance_transfer_events: list[LogReceipt] = []
 
@@ -1185,8 +1285,7 @@ class TransactionOperationsParser:
         assigned_indices: set[int],
         pool_revision: int,
     ) -> ScaledTokenEvent:
-        """
-        Find the principal debt event (Burn or Mint) associated with a REPAY operation.
+        """Find the principal debt event (Burn or Mint) associated with a REPAY operation.
 
         For REPAY operations, the VariableDebtToken emits either:
         - Burn event: when repayment > interest (net decrease in unscaled debt)
@@ -1194,6 +1293,10 @@ class TransactionOperationsParser:
 
         Both represent the same operation (debt reduction via repayment), just with
         different net effects due to interest accrual.
+
+        Returns:
+            The computed value.
+
         """
         for ev in scaled_events:
             if ev.event["logIndex"] in assigned_indices:
@@ -1251,8 +1354,7 @@ class TransactionOperationsParser:
         assigned_indices: set[int],
         pool_revision: int,
     ) -> ScaledTokenEvent:
-        """
-        Find the collateral adjustment event for a REPAY_WITH_ATOKENS operation.
+        """Find the collateral adjustment event for a REPAY_WITH_ATOKENS operation.
 
         In a REPAY_WITH_ATOKENS operation, the user burns aTokens to repay debt.
         The contract emits either:
@@ -1264,6 +1366,10 @@ class TransactionOperationsParser:
         the expected repayment amount from the pool event.
 
         For pool revision 9+, allows ±2 wei tolerance due to ray math rounding.
+
+        Returns:
+            The computed value.
+
         """
         # Get the aToken address for this reserve
         expected_a_token = self._get_a_token_for_asset(reserve)
@@ -1317,7 +1423,12 @@ class TransactionOperationsParser:
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
     ) -> list[LogReceipt]:
-        """Find debt transfer event to zero address matching the given amount."""
+        """Find debt transfer event to zero address matching the given amount.
+
+        Returns:
+            A list of results.
+
+        """
         for ev in scaled_events:
             if ev.event["logIndex"] in assigned_indices:
                 continue
@@ -1340,12 +1451,15 @@ class TransactionOperationsParser:
         self,
         all_events: list[LogReceipt],
     ) -> dict[tuple[ChecksumAddress, ChecksumAddress], int]:
-        """
-        Pre-analyze liquidations to detect multi-liquidation scenarios.
+        """Pre-analyze liquidations to detect multi-liquidation scenarios.
 
         Returns a mapping of (user, debt_v_token_address) -> liquidation_count.
         This allows proper disambiguation when the same user is liquidated
         multiple times with the same debt asset in one transaction.
+
+        Returns:
+            The computed value.
+
         """
         liquidation_counts: Counter[tuple[ChecksumAddress, ChecksumAddress]] = Counter()
 
@@ -1367,8 +1481,7 @@ class TransactionOperationsParser:
     def _analyze_user_liquidation_count(
         all_events: list[LogReceipt],
     ) -> dict[ChecksumAddress, int]:
-        """
-        Count total liquidations per user (not per user+asset pair).
+        """Count total liquidations per user (not per user+asset pair).
 
         When a user has exactly 1 liquidation, ALL debt burns for that user belong
         to that single liquidation. This handles bad debt liquidations where the
@@ -1376,6 +1489,10 @@ class TransactionOperationsParser:
 
         When a user has multiple liquidations, use asset-specific matching to
         disambiguate which burns belong to which liquidation.
+
+        Returns:
+            The computed value.
+
         """
         counts: dict[ChecksumAddress, int] = {}
         for ev in all_events:
@@ -1396,14 +1513,16 @@ class TransactionOperationsParser:
         user_liquidation_count: int = 1,
         liquidation_position: int = 0,
     ) -> list[ScaledTokenEvent]:
-        """
-        Collect debt burns for the liquidated user.
+        """Collect debt burns for the liquidated user.
 
         Collection strategy:
         - Single liquidation per user: Collect ALL debt burns (no asset filter)
           This handles bad debt liquidations where _burnBadDebt() burns all debt positions.
         - Multiple liquidations per user: Use asset filter + sequential matching
           to disambiguate which burns belong to which liquidation.
+
+        Returns:
+            A list of results.
 
         """
         burns: list[ScaledTokenEvent] = []
@@ -1506,8 +1625,7 @@ class TransactionOperationsParser:
         scaled_events: list[ScaledTokenEvent],
         assigned_indices: set[int],
     ) -> tuple[ScaledTokenEvent | None, list[ScaledTokenEvent]]:
-        """
-        Collect collateral events (burns and transfers) for the liquidation.
+        """Collect collateral events (burns and transfers) for the liquidation.
 
         During liquidations, borrower may have BOTH collateral burned AND multiple transfers.
         Collateral may be burned OR transferred to treasury (BalanceTransfer).
@@ -1557,8 +1675,7 @@ class TransactionOperationsParser:
         assigned_indices: set[int],
         pool_revision: int,
     ) -> Operation:
-        """
-        Create LIQUIDATION operation.
+        """Create LIQUIDATION operation.
 
         Event definition:
             event LiquidationCall(
@@ -1570,6 +1687,10 @@ class TransactionOperationsParser:
                 address liquidator,
                 bool receiveAToken
             );
+
+        Returns:
+            The computed value.
+
         """
         collateral_asset = decode_address(liquidation_event["topics"][1])
         debt_asset = decode_address(liquidation_event["topics"][2])
@@ -1712,8 +1833,7 @@ class TransactionOperationsParser:
         deficit_event: LogReceipt,
         pool_revision: int,
     ) -> Operation:
-        """
-        Create DEFICIT_CREATED operation.
+        """Create DEFICIT_CREATED operation.
 
         Event definition:
             event DeficitCreated(
@@ -1730,6 +1850,10 @@ class TransactionOperationsParser:
         part of the bad debt write-off mechanism. In such cases, the GHO debt
         burn should be matched to the LIQUIDATION_CALL operation, not a
         separate flash loan operation.
+
+        Returns:
+            The computed value.
+
         """
         scaled_token_events: list[ScaledTokenEvent] = []
 
@@ -1754,8 +1878,7 @@ class TransactionOperationsParser:
         starting_operation_id: int,
         pool_revision: int,
     ) -> list[Operation]:
-        """
-        Create DEFICIT_COVERAGE operations for paired BalanceTransfer + Burn events.
+        """Create DEFICIT_COVERAGE operations for paired BalanceTransfer + Burn events.
 
         Umbrella protocol's executeCoverReserveDeficits transfers aTokens to a user
         (via BalanceTransfer) and then burns them to cover reserve deficits. These
@@ -1880,8 +2003,7 @@ class TransactionOperationsParser:
         starting_operation_id: int,
         pool_revision: int,
     ) -> list[Operation]:
-        """
-        Create INTEREST_ACCRUAL operations for unassigned interest events.
+        """Create INTEREST_ACCRUAL operations for unassigned interest events.
 
         Interest accrual events are mints where amount == balance_increase.
         These represent pure interest accrual with no corresponding pool event.
@@ -1964,11 +2086,14 @@ class TransactionOperationsParser:
 
     @staticmethod
     def _extract_minted_to_treasury_events(events: list[LogReceipt]) -> list[LogReceipt]:
-        """
-        Extract MintedToTreasury events from Pool contract.
+        """Extract MintedToTreasury events from Pool contract.
 
         These events contain the actual amount minted to treasury (underlying for Rev 8,
         which equals the scaled amount passed to the AToken).
+
+        Returns:
+            A list of results.
+
         """
         return [e for e in events if e["topics"][0] == AaveV3PoolEvent.MINTED_TO_TREASURY.value]
 
@@ -1980,8 +2105,7 @@ class TransactionOperationsParser:
         pool_revision: int,
         minted_to_treasury_events: list[LogReceipt],
     ) -> list[Operation]:
-        """
-        Create MINT_TO_TREASURY operations for unassigned scaled token mints to the Pool.
+        """Create MINT_TO_TREASURY operations for unassigned scaled token mints to the Pool.
 
         When the Pool contract calls mintToTreasury(), it emits ScaledTokenMint events
         where the caller_address is the Pool itself. These represent protocol reserves being
@@ -2086,8 +2210,7 @@ class TransactionOperationsParser:
         starting_operation_id: int,
         pool_revision: int,
     ) -> list[Operation]:
-        """
-        Create TRANSFER operations for unassigned transfer events.
+        """Create TRANSFER operations for unassigned transfer events.
 
         Transfer events (ERC20 Transfer for aTokens/vTokens) are standalone
         and don't have corresponding pool events. When both an ERC20 Transfer
@@ -2135,7 +2258,12 @@ class TransactionOperationsParser:
         scaled_events: list[ScaledTokenEvent],
         local_assigned: set[int],
     ) -> bool:
-        """Check if an ERC20 Transfer to zero address is part of a burn operation."""
+        """Check if an ERC20 Transfer to zero address is part of a burn operation.
+
+        Returns:
+            The computed boolean value.
+
+        """
         ev_token_address = ev.event["address"]
         for other_ev in scaled_events:
             if (
@@ -2158,7 +2286,12 @@ class TransactionOperationsParser:
         scaled_events: list[ScaledTokenEvent],
         local_assigned: set[int],
     ) -> bool:
-        """Check if an ERC20 Transfer from zero address is part of a mint operation."""
+        """Check if an ERC20 Transfer from zero address is part of a mint operation.
+
+        Returns:
+            The computed boolean value.
+
+        """
         ev_token_address = ev.event["address"]
         for other_ev in scaled_events:
             if (
@@ -2182,7 +2315,12 @@ class TransactionOperationsParser:
         assigned_indices: set[int],
         local_assigned: set[int],
     ) -> ScaledTokenEvent | None:
-        """Find a matching BalanceTransfer event for an ERC20 Transfer."""
+        """Find a matching BalanceTransfer event for an ERC20 Transfer.
+
+        Returns:
+            The computed value.
+
+        """
         # Look in unassigned events first
         for bt_ev in all_scaled_token_events:
             if (
@@ -2213,7 +2351,12 @@ class TransactionOperationsParser:
         starting_operation_id: int,
         pool_revision: int,
     ) -> tuple[list[Operation], int]:
-        """Create operations for ERC20 Transfer events, pairing with BalanceTransfer when found."""
+        """Create operations for ERC20 Transfer events, pairing with BalanceTransfer when found.
+
+        Returns:
+            The computed value.
+
+        """
         operations: list[Operation] = []
         operation_id = starting_operation_id
 
@@ -2310,7 +2453,12 @@ class TransactionOperationsParser:
 
     @staticmethod
     def _validate_supply(op: Operation) -> list[str]:
-        """Validate SUPPLY operation."""
+        """Validate SUPPLY operation.
+
+        Returns:
+            A list of results.
+
+        """
         errors: list[str] = []
 
         assert op.pool_event is not None, "Missing SUPPLY pool event"
@@ -2325,7 +2473,12 @@ class TransactionOperationsParser:
 
     @staticmethod
     def _validate_withdraw(op: Operation) -> list[str]:
-        """Validate WITHDRAW operation."""
+        """Validate WITHDRAW operation.
+
+        Returns:
+            A list of results.
+
+        """
         errors: list[str] = []
 
         assert op.pool_event is not None, "Missing WITHDRAW pool event"
@@ -2340,7 +2493,12 @@ class TransactionOperationsParser:
 
     @staticmethod
     def _validate_borrow(op: Operation) -> list[str]:
-        """Validate BORROW operation."""
+        """Validate BORROW operation.
+
+        Returns:
+            A list of results.
+
+        """
         errors: list[str] = []
 
         assert op.pool_event is not None, "Missing BORROW pool event"
@@ -2352,7 +2510,12 @@ class TransactionOperationsParser:
         return errors
 
     def _validate_gho_borrow(self, op: Operation) -> list[str]:
-        """Validate GHO BORROW operation."""
+        """Validate GHO BORROW operation.
+
+        Returns:
+            A list of results.
+
+        """
         errors = self._validate_borrow(op)
 
         gho_mints = [
@@ -2364,7 +2527,12 @@ class TransactionOperationsParser:
 
     @staticmethod
     def _validate_repay(op: Operation) -> list[str]:
-        """Validate REPAY operation."""
+        """Validate REPAY operation.
+
+        Returns:
+            A list of results.
+
+        """
         errors: list[str] = []
 
         assert op.pool_event is not None, "Missing REPAY pool event"
@@ -2376,7 +2544,12 @@ class TransactionOperationsParser:
 
     @staticmethod
     def _validate_repay_with_atokens(op: Operation) -> list[str]:
-        """Validate REPAY_WITH_ATOKENS operation."""
+        """Validate REPAY_WITH_ATOKENS operation.
+
+        Returns:
+            A list of results.
+
+        """
         errors: list[str] = []
 
         assert op.pool_event is not None, "Missing REPAY pool event"
@@ -2397,7 +2570,12 @@ class TransactionOperationsParser:
         return errors
 
     def _validate_gho_repay(self, op: Operation) -> list[str]:
-        """Validate GHO REPAY operation."""
+        """Validate GHO REPAY operation.
+
+        Returns:
+            A list of results.
+
+        """
         errors = self._validate_repay(op)
 
         # GHO repay can emit either BURN (debt reduction) or MINT (interest > repayment)
@@ -2417,7 +2595,12 @@ class TransactionOperationsParser:
 
     @staticmethod
     def _validate_liquidation(op: Operation) -> list[str]:
-        """Validate LIQUIDATION operation."""
+        """Validate LIQUIDATION operation.
+
+        Returns:
+            A list of results.
+
+        """
         errors: list[str] = []
 
         assert op.pool_event is not None, "Missing LIQUIDATION_CALL pool event"
@@ -2434,18 +2617,26 @@ class TransactionOperationsParser:
         return errors
 
     def _validate_gho_liquidation(self, op: Operation) -> list[str]:
-        """Validate GHO LIQUIDATION operation."""
+        """Validate GHO LIQUIDATION operation.
+
+        Returns:
+            A list of results.
+
+        """
         return self._validate_liquidation(op)
 
     @staticmethod
     def _validate_interest_accrual(op: Operation) -> list[str]:
-        """
-        Validate INTEREST_ACCRUAL operation.
+        """Validate INTEREST_ACCRUAL operation.
 
         Interest accrual operations have no pool event. The scaled token event
         represents pure interest accrual where amount == balance_increase.
         Also includes dust mints (balance_increase == 0) from discount updates
         that still need to update the user's last_index.
+
+        Returns:
+            A list of results.
+
         """
         errors: list[str] = []
 
@@ -2458,7 +2649,12 @@ class TransactionOperationsParser:
 
     @staticmethod
     def _validate_balance_transfer(op: Operation) -> list[str]:
-        """Validate BALANCE_TRANSFER operation."""
+        """Validate BALANCE_TRANSFER operation.
+
+        Returns:
+            A list of results.
+
+        """
         errors: list[str] = []
 
         assert op.pool_event is None, "BALANCE_TRANSFER should not have a pool event"
@@ -2481,12 +2677,15 @@ class TransactionOperationsParser:
 
     @staticmethod
     def _validate_deficit_coverage(op: Operation) -> list[str]:
-        """
-        Validate DEFICIT_COVERAGE operation.
+        """Validate DEFICIT_COVERAGE operation.
 
         DEFICIT_COVERAGE operations group paired BalanceTransfer + Burn events
         that occur during Umbrella protocol's deficit coverage operations.
         May include both ERC20 Transfer and BalanceTransfer events for the same transfer.
+
+        Returns:
+            A list of results.
+
         """
         errors: list[str] = []
 
@@ -2523,7 +2722,12 @@ class TransactionOperationsParser:
 
     @staticmethod
     def _validate_mint_to_treasury(op: Operation) -> list[str]:
-        """Validate MINT_TO_TREASURY operation."""
+        """Validate MINT_TO_TREASURY operation.
+
+        Returns:
+            A list of results.
+
+        """
         errors: list[str] = []
 
         # Should have no pool event (treasury mints are standalone)
@@ -2544,7 +2748,12 @@ class TransactionOperationsParser:
 
     @staticmethod
     def _validate_stkaave_transfer(op: Operation) -> list[str]:
-        """Validate STKAAVE_TRANSFER operation."""
+        """Validate STKAAVE_TRANSFER operation.
+
+        Returns:
+            A list of results.
+
+        """
         errors: list[str] = []
 
         # Should have no pool event (transfers are standalone ERC20 events)

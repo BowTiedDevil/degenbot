@@ -1,5 +1,4 @@
-"""
-Add token ID column to pool table.
+"""Add token ID column to pool table.
 
 Revision ID: bbb8d61cef9c
 Revises: 03e723f439dc

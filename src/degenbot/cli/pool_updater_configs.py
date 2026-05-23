@@ -1,5 +1,4 @@
-"""
-Parameterized pool creation event updaters.
+"""Parameterized pool creation event updaters.
 
 Replaces 14 near-identical updater functions with 3 parameterized functions:
 - ``update_v2_pools``: V2-style events
@@ -35,8 +34,7 @@ from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 
 @dataclass(frozen=True)
 class V2PoolUpdateConfig:
-    """
-    Configuration for a V2-style pool creation event updater.
+    """Configuration for a V2-style pool creation event updater.
 
     V2 PoolCreated events have:
     - topics[1]: token0 address
@@ -63,8 +61,7 @@ class V2PoolUpdateConfig:
 
 @dataclass(frozen=True)
 class V3PoolUpdateConfig:
-    """
-    Configuration for a V3-style pool creation event updater.
+    """Configuration for a V3-style pool creation event updater.
 
     V3 PoolCreated events have:
     - topics[1]: token0 address
@@ -84,8 +81,7 @@ class V3PoolUpdateConfig:
 
 @dataclass(frozen=True)
 class V4PoolUpdateConfig:
-    """
-    Configuration for a V4-style pool creation event updater.
+    """Configuration for a V4-style pool creation event updater.
 
     V4 PoolCreated events have:
     - topics[1]: pool_hash (bytes32)

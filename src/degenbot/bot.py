@@ -62,8 +62,7 @@ from degenbot.types.aliases import ChainId  # noqa: TC001
 
 
 class Bot:
-    """
-    Explicit session object that owns the runtime state for a degenbot run.
+    """Explicit session object that owns the runtime state for a degenbot run.
 
     Replaces the four module-level singletons (`config`, `db_session`,
     `connection_manager`, `pool_registry`/`token_registry`/`managed_pool_registry`)
@@ -157,7 +156,12 @@ class Bot:
 
     @classmethod
     def from_config_file(cls) -> Bot:
-        """From config file."""
+        """From config file.
+
+        Returns:
+            An instance wrapping the given config_file.
+
+        """
         return cls(config=_init_config())
 
     def add_tracker[M: AbstractPoolTracker[Any]](
@@ -168,7 +172,12 @@ class Bot:
         chain_id: ChainId | None = None,
         **kwargs: Any,
     ) -> M:
-        """Create a pool manager within this bot's session."""
+        """Create a pool manager within this bot's session.
+
+        Returns:
+            The computed value.
+
+        """
         factory_address = get_checksum_address(factory_address)
         chain_id = chain_id or self.connections.default_chain_id
 
@@ -193,8 +202,7 @@ class Bot:
         pool_class: type[AbstractLiquidityPool],
         builder: PoolBuilder,
     ) -> None:
-        """
-        Register a builder for a concrete pool type.
+        """Register a builder for a concrete pool type.
 
         After registration, ``update()`` will use ``type(pool)`` dict lookup
         instead of isinstance chains to find the right builder.
@@ -214,13 +222,23 @@ class Bot:
         chain_id: ChainId | None = None,
         silent: bool = False,
     ) -> Erc20Token:
-        """Fetch token metadata from DB/RPC and construct an I/O-free Erc20Token."""
+        """Fetch token metadata from DB/RPC and construct an I/O-free Erc20Token.
+
+        Returns:
+            The computed value.
+
+        """
         resolved_chain_id = chain_id or self.connections.default_chain_id
         io = SyncPoolIO(self.connections.get_provider(resolved_chain_id))
         return self._erc20_builder.build(address, chain_id=resolved_chain_id, silent=silent, io=io)
 
     def get_token(self, address: str, *, chain_id: ChainId | None = None) -> Erc20Token:
-        """Get or create a token. Bot handles DB lookup, RPC calls, and registration."""
+        """Get or create a token. Bot handles DB lookup, RPC calls, and registration.
+
+        Returns:
+            The computed value.
+
+        """
         return self.build_erc20token(address, chain_id=chain_id)
 
     def build_pool(
@@ -234,10 +252,13 @@ class Bot:
         tick_data: dict[int, Any] | None = None,
         state_cache_depth: int = 8,
     ) -> AbstractLiquidityPool:
-        """
-        Build a pool from an address, automatically resolving its type.
+        """Build a pool from an address, automatically resolving its type.
 
         V4 managed pools should use ``build_managed_pool()`` instead.
+
+        Returns:
+            The computed value.
+
         """
         address = get_checksum_address(address)
         chain_id = chain_id or self.connections.default_chain_id
@@ -303,7 +324,12 @@ class Bot:
         io: SyncPoolIO,
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
-        """Dispatch to the builder with a typed request."""
+        """Dispatch to the builder with a typed request.
+
+        Returns:
+            The computed value.
+
+        """
         return builder.build(address, chain_id=chain_id, io=io, request=request)
 
     def build_managed_pool(
@@ -325,14 +351,17 @@ class Bot:
         tick_bitmap: dict[int, Any] | None = None,
         tick_data: dict[int, Any] | None = None,
     ) -> UniswapV4Pool:
-        """
-        Build a V4 managed pool from a PoolManager address and pool ID.
+        """Build a V4 managed pool from a PoolManager address and pool ID.
 
         ``address`` is the PoolManager contract. ``pool_id`` identifies the
         pool within the manager.
 
         When the pool is not in the database, ``state_view_address``,
         ``tokens``, ``fee``, ``tick_spacing`` must all be provided.
+
+        Returns:
+            The computed value.
+
         """
         address = get_checksum_address(address)
         chain_id = chain_id or self.connections.default_chain_id
@@ -380,7 +409,12 @@ class Bot:
         address: str,
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
-        """Retrieve the ERC-20 balance for the given address."""
+        """Retrieve the ERC-20 balance for the given address.
+
+        Returns:
+            The computed integer value.
+
+        """
         assert token.chain_id is not None
         io = SyncPoolIO(self.connections.get_provider(token.chain_id))
         return self._erc20_builder.get_token_balance(
@@ -394,7 +428,12 @@ class Bot:
         spender: str,
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
-        """Retrieve the amount that can be spent by `spender` on behalf of `owner`."""
+        """Retrieve the amount that can be spent by `spender` on behalf of `owner`.
+
+        Returns:
+            The computed integer value.
+
+        """
         assert token.chain_id is not None
         io = SyncPoolIO(self.connections.get_provider(token.chain_id))
         return self._erc20_builder.get_token_approval(
@@ -406,7 +445,12 @@ class Bot:
         token: Erc20Token,
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
-        """Retrieve the total supply for this token."""
+        """Retrieve the total supply for this token.
+
+        Returns:
+            The computed integer value.
+
+        """
         assert token.chain_id is not None
         io = SyncPoolIO(self.connections.get_provider(token.chain_id))
         return self._erc20_builder.get_token_total_supply(
@@ -419,22 +463,31 @@ class Bot:
         address: str,
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
-        """Retrieve the native ETH balance for the given address."""
+        """Retrieve the native ETH balance for the given address.
+
+        Returns:
+            The computed integer value.
+
+        """
         io = SyncPoolIO(self.connections.get_provider(chain_id))
         return self._erc20_builder.get_ether_balance(
             chain_id, address, block_identifier=block_identifier, io=io
         )
 
     def get_provider(self, *, chain_id: ChainId) -> ProviderAdapter:
-        """Return provider."""
+        """Return provider.
+
+        Returns:
+            The computed value.
+
+        """
         return self.connections.get_provider(chain_id)
 
     async def start_listening(
         self,
         chain_id: ChainId | None = None,
     ) -> tuple[Subscription, Subscription]:
-        """
-        Start WS subscriptions for newHeads and unfiltered logs.
+        """Start WS subscriptions for newHeads and unfiltered logs.
 
         Creates an AsyncProviderAdapter from the configured WS URI for
         the given chain, subscribes to new block headers and unfiltered
@@ -486,12 +539,15 @@ class Bot:
         *,
         block_number: BlockIdentifier | None = None,
     ) -> bool:
-        """
-        Fetch the current state of a pool from the chain and apply it via.
+        """Fetch the current state of a pool from the chain and apply it via.
 
         ``pool.external_update()``.
 
         Returns True if the state changed, False if unchanged.
+
+        Returns:
+            The computed boolean value.
+
         """
         builder = self._builder_for_pool(pool)
         resolved_block_number = (
@@ -507,12 +563,15 @@ class Bot:
         self,
         pool: AbstractLiquidityPool,
     ) -> PoolBuilder:
-        """
-        Select the appropriate builder for the pool type.
+        """Select the appropriate builder for the pool type.
 
         Uses the builder registry (dict lookup on type(pool)) first, then
         falls back to isinstance checks for subclasses not explicitly registered
         (e.g. SushiswapV2Pool inherits from UniswapV2Pool).
+
+        Returns:
+            The computed value.
+
         """
         # Fast path: exact type match in the registry
         builder = self._builders.get(type(pool))

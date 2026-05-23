@@ -1,5 +1,4 @@
-"""
-Liquidation processing functions for Aave V3.
+"""Liquidation processing functions for Aave V3.
 
 This module handles liquidation event processing including multi-liquidation patterns
 like COMBINED_BURN and SEPARATE_BURNS.
@@ -19,8 +18,7 @@ def _preprocess_liquidation_aggregates(
     tx_context: TransactionContext,
     operations: list["Operation"],
 ) -> None:
-    """
-    Preprocess liquidations to detect patterns and prepare for processing.
+    """Preprocess liquidations to detect patterns and prepare for processing.
 
     Detects whether multiple liquidations share the same debt asset and
     determines if they use combined or separate burn events.

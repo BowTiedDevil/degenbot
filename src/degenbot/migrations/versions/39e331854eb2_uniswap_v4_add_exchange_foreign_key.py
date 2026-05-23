@@ -1,5 +1,4 @@
-"""
-Uniswap V4: add exchange foreign key.
+"""Uniswap V4: add exchange foreign key.
 
 Revision ID: 39e331854eb2
 Revises: 901adb947000

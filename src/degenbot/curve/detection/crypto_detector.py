@@ -1,5 +1,4 @@
-"""
-Crypto pool parameter detection for Curve pools.
+"""Crypto pool parameter detection for Curve pools.
 
 Detects whether a Curve pool is a crypto pool by checking fee_gamma().
 If fee_gamma > 0, fetches related parameters (mid_fee, out_fee, gamma,
@@ -30,11 +29,14 @@ def detect_crypto_params(
     *,
     block_identifier: int,
 ) -> CryptoDetectionResult:
-    """
-    Detect crypto pool parameters.
+    """Detect crypto pool parameters.
 
     A pool is identified as crypto if fee_gamma() > 0.
     All parameters default to None for non-crypto pools.
+
+    Returns:
+        The computed value.
+
     """
     fee_gamma: int | None = None
     mid_fee: int | None = None
