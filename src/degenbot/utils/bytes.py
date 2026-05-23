@@ -1,5 +1,4 @@
-"""
-Bytes normalization utilities.
+"""Bytes normalization utilities.
 
 Provides utilities for normalizing between bytes and HexBytes
 types when working with web3 providers.
@@ -12,8 +11,7 @@ type HexBytesLike = bytes | HexBytes
 
 
 def to_bytes(data: HexBytesLike) -> bytes:
-    """
-    Normalize any hex-bytes type to plain bytes.
+    """Normalize any hex-bytes type to plain bytes.
 
     Use this when you need to pass data to libraries that require plain bytes
     (e.g., eth_abi which has hard-coded isinstance checks).
@@ -35,8 +33,7 @@ def to_bytes(data: HexBytesLike) -> bytes:
 
 
 def to_hex(data: HexBytesLike) -> str:
-    """
-    Normalize any hex-bytes type to 0x-prefixed lowercase hex string.
+    """Normalize any hex-bytes type to 0x-prefixed lowercase hex string.
 
     Args:
         data: Any of bytes or HexBytes
