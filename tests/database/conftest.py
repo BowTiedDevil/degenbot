@@ -201,8 +201,7 @@ def test_db():
 
     _seed_test_data(test_session)
 
-    db_mgr = DatabaseSessionManager(test_session)
-    yield db_mgr
+    yield DatabaseSessionManager(test_session)
 
     test_session.remove()
     engine.dispose()

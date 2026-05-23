@@ -275,8 +275,7 @@ def test_single_pool(
 
 
 def test_tricrypto_pool(fork_mainnet_full: AnvilFork):
-    """Tricrypto (WETH-wBTC-USDT) has a lot of one-off functions, so always test it
-    """
+    """Tricrypto (WETH-wBTC-USDT) has a lot of one-off functions, so always test it"""
     pool_address = "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5"
     lp = _build_pool(fork_mainnet_full, pool_address)
     _test_calculations(lp=lp, w3=fork_mainnet_full.w3)
@@ -397,8 +396,7 @@ def test_base_pool(fork_mainnet_full: AnvilFork):
 
 
 def test_factory_stableswap_pools(fork_mainnet_full: AnvilFork):
-    """Test the user-deployed pools deployed by the factory
-    """
+    """Test the user-deployed pools deployed by the factory"""
     stableswap_factory: Contract = fork_mainnet_full.w3.eth.contract(
         address=CURVE_V1_FACTORY_ADDRESS, abi=CURVE_V1_FACTORY_ABI
     )
@@ -424,15 +422,15 @@ def test_factory_stableswap_pools(fork_mainnet_full: AnvilFork):
                 f"{type(e).__name__}: {e} — "
                 f"pool {i}/{pool_count} @ {pool_address}, block {block_number}. "
                 f'Reproduce: set pool_address="{pool_address}" in test_single_pool '
-                f"with @pytest.mark.parametrize('fork_mainnet_archive', [{block_number}], indirect=True)"
+                f"with @pytest.mark.parametrize('fork_mainnet_archive', [{block_number}], "
+                f"indirect=True)"
             )
             print(msg)
             raise AssertionError(msg) from e
 
 
 def test_base_registry_pools(fork_mainnet_full: AnvilFork):
-    """Test the custom pools deployed by Curve
-    """
+    """Test the custom pools deployed by Curve"""
     registry: Contract = fork_mainnet_full.w3.eth.contract(
         address=CURVE_V1_REGISTRY_ADDRESS,
         abi=CURVE_V1_REGISTRY_ABI,
@@ -458,7 +456,8 @@ def test_base_registry_pools(fork_mainnet_full: AnvilFork):
                 f"{type(e).__name__}: {e} — "
                 f"registry pool {i}/{pool_count} @ {pool_address}, block {block_number}. "
                 f'Reproduce: set pool_address="{pool_address}" in test_single_pool '
-                f"with @pytest.mark.parametrize('fork_mainnet_archive', [{block_number}], indirect=True)"
+                f"with @pytest.mark.parametrize('fork_mainnet_archive', [{block_number}], "
+                f"indirect=True)"
             )
             print(msg)
             raise AssertionError(msg) from e
@@ -470,7 +469,8 @@ def test_base_registry_pools(fork_mainnet_full: AnvilFork):
                 f"{type(e).__name__}: {e} — "
                 f"registry pool {i}/{pool_count} @ {pool_address}, block {block_number}. "
                 f'Reproduce: set pool_address="{pool_address}" in test_single_pool '
-                f"with @pytest.mark.parametrize('fork_mainnet_archive', [{block_number}], indirect=True)"
+                f"with @pytest.mark.parametrize('fork_mainnet_archive', [{block_number}], "
+                f"indirect=True)"
             )
             print(msg)
             raise AssertionError(msg) from e

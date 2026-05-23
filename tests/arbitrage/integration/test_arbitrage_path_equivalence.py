@@ -63,8 +63,7 @@ def wbtc_weth_v3_lp(fork_mainnet_full: AnvilFork) -> UniswapV3Pool:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
     # Initialize from chain with auto-fetched tick data. This is simpler
     # than duplicating the hardcoded bitmap from test_uniswap_lp_cycle.py.
-    pool = bot.build_pool(WBTC_WETH_V3_POOL_ADDRESS)
-    return pool
+    return bot.build_pool(WBTC_WETH_V3_POOL_ADDRESS)
 
 
 class TestV2V3MixedEquivalence:
@@ -203,8 +202,7 @@ class TestV2V3MixedEquivalence:
 
 
 class TestEdgeCases:
-    """Edge case parity: behavior when the legacy system rejects a path early.
-    """
+    """Edge case parity: behavior when the legacy system rejects a path early."""
 
     def test_unprofitable_path_rejection_parity(
         self,
@@ -237,12 +235,12 @@ class TestEdgeCases:
         )
 
         # Legacy system rejects via _pre_calculation_check
+        legacy = UniswapLpCycle(
+            input_token=weth_token,
+            swap_pools=[wbtc_weth_v2_lp, wbtc_weth_v3_lp],
+            max_input=max_input,
+        )
         with pytest.raises(ArbitrageError):
-            legacy = UniswapLpCycle(
-                input_token=weth_token,
-                swap_pools=[wbtc_weth_v2_lp, wbtc_weth_v3_lp],
-                max_input=max_input,
-            )
             legacy.calculate(
                 state_overrides={
                     wbtc_weth_v2_lp: equal_v2_override,
@@ -251,17 +249,16 @@ class TestEdgeCases:
             )
 
         # New system rejects via OptimizationError
+        path = ArbitragePath(
+            pools=[wbtc_weth_v2_lp, wbtc_weth_v3_lp],
+            input_token=weth_token,
+            solver=MobiusSolver(),
+            max_input=max_input,
+        )
         with pytest.raises(OptimizationError):
-            path = ArbitragePath(
-                pools=[wbtc_weth_v2_lp, wbtc_weth_v3_lp],
-                input_token=weth_token,
-                solver=MobiusSolver(),
-                max_input=max_input,
-            )
-            solve_result = path.calculate_with_state_override(
+            path.calculate_with_state_override(
                 state_overrides={
                     wbtc_weth_v2_lp.address: equal_v2_override,
                     wbtc_weth_v3_lp.address: equal_v3_override,
                 }
             )
-            path.build_swap_amounts(solve_result)

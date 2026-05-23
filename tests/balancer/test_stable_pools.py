@@ -53,19 +53,19 @@ from degenbot.checksum_cache import get_checksum_address
 POOL_ABI = json.loads(
     """
     [{"inputs":[],"name":"getAmplificationParameter","outputs":[{"internalType":"uint256","name":"value","type":"uint256"},{"internalType":"bool","name":"isUpdating","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getPoolId","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getSwapFeePercentage","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getScalingFactors","outputs":[{"internalType":"uint256[]","name":"","type":"uint256[]"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getRateProviders","outputs":[{"internalType":"contract IRateProvider[]","name":"","type":"address[]"}],"stateMutability":"view","type":"function"}]
-    """  # noqa:E501
+    """  # noqa: E501
 )
 
 VAULT_ABI = json.loads(
     """
     [{"inputs":[{"internalType":"bytes32","name":"poolId","type":"bytes32"}],"name":"getPoolTokens","outputs":[{"internalType":"contract IERC20[]","name":"tokens","type":"address[]"},{"internalType":"uint256[]","name":"balances","type":"uint256[]"},{"internalType":"uint256","name":"lastChangeBlock","type":"uint256"}],"stateMutability":"view","type":"function"}]
-    """  # noqa:E501
+    """  # noqa: E501
 )
 
 QUERIES_ABI = json.loads(
     """
     [{"inputs":[{"components":[{"internalType":"bytes32","name":"poolId","type":"bytes32"},{"internalType":"enum IVault.SwapKind","name":"kind","type":"uint8"},{"internalType":"contract IAsset","name":"assetIn","type":"address"},{"internalType":"contract IAsset","name":"assetOut","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"},{"internalType":"bytes","name":"userData","type":"bytes"}],"internalType":"struct IVault.SingleSwap","name":"singleSwap","type":"tuple"},{"components":[{"internalType":"address","name":"sender","type":"address"},{"internalType":"bool","name":"fromInternalBalance","type":"bool"},{"internalType":"address payable","name":"recipient","type":"address"},{"internalType":"bool","name":"toInternalBalance","type":"bool"}],"internalType":"struct IVault.FundManagement","name":"funds","type":"tuple"}],"name":"querySwap","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"nonpayable","type":"function"}]
-    """  # noqa:E501
+    """  # noqa: E501
 )
 
 RATE_PROVIDER_ABI = json.loads(
@@ -175,7 +175,7 @@ def _build_pool_data(fork: AnvilFork, pool_address: str) -> dict:
     }
 
 
-def _query_swap(  # noqa: PLR0917
+def _query_swap(
     fork: AnvilFork,
     pool_id: bytes,
     token_in: str,
@@ -755,8 +755,7 @@ def _build_composable_pool_data(fork: AnvilFork, pool_address: str) -> dict:
 
     # Fresh scaling factors = base_sf * rate // ONE (mulDown, matching deployed contract)
     fresh_scaling_factors = [
-        b * r // ONE
-        for b, r in zip(base_scaling_factors, fresh_rates, strict=False)
+        b * r // ONE for b, r in zip(base_scaling_factors, fresh_rates, strict=False)
     ]
 
     # Find BPT index (token whose address matches the pool)
@@ -764,8 +763,7 @@ def _build_composable_pool_data(fork: AnvilFork, pool_address: str) -> dict:
 
     # Upscale all balances using fresh scaling factors
     upscaled_balances_with_bpt = [
-        b * s // ONE
-        for b, s in zip(balances, fresh_scaling_factors, strict=False)
+        b * s // ONE for b, s in zip(balances, fresh_scaling_factors, strict=False)
     ]
 
     # Drop BPT item

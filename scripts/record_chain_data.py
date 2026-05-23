@@ -1,5 +1,4 @@
-"""
-Record on-chain data to JSON files for offline testing.
+"""Record on-chain data to JSON files for offline testing.
 
 This script fetches chain data (token metadata, pool states) from an RPC endpoint
 and saves it to JSON files for use in tests without requiring a live RPC connection.
@@ -169,8 +168,7 @@ def _safe_eth_call(
     block_number: int,
     pool_address: str | None = None,
 ) -> str | None:
-    """
-    Safely execute an eth_call, returning None on revert.
+    """Safely execute an eth_call, returning None on revert.
 
     Returns the result hex string on success, or None if the call reverted.
     """
@@ -227,8 +225,7 @@ def fetch_v3_pool_calls(w3: Web3, pool_config: dict, block_number: int) -> list[
 def fetch_v3_pool_tick_data(
     w3: Web3, pool_address: str, tick_spacing: int, block_number: int
 ) -> dict | None:
-    """
-    Fetch complete tick bitmap and tick data for a V3 pool.
+    """Fetch complete tick bitmap and tick data for a V3 pool.
 
     Returns a dict with:
     - tick_spacing: The pool's tick spacing

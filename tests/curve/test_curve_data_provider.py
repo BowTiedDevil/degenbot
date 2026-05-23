@@ -41,7 +41,7 @@ class FakeProviderBackend:
 
     def get_block(
         self,
-        block_identifier: int | str,  # noqa: ARG002
+        block_identifier: int | str,
     ) -> dict | None:
         return {"number": self._block_number, "timestamp": self._block_timestamp}
 
@@ -50,14 +50,14 @@ class FakeProviderBackend:
         from_block: int,
         to_block: int,
         addresses,
-        topics,  # noqa: ARG002
+        topics,
     ) -> list:
         return []
 
     def call(self, to: str, data: bytes, block: int | None) -> HexBytes:
         return self.call_raw({"to": to, "data": data}, block)
 
-    def call_raw(self, tx: dict, block: int | None) -> HexBytes:  # noqa: ARG002
+    def call_raw(self, tx: dict, block: int | None) -> HexBytes:
         data = bytes(tx["data"])
         selector = data[:4]
         if selector in self._responses:
@@ -65,24 +65,24 @@ class FakeProviderBackend:
         msg = f"No mock response for selector 0x{selector.hex()}"
         raise RuntimeError(msg)
 
-    def get_code(self, address: str, block: int | None) -> HexBytes:  # noqa: ARG002
+    def get_code(self, address: str, block: int | None) -> HexBytes:
         return HexBytes(b"")
 
-    def get_balance(self, address: str, block: int | None) -> int:  # noqa: ARG002
+    def get_balance(self, address: str, block: int | None) -> int:
         return 0
 
     def get_storage_at(
         self,
         address: str,
         position: int,
-        block: int | None,  # noqa: ARG002
+        block: int | None,
     ) -> HexBytes:
         return HexBytes(b"\x00" * 32)
 
     def get_transaction_count(
         self,
         address: str,
-        block: int | None,  # noqa: ARG002
+        block: int | None,
     ) -> int:
         return 0
 
@@ -96,7 +96,7 @@ class FakeProviderBackend:
 class RevertingProviderBackend(FakeProviderBackend):
     """A fake backend that raises ContractLogicError on every call_raw."""
 
-    def call_raw(self, tx: dict, block: int | None = None) -> HexBytes:  # noqa: ARG002
+    def call_raw(self, tx: dict, block: int | None = None) -> HexBytes:
         revert_msg = "execution reverted"
         raise ContractLogicError(revert_msg)
 
@@ -322,7 +322,7 @@ class TestTokenBalance:
             io=SyncPoolIO(fake),
             pool_address=POOL_ADDRESS,
         )
-        token_addr = "0x0000000000000000000000000000000000000004"
+        token_addr = get_checksum_address("0x0000000000000000000000000000000000000004")
         result = impl.token_balance(token_addr, POOL_ADDRESS, 18_000_000)
         assert result == balance
 
@@ -340,7 +340,7 @@ class TestTokenTotalSupply:
             io=SyncPoolIO(fake),
             pool_address=POOL_ADDRESS,
         )
-        token_addr = "0x0000000000000000000000000000000000000004"
+        token_addr = get_checksum_address("0x0000000000000000000000000000000000000004")
         result = impl.token_total_supply(token_addr, 18_000_000)
         assert result == supply
 

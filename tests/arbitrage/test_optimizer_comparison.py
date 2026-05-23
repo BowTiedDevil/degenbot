@@ -11,6 +11,7 @@ import pytest
 from eth_typing import ChecksumAddress
 from scipy.optimize import minimize_scalar
 
+from degenbot.exceptions import DegenbotError
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from tests.arbitrage.generator import FixtureFactory
@@ -127,7 +128,7 @@ class TestOptimizerMethodComparison:
                     token_in=pool_b.token1,  # WETH
                     token_in_quantity=token1_received,
                 )
-            except Exception:
+            except (DegenbotError, ValueError, ZeroDivisionError):
                 return 0.0
 
             # token0 profit (USDC)
@@ -362,7 +363,7 @@ class TestOptimizerMethodComparison:
                     token_in=pool_b.token1,
                     token_in_quantity=token1_received,
                 )
-            except Exception:
+            except (DegenbotError, ValueError, ZeroDivisionError):
                 return 0.0
 
             return -(float(token0_received - input_amount))

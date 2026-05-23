@@ -104,7 +104,6 @@ def test_create_base_chain_trackers(fork_base_full: AnvilFork):
 
 @pytest.mark.base
 def test_base_pancake_v3_pool_tracker(fork_base_full: AnvilFork):
-    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
     pancakev3_lp_manager = PancakeswapV3PoolTracker(
         factory_address=BASE_PANCAKESWAP_V3_FACTORY_ADDRESS,
         deployer_address=BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS,

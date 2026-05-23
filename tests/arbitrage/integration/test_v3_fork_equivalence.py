@@ -17,6 +17,7 @@ from degenbot.arbitrage.optimizers.solver import BrentSolver
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.arbitrage.types import UniswapV3PoolSwapAmounts
 from degenbot.erc20.erc20 import Erc20Token
+from degenbot.exceptions.arbitrage import ArbitrageError
 from degenbot.provider import ProviderAdapter
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.helpers.bot_factory import make_bot_with_provider
@@ -94,7 +95,7 @@ class TestV3OnlyForkEquivalence:
             )
             legacy_result = legacy.calculate()
             legacy_found = True
-        except Exception:
+        except (ArbitrageError, ValueError):
             legacy_found = False
 
         # New system
@@ -107,7 +108,7 @@ class TestV3OnlyForkEquivalence:
         try:
             new_solve = path.calculate()
             new_found = True
-        except Exception:
+        except (ArbitrageError, ValueError):
             new_found = False
 
         # If both reject, skip (mainnet state is unprofitable for this triangle)

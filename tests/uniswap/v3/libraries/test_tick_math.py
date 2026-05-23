@@ -73,10 +73,10 @@ def test_get_tick_at_sqrt_ratio() -> None:
     with pytest.raises((EVMRevertError, OverflowError)):
         get_tick_at_sqrt_ratio(MAX_UINT160 + 1)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="out of bounds"):
         get_tick_at_sqrt_ratio(MIN_SQRT_RATIO - 1)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="out of bounds"):
         get_tick_at_sqrt_ratio(MAX_SQRT_RATIO)
 
     assert (get_tick_at_sqrt_ratio(MIN_SQRT_RATIO)) == (MIN_TICK)

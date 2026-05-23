@@ -4,6 +4,8 @@ Verifies that decode, extract, and snapshot-loading helpers produce
 correct outputs from known inputs, independent of I/O.
 """
 
+from dataclasses import dataclass, field
+
 import eth_abi.abi
 
 from degenbot.builders.v4_builder_base import (
@@ -104,10 +106,11 @@ class TestLoadTickSnapshot:
     """V4BuilderBase.load_tick_snapshot loads tick bitmap/data from DB relationships."""
 
     def test_returns_empty_and_not_loaded_when_no_data(self):
+        @dataclass
         class FakePoolWithData:
-            initialization_maps = []
-            liquidity_positions = []
-            liquidity_update_block = 0
+            initialization_maps: list = field(default_factory=list)
+            liquidity_positions: list = field(default_factory=list)
+            liquidity_update_block: int = 0
 
         bitmap, tick_data, loaded = V4BuilderBase.load_tick_snapshot(FakePoolWithData())
         assert bitmap == {}
@@ -124,12 +127,18 @@ class TestLoadTickSnapshot:
             liquidity_net = 5000
             liquidity_gross = 10000
 
+        @dataclass
         class FakePoolWithData:
-            initialization_maps = [FakeInitMap()]
-            liquidity_positions = [FakeLiqPosition()]
-            liquidity_update_block = 100
+            initialization_maps: list = field(default_factory=list)
+            liquidity_positions: list = field(default_factory=list)
+            liquidity_update_block: int = 100
 
-        bitmap, tick_data, loaded = V4BuilderBase.load_tick_snapshot(FakePoolWithData())
+        bitmap, tick_data, loaded = V4BuilderBase.load_tick_snapshot(
+            FakePoolWithData(
+                initialization_maps=[FakeInitMap()],
+                liquidity_positions=[FakeLiqPosition()],
+            )
+        )
 
         assert loaded is True
         assert 3 in bitmap
@@ -146,30 +155,47 @@ class TestLoadTickSnapshot:
             word = 0
             bitmap = 1
 
-        class FakePoolWithData:
-            initialization_maps = [FakeInitMap()]
-            liquidity_positions = []
-            liquidity_update_block = 1
+        class FakeLiqPosition: ...
 
-        _, _, loaded = V4BuilderBase.load_tick_snapshot(FakePoolWithData())
+        @dataclass
+        class FakePoolWithData:
+            initialization_maps: list[FakeInitMap] = field(default_factory=list)
+            liquidity_positions: list[FakeLiqPosition] = field(default_factory=list)
+            liquidity_update_block: int = 1
+
+        fake_pool = FakePoolWithData(
+            initialization_maps=[FakeInitMap()],
+            liquidity_positions=[],
+        )
+
+        _, _, loaded = V4BuilderBase.load_tick_snapshot(fake_pool)
         assert loaded is False
 
     def test_liquidity_update_block_defaults_to_zero(self):
+
+        @dataclass
         class FakeInitMap:
-            word = 0
-            bitmap = 1
+            word: int = 0
+            bitmap: int = 1
 
+        @dataclass
         class FakeLiqPosition:
-            tick = 10
-            liquidity_net = 100
-            liquidity_gross = 200
+            tick: int = 10
+            liquidity_net: int = 100
+            liquidity_gross: int = 200
 
+        @dataclass
         class FakePoolWithData:
-            initialization_maps = [FakeInitMap()]
-            liquidity_positions = [FakeLiqPosition()]
-            liquidity_update_block = None
+            initialization_maps: list[FakeInitMap] = field(default_factory=list)
+            liquidity_positions: list[FakeLiqPosition] = field(default_factory=list)
+            liquidity_update_block: int | None = None
 
-        bitmap, tick_data, loaded = V4BuilderBase.load_tick_snapshot(FakePoolWithData())
+        fake_pool = FakePoolWithData(
+            initialization_maps=[FakeInitMap()],
+            liquidity_positions=[FakeLiqPosition()],
+        )
+
+        bitmap, tick_data, loaded = V4BuilderBase.load_tick_snapshot(fake_pool)
 
         assert loaded is True
         assert bitmap[0].block == 0

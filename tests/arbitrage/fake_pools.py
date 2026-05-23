@@ -16,12 +16,12 @@ from typing import TYPE_CHECKING
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from tests.fakes.tokens import FakeToken
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
     from degenbot.erc20.erc20 import Erc20Token
+    from tests.fakes.tokens import FakeToken
 
 
 @dataclass(frozen=True, slots=True)

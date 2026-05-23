@@ -55,7 +55,7 @@ def test_simulate_path_with_curve_swap_fn():
 
     # Single Curve hop
     result = _simulate_path(100000, (curve_hop,))
-    assert result == 100000 * 0.997
+    assert result == 99700
 
 
 def test_simulate_path_with_mixed_hops():

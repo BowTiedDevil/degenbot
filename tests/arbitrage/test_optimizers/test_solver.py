@@ -1,6 +1,7 @@
 """Tests for the unified solver interface.
 """
 
+import math
 from fractions import Fraction
 
 import pytest
@@ -164,7 +165,7 @@ class TestMobiusCoefficients:
     def test_empty_hops(self):
         coeffs = _compute_mobius_coefficients(())
         assert not coeffs.is_profitable
-        assert coeffs.optimal_input() == 0.0
+        assert math.isclose(coeffs.optimal_input(), 0.0)
 
 
 # ---------------------------------------------------------------------------

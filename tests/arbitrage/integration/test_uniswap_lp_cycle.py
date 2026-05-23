@@ -1,7 +1,9 @@
 import asyncio
 import concurrent.futures
 import contextlib
+import json
 import multiprocessing
+import pathlib
 import pickle
 import time
 from fractions import Fraction
@@ -79,15 +81,11 @@ def wbtc_weth_v2_lp(
     return pool
 
 
-import json
-import os
-import pathlib
+_snap_path = pathlib.Path(__file__).parent / "../fixtures/wbtc_weth_v3_snapshot.json"
+with _snap_path.open(encoding="utf-8") as _f:
+    _SNAP = json.load(_f)
 
-_SNAP = json.load(
-    pathlib.Path(
-        os.path.join(os.path.dirname(__file__), "../fixtures/wbtc_weth_v3_snapshot.json")
-    ).open()
-)
+
 _WBTC_WETH_V3_TICK_BITMAP = {
     int(k): BitmapAtWord(bitmap=v["bitmap"], block=v["block"])
     for k, v in _SNAP["tick_bitmap"].items()
@@ -259,7 +257,7 @@ def test_arbitrage_with_overrides(
 async def test_pickle_uniswap_lp_cycle_with_camelot_pool(fork_arbitrum_full: AnvilFork):
     # Arbitrum-specific token addresses
     weth_address = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"
-    wbtc_address = "0x2f2a2543B76A7835D0D6980C1E5735743EFb2A2d"
+    _wbtc_address = "0x2f2a2543B76A7835D0D6980C1E5735743EFb2A2d"
 
     camelot_weth_wbtc_pool_address = "0x96059759C6492fb4e8a9777b65f307F2C811a34F"
     sushi_v2_weth_wbtc_pool_address = "0x515e252b2b5c22b4b2b6Df66c2eBeeA871AA4d69"

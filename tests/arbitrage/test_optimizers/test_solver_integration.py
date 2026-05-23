@@ -316,12 +316,12 @@ class TestV3VirtualReserves:
     def test_virtual_reserves_basic(self):
         """V3 virtual reserves should match L/sqrt_p and L*sqrt_p."""
         # L=1e18, sqrt_price_x96 = 2^96 (price = 1.0)
-        L = 1_000_000_000_000_000_000  # 1e18
+        liquidity = 1_000_000_000_000_000_000  # 1e18
         sqrt_price_x96 = 2**96  # price = 1.0
 
         # token0 as input (zero_for_one=True)
         r_in, r_out = _v3_virtual_reserves(
-            liquidity=L,
+            liquidity=liquidity,
             sqrt_price_x96=sqrt_price_x96,
             zero_for_one=True,
         )
@@ -335,17 +335,17 @@ class TestV3VirtualReserves:
 
     def test_virtual_reserves_unequal_price(self):
         """At price != 1.0, virtual reserves should reflect the price."""
-        L = 1_000_000_000_000_000_000
+        liquidity = 1_000_000_000_000_000_000
         # sqrt_price = 2.0 → price = 4.0 (token1 is 4x token0)
         sqrt_price_x96 = int(2.0 * (2**96))
 
         r_in_zfo, r_out_zfo = _v3_virtual_reserves(
-            liquidity=L,
+            liquidity=liquidity,
             sqrt_price_x96=sqrt_price_x96,
             zero_for_one=True,
         )
         r_in_ofz, r_out_ofz = _v3_virtual_reserves(
-            liquidity=L,
+            liquidity=liquidity,
             sqrt_price_x96=sqrt_price_x96,
             zero_for_one=False,
         )
@@ -362,10 +362,10 @@ class TestPoolStateToHop:
     def test_v3_hop_is_bounded_product(self):
         """Concentrated-liquidity pool should produce a BoundedProductHop."""
         # Build a V3-style Hop manually
-        L = 1_000_000_000_000_000_000
+        liquidity = 1_000_000_000_000_000_000
         sqrt_price_x96 = 2**96
         r_in, r_out = _v3_virtual_reserves(
-            liquidity=L,
+            liquidity=liquidity,
             sqrt_price_x96=sqrt_price_x96,
             zero_for_one=True,
         )
@@ -374,7 +374,7 @@ class TestPoolStateToHop:
             reserve_in=r_in,
             reserve_out=r_out,
             fee=FEE_0_3_PCT,
-            liquidity=L,
+            liquidity=liquidity,
             sqrt_price=sqrt_price_x96,
             tick_lower=0,
             tick_upper=0,
@@ -396,10 +396,10 @@ class TestArbSolverAllPoolTypes:
 
     def test_v3_buy_v2_sell(self, solver):
         """V3 buy pool + V2 sell pool: no arbitrage at same effective rate."""
-        L = 1_000_000_000_000_000_000
+        liquidity = 1_000_000_000_000_000_000
         sqrt_price_x96 = int(1.1 * (2**96))
         v3_r_in, v3_r_out = _v3_virtual_reserves(
-            liquidity=L,
+            liquidity=liquidity,
             sqrt_price_x96=sqrt_price_x96,
             zero_for_one=True,
         )
@@ -409,7 +409,7 @@ class TestArbSolverAllPoolTypes:
                 reserve_in=v3_r_in,
                 reserve_out=v3_r_out,
                 fee=FEE_0_3_PCT,
-                liquidity=L,
+                liquidity=liquidity,
                 sqrt_price=sqrt_price_x96,
                 tick_lower=0,
                 tick_upper=0,
@@ -421,10 +421,10 @@ class TestArbSolverAllPoolTypes:
 
     def test_v2_buy_v3_sell(self, solver):
         """V2 buy pool + V3 sell pool: should succeed."""
-        L = 2_000_000_000_000_000_000
+        liquidity = 2_000_000_000_000_000_000
         sqrt_price_x96 = int(2.0 * (2**96))
         v3_r_in, v3_r_out = _v3_virtual_reserves(
-            liquidity=L,
+            liquidity=liquidity,
             sqrt_price_x96=sqrt_price_x96,
             zero_for_one=True,
         )
@@ -435,7 +435,7 @@ class TestArbSolverAllPoolTypes:
                 reserve_in=v3_r_in,
                 reserve_out=v3_r_out,
                 fee=FEE_0_3_PCT,
-                liquidity=L,
+                liquidity=liquidity,
                 sqrt_price=sqrt_price_x96,
                 tick_lower=0,
                 tick_upper=0,
@@ -618,7 +618,6 @@ class TestCVXPYSolverComparison:
         try:
             mobius_result = solver.solve(SolveInput(hops=(hop_1, hop_2)))
             mobius_profit = mobius_result.profit
-            mobius_optimal = mobius_result.optimal_input
         except OptimizationError:
             # No arbitrage opportunity
             return
@@ -681,7 +680,7 @@ class TestCVXPYSolverAccuracy:
     """Test CVXPY solver accuracy against ground truth."""
 
     @pytest.mark.parametrize(
-        "price_ratio,fee",
+        ("price_ratio", "fee"),
         [
             (1.02, Fraction(3, 1000)),
             (1.05, Fraction(3, 1000)),

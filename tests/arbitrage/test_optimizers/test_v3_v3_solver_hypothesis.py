@@ -85,6 +85,7 @@ def sqrt_price_from_tick(tick: int) -> float:
 
 
 def make_single_range_hop(
+    *,
     liquidity: float,
     sqrt_price: float,
     fee: float,
@@ -100,6 +101,7 @@ def make_single_range_hop(
 
 
 def make_wide_range_hop(
+    *,
     liquidity: float,
     sqrt_price: float,
     fee: float,
@@ -373,8 +375,7 @@ class TestV3V3BoundsProperties:
         liquidity: float,
         fee: float,
     ):
-        """Property: Optimal input is always positive and finite when successful.
-        """
+        """Property: Optimal input is always positive and finite when successful."""
         sqrt_pa = math.sqrt(base_price * (1 + spread))
         sqrt_pb = math.sqrt(base_price)
 
@@ -548,5 +549,6 @@ class TestV3V3Invariants:
                     # Allow small tolerance for numerical precision
                     rel_diff = (result.profit - test_profit) / max(abs(result.profit), 1e-10)
                     assert rel_diff >= -1e-6, (
-                        f"Profit at optimal ({result.profit}) < profit at {x_test:.2e} ({test_profit})"
+                        f"Profit at optimal ({result.profit}) < profit at {x_test:.2e} "
+                        f"({test_profit})"
                     )

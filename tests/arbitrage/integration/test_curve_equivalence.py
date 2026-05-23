@@ -20,6 +20,7 @@ from degenbot.arbitrage.optimizers.solidly_stable import (
 from degenbot.arbitrage.optimizers.solver import BrentSolver
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.erc20 import Erc20Token
+from degenbot.exceptions.arbitrage import ArbitrageError
 from degenbot.provider import ProviderAdapter
 from degenbot.types.hop_types import ConstantProductHop, CurveStableswapHop
 from degenbot.uniswap.v2_types import UniswapV2PoolState
@@ -176,7 +177,7 @@ def test_brent_solver_with_curve():
         # If profitable, verify result is reasonable
         assert result.optimal_input > 0
         assert result.profit >= 0
-    except Exception:
+    except (ArbitrageError, ValueError):
         # Even if not profitable, the solver should run without crashing
         pass
 
@@ -194,7 +195,6 @@ def test_curve_fork_equivalence(fork_mainnet_full: AnvilFork) -> None:
     # the provider globally too.
 
     weth = bot.build_erc20token(WETH_ADDRESS)
-    dai = bot.build_erc20token(DAI_ADDRESS)
 
     curve_tripool = bot.build_pool(CURVE_TRIPOOL_ADDRESS)
     uniswap_v2_weth_dai_lp = bot.build_pool(UNISWAP_V2_WETH_DAI_ADDRESS)

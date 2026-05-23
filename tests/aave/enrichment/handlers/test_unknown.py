@@ -20,6 +20,9 @@ if TYPE_CHECKING:
     from degenbot.aave.operations import Operation, ScaledTokenEvent
 
 
+_DEFAULT_USER_ADDRESS = ChecksumAddress("0x" + "1" * 40)
+
+
 class TestUnknownHandler:
     """Tests for UnknownHandler."""
 
@@ -64,7 +67,7 @@ class TestUnknownHandler:
 def _create_mock_scaled_event(
     event_type: ScaledTokenEventType,
     amount: int,
-    user_address: ChecksumAddress = ChecksumAddress("0x" + "1" * 40),
+    user_address: ChecksumAddress = _DEFAULT_USER_ADDRESS,
 ) -> "ScaledTokenEvent":
     """Create a minimal mock ScaledTokenEvent."""
 

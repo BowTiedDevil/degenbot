@@ -42,17 +42,17 @@ class TestTickMathBoundaryErrors:
 
     def test_tick_at_sqrt_ratio_at_max(self):
         """Sqrt ratio >= MAX_SQRT_RATIO should raise ValueError."""
-        with pytest.raises(ValueError, match="Sqrt ratio.*out of bounds"):
+        with pytest.raises(ValueError, match=r"Sqrt ratio.*out of bounds"):
             get_tick_at_sqrt_ratio(MAX_SQRT_RATIO)
 
     def test_tick_at_sqrt_ratio_above_max(self):
         """Sqrt ratio > MAX_SQRT_RATIO should raise ValueError."""
-        with pytest.raises(ValueError, match="Sqrt ratio.*out of bounds"):
+        with pytest.raises(ValueError, match=r"Sqrt ratio.*out of bounds"):
             get_tick_at_sqrt_ratio(MAX_SQRT_RATIO + 1)
 
     def test_tick_at_sqrt_ratio_zero(self):
         """Sqrt ratio of 0 should raise ValueError."""
-        with pytest.raises(ValueError, match="Sqrt ratio.*out of bounds"):
+        with pytest.raises(ValueError, match=r"Sqrt ratio.*out of bounds"):
             get_tick_at_sqrt_ratio(0)
 
 
@@ -66,7 +66,7 @@ class TestAbiDecoderBoundaryErrors:
 
     def test_decode_single_truncated_data(self):
         """Truncated data should raise ValueError."""
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="ABI decoding failed"):
             decode_single("uint256", b"\x00" * 16)  # only 16 bytes, need 32
 
     def test_decode_empty_types(self):
@@ -81,7 +81,7 @@ class TestAbiDecoderBoundaryErrors:
 
     def test_decode_wrong_type_count(self):
         """Mismatched type/value count should raise ValueError."""
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="ABI decoding failed"):
             decode(["uint256", "bool"], b"\x00" * 32)
 
 
@@ -90,12 +90,12 @@ class TestAbiEncoderBoundaryErrors:
 
     def test_encode_invalid_signature(self):
         """Invalid function signature should raise ValueError."""
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="Invalid signature"):
             encode_function_call("not_a_valid_type", [])
 
     def test_encode_wrong_arg_count(self):
         """Wrong number of arguments should raise ValueError."""
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="Argument count mismatch"):
             # transfer requires 2 args, provide 1
             encode_function_call(
                 "transfer(address,uint256)",
@@ -104,12 +104,12 @@ class TestAbiEncoderBoundaryErrors:
 
     def test_encode_single_invalid_type(self):
         """Invalid type in encode_single should raise ValueError."""
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="Unknown ABI type"):
             encode_single("foobar", 42)
 
     def test_encode_single_bytes_too_large(self):
         """bytes32 with > 32 bytes should raise ValueError."""
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="requires exactly 32 bytes"):
             encode_single("bytes32", b"\x00" * 33)
 
 

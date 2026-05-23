@@ -1,6 +1,6 @@
-"""Tests for the PiecewiseMobiusSolver multi-range V3 support.
-"""
+"""Tests for the PiecewiseMobiusSolver multi-range V3 support."""
 
+import math
 from fractions import Fraction
 
 import pytest
@@ -260,7 +260,6 @@ def test_piecewise_mobius_crossing_math():
     # Range 1: price [2.0, 4.0), liquidity = 2000
     # Current price: 1.5 (in range 0)
 
-    Q96 = 2**96
     sqrt_1_0 = 1.0 * Q96  # sqrt(1.0) = 1.0
     sqrt_2_0 = 2**0.5 * Q96  # sqrt(2.0) ≈ 1.414
     sqrt_4_0 = 2.0 * Q96  # sqrt(4.0) = 2.0
@@ -317,8 +316,8 @@ def test_piecewise_mobius_crossing_math():
 
     # Test k=0 (no crossing)
     crossing_0 = sequence.compute_crossing(0)
-    assert crossing_0.crossing_gross_input == 0.0
-    assert crossing_0.crossing_output == 0.0
+    assert math.isclose(crossing_0.crossing_gross_input, 0.0)
+    assert math.isclose(crossing_0.crossing_output, 0.0)
 
     # Test k=1 (cross range 0, end in range 1)
     crossing_1 = sequence.compute_crossing(1)

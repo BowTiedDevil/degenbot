@@ -36,7 +36,7 @@ class TestCollateralStrategies:
         assert revision in COLLATERAL_STRATEGIES
 
     @pytest.mark.parametrize(
-        "revision,expected_mint,expected_burn",
+        ("revision", "expected_mint", "expected_burn"),
         [
             (1, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
             (2, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
@@ -139,7 +139,7 @@ class TestDebtStrategies:
         assert revision in DEBT_STRATEGIES
 
     @pytest.mark.parametrize(
-        "revision,expected_mint,expected_burn",
+        ("revision", "expected_mint", "expected_burn"),
         [
             (1, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
             (2, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
@@ -247,7 +247,7 @@ class TestGhoStrategies:
         assert revision in GHO_DISCOUNT_STRATEGIES
 
     @pytest.mark.parametrize(
-        "revision,expected_supports_discount,expected_has_method",
+        ("revision", "expected_supports_discount", "expected_has_method"),
         [
             (1, True, False),
             (2, True, True),
@@ -259,6 +259,7 @@ class TestGhoStrategies:
     )
     def test_gho_discount_strategy(
         self,
+        *,
         revision: int,
         expected_supports_discount: bool,
         expected_has_method: bool,
@@ -269,7 +270,7 @@ class TestGhoStrategies:
         assert strategy.has_discounted_balance_method == expected_has_method
 
     @pytest.mark.parametrize(
-        "revision,expected_mint,expected_burn",
+        ("revision", "expected_mint", "expected_burn"),
         [
             (1, RoundingMode.HALF_UP, RoundingMode.HALF_UP),
             (2, RoundingMode.HALF_UP, RoundingMode.HALF_UP),

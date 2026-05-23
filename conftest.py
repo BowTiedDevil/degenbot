@@ -1,5 +1,4 @@
-"""
-Sybil-powered doctest for README.md.
+"""Sybil-powered doctest for README.md.
 
 Validates that Python code blocks in the project README remain importable
 and syntactically valid after refactors.
@@ -25,8 +24,7 @@ pytest_collect_file = Sybil(
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """
-    Restore document order for README.md sybil items and pin them to one
+    """Restore document order for README.md sybil items and pin them to one
     xdist worker.
 
     Sybil's skip directive state is tracked per-document and depends on

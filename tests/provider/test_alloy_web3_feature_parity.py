@@ -44,7 +44,10 @@ WEB3_ETH_METHODS: dict[str, dict[str, Any]] = {
         "locations": ["bot.py"],
         "alloy_equivalent": "get_block(block_number: int)",
         "implemented": True,
-        "note": "AlloyProvider only supports integer block numbers, not 'latest'/'earliest'/'pending' strings",
+        "note": (
+            "AlloyProvider only supports integer block numbers, not 'latest'/'earliest'/'pending' "
+            "strings"
+        ),
     },
     "get_logs": {
         "web3_usage": "w3.eth.get_logs(filter_params)",
@@ -115,7 +118,9 @@ WEB3_ETH_METHODS: dict[str, dict[str, Any]] = {
         "locations": ["chainlink/price_feed.py"],
         "alloy_equivalent": "None",
         "implemented": False,
-        "note": "AlloyProvider does not provide contract factory. Use degenbot.contract module instead.",
+        "note": (
+            "AlloyProvider does not provide contract factory. Use degenbot.contract module instead."
+        ),
     },
 }
 

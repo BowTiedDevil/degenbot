@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from hexbytes import HexBytes
+from web3.exceptions import Web3Exception
 
 from degenbot.builders.pool_io import SyncPoolIO
 from degenbot.provider.sync_adapter import ProviderAdapter
@@ -81,9 +82,6 @@ class FakeCurveBackend:
 
     def close(self) -> None:
         pass
-
-
-from web3.exceptions import Web3Exception
 
 
 def make_fake_curve_provider(call_responses: dict[bytes, Any]) -> ProviderAdapter:

@@ -21,6 +21,10 @@ if TYPE_CHECKING:
     from degenbot.aave.operations import Operation, ScaledTokenEvent
 
 
+_DEFAULT_USER_ADDRESS = ChecksumAddress("0x" + "1" * 40)
+_RAY = 10**27
+
+
 class TestBorrowHandler:
     """Tests for BorrowHandler."""
 
@@ -54,7 +58,10 @@ class TestBorrowHandler:
         )
 
         pool_event = _create_mock_pool_event(
-            event_topic="0xb3d084820fb1a9decffb176436bd02558d15fac9b0ddfed8c465bc7359d7dce0",  # BORROW
+            event_topic=(
+                # BORROW
+                "0xb3d084820fb1a9decffb176436bd02558d15fac9b0ddfed8c465bc7359d7dce0"
+            ),
             amount=raw_amount,
         )
         operation = _create_mock_operation(OperationType.BORROW, pool_event)
@@ -100,7 +107,7 @@ def _create_mock_scaled_event(
     amount: int,
     index: int,
     balance_increase: int | None = None,
-    user_address: ChecksumAddress = ChecksumAddress("0x" + "1" * 40),
+    user_address: ChecksumAddress = _DEFAULT_USER_ADDRESS,
 ) -> "ScaledTokenEvent":
     """Create a minimal mock ScaledTokenEvent."""
 
@@ -204,8 +211,7 @@ def _create_mock_context() -> MagicMock:
         token_revision: int,
     ) -> int:
         """Calculate scaled amount using TokenMath."""
-        RAY = 10**27
-        return raw_amount * RAY // index
+        return raw_amount * _RAY // index
 
     def mock_build_enriched_event(
         event: "ScaledTokenEvent",

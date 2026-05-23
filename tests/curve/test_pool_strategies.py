@@ -116,7 +116,8 @@ class TestResolvePoolStrategies:
 
     def test_variant_groups_merged(self):
         """Strategies merge variant group resolution with address mapping."""
-        # 0xA5407eAE is in D_VARIANT_GROUP_1 (VARIANT_ALPHA_DP_ALPHA) and Y_VARIANT_GROUP_0+1 (VARIANT_0)
+        # 0xA5407eAE is in D_VARIANT_GROUP_1 (VARIANT_ALPHA_DP_ALPHA)
+        # and Y_VARIANT_GROUP_0+1 (VARIANT_0)
         # It uses RATE_ADJUSTED_NO_ONE swap style but has NO lending tokens
         # (USE_LENDING = [False, False, False, False] in the contract)
         strategies = resolve_pool_strategies("0xA5407eAE9Ba41422680e2e00537571bcC53efBfD")

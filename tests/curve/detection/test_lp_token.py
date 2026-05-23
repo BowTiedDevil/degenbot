@@ -1,14 +1,12 @@
-from web3.exceptions import Web3Exception
-
-from tests.curve.detection.fake_provider import make_fake_pool_io
-
 """Tests for Curve pool LP token discovery."""
 
 import eth_abi.abi
+from web3.exceptions import Web3Exception
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.detection.lp_token import find_lp_token
 from degenbot.provider.call_helpers import encode_function_calldata
+from tests.curve.detection.fake_provider import make_fake_pool_io
 
 POOL_ADDR = get_checksum_address("0xbEbc44782C7DB0a1A60Cb6fe97d0b483032FF1C7")
 THREE_CRV_LP = get_checksum_address("0x6c3F90f043a72FA612Cbac8115ee7e52bDE6E490")
@@ -26,7 +24,7 @@ def _encode_address(addr: str) -> bytes:
 
 
 class TestFindLpToken:
-    def testLpTokenFromFirstRegistry(self):
+    def test_lp_token_from_first_registry(self):
         """LP token found via the first registry."""
 
         def handle_get_lp_token(to: str, data: bytes, block: int) -> bytes:
@@ -44,7 +42,7 @@ class TestFindLpToken:
         )
         assert result == THREE_CRV_LP
 
-    def testLpTokenFromSecondRegistry(self):
+    def test_lp_token_from_second_registry(self):
         """First registry returns zero address, second registry finds the LP token."""
         call_count = {"count": 0}
 
@@ -66,7 +64,7 @@ class TestFindLpToken:
         )
         assert result == THREE_CRV_LP
 
-    def testNoLpTokenFound(self):
+    def test_no_lp_token_found(self):
         """Both registries revert or return zero — no LP token found."""
         io = make_fake_pool_io({})  # All calls revert
 
@@ -78,12 +76,13 @@ class TestFindLpToken:
         )
         assert result is None
 
-    def testFirstRegistryReverts(self):
+    def test_first_registry_reverts(self):
         """First registry reverts, second registry finds LP token."""
 
         def handle_get_lp_token(to: str, data: bytes, block: int) -> bytes:
             if to == CURVE_V1_REGISTRY_ADDRESS:
-                raise Web3Exception("revert")
+                msg = "revert"
+                raise Web3Exception(msg)
             return _encode_address(THREE_CRV_LP)
 
         io = make_fake_pool_io({

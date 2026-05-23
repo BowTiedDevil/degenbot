@@ -1,5 +1,4 @@
-"""Unit tests for the pool state generator.
-"""
+"""Unit tests for the pool state generator."""
 
 import math
 from fractions import Fraction
@@ -8,6 +7,7 @@ import pytest
 from hexbytes import HexBytes
 
 from degenbot.uniswap.v2_types import UniswapV2PoolState
+from degenbot.uniswap.v3_libraries.constants import Q96
 from degenbot.uniswap.v3_types import UniswapV3PoolState
 from tests.arbitrage.generator.pool_generator import PoolStateGenerator
 from tests.arbitrage.generator.types import (
@@ -190,7 +190,6 @@ class TestProfitablePairGeneration:
             liquidity=10**18,
         )
 
-        Q96 = 2**96
         price_a = (pool_a.sqrt_price_x96 / Q96) ** 2
         price_b = (pool_b.sqrt_price_x96 / Q96) ** 2
         assert abs(price_a / price_b - 1.02) / 1.02 < 0.01
@@ -207,7 +206,6 @@ class TestProfitablePairGeneration:
             liquidity=10**18,
         )
 
-        Q96 = 2**96
         price_a = (pool_a.sqrt_price_x96 / Q96) ** 2
         price_b = (pool_b.sqrt_price_x96 / Q96) ** 2
         assert abs(price_a / price_b - 1.02) / 1.02 < 0.01

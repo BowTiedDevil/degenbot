@@ -296,10 +296,11 @@ class TestPropertyDerivation:
     )
     def test_category_properties(
         self,
+        *,
         event_type: ScaledTokenEventType,
-        expected_collateral: bool,  # noqa: FBT001
-        expected_debt: bool,  # noqa: FBT001
-        expected_gho: bool,  # noqa: FBT001
+        expected_collateral: bool,
+        expected_debt: bool,
+        expected_gho: bool,
     ) -> None:
         kwargs = _base_kwargs(event_type=event_type)
 
@@ -350,11 +351,12 @@ class TestPropertyDerivation:
     )
     def test_direction_properties(
         self,
+        *,
         event_type: ScaledTokenEventType,
-        expected_mint: bool,  # noqa: FBT001
-        expected_burn: bool,  # noqa: FBT001
-        expected_transfer: bool,  # noqa: FBT001
-        expected_interest: bool,  # noqa: FBT001
+        expected_mint: bool,
+        expected_burn: bool,
+        expected_transfer: bool,
+        expected_interest: bool,
     ) -> None:
         kwargs = _base_kwargs(event_type=event_type)
 

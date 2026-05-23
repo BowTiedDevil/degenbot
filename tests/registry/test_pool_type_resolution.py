@@ -141,10 +141,9 @@ class TestPoolTypeInvariants:
 
     def test_all_v2_pool_classes_derive_constant_product(self) -> None:
 
-        for key, (pool_class, desc, deployment) in pool_type_registry.registrations.items():
-            chain_id, factory_addr = key
+        for _, desc, _ in pool_type_registry.registrations.values():
             if desc is not None:
-                    assert "_" in desc.kind, f"Expected kind with underscore, got {desc.kind}"
+                assert "_" in desc.kind, f"Expected kind with underscore, got {desc.kind}"
 
     def test_sushiswap_registered(self) -> None:
         assert pool_type_registry.has_registration(1, "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac")

@@ -1,5 +1,4 @@
-"""
-Verify recorded V3 tick data against TickLens contract.
+"""Verify recorded V3 tick data against TickLens contract.
 
 Usage:
     python scripts/verify_v3_tick_data.py --data tests/fixtures/chain_data/1/blocks_24945920_24945920.json --rpc-url https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY

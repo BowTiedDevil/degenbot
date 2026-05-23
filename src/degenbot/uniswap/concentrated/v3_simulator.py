@@ -83,8 +83,8 @@ def calculate_swap(
 
     Raises:
         EVMRevertError: If the swap amount is zero or price limits are violated.
-        MissingLiquidityData: If a required bitmap word is absent in a sparse mapping.
-    """""
+
+    """
     assert liquidity_start >= 0
 
     if amount_specified == 0:

@@ -393,4 +393,4 @@ class TestMultiPoolInvariants:
                 price = state.reserves_token1 / state.reserves_token0
                 # Price should be a valid positive number
                 assert price > 0
-                assert not (price != price)  # Not NaN
+                assert price == price  # Not NaN

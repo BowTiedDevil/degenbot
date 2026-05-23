@@ -1,5 +1,6 @@
 """Tests for the Rust Möbius optimizer Python bindings."""
 
+import math
 from fractions import Fraction
 from itertools import starmap
 
@@ -60,9 +61,9 @@ def _sim_path_float(x: float, hops: list) -> float:
 class TestRustHopState:
     def test_creation(self):
         hop = rs_mobius.RustHopState(1_000_000.0, 1_050_000.0, 0.003)
-        assert hop.reserve_in == 1_000_000.0
-        assert hop.reserve_out == 1_050_000.0
-        assert hop.fee == 0.003
+        assert math.isclose(hop.reserve_in, 1_000_000.0)
+        assert math.isclose(hop.reserve_out, 1_050_000.0)
+        assert math.isclose(hop.fee, 0.003)
 
     def test_repr(self):
         hop = rs_mobius.RustHopState(100.0, 200.0, 0.003)
@@ -114,7 +115,7 @@ class TestRustSimulatePath:
     def test_zero_input(self):
         hops = [rs_mobius.RustHopState(1_000_000.0, 1_050_000.0, 0.003)]
         output = _sim_path_float(0.0, hops)
-        assert output == 0.0
+        assert math.isclose(output, 0.0)
 
 
 class TestRustMobiusCoefficients:
@@ -151,7 +152,7 @@ class TestRustMobiusCoefficients:
         cp_hops = _to_cp_hops(FLAT_HOPS_2)
         coeffs = _compute_mobius_coefficients(cp_hops)
         assert not coeffs.is_profitable
-        assert coeffs.optimal_input() == 0.0
+        assert math.isclose(coeffs.optimal_input(), 0.0)
 
 
 class TestRustV3TickRangeHop:
@@ -164,9 +165,9 @@ class TestRustV3TickRangeHop:
             fee=0.003,
             zero_for_one=True,
         )
-        assert v3.liquidity == 1e18
-        assert v3.sqrt_price_current == 1000.0
-        assert v3.fee == 0.003
+        assert math.isclose(v3.liquidity, 1e18)
+        assert math.isclose(v3.sqrt_price_current, 1000.0)
+        assert math.isclose(v3.fee, 0.003)
         assert v3.zero_for_one is True
 
     def test_alpha_beta(self):

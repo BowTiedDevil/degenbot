@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from fractions import Fraction
 from unittest.mock import MagicMock
 
@@ -37,7 +38,7 @@ class FakeAsyncProvider:
         self._responses = responses
 
     async def call(
-        self, *, to: str, data: bytes, block: int | None = None  # noqa: ARG002
+        self, *, to: str, data: bytes, block: int | None = None
     ) -> HexBytes:
         selector = data[:4].hex()
         if selector in self._responses:
@@ -132,7 +133,8 @@ class TestAsyncV2PoolBuilder:
         # Builder with mock dependencies — all I/O goes through io=
         erc20_builder = MagicMock(spec=AsyncErc20Builder)
 
-        async def _build_token(address, *, chain_id=None, silent=False, io=None):  # noqa: ARG001, RUF029
+        async def _build_token(address, *, chain_id=None, silent=False, io=None):
+            await asyncio.sleep(0)
             token = MagicMock(spec=Erc20Token)
             token.address = address
             token.chain_id = chain_id or 1
