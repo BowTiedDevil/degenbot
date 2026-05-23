@@ -1,5 +1,4 @@
-"""
-Shared dependency context for async pool builders.
+"""Shared dependency context for async pool builders.
 
 Mirrors BuilderContext but with async-compatible types.
 AsyncBot creates one AsyncBuilderContext and passes it to all async builders.
@@ -19,8 +18,7 @@ if TYPE_CHECKING:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class AsyncBuilderContext:
-    """
-    Shared dependencies for all async pool builders.
+    """Shared dependencies for all async pool builders.
 
     AsyncBot creates one ``AsyncBuilderContext`` and passes it to all
     async builders. Each builder unpacks what it needs.

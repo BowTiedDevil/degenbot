@@ -37,8 +37,7 @@ _REGISTRY_ADDRESSES = (CURVE_V1_REGISTRY_ADDRESS, CURVE_V1_FACTORY_ADDRESS)
 
 
 class CurvePoolBuilder:
-    """
-    Builds and updates Curve StableSwap pools.
+    """Builds and updates Curve StableSwap pools.
 
     Owns the full I/O choreography: DB lookup → RPC fetch → decode →
     construct pool → register.
@@ -60,7 +59,15 @@ class CurvePoolBuilder:
         io: PoolIO,
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
-        """Fetch pool data from RPC and construct an I/O-free CurveStableswapPool."""
+        """Fetch pool data from RPC and construct an I/O-free CurveStableswapPool.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            BrokenPool: If the operation fails.
+
+        """
         pool_address = get_checksum_address(address)
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
@@ -212,7 +219,12 @@ class CurvePoolBuilder:
         request: BuildRequest,
         io: PoolIO,
     ) -> tuple[CurveStableswapPool | None, tuple[Erc20Token, ...] | None]:
-        """Build base pool and underlying tokens for a metapool."""
+        """Build base pool and underlying tokens for a metapool.
+
+        Returns:
+            The computed value.
+
+        """
         if not metapool.is_meta:
             return None, None
 
@@ -248,7 +260,15 @@ class CurvePoolBuilder:
         block_number: BlockIdentifier | None = None,
         io: PoolIO | None = None,
     ) -> bool:
-        """Fetch current state from chain and push update to the pool."""
+        """Fetch current state from chain and push update to the pool.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            TypeError: If the operation fails.
+
+        """
         if not isinstance(pool, CurveStableswapPool):
             msg = f"CurvePoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)
@@ -298,7 +318,12 @@ def _fetch_pool_params(
     *,
     block_identifier: int,
 ) -> tuple[int, int, int]:
-    """Fetch A, fee, and admin_fee from a Curve pool contract."""
+    """Fetch A, fee, and admin_fee from a Curve pool contract.
+
+    Returns:
+        The computed value.
+
+    """
     a_result = io.call_raw(
         {
             "to": pool_address,

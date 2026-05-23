@@ -22,8 +22,7 @@ if TYPE_CHECKING:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class TickDataTypes:
-    """
-    Type-params that differ between V3 and V4 tick data fetchers.
+    """Type-params that differ between V3 and V4 tick data fetchers.
 
     V3 and V4 use the same algorithm but different concrete types for
     the bitmap-at-word and liquidity-at-tick values. This dataclass
@@ -51,8 +50,7 @@ def make_tick_data_fetcher(
     state_view_address: str | None = None,
     pool_id: bytes | None = None,
 ) -> Callable[[int, int], None]:
-    """
-    Create a tick data fetcher callback for a concentrated-liquidity pool.
+    """Create a tick data fetcher callback for a concentrated-liquidity pool.
 
     The returned fetcher captures the pool-lookup closure and PoolIO
     reference so the calling builder does not need to hold references
@@ -63,6 +61,10 @@ def make_tick_data_fetcher(
     (``getTickBitmap(bytes32,int16)`` / ``getTickLiquidity(bytes32,int24)``).
     When these are absent the fetcher uses V3 ABI calls
     (``tickBitmap(int16)`` / ``ticks(int24)``) on ``pool.address``.
+
+    Returns:
+        The computed value.
+
     """
     is_v4 = state_view_address is not None and pool_id is not None
 

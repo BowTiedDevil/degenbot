@@ -35,8 +35,7 @@ from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
 
 class AsyncV3PoolBuilder:
-    """
-    Async counterpart of V3PoolBuilder.
+    """Async counterpart of V3PoolBuilder.
 
     Builds UniswapV3Pool instances using AsyncPoolIO for I/O.
     Shares pure decode/resolve logic with V3BuilderBase via static methods.
@@ -62,7 +61,17 @@ class AsyncV3PoolBuilder:
         io: AsyncPoolIO,
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
-        """Fetch pool data from DB/RPC and construct an I/O-free V3-style pool."""
+        """Fetch pool data from DB/RPC and construct an I/O-free V3-style pool.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            ValueError: If the operation fails.
+            DegenbotValueError: If the operation fails.
+            LiquidityPoolError: If the operation fails.
+
+        """
         pool_address = get_checksum_address(address)
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
@@ -314,7 +323,15 @@ class AsyncV3PoolBuilder:
         block_number: BlockIdentifier | None = None,
         io: AsyncPoolIO | None = None,
     ) -> bool:
-        """Fetch current state from chain and push update to the pool."""
+        """Fetch current state from chain and push update to the pool.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            TypeError: If the operation fails.
+
+        """
         if isinstance(pool, UniswapV4Pool):
             msg = f"AsyncV3PoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)

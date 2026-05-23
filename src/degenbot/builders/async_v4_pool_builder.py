@@ -35,8 +35,7 @@ if TYPE_CHECKING:
 
 
 class AsyncV4PoolBuilder:
-    """
-    Async counterpart of V4PoolBuilder.
+    """Async counterpart of V4PoolBuilder.
 
     Builds UniswapV4Pool instances using AsyncPoolIO for I/O.
     Shares pure decode/resolve logic with V4BuilderBase via static methods.
@@ -62,7 +61,16 @@ class AsyncV4PoolBuilder:
         io: AsyncPoolIO,
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
-        """Fetch pool data from DB/RPC and construct an I/O-free UniswapV4Pool."""
+        """Fetch pool data from DB/RPC and construct an I/O-free UniswapV4Pool.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            DegenbotValueError: If the operation fails.
+            LiquidityPoolError: If the operation fails.
+
+        """
         # For V4, `address` is the pool manager address
         pool_manager_address = get_checksum_address(address)
         assert isinstance(request, BuildManagedPoolRequest)
@@ -308,7 +316,15 @@ class AsyncV4PoolBuilder:
         io: AsyncPoolIO | None = None,
         block_number: BlockIdentifier | None = None,
     ) -> bool:
-        """Fetch current state from chain and push update to the pool."""
+        """Fetch current state from chain and push update to the pool.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            TypeError: If the operation fails.
+
+        """
         if not isinstance(pool, UniswapV4Pool):
             msg = f"AsyncV4PoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)

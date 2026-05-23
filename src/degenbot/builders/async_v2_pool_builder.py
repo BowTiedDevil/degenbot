@@ -30,8 +30,7 @@ if TYPE_CHECKING:
 
 
 class AsyncV2PoolBuilder:
-    """
-    Async counterpart of V2PoolBuilder.
+    """Async counterpart of V2PoolBuilder.
 
     Builds UniswapV2Pool instances using AsyncPoolIO for I/O.
     Shares pure decode/resolve logic with V2BuilderBase via static methods.
@@ -53,7 +52,15 @@ class AsyncV2PoolBuilder:
         state_block: int,
         io: AsyncPoolIO,
     ) -> V2CommonData:
-        """Fetch data shared by all V2 variants using async I/O."""
+        """Fetch data shared by all V2 variants using async I/O.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            LiquidityPoolError: If the operation fails.
+
+        """
         pool_address = get_checksum_address(pool_address)
 
         # Try DB first
@@ -140,7 +147,15 @@ class AsyncV2PoolBuilder:
         io: AsyncPoolIO,
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
-        """Fetch pool data from DB/RPC and construct an I/O-free V2-style pool."""
+        """Fetch pool data from DB/RPC and construct an I/O-free V2-style pool.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            ValueError: If the operation fails.
+
+        """
         pool_address = get_checksum_address(address)
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
@@ -203,7 +218,15 @@ class AsyncV2PoolBuilder:
         block_number: BlockIdentifier | None = None,
         io: AsyncPoolIO | None = None,
     ) -> bool:
-        """Fetch current state from chain and push update to the pool."""
+        """Fetch current state from chain and push update to the pool.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            TypeError: If the operation fails.
+
+        """
         assert io is not None, "io must be provided for update()"
         if not isinstance(pool, UniswapV2Pool):
             msg = f"AsyncV2PoolBuilder cannot update {type(pool).__name__}"

@@ -1,5 +1,4 @@
-"""
-Shared type resolution for pool construction.
+"""Shared type resolution for pool construction.
 
 Functions extracted from Bot and AsyncBot so that pool type resolution
 logic (DB lookup, factory fetch, on-chain probing, class dispatch) is
@@ -55,12 +54,18 @@ def pool_class_for_descriptor(
     *,
     chain_id: ChainId,
 ) -> type[AbstractLiquidityPool]:
-    """
-    Resolve a PoolTypeDescriptor to a concrete pool class.
+    """Resolve a PoolTypeDescriptor to a concrete pool class.
 
     Consults the pool_type_registry to find the registered class
     for this factory on this chain. Falls back to a default class
     based on the family if no specific registration exists.
+
+    Returns:
+        The computed value.
+
+    Raises:
+        DegenbotValueError: If the operation fails.
+
     """
     if pool_type.factory is not None:
         pool_class = pool_type_registry.get_class(chain_id, pool_type.factory)
@@ -106,11 +111,14 @@ def pool_class_for_descriptor(
 def _build_descriptor_from_db_result(
     pool_from_db: LiquidityPoolTable,
 ) -> PoolTypeDescriptor | None:
-    """
-    Map a DB row to a PoolTypeDescriptor.
+    """Map a DB row to a PoolTypeDescriptor.
 
     Returns None if the kind can't be resolved from the registry.
     Read-only dependency on pool_type_registry.
+
+    Returns:
+        The computed value.
+
     """
     kind = pool_from_db.kind
     descriptor = pool_type_registry.get_descriptor_by_kind(kind)
@@ -130,12 +138,15 @@ def _descriptor_from_probing_result(
     chain_id: ChainId,
     factory: ChecksumAddress,
 ) -> PoolTypeDescriptor:
-    """
-    Map 'which method succeeded' to a PoolTypeDescriptor.
+    """Map 'which method succeeded' to a PoolTypeDescriptor.
 
     If the factory is registered in pool_type_registry, uses the registry
     descriptor. Otherwise derives a default descriptor from the method name.
     If succeeded_method is None (no method succeeded), returns STABLESWAP.
+
+    Returns:
+        The computed value.
+
     """
     if succeeded_method is None:
         return PoolTypeDescriptor(
@@ -171,7 +182,12 @@ def fetch_factory_from_chain(
     chain_id: ChainId,  # noqa: ARG001 — kept for API consistency with resolve_pool_type
     io: PoolIO,
 ) -> ChecksumAddress | None:
-    """Fetch the factory address from the pool contract's factory() method."""
+    """Fetch the factory address from the pool contract's factory() method.
+
+    Returns:
+        The computed value.
+
+    """
     try:
         factory_result = io.call(
             to=address,
@@ -189,7 +205,12 @@ async def fetch_factory_from_chain_async(
     chain_id: ChainId,  # noqa: ARG001 — kept for API consistency with resolve_pool_type_async
     io: AsyncPoolIOProtocol,
 ) -> ChecksumAddress | None:
-    """Fetch the factory address from the pool contract's factory() method (async)."""
+    """Fetch the factory address from the pool contract's factory() method (async).
+
+    Returns:
+        The computed value.
+
+    """
     try:
         factory_result = await io.call(
             to=address,
@@ -208,12 +229,15 @@ def resolve_pool_type_by_probing(
     factory: ChecksumAddress,
     io: PoolIO,
 ) -> PoolTypeDescriptor:
-    """
-    Determine pool type by probing the contract on-chain.
+    """Determine pool type by probing the contract on-chain.
 
     Tries V3 methods first (slot0), then V2 methods (getReserves),
     then falls back to STABLESWAP. Descriptor construction is
     delegated to _descriptor_from_probing_result.
+
+    Returns:
+        The computed value.
+
     """
     # Try V3: slot0() exists → CONCENTRATED_LIQUIDITY
     try:
@@ -288,7 +312,12 @@ async def resolve_pool_type_by_probing_async(
     factory: ChecksumAddress,
     io: AsyncPoolIOProtocol,
 ) -> PoolTypeDescriptor:
-    """Determine pool type by probing the contract on-chain (async)."""
+    """Determine pool type by probing the contract on-chain (async).
+
+    Returns:
+        The computed value.
+
+    """
     # Try V3: slot0() exists → CONCENTRATED_LIQUIDITY
     try:
         await io.call(
@@ -362,8 +391,7 @@ def resolve_pool_type(
     io: PoolIO,
     db: DatabaseSessionManager,
 ) -> PoolTypeDescriptor:
-    """
-    Resolve the pool type for the given address.
+    """Resolve the pool type for the given address.
 
     Consults these sources in order:
     1. Database `kind` column (exact polymorphic type)
@@ -371,6 +399,13 @@ def resolve_pool_type(
     3. On-chain probing (slot0 vs getReserves) when factory is unknown
 
     Raises DegenbotValueError if the type cannot be determined.
+
+    Returns:
+        The computed value.
+
+    Raises:
+        DegenbotValueError: If the operation fails.
+
     """
     # Step 1: DB lookup — the `kind` column is the most direct signal
     with contextlib.suppress(Exception), db() as session:
@@ -411,10 +446,16 @@ async def resolve_pool_type_async(
     io: AsyncPoolIOProtocol,
     db: DatabaseSessionManager,
 ) -> PoolTypeDescriptor:
-    """
-    Resolve the pool type for the given address (async).
+    """Resolve the pool type for the given address (async).
 
     Same logic as resolve_pool_type but uses await for I/O calls.
+
+    Returns:
+        The computed value.
+
+    Raises:
+        DegenbotValueError: If the operation fails.
+
     """
     # Step 1: DB lookup — the `kind` column is the most direct signal
     with contextlib.suppress(Exception), db() as session:

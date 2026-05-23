@@ -22,8 +22,7 @@ if TYPE_CHECKING:
 
 
 class V2PoolBuilder(V2BuilderBase):
-    """
-    Builds and updates base Uniswap V2-style pools.
+    """Builds and updates base Uniswap V2-style pools.
 
     Owns the full I/O choreography: DB lookup → RPC fetch → decode →
     construct pool → register.
@@ -44,7 +43,15 @@ class V2PoolBuilder(V2BuilderBase):
         io: PoolIO,
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
-        """Fetch pool data from DB/RPC and construct an I/O-free V2-style pool."""
+        """Fetch pool data from DB/RPC and construct an I/O-free V2-style pool.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            ValueError: If the operation fails.
+
+        """
         pool_address = get_checksum_address(address)
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
@@ -106,7 +113,15 @@ class V2PoolBuilder(V2BuilderBase):
         block_number: BlockIdentifier | None = None,
         io: PoolIO | None = None,
     ) -> bool:
-        """Fetch current state from chain and push update to the pool."""
+        """Fetch current state from chain and push update to the pool.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            TypeError: If the operation fails.
+
+        """
         if not isinstance(pool, UniswapV2Pool):
             msg = f"V2PoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)

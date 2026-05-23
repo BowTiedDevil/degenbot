@@ -20,8 +20,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class V4Slot0Data:
-    """
-    Decoded V4 slot0 data.
+    """Decoded V4 slot0 data.
 
     Produced by V4BuilderBase.decode_slot0().
     Shared by both build() and update().
@@ -36,8 +35,7 @@ class V4Slot0Data:
 
 @dataclass(frozen=True)
 class V4DbValues:
-    """
-    Immutable values extracted from a V4 DB row.
+    """Immutable values extracted from a V4 DB row.
 
     Produced by V4BuilderBase.extract_db_values().
     """
@@ -51,8 +49,7 @@ class V4DbValues:
 
 
 class V4BuilderBase:
-    """
-    Shared pure-logic helpers for V4 pool builders.
+    """Shared pure-logic helpers for V4 pool builders.
 
     Both V4PoolBuilder (sync) and AsyncV4PoolBuilder (async) delegate
     decode/extract/snapshot steps to these helpers. Only the I/O
@@ -61,12 +58,15 @@ class V4BuilderBase:
 
     @staticmethod
     def decode_slot0(slot0_result: HexBytes) -> V4Slot0Data:
-        """
-        Decode sqrt_price, tick, protocol fees, and lp_fee from V4 getSlot0(bytes32).
+        """Decode sqrt_price, tick, protocol fees, and lp_fee from V4 getSlot0(bytes32).
 
         V4 getSlot0 returns [uint160 sqrtPriceX96, int24 tick, uint24 protocolFee,
         uint24 lpFee]. The protocol fee uint24 packs two uint12 values:
         bits 12-23 = fee_one_to_zero, bits 0-11 = fee_zero_to_one.
+
+        Returns:
+            The computed value.
+
         """
         price, tick, protocol_fee, lp_fee = eth_abi.abi.decode(
             types=["uint160", "int24", "uint24", "uint24"],
@@ -82,7 +82,12 @@ class V4BuilderBase:
 
     @staticmethod
     def extract_db_values(pool_from_db: UniswapV4PoolTableBase) -> V4DbValues:
-        """Extract currency addresses, hook, tick spacing, fee, state_view from a V4 DB row."""
+        """Extract currency addresses, hook, tick spacing, fee, state_view from a V4 DB row.
+
+        Returns:
+            The computed value.
+
+        """
         return V4DbValues(
             currency0_address=get_checksum_address(pool_from_db.currency0.address),
             currency1_address=get_checksum_address(pool_from_db.currency1.address),
@@ -96,8 +101,7 @@ class V4BuilderBase:
     def load_tick_snapshot(
         pool_with_data: UniswapV4PoolTableBase,
     ) -> tuple[dict[BitmapWord, BitmapAtWord], dict[Tick, LiquidityAtTick], bool]:
-        """
-        Load tick bitmap and tick data from a re-queried V4 DB row with active relationships.
+        """Load tick bitmap and tick data from a re-queried V4 DB row with active relationships.
 
         The caller is responsible for re-querying the pool row within an
         active SQLAlchemy session so that lazy-loaded relationships
@@ -105,6 +109,10 @@ class V4BuilderBase:
 
         Returns (working_tick_bitmap, working_tick_data, db_snapshot_loaded).
         If the snapshot cannot be loaded, returns ({}, {}, False).
+
+        Returns:
+            The computed value.
+
         """
         init_maps = pool_with_data.initialization_maps
         liq_positions = pool_with_data.liquidity_positions
@@ -137,11 +145,14 @@ class V4BuilderBase:
         working_tick_data: dict[Tick, LiquidityAtTick],
         working_tick_bitmap: dict[BitmapWord, BitmapAtWord],
     ) -> tuple[dict[BitmapWord, BitmapAtWord] | None, dict[Tick, LiquidityAtTick] | None]:
-        """
-        Decide whether to pass tick data to the pool constructor.
+        """Decide whether to pass tick data to the pool constructor.
 
         V4 passes tick data when any tick data was populated.
         Otherwise passes None (sparse mode).
+
+        Returns:
+            The computed value.
+
         """
         if working_tick_data:
             return working_tick_bitmap, working_tick_data

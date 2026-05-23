@@ -32,8 +32,7 @@ if TYPE_CHECKING:
 
 
 class AsyncErc20Builder:
-    """
-    Async counterpart of Erc20Builder.
+    """Async counterpart of Erc20Builder.
 
     Builds Erc20Token instances using AsyncPoolIO for I/O.
     Shares pure decode/register logic with Erc20Builder.
@@ -59,7 +58,12 @@ class AsyncErc20Builder:
         silent: bool = False,
         io: AsyncPoolIO | None = None,
     ) -> Erc20Token:
-        """Fetch token metadata from DB/RPC and construct an I/O-free Erc20Token."""
+        """Fetch token metadata from DB/RPC and construct an I/O-free Erc20Token.
+
+        Returns:
+            The computed value.
+
+        """
         address = get_checksum_address(address)
         chain_id = chain_id or self._default_chain_id
         assert chain_id is not None, "chain_id must be provided or set as default_chain_id"
@@ -157,7 +161,12 @@ class AsyncErc20Builder:
         address: str,
         io: AsyncPoolIO,
     ) -> tuple[str, str, int]:
-        """Fetch name, symbol, decimals from chain in three async calls."""
+        """Fetch name, symbol, decimals from chain in three async calls.
+
+        Returns:
+            The computed value.
+
+        """
         name_result = await io.call(
             to=address,
             data=encode_function_calldata("name()", None),
@@ -184,7 +193,12 @@ class AsyncErc20Builder:
         prototypes: list[str],
         default: str,
     ) -> str:
-        """Fetch a string field with fallback prototypes."""
+        """Fetch a string field with fallback prototypes.
+
+        Returns:
+            The computed value.
+
+        """
         for prototype in prototypes:
             try:
                 result = await io.call(
@@ -204,7 +218,12 @@ class AsyncErc20Builder:
         prototypes: list[str],
         default: int,
     ) -> int:
-        """Fetch an integer field with fallback prototypes."""
+        """Fetch an integer field with fallback prototypes.
+
+        Returns:
+            The computed value.
+
+        """
         for prototype in prototypes:
             try:
                 result = await io.call(
@@ -225,7 +244,12 @@ class AsyncErc20Builder:
         *,
         io: AsyncPoolIO | None = None,
     ) -> int:
-        """Retrieve the ERC-20 balance for the given address."""
+        """Retrieve the ERC-20 balance for the given address.
+
+        Returns:
+            The computed value.
+
+        """
         address = get_checksum_address(address)
         assert token.chain_id is not None
         assert io is not None
@@ -257,7 +281,12 @@ class AsyncErc20Builder:
         *,
         io: AsyncPoolIO | None = None,
     ) -> int:
-        """Retrieve the amount that can be spent by `spender` on behalf of `owner`."""
+        """Retrieve the amount that can be spent by `spender` on behalf of `owner`.
+
+        Returns:
+            The computed value.
+
+        """
         owner = get_checksum_address(owner)
         spender = get_checksum_address(spender)
         assert token.chain_id is not None
@@ -288,7 +317,12 @@ class AsyncErc20Builder:
         *,
         io: AsyncPoolIO | None = None,
     ) -> int:
-        """Retrieve the total supply for this token."""
+        """Retrieve the total supply for this token.
+
+        Returns:
+            The computed value.
+
+        """
         assert token.chain_id is not None
         assert io is not None
 
@@ -318,7 +352,12 @@ class AsyncErc20Builder:
         *,
         io: AsyncPoolIO | None = None,
     ) -> int:
-        """Retrieve the native ETH balance for the given address."""
+        """Retrieve the native ETH balance for the given address.
+
+        Returns:
+            The computed value.
+
+        """
         address = get_checksum_address(address)
         assert io is not None
 
@@ -327,7 +366,12 @@ class AsyncErc20Builder:
 
 
 async def _resolve_block_number(io: AsyncPoolIO, block_identifier: BlockIdentifier | None) -> int:
-    """Resolve a block identifier to a block number."""
+    """Resolve a block identifier to a block number.
+
+    Returns:
+        The computed value.
+
+    """
     if block_identifier is None:
         return await io.get_block_number()
     if isinstance(block_identifier, int):
