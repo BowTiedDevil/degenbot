@@ -150,8 +150,8 @@ class TestV3V3SingleRangeProperties:
         sqrt_pb = math.sqrt(base_price)
 
         # Wide ranges to ensure single-range fast path
-        hop1 = make_wide_range_hop(liquidity, sqrt_pa, fee, zero_for_one=True)
-        hop2 = make_wide_range_hop(liquidity, sqrt_pb, fee, zero_for_one=False)
+        hop1 = make_wide_range_hop(liquidity=liquidity, sqrt_price=sqrt_pa, fee=fee, zero_for_one=True)
+        hop2 = make_wide_range_hop(liquidity=liquidity, sqrt_price=sqrt_pb, fee=fee, zero_for_one=False)
 
         seq1 = mobius.RustV3TickRangeSequence([hop1])
         seq2 = mobius.RustV3TickRangeSequence([hop2])
@@ -183,8 +183,8 @@ class TestV3V3SingleRangeProperties:
         """
         sqrt_p = math.sqrt(price)
 
-        hop1 = make_wide_range_hop(liquidity, sqrt_p, fee, zero_for_one=True)
-        hop2 = make_wide_range_hop(liquidity, sqrt_p, fee, zero_for_one=False)
+        hop1 = make_wide_range_hop(liquidity=liquidity, sqrt_price=sqrt_p, fee=fee, zero_for_one=True)
+        hop2 = make_wide_range_hop(liquidity=liquidity, sqrt_price=sqrt_p, fee=fee, zero_for_one=False)
 
         seq1 = mobius.RustV3TickRangeSequence([hop1])
         seq2 = mobius.RustV3TickRangeSequence([hop2])
@@ -216,8 +216,8 @@ class TestV3V3SingleRangeProperties:
         sqrt_pa = math.sqrt(base_price * 1.1)  # 10% price difference
         sqrt_pb = math.sqrt(base_price)
 
-        hop1 = make_wide_range_hop(liquidity, sqrt_pa, fee, zero_for_one=True)
-        hop2 = make_wide_range_hop(liquidity, sqrt_pb, fee, zero_for_one=False)
+        hop1 = make_wide_range_hop(liquidity=liquidity, sqrt_price=sqrt_pa, fee=fee, zero_for_one=True)
+        hop2 = make_wide_range_hop(liquidity=liquidity, sqrt_price=sqrt_pb, fee=fee, zero_for_one=False)
 
         seq1 = mobius.RustV3TickRangeSequence([hop1])
         seq2 = mobius.RustV3TickRangeSequence([hop2])
@@ -258,8 +258,8 @@ class TestV3V3ProfitProperties:
             sqrt_pa = math.sqrt(base_price * (1 + spread))
             sqrt_pb = math.sqrt(base_price)
 
-            hop1 = make_wide_range_hop(liquidity, sqrt_pa, fee, zero_for_one=True)
-            hop2 = make_wide_range_hop(liquidity, sqrt_pb, fee, zero_for_one=False)
+            hop1 = make_wide_range_hop(liquidity=liquidity, sqrt_price=sqrt_pa, fee=fee, zero_for_one=True)
+            hop2 = make_wide_range_hop(liquidity=liquidity, sqrt_price=sqrt_pb, fee=fee, zero_for_one=False)
 
             seq1 = mobius.RustV3TickRangeSequence([hop1])
             seq2 = mobius.RustV3TickRangeSequence([hop2])
@@ -299,15 +299,15 @@ class TestV3V3ProfitProperties:
         sqrt_pb = math.sqrt(base_price)
 
         # Small liquidity
-        hop1_small = make_wide_range_hop(1e18, sqrt_pa, fee, zero_for_one=True)
-        hop2_small = make_wide_range_hop(1e18, sqrt_pb, fee, zero_for_one=False)
+        hop1_small = make_wide_range_hop(liquidity=1e18, sqrt_price=sqrt_pa, fee=fee, zero_for_one=True)
+        hop2_small = make_wide_range_hop(liquidity=1e18, sqrt_price=sqrt_pb, fee=fee, zero_for_one=False)
         seq1_small = mobius.RustV3TickRangeSequence([hop1_small])
         seq2_small = mobius.RustV3TickRangeSequence([hop2_small])
         result_small = _solve_v3_v3(seq1_small, seq2_small)
 
         # Double liquidity
-        hop1_double = make_wide_range_hop(2e18, sqrt_pa, fee, zero_for_one=True)
-        hop2_double = make_wide_range_hop(2e18, sqrt_pb, fee, zero_for_one=False)
+        hop1_double = make_wide_range_hop(liquidity=2e18, sqrt_price=sqrt_pa, fee=fee, zero_for_one=True)
+        hop2_double = make_wide_range_hop(liquidity=2e18, sqrt_price=sqrt_pb, fee=fee, zero_for_one=False)
         seq1_double = mobius.RustV3TickRangeSequence([hop1_double])
         seq2_double = mobius.RustV3TickRangeSequence([hop2_double])
         result_double = _solve_v3_v3(seq1_double, seq2_double)
@@ -342,8 +342,8 @@ class TestV3V3ProfitProperties:
 
         profits = {}
         for fee in [0.01, 0.003, 0.0005]:  # 1%, 0.3%, 0.05%
-            hop1 = make_wide_range_hop(liquidity, sqrt_pa, fee, zero_for_one=True)
-            hop2 = make_wide_range_hop(liquidity, sqrt_pb, fee, zero_for_one=False)
+            hop1 = make_wide_range_hop(liquidity=liquidity, sqrt_price=sqrt_pa, fee=fee, zero_for_one=True)
+            hop2 = make_wide_range_hop(liquidity=liquidity, sqrt_price=sqrt_pb, fee=fee, zero_for_one=False)
             seq1 = mobius.RustV3TickRangeSequence([hop1])
             seq2 = mobius.RustV3TickRangeSequence([hop2])
             result = _solve_v3_v3(seq1, seq2)
@@ -379,8 +379,8 @@ class TestV3V3BoundsProperties:
         sqrt_pa = math.sqrt(base_price * (1 + spread))
         sqrt_pb = math.sqrt(base_price)
 
-        hop1 = make_wide_range_hop(liquidity, sqrt_pa, fee, zero_for_one=True)
-        hop2 = make_wide_range_hop(liquidity, sqrt_pb, fee, zero_for_one=False)
+        hop1 = make_wide_range_hop(liquidity=liquidity, sqrt_price=sqrt_pa, fee=fee, zero_for_one=True)
+        hop2 = make_wide_range_hop(liquidity=liquidity, sqrt_price=sqrt_pb, fee=fee, zero_for_one=False)
 
         seq1 = mobius.RustV3TickRangeSequence([hop1])
         seq2 = mobius.RustV3TickRangeSequence([hop2])
@@ -421,8 +421,8 @@ class TestV3V3BoundsProperties:
         sqrt_pa = math.sqrt(base_price * (1 + spread))
         sqrt_pb = math.sqrt(base_price)
 
-        hop1 = make_wide_range_hop(liquidity, sqrt_pa, fee, zero_for_one=True)
-        hop2 = make_wide_range_hop(liquidity, sqrt_pb, fee, zero_for_one=False)
+        hop1 = make_wide_range_hop(liquidity=liquidity, sqrt_price=sqrt_pa, fee=fee, zero_for_one=True)
+        hop2 = make_wide_range_hop(liquidity=liquidity, sqrt_price=sqrt_pb, fee=fee, zero_for_one=False)
 
         seq1 = mobius.RustV3TickRangeSequence([hop1])
         seq2 = mobius.RustV3TickRangeSequence([hop2])
@@ -523,8 +523,8 @@ class TestV3V3Invariants:
         sqrt_pa = math.sqrt(base_price * (1 + spread))
         sqrt_pb = math.sqrt(base_price)
 
-        hop1 = make_wide_range_hop(liquidity, sqrt_pa, fee, zero_for_one=True)
-        hop2 = make_wide_range_hop(liquidity, sqrt_pb, fee, zero_for_one=False)
+        hop1 = make_wide_range_hop(liquidity=liquidity, sqrt_price=sqrt_pa, fee=fee, zero_for_one=True)
+        hop2 = make_wide_range_hop(liquidity=liquidity, sqrt_price=sqrt_pb, fee=fee, zero_for_one=False)
 
         seq1 = mobius.RustV3TickRangeSequence([hop1])
         seq2 = mobius.RustV3TickRangeSequence([hop2])

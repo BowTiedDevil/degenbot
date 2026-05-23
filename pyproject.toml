@@ -145,7 +145,7 @@ logger-objects = [
 allow-star-arg-any = true
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = [    
+"tests/*" = [
     "ANN",      # type annotations for tests are low priority
     "ARG",
     "D",
@@ -156,16 +156,10 @@ allow-star-arg-any = true
     "S311",
     "S403",
     "SLF001",   # tests may need to access private attributes to test implementation
-    "T201",     # many tests use print
+    "T201",     # print
 ]
 "**/arbitrage/_legacy/*" = [
-    "BLE",      # legacy code catches broad exceptions intentionally
-    "E501",     # long docstring lines in deprecated code
-    "FIX002",   # TODOs in deprecated code will not be resolved
-    "PLR2004",  # magic values in legacy code
-    "S110",     # try-except-pass in legacy fallback paths
-    "TRY300",   # legacy code structure
-    "TRY301",   # legacy code raises within try
+    "ALL",
 ]
 
 [tool.pytest.ini_options]
@@ -184,7 +178,9 @@ pythonpath = "src"
 python_files = "test_*.py"
 testpaths = ["tests", "README.md"]
 norecursedirs = ["archive"]
-filterwarnings = ["ignore::DeprecationWarning:websockets.legacy"]
+filterwarnings = [
+#    "ignore::DeprecationWarning:websockets.legacy",
+]
 markers = [
     "arbitrum: tests requiring an Arbitrum One mainnet RPC",
     "base: tests requiring a Base mainnet RPC",

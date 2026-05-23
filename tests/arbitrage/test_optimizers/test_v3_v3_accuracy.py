@@ -1067,10 +1067,18 @@ class TestV3V3VsV3IntegerMath:
 
         # Build Rust solver sequences
         seq1 = build_seq_from_tick_data(
-            tick_data_1, current_tick_1, range_idx_1, 0.003, zero_for_one=True
+            tick_data=tick_data_1,
+            current_tick=current_tick_1,
+            current_range_idx=range_idx_1,
+            fee=0.003,
+            zero_for_one=True,
         )
         seq2 = build_seq_from_tick_data(
-            tick_data_2, current_tick_2, range_idx_2, 0.003, zero_for_one=False
+            tick_data=tick_data_2,
+            current_tick=current_tick_2,
+            current_range_idx=range_idx_2,
+            fee=0.003,
+            zero_for_one=False,
         )
 
         result_rust = _solve_v3_v3(seq1, seq2)
@@ -1114,10 +1122,10 @@ class TestV3V3VsV3IntegerMath:
                 break
 
         __bf_input, bf_profit = v3_v3_brute_force_solver(
-            tick_data_1,
-            tick_data_2,
-            current_tick_1,
-            current_tick_2,
+            tick_data_1=tick_data_1,
+            tick_data_2=tick_data_2,
+            current_tick_1=current_tick_1,
+            current_tick_2=current_tick_2,
             fee_pips_1=500,
             fee_pips_2=500,
             zfo_1=True,
@@ -1125,10 +1133,18 @@ class TestV3V3VsV3IntegerMath:
         )
 
         seq1 = build_seq_from_tick_data(
-            tick_data_1, current_tick_1, range_idx_1, 0.0005, zero_for_one=True
+            tick_data=tick_data_1,
+            current_tick=current_tick_1,
+            current_range_idx=range_idx_1,
+            fee=0.0005,
+            zero_for_one=True,
         )
         seq2 = build_seq_from_tick_data(
-            tick_data_2, current_tick_2, range_idx_2, 0.0005, zero_for_one=False
+            tick_data=tick_data_2,
+            current_tick=current_tick_2,
+            current_range_idx=range_idx_2,
+            fee=0.0005,
+            zero_for_one=False,
         )
 
         result_rust = _solve_v3_v3(seq1, seq2)
