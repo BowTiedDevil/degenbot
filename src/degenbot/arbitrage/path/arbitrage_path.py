@@ -281,15 +281,21 @@ class ArbitragePath(PublisherMixin):
     ) -> asyncio.Future[SolveResult]:
         """Execute calculation in the given executor.
 
-        Uses ProcessPoolExecutor for true multi-core parallelism. The Rust solver releases
-        the GIL so ThreadPoolExecutor also works, but the Python-side preamble (cache lookups,
-        dispatch logic) holds the GIL and serializes across threads. ProcessPoolExecutor avoids
-        this by running in a separate process with its own GIL.
+        **ProcessPoolExecutor** (recommended for CPU parallelism):
+        Each subprocess has its own GIL, so Python-side preamble (cache lookups,
+        dispatch logic) and Rust computation run without inter-process contention.
+        A module-level ``_solve_in_subprocess`` function is submitted instead of a bound
+        method so that the ArbSolver (which contains an unpickleable RustPoolCache) is
+        never serialized. A fresh ArbSolver is constructed inside the subprocess — this
+        is cheap since the cache starts empty and the compute cost dominates.
 
-        A module-level ``_solve_in_subprocess`` function is submitted instead of a bound method
-        so that the ArbSolver (which contains an unpickleable RustPoolCache) is never serialized.
-        A fresh ArbSolver is constructed inside the subprocess — this is cheap since the cache
-        starts empty and the compute cost dominates.
+        **ThreadPoolExecutor** (GIL-safe but not parallel for short calls):
+        The Rust solver releases the GIL via ``py.detach()`` during computation.
+        However, each ``solve_raw`` call is ~1-2μs and the Python overhead per call
+        (GIL acquire/release, loop iteration, cache lookups) is comparable. This means
+        threads contend for the GIL between short Rust calls and do not achieve meaningful
+        speedup. ThreadPoolExecutor is safe to use but will not spread CPU load across
+        cores for this workload.
 
         Returns:
             The computed value.
