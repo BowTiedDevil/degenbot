@@ -32,7 +32,12 @@ class ManagedPoolRegistry(MultiKeyAddressRegistry["ConcentratedLiquidityPool"]):
         pool_manager_address: ChecksumAddress,
         pool_id: PoolId,
     ) -> ConcentratedLiquidityPool | None:
-        """Retrieve a V4 pool by chain, manager address, and pool ID."""
+        """Retrieve a V4 pool by chain, manager address, and pool ID.
+
+        Returns:
+            The registered V4 pool, or None if not found.
+
+        """
         return self._get(
             chain_id=chain_id,
             pool_manager_address=pool_manager_address,
@@ -101,7 +106,12 @@ class PoolRegistry(AddressRegistry["AbstractLiquidityPool"]):
         pool_address: ChecksumAddress,
         pool_id: PoolId | None = None,
     ) -> AbstractLiquidityPool | ConcentratedLiquidityPool | None:
-        """Retrieve a pool by chain and address."""
+        """Retrieve a pool by chain and address.
+
+        Returns:
+            The registered pool, or None if not found.
+
+        """
         if isinstance(pool_id, bytes):
             return self._managed_pool_registry.get(
                 chain_id=chain_id,
@@ -117,13 +127,16 @@ class PoolRegistry(AddressRegistry["AbstractLiquidityPool"]):
         pool_address: ChecksumAddress,
         pool_id: PoolId | None = None,
     ) -> None:
-        """
-        Register a pool.
+        """Register a pool.
 
         When pool_id is provided, the pool must satisfy the
         ConcentratedLiquidityPool protocol and is registered in the
         managed pool sub-registry. Otherwise, it is registered as a
         standard pool.
+
+        Raises:
+            TypeError: If pool_id is provided but pool does not satisfy ConcentratedLiquidityPool.
+
         """
         if isinstance(pool_id, bytes):
             if not isinstance(pool, ConcentratedLiquidityPool):

@@ -20,7 +20,12 @@ class TokenRegistry(AddressRegistry["Erc20Token"]):
         token_address: str,
         chain_id: ChainId,
     ) -> "Erc20Token | None":
-        """Retrieve a token by chain and address."""
+        """Retrieve a token by chain and address.
+
+        Returns:
+            The registered token, or None if not found.
+
+        """
         return self._get(chain_id=chain_id, address=token_address)
 
     def add(
