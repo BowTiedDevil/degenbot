@@ -12,8 +12,7 @@ from degenbot.types.hop_types import BalancerMultiTokenHop
 
 
 class BrentSolver(Solver):
-    """
-    Brent's method solver via scipy. Handles all pool types including.
+    """Brent's method solver via scipy. Handles all pool types including.
 
     V3-V3 with tick crossings.
 
@@ -36,7 +35,12 @@ class BrentSolver(Solver):
             )
 
         def neg_profit(x: float) -> float:
-            """Negative profit for minimization."""
+            """Negative profit for minimization.
+
+            Returns:
+                The computed value.
+
+            """
             if x <= 0:
                 return 0.0
             output = _simulate_path(x, solve_input.hops)

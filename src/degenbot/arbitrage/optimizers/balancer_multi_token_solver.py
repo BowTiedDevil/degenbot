@@ -13,8 +13,7 @@ from degenbot.types.hop_types import BalancerMultiTokenHop, PoolInvariant
 
 
 class BalancerMultiTokenSolver(Solver):
-    """
-    Closed-form solver for N-token Balancer weighted pool basket arbitrage.
+    """Closed-form solver for N-token Balancer weighted pool basket arbitrage.
 
     Uses the QuantAMM closed-form solution (Equation 9) from Willetts &
     Harrington's paper for optimal multi-token trades on geometric mean

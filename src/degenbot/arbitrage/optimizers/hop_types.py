@@ -1,5 +1,4 @@
-"""
-Core types for arbitrage optimization solvers.
+"""Core types for arbitrage optimization solvers.
 
 Hop state types (Hop, HopType, etc.) are in degenbot.types.hop_types.
 """

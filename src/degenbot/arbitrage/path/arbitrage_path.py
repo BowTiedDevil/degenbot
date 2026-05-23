@@ -53,8 +53,7 @@ class _StateUpdatedNoProfit(AbstractPublisherMessage):
 
 
 class ArbitragePath(PublisherMixin):
-    """
-    Event-driven arbitrage path helper.
+    """Event-driven arbitrage path helper.
 
     Wraps a sequence of Mobius-compatible pools, validates token flow, pre-computes directional
     data, subscribes to state updates, and delegates solving to a swappable Solver
@@ -69,7 +68,12 @@ class ArbitragePath(PublisherMixin):
         max_input: int | None = None,
         id: str | None = None,  # noqa:A002
     ) -> None:
-        """Initialize the instance."""
+        """Initialize the instance.
+
+        Raises:
+            PathValidationError: If the operation fails.
+
+        """
         if len(pools) < _MIN_POOLS_FOR_ARBITRAGE_PATH:
             msg = f"Arbitrage path requires at least {_MIN_POOLS_FOR_ARBITRAGE_PATH} pools"
             raise PathValidationError(msg)
@@ -203,7 +207,12 @@ class ArbitragePath(PublisherMixin):
         self._subscribers.clear()
 
     def calculate(self) -> SolveResult:
-        """Calculate."""
+        """Calculate.
+
+        Returns:
+            The computed value.
+
+        """
         self._refresh_hop_states()
         result = self._solver.solve(self._build_solve_input())
         self._last_result = result
@@ -213,7 +222,12 @@ class ArbitragePath(PublisherMixin):
         self,
         state_overrides: dict[ChecksumAddress, AbstractPoolState],
     ) -> SolveResult:
-        """Calculate with state override."""
+        """Calculate with state override.
+
+        Returns:
+            The computed value.
+
+        """
         hops = self._resolve_state_overrides(state_overrides)
         return self._solver.solve(self._build_solve_input(hops=hops))
 
@@ -222,12 +236,15 @@ class ArbitragePath(PublisherMixin):
         executor: ProcessPoolExecutor | ThreadPoolExecutor,
         state_overrides: Mapping[ChecksumAddress, AbstractPoolState] | None = None,
     ) -> asyncio.Future[SolveResult]:
-        """
-        Execute calculation in the given executor (ProcessPool recommended for CPU-bound work).
+        """Execute calculation in the given executor (ProcessPool recommended for CPU-bound work).
 
         Unlike the legacy UniswapLpCycle.calculate_with_pool, this method serializes only
         the lightweight SolveInput (tuple of frozen HopType dataclasses) — not full pool
         objects. It therefore never fails on sparse V3 bitmaps or non-pickleable state.
+
+        Returns:
+            The computed value.
+
         """
         self._refresh_hop_states()
 
@@ -274,7 +291,15 @@ class ArbitragePath(PublisherMixin):
         result: SolveResult,
         state_overrides: Mapping[ChecksumAddress, AbstractPoolState] | None = None,
     ) -> ArbitrageCalculationResult[AbstractSwapAmounts]:
-        """Build swap amounts."""
+        """Build swap amounts.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            PathValidationError: If the operation fails.
+
+        """
         if state_overrides is None:
             state_overrides = {}
 

@@ -162,7 +162,7 @@ class _UniswapLpCycle(PublisherMixin):
                     )
                 case _:
                     raise DegenbotValueError(
-                        message=f"Token {input_token} could not be matched. Pool holds {pool.token0} & {pool.token1}"  # noqa: E501
+                        message=f"Token {input_token} could not be matched. Pool holds {pool.token0} & {pool.token1}"
                     )
 
         self._swap_vectors = tuple(swap_vectors)
@@ -197,10 +197,16 @@ class _UniswapLpCycle(PublisherMixin):
         token_in_quantity: int,
         state_overrides: Mapping[Pool, PoolState] | None = None,
     ) -> tuple[SwapAmount, ...]:
-        """
-        Generate inputs for all swaps along the arbitrage path, starting with the specified amount.
+        """Generate inputs for all swaps along the arbitrage path, starting with the specified amount.
 
         of the input token defined in the constructor.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            ArbitrageError: If the operation fails.
+
         """
         if state_overrides is None:
             state_overrides = {}
@@ -309,7 +315,15 @@ class _UniswapLpCycle(PublisherMixin):
         state: PoolState,
         vector: UniswapPoolSwapVector,
     ) -> bool:
-        """Check if the pool can perform a swap along the given vector."""
+        """Check if the pool can perform a swap along the given vector.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            DegenbotValueError: If the operation fails.
+
+        """
         match pool, state:
             case AerodromeV2Pool(), AerodromeV2PoolState():
                 return pool.swap_is_viable(state=state, vector=vector)
@@ -325,10 +339,13 @@ class _UniswapLpCycle(PublisherMixin):
                 )
 
     def _check_pool_viability(self, state_overrides: Mapping[Pool, PoolState]) -> None:
-        """
-        Evaluate each pool in the swap path for viability. Raise `ArbitrageError` on the first.
+        """Evaluate each pool in the swap path for viability. Raise `ArbitrageError` on the first.
 
         non-viable pool found.
+
+        Raises:
+            ArbitrageError: If the operation fails.
+
         """
         for pool, vector in zip(self.swap_pools, self._swap_vectors, strict=True):
             assert pool in self._pool_viability
@@ -344,11 +361,14 @@ class _UniswapLpCycle(PublisherMixin):
         min_rate_of_exchange: Fraction = Fraction(1, 1),
         state_overrides: Mapping[Pool, PoolState] | None = None,
     ) -> None:
-        """
-        Perform pool viability and minimum rate of exchange checks. Raises an exception if a.
+        """Perform pool viability and minimum rate of exchange checks. Raises an exception if a.
 
         non-viable pool is found, or if the instantaneous rate of exchange is below the specified
         minimum.
+
+        Raises:
+            RateOfExchangeBelowMinimum: If the operation fails.
+
         """
         if state_overrides is None:
             state_overrides = {}
@@ -408,14 +428,17 @@ class _UniswapLpCycle(PublisherMixin):
     ) -> ArbitrageCalculationResult[
         UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts
     ]:
-        """
-        Calculate the optimal arbitrage profit using ArbSolver.
+        """Calculate the optimal arbitrage profit using ArbSolver.
 
         Delegates to ArbSolver.solve() which selects the best solver
         (MobiusSolver, PiecewiseMobiusSolver, BrentSolver, etc.)
         based on the pool types in the cycle.
 
         Raises OptimizationError if no profitable solution is found.
+
+        Returns:
+            The computed value.
+
         """
         if state_overrides is None:
             state_overrides = {}
@@ -486,10 +509,13 @@ class _UniswapLpCycle(PublisherMixin):
     ) -> ArbitrageCalculationResult[
         UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts
     ]:
-        """
-        Calculate the results of the arbitrage at the current pool states, or at one or more.
+        """Calculate the results of the arbitrage at the current pool states, or at one or more.
 
         overridden pool states if provided.
+
+        Returns:
+            The computed value.
+
         """
         self._pre_calculation_check(
             min_rate_of_exchange=min_rate_of_exchange,
@@ -504,8 +530,7 @@ class _UniswapLpCycle(PublisherMixin):
         state_overrides: Mapping[Pool, PoolState] | None = None,
         min_rate_of_exchange: Fraction = Fraction(1, 1),
     ) -> asyncio.Future[ArbitrageCalculationResult[SwapAmount]]:
-        """
-        Wrap the arbitrage calculation into an asyncio future using the specified executor.
+        """Wrap the arbitrage calculation into an asyncio future using the specified executor.
 
         Arguments:
         ---------
@@ -524,6 +549,9 @@ class _UniswapLpCycle(PublisherMixin):
         -------
         A future which returns a `ArbitrageCalculationResult` (or exception) when awaited.
 
+        Raises:
+            DegenbotValueError: If the operation fails.
+
         Notes:
         -----
         This is an async function that must be called with the `await` keyword.
@@ -533,7 +561,7 @@ class _UniswapLpCycle(PublisherMixin):
             pool.sparse_liquidity_map for pool in self.swap_pools if isinstance(pool, UniswapV3Pool)
         ):
             raise DegenbotValueError(
-                message="Cannot perform calculation with process pool executor. One or more V3 pools has a sparse bitmap."  # noqa:E501
+                message="Cannot perform calculation with process pool executor. One or more V3 pools has a sparse bitmap."
             )
 
         self._pre_calculation_check(
@@ -553,8 +581,7 @@ class _UniswapLpCycle(PublisherMixin):
         swap_amount: int,
         pool_swap_amounts: Sequence[SwapAmount],
     ) -> Sequence[Any]:
-        """
-        Generate a list of ABI-encoded calldata for each step in the swap path.
+        """Generate a list of ABI-encoded calldata for each step in the swap path.
 
         Calldata is built using the `eth_abi.encode` method and the ABI for the
         `swap` function at the Uniswap pool. Uniswap V2, V3, and V4 pools (and compatible child
@@ -575,6 +602,9 @@ class _UniswapLpCycle(PublisherMixin):
         Returns:
         -------
         payloads: list[Any]
+
+        Raises:
+            DegenbotValueError: If the operation fails.
 
         """
         from_address = get_checksum_address(from_address)

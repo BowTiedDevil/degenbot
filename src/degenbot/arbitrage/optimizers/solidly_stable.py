@@ -19,6 +19,9 @@ from degenbot.types.hop_types import (
     SolidlyStableHop,
 )
 
+_CURVATURE_THRESHOLD = 1e-30
+_NEWTON_CONVERGENCE_TOLERANCE = 1e-3
+
 
 def _solidly_swap_output_float(
     *,
@@ -29,14 +32,17 @@ def _solidly_swap_output_float(
     decimals_in: int,
     decimals_out: int,
 ) -> float:
-    """
-    Float approximation of Solidly stable swap output.
+    """Float approximation of Solidly stable swap output.
 
     Solves the Solidly invariant x³y + xy³ ≥ k for output given input.
     Uses Newton's method on the implicit equation f(y) = x³y + xy³ - k = 0.
 
     The reserves and amounts are scaled to 18-decimal internally, matching
     the Solidity contract behavior.
+
+    Returns:
+        The computed value.
+
     """
     if amount_in <= 0:
         return 0.0
@@ -81,7 +87,7 @@ def _solidly_swap_output_float(
         y2 = y**2 / scale
         f_prime = x3 + 3.0 * x_new * y2
 
-        if abs(f_prime) < 1e-30:
+        if abs(f_prime) < _CURVATURE_THRESHOLD:
             break
 
         dy = f_y / f_prime
@@ -92,7 +98,7 @@ def _solidly_swap_output_float(
             y = 1.0
             break
 
-        if abs(dy) < 1e-3:
+        if abs(dy) < _NEWTON_CONVERGENCE_TOLERANCE:
             break
 
     # Output = old reserve - new reserve
@@ -109,8 +115,7 @@ def _simulate_mixed_path(
     x: float,
     hops: tuple[HopType, ...],
 ) -> float:
-    """
-    Simulate a path with mixed hop types using float math.
+    """Simulate a path with mixed hop types using float math.
 
     For each hop:
     - ConstantProductHop: V2 formula y = gamma*s*x / (r + gamma*x)
@@ -119,6 +124,10 @@ def _simulate_mixed_path(
     - CurveStableswapHop: uses swap_fn if available
 
     For integer-exact evaluation, use ``_simulate_mixed_path_int`` instead.
+
+    Returns:
+        The computed value.
+
     """
     amount = x
     for hop in hops:
@@ -173,12 +182,15 @@ def _simulate_mixed_path_int(
     x: int,
     hops: tuple[HopType, ...],
 ) -> int:
-    """
-    Simulate a path with mixed hop types using integer math.
+    """Simulate a path with mixed hop types using integer math.
 
     For hops with ``swap_fn`` (Solidly, Curve), uses the integer-accurate callable.
     For V2 hops, uses integer constant-product formula.
     Falls back to float for hops without integer support.
+
+    Returns:
+        The computed value.
+
     """
     amount = x
     for hop in hops:
@@ -234,8 +246,7 @@ def _simulate_mixed_path_int(
 
 
 class SolidlyStableSolver(Solver):
-    """
-    Solver for paths containing Solidly stable pools (x³y + xy³ ≥ k).
+    """Solver for paths containing Solidly stable pools (x³y + xy³ ≥ k).
 
     Uses golden section search on the integer profit function when
     ``swap_fn`` is available on Solidly hops (EVM-exact). Falls back
@@ -252,10 +263,17 @@ class SolidlyStableSolver(Solver):
     GOLDEN_SECTION_ITERATIONS = 25
     NEWTON_MAX_ITERATIONS = 30
     NEWTON_TOLERANCE = 1e-6
+    CURVATURE_THRESHOLD = _CURVATURE_THRESHOLD
+    GRADIENT_STEP_FLOOR = 1e-12
 
     @staticmethod
     def _adaptive_step(x: float) -> float:
-        """Compute an adaptive finite-difference step size."""
+        """Compute an adaptive finite-difference step size.
+
+        Returns:
+            The computed value.
+
+        """
         return max(min(x * 1e-4, 1e12), 1e6)
 
     @override
@@ -322,7 +340,15 @@ class SolidlyStableSolver(Solver):
         mobius_coeffs: _MobiusCoefficients,
         start_ns: int,
     ) -> SolveResult:
-        """Golden section search using integer path evaluation."""
+        """Golden section search using integer path evaluation.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            OptimizationError: If the operation fails.
+
+        """
         hops = solve_input.hops
 
         # Bracket: [1, max_reserve] # noqa: ERA001
@@ -401,7 +427,15 @@ class SolidlyStableSolver(Solver):
         mobius_coeffs: _MobiusCoefficients,
         start_ns: int,
     ) -> SolveResult:
-        """Newton's method with float simulation (fallback when no swap_fn)."""
+        """Newton's method with float simulation (fallback when no swap_fn).
+
+        Returns:
+            The computed value.
+
+        Raises:
+            OptimizationError: If the operation fails.
+
+        """
         hops = solve_input.hops
 
         x = mobius_coeffs.optimal_input()
@@ -436,8 +470,8 @@ class SolidlyStableSolver(Solver):
             profit_minus = output_minus - max(x - h, 0.0)
             d2profit = (profit_plus - 2 * profit_mid + profit_minus) / (h * h)
 
-            if abs(d2profit) < 1e-30:
-                if abs(dprofit) > 1e-12:
+            if abs(d2profit) < self.CURVATURE_THRESHOLD:
+                if abs(dprofit) > self.GRADIENT_STEP_FLOOR:
                     x += dprofit * 0.01
                     if x <= 0:
                         x /= 2.0

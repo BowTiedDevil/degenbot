@@ -1,5 +1,4 @@
-"""
-Swap encoding and payload generation.
+"""Swap encoding and payload generation.
 
 - EncodedCall: a minimal EVM call fragment (to, data, value)
 - encode() on each SwapAmounts subclass produces per-hop calldata
@@ -30,8 +29,7 @@ class EncodedCall:
 
 @runtime_checkable
 class ApprovalStrategy(Protocol):
-    """
-    Pluggable approval injection.
+    """Pluggable approval injection.
 
     Given the swap amounts and the encoded calls, return any
     approval calls that should be prepended.
@@ -72,7 +70,12 @@ class NoApprovals:
         swap_amounts: tuple[AbstractSwapAmounts, ...],  # noqa: ARG002
         calls: list[EncodedCall],  # noqa: ARG002
     ) -> list[EncodedCall]:
-        """Approvals for."""
+        """Approvals for.
+
+        Returns:
+            The computed value.
+
+        """
         return []
 
 
@@ -80,7 +83,12 @@ class FlatComposer:
     """Composer that returns calls as-is (no wrapping)."""
 
     def compose(self, calls: list[EncodedCall]) -> list[EncodedCall]:  # noqa: PLR6301
-        """Return calls as-is without wrapping."""
+        """Return calls as-is without wrapping.
+
+        Returns:
+            The computed value.
+
+        """
         return calls
 
 
@@ -91,7 +99,12 @@ def generate_payloads(
     approval_strategy: ApprovalStrategy | None = None,
     composer: PayloadComposer | None = None,
 ) -> list[EncodedCall]:
-    """Compose."""
+    """Compose.
+
+    Returns:
+        The computed value.
+
+    """
     """Compose."""
     """
     Generate encoded swap payloads for an arbitrage path.
