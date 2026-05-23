@@ -22,25 +22,26 @@ pytest_collect_file = Sybil(
 ).pytest()
 
 
+_EXPECTED_LINE_PARTS = 2
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Restore document order for README.md sybil items and pin them to one
-    xdist worker.
+    """Restore document order for README.md sybil items and pin them to one xdist worker.
 
-    Sybil's skip directive state is tracked per-document and depends on
-    sequential, ordered evaluation. Two pytest plugins break this:
-
+    Sybil's skip directive state is tracked per-document and depends on sequential, ordered
+    evaluation. Two pytest plugins break this:
     - pytest-randomly reorders items, breaking the skip state machine.
     - pytest-xdist distributes items across workers, so each worker sees
       an unbalanced subset of skip:start/skip:end pairs.
 
-    This hook runs before pytest-randomly's shuffle (``tryfirst=True``)
-    and uses ``pytest.mark.order(N)`` to pin each README item to its
-    document position. pytest-order (``trylast=True`` by default) then
-    re-orders these items back into sequence after the random shuffle.
+    This hook runs before pytest-randomly's shuffle (``tryfirst=True``) and uses
+    ``pytest.mark.order(N)`` to pin each README item to its document position. pytest-order
+    (``trylast=True`` by default) then re-orders these items back into sequence after the random
+    shuffle.
 
-    It also marks them with a shared ``xdist_group`` so ``--dist=loadgroup``
-    sends them to a single worker.
+    It also marks them with a shared ``xdist_group`` so ``--dist=loadgroup`` sends them to a single
+    worker.
     """
     readme_items = []
     other_items = []
@@ -53,7 +54,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     # Sort README items by line number to restore document order
     def readme_sort_key(item: pytest.Item) -> int:
         parts = item.nodeid.split("line:")
-        if len(parts) == 2:
+        if len(parts) == _EXPECTED_LINE_PARTS:
             try:
                 return int(parts[1].split(",")[0])
             except ValueError:

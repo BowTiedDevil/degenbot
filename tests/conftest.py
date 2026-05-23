@@ -56,7 +56,6 @@ def pytest_addoption(parser: Parser):
 
 
 def pytest_collection_modifyitems(config: Config, items: list[Item]):
-    """Modify the"""
     skip_fixtures: str = config.getoption("--skip-fixture")
     if not skip_fixtures:
         return  # nothing to skip
