@@ -1,5 +1,4 @@
-"""
-Tests for eth_subscribe support.
+"""Tests for eth_subscribe support.
 
 Tests the Python subscription layer (Subscription, LogSubscriptionFilter)
 without requiring a live WebSocket endpoint.
@@ -51,8 +50,7 @@ class FakeAsyncIterator:
 
 
 class FakeSubscription:
-    """
-    Mocks degenbot.degenbot_rs.AlloySubscription for testing.
+    """Mocks degenbot.degenbot_rs.AlloySubscription for testing.
 
     Supports drain(), started(), and the async iterator protocol.
     """

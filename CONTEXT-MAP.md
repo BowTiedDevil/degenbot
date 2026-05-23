@@ -21,6 +21,7 @@ _Avoid_: Fork, local chain
 - [Aave](src/degenbot/aave/CONTEXT.md) — lending markets, assets, collateral, debt, and liquidation; domain types (`ScaledTokenEvent`, `Operation`, `TokenType`) in `aave/operations.py` and `aave/types.py`; boundary invariant: `aave/` must never import from `cli/`
 - [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — StableSwap pools, CurveDataProvider seam, DyCalculator, variant and strategy enums (with `make_calculator()` factory methods), per-block cache fields, pure-value DyCalculationInputs (zero callables)
 - [Connection Management](src/degenbot/connection/CONTEXT.md) — connection managers, provider references, and subscription primitives
+- [Provider](src/degenbot/provider/CONTEXT.md) — ProviderBackend/AsyncProviderBackend protocols, ProviderAdapter/AsyncProviderAdapter facades, subscription support mixins, and helper modules
 - [Chainlink](src/degenbot/chainlink/CONTEXT.md) — price feeds, aggregators, round data
 - [Builders](src/degenbot/builders/CONTEXT.md) — pool builders, PoolIO seam (7-method protocol), BuilderContext, BuildPoolRequest, `@staticmethod` `update()` on PoolBuilder/AsyncPoolBuilder protocols (type-enforced I/O separation), V2BuilderBase/V3BuilderBase/V4BuilderBase/BalancerBuilderBase shared helpers, and shared type resolution
 - [Rust Extension](rust/CONTEXT.md) — PyO3-wrapped ABI encode/decode, GIL discipline, subscription double-buffer, Möbius solver cache, two-level type intern, f64↔U256 conversion

@@ -1,5 +1,4 @@
-"""
-Tests for unified token processor implementation.
+"""Tests for unified token processor implementation.
 
 These tests verify that the strategy tables capture the correct rounding behavior
 for each revision and that the unified processor produces identical results
@@ -59,8 +58,7 @@ class TestCollateralStrategies:
 
     @pytest.mark.parametrize("revision", [1, 3, 4, 5])
     def test_collateral_mint_supply_uses_correct_rounding(self, revision: int) -> None:
-        """
-        Collateral mint for supply uses the mint rounding mode.
+        """Collateral mint for supply uses the mint rounding mode.
 
         For a SUPPLY, value > balance_increase, so we calculate:
         scaled_delta = (value - balance_increase) / index
@@ -97,8 +95,7 @@ class TestCollateralStrategies:
 
     @pytest.mark.parametrize("revision", [1, 3, 4, 5])
     def test_collateral_burn_uses_correct_rounding(self, revision: int) -> None:
-        """
-        Collateral burn uses the burn rounding mode.
+        """Collateral burn uses the burn rounding mode.
 
         For a WITHDRAW, we calculate:
         scaled_delta = (value + balance_increase) / index
@@ -164,8 +161,7 @@ class TestDebtStrategies:
 
     @pytest.mark.parametrize("revision", [1, 3, 4, 5])
     def test_debt_mint_borrow_uses_correct_rounding(self, revision: int) -> None:
-        """
-        Debt mint for BORROW uses the mint rounding mode.
+        """Debt mint for BORROW uses the mint rounding mode.
 
         For a BORROW, value > balance_increase, so we calculate:
         scaled_delta = (value - balance_increase) / index
@@ -204,8 +200,7 @@ class TestDebtStrategies:
 
     @pytest.mark.parametrize("revision", [1, 3, 4, 5])
     def test_debt_burn_uses_correct_rounding(self, revision: int) -> None:
-        """
-        Debt burn uses the burn rounding mode.
+        """Debt burn uses the burn rounding mode.
 
         For a REPAY, we calculate:
         scaled_delta = (value + balance_increase) / index
@@ -380,8 +375,7 @@ class TestGhoStrategies:
 
 
 class TestProcessorBehaviorPreservation:
-    """
-    Test that processor behavior is preserved across the refactoring.
+    """Test that processor behavior is preserved across the refactoring.
 
     These tests verify specific edge cases that could break during migration.
     """

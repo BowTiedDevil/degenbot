@@ -41,8 +41,7 @@ class TestDeficitCoverageHandler:
     def test_deficit_coverage_transfer_uses_amount_directly(
         self, handler: DeficitCoverageHandler
     ) -> None:
-        """
-        DEFICIT_COVERAGE transfer events bypass index-based scaling.
+        """DEFICIT_COVERAGE transfer events bypass index-based scaling.
 
         BalanceTransfer events have raw_amount = scaled_amount.
         """
@@ -65,8 +64,7 @@ class TestDeficitCoverageHandler:
     def test_deficit_coverage_burn_calculates_scaled_amount(
         self, handler: DeficitCoverageHandler
     ) -> None:
-        """
-        DEFICIT_COVERAGE burn events calculate scaled amount.
+        """DEFICIT_COVERAGE burn events calculate scaled amount.
 
         Standard collateral burn calculation with ceil rounding.
         """

@@ -1,5 +1,4 @@
-"""
-Compare SciPy minimize_scalar methods using the simple_v2_arb_profitable fixture.
+"""Compare SciPy minimize_scalar methods using the simple_v2_arb_profitable fixture.
 
 Uses production UniswapV2Pool for swap calculations instead of MockV2Pool.
 """
@@ -32,8 +31,7 @@ WETH_ADDRESS: ChecksumAddress = ChecksumAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD
 def build_pools_from_fixture(
     fixture,
 ) -> tuple[UniswapV2Pool, UniswapV2Pool, FakeToken]:
-    """
-    Build UniswapV2Pool objects from a V2 arbitrage fixture.
+    """Build UniswapV2Pool objects from a V2 arbitrage fixture.
 
     Uses the proper fee from the fixture generation.
     """
@@ -75,8 +73,7 @@ def build_pools_from_fixture(
 
 
 class TestOptimizerMethodComparison:
-    """
-    Compare Brent vs Golden vs Bounded methods from scipy.optimize.minimize_scalar
+    """Compare Brent vs Golden vs Bounded methods from scipy.optimize.minimize_scalar
     for finding optimal arbitrage input amounts.
 
     Note: In SciPy's minimize_scalar:
@@ -97,16 +94,14 @@ class TestOptimizerMethodComparison:
 
     @pytest.fixture
     def profit_function(self, mock_pools) -> "Callable[[float], float]":
-        """
-        Create a profit function using UniswapV2Pool.calculate_tokens_out_from_tokens_in().
+        """Create a profit function using UniswapV2Pool.calculate_tokens_out_from_tokens_in().
 
         Returns negative profit (since minimize_scalar finds minima).
         """
         pool_a, pool_b, usdc = mock_pools
 
         def calculate_profit(input_amount: float) -> float:
-            """
-            Calculate arbitrage profit for a given input amount.
+            """Calculate arbitrage profit for a given input amount.
 
             Returns negative profit for minimization.
             """
@@ -147,8 +142,7 @@ class TestOptimizerMethodComparison:
         self,
         profit_function: "Callable[[float], float]",
     ) -> None:
-        """
-        Test that both Brent (with bracket) and Bounded methods find same optimum.
+        """Test that both Brent (with bracket) and Bounded methods find same optimum.
         """
         # Brent: use bracket (initial search interval: a, b, c where f(b) < f(a), f(c))
         result_brent = minimize_scalar(
@@ -183,8 +177,7 @@ class TestOptimizerMethodComparison:
         self,
         profit_function: "Callable[[float], float]",
     ) -> None:
-        """
-        Test that both Golden (with bracket) and Bounded methods find same optimum.
+        """Test that both Golden (with bracket) and Bounded methods find same optimum.
         """
         # Golden: use bracket (like Brent but simpler algorithm)
         result_golden = minimize_scalar(
@@ -223,8 +216,7 @@ class TestOptimizerMethodComparison:
         self,
         profit_function: "Callable[[float], float]",
     ) -> None:
-        """
-        Benchmark test: Brent should typically be faster than Golden.
+        """Benchmark test: Brent should typically be faster than Golden.
         Both use bracket method.
         """
         bracket = (1.0, 1_000_000.0, 100_000_000_000.0)
@@ -273,8 +265,7 @@ class TestOptimizerMethodComparison:
         self,
         profit_function: "Callable[[float], float]",
     ) -> None:
-        """
-        Test that Brent uses fewer function evaluations than Golden.
+        """Test that Brent uses fewer function evaluations than Golden.
         """
         bracket = (1.0, 1_000_000.0, 100_000_000_000.0)
 
@@ -299,8 +290,7 @@ class TestOptimizerMethodComparison:
         self,
         profit_function: "Callable[[float], float]",
     ) -> None:
-        """
-        Test that Brent, Golden, and Bounded achieve similar profit accuracy.
+        """Test that Brent, Golden, and Bounded achieve similar profit accuracy.
         """
         bracket = (1.0, 1_000_000.0, 100_000_000_000.0)
         bounds = (1.0, 1_000_000_000_000.0)
@@ -345,8 +335,7 @@ class TestOptimizerMethodComparison:
         assert brent_profit == pytest.approx(bounded_profit, rel=1e-4)
 
     def test_optimal_input_is_profitable(self, mock_pools) -> None:
-        """
-        Verify that the optimal input found produces positive arbitrage profit.
+        """Verify that the optimal input found produces positive arbitrage profit.
         Uses UniswapV2Pool.calculate_tokens_out_from_tokens_in() for swap calculations.
         """
         pool_a, pool_b, usdc = mock_pools

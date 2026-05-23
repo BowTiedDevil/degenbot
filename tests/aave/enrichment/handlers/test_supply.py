@@ -37,8 +37,7 @@ class TestSupplyHandler:
         assert isinstance(handler, OperationHandler)
 
     def test_supply_calculates_scaled_amount(self, handler: SupplyHandler) -> None:
-        """
-        SUPPLY calculates scaled amount from raw amount and index.
+        """SUPPLY calculates scaled amount from raw amount and index.
 
         For SUPPLY operations:
         - Extract raw amount from Pool event

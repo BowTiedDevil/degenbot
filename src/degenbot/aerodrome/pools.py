@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
     from degenbot.erc20 import Erc20Token
-    from degenbot.provider.interface import ProviderAdapter
+    from degenbot.provider.sync_adapter import ProviderAdapter
     from degenbot.types.aliases import BlockNumber, ChainId
     from degenbot.uniswap.types import UniswapPoolSwapVector
 

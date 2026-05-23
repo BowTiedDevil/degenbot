@@ -1,5 +1,4 @@
-"""
-Tests for ProviderBackend protocol and explicit method delegation.
+"""Tests for ProviderBackend protocol and explicit method delegation.
 
 Validates that:
 1. ProviderBackend merges the former EthereumProvider + _SyncProviderBackend
@@ -13,7 +12,8 @@ from unittest.mock import MagicMock
 import pytest
 from hexbytes import HexBytes
 
-from degenbot.provider.interface import ProviderAdapter, ProviderBackend
+from degenbot.provider.protocols import ProviderBackend
+from degenbot.provider.sync_adapter import ProviderAdapter
 
 
 class FakeWeb3:

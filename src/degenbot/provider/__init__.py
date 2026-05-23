@@ -36,18 +36,15 @@ from hexbytes import HexBytes
 
 from degenbot.degenbot_rs import AlloyProvider as RustAlloyProvider
 from degenbot.degenbot_rs import AsyncAlloyProvider
-from degenbot.provider.interface import (
-    AsyncProviderAdapter,
-    AsyncProviderBackend,
-    ProviderAdapter,
-    ProviderBackend,
-)
+from degenbot.provider.async_adapter import AsyncProviderAdapter
 from degenbot.provider.offline_provider import (
     BlockNotRecordedError,
     OfflineDataMissing,
     OfflineProvider,
 )
+from degenbot.provider.protocols import AsyncProviderBackend, ProviderBackend
 from degenbot.provider.subscription import LogSubscriptionFilter, Subscription
+from degenbot.provider.sync_adapter import ProviderAdapter
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.rpc_types import BlockData, LogData, TransactionData, TransactionReceiptData
 

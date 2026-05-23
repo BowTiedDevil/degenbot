@@ -1,5 +1,4 @@
-"""
-Tests for v3_simulator — pure swap calculation extracted from V3Pool.
+"""Tests for v3_simulator — pure swap calculation extracted from V3Pool.
 
 These tests verify that ``v3_simulator.calculate_swap`` produces *identical*
 results to ``UniswapV3Pool._calculate_swap``. The simulator consumes a frozen

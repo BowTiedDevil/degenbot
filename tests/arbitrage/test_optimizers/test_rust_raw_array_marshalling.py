@@ -1,5 +1,4 @@
-"""
-Tests for raw array hop marshalling in RustArbSolver.solve_raw().
+"""Tests for raw array hop marshalling in RustArbSolver.solve_raw().
 
 Validates that RustArbSolver.solve_raw() accepts a flat list of Python ints
 (reserve_in, reserve_out, gamma_numer, fee_denom per hop) and produces
@@ -42,8 +41,7 @@ from .conftest import (
 def int_hops_flat(
     *hops: tuple[int, int, Fraction],
 ) -> list[int]:
-    """
-    Build a flat int array from (reserve_in, reserve_out, fee) tuples.
+    """Build a flat int array from (reserve_in, reserve_out, fee) tuples.
 
     Each hop contributes 4 elements: [r_in, r_out, gamma_numer, fee_denom].
     gamma_numer = fee_denom - fee.numerator.
@@ -78,8 +76,7 @@ class TestRustArbSolverSolveRaw:
         assert int(result.profit_int) > 0
 
     def test_solve_raw_evm_exact(self):
-        """
-        Integer results from solve_raw must be EVM-exact:
+        """Integer results from solve_raw must be EVM-exact:
         simulate(x) - x == profit exactly.
         """
         flat = int_hops_flat(
@@ -100,8 +97,7 @@ class TestRustArbSolverSolveRaw:
         )
 
     def test_solve_raw_matches_object_solve(self):
-        """
-        solve_raw must produce the same result as solve() with
+        """solve_raw must produce the same result as solve() with
         RustIntHopState objects.
         """
         flat = int_hops_flat(
@@ -240,8 +236,7 @@ class TestRustArbSolverSolveRaw:
 
 
 class TestArbSolverRawArrayMarshalling:
-    """
-    Tests that ArbSolver._try_rust_solve uses the raw array path
+    """Tests that ArbSolver._try_rust_solve uses the raw array path
     (solve_raw) when the feature flag is enabled, and results remain
     EVM-exact.
     """

@@ -1,5 +1,4 @@
-"""
-Property-based tests for Möbius transformation optimizer.
+"""Property-based tests for Möbius transformation optimizer.
 
 Tests the closed-form Möbius solver against Brent optimization for
 constant-product AMM arbitrage paths with randomized reserves and fees.
@@ -68,8 +67,7 @@ def hop_from_def(pd: PoolDef) -> MobiusFloatHop:
 def make_n_pool_path(
     n: int, profit_factor: float = 1.1, base_reserve: float = 1_000_000.0, fee: float = 0.003
 ) -> list[PoolDef]:
-    """
-    Generate an n-pool cycle with guaranteed profitability.
+    """Generate an n-pool cycle with guaranteed profitability.
 
     Creates a cycle where each pool has mispriced reserves in the same
     direction, so the product of marginal exchange rates (after fees)
@@ -96,8 +94,7 @@ def make_profitable_pair(
     price_ratio: float,
     fee: float,
 ) -> tuple[PoolDef, PoolDef]:
-    """
-    Generate a profitable 2-pool pair.
+    """Generate a profitable 2-pool pair.
 
     Pool A: Higher price (more token_out per token_in)
     Pool B: Lower price (less token_out per token_in)
@@ -135,8 +132,7 @@ class TestMobius2PoolProperties:
         price_ratio: float,
         fee: float,
     ):
-        """
-        Property: Möbius and Brent agree for 2-pool paths.
+        """Property: Möbius and Brent agree for 2-pool paths.
 
         The closed-form Möbius solution should match Brent optimization
         within numerical tolerance for any valid 2-pool configuration.
@@ -172,8 +168,7 @@ class TestMobius2PoolProperties:
         base_reserve: float,
         fee: float,
     ):
-        """
-        Property: No profit when pools have identical prices (with fees).
+        """Property: No profit when pools have identical prices (with fees).
 
         When both pools have the same effective price and fees are non-zero,
         arbitrage should be unprofitable.
@@ -199,8 +194,7 @@ class TestMobius2PoolProperties:
         price_ratio: float,
         fee: float,
     ):
-        """
-        Property: Profit exists when price spread exceeds fees.
+        """Property: Profit exists when price spread exceeds fees.
 
         When the price difference between pools exceeds the round-trip
         fee cost, arbitrage should be profitable.
@@ -238,8 +232,7 @@ class TestMobiusMultiPoolProperties:
         base_reserve: float,
         fee: float,
     ):
-        """
-        Property: Möbius matches Brent for multi-pool paths.
+        """Property: Möbius matches Brent for multi-pool paths.
 
         The closed-form solution should work for paths of any length.
         """
@@ -283,8 +276,7 @@ class TestMobiusMultiPoolProperties:
         profit_factor: float,
         fee: float,
     ):
-        """
-        Property: Möbius solver uses zero iterations.
+        """Property: Möbius solver uses zero iterations.
 
         The closed-form solution should not require iteration.
         """
@@ -317,8 +309,7 @@ class TestMobiusCoefficientProperties:
         reserve_out: float,
         fee: float,
     ):
-        """
-        Property: Möbius coefficients are well-formed.
+        """Property: Möbius coefficients are well-formed.
 
         All coefficients should be positive and finite.
         """
@@ -344,8 +335,7 @@ class TestMobiusCoefficientProperties:
         price_ratio: float,
         fee: float,
     ):
-        """
-        Property: Profitable paths have K > M.
+        """Property: Profitable paths have K > M.
 
         When arbitrage is profitable, the product of rates exceeds 1,
         so K > M in the Möbius formulation.
@@ -377,8 +367,7 @@ class TestMobiusSimulationProperties:
         fee: float,
         amount_in: float,
     ):
-        """
-        Property: Simulation produces positive output for positive input.
+        """Property: Simulation produces positive output for positive input.
 
         For any valid pool configuration and positive input, the output
         should be positive and finite.
@@ -411,8 +400,7 @@ class TestMobiusSimulationProperties:
         amount_in_small: float,
         amount_in_large: float,
     ):
-        """
-        Property: Simulation is monotonic in input.
+        """Property: Simulation is monotonic in input.
 
         Larger input should produce larger (or equal) output.
         """
@@ -456,8 +444,7 @@ class TestMobiusEdgeCases:
     )
     @hypothesis.settings(deadline=None, max_examples=10)
     def test_high_fee_unprofitable(self, fee: float):
-        """
-        Property: Very high fees make arbitrage unprofitable.
+        """Property: Very high fees make arbitrage unprofitable.
 
         When fees approach 50%, round-trip cost exceeds any price spread.
         """
@@ -480,8 +467,7 @@ class TestMobiusEdgeCases:
     )
     @hypothesis.settings(deadline=None, max_examples=15)
     def test_various_reserve_scales(self, base_reserve: float):
-        """
-        Property: Solver works across reserve scale magnitudes.
+        """Property: Solver works across reserve scale magnitudes.
 
         The solver should produce consistent results regardless of
         the absolute scale of reserves.

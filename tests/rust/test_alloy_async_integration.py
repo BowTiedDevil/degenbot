@@ -1,5 +1,4 @@
-"""
-Async integration tests for the Alloy-based Ethereum RPC provider.
+"""Async integration tests for the Alloy-based Ethereum RPC provider.
 
 These tests use the Rust async provider with proper tokio runtime support via
 pyo3-async-runtimes.

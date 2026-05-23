@@ -1,5 +1,4 @@
-"""
-V3-only equivalence: ArbitragePath + Solver on synthetic single-range V3 pools.
+"""V3-only equivalence: ArbitragePath + Solver on synthetic single-range V3 pools.
 
 Uses production UniswapV3Pool (exact virtual-reserve math via
 v3_virtual_reserves) and verifies both MobiusSolver and BrentSolver
@@ -60,8 +59,7 @@ def _make_profitable_v3_v3_cycle(
     liquidity: int = 10**18,
     fee: int = 500,
 ) -> tuple[UniswapV3Pool, UniswapV3Pool]:
-    """
-    Create two V3 pools for the same token pair at different prices.
+    """Create two V3 pools for the same token pair at different prices.
 
     Pool A: t0/t1 at {price_a}. ArbitragePath goes t0->t1 (zfo=True).
     Pool B: t0/t1 at {price_b}. ArbitragePath goes t1->t0 (zfo=False).
@@ -104,8 +102,7 @@ def _make_profitable_v3_v3_cycle(
 
 
 class TestV3OnlyEquivalance:
-    """
-    Verify ArbitragePath + Solver works correctly for V3-only paths.
+    """Verify ArbitragePath + Solver works correctly for V3-only paths.
 
     For single-range V3 pools, the Möbius closed-form should match Brent's
     numerical optimum. Both use the same _simulate_path on BoundedProductHops.
@@ -129,8 +126,7 @@ class TestV3OnlyEquivalance:
         assert result.method == SolverMethod.MOBIUS
 
     def test_v3_2hop_mobius_and_brent_agree(self, tokens):
-        """
-        Both MobiusSolver and BrentSolver find a profitable optimal input.
+        """Both MobiusSolver and BrentSolver find a profitable optimal input.
 
         With MIN_TICK/MAX_TICK-based virtual reserves (~10^45), the profit
         function is linear in [0, max_input], so both solvers push to the
@@ -185,8 +181,7 @@ class TestV3OnlyEquivalance:
             path.calculate()
 
     def test_v3_vs_manual_simulation(self, tokens):
-        """
-        MobiusSolver's optimal input must maximize profit as verified
+        """MobiusSolver's optimal input must maximize profit as verified
         by manual simulation using the same BoundedProductHop math.
         """
         t0, t1 = tokens
@@ -217,8 +212,7 @@ class TestV3OnlyEquivalance:
         assert profits[result.optimal_input] + 1 >= profits.get(result.optimal_input + 1, -1)
 
     def test_v3_3hop_mixed_directions(self, t0, t1, t2):
-        """
-        A 3-hop V3-only cycle with alternating price directions.
+        """A 3-hop V3-only cycle with alternating price directions.
 
         Pool 0: t0->t1 at price 2200
         Pool 1: t1->t2 at price 3.0

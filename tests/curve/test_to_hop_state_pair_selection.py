@@ -1,5 +1,4 @@
-"""
-Tests for token_in/token_out pair selection in Curve pool to_hop_state().
+"""Tests for token_in/token_out pair selection in Curve pool to_hop_state().
 
 Verifies that:
 - Default (no token_in/token_out) uses zero_for_one for (0,1)/(1,0) pair selection

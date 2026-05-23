@@ -1,5 +1,4 @@
-"""
-Offline tests for Uniswap V2 pools using recorded chain data.
+"""Offline tests for Uniswap V2 pools using recorded chain data.
 
 These tests use the OfflineProvider to run without requiring a live RPC connection.
 They test deterministic pool operations that don't need real-time chain data.

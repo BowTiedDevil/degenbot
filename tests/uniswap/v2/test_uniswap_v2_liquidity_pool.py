@@ -61,8 +61,7 @@ def _make_bot(fork: AnvilFork) -> Bot:
 def ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block(
     fork_mainnet_archive: AnvilFork,
 ) -> UniswapV2Pool:
-    """
-    Call this fixture passing an indirect parameter to "fork_mainnet_archive" to specify the
+    """Call this fixture passing an indirect parameter to "fork_mainnet_archive" to specify the
     forking block.
     """
     bot = _make_bot(fork_mainnet_archive)
@@ -386,8 +385,7 @@ def test_calculate_tokens_out_from_tokens_in_with_override(
 def test_calculate_tokens_in_from_tokens_out(
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: UniswapV2Pool,
 ):
-    """
-    Reserve values for this test are taken at block height 17,600,000
+    """Reserve values for this test are taken at block height 17,600,000
     """
     assert (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.calculate_tokens_in_from_tokens_out(

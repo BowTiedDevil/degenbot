@@ -1,5 +1,4 @@
-"""
-Feature parity tests between AlloyProvider and Web3.
+"""Feature parity tests between AlloyProvider and Web3.
 
 This test suite audits the codebase for direct web3/w3 usage and verifies
 that AlloyProvider has equivalent methods available.
@@ -69,19 +68,19 @@ WEB3_ETH_METHODS: dict[str, dict[str, Any]] = {
     },
     "get_balance": {
         "web3_usage": "w3.eth.get_balance(address, block)",
-        "locations": ["provider/interface.py (Web3Adapter)"],
+        "locations": ["provider/sync_adapter.py (_Web3Adapter)"],
         "alloy_equivalent": "get_balance(address, block_number)",
         "implemented": True,
     },
     "get_storage_at": {
         "web3_usage": "w3.eth.get_storage_at(address, position, block)",
-        "locations": ["provider/interface.py (Web3Adapter)"],
+        "locations": ["provider/sync_adapter.py (_Web3Adapter)"],
         "alloy_equivalent": "get_storage_at(address, position, block_number)",
         "implemented": True,
     },
     "get_transaction_count": {
         "web3_usage": "w3.eth.get_transaction_count(address, block)",
-        "locations": ["provider/interface.py (Web3Adapter)"],
+        "locations": ["provider/sync_adapter.py (_Web3Adapter)"],
         "alloy_equivalent": "get_transaction_count(address, block_number)",
         "implemented": True,
     },
@@ -124,7 +123,7 @@ WEB3_ETH_METHODS: dict[str, dict[str, Any]] = {
 WEB3_INSTANCE_METHODS: dict[str, dict[str, Any]] = {
     "is_connected": {
         "web3_usage": "w3.is_connected()",
-        "locations": ["anvil_fork.py", "provider/interface.py"],
+        "locations": ["anvil_fork.py", "provider/sync_adapter.py"],
         "alloy_equivalent": "is_connected()",
         "implemented": True,
         "note": "AlloyProvider returns True always",
@@ -233,8 +232,7 @@ class TestAlloyProviderFeatureParity:
 
     @pytest.fixture
     def mock_alloy_provider(self):
-        """
-        Create a mock AlloyProvider for signature testing.
+        """Create a mock AlloyProvider for signature testing.
 
         We use a mock because we don't want to require a real RPC endpoint
         just to check method signatures.

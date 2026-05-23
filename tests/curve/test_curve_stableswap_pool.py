@@ -275,8 +275,7 @@ def test_single_pool(
 
 
 def test_tricrypto_pool(fork_mainnet_full: AnvilFork):
-    """
-    Tricrypto (WETH-wBTC-USDT) has a lot of one-off functions, so always test it
+    """Tricrypto (WETH-wBTC-USDT) has a lot of one-off functions, so always test it
     """
     pool_address = "0x80466c64868E1ab14a1Ddf27A676C3fcBE638Fe5"
     lp = _build_pool(fork_mainnet_full, pool_address)
@@ -284,8 +283,7 @@ def test_tricrypto_pool(fork_mainnet_full: AnvilFork):
 
 
 def test_metapool_with_valid_base_cache():
-    """
-    Regression test: virtual_price must use _base_virtual_price_value when the
+    """Regression test: virtual_price must use _base_virtual_price_value when the
     base cache has not expired.
 
     At block 25144000 the RAI/3Crv metapool's base_cache_updated is only ~180s old
@@ -402,8 +400,7 @@ def test_base_pool(fork_mainnet_full: AnvilFork):
 
 
 def test_factory_stableswap_pools(fork_mainnet_full: AnvilFork):
-    """
-    Test the user-deployed pools deployed by the factory
+    """Test the user-deployed pools deployed by the factory
     """
     stableswap_factory: Contract = fork_mainnet_full.w3.eth.contract(
         address=CURVE_V1_FACTORY_ADDRESS, abi=CURVE_V1_FACTORY_ABI
@@ -437,8 +434,7 @@ def test_factory_stableswap_pools(fork_mainnet_full: AnvilFork):
 
 
 def test_base_registry_pools(fork_mainnet_full: AnvilFork):
-    """
-    Test the custom pools deployed by Curve
+    """Test the custom pools deployed by Curve
     """
     registry: Contract = fork_mainnet_full.w3.eth.contract(
         address=CURVE_V1_REGISTRY_ADDRESS,

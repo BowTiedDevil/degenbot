@@ -6,7 +6,7 @@ from web3.types import BlockIdentifier
 
 from degenbot.exceptions import DegenbotValueError
 from degenbot.provider import ProviderAdapter
-from degenbot.provider.interface import AsyncProviderAdapter
+from degenbot.provider.async_adapter import AsyncProviderAdapter
 from degenbot.types.aliases import BlockNumber
 
 

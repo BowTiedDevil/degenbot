@@ -1,5 +1,4 @@
-"""
-Tests for AbstractSwapAmounts.input_amount() and output_amount() methods.
+"""Tests for AbstractSwapAmounts.input_amount() and output_amount() methods.
 
 Validates that each SwapAmounts subclass correctly returns the input and
 output amounts through the protocol methods.

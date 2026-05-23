@@ -1,5 +1,4 @@
-"""
-Unit tests for the pool state generator.
+"""Unit tests for the pool state generator.
 """
 
 import math

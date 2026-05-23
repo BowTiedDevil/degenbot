@@ -1,5 +1,4 @@
-"""
-On-chain swap calculation tests for Balancer V2 Stable pools.
+"""On-chain swap calculation tests for Balancer V2 Stable pools.
 
 Tests GIVEN_IN and GIVEN_OUT swap calculations using the StableMath library,
 verified against the BalancerQueries contract.
@@ -206,8 +205,7 @@ def _assert_close(
     max_wei_diff: int = 3000,
     label: str = "",
 ) -> None:
-    """
-    Assert that Python and on-chain results are within max_wei_diff wei.
+    """Assert that Python and on-chain results are within max_wei_diff wei.
 
     Used for ComposableStablePools where rate caching can cause small
     differences between our fresh-rate computation and the on-chain result.
@@ -228,8 +226,7 @@ def _compute_given_in(
     token_out_idx: int,
     amount_in_raw: int,
 ) -> int:
-    """
-    Compute the GIVEN_IN swap result using StableMath.
+    """Compute the GIVEN_IN swap result using StableMath.
 
     MetaStablePool flow (fees before scaling):
     1. Subtract swap fee from raw input
@@ -266,8 +263,7 @@ def _compute_given_out(
     token_out_idx: int,
     amount_out_raw: int,
 ) -> int:
-    """
-    Compute the GIVEN_OUT swap result using StableMath.
+    """Compute the GIVEN_OUT swap result using StableMath.
 
     MetaStablePool flow (scaling before fees):
     1. Upscale output amount
@@ -302,8 +298,7 @@ def _compute_given_out(
 
 
 class TestMetaStablePoolSwaps:
-    """
-    Test swap calculations against BalancerQueries for MetaStablePools.
+    """Test swap calculations against BalancerQueries for MetaStablePools.
 
     MetaStablePool uses roundUp=True for the invariant during swaps.
     Using _calculate_invariant_deployed(round_up=True) should match on-chain
@@ -705,8 +700,7 @@ COMPOSABLE_STABLE_POOLS = {
 
 
 def _build_composable_pool_data(fork: AnvilFork, pool_address: str) -> dict:
-    """
-    Fetch on-chain data for a ComposableStablePool.
+    """Fetch on-chain data for a ComposableStablePool.
 
     Handles BPT dropping: identifies the BPT token (same address as pool),
     drops it from balances before computing the invariant.
@@ -802,8 +796,7 @@ def _compute_composable_given_in(
     token_out_idx: int,
     amount_in_raw: int,
 ) -> int:
-    """
-    Compute GIVEN_IN swap for a ComposableStablePool (token-to-token swap).
+    """Compute GIVEN_IN swap for a ComposableStablePool (token-to-token swap).
 
     Flow (same as MetaStablePool but with BPT dropping):
     1. Subtract swap fee from raw input
@@ -843,8 +836,7 @@ def _compute_composable_given_out(
     token_out_idx: int,
     amount_out_raw: int,
 ) -> int:
-    """
-    Compute GIVEN_OUT swap for a ComposableStablePool (token-to-token swap).
+    """Compute GIVEN_OUT swap for a ComposableStablePool (token-to-token swap).
 
     Flow (same as MetaStablePool but with BPT dropping):
     1. Upscale output amount
@@ -880,8 +872,7 @@ def _compute_composable_given_out(
 
 
 class TestComposableStablePoolSwaps:
-    """
-    Test swap calculations against BalancerQueries for ComposableStablePools.
+    """Test swap calculations against BalancerQueries for ComposableStablePools.
 
     ComposableStablePools include the BPT token in the pool's token list.
     For token-to-token swaps, the BPT is dropped before computing the invariant

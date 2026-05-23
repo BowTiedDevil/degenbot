@@ -1,5 +1,4 @@
-"""
-Tests for subscription support mixins.
+"""Tests for subscription support mixins.
 
 Verifies that SyncSubscriptionSupport and AsyncSubscriptionSupport correctly
 raise SubscriptionNotSupported for all subscribe methods, and that adapters
@@ -13,12 +12,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from degenbot.exceptions import SubscriptionNotSupported
-from degenbot.provider.interface import (
-    AsyncSubscriptionSupport,
+from degenbot.provider.async_adapter import AsyncSubscriptionSupport, _AsyncWeb3Adapter
+from degenbot.provider.sync_adapter import (
     ProviderAdapter,
     SyncSubscriptionSupport,
     _AlloyAdapter,
-    _AsyncWeb3Adapter,
     _OfflineAdapter,
     _Web3Adapter,
 )

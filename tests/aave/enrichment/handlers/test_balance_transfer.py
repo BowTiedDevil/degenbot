@@ -40,8 +40,7 @@ class TestBalanceTransferHandler:
     def test_collateral_transfer_uses_amount_directly(
         self, handler: BalanceTransferHandler
     ) -> None:
-        """
-        Collateral transfers bypass index-based scaling.
+        """Collateral transfers bypass index-based scaling.
 
         For transfers, raw_amount = scaled_amount (no index-based calculation).
         """

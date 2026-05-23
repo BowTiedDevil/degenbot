@@ -1,5 +1,4 @@
-"""
-Tests for pool protocol types.
+"""Tests for pool protocol types.
 
 Verifies that existing pool classes structurally satisfy the defined
 protocols once they implement the required methods (simulate_swap,

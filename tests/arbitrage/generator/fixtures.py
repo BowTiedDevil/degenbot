@@ -1,5 +1,4 @@
-"""
-Arbitrage test fixtures with known profitable outcomes.
+"""Arbitrage test fixtures with known profitable outcomes.
 
 Provides fixtures for testing arbitrage calculations with deterministic results.
 """
@@ -32,8 +31,7 @@ from .types import LIQUIDITY_MULTIPLIERS, PoolGenerationConfig, V3PoolGeneration
 
 @dataclass(frozen=True, slots=True)
 class ArbitrageCycleFixture:
-    """
-    A synthetic arbitrage scenario with known profitable outcome.
+    """A synthetic arbitrage scenario with known profitable outcome.
 
     Simple cases are manually constructed with hand-calculated optimal values.
     Stress tests are randomly generated with profit validation.
@@ -66,8 +64,7 @@ class ArbitrageCycleFixture:
     profit_tolerance_bps: int = 10
 
     def to_json(self) -> str:
-        """
-        Serialize fixture to JSON string.
+        """Serialize fixture to JSON string.
 
         Returns
         -------
@@ -90,8 +87,7 @@ class ArbitrageCycleFixture:
 
     @classmethod
     def from_json(cls, json_str: str) -> "ArbitrageCycleFixture":
-        """
-        Deserialize fixture from JSON string.
+        """Deserialize fixture from JSON string.
 
         Parameters
         ----------
@@ -120,8 +116,7 @@ class ArbitrageCycleFixture:
         )
 
     def save(self, path: Path) -> None:
-        """
-        Save fixture to a JSON file.
+        """Save fixture to a JSON file.
 
         Parameters
         ----------
@@ -134,8 +129,7 @@ class ArbitrageCycleFixture:
 
     @classmethod
     def load(cls, path: Path) -> "ArbitrageCycleFixture":
-        """
-        Load fixture from a JSON file.
+        """Load fixture from a JSON file.
 
         Parameters
         ----------
@@ -151,8 +145,7 @@ class ArbitrageCycleFixture:
         return cls.from_json(path.read_text(encoding="utf-8"))
 
     def validate(self) -> bool:
-        """
-        Validate fixture integrity.
+        """Validate fixture integrity.
 
         Checks that:
         - At least two pool states exist
@@ -319,8 +312,7 @@ def _deserialize_pool_state(data: dict[str, Any]) -> AbstractPoolState:
 
 
 class FixtureFactory:
-    """
-    Factory for generating arbitrage test fixtures.
+    """Factory for generating arbitrage test fixtures.
 
     Provides both simple (hand-crafted) and stress (randomly generated) fixtures.
     """
@@ -333,8 +325,7 @@ class FixtureFactory:
     # ==========================================================================
 
     def simple_v2_arb_profitable(self) -> ArbitrageCycleFixture:
-        """
-        Two V2 pools with 2% price difference.
+        """Two V2 pools with 2% price difference.
 
         Simple profit: arbitrage from higher to lower price pool.
         Pool A: 1 ETH = 2000 USDC (price = 2000)
@@ -372,8 +363,7 @@ class FixtureFactory:
         )
 
     def simple_v2_arb_cross_fee(self) -> ArbitrageCycleFixture:
-        """
-        V2 pools with different fees (0.05% vs 0.3%).
+        """V2 pools with different fees (0.05% vs 0.3%).
 
         Demonstrates fee impact on arbitrage profitability.
         """
@@ -404,8 +394,7 @@ class FixtureFactory:
         )
 
     def simple_v3_arb_same_tick_spacing(self) -> ArbitrageCycleFixture:
-        """
-        Two V3 pools at same tick spacing, different prices.
+        """Two V3 pools at same tick spacing, different prices.
         """
         pool_a_address: ChecksumAddress = cast(
             "ChecksumAddress", "0x0000000000000000000000000000000000000005"
@@ -433,8 +422,7 @@ class FixtureFactory:
         )
 
     def simple_v3_arb_cross_fee_tier(self) -> ArbitrageCycleFixture:
-        """
-        V3 pools at different fee tiers.
+        """V3 pools at different fee tiers.
         """
         pool_a_address: ChecksumAddress = cast(
             "ChecksumAddress", "0x0000000000000000000000000000000000000007"
@@ -464,8 +452,7 @@ class FixtureFactory:
         )
 
     def simple_mixed_v2_v3(self) -> ArbitrageCycleFixture:
-        """
-        V2 vs V3 arbitrage.
+        """V2 vs V3 arbitrage.
         """
         v2_pool_address: ChecksumAddress = cast(
             "ChecksumAddress", "0x0000000000000000000000000000000000000009"
@@ -495,8 +482,7 @@ class FixtureFactory:
         )
 
     def simple_v4_arb(self) -> ArbitrageCycleFixture:
-        """
-        Two V4 pools with price difference.
+        """Two V4 pools with price difference.
         """
         pool_manager_address: ChecksumAddress = cast(
             "ChecksumAddress", "0x0000000000000000000000000000000000000FFF"
@@ -528,8 +514,7 @@ class FixtureFactory:
         )
 
     def simple_v4_vs_v3(self) -> ArbitrageCycleFixture:
-        """
-        V4 vs V3 arbitrage.
+        """V4 vs V3 arbitrage.
 
         Tests arbitrage between V4 and V3 pool implementations.
         """
@@ -584,8 +569,7 @@ class FixtureFactory:
         liquidity_depth: Literal["shallow", "medium", "deep"] = "medium",
         price_ratio_range: tuple[float, float] = (1.01, 1.05),
     ) -> ArbitrageCycleFixture:
-        """
-        Generate a random V2 pair with constraints.
+        """Generate a random V2 pair with constraints.
 
         Parameters
         ----------
@@ -636,8 +620,7 @@ class FixtureFactory:
         price_ratio_range: tuple[float, float] = (1.01, 1.05),
         tick_spacing: int = 60,
     ) -> ArbitrageCycleFixture:
-        """
-        Generate a random V3 pair with constraints.
+        """Generate a random V3 pair with constraints.
 
         Parameters
         ----------
@@ -689,8 +672,7 @@ class FixtureFactory:
         price_ratio_range: tuple[float, float] = (1.01, 1.05),
         tick_spacing: int = 60,
     ) -> ArbitrageCycleFixture:
-        """
-        Generate a random V4 pair with constraints.
+        """Generate a random V4 pair with constraints.
 
         Parameters
         ----------
@@ -751,8 +733,7 @@ class FixtureFactory:
         liquidity_depth: Literal["shallow", "medium", "deep"] = "medium",
         price_ratio_range: tuple[float, float] = (1.01, 1.03),
     ) -> ArbitrageCycleFixture:
-        """
-        Generate a multi-pool cycle with constraints.
+        """Generate a multi-pool cycle with constraints.
 
         Creates a cycle through 3+ pools where arbitrage is possible.
         Each consecutive pool has a slightly different price.

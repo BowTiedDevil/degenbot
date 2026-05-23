@@ -1,5 +1,4 @@
-"""
-Property-based tests for the unified solver interface.
+"""Property-based tests for the unified solver interface.
 
 Tests the ArbSolver dispatch logic and correctness across different
 pool types (V2, V3) and path lengths.
@@ -128,8 +127,7 @@ class TestSolverV2V2Properties:
         price_mult: float,
         fee: Fraction,
     ):
-        """
-        Property: Solver finds profit for V2-V2 with price spread > fees.
+        """Property: Solver finds profit for V2-V2 with price spread > fees.
         """
         hop1, hop2 = make_profitable_v2_pair(base_reserve, price_mult, fee)
         inp = SolveInput(hops=(hop1, hop2))
@@ -155,8 +153,7 @@ class TestSolverV2V2Properties:
         base_reserve: int,
         fee: Fraction,
     ):
-        """
-        Property: No profit for identical prices with fees.
+        """Property: No profit for identical prices with fees.
         """
         hop = make_v2_hop(base_reserve, base_reserve, fee)
         inp = SolveInput(hops=(hop, hop))
@@ -178,8 +175,7 @@ class TestSolverV2V2Properties:
         price_mult: float,
         fee: Fraction,
     ):
-        """
-        Property: ArbSolver matches Brent for V2-V2.
+        """Property: ArbSolver matches Brent for V2-V2.
         """
         hop1, hop2 = make_profitable_v2_pair(base_reserve, price_mult, fee)
         inp = SolveInput(hops=(hop1, hop2))
@@ -220,8 +216,7 @@ class TestSolverMultiHopProperties:
         base_reserve: int,
         fee: Fraction,
     ):
-        """
-        Property: Solver handles paths of various lengths.
+        """Property: Solver handles paths of various lengths.
         """
         # Create a cycle where prices drift around
         hops = []
@@ -264,8 +259,7 @@ class TestSolverMultiHopProperties:
         base_reserve: int,
         fee: Fraction,
     ):
-        """
-        Property: Solver matches Brent for multi-hop paths.
+        """Property: Solver matches Brent for multi-hop paths.
         """
         # Create profitable cycle
         hops = []
@@ -315,8 +309,7 @@ class TestSolverMethodSelection:
         price_mult: float,
         fee: Fraction,
     ):
-        """
-        Property: V2-V2 paths use Möbius method.
+        """Property: V2-V2 paths use Möbius method.
         """
         hop1, hop2 = make_profitable_v2_pair(base_reserve, price_mult, fee)
         inp = SolveInput(hops=(hop1, hop2))
@@ -349,8 +342,7 @@ class TestSolverBounds:
         fee: Fraction,
         max_input_fraction: float,
     ):
-        """
-        Property: max_input constraint is respected.
+        """Property: max_input constraint is respected.
         """
         hop1, hop2 = make_profitable_v2_pair(base_reserve, price_mult, fee)
 
@@ -383,8 +375,7 @@ class TestSolverBounds:
         price_mult: float,
         fee: Fraction,
     ):
-        """
-        Property: Optimal input doesn't exceed available reserves.
+        """Property: Optimal input doesn't exceed available reserves.
         """
         hop1, hop2 = make_profitable_v2_pair(base_reserve, price_mult, fee)
         inp = SolveInput(hops=(hop1, hop2))
@@ -416,8 +407,7 @@ class TestSolverInvariants:
         price_mult: float,
         fee: Fraction,
     ):
-        """
-        Property: Profit is always non-negative when successful.
+        """Property: Profit is always non-negative when successful.
         """
         hop1, hop2 = make_profitable_v2_pair(base_reserve, price_mult, fee)
         inp = SolveInput(hops=(hop1, hop2))
@@ -442,8 +432,7 @@ class TestSolverInvariants:
         price_mult: float,
         fee: Fraction,
     ):
-        """
-        Property: Optimal input is positive when profit exists.
+        """Property: Optimal input is positive when profit exists.
         """
         hop1, hop2 = make_profitable_v2_pair(base_reserve, price_mult, fee)
         inp = SolveInput(hops=(hop1, hop2))
@@ -473,8 +462,7 @@ class TestSolverCoefficients:
         reserve_out: int,
         fee: Fraction,
     ):
-        """
-        Property: Coefficients are well-formed for any valid hop.
+        """Property: Coefficients are well-formed for any valid hop.
         """
         hop = ConstantProductHop(reserve_in=reserve_in, reserve_out=reserve_out, fee=fee)
         coeffs = _compute_mobius_coefficients((hop,))
@@ -498,8 +486,7 @@ class TestSolverCoefficients:
         price_mult: float,
         fee: Fraction,
     ):
-        """
-        Property: is_profitable correctly identifies profitable paths.
+        """Property: is_profitable correctly identifies profitable paths.
         """
         hop1, hop2 = make_profitable_v2_pair(base_reserve, price_mult, fee)
         coeffs = _compute_mobius_coefficients((hop1, hop2))
@@ -522,8 +509,7 @@ class TestV3VirtualReserves:
         liquidity: int,
         sqrt_price_x96: int,
     ):
-        """
-        Property: Virtual reserves are always positive.
+        """Property: Virtual reserves are always positive.
         """
         r_in_zfo, r_out_zfo = _v3_virtual_reserves(
             liquidity=liquidity,
@@ -547,8 +533,7 @@ class TestV3VirtualReserves:
     )
     @hypothesis.settings(deadline=None, max_examples=20)
     def test_virtual_reserves_at_price_one(self, liquidity: int):
-        """
-        Property: At price = 1.0, virtual reserves are equal.
+        """Property: At price = 1.0, virtual reserves are equal.
         """
         sqrt_price_x96 = 2**96  # sqrt(price) = 1.0
 

@@ -37,8 +37,7 @@ class TestGhoFlashLoanHandler:
         assert isinstance(handler, OperationHandler)
 
     def test_gho_flash_loan_calculates_scaled_amount(self, handler: GhoFlashLoanHandler) -> None:
-        """
-        GHO_FLASH_LOAN calculates scaled amount for GHO debt burn.
+        """GHO_FLASH_LOAN calculates scaled amount for GHO debt burn.
 
         GHO flash loan deficit creates a GHO_DEBT_BURN event.
         Standard burn calculation with floor rounding.

@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 
     from degenbot.builders.protocol import AsyncPoolBuilder
     from degenbot.erc20.erc20 import Erc20Token
-    from degenbot.provider.interface import AsyncProviderAdapter
+    from degenbot.provider.async_adapter import AsyncProviderAdapter
     from degenbot.types.aliases import ChainId
 
 

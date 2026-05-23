@@ -1,5 +1,4 @@
-"""
-Tests for Curve variant group resolution.
+"""Tests for Curve variant group resolution.
 
 Plan 029: Externalize variant group addresses from the pool class into
 a configuration module with typed resolver functions.

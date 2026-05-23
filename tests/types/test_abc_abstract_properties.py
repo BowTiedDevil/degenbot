@@ -1,5 +1,4 @@
-"""
-Tests verifying that concrete pool classes satisfy their pool-shape protocols
+"""Tests verifying that concrete pool classes satisfy their pool-shape protocols
 (ConstantProductPool, ConcentratedLiquidityPool, StableswapPool) and that
 AbstractLiquidityPool remains the root ABC.
 """
@@ -31,8 +30,7 @@ class TestAbstractLiquidityPoolCannotInstantiate:
 
 
 class TestConcretePoolsSatisfyProtocols:
-    """
-    Concrete pool classes satisfy their pool-shape protocol via isinstance checks.
+    """Concrete pool classes satisfy their pool-shape protocol via isinstance checks.
 
     Note: issubclass() doesn't work with runtime_checkable protocols that have
     @property members. We verify protocol satisfaction via isinstance on the

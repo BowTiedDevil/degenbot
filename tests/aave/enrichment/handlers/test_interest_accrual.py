@@ -40,8 +40,7 @@ class TestInterestAccrualHandler:
     def test_collateral_mint_sets_scaled_amount_to_zero(
         self, handler: InterestAccrualHandler
     ) -> None:
-        """
-        Interest accrual for collateral mint sets scaled_amount=0.
+        """Interest accrual for collateral mint sets scaled_amount=0.
 
         Interest accrual does NOT mint tokens or increase the scaled balance -
         it only updates the user's stored index.
@@ -66,8 +65,7 @@ class TestInterestAccrualHandler:
         assert result.event_type == ScaledTokenEventType.COLLATERAL_INTEREST_MINT
 
     def test_debt_mint_sets_scaled_amount_to_zero(self, handler: InterestAccrualHandler) -> None:
-        """
-        Interest accrual for debt mint sets scaled_amount=0.
+        """Interest accrual for debt mint sets scaled_amount=0.
         """
         scaled_event = _create_mock_scaled_event(
             event_type=ScaledTokenEventType.DEBT_MINT,
@@ -88,8 +86,7 @@ class TestInterestAccrualHandler:
     def test_gho_debt_mint_sets_scaled_amount_to_zero(
         self, handler: InterestAccrualHandler
     ) -> None:
-        """
-        Interest accrual for GHO debt mint sets scaled_amount=0.
+        """Interest accrual for GHO debt mint sets scaled_amount=0.
         """
         scaled_event = _create_mock_scaled_event(
             event_type=ScaledTokenEventType.GHO_DEBT_MINT,
@@ -163,8 +160,7 @@ def _create_mock_operation(operation_type: OperationType) -> "Operation":
 
 
 def _create_mock_context() -> MagicMock:
-    """
-    Create a mock EnrichmentContext that builds real enriched events.
+    """Create a mock EnrichmentContext that builds real enriched events.
 
     The mock delegates build_enriched_event to the real implementation.
     """

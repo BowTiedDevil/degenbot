@@ -1,5 +1,4 @@
-"""
-Tests for the 2-pool CVXPY problem factory.
+"""Tests for the 2-pool CVXPY problem factory.
 
 Validates that build_2pool_cvxpy_problem produces solved problems
 with correct status and value, matching the inline construction it
@@ -18,8 +17,7 @@ class TestBuild2PoolCVXPYProblem:
     """Validate the shared 2-pool CVXPY problem factory."""
 
     def test_wbtc_weth_finds_optimal(self):
-        """
-        WBTC (8 decimals) / WETH (18 decimals) with different reserves.
+        """WBTC (8 decimals) / WETH (18 decimals) with different reserves.
 
         This is the same scenario as test_cvxpy_known_value_wbtc_weth
         in test_solver_integration.py. Verifies the factory produces
@@ -40,8 +38,7 @@ class TestBuild2PoolCVXPYProblem:
             assert problem.value >= 0
 
     def test_identical_pools_no_profit(self):
-        """
-        Identical pools with fees should yield no arbitrage.
+        """Identical pools with fees should yield no arbitrage.
 
         This matches test_cvxpy_no_profit_identical_pools but uses
         per-token compression (the factory's strategy) instead of
@@ -64,8 +61,7 @@ class TestBuild2PoolCVXPYProblem:
         )
 
     def test_equal_decimals_profitable(self):
-        """
-        Same-decimal pools with price gap should find profit.
+        """Same-decimal pools with price gap should find profit.
 
         This matches the 2%/0.3% case from test_cvxpy_finds_profit
         but uses per-token compression.
@@ -91,8 +87,7 @@ class TestBuild2PoolCVXPYProblem:
         ids=["USDC/WETH", "WBTC/WETH", "WETH/WETH", "WETH/USDC"],
     )
     def test_various_decimal_pairs(self, decimals0: int, decimals1: int):
-        """
-        Factory should produce solved problems across decimal combinations.
+        """Factory should produce solved problems across decimal combinations.
 
         The per-token compression must handle any decimal asymmetry
         without floating-point overflow or underflow.
@@ -110,8 +105,7 @@ class TestBuild2PoolCVXPYProblem:
         assert problem.status in cvxpy.settings.SOLUTION_PRESENT
 
     def test_fresh_problem_each_call(self):
-        """
-        Two calls with same arguments should return independent Problems.
+        """Two calls with same arguments should return independent Problems.
 
         Mutating one must not affect the other. This validates that
         the factory has no shared mutable state.

@@ -1,5 +1,4 @@
-"""
-Tests for solver fast-path integration in cycle classes.
+"""Tests for solver fast-path integration in cycle classes.
 
 Validates that the ArbSolver fast-path produces identical results to the
 existing Brent/SCIPY optimization for V2-V2 and V2-V3 arbitrage paths.
@@ -188,8 +187,7 @@ class TestSolverFastPathEdgeCases:
 
 
 class TestSolverTimingComparison:
-    """
-    Benchmark the solver fast-path against Brent to validate that the
+    """Benchmark the solver fast-path against Brent to validate that the
     Möbius/Newton dispatch is actually faster.
 
     These tests use time.perf_counter_ns for reliable timing and require
@@ -250,8 +248,7 @@ class TestSolverTimingComparison:
         assert result.iterations == 0
 
     def test_mobius_faster_than_newton_v2v2(self, solver, v2_v2_input):
-        """
-        ArbSolver (Möbius) should be comparable to Newton for 2-hop V2-V2.
+        """ArbSolver (Möbius) should be comparable to Newton for 2-hop V2-V2.
 
         For 2-hop paths, Möbius and Newton have similar performance.
         Möbius's advantage is zero iterations and multi-hop support.
@@ -555,8 +552,7 @@ class TestArbSolverMultiHop:
 
 
 class TestCVXPYSolverComparison:
-    """
-    Compare CVXPY convex optimization solver with Möbius/Brent solvers.
+    """Compare CVXPY convex optimization solver with Möbius/Brent solvers.
 
     CVXPY uses geometric mean for the constant-product invariant, which
     should produce equivalent results to the analytical Möbius solution
@@ -569,8 +565,7 @@ class TestCVXPYSolverComparison:
     )
     @hypothesis.settings(deadline=None, max_examples=15)
     def test_cvxpy_vs_mobius_2pool_v2(self, price_ratio: float, seed: int):
-        """
-        Property: CVXPY and Möbius agree on 2-pool V2 arbitrage.
+        """Property: CVXPY and Möbius agree on 2-pool V2 arbitrage.
 
         For any valid V2 pair, CVXPY convex optimization should find
         the same optimal input as the analytical Möbius solution.
@@ -636,8 +631,7 @@ class TestCVXPYSolverComparison:
     )
     @hypothesis.settings(deadline=None, max_examples=10)
     def test_cvxpy_respects_invariant(self, seed: int):
-        """
-        Property: CVXPY solution respects constant-product invariant.
+        """Property: CVXPY solution respects constant-product invariant.
 
         After optimization, each pool should have k >= k_initial.
         """
@@ -660,8 +654,7 @@ class TestCVXPYSolverComparison:
         assert k_b_initial > 0
 
     def test_cvxpy_known_value_wbtc_weth(self):
-        """
-        Known value test: CVXPY optimization on WBTC/WETH pools.
+        """Known value test: CVXPY optimization on WBTC/WETH pools.
 
         Verifies that CVXPY finds a profitable arbitrage for a known
         pair of pools with specific reserves.
@@ -698,8 +691,7 @@ class TestCVXPYSolverAccuracy:
         ids=["2%_0.3%", "5%_0.3%", "2%_0.05%", "10%_1%"],
     )
     def test_cvxpy_finds_profit(self, price_ratio: float, fee: Fraction):
-        """
-        Test that CVXPY finds profitable arbitrage for various price ratios.
+        """Test that CVXPY finds profitable arbitrage for various price ratios.
 
         For any price discrepancy > total fees, arbitrage should be profitable.
         """
@@ -735,8 +727,7 @@ class TestCVXPYSolverAccuracy:
             assert problem.value >= 0, f"Expected profit for price_ratio={price_ratio}, fee={fee}"
 
     def test_cvxpy_no_profit_identical_pools(self):
-        """
-        Test that CVXPY finds no arbitrage for identical pools.
+        """Test that CVXPY finds no arbitrage for identical pools.
 
         When pools have identical reserves and fees, there should be
         no profitable arbitrage (profit <= 0 after fees).

@@ -1,5 +1,4 @@
-"""
-Tests for the pure functions extracted from type_resolution.py.
+"""Tests for the pure functions extracted from type_resolution.py.
 
 Plan 066, Slice 1: _build_descriptor_from_db_result and
 _descriptor_from_probing_result are the first pure-logic extractions.

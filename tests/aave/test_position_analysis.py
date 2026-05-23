@@ -139,8 +139,7 @@ class TestCalculateHealthFactor:
         assert result is None
 
     def test_health_factor_calculation(self) -> None:
-        """
-        Health factor = (collateral * LT) / (debt * BASIS_POINTS).
+        """Health factor = (collateral * LT) / (debt * BASIS_POINTS).
 
         Example:
         - Collateral: 1000, LT: 80% -> weighted = 1000 * 8000 = 8,000,000

@@ -1,5 +1,4 @@
-"""
-Tests for event-driven auto-solve in ArbitragePath.
+"""Tests for event-driven auto-solve in ArbitragePath.
 
 Validates that pool state updates trigger re-solve, subscribers are
 notified of profitable/unprofitable states, and state overrides

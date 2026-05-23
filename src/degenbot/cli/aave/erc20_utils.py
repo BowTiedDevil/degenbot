@@ -13,7 +13,7 @@ from eth_typing import ChecksumAddress
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 
 if TYPE_CHECKING:
-    from degenbot.provider.interface import ProviderAdapter
+    from degenbot.provider.sync_adapter import ProviderAdapter
 
 
 def _try_fetch_token_string(

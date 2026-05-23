@@ -1,5 +1,4 @@
-"""
-Offline tests for ERC20 token comparisons and cache behavior.
+"""Offline tests for ERC20 token comparisons and cache behavior.
 
 Uses I/O-free token construction without requiring a live RPC.
 """

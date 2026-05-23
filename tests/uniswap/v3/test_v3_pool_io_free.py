@@ -1,5 +1,4 @@
-"""
-Tests for Phase 4: I/O-free UniswapV3Pool construction via Bot.
+"""Tests for Phase 4: I/O-free UniswapV3Pool construction via Bot.
 """
 
 import pathlib

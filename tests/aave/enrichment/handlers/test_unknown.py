@@ -36,8 +36,7 @@ class TestUnknownHandler:
         assert isinstance(handler, OperationHandler)
 
     def test_unknown_raises_enrichment_error(self, handler: UnknownHandler) -> None:
-        """
-        UNKNOWN operation raises EnrichmentError.
+        """UNKNOWN operation raises EnrichmentError.
 
         When an operation cannot be classified, enrichment should fail
         rather than produce incorrect results.

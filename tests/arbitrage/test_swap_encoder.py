@@ -1,5 +1,4 @@
-"""
-Tests for swap encoding and payload generation.
+"""Tests for swap encoding and payload generation.
 
 Each SwapAmounts subclass encodes its own per-hop calldata.
 ApprovalStrategy and PayloadComposer are pluggable at the pipeline level.

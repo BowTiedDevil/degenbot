@@ -1,5 +1,4 @@
-"""
-Tests for AsyncErc20Builder I/O methods (Plan 065).
+"""Tests for AsyncErc20Builder I/O methods (Plan 065).
 
 These verify that AsyncErc20Builder's I/O methods mirror Erc20Builder's
 behavior: resolve block → check cache → call via AsyncPoolIO → decode →

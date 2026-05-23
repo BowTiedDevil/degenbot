@@ -37,8 +37,7 @@ class TestWithdrawHandler:
         assert isinstance(handler, OperationHandler)
 
     def test_standard_withdraw_calculates_scaled_amount(self, handler: WithdrawHandler) -> None:
-        """
-        Standard WITHDRAW calculates scaled amount with ceil rounding.
+        """Standard WITHDRAW calculates scaled amount with ceil rounding.
 
         For standard withdrawals (burn events), use COLLATERAL_BURN calculation.
         """
@@ -64,8 +63,7 @@ class TestWithdrawHandler:
     def test_interest_exceeds_withdrawal_uses_burn_calculation(
         self, handler: WithdrawHandler
     ) -> None:
-        """
-        When interest exceeds withdrawal, use COLLATERAL_BURN calculation.
+        """When interest exceeds withdrawal, use COLLATERAL_BURN calculation.
 
         When a COLLATERAL_MINT event has amount < balance_increase, it means
         interest > withdrawal. The aToken contract emits a Mint event instead

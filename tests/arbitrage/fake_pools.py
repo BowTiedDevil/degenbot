@@ -1,5 +1,4 @@
-"""
-Robust fake V3 pools for testing multi-range arbitrage.
+"""Robust fake V3 pools for testing multi-range arbitrage.
 
 These build on production UniswapV3Pool with full tick data support,
 enabling testing of _get_cached_tick_ranges() and multi-range
@@ -27,8 +26,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class FakeTickInfo:
-    """
-    Tick information for fake V3 pools.
+    """Tick information for fake V3 pools.
 
     Mirrors LiquidityAtTick but is Hashable for testing.
     """
@@ -46,8 +44,7 @@ class FakeTickInfo:
 
 @dataclass
 class TickRangeDefinition:
-    """
-    Definition of a tick range for building fake pools.
+    """Definition of a tick range for building fake pools.
 
     tick_lower: Lower tick boundary (inclusive)
     tick_upper: Upper tick boundary (exclusive)
@@ -79,8 +76,7 @@ def build_v3_pool_with_ticks(
     current_sqrt_price_x96: int,
     tick_ranges: list[TickRangeDefinition],
 ) -> UniswapV3Pool:
-    """
-    Build a production UniswapV3Pool with tick data from range definitions.
+    """Build a production UniswapV3Pool with tick data from range definitions.
 
     Constructs tick_data and tick_bitmap from the specified ranges, then
     passes them to UniswapV3Pool constructor. The pool is fully I/O-free.
@@ -185,8 +181,7 @@ def create_two_range_v3_pool(
     tick_spacing: int = 60,
     fee: int = 3000,
 ) -> UniswapV3Pool:
-    """
-    Create a production UniswapV3Pool with two adjacent liquidity ranges.
+    """Create a production UniswapV3Pool with two adjacent liquidity ranges.
 
     This is a convenience factory for the most common test scenario:
     - Range 1: [tick_lower, 0) with lower_liquidity

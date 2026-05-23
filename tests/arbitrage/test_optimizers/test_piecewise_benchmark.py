@@ -1,5 +1,4 @@
-"""
-Benchmark tests for PiecewiseMobiusSolver performance.
+"""Benchmark tests for PiecewiseMobiusSolver performance.
 
 Validates the ~10-20μs performance claim for multi-range V3 paths.
 """
@@ -26,8 +25,7 @@ def _make_profitable_v3_v2_path(
     sqrt_price_x96: int,
     v2_rate_multiplier: float = 2.0,
 ) -> tuple[BoundedProductHop, ConstantProductHop]:
-    """
-    Build a profitable V3→V2 arbitrage path with consistent reserves.
+    """Build a profitable V3→V2 arbitrage path with consistent reserves.
 
     V3 reserves are computed from L/sqrt_price via _v3_virtual_reserves
     so they match the pool's actual swap function. V2 reserves are set to

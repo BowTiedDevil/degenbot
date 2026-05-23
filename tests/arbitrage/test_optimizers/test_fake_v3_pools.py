@@ -1,5 +1,4 @@
-"""
-Tests for production UniswapV3Pool with tick data for multi-range integration.
+"""Tests for production UniswapV3Pool with tick data for multi-range integration.
 
 These verify that production V3 pools correctly support _get_cached_tick_ranges()
 and enable testing of piecewise-Möbius solving without RPC dependencies.

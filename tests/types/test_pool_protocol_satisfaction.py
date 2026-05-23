@@ -1,5 +1,4 @@
-"""
-Tests verifying pool protocol declarations are well-formed.
+"""Tests verifying pool protocol declarations are well-formed.
 
 Protocol satisfaction is verified indirectly through integration tests
 that construct ArbitragePath with real pool objects.

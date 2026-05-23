@@ -12,8 +12,7 @@ class TestRustIntHopState:
         assert hop.fee_denom == 1000
 
     def test_fee_numer_is_actual_fee_not_gamma(self):
-        """
-        fee_numer is the actual fee taken (fee_denom - gamma_numer), not gamma_numer.
+        """fee_numer is the actual fee taken (fee_denom - gamma_numer), not gamma_numer.
 
         This is an important invariant: fee_numer + gamma_numer == fee_denom.
         Gamma is the retained fraction; fee is the taken fraction.

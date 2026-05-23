@@ -1,5 +1,4 @@
-"""
-Integration tests for the Alloy-based Ethereum RPC provider.
+"""Integration tests for the Alloy-based Ethereum RPC provider.
 
 These tests demonstrate that the Rust-based Alloy integration is functional,
 covering provider operations, contract interactions, and connection management.
@@ -102,8 +101,7 @@ class TestContractUtilities:
 
 
 class TestContractRustBoundary:
-    """
-    Test Contract class boundary with Rust encode/decode.
+    """Test Contract class boundary with Rust encode/decode.
 
     Deduplicated: LogFilter creation tests are in test_provider_interface.py.
     """
@@ -208,8 +206,7 @@ class TestProviderInitialization:
 
 
 class TestProviderWithLiveConnection:
-    """
-    Sync provider tests requiring live RPC.
+    """Sync provider tests requiring live RPC.
 
     Note: The sync AlloyProvider uses tokio::runtime::Handle::try_current() which
     requires an existing tokio runtime. For live RPC tests, use AsyncAlloyProvider
@@ -243,8 +240,7 @@ class TestProviderWithLiveConnection:
 
 
 class TestContractWithLiveConnection:
-    """
-    Contract tests that require a live RPC connection.
+    """Contract tests that require a live RPC connection.
 
     Note: Contract initialization currently requires provider injection
     which is not yet fully implemented.

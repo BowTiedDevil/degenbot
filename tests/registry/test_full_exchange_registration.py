@@ -1,5 +1,4 @@
-"""
-Tests that all built-in exchanges, deployments, and factories can be registered
+"""Tests that all built-in exchanges, deployments, and factories can be registered
 under the new PoolTypeRegistry scheme.
 
 This test reconstructs the full registration table that the DEX __init__.py
@@ -294,8 +293,7 @@ class TestFullRegistration:
 
 
 class TestDeploymentDataMatchesPoolTypeRegistry:
-    """
-    Validate that pool_type_registry has correct deployment data.
+    """Validate that pool_type_registry has correct deployment data.
 
     pool_type_registry is the sole source of truth — there is no longer
     a separate FACTORY_DEPLOYMENTS dict to cross-check against.

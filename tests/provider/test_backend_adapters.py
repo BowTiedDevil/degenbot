@@ -1,5 +1,4 @@
-"""
-Unit tests for provider backend adapters.
+"""Unit tests for provider backend adapters.
 
 These tests verify the extracted adapter classes in isolation, ensuring that
 the refactoring from stringly-typed dispatch to polymorphic dispatch preserves
@@ -12,11 +11,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from degenbot.provider.interface import (
+from degenbot.provider.async_adapter import _AsyncAlloyAdapter, _AsyncWeb3Adapter
+from degenbot.provider.sync_adapter import (
     ProviderAdapter,
     _AlloyAdapter,
-    _AsyncAlloyAdapter,
-    _AsyncWeb3Adapter,
     _OfflineAdapter,
     _Web3Adapter,
 )

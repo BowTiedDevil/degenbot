@@ -12,8 +12,8 @@ from degenbot.aave.events import (
     AaveV3StkAaveEvent,
     ERC20Event,
 )
-from degenbot.provider.interface import ProviderAdapter
 from degenbot.provider.log_fetching import fetch_logs_retrying
+from degenbot.provider.sync_adapter import ProviderAdapter
 
 
 def fetch_pool_events(

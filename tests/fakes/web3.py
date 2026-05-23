@@ -1,5 +1,4 @@
-"""
-Fake Web3 instances for testing provider adapters.
+"""Fake Web3 instances for testing provider adapters.
 
 Replaces the ad hoc fakes from tests/provider/test_backend_adapters.py.
 
@@ -71,8 +70,7 @@ class FakeW3:
 
 
 class FakeAsyncW3Eth(FakeW3Eth):
-    """
-    Fake async web3.eth namespace.
+    """Fake async web3.eth namespace.
 
     Several attributes are async properties on the real AsyncWeb3 (e.g.
     ``eth.chain_id``).  Our fakes return a coroutine so ``await`` works.

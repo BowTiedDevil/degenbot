@@ -1,5 +1,4 @@
-"""
-Tests for the Balancer weighted pool closed-form arbitrage solver.
+"""Tests for the Balancer weighted pool closed-form arbitrage solver.
 
 Validates:
 - Trade signature generation

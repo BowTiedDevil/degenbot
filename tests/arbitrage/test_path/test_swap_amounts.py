@@ -1,5 +1,4 @@
-"""
-Tests for ArbitragePath.build_swap_amounts.
+"""Tests for ArbitragePath.build_swap_amounts.
 
 Validates that swap amount construction produces correct pool-specific
 swap amounts for V2 pools.

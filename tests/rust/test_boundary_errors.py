@@ -1,5 +1,4 @@
-"""
-Tests for Rust → Python error propagation at the FFI boundary.
+"""Tests for Rust → Python error propagation at the FFI boundary.
 
 Every Rust Result<T, E> crosses the PyO3 boundary as a Python exception.
 These tests verify the mapping is correct for all boundary functions.

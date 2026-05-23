@@ -1,5 +1,4 @@
-"""
-Fixtures for Uniswap V3 offline tests.
+"""Fixtures for Uniswap V3 offline tests.
 
 These fixtures provide offline-compatible V3 pool objects with complete tick data.
 """
@@ -69,8 +68,7 @@ def offline_adapter(offline_provider: OfflineProvider) -> ProviderAdapter:
 
 @pytest.fixture
 def offline_wbtc_weth_v3_pool(offline_adapter: ProviderAdapter) -> UniswapV3Pool:
-    """
-    Provide WBTC-WETH V3 pool using offline provider with complete tick data.
+    """Provide WBTC-WETH V3 pool using offline provider with complete tick data.
     """
     # Load tick data from recorded file
     data_file = CHAIN_DATA_PATH / "1" / f"block_{UNISWAP_V3_WBTC_WETH_BLOCK}.json"

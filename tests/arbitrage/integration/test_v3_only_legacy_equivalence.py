@@ -1,5 +1,4 @@
-"""
-V3-only legacy ↔ new equivalence: UniswapLpCycle vs ArbitragePath.
+"""V3-only legacy ↔ new equivalence: UniswapLpCycle vs ArbitragePath.
 
 Uses production UniswapV3Pool with exact V3 math to compare the legacy
 brent optimizer with the new MobiusSolver / BrentSolver optimizers.
@@ -39,8 +38,7 @@ def _make_v3_pool_from_state(
     fee: int = 3000,
     tick_spacing: int = 60,
 ) -> UniswapV3Pool:
-    """
-    Build a production UniswapV3Pool from a generated V3 pool state.
+    """Build a production UniswapV3Pool from a generated V3 pool state.
 
     The pool is fully I/O-free — no RPC calls or provider references.
     """
@@ -68,8 +66,7 @@ def _make_profitable_v3_pair(
     liquidity: int = 10**18,
     fee: int = 500,
 ) -> tuple[UniswapV3Pool, UniswapV3Pool]:
-    """
-    Create two production UniswapV3Pool for the same token pair at different prices.
+    """Create two production UniswapV3Pool for the same token pair at different prices.
 
     Pool A: t0/t1 at {price_a}. ArbitragePath goes t0→t1 (zfo=True).
     Pool B: t0/t1 at {price_b}. ArbitragePath goes t1→t0 (zfo=False).
@@ -127,8 +124,7 @@ def weth() -> FakeToken:
 
 
 class TestV3OnlyLegacyVsNew:
-    """
-    Verify UniswapLpCycle (legacy) and ArbitragePath (new) produce
+    """Verify UniswapLpCycle (legacy) and ArbitragePath (new) produce
     computationally equivalent results on the exact same V3-only pool states.
 
     Production UniswapV3Pool passes isinstance checks in the legacy code
@@ -136,8 +132,7 @@ class TestV3OnlyLegacyVsNew:
     """
 
     def test_2hop_v3_agreement_profitable(self, usdc: FakeToken, weth: FakeToken):
-        """
-        Both legacy and new systems find profit for a V3-only 2-hop cycle.
+        """Both legacy and new systems find profit for a V3-only 2-hop cycle.
 
         Pool A: USDC/WETH at price 2200 (high USDC per WETH → cheap WETH)
         Pool B: USDC/WETH at price 2000 (low USDC per WETH → expensive WETH)

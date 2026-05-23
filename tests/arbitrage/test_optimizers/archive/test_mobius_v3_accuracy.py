@@ -1,5 +1,4 @@
-"""
-Verification: Möbius V3 formula vs actual V3 integer swap math.
+"""Verification: Möbius V3 formula vs actual V3 integer swap math.
 
 The core question: does the float64 Möbius formula
     y = gamma * (R1 + beta) * x / ((R0 + alpha) + gamma * x)
@@ -43,8 +42,7 @@ def v3_swap_within_range_integer(
     fee_pips: int,
     zero_for_one: bool,
 ) -> tuple[int, int, int, bool]:
-    """
-    Simulate a V3 swap that stays within a single tick range,
+    """Simulate a V3 swap that stays within a single tick range,
     using the actual integer compute_swap_step.
 
     Returns (amount_out, amount_in_consumed, new_sqrt_price_x96, crossed_boundary).
@@ -93,8 +91,7 @@ def tick_to_sqrt_price_float(tick: int) -> float:
 
 
 class TestMobiusVsV3IntegerMath:
-    """
-    Compare Möbius float64 output against V3 integer compute_swap_step.
+    """Compare Möbius float64 output against V3 integer compute_swap_step.
 
     For each test case:
     1. Set up a V3 tick range with known liquidity and prices
@@ -275,8 +272,7 @@ class TestMobiusVsV3IntegerMath:
 
 
 class TestMobiusArbitrageVsV3Integer:
-    """
-    End-to-end test: V2 + V3 arbitrage using Möbius optimizer
+    """End-to-end test: V2 + V3 arbitrage using Möbius optimizer
     vs a brute-force search using actual V3 integer swap math.
 
     We scan a range of input amounts using V3 integer swap math,
@@ -284,8 +280,7 @@ class TestMobiusArbitrageVsV3Integer:
     """
 
     def test_v2_v3_arbitrage_mobius_vs_brute_force(self):
-        """
-        V2 pool (USDC/WETH) + V3 pool (USDC/WETH) arbitrage.
+        """V2 pool (USDC/WETH) + V3 pool (USDC/WETH) arbitrage.
 
         The Möbius closed-form gives the optimal input ASSUMING the swap
         stays within the V3 tick range. We verify:
@@ -455,8 +450,7 @@ class TestMobiusArbitrageVsV3Integer:
             )
 
     def test_v2_v3_profit_gradient_zero_at_mobius_optimum(self):
-        """
-        At the Möbius optimum, the marginal V3 swap should equal the
+        """At the Möbius optimum, the marginal V3 swap should equal the
         marginal V2 swap (no-arbitrage condition).
 
         Verify using integer V3 math at points near the Möbius optimum.
@@ -552,8 +546,7 @@ class TestMobiusArbitrageVsV3Integer:
 
 
 class TestEffectiveReserveCorrectness:
-    """
-    Verify that the effective reserves (R0+alpha, R1+beta) used by the
+    """Verify that the effective reserves (R0+alpha, R1+beta) used by the
     Möbius formula match the V3 contract's reserve computation.
 
     For a V3 tick range at current sqrt price P with liquidity L:
@@ -613,8 +606,7 @@ class TestEffectiveReserveCorrectness:
 
     @pytest.mark.parametrize("current_tick", [0, -83000, 100])
     def test_swap_output_matches_bounded_product_formula(self, current_tick: int):
-        """
-        Verify: For a small swap, the Möbius output matches the
+        """Verify: For a small swap, the Möbius output matches the
         first-order Taylor expansion of the bounded product CFMM.
 
         For small x: y ≈ gamma * s_eff / r_eff * x = gamma * marginal_rate * x
@@ -674,15 +666,13 @@ class TestEffectiveReserveCorrectness:
 
 
 class TestV3PriceImpactEstimation:
-    """
-    Verify that estimate_v3_final_sqrt_price matches the actual V3
+    """Verify that estimate_v3_final_sqrt_price matches the actual V3
     sqrt price change computed by compute_swap_step.
     """
 
     @pytest.mark.parametrize("current_tick", [30, -82970, 100])
     def test_price_impact_matches_v3_integer(self, current_tick: int):
-        """
-        The float estimate of final sqrt price should match the
+        """The float estimate of final sqrt price should match the
         integer compute_swap_step result, for within-range swaps.
         """
         L = 1_000_000_000_000

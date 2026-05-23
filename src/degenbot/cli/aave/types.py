@@ -15,7 +15,7 @@ from degenbot.database.models.aave import (
     AaveV3DebtPosition,
     AaveV3Market,
 )
-from degenbot.provider.interface import ProviderAdapter
+from degenbot.provider.sync_adapter import ProviderAdapter
 
 
 @dataclass

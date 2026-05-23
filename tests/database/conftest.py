@@ -1,5 +1,4 @@
-"""
-Fixtures for database tests.
+"""Fixtures for database tests.
 
 Provides an in-memory SQLite database seeded with minimal test data,
 wrapped in a ``DatabaseSessionManager`` for each test.
@@ -193,8 +192,7 @@ def _seed_test_data(session: scoped_session) -> None:
 
 @pytest.fixture
 def test_db():
-    """
-    Provide an in-memory SQLite database seeded with test data,
+    """Provide an in-memory SQLite database seeded with test data,
     wrapped in a ``DatabaseSessionManager``.
     """
     engine = create_engine("sqlite:///:memory:")

@@ -1,5 +1,4 @@
-"""
-Example: Testing Curve pool calculations with I/O-free architecture.
+"""Example: Testing Curve pool calculations with I/O-free architecture.
 
 This demonstrates how the I/O-free pattern eliminates the need for mocks
 when testing pool logic. All on-chain data is injected via a CurveDataProvider.
@@ -11,8 +10,7 @@ from tests.fakes.curve_data_provider import FakeCurveDataProvider
 
 
 def test_curve_plain_pool_with_data_provider():
-    """
-    Test a plain Curve pool (no lending, no base pool) with I/O-free pattern.
+    """Test a plain Curve pool (no lending, no base pool) with I/O-free pattern.
 
     NO MOCKS NEEDED - just pass a data_provider with fake on-chain data.
     """
@@ -58,8 +56,7 @@ def test_curve_plain_pool_with_data_provider():
 
 
 def test_curve_lending_pool_with_data_provider():
-    """
-    Test a lending pool (cToken/yToken) with fake lending rates via data_provider.
+    """Test a lending pool (cToken/yToken) with fake lending rates via data_provider.
 
     The data_provider bundles all on-chain data access behind a single seam.
     """
@@ -105,8 +102,7 @@ def test_curve_lending_pool_with_data_provider():
 
 
 def test_curve_metapool_with_data_provider():
-    """
-    Test a metapool with fake virtual price via data_provider.
+    """Test a metapool with fake virtual price via data_provider.
 
     Just configure the provider with a base_virtual_price value.
     """
@@ -151,8 +147,7 @@ def test_curve_metapool_with_data_provider():
 
 
 def test_curve_crypto_pool_with_data_provider():
-    """
-    Test a crypto pool (volatile assets like Tricrypto) with fake D, gamma, price_scale.
+    """Test a crypto pool (volatile assets like Tricrypto) with fake D, gamma, price_scale.
 
     Crypto pools need the on-chain invariant D value, gamma, and price_scale.
     All provided through the single data_provider seam.

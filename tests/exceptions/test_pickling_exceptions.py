@@ -5,8 +5,7 @@ from degenbot.exceptions.pool import HookedPoolResult, IncompleteSwap, StaleRate
 
 
 def test_no_solver_solution_pickling() -> None:
-    """
-    Test that the `NoSolverSolution` exception's `__reduce__` method allows the exception to be
+    """Test that the `NoSolverSolution` exception's `__reduce__` method allows the exception to be
     pickled and unpickled correctly.
     """
     # Create an instance with a custom message
@@ -28,8 +27,7 @@ def test_no_solver_solution_pickling() -> None:
 
 
 def test_no_solver_solution_default_message_pickling() -> None:
-    """
-    Test that NoSolverSolution exception with default message can be pickled and unpickled.
+    """Test that NoSolverSolution exception with default message can be pickled and unpickled.
     """
     # Create an instance with the default message
     original_exception = NoSolverSolution()
@@ -49,8 +47,7 @@ def test_no_solver_solution_default_message_pickling() -> None:
 
 
 def test_incomplete_swap_pickling() -> None:
-    """
-    Test that the `IncompleteSwap` exception's `__reduce__` method allows the exception to be
+    """Test that the `IncompleteSwap` exception's `__reduce__` method allows the exception to be
     pickled and unpickled correctly.
     """
     # Create an instance with custom amount_in and amount_out values
@@ -76,8 +73,7 @@ def test_incomplete_swap_pickling() -> None:
 
 
 def test_hooked_pool_result_pickling() -> None:
-    """
-    Test that the `HookedPoolResult` exception's `__reduce__` method allows the exception to
+    """Test that the `HookedPoolResult` exception's `__reduce__` method allows the exception to
     be pickled and unpickled correctly.
     """
     # Create an instance with custom amount_in, amount_out, and hooks values
@@ -107,8 +103,7 @@ def test_hooked_pool_result_pickling() -> None:
 
 
 def test_stale_rate_result_pickling() -> None:
-    """
-    Test that the `StaleRateResult` exception's `__reduce__` method allows the exception to
+    """Test that the `StaleRateResult` exception's `__reduce__` method allows the exception to
     be pickled and unpickled correctly.
     """
     original_amount_in = 5000

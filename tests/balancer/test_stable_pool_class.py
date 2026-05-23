@@ -1,5 +1,4 @@
-"""
-Integration tests for the BalancerV2StablePool production class.
+"""Integration tests for the BalancerV2StablePool production class.
 
 Verifies that the class's calculate_tokens_out_from_tokens_in() and
 calculate_tokens_in_from_tokens_out() match on-chain querySwap results.
@@ -83,8 +82,7 @@ COMPOSABLE_STABLE_POOL_ADDRESSES = {
 
 
 class CacheAwareRateProvider:
-    """
-    Rate provider that replicates the on-chain _cacheTokenRateIfNecessary flow.
+    """Rate provider that replicates the on-chain _cacheTokenRateIfNecessary flow.
 
     For each token, reads getTokenRateCache() to get the cached (rate, oldRate,
     duration, expires). If the cache has expired (block timestamp > expires),
@@ -174,8 +172,7 @@ def _build_stable_pool(
     inject_rate_provider: bool = False,
     invariant_version: int = INVARIANT_V2,
 ) -> BalancerV2StablePool:
-    """
-    Build a BalancerV2StablePool from on-chain data.
+    """Build a BalancerV2StablePool from on-chain data.
 
     If inject_rate_provider is True, constructs a CacheAwareRateProvider
     that replicates the on-chain _cacheTokenRateIfNecessary flow for
@@ -288,8 +285,7 @@ def _query_swap(  # noqa: PLR0917
 
 
 class TestBalancerV2StablePoolMetaStable:
-    """
-    Test BalancerV2StablePool against on-chain for MetaStablePools.
+    """Test BalancerV2StablePool against on-chain for MetaStablePools.
 
     MetaStablePools have no BPT token and near-static rate providers,
     so construction-time scaling factors produce exact 0-wei matching.
@@ -438,8 +434,7 @@ class TestBalancerV2StablePoolMetaStable:
 
 
 class TestBalancerV2StablePoolComposableExact:
-    """
-    Test BalancerV2StablePool against on-chain for ComposableStablePools
+    """Test BalancerV2StablePool against on-chain for ComposableStablePools
     with a CacheAwareRateProvider injected.
 
     The CacheAwareRateProvider replicates the on-chain _cacheTokenRateIfNecessary
@@ -594,8 +589,7 @@ class TestBalancerV2StablePoolComposableExact:
 
 
 class TestBalancerV2StablePoolComposableStaleRates:
-    """
-    Test that ComposableStablePools without a live rate_provider raise
+    """Test that ComposableStablePools without a live rate_provider raise
     StaleRateResult, and that the wrapped values are close
     to the on-chain result.
     """

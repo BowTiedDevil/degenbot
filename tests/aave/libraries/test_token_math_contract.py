@@ -1,5 +1,4 @@
-"""
-Basic sanity tests for TokenMath wrapper contracts.
+"""Basic sanity tests for TokenMath wrapper contracts.
 
 These tests verify that:
 1. The wrapper contracts deploy successfully

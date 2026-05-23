@@ -1,5 +1,4 @@
-"""
-Consolidated fake token implementations.
+"""Consolidated fake token implementations.
 
 Replaces the previous ad hoc token fakes:
 - FakeToken (from tests/arbitrage/test_path/conftest.py)
@@ -23,8 +22,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, eq=False)
 class FakeToken(AddressComparable):
-    """
-    Lightweight token stand-in for testing.
+    """Lightweight token stand-in for testing.
 
     Frozen dataclass inheriting from AddressComparable for consistent
     address-based equality, hashing, and ordering with Erc20Token.

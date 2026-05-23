@@ -1,5 +1,4 @@
-"""
-Configuration types for synthetic pool state generation.
+"""Configuration types for synthetic pool state generation.
 """
 
 from dataclasses import dataclass
@@ -9,8 +8,7 @@ from typing import Literal
 
 @dataclass(frozen=True, slots=True)
 class PoolGenerationConfig:
-    """
-    Base configuration for generating a synthetic pool state.
+    """Base configuration for generating a synthetic pool state.
 
     Attributes
     ----------
@@ -33,8 +31,7 @@ class PoolGenerationConfig:
 
 @dataclass(frozen=True, slots=True)
 class V3PoolGenerationConfig(PoolGenerationConfig):
-    """
-    Configuration for generating a Uniswap V3 pool state.
+    """Configuration for generating a Uniswap V3 pool state.
 
     Extends the base config with V3-specific parameters for tick spacing,
     liquidity distribution, and tick range.
@@ -72,8 +69,7 @@ class V3PoolGenerationConfig(PoolGenerationConfig):
 
 @dataclass(frozen=True, slots=True)
 class V4PoolGenerationConfig(V3PoolGenerationConfig):
-    """
-    Configuration for generating a Uniswap V4 pool state.
+    """Configuration for generating a Uniswap V4 pool state.
 
     Extends V3 config with V4-specific pool identification.
 
@@ -89,8 +85,7 @@ class V4PoolGenerationConfig(V3PoolGenerationConfig):
 
 @dataclass(frozen=True, slots=True)
 class PriceDiscrepancyConfig:
-    """
-    Configuration for injecting price discrepancy between pools.
+    """Configuration for injecting price discrepancy between pools.
 
     Used to create guaranteed arbitrage opportunities by setting up
     pools with different effective exchange rates.
@@ -124,8 +119,7 @@ class PriceDiscrepancyConfig:
 
 @dataclass(frozen=True, slots=True)
 class ArbitrageFixtureConfig:
-    """
-    Configuration for generating a complete arbitrage test fixture.
+    """Configuration for generating a complete arbitrage test fixture.
 
     Defines the scenario including pool types, profit target, and
     randomization parameters.

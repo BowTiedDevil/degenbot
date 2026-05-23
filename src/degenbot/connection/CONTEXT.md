@@ -1,24 +1,11 @@
 # Context — Connection Management
 
 **Provider**:
-An adapter wrapping an RPC connection for blockchain reads (sync or async). Implemented in `degenbot.provider` as `ProviderAdapter` and `AsyncProviderAdapter`; defined here because Connection Manager cannot be explained without it.
+An adapter wrapping an RPC connection for blockchain reads (sync or async). Implemented in `degenbot.provider` as `ProviderAdapter` and `AsyncProviderAdapter`. Full term definitions live in [Provider CONTEXT.md](../provider/CONTEXT.md).
 _Avoid_: RPC client, web3
 
-**ProviderBackend**:
-A `@runtime_checkable` protocol defining the contract for sync RPC backends (methods like `get_block_number`, `eth_call`, `get_logs`, etc.). `ProviderAdapter` wraps any `ProviderBackend` and delegates via `__getattr__` for methods that don't need extra logic. Formerly split into `EthereumProvider` protocol + `_SyncProviderBackend` adapter; the split has been collapsed. The `EthereumProvider` backward-compatibility alias has been removed.
-_Avoid_: Backend, sync backend, Ethereum provider (use **ProviderBackend**)
-
-**SyncSubscriptionSupport**:
-A mixin class providing default `raise SubscriptionNotSupported` implementations for all 5 `subscribe_*` methods on sync backends. Sync adapters (`_Web3Adapter`, `_AlloyAdapter`, `_OfflineAdapter`) and `ProviderAdapter` inherit this mixin instead of copy-pasting stubs. Subclasses override `_subscription_transport` and `_subscription_rpc_url` properties for error messages.
-_Avoid_: subscription stubs, sync subscription base
-
-**AsyncSubscriptionSupport**:
-The async counterpart — a mixin providing default `raise SubscriptionNotSupported` async stubs for backends that don't support WS/IPC subscriptions (e.g. `_AsyncWeb3Adapter`). `_AsyncAlloyAdapter` does NOT inherit this — it has real subscription implementations.
-_Avoid_: async subscription stubs, async subscription base
-
-**AsyncProviderBackend**:
-The async counterpart of `ProviderBackend` — a `@runtime_checkable` protocol for async RPC backends. Formerly `_AsyncProviderBackend`.
-_Avoid_: Async backend
+**ProviderBackend**, **AsyncProviderBackend**, **SyncSubscriptionSupport**, **AsyncSubscriptionSupport**:
+Defined in [Provider CONTEXT.md](../provider/CONTEXT.md).
 
 **Subscription**:
 A Rust-backed async iterator yielding push events from an Ethereum node via `eth_subscribe`. Created by `AsyncProviderAdapter.subscribe_*()` methods. Uses a double-buffer pattern: the Rust pump task writes raw events to an active buffer (zero GIL), and `drain()` atomically swaps + bulk-converts the stale buffer to Python dicts. Iterated with `async for` (which uses `drain()` internally with a local batch). `started()` awaits WS subscription confirmation; raises on failure. `drain()` returns `list[dict]` for bulk consumption. Terminates with `StopAsyncIteration` (clean) or `SubscriptionDisconnected` (connection lost). Requires WS or IPC transport; HTTP providers raise `SubscriptionNotSupported`.

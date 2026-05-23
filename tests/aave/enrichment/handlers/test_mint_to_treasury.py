@@ -40,8 +40,7 @@ class TestMintToTreasuryHandler:
     def test_mint_to_treasury_sets_scaled_amount_to_none(
         self, handler: MintToTreasuryHandler
     ) -> None:
-        """
-        MINT_TO_TREASURY sets scaled_amount=None.
+        """MINT_TO_TREASURY sets scaled_amount=None.
 
         MINT_TO_TREASURY requires position data (current balance and last_index)
         to correctly calculate accruedToTreasury. The enrichment layer doesn't

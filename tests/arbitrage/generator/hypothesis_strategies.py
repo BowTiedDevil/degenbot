@@ -1,5 +1,4 @@
-"""
-Hypothesis strategies for property-based arbitrage testing.
+"""Hypothesis strategies for property-based arbitrage testing.
 
 Provides strategies for generating random pool states and arbitrage
 configurations that are guaranteed to have profitable opportunities.

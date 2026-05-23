@@ -1,5 +1,4 @@
-"""
-Synthetic pool state generator for arbitrage testing.
+"""Synthetic pool state generator for arbitrage testing.
 
 Generates V2, V3, and V4 pool states with configurable parameters
 and guaranteed arbitrage opportunities.
@@ -37,8 +36,7 @@ if TYPE_CHECKING:
 
 
 class PoolStateGenerator:
-    """
-    Generate synthetic pool states for testing arbitrage calculations.
+    """Generate synthetic pool states for testing arbitrage calculations.
 
     Two modes of operation:
     1. Simple cases: Manually constructed with exact values
@@ -62,8 +60,7 @@ class PoolStateGenerator:
         reserves_token1: int,
         block: int = 0,
     ) -> UniswapV2PoolState:
-        """
-        Generate a V2 pool state with the given reserves.
+        """Generate a V2 pool state with the given reserves.
 
         Parameters
         ----------
@@ -101,8 +98,7 @@ class PoolStateGenerator:
         tick_data: "LiquidityMap | None" = None,
         block: int = 0,
     ) -> UniswapV3PoolState:
-        """
-        Generate a V3 pool state with the given parameters.
+        """Generate a V3 pool state with the given parameters.
 
         If tick_bitmap and tick_data are not provided, generates minimal
         tick structures that support swaps around the current price.
@@ -162,8 +158,7 @@ class PoolStateGenerator:
         tick_data: "dict[int, LiquidityAtTick] | None" = None,
         block: int = 0,
     ) -> UniswapV4PoolState:
-        """
-        Generate a V4 pool state with the given parameters.
+        """Generate a V4 pool state with the given parameters.
 
         V4 pools are similar to V3 but include a pool ID for identification
         within the PoolManager contract.
@@ -232,8 +227,7 @@ class PoolStateGenerator:
         tick_spacing: int,
         liquidity: Liquidity,
     ) -> tuple["InitializedTickMap", "LiquidityMap"]:
-        """
-        Generate minimal tick bitmap and tick data for a pool.
+        """Generate minimal tick bitmap and tick data for a pool.
 
         Creates boundary ticks that allow swaps in both directions
         without crossing into uninitialized regions.
@@ -308,8 +302,7 @@ class PoolStateGenerator:
         liquidity_base: int,
         config: PoolGenerationConfig,
     ) -> UniswapV2PoolState:
-        """
-        Generate a V2 pool state from a target price and liquidity.
+        """Generate a V2 pool state from a target price and liquidity.
 
         Parameters
         ----------
@@ -352,8 +345,7 @@ class PoolStateGenerator:
         liquidity: Liquidity,
         config: V3PoolGenerationConfig,
     ) -> UniswapV3PoolState:
-        """
-        Generate a V3 pool state from a target price and liquidity.
+        """Generate a V3 pool state from a target price and liquidity.
 
         Parameters
         ----------
@@ -397,8 +389,7 @@ class PoolStateGenerator:
         pool_b_address: ChecksumAddress,
         discrepancy: PriceDiscrepancyConfig,
     ) -> UniswapV2PoolState:
-        """
-        Create a second V2 pool state that creates an arbitrage opportunity.
+        """Create a second V2 pool state that creates an arbitrage opportunity.
 
         Given an existing pool A state, generates pool B reserves such that
         swapping through both pools yields profit.
@@ -453,8 +444,7 @@ class PoolStateGenerator:
         *,
         base_price: float = 1.0,
     ) -> tuple[UniswapV2PoolState, UniswapV2PoolState]:
-        """
-        Generate two V2 pool states with a guaranteed arbitrage opportunity.
+        """Generate two V2 pool states with a guaranteed arbitrage opportunity.
 
         Parameters
         ----------
@@ -511,8 +501,7 @@ class PoolStateGenerator:
         *,
         base_price: float = 1.0,
     ) -> tuple[UniswapV3PoolState, UniswapV3PoolState]:
-        """
-        Generate two V3 pool states with a guaranteed arbitrage opportunity.
+        """Generate two V3 pool states with a guaranteed arbitrage opportunity.
 
         Parameters
         ----------
@@ -570,8 +559,7 @@ class PoolStateGenerator:
         *,
         base_price: float = 1.0,
     ) -> tuple[UniswapV4PoolState, UniswapV4PoolState]:
-        """
-        Generate two V4 pool states with a guaranteed arbitrage opportunity.
+        """Generate two V4 pool states with a guaranteed arbitrage opportunity.
 
         Parameters
         ----------
@@ -649,8 +637,7 @@ class PoolStateGenerator:
         *,
         base_price: float = 1.0,
     ) -> tuple[UniswapV2PoolState, UniswapV3PoolState]:
-        """
-        Generate a V2 and V3 pool pair with a guaranteed arbitrage opportunity.
+        """Generate a V2 and V3 pool pair with a guaranteed arbitrage opportunity.
 
         Parameters
         ----------
@@ -709,8 +696,7 @@ class PoolStateGenerator:
         *,
         min_profit_ratio: float = 0.001,
     ) -> bool:
-        """
-        Validate that two pool states create a profitable arbitrage opportunity.
+        """Validate that two pool states create a profitable arbitrage opportunity.
 
         Checks if the price difference is large enough to overcome fees
         and yield profit.

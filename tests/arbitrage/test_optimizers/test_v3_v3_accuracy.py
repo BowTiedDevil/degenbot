@@ -1,5 +1,4 @@
-"""
-Verification: V3-V3 Rust solver accuracy.
+"""Verification: V3-V3 Rust solver accuracy.
 
 Three-layer validation strategy:
 - Layer 1: compute_v3_v3_profit unit tests (profit function correctness)
@@ -29,8 +28,7 @@ from .conftest import make_rust_v3_hop as make_v3_hop
 
 
 def _solve_v3_v3(seq1, seq2, max_input=None, max_candidates=10):
-    """
-    Solve a V3-V3 path using RustArbSolver.
+    """Solve a V3-V3 path using RustArbSolver.
 
     Constructs the hops from the sequences' first ranges, since RustArbSolver
     requires base_hops alongside v3_sequences.
@@ -76,8 +74,7 @@ def compute_v3_v3_profit_manual(
     hop1_ending: rs_mobius.RustV3TickRangeHop,
     hop2_ending: rs_mobius.RustV3TickRangeHop,
 ) -> float:
-    """
-    Manually compute V3-V3 profit, mirroring Rust compute_v3_v3_profit.
+    """Manually compute V3-V3 profit, mirroring Rust compute_v3_v3_profit.
 
     profit(x) = output(x) - x
 
@@ -118,8 +115,7 @@ def simulate_v3_hop_with_crossings(
     fee_pips: int,
     zero_for_one: bool,  # noqa: FBT001
 ) -> tuple[int, int]:
-    """
-    Simulate a V3 swap with tick crossing support using compute_swap_step.
+    """Simulate a V3 swap with tick crossing support using compute_swap_step.
 
     Walks through tick ranges until the input is exhausted.
 
@@ -182,8 +178,7 @@ def v3_v3_brute_force_solver(
     max_input_wei: int | None = None,
     scan_steps: int = 200,
 ) -> tuple[int, int]:
-    """
-    Brute-force V3-V3 arbitrage solver using V3 integer swap math.
+    """Brute-force V3-V3 arbitrage solver using V3 integer swap math.
 
     Scans input amounts, simulates the full 2-hop path using
     compute_swap_step with tick crossing support, and finds
@@ -295,8 +290,7 @@ def build_seq_from_tick_data(
     fee: float,
     zero_for_one: bool,  # noqa: FBT001
 ) -> rs_mobius.RustV3TickRangeSequence:
-    """
-    Build a RustV3TickRangeSequence from integer tick data,
+    """Build a RustV3TickRangeSequence from integer tick data,
     ordering ranges in the swap direction.
     """
     ranges = []
@@ -348,8 +342,7 @@ def build_seq_from_tick_data(
 
 
 class TestV3V3ProfitFunction:
-    """
-    Layer 1: Validate the profit function compute_v3_v3_profit.
+    """Layer 1: Validate the profit function compute_v3_v3_profit.
 
     The profit function is the atomic building block. If it's wrong,
     everything built on it is wrong.
@@ -361,8 +354,7 @@ class TestV3V3ProfitFunction:
     """
 
     def test_profit_no_crossing_matches_simulate_path(self):
-        """
-        For a single-range V3-V3 path, the profit function should
+        """For a single-range V3-V3 path, the profit function should
         reduce to: profit(x) = mobius2(x) - x = simulate_path(x, [h1, h2]) - x.
         """
         sqrt_pa = math.sqrt(2200.0)
@@ -385,8 +377,7 @@ class TestV3V3ProfitFunction:
             )
 
     def test_profit_crossing1_only(self):
-        """
-        When only hop 1 has a crossing, the profit function should be:
+        """When only hop 1 has a crossing, the profit function should be:
         profit(x) = mobius2(crossing1.output +
             mobius1(x - crossing1.gross_input, ending_range1)) - x
         for x > crossing1.gross_input.
@@ -456,8 +447,7 @@ class TestV3V3ProfitFunction:
         assert result.profit > 0, "Crossing path should be profitable"
 
     def test_profit_crossing2_only(self):
-        """
-        When only hop 2 has a crossing, the profit function should be:
+        """When only hop 2 has a crossing, the profit function should be:
         profit(x) = crossing2.output + mobius(output1 - crossing2.gross_input, ending_range2) - x
         where output1 = mobius1(x).
         """
@@ -522,8 +512,7 @@ class TestV3V3ProfitFunction:
             )
 
     def test_profit_both_crossings(self):
-        """
-        When both hops have crossings, profit should chain both:
+        """When both hops have crossings, profit should chain both:
         output1 = crossing1.output + mobius(x - crossing1.gross_input, ending1)
         output2 = crossing2.output + mobius(output1 - crossing2.gross_input, ending2)
         profit = output2 - x
@@ -603,8 +592,7 @@ class TestV3V3ProfitFunction:
         assert result.optimal_input >= 0
 
     def test_profit_below_crossing_cost_returns_negative(self):
-        """
-        If x < crossing.gross_input, the profit function should return
+        """If x < crossing.gross_input, the profit function should return
         a very negative value (since the input can't cover the crossing cost).
         """
         sqrt_pa = math.sqrt(2000.0)
@@ -644,8 +632,7 @@ class TestV3V3ProfitFunction:
         )
 
     def test_profit_at_exact_crossing_boundary(self):
-        """
-        At x = crossing.gross_input exactly, remaining input = 0.
+        """At x = crossing.gross_input exactly, remaining input = 0.
         The hop1 output = crossing_output + simulate_path(0, [ending]) = crossing_output.
         Profit depends on whether hop2 can turn crossing_output into enough output.
         """
@@ -721,8 +708,7 @@ def v3_v3_brent_solver(
     crossings2: list[rs_mobius.RustTickRangeCrossing],
     max_input: float | None = None,
 ) -> tuple[float, float, bool]:
-    """
-    Brent-based V3-V3 solver using scipy.optimize.minimize_scalar
+    """Brent-based V3-V3 solver using scipy.optimize.minimize_scalar
     on the FULL piecewise profit function (including tick crossings).
 
     Evaluates profit by checking all crossing combinations for each
@@ -780,8 +766,7 @@ def v3_v3_brent_solver(
 
 
 class TestV3V3VsBrent:
-    """
-    Layer 2: Compare Rust solve_v3_v3 against BrentSolver.
+    """Layer 2: Compare Rust solve_v3_v3 against BrentSolver.
 
     Brent is an independent reference that operates on the full profit
     function via scipy.optimize.minimize_scalar. It handles V3-V3
@@ -1027,16 +1012,14 @@ class TestV3V3VsBrent:
 
 
 class TestV3V3VsV3IntegerMath:
-    """
-    Layer 3: Compare Rust solve_v3_v3 against brute-force V3 integer math.
+    """Layer 3: Compare Rust solve_v3_v3 against brute-force V3 integer math.
 
     The brute-force solver chains two V3 pools using compute_swap_step
     with full tick crossing support. This is the gold standard.
     """
 
     def test_v3_v3_arbitrage_vs_brute_force_weth_usdc(self):
-        """
-        WETH/USDC-like pools (tick ≈ -83000, spacing=60).
+        """WETH/USDC-like pools (tick ≈ -83000, spacing=60).
 
         Two V3 pools with different prices for the same pair.
         Compare Rust solver profit against brute-force integer scan.
@@ -1097,8 +1080,7 @@ class TestV3V3VsV3IntegerMath:
             )
 
     def test_v3_v3_arbitrage_vs_brute_force_stablecoin(self):
-        """
-        Stablecoin-like pools (tick ≈ 0, spacing=10).
+        """Stablecoin-like pools (tick ≈ 0, spacing=10).
 
         Very tight price ranges, small tick spacing, 0.05% fee.
         """
@@ -1156,8 +1138,7 @@ class TestV3V3VsV3IntegerMath:
             )
 
     def test_v3_v3_profit_gradient_zero_at_optimum(self):
-        """
-        At the Rust solver's optimum, the profit function should be at
+        """At the Rust solver's optimum, the profit function should be at
         or near its maximum. Checking profit at nearby points should
         confirm this (profit should decrease in both directions).
         """
@@ -1234,8 +1215,7 @@ class TestV3V3VsV3IntegerMath:
         assert rel_diff < 1e-8
 
     def test_v3_v3_asymmetric_crossings(self):
-        """
-        Asymmetric: hop 1 crosses 1 tick, hop 2 stays in current range.
+        """Asymmetric: hop 1 crosses 1 tick, hop 2 stays in current range.
         The crossing path should beat the single-range path.
         """
         sqrt_pa = math.sqrt(2000.0)
@@ -1290,14 +1270,12 @@ class TestV3V3VsV3IntegerMath:
 
 
 class TestV3V3EdgeCases:
-    """
-    Edge case coverage: tick boundaries, numerical extremes,
+    """Edge case coverage: tick boundaries, numerical extremes,
     golden section search convergence, and fee tier interactions.
     """
 
     def test_current_price_at_tick_boundary(self):
-        """
-        Current price at exact tick boundary.
+        """Current price at exact tick boundary.
         Effective reserves should still be valid.
         """
         sqrt_p = math.sqrt(2000.0)
@@ -1344,8 +1322,7 @@ class TestV3V3EdgeCases:
         assert result.optimal_input >= 0
 
     def test_very_narrow_tick_range(self):
-        """
-        Very narrow range (1 tick spacing equivalent).
+        """Very narrow range (1 tick spacing equivalent).
         Price impact is massive, reserves are tiny.
         """
         tick = 0
@@ -1381,8 +1358,7 @@ class TestV3V3EdgeCases:
         assert result.optimal_input >= 0
 
     def test_massive_liquidity_asymmetry(self):
-        """
-        Massive liquidity asymmetry (1e30 vs 1e10).
+        """Massive liquidity asymmetry (1e30 vs 1e10).
         Tests float64 precision limits.
         """
         sqrt_pa = math.sqrt(2200.0)
@@ -1401,8 +1377,7 @@ class TestV3V3EdgeCases:
             assert result.profit > 0
 
     def test_near_zero_liquidity(self):
-        """
-        Near-zero liquidity in one range.
+        """Near-zero liquidity in one range.
         Should not produce division-by-zero errors.
         """
         sqrt_pa = math.sqrt(2200.0)
@@ -1419,8 +1394,7 @@ class TestV3V3EdgeCases:
         assert result.optimal_input >= 0
 
     def test_fee_exceeds_profit(self):
-        """
-        When fees exceed potential profit, solver should return failure
+        """When fees exceed potential profit, solver should return failure
         (no negative profit reported as success).
         """
         sqrt_pa = math.sqrt(2000.1)  # Tiny spread: 0.005%
@@ -1439,8 +1413,7 @@ class TestV3V3EdgeCases:
             assert result.profit > 0, "Successful result must have positive profit"
 
     def test_mixed_fee_tiers(self):
-        """
-        Mixed fee tiers: 0.05% + 1% cross-tier arbitrage.
+        """Mixed fee tiers: 0.05% + 1% cross-tier arbitrage.
         """
         sqrt_pa = math.sqrt(2200.0)
         sqrt_pb = math.sqrt(2000.0)
@@ -1474,8 +1447,7 @@ class TestV3V3EdgeCases:
             assert result.profit > 0
 
     def test_tiny_search_interval(self):
-        """
-        x_min ≈ x_max (tiny search interval).
+        """x_min ≈ x_max (tiny search interval).
         Golden section should handle this gracefully via early exit.
         """
         sqrt_pa = math.sqrt(2000.0)
@@ -1493,8 +1465,7 @@ class TestV3V3EdgeCases:
         assert result.optimal_input >= 0
 
     def test_no_valid_search_region(self):
-        """
-        max_input = 0 → no valid search region.
+        """max_input = 0 → no valid search region.
         Should return (0, 0).
         """
         sqrt_pa = math.sqrt(2200.0)
@@ -1514,8 +1485,7 @@ class TestV3V3EdgeCases:
         assert result.profit == 0
 
     def test_empty_range_zero_liquidity_in_crossing(self):
-        """
-        Crossing into a range with zero liquidity.
+        """Crossing into a range with zero liquidity.
         The solver should handle this without division by zero.
         """
         sqrt_pa = math.sqrt(2000.0)
@@ -1562,8 +1532,7 @@ class TestV3V3EdgeCases:
 
 
 class TestV3SingleRangeBounds:
-    """
-    Regression tests for the range bounds fix in solve_v3_candidates
+    """Regression tests for the range bounds fix in solve_v3_candidates
     and solve_piecewise (single-V3-multi-range paths).
 
     Before the fix, these solvers called mobius_solve without constraining
@@ -1574,8 +1543,7 @@ class TestV3SingleRangeBounds:
     """
 
     def test_solve_v3_candidates_narrow_range_finds_profit(self):
-        """
-        V3(zfo) + V2 path where the unconstrained Möbius optimum
+        """V3(zfo) + V2 path where the unconstrained Möbius optimum
         would exceed the V3 range. The solver should find the constrained
         optimum, not reject the candidate.
         """
@@ -1612,8 +1580,7 @@ class TestV3SingleRangeBounds:
         )
 
     def test_solve_piecewise_narrow_range_finds_profit(self):
-        """
-        V3(zfo) + V2 path via solve_piecewise where the unconstrained
+        """V3(zfo) + V2 path via solve_piecewise where the unconstrained
         Möbius optimum would exceed the V3 range.
         """
         # V3 zfo=True, narrow range
@@ -1648,8 +1615,7 @@ class TestV3SingleRangeBounds:
         )
 
     def test_solve_piecewise_zero_x_min_terminates(self):
-        """
-        Regression: golden section search with x_min=0 must terminate.
+        """Regression: golden section search with x_min=0 must terminate.
         Previously, (b-a)/a = infinity when a=0, causing infinite loop.
         """
         # Single range → k=0 → crossing_gross_input=0 → x_min=0

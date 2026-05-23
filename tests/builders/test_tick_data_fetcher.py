@@ -1,5 +1,4 @@
-"""
-Tests for the unified tick data fetcher factory.
+"""Tests for the unified tick data fetcher factory.
 
 Verifies that make_tick_data_fetcher produces a callback that correctly
 fetches bitmap/tick data from a concentrated-liquidity pool and pushes
@@ -26,8 +25,7 @@ from degenbot.uniswap.v3_types import (
 
 
 class FakePoolIO:
-    """
-    A minimal PoolIO double for tick data fetcher tests.
+    """A minimal PoolIO double for tick data fetcher tests.
 
     Records all call() invocations so tests can assert on them,
     and returns pre-configured responses based on calldata matching.
@@ -84,8 +82,7 @@ class FakePoolIO:
 
 
 def _make_fake_pool(state):
-    """
-    Build a fake pool with the given state and a real state manager.
+    """Build a fake pool with the given state and a real state manager.
 
     The fake pool exposes tick_bitmap, tick_data, update_block, state,
     address, tick_spacing, and _state_mgr.push_state — everything the
@@ -161,8 +158,7 @@ def _encode_ticks_calldata(tick: int) -> bytes:
 
 
 class TestNonZeroBitmapUpdatesBitmapAndTickData:
-    """
-    When the bitmap value is non-zero, the fetcher should:
+    """When the bitmap value is non-zero, the fetcher should:
     1. Update the bitmap at the word position
     2. Fetch and store populated ticks at that word
     3. Push the new state via _state_mgr.push_state()
@@ -227,8 +223,7 @@ class TestNonZeroBitmapUpdatesBitmapAndTickData:
 
 
 class TestZeroBitmapUpdatesBitmapOnly:
-    """
-    When the bitmap value is zero, the fetcher should update the bitmap
+    """When the bitmap value is zero, the fetcher should update the bitmap
     but NOT fetch populated ticks.
     """
 
@@ -287,8 +282,7 @@ class TestPoolNotFound:
 
 
 class TestBitmapFetchRaises:
-    """
-    When the bitmap RPC call raises, the fetcher should return
+    """When the bitmap RPC call raises, the fetcher should return
     early without updating state.
     """
 

@@ -1,5 +1,4 @@
-"""
-Equivalence test: Curve pool hops with solver vs direct pool calculation.
+"""Equivalence test: Curve pool hops with solver vs direct pool calculation.
 
 Uses production CurveStableswapPool with FakeCurveDataProvider to provide
 deterministic, inspectable state for verifying that solver simulation

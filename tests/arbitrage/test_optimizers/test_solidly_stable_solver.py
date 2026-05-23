@@ -1,5 +1,4 @@
-"""
-Tests for SolidlyStableSolver — Newton's method solver for Solidly stable
+"""Tests for SolidlyStableSolver — Newton's method solver for Solidly stable
 invariant pools (x³y + xy³ ≥ k) in the unified solver interface.
 
 Tests cover:
@@ -43,8 +42,7 @@ def make_aerodrome_stable_swap_fn(
     fee: Fraction,
     token_in: Literal[0, 1],
 ) -> Callable[[int], int]:
-    """
-    Create an integer swap function for Aerodrome stable pools.
+    """Create an integer swap function for Aerodrome stable pools.
 
     Wraps ``calc_exact_in_stable`` with the pool's parameters.
     """
@@ -172,8 +170,7 @@ class TestSolidlyStableSolverSolve:
     """Test solve() method for SolidlyStableSolver."""
 
     def test_solidly_stable_path_with_price_discrepancy(self):
-        """
-        2-hop path with price discrepancy: stable pool has cheaper WETH
+        """2-hop path with price discrepancy: stable pool has cheaper WETH
         than V2 pool, so there's arbitrage opportunity.
         """
         solver = SolidlyStableSolver()
@@ -282,8 +279,7 @@ class TestSolidlyStableSolverSolve:
         assert result.method == SolverMethod.SOLIDLY_STABLE
 
     def test_solidly_stable_matches_brent_profit(self):
-        """
-        SolidlyStableSolver profit should be close to a brute-force
+        """SolidlyStableSolver profit should be close to a brute-force
         search for the optimal input on a Solidly stable path.
 
         Since BrentSolver uses _simulate_path (V2 formula) for all hops,
@@ -427,8 +423,7 @@ class TestAsymmetricFees:
         assert hop.fee_out is None
 
     def test_solidly_stable_with_asymmetric_fee_v2(self):
-        """
-        Mixed path: Solidly stable + Camelot volatile (asymmetric fees).
+        """Mixed path: Solidly stable + Camelot volatile (asymmetric fees).
         The V2 hop uses fee (input direction gamma).
         """
         solver = SolidlyStableSolver()
@@ -484,8 +479,7 @@ class TestSolidlyStableSixDecimalPairs:
     """Test Solidly stable solver with USDC/USDT-like 6-decimal pairs."""
 
     def test_usdc_usdt_stable_arbitrage(self):
-        """
-        USDC/USDT stable pair with small price discrepancy.
+        """USDC/USDT stable pair with small price discrepancy.
         These should produce small profits due to the flat curve.
         """
         solver = SolidlyStableSolver()
@@ -541,14 +535,12 @@ class TestSolidlyStableSixDecimalPairs:
 
 
 class TestMixedMobiusNewtonPattern:
-    """
-    Test the Mixed Möbius-Newton pattern where V2 hops are composed
+    """Test the Mixed Möbius-Newton pattern where V2 hops are composed
     into a Möbius function and Solidly hops are treated as opaque.
     """
 
     def test_multi_hop_with_solidly_at_end(self):
-        """
-        3-hop path: V2 → V2 → Solidly.
+        """3-hop path: V2 → V2 → Solidly.
         V2 hops should be Möbius-composed for initial guess,
         Solidly hop is opaque.
         """
@@ -591,8 +583,7 @@ class TestMixedMobiusNewtonPattern:
         assert result.profit > 0
 
     def test_multi_hop_with_solidly_at_start(self):
-        """
-        3-hop path: Solidly → V2 → V2.
+        """3-hop path: Solidly → V2 → V2.
         Solidly hop first, then V2 hops Möbius-composed for initial guess.
         """
         solver = SolidlyStableSolver()
@@ -710,8 +701,7 @@ class TestMixedMobiusNewtonPattern:
         assert result.profit == best_profit
 
     def test_no_swap_fn_uses_newton_fallback(self):
-        """
-        SolidlyStableHop without swap_fn should fall back to
+        """SolidlyStableHop without swap_fn should fall back to
         Newton's method with float simulation.
         """
         solver = SolidlyStableSolver()

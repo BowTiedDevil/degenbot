@@ -1,5 +1,4 @@
-"""
-Tests for CVXPY convex optimization solver for arbitrage.
+"""Tests for CVXPY convex optimization solver for arbitrage.
 
 Tests cover:
 - 2-pool V2 cycles with decimal corrections
@@ -510,8 +509,7 @@ class TestCVXPY2PoolPropertyBased:
         liquidity_depth: str,
         seed: int,
     ):
-        """
-        Property: For any valid V2 pair with price discrepancy > fees,
+        """Property: For any valid V2 pair with price discrepancy > fees,
         CVXPY optimizer finds a solution that indicates arbitrage opportunity.
         """
         factory = FixtureFactory()
@@ -556,8 +554,7 @@ class TestCVXPY2PoolPropertyBased:
         liquidity_depth: str,
         seed: int,
     ):
-        """
-        Property: CVXPY handles pools with mismatched token decimals.
+        """Property: CVXPY handles pools with mismatched token decimals.
 
         Tests that the optimizer doesn't fail or produce invalid results
         when tokens have different decimal places.
@@ -583,8 +580,7 @@ class TestCVXPYMultiPoolPropertyBased:
     )
     @hypothesis.settings(deadline=None, max_examples=10)
     def test_3pool_cycle_finds_solution(self, seed: int):
-        """
-        Property: 3-pool cycles can be solved by CVXPY.
+        """Property: 3-pool cycles can be solved by CVXPY.
 
         Note: Not all 3-pool configurations are profitable, but the solver
         should at least find a solution or report infeasibility.
@@ -606,8 +602,7 @@ class TestCVXPYMultiPoolPropertyBased:
     )
     @hypothesis.settings(deadline=None, max_examples=10)
     def test_4pool_cycle_finds_solution(self, seed: int):
-        """
-        Property: 4-pool cycles can be solved by CVXPY.
+        """Property: 4-pool cycles can be solved by CVXPY.
         """
         factory = FixtureFactory()
         fixture = factory.random_multi_pool_cycle(

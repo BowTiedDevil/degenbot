@@ -1,5 +1,4 @@
-"""
-Offline integration tests replacing RPC-dependent fork tests.
+"""Offline integration tests replacing RPC-dependent fork tests.
 
 These tests duplicate the scenarios from tests/arbitrage/integration/ using
 synthetic data and offline pool objects that inherit from real pool classes
@@ -123,8 +122,7 @@ class TestConstruction:
         weth: FakeToken,
         wbtc: FakeToken,
     ):
-        """
-        UniswapLpCycle accepts either token as input.
+        """UniswapLpCycle accepts either token as input.
 
         Mirrors test_create_with_either_token_input.
         """
@@ -152,8 +150,7 @@ class TestConstruction:
         wbtc_weth_v3_lp: UniswapV3Pool,
         weth: FakeToken,
     ):
-        """
-        Two-pool cycle accepts pools in either order.
+        """Two-pool cycle accepts pools in either order.
 
         Mirrors test_create_arb_with_either_token_input_or_pools_in_any_order.
         """
@@ -234,8 +231,7 @@ class TestDirectionDetection:
         wbtc: FakeToken,
         weth: FakeToken,
     ):
-        """
-        V2-V2 cycle: pool with higher ROE for input token is the buy pool.
+        """V2-V2 cycle: pool with higher ROE for input token is the buy pool.
 
         Mirrors the logic from test_pre_calc_check in test_uniswap_lp_cycle.py.
         """
@@ -282,8 +278,7 @@ class TestDirectionDetection:
         wbtc: FakeToken,
         weth: FakeToken,
     ):
-        """
-        V2-V2 cycle in wrong direction raises RateOfExchangeBelowMinimum.
+        """V2-V2 cycle in wrong direction raises RateOfExchangeBelowMinimum.
 
         Mirrors test_pre_calc_check in test_uniswap_lp_cycle.py.
         """
@@ -328,8 +323,7 @@ class TestDirectionDetection:
         wbtc: FakeToken,
         weth: FakeToken,
     ):
-        """
-        Manipulating V2 reserves creates an arbitrage opportunity.
+        """Manipulating V2 reserves creates an arbitrage opportunity.
 
         Mirrors test_v2_v4_calculation from test_uniswap_2pool_cycle.py.
         """
@@ -361,8 +355,7 @@ class TestDirectionDetection:
         wbtc: FakeToken,
         weth: FakeToken,
     ):
-        """
-        State override that reverses the ROE direction is rejected.
+        """State override that reverses the ROE direction is rejected.
 
         Mirrors test_v2_v4_calculation_rejects_unprofitable_opportunity.
         """
@@ -472,8 +465,7 @@ class TestV2V2Arbitrage:
         usdc: FakeToken,
         weth: FakeToken,
     ):
-        """
-        State overrides change the arbitrage result.
+        """State overrides change the arbitrage result.
 
         Mirrors test_arbitrage_with_overrides from test_uniswap_lp_cycle.py.
         """
@@ -591,8 +583,7 @@ class TestSubscriptions:
         wbtc_weth_v3_lp: UniswapV3Pool,
         weth: FakeToken,
     ):
-        """
-        Cycle subscribes to pool state updates.
+        """Cycle subscribes to pool state updates.
 
         Mirrors test_arbitrage_helper_subscriptions from test_uniswap_lp_cycle.py.
         """
@@ -612,8 +603,7 @@ class TestSubscriptions:
         wbtc_weth_v3_lp: UniswapV3Pool,
         weth: FakeToken,
     ):
-        """
-        Cycle can unsubscribe from pools.
+        """Cycle can unsubscribe from pools.
 
         Mirrors test_pool_helper_unsubscriptions from test_uniswap_lp_cycle.py.
         """
@@ -637,8 +627,7 @@ class TestSubscriptions:
         self,
         wbtc_weth_v2_lp: UniswapV2Pool,
     ):
-        """
-        Pool state updates notify subscribers.
+        """Pool state updates notify subscribers.
 
         Mirrors the subscriber notification check in test_arbitrage_helper_subscriptions.
         """
@@ -676,8 +665,7 @@ class TestEdgeCases:
         wbtc_weth_v3_lp: UniswapV3Pool,
         weth: FakeToken,
     ):
-        """
-        Arbitrage cycle can be pickled.
+        """Arbitrage cycle can be pickled.
 
         Mirrors test_pickle_arb from test_uniswap_curve_cycle.py.
         """
@@ -696,8 +684,7 @@ class TestEdgeCases:
         wbtc: FakeToken,
         weth: FakeToken,
     ):
-        """
-        V2 pool with zero reserves is not viable for swaps.
+        """V2 pool with zero reserves is not viable for swaps.
 
         Mirrors test_arb_calculation_pre_checks_v2.
         """
@@ -762,8 +749,7 @@ class TestEdgeCases:
 
 
 class TestV2PoolAccuracy:
-    """
-    Verify UniswapV2Pool calculations match the Uniswap V2 constant product formula.
+    """Verify UniswapV2Pool calculations match the Uniswap V2 constant product formula.
 
     Since UniswapV2Pool inherits from UniswapV2Pool, its calculation methods
     should produce identical results to the real pool class.

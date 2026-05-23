@@ -1,5 +1,4 @@
-"""
-Tests for Phase 7: AsyncBot with async build_* and I/O methods.
+"""Tests for Phase 7: AsyncBot with async build_* and I/O methods.
 Updated for Plan 048, Slice 4: AsyncBot delegates to async builders via build_pool().
 """
 

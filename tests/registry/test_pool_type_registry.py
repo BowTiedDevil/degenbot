@@ -1,5 +1,4 @@
-"""
-Tests for PoolTypeRegistry — the unified pool type registration system.
+"""Tests for PoolTypeRegistry — the unified pool type registration system.
 
 The registry replaces the scattered PoolClassRegistry, FACTORY_DEPLOYMENTS,
 _KIND_TO_DESCRIPTOR, and _variant_from_class with a single registration
@@ -83,8 +82,7 @@ class TestKindDerivation:
         assert desc.kind == "sushiswap_v3"
 
     def test_underscore_variant_kind(self) -> None:
-        """
-        variant='aerodrome' → kind='aerodrome_v3'.
+        """variant='aerodrome' → kind='aerodrome_v3'.
 
         After fixing AerodromeV3Pool.variant to use the bare DEX name,
         the kind derives correctly without double-suffixing.

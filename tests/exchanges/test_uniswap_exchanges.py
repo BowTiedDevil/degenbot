@@ -1,5 +1,4 @@
-"""
-Tests for exchange registration via pool_type_registry.
+"""Tests for exchange registration via pool_type_registry.
 
 Replaces the former FACTORY_DEPLOYMENTS/register_exchange tests.
 pool_type_registry is now the sole source of truth for deployment data.

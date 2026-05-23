@@ -1,5 +1,4 @@
-"""
-Expanded on-chain swap calculation tests for Balancer V2 weighted pools.
+"""Expanded on-chain swap calculation tests for Balancer V2 weighted pools.
 
 Tests GIVEN_IN and GIVEN_OUT across diverse pools covering:
 - Weight profiles: 50/50, 60/40, 75/25, 80/20 (existing), 90/10, 1/99, 40/60, 20/80 (existing)
@@ -193,8 +192,7 @@ def _run_given_in_swaps(
     *,
     swap_directions: list[tuple[int, int]] | None = None,
 ):
-    """
-    Run GIVEN_IN swap calculations against the on-chain BalancerQueries contract
+    """Run GIVEN_IN swap calculations against the on-chain BalancerQueries contract
     and assert exact integer match at each amount.
     """
     if swap_directions is None:
@@ -279,8 +277,7 @@ def _run_given_out_swaps(
     *,
     swap_directions: list[tuple[int, int]] | None = None,
 ):
-    """
-    Run GIVEN_OUT swap calculations against the on-chain BalancerQueries contract
+    """Run GIVEN_OUT swap calculations against the on-chain BalancerQueries contract
     and assert exact integer match at each amount.
     """
     if swap_directions is None:

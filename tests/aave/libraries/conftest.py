@@ -1,5 +1,4 @@
-"""
-Fixtures for TokenMath property-based testing with Solidity wrapper contracts.
+"""Fixtures for TokenMath property-based testing with Solidity wrapper contracts.
 
 These fixtures deploy compiled Solidity wrapper contracts to a standalone Anvil
 instance (no forking) since the contracts are stateless with pure functions only.
@@ -20,8 +19,7 @@ if TYPE_CHECKING:
 
 
 def _load_contract_artifact(artifact_path: pathlib.Path) -> dict:
-    """
-    Load a compiled contract artifact (ABI + bytecode).
+    """Load a compiled contract artifact (ABI + bytecode).
     """
     with pathlib.Path(artifact_path).open(encoding="utf-8") as f:
         return json.load(f)
@@ -32,8 +30,7 @@ def _deploy_contract(
     artifact: dict,
     deployer_address: str,
 ) -> "Contract":
-    """
-    Deploy a contract from compiled artifact.
+    """Deploy a contract from compiled artifact.
 
     Args:
         w3: Web3 instance connected to Anvil
@@ -63,8 +60,7 @@ def _deploy_contract(
 
 @pytest.fixture(scope="module")
 def standalone_anvil() -> Generator[AnvilFork, None, None]:
-    """
-    Create a standalone Anvil instance (no forking) for pure contract testing.
+    """Create a standalone Anvil instance (no forking) for pure contract testing.
 
     Much faster than forking since we don't need to sync state from a remote node.
     """
@@ -80,8 +76,7 @@ def standalone_anvil() -> Generator[AnvilFork, None, None]:
 def token_math_wrappers(
     standalone_anvil,
 ) -> dict[int, "Contract"]:
-    """
-    Deploy all TokenMath wrapper contracts for each test function.
+    """Deploy all TokenMath wrapper contracts for each test function.
 
     Contracts are stateless (pure functions only), so they can be safely reused
     across tests.
@@ -142,23 +137,20 @@ def token_math_wrappers(
 
 @pytest.fixture(scope="module")
 def token_math_wrapper_rev1(token_math_wrappers) -> "Contract":
-    """
-    Get the Rev 1 wrapper contract (half-up rounding).
+    """Get the Rev 1 wrapper contract (half-up rounding).
     """
     return token_math_wrappers[1]
 
 
 @pytest.fixture(scope="module")
 def token_math_wrapper_rev4(token_math_wrappers) -> "Contract":
-    """
-    Get the Rev 4 wrapper contract (floor/ceil rounding).
+    """Get the Rev 4 wrapper contract (floor/ceil rounding).
     """
     return token_math_wrappers[4]
 
 
 @pytest.fixture(scope="module")
 def token_math_wrapper_rev9(token_math_wrappers) -> "Contract":
-    """
-    Get the Rev 9 wrapper contract (floor/ceil rounding, same as Rev4).
+    """Get the Rev 9 wrapper contract (floor/ceil rounding, same as Rev4).
     """
     return token_math_wrappers[9]

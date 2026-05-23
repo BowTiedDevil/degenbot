@@ -1,5 +1,4 @@
-"""
-Tests for Rust integer refinement of Möbius solver results.
+"""Tests for Rust integer refinement of Möbius solver results.
 
 Validates that ArbSolver uses Rust-based EVM-exact integer refinement
 instead of Python _simulate_path, and that results are correct for
@@ -33,8 +32,7 @@ from .conftest import (
 
 
 class TestRustMobiusRefineInt:
-    """
-    Tests for the Rust mobius_refine_int function that does integer
+    """Tests for the Rust mobius_refine_int function that does integer
     refinement around a float optimum using EVM-exact U256 arithmetic.
     """
 
@@ -169,8 +167,7 @@ class TestRustMobiusRefineInt:
 
 
 class TestArbSolverRustIntRefinement:
-    """
-    Tests that ArbSolver uses Rust integer refinement and produces
+    """Tests that ArbSolver uses Rust integer refinement and produces
     EVM-exact results, especially for large reserves.
     """
 

@@ -1,5 +1,4 @@
-"""
-Property-based tests for decimal correction in CVXPY optimization.
+"""Property-based tests for decimal correction in CVXPY optimization.
 
 Tests that the compression strategies (single vs double) handle
 asymmetric token decimals correctly.
@@ -27,8 +26,7 @@ def compute_single_compression_factor(
     decimals0: int,
     decimals1: int,
 ) -> Fraction:
-    """
-    Compute single compression factor (max of all reserves).
+    """Compute single compression factor (max of all reserves).
 
     This is the original approach: find the largest reserve value
     across both pools and use it as a common divisor.
@@ -49,8 +47,7 @@ def compute_double_compression_factors(
     decimals0: int,
     decimals1: int,
 ) -> tuple[Fraction, Fraction]:
-    """
-    Compute double compression factors (per-token).
+    """Compute double compression factors (per-token).
 
     This approach uses a separate compression factor for each token,
     which handles asymmetric decimals better.
@@ -72,8 +69,7 @@ def compute_compression_ratio(
     reserves_token0_a: int,
     reserves_token1_a: int,
 ) -> float:
-    """
-    Compute the ratio of compressed values for single vs double compression.
+    """Compute the ratio of compressed values for single vs double compression.
 
     A ratio far from 1.0 indicates significant difference between methods.
     """
@@ -120,8 +116,7 @@ class TestDecimalCompressionProperties:
         reserves0: int,
         reserves1: int,
     ):
-        """
-        Property: Single compression can distort values when decimals differ significantly.
+        """Property: Single compression can distort values when decimals differ significantly.
 
         When token0 has many more decimals than token1, the compressed reserves
         for token0 will be much smaller relative to token1.
@@ -154,8 +149,7 @@ class TestDecimalCompressionProperties:
         reserves0: int,
         reserves1: int,
     ):
-        """
-        Property: When decimals are equal, single and double compression give same results.
+        """Property: When decimals are equal, single and double compression give same results.
         """
         # Use same decimals for both tokens
         decimals0 = decimals
@@ -191,8 +185,7 @@ class TestDecimalCompressionProperties:
         reserves0: int,
         reserves1: int,
     ):
-        """
-        Property: Double compression treats each token independently.
+        """Property: Double compression treats each token independently.
 
         Each token's compressed value is based only on its own reserves,
         not affected by the other token's decimal places.
@@ -226,8 +219,7 @@ class TestDecimalCorrectionImpact:
         decimals_pair: tuple[int, int],
         price_ratio: float,
     ):
-        """
-        Property: Mismatched decimals lead to different results for single vs double compression.
+        """Property: Mismatched decimals lead to different results for single vs double compression.
 
         When tokens have significantly different decimals (e.g., USDC=6, WETH=18),
         the two compression methods should produce different optimization results.
@@ -278,8 +270,7 @@ class TestCompressionPrecision:
         decimals: int,
         reserve_magnitude: int,
     ):
-        """
-        Property: Compression preserves relative values within a pool.
+        """Property: Compression preserves relative values within a pool.
 
         After compression, the ratio of reserves should be the same.
         """
@@ -312,8 +303,7 @@ class TestCompressionPrecision:
         reserve0_mag: int,
         reserve1_mag: int,
     ):
-        """
-        Property: Double compression keeps values in [0, 1] range.
+        """Property: Double compression keeps values in [0, 1] range.
 
         After compression, all reserve values should be <= 1.0.
         """

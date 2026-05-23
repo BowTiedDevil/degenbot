@@ -1,5 +1,4 @@
-"""
-Tests for v4_simulator — pure swap calculation extracted from V4Pool.
+"""Tests for v4_simulator — pure swap calculation extracted from V4Pool.
 
 These tests verify that ``v4_simulator.calculate_swap`` produces *identical*
 results to ``UniswapV4Pool._calculate_swap``. Uses real on-chain pool data

@@ -1,5 +1,4 @@
-"""
-Tests for the Rust V3-V3 arbitrage solver (solve_v3_v3).
+"""Tests for the Rust V3-V3 arbitrage solver (solve_v3_v3).
 """
 
 import math

@@ -139,8 +139,7 @@ class TestApplyLiquidityMappingUpdateSkipInRange:
     """In-range liquidity adjustment is skipped when update_block <= initial_state_block."""
 
     def test_skip_in_range_when_block_not_past_initial(self) -> None:
-        """
-        When update_block <= initial_state_block, in-range liquidity is NOT adjusted.
+        """When update_block <= initial_state_block, in-range liquidity is NOT adjusted.
         This matches the mock pool's behavior with initial_state_block=MAX_UINT256.
         """
         tick_spacing = 60

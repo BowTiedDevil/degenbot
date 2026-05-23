@@ -1,5 +1,4 @@
-"""
-Reusable test double for CurveDataProvider.
+"""Reusable test double for CurveDataProvider.
 
 Provides a configurable CurveDataProvider that returns pre-programmed values
 for on-chain data access, enabling I/O-free CurveStableswapPool testing.
@@ -102,6 +101,10 @@ class FakeCurveDataProvider:
             msg = "D not configured"
             raise ValueError(msg)
         return self._D
+
+    # Alias matching the CurveDataProvider protocol's lowercase `d`
+    def d(self, block_number: int) -> int:  # noqa: ARG002
+        return self.D(block_number)
 
     def gamma(self, block_number: int) -> int:  # noqa: ARG002
         if self._gamma is None:

@@ -1,5 +1,4 @@
-"""
-Tests verifying AddressComparable mixin provides address-based comparison and hashing.
+"""Tests verifying AddressComparable mixin provides address-based comparison and hashing.
 """
 
 import pytest
