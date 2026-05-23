@@ -1,5 +1,4 @@
-"""
-Fixtures for Uniswap V2 offline tests.
+"""Fixtures for Uniswap V2 offline tests.
 
 These fixtures provide offline-compatible pool objects that can be used without requiring a live
 RPC connection.

@@ -205,8 +205,7 @@ class TestDiscoverCoinsEdgeCases:
         assert len(result.balances) == 0
 
     def testBalanceRevertStopsIteration(self):
-        """
-        If a balance call reverts, iteration stops at that point.
+        """If a balance call reverts, iteration stops at that point.
 
         Note: the coin address for the current index is already appended
         before the balance is fetched. A balance revert breaks the loop,

@@ -1,5 +1,4 @@
-"""
-Möbius transformation optimizer tests and benchmarks.
+"""Möbius transformation optimizer tests and benchmarks.
 
 Compares the closed-form Möbius solver against scipy.optimize.minimize_scalar
 (Brent) for constant product AMM arbitrage paths of varying length.
@@ -62,8 +61,7 @@ def chain_state_from_def(pd: PoolDef) -> ChainPoolState:
 def chain_rule_solve(
     hops: list[MobiusFloatHop],
 ) -> tuple[float, float, int]:
-    """
-    Solve using the existing chain rule Newton optimizer.
+    """Solve using the existing chain rule Newton optimizer.
     """
     pool_states = [
         chain_state_from_def(MobiusFloatHop(h.reserve_in, h.reserve_out, h.fee)) for h in hops
@@ -133,8 +131,7 @@ def varying_fees_3pool() -> list[PoolDef]:
 
 
 def make_n_pool_path(n: int, profit_factor: float = 1.1) -> list[PoolDef]:
-    """
-    Generate an n-pool cycle with guaranteed profitability.
+    """Generate an n-pool cycle with guaranteed profitability.
 
     Creates a realistic cycle where each pool has slightly mispriced
     reserves, accumulating to an overall profitable cycle. The
@@ -188,8 +185,7 @@ class TestMobiusCoefficients:
         assert pytest.approx(0.997) == coeffs.N
 
     def test_two_hop_recovers_known_formula(self):
-        """
-        For 2 pools (r=a, s=b, fee k) and (r=d, s=c, fee k),
+        """For 2 pools (r=a, s=b, fee k) and (r=d, s=c, fee k),
         the coefficients should be K = b·c·k², M = a·d, N = k·(b·k + d).
         """
         k = 1.0 - 0.003  # gamma
@@ -429,8 +425,7 @@ class TestMobiusBenchmarks:
 
     @pytest.mark.parametrize("n_pools", [2, 3, 4, 5, 10, 20, 50])
     def test_benchmark_mobius_vs_brent(self, n_pools):
-        """
-        Benchmark Möbius against Brent for varying path lengths.
+        """Benchmark Möbius against Brent for varying path lengths.
 
         This test prints a comparison table. It always passes; the assertions
         are informational.
@@ -510,8 +505,7 @@ class TestMobiusBenchmarks:
         print()
 
     def test_mobius_profitability_check_is_free(self):
-        """
-        The profitability check K/M > 1 should require no simulation.
+        """The profitability check K/M > 1 should require no simulation.
         It's computed as a byproduct of the coefficient recurrence.
         """
         pools = profitable_3pool()
@@ -534,8 +528,7 @@ class TestMobiusBenchmarks:
         assert profit == 0.0
 
     def test_mobius_recovers_2pool_closed_form(self):
-        """
-        For 2 pools, the Möbius solution should match the known
+        """For 2 pools, the Möbius solution should match the known
         2-pool closed-form: x_opt = (k√(abcd) - ad) / (k(bk + d))
         where k = 1 - fee, pool_a = (a, b), pool_b = (d, c).
         """

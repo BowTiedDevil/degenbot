@@ -1,5 +1,4 @@
-"""
-Tests for V4BuilderBase shared pure-logic helpers.
+"""Tests for V4BuilderBase shared pure-logic helpers.
 
 Verifies that decode, extract, and snapshot-loading helpers produce
 correct outputs from known inputs, independent of I/O.

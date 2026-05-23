@@ -82,8 +82,7 @@ def test_low_level_call_for_factory_address(fork_mainnet_full: AnvilFork):
 
 
 def test_create2():
-    """
-    Tests taken from https://eips.ethereum.org/EIPS/eip-1014
+    """Tests taken from https://eips.ethereum.org/EIPS/eip-1014
     """
     assert (
         create2_address(
@@ -138,8 +137,7 @@ def test_create2():
 
 
 def test_converting_block_identifier_to_int(fork_mainnet_full: AnvilFork):
-    """
-    Check that all inputs for web3 type `BlockIdentifier` can be converted to an integer
+    """Check that all inputs for web3 type `BlockIdentifier` can be converted to an integer
     """
     w3 = fork_mainnet_full.w3
     cm = ConnectionManager()

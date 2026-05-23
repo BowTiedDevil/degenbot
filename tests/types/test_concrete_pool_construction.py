@@ -1,5 +1,4 @@
-"""
-Tests that every concrete pool type can be constructed I/O-free and returns
+"""Tests that every concrete pool type can be constructed I/O-free and returns
 the correct concrete type.
 
 Pool addresses and token data come from the project's reference database

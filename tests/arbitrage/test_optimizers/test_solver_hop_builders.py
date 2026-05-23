@@ -1,5 +1,4 @@
-"""
-ArbSolver parity tests — ArbSolver.solve() vs UniswapLpCycle._calculate().
+"""ArbSolver parity tests — ArbSolver.solve() vs UniswapLpCycle._calculate().
 
 Verifies that ArbSolver.solve() produces results consistent with
 UniswapLpCycle._calculate() for V2-V2, V2-V3, and V3-V3 pool configurations.
@@ -63,8 +62,7 @@ def aerodrome_stable_pool(usdc: Erc20Token, usdt: Erc20Token) -> AerodromeV2Pool
 
 
 class TestArbSolverParityWithLpCycle:
-    """
-    ArbSolver.solve() and UniswapLpCycle._calculate() should produce
+    """ArbSolver.solve() and UniswapLpCycle._calculate() should produce
     equivalent optimal input amounts for the same pool configurations.
 
     These tests serve two purposes:
@@ -230,8 +228,7 @@ class TestArbSolverParityWithLpCycle:
         assert manual_profit > 0
 
     def test_v2_v2_profit_verified_by_pool_walk(self):
-        """
-        Walk through V2 pools manually to verify the solver's optimal input produces real profit.
+        """Walk through V2 pools manually to verify the solver's optimal input produces real profit.
         """
         usdc = Erc20Token(
             address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",

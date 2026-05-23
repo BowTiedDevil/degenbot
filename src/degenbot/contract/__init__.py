@@ -36,7 +36,7 @@ from degenbot.degenbot_rs import encode_function_call as _encode_function_call
 from degenbot.degenbot_rs import get_function_selector as _get_function_selector
 
 if TYPE_CHECKING:
-    from degenbot.provider.interface import ProviderAdapter
+    from degenbot.provider.sync_adapter import ProviderAdapter
 
 
 class Contract:

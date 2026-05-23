@@ -1,5 +1,4 @@
-"""
-Tests for standalone Curve StableSwap invariant calculation functions.
+"""Tests for standalone Curve StableSwap invariant calculation functions.
 
 These tests verify that the pure functions in `calculations/stableswap.py`
 produce identical results to the pool methods they were extracted from.

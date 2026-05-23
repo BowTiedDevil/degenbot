@@ -33,8 +33,7 @@ getcontext().rounding = "ROUND_FLOOR"
 
 
 def encode_price_sqrt(reserve1: int, reserve0: int) -> int:
-    """
-    Returns the sqrt price as a Q64.96 value
+    """Returns the sqrt price as a Q64.96 value
     """
     return round((Decimal(reserve1) / Decimal(reserve0)).sqrt() * Decimal(2**96))
 

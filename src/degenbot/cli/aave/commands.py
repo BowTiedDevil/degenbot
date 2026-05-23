@@ -59,7 +59,7 @@ from degenbot.exceptions import DegenbotValueError
 from degenbot.logging import logger
 from degenbot.provider.block_helpers import get_number_for_block_identifier
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
-from degenbot.provider.interface import ProviderAdapter
+from degenbot.provider.sync_adapter import ProviderAdapter
 
 if TYPE_CHECKING:
     from eth_typing.evm import BlockParams

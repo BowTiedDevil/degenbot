@@ -1,5 +1,4 @@
-"""
-Property-based tests for Newton optimizer Hessian threshold.
+"""Property-based tests for Newton optimizer Hessian threshold.
 
 These tests use Hypothesis to explore the parameter space and identify
 cases where the Hessian magnitude threshold may be too conservative
@@ -17,22 +16,19 @@ from hypothesis import strategies as st
 
 
 class TestStepBound:
-    """
-    Tests for the Newton step size bound.
+    """Tests for the Newton step size bound.
 
     These verify that the max_step_multiplier prevents wild jumps
     while maintaining convergence.
     """
 
     def test_default_step_multiplier_is_100(self) -> None:
-        """
-        Verify the default step multiplier constant.
+        """Verify the default step multiplier constant.
         """
         assert DEFAULT_MAX_STEP_MULTIPLIER == 100.0
 
     def test_step_bound_prevents_wild_jumps(self) -> None:
-        """
-        Test that a tight step bound prevents huge steps.
+        """Test that a tight step bound prevents huge steps.
 
         This uses a scenario where Newton would naturally take a large step
         and verifies the bound clamps it.
@@ -54,8 +50,7 @@ class TestStepBound:
         assert iterations <= 20
 
     def test_unbounded_step_allowed(self) -> None:
-        """
-        Test that passing float('inf') allows unbounded steps.
+        """Test that passing float('inf') allows unbounded steps.
         """
         x_opt, _, _ = v2_optimal_arbitrage_newton(
             reserve0_buy=1e18,
@@ -72,8 +67,7 @@ class TestStepBound:
 
 
 class TestThresholdComparison:
-    """
-    Compare optimization behavior with different Hessian thresholds.
+    """Compare optimization behavior with different Hessian thresholds.
 
     These tests help determine the appropriate threshold value by running
     the same optimization with multiple threshold values and comparing results.
@@ -105,8 +99,7 @@ class TestThresholdComparison:
         fee_buy: float,
         fee_sell: float,
     ) -> None:
-        """
-        Compare optimization results with different min_hessian values.
+        """Compare optimization results with different min_hessian values.
 
         Runs the same optimization with thresholds: 1e-30, 1e-20, 1e-15, 1e-10
         and checks if results differ significantly.
@@ -161,8 +154,7 @@ class TestThresholdComparison:
         ],
     )
     def test_specific_threshold_values(self, min_hessian: float) -> None:
-        """
-        Test that specific threshold values work for a known good case.
+        """Test that specific threshold values work for a known good case.
 
         This verifies that the threshold parameter is accepted and used.
         """
@@ -189,8 +181,7 @@ class TestThresholdComparison:
 
 
 class TestHessianFormulaCorrectness:
-    """
-    Verify the Hessian formula is mathematically correct.
+    """Verify the Hessian formula is mathematically correct.
 
     These tests check that the computed Hessian matches finite difference
     approximations, validating the analytical derivation.
@@ -224,8 +215,7 @@ class TestHessianFormulaCorrectness:
         fee_sell: float,
         x_pct: float,
     ) -> None:
-        """
-        Verify analytical Hessian matches finite difference approximation.
+        """Verify analytical Hessian matches finite difference approximation.
 
         This validates that the Hessian formula is correctly implemented.
         """

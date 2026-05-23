@@ -1,5 +1,4 @@
-"""
-Tests for ArbitragePath construction, validation, and hop state extraction.
+"""Tests for ArbitragePath construction, validation, and hop state extraction.
 
 Uses lightweight production pool objects to avoid blockchain dependencies.
 """

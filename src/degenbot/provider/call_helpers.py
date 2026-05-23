@@ -13,7 +13,7 @@ from eth_utils.crypto import keccak
 from web3.types import BlockIdentifier
 
 from degenbot.provider import ProviderAdapter
-from degenbot.provider.interface import AsyncProviderAdapter
+from degenbot.provider.async_adapter import AsyncProviderAdapter
 
 
 def encode_function_calldata(

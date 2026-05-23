@@ -21,7 +21,7 @@ from web3.types import LogReceipt
 from degenbot.exceptions.infrastructure import LogFetchingTimeout
 from degenbot.logging import logger
 from degenbot.provider import ProviderAdapter
-from degenbot.provider.interface import AsyncProviderAdapter
+from degenbot.provider.async_adapter import AsyncProviderAdapter
 from degenbot.types.aliases import BlockNumber
 
 

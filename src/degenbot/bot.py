@@ -56,8 +56,9 @@ if TYPE_CHECKING:
     from degenbot.types.abstract.pool_tracker import AbstractPoolTracker
 
 from degenbot.provider import AsyncAlloyProvider
-from degenbot.provider.interface import AsyncProviderAdapter, ProviderAdapter
+from degenbot.provider.async_adapter import AsyncProviderAdapter
 from degenbot.provider.subscription import Subscription  # noqa: TC001
+from degenbot.provider.sync_adapter import ProviderAdapter  # noqa: TC001
 from degenbot.types.aliases import ChainId  # noqa: TC001
 
 

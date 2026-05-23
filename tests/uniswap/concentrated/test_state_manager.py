@@ -1,5 +1,4 @@
-"""
-Tests for ConcentratedLiquidityStateManager.
+"""Tests for ConcentratedLiquidityStateManager.
 
 The state manager owns the mutable state cache for V3/V4 pools:
 - _state_cache deque with a configurable depth limit

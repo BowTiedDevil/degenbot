@@ -1,5 +1,4 @@
-"""
-Property-based tests for multi-pool CVXPY optimization.
+"""Property-based tests for multi-pool CVXPY optimization.
 
 Tests convergence and correctness for 3+ pool arbitrage cycles.
 """
@@ -48,8 +47,7 @@ class TestMultiPoolCycleProperties:
     )
     @hypothesis.settings(deadline=None, max_examples=15)
     def test_multipool_fixture_valid(self, num_pools: int, seed: int):
-        """
-        Property: Generated multi-pool fixtures are valid.
+        """Property: Generated multi-pool fixtures are valid.
 
         Any valid combination of parameters should produce a valid fixture.
         """
@@ -73,8 +71,7 @@ class TestMultiPoolCycleProperties:
     )
     @hypothesis.settings(deadline=None, max_examples=10)
     def test_3pool_cycle_price_progression(self, seed: int, liquidity_depth: str):
-        """
-        Property: 3-pool cycles have progressive price differences.
+        """Property: 3-pool cycles have progressive price differences.
 
         Each consecutive pool should have a different effective price.
         """
@@ -107,8 +104,7 @@ class TestMultiPoolConvergence:
     """Test CVXPY solver convergence for multi-pool cycles."""
 
     def test_3pool_known_profitable(self):
-        """
-        Known value test: 3-pool cycle with guaranteed profit.
+        """Known value test: 3-pool cycle with guaranteed profit.
 
         Creates a simple triangular arbitrage: WETH -> LINK -> WBTC -> WETH
         with skewed prices to guarantee profit.
@@ -167,8 +163,7 @@ class TestMultiPoolConvergence:
         assert result.profit_amount is not None
 
     def test_4pool_known_profitable(self):
-        """
-        Known value test: 4-pool cycle with guaranteed profit.
+        """Known value test: 4-pool cycle with guaranteed profit.
 
         Creates a 4-hop cycle: WETH -> LINK -> USDC -> WBTC -> WETH
         """
@@ -251,8 +246,7 @@ class TestMultiPoolBounds:
     )
     @hypothesis.settings(deadline=None, max_examples=10)
     def test_3pool_respects_reserve_bounds(self, seed: int):
-        """
-        Property: 3-pool optimization doesn't exceed available reserves.
+        """Property: 3-pool optimization doesn't exceed available reserves.
         """
         factory = FixtureFactory()
         fixture = factory.random_multi_pool_cycle(
@@ -276,8 +270,7 @@ class TestMultiPoolBounds:
     )
     @hypothesis.settings(deadline=None, max_examples=10)
     def test_4pool_positive_reserves(self, seed: int):
-        """
-        Property: 4-pool generated fixtures have positive reserves.
+        """Property: 4-pool generated fixtures have positive reserves.
         """
         factory = FixtureFactory()
         fixture = factory.random_multi_pool_cycle(
@@ -303,8 +296,7 @@ class TestMultiPoolMixedTypes:
     )
     @hypothesis.settings(deadline=None, max_examples=10)
     def test_v2_v3_mixed_cycle(self, seed: int):
-        """
-        Property: Mixed V2/V3 cycles can be generated.
+        """Property: Mixed V2/V3 cycles can be generated.
         """
         factory = FixtureFactory()
         fixture = factory.random_multi_pool_cycle(
@@ -326,8 +318,7 @@ class TestMultiPoolMixedTypes:
     )
     @hypothesis.settings(deadline=None, max_examples=10)
     def test_v4_cycle_generation(self, seed: int):
-        """
-        Property: V4-only cycles can be generated.
+        """Property: V4-only cycles can be generated.
         """
         factory = FixtureFactory()
         fixture = factory.random_multi_pool_cycle(
@@ -351,8 +342,7 @@ class TestMultiPoolInvariants:
     )
     @hypothesis.settings(deadline=None, max_examples=15)
     def test_k_invariant_preserved(self, num_pools: int, seed: int):
-        """
-        Property: Each pool's k = x * y is preserved (or increased) after swaps.
+        """Property: Each pool's k = x * y is preserved (or increased) after swaps.
 
         For AMM arbitrage, the invariant k should not decrease.
         """
@@ -382,8 +372,7 @@ class TestMultiPoolInvariants:
     )
     @hypothesis.settings(deadline=None, max_examples=10)
     def test_price_consistency_across_pools(self, seed: int):
-        """
-        Property: Prices in the fixture are internally consistent.
+        """Property: Prices in the fixture are internally consistent.
 
         The price ratios should match the expected progression.
         """

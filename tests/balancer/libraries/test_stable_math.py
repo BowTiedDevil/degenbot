@@ -1,5 +1,4 @@
-"""
-Tests for Balancer StableMath library, ported from the Balancer v2 monorepo tests.
+"""Tests for Balancer StableMath library, ported from the Balancer v2 monorepo tests.
 
 Solidity source:
 https://github.com/balancer/balancer-v2-monorepo/blob/master/pkg/pool-stable/contracts/StableMath.sol

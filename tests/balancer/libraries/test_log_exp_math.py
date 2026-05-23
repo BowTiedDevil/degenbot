@@ -1,5 +1,4 @@
-"""
-Tests for Balancer LogExpMath library, ported from the Balancer v2 monorepo Solidity tests at
+"""Tests for Balancer LogExpMath library, ported from the Balancer v2 monorepo Solidity tests at
 https://github.com/balancer/balancer-v2-monorepo/blob/master/pkg/solidity-utils/test/LogExpMath.test.ts
 
 These tests verify the fixed-point exponentiation and logarithm functions that underpin all

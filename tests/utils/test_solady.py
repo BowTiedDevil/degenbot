@@ -86,8 +86,7 @@ def test_solady_decompress_empty():
 
 
 def test_solady_backwards_compat():
-    """
-    Backwards compatibility - older FastLZ compressed data should decompress
+    """Backwards compatibility - older FastLZ compressed data should decompress
     correctly even if compression format differs slightly.
     """
     # Same text as test_solady_decompress_1, but compressed with older FastLZ format
@@ -102,8 +101,7 @@ def test_solady_backwards_compat():
 
 
 def test_solady_decompress_invalid_short_match():
-    """
-    Test graceful handling of invalid compressed data with reference offset
+    """Test graceful handling of invalid compressed data with reference offset
     exceeding current output length (short match).
 
     This tests the defensive behavior when malformed input provides an invalid
@@ -120,8 +118,7 @@ def test_solady_decompress_invalid_short_match():
 
 
 def test_solady_decompress_invalid_long_match():
-    """
-    Test graceful handling of invalid compressed data with invalid long match.
+    """Test graceful handling of invalid compressed data with invalid long match.
     """
     # Long match opcode (0xE0 = type 7) with invalid reference
     compressed = bytearray([0xE0, 0x01, 0x64])  # offset 100
@@ -143,8 +140,7 @@ def test_solady_decompress_invalid_literal_run():
 
 @hypothesis.given(data=hypothesis.strategies.binary())
 def test_solady_compress_decompress_fuzz(data: bytes):
-    """
-    Perform a round-trip compression/decompression, verify the lossless result
+    """Perform a round-trip compression/decompression, verify the lossless result
     """
     compressed = flz_compress(data)
     assert flz_decompress(compressed).hex() == data.hex()

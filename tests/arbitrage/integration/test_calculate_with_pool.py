@@ -1,5 +1,4 @@
-"""
-Multiprocessing wrapper: ArbitragePath.calculate_with_pool
+"""Multiprocessing wrapper: ArbitragePath.calculate_with_pool
 
 Verifies that the new method serializes HopState correctly and returns
 the same result as synchronous calculate(). Unlike the legacy
@@ -75,8 +74,7 @@ def t2() -> FakeToken:
 def v2_v2_v2_pools(
     t0: FakeToken, t1: FakeToken, t2: FakeToken
 ) -> tuple[UniswapV2Pool, UniswapV2Pool, UniswapV2Pool]:
-    """
-    3-hop V2 cycle: t0 -> t1 -> t2 -> t0.
+    """3-hop V2 cycle: t0 -> t1 -> t2 -> t0.
 
     Same reserve ratios as verify_legacy_equivalence.py, known profitable.
     """
@@ -158,8 +156,7 @@ def v3_profitable_pair(usdc: FakeToken, weth: FakeToken) -> list[UniswapV3Pool]:
 
 
 class TestCalculateWithPool:
-    """
-    Verify calculate_with_pool returns the same SolveResult as calculate
+    """Verify calculate_with_pool returns the same SolveResult as calculate
     for both ThreadPool and ProcessPool executors.
     """
 
@@ -226,8 +223,7 @@ class TestCalculateWithPool:
         assert async_result.profit == sync_result.profit
 
     def test_v3_processpool_matches_sync(self, usdc, v3_profitable_pair):
-        """
-        ProcessPoolExecutor: V3 single-range cycle result identical.
+        """ProcessPoolExecutor: V3 single-range cycle result identical.
 
         This is the critical improvement over legacy UniswapLpCycle: the
         legacy method fails with "Cannot perform calculation with process

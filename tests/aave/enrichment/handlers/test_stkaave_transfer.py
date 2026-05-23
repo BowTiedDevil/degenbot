@@ -38,8 +38,7 @@ class TestStkAaveTransferHandler:
         assert isinstance(handler, OperationHandler)
 
     def test_stkaave_transfer_uses_amount_directly(self, handler: StkAaveTransferHandler) -> None:
-        """
-        StkAAVE transfers bypass index-based scaling.
+        """StkAAVE transfers bypass index-based scaling.
 
         stkAAVE is an ERC20 token (GHO discount token), so transfers
         don't use index scaling. raw_amount = scaled_amount.

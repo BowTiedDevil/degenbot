@@ -1,5 +1,4 @@
-"""
-Offline tests for pool and token registries.
+"""Offline tests for pool and token registries.
 
 Tests that registry methods are correct without requiring a live RPC connection.
 """
@@ -71,8 +70,7 @@ def _get_offline_v2_pool() -> UniswapV2Pool:
 
 
 def test_distinct_registry_instances():
-    """
-    Constructing a new registry instance returns a distinct object.
+    """Constructing a new registry instance returns a distinct object.
     """
     pool_registry = PoolRegistry()
     token_registry = TokenRegistry()

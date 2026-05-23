@@ -1,5 +1,4 @@
-"""
-V3 Tick Range Cache Tests
+"""V3 Tick Range Cache Tests
 
 Tests for pool-level tick caching that accelerates V2-V3 and V3-V3 arbitrage.
 
@@ -28,8 +27,7 @@ from degenbot.uniswap.v3_types import UniswapV3PoolState
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class TickRangeInfo:
-    """
-    Cached information about a tick range.
+    """Cached information about a tick range.
 
     Pre-computed values for fast arbitrage optimization.
     """
@@ -65,8 +63,7 @@ class TickRangeInfo:
 
 
 class V3TickRangeCache:
-    """
-    Cache for V3 tick range lookups.
+    """Cache for V3 tick range lookups.
 
     Provides O(log n) lookup instead of O(n) iteration through tick_data.
 
@@ -92,8 +89,7 @@ class V3TickRangeCache:
         current_liquidity: int,
         current_tick: int,
     ) -> None:
-        """
-        Rebuild cache from tick data.
+        """Rebuild cache from tick data.
 
         This is called when cache is invalid and needs to be rebuilt.
         Only rebuilds if invalid to avoid unnecessary work.
@@ -145,8 +141,7 @@ class V3TickRangeCache:
         self._valid = True
 
     def find_range_at_price(self, price: float) -> TickRangeInfo | None:
-        """
-        Find tick range containing the given price.
+        """Find tick range containing the given price.
 
         Uses binary search for O(log n) performance.
 
@@ -208,8 +203,7 @@ class V3TickRangeCache:
 
 
 class MockV3PoolWithCache:
-    """
-    Mock V3 pool demonstrating tick range cache integration.
+    """Mock V3 pool demonstrating tick range cache integration.
 
     In production, this cache would be part of UniswapV3Pool.
     """
@@ -237,8 +231,7 @@ class MockV3PoolWithCache:
         self._tick_cache.invalidate()
 
     def get_tick_range_at_price(self, price: float) -> TickRangeInfo | None:
-        """
-        Get tick range at price with caching.
+        """Get tick range at price with caching.
 
         Rebuilds cache if invalid, then returns cached result.
         """

@@ -1,5 +1,4 @@
-"""
-Tests for the Rust-based ABI decoder.
+"""Tests for the Rust-based ABI decoder.
 
 This module tests the degenbot_rs.decode module against eth_abi.abi
 to ensure compatibility and correctness.
@@ -44,13 +43,11 @@ from degenbot.degenbot_rs import decode_single as decode_single_rs
 
 
 class TestBasicTypes:
-    """
-    Test decoding of basic static types.
+    """Test decoding of basic static types.
     """
 
     def test_uint256(self):
-        """
-        Test decoding uint256 values.
+        """Test decoding uint256 values.
         """
         # Test zero
         data = eth_abi.abi.encode(["uint256"], [0])
@@ -92,8 +89,7 @@ class TestBasicTypes:
         assert result == eth_abi.abi.decode(["int256"], data)[0]
 
     def test_address(self):
-        """
-        Test decoding address values.
+        """Test decoding address values.
         """
         address = "0xd3cda913deb6f67967b99d67acdfa1712c293601"
         address_bytes = eth_abi.abi.encode(types=["address"], args=[address])
@@ -119,8 +115,7 @@ class TestBasicTypes:
         assert lower_result == eth_abi_result
 
     def test_bool(self):
-        """
-        Test decoding bool values.
+        """Test decoding bool values.
         """
         # Test True
         data = eth_abi.abi.encode(["bool"], [True])
@@ -144,13 +139,11 @@ class TestBasicTypes:
 
 
 class TestDynamicTypes:
-    """
-    Test decoding of dynamic types (bytes, string, arrays).
+    """Test decoding of dynamic types (bytes, string, arrays).
     """
 
     def test_bytes_empty(self):
-        """
-        Test decoding empty bytes.
+        """Test decoding empty bytes.
         """
         data = eth_abi.abi.encode(["bytes"], [b""])
         result = decode_single_rs("bytes", data)
@@ -158,8 +151,7 @@ class TestDynamicTypes:
         assert result == eth_abi.abi.decode(["bytes"], data)[0]
 
     def test_bytes_non_empty(self):
-        """
-        Test decoding non-empty bytes.
+        """Test decoding non-empty bytes.
         """
         test_value = bytes.fromhex("deadbeef")
         data = eth_abi.abi.encode(["bytes"], [test_value])
@@ -168,8 +160,7 @@ class TestDynamicTypes:
         assert result == eth_abi.abi.decode(["bytes"], data)[0]
 
     def test_string(self):
-        """
-        Test decoding string values.
+        """Test decoding string values.
         """
         test_value = "test"
         data = eth_abi.abi.encode(["string"], [test_value])
@@ -178,8 +169,7 @@ class TestDynamicTypes:
         assert result == eth_abi.abi.decode(["string"], data)[0]
 
     def test_dynamic_array_uint256(self):
-        """
-        Test decoding dynamic uint256 arrays.
+        """Test decoding dynamic uint256 arrays.
         """
         test_value = [1, 2, 3]
         data = eth_abi.abi.encode(["uint256[]"], [test_value])
@@ -188,8 +178,7 @@ class TestDynamicTypes:
         assert result == list(eth_abi.abi.decode(["uint256[]"], data)[0])
 
     def test_fixed_array_uint256(self):
-        """
-        Test decoding fixed-size uint256 arrays.
+        """Test decoding fixed-size uint256 arrays.
         """
         test_value = [1, 2, 3]
         data = eth_abi.abi.encode(["uint256[3]"], [test_value])
@@ -198,8 +187,7 @@ class TestDynamicTypes:
         assert result == list(eth_abi.abi.decode(["uint256[3]"], data)[0])
 
     def test_dynamic_array_address(self):
-        """
-        Test decoding dynamic address arrays.
+        """Test decoding dynamic address arrays.
         """
         addr1 = "0xd3cda913deb6f67967b99d67acdfa1712c293601"
         addr2 = "0x66f9664f97f2b50f62d13ea064982f936de76657"
@@ -213,13 +201,11 @@ class TestDynamicTypes:
 
 
 class TestMultipleTypes:
-    """
-    Test decoding multiple types at once.
+    """Test decoding multiple types at once.
     """
 
     def test_uint256_and_address(self):
-        """
-        Test decoding uint256 and address together.
+        """Test decoding uint256 and address together.
         """
         test_values = [100, "0xd3cda913deb6f67967b99d67acdfa1712c293601"]
         data = eth_abi.abi.encode(["uint256", "address"], test_values)
@@ -234,8 +220,7 @@ class TestMultipleTypes:
         assert rust_addr.lower() == py_addr
 
     def test_multiple_static_types(self):
-        """
-        Test decoding multiple static types.
+        """Test decoding multiple static types.
         """
         test_values = [100, True, "0xd3cda913deb6f67967b99d67acdfa1712c293601"]
         data = eth_abi.abi.encode(["uint256", "bool", "address"], test_values)
@@ -246,13 +231,11 @@ class TestMultipleTypes:
 
 
 class TestTypeAliases:
-    """
-    Test that type aliases work correctly.
+    """Test that type aliases work correctly.
     """
 
     def test_uint_alias(self):
-        """
-        Test that 'uint' is an alias for 'uint256'.
+        """Test that 'uint' is an alias for 'uint256'.
         """
         data = eth_abi.abi.encode(["uint256"], [100])
         result = decode_single_rs("uint", data)
@@ -260,8 +243,7 @@ class TestTypeAliases:
         assert result == eth_abi.abi.decode(["uint256"], data)[0]
 
     def test_int_alias(self):
-        """
-        Test that 'int' is an alias for 'int256'.
+        """Test that 'int' is an alias for 'int256'.
         """
         data = eth_abi.abi.encode(["int256"], [100])
         result = decode_single_rs("int", data)
@@ -270,35 +252,30 @@ class TestTypeAliases:
 
 
 class TestErrorHandling:
-    """
-    Test error handling and edge cases.
+    """Test error handling and edge cases.
     """
 
     def test_empty_types_list(self):
-        """
-        Test that empty types list raises ValueError.
+        """Test that empty types list raises ValueError.
         """
         with pytest.raises(ValueError, match="Types list cannot be empty"):
             decode_rs([], b"test")
 
     def test_empty_data(self):
-        """
-        Test that empty data raises ValueError.
+        """Test that empty data raises ValueError.
         """
         with pytest.raises(ValueError, match="Data cannot be empty"):
             decode_single_rs("uint256", b"")
 
     def test_insufficient_data(self):
-        """
-        Test that insufficient data raises ValueError.
+        """Test that insufficient data raises ValueError.
         """
         data = bytes.fromhex("0" * 30)  # Only 30 bytes, need 32
         with pytest.raises(ValueError, match="Decoding failed"):
             decode_single_rs("uint256", data)
 
     def test_fixed_point_not_implemented(self):
-        """
-        Test that fixed-point types raise NotImplementedError.
+        """Test that fixed-point types raise NotImplementedError.
         """
         data = bytes.fromhex("0" * 64)
         with pytest.raises(NotImplementedError, match="Fixed-point types"):
@@ -306,13 +283,11 @@ class TestErrorHandling:
 
 
 class TestEthAbiCompatibility:
-    """
-    Test that our decoder produces the same results as eth_abi.abi.
+    """Test that our decoder produces the same results as eth_abi.abi.
     """
 
     def test_all_basic_types(self):
-        """
-        Test all basic static types match eth_abi.
+        """Test all basic static types match eth_abi.
         """
         test_cases = [
             ("uint256", 100),
@@ -335,14 +310,12 @@ class TestEthAbiCompatibility:
 
 
 class TestHypothesisStaticTypes:
-    """
-    Property-based tests for static types using Hypothesis.
+    """Property-based tests for static types using Hypothesis.
     """
 
     @hypothesis.given(value=st.integers(min_value=MIN_UINT8, max_value=MAX_UINT8))
     def test_uint8_hypothesis(self, value: int) -> None:
-        """
-        Test uint8 decoding with random values.
+        """Test uint8 decoding with random values.
         """
         data = eth_abi.abi.encode(["uint8"], [value])
         rust_result = decode_single_rs("uint8", data)
@@ -352,8 +325,7 @@ class TestHypothesisStaticTypes:
 
     @hypothesis.given(value=st.integers(min_value=MIN_UINT16, max_value=MAX_UINT16))
     def test_uint16_hypothesis(self, value: int) -> None:
-        """
-        Test uint16 decoding with random values.
+        """Test uint16 decoding with random values.
         """
         data = eth_abi.abi.encode(["uint16"], [value])
         rust_result = decode_single_rs("uint16", data)
@@ -363,8 +335,7 @@ class TestHypothesisStaticTypes:
 
     @hypothesis.given(value=st.integers(min_value=MIN_UINT24, max_value=MAX_UINT24))
     def test_uint24_hypothesis(self, value: int) -> None:
-        """
-        Test uint24 decoding with random values.
+        """Test uint24 decoding with random values.
         """
         data = eth_abi.abi.encode(["uint24"], [value])
         rust_result = decode_single_rs("uint24", data)
@@ -374,8 +345,7 @@ class TestHypothesisStaticTypes:
 
     @hypothesis.given(value=st.integers(min_value=MIN_UINT128, max_value=MAX_UINT128))
     def test_uint128_hypothesis(self, value: int) -> None:
-        """
-        Test uint128 decoding with random values.
+        """Test uint128 decoding with random values.
         """
         data = eth_abi.abi.encode(["uint128"], [value])
         rust_result = decode_single_rs("uint128", data)
@@ -385,8 +355,7 @@ class TestHypothesisStaticTypes:
 
     @hypothesis.given(value=st.integers(min_value=MIN_UINT256, max_value=MAX_UINT256))
     def test_uint256_hypothesis(self, value: int) -> None:
-        """
-        Test uint256 decoding with random values.
+        """Test uint256 decoding with random values.
         """
         data = eth_abi.abi.encode(["uint256"], [value])
         rust_result = decode_single_rs("uint256", data)
@@ -396,8 +365,7 @@ class TestHypothesisStaticTypes:
 
     @hypothesis.given(value=st.integers(min_value=MIN_INT16, max_value=MAX_INT16))
     def test_int16_hypothesis(self, value: int) -> None:
-        """
-        Test int16 decoding with random values.
+        """Test int16 decoding with random values.
         """
         data = eth_abi.abi.encode(["int16"], [value])
         rust_result = decode_single_rs("int16", data)
@@ -407,8 +375,7 @@ class TestHypothesisStaticTypes:
 
     @hypothesis.given(value=st.integers(min_value=MIN_INT24, max_value=MAX_INT24))
     def test_int24_hypothesis(self, value: int) -> None:
-        """
-        Test int24 decoding with random values.
+        """Test int24 decoding with random values.
         """
         data = eth_abi.abi.encode(["int24"], [value])
         rust_result = decode_single_rs("int24", data)
@@ -418,8 +385,7 @@ class TestHypothesisStaticTypes:
 
     @hypothesis.given(value=st.integers(min_value=MIN_INT32, max_value=MAX_INT32))
     def test_int32_hypothesis(self, value: int) -> None:
-        """
-        Test int32 decoding with random values.
+        """Test int32 decoding with random values.
         """
         data = eth_abi.abi.encode(["int32"], [value])
         rust_result = decode_single_rs("int32", data)
@@ -429,8 +395,7 @@ class TestHypothesisStaticTypes:
 
     @hypothesis.given(value=st.integers(min_value=MIN_INT64, max_value=MAX_INT64))
     def test_int64_hypothesis(self, value: int) -> None:
-        """
-        Test int64 decoding with random values.
+        """Test int64 decoding with random values.
         """
         data = eth_abi.abi.encode(["int64"], [value])
         rust_result = decode_single_rs("int64", data)
@@ -440,8 +405,7 @@ class TestHypothesisStaticTypes:
 
     @hypothesis.given(value=st.integers(min_value=MIN_INT128, max_value=MAX_INT128))
     def test_int128_hypothesis(self, value: int) -> None:
-        """
-        Test int128 decoding with random values.
+        """Test int128 decoding with random values.
         """
         data = eth_abi.abi.encode(["int128"], [value])
         rust_result = decode_single_rs("int128", data)
@@ -451,8 +415,7 @@ class TestHypothesisStaticTypes:
 
     @hypothesis.given(value=st.integers(min_value=MIN_INT256, max_value=MAX_INT256))
     def test_int256_hypothesis(self, value: int) -> None:
-        """
-        Test int256 decoding with random values.
+        """Test int256 decoding with random values.
         """
         data = eth_abi.abi.encode(["int256"], [value])
         rust_result = decode_single_rs("int256", data)
@@ -462,8 +425,7 @@ class TestHypothesisStaticTypes:
 
     @hypothesis.given(value=st.integers(min_value=MIN_UINT32, max_value=MAX_UINT32))
     def test_uint32_hypothesis(self, value: int) -> None:
-        """
-        Test uint32 decoding with random values.
+        """Test uint32 decoding with random values.
         """
         data = eth_abi.abi.encode(["uint32"], [value])
         rust_result = decode_single_rs("uint32", data)
@@ -473,8 +435,7 @@ class TestHypothesisStaticTypes:
 
     @hypothesis.given(value=st.integers(min_value=MIN_UINT64, max_value=MAX_UINT64))
     def test_uint64_hypothesis(self, value: int) -> None:
-        """
-        Test uint64 decoding with random values.
+        """Test uint64 decoding with random values.
         """
         data = eth_abi.abi.encode(["uint64"], [value])
         rust_result = decode_single_rs("uint64", data)
@@ -484,8 +445,7 @@ class TestHypothesisStaticTypes:
 
     @hypothesis.given(address_bytes=st.binary(min_size=20, max_size=20))
     def test_address_hypothesis(self, address_bytes: bytes) -> None:
-        """
-        Test address decoding with random values.
+        """Test address decoding with random values.
         """
         byte_encoded_address = eth_abi.abi.encode(
             types=["address"],
@@ -500,8 +460,7 @@ class TestHypothesisStaticTypes:
         assert rust_result.lower() == eth_abi_result.lower()
 
     def test_bool_hypothesis(self) -> None:
-        """
-        Test bool decoding with random values.
+        """Test bool decoding with random values.
         """
         for value in (True, False):
             data = eth_abi.abi.encode(["bool"], [value])
@@ -512,8 +471,7 @@ class TestHypothesisStaticTypes:
 
     @hypothesis.given(value=st.binary(min_size=32, max_size=32))
     def test_bytes32_hypothesis(self, value: bytes) -> None:
-        """
-        Test bytes32 decoding with random values.
+        """Test bytes32 decoding with random values.
         """
         data = eth_abi.abi.encode(["bytes32"], [value])
         rust_result = decode_single_rs("bytes32", data)

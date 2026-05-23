@@ -1,5 +1,4 @@
-"""
-Test CurveStableswapPool integration with ArbitragePath vs legacy comparison.
+"""Test CurveStableswapPool integration with ArbitragePath vs legacy comparison.
 
 This test verifies that the new ArbitragePath + Solver correctly handles
 Curve-stableswap hops. Uses production CurveStableswapPool with
@@ -139,8 +138,7 @@ def test_curve_hop_without_swap_fn():
 
 
 def test_brent_solver_with_curve():
-    """
-    Test that BrentSolver can optimize a path containing Curve hop.
+    """Test that BrentSolver can optimize a path containing Curve hop.
 
     Uses imbalanced pools to create an arbitrage opportunity.
     """
@@ -185,8 +183,7 @@ def test_brent_solver_with_curve():
 
 @pytest.mark.ethereum
 def test_curve_fork_equivalence(fork_mainnet_full: AnvilFork) -> None:
-    """
-    Fork-based Curve equivalence test.
+    """Fork-based Curve equivalence test.
 
     Compares ArbitragePath with Curve hops against legacy UniswapCurveCycle
     using real mainnet Curve pools.

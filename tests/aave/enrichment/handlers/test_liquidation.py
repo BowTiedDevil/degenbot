@@ -30,8 +30,7 @@ class TestLiquidationHandler:
     def test_erc20_collateral_transfer_bypasses_index_check(
         self, handler: LiquidationHandler
     ) -> None:
-        """
-        ERC20_COLLATERAL_TRANSFER events within LIQUIDATION have no index.
+        """ERC20_COLLATERAL_TRANSFER events within LIQUIDATION have no index.
 
         Standard ERC20 Transfer events don't carry an Aave index.
         They should use raw_amount = scaled_amount = event.amount.
@@ -52,8 +51,7 @@ class TestLiquidationHandler:
         assert result.scaled_amount == 1_000_000_000_000_000_000
 
     def test_erc20_debt_transfer_bypasses_index_check(self, handler: LiquidationHandler) -> None:
-        """
-        ERC20_DEBT_TRANSFER events within LIQUIDATION have no index.
+        """ERC20_DEBT_TRANSFER events within LIQUIDATION have no index.
 
         Standard ERC20 Transfer events don't carry an Aave index.
         They should use raw_amount = scaled_amount = event.amount.
@@ -89,8 +87,7 @@ class TestLiquidationHandler:
         assert isinstance(handler, OperationHandler)
 
     def test_debt_burn_uses_debt_extractor(self, handler: LiquidationHandler) -> None:
-        """
-        LIQUIDATION debt events use debtToCover from LiquidationCall event.
+        """LIQUIDATION debt events use debtToCover from LiquidationCall event.
         """
         index = 2_000_000_000_000_000_000_000_000_000
         debt_to_cover = 1_000_000_000_000_000_000
@@ -114,8 +111,7 @@ class TestLiquidationHandler:
         assert result.event_type == ScaledTokenEventType.DEBT_BURN
 
     def test_collateral_burn_uses_collateral_extractor(self, handler: LiquidationHandler) -> None:
-        """
-        LIQUIDATION collateral events use liquidatedCollateralAmount.
+        """LIQUIDATION collateral events use liquidatedCollateralAmount.
         """
         index = 2_000_000_000_000_000_000_000_000_000
         debt_to_cover = 1_000_000_000_000_000_000
@@ -139,8 +135,7 @@ class TestLiquidationHandler:
         assert result.event_type == ScaledTokenEventType.COLLATERAL_BURN
 
     def test_pool_rev9_plus_pre_scales_debt(self, handler: LiquidationHandler) -> None:
-        """
-        Pool Revision 9+ passes pre-scaled amounts for debt burns.
+        """Pool Revision 9+ passes pre-scaled amounts for debt burns.
 
         The Pool calculates scaledAmount = debtToCover.rayDivFloor(index)
         and passes it to vToken.burn(). We must calculate this ourselves.
@@ -165,8 +160,7 @@ class TestLiquidationHandler:
         assert result.scaled_amount == 500_000_000_000_000_000
 
     def test_net_debt_increase_uses_burn_calculation(self, handler: LiquidationHandler) -> None:
-        """
-        When debt repayment < accrued interest, DEBT_MINT is a net increase.
+        """When debt repayment < accrued interest, DEBT_MINT is a net increase.
 
         When balance_increase > amount on DEBT_MINT during liquidation,
         it's a net debt increase. Use DEBT_BURN calculation with

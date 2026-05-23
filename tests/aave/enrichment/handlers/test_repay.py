@@ -38,8 +38,7 @@ class TestRepayHandler:
         assert isinstance(handler, OperationHandler)
 
     def test_standard_repay_calculates_scaled_amount(self, handler: RepayHandler) -> None:
-        """
-        Standard REPAY calculates scaled amount with floor rounding.
+        """Standard REPAY calculates scaled amount with floor rounding.
 
         For standard repayments (burn events), use DEBT_BURN calculation.
         """
@@ -63,8 +62,7 @@ class TestRepayHandler:
         assert result.event_type == ScaledTokenEventType.DEBT_BURN
 
     def test_interest_exceeds_repayment_uses_burn_calculation(self, handler: RepayHandler) -> None:
-        """
-        When interest exceeds repayment, use DEBT_BURN calculation.
+        """When interest exceeds repayment, use DEBT_BURN calculation.
 
         When a DEBT_MINT event is emitted during REPAY, it means
         interest > repayment. Use DEBT_BURN calculation (floor rounding).

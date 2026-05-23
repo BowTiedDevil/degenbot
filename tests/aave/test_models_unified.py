@@ -1,5 +1,4 @@
-"""
-Tests for the unified EnrichedScaledTokenEvent model (Plan 010).
+"""Tests for the unified EnrichedScaledTokenEvent model (Plan 010).
 
 The unified model replaces 18 specific Pydantic event classes with a single
 class. Tests verify construction, property derivation, and validation routing.
@@ -38,8 +37,7 @@ def _fake_log_receipt() -> LogReceipt:
 
 
 def _base_kwargs(**overrides: object) -> dict:
-    """
-    Base kwargs for building an EnrichedScaledTokenEvent.
+    """Base kwargs for building an EnrichedScaledTokenEvent.
 
     Uses scaled_amount=None to skip TokenMath validation in structure tests.
     """

@@ -1,5 +1,4 @@
-"""
-Tests for snapshot explicit-dependency injection.
+"""Tests for snapshot explicit-dependency injection.
 
 Verifies that DatabaseSnapshot accepts explicit dependencies
 instead of importing module-level singletons.

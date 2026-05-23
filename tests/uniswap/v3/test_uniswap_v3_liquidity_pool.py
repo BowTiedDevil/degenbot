@@ -135,8 +135,7 @@ def liquidity_snapshot() -> dict[str, Any]:
 
 
 def convert_unsigned_integer_to_signed(num: int):
-    """
-    Workaround for the values shown on Tenderly's "State Changes" view, which converts signed
+    """Workaround for the values shown on Tenderly's "State Changes" view, which converts signed
     integers in a tuple to their unsigned representation
     """
     return int.from_bytes(HexBytes(num), byteorder="big", signed=True)
@@ -374,8 +373,7 @@ def test_reorg(
     wbtc_weth_v3_lp_at_historical_block: UniswapV3Pool,
     fork_mainnet_archive: AnvilFork,
 ) -> None:
-    """
-    Provide some updates, then simulate a reorg back to the starting state
+    """Provide some updates, then simulate a reorg back to the starting state
     """
     # Manipulate the cache depth so additional states beyond the default can be tracked
     old_cache = wbtc_weth_v3_lp_at_historical_block._state_cache
@@ -1026,8 +1024,7 @@ def test_external_update(
     indirect=True,
 )
 def test_mint_and_burn_in_empty_word(fork_mainnet_archive: AnvilFork) -> None:
-    """
-    Test that minting and burning an equal position inside an empty word results in no net
+    """Test that minting and burning an equal position inside an empty word results in no net
     liquidity in the mapping, and the removal of the position.
     """
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_archive.w3))
@@ -1076,8 +1073,7 @@ def test_mint_and_burn_in_empty_word(fork_mainnet_archive: AnvilFork) -> None:
     indirect=True,
 )
 def test_complex_liquidity_transaction_1(fork_mainnet_archive: AnvilFork):
-    """
-    Tests transaction 0xcc9b213c730978b096e2b629470c510fb68b32a1cb708ca21bbbbdce4221b00d, which
+    """Tests transaction 0xcc9b213c730978b096e2b629470c510fb68b32a1cb708ca21bbbbdce4221b00d, which
     executes a complex Burn/Swap/Mint
 
     State values taken from Tenderly: https://dashboard.tenderly.co/tx/mainnet/0xcc9b213c730978b096e2b629470c510fb68b32a1cb708ca21bbbbdce4221b00d/state-diff
@@ -1147,8 +1143,7 @@ def test_complex_liquidity_transaction_1(fork_mainnet_archive: AnvilFork):
     indirect=True,
 )
 def test_complex_liquidity_transaction_2(fork_mainnet_archive: AnvilFork):
-    """
-    Tests transaction 0xb70e8432d3ee0bcaa0f21ca7c0d0fd496096e9d72f243186dc3880d857114a3b, which
+    """Tests transaction 0xb70e8432d3ee0bcaa0f21ca7c0d0fd496096e9d72f243186dc3880d857114a3b, which
     executes a complex Burn/Swap/Mint
 
     State values taken from Tenderly: https://dashboard.tenderly.co/tx/mainnet/0xb70e8432d3ee0bcaa0f21ca7c0d0fd496096e9d72f243186dc3880d857114a3b/state-diff

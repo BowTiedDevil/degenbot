@@ -1,5 +1,4 @@
-"""
-Tests that verify pool managers return the correct pool subclass for each DEX variant.
+"""Tests that verify pool managers return the correct pool subclass for each DEX variant.
 
 This ensures that:
 - UniswapV2PoolTracker returns UniswapV2Pool

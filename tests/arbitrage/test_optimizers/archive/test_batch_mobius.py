@@ -1,5 +1,4 @@
-"""
-Tests for vectorized batch Möbius transformation optimizer.
+"""Tests for vectorized batch Möbius transformation optimizer.
 
 Verifies that the batch Möbius solver produces results matching the
 scalar mobius_solve for various path lengths and batch sizes, and
@@ -38,8 +37,7 @@ from degenbot.arbitrage.optimizers.vectorized_batch import (
 def make_hops_array(
     paths: list[list[MobiusFloatHop]],
 ) -> np.ndarray:
-    """
-    Convert a list of MobiusFloatHop lists to a numpy array of shape
+    """Convert a list of MobiusFloatHop lists to a numpy array of shape
     (num_paths, num_hops, 3).
     """
     num_hops = len(paths[0])
@@ -672,8 +670,7 @@ class TestBatchMobiusBenchmarks:
 
     @pytest.mark.parametrize("num_hops", [2, 3, 5])
     def test_benchmark_vectorized_vs_serial(self, num_hops):
-        """
-        Benchmark vectorized vs serial Möbius across batch sizes.
+        """Benchmark vectorized vs serial Möbius across batch sizes.
 
         This test prints a comparison table. It always passes; the
         assertions are informational.
@@ -712,8 +709,7 @@ class TestBatchMobiusBenchmarks:
         print()
 
     def test_benchmark_mobius_vs_newton_batch(self):
-        """
-        Compare batch Möbius against batch Newton for 2-pool V2-V2 paths.
+        """Compare batch Möbius against batch Newton for 2-pool V2-V2 paths.
 
         Newton requires 3-4 iterations; Möbius requires 0. This test
         demonstrates the iteration-free advantage.

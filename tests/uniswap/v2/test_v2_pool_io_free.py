@@ -1,5 +1,4 @@
-"""
-Tests for Phase 3: I/O-free UniswapV2Pool construction via Bot.
+"""Tests for Phase 3: I/O-free UniswapV2Pool construction via Bot.
 """
 
 import pathlib
@@ -55,8 +54,7 @@ class TestV2PoolIOFreeConstructor:
     """UniswapV2Pool can be constructed with pre-fetched data only."""
 
     def test_io_free_constructor_basic(self) -> None:
-        """
-        An I/O-free V2 pool can be constructed with tokens, factory, fees, and reserves.
+        """An I/O-free V2 pool can be constructed with tokens, factory, fees, and reserves.
         """
         weth = _make_weth()
         usdc = _make_usdc()

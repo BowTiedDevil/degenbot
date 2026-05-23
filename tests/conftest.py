@@ -56,8 +56,7 @@ def pytest_addoption(parser: Parser):
 
 
 def pytest_collection_modifyitems(config: Config, items: list[Item]):
-    """
-    Modify the
+    """Modify the
     """
     skip_fixtures: str = config.getoption("--skip-fixture")
     if not skip_fixtures:
@@ -85,8 +84,7 @@ def pytest_collection_modifyitems(config: Config, items: list[Item]):
 
 @pytest.fixture(autouse=True)
 def _initialize_and_reset_after_each_test():
-    """
-    Before each test, clear/reset global values and singletons
+    """Before each test, clear/reset global values and singletons
     """
     # Global singletons have been removed. Bot-owned connections and registries
     # are scoped to each Bot instance and do not need inter-test resets.
@@ -94,8 +92,7 @@ def _initialize_and_reset_after_each_test():
 
 @pytest.fixture(scope="session", autouse=True)
 def _set_degenbot_logging():
-    """
-    Set the logging level to DEBUG for the test run
+    """Set the logging level to DEBUG for the test run
     """
     logger.setLevel(logging.DEBUG)
 
@@ -114,8 +111,7 @@ def fork_arbitrum_full() -> Generator[AnvilFork, None, None]:
 
 @pytest.fixture
 def fork_base_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork, None, None]:
-    """
-    An AnvilFork using the default mainnet archive node. To fork from a specific block, parametrize
+    """An AnvilFork using the default mainnet archive node. To fork from a specific block, parametrize
     the test with an indirect parameter for this fixture, e.g.:
 
     ```
@@ -149,8 +145,7 @@ def fork_base_full() -> Generator[AnvilFork, None, None]:
 
 @pytest.fixture
 def fork_mainnet_archive(request: pytest.FixtureRequest) -> Generator[AnvilFork, None, None]:
-    """
-    An AnvilFork using the default mainnet archive node. To fork from a specific block, parametrize
+    """An AnvilFork using the default mainnet archive node. To fork from a specific block, parametrize
     the test with an indirect parameter for this fixture, e.g.:
 
     ```

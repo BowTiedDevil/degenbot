@@ -18,7 +18,7 @@ from degenbot.constants import ZERO_ADDRESS
 from degenbot.contract.decoding import decode_address
 from degenbot.database.models.aave import AaveGhoToken, AaveV3Asset, AaveV3Contract, AaveV3Market
 from degenbot.logging import logger
-from degenbot.provider.interface import ProviderAdapter
+from degenbot.provider.sync_adapter import ProviderAdapter
 
 
 def _get_v_token_for_underlying(

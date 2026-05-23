@@ -1,5 +1,4 @@
-"""
-Arbitrage testing framework.
+"""Arbitrage testing framework.
 
 Provides synthetic pool state generation, fixtures, and regression testing
 for arbitrage optimization algorithms.

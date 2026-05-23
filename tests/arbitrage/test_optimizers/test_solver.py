@@ -1,5 +1,4 @@
-"""
-Tests for the unified solver interface.
+"""Tests for the unified solver interface.
 """
 
 from fractions import Fraction

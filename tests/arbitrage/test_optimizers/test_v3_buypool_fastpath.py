@@ -1,5 +1,4 @@
-"""
-Tests for V3 buy-pool validation in solver fast-path.
+"""Tests for V3 buy-pool validation in solver fast-path.
 
 Validates that when V3 is the buy pool (first hop), the solver fast-path
 uses actual V3 pool calculations instead of constant-product approximation.

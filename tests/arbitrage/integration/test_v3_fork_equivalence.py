@@ -1,5 +1,4 @@
-"""
-V3-only fork-based equivalence: ArbitragePath + Solver vs. legacy UniswapLpCycle.
+"""V3-only fork-based equivalence: ArbitragePath + Solver vs. legacy UniswapLpCycle.
 
 Uses real mainnet V3 pools on an Anvil fork. Verifies both systems agree
 on profitability and optimal input for a 3-pool V3-only cycle.
@@ -68,8 +67,7 @@ def weth_usdt_030_lp(_bot) -> UniswapV3Pool:
 
 
 class TestV3OnlyForkEquivalence:
-    """
-    Verify both systems agree on a V3-only 3-hop cycle using real pools.
+    """Verify both systems agree on a V3-only 3-hop cycle using real pools.
 
     Cycle: WETH -> USDC (pool A, 0.05%) -> USDT (pool B, 0.01%) -> WETH (pool C, 0.30%)
     """
@@ -81,8 +79,7 @@ class TestV3OnlyForkEquivalence:
         weth_usdt_030_lp: UniswapV3Pool,
         weth_token: Erc20Token,
     ):
-        """
-        Both legacy and new systems must agree on whether the V3-only
+        """Both legacy and new systems must agree on whether the V3-only
         triangle is profitable, and if so, on the optimal input and profit.
         """
         pools = [weth_usdc_005_lp, usdc_usdt_001_lp, weth_usdt_030_lp]

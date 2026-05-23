@@ -83,8 +83,7 @@ class TestRepayWithAtokensHandler:
     def test_interest_exceeds_collateral_burn_uses_burn_calculation(
         self, handler: RepayWithAtokensHandler
     ) -> None:
-        """
-        When interest exceeds repayment for collateral, use COLLATERAL_BURN.
+        """When interest exceeds repayment for collateral, use COLLATERAL_BURN.
 
         Similar to WITHDRAW case - when COLLATERAL_MINT has amount < balance_increase,
         use COLLATERAL_BURN calculation (ceil rounding).
@@ -116,8 +115,7 @@ class TestRepayWithAtokensHandler:
     def test_interest_exceeds_debt_burn_uses_burn_calculation(
         self, handler: RepayWithAtokensHandler
     ) -> None:
-        """
-        When interest exceeds repayment for debt, use DEBT_BURN.
+        """When interest exceeds repayment for debt, use DEBT_BURN.
 
         Similar to REPAY case - when DEBT_MINT has balance_increase,
         use DEBT_BURN calculation (floor rounding).

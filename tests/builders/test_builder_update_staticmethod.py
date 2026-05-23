@@ -1,5 +1,4 @@
-"""
-Tests for builder update() method — structural conformance and behavioral integration.
+"""Tests for builder update() method — structural conformance and behavioral integration.
 
 Plan 074: Verifies that all builder update() methods are @staticmethod
 and dispatch correctly through both class and instance call patterns.
@@ -115,8 +114,7 @@ class TestUpdateIsStaticMethod:
 
 
 class TestUpdateClassVsInstanceCall:
-    """
-    update() is callable both as a class method and on an instance,
+    """update() is callable both as a class method and on an instance,
     matching the Bot.update() dispatch pattern.
     """
 

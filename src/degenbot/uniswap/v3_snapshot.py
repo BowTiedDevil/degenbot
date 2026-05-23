@@ -22,8 +22,9 @@ from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.pool import UnknownPool
 from degenbot.logging import logger
-from degenbot.provider.interface import AsyncProviderAdapter, ProviderAdapter
+from degenbot.provider.async_adapter import AsyncProviderAdapter
 from degenbot.provider.log_fetching import fetch_logs_retrying, fetch_logs_retrying_async
+from degenbot.provider.sync_adapter import ProviderAdapter
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import KeyedDefaultDict
 from degenbot.uniswap.abi import UNISWAP_V3_POOL_ABI

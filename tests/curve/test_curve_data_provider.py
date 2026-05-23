@@ -1,5 +1,4 @@
-"""
-Tests for CurveDataProvider: the consolidated I/O seam for Curve pools.
+"""Tests for CurveDataProvider: the consolidated I/O seam for Curve pools.
 
 Validates that CurveDataProviderImpl satisfies the CurveDataProvider protocol
 and correctly delegates to the underlying ProviderAdapter.
@@ -15,7 +14,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.data_provider_impl import CurveDataProviderImpl
 from degenbot.curve.types import CurveDataProvider, LendingRateStyle
 from degenbot.exceptions.pool import EVMRevertError
-from degenbot.provider.interface import ProviderAdapter
+from degenbot.provider.sync_adapter import ProviderAdapter
 
 # --- Fake provider ---
 

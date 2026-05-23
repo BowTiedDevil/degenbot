@@ -1,5 +1,4 @@
-"""
-Preset fixture lists and batch generation utilities.
+"""Preset fixture lists and batch generation utilities.
 
 Provides pre-defined fixture suites for testing and benchmarking.
 """
@@ -52,8 +51,7 @@ def _get_factory() -> FixtureFactory:
 
 
 def generate_fixture_by_name(name: str) -> ArbitrageCycleFixture:
-    """
-    Generate a fixture by its name.
+    """Generate a fixture by its name.
 
     Parameters
     ----------
@@ -120,8 +118,7 @@ def generate_all_fixtures(
     output_dir: Path,
     fixtures: list[str] | None = None,
 ) -> dict[str, Path]:
-    """
-    Generate fixture JSON files.
+    """Generate fixture JSON files.
 
     Parameters
     ----------
@@ -152,8 +149,7 @@ def generate_all_fixtures(
 
 
 def generate_simple_fixtures(output_dir: Path) -> dict[str, Path]:
-    """
-    Generate simple fixture JSON files.
+    """Generate simple fixture JSON files.
 
     Parameters
     ----------
@@ -173,8 +169,7 @@ def generate_stress_fixtures(
     output_dir: Path,
     pool_types: list[str] | None = None,
 ) -> dict[str, Path]:
-    """
-    Generate stress test fixture JSON files.
+    """Generate stress test fixture JSON files.
 
     Parameters
     ----------
@@ -209,8 +204,7 @@ def load_fixture_by_name(
     name: str,
     fixture_dir: Path | None = None,
 ) -> ArbitrageCycleFixture:
-    """
-    Load a fixture by its name.
+    """Load a fixture by its name.
 
     If fixture_dir is provided and the file exists, loads from disk.
     Otherwise, generates the fixture on-the-fly.
@@ -238,8 +232,7 @@ def load_fixture_by_name(
 
 
 def get_fixture_names_by_type(fixture_type: str) -> list[str]:
-    """
-    Get fixture names filtered by type.
+    """Get fixture names filtered by type.
 
     Parameters
     ----------
@@ -270,8 +263,7 @@ def get_fixture_names_by_type(fixture_type: str) -> list[str]:
 
 
 class FixtureSuite:
-    """
-    A collection of fixtures for testing.
+    """A collection of fixtures for testing.
 
     Provides iteration and access methods for a set of fixtures.
     """
@@ -281,8 +273,7 @@ class FixtureSuite:
         names: list[str],
         fixture_dir: Path | None = None,
     ) -> None:
-        """
-        Initialize the fixture suite.
+        """Initialize the fixture suite.
 
         Parameters
         ----------

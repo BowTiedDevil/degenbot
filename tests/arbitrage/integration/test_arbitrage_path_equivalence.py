@@ -1,5 +1,4 @@
-"""
-Equivalence tests: ArbitragePath + Solver vs. legacy UniswapLpCycle.
+"""Equivalence tests: ArbitragePath + Solver vs. legacy UniswapLpCycle.
 
 Uses real pools on a fork to verify calculation equivalence for production
 path types.
@@ -69,8 +68,7 @@ def wbtc_weth_v3_lp(fork_mainnet_full: AnvilFork) -> UniswapV3Pool:
 
 
 class TestV2V3MixedEquivalence:
-    """
-    Equivalence test for a real V2+V3 mixed path.
+    """Equivalence test for a real V2+V3 mixed path.
 
     The existing integration test suite uses WBTC-WETH V2 and V3 pools with
     hardcoded states. We construct the same path via both UniswapLpCycle
@@ -83,8 +81,7 @@ class TestV2V3MixedEquivalence:
         wbtc_weth_v3_lp: UniswapV3Pool,
         weth_token: Erc20Token,
     ):
-        """
-        Both systems should find equivalent optimal input and profit for the
+        """Both systems should find equivalent optimal input and profit for the
         same pool states.
         """
         max_input = 100 * 10**18
@@ -144,8 +141,7 @@ class TestV2V3MixedEquivalence:
         wbtc_weth_v3_lp: UniswapV3Pool,
         weth_token: Erc20Token,
     ):
-        """
-        Both systems should see equivalent profit when given identical
+        """Both systems should see equivalent profit when given identical
         pool state overrides. Legacy uses pool objects as dict keys;
         ArbitragePath uses checkSummed addresses.
         """
@@ -207,8 +203,7 @@ class TestV2V3MixedEquivalence:
 
 
 class TestEdgeCases:
-    """
-    Edge case parity: behavior when the legacy system rejects a path early.
+    """Edge case parity: behavior when the legacy system rejects a path early.
     """
 
     def test_unprofitable_path_rejection_parity(
@@ -217,8 +212,7 @@ class TestEdgeCases:
         wbtc_weth_v3_lp: UniswapV3Pool,
         weth_token: Erc20Token,
     ):
-        """
-        When reserves produce no arbitrage, both systems must reject.
+        """When reserves produce no arbitrage, both systems must reject.
         Legacy raises ArbitrageError (via _pre_calculation_check).
         New system raises OptimizationError.
         """

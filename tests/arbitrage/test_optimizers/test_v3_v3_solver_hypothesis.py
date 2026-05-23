@@ -1,5 +1,4 @@
-"""
-Property-based tests for V3-V3 arbitrage solver.
+"""Property-based tests for V3-V3 arbitrage solver.
 
 Tests the Rust V3-V3 solver with randomized sqrt prices, liquidity values,
 and tick ranges to verify correctness across the parameter space.
@@ -140,8 +139,7 @@ class TestV3V3SingleRangeProperties:
         liquidity: float,
         fee: float,
     ):
-        """
-        Property: Single-range V3-V3 finds profit when price spread exceeds fees.
+        """Property: Single-range V3-V3 finds profit when price spread exceeds fees.
 
         When pool A has price (1 + spread) times pool B, arbitrage should be profitable
         if the spread exceeds the total fees (2x fee for round trip).
@@ -177,8 +175,7 @@ class TestV3V3SingleRangeProperties:
         liquidity: float,
         fee: float,
     ):
-        """
-        Property: No profit when both pools have identical prices.
+        """Property: No profit when both pools have identical prices.
 
         With fees, arbitrage between identical-priced pools is unprofitable.
         """
@@ -209,8 +206,7 @@ class TestV3V3SingleRangeProperties:
         liquidity: float,
         fee: float,
     ):
-        """
-        Property: Wide single ranges use fast path (0 iterations).
+        """Property: Wide single ranges use fast path (0 iterations).
 
         When tick ranges are wide enough that no crossing is needed,
         the solver should use the Möbius fast path.
@@ -248,8 +244,7 @@ class TestV3V3ProfitProperties:
         liquidity: float,
         fee: float,
     ):
-        """
-        Property: Larger price spread produces larger profit.
+        """Property: Larger price spread produces larger profit.
 
         For a fixed liquidity and fee, profit should be monotonically
         increasing with the price spread between pools.
@@ -293,8 +288,7 @@ class TestV3V3ProfitProperties:
         spread: float,
         fee: float,
     ):
-        """
-        Property: Profit scales linearly with liquidity.
+        """Property: Profit scales linearly with liquidity.
 
         For a fixed price spread, doubling liquidity should approximately
         double the profit (with small deviations from fee rounding).
@@ -336,8 +330,7 @@ class TestV3V3ProfitProperties:
         spread: float,
         liquidity: float,
     ):
-        """
-        Property: Lower fees produce higher profit.
+        """Property: Lower fees produce higher profit.
 
         For the same price spread and liquidity, lower fees should yield
         higher profit.
@@ -380,8 +373,7 @@ class TestV3V3BoundsProperties:
         liquidity: float,
         fee: float,
     ):
-        """
-        Property: Optimal input is always positive and finite when successful.
+        """Property: Optimal input is always positive and finite when successful.
         """
         sqrt_pa = math.sqrt(base_price * (1 + spread))
         sqrt_pb = math.sqrt(base_price)
@@ -420,8 +412,7 @@ class TestV3V3BoundsProperties:
         fee: float,
         max_input_fraction: float,
     ):
-        """
-        Property: max_input constraint is respected.
+        """Property: max_input constraint is respected.
 
         When a max_input constraint is applied, the optimal input should
         not exceed it.
@@ -469,8 +460,7 @@ class TestV3V3MultiRangeProperties:
         liquidity2: float,
         fee: float,
     ):
-        """
-        Property: Multi-range V3-V3 handles edge cases gracefully.
+        """Property: Multi-range V3-V3 handles edge cases gracefully.
 
         The solver should never panic or return invalid results for any
         valid input configuration.
@@ -524,8 +514,7 @@ class TestV3V3Invariants:
         liquidity: float,
         fee: float,
     ):
-        """
-        Property: Profit at optimal input is maximum.
+        """Property: Profit at optimal input is maximum.
 
         Verify that the profit at optimal_input is greater than profit
         at nearby values (local maximum property).

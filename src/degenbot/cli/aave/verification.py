@@ -21,7 +21,7 @@ from degenbot.database.models.aave import (
 )
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
-from degenbot.provider.interface import ProviderAdapter
+from degenbot.provider.sync_adapter import ProviderAdapter
 
 
 def cleanup_zero_balance_positions(

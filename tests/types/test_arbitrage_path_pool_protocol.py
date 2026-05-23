@@ -1,5 +1,4 @@
-"""
-Tests verifying that the ArbitragePathPool protocol captures the required pool interface,
+"""Tests verifying that the ArbitragePathPool protocol captures the required pool interface,
 and that ArbitragePath types its pools as ArbitragePathPool instead of Any.
 """
 

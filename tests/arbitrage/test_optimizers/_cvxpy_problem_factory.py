@@ -1,5 +1,4 @@
-"""
-Shared CVXPY 2-pool problem builder for test code.
+"""Shared CVXPY 2-pool problem builder for test code.
 
 Provides a factory function that constructs a fresh cvxpy Problem for 2-pool
 constant-product arbitrage, parameterized by token decimal counts. Each call
@@ -25,8 +24,7 @@ def build_2pool_cvxpy_problem(
     decimals1: int,
     fee: Fraction,
 ) -> cvxpy.Problem:
-    """
-    Build a CVXPY 2-pool constant-product arbitrage problem.
+    """Build a CVXPY 2-pool constant-product arbitrage problem.
 
     Constructs the problem with per-token compression factors so floats stay
     in a numerically stable [0, 1] range regardless of decimal asymmetry.

@@ -1,5 +1,4 @@
-"""
-Consolidated fake subscriber implementation.
+"""Consolidated fake subscriber implementation.
 
 Replaces the previous ad hoc subscriber fakes:
 - FakeSubscriber (from tests/conftest.py)
@@ -16,8 +15,7 @@ from degenbot.types.concrete import AbstractPublisherMessage, Publisher
 
 
 class FakeSubscriber:
-    """
-    Subscriber that records received messages for test assertions.
+    """Subscriber that records received messages for test assertions.
 
     Supports both ``inbox`` (dict records) and ``notifications`` (tuple records)
     so it can serve as a drop-in replacement for either prior variant.

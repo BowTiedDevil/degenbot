@@ -97,8 +97,7 @@ def test_ray_to_wad() -> None:
 
 @hypothesis.given(a=hypothesis.strategies.integers(min_value=MIN_UINT256, max_value=MAX_UINT256))
 def test_wad_to_ray_fuzzing(a: int) -> None:
-    """
-    Foundry test function `test_wadToRay_fuzz` includes an overflow check:
+    """Foundry test function `test_wadToRay_fuzz` includes an overflow check:
         b = a * w.WAD_RAY_RATIO();
         safetyCheck = b / w.WAD_RAY_RATIO() == a;
 
@@ -114,8 +113,7 @@ def test_wad_to_ray_fuzzing(a: int) -> None:
 
 @hypothesis.given(a=hypothesis.strategies.integers(min_value=MIN_UINT256, max_value=MAX_UINT256))
 def test_ray_to_wad_fuzzing(a: int) -> None:
-    """
-    Check that `ray_to_wad` does not round the result up if remainder is less than half the wad to
+    """Check that `ray_to_wad` does not round the result up if remainder is less than half the wad to
     ray ratio.
     """
     assert ray_to_wad(a) == a // WAD_RAY_RATIO + ((a % WAD_RAY_RATIO) >= (WAD_RAY_RATIO // 2))

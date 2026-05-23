@@ -1,5 +1,4 @@
-"""
-Tests for the generalized Möbius optimizer with V3/V4 bounded liquidity pools.
+"""Tests for the generalized Möbius optimizer with V3/V4 bounded liquidity pools.
 
 Verifies that:
 1. V3TickRangeHop produces correct effective reserves
@@ -56,8 +55,7 @@ class TestV3TickRangeHop:
         assert v3_hop.beta == pytest.approx(L * sqrt_p_lower, rel=1e-10)
 
     def test_to_hop_state_zero_for_one(self):
-        """
-        For zero_for_one: r_eff = L/sqrt_p, s_eff = L*sqrt_p (virtual reserves).
+        """For zero_for_one: r_eff = L/sqrt_p, s_eff = L*sqrt_p (virtual reserves).
         """
         L = 500_000.0
         sqrt_p = tick_to_sqrt_price(0)  # ≈ 1.0
@@ -74,8 +72,7 @@ class TestV3TickRangeHop:
         assert hop.fee == 0.003
 
     def test_to_hop_state_one_for_zero(self):
-        """
-        For one_for_zero: r_eff = L*sqrt_p, s_eff = L/sqrt_p (reversed direction).
+        """For one_for_zero: r_eff = L*sqrt_p, s_eff = L/sqrt_p (reversed direction).
         """
         L = 500_000.0
         sqrt_p = tick_to_sqrt_price(0)
@@ -90,8 +87,7 @@ class TestV3TickRangeHop:
         assert hop.reserve_out == pytest.approx(expected_s_eff, rel=1e-10)
 
     def test_v2_recovered_when_alpha_beta_zero(self):
-        """
-        V3 MobiusFloatHop with effective reserves L/sqrt_p and L*sqrt_p
+        """V3 MobiusFloatHop with effective reserves L/sqrt_p and L*sqrt_p
         matches V2 behavior where r = L/sqrt_p, s = L*sqrt_p.
 
         The alpha and beta are implicitly included in the virtual reserves:
@@ -136,8 +132,7 @@ class TestV3TickRangeHop:
 
 
 class TestV3MobiusSwapFormula:
-    """
-    Verify that the V3 bounded product swap matches the Möbius form.
+    """Verify that the V3 bounded product swap matches the Möbius form.
 
     The swap: y = gamma*(R1+beta)*x / ((R0+alpha) + gamma*x)
     Should produce the same output as: simulate_path(x, [hop]) where hop has
@@ -168,8 +163,7 @@ class TestV3MobiusSwapFormula:
             )
 
     def test_narrow_vs_wide_same_output_for_within_range(self):
-        """
-        Narrow and wide V3 ranges with the same L and current price
+        """Narrow and wide V3 ranges with the same L and current price
         give the SAME swap output for within-range swaps.
 
         This is correct: the V3 swap formula depends only on L and
@@ -235,8 +229,7 @@ class TestV3MobiusVsBrent:
     """Compare V3 Möbius closed-form against Brent method."""
 
     def test_v3_single_range_matches_brent(self):
-        """
-        For a V3 tick range swap (no crossing), Möbius should match Brent.
+        """For a V3 tick range swap (no crossing), Möbius should match Brent.
         """
         L = 1_000_000.0
         v3_hop = make_v3_tick_range(liquidity=L, current_tick=0, tick_spacing=200)
@@ -253,8 +246,7 @@ class TestV3MobiusVsBrent:
             )
 
     def test_v2_plus_v3_single_range_matches_brent(self):
-        """
-        A mixed V2+V3 path should produce correct results via Möbius.
+        """A mixed V2+V3 path should produce correct results via Möbius.
         """
         # V2 pool
         v2_hop = MobiusFloatHop(reserve_in=10_000_000.0, reserve_out=5_000.0, fee=0.003)
@@ -330,8 +322,7 @@ class TestV3RangeValidation:
         assert final_sqrt_price > 0
 
     def test_mobius_optimizer_rejects_out_of_range_solution(self):
-        """
-        The MobiusOptimizer.solve() should reject solutions where
+        """The MobiusOptimizer.solve() should reject solutions where
         the V3 swap would cross tick boundaries.
         """
         MobiusOptimizer()
@@ -373,8 +364,7 @@ class TestSolveV3Candidates:
     """Tests for the multi-range V3 candidate solver."""
 
     def test_mobius_unprofitable_raises(self):
-        """
-        When V2 and V3 pools agree on price, Möbius coefficients yield K <= M
+        """When V2 and V3 pools agree on price, Möbius coefficients yield K <= M
         and solve_v3_candidates skips every candidate (x_opt <= 0, profit <= 0).
         """
         optimizer = MobiusOptimizer()
@@ -399,8 +389,7 @@ class TestSolveV3Candidates:
             )
 
     def test_range_validation_failure_raises(self):
-        """
-        When Möbius finds a profitable input but the swap pushes the V3 sqrt
+        """When Möbius finds a profitable input but the swap pushes the V3 sqrt
         price outside the tick range, contains_sqrt_price rejects the solution.
         """
         optimizer = MobiusOptimizer()
@@ -447,8 +436,7 @@ class TestMixedV2V3Composition:
     """Tests for Möbius composition across mixed V2 and V3 hops."""
 
     def test_coefficients_match_manual_composition(self):
-        """
-        Verify K, M, N from a V2+V3 path match hand-computed values.
+        """Verify K, M, N from a V2+V3 path match hand-computed values.
         """
         # V2 hop
         v2 = MobiusFloatHop(reserve_in=10_000.0, reserve_out=5_000.0, fee=0.003)

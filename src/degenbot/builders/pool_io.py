@@ -18,7 +18,8 @@ if TYPE_CHECKING:
     from hexbytes import HexBytes
     from web3.types import BlockData, BlockIdentifier, TxParams
 
-    from degenbot.provider.interface import AsyncProviderAdapter, ProviderAdapter
+    from degenbot.provider.async_adapter import AsyncProviderAdapter
+    from degenbot.provider.sync_adapter import ProviderAdapter
 
 
 @runtime_checkable

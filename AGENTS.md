@@ -293,6 +293,18 @@ The legacy cycle classes (`UniswapLpCycle`, `UniswapCurveCycle`, etc.) have been
 
 `eip_191_hash` was deleted (dead code, zero imports). The original `functions.py` no longer exists — all callers have been migrated.
 
+### Provider Interface Split
+
+`src/degenbot/provider/interface.py` has been split into three focused modules:
+
+| New Module | Contents |
+|---|---|
+| `provider/protocols.py` | `ProviderBackend`, `AsyncProviderBackend` — pure protocol seams |
+| `provider/sync_adapter.py` | `SyncSubscriptionSupport`, `_Web3Adapter`, `_AlloyAdapter`, `_OfflineAdapter`, `ProviderAdapter`, `_backend_for_type` |
+| `provider/async_adapter.py` | `AsyncSubscriptionSupport`, `_AsyncWeb3Adapter`, `_AsyncAlloyAdapter`, `AsyncProviderAdapter` |
+
+The original `interface.py` no longer exists — all callers have been updated to import from the new modules. `provider/__init__.py` re-exports the four public names for convenience.
+
 ### Pool-to-Hop Conversion
 
 `solver_hop_builders.py` has been deleted — each pool's `to_hop_state()` method is the single source of truth for pool→hop conversion. The `PoolCompatibility` enum has been removed. The thin free functions `_pool_to_hop_state`, `_extract_fee`, and `_check_pool_compatibility` have been inlined in `arbitrage_path.py`.

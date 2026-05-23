@@ -1,5 +1,4 @@
-"""
-Tests for V2-V3 arbitrage optimizer with tick range prediction.
+"""Tests for V2-V3 arbitrage optimizer with tick range prediction.
 """
 
 import math

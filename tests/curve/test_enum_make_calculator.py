@@ -117,8 +117,7 @@ class TestMetapoolRateStyleMakeCalculator:
 
 
 class TestMetapoolUnderlyingStyleMakeCalculator:
-    """
-    make_metapool_underlying_calculator() returns
+    """make_metapool_underlying_calculator() returns
     parameterized MetapoolUnderlyingDyCalculator.
     """
 

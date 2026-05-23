@@ -1,5 +1,4 @@
-"""
-Tests for Balancer scaling helpers, ported from the Balancer v2 monorepo.
+"""Tests for Balancer scaling helpers, ported from the Balancer v2 monorepo.
 
 Scaling helpers normalize token amounts to 18-decimal fixed-point, so that
 pools with tokens of different decimals can use uniform math.

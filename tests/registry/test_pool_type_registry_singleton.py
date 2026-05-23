@@ -1,5 +1,4 @@
-"""
-Tests that the module-level pool_type_registry singleton is correctly
+"""Tests that the module-level pool_type_registry singleton is correctly
 populated by DEX module self-registration at import time.
 """
 
@@ -228,8 +227,7 @@ class TestSingletonKindReverseLookup:
 
 
 class TestDeploymentDataIntegrity:
-    """
-    Validate registry deployment data directly.
+    """Validate registry deployment data directly.
 
     pool_type_registry is the sole source of truth — there is no longer
     a separate FACTORY_DEPLOYMENTS dict to cross-check against.

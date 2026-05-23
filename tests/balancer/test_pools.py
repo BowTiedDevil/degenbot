@@ -209,8 +209,7 @@ def _run_swap_calculations(
     *,
     swap_directions: list[tuple[int, int]] | None = None,
 ):
-    """
-    Run GIVEN_IN swap calculations against the on-chain BalancerQueries contract
+    """Run GIVEN_IN swap calculations against the on-chain BalancerQueries contract
     and assert exact integer match at each amount.
     """
     if swap_directions is None:

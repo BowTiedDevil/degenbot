@@ -1,5 +1,4 @@
-"""
-Tests for Curve pool integration with solver simulation functions.
+"""Tests for Curve pool integration with solver simulation functions.
 
 Verifies that production CurveStableswapPool works correctly with:
 - _simulate_path (float-precision path simulation)
@@ -166,8 +165,7 @@ class TestCurveSwapOutput:
         assert expected_min <= amount_out <= expected_max
 
     def test_curve_gives_better_rates_than_constant_product(self):
-        """
-        Curve's stableswap should give better rates than constant-product for same reserves.
+        """Curve's stableswap should give better rates than constant-product for same reserves.
 
         This verifies the Curve math is working correctly — the whole point of
         Curve is to provide lower slippage for stable pairs.
@@ -203,8 +201,7 @@ class TestCurvePairSelection:
     """Test token_in/token_out pair selection in to_hop_state."""
 
     def test_explicit_pair_selection_with_fake_token(self):
-        """
-        to_hop_state with token_in/token_out selects the specified pair.
+        """to_hop_state with token_in/token_out selects the specified pair.
 
         Note: FakeToken inherits from AddressComparable, matching Erc20Token's base.
         The production pool stores Erc20Token objects, but FakeToken with the same

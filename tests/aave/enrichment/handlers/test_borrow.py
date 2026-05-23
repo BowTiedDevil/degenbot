@@ -38,8 +38,7 @@ class TestBorrowHandler:
         assert isinstance(handler, OperationHandler)
 
     def test_borrow_calculates_scaled_amount(self, handler: BorrowHandler) -> None:
-        """
-        BORROW calculates scaled amount from raw amount and index.
+        """BORROW calculates scaled amount from raw amount and index.
 
         For BORROW operations:
         - Extract raw amount from Pool event

@@ -1,5 +1,4 @@
-"""
-Tests for Balancer FixedPoint library, ported from the Balancer v2 monorepo Solidity tests at
+"""Tests for Balancer FixedPoint library, ported from the Balancer v2 monorepo Solidity tests at
 https://github.com/balancer/balancer-v2-monorepo/blob/master/pkg/solidity-utils/test/FixedPoint.test.ts
 
 These tests verify the 18-decimal fixed-point arithmetic primitives: mul_down, mul_up, div_down,

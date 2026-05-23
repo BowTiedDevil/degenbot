@@ -1,5 +1,4 @@
-"""
-Verify that ArbitragePath + Solver produces computationally equivalent results
+"""Verify that ArbitragePath + Solver produces computationally equivalent results
 to legacy UniswapLpCycle for identical pool sequences and states.
 """
 
@@ -250,8 +249,7 @@ def v2_v2_v2_pools(
 
 class TestV2OnlyEquivalence:
     def test_optimal_result_matches_legacy_simulation(self, v2_v2_v2_pools, t0):
-        """
-        For a V2-only path, the MobiusSolver's optimal result must match
+        """For a V2-only path, the MobiusSolver's optimal result must match
         what the legacy system would find if it used the same (correct)
         optimization method.
 
@@ -305,8 +303,7 @@ class TestV2OnlyEquivalence:
         assert amounts[-1][1] == new_result.input_amount + new_result.profit_amount
 
     def test_optimal_input_matches_mobius_closed_form(self, v2_v2_v2_pools, t0):
-        """
-        For a 3-hop V2 path, the Mobius closed-form optimum must match the
+        """For a 3-hop V2 path, the Mobius closed-form optimum must match the
         integer-refined result from the MobiusSolver.
 
         The closed-form optimal input for a Möbius path is:
@@ -344,8 +341,7 @@ class TestV2OnlyEquivalence:
         assert profits[x] + 1 >= profits[x + 1]  # allow 1 wei tolerance
 
     def test_unprofitable_path_is_rejected(self, t0, t1):
-        """
-        When reserves are set such that no arbitrage exists, both systems
+        """When reserves are set such that no arbitrage exists, both systems
         must reject the path.
 
         Legacy: raises ArbitrageError (from _pre_calculation_check)
@@ -392,8 +388,7 @@ class TestV2OnlyEquivalence:
 
 class TestStateOverrideEquivalence:
     def test_state_override_produces_same_result(self, v2_v2_v2_pools, t0):
-        """
-        ArbitragePath.calculate_with_state_override should produce the same
+        """ArbitragePath.calculate_with_state_override should produce the same
         result as ArbitragePath.calculate when states match current pool states.
         """
         pools = v2_v2_v2_pools
@@ -429,8 +424,7 @@ class TestStateOverrideEquivalence:
         assert baseline_amounts.profit_amount == with_override_amounts.profit_amount
 
     def test_partial_override_changes_result(self, v2_v2_v2_pools, t0):
-        """
-        When only one pool's state is overridden, the result must differ
+        """When only one pool's state is overridden, the result must differ
         from the baseline.
         """
         pools = v2_v2_v2_pools
@@ -464,8 +458,7 @@ class TestStateOverrideEquivalence:
 
 class TestTwoHopEquivalence:
     def test_mobius_and_newton_agree_on_2hop_v2(self, t0, t1):
-        """
-        For a 2-hop V2 path, MobiusSolver (closed-form) and NewtonSolver
+        """For a 2-hop V2 path, MobiusSolver (closed-form) and NewtonSolver
         (iterative) should converge to the same optimal integer input.
         """
         pool_0 = UniswapV2Pool(
@@ -520,8 +513,7 @@ class TestTwoHopEquivalence:
 
 class TestPayloadGenerationGap:
     def test_build_swap_amount_produces_correct_dataclass(self, v2_v2_v2_pools, t0):
-        """
-        build_swap_amount must produce the right dataclass per pool type.
+        """build_swap_amount must produce the right dataclass per pool type.
         This is the bridge between the solver result and transaction execution.
         """
         pools = v2_v2_v2_pools

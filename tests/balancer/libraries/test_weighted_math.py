@@ -1,5 +1,4 @@
-"""
-Tests for Balancer WeightedMath library, ported from the Balancer v2 monorepo tests at
+"""Tests for Balancer WeightedMath library, ported from the Balancer v2 monorepo tests at
 https://github.com/balancer/balancer-v2-monorepo/blob/master/pkg/pool-weighted/test/WeightedMath.test.ts
 
 The TypeScript reference implementation is at:
@@ -234,8 +233,7 @@ class TestOutGivenIn:
         assert result > 0
 
     def test_rounding_direction(self):
-        """
-        OutGivenIn rounds down (favoring the pool). The result should be <= the mathematically
+        """OutGivenIn rounds down (favoring the pool). The result should be <= the mathematically
         exact value.
         """
         balance_in = 100 * 10**18
@@ -302,8 +300,7 @@ class TestInGivenOut:
             )
 
     def test_zero_amount_out(self):
-        """
-        With amount_out=0, base=div_up(bO,bO)=ONE, power=pow_up(ONE,ONE)=ONE+max_error,
+        """With amount_out=0, base=div_up(bO,bO)=ONE, power=pow_up(ONE,ONE)=ONE+max_error,
         ratio=max_error. The on-chain contract does NOT have a y==1 fast path, so this produces
         a small non-zero result rather than exactly 0.
         """
@@ -320,8 +317,7 @@ class TestInGivenOut:
         assert result < 10**7  # But very small relative to balances
 
     def test_rounding_direction(self):
-        """
-        InGivenOut rounds up (favoring the pool). The result should be >= the mathematically
+        """InGivenOut rounds up (favoring the pool). The result should be >= the mathematically
         exact value.
         """
         balance_in = 100 * 10**18

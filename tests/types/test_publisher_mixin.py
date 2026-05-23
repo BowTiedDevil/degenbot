@@ -1,5 +1,4 @@
-"""
-Tests verifying PublisherMixin provides complete pub/sub behavior:
+"""Tests verifying PublisherMixin provides complete pub/sub behavior:
 subscribe, unsubscribe, and _notify_subscribers.
 """
 
