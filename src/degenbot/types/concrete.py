@@ -8,8 +8,7 @@ from degenbot.types.abstract import AbstractPoolState
 
 
 class KeyedDefaultDict[KT, VT](defaultdict[KT, VT]):
-    """
-    A modified defaultdict that passes the key to default_factory at runtime and records it.
+    """A modified defaultdict that passes the key to default_factory at runtime and records it.
 
     This differs from the defaultdict behavior, which calls default_factory with no arguments.
     """
@@ -19,7 +18,12 @@ class KeyedDefaultDict[KT, VT](defaultdict[KT, VT]):
         self._default_factory = default_factory
 
     def __missing__(self, key: KT) -> VT:
-        """Implement __missing__."""
+        """Implement __missing__.
+
+        Returns:
+            The computed value.
+
+        """
         value = self._default_factory(key)
         self[key] = value
         return value
@@ -43,21 +47,41 @@ class TextMessage(AbstractPublisherMessage):
         self.text = text
 
     def __eq__(self, other: object) -> bool:
-        """Check equality with another object."""
+        """Check equality with another object.
+
+        Returns:
+            The computed value.
+
+        """
         if not isinstance(other, TextMessage):
             return NotImplemented
         return self.text == other.text
 
     def __hash__(self) -> int:
-        """Return the hash value."""
+        """Return the hash value.
+
+        Returns:
+            The computed value.
+
+        """
         return hash(self.text)
 
     def __repr__(self) -> str:
-        """Return a string representation."""
+        """Return a string representation.
+
+        Returns:
+            The computed value.
+
+        """
         return f"{self.__class__.__name__}(text={self.text})"
 
     def __str__(self) -> str:
-        """Return a string representation."""
+        """Return a string representation.
+
+        Returns:
+            The computed value.
+
+        """
         return self.text
 
 
@@ -77,8 +101,7 @@ class Publisher(Protocol):
 
 
 class PublisherMixin:
-    """
-    A set of default methods to accept subscribe & unsubscribe requests, and notify all.
+    """A set of default methods to accept subscribe & unsubscribe requests, and notify all.
 
     subscribers of a message. Classes using this mixin meet the `Publisher` protocol requirements.
     """
@@ -104,8 +127,7 @@ class Subscriber(Protocol):
 
 
 class BoundedCache[KT, VT](OrderedDict[KT, VT]):
-    """
-    A cache holding key-value pairs, tracked by entry order. The cache automatically removes old.
+    """A cache holding key-value pairs, tracked by entry order. The cache automatically removes old.
 
     items if the number of items would exceed the maximum number of entries set by `max_items`.
 
@@ -118,7 +140,12 @@ class BoundedCache[KT, VT](OrderedDict[KT, VT]):
         self.max_items = max_items
 
     def __reduce__(self) -> tuple[Any, ...]:
-        """Return pickling information."""
+        """Return pickling information.
+
+        Returns:
+            The computed value.
+
+        """
         state = super().__reduce__()
         return (
             state[0],
@@ -135,7 +162,12 @@ class BoundedCache[KT, VT](OrderedDict[KT, VT]):
             self.popitem(last=False)
 
     def copy(self) -> Self:
-        """Copy."""
+        """Copy.
+
+        Returns:
+            The computed value.
+
+        """
         new_copy = self.__class__(max_items=self.max_items)
         for k, v in self.items():
             new_copy[k] = v

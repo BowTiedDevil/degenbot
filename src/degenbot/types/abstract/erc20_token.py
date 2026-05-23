@@ -13,5 +13,10 @@ class AbstractErc20Token(AddressComparable):
     decimals: int
 
     def __str__(self) -> str:
-        """Return a string representation."""
+        """Return a string representation.
+
+        Returns:
+            The computed value.
+
+        """
         return self.symbol

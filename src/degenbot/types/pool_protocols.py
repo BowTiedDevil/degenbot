@@ -1,5 +1,4 @@
-"""
-Pool simulation protocols.
+"""Pool simulation protocols.
 
 Define structural interfaces for pool behavior. Pools satisfy these
 protocols by implementing the required methods — no inheritance needed.
@@ -37,8 +36,7 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class ConstantProductPool(Protocol):
-    """
-    Any pool using the x*y=k invariant (V2-style, Aerodrome volatile/stable).
+    """Any pool using the x*y=k invariant (V2-style, Aerodrome volatile/stable).
 
     Replaces AbstractUniswapV2Pool and AbstractAerodromeV2Pool for
     isinstance dispatch. Aerodrome pools satisfy this protocol too —
@@ -89,8 +87,7 @@ class ConstantProductPool(Protocol):
 
 @runtime_checkable
 class ConcentratedLiquidityPool(Protocol):
-    """
-    Any pool using concentrated liquidity (tick-based: V3, V4).
+    """Any pool using concentrated liquidity (tick-based: V3, V4).
 
     Replaces AbstractConcentratedLiquidityPool for isinstance dispatch.
     """
@@ -143,8 +140,7 @@ class ConcentratedLiquidityPool(Protocol):
 
 @runtime_checkable
 class StableswapPool(Protocol):
-    """
-    Any pool using the Curve StableSwap invariant.
+    """Any pool using the Curve StableSwap invariant.
 
     Structural check for multi-token stable pools. Used sparingly
     since Curve pools are typically dispatched by concrete type
@@ -159,8 +155,7 @@ class StableswapPool(Protocol):
 
 @dataclass(slots=True, frozen=True, kw_only=True)
 class SimulationResult:
-    """
-    Pool-agnostic simulation output.
+    """Pool-agnostic simulation output.
 
     Returned by PoolSimulation.simulate_swap for all pool types.
     """
@@ -173,8 +168,7 @@ class SimulationResult:
 
 @runtime_checkable
 class PoolSimulation(Protocol):
-    """
-    Required interface for all pools.
+    """Required interface for all pools.
 
     Supports exact-input swap simulation and pub/sub for state updates.
     """
@@ -205,8 +199,7 @@ class PoolSimulation(Protocol):
 
 @runtime_checkable
 class ReverseSimulatablePool(Protocol):
-    """
-    Optional interface for pools that support exact-output simulation.
+    """Optional interface for pools that support exact-output simulation.
 
     Not all pool types can compute input from desired output.
     """
@@ -224,8 +217,7 @@ class ReverseSimulatablePool(Protocol):
 
 @runtime_checkable
 class StateManageablePool(Protocol):
-    """
-    Optional interface for pools with on-chain state management.
+    """Optional interface for pools with on-chain state management.
 
     Curve and Balancer pools typically don't implement this.
     """
@@ -245,8 +237,7 @@ class StateManageablePool(Protocol):
 
 @runtime_checkable
 class CacheablePool(Protocol):
-    """
-    A pool whose reserves and fee can be registered in the Rust solver cache.
+    """A pool whose reserves and fee can be registered in the Rust solver cache.
 
     Used by ArbPoolCacheAdapter. Replaces getattr-based introspection
     with explicit methods.
@@ -267,8 +258,7 @@ class CacheablePool(Protocol):
 
 @runtime_checkable
 class ArbitrageCapablePool(PoolSimulation, Protocol):
-    """
-    Interface for pools participating in arbitrage paths.
+    """Interface for pools participating in arbitrage paths.
 
     Extends PoolSimulation with hop state conversion and fee extraction,
     absorbing the old PoolAdapter protocol.
@@ -292,8 +282,7 @@ class ArbitrageCapablePool(PoolSimulation, Protocol):
 
 @runtime_checkable
 class TwoTokenSwapCalculation(Protocol):
-    """
-    A 2-token pool that can calculate output from input.
+    """A 2-token pool that can calculate output from input.
 
     token_out is implied by token_in since there are exactly two tokens.
     """
@@ -310,8 +299,7 @@ class TwoTokenSwapCalculation(Protocol):
 
 @runtime_checkable
 class MultiTokenSwapCalculation(Protocol):
-    """
-    An N-token pool requiring explicit token_out for swap calculation.
+    """An N-token pool requiring explicit token_out for swap calculation.
 
     Curve and Balancer pools need token_out specified because they have
     more than two tokens.
@@ -330,8 +318,7 @@ class MultiTokenSwapCalculation(Protocol):
 
 @runtime_checkable
 class ArbitragePathPool(PoolSimulation, Protocol):
-    """
-    A pool that can participate in a cyclic arbitrage path.
+    """A pool that can participate in a cyclic arbitrage path.
 
     Extends PoolSimulation with directional token access, swap calculation,
     hop state conversion, and fee extraction. Intentionally excludes
