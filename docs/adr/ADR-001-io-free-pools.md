@@ -41,9 +41,9 @@ Separate I/O from pool logic using **fetcher callbacks** injected at constructio
 │   Client    │────▶│  Bot (Session)  │────▶│  Pool Classes   │
 │  (User/API) │     │                 │     │  (I/O-free)     │
 └─────────────┘     │  • Manages RPC  │     └─────────────────┘
-                    │  • Builds pools  │              │
-                    │  • Creates       │              │
-                    │  data_providers  │              ▼
+                    │  • Builds pools │              │
+                    │  • Creates      │              │
+                    │  data_providers │              ▼
                     └─────────────────┘     ┌───────────────────┐
                               │             │ CurveDataProvider │
                               │             │  (I/O here)       │
@@ -76,6 +76,17 @@ class CurveDataProvider(Protocol):
 # Pool just calls data_provider methods (pure logic)
 ```
 
+### I/O Boundary
+
+| Pool Family | Construction I/O-Free | Calculation I/O-Free | Notes |
+|-------------|----------------------|----------------------|-------|
+| V2/V3/V4/Aerodrome/Camelot | ✅ | ✅ | Builders fetch all data; pools are pure logic |
+| Curve (STANDARD, RAW_BALANCE) | ✅ | ✅ | Rate multipliers are static |
+| Curve (lending/crypto/live-admin/metapool) | ✅ | ❌ | `get_dy()` may call `CurveDataProvider` for per-block data |
+| Curve (A ramping) | ✅ | ❌ | `_a()` needs `block_timestamp` via data provider |
+
+The `CurveStableswapPool.requires_io_at_calculation_time` property exposes this distinction at runtime. The `_resolve_calculation_inputs_via_io` method name signals that I/O may occur during calculation input resolution.
+
 ### Why Data Providers Instead of Dependency Injection?
 
 | Approach | Pros | Cons | Decision |
@@ -85,6 +96,18 @@ class CurveDataProvider(Protocol):
 | Constructor-injected provider | Explicit dependency | Forces provider abstraction into pool signature | ❌ Rejected — pool shouldn't know about providers |
 | Abstract base class | Standard OOP | Requires subclassing, overkill for simple fetch | ❌ Rejected — not Pythonic for this use case |
 | Event stream | Decoupled, reactive | Complex state synchronization | ❌ Rejected — overkill for current needs |
+
+### Why Builders?
+
+Pool construction requires multiple RPC calls and DB lookups that vary by pool family. A builder class encapsulates this I/O so the pool constructor receives only pre-resolved values. Alternatives considered:
+
+| Approach | Why not |
+|----------|---------|
+| Class methods (`Pool.from_chain()`) | Class methods can't be swapped or composed; testing requires monkeypatching |
+| Factory functions | Work for a single pool type, but don't scale to the builder registry pattern (see ADR-002) |
+| Raw constructor calls | Circles back to the original problem — constructors doing I/O |
+
+The `BuilderContext` frozen dataclass (one object per Bot session, passed to all builders) means adding a new pool family requires only a builder class + `register_builder()` — zero wiring changes in Bot.
 
 ## Consequences
 
@@ -101,7 +124,7 @@ class CurveDataProvider(Protocol):
 - **More boilerplate**: `Bot.build_pool()` is longer than direct instantiation
 - **Learning curve**: Users must understand the Bot session pattern
 - **Migration effort**: All existing pool creation code needs updating
-- **Constructor bloat**: Resolved — Curve pool now has a single `data_provider` parameter instead of 13 fetcher callbacks (Plan 040)
+- **Constructor bloat**: Resolved — Curve pool now has a single `data_provider` parameter instead of 13 fetcher callbacks
 
 ## Migration Path
 
@@ -116,24 +139,32 @@ class CurveDataProvider(Protocol):
 - Builder extraction complete (`CurvePoolBuilder`)
 
 ### Phase 3: Other Pool Types ✅
-- V2/V3/V4/Aerodrome construction is I/O-free (builders fetch data, pass to constructors)
+- V2/V3/V4/Aerodrome/Camelot construction is I/O-free (builders fetch data, pass to constructors)
 - All `ProviderAdapter`-taking methods removed from pool classes (`get_reserves()`, `get_immutable_pool_values()`, `from_chain` classmethods, etc.)
-- Plan 017 complete
 
 ### Phase 4: Cleanup ✅
-- Typed pool builders (`build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool`) emit `DeprecationWarning` — use `build_pool()` instead (Plan 044). Removed by Plan 059.
-- `PoolFamily`/`PoolInvariant` enum naming resolved (Plan 020)
-- Curve fetcher callbacks collapsed into single `CurveDataProvider` seam (Plan 040)
-- V2 variant builders extracted from `V2PoolBuilder` into per-variant builders (Plan 043); V3/V4 builder base classes with shared pure-logic helpers and frozen dataclasses (Plan 060)
-- `ProviderBackend` protocol replaces `EthereumProvider` + `_SyncProviderBackend` mirror (Plan 042); `EthereumProvider` backward-compatibility alias removed (Plan 061); subscription stubs consolidated into `SyncSubscriptionSupport`/`AsyncSubscriptionSupport` mixins (Plan 058)
-- DyCalculator `pool` parameter replaced with `DyCalculationInputs` frozen dataclass; 77 SLF001 errors → 0; calculators are pure consumers of pre-resolved data (Plan 045). `DyCalculationInputs` is a pure value object — all fields are ints, tuples, enums, or None (zero callables); calculators call `stableswap_get_y()` / `stableswap_newton_y()` directly with `EVMRevertError` wrapping (Plan 069).
-- Old optimizer hierarchy deleted: `ArbitrageOptimizer` ABC, `OptimizerResult`/`OptimizerType`, and 7 concrete classes removed (zero production callers); pure Möbius math extracted to `_mobius_math.py` (Plan 053)
-- Curve on-chain caches consolidated into `CurveOnChainCache` (Plan 054), absorbed into `CurveStableswapPool` (Plan 068), then extracted into `PerBlockCache` class with mirror-free design (Plan 077)
-- Deprecated `*Fetcher` protocol classes deleted from `curve/types.py`; superseded by `CurveDataProvider` (Plan 055)
-- Strategy enum factory methods: `make_calculator()` on `SwapStyle`/`MetapoolRateStyle`/`MetapoolUnderlyingStyle`; `PoolStrategies` auto-constructs calculators from enum values (Plan 056)
-- Calculation-time I/O boundary documented: `_build_calculation_inputs` → `_resolve_calculation_inputs_via_io`, `requires_io_at_calculation_time` property (Plan 057)
-- AsyncBot inline I/O methods collapsed: 4 token/ether balance methods routed through `AsyncErc20Builder` instead of duplicating logic inline; AsyncBot 462→401 lines (Plan 065)
-- Type resolution sync/async duplication collapsed: 4 mirror functions → 2 thin wrappers + 2 shared pure functions (`_build_descriptor_from_db_result`, `_descriptor_from_probing_result`); ~56 lines of duplication removed (Plan 066)
+
+Subsequent plans refined the architecture in ways this ADR should record:
+
+- **Fetchers → Data Provider** (Plan 040): Individual fetcher callbacks collapsed
+  into a single `CurveDataProvider` seam — see Alternatives table.
+- **Typed builders → `build_pool()`** (Plans 044, 059): Per-type builder methods
+  replaced by a single `build_pool()` dispatching through the builder registry.
+- **DyCalculator gets `DyCalculationInputs`** (Plans 045, 069): The calculator
+  protocol changed from accepting a `pool` reference to a frozen dataclass of
+  pre-resolved values — eliminating all private-member access from calculators.
+- **Per-block cache gets mirror-free design** (Plans 054, 077): Getter methods
+  resolve their own dependencies inline instead of requiring a mirrored update call.
+- **Provider interface split** (Plans 042, 058, 061): `EthereumProvider` replaced by
+  `ProviderBackend` protocol; subscription stubs consolidated into
+  `SyncSubscriptionSupport`/`AsyncSubscriptionSupport` mixins.
+- **Builder base classes** (Plans 043, 060): V2/Aerodrome/Camelot share
+  `V2BuilderBase`; V3/V4 get separate base classes with frozen dataclasses for
+  immutable/slot0/DB data. Async builders call the same static methods without
+  inheriting.
+- **Calculation-time I/O boundary** (Plan 057): `requires_io_at_calculation_time`
+  property and `_resolve_calculation_inputs_via_io` method name make the I/O
+  boundary explicit (see I/O boundary table below).
 
 ## Testing Patterns
 
@@ -153,34 +184,23 @@ def test_stableswap_swap():
 
 ### Integration Tests (Bot + Live RPC)
 
+Integration tests create a `Bot` with a live RPC provider and verify that builder-constructed pools produce results consistent with on-chain state:
+
 ```python
 def test_curve_pool_live(bot):
-    # Bot creates pool with real fetchers
-    pool = bot.build_pool("0xbEbc4...")
-    # Pool calls fetchers internally on-demand
-    assert pool.virtual_price & gt
-    0
+    pool = bot.build_pool("0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7")
+    assert pool.virtual_price > 0
+    # Further assertions against known on-chain values
 ```
 
 ## Amendment: Calculation-Time I/O Boundary
 
-The original ADR stated all pools are "I/O-free." This is precise for construction time (all immutable parameters are provided by builders), but not for calculation time.
-
-### I/O-Free Status by Pool Family
-
-| Pool Family | Construction I/O-Free | Calculation I/O-Free | Notes |
-|-------------|----------------------|----------------------|-------|
-| V2/V3/V4/Aerodrome/Camelot | ✅ | ✅ | Builders fetch all data; pools are pure logic |
-| Curve (STANDARD, RAW_BALANCE) | ✅ | ✅ | Rate multipliers are static |
-| Curve (lending/crypto/live-admin/metapool) | ✅ | ❌ | `get_dy()` may call `CurveDataProvider` for per-block data |
-| Curve (A ramping) | ✅ | ❌ | `_a()` needs `block_timestamp` via data provider |
-
-The `CurveStableswapPool.requires_io_at_calculation_time` property exposes this distinction at runtime. The `_resolve_calculation_inputs_via_io` method name signals that I/O may occur during calculation input resolution.
+The original decision stated pools are "I/O-free" without qualification. This was precise for construction time but not for calculation time. The I/O boundary table was added to the Decision section to make this distinction structural rather than appended.
 
 ## Related Decisions
 
-- **ADR-002** (planned): Removal of `ConnectionManager` singleton
-- **ADR-003** (planned): `Bot` as the sole entry point for pool creation
+- **ADR-002**: Pool Type Registry as Module-Level Singleton — the `pool_type_registry` singleton allows DEX modules to self-register at import time, independent of any Bot instance that might use those registrations.
+- The `Bot`-as-entry-point pattern and `ConnectionManager` removal are consequences of this ADR, not separate ones.
 
 ## References
 
