@@ -283,7 +283,7 @@ class ArbSolver(Solver):
                 continue
             try:
                 return solver.solve(solve_input)
-            except OptimizationError:
+            except (OptimizationError, OverflowError):
                 continue
 
         raise OptimizationError(
