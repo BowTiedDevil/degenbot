@@ -103,7 +103,7 @@ class FakeCurveDataProvider:
         return self._D
 
     # Alias matching the CurveDataProvider protocol's lowercase `d`
-    def d(self, block_number: int) -> int:  # noqa: ARG002
+    def d(self, block_number: int) -> int:
         return self.D(block_number)
 
     def gamma(self, block_number: int) -> int:  # noqa: ARG002
