@@ -51,27 +51,27 @@ class IoFreePool:
 ### Layers
 
 ```
-┌───────────────────────────────────────┐
-│  Client Code (e.g., Arbitrage Cycle)  │
-│  - Calls pool methods                 │
-│  - Doesn't see data_provider calls     │
-├───────────────────────────────────────┤
-│  Pool Class (e.g., CurveStableswapPool)│
-│  - Pure swap calculation logic         │
-│  - Calls data_provider on-demand       │
-│  - No provider/connection imports      │
-├───────────────────────────────────────┤
-│  CurveDataProvider Protocol            │
-│  - 13 methods: D, gamma, virtual_price,│
-│    base_virtual_price, price_scale,    │
-│    admin_balances, lending_rate, etc.  │
-│  - Single seam replaces 13 fetchers    │
-├───────────────────────────────────────┤
-│  CurveDataProviderImpl (data_provider_impl)│
-│  - Structured class with real methods     │
-│  - Handles I/O, error handling, caching   │
-│  - Takes ProviderAdapter directly         │
-└───────────────────────────────────────┘
+┌─────────────────────────────────----───-─-──┐
+│  Client Code (e.g., Arbitrage Cycle)        │
+│  - Calls pool methods                       │
+│  - Doesn't see data_provider calls          │
+├────────────────────────────────----─────-──-┤
+│  Pool Class (e.g., CurveStableswapPool)     │
+│  - Pure swap calculation logic              │
+│  - Calls data_provider on-demand            │
+│  - No provider/connection imports           │
+├─────────────────────────────────────────────┤
+│  CurveDataProvider Protocol                 │
+│  - 13 methods: D, gamma, virtual_price,     │
+│    base_virtual_price, price_scale,         │
+│    admin_balances, lending_rate, etc.       │
+│  - Single seam replaces 13 fetchers         │
+├───────────────────────────────────────────-─┤
+│  CurveDataProviderImpl (data_provider_impl) │
+│  - Structured class with real methods       │
+│  - Handles I/O, error handling, caching     │
+│  - Takes ProviderAdapter directly           │
+└───────────────────────────────────────-----─┘
 ```
 
 ### Protocol Definitions
@@ -144,7 +144,7 @@ def build(self, pool_address):
 - **SwapAmounts consolidation** — `input_amount()`/`output_amount()` on `AbstractSwapAmounts`; `build_swap_amount()` on pool classes via `ArbitragePathPool` protocol; `_extract_amount_in/out` deleted (Plan 036)
 - **Legacy arbitrage cycles** — moved to `_legacy/` with deprecation warnings; `AbstractArbitrage` and `get_arbitrage_helpers()` deleted (Plan 038)
 - **Bot typed builders deprecated** — `build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool` emit `DeprecationWarning`; use `build_pool()` (Plan 044). Removed by Plan 059.
-- **Functions module** — `functions.py` split into domain-aligned modules: `provider/call_helpers.py`, `provider/log_fetching.py`, `contract/addresses.py`, `calculations/evm_math.py`, `provider/block_helpers.py`; `eip_191_hash` deleted as dead code (Plan 037)
+- **Functions module** — `functions.py` split into domain-aligned modules: `provider/call_helpers.py`, `provider/log_fetching.py`, `contract/addresses.py`, `contract/decoding.py` (`decode_address`), `calculations/evm_math.py`, `provider/block_helpers.py`; `eip_191_hash` deleted as dead code (Plan 037); `decode_address` moved from `cli/aave_utils.py` to `contract/decoding.py` (Plan 075)
 - **CurveDataProviderImpl** — 850-line closure bag (`CurveFetcherFactory`) replaced by structured `CurveDataProviderImpl` (~350 lines) with real methods and shared I/O helpers (Plan 049)
 - **Curve per-block caches** — 10 individual `BoundedCache` fields consolidated into `CurveOnChainCache` (Plan 054), then absorbed into `CurveStableswapPool` as `_cache_*` fields with `_get_cached_*` accessors (Plan 068). Two accessors (`_get_cached_base_cache_updated`, `_get_cached_base_virtual_price`) update side-effect mirrors (`_base_cache_updated_value`, `_base_virtual_price_value`) read by `_get_cached_virtual_price` for base-cache-expiry logic.
 - **Deprecated fetcher protocols** — 8 deprecated `*Fetcher` protocol classes deleted from `curve/types.py`; superseded by `CurveDataProvider` (Plan 055)
@@ -153,6 +153,7 @@ def build(self, pool_address):
 - **Old optimizer hierarchy** — `ArbitrageOptimizer` ABC, `OptimizerResult`/`OptimizerType`, and 7 concrete classes deleted (zero production callers); pure Möbius math extracted to `_mobius_math.py` (Plan 053)
 - **Rust extension GIL discipline & allocation reduction** — removed `py.detach()` from sub-μs functions (tick math, address utils); two-level `CachedAbiTypes` intern (string `Arc<str>` interner + `Arc<CachedAbiTypes>` value return + `Arc<[Arc<str>]>` key); `Arc`-shared `LogFilter` fields; `IntHopState` pre-converted U512 fields; `PyPoolCache` with `parking_lot::Mutex<LruCache>` (10K cap) replacing unbounded `HashMap`; subscription `drain_raw()` for pure-Rust buffer mechanics; concurrency stress tests; `f64_to_u256` 4-limb decomposition fix; criterion benchmarks for ABI decode/encode and Möbius solver (Plan 063)
 - **DyCalculationInputs pure value object** — `get_y`/`newton_y` closure fields removed; replaced with `d_variant`/`y_variant`/`yd_variant`/`a_precision` fields; calculators call `stableswap_get_y()`/`stableswap_newton_y()` directly with `EVMRevertError` wrapping; `DyCalculationInputs` is now a pure value object (zero callables) (Plan 069)
+- **Aave CLI boundary decoupling** — domain types (`ScaledTokenEvent`, `Operation`, `TransactionOperations`, `TransactionValidationError`) moved from `cli/aave_transaction_operations.py` to `aave/operations.py`; `TokenType` moved to `aave/types.py`; `decode_address` moved to `contract/decoding.py`; dead code deleted (`AAVE_EVENT_TOPIC_TO_CATEGORY`, `filter_scaled_events`/`find_first_scaled_event`); `aave/` now has zero `cli/` imports (Plan 075)
 
 ## Migration Guide
 
