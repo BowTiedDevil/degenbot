@@ -46,10 +46,13 @@ class DegenbotConfig(BaseSettings):
         cls,  # noqa: N805
         rpc_dict: dict[ChainId, HttpUrl | WebsocketUrl | Path],
     ) -> dict[ChainId, HttpUrl | WebsocketUrl | Path]:
-        """
-        Validate the endpoints.
+        """Validate the endpoints.
 
         This will convert all file paths to an absolute reference, leaving HTTP and WS URLs as-is.
+
+        Returns:
+            The computed value.
+
         """
         return {
             chain_id: endpoint.expanduser().absolute() if isinstance(endpoint, Path) else endpoint
@@ -58,7 +61,12 @@ class DegenbotConfig(BaseSettings):
 
 
 def load_config_from_file(config_path: Path) -> DegenbotConfig:
-    """Load config from file."""
+    """Load config from file.
+
+    Returns:
+        The computed value.
+
+    """
     return DegenbotConfig.model_validate(
         tomllib.loads(
             config_path.read_text(encoding="utf-8"),

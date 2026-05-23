@@ -1,5 +1,4 @@
-"""
-AsyncBot — the async counterpart to Bot.
+"""AsyncBot — the async counterpart to Bot.
 
 Owns an AsyncConnectionManager and provides async factory/I-O methods.
 Returns the same I/O-free domain objects as Bot.
@@ -53,8 +52,7 @@ if TYPE_CHECKING:
 
 
 class AsyncBot:
-    """
-    Async session object that owns the runtime state for a degenbot run.
+    """Async session object that owns the runtime state for a degenbot run.
 
     Mirrors Bot with AsyncConnectionManager and async factory/I-O methods.
     Returns the same I/O-free domain objects as Bot.
@@ -99,7 +97,12 @@ class AsyncBot:
 
     @classmethod
     def from_config_file(cls) -> AsyncBot:
-        """From config file."""
+        """From config file.
+
+        Returns:
+            An instance wrapping the given config_file.
+
+        """
         return cls(config=_init_config())
 
     def _register_builder(
@@ -116,7 +119,12 @@ class AsyncBot:
         *args: Any,
         **kwargs: Any,
     ) -> M:
-        """Add a pool manager to this bot session. Same as Bot.add_tracker."""
+        """Add a pool manager to this bot session. Same as Bot.add_tracker.
+
+        Returns:
+            The computed value.
+
+        """
         # Inject bot reference
         kwargs["bot"] = self
 
@@ -149,7 +157,12 @@ class AsyncBot:
         chain_id: ChainId | None = None,
         silent: bool = False,
     ) -> Erc20Token:
-        """Fetch token metadata from DB/RPC and construct an I/O-free Erc20Token."""
+        """Fetch token metadata from DB/RPC and construct an I/O-free Erc20Token.
+
+        Returns:
+            The computed value.
+
+        """
         resolved_chain_id = chain_id or self.connections.default_chain_id
         io = AsyncPoolIO(self.connections.get_provider(resolved_chain_id))
         return await self._erc20_builder.build(
@@ -157,7 +170,12 @@ class AsyncBot:
         )
 
     def get_token(self, address: str, *, chain_id: ChainId | None = None) -> Erc20Token | None:
-        """Get a token from the registry (sync — no async I/O)."""
+        """Get a token from the registry (sync — no async I/O).
+
+        Returns:
+            The computed value.
+
+        """
         chain_id = chain_id or self.connections.default_chain_id
         return self.tokens.get(token_address=address, chain_id=chain_id)
 
@@ -176,10 +194,13 @@ class AsyncBot:
         tick_data: dict[int, Any] | None = None,
         state_cache_depth: int = 8,
     ) -> AbstractLiquidityPool:
-        """
-        Build a pool from an address, automatically resolving its type.
+        """Build a pool from an address, automatically resolving its type.
 
         V4 managed pools should use ``build_managed_pool()`` instead.
+
+        Returns:
+            The computed value.
+
         """
         address = get_checksum_address(address)
         chain_id = chain_id or self.connections.default_chain_id
@@ -241,7 +262,12 @@ class AsyncBot:
         io: AsyncPoolIO,
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
-        """Dispatch to the async builder with a typed request."""
+        """Dispatch to the async builder with a typed request.
+
+        Returns:
+            The computed value.
+
+        """
         return await builder.build(address, chain_id=chain_id, io=io, request=request)
 
     # ------------------------------------------------------------------
@@ -267,14 +293,17 @@ class AsyncBot:
         tick_bitmap: dict[int, Any] | None = None,
         tick_data: dict[int, Any] | None = None,
     ) -> UniswapV4Pool:
-        """
-        Build a V4 managed pool from a PoolManager address and pool ID.
+        """Build a V4 managed pool from a PoolManager address and pool ID.
 
         ``address`` is the PoolManager contract. ``pool_id`` identifies the
         pool within the manager.
 
         When the pool is not in the database, ``state_view_address``,
         ``tokens``, ``fee``, ``tick_spacing`` must all be provided.
+
+        Returns:
+            The computed value.
+
         """
         address = get_checksum_address(address)
         chain_id = chain_id or self.connections.default_chain_id
@@ -331,7 +360,12 @@ class AsyncBot:
         factory: ChecksumAddress,
         default_init_hash: str,
     ) -> tuple[str, str]:
-        """Resolve deployer address and pool init-hash from the pool type registry."""
+        """Resolve deployer address and pool init-hash from the pool type registry.
+
+        Returns:
+            The computed value.
+
+        """
         resolved_deployer: str = factory
         resolved_init_hash = default_init_hash
         deployment = pool_type_registry.get_deployment(chain_id, factory)
@@ -352,7 +386,12 @@ class AsyncBot:
         chain_id: ChainId | None = None,
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
-        """Retrieve the ERC-20 balance for the given address."""
+        """Retrieve the ERC-20 balance for the given address.
+
+        Returns:
+            The computed integer value.
+
+        """
         token_address = get_checksum_address(token_address)
         chain_id = chain_id or self.connections.default_chain_id
 
@@ -374,7 +413,12 @@ class AsyncBot:
         chain_id: ChainId | None = None,
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
-        """Retrieve the amount that can be spent by `spender` on behalf of `owner`."""
+        """Retrieve the amount that can be spent by `spender` on behalf of `owner`.
+
+        Returns:
+            The computed integer value.
+
+        """
         token_address = get_checksum_address(token_address)
         chain_id = chain_id or self.connections.default_chain_id
 
@@ -394,7 +438,12 @@ class AsyncBot:
         chain_id: ChainId | None = None,
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
-        """Retrieve the total supply for this token."""
+        """Retrieve the total supply for this token.
+
+        Returns:
+            The computed integer value.
+
+        """
         token_address = get_checksum_address(token_address)
         chain_id = chain_id or self.connections.default_chain_id
 
@@ -414,7 +463,12 @@ class AsyncBot:
         chain_id: ChainId | None = None,
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
-        """Retrieve the native ETH balance for the given address."""
+        """Retrieve the native ETH balance for the given address.
+
+        Returns:
+            The computed integer value.
+
+        """
         chain_id = chain_id or self.connections.default_chain_id
         io = AsyncPoolIO(self.connections.get_provider(chain_id))
         return await self._erc20_builder.get_ether_balance(
@@ -422,5 +476,10 @@ class AsyncBot:
         )
 
     def get_provider(self, *, chain_id: ChainId) -> AsyncProviderAdapter:
-        """Return provider."""
+        """Return provider.
+
+        Returns:
+            The computed value.
+
+        """
         return self.connections.get_provider(chain_id)

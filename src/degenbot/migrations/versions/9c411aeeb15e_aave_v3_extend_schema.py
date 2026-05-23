@@ -1,5 +1,4 @@
-"""
-Aave V3: extend schema.
+"""Aave V3: extend schema.
 
 Revision ID: 9c411aeeb15e
 Revises: 5d2dfe7292b3

@@ -21,8 +21,7 @@ class CurveStableswapPoolTracker(
     AbstractPoolTracker["CurveStableswapPool"],
     pool_factory=None,
 ):
-    """
-    Manages Curve StableSwap pool instances.
+    """Manages Curve StableSwap pool instances.
 
     Tracks Curve pools by address, delegates construction to Bot.build_pool(),
     and supports registry-based discovery.
@@ -47,12 +46,15 @@ class CurveStableswapPoolTracker(
         *,
         silent: bool = False,
     ) -> CurveStableswapPool:
-        """
-        Get a Curve pool from its address.
+        """Get a Curve pool from its address.
 
         If the pool is already tracked, that instance is returned.
         If the pool is in the bot's pool registry, it is tracked and returned.
         Otherwise, a new pool is built via Bot.build_pool().
+
+        Returns:
+            The computed value.
+
         """
         pool_address = get_checksum_address(pool_address)
 
@@ -97,7 +99,12 @@ class CurveStableswapPoolTracker(
         self,
         token_address: ChecksumAddress | str,
     ) -> list[CurveStableswapPool]:
-        """Return all tracked pools that contain the given token."""
+        """Return all tracked pools that contain the given token.
+
+        Returns:
+            A list of results.
+
+        """
         token_address = get_checksum_address(token_address)
         return [
             pool
@@ -106,7 +113,12 @@ class CurveStableswapPoolTracker(
         ]
 
     def __repr__(self) -> str:  # pragma: no cover
-        """Return the canonical string representation."""
+        """Return the canonical string representation.
+
+        Returns:
+            A string representation of the object.
+
+        """
         return (
             f"{self.__class__.__name__}("
             f"chain_id={self._chain_id}, "

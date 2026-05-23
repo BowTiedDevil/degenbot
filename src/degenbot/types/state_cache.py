@@ -45,10 +45,7 @@ class CacheableState(Protocol):
 
 
 class StateCache[T: CacheableState]:
-    """Return block."""
-
-    """
-    Generic temporal state cache for pool state snapshots.
+    """Generic temporal state cache for pool state snapshots.
 
     Owns the deque, the lock, and the temporal navigation methods.
     Pool classes compose with a ``StateCache[TheirPoolState]`` instead

@@ -74,7 +74,12 @@ class CamelotLiquidityPool(CamelotPoolCalc, UniswapV2Pool):
         token_in: Erc20Token | None = None,  # ruff: ignore[ARG002]
         token_out: Erc20Token | None = None,  # ruff: ignore[ARG002]
     ) -> HopType:
-        """Convert to hop state."""
+        """Convert to hop state.
+
+        Returns:
+            The computed value.
+
+        """
         # token_in/token_out unused — 2-token pools determine pair from zero_for_one.
         # Callers should ensure these match pool.token0/pool.token1 if provided.
         state = state_override or self.state

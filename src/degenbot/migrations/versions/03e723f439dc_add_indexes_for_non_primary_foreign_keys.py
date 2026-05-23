@@ -1,5 +1,4 @@
-"""
-Add indexes for non-primary foreign keys.
+"""Add indexes for non-primary foreign keys.
 
 Revision ID: 03e723f439dc
 Revises: b20f5564b3b6

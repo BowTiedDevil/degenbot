@@ -1,5 +1,4 @@
-"""
-State mixin for Curve StableSwap pools.
+"""State mixin for Curve StableSwap pools.
 
 Holds immutable data attributes and read-only properties that access them.
 No calculation logic — calculations stay in CurveStableswapPool.
@@ -27,8 +26,7 @@ if TYPE_CHECKING:
 
 
 class StableswapPoolState:
-    """
-    State for Curve StableSwap pools.
+    """State for Curve StableSwap pools.
 
     Immutable data set at construction:
     - _tokens: the pool's ERC-20 tokens (2 or more)

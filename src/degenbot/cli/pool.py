@@ -123,8 +123,7 @@ def apply_v3_liquidity_updates(
     exchanges_in_scope: set[ExchangeTable],
     session: Session,
 ) -> None:
-    """
-    Apply the liquidity updates to the provided pool.
+    """Apply the liquidity updates to the provided pool.
 
     This function assumes that the liquidity updates are ordered by block number and log index,
     ascending.
@@ -325,8 +324,7 @@ def apply_v4_liquidity_updates(
     pool_manager: PoolManagerTable,
     session: Session,
 ) -> None:
-    """
-    Apply the liquidity updates to the provided pool.
+    """Apply the liquidity updates to the provided pool.
 
     This function assumes that the liquidity updates are ordered by block number and log index,
     ascending.
@@ -853,7 +851,12 @@ def get_events_from_contract(
     address: ChecksumAddress,
     event_hash: HexBytes,
 ) -> list[LogReceipt]:
-    """Return events from contract."""
+    """Return events from contract.
+
+    Returns:
+        A list of results.
+
+    """
     return fetch_logs_retrying(
         provider=provider,
         start_block=start_block,
@@ -869,7 +872,12 @@ def get_v3_liquidity_events(
     end_block: int,
     address: ChecksumAddress | None = None,
 ) -> dict[ChecksumAddress, list[LogReceipt]]:
-    """Fetch new Mint & Burn events for the given range."""
+    """Fetch new Mint & Burn events for the given range.
+
+    Returns:
+        The computed value.
+
+    """
     pool_updates: dict[ChecksumAddress, list[LogReceipt]] = defaultdict(list)
 
     for liquidity_event in fetch_logs_retrying(
@@ -895,7 +903,12 @@ def get_v4_liquidity_events(
     end_block: int,
     address: ChecksumAddress | None = None,
 ) -> dict[HexBytes, list[LogReceipt]]:
-    """Fetch new ModifyLiquidity events for the given range."""
+    """Fetch new ModifyLiquidity events for the given range.
+
+    Returns:
+        The computed value.
+
+    """
     pool_updates: dict[HexBytes, list[LogReceipt]] = defaultdict(list)
 
     for liquidity_event in fetch_logs_retrying(

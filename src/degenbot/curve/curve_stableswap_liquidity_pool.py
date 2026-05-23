@@ -1,5 +1,4 @@
-"""
-Curve StableSwap liquidity pool implementation.
+"""Curve StableSwap liquidity pool implementation.
 
 Implements the Curve StableSwap invariant for V1-style pools including
 plain pools, metapools, lending pools, and crypto pools.
@@ -121,8 +120,7 @@ class CurveStableswapPool(
         # Strategy enums (resolved by builder from pool address)
         strategies: PoolStrategies | None = None,
     ) -> None:
-        """
-        Curve V1 (StableSwap) pool.
+        """Curve V1 (StableSwap) pool.
 
         Constructed from pre-fetched data only. Use Bot.build_pool() to fetch from chain.
 
@@ -258,14 +256,17 @@ class CurveStableswapPool(
         # I/O is done via data_provider injected by Bot.build_pool()
 
     def __repr__(self) -> str:  # pragma: no cover
-        """Return the canonical string representation."""
+        """Return the canonical string representation.
+
+        Returns:
+            A string representation of the object.
+
+        """
         token_string = "-".join([token.symbol for token in self._tokens])
         return f"{self.__class__.__name__}(address={self.address}, tokens={token_string}, fee={100 * self.fee / self.FEE_DENOMINATOR:.2f}%, A={self.a_coefficient})"  # noqa:E501
 
     @property
     def balances(self) -> tuple[int, ...]:
-        """Return the canonical string representation."""
-        """Return a string representation."""
         """Balances."""
         return self.state.balances
 
@@ -288,8 +289,7 @@ class CurveStableswapPool(
 
     @property
     def requires_io_at_calculation_time(self) -> bool:
-        """
-        Whether this pool may call data_provider during swap calculations.
+        """Whether this pool may call data_provider during swap calculations.
 
         Returns True for pools that need per-block on-chain data (D, gamma,
         price_scale, lending rates, admin balances, virtual price for
@@ -331,7 +331,12 @@ class CurveStableswapPool(
     def _fetch_token_balance(
         self, token: Erc20Token, address: ChecksumAddress, *, block_identifier: int | None = None
     ) -> int:
-        """Fetch token balance using the data provider if available."""
+        """Fetch token balance using the data provider if available.
+
+        Returns:
+            The computed integer value.
+
+        """
         if self._data_provider is not None and block_identifier is not None:
             return self._data_provider.token_balance(token.address, address, block_identifier)
         raise MissingCurveData(
@@ -343,7 +348,12 @@ class CurveStableswapPool(
     def _fetch_token_total_supply(
         self, token: Erc20Token, *, block_identifier: int | None = None
     ) -> int:
-        """Fetch token total supply using the data provider if available."""
+        """Fetch token total supply using the data provider if available.
+
+        Returns:
+            The computed integer value.
+
+        """
         if self._data_provider is not None and block_identifier is not None:
             return self._data_provider.token_total_supply(token.address, block_identifier)
         raise MissingCurveData(
@@ -353,7 +363,12 @@ class CurveStableswapPool(
         )
 
     def _resolve_block_number(self, block_identifier: BlockIdentifier | None) -> int:
-        """Resolve a block identifier to an integer. Falls back to data provider if available."""
+        """Resolve a block identifier to an integer. Falls back to data provider if available.
+
+        Returns:
+            The computed integer value.
+
+        """
         if isinstance(block_identifier, int):
             return block_identifier
         if self._data_provider is not None:
@@ -368,7 +383,12 @@ class CurveStableswapPool(
     # ── Per-block cached accessors ──
 
     def _get_cached_block_timestamp(self, block_number: BlockNumber) -> int:
-        """Fetch or retrieve cached block timestamp."""
+        """Fetch or retrieve cached block timestamp.
+
+        Returns:
+            The computed integer value.
+
+        """
         with contextlib.suppress(KeyError):
             return self._cache_block_timestamps[block_number]
         if self._data_provider is None:
@@ -379,7 +399,12 @@ class CurveStableswapPool(
         return result
 
     def _get_cached_contract_d(self, block_number: BlockNumber) -> int:
-        """Fetch or retrieve cached contract D value (crypto pools)."""
+        """Fetch or retrieve cached contract D value (crypto pools).
+
+        Returns:
+            The computed integer value.
+
+        """
         with contextlib.suppress(KeyError):
             return self._cache_contract_D[block_number]
         if self._data_provider is None:
@@ -390,7 +415,12 @@ class CurveStableswapPool(
         return result
 
     def _get_cached_gamma(self, block_number: BlockNumber) -> int:
-        """Fetch or retrieve cached gamma value (crypto pools)."""
+        """Fetch or retrieve cached gamma value (crypto pools).
+
+        Returns:
+            The computed integer value.
+
+        """
         with contextlib.suppress(KeyError):
             return self._cache_gamma[block_number]
         if self._data_provider is None:
@@ -401,7 +431,12 @@ class CurveStableswapPool(
         return result
 
     def _get_cached_price_scale(self, block_number: BlockNumber) -> tuple[int, ...]:
-        """Fetch or retrieve cached price scale (crypto pools)."""
+        """Fetch or retrieve cached price scale (crypto pools).
+
+        Returns:
+            The computed value.
+
+        """
         with contextlib.suppress(KeyError):
             return self._cache_price_scale[block_number]
         if self._data_provider is None:
@@ -412,7 +447,12 @@ class CurveStableswapPool(
         return result
 
     def _get_cached_admin_balances(self, block_number: BlockNumber) -> tuple[int, ...]:
-        """Fetch or retrieve cached admin balances."""
+        """Fetch or retrieve cached admin balances.
+
+        Returns:
+            The computed value.
+
+        """
         with contextlib.suppress(KeyError):
             return self._cache_admin_balances[block_number]
         if self._data_provider is None:
@@ -423,7 +463,12 @@ class CurveStableswapPool(
         return result
 
     def _get_cached_scaled_redemption_price(self, block_number: BlockNumber) -> int:
-        """Fetch or retrieve cached scaled redemption price."""
+        """Fetch or retrieve cached scaled redemption price.
+
+        Returns:
+            The computed integer value.
+
+        """
         with contextlib.suppress(KeyError):
             return self._cache_scaled_redemption_price[block_number]
         if self._data_provider is None:
@@ -437,10 +482,13 @@ class CurveStableswapPool(
         return result
 
     def _get_cached_base_cache_updated(self, block_number: BlockNumber) -> int:
-        """
-        Fetch or retrieve cached base_cache_updated block number.
+        """Fetch or retrieve cached base_cache_updated block number.
 
         Updates _base_cache_updated_value as a side effect.
+
+        Returns:
+            The computed integer value.
+
         """
         with contextlib.suppress(KeyError):
             return self._cache_base_cache_updated[block_number]
@@ -454,10 +502,13 @@ class CurveStableswapPool(
         return result
 
     def _get_cached_base_virtual_price(self, block_number: BlockNumber) -> int:
-        """
-        Fetch or retrieve cached base pool virtual price.
+        """Fetch or retrieve cached base pool virtual price.
 
         Updates _base_virtual_price_value as a side effect.
+
+        Returns:
+            The computed integer value.
+
         """
         with contextlib.suppress(KeyError):
             result = self._cache_base_virtual_price[block_number]
@@ -472,12 +523,15 @@ class CurveStableswapPool(
         return result
 
     def _get_cached_virtual_price(self, block_number: BlockNumber) -> int:
-        """
-        Fetch or retrieve cached virtual price.
+        """Fetch or retrieve cached virtual price.
 
         For metapools, uses base_cache_updated expiry logic:
         - If base cache has expired or is unset, fetches live virtual_price
         - If base cache is still valid, uses cached base_virtual_price
+
+        Returns:
+            The computed integer value.
+
         """
         with contextlib.suppress(KeyError):
             return self._cache_virtual_price[block_number]
@@ -504,7 +558,12 @@ class CurveStableswapPool(
         return base_virtual_price
 
     def _a(self, timestamp: int | None = None) -> int:
-        """Handle ramping A up or down."""
+        """Handle ramping A up or down.
+
+        Returns:
+            The computed integer value.
+
+        """
         if any([
             self.future_a_coefficient is None,
             self.initial_a_coefficient is None,
@@ -549,12 +608,15 @@ class CurveStableswapPool(
         block_identifier: BlockIdentifier | None = None,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        """
-        Simplified method to calculate addition or reduction in token supply at.
+        """Simplified method to calculate addition or reduction in token supply at.
 
         deposit or withdrawal without taking fees into account (but looking at
         slippage).
         Needed to prevent front-running, not for precise calculations!
+
+        Returns:
+            The computed integer value.
+
         """
         n_coins = len(self._tokens)
 
@@ -588,7 +650,12 @@ class CurveStableswapPool(
     def calc_withdraw_one_coin(
         self, _token_amount: int, i: int, block_identifier: BlockIdentifier | None = None
     ) -> tuple[int, ...]:
-        """Calc withdraw one coin."""
+        """Calc withdraw one coin.
+
+        Returns:
+            The computed value.
+
+        """
         block_number = self._resolve_block_number(block_identifier)
 
         block_timestamp = self._get_cached_block_timestamp(block_number)
@@ -618,11 +685,14 @@ class CurveStableswapPool(
         block_number: int,
         override_state: CurveStableswapPoolState | None = None,
     ) -> DyCalculationInputs:
-        """
-        Pre-resolve all data needed by DyCalculator implementations.
+        """Pre-resolve all data needed by DyCalculator implementations.
 
         All I/O, cache lookups, and rate resolution happen here.
         The calculator receives a frozen snapshot — no pool access needed.
+
+        Returns:
+            The computed value.
+
         """
         pool_balances = override_state.balances if override_state is not None else self.balances
 
@@ -756,8 +826,7 @@ class CurveStableswapPool(
         block_identifier: BlockIdentifier | None = None,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        """
-        @notice Calculate the current output dy given input dx.
+        """@notice Calculate the current output dy given input dx.
 
         @dev Index values can be found via the `coins` public getter method
         @param i Index value for the coin to send
@@ -766,6 +835,10 @@ class CurveStableswapPool(
         @return Amount of `j` predicted.
 
         Reference: https://github.com/curveresearch/notes/blob/main/stableswap.pdf
+
+        Returns:
+            The computed integer value.
+
         """
         block_number = self._resolve_block_number(block_identifier)
 
@@ -798,11 +871,14 @@ class CurveStableswapPool(
         block_number: int,
         override_state: CurveStableswapPoolState | None = None,
     ) -> DyCalculationInputs:
-        """
-        Pre-resolve data needed by metapool DyCalculator implementations.
+        """Pre-resolve data needed by metapool DyCalculator implementations.
 
         Extends the base inputs with metapool-specific I/O (virtual price,
         redemption price, base pool reference).
+
+        Returns:
+            The computed value.
+
         """
         inputs = self._resolve_calculation_inputs_via_io(block_number, override_state)
 
@@ -842,11 +918,14 @@ class CurveStableswapPool(
         )
 
     def _get_d(self, _xp: Sequence[int], _amp: int) -> int:
-        """
-        Solve for the Curve stableswap invariant D.
+        """Solve for the Curve stableswap invariant D.
 
         Delegates to the pure function stableswap_get_d. Kept as a thin
         wrapper for backwards compatibility with callers that access pool state.
+
+        Returns:
+            The computed integer value.
+
         """
         try:
             return stableswap_get_d(
@@ -860,11 +939,14 @@ class CurveStableswapPool(
             raise EVMRevertError(error=str(e)) from e
 
     def _get_y(self, i: int, j: int, x: int, xp: Sequence[int]) -> int:
-        """
-        Calculate x[j] if one makes x[i] = x.
+        """Calculate x[j] if one makes x[i] = x.
 
         Delegates to the pure function stableswap_get_y. Resolves amp from
         the pool's A-ramping state and block timestamps before calling.
+
+        Returns:
+            The computed integer value.
+
         """
         amp = (
             self._a(timestamp=self._get_cached_block_timestamp(self.update_block))
@@ -888,10 +970,13 @@ class CurveStableswapPool(
             raise EVMRevertError(error=str(e)) from e
 
     def _get_y_d(self, a: int, i: int, xp: Sequence[int], d: int) -> int:
-        """
-        Calculate y given A, xp, and D.
+        """Calculate y given A, xp, and D.
 
         Delegates to the pure function stableswap_get_y_d.
+
+        Returns:
+            The computed integer value.
+
         """
         try:
             return stableswap_get_y_d(
@@ -912,11 +997,14 @@ class CurveStableswapPool(
         rates: tuple[int, ...],
         block_number: int,
     ) -> tuple[int, ...]:
-        """
-        Select rates based on the pool's lending rate style.
+        """Select rates based on the pool's lending rate style.
 
         Returns rate_multipliers for NONE, or calls the data provider
         for lending pools.
+
+        Returns:
+            The computed value.
+
         """
         if self._strategies.lending_rate_style == LendingRateStyle.NONE:
             return rates
@@ -936,11 +1024,14 @@ class CurveStableswapPool(
         )
 
     def _newton_y(self, ann: int, gamma: int, xp: Sequence[int], d: int, token_index: int) -> int:
-        """
-        Calculate xp[i] given other balances and invariant D using Newton's method.
+        """Calculate xp[i] given other balances and invariant D using Newton's method.
 
         Delegates to the pure function stableswap_newton_y.
         Used by crypto (volatile) Curve pools.
+
+        Returns:
+            The computed integer value.
+
         """
         try:
             return stableswap_newton_y(
@@ -959,10 +1050,13 @@ class CurveStableswapPool(
 
     @staticmethod
     def _reduction_coefficient(x: Sequence[int], fee_gamma: int, n_coins: int) -> int:
-        """
-        fee_gamma / (fee_gamma + (1 - K)) where K = prod(x) / (sum(x) / N)**N.
+        """fee_gamma / (fee_gamma + (1 - K)) where K = prod(x) / (sum(x) / N)**N.
 
         Delegates to the pure function stableswap_reduction_coefficient.
+
+        Returns:
+            The computed integer value.
+
         """
         return stableswap_reduction_coefficient(x, fee_gamma, n_coins)
 
@@ -974,7 +1068,12 @@ class CurveStableswapPool(
         override_state: CurveStableswapPoolState | None = None,
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
-        """Calculate the expected token OUTPUT for a target INPUT at current pool reserves."""
+        """Calculate the expected token OUTPUT for a target INPUT at current pool reserves.
+
+        Returns:
+            The computed integer value.
+
+        """
         block_number = self._resolve_block_number(block_identifier)
 
         if token_in_quantity <= 0:
@@ -1083,7 +1182,12 @@ class CurveStableswapPool(
         token_out: ChecksumAddress,
         state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
-        """Simulate swap."""
+        """Simulate swap.
+
+        Returns:
+            The computed value.
+
+        """
         curve_state: CurveStableswapPoolState | None = None
         if state_override is not None:
             if not isinstance(state_override, CurveStableswapPoolState):
@@ -1129,7 +1233,12 @@ class CurveStableswapPool(
         *,
         zero_for_one: bool,  # ruff: ignore[ARG002]
     ) -> Fraction:
-        """Extract fee."""
+        """Extract fee.
+
+        Returns:
+            The computed value.
+
+        """
         return Fraction(self.fee, self.FEE_DENOMINATOR)
 
     def to_hop_state(
@@ -1140,8 +1249,7 @@ class CurveStableswapPool(
         token_in: Erc20Token | None = None,
         token_out: Erc20Token | None = None,
     ) -> HopType:
-        """
-        Create a hop state for this pool.
+        """Create a hop state for this pool.
 
         For 2-token pools, zero_for_one maps to token[0] -> token[1] direction.
         For N-token pools, pass token_in/token_out to select the pair.
@@ -1149,6 +1257,10 @@ class CurveStableswapPool(
         NOTE: swap_fn is not pickleable for ProcessPoolExecutor. For
         multiprocessing, use constant-product approximation or build
         hop states in the subprocess from pool IDs.
+
+        Returns:
+            The computed value.
+
         """
         state = state_override or self.state
         balances = state.balances

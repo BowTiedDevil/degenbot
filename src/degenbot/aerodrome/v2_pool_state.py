@@ -1,5 +1,4 @@
-"""
-State mixin for Aerodrome V2 pools.
+"""State mixin for Aerodrome V2 pools.
 
 Holds all data attributes (immutable and mutable) and their properties.
 Different from V2PoolState: Aerodrome has a unidirectional fee and a stable flag
@@ -19,8 +18,7 @@ if TYPE_CHECKING:
 
 
 class AerodromeV2PoolState:
-    """
-    State for Aerodrome V2 pools with unidirectional fee and stable/volatile mode.
+    """State for Aerodrome V2 pools with unidirectional fee and stable/volatile mode.
 
     Matches the Aerodrome V2 contract's data model:
     - token0, token1: the paired ERC-20 tokens (immutable)

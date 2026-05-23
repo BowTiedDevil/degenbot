@@ -1,5 +1,4 @@
-"""
-ERC20: add chain ID index.
+"""ERC20: add chain ID index.
 
 Revision ID: 2606a6c7f5ee
 Revises: e0aaad8ad486

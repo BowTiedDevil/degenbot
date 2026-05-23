@@ -1,5 +1,4 @@
-"""
-Calculation mixin for Camelot V2 pools.
+"""Calculation mixin for Camelot V2 pools.
 
 Camelot pools can operate in volatile (constant-product) or stable mode,
 determined at construction time. This mixin wires the correct calculation
@@ -25,8 +24,7 @@ if TYPE_CHECKING:
 
 
 class CamelotPoolCalc(UniswapV2PoolCalc):
-    """
-    Camelot calculations — extends V2PoolCalc with stable swap support.
+    """Camelot calculations — extends V2PoolCalc with stable swap support.
 
     Adds:
     - fee_denominator: Camelot uses integer fee values with a denominator
@@ -59,7 +57,12 @@ class CamelotPoolCalc(UniswapV2PoolCalc):
         token_in_quantity: int,
         override_state: UniswapV2PoolState | None = None,
     ) -> int:
-        """Calculate expected token output — delegates to pre-wired strategy."""
+        """Calculate expected token output — delegates to pre-wired strategy.
+
+        Returns:
+            The computed integer value.
+
+        """
         return self._calc_tokens_out_fn(
             token_in=token_in,
             token_in_quantity=token_in_quantity,
@@ -72,7 +75,12 @@ class CamelotPoolCalc(UniswapV2PoolCalc):
         token_in_quantity: int,
         override_state: UniswapV2PoolState | None = None,
     ) -> int:
-        """Camelot-specific stable swap calculation."""
+        """Camelot-specific stable swap calculation.
+
+        Returns:
+            The computed integer value.
+
+        """
         if override_state is not None:  # pragma: no cover
             pass  # logger.debug(f"State overrides applied: {override_state}")
 

@@ -1,5 +1,4 @@
-"""
-Add unique index.
+"""Add unique index.
 
 Revision ID: d1f98e2c3b18
 Revises: a4f59783919f

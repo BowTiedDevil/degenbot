@@ -46,10 +46,7 @@ class ApprovalStrategy(Protocol):
 
 @runtime_checkable
 class PayloadComposer(Protocol):
-    """Approvals for."""
-
-    """
-    Pluggable call composition.
+    """Pluggable call composition.
 
     Given the list of encoded calls, compose them into the
     format a target contract expects.
@@ -61,8 +58,6 @@ class PayloadComposer(Protocol):
 
 
 class NoApprovals:
-    """Compose."""
-
     """Approval strategy that adds no approval calls."""
 
     def approvals_for(  # noqa: PLR6301
@@ -99,15 +94,7 @@ def generate_payloads(
     approval_strategy: ApprovalStrategy | None = None,
     composer: PayloadComposer | None = None,
 ) -> list[EncodedCall]:
-    """Compose.
-
-    Returns:
-        The computed value.
-
-    """
-    """Compose."""
-    """
-    Generate encoded swap payloads for an arbitrage path.
+    """Generate encoded swap payloads for an arbitrage path.
 
     Pipeline:
     1. Encode each swap via its SwapAmounts.encode() method
@@ -119,6 +106,9 @@ def generate_payloads(
         recipient: Address that receives swap output.
         approval_strategy: Injects approval calls. Default: NoApprovals.
         composer: Composes final call list. Default: FlatComposer.
+
+    Returns:
+        A list of results.
 
     """
     if approval_strategy is None:

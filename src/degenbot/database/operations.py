@@ -52,7 +52,12 @@ def backup_sqlite_database(
 
 
 def _get_sqlite_db_string(db_path: pathlib.Path) -> str:
-    """Get the SQLite database string for a path, handling :memory: specially."""
+    """Get the SQLite database string for a path, handling :memory: specially.
+
+    Returns:
+        The computed string value.
+
+    """
     if db_path.name == ":memory:":
         return ":memory:"
     return str(db_path.absolute())
@@ -105,7 +110,12 @@ def upgrade_existing_sqlite_database(database_path: pathlib.Path) -> None:
 
 
 def get_scoped_sqlite_session(database_path: pathlib.Path) -> scoped_session[Session]:
-    """Return scoped sqlite session."""
+    """Return scoped sqlite session.
+
+    Returns:
+        The computed value.
+
+    """
     return scoped_session(
         session_factory=sessionmaker(
             bind=create_engine(
@@ -119,7 +129,12 @@ def get_scoped_sqlite_session(database_path: pathlib.Path) -> scoped_session[Ses
 
 
 def get_alembic_config(database_path: pathlib.Path | None = None) -> Config:
-    """Return alembic config."""
+    """Return alembic config.
+
+    Returns:
+        The computed value.
+
+    """
     cfg = Config()
     if database_path is None:
         msg = "database_path is required. Pass it explicitly or use Bot.config.database.path"

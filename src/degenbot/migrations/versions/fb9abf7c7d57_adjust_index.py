@@ -1,5 +1,4 @@
-"""
-adjust index.
+"""adjust index.
 
 Revision ID: fb9abf7c7d57
 Revises: 2afcff276d90

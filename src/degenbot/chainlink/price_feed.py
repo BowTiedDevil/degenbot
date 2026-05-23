@@ -14,8 +14,7 @@ if TYPE_CHECKING:
 
 
 class ChainlinkPriceContract:
-    """
-    Represents an on-chain Chainlink price oracle.
+    """Represents an on-chain Chainlink price oracle.
 
     Constructed with the oracle address and chain_id. The ``price`` property fetches
     the current price and decimals on access.

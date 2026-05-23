@@ -1,5 +1,4 @@
-"""
-Infrastructure and token exceptions.
+"""Infrastructure and token exceptions.
 
 Includes exceptions for:
 - RPC connections (DegenbotConnectionError, ConnectionTimeout, ...)
@@ -105,8 +104,7 @@ class BackupExists(DegenbotError):
 
 
 class AnvilError(DegenbotError):
-    """
-    Raised on errors resulting from failed calls to Anvil via JSON-RPC.
+    """Raised on errors resulting from failed calls to Anvil via JSON-RPC.
 
     This exception is specifically for errors that occur when making RPC calls
     to an Anvil instance, such as invalid method calls, parameter errors,
@@ -143,8 +141,7 @@ class SubscriptionError(DegenbotError):
 
 
 class SubscriptionNotSupported(SubscriptionError):
-    """
-    Raised when subscribe_*() is called on a provider that doesn't support.
+    """Raised when subscribe_*() is called on a provider that doesn't support.
 
     eth_subscribe (e.g., HTTP transport).
     """

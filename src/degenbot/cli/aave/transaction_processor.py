@@ -1,5 +1,4 @@
-"""
-Transaction processing orchestration for Aave V3.
+"""Transaction processing orchestration for Aave V3.
 
 This module contains the main transaction processing orchestrator that handles:
 - Pre-processing discount updates

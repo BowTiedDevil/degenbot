@@ -1,5 +1,4 @@
-"""
-Rename pool hash column, add unique constraint.
+"""Rename pool hash column, add unique constraint.
 
 Revision ID: a4f59783919f
 Revises: 3199199def8c

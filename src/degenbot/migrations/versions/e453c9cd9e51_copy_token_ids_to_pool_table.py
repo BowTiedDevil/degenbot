@@ -1,5 +1,4 @@
-"""
-Copy token IDs to pool table.
+"""Copy token IDs to pool table.
 
 Revision ID: e453c9cd9e51
 Revises: bbb8d61cef9c

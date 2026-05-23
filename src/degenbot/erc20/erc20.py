@@ -27,7 +27,12 @@ def get_token_from_database(
     chain_id: int,
     session: Session | scoped_session[Session],
 ) -> Erc20TokenTable | None:
-    """Return token from database."""
+    """Return token from database.
+
+    Returns:
+        The computed value.
+
+    """
     return session.scalar(
         select(Erc20TokenTable).where(
             Erc20TokenTable.address == token,
@@ -42,8 +47,7 @@ UNKNOWN_DECIMALS = 18
 
 
 class Erc20Token(AbstractErc20Token):
-    """
-    An ERC-20 token contract.
+    """An ERC-20 token contract.
 
     Constructed from pre-fetched data only. Use ``Bot.build_erc20token()`` to fetch from chain.
     Balance, approval, and total supply queries go through ``Bot.get_token_balance()`` etc.
@@ -83,7 +87,12 @@ class Erc20Token(AbstractErc20Token):
     # -- Cache accessors (dictionary operations, no I/O) --
 
     def get_cached_balance(self, address: ChecksumAddress, block_number: int) -> int | None:
-        """Return cached balance."""
+        """Return cached balance.
+
+        Returns:
+            The computed value.
+
+        """
         cache = self._cached_balance.get(address, BoundedCache(max_items=self._state_cache_depth))
         return cache.get(block_number)
 
@@ -96,7 +105,12 @@ class Erc20Token(AbstractErc20Token):
     def get_cached_approval(
         self, block_number: int, owner: ChecksumAddress, spender: ChecksumAddress
     ) -> int | None:
-        """Return cached approval."""
+        """Return cached approval.
+
+        Returns:
+            The computed value.
+
+        """
         return self._cached_approval.get((block_number, owner, spender))
 
     def set_cached_approval(
@@ -106,7 +120,12 @@ class Erc20Token(AbstractErc20Token):
         self._cached_approval[block_number, owner, spender] = amount
 
     def get_cached_total_supply(self, block_number: int) -> int | None:
-        """Return cached total supply."""
+        """Return cached total supply.
+
+        Returns:
+            The computed value.
+
+        """
         return self._cached_total_supply.get(block_number)
 
     def set_cached_total_supply(self, block_number: int, total_supply: int) -> None:
@@ -119,7 +138,12 @@ class Erc20Token(AbstractErc20Token):
     def fetch_name_symbol_decimals_batched(
         address: ChecksumAddress, provider: ProviderAdapter
     ) -> tuple[str, str, int]:
-        """Fetch token name, symbol, and decimals via batched RPC calls."""
+        """Fetch token name, symbol, and decimals via batched RPC calls.
+
+        Returns:
+            The computed value.
+
+        """
         name_calldata = encode_function_calldata(
             function_prototype="name()",
             function_arguments=None,
@@ -147,7 +171,12 @@ class Erc20Token(AbstractErc20Token):
     def fetch_name(
         address: ChecksumAddress, provider: ProviderAdapter, func_prototype: str = "name()"
     ) -> str:
-        """Fetch token name via RPC call."""
+        """Fetch token name via RPC call.
+
+        Returns:
+            The computed string value.
+
+        """
         result = provider.call(
             to=address,
             data=encode_function_calldata(
@@ -167,7 +196,12 @@ class Erc20Token(AbstractErc20Token):
     def fetch_symbol(
         address: ChecksumAddress, provider: ProviderAdapter, func_prototype: str = "symbol()"
     ) -> str:
-        """Fetch token symbol via RPC call."""
+        """Fetch token symbol via RPC call.
+
+        Returns:
+            The computed string value.
+
+        """
         result = provider.call(
             to=address,
             data=encode_function_calldata(
@@ -187,7 +221,12 @@ class Erc20Token(AbstractErc20Token):
     def fetch_decimals(
         address: ChecksumAddress, provider: ProviderAdapter, func_prototype: str = "decimals()"
     ) -> int:
-        """Fetch token decimals via RPC call."""
+        """Fetch token decimals via RPC call.
+
+        Returns:
+            The computed integer value.
+
+        """
         (result,) = raw_call(
             provider,
             address=address,
@@ -205,7 +244,12 @@ class Erc20Token(AbstractErc20Token):
         provider: ProviderAdapter,
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
-        """Fetch total supply via RPC call."""
+        """Fetch total supply via RPC call.
+
+        Returns:
+            The computed integer value.
+
+        """
         block: int | None = None
         if block_identifier is not None and isinstance(block_identifier, int):
             block = block_identifier

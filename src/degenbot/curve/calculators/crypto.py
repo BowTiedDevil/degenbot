@@ -1,5 +1,4 @@
-"""
-Crypto pool DyCalculator.
+"""Crypto pool DyCalculator.
 
 CRYPTO: Newton's method, dynamic fee, price_scale.
 """
@@ -19,8 +18,7 @@ from degenbot.exceptions.pool import EVMRevertError
 
 @dataclass(frozen=True, slots=True)
 class CryptoDyCalculator:
-    """
-    CRYPTO: Newton's method for y, dynamic fee, price_scale.
+    """CRYPTO: Newton's method for y, dynamic fee, price_scale.
 
     Used by Curve tricrypto and volatile pools.
     """
@@ -36,7 +34,12 @@ class CryptoDyCalculator:
         inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        """Calculate."""
+        """Calculate.
+
+        Returns:
+            The computed integer value.
+
+        """
         assert inputs.d is not None, "Crypto pool requires d in inputs"
         assert inputs.gamma is not None, "Crypto pool requires gamma in inputs"
         assert inputs.price_scale is not None, "Crypto pool requires price_scale in inputs"

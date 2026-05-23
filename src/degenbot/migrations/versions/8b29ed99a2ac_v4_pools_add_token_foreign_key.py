@@ -1,5 +1,4 @@
-"""
-V4 pools: add token foreign key.
+"""V4 pools: add token foreign key.
 
 Revision ID: 8b29ed99a2ac
 Revises: 50b39bafa0be

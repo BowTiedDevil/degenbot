@@ -1,5 +1,4 @@
-"""
-Live-admin DyCalculator variants.
+"""Live-admin DyCalculator variants.
 
 Two parameterized calculators cover the four live-admin swap styles:
 
@@ -28,7 +27,12 @@ if TYPE_CHECKING:
 
 
 def _dynamic_fee(xpi: int, xpj: int, _fee: int, _feemul: int, fee_denominator: int) -> int:
-    """Compute dynamic fee for offpeg pools."""
+    """Compute dynamic fee for offpeg pools.
+
+    Returns:
+        The computed integer value.
+
+    """
     if _feemul <= fee_denominator:
         return _fee
     xps2 = (xpi + xpj) ** 2
@@ -46,8 +50,7 @@ class PrecisionMode(Enum):
 
 @dataclass(frozen=True, slots=True)
 class LiveAdminDynamicDyCalculator:
-    """
-    Live-admin dynamic-fee dy calculator.
+    """Live-admin dynamic-fee dy calculator.
 
     Parameterized by ``precision_mode``:
 
@@ -70,7 +73,12 @@ class LiveAdminDynamicDyCalculator:
         inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        """Calculate."""
+        """Calculate.
+
+        Returns:
+            The computed integer value.
+
+        """
         assert inputs.effective_balances is not None
 
         if self.precision_mode is PrecisionMode.PRECISION_MULTIPLIERS:

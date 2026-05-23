@@ -1,5 +1,4 @@
-"""
-User database operations for Aave V3.
+"""User database operations for Aave V3.
 
 Functions for querying, creating, and managing AaveV3User records.
 """
@@ -22,10 +21,13 @@ def get_gho_vtoken_revision(
     session: Session,
     market: AaveV3Market,
 ) -> int | None:
-    """
-    Get the GHO vToken revision for the given market.
+    """Get the GHO vToken revision for the given market.
 
     Queries the AaveV3Asset table to get the v_token_revision for the GHO asset.
+
+    Returns:
+        The computed value.
+
     """
     gho_asset = session.scalar(
         select(AaveGhoToken)
@@ -52,7 +54,12 @@ def is_discount_supported(
     session: Session,
     market: AaveV3Market,
 ) -> bool:
-    """Check if GHO discount mechanism is supported."""
+    """Check if GHO discount mechanism is supported.
+
+    Returns:
+        The computed boolean value.
+
+    """
     revision = get_gho_vtoken_revision(session, market)
     return revision is not None and revision < GHO_DISCOUNT_DEPRECATION_REVISION
 
@@ -63,8 +70,7 @@ def get_or_create_user(
     user_address: ChecksumAddress,
     block_number: int,
 ) -> AaveV3User:
-    """
-    Get existing user or create new one with default e_mode.
+    """Get existing user or create new one with default e_mode.
 
     Uses the transaction context's user_cache to avoid repeated database queries.
     New users are created on-demand and added to the cache.
@@ -72,6 +78,10 @@ def get_or_create_user(
     When creating a new user, if w3 and block_number are provided and the user
     has an existing GHO debt position, their discount percent will be fetched
     from the contract to properly initialize their gho_discount value.
+
+    Returns:
+        The computed value.
+
     """
     # User not in cache - query database (this handles the edge case where
     # a user was added by a concurrent transaction or cache wasn't pre-filled)

@@ -1,5 +1,4 @@
-"""
-Token processing functions for Aave V3.
+"""Token processing functions for Aave V3.
 
 This module contains functions for processing token mint/burn events and
 updating user positions. It delegates to revision-specific processors for
@@ -52,8 +51,7 @@ def _process_scaled_token_operation(
     scaled_token_revision: int,
     position: "AaveV3CollateralPosition | AaveV3DebtPosition",
 ) -> UserOperation:
-    """
-    Determine the user operation for scaled token events and apply the appropriate delta to the.
+    """Determine the user operation for scaled token events and apply the appropriate delta to the.
 
     position balance.
 
@@ -63,6 +61,9 @@ def _process_scaled_token_operation(
         event: The scaled token event data
         scaled_token_revision: The token contract revision
         position: The user's position to update
+
+    Returns:
+        The computed value.
 
     """
     # Determine token type for logging
@@ -160,14 +161,17 @@ def calculate_gho_discount_rate(
     debt_balance: int,
     discount_token_balance: int,
 ) -> int:
-    """
-    Calculate the GHO discount rate locally.
+    """Calculate the GHO discount rate locally.
 
     Delegates to GhoMath.calculate_discount_rate which mirrors the logic from
     the GhoDiscountRateStrategy contract at mainnet address
     0x4C38Ec4D1D2068540DfC11DFa4de41F733DDF812.
 
     Returns the discount rate in basis points (10000 = 100.00%).
+
+    Returns:
+        The computed integer value.
+
     """
     return GhoMath.calculate_discount_rate(
         debt_balance=debt_balance,
@@ -183,8 +187,7 @@ def _refresh_discount_rate(
     debt_index: int,
     math_libs: MathLibraries,
 ) -> None:
-    """
-    Calculate and update the user's GHO discount rate.
+    """Calculate and update the user's GHO discount rate.
 
     Calculates the debt token balance from scaled balance and index, then
     computes the discount rate locally using the same logic as the GhoDiscountRateStrategy
@@ -204,8 +207,7 @@ def _calculate_mint_to_treasury_scaled_amount(
     scaled_event: ScaledTokenEvent,
     operation: Operation,
 ) -> int:
-    """
-    Calculate scaled amount for MINT_TO_TREASURY operations.
+    """Calculate scaled amount for MINT_TO_TREASURY operations.
 
     Delegates to PoolMath for revision-aware calculation. This ensures
     the correct rounding mode is used based on Pool revision.
@@ -239,8 +241,7 @@ def _process_deficit_coverage_operation(
     operation: Operation,
     tx_context: TransactionContext,
 ) -> None:
-    """
-    Process DEFICIT_COVERAGE operations atomically.
+    """Process DEFICIT_COVERAGE operations atomically.
 
     DEFICIT_COVERAGE operations contain paired Transfer + Burn events that occur
     during Umbrella protocol's deficit coverage operations. These must be processed
@@ -286,8 +287,7 @@ def _process_deficit_coverage_burn(
     tx_context: TransactionContext,
     scaled_event: ScaledTokenEvent,
 ) -> None:
-    """
-    Process a burn event within a DEFICIT_COVERAGE operation.
+    """Process a burn event within a DEFICIT_COVERAGE operation.
 
     Unlike regular burns, deficit coverage burns don't need enrichment validation
     because the amount includes interest that was accrued between the transfer
@@ -490,8 +490,7 @@ def _process_debt_mint_with_match(
     scaled_event: ScaledTokenEvent,
     enriched_event: EnrichedScaledTokenEvent,
 ) -> None:
-    """
-    Process debt (vToken) mint with operation match.
+    """Process debt (vToken) mint with operation match.
 
     Note: In REPAY operations, a Mint event is emitted when interest > repayment.
     In this case, the Mint event represents the net effect of:
@@ -708,8 +707,7 @@ def _process_debt_mint_with_match(
 
 
 def _is_bad_debt_liquidation(user: "AaveV3User", tx_context: TransactionContext) -> bool:
-    """
-    Check if this transaction contains a bad debt liquidation for the user.
+    """Check if this transaction contains a bad debt liquidation for the user.
 
     Bad debt liquidations emit a DEFICIT_CREATED event for the user, indicating
     the protocol is writing off debt that cannot be covered by collateral.
@@ -720,6 +718,10 @@ def _is_bad_debt_liquidation(user: "AaveV3User", tx_context: TransactionContext)
             address indexed debtAsset,
             uint256 amountCreated
         );
+
+    Returns:
+        The computed boolean value.
+
     """
     for evt in tx_context.events:
         if evt["topics"][0] == AaveV3PoolEvent.DEFICIT_CREATED.value:

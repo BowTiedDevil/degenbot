@@ -106,8 +106,7 @@ class UniswapFeeMixin:
 
 
 class UniswapV2PoolTableBase(LiquidityPoolTable, UniswapFeeMixin):
-    """
-    Abstract parent for all Uniswap V2 variants.
+    """Abstract parent for all Uniswap V2 variants.
 
     It may be used to identify concrete subclasses at runtime, but otherwise is not useful for
     performing database queries.
@@ -184,8 +183,7 @@ class UniswapV2PoolTable(UniswapV2PoolTableBase):
 
 
 class UniswapV3PoolTableBase(LiquidityPoolTable, UniswapFeeMixin):
-    """
-    Abstract parent for all Uniswap V3 variants.
+    """Abstract parent for all Uniswap V3 variants.
 
     It may be used to identify concrete subclasses at runtime.
     """
@@ -200,7 +198,12 @@ class UniswapV3PoolTableBase(LiquidityPoolTable, UniswapFeeMixin):
     @declared_attr
     @classmethod
     def liquidity_positions(cls) -> Mapped[list[LiquidityPositionTable]]:
-        """Liquidity positions."""
+        """Liquidity positions.
+
+        Returns:
+            The computed value.
+
+        """
         return relationship(
             "LiquidityPositionTable",
             cascade="all, delete",
@@ -209,7 +212,12 @@ class UniswapV3PoolTableBase(LiquidityPoolTable, UniswapFeeMixin):
     @declared_attr
     @classmethod
     def initialization_maps(cls) -> Mapped[list[InitializationMapTable]]:
-        """Map initialization records."""
+        """Map initialization records.
+
+        Returns:
+            The computed value.
+
+        """
         return relationship(
             "InitializationMapTable",
             cascade="all, delete",
@@ -343,8 +351,7 @@ class ManagedLiquidityPoolTable(Base):
 
 
 class UniswapV4PoolTableBase(ManagedLiquidityPoolTable):
-    """
-    Abstract parent for all Uniswap V4 variants.
+    """Abstract parent for all Uniswap V4 variants.
 
     It should not be instantiated directly, but may be used to query and select child classes.
     """
@@ -368,7 +375,12 @@ class UniswapV4PoolTableBase(ManagedLiquidityPoolTable):
     @declared_attr
     @classmethod
     def liquidity_positions(cls) -> Mapped[list[ManagedPoolLiquidityPositionTable]]:
-        """Liquidity positions."""
+        """Liquidity positions.
+
+        Returns:
+            The computed value.
+
+        """
         return relationship(
             "ManagedPoolLiquidityPositionTable",
             cascade="all, delete",
@@ -377,7 +389,12 @@ class UniswapV4PoolTableBase(ManagedLiquidityPoolTable):
     @declared_attr
     @classmethod
     def initialization_maps(cls) -> Mapped[list[ManagedPoolInitializationMapTable]]:
-        """Map initialization records."""
+        """Map initialization records.
+
+        Returns:
+            The computed value.
+
+        """
         return relationship(
             "ManagedPoolInitializationMapTable",
             cascade="all, delete",
@@ -386,7 +403,12 @@ class UniswapV4PoolTableBase(ManagedLiquidityPoolTable):
     @declared_attr
     @classmethod
     def currency0(cls) -> Mapped[Erc20TokenTable]:
-        """Currency0."""
+        """Currency0.
+
+        Returns:
+            The computed value.
+
+        """
         return relationship(
             "Erc20TokenTable",
             foreign_keys=cls.currency0_id,
@@ -395,7 +417,12 @@ class UniswapV4PoolTableBase(ManagedLiquidityPoolTable):
     @declared_attr
     @classmethod
     def currency1(cls) -> Mapped[Erc20TokenTable]:
-        """Currency1."""
+        """Currency1.
+
+        Returns:
+            The computed value.
+
+        """
         return relationship(
             "Erc20TokenTable",
             foreign_keys=cls.currency1_id,

@@ -1,5 +1,4 @@
-"""
-Port of Balancer V2 StableMath library.
+"""Port of Balancer V2 StableMath library.
 
 Solidity source:
 https://github.com/balancer/balancer-v2-monorepo/blob/master/pkg/pool-stable/contracts/StableMath.sol
@@ -54,12 +53,15 @@ def _calculate_invariant(
     amplification_parameter: int,
     balances: list[int],
 ) -> int:
-    """
-    Compute the invariant given the current balances, using Newton-Raphson approximation.
+    """Compute the invariant given the current balances, using Newton-Raphson approximation.
 
     The amplification parameter equals: A * n^(n-1)
 
     Always rounds down, to match Vyper's arithmetic (which always truncates).
+
+    Returns:
+        The computed integer value.
+
     """
     sum_ = 0
     num_tokens = len(balances)
@@ -106,8 +108,7 @@ def _calculate_invariant_deployed(
     *,
     round_up: bool,
 ) -> int:
-    """
-    Compute the invariant using the DEPLOYED contract's implementation.
+    """Compute the invariant using the DEPLOYED contract's implementation.
 
     This matches the deployed MetaStablePool and ComposableStablePool contracts exactly.
     The deployed contracts use a `roundUp` parameter and P_D accumulation
@@ -116,6 +117,10 @@ def _calculate_invariant_deployed(
 
     The deployed MetaStablePool calls this with round_up=True for swaps.
     The deployed ComposableStablePool also calls with round_up=True for swaps.
+
+    Returns:
+        The computed integer value.
+
     """
     sum_ = 0
     num_tokens = len(balances)
@@ -171,12 +176,15 @@ def _calc_out_given_in(  # noqa: PLR0917
     token_amount_in: int,
     invariant: int,
 ) -> int:
-    """
-    Compute how many tokens can be taken out of a pool if tokenAmountIn are sent,.
+    """Compute how many tokens can be taken out of a pool if tokenAmountIn are sent,.
 
     given the current balances and invariant.
 
     Amount out, so we round down overall.
+
+    Returns:
+        The computed integer value.
+
     """
     # Add tokenAmountIn to the input balance
     balances[token_index_in] += token_amount_in
@@ -204,12 +212,15 @@ def _calc_in_given_out(  # noqa: PLR0917
     token_amount_out: int,
     invariant: int,
 ) -> int:
-    """
-    Compute how many tokens must be sent to a pool if tokenAmountOut are sent,.
+    """Compute how many tokens must be sent to a pool if tokenAmountOut are sent,.
 
     given the current balances and invariant.
 
     Amount in, so we round up overall.
+
+    Returns:
+        The computed integer value.
+
     """
     # Subtract tokenAmountOut from the output balance
     balances[token_index_out] -= token_amount_out
@@ -235,12 +246,15 @@ def _get_token_balance_given_invariant_and_all_other_balances(
     invariant: int,
     token_index: int,
 ) -> int:
-    """
-    Calculate the balance of a given token (tokenIndex) given all the other.
+    """Calculate the balance of a given token (tokenIndex) given all the other.
 
     balances and the invariant, using Newton-Raphson iteration.
 
     Rounds result up overall.
+
+    Returns:
+        The computed integer value.
+
     """
     n = len(balances)
     amp_times_total = amplification_parameter * n
@@ -290,7 +304,12 @@ def _calc_bpt_out_given_exact_tokens_in(  # noqa: PLR0917
     current_invariant: int,
     swap_fee_percentage: int,
 ) -> int:
-    """Calculate BPT out for exact tokens in, rounding down (FixedPoint operations)."""
+    """Calculate BPT out for exact tokens in, rounding down (FixedPoint operations).
+
+    Returns:
+        The computed integer value.
+
+    """
     sum_balances = 0
     for i in range(len(balances)):
         sum_balances += balances[i]
@@ -339,7 +358,12 @@ def _calc_token_in_given_exact_bpt_out(  # noqa: PLR0917
     current_invariant: int,
     swap_fee_percentage: int,
 ) -> int:
-    """Calculate token in for exact BPT out, rounding up (FixedPoint operations)."""
+    """Calculate token in for exact BPT out, rounding up (FixedPoint operations).
+
+    Returns:
+        The computed integer value.
+
+    """
     new_invariant = mul_up(
         div_up(bpt_total_supply + bpt_amount_out, bpt_total_supply),
         current_invariant,
@@ -374,7 +398,12 @@ def _calc_bpt_in_given_exact_tokens_out(  # noqa: PLR0917
     current_invariant: int,
     swap_fee_percentage: int,
 ) -> int:
-    """Calculate BPT in for exact tokens out, rounding up (FixedPoint operations)."""
+    """Calculate BPT in for exact tokens out, rounding up (FixedPoint operations).
+
+    Returns:
+        The computed integer value.
+
+    """
     sum_balances = 0
     for i in range(len(balances)):
         sum_balances += balances[i]
@@ -426,7 +455,12 @@ def _calc_token_out_given_exact_bpt_in(  # noqa: PLR0917
     current_invariant: int,
     swap_fee_percentage: int,
 ) -> int:
-    """Calculate token out for exact BPT in, rounding down (FixedPoint operations)."""
+    """Calculate token out for exact BPT in, rounding down (FixedPoint operations).
+
+    Returns:
+        The computed integer value.
+
+    """
     new_invariant = mul_up(
         div_up(bpt_total_supply - bpt_amount_in, bpt_total_supply),
         current_invariant,
@@ -460,7 +494,12 @@ def _calc_tokens_out_given_exact_bpt_in(
     bpt_amount_in: int,
     bpt_total_supply: int,
 ) -> list[int]:
-    """Calculate tokens out for exact BPT in, proportionally (FixedPoint operations)."""
+    """Calculate tokens out for exact BPT in, proportionally (FixedPoint operations).
+
+    Returns:
+        A list of results.
+
+    """
     bpt_ratio = div_down(bpt_amount_in, bpt_total_supply)
 
     return [mul_down(balances[i], bpt_ratio) for i in range(len(balances))]
@@ -473,7 +512,12 @@ def _calc_due_token_protocol_swap_fee_amount(
     token_index: int,
     protocol_swap_fee_percentage: int,
 ) -> int:
-    """Calculate due token protocol swap fee amount, rounding down."""
+    """Calculate due token protocol swap fee amount, rounding down.
+
+    Returns:
+        The computed integer value.
+
+    """
     final_balance_fee_token = _get_token_balance_given_invariant_and_all_other_balances(
         amplification_parameter,
         balances,
@@ -495,7 +539,12 @@ def _get_rate(
     amp: int,
     supply: int,
 ) -> int:
-    """Get the BPT rate, rounding down."""
+    """Get the BPT rate, rounding down.
+
+    Returns:
+        The computed integer value.
+
+    """
     invariant = _calculate_invariant(amp, balances)
     return div_down(invariant, supply)
 
@@ -504,14 +553,24 @@ def _get_rate(
 
 
 def _math_div_down(a: int, b: int) -> int:
-    """Plain integer division rounding down, matching Solidity's Math.divDown."""
+    """Plain integer division rounding down, matching Solidity's Math.divDown.
+
+    Returns:
+        The computed integer value.
+
+    """
     if b == 0:
         raise EVMRevertError(error="ZERO_DIVISION")
     return a // b
 
 
 def _math_div_up(a: int, b: int) -> int:
-    """Plain integer division rounding up, matching Solidity's Math.divUp."""
+    """Plain integer division rounding up, matching Solidity's Math.divUp.
+
+    Returns:
+        The computed integer value.
+
+    """
     if b == 0:
         raise EVMRevertError(error="ZERO_DIVISION")
     if a == 0:
@@ -520,15 +579,23 @@ def _math_div_up(a: int, b: int) -> int:
 
 
 def _math_mul(a: int, b: int) -> int:
-    """Plain integer multiplication, matching Solidity's Math.mul."""
+    """Plain integer multiplication, matching Solidity's Math.mul.
+
+    Returns:
+        The computed integer value.
+
+    """
     return a * b
 
 
 def _math_div(a: int, b: int, round_up: bool) -> int:  # noqa: FBT001
-    """
-    Plain integer division with rounding direction, matching Solidity's Math.div.
+    """Plain integer division with rounding direction, matching Solidity's Math.div.
 
     When round_up is True, rounds up (Math.divUp). When False, rounds down (Math.divDown).
+
+    Returns:
+        The computed integer value.
+
     """
     if b == 0:
         raise EVMRevertError(error="ZERO_DIVISION")

@@ -1,5 +1,4 @@
-"""
-User address extraction from Aave V3 events.
+"""User address extraction from Aave V3 events.
 
 This module provides functions to extract user addresses from Aave event logs,
 used for batch prefetching users to avoid N+1 queries during transaction processing.
@@ -24,21 +23,27 @@ from degenbot.contract.decoding import decode_address
 
 
 def extract_user_addresses_from_transaction(events: list[LogReceipt]) -> set[ChecksumAddress]:
-    """
-    Extract all unique user addresses from a list of transaction events.
+    """Extract all unique user addresses from a list of transaction events.
 
     This is used for batch prefetching users to avoid N+1 queries during
     transaction processing.
+
+    Returns:
+        The computed value.
+
     """
     return {address for event in events for address in extract_user_addresses_from_event(event)}
 
 
 def extract_user_addresses_from_event(event: LogReceipt) -> set[ChecksumAddress]:
-    """
-    Extract user addresses from an Aave event.
+    """Extract user addresses from an Aave event.
 
     Returns a set of all user addresses (senders, recipients, onBehalfOf, etc.)
     that are involved in the event.
+
+    Returns:
+        The computed value.
+
     """
     user_addresses: set[ChecksumAddress] = set()
     topic = event["topics"][0]

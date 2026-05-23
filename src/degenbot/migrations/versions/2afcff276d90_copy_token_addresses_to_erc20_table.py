@@ -1,5 +1,4 @@
-"""
-copy token addresses to erc20 table.
+"""copy token addresses to erc20 table.
 
 Revision ID: 2afcff276d90
 Revises: 4eada4ae4a55

@@ -1,5 +1,4 @@
-"""
-LP token address discovery for Curve pools.
+"""LP token address discovery for Curve pools.
 
 Finds the LP token address associated with a Curve pool by querying
 the Curve registry and factory via get_lp_token().
@@ -30,12 +29,15 @@ def find_lp_token(
     registry_addresses: tuple[ChecksumAddress, ...],
     block_identifier: int,
 ) -> ChecksumAddress | None:
-    """
-    Find the LP token address for a Curve pool.
+    """Find the LP token address for a Curve pool.
 
     Iterates the Curve registry and factory addresses, calling
     get_lp_token(address) until a non-zero address is returned.
     Returns None if no LP token is found.
+
+    Returns:
+        The computed value.
+
     """
     for registry_address in registry_addresses:
         try:

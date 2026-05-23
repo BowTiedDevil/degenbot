@@ -1,5 +1,4 @@
-"""
-Metapool DyCalculator variants.
+"""Metapool DyCalculator variants.
 
 Metapool get_dy has two dispatch axes:
 1. MetapoolRateStyle — used in get_dy() when base_pool is not None
@@ -33,8 +32,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class MetapoolDyCalculator:
-    """
-    Metapool dy calculator for get_dy() metapool fast-path.
+    """Metapool dy calculator for get_dy() metapool fast-path.
 
     Parameterized by ``rate_style`` which determines how the rates tuple
     is constructed:
@@ -57,7 +55,12 @@ class MetapoolDyCalculator:
         inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        """Calculate."""
+        """Calculate.
+
+        Returns:
+            The computed integer value.
+
+        """
         pool_balances = override_state.balances if override_state is not None else inputs.balances
 
         match self.rate_style:
@@ -98,8 +101,7 @@ class MetapoolDyCalculator:
 
 @dataclass(frozen=True, slots=True)
 class MetapoolUnderlyingDyCalculator:
-    """
-    Metapool dy calculator for _get_dy_underlying().
+    """Metapool dy calculator for _get_dy_underlying().
 
     Parameterized by ``underlying_style`` which determines how rates are
     constructed, which input-conversion factor applies, and how the
@@ -130,7 +132,12 @@ class MetapoolUnderlyingDyCalculator:
         inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        """Calculate."""
+        """Calculate.
+
+        Returns:
+            The computed integer value.
+
+        """
         assert inputs.base_pool is not None
         assert inputs.virtual_price is not None
         pool_balances = override_state.balances if override_state is not None else inputs.balances

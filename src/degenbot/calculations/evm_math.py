@@ -5,7 +5,12 @@ from degenbot.exceptions.pool import InvalidUint256
 
 
 def evm_divide(numerator: int, denominator: int) -> int:
-    """Perform integer division, rounding towards zero to match the EVM behavior."""
+    """Perform integer division, rounding towards zero to match the EVM behavior.
+
+    Returns:
+        The computed integer value.
+
+    """
     return -(-numerator // denominator) if numerator < 0 else numerator // denominator
 
 
@@ -18,8 +23,7 @@ def next_base_fee(
     base_fee_max_change_denominator: int = 8,
     elasticity_multiplier: int = 2,
 ) -> int:
-    """
-    Calculate next base fee for an EIP-1559 compatible blockchain. The.
+    """Calculate next base fee for an EIP-1559 compatible blockchain. The.
 
     formula is taken from the example code in the EIP-1559 proposal (ref:
     https://eips.ethereum.org/EIPS/eip-1559).
@@ -28,6 +32,10 @@ def next_base_fee(
     `elasticity_multiplier` are taken from EIP-1559.
 
     Enforces `min_base_fee` if provided.
+
+    Returns:
+        The computed integer value.
+
     """
     last_gas_target = parent_gas_limit // elasticity_multiplier
 

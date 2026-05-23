@@ -1,5 +1,4 @@
-"""
-Curve StableSwap invariant calculations.
+"""Curve StableSwap invariant calculations.
 
 Pure functions implementing the Curve V1 StableSwap invariant D and Y solvers
 and their variant forms.
@@ -39,7 +38,12 @@ def calc_d(
     n_coins: int,
     a_precision: int,
 ) -> int:
-    """Apply the standard D step: divide by (a_nn - a_precision) * d / a_precision."""
+    """Apply the standard D step: divide by (a_nn - a_precision) * d / a_precision.
+
+    Returns:
+        The computed integer value.
+
+    """
     return (
         (a_nn * s // a_precision + d_p * n_coins)
         * d
@@ -56,7 +60,12 @@ def calc_d_variant_alpha(
     n_coins: int,
     a_precision: int,  # noqa: ARG001 — unused in this variant
 ) -> int:
-    """Variant alpha D step: omits a_precision from the formula entirely."""
+    """Variant alpha D step: omits a_precision from the formula entirely.
+
+    Returns:
+        The computed integer value.
+
+    """
     return (a_nn * s + d_p * n_coins) * d // ((a_nn - 1) * d + (n_coins + 1) * d_p)
 
 
@@ -71,7 +80,12 @@ def calc_dp(
     xp: Sequence[int],
     n_coins: int,
 ) -> int:
-    """Apply the standard D' step: d_p = d_p * d // (x * n_coins) for each x in xp."""
+    """Apply the standard D' step: d_p = d_p * d // (x * n_coins) for each x in xp.
+
+    Returns:
+        The computed integer value.
+
+    """
     for x in xp:
         d_p = d_p * d // (x * n_coins)
     return d_p
@@ -84,7 +98,12 @@ def calc_dp_variant_alpha(
     xp: Sequence[int],
     n_coins: int,
 ) -> int:
-    """Variant alpha D' step: adds +1 to denominator (d_p * d // (x * n_coins + 1))."""
+    """Variant alpha D' step: adds +1 to denominator (d_p * d // (x * n_coins + 1)).
+
+    Returns:
+        The computed integer value.
+
+    """
     for x in xp:
         d_p = d_p * d // (x * n_coins + 1)
     return d_p
@@ -97,7 +116,12 @@ def calc_dp_variant_beta(
     xp: Sequence[int],
     n_coins: int,
 ) -> int:
-    """Variant beta D' step: uses only first two coins, no loop (d*d/x0 * d/x1 / n^2)."""
+    """Variant beta D' step: uses only first two coins, no loop (d*d/x0 * d/x1 / n^2).
+
+    Returns:
+        The computed integer value.
+
+    """
     return d * d // xp[0] * d // xp[1] // n_coins**2
 
 
@@ -108,7 +132,12 @@ def calc_dp_variant_gamma(
     xp: Sequence[int],
     n_coins: int,
 ) -> int:
-    """Variant gamma D' step: like beta but uses n^n instead of n^2."""
+    """Variant gamma D' step: like beta but uses n^n instead of n^2.
+
+    Returns:
+        The computed integer value.
+
+    """
     return cast("int", d * d // xp[0] * d // xp[1] // n_coins**n_coins)
 
 
@@ -124,8 +153,7 @@ def stableswap_get_d(
     a_precision: int,
     d_variant: DVariant,
 ) -> int:
-    """
-    Solve for the Curve StableSwap invariant D using modified Newton's method.
+    """Solve for the Curve StableSwap invariant D using modified Newton's method.
 
     Direct port of the Vyper contract's D calculation. Iterates until convergence
     (difference ≤ 1) or 255 steps (revert).
@@ -196,8 +224,7 @@ def stableswap_get_y(
     y_variant: YVariant,
     d_variant: DVariant,
 ) -> int:
-    """
-    Calculate x[j] if one makes x[i] = x in a Curve StableSwap pool.
+    """Calculate x[j] if one makes x[i] = x in a Curve StableSwap pool.
 
     Solves the quadratic equation iteratively using Newton's method.
     Direct port of Vyper contract logic.
@@ -274,8 +301,7 @@ def stableswap_get_y_d(
     a_precision: int,
     yd_variant: YDVariant,
 ) -> int:
-    """
-    Calculate y given A, xp, and D in a Curve StableSwap pool.
+    """Calculate y given A, xp, and D in a Curve StableSwap pool.
 
     Used by calc_token_amount and calc_withdraw_one_coin.
     Direct port of Vyper contract logic.
@@ -343,8 +369,7 @@ def stableswap_newton_y(
     n_coins: int,
     a_multiplier: int,
 ) -> int:
-    """
-    Calculate xp[i] given other balances and invariant D, using Newton's method.
+    """Calculate xp[i] given other balances and invariant D, using Newton's method.
 
     Used by crypto (volatile) Curve pools.
     Direct port of Vyper contract logic.
@@ -440,11 +465,14 @@ def stableswap_reduction_coefficient(
     fee_gamma: int,
     n_coins: int,
 ) -> int:
-    """
-    fee_gamma / (fee_gamma + (1 - K)) where K = prod(x) / (sum(x) / N)**N.
+    """fee_gamma / (fee_gamma + (1 - K)) where K = prod(x) / (sum(x) / N)**N.
 
     All values normalized to 1e18.
     Used by crypto (volatile) Curve pools for dynamic fee calculation.
+
+    Returns:
+        The computed integer value.
+
     """
     k = 10**18
     s = 0

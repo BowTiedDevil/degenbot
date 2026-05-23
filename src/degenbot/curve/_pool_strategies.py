@@ -1,5 +1,4 @@
-"""
-Curve pool strategy resolution.
+"""Curve pool strategy resolution.
 
 Maps pool addresses to their PoolStrategies, combining all calculation
 variant enums into a single lookup.
@@ -45,7 +44,12 @@ from degenbot.curve.types import (
 
 
 def _a(addr: str) -> ChecksumAddress:
-    """Shorthand for checksummed addresses in the mapping below."""
+    """Shorthand for checksummed addresses in the mapping below.
+
+    Returns:
+        The computed value.
+
+    """
     return get_checksum_address(addr)
 
 
@@ -296,14 +300,17 @@ _POOL_STRATEGIES: dict[ChecksumAddress, PoolStrategies] = {
 
 
 def resolve_pool_strategies(pool_address: ChecksumAddress | str) -> PoolStrategies:
-    """
-    Resolve the complete PoolStrategies for a Curve pool address.
+    """Resolve the complete PoolStrategies for a Curve pool address.
 
     Combines the address lookup from _POOL_STRATEGIES with the variant
     group resolution from _variant_groups. Returns a PoolStrategies with
     STANDARD/NONE defaults for any strategies not found in the mapping.
 
     Calculators are auto-constructed from enum values by PoolStrategies.__post_init__.
+
+    Returns:
+        The computed value.
+
     """
     pool_address = get_checksum_address(pool_address)
 

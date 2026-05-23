@@ -1,5 +1,4 @@
-"""
-ERC-20: adjust index.
+"""ERC-20: adjust index.
 
 Revision ID: 8aa4babb128a
 Revises: 8c69198e6a21

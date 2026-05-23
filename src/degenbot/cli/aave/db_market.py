@@ -1,5 +1,4 @@
-"""
-Market-level database operations for Aave V3.
+"""Market-level database operations for Aave V3.
 
 Functions for managing market state, eMode categories, and asset configurations.
 """
@@ -21,7 +20,12 @@ def get_e_mode_category(
     market: AaveV3Market,
     category_id: int,
 ) -> AaveV3EModeCategory | None:
-    """Get eMode category by ID."""
+    """Get eMode category by ID.
+
+    Returns:
+        The computed value.
+
+    """
     return session.scalar(
         select(AaveV3EModeCategory).where(
             AaveV3EModeCategory.market_id == market.id,
@@ -35,7 +39,12 @@ def get_or_create_e_mode_category(
     market: AaveV3Market,
     category_id: int,
 ) -> AaveV3EModeCategory:
-    """Get existing eMode category or create new one."""
+    """Get existing eMode category or create new one.
+
+    Returns:
+        The computed value.
+
+    """
     category = get_e_mode_category(session, market, category_id)
     if category is not None:
         return category
@@ -56,7 +65,12 @@ def get_asset_config(
     session: Session,
     asset_id: int,
 ) -> AaveV3AssetConfig | None:
-    """Get asset configuration by asset ID."""
+    """Get asset configuration by asset ID.
+
+    Returns:
+        The computed value.
+
+    """
     return session.scalar(
         select(AaveV3AssetConfig).where(
             AaveV3AssetConfig.asset_id == asset_id,
@@ -68,7 +82,12 @@ def get_or_create_asset_config(
     session: Session,
     asset_id: int,
 ) -> AaveV3AssetConfig:
-    """Get existing asset config or create new one with defaults."""
+    """Get existing asset config or create new one with defaults.
+
+    Returns:
+        The computed value.
+
+    """
     config = get_asset_config(session, asset_id)
     if config is not None:
         return config
@@ -95,7 +114,12 @@ def get_user_collateral_config(
     user_id: int,
     asset_id: int,
 ) -> AaveV3UserCollateralConfig | None:
-    """Get user collateral configuration."""
+    """Get user collateral configuration.
+
+    Returns:
+        The computed value.
+
+    """
     return session.scalar(
         select(AaveV3UserCollateralConfig).where(
             AaveV3UserCollateralConfig.user_id == user_id,
@@ -109,7 +133,12 @@ def get_or_create_user_collateral_config(
     user_id: int,
     asset_id: int,
 ) -> AaveV3UserCollateralConfig:
-    """Get existing user collateral config or create new one."""
+    """Get existing user collateral config or create new one.
+
+    Returns:
+        The computed value.
+
+    """
     config = get_user_collateral_config(session, user_id, asset_id)
     if config is not None:
         return config

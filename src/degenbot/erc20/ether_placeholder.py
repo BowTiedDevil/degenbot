@@ -6,10 +6,9 @@ from degenbot.types.aliases import ChainId
 
 
 class EtherPlaceholder(Erc20Token):
-    """
-    An Erc20Token-like adapter for pools using the 'all Es' or zero address placeholder to represent.
+    """An Erc20Token-like adapter for the 'all Es' or zero address placeholder.
 
-    native Ether.
+    Used by pools to represent native Ether.
     """
 
     addresses = (

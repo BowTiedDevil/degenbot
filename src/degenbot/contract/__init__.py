@@ -1,5 +1,4 @@
-"""
-Smart contract interface with automatic ABI encoding/decoding.
+"""Smart contract interface with automatic ABI encoding/decoding.
 
 This module provides a high-level contract interface using the Rust-based
 Alloy provider for automatic ABI encoding and decoding of function calls.
@@ -41,8 +40,7 @@ if TYPE_CHECKING:
 
 
 class Contract:
-    """
-    High-level contract interface with automatic ABI encoding/decoding.
+    """High-level contract interface with automatic ABI encoding/decoding.
 
     Provides a Pythonic interface for calling smart contract functions with
     automatic ABI encoding of arguments and decoding of return values.
@@ -86,8 +84,7 @@ class Contract:
         provider: "ProviderAdapter | None" = None,
         provider_url: str | None = None,
     ) -> None:
-        """
-        Create a new contract instance.
+        """Create a new contract instance.
 
         Args:
             address: Contract address
@@ -122,8 +119,7 @@ class Contract:
         args: Sequence[str] | None = None,
         block_number: int | str | None = None,
     ) -> list[str]:
-        """
-        Execute a contract call with automatic encoding/decoding.
+        """Execute a contract call with automatic encoding/decoding.
 
         Args:
             function_signature: Function signature like "balanceOf(address)" or
@@ -172,8 +168,7 @@ class Contract:
         calls: Sequence[tuple[str, Sequence[str] | None]],
         block_number: int | str | None = None,
     ) -> list[list[str]]:
-        """
-        Execute multiple contract calls efficiently.
+        """Execute multiple contract calls efficiently.
 
         Args:
             calls: List of (function_signature, args) tuples
@@ -207,8 +202,7 @@ class Contract:
         function_signature: str,
         args: Sequence[str] | None = None,
     ) -> bytes:
-        """
-        Encode a function call without executing it.
+        """Encode a function call without executing it.
 
         Useful for manual transaction building or debugging.
 
@@ -234,8 +228,7 @@ class Contract:
 
     @staticmethod
     def get_function_selector(function_signature: str) -> str:
-        """
-        Get the 4-byte function selector for a signature.
+        """Get the 4-byte function selector for a signature.
 
         Args:
             function_signature: Function signature like "transfer(address,uint256)"
@@ -254,8 +247,7 @@ class Contract:
 
     @staticmethod
     def decode_return_data(data: bytes, output_types: Sequence[str]) -> list[str]:
-        """
-        Decode return data based on expected output types.
+        """Decode return data based on expected output types.
 
         Args:
             data: Raw return data from eth_call
@@ -276,8 +268,7 @@ class Contract:
 
 
 def get_function_selector(function_signature: str) -> str:
-    """
-    Get the 4-byte function selector for a signature.
+    """Get the 4-byte function selector for a signature.
 
     Args:
         function_signature: Function signature like "transfer(address,uint256)"
@@ -294,8 +285,7 @@ def get_function_selector(function_signature: str) -> str:
 
 
 def encode_function_call(function_signature: str, args: Sequence[str] | None = None) -> bytes:
-    """
-    Encode a function call without executing it.
+    """Encode a function call without executing it.
 
     Args:
         function_signature: Function signature
@@ -311,8 +301,7 @@ def encode_function_call(function_signature: str, args: Sequence[str] | None = N
 
 
 def decode_return_data(data: bytes, output_types: Sequence[str]) -> list[str]:
-    """
-    Decode return data based on expected output types.
+    """Decode return data based on expected output types.
 
     Args:
         data: Raw return data from eth_call

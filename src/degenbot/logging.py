@@ -30,7 +30,12 @@ _FUNCTION_CALL_LOGGING_ENABLED = os.environ.get("DEGENBOT_DEBUG_FUNCTION_CALLS",
 
 
 def log_function_call[**P, R](func: Callable[P, R]) -> Callable[P, R]:
-    """Log function calls when DEGENBOT_DEBUG_FUNCTION_CALLS is enabled."""
+    """Log function calls when DEGENBOT_DEBUG_FUNCTION_CALLS is enabled.
+
+    Returns:
+        The computed value.
+
+    """
     if not _FUNCTION_CALL_LOGGING_ENABLED:
         return func
 

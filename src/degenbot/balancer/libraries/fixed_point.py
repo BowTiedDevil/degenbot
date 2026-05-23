@@ -8,21 +8,36 @@ _ZERO = 0
 
 
 def add(a: int, b: int) -> int:
-    """Return add."""
+    """Return add.
+
+    Returns:
+        The computed integer value.
+
+    """
     if a + b > MAX_UINT256:
         raise EVMRevertError(error="ADD_OVERFLOW")
     return a + b
 
 
 def sub(a: int, b: int) -> int:
-    """Return sub."""
+    """Return sub.
+
+    Returns:
+        The computed integer value.
+
+    """
     if b > a:
         raise EVMRevertError(error="SUB_OVERFLOW")
     return a - b
 
 
 def mul_down(a: int, b: int) -> int:
-    """Return mul down."""
+    """Return mul down.
+
+    Returns:
+        The computed integer value.
+
+    """
     product = a * b
     if not (a == 0 or product // a == b):
         raise EVMRevertError(error="MUL_OVERFLOW")
@@ -30,7 +45,12 @@ def mul_down(a: int, b: int) -> int:
 
 
 def mul_up(a: int, b: int) -> int:
-    """Return mul up."""
+    """Return mul up.
+
+    Returns:
+        The computed integer value.
+
+    """
     product = a * b
 
     if product == 0:
@@ -42,7 +62,12 @@ def mul_up(a: int, b: int) -> int:
 
 
 def div_down(a: int, b: int) -> int:
-    """Return div down."""
+    """Return div down.
+
+    Returns:
+        The computed integer value.
+
+    """
     if b == 0:
         raise EVMRevertError(error="ZERO_DIVISION")
 
@@ -57,7 +82,12 @@ def div_down(a: int, b: int) -> int:
 
 
 def div_up(a: int, b: int) -> int:
-    """Return div up."""
+    """Return div up.
+
+    Returns:
+        The computed integer value.
+
+    """
     if b == 0:
         raise EVMRevertError(error="ZERO_DIVISION")
 
@@ -72,14 +102,18 @@ def div_up(a: int, b: int) -> int:
 
 
 def pow_down(x: int, y: int, *, version: PowVersion = PowVersion.V1) -> int:
-    """
-    Return x^y, assuming both are fixed point numbers, rounding down. The result is guaranteed to.
+    """Return x^y for fixed-point numbers, rounding down.
 
-    not be above the true value (that is, the error function expected - actual is always positive).
+    The result is guaranteed not to be above the true value
+    (that is, the error function expected - actual is always positive).
 
     The `version` parameter controls which deployed contract implementation to match:
     - V1: General path only (no fast paths). Used by WeightedPool2Tokens and other older contracts.
     - V2: Includes fast paths for y == ONE, TWO, FOUR. Used by newer WeightedPool contracts.
+
+    Returns:
+        The computed integer value.
+
     """
     if version == PowVersion.V2:
         if y == ONE:
@@ -99,14 +133,18 @@ def pow_down(x: int, y: int, *, version: PowVersion = PowVersion.V1) -> int:
 
 
 def pow_up(x: int, y: int, *, version: PowVersion = PowVersion.V1) -> int:
-    """
-    Return x^y, assuming both are fixed point numbers, rounding up. The result is guaranteed to not.
+    """Return x^y for fixed-point numbers, rounding up.
 
-    be below the true value (that is, the error function expected - actual is always negative).
+    The result is guaranteed not to be below the true value
+    (that is, the error function expected - actual is always negative).
 
     The `version` parameter controls which deployed contract implementation to match:
     - V1: General path only (no fast paths). Used by WeightedPool2Tokens and other older contracts.
     - V2: Includes fast paths for y == ONE, TWO, FOUR. Used by newer WeightedPool contracts.
+
+    Returns:
+        The computed integer value.
+
     """
     if version == PowVersion.V2:
         if y == ONE:
@@ -123,5 +161,10 @@ def pow_up(x: int, y: int, *, version: PowVersion = PowVersion.V1) -> int:
 
 
 def complement(x: int) -> int:
-    """Return complement."""
+    """Return complement.
+
+    Returns:
+        The computed integer value.
+
+    """
     return ONE - x if x < ONE else _ZERO

@@ -1,5 +1,4 @@
-"""
-Pools: Add composite index for token IDs.
+"""Pools: Add composite index for token IDs.
 
 Revision ID: eb4080485a56
 Revises: 06a3739885a0

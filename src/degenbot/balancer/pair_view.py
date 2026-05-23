@@ -27,8 +27,7 @@ if TYPE_CHECKING:
 
 
 class BalancerPairView:
-    """
-    Adapts an N-token Balancer pool to a 2-token pair view for ArbitragePath.
+    """Adapts an N-token Balancer pool to a 2-token pair view for ArbitragePath.
 
     Delegates swap calculations and hop state to the underlying pool,
     for a specific (token_a, token_b) pair. Cheap to create (no I/O).
@@ -79,7 +78,12 @@ class BalancerPairView:
         token_in_quantity: int,
         override_state: AbstractPoolState | None = None,
     ) -> int:
-        """Calculate tokens out from tokens in."""
+        """Calculate tokens out from tokens in.
+
+        Returns:
+            The computed integer value.
+
+        """
         if token_in == self._token0:
             token_out = self._token1
         elif token_in == self._token1:
@@ -101,7 +105,12 @@ class BalancerPairView:
         token_out: ChecksumAddress,
         state_override: AbstractPoolState | None = None,
     ) -> SimulationResult:
-        """Simulate swap."""
+        """Simulate swap.
+
+        Returns:
+            The computed value.
+
+        """
         return self._pool.simulate_swap(
             token_in=token_in,
             amount_in=amount_in,
@@ -117,7 +126,12 @@ class BalancerPairView:
         token_in: Erc20Token | None = None,
         token_out: Erc20Token | None = None,
     ) -> HopType:
-        """Convert to hop state."""
+        """Convert to hop state.
+
+        Returns:
+            The computed value.
+
+        """
         # Delegate to the pool's to_hop_state with explicit pair selection.
         # When token_in/token_out are provided by the caller, pass them through.
         # Otherwise, derive from the pair's token0/token1.
@@ -132,7 +146,12 @@ class BalancerPairView:
         )
 
     def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001, ARG002
-        """Return the pool fee regardless of direction."""
+        """Return the pool fee regardless of direction.
+
+        Returns:
+            The computed value.
+
+        """
         return self._pool.fee
 
     def build_swap_amount(
@@ -141,9 +160,12 @@ class BalancerPairView:
         amount_in: int,
         amount_out: int,
     ) -> BalancerV2SwapAmounts:
-        """Extract fee."""
-        """Extract fee."""
-        """Build swap amount."""
+        """Build swap amount.
+
+        Returns:
+            The computed value.
+
+        """
         if zero_for_one:
             token_in = self._token0
             token_out = self._token1
@@ -161,8 +183,7 @@ class BalancerPairView:
     # --- Subscription relay ---
 
     def subscribe(self, subscriber: Subscriber) -> None:
-        """
-        Subscribe to state updates from this view.
+        """Subscribe to state updates from this view.
 
         The view relays notifications from the underlying pool.
         Subscribers receive messages with publisher=self (the view),
@@ -175,8 +196,7 @@ class BalancerPairView:
         self._subscribers.discard(subscriber)
 
     def notify(self, publisher: Publisher, message: AbstractPublisherMessage) -> None:  # noqa: ARG002
-        """
-        Relay notifications from the underlying pool.
+        """Relay notifications from the underlying pool.
 
         Re-publishes to this view's subscribers with publisher=self,
         so that ArbitragePath._pool_index identity checks work

@@ -1,5 +1,4 @@
-"""
-Parameterized DyCalculator for standard Curve swap paths.
+"""Parameterized DyCalculator for standard Curve swap paths.
 
 ``StandardDyCalculator`` is parameterized by four independent axes
 that encode every observed combination:
@@ -55,8 +54,7 @@ class ConversionStyle(Enum):
 
 @dataclass(frozen=True, slots=True)
 class StandardDyCalculator:
-    """
-    Parameterized dy calculator for standard and live-admin Curve swap paths.
+    """Parameterized dy calculator for standard and live-admin Curve swap paths.
 
     Encodes four independent variation axes:
 
@@ -86,7 +84,12 @@ class StandardDyCalculator:
         inputs: DyCalculationInputs,
         override_state: CurveStableswapPoolState | None = None,
     ) -> int:
-        """Calculate."""
+        """Calculate.
+
+        Returns:
+            The computed integer value.
+
+        """
         # ── Balance source ──
         if self.balance_source is BalanceSource.RAW_BALANCES:
             xp = inputs.balances

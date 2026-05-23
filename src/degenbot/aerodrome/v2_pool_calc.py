@@ -1,5 +1,4 @@
-"""
-Calculation mixin for Aerodrome V2 pools.
+"""Calculation mixin for Aerodrome V2 pools.
 
 Provides calculation methods that operate on state held by AerodromeV2PoolState.
 At construction time, the stable flag determines which underlying calculation
@@ -34,8 +33,7 @@ if TYPE_CHECKING:
 
 
 class AerodromeV2PoolCalc:
-    """
-    Calculation methods for Aerodrome V2 pools.
+    """Calculation methods for Aerodrome V2 pools.
 
     Wires the correct calculation function at construction time based on
     the stable flag. All methods delegate to the pre-bound calculation
@@ -57,8 +55,7 @@ class AerodromeV2PoolCalc:
     tokens: tuple[Erc20Token, Erc20Token]
 
     def _wire_stable_calculations(self, *, stable: bool) -> None:
-        """
-        Wire calculation functions based on the stable flag.
+        """Wire calculation functions based on the stable flag.
 
         Called by the pool's __init__ after setting self._stable.
         """
@@ -74,7 +71,12 @@ class AerodromeV2PoolCalc:
         token_out: Erc20Token,
         override_state: AerodromeV2PoolState | None = None,
     ) -> int:
-        """Calculate the required token INPUT for a target OUTPUT at current pool reserves."""
+        """Calculate the required token INPUT for a target OUTPUT at current pool reserves.
+
+        Returns:
+            The computed integer value.
+
+        """
         if token_out_quantity <= 0:  # pragma: no cover
             raise InvalidSwapInputAmount
 
@@ -123,7 +125,12 @@ class AerodromeV2PoolCalc:
         token_in_quantity: int,
         override_state: AerodromeV2PoolState | None = None,
     ) -> int:
-        """Calculate the expected token OUTPUT for a target INPUT at current pool reserves."""
+        """Calculate the expected token OUTPUT for a target INPUT at current pool reserves.
+
+        Returns:
+            The computed integer value.
+
+        """
         if token_in not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message="token_in not recognized.")
 
@@ -159,7 +166,12 @@ class AerodromeV2PoolCalc:
         token: Erc20Token,
         override_state: AerodromeV2PoolState | None = None,
     ) -> Fraction:
-        """Get the absolute price for the given token, expressed in units of the other."""
+        """Get the absolute price for the given token, expressed in units of the other.
+
+        Returns:
+            The computed value.
+
+        """
         return 1 / self.get_absolute_exchange_rate(token, override_state=override_state)
 
     def get_absolute_exchange_rate(
@@ -167,7 +179,12 @@ class AerodromeV2PoolCalc:
         token: Erc20Token,
         override_state: AerodromeV2PoolState | None = None,
     ) -> Fraction:
-        """Get the absolute exchange rate for the given token."""
+        """Get the absolute exchange rate for the given token.
+
+        Returns:
+            The computed value.
+
+        """
         if token not in self.tokens:
             raise DegenbotValueError(message=f"Unknown token {token}")
 
@@ -184,7 +201,12 @@ class AerodromeV2PoolCalc:
         token: Erc20Token,
         override_state: AerodromeV2PoolState | None = None,
     ) -> Fraction:
-        """Get the nominal price, corrected for decimals."""
+        """Get the nominal price, corrected for decimals.
+
+        Returns:
+            The computed value.
+
+        """
         return 1 / self.get_nominal_exchange_rate(token=token, override_state=override_state)
 
     def get_nominal_exchange_rate(
@@ -192,7 +214,12 @@ class AerodromeV2PoolCalc:
         token: Erc20Token,
         override_state: AerodromeV2PoolState | None = None,
     ) -> Fraction:
-        """Get the nominal exchange rate, corrected for decimal place values."""
+        """Get the nominal exchange rate, corrected for decimal place values.
+
+        Returns:
+            The computed value.
+
+        """
         return self.get_absolute_exchange_rate(token=token, override_state=override_state) * (
             Fraction(10**self._token1.decimals, 10**self._token0.decimals)
             if token == self._token0
@@ -204,7 +231,12 @@ class AerodromeV2PoolCalc:
         *,
         zero_for_one: bool,  # ruff: ignore[ARG002]
     ) -> Fraction:
-        """Extract fee."""
+        """Extract fee.
+
+        Returns:
+            The computed value.
+
+        """
         return self._fee
 
     # ── Private: calculation strategy methods ──
@@ -218,7 +250,12 @@ class AerodromeV2PoolCalc:
         reserves1: int,
         fee: Fraction,
     ) -> int:
-        """Volatile (constant-product) exact-in calculation."""
+        """Volatile (constant-product) exact-in calculation.
+
+        Returns:
+            The computed integer value.
+
+        """
         return calc_exact_in_volatile(
             amount_in=amount_in,
             token_in=token_in,
@@ -238,7 +275,12 @@ class AerodromeV2PoolCalc:
         decimals1: int,
         fee: Fraction,
     ) -> int:
-        """Stable (Solidly invariant) exact-in calculation."""
+        """Stable (Solidly invariant) exact-in calculation.
+
+        Returns:
+            The computed integer value.
+
+        """
         return calc_exact_in_stable(
             amount_in=amount_in,
             token_in=token_in,
@@ -259,7 +301,12 @@ class AerodromeV2PoolCalc:
         reserves_out: int,
         fee: Fraction,
     ) -> int:
-        """Volatile (constant-product) exact-out calculation."""
+        """Volatile (constant-product) exact-out calculation.
+
+        Returns:
+            The computed integer value.
+
+        """
         return constant_product_calc_exact_out(
             amount_out=token_out_quantity,
             reserves_in=reserves_in,

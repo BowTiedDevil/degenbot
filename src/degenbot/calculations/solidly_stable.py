@@ -1,5 +1,4 @@
-"""
-Solidly StableSwap invariant calculations.
+"""Solidly StableSwap invariant calculations.
 
 Pure functions implementing the Solidly stable pool invariant
 (x^3*y + y^3*x >= k) and its Newton's method solvers.
@@ -17,10 +16,13 @@ from degenbot.exceptions.pool import EVMRevertError
 
 
 def calc_d(x0: int, y: int) -> int:
-    """
-    Calculate the Solidly stable D value for normalized reserves x0, y.
+    """Calculate the Solidly stable D value for normalized reserves x0, y.
 
     D = 3*x0*y^2 + x0^3*y, all scaled by 10^18.
+
+    Returns:
+        The computed integer value.
+
     """
     return (3 * x0 * ((y * y) // 10**18)) // 10**18 + ((((x0 * x0) // 10**18) * x0) // 10**18)
 
@@ -31,10 +33,13 @@ def calc_k(
     decimals_0: int,
     decimals_1: int,
 ) -> int:
-    """
-    Calculate the Solidly stable k invariant for unnormalized reserves.
+    """Calculate the Solidly stable k invariant for unnormalized reserves.
 
     Scales reserves by decimals, then computes k = a*b where a = x*y, b = x^2 + y^2.
+
+    Returns:
+        The computed integer value.
+
     """
     x = balance_0 * 10**18 // decimals_0
     y = balance_1 * 10**18 // decimals_1
@@ -45,10 +50,13 @@ def calc_k(
 
 
 def calc_f(x0: int, y: int) -> int:
-    """
-    Evaluate the Solidly stable invariant f(x0, y) = x0*y^3 + x0^3*y.
+    """Evaluate the Solidly stable invariant f(x0, y) = x0*y^3 + x0^3*y.
 
     Used by Newton's method solvers to find y given x0 and target k.
+
+    Returns:
+        The computed integer value.
+
     """
     a = (x0 * y) // 10**18
     b = (x0 * x0) // 10**18 + (y * y) // 10**18
@@ -67,11 +75,14 @@ def calc_exact_in_stable(
     k_func: Callable[[int, int, int, int], int],
     get_y_func: Callable[[int, int, int, int, int], int],
 ) -> int:
-    """
-    Calculate the amount out for an exact input to a Solidly stable pool.
+    """Calculate the amount out for an exact input to a Solidly stable pool.
 
     Generic over the k() and get_y() implementations to accommodate
     DEX-specific variants (Aerodrome, Camelot).
+
+    Returns:
+        The computed integer value.
+
     """
     if token_in not in {0, 1}:  # pragma: no cover
         msg = "Invalid token_in identifier"
@@ -108,7 +119,12 @@ def calc_exact_in_volatile(
     reserves1: int,
     fee: Fraction,
 ) -> int:
-    """Calculate the amount out for an exact input to a Solidly volatile pool (x*y>=k)."""
+    """Calculate the amount out for an exact input to a Solidly volatile pool (x*y>=k).
+
+    Returns:
+        The computed integer value.
+
+    """
     if token_in not in {0, 1}:  # pragma: no cover
         msg = "Invalid token_in identifier"
         raise DegenbotValueError(message=msg)
@@ -125,12 +141,15 @@ def get_y_solidly(
     decimals0: int,
     decimals1: int,
 ) -> int:
-    """
-    Solve for y in the Solidly stable invariant using Newton's method.
+    """Solve for y in the Solidly stable invariant using Newton's method.
 
     Finds the minimum y such that f(x0, y) >= xy.
 
     Reference: https://github.com/aerodrome-finance/contracts/blob/main/contracts/Pool.sol
+
+    Returns:
+        The computed integer value.
+
     """
     for _ in range(255):
         k = calc_f(x0, y)

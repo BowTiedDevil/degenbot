@@ -1,5 +1,4 @@
-"""
-Async smart contract interface with automatic ABI encoding/decoding.
+"""Async smart contract interface with automatic ABI encoding/decoding.
 
 This module provides async variants of the Contract class for non-blocking
 smart contract interactions.
@@ -25,8 +24,7 @@ from degenbot.degenbot_rs import AsyncContract as _AsyncContract
 
 
 class AsyncContract:
-    """
-    Async contract interface with automatic ABI encoding/decoding.
+    """Async contract interface with automatic ABI encoding/decoding.
 
     Provides async methods for non-blocking smart contract calls with
     automatic ABI encoding of arguments and decoding of return values.
@@ -61,8 +59,7 @@ class AsyncContract:
         address: str,
         provider_url: str,
     ) -> None:
-        """
-        Create a new async contract instance.
+        """Create a new async contract instance.
 
         Args:
             address: Contract address
@@ -86,8 +83,7 @@ class AsyncContract:
         args: Sequence[str] | None = None,
         block_number: int | None = None,
     ) -> list[str]:
-        """
-        Execute a contract call asynchronously.
+        """Execute a contract call asynchronously.
 
         Args:
             function_signature: Function signature like "balanceOf(address)" or
@@ -122,8 +118,7 @@ class AsyncContract:
         calls: Sequence[tuple[str, Sequence[str] | None]],
         block_number: int | None = None,
     ) -> list[list[str]]:
-        """
-        Execute multiple contract calls asynchronously.
+        """Execute multiple contract calls asynchronously.
 
         Args:
             calls: List of (function_signature, args) tuples
