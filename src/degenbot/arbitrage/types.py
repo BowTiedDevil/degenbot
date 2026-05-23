@@ -32,8 +32,7 @@ class AbstractSwapAmounts:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class ArbitrageCalculationResult[SwapAmountType]:
-    """
-    The result of an arbitrage calculation containing profit details and swap amounts.
+    """The result of an arbitrage calculation containing profit details and swap amounts.
 
     This class is generic over the swap amount type. Calculations that build an
     instance should specify this type in the return annotation, e.g.:
@@ -78,15 +77,30 @@ class CurveStableSwapPoolSwapAmounts(AbstractSwapAmounts):
         assert self.token_in != self.token_out
 
     def input_amount(self) -> int:
-        """Return input amount."""
+        """Return input amount.
+
+        Returns:
+            The computed value.
+
+        """
         return self.amount_in
 
     def output_amount(self) -> int:
-        """Return output amount."""
+        """Return output amount.
+
+        Returns:
+            The computed value.
+
+        """
         return self.min_amount_out
 
     def encode(self, *, recipient: ChecksumAddress) -> EncodedCall:  # noqa: ARG002
-        """Encode a Curve exchange() or exchange_underlying() call."""
+        """Encode a Curve exchange() or exchange_underlying() call.
+
+        Returns:
+            The computed value.
+
+        """
         if self.underlying:
             selector = Web3.keccak(text="exchange_underlying(int128,int128,uint256,uint256)")[:4]
         else:
@@ -120,15 +134,30 @@ class UniswapV2PoolSwapAmounts(AbstractSwapAmounts):
         assert 0 in self.amounts_out
 
     def input_amount(self) -> int:
-        """Return input amount."""
+        """Return input amount.
+
+        Returns:
+            The computed value.
+
+        """
         return max(self.amounts_in)
 
     def output_amount(self) -> int:
-        """Return output amount."""
+        """Return output amount.
+
+        Returns:
+            The computed value.
+
+        """
         return max(self.amounts_out)
 
     def encode(self, *, recipient: ChecksumAddress) -> EncodedCall:
-        """Encode a Uniswap V2 swap() call."""
+        """Encode a Uniswap V2 swap() call.
+
+        Returns:
+            The computed value.
+
+        """
         selector = Web3.keccak(text="swap(uint256,uint256,address,bytes)")[:4]
         data = selector + eth_abi.abi.encode(
             types=["uint256", "uint256", "address", "bytes"],
@@ -154,15 +183,30 @@ class UniswapV3PoolSwapAmounts(AbstractSwapAmounts):
         assert self.amount_specified != 0
 
     def input_amount(self) -> int:
-        """Return input amount."""
+        """Return input amount.
+
+        Returns:
+            The computed value.
+
+        """
         return self.amount_in
 
     def output_amount(self) -> int:
-        """Return output amount."""
+        """Return output amount.
+
+        Returns:
+            The computed value.
+
+        """
         return self.amount_out
 
     def encode(self, *, recipient: ChecksumAddress) -> EncodedCall:
-        """Encode a Uniswap V3 swap() call."""
+        """Encode a Uniswap V3 swap() call.
+
+        Returns:
+            The computed value.
+
+        """
         selector = Web3.keccak(text="swap(address,bool,int256,uint160,bytes)")[:4]
         data = selector + eth_abi.abi.encode(
             types=["address", "bool", "int256", "uint160", "bytes"],
@@ -207,16 +251,25 @@ class UniswapV4PoolSwapAmounts(AbstractSwapAmounts):
         assert self.amount_specified != 0
 
     def input_amount(self) -> int:
-        """Return input amount."""
+        """Return input amount.
+
+        Returns:
+            The computed value.
+
+        """
         return self.amount_in
 
     def output_amount(self) -> int:
-        """Return output amount."""
+        """Return output amount.
+
+        Returns:
+            The computed value.
+
+        """
         return self.amount_out
 
     def encode(self, *, recipient: ChecksumAddress) -> EncodedCall:
-        """
-        Encode a Uniswap V4 swap() call.
+        """Encode a Uniswap V4 swap() call.
 
         V4 swaps are dispatched through PoolManager which requires an
         unlock/swap callback pattern. The default implementation encodes

@@ -116,7 +116,7 @@ select = [
     "PERF",     # perflint
     "E", "W",   # pycodestyle
     "DOC",      # pydoclint
-    "D",        # pydocstyle    
+    "D",        # pydocstyle
     "F",        # pyflakes
     "PL",       # pylint
     "UP",       # pyupgrade
@@ -152,10 +152,19 @@ allow-star-arg-any = true
     "PLC2701",  # tests may need to import private modules
     "PLR0904",  # don't restrict the number of methods for class-based patterns
     "PLR2004",  # many tests compare results against arbitrary values — transforming to named constants is not worthwhile
-    "PLR6301",  # allow tests using class-based patterns 
+    "PLR6301",  # allow tests using class-based patterns
     "S",        # asserts are expected for testing
     "SLF",      # tests may need to access private attributes to test implementation
     "T20",      # many tests use print
+]
+"**/arbitrage/_legacy/*" = [
+    "BLE",      # legacy code catches broad exceptions intentionally
+    "E501",     # long docstring lines in deprecated code
+    "FIX002",   # TODOs in deprecated code will not be resolved
+    "PLR2004",  # magic values in legacy code
+    "S110",     # try-except-pass in legacy fallback paths
+    "TRY300",   # legacy code structure
+    "TRY301",   # legacy code raises within try
 ]
 
 [tool.pytest.ini_options]

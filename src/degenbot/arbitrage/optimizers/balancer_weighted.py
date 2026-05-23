@@ -1,5 +1,4 @@
-"""
-Closed-form solver for N-token Balancer weighted pool arbitrage.
+"""Closed-form solver for N-token Balancer weighted pool arbitrage.
 
 Based on "Closed-form solutions for generic N-token AMM arbitrage"
 by Willetts & Harrington (QuantAMM.fi, Feb 2024).
@@ -28,8 +27,7 @@ TradeSignature = tuple[int, ...]
 
 @dataclass(frozen=True, slots=True)
 class BalancerMultiTokenState:
-    """
-    State for an N-token Balancer weighted pool.
+    """State for an N-token Balancer weighted pool.
 
     Attributes
     ----------
@@ -57,18 +55,33 @@ class BalancerMultiTokenState:
         return len(self.reserves)
 
     def _scaling_factors(self) -> list[int]:
-        """Compute scaling factors to upscale reserves to 18-decimal."""
+        """Compute scaling factors to upscale reserves to 18-decimal.
+
+        Returns:
+            The computed value.
+
+        """
         if not self.decimals:
             return [1] * self.n_tokens
         return [10 ** (18 - d) for d in self.decimals]
 
     def upscaled_reserves(self) -> tuple[float, ...]:
-        """Reserves upscaled to 18-decimal (Balancer Vault convention)."""
+        """Reserves upscaled to 18-decimal (Balancer Vault convention).
+
+        Returns:
+            The computed value.
+
+        """
         factors = self._scaling_factors()
         return tuple(float(r * f) for r, f in zip(self.reserves, factors, strict=True))
 
     def descale_trade(self, trade: float, token_index: int) -> int:
-        """Descale a trade from 18-decimal units back to native token units."""
+        """Descale a trade from 18-decimal units back to native token units.
+
+        Returns:
+            The computed value.
+
+        """
         if not self.decimals:
             return int(round(trade))  # noqa: RUF046
         factor = 10 ** (18 - self.decimals[token_index])
@@ -77,8 +90,7 @@ class BalancerMultiTokenState:
 
 @dataclass(frozen=True, slots=True)
 class MultiTokenArbitrageResult:
-    """
-    Result of multi-token arbitrage optimization.
+    """Result of multi-token arbitrage optimization.
 
     Attributes
     ----------
@@ -111,10 +123,13 @@ INVARIANT_TOLERANCE = 1e-6
 
 
 def generate_trade_signatures(n_tokens: int) -> list[TradeSignature]:
-    """
-    Generate all valid trade signatures for an N-token pool.
+    """Generate all valid trade signatures for an N-token pool.
 
     N=3: 12 signatures, N=4: 50, N=5: 180.
+
+    Returns:
+        The computed value.
+
     """
     return [s for s in itertools.product((-1, 0, 1), repeat=n_tokens) if 1 in s and -1 in s]
 
@@ -125,12 +140,15 @@ def generate_trade_signatures(n_tokens: int) -> list[TradeSignature]:
 
 
 def _compute_d(signature: TradeSignature) -> list[int]:
-    """
-    Compute d_i = I_{s_i=1} per the paper's definition.
+    """Compute d_i = I_{s_i=1} per the paper's definition.
 
     d_i = 1 if depositing (signature[i] == 1)
     d_i = 0 if withdrawing (signature[i] == -1)
     d_i = 0 if not traded (signature[i] == 0)
+
+    Returns:
+        The computed value.
+
     """
     return [1 if s == 1 else 0 for s in signature]
 
@@ -140,12 +158,15 @@ def compute_optimal_trade(
     market_prices: tuple[float, ...],
     signature: TradeSignature,
 ) -> tuple[float, ...]:
-    """
-    Compute optimal trade amounts for a given signature using Equation 9.
+    """Compute optimal trade amounts for a given signature using Equation 9.
 
     All reserves are internally upscaled to 18-decimal before applying
     the formula. The resulting trades are in the upscaled 18-decimal space
     and must be descaled to native token units for on-chain use.
+
+    Returns:
+        The computed value.
+
     """
     n = pool.n_tokens
     gamma = 1.0 - float(pool.fee)
@@ -200,14 +221,17 @@ def validate_trade(
     signature: TradeSignature,
     pool: BalancerMultiTokenState,
 ) -> bool:
-    """
-    Validate that the trade.
+    """Validate that the trade.
 
     1. Respects the signature (direction matches)
     2. Doesn't withdraw more than available
     3. Maintains the invariant with fees.
 
     All calculations use upscaled 18-decimal reserves.
+
+    Returns:
+        The computed value.
+
     """
     gamma = 1.0 - float(pool.fee)
     reserves_f = pool.upscaled_reserves()
@@ -246,13 +270,16 @@ def compute_profit_token_units(
     trades: tuple[float, ...],
     market_prices: tuple[float, ...],
 ) -> float:
-    """
-    Compute profit from upscaled 18-decimal trades at market prices.
+    """Compute profit from upscaled 18-decimal trades at market prices.
 
     Converts upscaled 18-decimal trades to token units before
     multiplying by market prices, ensuring dimensional consistency.
 
     Profit = -sum(market_price_i * Phi_i_in_tokens)
+
+    Returns:
+        The computed value.
+
     """
     total = 0.0
     for i in range(len(trades)):
@@ -273,11 +300,14 @@ def refine_to_integer(
     market_prices: tuple[float, ...],
     search_radius: int = 3,
 ) -> tuple[int, ...]:
-    """
-    Refine float trades to integer amounts in native token units.
+    """Refine float trades to integer amounts in native token units.
 
     Trades are in upscaled 18-decimal units. We descale to native
     units (accounting for each token's decimals), round, and search.
+
+    Returns:
+        The computed value.
+
     """
     n = pool.n_tokens
     active_indices = [i for i in range(n) if signature[i] != 0]
@@ -360,11 +390,14 @@ def solve_balancer_weighted(
     market_prices: tuple[float, ...],
     max_input: float | None = None,
 ) -> MultiTokenArbitrageResult:
-    """
-    Find optimal multi-token arbitrage trade for a Balancer weighted pool.
+    """Find optimal multi-token arbitrage trade for a Balancer weighted pool.
 
     Uses Equation 9 from Willetts & Harrington (2024) with correct
     d_i = I_{s_i=1} indicator (1 for deposit, 0 for withdraw).
+
+    Returns:
+        The computed value.
+
     """
     n = pool.n_tokens
 
@@ -428,7 +461,12 @@ def solve_balancer_weighted(
 
 
 def balancer_pool_to_state(pool: BalancerV2Pool) -> BalancerMultiTokenState:
-    """Convert a BalancerV2Pool object to BalancerMultiTokenState."""
+    """Convert a BalancerV2Pool object to BalancerMultiTokenState.
+
+    Returns:
+        The computed value.
+
+    """
     decimals = tuple(token.decimals for token in pool.tokens) if hasattr(pool, "tokens") else ()
     return BalancerMultiTokenState(
         reserves=pool.balances,

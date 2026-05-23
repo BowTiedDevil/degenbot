@@ -1,5 +1,4 @@
-"""
-Legacy arbitrage cycle classes.
+"""Legacy arbitrage cycle classes.
 
 These classes are deprecated and will be removed in a future release.
 Refer to the migration guide at docs/migration-guides/legacy-cycles-to-arbitrage-path.md

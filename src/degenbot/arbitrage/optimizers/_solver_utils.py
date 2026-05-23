@@ -15,8 +15,7 @@ from degenbot.uniswap.v3_libraries.constants import Q96
 
 
 def _infer_zero_for_one(v3_hop: BoundedProductHop) -> bool:
-    """
-    Infer swap direction from BoundedProductHop data.
+    """Infer swap direction from BoundedProductHop data.
 
     Uses the stored zero_for_one if available. Otherwise computes it
     from the reserve ratio vs the expected ratio from L/sqrt_price.
@@ -26,6 +25,10 @@ def _infer_zero_for_one(v3_hop: BoundedProductHop) -> bool:
     - zero_for_one=False: reserve_in/reserve_out = R1/R0 = sqrt_p²
 
     The ratio comparison is scale-invariant (works regardless of Q96 scaling).
+
+    Returns:
+        The computed value.
+
     """
     if v3_hop.zero_for_one is not None:
         return v3_hop.zero_for_one
@@ -37,7 +40,15 @@ def _infer_zero_for_one(v3_hop: BoundedProductHop) -> bool:
 
 
 def _hop_to_float_state(hop: HopType) -> tuple[float, float, float]:
-    """Convert any pairwise Hop variant to (reserve_in, reserve_out, gamma) as floats."""
+    """Convert any pairwise Hop variant to (reserve_in, reserve_out, gamma) as floats.
+
+    Returns:
+        The computed value.
+
+    Raises:
+        TypeError: If the operation fails.
+
+    """
     if isinstance(hop, BalancerMultiTokenHop):
         msg = "BalancerMultiTokenHop has no pairwise reserves"
         raise TypeError(msg)
@@ -46,8 +57,7 @@ def _hop_to_float_state(hop: HopType) -> tuple[float, float, float]:
 
 @dataclass(frozen=True, slots=True)
 class _MobiusCoefficients:
-    """
-    Internal Möbius coefficients l(x) = K*x / (M + N*x).
+    """Internal Möbius coefficients l(x) = K*x / (M + N*x).
 
     Computed from Hop data via an O(n) recurrence.
     """
@@ -73,8 +83,7 @@ class _MobiusCoefficients:
 
 
 def _compute_mobius_coefficients(hops: tuple[HopType, ...]) -> _MobiusCoefficients:
-    """
-    Compute Möbius transformation coefficients from hops.
+    """Compute Möbius transformation coefficients from hops.
 
     The recurrence:
         Initialize: K = gamma_1 * s_1, M = r_1, N = gamma_1
@@ -82,6 +91,10 @@ def _compute_mobius_coefficients(hops: tuple[HopType, ...]) -> _MobiusCoefficien
             K_new = K * gamma_i * s_i
             M_new = M * r_i
             N_new = N * r_i + K * gamma_i   (uses K before update)
+
+    Returns:
+        The computed value.
+
     """
     if not hops:
         return _MobiusCoefficients(K=0.0, M=1.0, N=0.0, is_profitable=False)
@@ -103,12 +116,15 @@ def _compute_mobius_coefficients(hops: tuple[HopType, ...]) -> _MobiusCoefficien
 
 
 def _simulate_path(x: float, hops: tuple[HopType, ...]) -> float:
-    """
-    Simulate a swap through all hops for verification.
+    """Simulate a swap through all hops for verification.
 
     Supports ConstantProduct, BoundedProduct, SolidlyStable (with swap_fn),
     and CurveStableswap (with swap_fn). Falls back to constant-product
     formula when no exact swap_fn is available.
+
+    Returns:
+        The computed value.
+
     """
     amount = x
     for hop in hops:
@@ -135,12 +151,18 @@ def _rust_integer_refinement(
     hops: tuple[HopType, ...],
     max_input: int | None,
 ) -> tuple[int, int]:
-    """
-    Integer refinement in Rust using EVM-exact U256 arithmetic.
+    """Integer refinement in Rust using EVM-exact U256 arithmetic.
 
     Converts Python hops to RustIntHopState, calls py_mobius_refine_int
     to search around the float optimum with U256 simulation, and
     returns the best integer result.
+
+    Returns:
+        The computed value.
+
+    Raises:
+        TypeError: If the operation fails.
+
     """
     rust_int_hops: list[Any] = []
     for hop in hops:

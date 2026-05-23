@@ -1,5 +1,4 @@
-"""
-Pure-math Möbius transformation functions for constant product AMM paths.
+"""Pure-math Möbius transformation functions for constant product AMM paths.
 
 Every constant product swap y = (f·s·x)/(r + f·x) is a Möbius transformation
 that fixes the origin. This includes V3/V4 tick ranges, which are bounded
@@ -50,8 +49,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class MobiusCoefficients:
-    """
-    The three scalar coefficients that fully describe an n-hop constant.
+    """The three scalar coefficients that fully describe an n-hop constant.
 
     product path as a single Möbius transformation l(x) = K·x / (M + N·x).
 
@@ -74,8 +72,7 @@ class MobiusCoefficients:
     is_profitable: bool
 
     def path_output(self, x: float) -> float:
-        """
-        Compute the path output for input x.
+        """Compute the path output for input x.
 
         Parameters
         ----------
@@ -94,8 +91,7 @@ class MobiusCoefficients:
         return self.K * x / denom
 
     def optimal_input(self) -> float:
-        """
-        Compute the exact optimal input that maximizes profit.
+        """Compute the exact optimal input that maximizes profit.
 
         Returns
         -------
@@ -108,8 +104,7 @@ class MobiusCoefficients:
         return (math.sqrt(self.K * self.M) - self.M) / self.N
 
     def profit_at(self, x: float) -> float:
-        """
-        Compute profit l(x) - x for input x.
+        """Compute profit l(x) - x for input x.
 
         Parameters
         ----------
@@ -127,8 +122,7 @@ class MobiusCoefficients:
 
 @dataclass(frozen=True, slots=True)
 class MobiusFloatHop:
-    """
-    Reserve and fee state for a single pool hop in float space.
+    """Reserve and fee state for a single pool hop in float space.
 
     For V2 pools, reserve_in and reserve_out are the raw reserves.
     For V3 tick ranges, they are the effective reserves:
@@ -160,8 +154,7 @@ class MobiusFloatHop:
 
 @dataclass(frozen=True, slots=True)
 class V3TickRangeHop:
-    """
-    V3/V4 tick range data needed to build a Möbius MobiusFloatHop.
+    """V3/V4 tick range data needed to build a Möbius MobiusFloatHop.
 
     Stores the bounded product CFMM parameters for a single V3 tick range
     along with the current pool state, so that we can construct effective
@@ -202,8 +195,7 @@ class V3TickRangeHop:
         return self.liquidity * self.sqrt_price_lower
 
     def to_hop_state(self) -> MobiusFloatHop:
-        """
-        Convert this V3 tick range to a MobiusFloatHop with effective reserves.
+        """Convert this V3 tick range to a MobiusFloatHop with effective reserves.
 
         The swap function for a bounded product CFMM is:
             y = gamma*(R1+beta)*x / ((R0+alpha) + gamma*x)
@@ -234,14 +226,18 @@ class V3TickRangeHop:
         )
 
     def contains_sqrt_price(self, sqrt_price: float) -> bool:
-        """Check if a sqrt price is within this tick range."""
+        """Check if a sqrt price is within this tick range.
+
+        Returns:
+            The computed value.
+
+        """
         return self.sqrt_price_lower <= sqrt_price <= self.sqrt_price_upper
 
 
 @dataclass(frozen=True, slots=True)
 class TickRangeCrossing:
-    """
-    Pre-computed crossing data for a V3 swap that crosses tick boundaries.
+    """Pre-computed crossing data for a V3 swap that crosses tick boundaries.
 
     and ends in a specific range.
 
@@ -267,8 +263,7 @@ class TickRangeCrossing:
 
 @dataclass(frozen=True, slots=True)
 class V3TickRangeSequence:
-    """
-    Ordered sequence of V3 tick ranges in the swap direction.
+    """Ordered sequence of V3 tick ranges in the swap direction.
 
     ranges[0] contains the current price. ranges[1], ranges[2], ... are
     adjacent ranges in the swap direction.
@@ -301,8 +296,7 @@ class V3TickRangeSequence:
         return self.ranges[0].zero_for_one
 
     def compute_crossing(self, k: int) -> TickRangeCrossing:
-        """
-        Compute crossing data to reach range k (0-indexed).
+        """Compute crossing data to reach range k (0-indexed).
 
         k=0: no crossing (swap stays in first range).
         k=1: cross range 0, end in range 1.
@@ -312,15 +306,14 @@ class V3TickRangeSequence:
         price (the boundary with the previous range), so that to_hop_state()
         gives the correct effective reserves.
 
-        Parameters
-        ----------
-        k : int
-            Index of the ending range.
+        Args:
+            k: Index of the ending range.
 
-        Returns
-        -------
-        TickRangeCrossing
+        Returns:
             Crossing data including fixed input/output and ending range.
+
+        Raises:
+            IndexError: If k is out of range.
 
         """
         if k < 0 or k >= len(self.ranges):
@@ -384,8 +377,7 @@ class V3TickRangeSequence:
 
 
 def compute_mobius_coefficients(hops: list[MobiusFloatHop]) -> MobiusCoefficients:
-    """
-    Compute the Möbius transformation coefficients K, M, N for an n-hop.
+    """Compute the Möbius transformation coefficients K, M, N for an n-hop.
 
     constant product path via a single forward pass.
 
@@ -431,8 +423,7 @@ def compute_mobius_coefficients(hops: list[MobiusFloatHop]) -> MobiusCoefficient
 
 
 def simulate_path(x: float, hops: list[MobiusFloatHop]) -> float:
-    """
-    Simulate a swap through all hops for verification.
+    """Simulate a swap through all hops for verification.
 
     Parameters
     ----------
@@ -462,8 +453,7 @@ def mobius_solve(
     hops: list[MobiusFloatHop],
     max_input: float | None = None,
 ) -> tuple[float, float, int]:
-    """
-    Solve for optimal arbitrage input using the Möbius transformation approach.
+    """Solve for optimal arbitrage input using the Möbius transformation approach.
 
     Parameters
     ----------

@@ -50,6 +50,8 @@ from degenbot.uniswap.v3_libraries.constants import Q96
 # V3 sqrt-price estimation (pure math, no I/O)
 # ---------------------------------------------------------------------------
 
+_SEQUENTIAL_CANDIDATE_THRESHOLD = 2
+
 
 def _estimate_sqrt_price_after_swap(
     amount_in: float,
@@ -58,14 +60,17 @@ def _estimate_sqrt_price_after_swap(
     fee: float = 0.003,
     zero_for_one: bool = True,  # noqa: FBT001, FBT002
 ) -> float:
-    """
-    Estimate the sqrt price after swapping *amount_in* within a single V3 tick range.
+    """Estimate the sqrt price after swapping *amount_in* within a single V3 tick range.
 
     Uses the V3 swap approximation:
     - zfo (token0→token1): new_sqrt_p = L / (L / sqrt_p + amount_in / gamma)
     - ofo (token1→token0): new_sqrt_p = sqrt_p + amount_in * gamma / L
 
     Returns *current_sqrt_price* unchanged when *amount_in* ≤ 0 or *liquidity* ≤ 0.
+
+    Returns:
+        The computed value.
+
     """
     if amount_in <= 0 or liquidity <= 0:
         return current_sqrt_price
@@ -77,8 +82,7 @@ def _estimate_sqrt_price_after_swap(
 
 
 class PiecewiseMobiusSolver(Solver):
-    """
-    Piecewise-Möbius solver for V3 paths with tick crossings.
+    """Piecewise-Möbius solver for V3 paths with tick crossings.
 
     For V3 swaps that cross tick boundaries, the swap function is
     piecewise-Möbius: fixed crossing output from crossed ranges plus
@@ -99,10 +103,17 @@ class PiecewiseMobiusSolver(Solver):
         self._rust_solver = _RustArbSolver()
         self._mobius_solver: MobiusSolver | None = None
         self._rust_hop_cache: dict[int, list[Any]] = {}
-        self._rust_sequence_cache: dict[tuple[tuple[int, ...], int, bool], Any] = {}
+        self._rust_sequence_cache: dict[
+            tuple[tuple[int, ...], int, bool], _RustV3TickRangeSequence
+        ] = {}
 
     def __getstate__(self) -> dict[str, Any]:
-        """Omit the non-pickleable Rust optimizer and solver caches."""
+        """Omit the non-pickleable Rust optimizer and solver caches.
+
+        Returns:
+            The computed value.
+
+        """
         state = self.__dict__.copy()
         state["_rust_solver"] = None
         state["_mobius_solver"] = None
@@ -131,7 +142,12 @@ class PiecewiseMobiusSolver(Solver):
 
     @staticmethod
     def _has_multi_range(solve_input: SolveInput) -> bool:
-        """Check if any V3 hop has multi-range data for tick crossing."""
+        """Check if any V3 hop has multi-range data for tick crossing.
+
+        Returns:
+            The computed value.
+
+        """
         for hop in solve_input.hops:
             if (
                 hop.invariant == PoolInvariant.BOUNDED_PRODUCT
@@ -143,7 +159,12 @@ class PiecewiseMobiusSolver(Solver):
 
     @staticmethod
     def _find_v3_hop_index(solve_input: SolveInput) -> tuple[int, BoundedProductHop] | None:
-        """Find the first V3 hop with multi-range data."""
+        """Find the first V3 hop with multi-range data.
+
+        Returns:
+            The computed value.
+
+        """
         for i, hop in enumerate(solve_input.hops):
             if not isinstance(hop, BoundedProductHop):
                 continue
@@ -193,7 +214,15 @@ class PiecewiseMobiusSolver(Solver):
         return self._solve_multi_range(solve_input, start_ns)
 
     def _try_single_range_fallback(self, solve_input: SolveInput) -> SolveResult:
-        """Try MobiusSolver for single-range V3."""
+        """Try MobiusSolver for single-range V3.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            OptimizationError: If the operation fails.
+
+        """
         if self._mobius_solver is None:
             self._mobius_solver = MobiusSolver()
         try:
@@ -214,7 +243,15 @@ class PiecewiseMobiusSolver(Solver):
             ) from None
 
     def _solve_multi_range(self, solve_input: SolveInput, start_ns: int) -> SolveResult:
-        """Solve using Python piecewise-Möbius for tick crossings."""
+        """Solve using Python piecewise-Möbius for tick crossings.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            OptimizationError: If the operation fails.
+
+        """
         # Find the V3 hop with multi-range data (already found in solve(), but refind for safety)
         v3_result = self._find_v3_hop_index(solve_input)
         if v3_result is None:
@@ -232,7 +269,15 @@ class PiecewiseMobiusSolver(Solver):
     def _solve_multi_range_python(
         self, solve_input: SolveInput, v3_hop_index: int, v3_hop: BoundedProductHop, start_ns: int
     ) -> SolveResult:
-        """Python-only multi-range solver (fallback when Rust fails)."""
+        """Python-only multi-range solver (fallback when Rust fails).
+
+        Returns:
+            The computed value.
+
+        Raises:
+            OptimizationError: If the operation fails.
+
+        """
         # Build candidate crossings from tick_ranges with lazy evaluation
         best_result: SolveResult | None = None
         best_profit = -1
@@ -305,20 +350,23 @@ class PiecewiseMobiusSolver(Solver):
         solve_input: SolveInput,
         v3_hop_index: int,
         v3_hop: BoundedProductHop,
-        current_idx: int,
+        current_idx: int,  # noqa: ARG002
         candidates: list[int],
     ) -> list[SolveResult]:
-        """
-        Evaluate multiple candidate ranges.
+        """Evaluate multiple candidate ranges.
 
         Uses sequential evaluation for 1-2 candidates (avoids thread overhead).
         Only uses threads for 3+ candidates where parallelism pays off.
+
+        Returns:
+            The computed value.
+
         """
         results: list[SolveResult] = []
 
         # Sequential evaluation for small number of candidates
         # Thread overhead exceeds benefit for 1-2 candidates
-        if len(candidates) <= 2:
+        if len(candidates) <= _SEQUENTIAL_CANDIDATE_THRESHOLD:
             for end_idx in candidates:
                 try:
                     result = self._try_candidate_range(
@@ -362,10 +410,13 @@ class PiecewiseMobiusSolver(Solver):
         end_idx: int,
         current_best_profit: int,
     ) -> bool:
-        """
-        Cheap check to filter out candidates that can't be profitable.
+        """Cheap check to filter out candidates that can't be profitable.
 
         Returns False if this candidate can be skipped (saves expensive evaluation).
+
+        Returns:
+            The computed value.
+
         """
         assert v3_hop.tick_ranges is not None
 
@@ -439,8 +490,7 @@ class PiecewiseMobiusSolver(Solver):
         v3_hop: BoundedProductHop,
         end_idx: int,
     ) -> SolveResult:
-        """
-        Try a candidate ending range using proper V3 tick crossing math.
+        """Try a candidate ending range using proper V3 tick crossing math.
 
         Uses the exact V3 swap formulas from mobius.py:
         - Computes TickRangeCrossing with proper fee handling
@@ -448,6 +498,13 @@ class PiecewiseMobiusSolver(Solver):
         - Uses golden section search for piecewise profit maximization
 
         Falls back to Rust implementation when available for ~5x speedup.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            OptimizationError: If the operation fails.
+
         """
         assert v3_hop.tick_ranges is not None
 
@@ -560,7 +617,12 @@ class PiecewiseMobiusSolver(Solver):
 
         # Define profit evaluation functions (scalar and vectorized)
         def eval_profit(x: float) -> float:
-            """Evaluate profit for input x using piecewise V3 swap."""
+            """Evaluate profit for input x using piecewise V3 swap.
+
+            Returns:
+                The computed value.
+
+            """
             if x <= 0:
                 return -x
 
@@ -678,13 +740,16 @@ class PiecewiseMobiusSolver(Solver):
         x_high: float,
         eval_profit_scalar: Callable[[float], float],
     ) -> SolveResult | None:
-        """
-        Vectorized bracket search using NumPy for parallel evaluation.
+        """Vectorized bracket search using NumPy for parallel evaluation.
 
         Evaluates profit at multiple points simultaneously to quickly
         narrow down the optimal region before golden section refinement.
 
         Returns SolveResult if successful, None to fall back to scalar search.
+
+        Returns:
+            The computed value.
+
         """
         # Number of points for initial vectorized evaluation
         # Reduced from 20 to 10 to minimize overhead
@@ -758,7 +823,7 @@ class PiecewiseMobiusSolver(Solver):
     def _get_cached_rust_sequence(
         self,
         v3_hop: BoundedProductHop,
-    ) -> Any:
+    ) -> _RustV3TickRangeSequence:
         assert v3_hop.tick_ranges is not None
         zero_for_one = _infer_zero_for_one(v3_hop)
 
@@ -798,10 +863,16 @@ class PiecewiseMobiusSolver(Solver):
         solve_input: SolveInput,
         start_ns: int,
     ) -> SolveResult:
-        """
-        Try V3-V3 Rust solver for 2-hop paths where both hops are V3.
+        """Try V3-V3 Rust solver for 2-hop paths where both hops are V3.
 
         Raises OptimizationError on failure.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            OptimizationError: If the operation fails.
+
         """
         # Check both hops are V3 with tick range data
         v3_hops: list[BoundedProductHop] = []
@@ -861,11 +932,17 @@ class PiecewiseMobiusSolver(Solver):
         v3_hop: BoundedProductHop,
         start_ns: int,
     ) -> SolveResult:
-        """
-        Try to solve multi-range V3 using Rust's full sequence solver.
+        """Try to solve multi-range V3 using Rust's full sequence solver.
 
         Uses cached Rust objects to minimize Python-Rust marshalling overhead.
         Raises OptimizationError on failure.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            OptimizationError: If the operation fails.
+
         """
         # Get cached Rust objects
         rust_hops = self._get_cached_rust_hops(solve_input)

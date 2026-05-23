@@ -196,10 +196,17 @@ class _UniswapCurveCycle(PublisherMixin):
         state_overrides: Mapping[ChecksumAddress, CurveOrUniswapPoolState],
         block_number: BlockNumber | None = None,
     ) -> tuple[CurveOrUniswapSwapAmount, ...]:
-        """
-        Generate inputs for all swaps along the arbitrage path, starting with the specified amount.
+        """Generate inputs for all swaps along the arbitrage path, starting with the specified amount.
 
         of the input token defined in the constructor.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            DegenbotValueError: If the operation fails.
+            ArbitrageError: If the operation fails.
+
         """
         working_token_out_quantity = 0
         swap_amounts: list[CurveOrUniswapSwapAmount] = []
@@ -296,7 +303,7 @@ class _UniswapCurveCycle(PublisherMixin):
                         )
                     case _:  # pragma: no cover
                         raise DegenbotValueError(
-                            message=f"Could not process pool {pool} and override {pool_state_override}"  # noqa:E501
+                            message=f"Could not process pool {pool} and override {pool_state_override}"
                         )
             except LiquidityPoolError as exc:  # pragma: no cover
                 raise ArbitrageError(message=str(exc)) from exc
@@ -309,7 +316,15 @@ class _UniswapCurveCycle(PublisherMixin):
         owner: ChecksumAddress,
         spender: ChecksumAddress,
     ) -> int:
-        """Fetch the ERC-20 approval for `spender` on behalf of `owner`."""
+        """Fetch the ERC-20 approval for `spender` on behalf of `owner`.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            ValueError: If the operation fails.
+
+        """
         if self._bot is None:
             msg = "A Bot instance is required for token approval lookups"
             raise ValueError(msg)
@@ -331,10 +346,15 @@ class _UniswapCurveCycle(PublisherMixin):
         self,
         state_overrides: Mapping[ChecksumAddress, CurveOrUniswapPoolState],
     ) -> None:
-        """
-        Perform liquidity and minimum rate of exchange checks and raise an exception if further.
+        """Perform liquidity and minimum rate of exchange checks and raise an exception if further.
 
         optimization should be avoided.
+
+        Raises:
+            DegenbotValueError: If the operation fails.
+            ArbitrageError: If the operation fails.
+            NoLiquidity: If the operation fails.
+
         """
         # A scalar value representing the net amount of 1 input token across
         # the complete path (including fees).
@@ -411,7 +431,7 @@ class _UniswapCurveCycle(PublisherMixin):
                     profit_factor *= price * ((fee.denominator - fee.numerator) / fee.denominator)
                 case _:  # pragma: no cover
                     raise DegenbotValueError(
-                        message=f"Could not process pool {pool}, state {pool_state}, and vector {vector}"  # noqa:E501
+                        message=f"Could not process pool {pool}, state {pool_state}, and vector {vector}"
                     )
 
         if profit_factor < 1.0:
@@ -426,7 +446,12 @@ class _UniswapCurveCycle(PublisherMixin):
     ) -> ArbitrageCalculationResult[
         CurveStableSwapPoolSwapAmounts | UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts
     ]:
-        """Calculate the optimal arbitrage profit using the maximum input as an upper bound."""
+        """Calculate the optimal arbitrage profit using the maximum input as an upper bound.
+
+        Returns:
+            The computed value.
+
+        """
         # bound the amount to be swapped
         bounds = (
             1.0,
@@ -537,10 +562,13 @@ class _UniswapCurveCycle(PublisherMixin):
     ) -> ArbitrageCalculationResult[
         CurveStableSwapPoolSwapAmounts | UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts
     ]:
-        """
-        Calculate the results of the arbitrage at the current pool states, or at one or more.
+        """Calculate the results of the arbitrage at the current pool states, or at one or more.
 
         overridden pool states if provided.
+
+        Returns:
+            The computed value.
+
         """
         if state_overrides is None:
             state_overrides = {}
@@ -554,8 +582,7 @@ class _UniswapCurveCycle(PublisherMixin):
         executor: ProcessPoolExecutor | ThreadPoolExecutor,
         state_overrides: Mapping[ChecksumAddress, CurveOrUniswapPoolState] | None = None,
     ) -> Awaitable[Any]:
-        """
-        Wrap the arbitrage calculation into an asyncio future using the.
+        """Wrap the arbitrage calculation into an asyncio future using the.
 
         specified executor.
 
@@ -573,6 +600,10 @@ class _UniswapCurveCycle(PublisherMixin):
         A future which returns a `ArbitrageCalculationResult` (or exception)
         when awaited.
 
+        Raises:
+            ValueError: If the operation fails.
+            DegenbotValueError: If the operation fails.
+
         Notes:
         -----
         This is an async function that must be called with the `await` keyword.
@@ -587,7 +618,7 @@ class _UniswapCurveCycle(PublisherMixin):
             pool.sparse_liquidity_map for pool in self.swap_pools if isinstance(pool, UniswapV3Pool)
         ):  # pragma: no cover
             raise DegenbotValueError(
-                message=f"Cannot calculate {self} with executor. One or more V3 pools has a sparse liquidity map."  # noqa: E501
+                message=f"Cannot calculate {self} with executor. One or more V3 pools has a sparse liquidity map."
             )
 
         curve_pool = self.swap_pools[1]
@@ -627,8 +658,7 @@ class _UniswapCurveCycle(PublisherMixin):
         pool_swap_amounts: Sequence[CurveOrUniswapSwapAmount],
         infinite_approval: bool = False,
     ) -> list[tuple[ChecksumAddress, bytes, int]]:
-        """
-        Generate a list of tuple-formatted payloads for each step in the swap path.
+        """Generate a list of tuple-formatted payloads for each step in the swap path.
 
         Calldata is built using the eth_abi.encode method and the ABI for the
         swap functions at each pool. Curve V1 and Uniswap V2/V3 pools are supported.
@@ -658,6 +688,9 @@ class _UniswapCurveCycle(PublisherMixin):
                 calldata: bytes,
                 value: int
             ).
+
+        Raises:
+            DegenbotValueError: If the operation fails.
 
         """
         from_address = get_checksum_address(from_address)
@@ -819,7 +852,7 @@ class _UniswapCurveCycle(PublisherMixin):
                         ))
 
                     logger.debug(
-                        f"PAYLOAD: exchange {amounts.amount_in} {amounts.token_in_index}->{amounts.token_out_index}, min out = {amounts.min_amount_out}"  # noqa: E501
+                        f"PAYLOAD: exchange {amounts.amount_in} {amounts.token_in_index}->{amounts.token_out_index}, min out = {amounts.min_amount_out}"
                     )
                     if amounts.underlying:
                         payloads.append((
@@ -859,7 +892,7 @@ class _UniswapCurveCycle(PublisherMixin):
                         ))
                     if isinstance(next_pool, UniswapV2Pool):
                         logger.debug(
-                            f"PAYLOAD: transferring {amounts.min_amount_out} {amounts.token_out} to V2 pool {next_pool}"  # noqa: E501
+                            f"PAYLOAD: transferring {amounts.min_amount_out} {amounts.token_out} to V2 pool {next_pool}"
                         )
                         payloads.append((
                             # address

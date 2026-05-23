@@ -13,8 +13,7 @@ from degenbot.exceptions import OptimizationError
 
 
 class NewtonSolver(Solver):
-    """
-    Newton's method solver for 2-hop V2-V2 arbitrage.
+    """Newton's method solver for 2-hop V2-V2 arbitrage.
 
     Converges in 3-4 iterations. Useful as a fallback when Möbius
     is not available or for validation.
@@ -24,6 +23,7 @@ class NewtonSolver(Solver):
 
     MAX_ITERATIONS = 10
     TOLERANCE = 1e-9
+    CURVATURE_THRESHOLD = 1e-30
 
     @override
     def supports(self, solve_input: SolveInput) -> bool:
@@ -91,7 +91,7 @@ class NewtonSolver(Solver):
             d2z_dy2 = -2.0 * g0_sell**2 * s0_sell * r0_sell / (denom_sell**3)
             d2profit_dx2 = d2z_dy2 * dy_dx**2 + dz_dy * d2y_dx2
 
-            if abs(d2profit_dx2) < 1e-30:
+            if abs(d2profit_dx2) < self.CURVATURE_THRESHOLD:
                 iterations = i + 1
                 break
 

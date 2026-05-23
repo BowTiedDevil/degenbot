@@ -3,9 +3,15 @@
 from degenbot.types.hop_types import V3TickRangeInfo
 from degenbot.uniswap.v3_libraries.constants import Q96
 from degenbot.uniswap.v3_libraries.tick_bitmap import gen_ticks
-from degenbot.uniswap.v3_libraries.tick_math import MAX_TICK, MIN_TICK, get_sqrt_ratio_at_tick
+from degenbot.uniswap.v3_libraries.tick_math import (
+    MAX_TICK,
+    MIN_TICK,
+    get_sqrt_ratio_at_tick,
+)
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+
+_MIN_BOUNDARY_TICKS = 2
 
 
 def _v3_virtual_reserves(
@@ -14,8 +20,7 @@ def _v3_virtual_reserves(
     sqrt_price_x96: int,
     zero_for_one: bool,
 ) -> tuple[int, int]:
-    """
-    Compute virtual reserves for a V3/V4 tick range.
+    """Compute virtual reserves for a V3/V4 tick range.
 
     For a concentrated-liquidity pool, the effective (virtual) reserves
     within the current tick range are:
@@ -60,7 +65,9 @@ def _v3_virtual_reserves(
 
 
 # Cache for tick range lookups: (pool_address, current_tick, zero_for_one) -> result
-_tick_range_cache: dict[tuple[str, int, bool], tuple[tuple[V3TickRangeInfo, ...], int] | None] = {}
+_tick_range_cache: dict[
+    tuple[str, int, bool], tuple[tuple[V3TickRangeInfo, ...], int] | None
+] = {}
 _MAX_TICK_RANGE_CACHE_SIZE = 128
 
 
@@ -70,11 +77,14 @@ def _get_cached_tick_ranges(
     zero_for_one: bool,
     max_ranges: int = 3,
 ) -> tuple[tuple[V3TickRangeInfo, ...], int] | None:
-    """
-    Cache _v3_get_adjacent_tick_ranges results.
+    """Cache _v3_get_adjacent_tick_ranges results.
 
     Uses LRU-style cache keyed by (pool_address, current_tick, zero_for_one).
     Cache is cleared when it exceeds _MAX_TICK_RANGE_CACHE_SIZE entries.
+
+    Returns:
+        The computed value.
+
     """
     cache_key = (str(pool.address), pool.tick, zero_for_one)
 
@@ -103,8 +113,7 @@ def _v3_get_adjacent_tick_ranges(
     zero_for_one: bool,
     max_ranges: int = 3,
 ) -> tuple[tuple[V3TickRangeInfo, ...], int] | None:
-    """
-    Fetch adjacent tick ranges from a V3/V4 pool for multi-range support.
+    """Fetch adjacent tick ranges from a V3/V4 pool for multi-range support.
 
     Returns a tuple of (tick_ranges, current_range_index) where current_range_index
     indicates which range contains the current price. Returns None if the pool
@@ -139,7 +148,9 @@ def _v3_get_adjacent_tick_ranges(
     current_tick = pool.tick
 
     # Generate ticks in swap direction
-    less_than_or_equal = not zero_for_one  # token0→token1: price goes down, tick goes down
+    less_than_or_equal = (
+        not zero_for_one
+    )  # token0→token1: price goes down, tick goes down
 
     ticks_along_path = gen_ticks(
         tick_data=tick_data,
@@ -171,7 +182,7 @@ def _v3_get_adjacent_tick_ranges(
     except StopIteration:
         pass
 
-    if len(initialized_ticks) < 2:
+    if len(initialized_ticks) < _MIN_BOUNDARY_TICKS:
         # Not enough range boundaries to form meaningful ranges
         return None
 

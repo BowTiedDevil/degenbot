@@ -100,8 +100,7 @@ class V2Payload:
 
 
 def _build_convex_problem(num_pools: int) -> Problem:
-    """
-    Construct a DPP-compliant cvxpy problem with parameterized values for pool reserves. This.
+    """Construct a DPP-compliant cvxpy problem with parameterized values for pool reserves. This.
 
     allows the problem to be defined once at the class level, and rapidly re-solved at the instance
     level by updating the parameters for the specific pools and tokens being evaluated.
@@ -109,6 +108,10 @@ def _build_convex_problem(num_pools: int) -> Problem:
     The initial reserve, fee, and token decimal values are typical for the expected problem.
 
     ref: https://www.cvxpy.org/tutorial/dpp/index.html
+
+    Returns:
+        The computed value.
+
     """
     # Indices are arbitrary but must be consistent so token position matches across reserve arrays
     pool_hi_index, pool_lo_index = 0, 1
@@ -235,7 +238,12 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
     @classmethod
     def _get_arb_solver(cls) -> _ArbSolver:
-        """Lazy-init shared ArbSolver instance."""
+        """Lazy-init shared ArbSolver instance.
+
+        Returns:
+            The computed value.
+
+        """
         if cls._arb_solver is None:
             cls._arb_solver = _ArbSolver()
         return cls._arb_solver
@@ -247,8 +255,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
         state_overrides: Mapping[Pool, PoolState] | None = None,
         max_input: int | None = None,
     ) -> int | None:
-        """
-        Try the ArbSolver fast-path for an arbitrage cycle of arbitrary length.
+        """Try the ArbSolver fast-path for an arbitrage cycle of arbitrary length.
 
         Builds Hops from pool objects (V2, V3, V4, Aerodrome) using
         `pool_state_to_hop`, runs the ArbSolver (Mobius→Newton→Brent),
@@ -261,6 +268,10 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
         Returns the optimal forward_token_amount if the solver succeeds,
         or None to fall back to the existing optimization path.
+
+        Returns:
+            The computed value.
+
         """
         if not USE_SOLVER_FAST_PATH or len(pools) < 2:
             return None
@@ -340,7 +351,19 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
     ) -> ArbitrageCalculationResult[
         UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts
     ]:
-        """Calculate the optimal arbitrage profit using the maximum input as an upper bound."""
+        """Calculate the optimal arbitrage profit using the maximum input as an upper bound.
+
+        Returns:
+            The computed value.
+
+        Raises:
+            TypeError: If the operation fails.
+            DegenbotValueError: If the operation fails.
+            ArbitrageError: If the operation fails.
+            InvalidForwardAmount: If the operation fails.
+            Unprofitable: If the operation fails.
+
+        """
         # TODO: check strategy comments for all arbs
 
         def _arb_profit_high_roe_v4_low_roe_v3(
@@ -352,10 +375,13 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             v4_pool_state_override: UniswapV4PoolState | None = None,
             v3_pool_state_override: UniswapV3PoolState | None = None,
         ) -> float:
-            """
-            Transfer forward token from V3 -> V4, profit is difference of WETH_out from V4 and.
+            """Transfer forward token from V3 -> V4, profit is difference of WETH_out from V4 and.
 
             WETH_in to V3.
+
+            Returns:
+                The computed value.
+
             """
             forward_token_quantity = int(forward_token_amount)  # round the input down
 
@@ -401,10 +427,16 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             v4_pool_state_override: UniswapV4PoolState | None = None,
             v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
         ) -> float:
-            """
-            Calculate the expected profit for a V4 ROE > V2 ROE arbitrage that buys forward token X.
+            """Calculate the expected profit for a V4 ROE > V2 ROE arbitrage that buys forward token X.
 
             from the V2 pool and sells it to the V4 pool.
+
+            Returns:
+                The computed value.
+
+            Raises:
+                TypeError: If the operation fails.
+
             """
             forward_token_quantity = int(forward_token_amount)  # round the input down
 
@@ -440,7 +472,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             calc_in_time = time.perf_counter() - calc_start
 
             logger.debug(
-                f"V4: {forward_token_quantity} {forward_token} in, {weth_out} {self.input_token} out"  # noqa: E501
+                f"V4: {forward_token_quantity} {forward_token} in, {weth_out} {self.input_token} out"
             )
             logger.debug(
                 f"V2: {weth_in} {self.input_token} in, {forward_token_quantity} {forward_token} out"
@@ -464,10 +496,13 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             v4_pool_state_override: UniswapV4PoolState | None = None,
             v3_pool_state_override: UniswapV3PoolState | None = None,
         ) -> float:
-            """
-            Calculate the expected profit for a V3 ROE > V4 ROE arbitrage that buys forward token X.
+            """Calculate the expected profit for a V3 ROE > V4 ROE arbitrage that buys forward token X.
 
             from the V4 pool and sells it to the V3 pool.
+
+            Returns:
+                The computed value.
+
             """
             forward_token_quantity = int(forward_token_amount)  # round the input down
 
@@ -513,10 +548,16 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             v3_pool_state_override: UniswapV3PoolState | None = None,
             v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
         ) -> float:
-            """
-            Calculate the expected profit for a V3 ROE > V2 ROE arbitrage that buys forward token X.
+            """Calculate the expected profit for a V3 ROE > V2 ROE arbitrage that buys forward token X.
 
             from the V2 pool and sells it to the V3 pool.
+
+            Returns:
+                The computed value.
+
+            Raises:
+                TypeError: If the operation fails.
+
             """
             forward_token_quantity = int(forward_token_amount)  # round the input down
 
@@ -551,7 +592,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             calc_in_time = time.perf_counter() - calc_start
 
             logger.debug(
-                f"V3: {forward_token_quantity} {forward_token} in, {weth_out} {self.input_token} out"  # noqa: E501
+                f"V3: {forward_token_quantity} {forward_token} in, {weth_out} {self.input_token} out"
             )
             logger.debug(
                 f"V2: {weth_in} {self.input_token} in, {forward_token_quantity} {forward_token} out"
@@ -575,10 +616,16 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             v4_pool_state_override: UniswapV4PoolState | None = None,
             v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
         ) -> float:
-            """
-            Calculate the expected profit for a V2 ROE > V4 ROE arbitrage that buys forward token X.
+            """Calculate the expected profit for a V2 ROE > V4 ROE arbitrage that buys forward token X.
 
             from the V4 pool and sells it to the V2 pool.
+
+            Returns:
+                The computed value.
+
+            Raises:
+                TypeError: If the operation fails.
+
             """
             forward_token_quantity = int(forward_token_amount)  # round the input down
 
@@ -613,7 +660,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                 calc_in_time = time.perf_counter() - calc_start
 
             logger.debug(
-                f"V2: {forward_token_quantity} {forward_token} in, {weth_out} {self.input_token} out"  # noqa: E501
+                f"V2: {forward_token_quantity} {forward_token} in, {weth_out} {self.input_token} out"
             )
             logger.debug(
                 f"V4: {weth_in} {self.input_token} in, {forward_token_quantity} {forward_token} out"
@@ -637,10 +684,16 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             v3_pool_state_override: UniswapV3PoolState | None = None,
             v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
         ) -> float:
-            """
-            Calculate the expected profit for a V2 ROE > V3 ROE arbitrage that buys forward token X.
+            """Calculate the expected profit for a V2 ROE > V3 ROE arbitrage that buys forward token X.
 
             from the V3 pool and sells it to the V2 pool.
+
+            Returns:
+                The computed value.
+
+            Raises:
+                TypeError: If the operation fails.
+
             """
             forward_token_quantity = int(forward_token_amount)  # round the input down
 
@@ -675,7 +728,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                 calc_in_time = time.perf_counter() - calc_start
 
             logger.debug(
-                f"V2: {forward_token_quantity} {forward_token} in, {weth_out} {self.input_token} out"  # noqa: E501
+                f"V2: {forward_token_quantity} {forward_token} in, {weth_out} {self.input_token} out"
             )
             logger.debug(
                 f"V3: {weth_in} {self.input_token} in, {forward_token_quantity} {forward_token} out"
@@ -699,10 +752,13 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             pool_hi_state_override: UniswapV4PoolState | None = None,
             pool_lo_state_override: UniswapV4PoolState | None = None,
         ) -> float:
-            """
-            Calculate the expected profit for a V4/V4 arbitrage that buys forward token X from the.
+            """Calculate the expected profit for a V4/V4 arbitrage that buys forward token X from the.
 
             low ROE pool and sells it to the high ROE pool.
+
+            Returns:
+                The computed value.
+
             """
             forward_token_quantity = int(forward_token_amount)  # round the input down
 
@@ -764,10 +820,13 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             pool_hi_state_override: UniswapV3PoolState | None = None,
             pool_lo_state_override: UniswapV3PoolState | None = None,
         ) -> float:
-            """
-            Calculate the expected profit for a V3/V3 arbitrage that buys forward token X from the.
+            """Calculate the expected profit for a V3/V3 arbitrage that buys forward token X from the.
 
             low ROE pool and sells it to the high ROE pool.
+
+            Returns:
+                The computed value.
+
             """
             forward_token_quantity = int(forward_token_amount)  # round the input down
 
@@ -906,7 +965,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
                 if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
                     logger.debug(
-                        f"V4/V4 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
+                        f"V4/V4 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"
                     )
 
                 forward_token_amount = int(opt.x)
@@ -980,7 +1039,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
             logger.debug(f"{best_profit=}, {weth_out=}, {weth_in=}")
             logger.debug(
-                f"Profit result: cycle {forward_token_amount} {forward_token}, {best_profit} {self.input_token} profit"  # noqa: E501
+                f"Profit result: cycle {forward_token_amount} {forward_token}, {best_profit} {self.input_token} profit"
             )
             logger.debug(f"{amounts=}")
             logger.debug(f"{self.swap_pools=}")
@@ -1099,7 +1158,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
                     if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
                         logger.debug(
-                            f"V4/V3 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
+                            f"V4/V3 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"
                         )
 
             assert forward_token_amount >= 1
@@ -1176,7 +1235,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
             logger.debug(f"{best_profit=}, {weth_out=}, {weth_in=}")
             logger.debug(
-                f"Profit result: cycle {forward_token_amount} {forward_token}, {best_profit} {self.input_token} profit"  # noqa: E501
+                f"Profit result: cycle {forward_token_amount} {forward_token}, {best_profit} {self.input_token} profit"
             )
             logger.debug(f"{amounts=}")
 
@@ -1286,7 +1345,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
                 if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
                     logger.debug(
-                        f"V4/V2 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
+                        f"V4/V2 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"
                     )
 
             assert forward_token_amount >= 1
@@ -1485,7 +1544,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
                     if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
                         logger.debug(
-                            f"V4/V3 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
+                            f"V4/V3 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"
                         )
 
             assert forward_token_amount >= 1
@@ -1669,7 +1728,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
                 if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
                     logger.debug(
-                        f"V3/V3 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
+                        f"V3/V3 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"
                     )
 
                 forward_token_amount = int(opt.x)
@@ -1720,7 +1779,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
             logger.debug(f"{best_profit=}, {weth_out=}, {weth_in=}")
             logger.debug(
-                f"Profit result: cycle {forward_token_amount} {forward_token}, {best_profit} {self.input_token} profit"  # noqa: E501
+                f"Profit result: cycle {forward_token_amount} {forward_token}, {best_profit} {self.input_token} profit"
             )
             logger.debug(f"{amounts=}")
             logger.debug(f"{self.swap_pools=}")
@@ -1831,7 +1890,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
                     if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
                         logger.debug(
-                            f"V3/V2 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
+                            f"V3/V2 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"
                         )
 
             v2_pool_zero_for_one = v3_pool.token1 == forward_token
@@ -1900,7 +1959,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
             logger.debug(f"{best_profit=}, {weth_out=}, {weth_in=}")
             logger.debug(
-                f"Profit result: cycle {forward_token_amount} {forward_token}, {best_profit} {self.input_token} profit"  # noqa: E501
+                f"Profit result: cycle {forward_token_amount} {forward_token}, {best_profit} {self.input_token} profit"
             )
             logger.debug(f"{amounts=}")
             logger.debug(f"{self.swap_pools=}")
@@ -2011,7 +2070,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
                     if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
                         logger.debug(
-                            f"V4/V2 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
+                            f"V4/V2 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"
                         )
 
             assert forward_token_amount >= 1
@@ -2191,7 +2250,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
                 if time.perf_counter() - start > SLOW_ARB_CALC_THRESHOLD:
                     logger.debug(
-                        f"V3/V2 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"  # noqa: E501
+                        f"V3/V2 optimization (id={self.id}) took {time.perf_counter() - start:.2f}s with {opt.nit} iterations"
                     )
 
                 forward_token_amount = int(opt.x)
@@ -2264,7 +2323,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
             logger.debug(f"{best_profit=}, {weth_out=}, {weth_in=}")
             logger.debug(
-                f"Profit result: cycle {forward_token_amount} {forward_token}, {best_profit:.4f} {self.input_token} profit"  # noqa: E501
+                f"Profit result: cycle {forward_token_amount} {forward_token}, {best_profit:.4f} {self.input_token} profit"
             )
             logger.debug(f"{amounts=}")
             logger.debug(f"{self.swap_pools=}")
@@ -2419,7 +2478,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                             / ((new_problem.value + problem.value) / 2)
                         )
                         logger.error(
-                            f"Cached problem result ({problem.value}) within {result_percent_difference:.2f}% of fresh result ({new_problem.value})"  # noqa: E501
+                            f"Cached problem result ({problem.value}) within {result_percent_difference:.2f}% of fresh result ({new_problem.value})"
                         )
                         raise DegenbotValueError(message="CVXPY calculation result mismatch")
 
@@ -2473,7 +2532,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                 )
                 logger.info("Solved")
                 logger.info(
-                    f"fee_multiplier                        = {[(float(fee[0]), float(fee[1])) for fee in (fee_multiplier.value or [])]}"  # noqa: E501
+                    f"fee_multiplier                        = {[(float(fee[0]), float(fee[1])) for fee in (fee_multiplier.value or [])]}"
                 )
                 logger.info(
                     f"forward_token_amount                  = {uncompressed_forward_token_amount}"
@@ -2491,22 +2550,22 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                     f"deposits (pool_lo)                    = {deposits[pool_lo_index].value}"
                 )
                 logger.info(
-                    f"reserves_starting (pool_hi)           = {list(compressed_reserves_pre_swap[pool_hi_index].value or [])}"  # noqa: E501
+                    f"reserves_starting (pool_hi)           = {list(compressed_reserves_pre_swap[pool_hi_index].value or [])}"
                 )
                 logger.info(
-                    f"reserves_ending   (pool_hi)           = {list(compressed_reserves_post_swap[pool_hi_index].value)}"  # noqa: E501
+                    f"reserves_ending   (pool_hi)           = {list(compressed_reserves_post_swap[pool_hi_index].value)}"
                 )
                 logger.info(
-                    f"reserves_starting (pool_lo)           = {list(compressed_reserves_pre_swap[pool_lo_index].value or [])}"  # noqa: E501
+                    f"reserves_starting (pool_lo)           = {list(compressed_reserves_pre_swap[pool_lo_index].value or [])}"
                 )
                 logger.info(
-                    f"reserves_ending   (pool_lo)           = {list(compressed_reserves_post_swap[pool_lo_index].value)}"  # noqa: E501
+                    f"reserves_ending   (pool_lo)           = {list(compressed_reserves_post_swap[pool_lo_index].value)}"
                 )
                 logger.info(
-                    f"reserves_final    (pool_hi)           = {list(compressed_reserves_post_swap[pool_hi_index].value)}"  # noqa: E501
+                    f"reserves_final    (pool_hi)           = {list(compressed_reserves_post_swap[pool_hi_index].value)}"
                 )
                 logger.info(
-                    f"reserves_final    (pool_lo)           = {list(compressed_reserves_post_swap[pool_lo_index].value)}"  # noqa: E501
+                    f"reserves_final    (pool_lo)           = {list(compressed_reserves_post_swap[pool_lo_index].value)}"
                 )
 
             if uncompressed_forward_token_amount <= 0:
