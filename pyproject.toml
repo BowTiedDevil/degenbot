@@ -78,7 +78,6 @@ docstring-code-format = true
 
 [tool.ruff.lint]
 select = [
-
     "ERA",      # eradicate
     "ANN",      # flake8-annotations
     "ASYNC",    # flake8-async
