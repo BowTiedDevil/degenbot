@@ -43,6 +43,9 @@ def calculate_invariant(
     Returns:
         The computed integer value.
 
+    Raises:
+        EVMRevertError: See function documentation.
+
     """
     invariant = ONE
 
@@ -73,6 +76,9 @@ def _calc_out_given_in(
 
     Returns:
         The computed integer value.
+
+    Raises:
+        EVMRevertError: See function documentation.
 
     """
     # ********************************************************************************************
@@ -119,6 +125,9 @@ def _calc_in_given_out(
 
     Returns:
         The computed integer value.
+
+    Raises:
+        EVMRevertError: See function documentation.
 
     """
     # ********************************************************************************************

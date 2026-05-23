@@ -71,12 +71,15 @@ class LiveAdminDynamicDyCalculator:
         dx: int,
         *,
         inputs: DyCalculationInputs,
-        override_state: CurveStableswapPoolState | None = None,
+        override_state: CurveStableswapPoolState | None = None,  # noqa: ARG002
     ) -> int:
         """Calculate.
 
         Returns:
             The computed integer value.
+
+        Raises:
+            EVMRevertError: See function documentation.
 
         """
         assert inputs.effective_balances is not None

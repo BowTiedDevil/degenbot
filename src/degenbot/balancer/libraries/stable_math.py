@@ -62,6 +62,9 @@ def _calculate_invariant(
     Returns:
         The computed integer value.
 
+    Raises:
+        EVMRevertError: See function documentation.
+
     """
     sum_ = 0
     num_tokens = len(balances)
@@ -120,6 +123,9 @@ def _calculate_invariant_deployed(
 
     Returns:
         The computed integer value.
+
+    Raises:
+        EVMRevertError: See function documentation.
 
     """
     sum_ = 0
@@ -254,6 +260,9 @@ def _get_token_balance_given_invariant_and_all_other_balances(
 
     Returns:
         The computed integer value.
+
+    Raises:
+        EVMRevertError: See function documentation.
 
     """
     n = len(balances)
@@ -558,6 +567,9 @@ def _math_div_down(a: int, b: int) -> int:
     Returns:
         The computed integer value.
 
+    Raises:
+        EVMRevertError: See function documentation.
+
     """
     if b == 0:
         raise EVMRevertError(error="ZERO_DIVISION")
@@ -569,6 +581,9 @@ def _math_div_up(a: int, b: int) -> int:
 
     Returns:
         The computed integer value.
+
+    Raises:
+        EVMRevertError: See function documentation.
 
     """
     if b == 0:
@@ -595,6 +610,9 @@ def _math_div(a: int, b: int, round_up: bool) -> int:  # noqa: FBT001
 
     Returns:
         The computed integer value.
+
+    Raises:
+        EVMRevertError: See function documentation.
 
     """
     if b == 0:

@@ -59,6 +59,11 @@ def next_base_fee(
 
 
 def raise_if_invalid_uint256(number: int) -> None:
-    """Perform raise if invalid uint256."""
+    """Perform raise if invalid uint256.
+
+    Raises:
+        InvalidUint256: See function documentation.
+
+    """
     if (MIN_UINT256 <= number <= MAX_UINT256) is False:
         raise InvalidUint256

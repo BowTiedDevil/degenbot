@@ -163,6 +163,10 @@ def verify_scaled_token_positions(
 
     If user_addresses is provided, only verifies positions for those specific users.
     Otherwise, verifies all users in the market.
+
+    Raises:
+        ValueError: See function documentation.
+
     """
     stmt = (
         select(position_table)

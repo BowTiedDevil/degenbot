@@ -497,6 +497,10 @@ def _process_debt_mint_with_match(
     1. Interest accrual (increasing debt)
     2. Debt repayment (burning scaled tokens)
     The actual scaled burn amount = balance_increase - amount.
+
+    Raises:
+        ValueError: See function documentation.
+
     """
     # Get debt asset first for logging
     token_address = scaled_event.event["address"]
@@ -740,7 +744,12 @@ def _process_debt_burn_with_match(
     scaled_event: ScaledTokenEvent,
     enriched_event: EnrichedScaledTokenEvent,
 ) -> None:
-    """Process debt (vToken) burn with operation match."""
+    """Process debt (vToken) burn with operation match.
+
+    Raises:
+        ValueError: See function documentation.
+
+    """
     # Get debt asset first for logging
     token_address = scaled_event.event["address"]
     debt_asset = get_asset_by_token_type(

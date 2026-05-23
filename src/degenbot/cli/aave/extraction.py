@@ -44,6 +44,9 @@ def extract_user_addresses_from_event(event: LogReceipt) -> set[ChecksumAddress]
     Returns:
         The computed value.
 
+    Raises:
+        ValueError: See function documentation.
+
     """
     user_addresses: set[ChecksumAddress] = set()
     topic = event["topics"][0]

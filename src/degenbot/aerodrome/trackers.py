@@ -50,6 +50,10 @@ class _AbstractAerodromeV2PoolTracker[Pool: AerodromeV2Pool](AbstractPoolTracker
         Returns:
             The computed value.
 
+        Raises:
+            PoolCreationFailed: See function documentation.
+            PoolNotAssociated: See function documentation.
+
         """
         pool_address = get_checksum_address(pool_address)
 

@@ -82,12 +82,15 @@ class StandardDyCalculator:
         dx: int,
         *,
         inputs: DyCalculationInputs,
-        override_state: CurveStableswapPoolState | None = None,
+        override_state: CurveStableswapPoolState | None = None,  # noqa: ARG002
     ) -> int:
         """Calculate.
 
         Returns:
             The computed integer value.
+
+        Raises:
+            EVMRevertError: See function documentation.
 
         """
         # ── Balance source ──

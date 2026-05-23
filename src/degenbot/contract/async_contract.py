@@ -94,9 +94,6 @@ class AsyncContract:
         Returns:
             List of decoded return values as strings
 
-        Raises:
-            ValueError: If the call fails or encoding/decoding fails
-
         Example:
             >>> # Simple call without arguments
             >>> name = await contract.call("name()")
@@ -126,9 +123,6 @@ class AsyncContract:
 
         Returns:
             List of results, where each result is a list of decoded return values
-
-        Raises:
-            ValueError: If any call fails
 
         Example:
             >>> # Fetch multiple token properties concurrently

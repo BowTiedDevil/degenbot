@@ -83,6 +83,10 @@ def calc_exact_in_stable(
     Returns:
         The computed integer value.
 
+    Raises:
+        DegenbotValueError: See function documentation.
+        EVMRevertError: See function documentation.
+
     """
     if token_in not in {0, 1}:  # pragma: no cover
         msg = "Invalid token_in identifier"
@@ -124,6 +128,9 @@ def calc_exact_in_volatile(
     Returns:
         The computed integer value.
 
+    Raises:
+        DegenbotValueError: See function documentation.
+
     """
     if token_in not in {0, 1}:  # pragma: no cover
         msg = "Invalid token_in identifier"
@@ -149,6 +156,9 @@ def get_y_solidly(
 
     Returns:
         The computed integer value.
+
+    Raises:
+        EVMRevertError: See function documentation.
 
     """
     for _ in range(255):

@@ -74,6 +74,9 @@ def get_gho_asset(
     Returns:
         The computed value.
 
+    Raises:
+        ValueError: See function documentation.
+
     """
     # AaveGhoToken is a tiny table. Query it directly with eager-loaded
     # relationships, then filter in Python to avoid the expensive JOIN
@@ -127,6 +130,9 @@ def get_asset_by_token_type(
 
     Returns:
         The computed value.
+
+    Raises:
+        ValueError: See function documentation.
 
     """
     match token_type:

@@ -83,6 +83,9 @@ class BalancerPairView:
         Returns:
             The computed integer value.
 
+        Raises:
+            DegenbotValueError: See function documentation.
+
         """
         if token_in == self._token0:
             token_out = self._token1

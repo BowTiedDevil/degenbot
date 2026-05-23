@@ -267,7 +267,12 @@ class Erc20Token(AbstractErc20Token):
 
     @property
     def price(self) -> float:
-        """Price."""
+        """Price.
+
+        Raises:
+            NoPriceOracle: See function documentation.
+
+        """
         if self._price_oracle is None:
             raise NoPriceOracle
         return self._price_oracle.price

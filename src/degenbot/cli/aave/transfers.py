@@ -85,6 +85,9 @@ def _match_paired_balance_transfer(
     Returns:
         Tuple of (matched_event, scaled_amount, index) or (None, None, None)
 
+    Raises:
+        ValueError: See function documentation.
+
     """
     if operation is None:
         return None, None, None

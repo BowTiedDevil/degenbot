@@ -263,6 +263,9 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         Returns:
             The computed value.
 
+        Raises:
+            DegenbotValueError: See function documentation.
+
         """
         balancer_state: BalancerV2PoolState | None = None
         if state_override is not None:
@@ -338,6 +341,9 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
         Returns:
             The computed value.
 
+        Raises:
+            DegenbotValueError: See function documentation.
+
         """
         state = state_override or self.state
 
@@ -395,6 +401,9 @@ class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
 
         Returns:
             The computed value.
+
+        Raises:
+            DegenbotValueError: See function documentation.
 
         """
         # Resolve token pair

@@ -39,7 +39,12 @@ class BalancerV2SwapAmounts:
     token_out: ChecksumAddress
 
     def __post_init__(self) -> None:
-        """Post-initialization hook."""
+        """Post-initialization hook.
+
+        Raises:
+            DegenbotValueError: See function documentation.
+
+        """
         if isinstance(self.pool_id, (bytes, bytearray)) and len(self.pool_id) != _POOL_ID_LENGTH:
             msg = f"pool_id must be {_POOL_ID_LENGTH} bytes, got {len(self.pool_id)}"
             raise DegenbotValueError(message=msg)
@@ -73,6 +78,9 @@ class BalancerV2SwapAmounts:
 
         Returns:
             The computed value.
+
+        Raises:
+            DegenbotValueError: See function documentation.
 
         """
         if recipient is None:

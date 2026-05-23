@@ -76,6 +76,11 @@ class AerodromeV2PoolCalc:
         Returns:
             The computed integer value.
 
+        Raises:
+            DegenbotValueError: See function documentation.
+            InvalidSwapInputAmount: See function documentation.
+            LiquidityPoolError: See function documentation.
+
         """
         if token_out_quantity <= 0:  # pragma: no cover
             raise InvalidSwapInputAmount
@@ -130,6 +135,10 @@ class AerodromeV2PoolCalc:
         Returns:
             The computed integer value.
 
+        Raises:
+            DegenbotValueError: See function documentation.
+            InvalidSwapInputAmount: See function documentation.
+
         """
         if token_in not in self.tokens:  # pragma: no cover
             raise DegenbotValueError(message="token_in not recognized.")
@@ -183,6 +192,9 @@ class AerodromeV2PoolCalc:
 
         Returns:
             The computed value.
+
+        Raises:
+            DegenbotValueError: See function documentation.
 
         """
         if token not in self.tokens:

@@ -24,7 +24,12 @@ def database() -> None:
 @database.command("backup")
 @click.pass_obj
 def database_backup(bot: Bot) -> None:
-    """Back up the database."""
+    """Back up the database.
+
+    Raises:
+        Abort: See function documentation.
+
+    """
     try:
         with bot.db() as session:
             backup_sqlite_database(
@@ -53,7 +58,12 @@ def database_backup(bot: Bot) -> None:
 )
 @click.pass_obj
 def database_reset(bot: Bot, *, force: bool) -> None:
-    """Remove and recreate the database."""
+    """Remove and recreate the database.
+
+    Raises:
+        Abort: See function documentation.
+
+    """
     if force or click.confirm(
         f"The existing database at {bot.config.database.path} will be removed and a new, empty database will be created and initialized using the schema included in {__package__} version {__version__}. Do you want to proceed?",  # noqa: E501
         default=False,
@@ -72,7 +82,12 @@ def database_reset(bot: Bot, *, force: bool) -> None:
 )
 @click.pass_obj
 def database_upgrade(bot: Bot, *, force: bool) -> None:
-    """Upgrade the database to the latest schema."""
+    """Upgrade the database to the latest schema.
+
+    Raises:
+        Abort: See function documentation.
+
+    """
     with bot.db() as _:
         current_version = MigrationContext.configure(
             connection=bot.db.connection()

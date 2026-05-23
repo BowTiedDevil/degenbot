@@ -427,6 +427,9 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         Returns:
             The computed integer value.
 
+        Raises:
+            StaleRateResult: See function documentation.
+
         """
         if override_state is not None:
             balances = list(override_state.balances)
@@ -502,6 +505,9 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         Returns:
             The computed integer value.
 
+        Raises:
+            StaleRateResult: See function documentation.
+
         """
         if override_state is not None:
             balances = list(override_state.balances)
@@ -565,6 +571,9 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
 
         Returns:
             The computed value.
+
+        Raises:
+            DegenbotValueError: See function documentation.
 
         """
         balancer_state: BalancerV2PoolState | None = None
@@ -642,6 +651,9 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
         Returns:
             The computed value.
 
+        Raises:
+            DegenbotValueError: See function documentation.
+
         """
         state = state_override or self.state
         balances = state.balances
@@ -713,6 +725,9 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
 
         Returns:
             The computed value.
+
+        Raises:
+            DegenbotValueError: See function documentation.
 
         """
         # Resolve token pair

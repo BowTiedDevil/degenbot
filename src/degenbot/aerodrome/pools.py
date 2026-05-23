@@ -202,7 +202,12 @@ class AerodromeV2Pool(
         self,
         update: AerodromeV2PoolExternalUpdate,
     ) -> None:
-        """External update."""
+        """External update.
+
+        Raises:
+            ExternalUpdateError: See function documentation.
+
+        """
         if update.block_number < self.update_block:
             raise ExternalUpdateError(
                 message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}"  # noqa:E501
@@ -312,7 +317,12 @@ class AerodromeV2Pool(
         self,
         block: BlockNumber,
     ) -> None:
-        """Discard cached states earlier than the given block."""
+        """Discard cached states earlier than the given block.
+
+        Raises:
+            NoPoolStateAvailable: See function documentation.
+
+        """
         try:
             with self._state_cache.lock():
                 self._state_cache.discard_before_block(block)
@@ -329,6 +339,10 @@ class AerodromeV2Pool(
 
         The pool will notify all subscribers of the new state with a `AerodromeV2PoolStateUpdated`
         event.
+
+        Raises:
+            NoPoolStateAvailable: See function documentation.
+
         """
         try:
             with self._state_cache.lock():
@@ -348,6 +362,9 @@ class AerodromeV2Pool(
 
         Returns:
             The computed value.
+
+        Raises:
+            DegenbotValueError: See function documentation.
 
         """
         aero_state: AerodromeV2PoolState | None = None
@@ -394,6 +411,9 @@ class AerodromeV2Pool(
 
         Returns:
             The computed value.
+
+        Raises:
+            DegenbotValueError: See function documentation.
 
         """
         if token_out == self._token0.address:
