@@ -16,6 +16,10 @@
 
 #[allow(clippy::doc_markdown)]
 pub mod mobius;
+#[allow(clippy::doc_markdown)]
+pub mod v2_block_engine;
+pub mod v2_sync_decoder;
+pub mod v2_engine_pump;
 // mobius_batch: removed from Python bindings, no callers remaining
 // pub mod mobius_batch;
 #[allow(clippy::doc_markdown)]
@@ -26,3 +30,6 @@ pub mod mobius_py;
 pub mod mobius_v3;
 #[allow(clippy::doc_markdown)]
 pub mod mobius_v3_v3;
+pub mod v3_block_engine;
+pub mod v3_engine_pump;
+pub mod uniswap_engine;
