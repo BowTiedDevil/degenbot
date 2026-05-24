@@ -55,7 +55,7 @@ pub const INVALID_RANGE_PENALTY: f64 = -1e30;
 /// For V2 pools, `reserve_in` and `reserve_out` are the raw reserves.
 /// For V3 tick ranges, they are the effective/virtual reserves:
 /// `R0 + α = L/√P` and `R1 + β = L·√P`.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 #[non_exhaustive]
 pub struct HopState {
     /// Reserve of the token being deposited (input reserve).

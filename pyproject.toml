@@ -179,7 +179,7 @@ python_files = "test_*.py"
 testpaths = ["tests", "README.md"]
 norecursedirs = ["archive"]
 filterwarnings = [
-#    "ignore::DeprecationWarning:websockets.legacy",
+    "ignore::DeprecationWarning:websockets.legacy",
 ]
 markers = [
     "arbitrum: tests requiring an Arbitrum One mainnet RPC",

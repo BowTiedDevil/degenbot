@@ -174,6 +174,178 @@ class ArbSolver(Solver):
         cache = self.get_pool_cache()
         return cache.remove(pool_id)
 
+    def register_path(self, pool_ids: list[int]) -> int:
+        """Register an arbitrage path in the Rust cache.
+
+        The path's pool IDs are resolved to concrete IntHopState values
+        once at registration time. Subsequent calls to ``solve_registered()``
+        use the returned path ID, eliminating all per-solve pool lookups,
+        float conversions, and lock acquisitions.
+
+        Call ``update_path()`` or ``update_all_paths()`` after pool state
+        changes (e.g., at block boundaries) to re-resolve the path.
+
+        Args:
+            pool_ids: Ordered list of pool IDs along the arbitrage path.
+                Must have at least 2 pool IDs.
+
+        Returns:
+            The auto-assigned path ID.
+
+        """
+        cache = self.get_pool_cache()
+        return cache.register_path(pool_ids)
+
+    def update_path(self, path_id: int) -> bool:
+        """Re-resolve a registered path's pool states.
+
+        Call this after updating pool states (e.g., at block boundaries)
+        to refresh the pre-resolved hop states from the pool cache.
+
+        Args:
+            path_id: The path ID returned by ``register_path()``.
+
+        Returns:
+            True if the path was found and updated, False if not found.
+
+        """
+        cache = self.get_pool_cache()
+        return cache.update_path(path_id)
+
+    def update_all_paths(self) -> int:
+        """Re-resolve all registered paths after a batch pool state update.
+
+        More efficient than calling ``update_path()`` individually because
+        it acquires the pool cache lock once for all paths.
+
+        Returns:
+            The number of paths updated.
+
+        """
+        cache = self.get_pool_cache()
+        return cache.update_all_paths()
+
+    def remove_path(self, path_id: int) -> bool:
+        """Remove a registered path.
+
+        Args:
+            path_id: The path ID to remove.
+
+        Returns:
+            True if the path was found and removed, False otherwise.
+
+        """
+        cache = self.get_pool_cache()
+        return cache.remove_path(path_id)
+
+    def solve_registered(
+        self,
+        path_ids: list[int],
+        *,
+        max_input: int | None = None,
+    ) -> list[SolveResult]:
+        """Solve multiple pre-registered paths by path ID.
+
+        This is the fastest solve path: paths were pre-resolved at
+        registration time, so no pool lookups, float conversions, or
+        lock acquisitions are needed. The GIL is released once for
+        the entire batch.
+
+        Args:
+            path_ids: Path IDs returned by ``register_path()``.
+            max_input: Optional maximum input constraint (applied to all paths).
+
+        Returns:
+            List of SolveResult, one per path. Paths that are not registered
+            or not profitable have .profit == 0.
+
+        """
+        start_ns = time.perf_counter_ns()
+        cache = self.get_pool_cache()
+
+        max_input_float = float(max_input) if max_input is not None else None
+
+        results = cache.solve_registered(path_ids, max_input_float)
+
+        elapsed_ns = time.perf_counter_ns() - start_ns
+
+        solve_results: list[SolveResult] = []
+
+        for result in results:
+            method = self._RUST_METHOD_MAP.get(result.method, SolverMethod.MOBIUS)
+
+            if not result.supported or not result.success:
+                solve_results.append(
+                    SolveResult(
+                        optimal_input=0,
+                        profit=0,
+                        iterations=result.iterations,
+                        method=method,
+                        solve_time_ns=elapsed_ns,
+                    )
+                )
+                continue
+
+            if result.optimal_input_int is not None and result.profit_int is not None:
+                optimal_input = int(result.optimal_input_int)
+                profit = int(result.profit_int)
+                if profit > 0:
+                    solve_results.append(
+                        SolveResult(
+                            optimal_input=optimal_input,
+                            profit=profit,
+                            iterations=result.iterations,
+                            method=method,
+                            solve_time_ns=elapsed_ns,
+                        )
+                    )
+                    continue
+
+            solve_results.append(
+                SolveResult(
+                    optimal_input=0,
+                    profit=0,
+                    iterations=result.iterations,
+                    method=method,
+                    solve_time_ns=elapsed_ns,
+                )
+            )
+
+        return solve_results
+
+    def solve_registered_ints(
+        self,
+        path_ids: list[int],
+        *,
+        max_input: int | None = None,
+    ) -> list[tuple[int, int]]:
+        """Solve multiple pre-registered paths, returning only integer results.
+
+        This is the **minimum-overhead** solve path. It returns a flat list of
+        ``(optimal_input, profit)`` tuples, bypassing all ``SolveResult``
+        construction, method/iteration tracking, and result field conversion.
+
+        For paths that are not registered, not supported, or not profitable,
+        the returned tuple is ``(0, 0)``.
+
+        Args:
+            path_ids: Path IDs returned by ``register_path()``.
+            max_input: Optional maximum input constraint (applied to all paths).
+
+        Returns:
+            List of ``(optimal_input, profit)`` tuples, one per path.
+
+        """
+        cache = self.get_pool_cache()
+
+        max_input_float = float(max_input) if max_input is not None else None
+
+        # Rust returns flat [input0, profit0, input1, profit1, ...]
+        flat = cache.solve_registered_ints(path_ids, max_input_float)
+
+        # Group into pairs
+        return [(flat[i], flat[i + 1]) for i in range(0, len(flat), 2)]
+
     def solve_cached(
         self,
         path: list[int],
@@ -247,6 +419,80 @@ class ArbSolver(Solver):
             iterations=result.iterations,
             method=method.name,
         )
+
+    def solve_cached_batch(
+        self,
+        paths: list[list[int]],
+        *,
+        max_input: int | None = None,
+    ) -> list[SolveResult]:
+        """Solve multiple arbitrage paths in a single Python → Rust round-trip.
+
+        All paths are looked up and solved inside a single GIL-release window,
+        amortizing the ~1,160ns PyO3 bridge overhead across all paths.
+
+        Args:
+            paths: List of paths, each an ordered list of pool IDs.
+            max_input: Optional maximum input constraint (applied to all paths).
+
+        Returns:
+            List of SolveResult, one per path. Paths that are not supported
+            or not profitable are still returned (with .profit == 0), rather
+            than raising OptimizationError.
+
+        """
+        start_ns = time.perf_counter_ns()
+        cache = self.get_pool_cache()
+
+        max_input_float = float(max_input) if max_input is not None else None
+
+        results = cache.solve_batch(paths, max_input_float)
+
+        elapsed_ns = time.perf_counter_ns() - start_ns
+
+        solve_results: list[SolveResult] = []
+
+        for result in results:
+            method = self._RUST_METHOD_MAP.get(result.method, SolverMethod.MOBIUS)
+
+            if not result.supported or not result.success:
+                solve_results.append(
+                    SolveResult(
+                        optimal_input=0,
+                        profit=0,
+                        iterations=result.iterations,
+                        method=method,
+                        solve_time_ns=elapsed_ns,
+                    )
+                )
+                continue
+
+            if result.optimal_input_int is not None and result.profit_int is not None:
+                optimal_input = int(result.optimal_input_int)
+                profit = int(result.profit_int)
+                if profit > 0:
+                    solve_results.append(
+                        SolveResult(
+                            optimal_input=optimal_input,
+                            profit=profit,
+                            iterations=result.iterations,
+                            method=method,
+                            solve_time_ns=elapsed_ns,
+                        )
+                    )
+                    continue
+
+            solve_results.append(
+                SolveResult(
+                    optimal_input=0,
+                    profit=0,
+                    iterations=result.iterations,
+                    method=method,
+                    solve_time_ns=elapsed_ns,
+                )
+            )
+
+        return solve_results
 
     # ------------------------------------------------------------------
     # Solver interface

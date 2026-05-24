@@ -1,0 +1,1418 @@
+//! V3 Block Engine — Rust-centric arbitrage engine for Uniswap V3 paths.
+//!
+//! Owns the per-block lifecycle for V3 pools: Swap event decoding, pool state
+//! updates (including tick-level changes), tick-range computation, and
+//! Mobius piecewise solver dispatch.
+//!
+//! # Design
+//!
+//! The engine stores V3 pool state (including tick data) and constructs
+//! [`V3TickRangeSequence`] objects for each registered pool+direction. Paths
+//! are registered as ordered lists of (`pool_key`, `zero_for_one`) pairs.
+//!
+//! On `process_block()`:
+//! 1. Decode Swap events and apply updates (including tick priors for journal)
+//! 2. Rebuild tick-range sequences from updated pool state
+//! 3. Solve all registered paths
+//! 4. Store results for Python to read
+
+use std::collections::HashMap;
+
+use alloy::primitives::{Address, U128, U256};
+
+use crate::bot_core::tick_bitmap::compute_tick_ranges;
+use crate::bot_core::TickInfo;
+use crate::bot_core::v3_swap_decoder::decode_v3_swap_log;
+use crate::optimizers::mobius::HopState;
+use crate::optimizers::mobius_int::{u256_to_f64, IntHopState};
+use crate::optimizers::mobius_v3::{V3TickRangeHop, V3TickRangeSequence};
+use crate::optimizers::mobius_v3_v3::solve_v3_v3;
+
+// Q96 = 2^96, used to convert Q128.96 sqrt prices to plain floats
+const Q96_F64: f64 = 79_228_162_514_264_337_593_543_950_336.0;
+
+// ---------------------------------------------------------------------------
+// V3 pool state (engine-internal, mirrors BotCore::V3PoolState fields)
+// ---------------------------------------------------------------------------
+
+/// Parameters for registering a V3 pool with the engine.
+///
+/// Bundles all fields to satisfy `clippy::too_many_arguments`.
+#[derive(Clone, Debug)]
+pub struct RegisterV3PoolParams {
+    pub address: Address,
+    pub token0: Address,
+    pub token1: Address,
+    pub fee: u32,
+    pub tick_spacing: i32,
+    pub factory: Address,
+    pub sqrt_price_x96: U256,
+    pub liquidity: u128,
+    pub tick: i32,
+    pub tick_data: HashMap<i32, TickInfo>,
+}
+
+/// V3 pool state as owned by the engine.
+#[derive(Clone, Debug)]
+pub struct V3PoolState {
+    pub address: Address,
+    pub token0: Address,
+    pub token1: Address,
+    pub fee: u32,
+    pub tick_spacing: i32,
+    pub factory: Address,
+
+    // Mutable state
+    pub sqrt_price_x96: U256,
+    pub liquidity: u128,
+    pub tick: i32,
+    pub update_block: u64,
+
+    // Tick data
+    pub tick_data: HashMap<i32, TickInfo>,
+}
+
+impl V3PoolState {
+    /// Compute tick-range sequences for both swap directions using the
+    /// current tick data and [`compute_tick_ranges`].
+    ///
+    /// Returns `(zfo_sequence, ofz_sequence)` or `None` for either direction
+    /// if insufficient initialized ticks.
+    #[must_use]
+    pub fn build_tick_range_sequences(
+        &self,
+        max_ranges: usize,
+    ) -> (Option<V3TickRangeSequence>, Option<V3TickRangeSequence>) {
+        let zfo = self.build_sequence(true, max_ranges);
+        let ofz = self.build_sequence(false, max_ranges);
+        (zfo, ofz)
+    }
+
+    #[must_use]
+    pub fn build_sequence(
+        &self,
+        zero_for_one: bool,
+        max_ranges: usize,
+    ) -> Option<V3TickRangeSequence> {
+        let (ranges, _current_idx) = compute_tick_ranges(
+            &self.tick_data,
+            self.tick,
+            self.tick_spacing,
+            self.liquidity,
+            zero_for_one,
+            max_ranges,
+        )?;
+
+        let fee_f64 = f64::from(self.fee) / 1_000_000.0;
+
+        let mut rust_ranges = Vec::with_capacity(ranges.len());
+        for (i, r) in ranges.iter().enumerate() {
+            // Current sqrt price for this range:
+            // - Range 0: the pool's current sqrt price
+            // - Later ranges (zfo): entry from upper boundary of prior range
+            // - Later ranges (ofz): entry from lower boundary of prior range
+            let sqrt_p_current = if i == 0 {
+                u256_to_f64(self.sqrt_price_x96)
+            } else {
+                let prev = &ranges[i - 1];
+                if zero_for_one {
+                    // Walking down: entered from the upper boundary of prior range
+                    u256_to_f64(prev.sqrt_price_upper)
+                } else {
+                    // Walking up: entered from the lower boundary of prior range
+                    u256_to_f64(prev.sqrt_price_lower)
+                }
+            };
+
+            // Compute the active liquidity for this range.
+            // Range 0 uses the pool's current liquidity.
+            // Subsequent ranges accumulate boundary-crossing liquidity_net values.
+            #[allow(clippy::cast_precision_loss)]
+            let range_liquidity = if i == 0 {
+                self.liquidity as f64
+            } else {
+                let mut l = self.liquidity.cast_signed();
+                for prev_range in &ranges[..i] {
+                    let net = prev_range.liquidity_net;
+                    // Both directions: liquidity_net is the net change at the
+                    // crossed boundary. Positive = liquidity added, negative = removed.
+                    l += net;
+                }
+                #[allow(clippy::cast_precision_loss)]
+                {
+                    l as f64
+                }
+            };
+
+            rust_ranges.push(V3TickRangeHop {
+                liquidity: range_liquidity,
+                sqrt_price_current: sqrt_p_current / Q96_F64,
+                sqrt_price_lower: u256_to_f64(r.sqrt_price_lower) / Q96_F64,
+                sqrt_price_upper: u256_to_f64(r.sqrt_price_upper) / Q96_F64,
+                fee: fee_f64,
+                zero_for_one,
+            });
+        }
+
+        V3TickRangeSequence::new(rust_ranges).ok()
+    }
+}
+
+impl From<RegisterV3PoolParams> for V3PoolState {
+    fn from(params: RegisterV3PoolParams) -> Self {
+        Self {
+            address: params.address,
+            token0: params.token0,
+            token1: params.token1,
+            fee: params.fee,
+            tick_spacing: params.tick_spacing,
+            factory: params.factory,
+            sqrt_price_x96: params.sqrt_price_x96,
+            liquidity: params.liquidity,
+            tick: params.tick,
+            update_block: 0,
+            tick_data: params.tick_data,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Path types
+// ---------------------------------------------------------------------------
+
+/// A pool reference in a path: (`pool_key` index, `zero_for_one` direction).
+#[derive(Clone, Debug)]
+pub struct V3PoolRef {
+    /// Index into the engine's `pools` map.
+    pub pool_idx: u64,
+    /// Direction for this hop.
+    pub zero_for_one: bool,
+}
+
+/// A registered V3 arbitrage path.
+#[derive(Clone, Debug)]
+struct V3Path {
+    pools: Vec<V3PoolRef>,
+}
+
+/// Resolved state for a path, ready for solving.
+#[derive(Clone, Debug, Default)]
+struct ResolvedV3Path {
+    /// Pre-built tick-range sequences for V3 hops (index matches path.pools).
+    tick_range_sequences: Vec<Option<V3TickRangeSequence>>,
+    /// For V2 hops in mixed paths, the [`IntHopState`].
+    /// None for pure V3 hops.
+    int_hops: Vec<Option<IntHopState>>,
+    /// Base (f64) hops for Mobius initial estimate.
+    base_hops: Vec<HopState>,
+    /// Whether this path is valid for solving.
+    valid: bool,
+}
+
+// ---------------------------------------------------------------------------
+// V3BlockEngine
+// ---------------------------------------------------------------------------
+
+/// The V3 block engine — owns V3 pool state, constructs tick-range
+/// sequences, and solves arbitrage paths.
+pub struct V3BlockEngine {
+    /// V3 pool state: auto-incrementing key → state
+    pools: HashMap<u64, V3PoolState>,
+    /// Pool contract address → key
+    pool_addresses: HashMap<Address, u64>,
+    /// Registered paths: `path_id` → (`V3Path`, `ResolvedV3Path`)
+    paths: HashMap<u64, (V3Path, ResolvedV3Path)>,
+    /// Last solved results: (`path_id`, `optimal_input`, profit)
+    results: Vec<(u64, U256, U256)>,
+    /// Block number for the last solved results
+    results_block: u64,
+    /// Whether the engine is running (freezes registration after start)
+    running: bool,
+    /// Auto-incrementing path ID
+    next_path_id: u64,
+    /// Auto-incrementing pool key
+    next_pool_key: u64,
+}
+
+impl V3BlockEngine {
+    /// Create a new engine.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            pools: HashMap::new(),
+            pool_addresses: HashMap::new(),
+            paths: HashMap::new(),
+            results: Vec::new(),
+            results_block: 0,
+            running: false,
+            next_path_id: 1,
+            next_pool_key: 1,
+        }
+    }
+
+    /// Register a V3 pool by contract address and initial state.
+    ///
+    /// Returns the pool key for use in path registration.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called after `start()`.
+    pub fn register_pool(&mut self, params: RegisterV3PoolParams) -> u64 {
+        assert!(!self.running, "cannot register pools after start()");
+
+        let key = self.next_pool_key;
+        self.next_pool_key += 1;
+
+        let address = params.address;
+        self.pools.insert(key, V3PoolState::from(params));
+        self.pool_addresses.insert(address, key);
+        key
+    }
+
+    /// Register an arbitrage path as an ordered list of (`pool_key`,
+    /// `zero_for_one`) pairs.
+    ///
+    /// Returns the auto-assigned path ID.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called after `start()` or with fewer than 2 pool refs.
+    pub fn register_path(&mut self, pool_refs: Vec<V3PoolRef>) -> u64 {
+        assert!(!self.running, "cannot register paths after start()");
+        assert!(pool_refs.len() >= 2, "need at least 2 pool refs");
+
+        let path_id = self.next_path_id;
+        self.next_path_id += 1;
+
+        let mut resolved = ResolvedV3Path::default();
+        self.resolve_path(&pool_refs, &mut resolved);
+
+        self.paths
+            .insert(path_id, (V3Path { pools: pool_refs }, resolved));
+        path_id
+    }
+
+    /// Update a V3 pool with new Swap event data.
+    ///
+    /// Updates the scalar fields (`sqrt_price`, liquidity, tick) and records
+    /// tick-level priors for the journal. The `tick_data` map is mutated
+    /// in-place.
+    pub fn apply_swap(
+        &mut self,
+        pool_address: Address,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        block_number: u64,
+        tick_priors: &[(i32, TickInfo)], // (tick_index, prior_state)
+    ) {
+        let Some(&key) = self.pool_addresses.get(&pool_address) else {
+            return;
+        };
+        let Some(pool) = self.pools.get_mut(&key) else {
+            return;
+        };
+
+        // Apply tick priors updates to tick_data
+        for &(tick_index, ref prior) in tick_priors {
+            pool.tick_data.insert(tick_index, prior.clone());
+        }
+
+        pool.sqrt_price_x96 = sqrt_price_x96;
+        pool.liquidity = liquidity;
+        pool.tick = tick;
+        pool.update_block = block_number;
+    }
+
+    /// Process a block: decode Swap events, apply updates, rebuild paths,
+    /// solve all, and store results.
+    pub fn process_block(&mut self, logs: &[alloy::rpc::types::Log], block_number: u64) {
+        // Decode Swap events
+        for log in logs {
+            if let Some(event) = decode_v3_swap_log(log) {
+                self.apply_swap(
+                    event.pool_address,
+                    event.sqrt_price_x96,
+                    extract_u128(event.liquidity),
+                    event.tick,
+                    block_number,
+                    &[],
+                );
+            }
+        }
+
+        self.rebuild_and_solve(block_number);
+    }
+
+    /// Process pre-decoded Swap updates for testing.
+    pub fn process_swap_updates(&mut self, updates: &[V3SwapUpdate], block_number: u64) {
+        for update in updates {
+            self.apply_swap(
+                update.pool_address,
+                update.sqrt_price_x96,
+                update.liquidity,
+                update.tick,
+                block_number,
+                &update.tick_priors,
+            );
+        }
+
+        self.rebuild_and_solve(block_number);
+    }
+
+    /// Rebuild all path resolutions and solve.
+    fn rebuild_and_solve(&mut self, block_number: u64) {
+        // Collect path pool refs so we can rebuild without borrowing self.paths
+        let path_pool_refs: Vec<(u64, Vec<V3PoolRef>)> = self
+            .paths
+            .iter()
+            .map(|(&id, (path, _))| (id, path.pools.clone()))
+            .collect();
+
+        // Rebuild each path
+        for (path_id, pool_refs) in &path_pool_refs {
+            let mut resolved = ResolvedV3Path::default();
+            self.resolve_path(pool_refs, &mut resolved);
+            if let Some((_, stored)) = self.paths.get_mut(path_id) {
+                *stored = resolved;
+            }
+        }
+
+        // Solve all paths
+        self.results = self.solve_all(None);
+        self.results_block = block_number;
+    }
+
+    /// Solve all registered V3 paths.
+    ///
+    /// Currently supports:
+    /// - V3-V3 2-hop paths (piecewise Mobius V3-V3 solver)
+    ///
+    /// Will be extended for V3-V2 and V2-V3 paths.
+    #[must_use]
+    pub fn solve_all(&self, max_input: Option<f64>) -> Vec<(u64, U256, U256)> {
+        let mut results = Vec::with_capacity(self.paths.len());
+
+        for (&path_id, (_path, resolved)) in &self.paths {
+            if !resolved.valid {
+                continue;
+            }
+
+            // Dispatch based on hop count and type
+            let v3_sequences: Vec<&V3TickRangeSequence> = resolved
+                .tick_range_sequences
+                .iter()
+                .filter_map(Option::as_ref)
+                .collect();
+
+            // V3-V3 2-hop
+            if v3_sequences.len() == 2 && resolved.int_hops.iter().all(Option::is_none) {
+                let (x, profit, _iters) = solve_v3_v3(
+                    v3_sequences[0],
+                    v3_sequences[1],
+                    max_input,
+                    10, // max_candidates
+                );
+                if x > 0.0 && profit > 0.0 {
+                    #[allow(clippy::cast_possible_truncation)]
+                    #[allow(clippy::cast_sign_loss)]
+                    {
+                        let x_int = U256::from(x as u128);
+                        let profit_int = U256::from(profit as u128);
+                        if !x_int.is_zero() && !profit_int.is_zero() {
+                            results.push((path_id, x_int, profit_int));
+                        }
+                    }
+                }
+            }
+        }
+
+        results
+    }
+
+    /// Read the last solved results and block number.
+    #[must_use]
+    pub const fn latest_results(&self) -> (&Vec<(u64, U256, U256)>, u64) {
+        (&self.results, self.results_block)
+    }
+
+    /// Return the list of registered pool addresses.
+    #[must_use]
+    pub fn registered_addresses(&self) -> Vec<Address> {
+        self.pool_addresses.keys().copied().collect()
+    }
+
+    /// Mark the engine as running. Freezes registration.
+    pub const fn start(&mut self) {
+        self.running = true;
+    }
+
+    /// Whether the engine is running.
+    #[must_use]
+    pub const fn is_running(&self) -> bool {
+        self.running
+    }
+
+    /// Number of registered pools.
+    #[must_use]
+    pub fn pool_count(&self) -> usize {
+        self.pool_addresses.len()
+    }
+
+    /// Get a reference to a V3 pool state by pool key.
+    #[must_use]
+    pub fn get_pool(&self, pool_key: u64) -> Option<&V3PoolState> {
+        self.pools.get(&pool_key)
+    }
+
+    /// Number of registered paths.
+    #[must_use]
+    pub fn path_count(&self) -> usize {
+        self.paths.len()
+    }
+
+    /// Resolve a path's pool refs into tick-range sequences and hop states.
+    fn resolve_path(&self, pool_refs: &[V3PoolRef], resolved: &mut ResolvedV3Path) {
+        resolved.tick_range_sequences.clear();
+        resolved.int_hops.clear();
+        resolved.base_hops.clear();
+        resolved.valid = false;
+
+        if pool_refs.len() < 2 {
+            return;
+        }
+
+        resolved.tick_range_sequences.reserve(pool_refs.len());
+        resolved.int_hops.reserve(pool_refs.len());
+
+        for pool_ref in pool_refs {
+            let Some(pool) = self.pools.get(&pool_ref.pool_idx) else {
+                return; // Missing pool → invalid
+            };
+
+            let sequence = pool.build_sequence(pool_ref.zero_for_one, 3);
+            resolved.tick_range_sequences.push(sequence);
+            // V3 hops don't use IntHopState
+            resolved.int_hops.push(None);
+        }
+
+        // Build base hops from tick-range sequences for the initial Mobius estimate
+        for seq_opt in &resolved.tick_range_sequences {
+            if let Some(seq) = seq_opt {
+                if let Some(first_range) = seq.ranges.first() {
+                    resolved.base_hops.push(first_range.to_hop_state());
+                } else {
+                    return; // Empty sequence → invalid
+                }
+            } else {
+                return; // Missing sequence → invalid
+            }
+        }
+
+        resolved.valid = true;
+    }
+}
+
+impl Default for V3BlockEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Swap update type for testing
+// ---------------------------------------------------------------------------
+
+/// A pre-decoded V3 Swap update for testing without log decoding.
+#[derive(Clone, Debug)]
+pub struct V3SwapUpdate {
+    pub pool_address: Address,
+    pub sqrt_price_x96: U256,
+    pub liquidity: u128,
+    pub tick: i32,
+    pub tick_priors: Vec<(i32, TickInfo)>,
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Extract a `u128` from the V3 Swap event's `liquidity` field.
+/// The [`V3SwapEvent`] stores liquidity as `U128` (alloy).
+fn extract_u128(liquidity: U128) -> u128 {
+    liquidity.to::<u128>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_tick_info(liquidity_gross: u128, liquidity_net: i128) -> TickInfo {
+        use alloy::primitives::I256;
+        TickInfo {
+            liquidity_gross: U128::from(liquidity_gross),
+            liquidity_net: I256::try_from(liquidity_net).unwrap_or(I256::ZERO),
+        }
+    }
+
+    fn make_pool_state(
+        address: Address,
+        fee: u32,
+        tick_spacing: i32,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        tick_data: HashMap<i32, TickInfo>,
+    ) -> V3PoolState {
+        V3PoolState {
+            address,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee,
+            tick_spacing,
+            factory: Address::ZERO,
+            sqrt_price_x96,
+            liquidity,
+            tick,
+            update_block: 0,
+            tick_data,
+        }
+    }
+
+    #[test]
+    fn register_v3_pool_stores_state() {
+        let mut engine = V3BlockEngine::new();
+        let addr = Address::from([0x11u8; 20]);
+        let key = engine.register_pool(RegisterV3PoolParams {
+            address: addr,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: HashMap::new(),
+        });
+
+        assert_eq!(key, 1);
+        assert!(engine.pools.contains_key(&key));
+        assert_eq!(engine.pool_addresses[&addr], key);
+    }
+
+    #[test]
+    fn register_v3_pool_after_start_panics() {
+        let mut engine = V3BlockEngine::new();
+        engine.start();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            engine.register_pool(RegisterV3PoolParams {
+                address: Address::ZERO,
+                token0: Address::ZERO,
+                token1: Address::ZERO,
+                fee: 3000,
+                tick_spacing: 60,
+                factory: Address::ZERO,
+                sqrt_price_x96: U256::ONE,
+                liquidity: 100,
+                tick: 0,
+                tick_data: HashMap::new(),
+            });
+        }));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn register_v3_path_stores_and_resolves() {
+        let mut engine = V3BlockEngine::new();
+
+        let addr0 = Address::from([0x11u8; 20]);
+        let addr1 = Address::from([0x22u8; 20]);
+
+        let mut tick_data0 = HashMap::new();
+        tick_data0.insert(60, make_tick_info(200, 100));
+        tick_data0.insert(-60, make_tick_info(150, -50));
+
+        let mut tick_data1 = HashMap::new();
+        tick_data1.insert(60, make_tick_info(300, 200));
+        tick_data1.insert(-60, make_tick_info(250, -100));
+
+        let key0 = engine.register_pool(RegisterV3PoolParams {
+            address: addr0,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: tick_data0,
+        });
+
+        let key1 = engine.register_pool(RegisterV3PoolParams {
+            address: addr1,
+            token0: Address::from([2u8; 20]),
+            token1: Address::from([3u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            liquidity: 2_000_000,
+            tick: 0,
+            tick_data: tick_data1,
+        });
+
+        let path_id = engine.register_path(vec![
+            V3PoolRef {
+                pool_idx: key0,
+                zero_for_one: true,
+            },
+            V3PoolRef {
+                pool_idx: key1,
+                zero_for_one: false,
+            },
+        ]);
+
+        assert_eq!(path_id, 1);
+        assert_eq!(engine.path_count(), 1);
+
+        let (_, resolved) = &engine.paths[&path_id];
+        assert!(resolved.valid);
+        assert_eq!(resolved.tick_range_sequences.len(), 2);
+    }
+
+    #[test]
+    fn apply_swap_updates_pool_state() {
+        let mut engine = V3BlockEngine::new();
+        let addr = Address::from([0x11u8; 20]);
+
+        let mut tick_data = HashMap::new();
+        tick_data.insert(60, make_tick_info(200, 100));
+
+        let key = engine.register_pool(RegisterV3PoolParams {
+            address: addr,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data,
+        });
+
+        let new_sqrt_price = U256::from(79466191966197645195421774833u128);
+        engine.apply_swap(addr, new_sqrt_price, 900_000, 60, 42, &[]);
+
+        let pool = &engine.pools[&key];
+        assert_eq!(pool.sqrt_price_x96, new_sqrt_price);
+        assert_eq!(pool.liquidity, 900_000);
+        assert_eq!(pool.tick, 60);
+        assert_eq!(pool.update_block, 42);
+    }
+
+    #[test]
+    fn apply_swap_updates_tick_data() {
+        let mut engine = V3BlockEngine::new();
+        let addr = Address::from([0x11u8; 20]);
+
+        let key = engine.register_pool(RegisterV3PoolParams {
+            address: addr,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: HashMap::new(),
+        });
+
+        let tick_priors = vec![(60, make_tick_info(200, 100))];
+        engine.apply_swap(
+            addr,
+            U256::from(79466191966197645195421774833u128),
+            900_000,
+            60,
+            42,
+            &tick_priors,
+        );
+
+        let pool = &engine.pools[&key];
+        assert!(pool.tick_data.contains_key(&60));
+        let info = &pool.tick_data[&60];
+        assert_eq!(info.liquidity_gross, U128::from(200));
+    }
+
+    #[test]
+    fn apply_swap_ignores_unregistered_pool() {
+        let mut engine = V3BlockEngine::new();
+        let unregistered = Address::from([0xaau8; 20]);
+
+        engine.apply_swap(unregistered, U256::ONE, 100, 0, 1, &[]);
+    }
+
+    #[test]
+    fn build_tick_range_sequence_zfo() {
+        let mut tick_data = HashMap::new();
+        tick_data.insert(-60, make_tick_info(200, -100));
+        tick_data.insert(60, make_tick_info(300, 150));
+
+        let pool = make_pool_state(
+            Address::ZERO,
+            3000,
+            60,
+            U256::from(79228162514264337593543950336u128),
+            1_000_000,
+            0,
+            tick_data,
+        );
+
+        let (zfo_seq, ofz_seq) = pool.build_tick_range_sequences(3);
+        assert!(zfo_seq.is_some(), "zfo sequence should exist");
+        assert!(ofz_seq.is_some(), "ofz sequence should exist");
+
+        let zfo = zfo_seq.unwrap();
+        assert!(zfo.zero_for_one());
+        assert!(!zfo.ranges.is_empty());
+    }
+
+    #[test]
+    fn build_tick_range_sequence_insufficient_ticks() {
+        let pool = make_pool_state(
+            Address::ZERO,
+            3000,
+            60,
+            U256::from(79228162514264337593543950336u128),
+            1_000_000,
+            0,
+            HashMap::new(),
+        );
+
+        let (zfo_seq, ofz_seq) = pool.build_tick_range_sequences(3);
+        assert!(
+            zfo_seq.is_none(),
+            "zfo sequence should not exist without tick data"
+        );
+        assert!(
+            ofz_seq.is_none(),
+            "ofz sequence should not exist without tick data"
+        );
+    }
+
+    #[test]
+    fn solve_v3_v3_two_hop_path() {
+        let mut engine = V3BlockEngine::new();
+
+        let addr0 = Address::from([0x11u8; 20]);
+        let addr1 = Address::from([0x22u8; 20]);
+
+        let mut tick_data0 = HashMap::new();
+        tick_data0.insert(-60, make_tick_info(200, -100));
+        tick_data0.insert(60, make_tick_info(300, 150));
+        tick_data0.insert(-120, make_tick_info(100, 50));
+        tick_data0.insert(120, make_tick_info(400, 200));
+
+        let mut tick_data1 = HashMap::new();
+        tick_data1.insert(-60, make_tick_info(250, -80));
+        tick_data1.insert(60, make_tick_info(350, 120));
+        tick_data1.insert(-120, make_tick_info(150, 30));
+        tick_data1.insert(120, make_tick_info(450, 180));
+
+        let key0 = engine.register_pool(RegisterV3PoolParams {
+            address: addr0,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            liquidity: 1_000_000_000_000,
+            tick: 0,
+            tick_data: tick_data0,
+        });
+
+        let key1 = engine.register_pool(RegisterV3PoolParams {
+            address: addr1,
+            token0: Address::from([2u8; 20]),
+            token1: Address::from([3u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            liquidity: 2_000_000_000_000,
+            tick: 0,
+            tick_data: tick_data1,
+        });
+
+        let _path_id = engine.register_path(vec![
+            V3PoolRef {
+                pool_idx: key0,
+                zero_for_one: true,
+            },
+            V3PoolRef {
+                pool_idx: key1,
+                zero_for_one: false,
+            },
+        ]);
+
+        let (_, resolved) = engine.paths.values().next().unwrap();
+        assert!(resolved.valid, "path should be valid");
+    }
+
+    #[test]
+    fn process_swap_updates_rebuilds_and_solves() {
+        let mut engine = V3BlockEngine::new();
+
+        let addr0 = Address::from([0x11u8; 20]);
+        let addr1 = Address::from([0x22u8; 20]);
+
+        let mut tick_data0 = HashMap::new();
+        tick_data0.insert(-60, make_tick_info(500, -200));
+        tick_data0.insert(60, make_tick_info(800, 300));
+
+        let mut tick_data1 = HashMap::new();
+        tick_data1.insert(-60, make_tick_info(600, -250));
+        tick_data1.insert(60, make_tick_info(900, 350));
+
+        let key0 = engine.register_pool(RegisterV3PoolParams {
+            address: addr0,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            liquidity: 10_000_000_000_000,
+            tick: 0,
+            tick_data: tick_data0,
+        });
+
+        let key1 = engine.register_pool(RegisterV3PoolParams {
+            address: addr1,
+            token0: Address::from([2u8; 20]),
+            token1: Address::from([3u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            liquidity: 20_000_000_000_000,
+            tick: 0,
+            tick_data: tick_data1,
+        });
+
+        engine.register_path(vec![
+            V3PoolRef { pool_idx: key0, zero_for_one: true },
+            V3PoolRef { pool_idx: key1, zero_for_one: false },
+        ]);
+
+        engine.start();
+
+        // Process a swap update that changes price in pool 0
+        engine.process_swap_updates(
+            &[V3SwapUpdate {
+                pool_address: addr0,
+                sqrt_price_x96: U256::from(79466191966197645195421774833u128),
+                liquidity: 10_000_000_000_000,
+                tick: 60,
+                tick_priors: vec![],
+            }],
+            100,
+        );
+
+        // Results block should be updated
+        let (_, block) = engine.latest_results();
+        assert_eq!(block, 100);
+
+        // Pool state should be updated
+        let pool = &engine.pools[&key0];
+        assert_eq!(pool.tick, 60);
+        assert_eq!(pool.update_block, 100);
+    }
+
+    #[test]
+    fn path_with_missing_pool_is_invalid() {
+        let mut engine = V3BlockEngine::new();
+
+        // Register only one pool
+        let addr0 = Address::from([0x11u8; 20]);
+        let mut tick_data0 = HashMap::new();
+        tick_data0.insert(60, make_tick_info(200, 100));
+        tick_data0.insert(-60, make_tick_info(150, -50));
+
+        let key0 = engine.register_pool(RegisterV3PoolParams {
+            address: addr0,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: tick_data0,
+        });
+
+        // Register a path that references a non-existent pool
+        let path_id = engine.register_path(vec![
+            V3PoolRef { pool_idx: key0, zero_for_one: true },
+            V3PoolRef { pool_idx: 999, zero_for_one: false }, // Non-existent
+        ]);
+
+        let (_, resolved) = &engine.paths[&path_id];
+        assert!(!resolved.valid, "path with missing pool should be invalid");
+    }
+
+    #[test]
+    fn process_block_with_no_logs_is_noop() {
+        let mut engine = V3BlockEngine::new();
+
+        let addr = Address::from([0x11u8; 20]);
+        let mut tick_data = HashMap::new();
+        tick_data.insert(60, make_tick_info(200, 100));
+        tick_data.insert(-60, make_tick_info(150, -50));
+
+        let key = engine.register_pool(RegisterV3PoolParams {
+            address: addr,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: tick_data,
+        });
+
+        engine.start();
+
+        // Process a block with no logs — pool state should be unchanged
+        engine.process_block(&[], 50);
+
+        let pool = &engine.pools[&key];
+        assert_eq!(pool.tick, 0);
+        assert_eq!(pool.update_block, 0); // Not updated
+
+        let (_, block) = engine.latest_results();
+        assert_eq!(block, 50);
+    }
+
+    #[test]
+    fn multiple_pools_in_path_resolve_independently() {
+        let mut engine = V3BlockEngine::new();
+
+        let addr0 = Address::from([0x11u8; 20]);
+        let addr1 = Address::from([0x22u8; 20]);
+
+        let mut tick_data0 = HashMap::new();
+        tick_data0.insert(-60, make_tick_info(200, -100));
+        tick_data0.insert(60, make_tick_info(300, 150));
+
+        let mut tick_data1 = HashMap::new();
+        tick_data1.insert(-60, make_tick_info(250, -80));
+        tick_data1.insert(60, make_tick_info(350, 120));
+
+        let key0 = engine.register_pool(RegisterV3PoolParams {
+            address: addr0,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: tick_data0,
+        });
+
+        let key1 = engine.register_pool(RegisterV3PoolParams {
+            address: addr1,
+            token0: Address::from([2u8; 20]),
+            token1: Address::from([3u8; 20]),
+            fee: 500,
+            tick_spacing: 10,
+            factory: Address::from([4u8; 20]),
+            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            liquidity: 2_000_000,
+            tick: 0,
+            tick_data: tick_data1,
+        });
+
+        let path_id = engine.register_path(vec![
+            V3PoolRef { pool_idx: key0, zero_for_one: true },
+            V3PoolRef { pool_idx: key1, zero_for_one: false },
+        ]);
+
+        let (_, resolved) = &engine.paths[&path_id];
+        assert!(resolved.valid);
+
+        // Both sequences should exist
+        let seq0 = resolved.tick_range_sequences[0].as_ref().unwrap();
+        let seq1 = resolved.tick_range_sequences[1].as_ref().unwrap();
+
+        assert!(seq0.zero_for_one());
+        assert!(!seq1.zero_for_one());
+
+        // Different fees propagated
+        assert!(!seq0.ranges.is_empty());
+        assert!(!seq1.ranges.is_empty());
+    }
+
+    #[test]
+    fn register_path_after_start_panics() {
+        let mut engine = V3BlockEngine::new();
+        engine.start();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            engine.register_path(vec![
+                V3PoolRef { pool_idx: 1, zero_for_one: true },
+                V3PoolRef { pool_idx: 2, zero_for_one: false },
+            ]);
+        }));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn double_swap_update_applies_both() {
+        let mut engine = V3BlockEngine::new();
+        let addr = Address::from([0x11u8; 20]);
+
+        let mut tick_data = HashMap::new();
+        tick_data.insert(60, make_tick_info(200, 100));
+        tick_data.insert(-60, make_tick_info(150, -50));
+
+        let key = engine.register_pool(RegisterV3PoolParams {
+            address: addr,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data,
+        });
+
+        // Apply two swaps in the same block
+        engine.apply_swap(
+            addr,
+            U256::from(79466191966197645195421774833u128),
+            900_000,
+            60,
+            42,
+            &[],
+        );
+        engine.apply_swap(
+            addr,
+            U256::from(79714513003271600568814636800u128), // Higher sqrt price
+            800_000,
+            120,
+            42,
+            &[],
+        );
+
+        // Last swap wins
+        let pool = &engine.pools[&key];
+        assert_eq!(pool.tick, 120);
+        assert_eq!(pool.liquidity, 800_000);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PyO3 wrapper — Python-accessible V3 block engine
+// ---------------------------------------------------------------------------
+
+use pyo3::prelude::*;
+use pyo3::types::PyList;
+use std::sync::Arc;
+
+/// V3 block engine — Rust-centric arbitrage engine for Uniswap V3 paths.
+///
+/// Python constructs the engine (registers pools and paths), then starts
+/// a Rust-side pump that drives the full per-block lifecycle. Python reads
+/// results via `latest_results()`.
+#[pyclass(name = "V3ArbEngine")]
+pub struct PyV3ArbEngine {
+    /// Shared engine state — Arc allows the pump to hold a reference too
+    engine: Arc<parking_lot::Mutex<V3BlockEngine>>,
+    /// Shutdown flag for the pump
+    shutdown: Arc<std::sync::atomic::AtomicBool>,
+    /// Handle for the pump task (None until `start()` is called)
+    pump_handle: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+#[pymethods]
+impl PyV3ArbEngine {
+    #[new]
+    fn new() -> Self {
+        Self {
+            engine: Arc::new(parking_lot::Mutex::new(V3BlockEngine::new())),
+            shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            pump_handle: parking_lot::Mutex::new(None),
+        }
+    }
+
+    /// Register a V3 pool by contract address and initial state.
+    /// Returns the pool key for use in path registration.
+    ///
+    /// Args:
+    ///     address: Pool contract address (hex string)
+    ///     token0: Token0 address (hex string)
+    ///     token1: Token1 address (hex string)
+    ///     fee: Fee tier (e.g. 3000 for 0.3%)
+    ///     `tick_spacing`: Tick spacing (e.g. 60)
+    ///     `factory`: Factory address (hex string)
+    ///     `sqrt_price_x96`: Current sqrt price (int)
+    ///     `liquidity`: Current active liquidity (int)
+    ///     `tick`: Current tick (int)
+    ///     `tick_data`: Dict mapping tick index -> (`liquidity_gross`, `liquidity_net`)
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (address, token0, token1, fee, tick_spacing, factory, sqrt_price_x96, liquidity, tick, tick_data))]
+    fn register_pool(
+        &self,
+        address: &str,
+        token0: &str,
+        token1: &str,
+        fee: u32,
+        tick_spacing: i32,
+        factory: &str,
+        sqrt_price_x96: &Bound<'_, pyo3::PyAny>,
+        liquidity: u128,
+        tick: i32,
+        tick_data: &Bound<'_, pyo3::types::PyDict>,
+    ) -> PyResult<u64> {
+        let addr = address.parse::<Address>().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
+        })?;
+        let t0 = token0.parse::<Address>().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid token0 address: {e}"))
+        })?;
+        let t1 = token1.parse::<Address>().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid token1 address: {e}"))
+        })?;
+        let fac = factory.parse::<Address>().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid factory address: {e}"))
+        })?;
+        let sp = crate::alloy_py::extract_python_u256(sqrt_price_x96)?;
+
+        let mut rust_tick_data = HashMap::new();
+        for (key, value) in tick_data.iter() {
+            let tick_idx: i32 = key.extract()?;
+            let tuple = value.cast::<pyo3::types::PyTuple>()?;
+            if tuple.len() != 2 {
+                let msg = format!(
+                    "Expected 2-tuple (liquidity_gross, liquidity_net), got {} elements",
+                    tuple.len()
+                );
+                return Err(pyo3::exceptions::PyValueError::new_err(msg));
+            }
+            let liquidity_gross: u128 = tuple.get_item(0)?.extract()?;
+            let liquidity_net: i128 = tuple.get_item(1)?.extract()?;
+            rust_tick_data.insert(tick_idx, make_tick_info_for_py(liquidity_gross, liquidity_net));
+        }
+
+        Ok(self.engine.lock().register_pool(RegisterV3PoolParams {
+            address: addr,
+            token0: t0,
+            token1: t1,
+            fee,
+            tick_spacing,
+            factory: fac,
+            sqrt_price_x96: sp,
+            liquidity,
+            tick,
+            tick_data: rust_tick_data,
+        }))
+    }
+
+    /// Register a V3 arbitrage path. Returns the path ID.
+    ///
+    /// Args:
+    ///     `pool_refs`: List of (`pool_key`, `zero_for_one`) tuples
+    #[pyo3(signature = (pool_refs))]
+    fn register_path(&self, pool_refs: &Bound<'_, PyList>) -> PyResult<u64> {
+        let mut rust_refs = Vec::with_capacity(pool_refs.len());
+        for item in pool_refs.iter() {
+            let tuple = item.cast::<pyo3::types::PyTuple>()?;
+            if tuple.len() != 2 {
+                let msg = format!(
+                    "Expected 2-tuple (pool_key, zero_for_one), got {} elements",
+                    tuple.len()
+                );
+                return Err(pyo3::exceptions::PyValueError::new_err(msg));
+            }
+            let pool_idx: u64 = tuple.get_item(0)?.extract()?;
+            let zero_for_one: bool = tuple.get_item(1)?.extract()?;
+            rust_refs.push(V3PoolRef { pool_idx, zero_for_one });
+        }
+
+        if rust_refs.len() < 2 {
+            let msg = format!("Need at least 2 pool refs, got {}", rust_refs.len());
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+
+        Ok(self.engine.lock().register_path(rust_refs))
+    }
+
+    /// Start the engine pump with the given RPC URL.
+    /// Freezes registration and spawns the `V3EnginePump` on the Tokio runtime.
+    #[pyo3(signature = (rpc_url))]
+    fn start(&self, rpc_url: String) -> PyResult<()> {
+        self.engine.lock().start();
+
+        if self.shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+            let msg = "Engine already running";
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
+        }
+
+        self.shutdown.store(false, std::sync::atomic::Ordering::Relaxed);
+
+        let handle = crate::optimizers::v3_engine_pump::V3EnginePump::spawn(
+            rpc_url,
+            Arc::clone(&self.engine),
+            &self.shutdown,
+        )
+        .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+
+        *self.pump_handle.lock() = Some(handle);
+
+        Ok(())
+    }
+
+    /// Stop the engine pump.
+    fn stop(&self) {
+        self.shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+        let handle = self.pump_handle.lock().take();
+        if let Some(handle) = handle {
+            handle.abort();
+        }
+    }
+
+    /// Whether the engine is running.
+    fn is_running(&self) -> bool {
+        self.engine.lock().is_running()
+    }
+
+    /// Freeze registration without starting the pump.
+    fn freeze(&self) {
+        self.engine.lock().start();
+    }
+
+    /// Number of registered pools.
+    fn pool_count(&self) -> usize {
+        self.engine.lock().pool_count()
+    }
+
+    /// Number of registered paths.
+    fn path_count(&self) -> usize {
+        self.engine.lock().path_count()
+    }
+
+    /// Process Swap events synchronously (for testing without a subscription).
+    ///
+    /// Each entry is (`address_str`, `sqrt_price_x96`, liquidity, tick, `tick_priors`)
+    /// where `tick_priors` is a list of (`tick_index`, (`liquidity_gross`, `liquidity_net`)).
+    #[pyo3(signature = (swap_updates, block_number))]
+    fn process_logs(
+        &self,
+        swap_updates: &Bound<'_, PyList>,
+        block_number: u64,
+    ) -> PyResult<()> {
+        let mut rust_updates: Vec<V3SwapUpdate> = Vec::with_capacity(swap_updates.len());
+
+        for item in swap_updates.iter() {
+            let tuple = item.cast::<pyo3::types::PyTuple>()?;
+            if tuple.len() != 5 {
+                let msg = format!(
+                    "Expected 5-tuple (address, sqrt_price, liquidity, tick, tick_priors), got {} elements",
+                    tuple.len()
+                );
+                return Err(pyo3::exceptions::PyValueError::new_err(msg));
+            }
+
+            let addr_obj = tuple.get_item(0)?;
+            let addr_str: String = addr_obj.extract()?;
+            let addr = addr_str.parse::<Address>().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}"))
+            })?;
+            let sqrt_price = crate::alloy_py::extract_python_u256(&tuple.get_item(1)?)?;
+            let liquidity: u128 = tuple.get_item(2)?.extract()?;
+            let tick: i32 = tuple.get_item(3)?.extract()?;
+
+            // Parse tick_priors: list of (tick_index, (liquidity_gross, liquidity_net))
+            let priors_obj = tuple.get_item(4)?;
+            let priors_list = priors_obj.cast::<PyList>()?;
+            let mut tick_priors = Vec::new();
+            for prior_item in priors_list.iter() {
+                let prior_tuple = prior_item.cast::<pyo3::types::PyTuple>()?;
+                if prior_tuple.len() != 2 {
+                    let msg = format!(
+                        "Expected 2-tuple (tick_index, (lg, ln)), got {} elements",
+                        prior_tuple.len()
+                    );
+                    return Err(pyo3::exceptions::PyValueError::new_err(msg));
+                }
+                let tick_idx: i32 = prior_tuple.get_item(0)?.extract()?;
+                let info_obj = prior_tuple.get_item(1)?;
+                let info_tuple = info_obj.cast::<pyo3::types::PyTuple>()?;
+                if info_tuple.len() != 2 {
+                    let msg = format!(
+                        "Expected 2-tuple (liquidity_gross, liquidity_net), got {} elements",
+                        info_tuple.len()
+                    );
+                    return Err(pyo3::exceptions::PyValueError::new_err(msg));
+                }
+                let lg: u128 = info_tuple.get_item(0)?.extract()?;
+                let ln: i128 = info_tuple.get_item(1)?.extract()?;
+                tick_priors.push((tick_idx, make_tick_info_for_py(lg, ln)));
+            }
+
+            rust_updates.push(V3SwapUpdate {
+                pool_address: addr,
+                sqrt_price_x96: sqrt_price,
+                liquidity,
+                tick,
+                tick_priors,
+            });
+        }
+
+        self.engine.lock().process_swap_updates(&rust_updates, block_number);
+        Ok(())
+    }
+
+    /// Read the last solved results and block number.
+    /// Returns (results, `block_number`) where results is a flat list:
+    /// [`path_id_0`, `optimal_input_0`, `profit_0`, `path_id_1`, ...]
+    #[allow(clippy::significant_drop_tightening)]
+    fn latest_results(&self, py: Python<'_>) -> PyResult<(Py<PyList>, u64)> {
+        let (results, block_num) = {
+            let engine = self.engine.lock();
+            let (r, b) = engine.latest_results();
+            (r.clone(), b)
+        };
+
+        let py_list = PyList::empty(py);
+        for (path_id, optimal_input, profit) in results {
+            py_list.append(path_id)?;
+            let input_py = crate::alloy_py::PyU256(optimal_input).into_pyobject(py)?;
+            py_list.append(input_py)?;
+            let profit_py = crate::alloy_py::PyU256(profit).into_pyobject(py)?;
+            py_list.append(profit_py)?;
+        }
+
+        Ok((py_list.unbind(), block_num))
+    }
+}
+
+/// Helper to construct `TickInfo` from Python-extracted values.
+fn make_tick_info_for_py(liquidity_gross: u128, liquidity_net: i128) -> TickInfo {
+    use alloy::primitives::{I256, U128};
+    TickInfo {
+        liquidity_gross: U128::from(liquidity_gross),
+        liquidity_net: I256::try_from(liquidity_net).unwrap_or(I256::ZERO),
+    }
+}

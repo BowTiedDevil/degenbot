@@ -69,7 +69,7 @@ fn compute_range_constrained_max_input(
 /// that both hops stay within their tick range bounds.
 ///
 /// Returns `(x, profit, iters)` if profitable and in-range, otherwise `(0.0, 0.0, iters)`.
-fn solve_v3_v3_validated(
+pub fn solve_v3_v3_validated(
     v3_hop1: &V3TickRangeHop,
     v3_hop2: &V3TickRangeHop,
     max_input: Option<f64>,
@@ -77,7 +77,7 @@ fn solve_v3_v3_validated(
     let hop1 = v3_hop1.to_hop_state();
     let hop2 = v3_hop2.to_hop_state();
     let constrained_max = compute_range_constrained_max_input(v3_hop1, v3_hop2, max_input);
-    let (x, profit, iters) = mobius_solve(&[hop1.clone(), hop2], Some(constrained_max));
+    let (x, profit, iters) = mobius_solve(&[hop1, hop2], Some(constrained_max));
 
     if profit > 0.0 {
         let final_p1 = estimate_v3_final_sqrt_price(x, v3_hop1);
@@ -377,7 +377,7 @@ fn compute_v3_v3_profit(
                 return INVALID_RANGE_PENALTY; // Input pushes past range boundary
             }
         }
-        simulate_path(x, &[hops[0].clone()])
+        simulate_path(x, &[hops[0]])
     };
 
     // Hop 2 output (using output1 as input to hop 2)
@@ -403,7 +403,7 @@ fn compute_v3_v3_profit(
                 return INVALID_RANGE_PENALTY; // Input pushes past range boundary
             }
         }
-        simulate_path(output1, &[hops[1].clone()])
+        simulate_path(output1, &[hops[1]])
     };
 
     output2 - x
@@ -559,7 +559,7 @@ mod tests {
             1e6,
             None,
             None,
-            &[hop_state.clone(), hop_state],
+            &[hop_state, hop_state],
             Some(&hop),
             Some(&hop),
         );
@@ -575,7 +575,7 @@ mod tests {
             1e18,
             None,
             None,
-            &[hop_state2.clone(), hop_state2],
+            &[hop_state2, hop_state2],
             Some(&hop),
             Some(&hop),
         );

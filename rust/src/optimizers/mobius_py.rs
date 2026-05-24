@@ -411,7 +411,7 @@ fn parse_hops(hops: &Bound<'_, PyList>) -> PyResult<(Vec<HopState>, Vec<IntHopSt
         }
         // Try as RustHopState
         else if let Ok(py_hop) = item.extract::<PyRef<PyHopState>>() {
-            base_hops.push(py_hop.inner.clone());
+            base_hops.push(py_hop.inner);
             all_int = false;
         } else {
             unsupported = true;
@@ -662,6 +662,122 @@ impl PyArbSolver {
 
         Ok(py.detach(|| solve_mobius(&base_hops, &int_hops, true, max_input)))
     }
+
+    /// Solve multiple arbitrage paths in a single Python → Rust round-trip.
+    ///
+    /// All paths are parsed under the GIL, then solved inside a single
+    /// `py.detach()` call. This amortizes the ~1,160ns PyO3 bridge overhead
+    /// across all paths instead of paying it per-path.
+    ///
+    /// Parameters
+    /// ----------
+    /// paths : list of list of int
+    ///     Each inner list is an ordered list of pool IDs along an arbitrage
+    ///     path. Must have at least 2 pool IDs.
+    /// max_input : float or None
+    ///     Optional maximum input constraint (applied to all paths).
+    ///
+    /// Returns
+    /// -------
+    /// list of RustArbResult
+    ///     One result per path. Paths with missing pool IDs or < 2 hops
+    ///     are returned as not_supported.
+    #[pyo3(signature = (paths, max_input=None))]
+    fn solve_raw_batch(
+        &self,
+        py: Python<'_>,
+        paths: &Bound<'_, PyList>,
+        max_input: Option<f64>,
+    ) -> PyResult<Py<PyList>> {
+        let num_paths = paths.len();
+        if num_paths == 0 {
+            return Ok(PyList::empty(py).unbind());
+        }
+
+        // Phase 1 (GIL-held): Parse all paths into (base_hops, int_hops) pairs
+        let mut assembled: Vec<(
+            bool,   // supported
+            Vec<HopState>,
+            Vec<IntHopState>,
+        )> = Vec::with_capacity(num_paths);
+
+        for path_item in paths.iter() {
+            let int_flat: &Bound<'_, PyList> = path_item.cast()?;
+            let n = int_flat.len();
+
+            if n % 4 != 0 || n / 4 < 2 {
+                assembled.push((false, Vec::new(), Vec::new()));
+                continue;
+            }
+
+            let num_hops = n / 4;
+            let mut base_hops: Vec<HopState> = Vec::with_capacity(num_hops);
+            let mut int_hops: Vec<IntHopState> = Vec::with_capacity(num_hops);
+            let mut path_valid = true;
+
+            for i in 0..num_hops {
+                let r_in_obj = int_flat.get_item(i * 4)?;
+                let r_out_obj = int_flat.get_item(i * 4 + 1)?;
+                let gamma_numer_obj = int_flat.get_item(i * 4 + 2)?;
+                let fee_denom_obj = int_flat.get_item(i * 4 + 3)?;
+
+                let Ok(r_in) = extract_python_u256(&r_in_obj) else {
+                    path_valid = false;
+                    break;
+                };
+                let Ok(r_out) = extract_python_u256(&r_out_obj) else {
+                    path_valid = false;
+                    break;
+                };
+                let Ok(gamma_numer) = gamma_numer_obj.extract::<u64>() else {
+                    path_valid = false;
+                    break;
+                };
+                let Ok(fee_denom) = fee_denom_obj.extract::<u64>() else {
+                    path_valid = false;
+                    break;
+                };
+
+                if gamma_numer >= fee_denom {
+                    path_valid = false;
+                    break;
+                }
+
+                int_hops.push(IntHopState::new(r_in, r_out, gamma_numer, fee_denom));
+                let r_in_f64 = u256_to_f64(r_in);
+                let r_out_f64 = u256_to_f64(r_out);
+                let fee_f64 = 1.0 - (gamma_numer as f64 / fee_denom as f64);
+                base_hops.push(HopState::new(r_in_f64, r_out_f64, fee_f64));
+            }
+
+            if path_valid {
+                assembled.push((true, base_hops, int_hops));
+            } else {
+                assembled.push((false, Vec::new(), Vec::new()));
+            }
+        }
+
+        // Phase 2 (GIL-released): Solve all valid paths in one batch
+        let results: Vec<PyArbResult> = py.detach(|| {
+            assembled
+                .iter()
+                .map(|(supported, base_hops, int_hops)| {
+                    if !supported {
+                        return not_supported_result();
+                    }
+                    solve_mobius(base_hops, int_hops, true, max_input)
+                })
+                .collect()
+        });
+
+        // Phase 3 (GIL-held): Build Python list of results
+        let py_list = PyList::empty(py);
+        for result in results {
+            py_list.append(result)?;
+        }
+
+        Ok(py_list.unbind())
+    }
 }
 
 // ==========================================================================
@@ -670,7 +786,52 @@ impl PyArbSolver {
 
 use lru::LruCache;
 use parking_lot::Mutex;
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Pre-resolved hop states for a registered path.
+///
+/// When a path is registered, its pool IDs are resolved to concrete
+/// `IntHopState` values once and stored. On solve, no pool lookup
+/// or float conversion is needed — just iterate and solve.
+struct RegisteredPath {
+    hops: ResolvedHops,
+    pool_ids: Vec<u64>,
+}
+
+/// Type alias for pre-resolved hop state pairs.
+type ResolvedHops = Vec<(HopState, IntHopState)>;
+
+/// Global counter for auto-assigned path IDs.
+static NEXT_PATH_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Convert a U256 to a Python int with a fast path for u64-fit values.
+///
+/// For values that fit in a single u64 (high 3 limbs are zero), uses
+/// `PyInt::new(py, val)` which is a single C API call (~20ns).
+/// For larger values, falls back to `int.from_bytes()` (~160ns).
+///
+/// This is the key optimization for `solve_registered_ints`: most arbitrage
+/// results (optimal_input, profit) fit in u64 for common pools, so the
+/// fast path is hit almost always.
+fn u256_to_py_fast(py: Python<'_>, val: U256) -> PyResult<Bound<'_, PyAny>> {
+    let limbs = val.as_limbs(); // &[u64; 4]
+    if limbs[1] == 0 && limbs[2] == 0 && limbs[3] == 0 {
+        // Fits in u64
+        let low = limbs[0];
+        if let Ok(signed) = i64::try_from(low) {
+            // Fits in i64 — use fast C API path
+            Ok(pyo3::types::PyInt::new(py, signed).into_any())
+        } else {
+            // u64 value > i64::MAX: must use from_bytes to avoid cast wrapping
+            PyU256(val).into_pyobject(py)
+        }
+    } else {
+        // Needs big-int conversion
+        PyU256(val).into_pyobject(py)
+    }
+}
 
 /// Cached pool state for fast arbitrage solving by pool ID.
 ///
@@ -678,11 +839,18 @@ use std::num::NonZeroUsize;
 /// solved by ID reference, eliminating all Python object construction
 /// and per-item extraction overhead on the solve path.
 ///
-/// The solve path becomes: `cache.solve([pool_id_0, pool_id_1])` —
-/// just two Python integers passed to Rust.
+/// Two solve modes are available:
+/// - `solve([pool_ids])` / `solve_batch([[pool_ids], ...])` — resolve pool IDs
+///   on every call. Simple but incurs per-call lock + lookup overhead.
+/// - `register_path([pool_ids])` → `solve_registered([path_ids])` — resolve
+///   pool IDs once at registration time, then solve by path ID reference.
+///   This eliminates all per-solve pool lookups, float conversions, and
+///   lock acquisitions. The solve hot path becomes: look up pre-built
+///   `(HopState, IntHopState)` vectors by path ID, then call `py.detach()`
+///   once for the entire batch.
 ///
-/// Uses LRU eviction (capacity 10,000) to prevent unbounded memory
-/// growth in long-running processes. `Mutex` is required because
+/// Uses LRU eviction (capacity 10,000) for pool state to prevent unbounded
+/// memory growth in long-running processes. `Mutex` is required because
 /// `LruCache::get()` takes `&mut self` (it updates LRU ordering on
 /// access), but `PyPoolCache::solve(&self, ...)` must remain `&self`
 /// (pyo3 convention). `Mutex` is safe under both GIL-enabled and
@@ -692,6 +860,8 @@ use std::num::NonZeroUsize;
 #[pyclass(name = "RustPoolCache")]
 pub struct PyPoolCache {
     pools: Mutex<LruCache<u64, IntHopState>>,
+    /// Pre-registered paths: path_id → resolved (HopState, IntHopState) pairs.
+    paths: Mutex<HashMap<u64, RegisteredPath>>,
 }
 #[pymethods]
 impl PyPoolCache {
@@ -701,6 +871,7 @@ impl PyPoolCache {
         const CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(10_000).unwrap(); // infallible for non-zero literal
         Self {
             pools: Mutex::new(LruCache::new(CACHE_CAPACITY)),
+            paths: Mutex::new(HashMap::new()),
         }
     }
 
@@ -814,6 +985,456 @@ impl PyPoolCache {
         }
 
         Ok(py.detach(|| solve_mobius(&base_hops, &int_hops, true, max_input)))
+    }
+
+    /// Solve multiple arbitrage paths in a single Python → Rust round-trip.
+    ///
+    /// All paths are looked up under the GIL (one lock acquisition), then
+    /// solved inside a single `py.detach()` call. This amortizes the
+    /// ~1,160ns PyO3 bridge overhead across all paths.
+    ///
+    /// Parameters
+    /// ----------
+    /// paths : list of list of int
+    ///     Each inner list is an ordered list of pool IDs along an arbitrage
+    ///     path. Must have at least 2 pool IDs.
+    /// max_input : float or None
+    ///     Optional maximum input constraint (applied to all paths).
+    ///
+    /// Returns
+    /// -------
+    /// list of RustArbResult
+    ///     One result per path. Paths with missing pool IDs or < 2 hops
+    ///     are returned as not_supported.
+    #[pyo3(signature = (paths, max_input=None))]
+    fn solve_batch(
+        &self,
+        py: Python<'_>,
+        paths: &Bound<'_, PyList>,
+        max_input: Option<f64>,
+    ) -> PyResult<Py<PyList>> {
+        let num_paths = paths.len();
+        if num_paths == 0 {
+            return Ok(PyList::empty(py).unbind());
+        }
+
+        // Phase 1 (GIL-held): Look up all pool states for all paths
+        // One lock acquisition for the entire batch
+        let pool_ids_list: Vec<Vec<u64>> = paths.extract()?;
+
+        let mut cache = self.pools.lock();
+
+        let mut assembled: Vec<(
+            bool,   // supported
+            Vec<HopState>,
+            Vec<IntHopState>,
+        )> = Vec::with_capacity(num_paths);
+
+        for pool_ids in &pool_ids_list {
+            if pool_ids.len() < 2 {
+                assembled.push((false, Vec::new(), Vec::new()));
+                continue;
+            }
+
+            let mut base_hops: Vec<HopState> = Vec::with_capacity(pool_ids.len());
+            let mut int_hops: Vec<IntHopState> = Vec::with_capacity(pool_ids.len());
+            let mut path_valid = true;
+
+            for &pool_id in pool_ids {
+                let Some(hop_state) = cache.get(&pool_id).cloned() else {
+                    path_valid = false;
+                    break;
+                };
+
+                int_hops.push(hop_state.clone());
+                let r_in_f64 = u256_to_f64(hop_state.reserve_in);
+                let r_out_f64 = u256_to_f64(hop_state.reserve_out);
+                let fee_f64 = 1.0 - (hop_state.gamma_numer as f64 / hop_state.fee_denom as f64);
+                base_hops.push(HopState::new(r_in_f64, r_out_f64, fee_f64));
+            }
+
+            if path_valid {
+                assembled.push((true, base_hops, int_hops));
+            } else {
+                assembled.push((false, Vec::new(), Vec::new()));
+            }
+        }
+
+        // Release cache lock before GIL release — no longer needed
+        drop(cache);
+
+        // Phase 2 (GIL-released): Solve all valid paths in one batch
+        let results: Vec<PyArbResult> = py.detach(|| {
+            assembled
+                .iter()
+                .map(|(supported, base_hops, int_hops)| {
+                    if !supported {
+                        return not_supported_result();
+                    }
+                    solve_mobius(base_hops, int_hops, true, max_input)
+                })
+                .collect()
+        });
+
+        // Phase 3 (GIL-held): Build Python list of results
+        let py_list = PyList::empty(py);
+        for result in results {
+            py_list.append(result)?;
+        }
+
+        Ok(py_list.unbind())
+    }
+
+    /// Register an arbitrage path by its pool IDs.
+    ///
+    /// Resolves the pool IDs to concrete `IntHopState` values once and
+    /// stores them under an auto-assigned path ID. Subsequent calls to
+    /// `solve_registered()` use this path ID, eliminating all per-solve
+    /// pool lookups, lock acquisitions, and float conversions.
+    ///
+    /// If a pool ID is not found in the cache, the path is still registered
+    /// but will return not_supported when solved. Call `update_path()` after
+    /// registering missing pools.
+    ///
+    /// Parameters
+    /// ----------
+    /// pool_ids : list of int
+    ///     Ordered list of pool IDs along the arbitrage path.
+    ///     Must have at least 2 pool IDs.
+    ///
+    /// Returns
+    /// -------
+    /// int
+    ///     The auto-assigned path ID for use with `solve_registered()`.
+    #[pyo3(signature = (pool_ids))]
+    fn register_path(&self, pool_ids: Vec<u64>) -> PyResult<u64> {
+        if pool_ids.len() < 2 {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Need at least 2 pools in path, got {}",
+                pool_ids.len()
+            )));
+        }
+
+        let path_id = NEXT_PATH_ID.fetch_add(1, Ordering::Relaxed);
+
+        // Resolve pool IDs to hop states
+        let mut cache = self.pools.lock();
+        let mut hops = Vec::with_capacity(pool_ids.len());
+
+        for &pool_id in &pool_ids {
+            let Some(hop_state) = cache.get(&pool_id).cloned() else {
+                // Pool not found — register with empty hops, caller must
+                // call update_path() after inserting the pool
+                drop(cache);
+                {
+                    let mut paths = self.paths.lock();
+                    paths.insert(path_id, RegisteredPath {
+                        hops: Vec::new(),
+                        pool_ids,
+                    });
+                }
+                return Ok(path_id);
+            };
+
+            let r_in_f64 = u256_to_f64(hop_state.reserve_in);
+            let r_out_f64 = u256_to_f64(hop_state.reserve_out);
+            let fee_f64 = 1.0 - (hop_state.gamma_numer as f64 / hop_state.fee_denom as f64);
+            let base_hop = HopState::new(r_in_f64, r_out_f64, fee_f64);
+            hops.push((base_hop, hop_state));
+        }
+        drop(cache);
+
+        {
+            let mut paths = self.paths.lock();
+            paths.insert(path_id, RegisteredPath {
+                hops,
+                pool_ids,
+            });
+        }
+
+        Ok(path_id)
+    }
+
+    /// Re-resolve a previously registered path's pool states.
+    ///
+    /// Call this after updating pool states (e.g., at block boundaries)
+    /// to refresh the pre-resolved hop states from the pool cache.
+    ///
+    /// Parameters
+    /// ----------
+    /// path_id : int
+    ///     The path ID returned by `register_path()`.
+    ///
+    /// Returns True if the path was found and updated, False if not found.
+    #[pyo3(signature = (path_id))]
+    fn update_path(&self, path_id: u64) -> bool {
+        let pool_ids = {
+            let paths = self.paths.lock();
+            let Some(registered) = paths.get(&path_id) else {
+                return false;
+            };
+            let pool_ids = registered.pool_ids.clone();
+            drop(paths);
+            pool_ids
+        };
+
+        // Re-resolve pool IDs
+        let mut cache = self.pools.lock();
+        let mut hops = Vec::with_capacity(pool_ids.len());
+
+        for &pool_id in &pool_ids {
+            let Some(hop_state) = cache.get(&pool_id).cloned() else {
+                // Pool missing — clear hops so solve returns not_supported
+                drop(cache);
+                {
+                    let mut paths = self.paths.lock();
+                    if let Some(rp) = paths.get_mut(&path_id) {
+                        rp.hops.clear();
+                    }
+                }
+                return true;
+            };
+
+            let r_in_f64 = u256_to_f64(hop_state.reserve_in);
+            let r_out_f64 = u256_to_f64(hop_state.reserve_out);
+            let fee_f64 = 1.0 - (hop_state.gamma_numer as f64 / hop_state.fee_denom as f64);
+            let base_hop = HopState::new(r_in_f64, r_out_f64, fee_f64);
+            hops.push((base_hop, hop_state));
+        }
+        drop(cache);
+
+        {
+            let mut paths = self.paths.lock();
+            if let Some(rp) = paths.get_mut(&path_id) {
+                rp.hops = hops;
+            }
+        }
+
+        true
+    }
+
+    /// Re-resolve all registered paths after a batch pool state update.
+    ///
+    /// More efficient than calling `update_path()` individually because
+    /// it acquires the pool cache lock once for all paths.
+    ///
+    /// Returns the number of paths updated.
+    fn update_all_paths(&self) -> usize {
+        let all_pool_ids: Vec<(u64, Vec<u64>)> = {
+            let paths = self.paths.lock();
+            paths
+                .iter()
+                .map(|(&id, rp)| (id, rp.pool_ids.clone()))
+                .collect()
+        };
+
+        // Resolve all pool IDs under a single cache lock
+        let mut cache = self.pools.lock();
+        let mut resolved: Vec<(u64, bool, ResolvedHops)> = Vec::with_capacity(all_pool_ids.len());
+        for (path_id, pool_ids) in &all_pool_ids {
+            let mut hops = Vec::with_capacity(pool_ids.len());
+            let mut path_valid = true;
+
+            for &pool_id in pool_ids {
+                let Some(hop_state) = cache.get(&pool_id).cloned() else {
+                    path_valid = false;
+                    break;
+                };
+
+                let r_in_f64 = u256_to_f64(hop_state.reserve_in);
+                let r_out_f64 = u256_to_f64(hop_state.reserve_out);
+                let fee_f64 = 1.0 - (hop_state.gamma_numer as f64 / hop_state.fee_denom as f64);
+                let base_hop = HopState::new(r_in_f64, r_out_f64, fee_f64);
+                hops.push((base_hop, hop_state));
+            }
+
+            resolved.push((*path_id, path_valid, hops));
+        }
+        drop(cache);
+
+        // Update path storage under a single paths lock
+        let mut paths = self.paths.lock();
+        let mut updated = 0;
+        for (path_id, path_valid, hops) in resolved {
+            if let Some(rp) = paths.get_mut(&path_id) {
+                if path_valid {
+                    rp.hops = hops;
+                } else {
+                    rp.hops.clear();
+                }
+                updated += 1;
+            }
+        }
+
+        updated
+    }
+
+    /// Remove a registered path.
+    ///
+    /// Returns True if the path was found and removed, False otherwise.
+    #[pyo3(signature = (path_id))]
+    fn remove_path(&self, path_id: u64) -> bool {
+        self.paths.lock().remove(&path_id).is_some()
+    }
+
+    /// Solve multiple pre-registered paths by their path IDs in a single
+    /// Python → Rust round-trip.
+    ///
+    /// This is the fastest solve path: paths were pre-resolved at
+    /// registration time, so no pool lookups, float conversions, or
+    /// lock acquisitions are needed on the solve hot path. The GIL is
+    /// released once for the entire batch.
+    ///
+    /// Parameters
+    /// ----------
+    /// path_ids : list of int
+    ///     Path IDs returned by `register_path()`.
+    /// max_input : float or None
+    ///     Optional maximum input constraint (applied to all paths).
+    ///
+    /// Returns
+    /// -------
+    /// list of RustArbResult
+    ///     One result per path_id. Paths that are not registered or
+    ///     have incomplete hops are returned as not_supported.
+    #[pyo3(signature = (path_ids, max_input=None))]
+    fn solve_registered(
+        &self,
+        py: Python<'_>,
+        path_ids: Vec<u64>,
+        max_input: Option<f64>,
+    ) -> PyResult<Py<PyList>> {
+        if path_ids.is_empty() {
+            return Ok(PyList::empty(py).unbind());
+        }
+
+        // Phase 1 (GIL-held): Look up pre-resolved hop states by path ID
+        // Clone the data so we can release the lock before py.detach()
+        let paths_lock = self.paths.lock();
+
+        let resolved: Vec<Option<ResolvedHops>> = path_ids
+            .iter()
+            .map(|id| {
+                paths_lock
+                    .get(id)
+                    .map(|rp| rp.hops.clone())
+            })
+            .collect();
+
+        drop(paths_lock);
+
+        // Phase 2 (GIL-released): Solve all paths in one batch
+        // No pool lookups, no float conversions, no lock acquisitions needed
+        let results: Vec<PyArbResult> = py.detach(|| {
+            resolved
+                .iter()
+                .map(|opt_hops| match opt_hops {
+                    None => not_supported_result(),
+                    Some(hops) if hops.len() < 2 => not_supported_result(),
+                    Some(hops) => {
+                        let base_hops: Vec<HopState> = hops.iter().map(|(b, _)| *b).collect();
+                        let int_hops: Vec<IntHopState> = hops.iter().map(|(_, i)| i.clone()).collect();
+                        solve_mobius(&base_hops, &int_hops, true, max_input)
+                    }
+                })
+                .collect()
+        });
+
+        // Phase 3 (GIL-held): Build Python list of results
+        let py_list = PyList::empty(py);
+        for result in results {
+            py_list.append(result)?;
+        }
+
+        Ok(py_list.unbind())
+    }
+
+    /// Solve multiple pre-registered paths, returning only integer results.
+    ///
+    /// This is the **minimum-overhead** solve path. Returns a flat list of
+    /// Python integers: `[input0, profit0, input1, profit1, ...]`.
+    ///
+    /// For paths that are not registered, not supported, or not profitable,
+    /// both values are 0.
+    ///
+    /// Optimizations over `solve_registered`:
+    /// - Calls `mobius_solve_with_refinement` directly, skipping PyArbResult
+    /// - For u64-fit values, returns native Python ints (~20ns) instead of
+    ///   calling `int.from_bytes()` (~160ns)
+    /// - Flat int list instead of tuple list (avoids PyTuple allocation)
+    ///
+    /// Parameters
+    /// ----------
+    /// path_ids : list of int
+    ///     Path IDs returned by `register_path()`.
+    /// max_input : float or None
+    ///     Optional maximum input constraint (applied to all paths).
+    ///
+    /// Returns
+    /// -------
+    /// list of int
+    ///     Flat list: `[optimal_input_0, profit_0, optimal_input_1, profit_1, ...]`
+    #[pyo3(signature = (path_ids, max_input=None))]
+    fn solve_registered_ints(
+        &self,
+        py: Python<'_>,
+        path_ids: Vec<u64>,
+        max_input: Option<f64>,
+    ) -> PyResult<Py<PyList>> {
+        if path_ids.is_empty() {
+            return Ok(PyList::empty(py).unbind());
+        }
+
+        // Phase 1 (GIL-held): Look up pre-resolved hop states
+        let paths_lock = self.paths.lock();
+        let resolved: Vec<Option<ResolvedHops>> = path_ids
+            .iter()
+            .map(|id| paths_lock.get(id).map(|rp| rp.hops.clone()))
+            .collect();
+        drop(paths_lock);
+
+        // Phase 2 (GIL-released): Solve all paths, calling solver directly
+        let int_results: Vec<Option<(U256, U256)>> = py.detach(|| {
+            resolved
+                .iter()
+                .map(|opt_hops| match opt_hops {
+                    None => None,
+                    Some(hops) if hops.len() < 2 => None,
+                    Some(hops) => {
+                        let base_hops: Vec<HopState> = hops.iter().map(|(b, _)| *b).collect();
+                        let int_hops: Vec<IntHopState> = hops.iter().map(|(_, i)| i.clone()).collect();
+                        let result = mobius_solve_with_refinement(&base_hops, &int_hops, true, max_input);
+                        if !result.success {
+                            None
+                        } else if let (Some(opt_input), Some(profit)) =
+                            (result.optimal_input_int, result.profit_int)
+                        {
+                            Some((opt_input, profit))
+                        } else {
+                            None
+                        }
+                    }
+                })
+                .collect()
+        });
+
+        // Phase 3 (GIL-held): Convert to Python ints with fast path for u64 values
+        // For values that fit in u64, use PyLong::new (C call, ~20ns)
+        // For larger values, fall back to int.from_bytes (~160ns)
+        let py_list = PyList::empty(py);
+        for opt_result in &int_results {
+            if let Some((optimal_input, profit)) = opt_result {
+                let input_py = u256_to_py_fast(py, *optimal_input)?;
+                let profit_py = u256_to_py_fast(py, *profit)?;
+                py_list.append(input_py)?;
+                py_list.append(profit_py)?;
+            } else {
+                py_list.append(0)?;
+                py_list.append(0)?;
+            }
+        }
+
+        Ok(py_list.unbind())
     }
 
     /// Check if a pool ID is in the cache.
