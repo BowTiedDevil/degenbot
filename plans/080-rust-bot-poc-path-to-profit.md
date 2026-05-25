@@ -10,6 +10,8 @@ Bring the V3/V2 Rust-backed backrun bot (`examples/eth_backrun_v3_v2_rust.py`) f
 
 **All slices in this plan are complete.** The engine is fully integer-exact — zero f64 arithmetic on any solve path. 13 engine-vs-reference V3-V3 tests verify correctness against Brent and brute-force solvers. 409 Rust tests and 3223 Python tests pass.
 
+**Post-completion fix**: Eliminated mixed V2-V3 solver false positives caused by (1) wrong V2 pool key selection for `zfo=False` paths and (2) single-range V3 approximation. See "Post-Completion Fixes" section.
+
 ## Problem
 
 ### Deletion test
@@ -417,7 +419,8 @@ Key testing lessons:
 
 ## Risks
 
-- **f64 solver produces huge phantom profits for V3 paths**: ~~The existing `mobius_solve`/`solve_mixed_path` uses f64 arithmetic exclusively. For V3-involving paths, `simulate_v3_hop` only uses the first tick range and `x as u128` silently truncates values > 2^128. This produces profits reported in 10^18+ ETH — pure artifacts.~~ **Resolved by Slices 10–15**: All solve paths (V2-V2, V2-V3, V3-V2, V3-V3) now use integer-exact arithmetic. The engine is fully f64-free. `MAX_PROFIT_WEI` guard in the bot still provides defense-in-depth against scam tokens.
+- **~~f64 solver produces huge phantom profits for V3 paths~~**: ~~The existing `mobius_solve`/`solve_mixed_path` uses f64 arithmetic exclusively. For V3-involving paths, `simulate_v3_hop` only uses the first tick range and `x as u128` silently truncates values > 2^128. This produces profits reported in 10^18+ ETH — pure artifacts.~~ **Resolved by Slices 10–15**: All solve paths (V2-V2, V2-V3, V3-V2, V3-V3) now use integer-exact arithmetic. The engine is fully f64-free. `MAX_PROFIT_WEI` guard in the bot still provides defense-in-depth.
+- **Mixed V2-V3 single-range false positives**: ~~The `exact_solve_mixed_v2_v3` function used a single V3 tick range, producing false profits when swaps exceeded the current range's capacity.~~ **Resolved**: Replaced with `exact_solve_mixed_v2_v3_sequence` which enumerates V3 ending ranges with crossing-aware simulation. Additionally fixed V2 pool key selection bug (forward key used for all paths regardless of zfo direction) and V2 dependency tracking (both orientations returned on update).
 - **`asyncio.gather` + node throttling**: Simulating 8 candidates concurrently may hit node rate limits. **Mitigation**: `MAX_SIMULATE_CONCURRENT` is configurable. Start at 4, increase to 8 if the node handles it.
 - **Dispatch lock + coalesce interaction**: The `dispatch_lock` in Slice 0.5 uses `if dispatch_lock.locked(): return` (non-blocking check). A second dispatch triggered during the coalesce window's `asyncio.sleep` will be silently dropped. **Mitigation**: This is intentional — the first dispatch processes all accumulated updates. The second dispatch would process zero updates anyway (they've been consumed).
 - **Reconciliation after reconnect may be slow**: Fetching recently-active pool states takes time proportional to activity. **Mitigation**: Only reconcile pools with pending updates (bounded set). Accept brief stale state for inactive pools.
@@ -505,7 +508,7 @@ The f64 Möbius solver produces wildly inaccurate profits for V3-involving paths
 
 The integer-exact solver is fully wired into the `UniswapArbEngine`:
 - V2-only paths: use `exact_mobius_solve` (closed-form U512 isqrt) ✅
-- Mixed V2-V3 paths: use `exact_solve_mixed_v2_v3` (integer effective reserves + closed-form) ✅
+- Mixed V2-V3 paths: use `exact_solve_mixed_v2_v3_sequence` (integer effective reserves + piecewise tick-range enumeration + closed-form) ✅
 - Pure V3 paths: use `int_solve_v3_v3` (integer piecewise-Möbius with closed-form per segment) ✅
 
 The engine is now fully integer-exact — zero f64 arithmetic on any solve path.
@@ -529,9 +532,11 @@ Created `rust/src/optimizers/mobius_v3_int.rs` with:
 
 ### Slice 12: Wire integer-exact solver into mixed V3-V2 paths ✅
 
-Replaced the golden-section search in `solve_mixed_path` with `exact_solve_mixed_v2_v3`. The `ResolvedMixedPath` now carries `int_v3_hops: Vec<Option<IntV3TickRangeHop>>` built from original U256 values during `resolve_path`. The old `simulate_v3_hop` and `user_max_or` helpers are removed.
+Replaced the golden-section search in `solve_mixed_path` with the integer-exact mixed solver. The `ResolvedMixedPath` now carries `int_v3_hops: Vec<Option<IntV3TickRangeHop>>` built from original U256 values during `resolve_path`. The old `simulate_v3_hop` and `user_max_or` helpers are removed.
 
-**Result**: All 401 Rust tests pass. All 9 Python integration tests pass. The engine no longer uses any f64 arithmetic for V2-only or mixed V2-V3 paths.
+**Post-completion upgrade**: `exact_solve_mixed_v2_v3` (single-range) replaced with `exact_solve_mixed_v2_v3_sequence` (piecewise multi-range). The single-range version produced false positives when swaps exceeded the current V3 tick range capacity. The sequence version enumerates V3 ending ranges, computes crossing data, and validates with crossing-aware simulation — identical approach to `int_solve_v3_v3`.
+
+**Result**: All 409 Rust tests pass. All 9 Python integration tests pass. The engine no longer uses any f64 arithmetic for V2-only or mixed V2-V3 paths.
 
 ### Phase 3: Pure V3-V3 Integer-Exact Solver
 
@@ -604,16 +609,54 @@ Key findings during testing:
 - [x] Documented V3-V3 direction rule: pool_A(zfo=True) must have tick > pool_B(zfo=False) for profit
 - [x] Documented range coverage requirement: wide_range_around(tick, n=10) for sufficient tick ranges
 - [x] Clippy fixes in mobius_int_exact.rs (div_ceil) and mobius_v3_int.rs (let-else, let-binding return)
+- [x] Fix mixed V2-V3 solver false positives: sequence-based solver replaces single-range approximation
+- [x] Fix V2 pool key selection: register_path uses reverse key for zfo=False paths
+- [x] Fix V2 dependency tracking: apply_sync_updates returns both orientations, process_block maps addresses to both keys
+- [x] Remove dead code: exact_solve_mixed_v2_v3, int_simulate_mixed_path
+- [x] Mainnet observe validation: all large profits verified as real on-chain opportunities
+
+## Post-Completion Fixes
+
+### Fix: Mixed V2-V3 solver false positives (2025-05-25)
+
+Two bugs caused the mixed V2-V3 solver to report false profits on paths where Python simulation showed a loss.
+
+**Bug 1: Wrong V2 pool key for `zfo=False` paths**
+
+`register_path` in the bot always used the forward V2 pool key (reserve0→reserve1), but `zfo=False` means selling token1 for token0 — which needs the reverse pool key (reserve1→reserve0). Using the wrong key gave the solver inverted V2 reserves, producing wildly incorrect Möbius coefficients.
+
+Example: MILADY-WETH Sushiswap V2 pool with reserve0=1.49 MILADY, reserve1=1.86 WETH. For `zfo=False` (sell WETH), the solver needs `reserve_in=WETH=1.86`, `reserve_out=MILADY=1.49`. But with the forward key, it got `reserve_in=MILADY=1.49`, `reserve_out=WETH=1.86` — the complete opposite.
+
+Fix: `register_path` now selects `fwd_key` for `zfo=True` and `fwd_key + 1` for `zfo=False`.
+
+**Bug 2: Single-range V3 approximation**
+
+`exact_solve_mixed_v2_v3` used a single `IntV3TickRangeHop` (the current tick range only). When the optimal swap exceeded the current range's capacity, the solver assumed unlimited liquidity at the current price — producing K >> M in Möbius coefficients and phantom profits.
+
+Example: MILADY-WETH V3 (tick=2311, tick_spacing=200, L=998T). The swap needed to cross 16× the current range's capacity. The single-range approximation gave K > M by 1248×, reporting 0.03 ETH profit. Python's full tick-crossing simulation showed a 0.018 ETH loss.
+
+Fix: Replaced `exact_solve_mixed_v2_v3` with `exact_solve_mixed_v2_v3_sequence`, which takes `IntV3TickRangeSequence` and enumerates V3 ending ranges (like `int_solve_v3_v3`). For each candidate ending range k, it computes crossing data, builds mixed hop list with the ending range, solves via closed-form Möbius, and validates with crossing-aware simulation.
+
+**Additional fix: V2 dependency tracking**
+
+`apply_sync_updates` only returned the forward pool key, and `process_block` mapped V2 addresses to the forward key only. Paths registered with the reverse key (for `zfo=False`) were never found in the `pool_to_paths` reverse index, so they were never re-solved after updates.
+
+Fix: `apply_sync_updates` now returns both forward and reverse keys. `process_block` maps V2 addresses to both orientations. Added `pool_keys_for_address()` to `V2BlockEngine`.
+
+**Dead code removed**: `exact_solve_mixed_v2_v3` (single-range solver), `int_simulate_mixed_path` (single-range simulation).
+
+**Verification**: MILADY-WETH path (previously 0.03 ETH false profit) now produces zero profit with both no-tick-data and real-tick-data V3 pools. Mainnet observe mode confirms large profits are real on-chain opportunities (e.g. drained VLO pool with reserve0=0 still holding 435 WETH).
 
 ## Remaining Work
 
 All slices in this plan are complete. The following items are out-of-scope
 improvements for future consideration:
 
-- [ ] Run `--observe` mode on mainnet to validate the fully integer-exact engine produces realistic profits at production tick values and liquidity levels
+- [x] ~~Run `--observe` mode on mainnet to validate the fully integer-exact engine produces realistic profits~~ Ran on mainnet for multiple blocks. All large profits verified as real on-chain opportunities (drained pools, extreme reserve imbalances). MILADY-WETH false positive eliminated by sequence-based solver.
 - [ ] Consider removing `rust/src/optimizers/mobius_v3_v3.rs` (f64 V3-V3 solver) — now unused by the engine since Slice 15 replaced it with `int_solve_v3_v3`
 - [ ] Consider benchmarking `int_solve_v3_v3` vs f64 `solve_v3_v3` to quantify the integer-exact solver's overhead
 - [ ] Extend engine V3-V3 test suite with >3-hop paths (current tests cover only 2-hop V3-V3)
 - [ ] Investigate false-zero-profit for large tick divergence (>1400 ticks between pool A and pool B) — the engine's `int_solve_v3_v3` finds no profit where brute-force does, likely caused by `build_int_v3_sequence`'s `max_ranges` cap or overflow in crossing computation for deeply-in-the-money pieces
 - [ ] Add runtime check in `register_v2_pool` that `_fee_token0 == _fee_token1` and warn if asymmetric (F3 mitigation)
 - [ ] Optimize V3 tick_data transfer: diff against cached snapshot and send only changed ticks (F4 mitigation)
+- [ ] Add integration test for `exact_solve_mixed_v2_v3_sequence` covering multi-range V3 paths (the former single-range `exact_solve_mixed_v2_v3` had a test that was replaced, but no new multi-range-specific test was added)
