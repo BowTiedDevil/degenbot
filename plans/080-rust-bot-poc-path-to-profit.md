@@ -760,6 +760,21 @@ All four encoding functions tested against real mainnet pools:
 - V2-V3: PancakeSwap V2→Uni V3 MAGAS-WETH (4 payloads, flash borrow + nested callback)
 - V3-V2: existing encoder unchanged, already working
 
+## Executor Contracts
+
+This bot uses the `tstore_executor.vy` contract (`contracts/`) for V2/V3 arbitrage. Three additional executor contracts exist for V4-based arbitrage, each tailored to a specific V4 pairing:
+
+| Contract | Location | Pool Types | Style |
+|----------|----------|------------|-------|
+| `tstore_executor.vy` | `contracts/` | V2 + V3 | Generic payload queue with all V2/V3 callbacks |
+| `v4_v2_executor.vy` | `examples/uniswap_v4_v2_executor/contracts/` | V4 + V2 | Fixed-structure: V4 unlock callback drives V2 swap, 4 cases (ETH/WETH/ERC-20) |
+| `v4_v3_executor.vy` | `examples/uniswap_v4_v2_executor/contracts/` | V4 + V3 | Fixed-structure: V4 unlock + V3 callback, auto-wrap/unwrap |
+| `v4_v3_executor_multi.vy` | `examples/uniswap_v4_v3_executor/contracts/` | V4 + V3 | Command-bytecode VM: 10 opcodes, `t_deltas` ledger, chainable callbacks |
+| `v4_v4_executor.vy` | `examples/uniswap_v4_v4_executor/contracts/` | V4 + V4 | Fixed-structure: 2 V4 swaps in callback, net delta settlement |
+| `v4_v4_executor_dev.vy` | `examples/uniswap_v4_v4_executor/contracts/` | V4 (multi-hop) | Chained pool keys: N swaps with auto-chained amounts |
+
+See `contracts/README.md` for full details on each contract including compile/deploy instructions, callback support, and key design decisions.
+
 ## Remaining Work
 
 All slices in this plan are complete. The following items are out-of-scope
@@ -767,6 +782,8 @@ improvements for future consideration:
 
 - [x] ~~Run `--observe` mode on mainnet to validate the fully integer-exact engine produces realistic profits~~ Ran on mainnet for multiple blocks. All large profits verified as real on-chain opportunities (drained pools, extreme reserve imbalances). MILADY-WETH false positive eliminated by sequence-based solver.
 - [x] ~~V3-V3 and V2-V2 encoding blocked on smart contract design~~ No contract changes needed. All four path types (V3-V2, V3-V3, V2-V2, V2-V3) now have encoding functions using the existing executor's generic payload queue with nested callbacks.
+- [x] **Fix V3-V3 double-WETH-payment bug** — `encode_v3v3_payloads` and `encode_v2v3_payloads` were including explicit WETH transfer payloads to V3 pools where the executor's callback auto-pay already handles them. Fixed: skip explicit WETH transfers when `token_owed.address == WETH_ADDRESS`.
+- [ ] **Deploy new `tstore_executor.vy` contract** — Compiled (3058 bytes runtime bytecode), needs mainnet deployment with WETH funding. Updates `EXECUTOR_ADDRESS` and `EXECUTOR_OWNER` in bot config. Currently blocked until deployment.
 - [ ] Consider removing `rust/src/optimizers/mobius_v3_v3.rs` (f64 V3-V3 solver) — now unused by the engine since Slice 15 replaced it with `int_solve_v3_v3`
 - [ ] Consider benchmarking `int_solve_v3_v3` vs f64 `solve_v3_v3` to quantify the integer-exact solver's overhead
 - [ ] Extend engine V3-V3 test suite with >3-hop paths (current tests cover only 2-hop V3-V3)
@@ -776,3 +793,4 @@ improvements for future consideration:
 - [ ] Add integration test for `exact_solve_mixed_v2_v3_sequence` covering multi-range V3 paths (the former single-range `exact_solve_mixed_v2_v3` had a test that was replaced, but no new multi-range-specific test was added)
 - [ ] Run bot with `--dry-run` in live submission mode to validate V3-V3, V2-V2, and V2-V3 encoding against `eth_simulateV1`
 - [ ] Add unit tests for `encode_v3v3_payloads`, `encode_v2v2_payloads`, and `encode_v2v3_payloads` (currently validated only against mainnet pools manually)
+- [ ] Extend `tstore_executor.vy` with V4 support (add `unlockCallback` handler, `execute_payloads` integration) so a single contract handles V2+V3+V4 paths — currently requires separate V4 executor contracts
