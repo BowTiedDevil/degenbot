@@ -1,4 +1,7 @@
-"""Uniswap V3 SwapMath: swap step amounts and fees."""
+"""Uniswap V3 SwapMath: swap step amounts and fees.
+
+See: contract_reference/uniswap/V3/UniswapV3Factory.sol (SwapMath library)
+"""
 from degenbot.uniswap.v3_libraries import full_math, sqrt_price_math
 from degenbot.uniswap.v3_types import SqrtPriceX96
 

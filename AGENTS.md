@@ -311,6 +311,17 @@ The original `interface.py` no longer exists — all callers have been updated t
 
 ## Solidity
 
+### Contract Reference Sources
+
+Verified Solidity sources are in `contract_reference/` (see [`contract_reference/README.md`](contract_reference/README.md) for the full index). When porting on-chain logic to Python, include a `See: contract_reference/...` comment pointing to the exact source file and line range.
+
+| Protocol | Path |
+|----------|------|
+| Uniswap V2 | `contract_reference/uniswap/V2/UniswapV2Factory.sol` |
+| Uniswap V3 | `contract_reference/uniswap/V3/UniswapV3Factory.sol` |
+| Uniswap V4 | `contract_reference/uniswap/V4/PoolManager.sol` |
+| Aave V3 | `contract_reference/aave/` (revision-based: `Pool/rev_N.sol`, `AToken/rev_N.sol`, etc.) |
+
 ### Arithmetic wrapping behavior
 - Solidity arithmetic silently wraps for versions < 0.8.0, e.g. `uint8(255) + 1 == 0`
 - Solidity arithmetic is checked by default for versions 0.8.0+, e.g. `uint8(255) + 1` will revert

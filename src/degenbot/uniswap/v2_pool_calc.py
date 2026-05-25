@@ -6,6 +6,8 @@ and delegate to standalone calculation functions where possible.
 
 Pools with different calculation paths (e.g., Aerodrome's stable mode,
 Camelot's k invariant) define their own calc mixin instead of using this one.
+
+See: contract_reference/uniswap/V2/UniswapV2Factory.sol (UniswapV2Pair swap/mint/burn)
 """
 
 from __future__ import annotations

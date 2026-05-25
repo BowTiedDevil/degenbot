@@ -1,4 +1,7 @@
-"""Uniswap V4 UnsafeMath: rounding-up division."""
+"""Uniswap V4 UnsafeMath: rounding-up division.
+
+See: contract_reference/uniswap/V4/PoolManager.sol (UnsafeMath library)
+"""
 
 
 def div_rounding_up(

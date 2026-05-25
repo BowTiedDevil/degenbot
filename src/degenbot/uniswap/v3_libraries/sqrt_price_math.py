@@ -1,4 +1,7 @@
-"""Uniswap V3 SqrtPriceMath: price movement with liquidity constraints."""
+"""Uniswap V3 SqrtPriceMath: price movement with liquidity constraints.
+
+See: contract_reference/uniswap/V3/UniswapV3Factory.sol (SqrtPriceMath library)
+"""
 import functools
 from typing import overload
 

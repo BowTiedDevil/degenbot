@@ -1,4 +1,7 @@
-"""Uniswap V3 LiquidityMath: liquidity delta from tick crosses."""
+"""Uniswap V3 LiquidityMath: liquidity delta from tick crosses.
+
+See: contract_reference/uniswap/V3/UniswapV3Factory.sol (LiquidityMath library)
+"""
 from degenbot.constants import MAX_INT128, MAX_UINT128, MIN_INT128, MIN_UINT128
 from degenbot.exceptions.pool import EVMRevertError
 

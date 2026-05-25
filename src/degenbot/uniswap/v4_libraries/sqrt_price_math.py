@@ -1,4 +1,7 @@
-"""Uniswap V4 SqrtPriceMath: price movement with liquidity constraints."""
+"""Uniswap V4 SqrtPriceMath: price movement with liquidity constraints.
+
+See: contract_reference/uniswap/V4/PoolManager.sol (SqrtPriceMath library)
+"""
 import functools
 
 from degenbot.constants import MAX_UINT160, MAX_UINT256

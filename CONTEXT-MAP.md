@@ -26,6 +26,7 @@ _Avoid_: Fork, local chain
 - [Builders](src/degenbot/builders/CONTEXT.md) — pool builders, PoolIO seam (7-method protocol), BuilderContext, BuildPoolRequest, `@staticmethod` `update()` on PoolBuilder/AsyncPoolBuilder protocols (type-enforced I/O separation), V2BuilderBase/V3BuilderBase/V4BuilderBase/BalancerBuilderBase shared helpers, and shared type resolution
 - [Rust Extension](rust/CONTEXT.md) — PyO3-wrapped ABI encode/decode, GIL discipline, subscription double-buffer, Möbius solver cache, two-level type intern, f64↔U256 conversion
 - [Balancer V2](src/degenbot/balancer/CONTEXT.md) — Weighted pools, FixedPoint math, PowVersion detection, scaling helpers, Vault architecture, StableMath invariant versions (V1/V2), MetaStablePool, ComposableStablePool with BPT index, CacheAwareRateProvider, BalancerRateProvider protocol, StaleRateResult, BalancerBuilder, BalancerPairView, BalancerV2SwapAmounts, external_update, to_hop_state, build_swap_amount
+- [Contract Reference](contract_reference/README.md) — Verified Solidity sources for Uniswap (V2/V3/V4) and Aave V3; ground truth for integer-exact Python ports
 
 ## Instructions
 

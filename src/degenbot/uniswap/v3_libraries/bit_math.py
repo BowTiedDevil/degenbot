@@ -1,4 +1,7 @@
-"""Uniswap V3 BitMath: bit position and population count."""
+"""Uniswap V3 BitMath: bit position and population count.
+
+See: contract_reference/uniswap/V3/UniswapV3Factory.sol (BitMath library)
+"""
 from degenbot.constants import MAX_UINT256, MIN_UINT256
 from degenbot.exceptions.pool import EVMRevertError
 
