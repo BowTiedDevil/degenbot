@@ -752,31 +752,6 @@ pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> U256
 
 /// Simulate a path of mixed V2/V3 hops using integer arithmetic.
 ///
-/// For V2 hops, uses `int_simulate_path`. For V3 hops, uses
-/// `int_simulate_v3_swap`. The output of each hop becomes the
-/// input to the next.
-///
-/// Returns the final output amount (U256).
-#[must_use]
-pub fn int_simulate_mixed_path(amount_in: U256, hops: &[MixedIntHop]) -> U256 {
-    let mut current = amount_in;
-
-    for hop in hops {
-        if current.is_zero() {
-            return U256::ZERO;
-        }
-
-        current = match hop {
-            MixedIntHop::V2(v2_state) => {
-                crate::optimizers::mobius_int::int_simulate_path(current, std::slice::from_ref(v2_state))
-            }
-            MixedIntHop::V3(v3_hop) => int_simulate_v3_swap(current, v3_hop),
-        };
-    }
-
-    current
-}
-
 // ---------------------------------------------------------------------------
 // Integer V3 Exact Solver
 // ---------------------------------------------------------------------------
@@ -786,60 +761,167 @@ pub fn int_simulate_mixed_path(amount_in: U256, hops: &[MixedIntHop]) -> U256 {
 /// Computes Möbius coefficients from V3 effective reserves + V2 reserves,
 /// then uses the closed-form `exact_mobius_solve` to find the optimal input.
 ///
+/// Simulate a mixed V2-V3 path where the V3 hop may cross tick ranges.
+///
+/// If `v3_crossing` is `Some`, the V3 hop is split into:
+/// 1. Crossing `k` ranges (consuming `crossing_gross_input`, producing `crossing_output`)
+/// 2. Remaining input goes into the ending range
+///
+/// The `base_v3_hop` is used only when `v3_crossing` is `None` (k=0 case).
+///
+/// Returns the final output amount (U256).
+#[must_use]
+fn int_simulate_mixed_path_with_crossing(
+    amount_in: U256,
+    v2_hops: &[IntHopState],
+    base_v3_hop: &IntV3TickRangeHop,
+    v3_crossing: Option<&IntTickRangeCrossing>,
+    v3_first: bool,
+) -> U256 {
+    if amount_in.is_zero() {
+        return U256::ZERO;
+    }
+
+    if v3_first {
+        // V3 → V2: input goes through V3 first, then V2
+        let v3_output = if let Some(crossing) = v3_crossing {
+            if amount_in < crossing.crossing_gross_input {
+                return U256::ZERO; // Can't cover V3 crossing cost
+            }
+            let remaining = amount_in - crossing.crossing_gross_input;
+            let ending_out = int_simulate_v3_swap(remaining, &crossing.ending_range);
+            crossing.crossing_output.saturating_add(ending_out)
+        } else {
+            int_simulate_v3_swap(amount_in, base_v3_hop)
+        };
+
+        // V3 output goes through V2 hops
+        int_simulate_v2_hops(v3_output, v2_hops)
+    } else {
+        // V2 → V3: input goes through V2 first, then V3
+        let v2_output = int_simulate_v2_hops(amount_in, v2_hops);
+
+        // V2 output goes through V3 (with optional crossing)
+        if let Some(crossing) = v3_crossing {
+            if v2_output < crossing.crossing_gross_input {
+                return U256::ZERO; // V2 output can't cover V3 crossing cost
+            }
+            let remaining = v2_output - crossing.crossing_gross_input;
+            let ending_out = int_simulate_v3_swap(remaining, &crossing.ending_range);
+            crossing.crossing_output.saturating_add(ending_out)
+        } else {
+            int_simulate_v3_swap(v2_output, base_v3_hop)
+        }
+    }
+}
+
+/// Simulate a chain of V2 hops sequentially.
+#[must_use]
+fn int_simulate_v2_hops(amount_in: U256, v2_hops: &[IntHopState]) -> U256 {
+    let mut current = amount_in;
+    for hop in v2_hops {
+        if current.is_zero() {
+            return U256::ZERO;
+        }
+        current = crate::optimizers::mobius_int::int_simulate_path(
+            current,
+            std::slice::from_ref(hop),
+        );
+    }
+    current
+}
+
+/// Solve mixed V2-V3 arbitrage path using integer-exact Möbius solver
+/// with full tick-range sequence for the V3 side.
+///
+/// This is the production solver for mixed paths. It enumerates V3 ending
+/// ranges (like `int_solve_v3_v3`), computing the optimal input for each
+/// piece and validating with full crossing-aware simulation.
+///
+/// # Algorithm
+///
+/// For each candidate ending range `k` in the V3 sequence:
+/// 1. Compute crossing data (input/output to reach range k)
+/// 2. Build `MixedIntHop` list with V3 ending range + V2 hops
+/// 3. Compute Möbius coefficients → closed-form optimal input for this piece
+/// 4. Total optimal input = crossing_gross_input + piecewise optimal input
+/// 5. Validate with crossing-aware simulation
+/// 6. Search ±2 neighbors for integer rounding
+///
 /// Returns the optimal input and profit, or `None` if not profitable.
 #[must_use]
-pub fn exact_solve_mixed_v2_v3(
+pub fn exact_solve_mixed_v2_v3_sequence(
     v2_hops: &[IntHopState],
-    v3_hop: &IntV3TickRangeHop,
-    v2_first: bool,
+    v3_sequence: &IntV3TickRangeSequence,
+    v3_first: bool,
 ) -> Option<(U256, U256)> {
-    // Build the mixed hop list in path order
-    let mixed_hops: Vec<MixedIntHop> = if v2_first {
-        let mut h: Vec<MixedIntHop> = v2_hops.iter().map(|h| MixedIntHop::V2(h.clone())).collect();
-        h.push(MixedIntHop::V3(v3_hop.clone()));
-        h
-    } else {
-        let mut h = vec![MixedIntHop::V3(v3_hop.clone())];
-        h.extend(v2_hops.iter().map(|h| MixedIntHop::V2(h.clone())));
-        h
-    };
+    let max_candidates = 10;
+    let n_v3 = max_candidates.min(v3_sequence.ranges.len());
 
-    // Compute combined Möbius coefficients
-    let coeffs = compute_mixed_int_mobius_coefficients(&mixed_hops)?;
-
-    if !coeffs.is_profitable {
-        return None;
-    }
-
-    // Closed-form optimal input
-    let x_approx = crate::optimizers::mobius_int_exact::compute_exact_optimal_input_from_coeffs(&coeffs);
-
-    if x_approx.is_zero() {
-        return None;
-    }
-
-    // Search ±2 around x_approx
     let mut best_x = U256::ZERO;
     let mut best_profit = U256::ZERO;
 
-    for delta in -2i32..=2 {
-        let candidate = if delta >= 0 {
-            x_approx.saturating_add(U256::from(delta as u64))
-        } else {
-            x_approx.saturating_sub(U256::from((-delta) as u64))
+    for k in 0..n_v3 {
+        let Some(crossing) = v3_sequence.compute_crossing(k) else {
+            continue;
         };
 
-        if candidate.is_zero() {
+        // Build MixedIntHop list with ending V3 range + V2 hops
+        let mixed_hops: Vec<MixedIntHop> = if v3_first {
+            let mut h = vec![MixedIntHop::V3(crossing.ending_range.clone())];
+            h.extend(v2_hops.iter().map(|h| MixedIntHop::V2(h.clone())));
+            h
+        } else {
+            let mut h: Vec<MixedIntHop> = v2_hops.iter().map(|h| MixedIntHop::V2(h.clone())).collect();
+            h.push(MixedIntHop::V3(crossing.ending_range.clone()));
+            h
+        };
+
+        // Compute Möbius coefficients for this piece
+        let Some(coeffs) = compute_mixed_int_mobius_coefficients(&mixed_hops) else {
+            continue;
+        };
+
+        if !coeffs.is_profitable {
             continue;
         }
 
-        let output = int_simulate_mixed_path(candidate, &mixed_hops);
+        // Closed-form optimal input for the remaining (post-crossing) swap
+        let x_piece = crate::optimizers::mobius_int_exact::compute_exact_optimal_input_from_coeffs(&coeffs);
 
-        if output > candidate {
-            let profit = output - candidate;
-            if profit > best_profit {
-                best_profit = profit;
-                best_x = candidate;
+        if x_piece.is_zero() {
+            continue;
+        }
+
+        // Total optimal input = crossing cost + piecewise optimal input
+        let total_optimal_input = x_piece.saturating_add(crossing.crossing_gross_input);
+
+        // Search ±2 around total_optimal_input
+        for delta in -2i32..=2 {
+            let candidate = if delta >= 0 {
+                total_optimal_input.saturating_add(U256::from(delta as u64))
+            } else {
+                total_optimal_input.saturating_sub(U256::from((-delta) as u64))
+            };
+
+            if candidate.is_zero() {
+                continue;
+            }
+
+            let output = int_simulate_mixed_path_with_crossing(
+                candidate,
+                v2_hops,
+                &v3_sequence.ranges[0],
+                if k == 0 { None } else { Some(&crossing) },
+                v3_first,
+            );
+
+            if output > candidate {
+                let profit = output - candidate;
+                if profit > best_profit {
+                    best_profit = profit;
+                    best_x = candidate;
+                }
             }
         }
     }
@@ -1018,19 +1100,17 @@ mod tests {
     }
 
     #[test]
-    fn test_exact_solve_mixed_v2_v3_profitable() {
+    fn test_exact_solve_mixed_v2_v3_sequence_profitable() {
         // V2 pool: 1.5M USDC / 800 WETH (cheap WETH)
         // V3 pool at 1:1 with different effective reserves
         let v2_hop = IntHopState::new(
-            U256::from(1_500_000_000_000u64),  // 1.5M USDC  
+            U256::from(1_500_000_000_000u64),  // 1.5M USDC
             U256::from(800_000_000_000_000_000_000u128), // 800 WETH (18 dec)
             997,
             1000,
         );
 
         // V3 with high liquidity and price above V2
-        // At tick 0, effective reserves = L (both sides)
-        // We want V3 effective reserve_out >> V2's, creating an arb
         let v3_hop = IntV3TickRangeHop {
             liquidity: 10_000_000_000_000u128,
             sqrt_price_x96: U256::from(1u128) << 96, // 1:1 price
@@ -1045,9 +1125,10 @@ mod tests {
             zero_for_one: false,
         };
 
-        let result = exact_solve_mixed_v2_v3(&[v2_hop], &v3_hop, true);
-        // May or may not be profitable depending on exactly how reserve mismatch
-        // maps to effective reserves. The key thing is no panics.
+        let v3_seq = IntV3TickRangeSequence::new(vec![v3_hop]).unwrap();
+
+        let result = exact_solve_mixed_v2_v3_sequence(&[v2_hop], &v3_seq, true);
+        // Key thing is no panics.
         let _ = result;
     }
 

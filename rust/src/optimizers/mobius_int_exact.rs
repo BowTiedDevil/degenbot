@@ -152,7 +152,7 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
 /// Floor division matches EVM semantics.
 ///
 /// This function is also used by the mixed V2-V3 integer solver
-/// (`mobius_v3_int::exact_solve_mixed_v2_v3`).
+/// (`mobius_v3_int::exact_solve_mixed_v2_v3_sequence`).
 pub fn compute_exact_optimal_input_from_coeffs(coeffs: &IntMobiusCoefficients) -> U256 {
     // K * M fits in U512 (each is at most U512)
     let km = coeffs.K * coeffs.M;
