@@ -1,4 +1,7 @@
-"""Uniswap V4 SwapMath: swap step amounts and fees."""
+"""Uniswap V4 SwapMath: swap step amounts and fees.
+
+See: contract_reference/uniswap/V4/PoolManager.sol (SwapMath library)
+"""
 from degenbot.uniswap.v4_libraries import full_math, sqrt_price_math
 
 MAX_SWAP_FEE = 1 * 10**6

@@ -1,4 +1,7 @@
-"""Uniswap V4 FullMath: 512-bit multiplication with Q96 rounding."""
+"""Uniswap V4 FullMath: 512-bit multiplication with Q96 rounding.
+
+See: contract_reference/uniswap/V4/PoolManager.sol (FullMath library)
+"""
 from degenbot.constants import MAX_UINT256
 from degenbot.exceptions.pool import EVMRevertError
 from degenbot.uniswap.v4_libraries.functions import mulmod

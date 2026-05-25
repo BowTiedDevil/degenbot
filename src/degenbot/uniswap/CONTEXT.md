@@ -31,6 +31,18 @@ Domain terms for Uniswap V2, V3, and V4 liquidity pools and pool trackers.
 | **StateCache** | See [StateCache](../types/CONTEXT.md) in the types context | Pool state cache |
 | **ConcentratedLiquidityStateManager** | A manager class for V3/V4 that composes with `StateCache` internally, exposing CL-specific convenience properties (`liquidity`, `sqrt_price_x96`, `tick`, etc.) | State manager |
 
+## Contract Reference
+
+Verified Solidity sources for all Uniswap versions are in `contract_reference/uniswap/`:
+
+| File | Contents |
+|------|----------|
+| `V2/UniswapV2Factory.sol` | Full V2 core: Factory, Pair, ERC20, SafeMath, Math, UQ112x112 |
+| `V3/UniswapV3Factory.sol` | Full V3 core: Factory, Pool, Oracle, Tick, TickBitmap, SqrtPriceMath, SwapMath, TickMath, FullMath, Position, etc. |
+| `V4/PoolManager.sol` | Full V4 core: PoolManager, Pool, Hooks, TickBitmap, SqrtPriceMath, SwapMath, TickMath, ProtocolFeeLibrary, LPFeeLibrary, ERC6909, etc. |
+
+Each file is a single concatenated bundle of all core contracts and libraries. When porting on-chain logic to Python, include a `See: contract_reference/uniswap/...` comment pointing to the exact source.
+
 ## Relationships
 
 - A **Pool Tracker** tracks many **Pools** for one **Factory** on a chain

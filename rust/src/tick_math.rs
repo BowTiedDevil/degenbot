@@ -6,6 +6,8 @@
 //!
 //! `PyO3` wrappers are in [`crate::tick_math_py`].
 //!
+//! See: contract_reference/uniswap/V3/UniswapV3Factory.sol (TickMath library)
+//!
 //! # Performance
 //!
 //! All constants are evaluated at compile time for zero runtime overhead.

@@ -1,4 +1,7 @@
-"""UniswapV4Pool: concentrated liquidity AMM with hook support."""
+"""UniswapV4Pool: concentrated liquidity AMM with hook support.
+
+See: contract_reference/uniswap/V4/PoolManager.sol (PoolManager, Pool, Hooks)
+"""
 
 import dataclasses
 from collections.abc import Callable

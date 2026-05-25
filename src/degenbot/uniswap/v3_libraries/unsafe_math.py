@@ -1,4 +1,7 @@
-"""Uniswap V3 UnsafeMath: rounding-up division."""
+"""Uniswap V3 UnsafeMath: rounding-up division.
+
+See: contract_reference/uniswap/V3/UniswapV3Factory.sol (UnsafeMath library)
+"""
 
 
 def div_rounding_up(x: int, y: int) -> int:

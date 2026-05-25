@@ -1,4 +1,7 @@
-"""Uniswap V3 TickBitmap: compressed tick position lookup."""
+"""Uniswap V3 TickBitmap: compressed tick position lookup.
+
+See: contract_reference/uniswap/V3/UniswapV3Factory.sol (TickBitmap library)
+"""
 import bisect
 from collections.abc import Generator
 from itertools import count
