@@ -204,6 +204,7 @@ dev = [
     "ruff",
     "sybil",
     "ty",
+    "vyper",
 ]
 
 [tool.ty.environment]
