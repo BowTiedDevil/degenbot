@@ -25,9 +25,13 @@ pub mod v2_engine_pump;
 #[allow(clippy::doc_markdown)]
 pub mod mobius_int;
 #[allow(clippy::doc_markdown)]
+pub mod mobius_int_exact;
+#[allow(clippy::doc_markdown)]
 pub mod mobius_py;
 #[allow(clippy::doc_markdown)]
 pub mod mobius_v3;
+#[allow(clippy::doc_markdown)]
+pub mod mobius_v3_int;
 #[allow(clippy::doc_markdown)]
 pub mod mobius_v3_v3;
 pub mod v3_block_engine;

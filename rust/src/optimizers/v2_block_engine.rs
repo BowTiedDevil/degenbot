@@ -4,7 +4,7 @@
 //! path resolution, and Mobius solver dispatch. Python participates only in
 //! initial construction and reading results.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use alloy::primitives::{Address, U256};
@@ -168,6 +168,27 @@ impl V2BlockEngine {
             reverse_id,
             IntHopState::new(reserve1, reserve0, gamma_numer, fee_denom),
         );
+    }
+
+    /// Apply Sync updates and return the set of forward pool keys that changed.
+    /// Does NOT rebuild paths or solve — caller handles that.
+    pub fn apply_sync_updates(&mut self, updates: &[(Address, U256, U256)]) -> HashSet<u64> {
+        let mut affected = HashSet::new();
+        for &(addr, r0, r1) in updates {
+            let Some(&(forward_id, _reverse_id)) = self.pool_addresses.get(&addr) else {
+                continue;
+            };
+            self.apply_sync(addr, r0, r1);
+            affected.insert(forward_id);
+        }
+        affected
+    }
+
+    /// Look up the forward pool key for a registered address.
+    /// Returns `None` if the address is not registered.
+    #[must_use]
+    pub fn pool_key_for_address(&self, address: &Address) -> Option<u64> {
+        self.pool_addresses.get(address).map(|(fwd, _)| *fwd)
     }
 
     /// Process a block: decode Sync events, apply updates, rebuild paths,
