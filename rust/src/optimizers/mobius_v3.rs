@@ -37,6 +37,7 @@ use crate::optimizers::mobius::{
     compute_mobius_coefficients, golden_section_search_max, invert_path_output, mobius_solve,
     simulate_path, HopState, MobiusError, RANGE_CAPACITY_MARGIN,
 };
+use crate::optimizers::mobius_v3_int::IntV3TickRangeHop;
 
 /// V3/V4 tick range data needed to build a Möbius `HopState`.
 ///
@@ -161,6 +162,51 @@ impl V3TickRangeHop {
         let final_sp = estimate_v3_final_sqrt_price(amount_in, self);
         let eps = rel_tol * self.sqrt_price_current;
         final_sp >= self.sqrt_price_lower - eps && final_sp <= self.sqrt_price_upper + eps
+    }
+
+    /// Convert this f64 V3 tick range to an integer-exact representation.
+    ///
+    /// The integer version preserves full U256 precision for sqrt prices
+    /// and u128 for liquidity, enabling EVM-exact computation.
+    ///
+    /// The original sqrt prices were converted from Q128.96 (U256) to f64
+    /// by dividing by 2^96. We recover the integer form by storing the
+    /// raw f64 value — the caller is responsible for ensuring the
+    /// `sqrt_price_*_x96` fields were computed from the original U256
+    /// values before the f64 conversion.
+    ///
+    /// **Important**: This method reconstructs the Q128.96 U256 values
+    /// from the f64 representations by multiplying by `2^96`. This
+    /// introduces float rounding errors. For best accuracy, prefer
+    /// building `IntV3TickRangeHop` directly from the original `U256`
+    /// sqrt price values (see `v3_block_engine.rs`).
+    #[must_use]
+    pub fn to_int_v3_hop(&self) -> IntV3TickRangeHop {
+        // Recover Q96 sqrt prices from the f64 "plain" values
+        // The f64 values were: sp_x96 / Q96_F64
+        // We recover: sp_x96 = f64_value * Q96_F64
+        // This introduces float rounding, but for the first range
+        // the actual U256 is available from the engine.
+        let q96 = 79_228_162_514_264_337_593_543_950_336.0_f64;
+        let sp_current_x96 = f64_to_u256_approx(self.sqrt_price_current * q96);
+        let sp_lower_x96 = f64_to_u256_approx(self.sqrt_price_lower * q96);
+        let sp_upper_x96 = f64_to_u256_approx(self.sqrt_price_upper * q96);
+
+        // Convert fee fraction to gamma_numer / fee_denom
+        // fee is stored as a fraction (e.g., 0.003)
+        // gamma = 1 - fee, so gamma_numer = (1 - fee) * 1_000_000
+        let gamma_numer = ((1.0 - self.fee) * 1_000_000.0).round() as u64;
+        let fee_denom = 1_000_000u64;
+
+        IntV3TickRangeHop {
+            liquidity: self.liquidity as u128,
+            sqrt_price_x96: sp_current_x96,
+            sqrt_price_lower_x96: sp_lower_x96,
+            sqrt_price_upper_x96: sp_upper_x96,
+            gamma_numer,
+            fee_denom,
+            zero_for_one: self.zero_for_one,
+        }
     }
 }
 
@@ -868,5 +914,35 @@ mod tests {
             iters < 100,
             "Should converge in < 100 iterations, got {iters}"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Convert an f64 value to U256 by rounding to the nearest integer.
+///
+/// This is an approximation — f64 has 53 bits of mantissa, while U256
+/// can represent up to 256 bits. For values up to 2^53, this is exact.
+/// For larger values, there may be rounding.
+///
+/// Prefer building `IntV3TickRangeHop` directly from U256 values
+/// when they are available (e.g., from pool state).
+#[allow(clippy::cast_possible_truncation)]
+#[allow(clippy::cast_sign_loss)]
+fn f64_to_u256_approx(v: f64) -> alloy::primitives::U256 {
+    if v <= 0.0 || !v.is_finite() {
+        return alloy::primitives::U256::ZERO;
+    }
+    // For values that fit in u64, convert directly
+    if v <= u64::MAX as f64 {
+        alloy::primitives::U256::from(v as u64)
+    } else {
+        // For larger values, split into high and low 64-bit limbs
+        let v = v.floor();
+        let hi = (v / (u64::MAX as f64 + 1.0)).floor() as u64;
+        let lo = (v - hi as f64 * (u64::MAX as f64 + 1.0)).floor() as u64;
+        alloy::primitives::U256::from(hi) << 64 | alloy::primitives::U256::from(lo)
     }
 }

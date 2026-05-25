@@ -85,3 +85,7 @@ codegen-units = 1
 [profile.bench]
 inherits = "release"
 debug = true
+
+[[bench]]
+name = "mobius_exact_vs_f64"
+harness = false

@@ -18,15 +18,14 @@
 //! function, where the V2 hop uses standard Möbius and the V3 hop uses
 //! tick-range-constrained simulation.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use alloy::primitives::{Address, U256};
 use alloy::rpc::types::Log;
 
-use crate::optimizers::mobius::simulate_path;
 use crate::optimizers::mobius_int::u256_to_f64;
 use crate::optimizers::mobius_v3::V3TickRangeSequence;
-use crate::optimizers::mobius_v3_v3::solve_v3_v3;
+
 use crate::optimizers::v2_block_engine::V2BlockEngine;
 use crate::optimizers::v3_block_engine::{RegisterV3PoolParams, V3BlockEngine, V3SwapUpdate};
 
@@ -35,7 +34,7 @@ use crate::optimizers::v3_block_engine::{RegisterV3PoolParams, V3BlockEngine, V3
 // ---------------------------------------------------------------------------
 
 /// Which engine owns a given hop.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum HopType {
     /// V2 constant-product hop
     V2,
@@ -68,6 +67,10 @@ struct ResolvedMixedPath {
     v2_hops: Vec<Option<crate::optimizers::mobius_int::IntHopState>>,
     /// V3 tick-range sequences (Some for V3 hops, None for V2 hops)
     v3_sequences: Vec<Option<V3TickRangeSequence>>,
+    /// Integer V3 hops built from original U256 values (Some for V3 hops, None for V2 hops)
+    int_v3_hops: Vec<Option<crate::optimizers::mobius_v3_int::IntV3TickRangeHop>>,
+    /// Integer V3 tick-range sequences for V3-V3 paths (Some for V3 hops, None for V2 hops)
+    int_v3_sequences: Vec<Option<crate::optimizers::mobius_v3_int::IntV3TickRangeSequence>>,
     /// Base (f64) hops for Mobius initial estimate
     base_hops: Vec<crate::optimizers::mobius::HopState>,
     /// Whether this path is valid for solving
@@ -87,6 +90,8 @@ pub struct UniswapEngine {
     v3_engine: V3BlockEngine,
     /// Registered mixed paths
     paths: HashMap<u64, (MixedPath, ResolvedMixedPath)>,
+    /// Reverse index: (`hop_type`, `pool_key`) maps to set of `path_ids` that use this pool
+    pool_to_paths: HashMap<(HopType, u64), HashSet<u64>>,
     /// Last solved results
     results: Vec<(u64, U256, U256)>,
     /// Block number for the last solved results
@@ -105,6 +110,7 @@ impl UniswapEngine {
             v2_engine: V2BlockEngine::new(),
             v3_engine: V3BlockEngine::new(),
             paths: HashMap::new(),
+            pool_to_paths: HashMap::new(),
             results: Vec::new(),
             results_block: 0,
             running: false,
@@ -141,13 +147,21 @@ impl UniswapEngine {
         let mut resolved = ResolvedMixedPath::default();
         self.resolve_path(&pool_refs, &mut resolved);
 
+        // Build reverse index: (hop_type, pool_key) → path_id
+        for pool_ref in &pool_refs {
+            self.pool_to_paths
+                .entry((pool_ref.hop_type, pool_ref.pool_key))
+                .or_default()
+                .insert(path_id);
+        }
+
         self.paths
             .insert(path_id, (MixedPath { pools: pool_refs }, resolved));
         path_id
     }
 
     /// Process a block: decode both Sync and Swap events, route to
-    /// sub-engines, and solve all paths.
+    /// sub-engines, and re-solve only affected paths.
     pub fn process_block(&mut self, logs: &[Log], block_number: u64) {
         // Separate V2 Sync and V3 Swap logs
         let mut v2_logs: Vec<&Log> = Vec::new();
@@ -164,6 +178,10 @@ impl UniswapEngine {
             }
         }
 
+        // Collect affected pool addresses before applying updates
+        let v2_addrs: Vec<Address> = v2_logs.iter().map(|log| log.address()).collect();
+        let v3_addrs: Vec<Address> = v3_logs.iter().map(|log| log.address()).collect();
+
         // Process V2 Sync events
         if !v2_logs.is_empty() {
             let v2_log_owned: Vec<Log> = v2_logs.iter().map(|l| (*l).clone()).collect();
@@ -176,8 +194,18 @@ impl UniswapEngine {
             self.v3_engine.process_block(&v3_log_owned, block_number);
         }
 
-        // Rebuild all mixed paths
-        self.rebuild_and_solve(block_number);
+        // Map addresses to pool keys
+        let v2_affected: HashSet<u64> = v2_addrs
+            .iter()
+            .filter_map(|addr| self.v2_engine.pool_key_for_address(addr))
+            .collect();
+        let v3_affected: HashSet<u64> = v3_addrs
+            .iter()
+            .filter_map(|addr| self.v3_engine.pool_key_for_address(addr))
+            .collect();
+
+        // Re-solve only paths containing updated pools
+        self.rebuild_and_solve_affected(&v2_affected, &v3_affected, block_number);
     }
 
     /// Process pre-decoded updates for testing.
@@ -187,27 +215,56 @@ impl UniswapEngine {
         v3_updates: &[V3SwapUpdate],
         block_number: u64,
     ) {
-        // Apply V2 updates
-        self.v2_engine.process_sync_updates(v2_updates, block_number);
+        // Apply updates to sub-engines and collect affected pool keys
+        let v2_affected = self.v2_engine.apply_sync_updates(v2_updates);
+        let v3_affected = self.v3_engine.apply_swap_updates(v3_updates, block_number);
 
-        // Apply V3 updates
-        self.v3_engine.process_swap_updates(v3_updates, block_number);
-
-        // Rebuild and solve mixed paths
-        self.rebuild_and_solve(block_number);
+        // Re-solve only paths containing updated pools
+        self.rebuild_and_solve_affected(&v2_affected, &v3_affected, block_number);
     }
 
-    /// Rebuild all path resolutions and solve.
-    fn rebuild_and_solve(&mut self, block_number: u64) {
-        // Collect path pool refs for rebuilding
-        let path_pool_refs: Vec<(u64, Vec<MixedPoolRef>)> = self
-            .paths
+    /// Re-resolve and re-solve only paths that contain updated pools.
+    ///
+    /// Uses the `pool_to_paths` reverse index to identify `affected_path_ids`,
+    /// then re-resolves and re-solves only those. Unaffected paths carry
+    /// their previous results forward.
+    fn rebuild_and_solve_affected(
+        &mut self,
+        v2_affected: &HashSet<u64>,
+        v3_affected: &HashSet<u64>,
+        block_number: u64,
+    ) {
+        // Collect affected path IDs from the reverse index
+        let mut affected_path_ids: HashSet<u64> = HashSet::new();
+
+        for pool_key in v2_affected {
+            if let Some(path_ids) = self.pool_to_paths.get(&(HopType::V2, *pool_key)) {
+                affected_path_ids.extend(path_ids);
+            }
+        }
+        for pool_key in v3_affected {
+            if let Some(path_ids) = self.pool_to_paths.get(&(HopType::V3, *pool_key)) {
+                affected_path_ids.extend(path_ids);
+            }
+        }
+
+        // If no paths are affected, just update the block number
+        if affected_path_ids.is_empty() {
+            self.results_block = block_number;
+            return;
+        }
+
+        // Re-resolve affected paths
+        let resolve_work: Vec<(u64, Vec<MixedPoolRef>)> = affected_path_ids
             .iter()
-            .map(|(&id, (path, _))| (id, path.pools.clone()))
+            .filter_map(|&path_id| {
+                self.paths
+                    .get(&path_id)
+                    .map(|(path, _)| (path_id, path.pools.clone()))
+            })
             .collect();
 
-        // Rebuild each path
-        for (path_id, pool_refs) in &path_pool_refs {
+        for (path_id, pool_refs) in &resolve_work {
             let mut resolved = ResolvedMixedPath::default();
             self.resolve_path(pool_refs, &mut resolved);
             if let Some((_, stored)) = self.paths.get_mut(path_id) {
@@ -215,19 +272,95 @@ impl UniswapEngine {
             }
         }
 
-        // Solve all paths
-        self.results = self.solve_all(None);
+        // Re-solve affected paths and merge with unchanged results
+        let mut new_results: Vec<(u64, U256, U256)> = Vec::with_capacity(self.paths.len());
+
+        // Carry forward unchanged results
+        for &(path_id, ref input, ref profit) in &self.results {
+            if !affected_path_ids.contains(&path_id) {
+                new_results.push((path_id, *input, *profit));
+            }
+        }
+
+        // Solve affected paths
+        for &path_id in &affected_path_ids {
+            let Some((_path, resolved)) = self.paths.get(&path_id) else {
+                continue;
+            };
+            if !resolved.valid {
+                continue;
+            }
+
+            if let Some((opt_input, profit)) = self.solve_path(resolved) {
+                if !opt_input.is_zero() && !profit.is_zero() {
+                    new_results.push((path_id, opt_input, profit));
+                }
+            }
+        }
+
+        // Sort by path_id for deterministic output
+        new_results.sort_unstable_by_key(|(path_id, _, _)| *path_id);
+
+        self.results = new_results;
         self.results_block = block_number;
     }
 
-    /// Solve all registered paths.
+    /// Solve a single resolved path.
     ///
     /// Dispatches based on path composition:
-    /// - V2-V2: `mobius_solve_with_refinement`
-    /// - V3-V3: `solve_v3_v3`
-    /// - V2-V3 / V3-V2: mixed golden-section search
+    /// - V2-V2: integer-exact Möbius solver (closed-form U512 isqrt)
+    /// - V3-V3: integer piecewise-Möbius (closed-form per segment)
+    /// - V2-V3 / V3-V2: mixed integer-exact solver
+    #[allow(clippy::unused_self)]
+    fn solve_path(&self, resolved: &ResolvedMixedPath) -> Option<(U256, U256)> {
+        let all_v2 = resolved.hop_types.iter().all(|&t| t == HopType::V2);
+        let all_v3 = resolved.hop_types.iter().all(|&t| t == HopType::V3);
+
+        if all_v2 {
+            let int_hops: Vec<_> = resolved
+                .v2_hops
+                .iter()
+                .filter_map(Option::as_ref)
+                .cloned()
+                .collect();
+            if int_hops.len() == resolved.hop_types.len() {
+                crate::optimizers::mobius_int_exact::exact_mobius_solve(&int_hops)
+                    .ok()
+                    .and_then(|result| {
+                        if result.is_profitable
+                            && !result.optimal_input.is_zero()
+                            && !result.profit.is_zero()
+                        {
+                            Some((result.optimal_input, result.profit))
+                        } else {
+                            None
+                        }
+                    })
+            } else {
+                None
+            }
+        } else if all_v3 {
+            let int_sequences: Vec<_> = resolved
+                .int_v3_sequences
+                .iter()
+                .filter_map(Option::as_ref)
+                .collect();
+            if int_sequences.len() == 2 {
+                crate::optimizers::mobius_v3_int::int_solve_v3_v3(
+                    int_sequences[0],
+                    int_sequences[1],
+                )
+            } else {
+                None
+            }
+        } else {
+            Self::solve_mixed_path_int(resolved)
+        }
+    }
+
+    /// Solve all registered paths using `solve_path`.
     #[must_use]
-    pub fn solve_all(&self, max_input: Option<f64>) -> Vec<(u64, U256, U256)> {
+    fn solve_all(&self) -> Vec<(u64, U256, U256)> {
         let mut results = Vec::with_capacity(self.paths.len());
 
         for (&path_id, (_path, resolved)) in &self.paths {
@@ -235,60 +368,9 @@ impl UniswapEngine {
                 continue;
             }
 
-            let all_v2 = resolved.hop_types.iter().all(|&t| t == HopType::V2);
-            let all_v3 = resolved.hop_types.iter().all(|&t| t == HopType::V3);
-
-            if all_v2 {
-                // Pure V2 path — delegate to V2 engine solver
-                let int_hops: Vec<_> = resolved
-                    .v2_hops
-                    .iter()
-                    .filter_map(Option::as_ref)
-                    .cloned()
-                    .collect();
-                if int_hops.len() == resolved.hop_types.len() {
-                    let result = crate::optimizers::mobius_int::mobius_solve_with_refinement(
-                        &resolved.base_hops,
-                        &int_hops,
-                        true,
-                        max_input,
-                    );
-                    if result.success {
-                        if let (Some(x), Some(p)) = (result.optimal_input_int, result.profit_int) {
-                            if !x.is_zero() && !p.is_zero() {
-                                results.push((path_id, x, p));
-                            }
-                        }
-                    }
-                }
-            } else if all_v3 {
-                // Pure V3 path — use V3-V3 solver
-                let sequences: Vec<&V3TickRangeSequence> = resolved
-                    .v3_sequences
-                    .iter()
-                    .filter_map(Option::as_ref)
-                    .collect();
-                if sequences.len() == 2 {
-                    let (x, profit, _iters) =
-                        solve_v3_v3(sequences[0], sequences[1], max_input, 10);
-                    if x > 0.0 && profit > 0.0 {
-                        #[allow(clippy::cast_possible_truncation)]
-                        #[allow(clippy::cast_sign_loss)]
-                        {
-                            let x_int = U256::from(x as u128);
-                            let profit_int = U256::from(profit as u128);
-                            if !x_int.is_zero() && !profit_int.is_zero() {
-                                results.push((path_id, x_int, profit_int));
-                            }
-                        }
-                    }
-                }
-            } else {
-                // Mixed V2-V3 or V3-V2 path
-                if let Some((x, profit)) = Self::solve_mixed_path(resolved, max_input) {
-                    if !x.is_zero() && !profit.is_zero() {
-                        results.push((path_id, x, profit));
-                    }
+            if let Some((opt_input, profit)) = self.solve_path(resolved) {
+                if !opt_input.is_zero() && !profit.is_zero() {
+                    results.push((path_id, opt_input, profit));
                 }
             }
         }
@@ -296,13 +378,17 @@ impl UniswapEngine {
         results
     }
 
-    /// Solve a mixed V2-V3 path using golden-section search.
+    /// Solve a mixed V2-V3 path using integer-exact Möbius solver.
     ///
-    /// The profit function is: `profit(x) = output(x) - x`
-    /// where `output(x)` routes through both hops sequentially.
-    fn solve_mixed_path(
+    /// Uses the pre-built `IntV3TickRangeHop` from `resolve_path`,
+    /// which was constructed directly from U256 values (no f64 conversion).
+    ///
+    /// Uses the closed-form `exact_mobius_solve` instead of golden-section
+    /// search over f64 approximations.
+    ///
+    /// This produces **EVM-exact** results with zero float conversions.
+    fn solve_mixed_path_int(
         resolved: &ResolvedMixedPath,
-        max_input: Option<f64>,
     ) -> Option<(U256, U256)> {
         if resolved.hop_types.len() != 2 {
             return None;
@@ -310,67 +396,23 @@ impl UniswapEngine {
 
         let hop0_is_v2 = resolved.hop_types[0] == HopType::V2;
 
-        // Get the V2 hop state and V3 sequence
-        let (v2_hop, v3_seq, v2_first) = if hop0_is_v2 {
+        // Get the V2 hop state and integer V3 hop
+        let (v2_hop, int_v3_hop, v2_first) = if hop0_is_v2 {
             let v2 = resolved.v2_hops[0].as_ref()?;
-            let v3 = resolved.v3_sequences[1].as_ref()?;
+            let v3 = resolved.int_v3_hops[1].as_ref()?;
             (v2, v3, true)
         } else {
-            let v3 = resolved.v3_sequences[0].as_ref()?;
+            let v3 = resolved.int_v3_hops[0].as_ref()?;
             let v2 = resolved.v2_hops[1].as_ref()?;
             (v2, v3, false)
         };
 
-        let base_hop = v2_hop.to_base_hop();
-
-        // Max input constrained by V3 range capacity
-        let v3_capacity = v3_seq.ranges.first().map_or(f64::MAX, |r| {
-            r.max_gross_input_in_range() * 0.999
-        });
-        let x_max = user_max_or(max_input, v3_capacity);
-
-        let profit_fn = |x: f64| -> f64 {
-            if v2_first {
-                // V2 → V3: simulate V2 hop, then V3 hop
-                let output0 = simulate_path(x, std::slice::from_ref(&base_hop));
-                if output0 <= 0.0 {
-                    return f64::MIN;
-                }
-                let v3_result = simulate_v3_hop(output0, v3_seq);
-                v3_result - x
-            } else {
-                // V3 → V2: simulate V3 hop, then V2 hop
-                let output0 = simulate_v3_hop(x, v3_seq);
-                if output0 <= 0.0 {
-                    return f64::MIN;
-                }
-                let v2_result = simulate_path(output0, std::slice::from_ref(&base_hop));
-                v2_result - x
-            }
-        };
-
-        // Golden-section search for maximum profit
-        let x_min = 1.0;
-        if x_min >= x_max {
-            return None;
-        }
-
-        let (x_best, _iters) = crate::optimizers::mobius::golden_section_search_max(
-            profit_fn,
-            x_min,
-            x_max,
-        );
-        let profit_best = profit_fn(x_best);
-
-        if profit_best > 0.0 {
-            #[allow(clippy::cast_possible_truncation)]
-            #[allow(clippy::cast_sign_loss)]
-            {
-                Some((U256::from(x_best as u128), U256::from(profit_best as u128)))
-            }
-        } else {
-            None
-        }
+        // Use the integer-exact mixed solver
+        crate::optimizers::mobius_v3_int::exact_solve_mixed_v2_v3(
+            std::slice::from_ref(v2_hop),
+            int_v3_hop,
+            v2_first,
+        )
     }
 
     /// Read the last solved results and block number.
@@ -385,6 +427,32 @@ impl UniswapEngine {
         self.running = true;
         self.v2_engine.start();
         self.v3_engine.start();
+    }
+
+    /// Perform initial solve of ALL paths.
+    ///
+    /// Called once after `freeze()` + `start()` to populate `results`
+    /// for the first time. Subsequent updates use `rebuild_and_solve_affected`
+    /// which only re-solves paths containing updated pools.
+    pub fn initial_solve(&mut self, block_number: u64) {
+        // Resolve all paths
+        let path_pool_refs: Vec<(u64, Vec<MixedPoolRef>)> = self
+            .paths
+            .iter()
+            .map(|(&id, (path, _))| (id, path.pools.clone()))
+            .collect();
+
+        for (path_id, pool_refs) in &path_pool_refs {
+            let mut resolved = ResolvedMixedPath::default();
+            self.resolve_path(pool_refs, &mut resolved);
+            if let Some((_, stored)) = self.paths.get_mut(path_id) {
+                *stored = resolved;
+            }
+        }
+
+        // Solve all paths
+        self.results = self.solve_all();
+        self.results_block = block_number;
     }
 
     /// Whether the engine is running.
@@ -428,6 +496,8 @@ impl UniswapEngine {
         resolved.hop_types.clear();
         resolved.v2_hops.clear();
         resolved.v3_sequences.clear();
+        resolved.int_v3_hops.clear();
+        resolved.int_v3_sequences.clear();
         resolved.base_hops.clear();
         resolved.valid = false;
 
@@ -438,6 +508,8 @@ impl UniswapEngine {
         resolved.hop_types.reserve(pool_refs.len());
         resolved.v2_hops.reserve(pool_refs.len());
         resolved.v3_sequences.reserve(pool_refs.len());
+        resolved.int_v3_hops.reserve(pool_refs.len());
+        resolved.int_v3_sequences.reserve(pool_refs.len());
 
         for pool_ref in pool_refs {
             match pool_ref.hop_type {
@@ -450,6 +522,8 @@ impl UniswapEngine {
                     resolved.hop_types.push(HopType::V2);
                     resolved.v2_hops.push(Some(hop_state.clone()));
                     resolved.v3_sequences.push(None);
+                    resolved.int_v3_hops.push(None);
+                    resolved.int_v3_sequences.push(None);
 
                     let base = hop_state.to_base_hop();
                     resolved.base_hops.push(base);
@@ -471,9 +545,16 @@ impl UniswapEngine {
                         return; // No sequence → invalid
                     }
 
+                    // Build integer V3 hop from original U256 values (exact, no f64 conversion)
+                    let int_v3_hop = pool_state.build_int_v3_hop(pool_ref.zero_for_one);
+                    // Build integer V3 sequence for V3-V3 paths
+                    let int_v3_sequence = pool_state.build_int_v3_sequence(pool_ref.zero_for_one, 10);
+
                     resolved.hop_types.push(HopType::V3);
                     resolved.v2_hops.push(None);
                     resolved.v3_sequences.push(sequence);
+                    resolved.int_v3_hops.push(int_v3_hop);
+                    resolved.int_v3_sequences.push(int_v3_sequence);
                 }
             }
         }
@@ -492,22 +573,10 @@ impl Default for UniswapEngine {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Simulate a V3 hop with the given input amount.
-/// Uses the first range of the tick-range sequence as a single-hop estimate.
-fn simulate_v3_hop(x: f64, sequence: &V3TickRangeSequence) -> f64 {
-    if sequence.ranges.is_empty() {
-        return 0.0;
-    }
-    // Use the first range for the initial estimate
-    let first = &sequence.ranges[0];
-    let hop = first.to_hop_state();
-    simulate_path(x, std::slice::from_ref(&hop))
-}
-
-/// Apply user max input or fall back to a computed max.
-fn user_max_or(user_max: Option<f64>, computed_max: f64) -> f64 {
-    user_max.map_or(computed_max, |m| m.min(computed_max))
-}
+// NOTE: `simulate_v3_hop` and `user_max_or` were removed when the mixed
+// V2-V3 solver was replaced with the integer-exact version. The integer
+// solver uses `mobius_v3_int::exact_solve_mixed_v2_v3` instead of
+// golden-section search over f64 approximations.
 
 // ---------------------------------------------------------------------------
 // IntHopState extension for base hop conversion
@@ -877,7 +946,7 @@ mod tests {
         ]);
 
         // Solve
-        let results = engine.solve_all(None);
+        let results = engine.solve_all();
         // Should find a profitable arbitrage
         assert!(!results.is_empty(), "should find profitable V2-V2 arb");
         let (_, x, p) = &results[0];
@@ -975,7 +1044,7 @@ mod tests {
             },
         ]);
 
-        let results = engine.solve_all(None);
+        let results = engine.solve_all();
         // V3-V3 arb depends on the exact price divergence — the important thing
         // is that the path resolves and the solver runs without panicking.
         // With a single tick spacing of 60 and 0.6% total fees, the arb may
@@ -1047,7 +1116,7 @@ mod tests {
 
         // Even if no profit found (depends on exact numbers),
         // solve_all should run without panicking
-        let results = engine.solve_all(None);
+        let results = engine.solve_all();
         // Just verify it doesn't crash
         let _ = results;
     }
@@ -1161,7 +1230,7 @@ mod tests {
         ]);
 
         // Initial solve
-        let results_before = engine.solve_all(None);
+        let results_before = engine.solve_all();
 
         // Apply V2 update to make pool A even more mispriced
         engine.process_updates(
@@ -1353,6 +1422,14 @@ impl PyUniswapArbEngine {
     /// Freeze registration without starting a pump.
     fn freeze(&self) {
         self.engine.lock().start();
+    }
+
+    /// Perform initial solve of all paths. Call once after `freeze()`.
+    ///
+    /// Populates `results` for the first time. Subsequent `process_logs`
+    /// calls use dependency tracking to only re-solve affected paths.
+    fn initial_solve(&self, block_number: u64) {
+        self.engine.lock().initial_solve(block_number);
     }
 
     /// Number of registered V2 pools.

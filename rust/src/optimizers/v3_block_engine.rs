@@ -16,7 +16,7 @@
 //! 3. Solve all registered paths
 //! 4. Store results for Python to read
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use alloy::primitives::{Address, U128, U256};
 
@@ -26,6 +26,7 @@ use crate::bot_core::v3_swap_decoder::decode_v3_swap_log;
 use crate::optimizers::mobius::HopState;
 use crate::optimizers::mobius_int::{u256_to_f64, IntHopState};
 use crate::optimizers::mobius_v3::{V3TickRangeHop, V3TickRangeSequence};
+use crate::optimizers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use crate::optimizers::mobius_v3_v3::solve_v3_v3;
 
 // Q96 = 2^96, used to convert Q128.96 sqrt prices to plain floats
@@ -127,6 +128,15 @@ impl V3PoolState {
             // Compute the active liquidity for this range.
             // Range 0 uses the pool's current liquidity.
             // Subsequent ranges accumulate boundary-crossing liquidity_net values.
+            //
+            // In compute_tick_ranges, `liquidity_net` at `tick_lower` (zfo) or
+            // `tick_upper` (ofz) follows the standard Uniswap convention:
+            // positive = liquidity added when crossing from below (ascending).
+            //
+            // When walking DOWN (zfo=True), we cross boundaries from above,
+            // so the net change is the NEGATE of the stored value.
+            // When walking UP (zfo=False), we cross from below, matching the
+            // stored value, so no negation needed.
             #[allow(clippy::cast_precision_loss)]
             let range_liquidity = if i == 0 {
                 self.liquidity as f64
@@ -134,9 +144,13 @@ impl V3PoolState {
                 let mut l = self.liquidity.cast_signed();
                 for prev_range in &ranges[..i] {
                     let net = prev_range.liquidity_net;
-                    // Both directions: liquidity_net is the net change at the
-                    // crossed boundary. Positive = liquidity added, negative = removed.
-                    l += net;
+                    if zero_for_one {
+                        // Walking down: crossing from above subtracts the net
+                        l -= net;
+                    } else {
+                        // Walking up: crossing from below adds the net
+                        l += net;
+                    }
                 }
                 #[allow(clippy::cast_precision_loss)]
                 {
@@ -155,6 +169,135 @@ impl V3PoolState {
         }
 
         V3TickRangeSequence::new(rust_ranges).ok()
+    }
+
+    /// Build an integer V3 tick range hop for the first range, using
+    /// original U256 sqrt prices and u128 liquidity (no f64 conversion).
+    ///
+    /// This produces an [`IntV3TickRangeHop`] suitable for the integer-exact
+    /// Möbius solver, preserving full precision.
+    ///
+    /// Returns `None` if insufficient tick data.
+    #[must_use]
+    pub fn build_int_v3_hop(
+        &self,
+        zero_for_one: bool,
+    ) -> Option<IntV3TickRangeHop> {
+        let (ranges, _current_idx) = compute_tick_ranges(
+            &self.tick_data,
+            self.tick,
+            self.tick_spacing,
+            self.liquidity,
+            zero_for_one,
+            3,
+        )?;
+
+        // Only use the first range (same as the old f64 solver)
+        let r = ranges.first()?;
+
+        // Compute the active liquidity for the first range = pool's current liquidity
+        let first_range_liquidity = self.liquidity;
+
+        // Gamma representation: gamma = (1_000_000 - fee) / 1_000_000
+        let gamma_numer = u64::from(1_000_000 - self.fee);
+        let fee_denom = 1_000_000u64;
+
+        Some(IntV3TickRangeHop {
+            liquidity: first_range_liquidity,
+            sqrt_price_x96: self.sqrt_price_x96,
+            sqrt_price_lower_x96: r.sqrt_price_lower,
+            sqrt_price_upper_x96: r.sqrt_price_upper,
+            gamma_numer,
+            fee_denom,
+            zero_for_one,
+        })
+    }
+
+    /// Build an integer V3 tick range sequence with up to `max_ranges` ranges,
+    /// using original U256 sqrt prices and i128→u128 liquidity (no f64 conversion).
+    ///
+    /// This produces an [`IntV3TickRangeSequence`] suitable for the
+    /// integer-exact V3-V3 solver, preserving full precision.
+    ///
+    /// Returns `None` if insufficient tick data.
+    #[must_use]
+    pub fn build_int_v3_sequence(
+        &self,
+        zero_for_one: bool,
+        max_ranges: usize,
+    ) -> Option<IntV3TickRangeSequence> {
+        let (ranges, _current_idx) = compute_tick_ranges(
+            &self.tick_data,
+            self.tick,
+            self.tick_spacing,
+            self.liquidity,
+            zero_for_one,
+            max_ranges,
+        )?;
+
+        let gamma_numer = u64::from(1_000_000 - self.fee);
+        let fee_denom = 1_000_000u64;
+
+        let mut int_ranges = Vec::with_capacity(ranges.len());
+        for (i, r) in ranges.iter().enumerate() {
+            // Current sqrt price for this range
+            let sqrt_price_x96 = if i == 0 {
+                self.sqrt_price_x96
+            } else if zero_for_one {
+                // Walking down: entered from the upper boundary of prior range
+                ranges[i - 1].sqrt_price_upper
+            } else {
+                // Walking up: entered from the lower boundary of prior range
+                ranges[i - 1].sqrt_price_lower
+            };
+
+            // Compute the active liquidity for this range
+            //
+            // In compute_tick_ranges, `liquidity_net` at `tick_lower` (zfo) or
+            // `tick_upper` (ofz) follows the standard Uniswap convention:
+            // positive = liquidity added when crossing from below (ascending).
+            //
+            // When walking DOWN (zfo=True), we cross boundaries from above,
+            // so the net change is the NEGATE of the stored value.
+            // When walking UP (zfo=False), we cross from below, matching the
+            // stored value, so no negation needed.
+            let range_liquidity = if i == 0 {
+                self.liquidity
+            } else {
+                let mut l = self.liquidity.cast_signed();
+                for prev_range in &ranges[..i] {
+                    let net = prev_range.liquidity_net;
+                    if zero_for_one {
+                        // Walking down: crossing from above subtracts the net
+                        l -= net;
+                    } else {
+                        // Walking up: crossing from below adds the net
+                        l += net;
+                    }
+                }
+                // i128 → u128: if negative, liquidity is 0 (depleted range)
+                if l.is_negative() {
+                    0u128
+                } else {
+                    #[allow(clippy::cast_sign_loss)]
+                    {
+                        l as u128
+                    }
+                }
+            };
+
+            int_ranges.push(IntV3TickRangeHop {
+                liquidity: range_liquidity,
+                sqrt_price_x96,
+                sqrt_price_lower_x96: r.sqrt_price_lower,
+                sqrt_price_upper_x96: r.sqrt_price_upper,
+                gamma_numer,
+                fee_denom,
+                zero_for_one,
+            });
+        }
+
+        IntV3TickRangeSequence::new(int_ranges).ok()
     }
 }
 
@@ -358,6 +501,34 @@ impl V3BlockEngine {
         }
 
         self.rebuild_and_solve(block_number);
+    }
+
+    /// Apply Swap updates and return the set of pool keys that changed.
+    /// Does NOT rebuild paths or solve — caller handles that.
+    pub fn apply_swap_updates(&mut self, updates: &[V3SwapUpdate], block_number: u64) -> HashSet<u64> {
+        let mut affected = HashSet::new();
+        for update in updates {
+            let Some(&key) = self.pool_addresses.get(&update.pool_address) else {
+                continue;
+            };
+            self.apply_swap(
+                update.pool_address,
+                update.sqrt_price_x96,
+                update.liquidity,
+                update.tick,
+                block_number,
+                &update.tick_priors,
+            );
+            affected.insert(key);
+        }
+        affected
+    }
+
+    /// Look up the pool key for a registered address.
+    /// Returns `None` if the address is not registered.
+    #[must_use]
+    pub fn pool_key_for_address(&self, address: &Address) -> Option<u64> {
+        self.pool_addresses.get(address).copied()
     }
 
     /// Rebuild all path resolutions and solve.

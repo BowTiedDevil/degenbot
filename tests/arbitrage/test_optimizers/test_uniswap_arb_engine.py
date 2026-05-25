@@ -130,11 +130,7 @@ class TestUniswapArbEngineProcessLogs:
         )
 
         engine.freeze()
-        engine.process_logs(
-            v2_sync_updates=[],
-            v3_swap_updates=[],
-            block_number=1,
-        )
+        engine.initial_solve(block_number=1)
         results, block = engine.latest_results()
         assert block == 1
 
@@ -213,12 +209,8 @@ class TestUniswapArbEngineProcessLogs:
 
         engine.freeze()
 
-        # Process empty block to trigger solve
-        engine.process_logs(
-            v2_sync_updates=[],
-            v3_swap_updates=[],
-            block_number=1,
-        )
+        # Initial solve
+        engine.initial_solve(block_number=1)
 
         results, block = engine.latest_results()
         assert block == 1
