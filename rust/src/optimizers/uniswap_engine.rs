@@ -194,11 +194,14 @@ impl UniswapEngine {
             self.v3_engine.process_block(&v3_log_owned, block_number);
         }
 
-        // Map addresses to pool keys
-        let v2_affected: HashSet<u64> = v2_addrs
-            .iter()
-            .filter_map(|addr| self.v2_engine.pool_key_for_address(addr))
-            .collect();
+        // Map addresses to pool keys (both orientations for V2)
+        let mut v2_affected: HashSet<u64> = HashSet::new();
+        for addr in &v2_addrs {
+            if let Some((fwd, rev)) = self.v2_engine.pool_keys_for_address(addr) {
+                v2_affected.insert(fwd);
+                v2_affected.insert(rev);
+            }
+        }
         let v3_affected: HashSet<u64> = v3_addrs
             .iter()
             .filter_map(|addr| self.v3_engine.pool_key_for_address(addr))
@@ -380,13 +383,13 @@ impl UniswapEngine {
 
     /// Solve a mixed V2-V3 path using integer-exact Möbius solver.
     ///
-    /// Uses the pre-built `IntV3TickRangeHop` from `resolve_path`,
+    /// Uses the pre-built `IntV3TickRangeSequence` from `resolve_path`,
     /// which was constructed directly from U256 values (no f64 conversion).
     ///
-    /// Uses the closed-form `exact_mobius_solve` instead of golden-section
-    /// search over f64 approximations.
-    ///
-    /// This produces **EVM-exact** results with zero float conversions.
+    /// The sequence-based solver enumerates V3 ending ranges and computes
+    /// the optimal input for each piece, validating with crossing-aware
+    /// simulation. This eliminates false positives from single-range
+    /// approximation when swaps exceed the current tick range capacity.
     fn solve_mixed_path_int(
         resolved: &ResolvedMixedPath,
     ) -> Option<(U256, U256)> {
@@ -396,22 +399,22 @@ impl UniswapEngine {
 
         let hop0_is_v2 = resolved.hop_types[0] == HopType::V2;
 
-        // Get the V2 hop state and integer V3 hop
-        let (v2_hop, int_v3_hop, v2_first) = if hop0_is_v2 {
+        // Get V2 hop state and V3 tick-range sequence
+        let (v2_hop, v3_sequence, v3_first) = if hop0_is_v2 {
             let v2 = resolved.v2_hops[0].as_ref()?;
-            let v3 = resolved.int_v3_hops[1].as_ref()?;
-            (v2, v3, true)
+            let v3_seq = resolved.int_v3_sequences[1].as_ref()?;
+            (v2, v3_seq, false) // V2 is first, V3 is second
         } else {
-            let v3 = resolved.int_v3_hops[0].as_ref()?;
+            let v3_seq = resolved.int_v3_sequences[0].as_ref()?;
             let v2 = resolved.v2_hops[1].as_ref()?;
-            (v2, v3, false)
+            (v2, v3_seq, true) // V3 is first, V2 is second
         };
 
-        // Use the integer-exact mixed solver
-        crate::optimizers::mobius_v3_int::exact_solve_mixed_v2_v3(
+        // Use the sequence-based integer-exact mixed solver
+        crate::optimizers::mobius_v3_int::exact_solve_mixed_v2_v3_sequence(
             std::slice::from_ref(v2_hop),
-            int_v3_hop,
-            v2_first,
+            v3_sequence,
+            v3_first,
         )
     }
 
@@ -575,7 +578,7 @@ impl Default for UniswapEngine {
 
 // NOTE: `simulate_v3_hop` and `user_max_or` were removed when the mixed
 // V2-V3 solver was replaced with the integer-exact version. The integer
-// solver uses `mobius_v3_int::exact_solve_mixed_v2_v3` instead of
+// solver uses `mobius_v3_int::exact_solve_mixed_v2_v3_sequence` instead of
 // golden-section search over f64 approximations.
 
 // ---------------------------------------------------------------------------

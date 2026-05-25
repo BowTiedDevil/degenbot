@@ -175,13 +175,24 @@ impl V2BlockEngine {
     pub fn apply_sync_updates(&mut self, updates: &[(Address, U256, U256)]) -> HashSet<u64> {
         let mut affected = HashSet::new();
         for &(addr, r0, r1) in updates {
-            let Some(&(forward_id, _reverse_id)) = self.pool_addresses.get(&addr) else {
+            let Some(&(forward_id, reverse_id)) = self.pool_addresses.get(&addr) else {
                 continue;
             };
             self.apply_sync(addr, r0, r1);
             affected.insert(forward_id);
+            affected.insert(reverse_id);
         }
         affected
+    }
+
+    /// Look up both pool keys (forward + reverse) for a registered address.
+    /// Returns `None` if the address is not registered.
+    ///
+    /// Needed because paths may use either orientation (forward for zfo=True,
+    /// reverse for zfo=False), and both must be tracked for dependency resolution.
+    #[must_use]
+    pub fn pool_keys_for_address(&self, address: &Address) -> Option<(u64, u64)> {
+        self.pool_addresses.get(address).copied()
     }
 
     /// Look up the forward pool key for a registered address.
