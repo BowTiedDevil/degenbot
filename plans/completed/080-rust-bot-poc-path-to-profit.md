@@ -252,7 +252,8 @@ Add structured logging so dry-run output can be analyzed for missed opportunitie
 
 - Log each dispatched result with: path_id, pool addresses, optimal_input, engine_profit, sim_profit, net_profit, gas_used, priority_fee, solve_block, current_block, time_since_last_event
 - Log *why* each result was skipped (pools pending, simulation reverted, profit too low, stale block)
-- Add a `--observe` mode that logs every engine result without simulation (faster, for calibrating the Rust engine's accuracy)
+
+**Update (2026-05-26)**: The `--observe` flag was removed. It bypassed simulation to log raw engine output, but provided less utility than dry-run mode (which validates simulation success on-chain) while the `[engine]` result logging in normal/dry-run mode already shows solver output. The `--dry-run` flag was replaced with `--live` (dry-run is now the safe default).
 
 ### Slice 9: Validate and clean up
 
@@ -269,7 +270,7 @@ Add structured logging so dry-run output can be analyzed for missed opportunitie
 - **No re-optimization sweep**: Slice 2 checks staleness but doesn't re-optimize failed simulations with nearby input values. Re-optimization is deferred to a future plan — the engine's `optimal_input` should be close enough given matching Python `calculate_*` methods.
 - **Coalescence window stays at 50ms**: Slices 0.5-8 don't change the coalescence model. 50ms is a reasonable tradeoff; tuning it requires mainnet latency measurements which we don't have yet.
 - **Reconciliation for recently-active pools only**: The pool count (~17K) makes a full multicall impractical. Individual `getReserves`/`slot0` calls for all pools would take minutes. Reconciliation fetches only recently-active pools (tracked in a bounded set), accepting brief stale state for inactive pools.
-- **`--observe` mode is for development**: Not for production. It bypasses simulation to maximize throughput, letting us verify the Rust engine is producing real opportunities.
+- **`--observe` mode removed**: Was for development only — bypassed simulation to maximize throughput. Removed because dry-run already provides "what would happen on-chain?" answers (including simulation), and the `[engine]` result logging shows solver output in all modes. Dry-run is now the safe default; `--live` is required for real submissions.
 - **Immediate submission, no 1-block delay**: The reference bot uses `BLOCKS_TO_SLEEP_BEFORE_SEND = 1` because its queue-based architecture decouples simulation from submission. In the Rust bot's per-event architecture, results are fresh (same block, same dispatch) and delay would only lose opportunities. The staleness check (Slice 2) prevents submitting results from old blocks. See F8.
 
 ## Files Involved
@@ -825,6 +826,91 @@ improvements for future consideration:
 - [ ] Run bot with `--dry-run` in live submission mode to validate V3-V3, V2-V2, and V2-V3 encoding against `eth_simulateV1`
 - [ ] Add unit tests for `encode_v3v3_payloads`, `encode_v2v2_payloads`, and `encode_v2v3_payloads` (currently validated only against mainnet pools manually)
 - [ ] Extend `tstore_executor.vy` with V4 support (add `unlockCallback` handler, `execute_payloads` integration) so a single contract handles V2+V3+V4 paths — currently requires separate V4 executor contracts
+
+## Post-Completion: Dry-Run Default, Observe Removal & Pump Watch Channel (2026-05-26)
+
+Three changes to the bot's startup and operational modes:
+
+### 1. Dry-run is now the default; `--live` flag for production
+
+Previously, the bot defaulted to live mode with an optional `--dry-run` flag. This was dangerous — running the script without flags would attempt real transactions. Now:
+
+- **Default**: dry-run (simulates only, no submission)
+- **`--live`**: required to submit real transactions
+- Banner updated: `*** LIVE MODE — BOT WILL SUBMIT REAL TRANSACTIONS! ***`
+
+### 2. `--observe` mode removed
+
+The `--observe` flag bypassed simulation entirely, logging only the Rust engine's raw solver output. In practice this was rarely useful — it couldn't answer "would this actually work on-chain?" (that's what dry-run does), and the `[engine]` result logging in normal/dry-run mode already shows the solver's output.
+
+Removed: the argparse flag, the `observe` variable, the early-return observe block in `dispatch_profitable_results`, the observe-guard on engine logging, and all `observe` parameter threading from `main` → `try_dispatch` → `dispatch_profitable_results`.
+
+### 3. `build_paths` progress logging
+
+Added structured logging to `build_paths()` so each startup stage is visible:
+
+```
+[build_paths] V3 trackers added, WETH built — starting path discovery
+[build_paths] Calling find_paths_async...
+[build_paths] Progress: 100 paths registered, 0 skipped, 0 token-filtered, 25610 engine-rejected, 0 duplicates
+[build_paths] Progress: 200 paths registered, ...
+...
+[build_paths] Path discovery complete: 3150 paths in 342.1s — 4 skipped, 0 token-filtered, 7455 engine-rejected, 0 duplicates
+[build_paths] Freezing engine...
+[build_paths] Running initial solve...
+[build_paths] Initial solve: 652 profitable paths (top: 18gwei)
+[build_paths] Summary: 3150 paths in 342.1s — 5831 V2, 0 V3, 341276 V4 pools, 7455 hook-rejected, 0 dynamic-fee-rejected, 3590 engine paths
+```
+
+Added counters for: `skip_count` (build failure), `token_filter_count` (blacklist/whitelist), `engine_reject_count` (hook/dynamic fee/api), `dup_count` (already-registered paths). Progress logged every 100 paths.
+
+### 4. Backfill race condition: subscription-first ordering
+
+The previous startup sequence had a race window:
+
+1. Build paths + initial solve
+2. Backfill to `current_block` from `get_block("latest")`
+3. Start Rust pump (subscribes to WS, begins processing from first WS block)
+4. Start Python WS subscription
+
+Gap: events between the backfill target block and the first WS subscription event were missed.
+
+**Fix**: restructured `main()` so the Python WS subscription starts first:
+
+1. Build paths + initial solve (no backfill)
+2. Start Python WS subscription
+3. On first `on_block` callback: note `first_block`, backfill to `first_block - 1`
+4. Start Rust pump (its WS subscription picks up from the next block after `first_block`)
+5. Enable dispatch only after backfill completes
+
+The backfill code was extracted from `build_paths()` into a standalone `backfill_snapshots()` function that takes an explicit `backfill_to_block` parameter.
+
+### 5. Rust `wait_for_block()` via watch channel
+
+The Rust pump now exposes a `tokio::sync::watch` channel that publishes a `BlockNotification` after each processed block. This eliminates the need for Python's separate WS subscription, reducing:
+
+- **WS connections**: 1 (Rust pump only) instead of 2 (Rust + Python)
+- **Startup complexity**: no first-block handshake needed — `wait_for_block()` returns the next processed block directly
+- **Reconnection**: Rust already handles its own; no Python reconnection loop needed
+
+**Rust changes**:
+
+- Added `BlockNotification` struct (`block_number`, `timestamp`, `base_fee_per_gas`, `gas_used`, `gas_limit`) to `uniswap_engine_pump.rs`
+- `UniswapEnginePump::spawn()` now returns `(JoinHandle, watch::Receiver<BlockNotification>)`
+- Pump sends `BlockNotification` after each `engine.process_block()` — non-blocking, overwrites if stale
+- Added `block_rx: Mutex<Option<watch::Receiver<BlockNotification>>>` to `PyUniswapArbEngine`
+- Added `wait_for_block() -> dict` method: releases GIL via `py.detach()`, awaits next notification via `get_runtime().block_on()`
+
+**Python-side migration** (not yet applied to the bot script): Python will replace its WS subscription + `on_block` handler with:
+
+```python
+while True:
+    block_info = engine_registry.engine.wait_for_block()
+    block_number = block_info["block_number"]
+    # compute base_fee_next, refresh nonce, dispatch
+```
+
+This removes the `AsyncWeb3` WebSocket subscription entirely, along with the reconnection loop and `first_block_event` / `backfill_done` coordination state.
 
 ## Post-Completion: Executor Code Injection via eth_simulateV1 (2025-05-25)
 
