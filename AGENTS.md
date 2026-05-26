@@ -410,3 +410,12 @@ Three individual pumps and one unified pump drive the Rust engines:
 - **`UniswapEnginePump`** — single `eth_getLogs` call per block with all topics and addresses, routes to V2/V3/V4 engines internally. Preferred over running separate pumps (1 RPC call vs 3 per block, single lock acquisition). Spawned by `PyUniswapArbEngine.start(rpc_url)`.
 
 All pumps follow the same pattern: WS `newHeads` subscription → `eth_getLogs` with topic+address filter → `engine.process_block()`. No Python dependency. The bot's `main()` calls `engine.start(rpc_url)` after `freeze()` + `initial_solve()`; Python subscribes to `newHeads` only for fee/nonce updates and result dispatch.
+
+### Snapshot Backfill
+
+Before the Rust pump takes over state updates, the bot must bridge the gap between the last DB snapshot and the current block. After `freeze()` + `initial_solve()`:
+
+1. **V3 backfill**: Each V3 tracker applies `backfill_snapshot()` — fetches Mint/Burn events via `snapshot.fetch_new_events()`, applies them to Python pools, pushes updated tick_data to the Rust engine via `process_block()`, then `unload_snapshot()`.
+2. **V4 backfill**: Creates `UniswapV4LiquiditySnapshot` from `DatabaseSnapshot(chain_id=1, db=bot.db)`, fetches ModifyLiquidity events, applies `pending_updates()` to each V4 pool via `pool.update_liquidity_map()`, pushes updated tick_data to the Rust engine. If the DB has no V4 data, the backfill is skipped gracefully.
+
+After backfill, the Rust pump owns all state updates. Python's role in the hot loop is reduced to reading results and submitting transactions.
