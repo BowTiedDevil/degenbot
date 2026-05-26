@@ -54,6 +54,7 @@ interface IWETH:
 struct Payload:
     target: address
     calldata: Bytes[MAX_PAYLOAD_BYTES]
+    value: uint256
     will_callback: bool
 
 OWNER_ADDR: immutable(address)
@@ -103,6 +104,7 @@ def deliver_queued_payload():
     raw_call(
         payload.target,
         payload.calldata,
+        value=payload.value,
     )
 
 

@@ -116,7 +116,7 @@ The file `contracts/tstore_executor_runtime_bytecode.txt` contains the deployed 
 | `pancakeCall` | PancakeSwap V2 | `0x84800812` |
 | `uniswapV3SwapCallback` | Uniswap V3, SushiSwap V3 | `0xfa461e33` |
 | `pancakeV3SwapCallback` | PancakeSwap V3 | `0x23a69e75` |
-| `unlockCallback` | Uniswap V4 PoolManager | `0x9a7bff79` |
+| `unlockCallback` | Uniswap V4 PoolManager | `0x91dd7346` |
 
 ### Key Design Decisions
 
@@ -127,7 +127,8 @@ The file `contracts/tstore_executor_runtime_bytecode.txt` contains the deployed 
 5. **V4 unlock/settle/take**: The executor's `unlockCallback` resumes payload delivery inside PoolManager's `unlock()` context. Python encodes all V4 operations (swap, sync, settle, take) as raw calldata payloads — the executor treats them identically to V2/V3 payloads. The PoolManager address must be registered via `will_callback=True` on the unlock payload.
 6. **`will_callback` registration**: Before calling a pool with `will_callback=True`, the target address is registered in `t_allowed_callback_addresses`. Callback handlers assert that `msg.sender` is registered.
 7. **Transient storage**: All queue state uses TLOAD/TSTORE, automatically cleared between transactions.
-8. **Increased limits**: `MAX_PAYLOADS=16` (was 8), `MAX_PAYLOAD_BYTES=832` (was 196) to accommodate V4 `PoolManager.swap(PoolKey, SwapParams, bytes32)` calldata.
+8. **Increased limits**: `MAX_PAYLOADS=16` (was 8), `MAX_PAYLOAD_BYTES=832` (was 196) to accommodate V4 `PoolManager.swap(PoolKey, SwapParams, bytes)` calldata.
+9. **Payload value field**: Each `Payload` struct includes a `value: uint256` field for native ETH value to be sent with the call. This is used for V4 `settle()` with `msg.value` to pay ETH debts. Set to `0` for all non-ETH-settlement payloads. The `raw_call` in `deliver_queued_payload` passes `value=payload.value`.
 
 ### Supported Path Types
 
