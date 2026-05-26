@@ -12,6 +12,7 @@
 //!     → single `eth_getLogs` call per block with all topics
 //!     → route V2/V3/V4 events to sub-engines
 //!     → results stored in engine for Python to read
+//!     → BlockNotification sent via watch channel
 //! ```
 //!
 //! # Why a single pump?
@@ -33,6 +34,7 @@ use alloy::primitives::Address;
 use alloy::rpc::types::Filter;
 use futures_util::StreamExt;
 use parking_lot::Mutex;
+use tokio::sync::watch;
 
 use crate::bot_core::v3_mint_burn_decoder::{V3_MINT_TOPIC, V3_BURN_TOPIC};
 use crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC;
@@ -42,6 +44,24 @@ use crate::optimizers::v2_sync_decoder::V2_SYNC_TOPIC;
 use crate::optimizers::uniswap_engine::UniswapEngine;
 use crate::provider::AlloyProvider;
 use crate::runtime::get_runtime;
+
+/// Block data sent from the pump to Python via the watch channel.
+///
+/// Python reads this on each new block to compute base fees and schedule
+/// dispatch — no separate WS subscription needed.
+#[derive(Clone, Debug)]
+pub struct BlockNotification {
+    /// The block number
+    pub block_number: u64,
+    /// Block timestamp
+    pub timestamp: u64,
+    /// Base fee per gas (None for pre-EIP-1559 blocks)
+    pub base_fee_per_gas: Option<u64>,
+    /// Gas used in this block
+    pub gas_used: u64,
+    /// Gas limit of this block
+    pub gas_limit: u64,
+}
 
 /// The unified pump that drives the `UniswapEngine`.
 pub struct UniswapEnginePump {
@@ -53,6 +73,8 @@ pub struct UniswapEnginePump {
     log_filter: Filter,
     /// Shutdown flag — set by `stop()`
     shutdown: Arc<AtomicBool>,
+    /// Watch sender — publishes BlockNotification after each processed block
+    block_tx: watch::Sender<BlockNotification>,
 }
 
 impl UniswapEnginePump {
@@ -62,15 +84,25 @@ impl UniswapEnginePump {
     /// 1. Subscribes to block headers via the WS connection
     /// 2. On each new block: fetches all relevant logs via a single `eth_getLogs`
     /// 3. Calls `engine.process_block(logs, block_number)`
-    /// 4. Loops until `shutdown` is set
+    /// 4. Sends a `BlockNotification` via the watch channel
+    /// 5. Loops until `shutdown` is set
     ///
-    /// Returns a handle that can be used to stop the pump.
+    /// Returns a handle that can be used to stop the pump, plus a
+    /// `watch::Receiver<BlockNotification>` for Python to read.
     pub fn spawn(
         rpc_url: String,
         engine: Arc<Mutex<UniswapEngine>>,
         shutdown: &Arc<AtomicBool>,
-    ) -> Result<tokio::task::JoinHandle<()>, String> {
+    ) -> Result<(tokio::task::JoinHandle<()>, watch::Receiver<BlockNotification>), String> {
         let runtime = get_runtime();
+
+        let (block_tx, block_rx) = watch::channel(BlockNotification {
+            block_number: 0,
+            timestamp: 0,
+            base_fee_per_gas: None,
+            gas_used: 0,
+            gas_limit: 0,
+        });
 
         let shutdown_clone = Arc::clone(shutdown);
         let handle = runtime.spawn(async move {
@@ -96,12 +128,13 @@ impl UniswapEnginePump {
                 provider: Arc::new(provider),
                 log_filter,
                 shutdown: shutdown_clone,
+                block_tx,
             };
 
             pump.run().await;
         });
 
-        Ok(handle)
+        Ok((handle, block_rx))
     }
 
     /// Run the pump loop until shutdown is signaled.
@@ -162,6 +195,16 @@ impl UniswapEnginePump {
 
             // Process the block: route events to sub-engines and solve
             self.engine.lock().process_block(&logs, block_number);
+
+            // Notify Python via the watch channel (non-blocking — overwrites if stale)
+            let notification = BlockNotification {
+                block_number,
+                timestamp: header.timestamp,
+                base_fee_per_gas: header.base_fee_per_gas,
+                gas_used: header.gas_used,
+                gas_limit: header.gas_limit,
+            };
+            let _ = self.block_tx.send(notification);
 
             log::debug!("UniswapEnginePump: processed block {block_number}");
         }
