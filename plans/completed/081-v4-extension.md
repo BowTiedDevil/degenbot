@@ -196,7 +196,7 @@ Extend `eth_backrun_v3_v2_rust.py`:
 4. `register_v4_pool()`: extract pool state (sqrtPriceX96, liquidity, tick, tick_data) and call `engine.register_v4_pool()`
 5. WS subscription: subscribe to PoolManager address for V4 Swap events alongside V2/V3
 
-Run: `--observe` mode — V4 pools discovered, V4-V3 and V4-V2 paths registered, engine results logged.
+Run: `--dry-run` mode — V4 pools discovered, V4-V3 and V4-V2 paths registered, engine results logged.
 
 ### Slice 6: Bot — V4 swap encoding
 
@@ -216,7 +216,7 @@ Key encoding differences from V2/V3:
 - V4 settlement uses `sync` + `settle()` (for ERC-20) or `settle(value=)` (for ETH), not ERC20 transfers
 - V4 token receipt uses `take(currency, to, amount)`, not direct transfers
 
-Run: `--dry-run` with code injection.
+Run: `--dry-run` (default) with code injection.
 
 ### Slice 7: Bot — path building with V4
 
@@ -227,7 +227,7 @@ Run: `--dry-run` with code injection.
 5. Update `PathInfo`/`HopInfo` dataclasses to carry V4-specific fields (`pool_manager`, `pool_id`, `pool_key`)
 6. V4 event processing in `on_event()`: route PoolManager Swap events to V4 engine updates
 
-Run: `--observe` mode with V4 pools, verify all path types appear.
+Run: `--dry-run` mode with V4 pools, verify all path types appear.
 
 ### Slice 8: Validate and clean up
 
@@ -272,7 +272,7 @@ def test_v4_hooked_pool_excluded()
 - Anvil fork test: deploy universal executor, submit V4-V3 path, verify profit
 - Anvil fork test: submit V4-V2 path, verify profit
 - Anvil fork test: submit V4-V4 path, verify profit
-- Mainnet `--observe`: V4 engine results match Python V4 pool calculations
+- Mainnet `--dry-run`: V4 engine results match Python V4 pool calculations
 
 ### Existing test coverage
 

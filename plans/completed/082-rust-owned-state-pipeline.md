@@ -389,7 +389,7 @@ Python pool objects are still needed for **encoding** (calculating output amount
 5. Create `UniswapV4LiquiditySnapshot` (or `CLLiquiditySnapshot` if generalizable) — fetches ModifyLiquidity events from PoolManager, same `pending_updates` pattern
 6. Apply same backfill-and-push for V4 pools
 7. Run: `just test-python` + `just test-rust` — expect all pass
-8. Run bot with `--observe` — verify V3/V4 pools have correct tick_data at live block
+8. Run bot with `--dry-run` — verify V3/V4 pools have correct tick_data at live block
 
 ### Slice 7: Remove Python event path
 
@@ -399,7 +399,7 @@ Python pool objects are still needed for **encoding** (calculating output amount
 4. The coalesce mechanism is no longer needed — the pump processes all events per block atomically, and `on_block` triggers dispatch
 5. Remove the `DISPATCH_COALESCE_MS` constant and `schedule_dispatch()` coroutine
 6. Python WS subscription becomes `newHeads` only (no logs subscription)
-7. Run: `just test-python` + manual `--dry-run` test
+7. Run: `just test-python` + manual dry-run test (default mode)
 
 ### Slice 8: Validate and clean up
 
@@ -451,7 +451,7 @@ def test_v4_snapshot_pending_updates()
 
 - Register V3 pool → start pump → push mock Swap + Mint logs → verify engine results
 - Register V4 pool → start pump → push mock Swap + ModifyLiquidity logs → verify engine results
-- Full end-to-end: `--observe` mode with Rust pump active, verify opportunities detected
+- Full end-to-end: `--dry-run` mode with Rust pump active, verify opportunities detected
 
 ### Existing test coverage
 
