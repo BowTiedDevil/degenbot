@@ -52,12 +52,24 @@ uv run vyper -f abi,bytecode,bytecode_runtime contracts/tstore_executor.vy
 
 ```bash
 # Deploy with cast, funding with 1 WETH
-cast create --rpc-url http://node:8545 \
+cast send --rpc-url http://node:8545 \
   --private-key $PRIVATE_KEY \
-  --value 1ether \
+  --create \
   $(cat contracts/tstore_executor_bytecode.txt) \
   0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2  # WETH address (constructor arg)
 ```
+
+### Runtime Bytecode (for Code Injection)
+
+The file `contracts/tstore_executor_runtime_bytecode.txt` contains the deployed runtime bytecode with immutables already baked in (OWNER_ADDR and WETH_ADDR). This is used by the bot's code injection feature (`INJECT_EXECUTOR_CODE=1`) to test the contract via `eth_simulateV1` without deploying on mainnet first.
+
+**How it was generated:**
+1. Deploy the contract on a local anvil fork with the correct OWNER_ADDR
+2. Extract the runtime bytecode from the deployed address: `cast code <address> --rpc-url ...`
+3. Patch the OWNER_ADDR immutable in the bytecode (anvil deployer → actual executor owner)
+4. Save the patched bytecode to `contracts/tstore_executor_runtime_bytecode.txt`
+
+**Vyper immutables are embedded in the runtime code**, not in storage. The bytecode already contains the correct OWNER_ADDR (`0x9dB96ae33f661808A41baf9e1C39D264bD472B08`) and WETH_ADDR (`0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2`). No storage slot overrides are needed for the executor itself.
 
 ### Callback Support
 

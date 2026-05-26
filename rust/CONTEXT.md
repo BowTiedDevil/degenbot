@@ -107,6 +107,9 @@ _Avoid_: mixed ref, mixed hop ref
 _Avoid_: Python mixed engine, uniswap engine wrapper
 _Avoid_: V3 pump, V3 block subscriber, V3 event driver
 
+**Code Injection**: Injecting contract runtime bytecode at a fresh address via `eth_simulateV1`'s `stateOverrides.code` field, enabling simulation of undeployed contracts. The executor contract's runtime bytecode (with immutables OWNER_ADDR/WETH_ADDR baked in) is loaded from `contracts/tstore_executor_runtime_bytecode.txt`. Vyper immutables are embedded in the code section, not storage — no storage slot overrides are needed. `eth_simulateV1` chains calls sequentially, so the 3-call WETH balanceOf pattern correctly captures profit without WETH storage prefunding.
+_Avoid_: contract injection, bytecode override, code override
+
 ## Relationships
 
 - **String Interner** → **Type Cache Key**: The interner produces `Arc<str>` values that are collected into `Arc<[Arc<str>]>` keys for `LruCache` lookups
@@ -152,6 +155,7 @@ _Avoid_: V3 pump, V3 block subscriber, V3 event driver
 - **`UniswapEngine`** → **`golden_section_search_max()`**: Mixed V2-V3 paths use golden-section search over the piecewise profit function, simulating V2 and V3 hops sequentially
 - **`PyUniswapArbEngine`** → **`UniswapEngine`**: The PyO3 wrapper delegates all operations to the inner engine through a shared `Mutex`; `process_logs()` drives both V2 and V3 updates synchronously
 - **`MixedPoolRef`** → **`HopType`**: Each pool ref in a mixed path carries a `HopType` (`V2` or `V3`) for solver dispatch
+- **`Code Injection`** → **`PyUniswapArbEngine`**: The bot's code injection feature uses `stateOverrides.code` to test the undeployed executor contract; the engine's `latest_results()` provides profitable paths that are encoded and simulated against the injected code
 
 ## Resolved Ambiguities
 
