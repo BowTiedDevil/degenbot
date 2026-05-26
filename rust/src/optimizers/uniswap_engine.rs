@@ -33,6 +33,7 @@ use crate::optimizers::mobius_v3::V3TickRangeSequence;
 use crate::optimizers::v2_block_engine::V2BlockEngine;
 use crate::optimizers::v3_block_engine::{RegisterV3PoolParams, V3BlockEngine, V3SwapUpdate};
 use crate::optimizers::v4_block_engine::{RegisterV4PoolParams, V4BlockEngine, V4SwapUpdate};
+use crate::runtime::get_runtime;
 
 // ---------------------------------------------------------------------------
 // Path types
@@ -1401,7 +1402,7 @@ mod tests {
 use std::sync::Arc;
 
 use pyo3::prelude::*;
-use pyo3::types::PyList;
+use pyo3::types::{PyDict, PyList};
 
 /// Python-facing mixed V2/V3 arbitrage engine.
 ///
@@ -1416,6 +1417,8 @@ pub struct PyUniswapArbEngine {
     shutdown: Arc<std::sync::atomic::AtomicBool>,
     /// Handle for the pump task (None until `start()` is called)
     pump_handle: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Watch receiver for block notifications (None until `start()` is called)
+    block_rx: parking_lot::Mutex<Option<tokio::sync::watch::Receiver<crate::optimizers::uniswap_engine_pump::BlockNotification>>>,
 }
 
 #[pymethods]
@@ -1426,6 +1429,7 @@ impl PyUniswapArbEngine {
             engine: Arc::new(parking_lot::Mutex::new(UniswapEngine::new())),
             shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pump_handle: parking_lot::Mutex::new(None),
+            block_rx: parking_lot::Mutex::new(None),
         }
     }
 
@@ -1639,7 +1643,8 @@ impl PyUniswapArbEngine {
     /// `eth_getLogs` call per block, and routes them to the engine.
     ///
     /// After calling `start()`, the engine processes events autonomously.
-    /// Python reads results via `latest_results()`.
+    /// Python reads results via `latest_results()` and awaits new blocks
+    /// via `wait_for_block()`.
     #[pyo3(signature = (rpc_url))]
     fn start(&self, rpc_url: String) -> PyResult<()> {
         self.engine.lock().start();
@@ -1647,7 +1652,7 @@ impl PyUniswapArbEngine {
         // Spawn the unified pump
         let engine = Arc::clone(&self.engine);
         let shutdown = Arc::clone(&self.shutdown);
-        let handle = crate::optimizers::uniswap_engine_pump::UniswapEnginePump::spawn(
+        let (handle, block_rx) = crate::optimizers::uniswap_engine_pump::UniswapEnginePump::spawn(
             rpc_url,
             engine,
             &shutdown,
@@ -1655,6 +1660,7 @@ impl PyUniswapArbEngine {
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
 
         *self.pump_handle.lock() = Some(handle);
+        *self.block_rx.lock() = Some(block_rx);
 
         Ok(())
     }
@@ -1879,6 +1885,65 @@ impl PyUniswapArbEngine {
         }
 
         Ok((py_list.unbind(), block_num))
+    }
+
+    /// Wait for the next block notification from the pump.
+    ///
+    /// Returns a dict with block header fields:
+    ///   {"block_number": int, "timestamp": int,
+    ///    "base_fee_per_gas": int|None, "gas_used": int, "gas_limit": int}
+    ///
+    /// This is the primary mechanism for Python to learn about new blocks.
+    /// The pump processes events autonomously; this method blocks until the
+    /// pump has processed a new block.
+    ///
+    /// On the first call after `start()`, returns immediately with the
+    /// latest notification (which may be block 0 if no block has been
+    /// processed yet). Subsequent calls block until a new block arrives.
+    ///
+    /// Raises `RuntimeError` if the pump has not been started.
+    fn wait_for_block(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        let rx_result = self.block_rx.lock().take();
+        let mut rx = rx_result.ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "Cannot wait for block: pump not started. Call start() first.",
+            )
+        })?;
+
+        // Release the GIL while waiting for the next block notification.
+        // SAFETY: This is called from the Python main thread (not a Tokio
+        // worker), so get_runtime().block_on() is safe — it will not deadlock
+        // against the pump's spawned task.
+        let wait_result = py.detach(|| {
+            get_runtime().block_on(async { rx.changed().await })
+        });
+
+        // Put the receiver back even on error so subsequent calls don't panic
+        *self.block_rx.lock() = Some(rx);
+
+        wait_result.map_err(|_| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "Block notification channel closed — pump may have stopped.",
+            )
+        })?;
+
+        // Read the latest value from the receiver (the one that just arrived)
+        let notification = self
+            .block_rx
+            .lock()
+            .as_ref()
+            .expect("receiver was just restored")
+            .borrow()
+            .clone();
+
+        let dict = PyDict::new(py);
+        dict.set_item("block_number", notification.block_number)?;
+        dict.set_item("timestamp", notification.timestamp)?;
+        dict.set_item("base_fee_per_gas", notification.base_fee_per_gas)?;
+        dict.set_item("gas_used", notification.gas_used)?;
+        dict.set_item("gas_limit", notification.gas_limit)?;
+
+        Ok(dict.unbind())
     }
 }
 
