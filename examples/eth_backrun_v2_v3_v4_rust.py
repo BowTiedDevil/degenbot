@@ -72,6 +72,8 @@ from degenbot.sushiswap.pools import SushiswapV2Pool as _SushiV2
 from degenbot.uniswap.trackers import UniswapV3PoolTracker
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool as _V2Pool
 from degenbot.uniswap.v4_liquidity_pool import NATIVE_CURRENCY_ADDRESS, UniswapV4Pool
+from degenbot.uniswap.v4_snapshot import DatabaseSnapshot as V4DatabaseSnapshot
+from degenbot.uniswap.v4_snapshot import UniswapV4LiquiditySnapshot
 
 # ──────────────────────────────────────────────────────────────────
 # Configuration
@@ -2342,6 +2344,61 @@ async def build_paths(
     uniswap_v3_tracker.unload_snapshot()
     sushiswap_v3_tracker.unload_snapshot()
     pancakeswap_v3_tracker.unload_snapshot()
+
+    # ── V4 snapshot backfill ─────────────────────────────────────
+    # Same pattern as V3: fetch ModifyLiquidity events between the
+    # snapshot block and the current block, apply them to Python V4
+    # pools, and push the updated tick_data to the Rust engine.
+    try:
+        v4_db_snapshot = V4DatabaseSnapshot(chain_id=1, db=bot.db)
+        v4_snapshot = UniswapV4LiquiditySnapshot(source=v4_db_snapshot)
+    except ValueError:
+        # Database has no V4 snapshot data
+        v4_snapshot = None
+
+    if v4_snapshot is not None:
+        v4_snapshot_block = v4_snapshot.newest_block
+        if v4_snapshot_block < current_block:
+            bot_logger.info(
+                f"[backfill] V4: fetching ModifyLiquidity events "
+                f"from block {v4_snapshot_block + 1} to {current_block}"
+            )
+            v4_snapshot.fetch_new_events(
+                current_block,
+                provider=sync_provider,
+            )
+
+            # Apply pending updates to V4 Python pools
+            for pool_info in engine_registry._v4_pool_info.values():
+                pool = pool_info.pool
+                for liquidity_update in v4_snapshot.pending_updates(
+                    pool.pool_manager_address, pool.pool_id
+                ):
+                    pool.update_liquidity_map(liquidity_update)
+
+            # Push updated tick_data to the Rust engine one final time
+            v4_updates: list[
+                tuple[str, str, int, int, int, list[tuple[int, tuple[int, int]]]]
+            ] = []
+            for pool_info in engine_registry._v4_pool_info.values():
+                pool = pool_info.pool
+                tick_priors = [
+                    (idx, (info.liquidity_gross, info.liquidity_net))
+                    for idx, info in pool.tick_data.items()
+                ]
+                v4_updates.append((
+                    pool.pool_manager_address,
+                    pool.pool_id.to_0x_hex(),
+                    pool.sqrt_price_x96,
+                    pool.liquidity,
+                    pool.tick,
+                    tick_priors,
+                ))
+            if v4_updates:
+                engine_registry.process_block([], [], v4_updates, current_block)
+                bot_logger.info(
+                    f"[backfill] V4: pushed {len(v4_updates)} pool updates to Rust engine"
+                )
 
 # ──────────────────────────────────────────────────────────────────
 # Priority fee pricing (Slice 3)
