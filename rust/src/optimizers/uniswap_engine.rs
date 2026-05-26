@@ -192,26 +192,28 @@ impl UniswapEngine {
         path_id
     }
 
-    /// Process a block: decode Sync, V3 Swap, and V4 Swap events, route to
-    /// sub-engines, and re-solve only affected paths.
+    /// Process a block: decode Sync, V3 Swap/Mint/Burn, and V4 Swap/ModifyLiquidity
+    /// events, route to sub-engines, and re-solve only affected paths.
     pub fn process_block(&mut self, logs: &[Log], block_number: u64) {
-        // Separate V2 Sync, V3 Swap, and V4 Swap logs
+        // Separate V2 Sync, V3, and V4 logs by topic
         let mut v2_logs: Vec<&Log> = Vec::new();
         let mut v3_logs: Vec<&Log> = Vec::new();
-        // V4 Swap events come from PoolManager, not individual pool contracts.
-        // We decode them from the V4_SWAP_TOPIC.
+        let mut v4_logs: Vec<&Log> = Vec::new();
 
         for log in logs {
-            // Try to identify the log type by its topic
             if let Some(topic) = log.topics().first() {
                 if *topic == crate::optimizers::v2_sync_decoder::V2_SYNC_TOPIC {
                     v2_logs.push(log);
-                } else if *topic == crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC {
+                } else if *topic == crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC
+                    || *topic == crate::bot_core::v3_mint_burn_decoder::V3_MINT_TOPIC
+                    || *topic == crate::bot_core::v3_mint_burn_decoder::V3_BURN_TOPIC
+                {
                     v3_logs.push(log);
+                } else if *topic == crate::bot_core::v4_swap_decoder::V4_SWAP_TOPIC
+                    || *topic == crate::bot_core::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC
+                {
+                    v4_logs.push(log);
                 }
-                // V4 Swap events are identified by V4_SWAP_TOPIC.
-                // They are NOT decoded here — use process_v4_updates() instead
-                // since V4 requires (pool_manager, pool_id) not just address.
             }
         }
 
@@ -225,10 +227,16 @@ impl UniswapEngine {
             self.v2_engine.process_block(&v2_log_owned, block_number);
         }
 
-        // Process V3 Swap events
+        // Process V3 Swap/Mint/Burn events
         if !v3_logs.is_empty() {
             let v3_log_owned: Vec<Log> = v3_logs.iter().map(|l| (*l).clone()).collect();
             self.v3_engine.process_block(&v3_log_owned, block_number);
+        }
+
+        // Process V4 Swap/ModifyLiquidity events
+        if !v4_logs.is_empty() {
+            let v4_log_owned: Vec<Log> = v4_logs.iter().map(|l| (*l).clone()).collect();
+            self.v4_engine.process_block(&v4_log_owned, block_number);
         }
 
         // Map addresses to pool keys (both orientations for V2)
@@ -244,8 +252,26 @@ impl UniswapEngine {
             .filter_map(|addr| self.v3_engine.pool_key_for_address(addr))
             .collect();
 
+        // V4 affected pools: identified by (pool_manager, pool_id), not address.
+        // Since V4BlockEngine.process_block handles rebuild internally,
+        // we collect V4 pool IDs that were decoded from V4 logs.
+        let v4_affected: HashSet<u64> = v4_logs
+            .iter()
+            .filter_map(|log| {
+                // Try to decode pool_id from V4 Swap or ModifyLiquidity events
+                if let Some(event) = crate::bot_core::v4_swap_decoder::decode_v4_swap_log(log) {
+                    self.v4_engine.pool_keys_for_id(log.address(), &event.pool_id)
+                } else if let Some(event) = crate::bot_core::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log(log) {
+                    self.v4_engine.pool_keys_for_id(log.address(), &event.pool_id)
+                } else {
+                    None
+                }
+            })
+            .flat_map(|(fwd, rev)| [fwd, rev])
+            .collect();
+
         // Re-solve only paths containing updated pools
-        self.rebuild_and_solve_affected(&v2_affected, &v3_affected, &HashSet::new(), block_number);
+        self.rebuild_and_solve_affected(&v2_affected, &v3_affected, &v4_affected, block_number);
     }
 
     /// Process pre-decoded updates for testing.
@@ -575,6 +601,12 @@ impl UniswapEngine {
     #[must_use]
     pub fn v3_registered_addresses(&self) -> Vec<Address> {
         self.v3_engine.registered_addresses()
+    }
+
+    /// Return the list of registered V4 PoolManager addresses.
+    #[must_use]
+    pub fn v4_registered_pool_managers(&self) -> Vec<Address> {
+        self.v4_engine.registered_pool_managers()
     }
 
     /// Resolve a path's pool refs into hop states and tick-range sequences.
@@ -1589,10 +1621,31 @@ impl PyUniswapArbEngine {
         Ok(self.engine.lock().register_path(rust_refs))
     }
 
-    /// Start the engine. Freezes registration.
-    /// (Does not start a pump \- use `process_logs()` for testing.)
-    fn start(&self) {
+    /// Start the engine. Freezes registration and spawns the unified pump.
+    ///
+    /// The pump subscribes to block headers via WS, fetches all relevant
+    /// logs (V2 Sync, V3 Swap/Mint/Burn, V4 Swap/ModifyLiquidity) in one
+    /// `eth_getLogs` call per block, and routes them to the engine.
+    ///
+    /// After calling `start()`, the engine processes events autonomously.
+    /// Python reads results via `latest_results()`.
+    #[pyo3(signature = (rpc_url))]
+    fn start(&self, rpc_url: String) -> PyResult<()> {
         self.engine.lock().start();
+
+        // Spawn the unified pump
+        let engine = Arc::clone(&self.engine);
+        let shutdown = Arc::clone(&self.shutdown);
+        let handle = crate::optimizers::uniswap_engine_pump::UniswapEnginePump::spawn(
+            rpc_url,
+            engine,
+            &shutdown,
+        )
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
+
+        *self.pump_handle.lock() = Some(handle);
+
+        Ok(())
     }
 
     /// Whether the engine is running (registration is frozen).
