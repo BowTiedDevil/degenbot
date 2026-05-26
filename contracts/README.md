@@ -124,11 +124,12 @@ The file `contracts/tstore_executor_runtime_bytecode.txt` contains the deployed 
 2. **V3 auto-pay**: When a V3 pool is owed WETH, the callback auto-transfers it. Python encoders must NOT include separate WETH transfer payloads for V3 pools where auto-pay fires.
 3. **Strict `__default__`**: Reverts on unknown function calls (unlike the old deployed contract which silently returned, swallowing V2 callbacks).
 4. **Bribe support**: `execute_payloads(payloads, bribe_bips)` sends a coinbase bribe proportional to WETH profit.
-5. **V4 unlock/settle/take**: The executor's `unlockCallback` resumes payload delivery inside PoolManager's `unlock()` context. Python encodes all V4 operations (swap, sync, settle, take) as raw calldata payloads — the executor treats them identically to V2/V3 payloads. The PoolManager address must be registered via `will_callback=True` on the unlock payload.
+5. **V4 auto-settlement**: The executor's `unlockCallback` now executes V4 swaps directly via `extcall` (not `raw_call`) and reads the actual `BalanceDelta` return values from `PM.swap()`. After all swaps, it takes positive deltas (credits) and settles negative deltas (debits) using ACTUAL on-chain amounts. This eliminates `CurrencyNotSettled` errors caused by rounding mismatches between Python pre-computed amounts and on-chain actual swap outputs. V4 swap parameters are passed via the `v4_swaps` argument to `execute_payloads()`, not as raw calldata payloads.
 6. **`will_callback` registration**: Before calling a pool with `will_callback=True`, the target address is registered in `t_allowed_callback_addresses`. Callback handlers assert that `msg.sender` is registered.
 7. **Transient storage**: All queue state uses TLOAD/TSTORE, automatically cleared between transactions.
 8. **Increased limits**: `MAX_PAYLOADS=16` (was 8), `MAX_PAYLOAD_BYTES=832` (was 196) to accommodate V4 `PoolManager.swap(PoolKey, SwapParams, bytes)` calldata.
 9. **Payload value field**: Each `Payload` struct includes a `value: uint256` field for native ETH value to be sent with the call. This is used for V4 `settle()` with `msg.value` to pay ETH debts. Set to `0` for all non-ETH-settlement payloads. The `raw_call` in `deliver_queued_payload` passes `value=payload.value`.
+10. **Combined balance check**: After all payloads, the executor asserts `WETH_balance + ETH_balance` did not decrease (not WETH alone). This correctly handles paths that unwrap WETH to ETH for V4 native settlement — the total value increases even though WETH balance alone may decrease.
 
 ### Supported Path Types
 
@@ -139,11 +140,11 @@ The file `contracts/tstore_executor_runtime_bytecode.txt` contains the deployed 
 | V3→V3 | 4 | Nested V3 callbacks; auto-pay for WETH debts |
 | V2→V2 | 4 | V2 flash borrow + direct V2 swap + WETH repayment |
 | V2→V3 | 4 | V2 flash borrow + V3 nested callback + WETH repayment |
-| V4→V4 | 6 | `unlock()` + V4 swap A + V4 swap B + sync + transfer + settle |
-| V4→V3 | 7 | `unlock()` + V4 swap + V3 swap + callback + sync + transfer + settle |
-| V4→V2 | 7 | `unlock()` + V4 swap + V2 swap + sync + transfer + settle + take |
-| V3→V4 | 7 | V3 swap + callback → `unlock()` + V4 swap + sync + transfer + settle |
-| V2→V4 | 7 | V2 flash + callback → `unlock()` + V4 swap + sync + transfer + settle |
+| V4→V4 | 1 | `unlock()` + V4 swaps via `extcall` (auto-settled by contract) |
+| V4→V3 | 4-6 | `unlock()` + V4 swap + take forward + optional wrap + transfer + V3 swap |
+| V4→V2 | 4-6 | `unlock()` + V4 swap + take forward + optional wrap + transfer + V2 swap |
+| V3→V4 | 4-7 | V3 swap → `unlock()` + V4 swap + optional sync/settle |
+| V2→V4 | 4-7 | V2 flash → `unlock()` + V4 swap + optional sync/settle |
 
 ---
 
