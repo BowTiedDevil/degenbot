@@ -2,6 +2,30 @@
 
 On-chain executor contracts for MEV arbitrage.
 
+## Directory Structure
+
+```
+contracts/
+├── README.md                            ← you are here
+├── tstore_executor.vy                   ← Vyper 0.4.x source (V2+V3+V4)
+├── tstore_executor_bytecode.txt         ← Init bytecode (includes constructor; for deployment)
+├── tstore_executor_runtime_bytecode.txt ← Deployed bytecode (runtime + immutables; for code injection)
+└── tstore_executor_abi.json            ← ABI (for web3.py contract objects)
+```
+
+### How the Bytecode Files Relate
+
+- **`tstore_executor_bytecode.txt`** — the output of `vyper -f bytecode`. Contains the init code (constructor) that, when executed by the EVM, returns the runtime code with immutables appended. Use this for on-chain deployment via `cast send --create`.
+- **`tstore_executor_runtime_bytecode.txt`** — the deployed runtime code **with immutables already appended** (OWNER_ADDR and WETH_ADDR as 32-byte padded values in declaration order). Use this for `eth_simulateV1` code injection (`INJECT_EXECUTOR_CODE=1`) — injected code must include immutables because Vyper loads them from the code section via `CODECOPY`.
+
+If you recompile the contract (e.g. after changing the Vyper source), you must regenerate **both** files and re-append the immutables to the runtime bytecode. See "Runtime Bytecode (for Code Injection)" below for the procedure.
+
+### Cross-References
+
+- **Bot script**: `examples/eth_backrun_v2_v3_v4_rust.py` — loads the runtime bytecode via `_load_executor_runtime_bytecode()` when `INJECT_EXECUTOR_CODE=1`
+- **Executor config**: `EXECUTOR_ADDRESS`, `EXECUTOR_OWNER`, `INJECT_EXECUTOR_CODE` in the bot script and `examples/mainnet.env`
+- **Architecture**: Plan 080 (`plans/completed/080-rust-bot-poc-path-to-profit.md`) documents the swap encoding, code injection mechanism, and V3 sign convention
+
 ## Contract Index
 
 | Contract | Location | Vyper | Pool Types | Callbacks | Style |
@@ -75,10 +99,11 @@ cast send --rpc-url http://node:8545 \
 The file `contracts/tstore_executor_runtime_bytecode.txt` contains the deployed runtime bytecode with immutables already baked in (OWNER_ADDR and WETH_ADDR). This is used by the bot's code injection feature (`INJECT_EXECUTOR_CODE=1`) to test the contract via `eth_simulateV1` without deploying on mainnet first.
 
 **How it was generated:**
-1. Deploy the contract on a local anvil fork with the correct OWNER_ADDR
-2. Extract the runtime bytecode from the deployed address: `cast code <address> --rpc-url ...`
-3. Patch the OWNER_ADDR immutable in the bytecode (anvil deployer → actual executor owner)
-4. Save the patched bytecode to `contracts/tstore_executor_runtime_bytecode.txt`
+1. Compile with `uv run vyper -f bytecode_runtime contracts/tstore_executor.vy`
+2. Append two 32-byte padded immutable values to the runtime bytecode:
+   - `OWNER_ADDR` (12 zero bytes + `0x9C56a29c7231974c269E24F9FB3c29203039089E`, padded to 32 bytes)
+   - `WETH_ADDR` (12 zero bytes + `0xC02aaA39b223FE8D0A0e5C4f27eAD9083C756Cc2`, padded to 32 bytes)
+3. Vyper's runtime code uses `CODECOPY` with offset = `len(runtime_code)` to load immutables, so appending them at the end is equivalent to what the constructor does during deployment
 
 **Vyper immutables are embedded in the runtime code**, not in storage. The bytecode already contains the throwaway OWNER_ADDR (`0x9C56a29c7231974c269E24F9FB3c29203039089E` — a randomly generated key, not a real deployment) and WETH_ADDR (`0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2`). No storage slot overrides are needed for the executor itself. Override `EXECUTOR_OWNER_ADDRESS` at runtime with the real owner key.
 
