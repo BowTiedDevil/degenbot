@@ -47,7 +47,7 @@ import web3
 from hexbytes import HexBytes
 from web3 import AsyncWeb3, Web3
 from web3.exceptions import ContractLogicError, TransactionNotFound, Web3Exception
-from web3.utils.subscriptions import LogsSubscription, NewHeadsSubscription
+from web3.utils.subscriptions import NewHeadsSubscription
 
 from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, get_checksum_address
 from degenbot.calculations.evm_math import next_base_fee
@@ -69,14 +69,6 @@ from degenbot.logging import logger as bot_logger
 from degenbot.pathfinding import find_paths_async
 from degenbot.provider.sync_adapter import ProviderAdapter
 from degenbot.sushiswap.pools import SushiswapV2Pool as _SushiV2
-from degenbot.uniswap.log_decoders import (
-    V2_SYNC_TOPIC,
-    V3_BURN_TOPIC,
-    V3_MINT_TOPIC,
-    V3_SWAP_TOPIC,
-    V4_MODIFY_LIQUIDITY_TOPIC,
-    V4_SWAP_TOPIC,
-)
 from degenbot.uniswap.trackers import UniswapV3PoolTracker
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool as _V2Pool
 from degenbot.uniswap.v4_liquidity_pool import NATIVE_CURRENCY_ADDRESS, UniswapV4Pool
@@ -92,7 +84,6 @@ FEE_HISTORY_WINDOW = 10
 FEE_PERCENTILES = (10, 50)
 TARGET_PROFIT_RATIO = 1.25
 BLOCKS_BEFORE_NONCE_EXPIRES = 5
-DISPATCH_COALESCE_MS = 50  # Wait this long after last event before dispatching
 MAX_SIMULATE_CONCURRENT = 50  # Cap concurrent simulation RPC calls (Slice 1)
 STALENESS_TOLERANCE = 5  # Blocks after solve_block to discard results (Slice 2)
 AGE_DECAY_CONSTANT = 0.25  # Priority fee age decay factor (Slice 3)
@@ -198,15 +189,6 @@ AMOUNT_MODIFYING_HOOK_MASK = 0xCC
 # V4 dynamic fee flag — pools with fee == 0x100000 have dynamic fees.
 # The solver requires a fixed fee for accurate profit calculation.
 V4_DYNAMIC_FEE_FLAG = 0x100000
-
-MONITORED_TOPICS = {
-    V2_SYNC_TOPIC,
-    V3_SWAP_TOPIC,
-    V3_MINT_TOPIC,
-    V3_BURN_TOPIC,
-    V4_SWAP_TOPIC,
-    V4_MODIFY_LIQUIDITY_TOPIC,
-}
 
 # V3 sqrt price limits
 MIN_SQRT_RATIO = 4295128739
@@ -2361,245 +2343,6 @@ async def build_paths(
     sushiswap_v3_tracker.unload_snapshot()
     pancakeswap_v3_tracker.unload_snapshot()
 
-
-# ──────────────────────────────────────────────────────────────────
-# Event processing (per-event, immediate engine update)
-# ──────────────────────────────────────────────────────────────────
-
-
-def extract_topic0(log: dict) -> str:
-    topic0 = log["topics"][0]
-    if isinstance(topic0, (bytes, HexBytes)):
-        return f"0x{topic0.hex()}"
-    if isinstance(topic0, str):
-        return topic0 if topic0.startswith("0x") else f"0x{topic0}"
-    return str(topic0)
-
-
-def process_single_event(
-    event_log: dict,
-    bot: Bot,
-    chain_id: int,
-    engine_registry: EngineRegistry,
-    block_number: int,
-) -> tuple[
-    list[tuple[str, int, int]],
-    list[tuple[str, int, int, int, list[tuple[int, tuple[int, int]]]]],
-    list[tuple[str, str, int, int, int, list[tuple[int, tuple[int, int]]]]],
-]:
-    """Decode a single log event, update Python pool state, return engine updates.
-
-    Returns (v2_updates, v3_updates, v4_updates) for the Rust engine.
-    The caller decides when to push them (immediately or batched).
-
-    V4 events (Swap, ModifyLiquidity) are emitted from the PoolManager contract.
-    The pool_id is extracted from topic[1] of the event.
-    """
-    try:
-        topic0 = extract_topic0(event_log)
-    except (KeyError, IndexError):
-        return [], [], []
-
-    if topic0 not in MONITORED_TOPICS:
-        return [], [], []
-
-    address = get_checksum_address(event_log.get("address", ""))
-    v2_updates: list[tuple[str, int, int]] = []
-    v3_updates: list[tuple[str, int, int, int, list[tuple[int, tuple[int, int]]]]] = []
-    v4_updates: list[tuple[str, str, int, int, int, list[tuple[int, tuple[int, int]]]]] = []
-
-    # V2 Sync
-    if topic0 == V2_SYNC_TOPIC:
-        pool = bot.pools.get(chain_id, address)
-        if not isinstance(pool, UniswapV2Pool):
-            return [], [], []
-        handler = pool.LOG_HANDLERS.get(V2_SYNC_TOPIC)
-        if handler:
-            try:
-                handler(event_log)(pool)
-            except Exception as exc:
-                bot_logger.debug(f"V2 handler rejected event for {address}: {exc}")
-        if address in engine_registry._v2_keys:
-            v2_updates.append((address, pool.reserves_token0, pool.reserves_token1))
-
-    # V3 Swap / Mint / Burn
-    elif topic0 in (V3_SWAP_TOPIC, V3_MINT_TOPIC, V3_BURN_TOPIC):
-        pool = bot.pools.get(chain_id, address)
-        if not isinstance(pool, UniswapV3Pool):
-            return [], [], []
-        handler = pool.LOG_HANDLERS.get(topic0)
-        if handler:
-            try:
-                handler(event_log)(pool)
-            except Exception as exc:
-                bot_logger.debug(f"V3 handler rejected event for {address}: {exc}")
-        if address in engine_registry._v3_keys:
-            tick_priors = [
-                (idx, (info.liquidity_gross, info.liquidity_net))
-                for idx, info in pool.tick_data.items()
-            ]
-            v3_updates.append((
-                address,
-                pool.sqrt_price_x96,
-                pool.liquidity,
-                pool.tick,
-                tick_priors,
-            ))
-
-    # V4 Swap / ModifyLiquidity — emitted from PoolManager contract
-    elif topic0 in (V4_SWAP_TOPIC, V4_MODIFY_LIQUIDITY_TOPIC):
-        # Only process events from the monitored PoolManager address
-        if address != UNISWAP_V4_POOL_MANAGER_ADDRESS:
-            return [], [], []
-
-        # Extract pool_id from topic[1]
-        topics = event_log.get("topics", [])
-        if len(topics) < 2:
-            return [], [], []
-
-        pool_id_raw = topics[1]
-        if isinstance(pool_id_raw, (bytes, HexBytes)):
-            pool_id_hex = f"0x{HexBytes(pool_id_raw).hex()}"
-        elif isinstance(pool_id_raw, str):
-            pool_id_hex = pool_id_raw if pool_id_raw.startswith("0x") else f"0x{pool_id_raw}"
-        else:
-            return [], [], []
-
-        # Find the pool in the managed pool registry
-        pool = bot.managed_pools.get(
-            chain_id,
-            UNISWAP_V4_POOL_MANAGER_ADDRESS,
-            HexBytes(pool_id_hex),
-        )
-        if pool is None or not isinstance(pool, UniswapV4Pool):
-            return [], [], []
-
-        # Apply the update to the Python pool
-        handler = pool.LOG_HANDLERS.get(topic0)
-        if handler:
-            try:
-                handler(event_log)(pool)
-            except Exception as exc:
-                bot_logger.debug(f"V4 handler rejected event for pool_id={pool_id_hex}: {exc}")
-
-        # Push to Rust engine if this pool is registered
-        if pool_id_hex in engine_registry._v4_keys:
-            tick_priors = [
-                (idx, (info.liquidity_gross, info.liquidity_net))
-                for idx, info in pool.tick_data.items()
-            ]
-            v4_updates.append((
-                UNISWAP_V4_POOL_MANAGER_ADDRESS,
-                pool_id_hex,
-                pool.sqrt_price_x96,
-                pool.liquidity,
-                pool.tick,
-                tick_priors,
-            ))
-
-    return v2_updates, v3_updates, v4_updates
-
-
-async def _reconcile_pool_states(
-    bot: Bot,
-    engine_registry: EngineRegistry,
-    async_w3: AsyncWeb3,
-) -> None:
-    """Re-fetch pool states after a WS reconnection and push to the engine.
-
-    Only reconciles pools known to the engine registry. Uses multicall
-    patterns where possible to reduce RPC round-trips.
-    """
-    v2_updates: list[tuple[str, int, int]] = []
-    v3_updates: list[tuple[str, int, int, int, list[tuple[int, tuple[int, int]]]]] = []
-    v4_updates: list[tuple[str, str, int, int, int, list[tuple[int, tuple[int, int]]]]] = []
-
-    for address in engine_registry._v2_keys:
-        pool = bot.pools.get(1, address)
-        if not isinstance(pool, UniswapV2Pool):
-            continue
-        # Re-fetch reserves from on-chain
-        try:
-            reserves = await async_w3.eth.call({
-                "to": address,
-                "data": web3.Web3.keccak(text="getReserves()")[:4],
-            })
-            r0 = int.from_bytes(reserves[0:32], byteorder="big")
-            r1 = int.from_bytes(reserves[32:64], byteorder="big")
-            v2_updates.append((address, r0, r1))
-        except Exception:
-            pass
-
-    for address in engine_registry._v3_keys:
-        pool = bot.pools.get(1, address)
-        if not isinstance(pool, UniswapV3Pool):
-            continue
-        try:
-            slot0_data = await async_w3.eth.call({
-                "to": address,
-                "data": web3.Web3.keccak(text="slot0()")[:4],
-            })
-            sqrt_price_x96 = int.from_bytes(slot0_data[0:32], byteorder="big")
-            tick = int.from_bytes(slot0_data[96:128], byteorder="big")
-            tick = tick - 2**256 if tick >= 2**255 else tick  # sign-extend
-            liquidity_data = await async_w3.eth.call({
-                "to": address,
-                "data": web3.Web3.keccak(text="liquidity()")[:4],
-            })
-            liquidity = int.from_bytes(liquidity_data[0:32], byteorder="big")
-            tick_priors = [
-                (idx, (info.liquidity_gross, info.liquidity_net))
-                for idx, info in pool.tick_data.items()
-            ]
-            v3_updates.append((address, sqrt_price_x96, liquidity, tick, tick_priors))
-        except Exception:
-            pass
-
-    # V4 reconciliation: re-fetch pool state from PoolManager
-    for pool_id_hex, key in engine_registry._v4_keys.items():
-        info = engine_registry._v4_pool_info.get(key)
-        if info is None:
-            continue
-        pool = info.pool
-        try:
-            slot0_data = await async_w3.eth.call({
-                "to": UNISWAP_V4_POOL_MANAGER_ADDRESS,
-                "data": web3.Web3.keccak(text="getSlot0(bytes32)")[:4] + HexBytes(pool_id_hex),
-            })
-            sqrt_price_x96 = int.from_bytes(slot0_data[0:32], byteorder="big")
-            tick = int.from_bytes(slot0_data[32:64], byteorder="big")
-            tick = tick - 2**256 if tick >= 2**255 else tick  # sign-extend
-            liquidity_data = await async_w3.eth.call({
-                "to": UNISWAP_V4_POOL_MANAGER_ADDRESS,
-                "data": web3.Web3.keccak(text="getLiquidity(bytes32)")[:4] + HexBytes(pool_id_hex),
-            })
-            liquidity = int.from_bytes(liquidity_data[0:32], byteorder="big")
-            tick_priors = [
-                (idx, (info.liquidity_gross, info.liquidity_net))
-                for idx, info in pool.tick_data.items()
-            ]
-            v4_updates.append((
-                UNISWAP_V4_POOL_MANAGER_ADDRESS,
-                pool_id_hex,
-                sqrt_price_x96,
-                liquidity,
-                tick,
-                tick_priors,
-            ))
-        except Exception:
-            pass
-
-    if v2_updates or v3_updates or v4_updates:
-        current_block = await async_w3.eth.get_block_number()
-        engine_registry.process_block(v2_updates, v3_updates, v4_updates, current_block)
-        bot_logger.info(
-            f"Reconciled {len(v2_updates)} V2 + {len(v3_updates)} V3 + "
-            f"{len(v4_updates)} V4 pools at block {current_block}"
-        )
-    else:
-        bot_logger.warning("Reconciliation produced no updates — pools may be stale")
-
-
 # ──────────────────────────────────────────────────────────────────
 # Priority fee pricing (Slice 3)
 # ──────────────────────────────────────────────────────────────────
@@ -3308,75 +3051,31 @@ async def main() -> None:
     current_block_ref: list[int] = [current_block]  # mutable for monitor tasks
     block_times: deque[tuple[int, int]] = deque(maxlen=60)
     block_priority_fees: dict[int, dict[int, int]] = {}
-
-    # ── Per-event reactivity state ────────────────────────────────
-    # Accumulated engine updates within a coalescence window
-    pending_v2_updates: list[tuple[str, int, int]] = []
-    pending_v3_updates: list[tuple[str, int, int, int, list[tuple[int, tuple[int, int]]]]] = []
-    pending_v4_updates: list[tuple[str, str, int, int, int, list[tuple[int, tuple[int, int]]]]] = []
-    pending_block_number: int = current_block
-    dispatch_scheduled: bool = False
-    last_dispatch_time: float = 0.0
     dispatch_lock = asyncio.Lock()  # Prevents concurrent dispatches (Slice 0.5)
     last_engine_log: frozenset[tuple[int, int]] = frozenset()  # Dedup engine result logs
 
-    async def try_dispatch() -> None:
-        """Push accumulated updates to the engine and dispatch profitable results.
+    # ── Start the Rust pump ──────────────────────────────────────
+    # The pump subscribes to block headers via WS, fetches all relevant
+    # logs (V2 Sync, V3 Swap/Mint/Burn, V4 Swap/ModifyLiquidity) in
+    # one eth_getLogs call per block, decodes events, and updates the
+    # Rust engine autonomously. Python reads results via latest_results().
+    engine_registry.engine.start(node_ws)
+    bot_logger.info("Rust pump started — engine processes events autonomously")
 
-        guarded by dispatch_lock so only one dispatch runs at a time.
-        A second call while the first is running is silently dropped —
-        the first dispatch processes all accumulated updates anyway.
+    async def try_dispatch() -> None:
+        """Dispatch profitable results from the Rust engine.
+
+        The Rust pump processes events autonomously. This function reads
+        the latest results and dispatches profitable ones for simulation
+        and submission.
         """
-        nonlocal \
-            pending_v2_updates, \
-            pending_v3_updates, \
-            pending_v4_updates, \
-            dispatch_scheduled, \
-            last_dispatch_time, \
-            last_engine_log
+        nonlocal last_engine_log
 
         # Non-blocking: if a dispatch is already running, skip this one
         if dispatch_lock.locked():
             return
 
         async with dispatch_lock:
-            if not pending_v2_updates and not pending_v3_updates and not pending_v4_updates:
-                dispatch_scheduled = False
-                # No new updates, but the engine may have results from
-                # initial_solve or a prior block. Try to dispatch them.
-                results = engine_registry.profitable_results()
-                if results:
-                    await dispatch_profitable_results(
-                        results=results,
-                        engine_registry=engine_registry,
-                        async_w3=async_w3,
-                        executor_address=executor_address,
-                        operator_address=operator_address,
-                        operator_private_key=operator_private_key,
-                        base_fee_next=base_fee_next,
-                        current_block=current_block_ref[0],
-                        operator_nonce=operator_nonce,
-                        pending_nonces=pending_nonces,
-                        pending_pools=pending_pools,
-                        active_tasks=active_tasks,
-                        current_block_ref=current_block_ref,
-                        dry_run=dry_run,
-                        block_priority_fees=block_priority_fees,
-                        observe=observe,
-                    )
-                return
-
-            # Push all accumulated updates to the engine in one call
-            v2 = pending_v2_updates[:]
-            v3 = pending_v3_updates[:]
-            v4 = pending_v4_updates[:]
-            pending_v2_updates = []
-            pending_v3_updates = []
-            pending_v4_updates = []
-            dispatch_scheduled = False
-
-            engine_registry.process_block(v2, v3, v4, pending_block_number)
-
             results = engine_registry.profitable_results()
             if not results:
                 return
@@ -3411,49 +3110,6 @@ async def main() -> None:
                 block_priority_fees=block_priority_fees,
                 observe=observe,
             )
-
-            last_dispatch_time = time.monotonic()
-
-    async def schedule_dispatch() -> None:
-        """Coalesce events: wait a short window then dispatch once."""
-        nonlocal dispatch_scheduled
-
-        if dispatch_scheduled:
-            return
-        dispatch_scheduled = True
-        await asyncio.sleep(DISPATCH_COALESCE_MS / 1000)
-        await try_dispatch()
-
-    async def on_event(ctx: Any) -> None:
-        """Process a single WS log event immediately.
-
-        The key to same-block reactivity: decode the event, update Python pools,
-        accumulate engine updates, then schedule a coalesced dispatch.
-        The dispatch fires after DISPATCH_COALESCE_MS of event silence, or
-        immediately on the next newHead.
-        """
-        nonlocal pending_block_number
-
-        event = ctx.result
-        block_num = event.get("blockNumber")
-        if block_num is not None:
-            pending_block_number = int(block_num)
-
-        v2_updates, v3_updates, v4_updates = process_single_event(
-            event,
-            bot,
-            chain_id,
-            engine_registry,
-            pending_block_number,
-        )
-
-        if v2_updates or v3_updates or v4_updates:
-            pending_v2_updates.extend(v2_updates)
-            pending_v3_updates.extend(v3_updates)
-            pending_v4_updates.extend(v4_updates)
-            # Schedule a coalesced dispatch — will fire after a short pause
-            # in event arrivals, or immediately on newHead
-            asyncio.create_task(schedule_dispatch())
 
     async def on_block(ctx: Any) -> None:
         nonlocal current_block, base_fee_next, operator_nonce
@@ -3502,7 +3158,9 @@ async def main() -> None:
         current_block = block_number
         await try_dispatch()
 
-    # ── Subscribe with WS reconnection (Slice 6) ──────────────────
+    # ── Subscribe with WS reconnection ────────────────────────────
+    # Python subscribes to newHeads only — the Rust pump handles all
+    # event decoding and state updates autonomously.
     reconnect_delay = RECONNECT_BASE_DELAY
 
     while True:
@@ -3511,29 +3169,7 @@ async def main() -> None:
                 ws_w3.middleware_onion.clear()
 
                 await ws_w3.subscription_manager.subscribe(NewHeadsSubscription(handler=on_block))
-
-                # Slice 7: Filter logs subscription to monitored pool addresses
-                # Include PoolManager for V4 events
-                monitored_addresses = list(
-                    engine_registry._v2_keys.keys()
-                    | engine_registry._v3_keys.keys()
-                    | {UNISWAP_V4_POOL_MANAGER_ADDRESS}
-                )
-                if len(monitored_addresses) <= 1000:
-                    await ws_w3.subscription_manager.subscribe(
-                        LogsSubscription(address=monitored_addresses, handler=on_event)
-                    )
-                    bot_logger.info(
-                        f"Subscribed to filtered logs ({len(monitored_addresses)} addresses)"
-                    )
-                else:
-                    await ws_w3.subscription_manager.subscribe(LogsSubscription(handler=on_event))
-                    bot_logger.warning(
-                        f"Too many pools ({len(monitored_addresses)}) for WS address filter — "
-                        "using unfiltered subscription"
-                    )
-
-                bot_logger.info("Subscribed to newHeads + logs — running")
+                bot_logger.info("Subscribed to newHeads — Rust pump handles events")
                 await ws_w3.subscription_manager.handle_subscriptions()
                 reconnect_delay = RECONNECT_BASE_DELAY  # Reset on clean exit
         except Exception as exc:
@@ -3541,17 +3177,8 @@ async def main() -> None:
             bot_logger.info(f"Reconnecting in {reconnect_delay:.1f}s...")
             await asyncio.sleep(reconnect_delay)
             reconnect_delay = min(reconnect_delay * 2, RECONNECT_MAX_DELAY)
-
-            # State reconciliation: push latest pool states to the engine
-            # so it's not stuck on stale data from before the disconnect
-            try:
-                await _reconcile_pool_states(
-                    bot=bot,
-                    engine_registry=engine_registry,
-                    async_w3=async_w3,
-                )
-            except Exception as reconcile_exc:
-                bot_logger.error(f"State reconciliation failed: {reconcile_exc}")
+            # The Rust pump handles its own reconnection.
+            # Python only needs to re-subscribe to newHeads.
 
 
 if __name__ == "__main__":
