@@ -20,6 +20,7 @@ pub mod tick_bitmap;
 pub mod v2_encoding;
 pub mod v3_mint_burn_decoder;
 pub mod v3_swap_decoder;
+pub mod v4_modify_liquidity_decoder;
 pub mod v4_swap_decoder;
 
 // ---------------------------------------------------------------------------

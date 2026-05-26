@@ -37,10 +37,11 @@
 
 use std::collections::{HashMap, HashSet};
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, I256, U128, U256};
 
 use crate::bot_core::tick_bitmap::compute_tick_ranges;
-use crate::bot_core::v4_swap_decoder::PoolId;
+use crate::bot_core::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log;
+use crate::bot_core::v4_swap_decoder::{decode_v4_swap_log, PoolId};
 use crate::bot_core::TickInfo;
 use crate::optimizers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence};
 
@@ -409,6 +410,84 @@ impl V4BlockEngine {
         }
     }
 
+    /// Apply a liquidity update (V4 ModifyLiquidity event) to a registered pool.
+    ///
+    /// Updates `tick_data` at `tick_lower` and `tick_upper` using the same
+    /// logic as V3's `Tick.update()`: both ticks get `liquidity_gross += delta`,
+    /// while `liquidity_net += delta` for the lower tick and
+    /// `liquidity_net -= delta` for the upper tick.
+    ///
+    /// If a tick does not yet exist in `tick_data`, it is inserted.
+    /// Ticks with zero `liquidity_gross` after the update are removed.
+    pub fn apply_liquidity_update(
+        &mut self,
+        pool_manager: Address,
+        pool_id: PoolId,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: I256,
+        block_number: u64,
+    ) {
+        let Some(&(fwd_key, rev_key)) = self.pool_ids.get(&(pool_manager, pool_id)) else {
+            return;
+        };
+
+        // Convert I256 liquidity_delta to i128 for tick update
+        // If it doesn't fit, skip (shouldn't happen with valid on-chain data)
+        let delta_i128: i128 = match liquidity_delta.try_into() {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+
+        // Apply to forward pool
+        if let Some(pool) = self.pools.get_mut(&fwd_key) {
+            update_tick_liquidity(&mut pool.tick_data, tick_lower, delta_i128, true);
+            update_tick_liquidity(&mut pool.tick_data, tick_upper, delta_i128, false);
+            pool.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+            pool.update_block = block_number;
+        }
+
+        // Apply to reverse pool
+        if let Some(pool) = self.pools.get_mut(&rev_key) {
+            update_tick_liquidity(&mut pool.tick_data, tick_lower, delta_i128, true);
+            update_tick_liquidity(&mut pool.tick_data, tick_upper, delta_i128, false);
+            pool.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+            pool.update_block = block_number;
+        }
+    }
+
+    /// Process a block: decode Swap and ModifyLiquidity events, apply updates,
+    /// rebuild paths, solve all, and store results.
+    ///
+    /// Only processes logs from registered pool managers. Logs from other
+    /// addresses are ignored.
+    pub fn process_block(&mut self, logs: &[alloy::rpc::types::Log], block_number: u64) {
+        for log in logs {
+            if let Some(event) = decode_v4_swap_log(log) {
+                self.apply_swap(
+                    log.address(),
+                    event.pool_id,
+                    event.sqrt_price_x96,
+                    event.liquidity.to::<u128>(),
+                    event.tick,
+                    block_number,
+                    &[],
+                );
+            } else if let Some(event) = decode_v4_modify_liquidity_log(log) {
+                self.apply_liquidity_update(
+                    log.address(),
+                    event.pool_id,
+                    event.tick_lower,
+                    event.tick_upper,
+                    event.liquidity_delta,
+                    block_number,
+                );
+            }
+        }
+
+        self.rebuild_and_solve(block_number);
+    }
+
     /// Apply Swap updates and return the set of pool keys that changed.
     /// Does NOT rebuild paths or solve — caller handles that.
     pub fn apply_swap_updates(
@@ -601,6 +680,41 @@ impl V4BlockEngine {
         self.running
     }
 
+    /// Return the set of PoolManager addresses with registered pools.
+    /// Used by the V4 pump to build the log filter.
+    #[must_use]
+    pub fn registered_pool_managers(&self) -> Vec<Address> {
+        self.pool_ids
+            .keys()
+            .map(|(pm, _)| *pm)
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
+    /// Rebuild all paths and solve. Convenience method for `process_block`
+    /// and initial setup.
+    pub fn rebuild_and_solve(&mut self, block_number: u64) {
+        // Re-resolve all paths
+        let path_pool_refs: Vec<(u64, Vec<V4PoolRef>)> = self
+            .paths
+            .iter()
+            .map(|(&id, (path, _))| (id, path.pools.clone()))
+            .collect();
+
+        for (path_id, pool_refs) in &path_pool_refs {
+            let mut resolved = ResolvedV4Path::default();
+            self.resolve_path(pool_refs, &mut resolved);
+            if let Some((_, stored)) = self.paths.get_mut(path_id) {
+                *stored = resolved;
+            }
+        }
+
+        // Re-solve all paths
+        self.results = self.solve_all();
+        self.results_block = block_number;
+    }
+
     /// Number of registered pools (counting PoolId entries, not orientations).
     #[must_use]
     pub fn pool_count(&self) -> usize {
@@ -647,6 +761,51 @@ impl Default for V4BlockEngine {
 }
 
 // ---------------------------------------------------------------------------
+// Tick liquidity update function (mirrors V3BlockEngine)
+// ---------------------------------------------------------------------------
+
+/// Update a single tick's `liquidity_gross` and `liquidity_net` in-place.
+///
+/// Matches V3's Solidity `Tick.update()`:
+/// - Both lower and upper tick receive `liquidity_gross += delta`
+/// - `liquidity_net += delta` for the lower tick
+/// - `liquidity_net -= delta` for the upper tick (controlled by `is_lower_tick`)
+///
+/// If a tick doesn't exist yet, it's inserted with appropriate initial values.
+/// Ticks with `liquidity_gross == 0` after the update should be removed by the caller.
+fn update_tick_liquidity(
+    tick_data: &mut HashMap<i32, TickInfo>,
+    tick: i32,
+    delta: i128,
+    is_lower_tick: bool,
+) {
+    let entry = tick_data.entry(tick).or_insert(TickInfo {
+        liquidity_gross: U128::ZERO,
+        liquidity_net: I256::ZERO,
+    });
+
+    // Update liquidity_gross: += delta (always the same direction for both ticks)
+    let current_gross = entry.liquidity_gross.to::<u128>();
+    let new_gross_i128 = current_gross as i128 + delta;
+    // liquidity_gross is always >= 0 in valid state; negative means an underflow bug
+    let new_gross = if new_gross_i128 < 0 {
+        U128::ZERO
+    } else {
+        U128::from(new_gross_i128 as u128)
+    };
+    entry.liquidity_gross = new_gross;
+
+    // Update liquidity_net: += delta for lower tick, -= delta for upper tick
+    let delta_i256 = I256::try_from(delta).unwrap_or(I256::ZERO);
+    let current_net = entry.liquidity_net;
+    entry.liquidity_net = if is_lower_tick {
+        current_net.checked_add(delta_i256).unwrap_or(I256::ZERO)
+    } else {
+        current_net.checked_sub(delta_i256).unwrap_or(I256::ZERO)
+    };
+}
+
+// ---------------------------------------------------------------------------
 // Swap update type for testing
 // ---------------------------------------------------------------------------
 
@@ -668,7 +827,7 @@ pub struct V4SwapUpdate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::U128;
+    use alloy::primitives::{B256, U128};
 
     fn make_tick_info(liquidity_gross: u128, liquidity_net: i128) -> TickInfo {
         use alloy::primitives::I256;
@@ -1174,6 +1333,445 @@ mod tests {
                 HashMap::new(),
             ));
             assert!(result.is_ok(), "should accept hook flags 0x{:04X}", flags);
+        }
+    }
+
+    // ── apply_liquidity_update tests ─────────────────────────────
+
+    #[test]
+    fn v4_mint_updates_tick_data() {
+        let mut engine = V4BlockEngine::new();
+        let pool_id = make_pool_id(1);
+
+        let mut tick_data = HashMap::new();
+        tick_data.insert(-60, make_tick_info(100, 50));
+        tick_data.insert(60, make_tick_info(100, -50));
+
+        engine.register_pool(make_register_params(
+            POOL_MANAGER,
+            pool_id,
+            3000,
+            60,
+            0,
+            U256::from(79228162514264337593543950336u128),
+            1_000_000,
+            0,
+            tick_data,
+        )).unwrap();
+
+        engine.start();
+
+        // Add 500 liquidity: positive delta
+        engine.apply_liquidity_update(
+            POOL_MANAGER,
+            pool_id,
+            -60,
+            60,
+            I256::try_from(500_i128).unwrap(),
+            100,
+        );
+
+        let fwd_key = engine.pool_keys_for_id(POOL_MANAGER, &pool_id).unwrap().0;
+        let pool = engine.get_pool(fwd_key).unwrap();
+
+        // tick_lower: gross += 500, net += 500
+        let lower_tick = &pool.tick_data[&-60];
+        assert_eq!(lower_tick.liquidity_gross, U128::from(600)); // 100 + 500
+        assert_eq!(lower_tick.liquidity_net, I256::try_from(550_i128).unwrap()); // 50 + 500
+
+        // tick_upper: gross += 500, net -= 500
+        let upper_tick = &pool.tick_data[&60];
+        assert_eq!(upper_tick.liquidity_gross, U128::from(600)); // 100 + 500
+        assert_eq!(upper_tick.liquidity_net, I256::try_from(-550_i128).unwrap()); // -50 - 500
+    }
+
+    #[test]
+    fn v4_burn_updates_tick_data() {
+        let mut engine = V4BlockEngine::new();
+        let pool_id = make_pool_id(2);
+
+        let mut tick_data = HashMap::new();
+        tick_data.insert(-60, make_tick_info(500, 250));
+        tick_data.insert(60, make_tick_info(500, -250));
+
+        engine.register_pool(make_register_params(
+            POOL_MANAGER,
+            pool_id,
+            3000,
+            60,
+            0,
+            U256::from(79228162514264337593543950336u128),
+            1_000_000,
+            0,
+            tick_data,
+        )).unwrap();
+
+        engine.start();
+
+        // Burn 200 liquidity: negative delta
+        engine.apply_liquidity_update(
+            POOL_MANAGER,
+            pool_id,
+            -60,
+            60,
+            I256::try_from(-200_i128).unwrap(),
+            100,
+        );
+
+        let fwd_key = engine.pool_keys_for_id(POOL_MANAGER, &pool_id).unwrap().0;
+        let pool = engine.get_pool(fwd_key).unwrap();
+
+        // tick_lower: gross -= 200, net -= 200
+        let lower_tick = &pool.tick_data[&-60];
+        assert_eq!(lower_tick.liquidity_gross, U128::from(300)); // 500 - 200
+        assert_eq!(lower_tick.liquidity_net, I256::try_from(50_i128).unwrap()); // 250 - 200
+
+        // tick_upper: gross -= 200, net += 200
+        let upper_tick = &pool.tick_data[&60];
+        assert_eq!(upper_tick.liquidity_gross, U128::from(300)); // 500 - 200
+        assert_eq!(upper_tick.liquidity_net, I256::try_from(-50_i128).unwrap()); // -250 + 200
+    }
+
+    #[test]
+    fn v4_full_burn_removes_ticks_with_zero_gross() {
+        let mut engine = V4BlockEngine::new();
+        let pool_id = make_pool_id(3);
+
+        let mut tick_data = HashMap::new();
+        tick_data.insert(-60, make_tick_info(100, 100));
+        tick_data.insert(60, make_tick_info(100, -100));
+
+        engine.register_pool(make_register_params(
+            POOL_MANAGER,
+            pool_id,
+            3000,
+            60,
+            0,
+            U256::from(79228162514264337593543950336u128),
+            1_000_000,
+            0,
+            tick_data,
+        )).unwrap();
+
+        engine.start();
+
+        // Burn all 100 liquidity: delta = -100, gross goes to 0 → tick removed
+        engine.apply_liquidity_update(
+            POOL_MANAGER,
+            pool_id,
+            -60,
+            60,
+            I256::try_from(-100_i128).unwrap(),
+            100,
+        );
+
+        let fwd_key = engine.pool_keys_for_id(POOL_MANAGER, &pool_id).unwrap().0;
+        let pool = engine.get_pool(fwd_key).unwrap();
+
+        // Both ticks should be removed since liquidity_gross is now 0
+        assert!(!pool.tick_data.contains_key(&-60));
+        assert!(!pool.tick_data.contains_key(&60));
+    }
+
+    #[test]
+    fn v4_mint_initializes_new_tick() {
+        let mut engine = V4BlockEngine::new();
+        let pool_id = make_pool_id(4);
+
+        // Register with no tick at -120 or 120
+        engine.register_pool(make_register_params(
+            POOL_MANAGER,
+            pool_id,
+            3000,
+            60,
+            0,
+            U256::from(79228162514264337593543950336u128),
+            1_000_000,
+            0,
+            HashMap::new(),
+        )).unwrap();
+
+        engine.start();
+
+        // Mint adds new ticks at -120 and 120
+        engine.apply_liquidity_update(
+            POOL_MANAGER,
+            pool_id,
+            -120,
+            120,
+            I256::try_from(300_i128).unwrap(),
+            100,
+        );
+
+        let fwd_key = engine.pool_keys_for_id(POOL_MANAGER, &pool_id).unwrap().0;
+        let pool = engine.get_pool(fwd_key).unwrap();
+
+        // New ticks should be initialized
+        let lower_tick = &pool.tick_data[&-120];
+        assert_eq!(lower_tick.liquidity_gross, U128::from(300));
+        assert_eq!(lower_tick.liquidity_net, I256::try_from(300_i128).unwrap());
+
+        let upper_tick = &pool.tick_data[&120];
+        assert_eq!(upper_tick.liquidity_gross, U128::from(300));
+        assert_eq!(upper_tick.liquidity_net, I256::try_from(-300_i128).unwrap());
+    }
+
+    #[test]
+    fn v4_apply_liquidity_update_ignores_unregistered_pool() {
+        let mut engine = V4BlockEngine::new();
+        let unregistered_id = make_pool_id(0xFF);
+
+        // Should not panic
+        engine.apply_liquidity_update(
+            POOL_MANAGER,
+            unregistered_id,
+            -60,
+            60,
+            I256::try_from(100_i128).unwrap(),
+            1,
+        );
+    }
+
+    // ── process_block tests ──────────────────────────────────────
+
+    #[test]
+    fn v4_process_block_with_no_logs_is_noop() {
+        let mut engine = V4BlockEngine::new();
+
+        let pool_id = make_pool_id(1);
+        let mut tick_data = HashMap::new();
+        tick_data.insert(60, make_tick_info(200, 100));
+        tick_data.insert(-60, make_tick_info(150, -50));
+
+        engine.register_pool(make_register_params(
+            POOL_MANAGER,
+            pool_id,
+            3000,
+            60,
+            0,
+            U256::from(79228162514264337593543950336u128),
+            1_000_000,
+            0,
+            tick_data,
+        )).unwrap();
+
+        engine.start();
+
+        let fwd_key = engine.pool_keys_for_id(POOL_MANAGER, &pool_id).unwrap().0;
+        let pool_before = engine.get_pool(fwd_key).unwrap().clone();
+
+        engine.process_block(&[], 50);
+
+        let pool_after = engine.get_pool(fwd_key).unwrap();
+        assert_eq!(pool_after.sqrt_price_x96, pool_before.sqrt_price_x96);
+        assert_eq!(pool_after.liquidity, pool_before.liquidity);
+        assert_eq!(pool_after.tick, pool_before.tick);
+    }
+
+    #[test]
+    fn v4_process_block_with_swap_and_modify_liquidity() {
+        let mut engine = V4BlockEngine::new();
+        let pool_id = make_pool_id(10);
+
+        let mut tick_data = HashMap::new();
+        tick_data.insert(-60, make_tick_info(200, -100));
+        tick_data.insert(60, make_tick_info(200, 100));
+
+        engine.register_pool(make_register_params(
+            POOL_MANAGER,
+            pool_id,
+            3000,
+            60,
+            0,
+            U256::from(79228162514264337593543950336u128),
+            1_000_000,
+            0,
+            tick_data,
+        )).unwrap();
+
+        engine.start();
+
+        // Build a swap log
+        let swap_log = build_v4_swap_log(
+            POOL_MANAGER,
+            pool_id,
+            Address::ZERO,
+            I256::try_from(-1000_i128).unwrap(),
+            I256::try_from(500_i128).unwrap(),
+            U256::from(79466191966197645195421774833u128),
+            U128::from(900_000u64),
+            10,
+            3000,
+        );
+
+        // Build a ModifyLiquidity log (positive delta = add liquidity)
+        let modify_log = build_v4_modify_liquidity_log(
+            POOL_MANAGER,
+            pool_id,
+            Address::ZERO,
+            -120,
+            120,
+            I256::try_from(500_i128).unwrap(),
+            B256::ZERO,
+        );
+
+        engine.process_block(&[swap_log, modify_log], 100);
+
+        let fwd_key = engine.pool_keys_for_id(POOL_MANAGER, &pool_id).unwrap().0;
+        let pool = engine.get_pool(fwd_key).unwrap();
+
+        // Swap should have updated scalar state
+        assert_eq!(pool.sqrt_price_x96, U256::from(79466191966197645195421774833u128));
+        assert_eq!(pool.liquidity, 900_000);
+        assert_eq!(pool.tick, 10);
+
+        // ModifyLiquidity should have added ticks at -120 and 120
+        assert!(pool.tick_data.contains_key(&-120));
+        assert!(pool.tick_data.contains_key(&120));
+        let new_lower_tick = &pool.tick_data[&-120];
+        assert_eq!(new_lower_tick.liquidity_gross, U128::from(500));
+        assert_eq!(new_lower_tick.liquidity_net, I256::try_from(500_i128).unwrap());
+        let new_upper_tick = &pool.tick_data[&120];
+        assert_eq!(new_upper_tick.liquidity_gross, U128::from(500));
+        assert_eq!(new_upper_tick.liquidity_net, I256::try_from(-500_i128).unwrap());
+    }
+
+    // ── registered_pool_managers test ─────────────────────────────
+
+    #[test]
+    fn registered_pool_managers_returns_unique_addresses() {
+        let mut engine = V4BlockEngine::new();
+
+        let pm1 = Address::from([0x11u8; 20]);
+        let pm2 = Address::from([0x22u8; 20]);
+
+        engine.register_pool(make_register_params(
+            pm1,
+            make_pool_id(1),
+            3000,
+            60,
+            0,
+            U256::from(79228162514264337593543950336u128),
+            1_000_000,
+            0,
+            HashMap::new(),
+        )).unwrap();
+
+        engine.register_pool(make_register_params(
+            pm1,
+            make_pool_id(2),
+            3000,
+            60,
+            0,
+            U256::from(79228162514264337593543950336u128),
+            1_000_000,
+            0,
+            HashMap::new(),
+        )).unwrap();
+
+        engine.register_pool(make_register_params(
+            pm2,
+            make_pool_id(3),
+            3000,
+            60,
+            0,
+            U256::from(79228162514264337593543950336u128),
+            1_000_000,
+            0,
+            HashMap::new(),
+        )).unwrap();
+
+        let managers = engine.registered_pool_managers();
+        assert_eq!(managers.len(), 2);
+        assert!(managers.contains(&pm1));
+        assert!(managers.contains(&pm2));
+    }
+
+    // ── Log construction helpers ──────────────────────────────────
+
+    fn build_v4_swap_log(
+        pool_manager: Address,
+        pool_id: PoolId,
+        sender: Address,
+        amount0: I256,
+        amount1: I256,
+        sqrt_price_x96: U256,
+        liquidity: U128,
+        tick: i32,
+        fee: u32,
+    ) -> alloy::rpc::types::Log {
+        use alloy::primitives::Bytes;
+
+        let mut data = Vec::with_capacity(192);
+        data.extend_from_slice(&amount0.to_be_bytes::<32>());
+        data.extend_from_slice(&amount1.to_be_bytes::<32>());
+        data.extend_from_slice(&sqrt_price_x96.to_be_bytes::<32>());
+        let liq_bytes = liquidity.to_be_bytes::<16>();
+        let mut liq_word = [0u8; 32];
+        liq_word[16..32].copy_from_slice(&liq_bytes);
+        data.extend_from_slice(&liq_word);
+        let tick_i256 = I256::try_from(tick as i128).unwrap_or(I256::ZERO);
+        data.extend_from_slice(&tick_i256.to_be_bytes::<32>());
+        let mut fee_word = [0u8; 32];
+        fee_word[28..32].copy_from_slice(&fee.to_be_bytes());
+        data.extend_from_slice(&fee_word);
+
+        let pool_id_topic = B256::from(pool_id);
+        let v4_swap_topic = crate::bot_core::v4_swap_decoder::V4_SWAP_TOPIC;
+
+        let inner = alloy::primitives::Log::new_unchecked(
+            pool_manager,
+            vec![v4_swap_topic, pool_id_topic, sender.into_word()],
+            Bytes::from(data),
+        );
+        alloy::rpc::types::Log {
+            inner,
+            block_hash: None,
+            block_number: None,
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
+        }
+    }
+
+    fn build_v4_modify_liquidity_log(
+        pool_manager: Address,
+        pool_id: PoolId,
+        sender: Address,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: I256,
+        salt: B256,
+    ) -> alloy::rpc::types::Log {
+        use alloy::primitives::Bytes;
+
+        let mut data = Vec::with_capacity(128);
+        let tick_lower_i256 = I256::try_from(i128::from(tick_lower)).unwrap_or(I256::ZERO);
+        data.extend_from_slice(&tick_lower_i256.to_be_bytes::<32>());
+        let tick_upper_i256 = I256::try_from(i128::from(tick_upper)).unwrap_or(I256::ZERO);
+        data.extend_from_slice(&tick_upper_i256.to_be_bytes::<32>());
+        data.extend_from_slice(&liquidity_delta.to_be_bytes::<32>());
+        data.extend_from_slice(salt.as_slice());
+
+        let pool_id_topic = B256::from(pool_id);
+        let v4_modify_liq_topic = crate::bot_core::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC;
+
+        let inner = alloy::primitives::Log::new_unchecked(
+            pool_manager,
+            vec![v4_modify_liq_topic, pool_id_topic, sender.into_word()],
+            Bytes::from(data),
+        );
+        alloy::rpc::types::Log {
+            inner,
+            block_hash: None,
+            block_number: None,
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
         }
     }
 }

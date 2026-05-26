@@ -488,7 +488,7 @@ def test_v4_snapshot_pending_updates()
 
 - [x] Slice 1: V3 Mint/Burn event decoders
 - [x] Slice 2: V3 `apply_liquidity_update` + `process_block` with Mint/Burn
-- [ ] Slice 3: V3EnginePump filter + V4 ModifyLiquidity decoder + V4 `process_block`
+- [x] Slice 3: V3EnginePump filter + V4 ModifyLiquidity decoder + V4 `process_block`
 - [ ] Slice 4: V4EnginePump
 - [ ] Slice 5: Unified `UniswapEnginePump`
 - [ ] Slice 6: V3 snapshot backfill + V4 snapshot
