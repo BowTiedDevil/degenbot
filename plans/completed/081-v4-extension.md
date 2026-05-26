@@ -318,7 +318,7 @@ def test_v4_hooked_pool_excluded()
 
 ### V4 pool discovery performance
 
-The database contains ~6.8M V4 pools (~102K without hooks). Including `UniswapV4PoolTable` in `find_paths_async` with `ZERO_ADDRESS` as a start/end token significantly increases path enumeration time. `ENABLE_V4_POOL_DISCOVERY=1` env var controls this — default off so V2/V3 baseline starts in ~240s.
+The database contains ~6.8M V4 pools (~102K without hooks). Including `UniswapV4PoolTable` in `find_paths_async` with `ZERO_ADDRESS` as a start/end token increases path enumeration time compared to V2/V3-only runs.
 
 ### WS subscription address filter
 
