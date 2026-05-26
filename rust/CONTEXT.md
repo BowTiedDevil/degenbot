@@ -94,10 +94,10 @@ _Avoid_: Python V3 engine, V3 engine wrapper
 
 **V3EnginePump**: A standalone async task that drives `V3BlockEngine`. Owns its own `AlloyProvider` (created from an RPC URL string), subscribes to block headers via WS, fetches V3 Swap logs via `eth_getLogs` on each new block, and calls `engine.process_block()`. No dependency on the Python subscription infrastructure. Mirrors `V2EnginePump`.
 
-**UniswapEngine**: A unified engine that composes a `V2BlockEngine` and a `V3BlockEngine` to handle mixed V2/V3 arbitrage paths in the same per-block lifecycle. Routes Sync events to the V2 engine and Swap events to the V3 engine. Solver dispatch: V2-V2 → `exact_mobius_solve` (closed-form U512 isqrt), V3-V3 → `int_solve_v3_v3` (piecewise integer Möbius), V2-V3/V3-V2 → `exact_solve_mixed_v2_v3_sequence` (integer effective reserves + piecewise tick-range enumeration). Registration is frozen after `start()` — calls `start()` on both sub-engines.
+**UniswapEngine**: A unified engine that composes a `V2BlockEngine`, `V3BlockEngine`, and `V4BlockEngine` to handle mixed V2/V3/V4 arbitrage paths in the same per-block lifecycle. Routes Sync events to the V2 engine, Swap events to the V3 engine, and V4 Swap events (from PoolManager) to the V4 engine. Solver dispatch: V2-V2 → `exact_mobius_solve`, V3-V3 and V4-V4 → `int_solve_v3_v3` (same CL math), V2-V3/V3-V2/V4-V3/V3-V4/V4-V2/V2-V4 → `exact_solve_mixed_v2_v3_sequence` (integer effective reserves + piecewise tick-range enumeration). Registration is frozen after `start()` — calls `start()` on all sub-engines.
 _Avoid_: mixed engine, combined engine, uniswap engine
 
-**HopType**: An enum (`V2`, `V3`) identifying which sub-engine owns a given hop in a mixed path.
+**HopType**: An enum (`V2`, `V3`, `V4`) identifying which sub-engine owns a given hop in a mixed path. `V4` is treated as concentrated liquidity (same math as `V3`) by the solver.
 _Avoid_: hop enum, engine type
 
 **MixedPoolRef**: A pool reference in a mixed path: (`hop_type`, `pool_key`, `zero_for_one`). `pool_key` is the pool ID in the V2 engine or the pool key in the V3 engine.
@@ -109,6 +109,24 @@ _Avoid_: V3 pump, V3 block subscriber, V3 event driver
 
 **Code Injection**: Injecting contract runtime bytecode at a fresh address via `eth_simulateV1`'s `stateOverrides.code` field, enabling simulation of undeployed contracts. The executor contract's runtime bytecode (with immutables OWNER_ADDR/WETH_ADDR baked in) is loaded from `contracts/tstore_executor_runtime_bytecode.txt`. The committed bytecode uses a randomly generated throwaway OWNER_ADDR to avoid leaking operational addresses — override `EXECUTOR_OWNER_ADDRESS` at runtime with the real key. Vyper immutables are embedded in the code section, not storage — no storage slot overrides are needed. `eth_simulateV1` chains calls sequentially, so the 3-call WETH balanceOf pattern correctly captures profit without WETH storage prefunding.
 _Avoid_: contract injection, bytecode override, code override
+
+**V4BlockEngine**: A pure-Rust struct that owns the full per-block V4 arbitrage lifecycle: V4 Swap event decoding from PoolManager, pool state updates (including tick-level changes), tick-range computation, and Mobius piecewise solver dispatch. V4 pools are identified by `(pool_manager: Address, pool_id: [u8; 32])` instead of a single contract address. V4 paths carry `IntV3TickRangeSequence` objects (same type as V3) — the solver can't distinguish V3 from V4 hops. Follows the `V3BlockEngine` pattern exactly.
+_Avoid_: V4 engine, v4 block processor, v4 arbitrage engine
+
+**V4PoolState**: The engine-internal state for a Uniswap V4 pool: pool_manager address, pool_id (32-byte hash of PoolKey), pool_key (currency0, currency1, fee, tick_spacing, hooks), mutable fields (sqrt_price_x96, liquidity, tick), and `tick_data: HashMap<i32, TickInfo>`. Mirrors `V3PoolState` with added `(pool_manager, pool_id)` identification.
+_Avoid_: v4 state, v4 pool data
+
+**V4PoolKey**: A struct with 5 fields matching Solidity's `PoolKey`: `currency0: Address`, `currency1: Address`, `fee: u32`, `tick_spacing: i32`, `hooks: Address`. Used for engine-internal tracking; the hooks field is stored but not used for solving (hook filtering happened at registration).
+_Avoid_: pool key, v4 key, poolkey
+
+**V4SwapUpdate**: A pre-decoded V4 Swap update. Carries pool_manager, pool_id, sqrt_price_x96, liquidity, tick, and tick_priors. Same structure as `V3SwapUpdate` with replaced identification fields.
+_Avoid_: v4 swap event data, v4 update
+
+**AMOUNT_MODIFYING_HOOK_MASK**: `0xCC` — a bitmask covering the 4 V4 hook flags that can modify swap amounts: `BEFORE_SWAP` (0x80), `AFTER_SWAP` (0x40), `BEFORE_SWAP_RETURNS_DELTA` (0x08), `AFTER_SWAP_RETURNS_DELTA` (0x04). Pools with `(hook_flags & 0xCC) != 0` are rejected at registration time — they violate the solver's assumption that V3 CL math applies exactly.
+_Avoid_: hook mask, hook filter, amount mask
+
+**V4_DYNAMIC_FEE_FLAG**: `0x100000` — the fee value indicating a V4 pool has dynamic (swap-dependent) fees. Pools with this fee value are rejected at registration because the solver requires a fixed fee for accurate profit calculation.
+_Avoid_: dynamic fee, variable fee flag
 
 **V3 amountSpecified Sign Convention**: V3 and V4 use opposite conventions for `amountSpecified`. In V3: positive (> 0) = exact INPUT (swap exactly this much into the pool), negative (< 0) = exact OUTPUT (receive exactly this much from the pool). In V4, the convention is reversed. This is verified in `v3_simulator.py:93` — `exact_input = amount_specified > 0`. For arbitrage (always exact-input mode), V3 swap calldata must use **positive** values. The original bot implementation incorrectly used the V4 convention (negative values), causing all V3-involving simulations to fail with V3's "IIA" (Insufficient Input Amount) error.
 _Avoid_: amount sign, swap direction sign, amount convention
@@ -154,7 +172,8 @@ _Avoid_: amount sign, swap direction sign, amount convention
 - **`V3EnginePump`** → **`V3_SWAP_TOPIC`**: The pump builds an Alloy `Filter` with `V3_SWAP_TOPIC` and registered pool addresses for `eth_getLogs` queries
 - **`UniswapEngine`** → **`V2BlockEngine`**: UniswapEngine composes a V2BlockEngine for V2 pool state and constant-product solving; `start()` calls `v2_engine.start()`
 - **`UniswapEngine`** → **`V3BlockEngine`**: UniswapEngine composes a V3BlockEngine for V3 pool state, tick ranges, and piecewise solving; `start()` calls `v3_engine.start()`
-- **`UniswapEngine`** → **`solve_v3_v3()`**: Pure V3 paths are dispatched to the integer-exact piecewise Mobius solver (`int_solve_v3_v3`); mixed paths use integer sequence solver
+- **`UniswapEngine`** → **`V4BlockEngine`**: UniswapEngine composes a V4BlockEngine for V4 pool state, tick ranges, and piecewise solving; `start()` calls `v4_engine.start()`
+- **`UniswapEngine`** → **`solve_v3_v3()`**: Pure V3/V4 paths are dispatched to the integer-exact piecewise Mobius solver (`int_solve_v3_v3`); mixed paths use integer sequence solver
 - **`UniswapEngine`** → **`exact_solve_mixed_v2_v3_sequence()`**: Mixed V2-V3 paths use integer effective reserves + piecewise tick-range enumeration with closed-form Möbius solve per range, replacing the former golden-section search
 - **`PyUniswapArbEngine`** → **`UniswapEngine`**: The PyO3 wrapper delegates all operations to the inner engine through a shared `Mutex`; `process_logs()` drives both V2 and V3 updates synchronously
 - **`MixedPoolRef`** → **`HopType`**: Each pool ref in a mixed path carries a `HopType` (`V2` or `V3`) for solver dispatch

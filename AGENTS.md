@@ -149,6 +149,30 @@ Three `runtime_checkable` protocols replace removed ABCs:
 
 Use `hasattr()` structural checks for class-level dispatch (not `issubclass()` — Python's `runtime_checkable` protocols with `@property` raise `TypeError` on `issubclass()`).
 
+### V4 Hook Filtering
+
+V4 pools with amount-modifying hooks are rejected at registration time in the Rust engine. The `AMOUNT_MODIFYING_HOOK_MASK = 0xCC` covers 4 hook flags:
+
+| Hook Flag | Bit | Effect |
+|-----------|-----|--------|
+| `BEFORE_SWAP` | 1<<7 | Hook can modify swap parameters before execution |
+| `AFTER_SWAP` | 1<<6 | Hook can modify swap results after execution |
+| `BEFORE_SWAP_RETURNS_DELTA` | 1<<3 | Hook returns custom swap delta |
+| `AFTER_SWAP_RETURNS_DELTA` | 1<<2 | Hook returns custom swap delta |
+
+If `(hook_flags & 0xCC) != 0`, the pool is excluded — it violates the solver's assumption that V3 CL math applies exactly. V4 pools with dynamic fees (`fee == 0x100000`) are also excluded at registration. Both checks are performed once at registration with zero runtime overhead.
+
+### V4 amountSpecified Sign Convention
+
+V3 and V4 use **opposite** sign conventions for `amountSpecified`:
+
+| Mode | V3 | V4 |
+|------|----|----|
+| Exact INPUT | `amountSpecified > 0` | `amountSpecified < 0` |
+| Exact OUTPUT | `amountSpecified < 0` | `amountSpecified > 0` |
+
+For arbitrage (always exact-input mode): V3 encoding uses **positive** values, V4 encoding uses **negative** values. This is verified in `v3_simulator.py:93` — `exact_input = amount_specified > 0`.
+
 ### Calculations Module
 
 Standalone pure-math functions in `src/degenbot/calculations/`: `solidly_stable`, `camelot`, `stableswap`, `concentrated_liquidity`, `evm_math`. No `self`, no class references. V3/V4 libraries remain in `uniswap/v3_libraries/` and `v4_libraries/`. Constant-product swap math lives in `uniswap/v2_functions.py` (`constant_product_calc_exact_in`, `constant_product_calc_exact_out`); the former `calculations/constant_product.py` was deleted — its intermediate truncation in fee deduction diverged from on-chain behavior for small inputs.
