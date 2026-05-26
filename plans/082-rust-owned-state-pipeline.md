@@ -491,6 +491,6 @@ def test_v4_snapshot_pending_updates()
 - [x] Slice 3: V3EnginePump filter + V4 ModifyLiquidity decoder + V4 `process_block`
 - [x] Slice 4: V4EnginePump
 - [x] Slice 5: Unified `UniswapEnginePump`
-- [ ] Slice 6: V3 snapshot backfill + V4 snapshot
+- [x] Slice 6: V3 snapshot backfill + V4 snapshot
 - [ ] Slice 7: Remove Python event path
 - [ ] Slice 8: Validate and clean up
