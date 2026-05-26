@@ -20,8 +20,19 @@ On-chain executor contracts for MEV arbitrage.
 
 | Address | Contract | Notes |
 |---------|----------|-------|
-| `0x543C7eF4...` | `tstore_executor_generic.vy` | V3-only, V2 callbacks silently dropped by `__default__()` |
+| `0x543C7eF4...` | `tstore_executor_generic.vy` | V3-only, V2 callbacks silently dropped by `__default__()`. **Superseded** by `contracts/tstore_executor.vy` which has full V2/V3 callback support. |
 | `0x6dF77532...` | `ethereum_executor_testing.vy` | V3-only, no flash borrows |
+
+### Critical: V3 amountSpecified Sign Convention
+
+When building swap calldata for V3 pools, note that V3 and V4 use **opposite** sign conventions for `amountSpecified`:
+
+| | exact INPUT | exact OUTPUT |
+|---|---|---|
+| **V3** | `amountSpecified > 0` | `amountSpecified < 0` |
+| **V4** | `amountSpecified < 0` | `amountSpecified > 0` |
+
+For arbitrage paths using the `tstore_executor.vy` (V2+V3 only), always use **positive** `amountSpecified` for exact-input V3 swaps. Using the wrong sign causes V3 to interpret the call as exact-output mode, computing an enormous input requirement and failing with "IIA" (Insufficient Input Amount).
 
 ---
 

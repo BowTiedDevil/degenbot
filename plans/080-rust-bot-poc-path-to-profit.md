@@ -760,6 +760,35 @@ All four encoding functions tested against real mainnet pools:
 - V2-V3: PancakeSwap V2→Uni V3 MAGAS-WETH (4 payloads, flash borrow + nested callback)
 - V3-V2: existing encoder unchanged, already working
 
+### Post-Completion: V3 amountSpecified Sign Convention Fix (2025-05-25)
+
+All V3 swap encoding was using the **V4 sign convention** (negative = exact input) instead of the **V3 sign convention** (positive = exact input). This caused every V3-involving simulation to fail with V3's "IIA" (Insufficient Input Amount) error.
+
+**V3 convention** (from `v3_simulator.py:93` — `exact_input = amount_specified > 0`):
+- `amountSpecified > 0` → exact INPUT (swap exactly this much INTO the pool)
+- `amountSpecified < 0` → exact OUTPUT (receive exactly this much FROM the pool)
+
+**V4 convention** (opposite):
+- `amountSpecified < 0` → exact INPUT
+- `amountSpecified > 0` → exact OUTPUT
+
+**Bug**: All 5 V3 swap encoding sites passed `amountSpecified = -X` (negative), telling V3 "give me exactly X of the output token." V3 then computed the enormous input needed to produce that output, and the balance check failed because we only transferred the solver-computed amount.
+
+**Fix**: Changed all 5 occurrences from `-X` to `+X` (positive = exact input):
+1. `encode_v3v3_payloads` V3_A: `-optimal_input` → `+optimal_input`
+2. `encode_v3v3_payloads` V3_B: `-output_a` → `+output_a`
+3. `encode_v2v3_payloads` V3_B: `-output_a` → `+output_a`
+4. `encode_v3v2_payloads` Case 1: `-weth_in` → `+weth_in`
+5. `encode_v3v2_payloads` Case 2: `-weth_in` → `+weth_in`
+
+Also added docstring to `encode_v3_swap_calldata()` documenting the V3 vs V4 sign convention difference.
+
+**Verification**:
+- Anvil fork: V2-V3 arb path **SUCCEEDED** (gasUsed=185547, profit=0.0009 ETH)
+- Mainnet `--dry-run`: **Zero IIA errors** (down from 100% V3-involving simulation failure)
+- Remaining failures are token quality issues (tax tokens, anti-bot, OVERFLOW, empty reverts)
+- All 3225 Python tests pass
+
 ## Executor Contracts
 
 This bot uses the `tstore_executor.vy` contract (`contracts/`) for V2/V3 arbitrage. Three additional executor contracts exist for V4-based arbitrage, each tailored to a specific V4 pairing:
@@ -783,6 +812,7 @@ improvements for future consideration:
 - [x] ~~Run `--observe` mode on mainnet to validate the fully integer-exact engine produces realistic profits~~ Ran on mainnet for multiple blocks. All large profits verified as real on-chain opportunities (drained pools, extreme reserve imbalances). MILADY-WETH false positive eliminated by sequence-based solver.
 - [x] ~~V3-V3 and V2-V2 encoding blocked on smart contract design~~ No contract changes needed. All four path types (V3-V2, V3-V3, V2-V2, V2-V3) now have encoding functions using the existing executor's generic payload queue with nested callbacks.
 - [x] **Fix V3-V3 double-WETH-payment bug** — `encode_v3v3_payloads` and `encode_v2v3_payloads` were including explicit WETH transfer payloads to V3 pools where the executor's callback auto-pay already handles them. Fixed: skip explicit WETH transfers when `token_owed.address == WETH_ADDRESS`.
+- [x] **Fix V3 amountSpecified sign convention** — All 5 V3 swap encoding sites used V4 convention (negative = exact input) instead of V3 convention (positive = exact input). Every V3-involving simulation failed with "IIA". Fixed to use positive values. Verified on anvil fork (V2-V3 arb succeeded) and mainnet dry-run (zero IIA errors). See "Post-Completion: V3 amountSpecified Sign Convention Fix" section.
 - [ ] **Deploy new `tstore_executor.vy` contract** — Compiled (3058 bytes runtime bytecode), needs mainnet deployment with WETH funding. Updates `EXECUTOR_ADDRESS` and `EXECUTOR_OWNER` in bot config. Currently blocked until deployment. **Workaround**: `INJECT_EXECUTOR_CODE=1` enables code injection via `eth_simulateV1` for dry-run testing without mainnet deployment.
 - [ ] Consider removing `rust/src/optimizers/mobius_v3_v3.rs` (f64 V3-V3 solver) — now unused by the engine since Slice 15 replaced it with `int_solve_v3_v3`
 - [ ] Consider benchmarking `int_solve_v3_v3` vs f64 `solve_v3_v3` to quantify the integer-exact solver's overhead
