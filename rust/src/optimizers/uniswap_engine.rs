@@ -1,22 +1,26 @@
-//! Uniswap Engine — mixed V2/V3 arbitrage engine.
+//! Uniswap Engine — mixed V2/V3/V4 arbitrage engine.
 //!
-//! A unified engine that handles both Uniswap V2 and V3 pools in the same
-//! per-block lifecycle. Supports mixed paths (e.g., V2→V3 or V3→V2 hops).
+//! A unified engine that handles Uniswap V2, V3, and V4 pools in the same
+//! per-block lifecycle. Supports mixed paths (e.g., V2→V3, V3→V4, V4→V2 hops).
 //!
 //! # Design
 //!
 //! The engine composes:
 //! - A [`V2BlockEngine`] for V2 pool state and constant-product solving
 //! - A [`V3BlockEngine`] for V3 pool state, tick ranges, and piecewise V3 solving
+//! - A [`V4BlockEngine`] for V4 pool state (same CL math as V3, different settlement)
+//!
+//! V4 pools share identical concentrated-liquidity math with V3. The solver
+//! treats V3 and V4 hops identically — both produce `IntV3TickRangeSequence`.
 //!
 //! On [`UniswapEngine::process_block`]:
-//! 1. Decode both Sync and Swap events from logs
-//! 2. Route V2 Sync events to the V2 engine, V3 Swap events to the V3 engine
-//! 3. Solve registered paths using the appropriate solver (V2-V2, V3-V3, or mixed)
+//! 1. Decode Sync, V3 Swap, and V4 Swap events from logs
+//! 2. Route V2 Sync events to the V2 engine, V3 Swap events to the V3 engine,
+//!    V4 Swap events to the V4 engine
+//! 3. Solve registered paths using the appropriate solver
 //!
-//! Mixed V2-V3 paths use a golden-section search over the piecewise profit
-//! function, where the V2 hop uses standard Möbius and the V3 hop uses
-//! tick-range-constrained simulation.
+//! Hook filtering: V4 pools with amount-modifying hooks are rejected at
+//! registration time in the V4 engine. The unified engine never sees them.
 
 use std::collections::{HashMap, HashSet};
 
@@ -28,6 +32,7 @@ use crate::optimizers::mobius_v3::V3TickRangeSequence;
 
 use crate::optimizers::v2_block_engine::V2BlockEngine;
 use crate::optimizers::v3_block_engine::{RegisterV3PoolParams, V3BlockEngine, V3SwapUpdate};
+use crate::optimizers::v4_block_engine::{RegisterV4PoolParams, V4BlockEngine, V4SwapUpdate};
 
 // ---------------------------------------------------------------------------
 // Path types
@@ -40,6 +45,18 @@ pub enum HopType {
     V2,
     /// V3 concentrated-liquidity hop
     V3,
+    /// V4 concentrated-liquidity hop (same math as V3, different settlement)
+    V4,
+}
+
+impl HopType {
+    /// Whether this hop type uses concentrated-liquidity math.
+    ///
+    /// V3 and V4 hops are both CL — they share the same solver dispatch.
+    #[must_use]
+    pub const fn is_concentrated_liquidity(&self) -> bool {
+        matches!(self, HopType::V3 | HopType::V4)
+    }
 }
 
 /// A pool reference in a mixed path.
@@ -60,16 +77,22 @@ struct MixedPath {
 }
 
 /// Resolved state for a mixed path, ready for solving.
+///
+/// V3 and V4 hops both use the same `IntV3TickRangeSequence` type (CL math
+/// is identical). The `hop_types` vector distinguishes which engine owns
+/// each hop at the path level.
 #[derive(Clone, Debug, Default)]
 struct ResolvedMixedPath {
     hop_types: Vec<HopType>,
-    /// V2 hop states (Some for V2 hops, None for V3 hops)
+    /// V2 hop states (Some for V2 hops, None for V3/V4 hops)
     v2_hops: Vec<Option<crate::optimizers::mobius_int::IntHopState>>,
-    /// V3 tick-range sequences (Some for V3 hops, None for V2 hops)
+    /// V3 tick-range sequences (Some for V3 hops, None for V2/V4 hops)
+    /// Only used for f64-based solver (kept for compatibility)
     v3_sequences: Vec<Option<V3TickRangeSequence>>,
-    /// Integer V3 hops built from original U256 values (Some for V3 hops, None for V2 hops)
+    /// Integer V3 hops built from original U256 values (Some for V3 hops, None for V2/V4 hops)
     int_v3_hops: Vec<Option<crate::optimizers::mobius_v3_int::IntV3TickRangeHop>>,
-    /// Integer V3 tick-range sequences for V3-V3 paths (Some for V3 hops, None for V2 hops)
+    /// Integer tick-range sequences for CL paths (Some for V3/V4 hops, None for V2 hops).
+    /// V3 and V4 produce the same type — `IntV3TickRangeSequence`.
     int_v3_sequences: Vec<Option<crate::optimizers::mobius_v3_int::IntV3TickRangeSequence>>,
     /// Base (f64) hops for Mobius initial estimate
     base_hops: Vec<crate::optimizers::mobius::HopState>,
@@ -81,13 +104,15 @@ struct ResolvedMixedPath {
 // UniswapEngine
 // ---------------------------------------------------------------------------
 
-/// The unified Uniswap engine — owns both V2 and V3 pool state and solves
+/// The unified Uniswap engine — owns V2, V3, and V4 pool state and solves
 /// mixed arbitrage paths.
 pub struct UniswapEngine {
     /// The V2 engine
     v2_engine: V2BlockEngine,
     /// The V3 engine
     v3_engine: V3BlockEngine,
+    /// The V4 engine
+    v4_engine: V4BlockEngine,
     /// Registered mixed paths
     paths: HashMap<u64, (MixedPath, ResolvedMixedPath)>,
     /// Reverse index: (`hop_type`, `pool_key`) maps to set of `path_ids` that use this pool
@@ -109,6 +134,7 @@ impl UniswapEngine {
         Self {
             v2_engine: V2BlockEngine::new(),
             v3_engine: V3BlockEngine::new(),
+            v4_engine: V4BlockEngine::new(),
             paths: HashMap::new(),
             pool_to_paths: HashMap::new(),
             results: Vec::new(),
@@ -128,6 +154,12 @@ impl UniswapEngine {
     #[allow(clippy::missing_const_for_fn)]
     pub fn v3_engine(&mut self) -> &mut V3BlockEngine {
         &mut self.v3_engine
+    }
+
+    /// Access the V4 engine (for registration).
+    #[allow(clippy::missing_const_for_fn)]
+    pub fn v4_engine(&mut self) -> &mut V4BlockEngine {
+        &mut self.v4_engine
     }
 
     /// Register a mixed arbitrage path as an ordered list of `MixedPoolRef`s.
@@ -160,12 +192,14 @@ impl UniswapEngine {
         path_id
     }
 
-    /// Process a block: decode both Sync and Swap events, route to
+    /// Process a block: decode Sync, V3 Swap, and V4 Swap events, route to
     /// sub-engines, and re-solve only affected paths.
     pub fn process_block(&mut self, logs: &[Log], block_number: u64) {
-        // Separate V2 Sync and V3 Swap logs
+        // Separate V2 Sync, V3 Swap, and V4 Swap logs
         let mut v2_logs: Vec<&Log> = Vec::new();
         let mut v3_logs: Vec<&Log> = Vec::new();
+        // V4 Swap events come from PoolManager, not individual pool contracts.
+        // We decode them from the V4_SWAP_TOPIC.
 
         for log in logs {
             // Try to identify the log type by its topic
@@ -175,6 +209,9 @@ impl UniswapEngine {
                 } else if *topic == crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC {
                     v3_logs.push(log);
                 }
+                // V4 Swap events are identified by V4_SWAP_TOPIC.
+                // They are NOT decoded here — use process_v4_updates() instead
+                // since V4 requires (pool_manager, pool_id) not just address.
             }
         }
 
@@ -208,7 +245,7 @@ impl UniswapEngine {
             .collect();
 
         // Re-solve only paths containing updated pools
-        self.rebuild_and_solve_affected(&v2_affected, &v3_affected, block_number);
+        self.rebuild_and_solve_affected(&v2_affected, &v3_affected, &HashSet::new(), block_number);
     }
 
     /// Process pre-decoded updates for testing.
@@ -223,7 +260,31 @@ impl UniswapEngine {
         let v3_affected = self.v3_engine.apply_swap_updates(v3_updates, block_number);
 
         // Re-solve only paths containing updated pools
-        self.rebuild_and_solve_affected(&v2_affected, &v3_affected, block_number);
+        self.rebuild_and_solve_affected(&v2_affected, &v3_affected, &HashSet::new(), block_number);
+    }
+
+    /// Process pre-decoded V4 updates.
+    pub fn process_v4_updates(
+        &mut self,
+        v4_updates: &[V4SwapUpdate],
+        block_number: u64,
+    ) {
+        let v4_affected = self.v4_engine.apply_swap_updates(v4_updates, block_number);
+        self.rebuild_and_solve_affected(&HashSet::new(), &HashSet::new(), &v4_affected, block_number);
+    }
+
+    /// Process all updates at once (V2 + V3 + V4).
+    pub fn process_all_updates(
+        &mut self,
+        v2_updates: &[(Address, U256, U256)],
+        v3_updates: &[V3SwapUpdate],
+        v4_updates: &[V4SwapUpdate],
+        block_number: u64,
+    ) {
+        let v2_affected = self.v2_engine.apply_sync_updates(v2_updates);
+        let v3_affected = self.v3_engine.apply_swap_updates(v3_updates, block_number);
+        let v4_affected = self.v4_engine.apply_swap_updates(v4_updates, block_number);
+        self.rebuild_and_solve_affected(&v2_affected, &v3_affected, &v4_affected, block_number);
     }
 
     /// Re-resolve and re-solve only paths that contain updated pools.
@@ -235,6 +296,7 @@ impl UniswapEngine {
         &mut self,
         v2_affected: &HashSet<u64>,
         v3_affected: &HashSet<u64>,
+        v4_affected: &HashSet<u64>,
         block_number: u64,
     ) {
         // Collect affected path IDs from the reverse index
@@ -247,6 +309,11 @@ impl UniswapEngine {
         }
         for pool_key in v3_affected {
             if let Some(path_ids) = self.pool_to_paths.get(&(HopType::V3, *pool_key)) {
+                affected_path_ids.extend(path_ids);
+            }
+        }
+        for pool_key in v4_affected {
+            if let Some(path_ids) = self.pool_to_paths.get(&(HopType::V4, *pool_key)) {
                 affected_path_ids.extend(path_ids);
             }
         }
@@ -312,12 +379,12 @@ impl UniswapEngine {
     ///
     /// Dispatches based on path composition:
     /// - V2-V2: integer-exact Möbius solver (closed-form U512 isqrt)
-    /// - V3-V3: integer piecewise-Möbius (closed-form per segment)
-    /// - V2-V3 / V3-V2: mixed integer-exact solver
+    /// - V3-V3 / V4-V4 / V3-V4 / V4-V3: integer piecewise-Möbius (CL × CL)
+    /// - V2-V3 / V3-V2 / V2-V4 / V4-V2: mixed integer-exact solver
     #[allow(clippy::unused_self)]
     fn solve_path(&self, resolved: &ResolvedMixedPath) -> Option<(U256, U256)> {
         let all_v2 = resolved.hop_types.iter().all(|&t| t == HopType::V2);
-        let all_v3 = resolved.hop_types.iter().all(|&t| t == HopType::V3);
+        let all_cl = resolved.hop_types.iter().all(|t| t.is_concentrated_liquidity());
 
         if all_v2 {
             let int_hops: Vec<_> = resolved
@@ -342,7 +409,8 @@ impl UniswapEngine {
             } else {
                 None
             }
-        } else if all_v3 {
+        } else if all_cl {
+            // V3-V3, V4-V4, V3-V4, V4-V3: all concentrated-liquidity, same solver
             let int_sequences: Vec<_> = resolved
                 .int_v3_sequences
                 .iter()
@@ -357,6 +425,7 @@ impl UniswapEngine {
                 None
             }
         } else {
+            // Mixed V2 + CL (V3 or V4)
             Self::solve_mixed_path_int(resolved)
         }
     }
@@ -381,12 +450,13 @@ impl UniswapEngine {
         results
     }
 
-    /// Solve a mixed V2-V3 path using integer-exact Möbius solver.
+    /// Solve a mixed V2 + CL (V3 or V4) path using integer-exact Möbius solver.
     ///
     /// Uses the pre-built `IntV3TickRangeSequence` from `resolve_path`,
     /// which was constructed directly from U256 values (no f64 conversion).
+    /// V3 and V4 hops produce the same type — `IntV3TickRangeSequence`.
     ///
-    /// The sequence-based solver enumerates V3 ending ranges and computes
+    /// The sequence-based solver enumerates CL ending ranges and computes
     /// the optimal input for each piece, validating with crossing-aware
     /// simulation. This eliminates false positives from single-range
     /// approximation when swaps exceed the current tick range capacity.
@@ -398,23 +468,29 @@ impl UniswapEngine {
         }
 
         let hop0_is_v2 = resolved.hop_types[0] == HopType::V2;
+        let hop1_is_v2 = resolved.hop_types[1] == HopType::V2;
 
-        // Get V2 hop state and V3 tick-range sequence
-        let (v2_hop, v3_sequence, v3_first) = if hop0_is_v2 {
+        // One hop must be V2, the other must be CL (V3 or V4)
+        if hop0_is_v2 == hop1_is_v2 {
+            return None; // both same type — should be handled by other dispatches
+        }
+
+        // Get V2 hop state and CL tick-range sequence
+        let (v2_hop, cl_sequence, cl_first) = if hop0_is_v2 {
             let v2 = resolved.v2_hops[0].as_ref()?;
-            let v3_seq = resolved.int_v3_sequences[1].as_ref()?;
-            (v2, v3_seq, false) // V2 is first, V3 is second
+            let cl_seq = resolved.int_v3_sequences[1].as_ref()?;
+            (v2, cl_seq, false) // V2 is first, CL is second
         } else {
-            let v3_seq = resolved.int_v3_sequences[0].as_ref()?;
+            let cl_seq = resolved.int_v3_sequences[0].as_ref()?;
             let v2 = resolved.v2_hops[1].as_ref()?;
-            (v2, v3_seq, true) // V3 is first, V2 is second
+            (v2, cl_seq, true) // CL is first, V2 is second
         };
 
         // Use the sequence-based integer-exact mixed solver
         crate::optimizers::mobius_v3_int::exact_solve_mixed_v2_v3_sequence(
             std::slice::from_ref(v2_hop),
-            v3_sequence,
-            v3_first,
+            cl_sequence,
+            cl_first,
         )
     }
 
@@ -430,6 +506,7 @@ impl UniswapEngine {
         self.running = true;
         self.v2_engine.start();
         self.v3_engine.start();
+        self.v4_engine.start();
     }
 
     /// Perform initial solve of ALL paths.
@@ -474,6 +551,12 @@ impl UniswapEngine {
     #[must_use]
     pub fn v3_pool_count(&self) -> usize {
         self.v3_engine.pool_count()
+    }
+
+    /// Number of registered V4 pools.
+    #[must_use]
+    pub fn v4_pool_count(&self) -> usize {
+        self.v4_engine.pool_count()
     }
 
     /// Number of registered mixed paths.
@@ -558,6 +641,28 @@ impl UniswapEngine {
                     resolved.v3_sequences.push(sequence);
                     resolved.int_v3_hops.push(int_v3_hop);
                     resolved.int_v3_sequences.push(int_v3_sequence);
+                }
+                HopType::V4 => {
+                    // V4 pools use identical concentrated-liquidity math as V3.
+                    // They produce the same `IntV3TickRangeSequence` type.
+                    let Some(pool_state) = self.v4_engine.get_pool(pool_ref.pool_key) else {
+                        return; // Missing pool → invalid
+                    };
+
+                    // Build integer V4 sequence (same type as V3)
+                    let int_v4_sequence = pool_state.build_int_v4_sequence(pool_ref.zero_for_one, 10);
+
+                    // V4 doesn't use f64-based tick-range sequences or base hops
+                    // (the integer solver is sufficient). Push empty placeholders.
+                    resolved.hop_types.push(HopType::V4);
+                    resolved.v2_hops.push(None);
+                    resolved.v3_sequences.push(None); // V4 doesn't produce V3TickRangeSequence
+                    resolved.int_v3_hops.push(None); // V4 uses sequences, not single hops
+                    resolved.int_v3_sequences.push(int_v4_sequence);
+
+                    // Push a zero base hop placeholder (not used by integer solver,
+                    // but required to keep vectors aligned)
+                    resolved.base_hops.push(crate::optimizers::mobius::HopState::new(0.0, 0.0, 0.0));
                 }
             }
         }
@@ -1366,6 +1471,79 @@ impl PyUniswapArbEngine {
         }))
     }
 
+    /// Register a V4 pool with the engine.
+    ///
+    /// Hook filtering: pools with amount-modifying hook flags (BEFORE_SWAP,
+    /// AFTER_SWAP, BEFORE_SWAP_RETURNS_DELTA, AFTER_SWAP_RETURNS_DELTA)
+    /// are rejected. Dynamic-fee pools (fee=0x100000) are also rejected.
+    ///
+    /// Returns the forward pool key for use in path registration,
+    /// or raises ValueError if the pool is excluded.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, sqrt_price_x96, liquidity, tick, tick_data))]
+    fn register_v4_pool(
+        &self,
+        pool_manager: &str,
+        pool_id_hex: &str,
+        currency0: &str,
+        currency1: &str,
+        fee: u32,
+        tick_spacing: i32,
+        hook_flags: u16,
+        sqrt_price_x96: &Bound<'_, pyo3::PyAny>,
+        liquidity: u128,
+        tick: i32,
+        tick_data: &Bound<'_, pyo3::types::PyDict>,
+    ) -> PyResult<u64> {
+        let pm = pool_manager.parse::<Address>().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager address: {e}"))
+        })?;
+
+        // Decode pool_id from hex string (e.g. "0x1234...") to [u8; 32]
+        let pool_id = hex_string_to_pool_id(pool_id_hex)?;
+
+        let c0 = currency0.parse::<Address>().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid currency0 address: {e}"))
+        })?;
+        let c1 = currency1.parse::<Address>().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid currency1 address: {e}"))
+        })?;
+        let sp = crate::alloy_py::extract_python_u256(sqrt_price_x96)?;
+
+        let mut rust_tick_data = HashMap::new();
+        for (key, value) in tick_data.iter() {
+            let tick_idx: i32 = key.extract()?;
+            let tuple = value.cast::<pyo3::types::PyTuple>()?;
+            if tuple.len() != 2 {
+                let msg = format!(
+                    "Expected 2-tuple (liquidity_gross, liquidity_net), got {} elements",
+                    tuple.len()
+                );
+                return Err(pyo3::exceptions::PyValueError::new_err(msg));
+            }
+            let liquidity_gross: u128 = tuple.get_item(0)?.extract()?;
+            let liquidity_net: i128 = tuple.get_item(1)?.extract()?;
+            rust_tick_data.insert(tick_idx, make_tick_info(liquidity_gross, liquidity_net));
+        }
+
+        self.engine.lock().v4_engine().register_pool(RegisterV4PoolParams {
+            pool_manager: pm,
+            pool_id,
+            pool_key: crate::optimizers::v4_block_engine::V4PoolKey {
+                currency0: c0,
+                currency1: c1,
+                fee,
+                tick_spacing,
+                hooks: Address::ZERO, // Not needed for solving; hook filtering already done
+            },
+            hook_flags,
+            sqrt_price_x96: sp,
+            liquidity,
+            tick,
+            tick_data: rust_tick_data,
+        }).map_err(|e| pyo3::exceptions::PyValueError::new_err(e))
+    }
+
     /// Register a mixed arbitrage path.
     ///
     /// Each entry is (`hop_type_str`, `pool_key`, `zero_for_one`) where
@@ -1389,8 +1567,9 @@ impl PyUniswapArbEngine {
             let hop_type = match hop_type_str.as_str() {
                 "V2" => HopType::V2,
                 "V3" => HopType::V3,
+                "V4" => HopType::V4,
                 _ => {
-                    let msg = format!("Invalid hop_type: {hop_type_str}. Expected 'V2' or 'V3'");
+                    let msg = format!("Invalid hop_type: {hop_type_str}. Expected 'V2', 'V3', or 'V4'");
                     return Err(pyo3::exceptions::PyValueError::new_err(msg));
                 }
             };
@@ -1445,21 +1624,28 @@ impl PyUniswapArbEngine {
         self.engine.lock().v3_pool_count()
     }
 
+    /// Number of registered V4 pools.
+    fn v4_pool_count(&self) -> usize {
+        self.engine.lock().v4_pool_count()
+    }
+
     /// Number of registered paths.
     fn path_count(&self) -> usize {
         self.engine.lock().path_count()
     }
 
-    /// Process Sync and Swap events synchronously (for testing without a subscription).
+    /// Process Sync, V3 Swap, and V4 Swap events synchronously (for testing).
     ///
     /// `v2_sync_updates`: list of (`address_str`, `reserve0`, `reserve1`)
     /// `v3_swap_updates`: list of (`address_str`, `sqrt_price_x96`, liquidity, tick, `tick_priors`)
     ///   where `tick_priors` is a list of (`tick_index`, (`liquidity_gross`, `liquidity_net`))
-    #[pyo3(signature = (v2_sync_updates, v3_swap_updates, block_number))]
+    /// `v4_swap_updates`: list of (`pool_manager_str`, `pool_id_hex`, `sqrt_price_x96`, liquidity, tick, `tick_priors`)
+    #[pyo3(signature = (v2_sync_updates, v3_swap_updates, v4_swap_updates, block_number))]
     fn process_logs(
         &self,
         v2_sync_updates: &Bound<'_, PyList>,
         v3_swap_updates: &Bound<'_, PyList>,
+        v4_swap_updates: &Bound<'_, PyList>,
         block_number: u64,
     ) -> PyResult<()> {
         // Parse V2 Sync updates
@@ -1540,7 +1726,70 @@ impl PyUniswapArbEngine {
             });
         }
 
-        self.engine.lock().process_updates(&rust_v2, &rust_v3, block_number);
+        // Parse V4 Swap updates
+        let mut rust_v4: Vec<V4SwapUpdate> = Vec::with_capacity(v4_swap_updates.len());
+        for item in v4_swap_updates.iter() {
+            let tuple = item.cast::<pyo3::types::PyTuple>()?;
+            if tuple.len() != 6 {
+                let msg = format!(
+                    "Expected 6-tuple (pool_manager, pool_id_hex, sqrt_price, liquidity, tick, tick_priors), got {} elements",
+                    tuple.len()
+                );
+                return Err(pyo3::exceptions::PyValueError::new_err(msg));
+            }
+
+            let pm_obj = tuple.get_item(0)?;
+            let pm_str: String = pm_obj.extract()?;
+            let pool_manager = pm_str.parse::<Address>().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager address: {e}"))
+            })?;
+
+            let pid_obj = tuple.get_item(1)?;
+            let pid_str: String = pid_obj.extract()?;
+            let pool_id = hex_string_to_pool_id(&pid_str)?;
+
+            let sqrt_price = crate::alloy_py::extract_python_u256(&tuple.get_item(2)?)?;
+            let liquidity: u128 = tuple.get_item(3)?.extract()?;
+            let tick: i32 = tuple.get_item(4)?.extract()?;
+
+            let priors_obj = tuple.get_item(5)?;
+            let priors_list = priors_obj.cast::<PyList>()?;
+            let mut tick_priors = Vec::new();
+            for prior_item in priors_list.iter() {
+                let prior_tuple = prior_item.cast::<pyo3::types::PyTuple>()?;
+                if prior_tuple.len() != 2 {
+                    let msg = format!(
+                        "Expected 2-tuple (tick_index, (lg, ln)), got {} elements",
+                        prior_tuple.len()
+                    );
+                    return Err(pyo3::exceptions::PyValueError::new_err(msg));
+                }
+                let tick_idx: i32 = prior_tuple.get_item(0)?.extract()?;
+                let info_obj = prior_tuple.get_item(1)?;
+                let info_tuple = info_obj.cast::<pyo3::types::PyTuple>()?;
+                if info_tuple.len() != 2 {
+                    let msg = format!(
+                        "Expected 2-tuple (liquidity_gross, liquidity_net), got {} elements",
+                        info_tuple.len()
+                    );
+                    return Err(pyo3::exceptions::PyValueError::new_err(msg));
+                }
+                let lg: u128 = info_tuple.get_item(0)?.extract()?;
+                let ln: i128 = info_tuple.get_item(1)?.extract()?;
+                tick_priors.push((tick_idx, make_tick_info(lg, ln)));
+            }
+
+            rust_v4.push(V4SwapUpdate {
+                pool_manager,
+                pool_id,
+                sqrt_price_x96: sqrt_price,
+                liquidity,
+                tick,
+                tick_priors,
+            });
+        }
+
+        self.engine.lock().process_all_updates(&rust_v2, &rust_v3, &rust_v4, block_number);
         Ok(())
     }
 
@@ -1576,4 +1825,25 @@ fn make_tick_info(liquidity_gross: u128, liquidity_net: i128) -> crate::bot_core
         liquidity_gross: U128::from(liquidity_gross),
         liquidity_net: I256::try_from(liquidity_net).unwrap_or(I256::ZERO),
     }
+}
+
+/// Helper to decode a hex string (e.g. "0xabcd...") to a V4 PoolId ([u8; 32]).
+fn hex_string_to_pool_id(hex_str: &str) -> PyResult<crate::bot_core::v4_swap_decoder::PoolId> {
+    let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+    if hex_str.len() != 64 {
+        let msg = format!(
+            "Pool ID hex string must be 64 hex chars (32 bytes), got {}",
+            hex_str.len()
+        );
+        return Err(pyo3::exceptions::PyValueError::new_err(msg));
+    }
+    let mut pool_id = [0u8; 32];
+    for i in 0..32 {
+        let byte_str = &hex_str[i * 2..i * 2 + 2];
+        pool_id[i] = u8::from_str_radix(byte_str, 16).map_err(|e| {
+            let msg = format!("Invalid hex in pool_id at byte {i}: {e}");
+            pyo3::exceptions::PyValueError::new_err(msg)
+        })?;
+    }
+    Ok(pool_id)
 }

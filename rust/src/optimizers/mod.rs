@@ -36,4 +36,5 @@ pub mod mobius_v3_int;
 pub mod mobius_v3_v3;
 pub mod v3_block_engine;
 pub mod v3_engine_pump;
+pub mod v4_block_engine;
 pub mod uniswap_engine;
