@@ -783,7 +783,7 @@ improvements for future consideration:
 - [x] ~~Run `--observe` mode on mainnet to validate the fully integer-exact engine produces realistic profits~~ Ran on mainnet for multiple blocks. All large profits verified as real on-chain opportunities (drained pools, extreme reserve imbalances). MILADY-WETH false positive eliminated by sequence-based solver.
 - [x] ~~V3-V3 and V2-V2 encoding blocked on smart contract design~~ No contract changes needed. All four path types (V3-V2, V3-V3, V2-V2, V2-V3) now have encoding functions using the existing executor's generic payload queue with nested callbacks.
 - [x] **Fix V3-V3 double-WETH-payment bug** — `encode_v3v3_payloads` and `encode_v2v3_payloads` were including explicit WETH transfer payloads to V3 pools where the executor's callback auto-pay already handles them. Fixed: skip explicit WETH transfers when `token_owed.address == WETH_ADDRESS`.
-- [ ] **Deploy new `tstore_executor.vy` contract** — Compiled (3058 bytes runtime bytecode), needs mainnet deployment with WETH funding. Updates `EXECUTOR_ADDRESS` and `EXECUTOR_OWNER` in bot config. Currently blocked until deployment.
+- [ ] **Deploy new `tstore_executor.vy` contract** — Compiled (3058 bytes runtime bytecode), needs mainnet deployment with WETH funding. Updates `EXECUTOR_ADDRESS` and `EXECUTOR_OWNER` in bot config. Currently blocked until deployment. **Workaround**: `INJECT_EXECUTOR_CODE=1` enables code injection via `eth_simulateV1` for dry-run testing without mainnet deployment.
 - [ ] Consider removing `rust/src/optimizers/mobius_v3_v3.rs` (f64 V3-V3 solver) — now unused by the engine since Slice 15 replaced it with `int_solve_v3_v3`
 - [ ] Consider benchmarking `int_solve_v3_v3` vs f64 `solve_v3_v3` to quantify the integer-exact solver's overhead
 - [ ] Extend engine V3-V3 test suite with >3-hop paths (current tests cover only 2-hop V3-V3)
@@ -794,3 +794,36 @@ improvements for future consideration:
 - [ ] Run bot with `--dry-run` in live submission mode to validate V3-V3, V2-V2, and V2-V3 encoding against `eth_simulateV1`
 - [ ] Add unit tests for `encode_v3v3_payloads`, `encode_v2v2_payloads`, and `encode_v2v3_payloads` (currently validated only against mainnet pools manually)
 - [ ] Extend `tstore_executor.vy` with V4 support (add `unlockCallback` handler, `execute_payloads` integration) so a single contract handles V2+V3+V4 paths — currently requires separate V4 executor contracts
+
+## Post-Completion: Executor Code Injection via eth_simulateV1 (2025-05-25)
+
+The new `tstore_executor.vy` contract has full V2/V3 callback support, but deploying it on mainnet requires a real transaction. Code injection via `eth_simulateV1`'s `stateOverrides.code` field enables dry-run testing of the undeployed contract.
+
+### How it works
+
+1. **Runtime bytecode with immutables baked in**: Vyper immutables (OWNER_ADDR, WETH_ADDR) are embedded in the runtime code at construction time, not in storage. The patched runtime bytecode in `contracts/tstore_executor_runtime_bytecode.txt` has both addresses already set.
+
+2. **Code injection at a fresh address**: `stateOverrides.{address}.code = <runtime_bytecode>` injects the contract at `INJECTED_EXECUTOR_ADDRESS` (default `0xBadb1053...`). The address has no on-chain code, so this is completely safe.
+
+3. **No WETH storage overrides needed**: `eth_simulateV1` chains calls sequentially within a `blockStateCalls` group — the 3-call pattern (WETH balanceOf before → execute_payloads → WETH balanceOf after) correctly measures profit without prefunding. The WETH balance starts at 0 before `execute_payloads` and reflects the actual change after.
+
+4. **Manual tx encoding**: When `INJECT_EXECUTOR_CODE=True`, `build_transaction()` is skipped (it calls `estimateGas` which fails on an address with no on-chain code). Instead, the calldata is encoded manually via `encode_abi()` and a tx dict is built with a generous pre-set gas limit (2M gas), which is refined after simulation.
+
+5. **Safety guard**: When code injection is active, the bot never submits a real transaction — it logs a warning and skips submission. The injected contract doesn't exist on-chain.
+
+### Configuration
+
+```bash
+# Enable code injection for dry-run testing
+INJECT_EXECUTOR_CODE=1 python examples/eth_backrun_v3_v2_rust.py --dry-run
+
+# Override the injected executor address (optional)
+INJECTED_EXECUTOR_ADDRESS=0xYourAddressHere INJECT_EXECUTOR_CODE=1 python examples/eth_backrun_v3_v2_rust.py --dry-run
+```
+
+### Verified behaviors
+
+- `execute_payloads([], 0)` succeeds when called by OWNER_ADDR (status=1, gasUsed=~41K)
+- `execute_payloads([], 0)` reverts with `!OWNER` when called by a non-owner address
+- WETH stateDiff on this Erigon node does NOT affect `balanceOf()` reads — the `stateDiff`/`state` override on the WETH contract's storage is silently ignored. However, this is not needed since calls chain sequentially and the balance change from `execute_payloads` propagates correctly to the after-check.
+- ETH balance override on the owner address works correctly for gas payment
