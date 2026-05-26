@@ -92,7 +92,17 @@ _Avoid_: swap update, v3 swap event data
 **PyV3ArbEngine**: The PyO3 wrapper class (exposed as `V3ArbEngine` in Python) that holds `Arc<Mutex<V3BlockEngine>>` plus a shutdown flag and pump handle. Mirrors `PyV2ArbEngine` — Python constructs the engine (registers V3 pools with tick data, registers paths), then starts a Rust-side pump. `process_logs()` drives the engine synchronously for testing.
 _Avoid_: Python V3 engine, V3 engine wrapper
 
-**V3EnginePump**: A standalone async task that drives `V3BlockEngine`. Owns its own `AlloyProvider` (created from an RPC URL string), subscribes to block headers via WS, fetches V3 Swap logs via `eth_getLogs` on each new block, and calls `engine.process_block()`. No dependency on the Python subscription infrastructure. Mirrors `V2EnginePump`.
+**V3EnginePump**: A standalone async task that drives `V3BlockEngine`. Owns its own `AlloyProvider` (created from an RPC URL string), subscribes to block headers via WS, fetches V3 Swap/Mint/Burn logs via `eth_getLogs` on each new block, and calls `engine.process_block()`. No dependency on the Python subscription infrastructure. Mirrors `V2EnginePump`.
+
+**V3_MINT_TOPIC**: `0x7a53080ba414158be7ec69b987b5fb7d07dee101fe85488f0853ae16239d0bde` — the Keccak256 hash of the Uniswap V3 `Mint(address,address,int24,int24,uint128,uint256,uint256)` event signature. Used by the V3 Mint/Burn decoder to filter and decode Mint logs. Matches the Python `V3_MINT_TOPIC` in `log_decoders.py`.
+
+**V3_BURN_TOPIC**: `0x0c396cd989a39f4459b5fa1aed6a9a8dcdbc45908acfd67e028cd568da98982c` — the Keccak256 hash of the Uniswap V3 `Burn(address,int24,int24,uint128,uint256,uint256)` event signature. Used by the V3 Mint/Burn decoder to filter and decode Burn logs. Matches the Python `V3_BURN_TOPIC` in `log_decoders.py`.
+
+**update_tick_liquidity**: A module-level function that mutates a single tick's `liquidity_gross` and `liquidity_net` in-place, matching V3's Solidity `Tick.update()`. Both lower and upper tick receive `liquidity_gross += delta`; `liquidity_net += delta` for the lower tick and `liquidity_net -= delta` for the upper tick (controlled by the `is_lower_tick` parameter). Ticks with zero `liquidity_gross` after the update are removed (de-initialized).
+_Avoid_: tick update, tick liquidity mutation
+
+**apply_liquidity_update**: A method on `V3BlockEngine` that applies a Mint or Burn event to a pool's `tick_data`. Calls `update_tick_liquidity` for both lower and upper ticks, then removes de-initialized ticks. For Mint, `liquidity_delta` is positive; for Burn, negative.
+_Avoid_: liquidity mutation, mint/burn handler
 
 **UniswapEngine**: A unified engine that composes a `V2BlockEngine`, `V3BlockEngine`, and `V4BlockEngine` to handle mixed V2/V3/V4 arbitrage paths in the same per-block lifecycle. Routes Sync events to the V2 engine, Swap events to the V3 engine, and V4 Swap events (from PoolManager) to the V4 engine. Solver dispatch: V2-V2 → `exact_mobius_solve`, V3-V3 and V4-V4 → `int_solve_v3_v3` (same CL math), V2-V3/V3-V2/V4-V3/V3-V4/V4-V2/V2-V4 → `exact_solve_mixed_v2_v3_sequence` (integer effective reserves + piecewise tick-range enumeration). Registration is frozen after `start()` — calls `start()` on all sub-engines.
 _Avoid_: mixed engine, combined engine, uniswap engine
@@ -170,6 +180,10 @@ _Avoid_: amount sign, swap direction sign, amount convention
 - **`V3EnginePump`** → **`PyV3ArbEngine`**: PyV3ArbEngine holds `Arc<Mutex<V3BlockEngine>>` (shared with the pump) and a shutdown `Arc<AtomicBool>`; pump is spawned on `start(rpc_url)` and stopped via the shutdown flag
 - **`V3EnginePump`** → **`AlloyProvider`**: The pump creates its own `AlloyProvider` from an RPC URL — no PyO3 dependency
 - **`V3EnginePump`** → **`V3_SWAP_TOPIC`**: The pump builds an Alloy `Filter` with `V3_SWAP_TOPIC` and registered pool addresses for `eth_getLogs` queries
+- **`V3BlockEngine`** → **`decode_v3_mint_log()`**: Process_block decodes V3 Mint events from raw logs, then applies updates via `apply_liquidity_update()`
+- **`V3BlockEngine`** → **`decode_v3_burn_log()`**: Process_block decodes V3 Burn events from raw logs, then applies updates via `apply_liquidity_update()` (negated delta)
+- **`update_tick_liquidity`** → **`TickInfo`**: Mutates `liquidity_gross` and `liquidity_net` in-place on the `TickInfo` struct
+- **`apply_liquidity_update`** → **`update_tick_liquidity`**: Calls `update_tick_liquidity` for both lower and upper ticks; removes zero-gross ticks
 - **`UniswapEngine`** → **`V2BlockEngine`**: UniswapEngine composes a V2BlockEngine for V2 pool state and constant-product solving; `start()` calls `v2_engine.start()`
 - **`UniswapEngine`** → **`V3BlockEngine`**: UniswapEngine composes a V3BlockEngine for V3 pool state, tick ranges, and piecewise solving; `start()` calls `v3_engine.start()`
 - **`UniswapEngine`** → **`V4BlockEngine`**: UniswapEngine composes a V4BlockEngine for V4 pool state, tick ranges, and piecewise solving; `start()` calls `v4_engine.start()`
