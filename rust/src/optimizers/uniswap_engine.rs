@@ -1638,9 +1638,10 @@ impl PyUniswapArbEngine {
 
     /// Start the engine. Freezes registration and spawns the unified pump.
     ///
-    /// The pump subscribes to block headers via WS, fetches all relevant
-    /// logs (V2 Sync, V3 Swap/Mint/Burn, V4 Swap/ModifyLiquidity) in one
-    /// `eth_getLogs` call per block, and routes them to the engine.
+    /// The pump subscribes to both block headers and log events via WS.
+    /// Logs are buffered and processed atomically when the next block header
+    /// arrives. If no logs are received for a block, `eth_getLogs` is used to
+    /// verify. A 60s timeout triggers backfill for the missing range.
     ///
     /// After calling `start()`, the engine processes events autonomously.
     /// Python reads results via `latest_results()` and awaits new blocks
@@ -1942,6 +1943,7 @@ impl PyUniswapArbEngine {
         dict.set_item("base_fee_per_gas", notification.base_fee_per_gas)?;
         dict.set_item("gas_used", notification.gas_used)?;
         dict.set_item("gas_limit", notification.gas_limit)?;
+        dict.set_item("backfilled", notification.backfilled)?;
 
         Ok(dict.unbind())
     }

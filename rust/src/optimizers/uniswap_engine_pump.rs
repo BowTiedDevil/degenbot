@@ -1,40 +1,52 @@
 //! Uniswap Engine Pump — unified async task that drives the `UniswapEngine`.
 //!
-//! A single pump that subscribes to block headers, fetches ALL relevant logs
-//! (V2 Sync, V3 Swap/Mint/Burn, V4 Swap/ModifyLiquidity) in one
-//! `eth_getLogs` call per block, and routes them to the appropriate
+//! A single pump that subscribes to both block headers and log events via WS,
+//! buffers incoming logs against each block, and routes them to the appropriate
 //! sub-engine via `UniswapEngine::process_block()`.
 //!
 //! # Architecture
 //!
 //! ```text
-//! WS subscription → block header
-//!     → single `eth_getLogs` call per block with all topics
-//!     → route V2/V3/V4 events to sub-engines
-//!     → results stored in engine for Python to read
-//!     → BlockNotification sent via watch channel
+//! WS subscription: newHeads + logs (unfiltered)
+//!     │
+//!     ├─ logs arrive in real-time, buffered per block
+//!     │
+//!     └─ on newHeads:
+//!          ├─ Take all buffered logs for the just-completed block
+//!          ├─ Filter by topic + address in Rust
+//!          ├─ engine.process_block(filtered_logs, block_number)
+//!          ├─ Send `BlockNotification` via watch channel
+//!          │
+//!          └─ If no logs were received for this block:
+//!               `eth_getLogs` backfill to verify (empty block vs dropped events)
+//!
+//!     Backfill trigger 2: 60s timeout with nothing received on either subscription
+//!          → `eth_getLogs` from last_processed_block+1 to latest
 //! ```
 //!
-//! # Why a single pump?
+//! # Why dual subscriptions instead of `eth_getLogs` every block?
 //!
-//! V2, V3, and V4 each could have their own pump (as they do in the individual
-//! `V2EnginePump`, `V3EnginePump`, `V4EnginePump` files). But a single pump
-//! that fetches all logs in one `eth_getLogs` call per block reduces:
-//! - RPC round-trips: 1 instead of 3 per block
-//! - WS subscription load: 1 block header subscriber instead of 3
-//! - Lock contention: engine locked once per block, not 3 times
+//! Push-based log delivery eliminates the per-block RPC round-trip (~50-100ms).
+//! Events are processed as they arrive, not after a poll delay. Two backfill
+//! triggers cover the gap scenarios:
+//! - **60s timeout**: connection is likely dead → backfill the missing range
+//! - **Empty block**: no logs arrived → `eth_getLogs` verifies whether the block
+//!   was truly empty or events were silently dropped
 //!
-//! The individual pumps are kept as alternative entry points for testing or
-//! single-protocol deployments.
+//! The unfiltered logs subscription avoids provider-specific filter quirks
+//! (address limits, topic truncation, AND/OR semantics). All filtering happens
+//! in Rust after receipt.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
-use alloy::primitives::Address;
-use alloy::rpc::types::Filter;
-use futures_util::StreamExt;
-use parking_lot::Mutex;
+use alloy::primitives::{Address, B256};
+use alloy::rpc::types::{Filter, Log};
+use futures_util::{StreamExt, stream};
 use tokio::sync::watch;
+use tokio::time::timeout;
 
 use crate::bot_core::v3_mint_burn_decoder::{V3_MINT_TOPIC, V3_BURN_TOPIC};
 use crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC;
@@ -44,6 +56,9 @@ use crate::optimizers::v2_sync_decoder::V2_SYNC_TOPIC;
 use crate::optimizers::uniswap_engine::UniswapEngine;
 use crate::provider::AlloyProvider;
 use crate::runtime::get_runtime;
+
+/// How long to wait with no activity before assuming the connection is dead.
+const BACKFILL_TIMEOUT_SECS: u64 = 60;
 
 /// Block data sent from the pump to Python via the watch channel.
 ///
@@ -61,19 +76,43 @@ pub struct BlockNotification {
     pub gas_used: u64,
     /// Gas limit of this block
     pub gas_limit: u64,
+    /// Whether a backfill was performed for this block
+    pub backfilled: bool,
+}
+
+/// Topics we care about — used for in-Rust filtering of incoming logs.
+const RELEVANT_TOPICS: [B256; 6] = [
+    V2_SYNC_TOPIC,
+    V3_SWAP_TOPIC,
+    V3_MINT_TOPIC,
+    V3_BURN_TOPIC,
+    V4_SWAP_TOPIC,
+    V4_MODIFY_LIQUIDITY_TOPIC,
+];
+
+/// Events from the two WS subscriptions.
+enum WsEvent {
+    /// A new block header arrived.
+    BlockHeader {
+        number: u64,
+        timestamp: u64,
+        base_fee_per_gas: Option<u64>,
+        gas_used: u64,
+        gas_limit: u64,
+    },
+    /// A log event arrived from the logs subscription.
+    Log(Log),
 }
 
 /// The unified pump that drives the `UniswapEngine`.
 pub struct UniswapEnginePump {
     /// Shared engine state
-    engine: Arc<Mutex<UniswapEngine>>,
+    engine: Arc<parking_lot::Mutex<UniswapEngine>>,
     /// The Alloy provider (created from the RPC URL)
     provider: Arc<AlloyProvider>,
-    /// Pre-built log filter for all event types on registered addresses
-    log_filter: Filter,
     /// Shutdown flag — set by `stop()`
     shutdown: Arc<AtomicBool>,
-    /// Watch sender — publishes BlockNotification after each processed block
+    /// Watch sender — publishes `BlockNotification` after each processed block
     block_tx: watch::Sender<BlockNotification>,
 }
 
@@ -81,17 +120,18 @@ impl UniswapEnginePump {
     /// Create and spawn the pump on the Tokio runtime.
     ///
     /// The pump:
-    /// 1. Subscribes to block headers via the WS connection
-    /// 2. On each new block: fetches all relevant logs via a single `eth_getLogs`
-    /// 3. Calls `engine.process_block(logs, block_number)`
+    /// 1. Subscribes to block headers AND log events via WS
+    /// 2. Buffers incoming logs between block boundaries
+    /// 3. On each new block: filters relevant logs and calls `engine.process_block()`
     /// 4. Sends a `BlockNotification` via the watch channel
-    /// 5. Loops until `shutdown` is set
+    /// 5. On timeout (60s) or empty-block: backfills via `eth_getLogs`
+    /// 6. Loops until `shutdown` is set
     ///
     /// Returns a handle that can be used to stop the pump, plus a
     /// `watch::Receiver<BlockNotification>` for Python to read.
     pub fn spawn(
         rpc_url: String,
-        engine: Arc<Mutex<UniswapEngine>>,
+        engine: Arc<parking_lot::Mutex<UniswapEngine>>,
         shutdown: &Arc<AtomicBool>,
     ) -> Result<(tokio::task::JoinHandle<()>, watch::Receiver<BlockNotification>), String> {
         let runtime = get_runtime();
@@ -102,6 +142,7 @@ impl UniswapEnginePump {
             base_fee_per_gas: None,
             gas_used: 0,
             gas_limit: 0,
+            backfilled: false,
         });
 
         let shutdown_clone = Arc::clone(shutdown);
@@ -114,19 +155,9 @@ impl UniswapEnginePump {
                 }
             };
 
-            let log_filter = {
-                let engine = engine.lock();
-                build_uniswap_log_filter(
-                    &engine.v2_registered_addresses(),
-                    &engine.v3_registered_addresses(),
-                    &engine.v4_registered_pool_managers(),
-                )
-            };
-
             let pump = Self {
                 engine,
                 provider: Arc::new(provider),
-                log_filter,
                 shutdown: shutdown_clone,
                 block_tx,
             };
@@ -137,13 +168,109 @@ impl UniswapEnginePump {
         Ok((handle, block_rx))
     }
 
+    /// Collect the set of registered pool/PoolManager addresses for filtering.
+    fn collect_relevant_addrs(engine: &parking_lot::MutexGuard<'_, UniswapEngine>) -> HashSet<Address> {
+        let v2 = engine.v2_registered_addresses();
+        let v3 = engine.v3_registered_addresses();
+        let v4 = engine.v4_registered_pool_managers();
+
+        v2.iter().chain(v3.iter()).chain(v4.iter()).copied().collect()
+    }
+
+    /// Process the completed block using buffered logs, with backfill on empty.
+    ///
+    /// Returns `true` if logs were processed from the WS buffer, `false` if
+    /// a backfill was attempted (or the block was truly empty).
+    async fn process_completed_block(
+        &self,
+        block_to_process: u64,
+        pending_logs: &[Log],
+        relevant_addrs: &HashSet<Address>,
+        relevant_topic_set: &HashSet<B256>,
+    ) -> bool {
+        let logs_received = !pending_logs.is_empty();
+
+        // Filter the buffered logs to relevant events only
+        let filtered = filter_relevant_logs(pending_logs, relevant_addrs, relevant_topic_set);
+
+        if logs_received && !filtered.is_empty() {
+            // Process buffered logs for the completed block
+            self.engine.lock().process_block(&filtered, block_to_process);
+            log::debug!(
+                "UniswapEnginePump: processed block {block_to_process} ({} filtered logs)",
+                filtered.len()
+            );
+            true
+        } else if logs_received && filtered.is_empty() {
+            // Got logs but none were relevant — still need to advance the engine's
+            // block number so staleness checks work correctly
+            self.engine.lock().process_block(&[], block_to_process);
+            log::debug!(
+                "UniswapEnginePump: processed block {block_to_process} (no relevant logs)"
+            );
+            true
+        } else {
+            // No logs received since last newHeads — backfill to verify
+            log::debug!(
+                "UniswapEnginePump: block {block_to_process} — no logs received, verifying via eth_getLogs"
+            );
+            let backfilled = self
+                .backfill_single_block(block_to_process, relevant_addrs, relevant_topic_set)
+                .await;
+            if !backfilled {
+                // Block truly had no relevant events — advance engine block number
+                self.engine.lock().process_block(&[], block_to_process);
+            }
+            false
+        }
+    }
+
+    /// Handle a 60s timeout by backfilling any missed blocks.
+    async fn handle_timeout(
+        &self,
+        relevant_addrs: &HashSet<Address>,
+        relevant_topic_set: &HashSet<B256>,
+        last_processed_block: &mut u64,
+    ) {
+        log::warn!(
+            "UniswapEnginePump: no activity for {BACKFILL_TIMEOUT_SECS}s — attempting backfill"
+        );
+        let current_block = match self.provider.provider_arc().get_block_number().await {
+            Ok(n) => n,
+            Err(e) => {
+                log::error!("UniswapEnginePump: backfill failed — can't get block number: {e}");
+                return; // The timeout will re-trigger next iteration
+            }
+        };
+
+        if current_block > *last_processed_block {
+            self.backfill_range(
+                *last_processed_block + 1,
+                current_block,
+                relevant_addrs,
+                relevant_topic_set,
+                last_processed_block,
+            )
+            .await;
+        }
+    }
+
     /// Run the pump loop until shutdown is signaled.
+    ///
+    /// Maintains two concurrent WS subscriptions:
+    /// - `newHeads` for block boundary notifications
+    /// - `logs` (unfiltered) for real-time event delivery
+    ///
+    /// Logs are buffered and processed atomically when the next block header
+    /// arrives. Two backfill triggers cover connection issues:
+    /// - **Timeout**: 60s with nothing received on either subscription
+    /// - **Empty block**: newHeads arrives but zero logs were received since
+    ///   the previous newHeads → verify via `eth_getLogs`
     async fn run(self) {
         let provider_arc = self.provider.provider_arc();
 
         // Subscribe to block headers
-        let sub_result = provider_arc.subscribe_blocks().await;
-        let mut stream = match sub_result {
+        let block_stream = match provider_arc.subscribe_blocks().await {
             Ok(s) => {
                 log::info!("UniswapEnginePump: subscribed to block headers");
                 s.into_stream()
@@ -154,101 +281,267 @@ impl UniswapEnginePump {
             }
         };
 
+        // Subscribe to logs — no filter. All filtering happens in Rust.
+        let log_filter = Filter::new();
+        let log_stream = match provider_arc.subscribe_logs(&log_filter).await {
+            Ok(s) => {
+                log::info!("UniswapEnginePump: subscribed to logs (unfiltered)");
+                s.into_stream()
+            }
+            Err(e) => {
+                log::error!("UniswapEnginePump: failed to subscribe to logs: {e}");
+                return;
+            }
+        };
+
+        // Merge both streams into a single fused stream
+        let mut combined = stream_select(block_stream, log_stream);
+
+        // Build the set of relevant addresses for filtering.
+        // Drop the engine lock immediately to avoid holding it across await points.
+        let relevant_addrs = {
+            let engine = self.engine.lock();
+            Self::collect_relevant_addrs(&engine)
+        };
+        let relevant_topic_set: HashSet<B256> = RELEVANT_TOPICS.into_iter().collect();
+
+        // Buffer for logs received since the last newHeads
+        let mut pending_logs: Vec<Log> = Vec::new();
+        // Block number of the last processed block (0 = none yet)
+        let mut last_processed_block: u64 = 0;
+
         loop {
-            // Check shutdown before waiting for next block
+            // Check shutdown
             if self.shutdown.load(Ordering::Relaxed) {
                 log::info!("UniswapEnginePump: shutting down");
                 return;
             }
 
-            // Await next block header
-            let Some(header) = stream.next().await else {
-                log::warn!("UniswapEnginePump: block header stream ended");
+            // Wait for the next event with a timeout for backfill.
+            // If nothing arrives within 60s, the connection is likely dead.
+            let event = timeout(
+                Duration::from_secs(BACKFILL_TIMEOUT_SECS),
+                combined.next(),
+            )
+            .await;
+
+            match event {
+                // Timeout — no activity for 60s. Try to backfill.
+                Err(_) => {
+                    self.handle_timeout(
+                        &relevant_addrs,
+                        &relevant_topic_set,
+                        &mut last_processed_block,
+                    )
+                    .await;
+                }
+
+                // Got a block header from the combined stream
+                Ok(Some(WsEvent::BlockHeader {
+                    number,
+                    timestamp,
+                    base_fee_per_gas,
+                    gas_used,
+                    gas_limit,
+                })) => {
+                    // On the first block header, just record it
+                    if last_processed_block == 0 {
+                        last_processed_block = number;
+                        pending_logs.clear();
+                        let _ = self.block_tx.send(BlockNotification {
+                            block_number: number,
+                            timestamp,
+                            base_fee_per_gas,
+                            gas_used,
+                            gas_limit,
+                            backfilled: false,
+                        });
+                        continue;
+                    }
+
+                    let block_to_process = last_processed_block;
+                    self.process_completed_block(
+                        block_to_process,
+                        &pending_logs,
+                        &relevant_addrs,
+                        &relevant_topic_set,
+                    )
+                    .await;
+                    pending_logs.clear();
+                    last_processed_block = number;
+
+                    let _ = self.block_tx.send(BlockNotification {
+                        block_number: number,
+                        timestamp,
+                        base_fee_per_gas,
+                        gas_used,
+                        gas_limit,
+                        backfilled: false,
+                    });
+                }
+
+                // Got a log event from the combined stream
+                Ok(Some(WsEvent::Log(log))) => {
+                    pending_logs.push(log);
+                }
+
+                Ok(None) => {
+                    log::warn!("UniswapEnginePump: both subscription streams ended");
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Backfill a single block via `eth_getLogs`.
+    ///
+    /// Returns `true` if logs were found and processed, `false` if the block
+    /// genuinely had no relevant events.
+    async fn backfill_single_block(
+        &self,
+        block_number: u64,
+        relevant_addrs: &HashSet<Address>,
+        relevant_topic_set: &HashSet<B256>,
+    ) -> bool {
+        let filter = build_backfill_filter(block_number, block_number);
+        let logs = match self.provider.provider_arc().get_logs(&filter).await {
+            Ok(logs) => logs,
+            Err(e) => {
+                log::warn!(
+                    "UniswapEnginePump: backfill eth_getLogs failed for block {block_number}: {e}"
+                );
+                return false;
+            }
+        };
+
+        let filtered = filter_relevant_logs(&logs, relevant_addrs, relevant_topic_set);
+        if filtered.is_empty() {
+            log::debug!("UniswapEnginePump: backfill confirmed block {block_number} has no relevant events");
+            return false;
+        }
+
+        self.engine.lock().process_block(&filtered, block_number);
+        log::info!(
+            "UniswapEnginePump: backfilled block {block_number} with {} events",
+            filtered.len()
+        );
+        true
+    }
+
+    /// Backfill a range of blocks via `eth_getLogs`.
+    ///
+    /// Processes each block in the range sequentially.
+    async fn backfill_range(
+        &self,
+        from_block: u64,
+        to_block: u64,
+        relevant_addrs: &HashSet<Address>,
+        relevant_topic_set: &HashSet<B256>,
+        last_processed_block: &mut u64,
+    ) {
+        if from_block > to_block {
+            return;
+        }
+
+        log::info!(
+            "UniswapEnginePump: backfilling blocks {from_block} to {to_block}"
+        );
+
+        let filter = build_backfill_filter(from_block, to_block);
+        let logs = match self.provider.provider_arc().get_logs(&filter).await {
+            Ok(logs) => logs,
+            Err(e) => {
+                log::error!("UniswapEnginePump: backfill eth_getLogs failed: {e}");
                 return;
-            };
+            }
+        };
 
-            let block_number = header.number;
+        // Group logs by block number for sequential processing
+        let mut logs_by_block: HashMap<u64, Vec<Log>> = HashMap::new();
+        for log in &logs {
+            if let Some(block_num) = log.block_number {
+                logs_by_block.entry(block_num).or_default().push(log.clone());
+            }
+        }
 
-            // Check shutdown again after receiving block
+        // Process each block in order
+        let mut any_processed = false;
+        for block in from_block..=to_block {
             if self.shutdown.load(Ordering::Relaxed) {
-                log::info!("UniswapEnginePump: shutting down after block {block_number}");
+                log::info!("UniswapEnginePump: shutting down during backfill");
                 return;
             }
 
-            // Build block-specific filter (from/to = current block)
-            let block_filter = self
-                .log_filter
-                .clone()
-                .from_block(block_number)
-                .to_block(block_number);
+            let block_logs = logs_by_block.remove(&block).unwrap_or_default();
+            let filtered = filter_relevant_logs(&block_logs, relevant_addrs, relevant_topic_set);
+            if !filtered.is_empty() {
+                self.engine.lock().process_block(&filtered, block);
+                any_processed = true;
+            }
+            *last_processed_block = block;
+        }
 
-            // Fetch all relevant logs for this block in a single RPC call
-            let logs = match self.provider.provider_arc().get_logs(&block_filter).await {
-                Ok(logs) => logs,
-                Err(e) => {
-                    log::warn!(
-                        "UniswapEnginePump: failed to fetch logs for block {block_number}: {e}"
-                    );
-                    continue; // Skip this block, try next
-                }
-            };
-
-            // Process the block: route events to sub-engines and solve
-            self.engine.lock().process_block(&logs, block_number);
-
-            // Notify Python via the watch channel (non-blocking — overwrites if stale)
-            let notification = BlockNotification {
-                block_number,
-                timestamp: header.timestamp,
-                base_fee_per_gas: header.base_fee_per_gas,
-                gas_used: header.gas_used,
-                gas_limit: header.gas_limit,
-            };
-            let _ = self.block_tx.send(notification);
-
-            log::debug!("UniswapEnginePump: processed block {block_number}");
+        if any_processed {
+            log::info!("UniswapEnginePump: backfill complete for blocks {from_block}–{to_block}");
+        } else {
+            log::info!("UniswapEnginePump: backfill found no relevant events in blocks {from_block}–{to_block}");
         }
     }
 }
 
-/// Build an Alloy `Filter` for all Uniswap event types.
+/// Filter a set of logs to only those relevant to the engine.
 ///
-/// Combines:
-/// - V2: `V2_SYNC_TOPIC` on registered V2 pool addresses
-/// - V3: `V3_SWAP_TOPIC` | `V3_MINT_TOPIC` | `V3_BURN_TOPIC` on registered V3 pool addresses
-/// - V4: `V4_SWAP_TOPIC` | `V4_MODIFY_LIQUIDITY_TOPIC` on registered PoolManager addresses
+/// A log is relevant if:
+/// 1. Its topic0 matches one of the 6 monitored event types, AND
+/// 2. Its emitting address is a registered V2/V3 pool or V4 `PoolManager`
+fn filter_relevant_logs(
+    logs: &[Log],
+    relevant_addrs: &HashSet<Address>,
+    relevant_topic_set: &HashSet<B256>,
+) -> Vec<Log> {
+    logs.iter()
+        .filter(|log| {
+            relevant_addrs.contains(&log.address())
+                && log.topics().first().is_some_and(|topic0| relevant_topic_set.contains(topic0))
+        })
+        .cloned()
+        .collect()
+}
+
+/// Build an Alloy `Filter` for backfill via `eth_getLogs`.
 ///
-/// The Alloy `Filter` supports multiple `topic0` values (OR semantics) and
-/// multiple `address` values (OR semantics). This gives us a single filter
-/// that captures all relevant events.
-fn build_uniswap_log_filter(
-    v2_addresses: &[Address],
-    v3_addresses: &[Address],
-    v4_pool_managers: &[Address],
-) -> Filter {
-    let mut filter = Filter::new();
+/// Uses topic filtering server-side to reduce response size. No address
+/// filter — the Rust-side `filter_relevant_logs` handles that.
+fn build_backfill_filter(from_block: u64, to_block: u64) -> Filter {
+    let mut filter = Filter::new()
+        .from_block(from_block)
+        .to_block(to_block);
 
-    // Set topic0 values for all event types
-    filter = filter
-        .event_signature(V2_SYNC_TOPIC)
-        .event_signature(V3_SWAP_TOPIC)
-        .event_signature(V3_MINT_TOPIC)
-        .event_signature(V3_BURN_TOPIC)
-        .event_signature(V4_SWAP_TOPIC)
-        .event_signature(V4_MODIFY_LIQUIDITY_TOPIC);
-
-    // Add all addresses (V2 pools + V3 pools + V4 PoolManagers)
-    for addr in v2_addresses {
-        filter = filter.address(*addr);
-    }
-    for addr in v3_addresses {
-        filter = filter.address(*addr);
-    }
-    for addr in v4_pool_managers {
-        filter = filter.address(*addr);
+    // Add all relevant topics so the server pre-filters
+    for topic in &RELEVANT_TOPICS {
+        filter = filter.event_signature(*topic);
     }
 
     filter
+}
+
+/// Merge a block header stream and a log stream into a single `WsEvent` stream.
+///
+/// Uses `stream::Select` to fairly interleave events from both subscriptions.
+fn stream_select(
+    block_stream: impl StreamExt<Item = alloy::rpc::types::Header> + Unpin + Send + 'static,
+    log_stream: impl StreamExt<Item = Log> + Unpin + Send + 'static,
+) -> impl StreamExt<Item = WsEvent> + Unpin + Send {
+    let block_events = block_stream.map(|header| WsEvent::BlockHeader {
+        number: header.number,
+        timestamp: header.timestamp,
+        base_fee_per_gas: header.base_fee_per_gas,
+        gas_used: header.gas_used,
+        gas_limit: header.gas_limit,
+    });
+    let log_events = log_stream.map(WsEvent::Log);
+
+    stream::select(block_events, log_events)
 }
 
 #[cfg(test)]
@@ -256,23 +549,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn build_uniswap_log_filter_with_all_addresses() {
-        let v2_addr = Address::from([0x11u8; 20]);
-        let v3_addr = Address::from([0x22u8; 20]);
-        let v4_pm = Address::from([0x33u8; 20]);
-
-        let filter = build_uniswap_log_filter(&[v2_addr], &[v3_addr], &[v4_pm]);
-
-        // Verify the filter was constructed without panicking
-        let debug_str = format!("{filter:?}");
-        assert!(!debug_str.is_empty());
-    }
-
-    #[test]
-    fn build_uniswap_log_filter_with_no_addresses() {
-        let filter = build_uniswap_log_filter(&[], &[], &[]);
-
-        // Should still produce a valid filter (just topics, no address constraint)
+    fn build_backfill_filter_constructs_valid_filter() {
+        let filter = build_backfill_filter(100, 200);
         let debug_str = format!("{filter:?}");
         assert!(!debug_str.is_empty());
     }
@@ -281,5 +559,28 @@ mod tests {
     fn shutdown_flag_stops_uniswap_pump() {
         let shutdown = Arc::new(AtomicBool::new(true));
         assert!(shutdown.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn relevant_topics_contains_all_six() {
+        assert_eq!(RELEVANT_TOPICS.len(), 6);
+        // Verify each is non-zero
+        for topic in &RELEVANT_TOPICS {
+            assert_ne!(topic, &B256::ZERO);
+        }
+    }
+
+    #[test]
+    fn filter_relevant_logs_empty_input() {
+        let addrs = HashSet::new();
+        let topics: HashSet<B256> = RELEVANT_TOPICS.into_iter().collect();
+        let result = filter_relevant_logs(&[], &addrs, &topics);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn backfill_timeout_constant_is_reasonable() {
+        // 60s is the chosen timeout — verify it's set
+        assert_eq!(BACKFILL_TIMEOUT_SECS, 60);
     }
 }
