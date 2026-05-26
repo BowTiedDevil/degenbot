@@ -392,3 +392,7 @@ The Rust extension (`rust/`) provides PyO3-wrapped ABI encoding/decoding, subscr
 ### Subscription Buffer
 
 `SubscriptionHandle` uses a double-buffer pattern with `drain_raw()` (pure Rust, no GIL) for GIL-free accumulation. The Python-facing `drain_buffer()` wraps it with `Python::attach()`.
+
+### V3 Block Engine: Mint/Burn Event Handling
+
+`V3BlockEngine.process_block()` decodes Swap, Mint, and Burn events from raw Alloy logs. The `update_tick_liquidity()` function matches Solidity's `Tick.update()`: both lower and upper tick receive `liquidity_gross += delta`, while `liquidity_net += delta` for the lower tick and `liquidity_net -= delta` for the upper tick (controlled by `is_lower_tick` parameter). Ticks with zero `liquidity_gross` after the update are removed (de-initialized). Mint/Burn decoders live in `rust/src/bot_core/v3_mint_burn_decoder.rs`. This replaces the previous O(n) full-tick-data dump from Python on every event (Plan 080 F4).

@@ -22,6 +22,7 @@ use alloy::primitives::{Address, U128, U256};
 
 use crate::bot_core::tick_bitmap::compute_tick_ranges;
 use crate::bot_core::TickInfo;
+use crate::bot_core::v3_mint_burn_decoder::{decode_v3_mint_log, decode_v3_burn_log};
 use crate::bot_core::v3_swap_decoder::decode_v3_swap_log;
 use crate::optimizers::mobius::HopState;
 use crate::optimizers::mobius_int::{u256_to_f64, IntHopState};
@@ -467,10 +468,52 @@ impl V3BlockEngine {
         pool.update_block = block_number;
     }
 
-    /// Process a block: decode Swap events, apply updates, rebuild paths,
-    /// solve all, and store results.
+    /// Apply a liquidity update (Mint or Burn) to a V3 pool's tick_data.
+    ///
+    /// For a Mint event at `[tick_lower, tick_upper]` with `amount`:
+    /// - `tick_data[tick_lower].liquidity_net += amount`
+    /// - `tick_data[tick_upper].liquidity_net -= amount`
+    /// - `tick_data[tick_lower].liquidity_gross += amount`
+    /// - `tick_data[tick_upper].liquidity_gross += amount`
+    ///
+    /// For a Burn event, the delta is negative (amount is negated before calling).
+    ///
+    /// If a tick does not yet exist in `tick_data`, it is inserted with
+    /// `liquidity_gross = |delta|` and `liquidity_net = delta`. This handles
+    /// new position initialization.
+    pub fn apply_liquidity_update(
+        &mut self,
+        pool_address: Address,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: i128,
+        block_number: u64,
+    ) {
+        let Some(&key) = self.pool_addresses.get(&pool_address) else {
+            return;
+        };
+        let Some(pool) = self.pools.get_mut(&key) else {
+            return;
+        };
+
+        // Apply tick-level mutations:
+        // In Solidity's Tick.update(), BOTH lower and upper tick get:
+        //   liquidity_gross += liquidityDelta
+        // But liquidity_net differs:
+        //   tick_lower: liquidity_net += liquidityDelta
+        //   tick_upper: liquidity_net -= liquidityDelta
+        update_tick_liquidity(&mut pool.tick_data, tick_lower, liquidity_delta, true);
+        update_tick_liquidity(&mut pool.tick_data, tick_upper, liquidity_delta, false);
+
+        // Remove ticks with zero liquidity_gross (position fully closed)
+        pool.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+
+        pool.update_block = block_number;
+    }
+
+    /// Process a block: decode Swap, Mint, and Burn events, apply updates,
+    /// rebuild paths, solve all, and store results.
     pub fn process_block(&mut self, logs: &[alloy::rpc::types::Log], block_number: u64) {
-        // Decode Swap events
         for log in logs {
             if let Some(event) = decode_v3_swap_log(log) {
                 self.apply_swap(
@@ -480,6 +523,22 @@ impl V3BlockEngine {
                     event.tick,
                     block_number,
                     &[],
+                );
+            } else if let Some(event) = decode_v3_mint_log(log) {
+                self.apply_liquidity_update(
+                    event.pool_address,
+                    event.tick_lower,
+                    event.tick_upper,
+                    event.amount as i128,
+                    block_number,
+                );
+            } else if let Some(event) = decode_v3_burn_log(log) {
+                self.apply_liquidity_update(
+                    event.pool_address,
+                    event.tick_lower,
+                    event.tick_upper,
+                    -(event.amount as i128),
+                    block_number,
                 );
             }
         }
@@ -714,9 +773,56 @@ fn extract_u128(liquidity: U128) -> u128 {
     liquidity.to::<u128>()
 }
 
+/// Update a single tick's `liquidity_gross` and `liquidity_net` in-place.
+///
+/// Matches the Uniswap V3 `Tick.update()` logic:
+/// - `liquidity_gross += delta` (always, for both lower and upper ticks)
+/// - `liquidity_net += delta` for the lower tick
+/// - `liquidity_net -= delta` for the upper tick
+///
+/// The `is_lower_tick` parameter controls whether to add or subtract the
+/// delta from `liquidity_net` (matches Solidity's `if (upper)` check).
+///
+/// If a tick doesn't exist yet, it's inserted with appropriate initial values.
+/// Ticks with `liquidity_gross == 0` after the update should be removed by the caller.
+fn update_tick_liquidity(
+    tick_data: &mut HashMap<i32, TickInfo>,
+    tick: i32,
+    delta: i128,
+    is_lower_tick: bool,
+) {
+    use alloy::primitives::{I256, U128};
+
+    let entry = tick_data.entry(tick).or_insert(TickInfo {
+        liquidity_gross: U128::ZERO,
+        liquidity_net: I256::ZERO,
+    });
+
+    // Update liquidity_gross: += delta (always the same direction for both ticks)
+    let current_gross = entry.liquidity_gross.to::<u128>();
+    let new_gross_i128 = current_gross as i128 + delta;
+    // liquidity_gross is always >= 0 in valid state; negative means an underflow bug
+    let new_gross = if new_gross_i128 < 0 {
+        U128::ZERO
+    } else {
+        U128::from(new_gross_i128 as u128)
+    };
+    entry.liquidity_gross = new_gross;
+
+    // Update liquidity_net: += delta for lower tick, -= delta for upper tick
+    let delta_i256 = I256::try_from(delta).unwrap_or(I256::ZERO);
+    let current_net = entry.liquidity_net;
+    entry.liquidity_net = if is_lower_tick {
+        current_net.checked_add(delta_i256).unwrap_or(I256::ZERO)
+    } else {
+        current_net.checked_sub(delta_i256).unwrap_or(I256::ZERO)
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy::primitives::I256;
 
     fn make_tick_info(liquidity_gross: u128, liquidity_net: i128) -> TickInfo {
         use alloy::primitives::I256;
@@ -1290,6 +1396,151 @@ mod tests {
         let pool = &engine.pools[&key];
         assert_eq!(pool.tick, 120);
         assert_eq!(pool.liquidity, 800_000);
+    }
+
+    // ── apply_liquidity_update tests ─────────────────────────────
+
+    #[test]
+    fn mint_updates_tick_data() {
+        let mut engine = V3BlockEngine::new();
+        let addr = Address::from([0x11u8; 20]);
+
+        let mut tick_data = HashMap::new();
+        tick_data.insert(-60, make_tick_info(100, 50));
+        tick_data.insert(60, make_tick_info(100, -50));
+
+        let key = engine.register_pool(RegisterV3PoolParams {
+            address: addr,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data,
+        });
+
+        // Mint 500 liquidity from tick -60 to tick 60
+        engine.apply_liquidity_update(addr, -60, 60, 500, 100);
+
+        let pool = &engine.pools[&key];
+        // tick_lower (-60): liquidity_gross += 500, liquidity_net += 500
+        let tick_lower = &pool.tick_data[&-60];
+        assert_eq!(tick_lower.liquidity_gross.to::<u128>(), 600); // 100 + 500
+        assert_eq!(tick_lower.liquidity_net, I256::try_from(550i128).unwrap()); // 50 + 500
+
+        // tick_upper (60): liquidity_gross += 500, liquidity_net += (-500)
+        let tick_upper = &pool.tick_data[&60];
+        assert_eq!(tick_upper.liquidity_gross.to::<u128>(), 600); // 100 + 500
+        assert_eq!(tick_upper.liquidity_net, I256::try_from(-550i128).unwrap()); // -50 + (-500)
+    }
+
+    #[test]
+    fn burn_updates_tick_data() {
+        let mut engine = V3BlockEngine::new();
+        let addr = Address::from([0x11u8; 20]);
+
+        let mut tick_data = HashMap::new();
+        tick_data.insert(-60, make_tick_info(500, 500));
+        tick_data.insert(60, make_tick_info(500, -500));
+
+        let key = engine.register_pool(RegisterV3PoolParams {
+            address: addr,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data,
+        });
+
+        // Burn 200 liquidity from tick -60 to tick 60 (delta is negative)
+        engine.apply_liquidity_update(addr, -60, 60, -200, 100);
+
+        let pool = &engine.pools[&key];
+        // tick_lower (-60): liquidity_gross += -200 → 300, liquidity_net += -200 → 300
+        let tick_lower = &pool.tick_data[&-60];
+        assert_eq!(tick_lower.liquidity_gross.to::<u128>(), 300); // 500 - 200
+        assert_eq!(tick_lower.liquidity_net, I256::try_from(300i128).unwrap()); // 500 - 200
+
+        // tick_upper (60): gross += -200 → 300, net += -(-200) = +200 → -300
+        let tick_upper = &pool.tick_data[&60];
+        assert_eq!(tick_upper.liquidity_gross.to::<u128>(), 300); // 500 - 200
+        assert_eq!(tick_upper.liquidity_net, I256::try_from(-300i128).unwrap()); // -500 + 200
+    }
+
+    #[test]
+    fn full_burn_removes_ticks_with_zero_gross() {
+        let mut engine = V3BlockEngine::new();
+        let addr = Address::from([0x11u8; 20]);
+
+        let mut tick_data = HashMap::new();
+        tick_data.insert(-60, make_tick_info(100, 100));
+        tick_data.insert(60, make_tick_info(100, -100));
+
+        let key = engine.register_pool(RegisterV3PoolParams {
+            address: addr,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data,
+        });
+
+        // Burn 100 liquidity (the entire position) — gross goes to 0 at both ticks
+        engine.apply_liquidity_update(addr, -60, 60, -100, 100);
+
+        let pool = &engine.pools[&key];
+        // Ticks with zero liquidity_gross are removed
+        assert!(!pool.tick_data.contains_key(&-60));
+        assert!(!pool.tick_data.contains_key(&60));
+    }
+
+    #[test]
+    fn mint_initializes_new_tick() {
+        let mut engine = V3BlockEngine::new();
+        let addr = Address::from([0x11u8; 20]);
+
+        // Pool with no initialized ticks at -120/120
+        let tick_data = HashMap::new();
+
+        let key = engine.register_pool(RegisterV3PoolParams {
+            address: addr,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data,
+        });
+
+        // Mint 300 liquidity from tick -120 to tick 120
+        engine.apply_liquidity_update(addr, -120, 120, 300, 100);
+
+        let pool = &engine.pools[&key];
+        assert!(pool.tick_data.contains_key(&-120));
+        assert!(pool.tick_data.contains_key(&120));
+    }
+
+    #[test]
+    fn apply_liquidity_update_ignores_unregistered_pool() {
+        let mut engine = V3BlockEngine::new();
+        let addr = Address::from([0x11u8; 20]);
+
+        // No pool registered — should be a no-op, not a panic
+        engine.apply_liquidity_update(addr, -60, 60, 100, 1);
     }
 }
 
