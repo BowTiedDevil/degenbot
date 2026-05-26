@@ -28,6 +28,7 @@ Domain terms for Uniswap V2, V3, and V4 liquidity pools and pool trackers.
 | **Swap Vector** | See [Swap Vector](../arbitrage/CONTEXT.md) in the arbitrage context | Swap direction |
 | **Exact Input** | A swap calculation mode where the input amount is fixed and output is calculated | Exact in |
 | **Exact Output** | A swap calculation mode where the output amount is fixed and required input is calculated | Exact out |
+| **amountSpecified** | The swap amount parameter in V3/V4 `swap()`: sign convention differs between V3 (positive = exact input, negative = exact output) and V4 (negative = exact input, positive = exact output). Verified in `v3_simulator.py:93` — `exact_input = amount_specified > 0` | swap amount, specified amount |
 | **StateCache** | See [StateCache](../types/CONTEXT.md) in the types context | Pool state cache |
 | **ConcentratedLiquidityStateManager** | A manager class for V3/V4 that composes with `StateCache` internally, exposing CL-specific convenience properties (`liquidity`, `sqrt_price_x96`, `tick`, etc.) | State manager |
 
@@ -92,6 +93,14 @@ V4 pools don't have contract addresses. They have **Pool IDs** (32-byte keccak25
 
 - ✅ "The V4 pool ID is 0xabcd..."
 - ❌ "The V4 pool address is 0xabcd..."
+
+### 6. V3 vs V4 amountSpecified sign convention
+
+V3 and V4 use **opposite** sign conventions for `amountSpecified`. In V3: positive (> 0) = exact INPUT, negative (< 0) = exact OUTPUT. In V4, the convention is reversed: negative = exact INPUT, positive = exact OUTPUT. This is verified in `v3_simulator.py:93` — `exact_input = amount_specified > 0`. When building swap calldata for V3 arbitrage, always use positive `amountSpecified` for exact-input mode.
+
+- ✅ "V3 exact-input swap with `amountSpecified = 1000000` (positive)"
+- ✅ "V4 exact-input swap with `amountSpecified = -1000000` (negative)"
+- ❌ "Exact input uses negative amountSpecified" (wrong for V3, correct for V4 — always qualify which version)
 
 ## Example dialogue
 

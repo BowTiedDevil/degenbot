@@ -94,7 +94,7 @@ _Avoid_: Python V3 engine, V3 engine wrapper
 
 **V3EnginePump**: A standalone async task that drives `V3BlockEngine`. Owns its own `AlloyProvider` (created from an RPC URL string), subscribes to block headers via WS, fetches V3 Swap logs via `eth_getLogs` on each new block, and calls `engine.process_block()`. No dependency on the Python subscription infrastructure. Mirrors `V2EnginePump`.
 
-**UniswapEngine**: A unified engine that composes a `V2BlockEngine` and a `V3BlockEngine` to handle mixed V2/V3 arbitrage paths in the same per-block lifecycle. Routes Sync events to the V2 engine and Swap events to the V3 engine. Solver dispatch: V2-V2 → `mobius_solve_with_refinement`, V3-V3 → `solve_v3_v3`, V2-V3/V3-V2 → golden-section search over the piecewise profit function. Registration is frozen after `start()` — calls `start()` on both sub-engines.
+**UniswapEngine**: A unified engine that composes a `V2BlockEngine` and a `V3BlockEngine` to handle mixed V2/V3 arbitrage paths in the same per-block lifecycle. Routes Sync events to the V2 engine and Swap events to the V3 engine. Solver dispatch: V2-V2 → `exact_mobius_solve` (closed-form U512 isqrt), V3-V3 → `int_solve_v3_v3` (piecewise integer Möbius), V2-V3/V3-V2 → `exact_solve_mixed_v2_v3_sequence` (integer effective reserves + piecewise tick-range enumeration). Registration is frozen after `start()` — calls `start()` on both sub-engines.
 _Avoid_: mixed engine, combined engine, uniswap engine
 
 **HopType**: An enum (`V2`, `V3`) identifying which sub-engine owns a given hop in a mixed path.
@@ -109,6 +109,9 @@ _Avoid_: V3 pump, V3 block subscriber, V3 event driver
 
 **Code Injection**: Injecting contract runtime bytecode at a fresh address via `eth_simulateV1`'s `stateOverrides.code` field, enabling simulation of undeployed contracts. The executor contract's runtime bytecode (with immutables OWNER_ADDR/WETH_ADDR baked in) is loaded from `contracts/tstore_executor_runtime_bytecode.txt`. The committed bytecode uses a randomly generated throwaway OWNER_ADDR to avoid leaking operational addresses — override `EXECUTOR_OWNER_ADDRESS` at runtime with the real key. Vyper immutables are embedded in the code section, not storage — no storage slot overrides are needed. `eth_simulateV1` chains calls sequentially, so the 3-call WETH balanceOf pattern correctly captures profit without WETH storage prefunding.
 _Avoid_: contract injection, bytecode override, code override
+
+**V3 amountSpecified Sign Convention**: V3 and V4 use opposite conventions for `amountSpecified`. In V3: positive (> 0) = exact INPUT (swap exactly this much into the pool), negative (< 0) = exact OUTPUT (receive exactly this much from the pool). In V4, the convention is reversed. This is verified in `v3_simulator.py:93` — `exact_input = amount_specified > 0`. For arbitrage (always exact-input mode), V3 swap calldata must use **positive** values. The original bot implementation incorrectly used the V4 convention (negative values), causing all V3-involving simulations to fail with V3's "IIA" (Insufficient Input Amount) error.
+_Avoid_: amount sign, swap direction sign, amount convention
 
 ## Relationships
 
@@ -151,8 +154,8 @@ _Avoid_: contract injection, bytecode override, code override
 - **`V3EnginePump`** → **`V3_SWAP_TOPIC`**: The pump builds an Alloy `Filter` with `V3_SWAP_TOPIC` and registered pool addresses for `eth_getLogs` queries
 - **`UniswapEngine`** → **`V2BlockEngine`**: UniswapEngine composes a V2BlockEngine for V2 pool state and constant-product solving; `start()` calls `v2_engine.start()`
 - **`UniswapEngine`** → **`V3BlockEngine`**: UniswapEngine composes a V3BlockEngine for V3 pool state, tick ranges, and piecewise solving; `start()` calls `v3_engine.start()`
-- **`UniswapEngine`** → **`solve_v3_v3()`**: Pure V3 paths are dispatched to the piecewise Mobius solver; mixed paths use golden-section search
-- **`UniswapEngine`** → **`golden_section_search_max()`**: Mixed V2-V3 paths use golden-section search over the piecewise profit function, simulating V2 and V3 hops sequentially
+- **`UniswapEngine`** → **`solve_v3_v3()`**: Pure V3 paths are dispatched to the integer-exact piecewise Mobius solver (`int_solve_v3_v3`); mixed paths use integer sequence solver
+- **`UniswapEngine`** → **`exact_solve_mixed_v2_v3_sequence()`**: Mixed V2-V3 paths use integer effective reserves + piecewise tick-range enumeration with closed-form Möbius solve per range, replacing the former golden-section search
 - **`PyUniswapArbEngine`** → **`UniswapEngine`**: The PyO3 wrapper delegates all operations to the inner engine through a shared `Mutex`; `process_logs()` drives both V2 and V3 updates synchronously
 - **`MixedPoolRef`** → **`HopType`**: Each pool ref in a mixed path carries a `HopType` (`V2` or `V3`) for solver dispatch
 - **`Code Injection`** → **`PyUniswapArbEngine`**: The bot's code injection feature uses `stateOverrides.code` to test the undeployed executor contract; the engine's `latest_results()` provides profitable paths that are encoded and simulated against the injected code

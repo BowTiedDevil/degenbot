@@ -311,6 +311,17 @@ The original `interface.py` no longer exists — all callers have been updated t
 
 ## Solidity
 
+### V3 amountSpecified Sign Convention
+
+V3 and V4 use **opposite** sign conventions for `amountSpecified`:
+
+| | exact INPUT | exact OUTPUT |
+|---|---|---|
+| **V3** | `amountSpecified > 0` | `amountSpecified < 0` |
+| **V4** | `amountSpecified < 0` | `amountSpecified > 0` |
+
+This is verified in `v3_simulator.py:93` — `exact_input = amount_specified > 0`. When building V3 swap calldata for arbitrage (always exact-input mode), use **positive** values.
+
 ### Contract Reference Sources
 
 Verified Solidity sources are in `contract_reference/` (see [`contract_reference/README.md`](contract_reference/README.md) for the full index). When porting on-chain logic to Python, include a `See: contract_reference/...` comment pointing to the exact source file and line range.
