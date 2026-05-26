@@ -310,6 +310,6 @@ def test_v4_hooked_pool_excluded()
 - [x] Slice 3: Wire V4BlockEngine into UniswapEngine
 - [x] Slice 4: Universal executor contract — V4 settlement
 - [x] Slice 5: Bot — V4 pool discovery
-- [ ] Slice 6: Bot — V4 swap encoding
-- [ ] Slice 7: Bot — path building with V4
-- [ ] Slice 8: Validate and clean up
+- [x] Slice 6: Bot — V4 swap encoding
+- [x] Slice 7: Bot — path building with V4 (done in Slice 5 — build_paths, event routing, HopInfo/PathInfo all extended for V4)
+- [x] Slice 8: Validate and clean up
