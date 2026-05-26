@@ -107,6 +107,8 @@ pub struct RegisterV4PoolParams {
     pub tick: i32,
     /// Tick data: {tick_index: (liquidity_gross, liquidity_net)}
     pub tick_data: HashMap<i32, TickInfo>,
+    /// Block number at which this state was captured
+    pub update_block: u64,
 }
 
 /// V4 pool state as owned by the engine.
@@ -212,7 +214,7 @@ impl From<RegisterV4PoolParams> for V4PoolState {
             sqrt_price_x96: params.sqrt_price_x96,
             liquidity: params.liquidity,
             tick: params.tick,
-            update_block: 0,
+            update_block: params.update_block,
             tick_data: params.tick_data,
         }
     }
@@ -872,6 +874,7 @@ mod tests {
             liquidity,
             tick,
             tick_data,
+            update_block: 0,
         }
     }
 
@@ -881,6 +884,25 @@ mod tests {
         let mut id = [0u8; 32];
         id[31] = suffix;
         id
+    }
+
+    #[test]
+    fn register_v4_pool_sets_update_block() {
+        let mut engine = V4BlockEngine::new();
+        let fwd_key = engine.register_pool(make_register_params(
+            POOL_MANAGER,
+            make_pool_id(1),
+            3000,
+            60,
+            0,
+            U256::from(79228162514264337593543950336u128),
+            1_000_000,
+            0,
+            HashMap::new(),
+        )).unwrap();
+        // Default update_block is 0 (set by make_register_params)
+        let fwd_pool = &engine.pools[&fwd_key];
+        assert_eq!(fwd_pool.update_block, 0);
     }
 
     #[test]

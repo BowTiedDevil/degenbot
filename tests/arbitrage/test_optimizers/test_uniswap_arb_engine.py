@@ -245,7 +245,7 @@ class TestUniswapArbEngineFreeze:
 
     def test_start_freezes_registration(self):
         engine = UniswapArbEngine()
-        engine.start()
+        engine.start(rpc_url="wss://fake.example.com")
         assert engine.is_running()
 
 

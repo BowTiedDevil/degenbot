@@ -797,6 +797,7 @@ mod tests {
                 liquidity: 1_000_000,
                 tick: 0,
                 tick_data,
+                update_block: 0,
             },
         );
 
@@ -917,6 +918,7 @@ mod tests {
                 liquidity: 10_000_000_000_000,
                 tick: 0,
                 tick_data,
+                update_block: 0,
             },
         );
 
@@ -957,6 +959,7 @@ mod tests {
                 liquidity: 1_000_000,
                 tick: 0,
                 tick_data: HashMap::new(),
+                update_block: 0,
             },
         );
 
@@ -1129,6 +1132,7 @@ mod tests {
                 liquidity: 10_000_000_000_000_000,
                 tick: 0,
                 tick_data: tick_data_a,
+                update_block: 0,
             },
         );
 
@@ -1167,6 +1171,7 @@ mod tests {
                 liquidity: 10_000_000_000_000_000,
                 tick: -60,
                 tick_data: tick_data_b,
+                update_block: 0,
             },
         );
 
@@ -1237,6 +1242,7 @@ mod tests {
                 liquidity: 10_000_000_000_000,
                 tick: 0,
                 tick_data,
+                update_block: 0,
             },
         );
 
@@ -1296,6 +1302,7 @@ mod tests {
                 liquidity: 10_000_000_000_000,
                 tick: 0,
                 tick_data,
+                update_block: 0,
             },
         );
 
@@ -1445,7 +1452,7 @@ impl PyUniswapArbEngine {
     /// Register a V3 pool by contract address and initial state.
     /// Returns the pool key for use in path registration.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (address, token0, token1, fee, tick_spacing, factory, sqrt_price_x96, liquidity, tick, tick_data))]
+    #[pyo3(signature = (address, token0, token1, fee, tick_spacing, factory, sqrt_price_x96, liquidity, tick, tick_data, block=0))]
     fn register_v3_pool(
         &self,
         address: &str,
@@ -1458,6 +1465,7 @@ impl PyUniswapArbEngine {
         liquidity: u128,
         tick: i32,
         tick_data: &Bound<'_, pyo3::types::PyDict>,
+        block: u64,
     ) -> PyResult<u64> {
         let addr = address.parse::<Address>().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
@@ -1500,6 +1508,7 @@ impl PyUniswapArbEngine {
             liquidity,
             tick,
             tick_data: rust_tick_data,
+            update_block: block,
         }))
     }
 
@@ -1512,7 +1521,7 @@ impl PyUniswapArbEngine {
     /// Returns the forward pool key for use in path registration,
     /// or raises ValueError if the pool is excluded.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, sqrt_price_x96, liquidity, tick, tick_data))]
+    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, sqrt_price_x96, liquidity, tick, tick_data, block=0))]
     fn register_v4_pool(
         &self,
         pool_manager: &str,
@@ -1526,6 +1535,7 @@ impl PyUniswapArbEngine {
         liquidity: u128,
         tick: i32,
         tick_data: &Bound<'_, pyo3::types::PyDict>,
+        block: u64,
     ) -> PyResult<u64> {
         let pm = pool_manager.parse::<Address>().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager address: {e}"))
@@ -1573,6 +1583,7 @@ impl PyUniswapArbEngine {
             liquidity,
             tick,
             tick_data: rust_tick_data,
+            update_block: block,
         }).map_err(|e| pyo3::exceptions::PyValueError::new_err(e))
     }
 
