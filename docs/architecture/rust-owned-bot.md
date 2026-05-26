@@ -223,7 +223,22 @@ AlloyProvider (WS)
          └─ block_tx.send(BlockNotification) — Python reads this
 ```
 
-**Why one pump, not three?**
+### 6.2 Why `eth_getLogs` per Block, Not a Logs Subscription
+
+Plan 079's original vision used `eth_subscribe("logs", filter)` for real-time event delivery, with block headers signalling when to process the buffered stream. Plan 082 (the implementation) deliberately chose **pull-based** `eth_getLogs` instead:
+
+1. **Silent data loss**: If a WS `logs` subscription hiccups (network jitter, provider restart, buffer overflow), events are missed **silently** — the engine operates on stale state and produces wrong results with no error signal. `eth_getLogs` is a single retryable RPC call; failure is loud and recoverable.
+
+2. **Block atomicity**: A log subscription pushes events one at a time, requiring a buffer against a block boundary and fragile interleaving logic. `eth_getLogs` returns the complete set of logs for a block atomically — decode, update, and solve in one lock acquisition, no partial-processing risk.
+
+3. **Reconnection simplicity**: On WS reconnect, the pump calls `eth_getLogs` for the missed block(s). No need to reconcile a potentially-gapped event stream, re-subscribe to the log filter, or determine which events were missed.
+
+4. **Provider compatibility**: Some providers ignore `eth_subscribe("logs")` address constraints, reject large address lists, or throttle active log subscriptions. `eth_getLogs` is universally supported and well-tested across all node providers.
+
+The latency cost is one RPC round-trip per block (~50ms local, ~100ms remote), arriving after the block header. The solve → encode → simulate → submit pipeline already takes hundreds of milliseconds, so `eth_getLogs` latency is not the bottleneck.
+
+### 6.3 Why One Pump, Not Three
+
 - 1 RPC call per block instead of 3
 - 1 WS subscription instead of 3
 - 1 lock acquisition per block instead of 3
