@@ -19,6 +19,7 @@ pub mod state_history;
 pub mod tick_bitmap;
 pub mod v2_encoding;
 pub mod v3_swap_decoder;
+pub mod v4_swap_decoder;
 
 // ---------------------------------------------------------------------------
 // Pool state types
