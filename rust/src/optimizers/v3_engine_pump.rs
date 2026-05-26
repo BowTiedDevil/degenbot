@@ -2,15 +2,15 @@
 //!
 //! The pump owns its own `AlloyProvider` connection and subscribes to block
 //! headers directly via Alloy's WS subscription. On each new block, it
-//! fetches V3 Swap logs via `eth_getLogs`, decodes them, and drives
+//! fetches V3 Swap/Mint/Burn logs via `eth_getLogs`, decodes them, and drives
 //! `V3BlockEngine::process_block()`.
 //!
 //! # Architecture
 //!
 //! ```text
 //! WS subscription → block header
-//!     → `eth_getLogs`(registered addresses, `V3_SWAP_TOPIC`)
-//!     → decode Swap events → `process_block()`
+//!     → `eth_getLogs`(registered addresses, `V3_SWAP_TOPIC` | `V3_MINT_TOPIC` | `V3_BURN_TOPIC`)
+//!     → decode Swap/Mint/Burn events → `process_block()`
 //!     → results stored in engine for Python to read
 //! ```
 
@@ -22,6 +22,7 @@ use alloy::rpc::types::Filter;
 use futures_util::StreamExt;
 use parking_lot::Mutex;
 
+use crate::bot_core::v3_mint_burn_decoder::{V3_MINT_TOPIC, V3_BURN_TOPIC};
 use crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC;
 use crate::optimizers::v3_block_engine::V3BlockEngine;
 use crate::provider::AlloyProvider;
@@ -68,7 +69,7 @@ impl V3EnginePump {
 
             let log_filter = {
                 let engine = engine.lock();
-                build_v3_swap_filter(&engine.registered_addresses())
+                build_v3_log_filter(&engine.registered_addresses())
             };
 
             let pump = Self {
@@ -148,12 +149,15 @@ impl V3EnginePump {
     }
 }
 
-/// Build an Alloy `Filter` for V3 Swap events on the given addresses.
-fn build_v3_swap_filter(addresses: &[Address]) -> Filter {
+/// Build an Alloy `Filter` for V3 Swap/Mint/Burn events on the given addresses.
+fn build_v3_log_filter(addresses: &[Address]) -> Filter {
     let mut filter = Filter::new();
 
-    // Set topic0 = V3_SWAP_TOPIC
-    filter = filter.event_signature(V3_SWAP_TOPIC);
+    // Set topic0 = V3_SWAP_TOPIC | V3_MINT_TOPIC | V3_BURN_TOPIC
+    filter = filter
+        .event_signature(V3_SWAP_TOPIC)
+        .event_signature(V3_MINT_TOPIC)
+        .event_signature(V3_BURN_TOPIC);
 
     // Add all registered pool addresses
     for addr in addresses {
@@ -168,10 +172,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn build_v3_swap_filter_includes_topic_and_addresses() {
+    fn build_v3_log_filter_includes_topics_and_addresses() {
         let addr0 = Address::from([0u8; 20]);
         let addr1 = Address::from([1u8; 20]);
-        let filter = build_v3_swap_filter(&[addr0, addr1]);
+        let filter = build_v3_log_filter(&[addr0, addr1]);
 
         // Verify the filter was constructed without panicking
         let debug_str = format!("{filter:?}");
