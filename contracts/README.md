@@ -69,7 +69,7 @@ The file `contracts/tstore_executor_runtime_bytecode.txt` contains the deployed 
 3. Patch the OWNER_ADDR immutable in the bytecode (anvil deployer → actual executor owner)
 4. Save the patched bytecode to `contracts/tstore_executor_runtime_bytecode.txt`
 
-**Vyper immutables are embedded in the runtime code**, not in storage. The bytecode already contains the correct OWNER_ADDR (`0x9dB96ae33f661808A41baf9e1C39D264bD472B08`) and WETH_ADDR (`0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2`). No storage slot overrides are needed for the executor itself.
+**Vyper immutables are embedded in the runtime code**, not in storage. The bytecode already contains the throwaway OWNER_ADDR (`0x9C56a29c7231974c269E24F9FB3c29203039089E` — a randomly generated key, not a real deployment) and WETH_ADDR (`0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2`). No storage slot overrides are needed for the executor itself. Override `EXECUTOR_OWNER_ADDRESS` at runtime with the real owner key.
 
 ### Callback Support
 

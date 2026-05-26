@@ -107,7 +107,7 @@ _Avoid_: mixed ref, mixed hop ref
 _Avoid_: Python mixed engine, uniswap engine wrapper
 _Avoid_: V3 pump, V3 block subscriber, V3 event driver
 
-**Code Injection**: Injecting contract runtime bytecode at a fresh address via `eth_simulateV1`'s `stateOverrides.code` field, enabling simulation of undeployed contracts. The executor contract's runtime bytecode (with immutables OWNER_ADDR/WETH_ADDR baked in) is loaded from `contracts/tstore_executor_runtime_bytecode.txt`. Vyper immutables are embedded in the code section, not storage — no storage slot overrides are needed. `eth_simulateV1` chains calls sequentially, so the 3-call WETH balanceOf pattern correctly captures profit without WETH storage prefunding.
+**Code Injection**: Injecting contract runtime bytecode at a fresh address via `eth_simulateV1`'s `stateOverrides.code` field, enabling simulation of undeployed contracts. The executor contract's runtime bytecode (with immutables OWNER_ADDR/WETH_ADDR baked in) is loaded from `contracts/tstore_executor_runtime_bytecode.txt`. The committed bytecode uses a randomly generated throwaway OWNER_ADDR to avoid leaking operational addresses — override `EXECUTOR_OWNER_ADDRESS` at runtime with the real key. Vyper immutables are embedded in the code section, not storage — no storage slot overrides are needed. `eth_simulateV1` chains calls sequentially, so the 3-call WETH balanceOf pattern correctly captures profit without WETH storage prefunding.
 _Avoid_: contract injection, bytecode override, code override
 
 ## Relationships
