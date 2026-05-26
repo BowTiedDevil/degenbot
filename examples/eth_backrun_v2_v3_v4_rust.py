@@ -549,7 +549,7 @@ class EngineRegistry:
         self._v2_keys[pool.address] = key
         return key
 
-    def register_v3_pool(self, pool: UniswapV3Pool) -> int:
+    def register_v3_pool(self, pool: UniswapV3Pool, block: int = 0) -> int:
         if pool.address in self._v3_keys:
             return self._v3_keys[pool.address]
         tick_data = {
@@ -566,11 +566,12 @@ class EngineRegistry:
             liquidity=pool.liquidity,
             tick=pool.tick,
             tick_data=tick_data,
+            block=block,
         )
         self._v3_keys[pool.address] = key
         return key
 
-    def register_v4_pool(self, pool: UniswapV4Pool) -> int:
+    def register_v4_pool(self, pool: UniswapV4Pool, block: int = 0) -> int:
         """Register a V4 pool with the Rust engine.
 
         Performs hook filtering at registration:
@@ -615,6 +616,7 @@ class EngineRegistry:
             liquidity=pool.liquidity,
             tick=pool.tick,
             tick_data=tick_data,
+            block=block,
         )
 
         self._v4_keys[pool_id_hex] = key

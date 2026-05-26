@@ -52,6 +52,7 @@ pub struct RegisterV3PoolParams {
     pub liquidity: u128,
     pub tick: i32,
     pub tick_data: HashMap<i32, TickInfo>,
+    pub update_block: u64,
 }
 
 /// V3 pool state as owned by the engine.
@@ -314,7 +315,7 @@ impl From<RegisterV3PoolParams> for V3PoolState {
             sqrt_price_x96: params.sqrt_price_x96,
             liquidity: params.liquidity,
             tick: params.tick,
-            update_block: 0,
+            update_block: params.update_block,
             tick_data: params.tick_data,
         }
     }
@@ -871,11 +872,33 @@ mod tests {
             liquidity: 1_000_000,
             tick: 0,
             tick_data: HashMap::new(),
+            update_block: 0,
         });
 
         assert_eq!(key, 1);
         assert!(engine.pools.contains_key(&key));
         assert_eq!(engine.pool_addresses[&addr], key);
+    }
+
+    #[test]
+    fn register_v3_pool_sets_update_block() {
+        let mut engine = V3BlockEngine::new();
+        let addr = Address::from([0x11u8; 20]);
+        let key = engine.register_pool(RegisterV3PoolParams {
+            address: addr,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: HashMap::new(),
+            update_block: 21_000_000,
+        });
+        let pool = &engine.pools[&key];
+        assert_eq!(pool.update_block, 21_000_000);
     }
 
     #[test]
@@ -894,6 +917,7 @@ mod tests {
                 liquidity: 100,
                 tick: 0,
                 tick_data: HashMap::new(),
+                update_block: 0,
             });
         }));
         assert!(result.is_err());
@@ -925,6 +949,7 @@ mod tests {
             liquidity: 1_000_000,
             tick: 0,
             tick_data: tick_data0,
+            update_block: 0,
         });
 
         let key1 = engine.register_pool(RegisterV3PoolParams {
@@ -938,6 +963,7 @@ mod tests {
             liquidity: 2_000_000,
             tick: 0,
             tick_data: tick_data1,
+            update_block: 0,
         });
 
         let path_id = engine.register_path(vec![
@@ -978,6 +1004,7 @@ mod tests {
             liquidity: 1_000_000,
             tick: 0,
             tick_data,
+        update_block: 0,
         });
 
         let new_sqrt_price = U256::from(79466191966197645195421774833u128);
@@ -1006,6 +1033,7 @@ mod tests {
             liquidity: 1_000_000,
             tick: 0,
             tick_data: HashMap::new(),
+            update_block: 0,
         });
 
         let tick_priors = vec![(60, make_tick_info(200, 100))];
@@ -1110,6 +1138,7 @@ mod tests {
             liquidity: 1_000_000_000_000,
             tick: 0,
             tick_data: tick_data0,
+            update_block: 0,
         });
 
         let key1 = engine.register_pool(RegisterV3PoolParams {
@@ -1123,6 +1152,7 @@ mod tests {
             liquidity: 2_000_000_000_000,
             tick: 0,
             tick_data: tick_data1,
+            update_block: 0,
         });
 
         let _path_id = engine.register_path(vec![
@@ -1166,6 +1196,7 @@ mod tests {
             liquidity: 10_000_000_000_000,
             tick: 0,
             tick_data: tick_data0,
+            update_block: 0,
         });
 
         let key1 = engine.register_pool(RegisterV3PoolParams {
@@ -1179,6 +1210,7 @@ mod tests {
             liquidity: 20_000_000_000_000,
             tick: 0,
             tick_data: tick_data1,
+            update_block: 0,
         });
 
         engine.register_path(vec![
@@ -1231,6 +1263,7 @@ mod tests {
             liquidity: 1_000_000,
             tick: 0,
             tick_data: tick_data0,
+            update_block: 0,
         });
 
         // Register a path that references a non-existent pool
@@ -1263,6 +1296,7 @@ mod tests {
             liquidity: 1_000_000,
             tick: 0,
             tick_data: tick_data,
+            update_block: 0,
         });
 
         engine.start();
@@ -1304,6 +1338,7 @@ mod tests {
             liquidity: 1_000_000,
             tick: 0,
             tick_data: tick_data0,
+            update_block: 0,
         });
 
         let key1 = engine.register_pool(RegisterV3PoolParams {
@@ -1317,6 +1352,7 @@ mod tests {
             liquidity: 2_000_000,
             tick: 0,
             tick_data: tick_data1,
+            update_block: 0,
         });
 
         let path_id = engine.register_path(vec![
@@ -1372,6 +1408,7 @@ mod tests {
             liquidity: 1_000_000,
             tick: 0,
             tick_data,
+        update_block: 0,
         });
 
         // Apply two swaps in the same block
@@ -1420,6 +1457,7 @@ mod tests {
             liquidity: 1_000_000,
             tick: 0,
             tick_data,
+        update_block: 0,
         });
 
         // Mint 500 liquidity from tick -60 to tick 60
@@ -1457,6 +1495,7 @@ mod tests {
             liquidity: 1_000_000,
             tick: 0,
             tick_data,
+        update_block: 0,
         });
 
         // Burn 200 liquidity from tick -60 to tick 60 (delta is negative)
@@ -1494,6 +1533,7 @@ mod tests {
             liquidity: 1_000_000,
             tick: 0,
             tick_data,
+        update_block: 0,
         });
 
         // Burn 100 liquidity (the entire position) — gross goes to 0 at both ticks
@@ -1524,6 +1564,7 @@ mod tests {
             liquidity: 1_000_000,
             tick: 0,
             tick_data,
+        update_block: 0,
         });
 
         // Mint 300 liquidity from tick -120 to tick 120
@@ -1593,7 +1634,7 @@ impl PyV3ArbEngine {
     ///     `tick`: Current tick (int)
     ///     `tick_data`: Dict mapping tick index -> (`liquidity_gross`, `liquidity_net`)
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (address, token0, token1, fee, tick_spacing, factory, sqrt_price_x96, liquidity, tick, tick_data))]
+    #[pyo3(signature = (address, token0, token1, fee, tick_spacing, factory, sqrt_price_x96, liquidity, tick, tick_data, block=0))]
     fn register_pool(
         &self,
         address: &str,
@@ -1606,6 +1647,7 @@ impl PyV3ArbEngine {
         liquidity: u128,
         tick: i32,
         tick_data: &Bound<'_, pyo3::types::PyDict>,
+        block: u64,
     ) -> PyResult<u64> {
         let addr = address.parse::<Address>().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
@@ -1648,6 +1690,7 @@ impl PyV3ArbEngine {
             liquidity,
             tick,
             tick_data: rust_tick_data,
+            update_block: block,
         }))
     }
 
