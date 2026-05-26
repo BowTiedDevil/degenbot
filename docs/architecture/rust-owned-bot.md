@@ -21,7 +21,7 @@ Every hot-path operation — event decoding, pool state mutation, tick-range con
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                      Hot Loop (Rust Pump)                           │
-│  WS newHeads → eth_getLogs → process_block → solve → store results │
+│  WS newHeads+logs → process_block → solve → store results              │
 │  ↳ send BlockNotification via watch channel                        │
 └─────────────────────────────────────────────────────────────────────┘
                                 │
@@ -43,7 +43,7 @@ Every hot-path operation — event decoding, pool state mutation, tick-range con
 | V2BlockEngine | Rust | `rust/src/optimizers/v2_block_engine.rs` | V2 pool state, Sync decoding, constant-product solving |
 | V3BlockEngine | Rust | `rust/src/optimizers/v3_block_engine.rs` | V3 pool state, Swap/Mint/Burn decoding, tick-range construction, piecewise solving |
 | V4BlockEngine | Rust | `rust/src/optimizers/v4_block_engine.rs` | V4 pool state, Swap/ModifyLiquidity decoding, same CL math as V3 |
-| UniswapEnginePump | Rust | `rust/src/optimizers/uniswap_engine_pump.rs` | Unified async pump: WS block headers, single `eth_getLogs` per block, routes to sub-engines |
+| UniswapEnginePump | Rust | `rust/src/optimizers/uniswap_engine_pump.rs` | Unified async pump: dual WS subscription (newHeads + logs), backfill on timeout/empty block, routes to sub-engines |
 | BotCore | Rust | `rust/src/bot_core/mod.rs` | Single owner of pool/token state (future all-state owner, currently V2+V3 partial) |
 | ReorgJournal | Rust | `rust/src/bot_core/state_history.rs` | Bounded deque of per-block deltas for rollback (V2: 2 reserves; V3: scalars + tick priors) |
 | Tick bitmap walk | Rust | `rust/src/bot_core/tick_bitmap.rs` | Port of `gen_ticks()` — produces ordered initialized/boundary ticks |
@@ -199,22 +199,39 @@ Replaced the single-range `exact_solve_mixed_v2_v3` which produced false positiv
 
 ## 6. The Pump: Rust-Owned State Pipeline
 
-### 6.1 Architecture
+### 6.1 Architecture: Dual-Subscription with Backfill Safety Net
 
-The `UniswapEnginePump` is the single async task that drives the entire hot loop:
+The `UniswapEnginePump` maintains two concurrent WS subscriptions against the same provider:
+
+1. **`newHeads`** — block boundary notifications (block number, timestamp, base fee, gas)
+2. **`logs`** — all log events, unfiltered (topic + address filtering happens in Rust)
+
+The pump assumes the WS/IPC connection is live and delivering events correctly. Logs arrive in real-time and are buffered per block. When a `newHeads` event arrives, the buffered logs for the just-completed block are processed atomically.
 
 ```
-AlloyProvider (WS)
+AlloyProvider (WS/IPC)
     │
-    ├─ subscribe_blocks() → newHeads stream
-    │
-    └─ on each block header:
-         ├─ eth_getLogs(block_filter) — single RPC call
-         │   Filter covers: V2_SYNC_TOPIC, V3_SWAP/MINT/BURN_TOPIC,
-         │                  V4_SWAP/MODIFY_LIQUIDITY_TOPIC
-         │   Addresses: all V2 + V3 pool contracts + V4 PoolManagers
+    ├─ subscribe("newHeads") ──────────────────────┐
+    │                                               │
+    ├─ subscribe("logs") ──┐                       │
+    │   (no filter)         │                       │
+    │                       ▼                       ▼
+    │               ┌─────────────────────────────────────┐
+    │               │  Buffer logs by block_number        │
+    │               │  (log.block_number from WS context  │
+    │               │   or matched against pending block)  │
+    │               └──────────┬──────────────────────────┘
+    │                          │
+    └─ on newHeads(block N):  │
+         │                    │
+         ├─ Take all buffered logs for block N-1
+         │   (logs that arrived since the previous newHeads)
          │
-         ├─ engine.lock().process_block(logs, block_number)
+         ├─ Filter logs in Rust:
+         │   topic0 ∈ {V2_SYNC, V3_SWAP/MINT/BURN, V4_SWAP/MODIFY_LIQ}
+         │   address ∈ {registered V2+V3 pools, V4 PoolManagers}
+         │
+         ├─ engine.lock().process_block(filtered_logs, block_number)
          │   → route to V2/V3/V4 sub-engines
          │   → rebuild affected sequences
          │   → solve affected paths
@@ -223,27 +240,64 @@ AlloyProvider (WS)
          └─ block_tx.send(BlockNotification) — Python reads this
 ```
 
-### 6.2 Why `eth_getLogs` per Block, Not a Logs Subscription
+### 6.2 Why No Filter on the Logs Subscription
 
-Plan 079's original vision used `eth_subscribe("logs", filter)` for real-time event delivery, with block headers signalling when to process the buffered stream. Plan 082 (the implementation) deliberately chose **pull-based** `eth_getLogs` instead:
+The `logs` subscription carries no address or topic filter. All filtering happens in Rust after receipt. This avoids three classes of provider-specific failure:
 
-1. **Silent data loss**: If a WS `logs` subscription hiccups (network jitter, provider restart, buffer overflow), events are missed **silently** — the engine operates on stale state and produces wrong results with no error signal. `eth_getLogs` is a single retryable RPC call; failure is loud and recoverable.
+1. **Address filter limits** — some providers reject subscriptions with >1000 address constraints, or silently ignore them
+2. **Topic filter truncation** — some providers handle 6-topic OR filters incorrectly
+3. **Provider-dependent filter semantics** — different providers interpret `address` and `topic` constraints differently (AND vs OR, ordering requirements)
 
-2. **Block atomicity**: A log subscription pushes events one at a time, requiring a buffer against a block boundary and fragile interleaving logic. `eth_getLogs` returns the complete set of logs for a block atomically — decode, update, and solve in one lock acquisition, no partial-processing risk.
+The traffic cost is bounded: Ethereum mainnet produces ~200–500 logs per block, of which typically 5–50 are relevant to our monitored pools. The Rust-side topic+address filter is O(1) per log (hash comparison + HashMap lookup).
 
-3. **Reconnection simplicity**: On WS reconnect, the pump calls `eth_getLogs` for the missed block(s). No need to reconcile a potentially-gapped event stream, re-subscribe to the log filter, or determine which events were missed.
+### 6.3 Backfill Triggers
 
-4. **Provider compatibility**: Some providers ignore `eth_subscribe("logs")` address constraints, reject large address lists, or throttle active log subscriptions. `eth_getLogs` is universally supported and well-tested across all node providers.
+The pump assumes the WS connection is live, but two conditions trigger a verification backfill via `eth_getLogs`:
 
-The latency cost is one RPC round-trip per block (~50ms local, ~100ms remote), arriving after the block header. The solve → encode → simulate → submit pipeline already takes hundreds of milliseconds, so `eth_getLogs` latency is not the bottleneck.
+#### Trigger 1: Timeout — 60s with nothing received
 
-### 6.3 Why One Pump, Not Three
+If neither a `newHeads` nor a `logs` event arrives within 60 seconds, the connection is likely dead. The pump:
 
-- 1 RPC call per block instead of 3
-- 1 WS subscription instead of 3
+1. Logs a warning with the last-seen block
+2. Calls `eth_getLogs` from `last_processed_block + 1` to the latest block (determined via `eth_blockNumber`)
+3. Processes any logs found, filling the gap
+4. Resets the timeout watchdog
+
+This catches: WS disconnects, provider restarts, network partitions, and local socket errors that don't immediately surface as `Err` in the stream.
+
+#### Trigger 2: Block with no received logs
+
+When a `newHeads` event arrives, the pump checks whether any logs were received since the previous `newHeads`. If zero logs arrived for the just-completed block, this could mean:
+
+- The block genuinely has no relevant events (common — many blocks have zero pool events)
+- The WS dropped some or all log events for this block
+
+The pump cannot distinguish these cases from the subscription alone. It calls `eth_getLogs(from=block, to=block)` to verify:
+
+- **Empty result** → block truly had no events. No harm done — one extra RPC call, no state change.
+- **Non-empty result** → logs were missed. Process them. The engine now has correct state.
+
+This provides **protection against false positives**: if the WS silently dropped events, the backfill catches them before the engine solves on stale state. If the block was truly empty, the backfill is a no-op with a small RPC cost.
+
+#### Why this is better than `eth_getLogs` every block
+
+| | `eth_getLogs` every block | Push + backfill on suspicion |
+|---|---|---|
+| Latency | Block header + ~50–100ms RPC | Block header only (logs already buffered) |
+| RPC calls per block | Always 1 | 0 for blocks with events, 1 for empty blocks |
+| Data freshness | Stale by one RPC round-trip | Real-time (logs arrive as they're mined) |
+| Safety | Guaranteed complete (by construction) | Guaranteed complete (backfill covers gaps) |
+| Empty-block cost | Same as any block | One `eth_getLogs` call (cheap — empty response) |
+
+The key advantage: **events are processed as they arrive**, not after a round-trip delay. For same-block reactivity (where another searcher might see the same event and act first), this latency reduction is material.
+
+### 6.4 Why One Pump, Not Three
+
+- 2 WS subscriptions instead of 6 (3 `newHeads` + 3 `logs`)
 - 1 lock acquisition per block instead of 3
+- Single `eth_getLogs` backfill call covers all protocols
 
-### 6.2 BlockNotification
+### 6.5 BlockNotification
 
 ```rust
 pub struct BlockNotification {
@@ -257,7 +311,7 @@ pub struct BlockNotification {
 
 Published via `tokio::sync::watch` channel. Python reads it via `engine.wait_for_block()` (blocking call, releases GIL). This replaces Python's WS `newHeads` subscription for fee/nonce computation — the pump is the sole source of block data.
 
-### 6.3 Startup Sequence
+### 6.6 Startup Sequence
 
 Python's `main()` follows this exact order:
 
@@ -270,6 +324,12 @@ Python's `main()` follows this exact order:
 7. **Main loop**: `wait_for_block → latest_results → dispatch_profitable_results`
 
 The backfill closes the gap between the DB snapshot and the first pump block. After backfill, Rust owns all state updates — Python never pushes pool state again.
+
+### 6.7 Consumer Subscription Model
+
+The pump's `watch` channel provides a continuous stream of `BlockNotification`s to Python. Because backfill covers gaps, consumers see an **unbroken, block-ordered sequence** of notifications — even if the WS connection dropped and recovered during a short window. The engine's `latest_results()` always reflects the most recent processed state, regardless of whether it came from the WS subscription or a backfill call.
+
+For future consumers that want per-event granularity (not just per-block), the pump can expose a second channel carrying `DecodedEvent` objects — block-ordered, deduplicated (backfill results merged with WS-received events), filtered to relevant pools only.
 
 ---
 
@@ -604,9 +664,10 @@ Every `Python::attach()` call site has a `// SAFETY:` comment documenting the no
               ┌────────────▼──────────────┐
               │   UniswapEnginePump       │
               │  (Tokio async task)       │
-              │  WS → eth_getLogs →       │
+              │  WS newHeads + logs →     │
               │  process_block → solve    │
               │  → BlockNotification      │
+              │  backfill on gap/timeout  │
               └──────────────────────────┘
 
   ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
@@ -685,4 +746,4 @@ Each math port follows the pattern:
 | `BotCore` is partial | V3 calculation/encoding not in BotCore; Curve/Balancer math not ported | Engines own their own state; BotCore is a future consolidation point |
 | V4 encoding not validated on anvil fork | ABI selectors and amountSpecified verified in unit tests, not against real node | Dry-run mode validates via `eth_simulateV1` before live submission |
 | No three-hop paths | Path discovery limited to `max_depth=2` | Would require solver extension (3-hop Möbius composition) and more complex encoding |
-| WS stability depends on Alloy | Rust pump uses Alloy's WS provider for block subscriptions | Pump logs gaps; can restart by re-calling `start()` |
+| WS stability depends on Alloy | Rust pump uses Alloy's WS provider for dual subscriptions | Timeout backfill (60s) covers dead connections; empty-block backfill covers silent event drops; Alloy auto-reconnects |
