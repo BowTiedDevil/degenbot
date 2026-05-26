@@ -308,8 +308,8 @@ def test_v4_hooked_pool_excluded()
 - [x] Slice 1: V4BlockEngine — pool state and registration
 - [x] Slice 2: V4BlockEngine — path solving and block processing
 - [x] Slice 3: Wire V4BlockEngine into UniswapEngine
-- [ ] Slice 4: Universal executor contract — V4 settlement
-- [ ] Slice 5: Bot — V4 pool discovery
+- [x] Slice 4: Universal executor contract — V4 settlement
+- [x] Slice 5: Bot — V4 pool discovery
 - [ ] Slice 6: Bot — V4 swap encoding
 - [ ] Slice 7: Bot — path building with V4
 - [ ] Slice 8: Validate and clean up
