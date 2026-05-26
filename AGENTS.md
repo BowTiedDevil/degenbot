@@ -404,12 +404,12 @@ The Rust extension (`rust/`) provides PyO3-wrapped ABI encoding/decoding, subscr
 ### Rust Engine Pumps
 
 Three individual pumps and one unified pump drive the Rust engines:
-- **`V2EnginePump`** — fetches Sync logs for registered V2 pool addresses
-- **`V3EnginePump`** — fetches Swap/Mint/Burn logs for registered V3 pool addresses
-- **`V4EnginePump`** — fetches Swap/ModifyLiquidity logs for PoolManager addresses
-- **`UniswapEnginePump`** — single `eth_getLogs` call per block with all topics and addresses, routes to V2/V3/V4 engines internally. Preferred over running separate pumps (1 RPC call vs 3 per block, single lock acquisition). Spawned by `PyUniswapArbEngine.start(rpc_url)`.
+- **`V2EnginePump`** — fetches Sync logs for registered V2 pool addresses (standalone, per-block `eth_getLogs`)
+- **`V3EnginePump`** — fetches Swap/Mint/Burn logs for registered V3 pool addresses (standalone, per-block `eth_getLogs`)
+- **`V4EnginePump`** — fetches Swap/ModifyLiquidity logs for PoolManager addresses (standalone, per-block `eth_getLogs`)
+- **`UniswapEnginePump`** — dual WS subscription (`newHeads` + unfiltered `logs`), buffers incoming logs in real-time, processes them atomically on block boundaries. Rust-side filtering by topic + registered address. Two backfill triggers: (1) 60s timeout with no activity → `eth_getLogs` for the missing range; (2) block header with zero buffered logs → `eth_getLogs` to verify empty vs dropped events. Preferred over running separate pumps. Spawned by `PyUniswapArbEngine.start(rpc_url)`. Individual V2/V3/V4 pumps are kept as alternative entry points for testing or single-protocol deployments.
 
-All pumps follow the same pattern: WS `newHeads` subscription → `eth_getLogs` with topic+address filter → `engine.process_block()`. No Python dependency. The bot's `main()` calls `engine.start(rpc_url)` after `freeze()` + `initial_solve()`; Python subscribes to `newHeads` only for fee/nonce updates and result dispatch.
+All pumps follow the same pattern: WS `newHeads` subscription → log processing → `engine.process_block()`. No Python dependency. The bot's `main()` calls `engine.start(rpc_url)` after `freeze()` + `initial_solve()`; Python subscribes to `newHeads` only for fee/nonce updates and result dispatch.
 
 ### Snapshot Backfill
 
