@@ -433,6 +433,7 @@ Key testing lessons:
 ## Relationship to Other Plans
 
 - **Plan 079** (Rust-Owned Bot Core): Complementary. Plan 079 moves more computation into Rust (V3 encoding, V3 calculation, tick bitmap walk). This plan (080) improves the Python orchestration layer (Slices 0.5–9) AND provides an integer-exact solver (Slices 10–12). Slices 10–12 overlap with Plan 079's goal of moving V3 math into Rust — specifically, Slice 11 (integer V3TickRangeHop) is a prerequisite for both plans. Plan 079 can replace `encode_v3_swap_calldata()` and `calculate_tokens_out_from_tokens_in()` with Rust equivalents, and this plan's dispatch logic doesn't change.
+- **Plan 081** (V4 Extension): Superset. Plan 081 extends the Rust engine and bot with V4 concentrated-liquidity support — `V4BlockEngine`, `HopType::V4`, V4 swap encoding, `unlockCallback` in the executor, and V4 pool discovery. All Plan 080 fixes (sign convention, auto-pay, code injection, integer-exact solvers) apply equally to V4 paths. Plan 081 is complete — all 8 slices implemented and tested.
 - **Independent of all other active plans**: No dependencies on Curve, Balancer, Aerodrome, or database plans.
 
 ## Review Findings

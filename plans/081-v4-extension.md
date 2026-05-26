@@ -313,3 +313,21 @@ def test_v4_hooked_pool_excluded()
 - [x] Slice 6: Bot — V4 swap encoding
 - [x] Slice 7: Bot — path building with V4 (done in Slice 5 — build_paths, event routing, HopInfo/PathInfo all extended for V4)
 - [x] Slice 8: Validate and clean up
+
+## Runtime Notes
+
+### V4 pool discovery performance
+
+The database contains ~6.8M V4 pools (~102K without hooks). Including `UniswapV4PoolTable` in `find_paths_async` with `ZERO_ADDRESS` as a start/end token significantly increases path enumeration time. `ENABLE_V4_POOL_DISCOVERY=1` env var controls this — default off so V2/V3 baseline starts in ~240s.
+
+### WS subscription address filter
+
+`engine_registry._v2_keys` and `_v3_keys` are dicts (address→key), not sets. Must use `.keys()` when constructing the WS subscription filter: `_v2_keys.keys() | _v3_keys.keys() | {PM_ADDR}`. Using `dict | set` raises `TypeError`.
+
+### V4 pool construction
+
+`bot.build_managed_pool(address=PM_ADDR, pool_id=pool_hash)` constructs V4 pools from DB records. For V4 ETH pools (currency0=address(0)), the DB stores address(0) as a token — `build_managed_pool` may fail if the ERC20 builder cannot handle the zero address. WETH/ERC20 V4 pools work fine.
+
+### V4 encoding validation status
+
+V4 swap selectors (`unlock=0x48c89491`, `swap=0xfd478a6c`, `take=0x0b0d9c09`, `sync=0xa5841194`, `settle=0x11da60b4`) and ABI encoding (negative amountSpecified for exact-input) are verified in unit tests. Not yet validated against a real anvil fork or mainnet.
