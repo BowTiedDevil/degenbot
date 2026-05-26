@@ -6,7 +6,7 @@ On-chain executor contracts for MEV arbitrage.
 
 | Contract | Location | Vyper | Pool Types | Callbacks | Style |
 |----------|----------|-------|-------------|-----------|-------|
-| `tstore_executor.vy` | `contracts/` | 0.4.x | V2 + V3 | `uniswapV2Call`, `hook`, `pancakeCall`, `uniswapV3SwapCallback`, `pancakeV3SwapCallback` | Generic payload queue |
+| `tstore_executor.vy` | `contracts/` | 0.4.x | V2 + V3 + V4 | `uniswapV2Call`, `hook`, `pancakeCall`, `uniswapV3SwapCallback`, `pancakeV3SwapCallback`, `unlockCallback` | Generic payload queue |
 | `v4_v2_executor.vy` | `examples/uniswap_v4_v2_executor/contracts/` | 0.4.1 | V4 + V2 | `unlockCallback`, `__default__` | Fixed-structure (V4↔V2) |
 | `v4_v3_executor.vy` | `examples/uniswap_v4_v2_executor/contracts/` | 0.4.1 | V4 + V3 | `unlockCallback`, `uniswapV3SwapCallback` | Fixed-structure (V4↔V3) |
 | `v4_v3_executor_multi.vy` | `examples/uniswap_v4_v3_executor/contracts/` | 0.4.1 | V4 + V3 | `unlockCallback`, `uniswapV3SwapCallback` | Command-bytecode VM |
@@ -36,7 +36,7 @@ For arbitrage paths using the `tstore_executor.vy` (V2+V3 only), always use **po
 
 ---
 
-## tstore_executor.vy — V2/V3 Generic Payload Executor
+## tstore_executor.vy — V2/V3/V4 Generic Payload Executor
 
 **Vyper version**: 0.4.x
 **EVM version**: Cancun (uses TSTORE for transient storage)
@@ -91,6 +91,7 @@ The file `contracts/tstore_executor_runtime_bytecode.txt` contains the deployed 
 | `pancakeCall` | PancakeSwap V2 | `0x84800812` |
 | `uniswapV3SwapCallback` | Uniswap V3, SushiSwap V3 | `0xfa461e33` |
 | `pancakeV3SwapCallback` | PancakeSwap V3 | `0x23a69e75` |
+| `unlockCallback` | Uniswap V4 PoolManager | `0x9a7bff79` |
 
 ### Key Design Decisions
 
@@ -98,8 +99,10 @@ The file `contracts/tstore_executor_runtime_bytecode.txt` contains the deployed 
 2. **V3 auto-pay**: When a V3 pool is owed WETH, the callback auto-transfers it. Python encoders must NOT include separate WETH transfer payloads for V3 pools where auto-pay fires.
 3. **Strict `__default__`**: Reverts on unknown function calls (unlike the old deployed contract which silently returned, swallowing V2 callbacks).
 4. **Bribe support**: `execute_payloads(payloads, bribe_bips)` sends a coinbase bribe proportional to WETH profit.
-5. **`will_callback` registration**: Before calling a pool with `will_callback=True`, the target address is registered in `t_allowed_callback_addresses`. Callback handlers assert that `msg.sender` is registered.
-6. **Transient storage**: All queue state uses TLOAD/TSTORE, automatically cleared between transactions.
+5. **V4 unlock/settle/take**: The executor's `unlockCallback` resumes payload delivery inside PoolManager's `unlock()` context. Python encodes all V4 operations (swap, sync, settle, take) as raw calldata payloads — the executor treats them identically to V2/V3 payloads. The PoolManager address must be registered via `will_callback=True` on the unlock payload.
+6. **`will_callback` registration**: Before calling a pool with `will_callback=True`, the target address is registered in `t_allowed_callback_addresses`. Callback handlers assert that `msg.sender` is registered.
+7. **Transient storage**: All queue state uses TLOAD/TSTORE, automatically cleared between transactions.
+8. **Increased limits**: `MAX_PAYLOADS=16` (was 8), `MAX_PAYLOAD_BYTES=832` (was 196) to accommodate V4 `PoolManager.swap(PoolKey, SwapParams, bytes32)` calldata.
 
 ### Supported Path Types
 
@@ -110,6 +113,11 @@ The file `contracts/tstore_executor_runtime_bytecode.txt` contains the deployed 
 | V3→V3 | 4 | Nested V3 callbacks; auto-pay for WETH debts |
 | V2→V2 | 4 | V2 flash borrow + direct V2 swap + WETH repayment |
 | V2→V3 | 4 | V2 flash borrow + V3 nested callback + WETH repayment |
+| V4→V4 | 6 | `unlock()` + V4 swap A + V4 swap B + sync + transfer + settle |
+| V4→V3 | 7 | `unlock()` + V4 swap + V3 swap + callback + sync + transfer + settle |
+| V4→V2 | 7 | `unlock()` + V4 swap + V2 swap + sync + transfer + settle + take |
+| V3→V4 | 7 | V3 swap + callback → `unlock()` + V4 swap + sync + transfer + settle |
+| V2→V4 | 7 | V2 flash + callback → `unlock()` + V4 swap + sync + transfer + settle |
 
 ---
 

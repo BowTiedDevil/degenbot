@@ -7,15 +7,27 @@ Tstore Executor — generic payload executor for Uniswap V2/V3/V4 arbitrage.
 Supports all callback types from major Uniswap forks:
 - V2: uniswapV2Call (Uniswap, SushiSwap), hook (Velodrome/Aerodrome), pancakeCall (PancakeSwap)
 - V3: uniswapV3SwapCallback (Uniswap, SushiSwap), pancakeV3SwapCallback (PancakeSwap)
-- V4: unlockCallback (stubs for future V4 support)
+- V4: unlockCallback (PoolManager unlock/settle/take pattern)
 
 Usage:
     executor.execute_payloads([
-        (V2_POOL,  swap_calldata_with_data,  True),   # V2 flash borrow (data != "")
+        (POOL_MANAGER, unlock_calldata,                     False),  # V4 unlock entry
+        # -- inside unlockCallback, queue resumes: --
+        (POOL_MANAGER, swap_calldata,                        False),  # V4 swap A
+        (POOL_MANAGER, swap_calldata,                        False),  # V4 swap B
+        (WETH,          transfer_to_pool_manager_calldata,   False),  # settle debt
+        (POOL_MANAGER, settle_calldata,                      False),  # settle()
+        (POOL_MANAGER, take_calldata,                        False),  # take() profit
+        # ... or for V2/V3 paths:
+        (V2_POOL,  swap_calldata_with_data,  True),   # V2 flash borrow
         (TOKEN,    transfer_calldata,         False),  # ERC20 transfer
-        (V2_POOL,  swap_calldata_no_data,    False),  # V2 direct swap (data == "")
         (WETH,     transfer_calldata,         False),  # WETH repayment
     ])
+
+V4 settlement pattern:
+    V4 swaps happen inside unlockCallback (called by PoolManager.unlock).
+    Python encodes all V4 operations (swap, sync, settle, take) as raw calldata.
+    The executor treats them identically to V2/V3 payloads — just raw_calls.
 
 Payload delivery uses a queue with transient storage:
 - deliver_queued_payload() advances the queue index and raw_calls the target
@@ -46,8 +58,8 @@ struct Payload:
 
 OWNER_ADDR: immutable(address)
 WETH_ADDR: immutable(address)
-MAX_PAYLOADS: constant(uint256) = 8
-MAX_PAYLOAD_BYTES: constant(uint256) = 196  # Maximum for a V3 swap call
+MAX_PAYLOADS: constant(uint256) = 16
+MAX_PAYLOAD_BYTES: constant(uint256) = 832  # PoolManager.swap(PoolKey,SwapParams,bytes32) ≈ 832
 
 # --- Transient state (cleared every transaction) ---
 
@@ -284,6 +296,40 @@ def pancakeV3SwapCallback(
     """PancakeSwap V3 swap callback."""
     assert self.t_allowed_callback_addresses[msg.sender], "Unregistered V3 Callback Address"
     self.v3_swap_callback(amount0_delta, amount1_delta)
+
+
+# ──────────────────────── V4 Callback ─────────────────────────
+
+
+@external
+@payable
+def unlockCallback(data: Bytes[32]) -> Bytes[32]:
+    """
+    PoolManager unlock callback — resume payload delivery.
+
+    Called by PoolManager.unlock(). Inside this callback, the executor
+    delivers queued payloads that perform V4 operations:
+    - PoolManager.swap (the V4 swap calls)
+    - PoolManager.sync + ERC20.transfer + PoolManager.settle (settle debts)
+    - PoolManager.take (receive profits)
+
+    All V4 operations are pre-encoded by Python as raw calldata payloads.
+    The executor does not decode swap deltas or manage settlement internally
+    — Python pre-computes all amounts and encodes the settlement calldata.
+
+    Only one unlockCallback is accepted per execute_payloads() call.
+    The PoolManager address must be registered via will_callback=True on
+    the unlock payload.
+    """
+    assert self.t_allowed_callback_addresses[msg.sender], "Unregistered V4 Callback Address"
+
+    for i: uint256 in range(MAX_PAYLOADS):
+        if self.t_all_payloads_delivered:
+            break
+        else:
+            self.deliver_queued_payload()
+
+    return b''
 
 
 # ──────────────────────────── Fallback ────────────────────────────
