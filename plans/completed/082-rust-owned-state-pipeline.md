@@ -1,5 +1,7 @@
 # Plan 082: Rust-Owned State Pipeline
 
+> **Post-completion update (2026-05)**: The pump architecture was refined from per-block `eth_getLogs` to a dual-subscription model (`newHeads` + unfiltered `logs` WS subscriptions) with backfill safety nets (60s timeout, empty-block verification). See `docs/architecture/rust-owned-bot.md` §6 for the current architecture. The design decision "Push-based WS, pull-based logs" below reflects the original implementation; it has been superseded by the push-based subscription model with `eth_getLogs` only used for backfill verification.
+
 ## Overview
 
 Activate the Rust engine pumps so Rust owns the entire hot-loop state pipeline for V2, V3, and V4 pools. Today, Python receives WS events, applies handlers to Python pool objects, extracts full tick_data, and pushes it to Rust via `process_logs()` — making Python the state authority and Rust a passive consumer. The Rust engine already has event decoders (`v2_sync_decoder`, `v3_swap_decoder`, `v4_swap_decoder`) and pump skeletons (`V2EnginePump`, `V3EnginePump`) — but the bot doesn't use them. This plan wires them in, adds the missing V4 pump and V3 Mint/Burn decoder, introduces a backfill mechanism for snapshot-to-live-gap, and eliminates Python from the per-event state path.

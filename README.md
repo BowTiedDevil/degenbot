@@ -1471,6 +1471,7 @@ Additional documentation is available in the [`docs/`](docs/) directory:
 
 - **[Architecture](docs/architecture/)**: High-level architectural patterns
   - [I/O-Free Pool Architecture](docs/architecture/io-free-pools.md) — The CurveDataProvider seam for decoupled I/O
+  - [Rust-Owned Backrun Bot](docs/architecture/rust-owned-bot.md) — V2/V3/V4 arbitrage engine, dual-subscription pump, integer-exact Möbius solver, executor contract, and Python orchestration layer
   - [Semantic Matching](docs/architecture/semantic-matching.md) — Event processing patterns for Aave
 - **[Aave V3](docs/aave/)**: Comprehensive control flow diagrams and amount transformations for Aave operations
 - **[Arbitrage](docs/arbitrage/)**: Multi-pool cycle testing documentation

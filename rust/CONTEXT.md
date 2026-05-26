@@ -26,7 +26,7 @@ _Avoid_: pool cache, solver cache, rust cache
 **V2BlockEngine**: A pure-Rust struct that owns the full per-block V2 arbitrage lifecycle: Sync event decoding, pool state updates (`apply_sync`), path resolution, and Mobius solver dispatch. Python participates only in initial construction (`register_pool`, `register_path`) and reading results (`latest_results`). Registration is frozen after `start()`.
 _Avoid_: V2 engine, block processor, arbitrage engine
 
-**V2EnginePump**: A standalone async task that drives `V2BlockEngine`. Owns its own `AlloyProvider` (created from an RPC URL string), subscribes to block headers via WS, fetches Sync logs via `eth_getLogs` on each new block, and calls `engine.process_block()`. No dependency on the Python subscription infrastructure.
+**V2EnginePump**: A standalone async task that drives `V2BlockEngine`. Owns its own `AlloyProvider` (created from an RPC URL string), subscribes to block headers via WS, fetches Sync logs via `eth_getLogs` on each new block, and calls `engine.process_block()`. No dependency on the Python subscription infrastructure. Superseded by `UniswapEnginePump` for mixed-protocol deployments.
 _Avoid_: pump, block subscriber, event driver
 
 **V2_SYNC_TOPIC**: `0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1` — the Keccak256 hash of the Uniswap V2 `Sync(uint112,uint112)` event signature. The Rust-side constant matches the Python `V2_SYNC_TOPIC` in `log_decoders.py`.
@@ -92,12 +92,12 @@ _Avoid_: swap update, v3 swap event data
 **PyV3ArbEngine**: The PyO3 wrapper class (exposed as `V3ArbEngine` in Python) that holds `Arc<Mutex<V3BlockEngine>>` plus a shutdown flag and pump handle. Mirrors `PyV2ArbEngine` — Python constructs the engine (registers V3 pools with tick data, registers paths), then starts a Rust-side pump. `process_logs()` drives the engine synchronously for testing.
 _Avoid_: Python V3 engine, V3 engine wrapper
 
-**V3EnginePump**: A standalone async task that drives `V3BlockEngine`. Owns its own `AlloyProvider` (created from an RPC URL string), subscribes to block headers via WS, fetches V3 Swap/Mint/Burn logs via `eth_getLogs` on each new block, and calls `engine.process_block()`. No dependency on the Python subscription infrastructure. Mirrors `V2EnginePump`.
+**V3EnginePump**: A standalone async task that drives `V3BlockEngine`. Owns its own `AlloyProvider` (created from an RPC URL string), subscribes to block headers via WS, fetches V3 Swap/Mint/Burn logs via `eth_getLogs` on each new block, and calls `engine.process_block()`. No dependency on the Python subscription infrastructure. Mirrors `V2EnginePump`. Superseded by `UniswapEnginePump` for mixed-protocol deployments.
 
-**V4EnginePump**: A standalone async task that drives `V4BlockEngine`. Owns its own `AlloyProvider`, subscribes to block headers via WS, fetches V4 Swap/ModifyLiquidity logs via `eth_getLogs` on each new block, and calls `engine.process_block()`. Key difference from V2/V3: filters on PoolManager address (typically one) instead of individual pool contract addresses. Mirrors `V2EnginePump` and `V3EnginePump`.
+**V4EnginePump**: A standalone async task that drives `V4BlockEngine`. Owns its own `AlloyProvider`, subscribes to block headers via WS, fetches V4 Swap/ModifyLiquidity logs via `eth_getLogs` on each new block, and calls `engine.process_block()`. Key difference from V2/V3: filters on PoolManager address (typically one) instead of individual pool contract addresses. Mirrors `V2EnginePump` and `V3EnginePump`. Superseded by `UniswapEnginePump` for mixed-protocol deployments.
 
-**UniswapEnginePump**: The unified pump that drives `UniswapEngine`. A single async task that subscribes to block headers, fetches ALL relevant logs (V2 Sync, V3 Swap/Mint/Burn, V4 Swap/ModifyLiquidity) in one `eth_getLogs` call per block, and routes them to `UniswapEngine::process_block()`. Preferred over running V2/V3/V4 pumps separately — fewer RPC calls (1 vs 3 per block), less lock contention, and simpler WS subscription management. Spawned by `PyUniswapArbEngine.start(rpc_url)`.
-_Avoid_: unified pump, combined pump, single pump
+**UniswapEnginePump**: The unified pump that drives `UniswapEngine`. Maintains two concurrent WS subscriptions — `newHeads` (block boundary notifications) and `logs` (unfiltered, all filtering in Rust). Logs are buffered in real-time and processed atomically when the next block header arrives. Two backfill triggers cover connection gaps: (1) 60s timeout with no activity on either subscription → `eth_getLogs` backfill for the missing range; (2) block header arrives with zero buffered logs → `eth_getLogs` verifies whether the block was truly empty or events were silently dropped. Rust-side `filter_relevant_logs()` checks topic0 against 6 monitored topics AND address against registered pool/PoolManager addresses — no provider-side filter needed. `BlockNotification` carries a `backfilled` field. Spawned by `PyUniswapArbEngine.start(rpc_url)`.
+_Avoid_: unified pump, combined pump, single pump, per-block getLogs pump
 
 **V3_MINT_TOPIC**: `0x7a53080ba414158be7ec69b987b5fb7d07dee101fe85488f0853ae16239d0bde` — the Keccak256 hash of the Uniswap V3 `Mint(address,address,int24,int24,uint128,uint256,uint256)` event signature. Used by the V3 Mint/Burn decoder to filter and decode Mint logs. Matches the Python `V3_MINT_TOPIC` in `log_decoders.py`.
 
@@ -190,10 +190,11 @@ _Avoid_: amount sign, swap direction sign, amount convention
 - **`PyV3ArbEngine`** → **`V3BlockEngine`**: The PyO3 wrapper delegates all operations to the inner engine through a shared `Mutex`; `process_logs()` is the main test entry point, `latest_results()` is the per-block result reader
 - **`V3EnginePump`** → **`PyV3ArbEngine`**: PyV3ArbEngine holds `Arc<Mutex<V3BlockEngine>>` (shared with the pump) and a shutdown `Arc<AtomicBool>`; pump is spawned on `start(rpc_url)` and stopped via the shutdown flag
 - **`V3EnginePump`** → **`AlloyProvider`**: The pump creates its own `AlloyProvider` from an RPC URL — no PyO3 dependency
-- **`V3EnginePump`** → **`V3_SWAP_TOPIC`**: The pump builds an Alloy `Filter` with `V3_SWAP_TOPIC` and registered pool addresses for `eth_getLogs` queries
-- **`V4EnginePump`** → **`V4_SWAP_TOPIC`** + **`V4_MODIFY_LIQUIDITY_TOPIC`**: The pump builds an Alloy `Filter` with both topics and PoolManager addresses
-- **`UniswapEnginePump`** → **`UniswapEngine`**: The pump holds `Arc<Mutex<UniswapEngine>>` and calls `process_block()` on each new block after fetching logs
-- **`UniswapEnginePump`** → **`AlloyProvider`**: The pump creates its own provider from an RPC URL
+- **`V3EnginePump`** → **`V3_SWAP_TOPIC`**: The pump builds an Alloy `Filter` with `V3_SWAP_TOPIC` and registered pool addresses for `eth_getLogs` queries (used by the standalone V3 pump; `UniswapEnginePump` does its own filtering)
+- **`V4EnginePump`** → **`V4_SWAP_TOPIC`** + **`V4_MODIFY_LIQUIDITY_TOPIC`**: The pump builds an Alloy `Filter` with both topics and PoolManager addresses (used by the standalone V4 pump; `UniswapEnginePump` does its own filtering)
+- **`UniswapEnginePump`** → **`UniswapEngine`**: The pump holds `Arc<Mutex<UniswapEngine>>` and calls `process_block()` after buffering WS-delivered logs against block boundaries
+- **`UniswapEnginePump`** → **`AlloyProvider`**: The pump creates its own provider from an RPC URL; subscribes to both `newHeads` and `logs` (unfiltered) via WS
+- **`UniswapEnginePump`** — backfill on timeout/empty-block: 60s with no WS activity, or block header with zero buffered logs → `eth_getLogs` to verify
 - **`PyUniswapArbEngine`** → **`UniswapEnginePump`**: `start(rpc_url)` spawns the pump; `pump_handle` stores the JoinHandle; `shutdown` `AtomicBool` stops it
 - **`V3BlockEngine`** → **`decode_v3_mint_log()`**: Process_block decodes V3 Mint events from raw logs, then applies updates via `apply_liquidity_update()`
 - **`V3BlockEngine`** → **`decode_v3_burn_log()`**: Process_block decodes V3 Burn events from raw logs, then applies updates via `apply_liquidity_update()` (negated delta)
