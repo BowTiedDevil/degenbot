@@ -376,37 +376,32 @@ impl V4BlockEngine {
     /// tick-level priors. Both orientations are updated.
     pub fn apply_swap(
         &mut self,
-        pool_manager: Address,
-        pool_id: PoolId,
-        sqrt_price_x96: U256,
-        liquidity: u128,
-        tick: i32,
+        update: &V4SwapUpdate,
         block_number: u64,
-        tick_priors: &[(i32, TickInfo)],
     ) {
-        let Some(&(fwd_key, rev_key)) = self.pool_ids.get(&(pool_manager, pool_id)) else {
+        let Some(&(fwd_key, rev_key)) = self.pool_ids.get(&(update.pool_manager, update.pool_id)) else {
             return;
         };
 
         // Apply to forward pool
         if let Some(pool) = self.pools.get_mut(&fwd_key) {
-            for &(tick_index, ref prior) in tick_priors {
+            for &(tick_index, ref prior) in &update.tick_priors {
                 pool.tick_data.insert(tick_index, prior.clone());
             }
-            pool.sqrt_price_x96 = sqrt_price_x96;
-            pool.liquidity = liquidity;
-            pool.tick = tick;
+            pool.sqrt_price_x96 = update.sqrt_price_x96;
+            pool.liquidity = update.liquidity;
+            pool.tick = update.tick;
             pool.update_block = block_number;
         }
 
         // Apply to reverse pool (same state, different PoolKey orientation)
         if let Some(pool) = self.pools.get_mut(&rev_key) {
-            for &(tick_index, ref prior) in tick_priors {
+            for &(tick_index, ref prior) in &update.tick_priors {
                 pool.tick_data.insert(tick_index, prior.clone());
             }
-            pool.sqrt_price_x96 = sqrt_price_x96;
-            pool.liquidity = liquidity;
-            pool.tick = tick;
+            pool.sqrt_price_x96 = update.sqrt_price_x96;
+            pool.liquidity = update.liquidity;
+            pool.tick = update.tick;
             pool.update_block = block_number;
         }
     }
@@ -466,13 +461,15 @@ impl V4BlockEngine {
         for log in logs {
             if let Some(event) = decode_v4_swap_log(log) {
                 self.apply_swap(
-                    log.address(),
-                    event.pool_id,
-                    event.sqrt_price_x96,
-                    event.liquidity.to::<u128>(),
-                    event.tick,
+                    &V4SwapUpdate {
+                        pool_manager: log.address(),
+                        pool_id: event.pool_id,
+                        sqrt_price_x96: event.sqrt_price_x96,
+                        liquidity: event.liquidity.to::<u128>(),
+                        tick: event.tick,
+                        tick_priors: vec![],
+                    },
                     block_number,
-                    &[],
                 );
             } else if let Some(event) = decode_v4_modify_liquidity_log(log) {
                 self.apply_liquidity_update(
@@ -501,15 +498,7 @@ impl V4BlockEngine {
             let Some(&(fwd_key, rev_key)) = self.pool_ids.get(&(update.pool_manager, update.pool_id)) else {
                 continue;
             };
-            self.apply_swap(
-                update.pool_manager,
-                update.pool_id,
-                update.sqrt_price_x96,
-                update.liquidity,
-                update.tick,
-                block_number,
-                &update.tick_priors,
-            );
+            self.apply_swap(update, block_number);
             affected.insert(fwd_key);
             affected.insert(rev_key);
         }
@@ -838,6 +827,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn make_register_params(
         pool_manager: Address,
         pool_id: PoolId,
@@ -1048,13 +1038,15 @@ mod tests {
 
         let new_sqrt_price = U256::from(79466191966197645195421774833u128);
         engine.apply_swap(
-            POOL_MANAGER,
-            pool_id,
-            new_sqrt_price,
-            900_000,
-            60,
+            &V4SwapUpdate {
+                pool_manager: POOL_MANAGER,
+                pool_id,
+                sqrt_price_x96: new_sqrt_price,
+                liquidity: 900_000,
+                tick: 60,
+                tick_priors: vec![],
+            },
             42,
-            &[],
         );
 
         // Forward pool updated
@@ -1079,13 +1071,15 @@ mod tests {
         let unregistered_id = make_pool_id(0xFF);
 
         engine.apply_swap(
-            POOL_MANAGER,
-            unregistered_id,
-            U256::ONE,
-            100,
-            0,
+            &V4SwapUpdate {
+                pool_manager: POOL_MANAGER,
+                pool_id: unregistered_id,
+                sqrt_price_x96: U256::ONE,
+                liquidity: 100,
+                tick: 0,
+                tick_priors: vec![],
+            },
             1,
-            &[],
         );
         // Should not panic
     }
@@ -1710,6 +1704,7 @@ mod tests {
 
     // ── Log construction helpers ──────────────────────────────────
 
+    #[allow(clippy::too_many_arguments)]
     fn build_v4_swap_log(
         pool_manager: Address,
         pool_id: PoolId,

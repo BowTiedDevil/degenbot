@@ -750,8 +750,6 @@ pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> U256
     }
 }
 
-/// Simulate a path of mixed V2/V3 hops using integer arithmetic.
-///
 // ---------------------------------------------------------------------------
 // Integer V3 Exact Solver
 // ---------------------------------------------------------------------------

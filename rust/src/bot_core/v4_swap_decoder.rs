@@ -144,6 +144,7 @@ mod tests {
     use super::*;
     use alloy::primitives::Bytes;
 
+    #[allow(clippy::too_many_arguments)]
     fn make_v4_swap_log(
         pool_id: PoolId,
         sender: Address,
