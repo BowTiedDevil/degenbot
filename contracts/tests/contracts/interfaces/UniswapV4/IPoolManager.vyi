@@ -1,0 +1,51 @@
+MAX_CALLDATA_LENGTH: constant(uint256) = 4096
+
+struct PoolKey:
+    currency0: address
+    currency1: address
+    fee: uint24
+    tick_spacing: int24
+    hooks: address
+
+struct SwapParams:
+    zero_for_one: bool
+    amount_specified: int256   
+    sqrt_price_limit_x96: uint160
+
+
+@payable
+def settle() -> uint256: 
+    ...
+
+
+@payable
+def settleFor(recipient: address) -> uint256: 
+    ...
+
+
+@nonpayable
+def swap(
+    key: PoolKey, 
+    params: SwapParams, 
+    hook_data: Bytes[MAX_CALLDATA_LENGTH],
+) -> int256: 
+    ...
+
+
+@nonpayable
+def sync(currency: address): 
+    ...
+
+
+@nonpayable
+def take(
+    currency: address,
+    to: address,
+    amount: uint256
+): 
+    ...
+
+
+@nonpayable
+def unlock(data: Bytes[MAX_CALLDATA_LENGTH]) -> Bytes[MAX_CALLDATA_LENGTH]:
+    ...

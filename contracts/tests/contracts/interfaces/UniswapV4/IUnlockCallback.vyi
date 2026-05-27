@@ -1,0 +1,5 @@
+MAX_CALLDATA_LENGTH: constant(uint256) = 4096
+
+@nonpayable
+def unlockCallback(data: Bytes[4096]) -> Bytes[4096]:
+    ...

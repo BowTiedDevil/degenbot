@@ -230,7 +230,7 @@ impl UniswapEnginePump {
         &self,
         relevant_addrs: &HashSet<Address>,
         relevant_topic_set: &HashSet<B256>,
-        last_processed_block: &mut u64,
+        last_processed_block: &mut Option<u64>,
     ) {
         log::warn!(
             "UniswapEnginePump: no activity for {BACKFILL_TIMEOUT_SECS}s — attempting backfill"
@@ -243,15 +243,19 @@ impl UniswapEnginePump {
             }
         };
 
-        if current_block > *last_processed_block {
-            self.backfill_range(
-                *last_processed_block + 1,
-                current_block,
-                relevant_addrs,
-                relevant_topic_set,
-                last_processed_block,
-            )
-            .await;
+        if let Some(lpb) = *last_processed_block {
+            if current_block > lpb {
+                let mut lpb_mut = lpb;
+                self.backfill_range(
+                    lpb + 1,
+                    current_block,
+                    relevant_addrs,
+                    relevant_topic_set,
+                    &mut lpb_mut,
+                )
+                .await;
+                *last_processed_block = Some(lpb_mut);
+            }
         }
     }
 
@@ -305,10 +309,24 @@ impl UniswapEnginePump {
         };
         let relevant_topic_set: HashSet<B256> = RELEVANT_TOPICS.into_iter().collect();
 
+        // Read the last block processed by Python backfill.
+        // If Python ran process_block(..., 25182221) before starting the pump,
+        // this will be Some(25182221). The pump uses this to determine the
+        // backfill boundary on startup — any blocks between this value and
+        // the first WS block header must be fetched via eth_getLogs.
+        // None means no block has been processed yet (cold start).
+        let mut last_processed_block: Option<u64> = {
+            let engine = self.engine.lock();
+            engine.last_processed_block()
+        };
+        if let Some(block) = last_processed_block {
+            log::info!("UniswapEnginePump: starting from block {block} (Python backfill)");
+        } else {
+            log::info!("UniswapEnginePump: starting with no prior processed block");
+        }
+
         // Buffer for logs received since the last newHeads
         let mut pending_logs: Vec<Log> = Vec::new();
-        // Block number of the last processed block (0 = none yet)
-        let mut last_processed_block: u64 = 0;
 
         loop {
             // Check shutdown
@@ -344,40 +362,66 @@ impl UniswapEnginePump {
                     gas_used,
                     gas_limit,
                 })) => {
-                    // On the first block header, just record it
-                    if last_processed_block == 0 {
-                        last_processed_block = number;
-                        pending_logs.clear();
-                        let _ = self.block_tx.send(BlockNotification {
-                            block_number: number,
-                            timestamp,
-                            base_fee_per_gas,
-                            gas_used,
-                            gas_limit,
-                            backfilled: false,
-                        });
-                        continue;
+                    match last_processed_block {
+                        None => {
+                            // Cold start — no Python backfill was done.
+                            // Record this block as the starting point and skip processing.
+                            // The next block header will trigger normal processing.
+                            last_processed_block = Some(number);
+                            pending_logs.clear();
+                            let _ = self.block_tx.send(BlockNotification {
+                                block_number: number,
+                                timestamp,
+                                base_fee_per_gas,
+                                gas_used,
+                                gas_limit,
+                                backfilled: false,
+                            });
+                            continue;
+                        }
+                        Some(prior_block) => {
+                            // Backfill any gap between the last processed block
+                            // and this block header. For example, if Python
+                            // backfill ended at block 25182221 and the first WS
+                            // header is block 25182223, we must fetch events
+                            // for blocks 25182222 (and 25182223 is the new
+                            // current block, not yet complete).
+                            if number > prior_block + 1 {
+                                let mut lpb = prior_block;
+                                self.backfill_range(
+                                    prior_block + 1,
+                                    number - 1,
+                                    &relevant_addrs,
+                                    &relevant_topic_set,
+                                    &mut lpb,
+                                )
+                                .await;
+                                // lpb now holds the last backfilled block
+                                last_processed_block = Some(lpb);
+                            }
+
+                            // Process the block we were sitting on
+                            let block_to_process = last_processed_block.unwrap_or(prior_block);
+                            self.process_completed_block(
+                                block_to_process,
+                                &pending_logs,
+                                &relevant_addrs,
+                                &relevant_topic_set,
+                            )
+                            .await;
+                            pending_logs.clear();
+                            last_processed_block = Some(number);
+
+                            let _ = self.block_tx.send(BlockNotification {
+                                block_number: number,
+                                timestamp,
+                                base_fee_per_gas,
+                                gas_used,
+                                gas_limit,
+                                backfilled: false,
+                            });
+                        }
                     }
-
-                    let block_to_process = last_processed_block;
-                    self.process_completed_block(
-                        block_to_process,
-                        &pending_logs,
-                        &relevant_addrs,
-                        &relevant_topic_set,
-                    )
-                    .await;
-                    pending_logs.clear();
-                    last_processed_block = number;
-
-                    let _ = self.block_tx.send(BlockNotification {
-                        block_number: number,
-                        timestamp,
-                        base_fee_per_gas,
-                        gas_used,
-                        gas_limit,
-                        backfilled: false,
-                    });
                 }
 
                 // Got a log event from the combined stream

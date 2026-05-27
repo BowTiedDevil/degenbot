@@ -1,0 +1,18 @@
+MAX_CALLBACK_DATA_LENGTH: constant(uint256) = 4096
+
+@nonpayable
+def swap(
+    recipient: address,
+    zeroForOne: bool,
+    amountSpecified: int256,
+    sqrtPriceLimitX96: uint160,
+    data: Bytes[MAX_CALLBACK_DATA_LENGTH]
+) -> (int256, int256): ...
+
+
+@view
+def token0() -> address: ...
+
+
+@view
+def token1() -> address: ...
