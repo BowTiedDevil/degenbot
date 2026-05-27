@@ -276,6 +276,29 @@ Each `SwapAmounts` subclass (V2, V3, Curve, V4, Balancer) has an `encode(recipie
 
 Library callers extend this by implementing custom `ApprovalStrategy` and `PayloadComposer` for their specific smart contracts. V4 encoding requires a custom `PayloadComposer` since V4 uses an unlock/swap callback pattern. The `V4PoolKey` dataclass is available on `UniswapV4PoolSwapAmounts.pool_key` for V4 dispatch. See `src/degenbot/arbitrage/CONTEXT.md` for full terminology.
 
+### Tstore Executor V4 Architecture
+
+The `tstore_executor.vy` contract handles V2/V3/V4 arbitrage via a hybrid approach:
+
+- **V4 swaps** execute directly via `extcall` in `unlockCallback` to capture `BalanceDelta` return values
+- **V2/V3 operations** use the generic payload queue with `raw_call` delivery
+- **Settlement** is automatic — all nonzero V4 currency deltas are settled after swaps and payloads
+
+The `unlockCallback` has 4 phases:
+
+| Phase | Purpose | Key Logic |
+|-------|---------|-----------|
+| **Phase 0** | Pre-settle | For V3→V4/V2→V4: calls `settle()` to credit forward ERC-20 to `t_v4_deltas` before V4 swap consumes them |
+| **Phase 1** | V4 swaps | Executes V4 swaps, tallies ALL currency deltas in `t_v4_deltas` (not just ETH/WETH). Handles `dynamic_amount` flag for V4-V4 paths |
+| **Phase 2** | Queued payloads | Delivers remaining queued payloads (take/transfer for V4→V3/V4→V2). Zeros intermediate ERC-20 deltas if payloads were delivered |
+| **Phase 3** | Auto-settle | Settles all nonzero deltas: native ETH, WETH, and intermediate ERC-20s. Uses `_v4_settle_currency` internal helper |
+
+**V2 callback difference**: Unlike V3 (which auto-pays WETH), the V2 `uniswapV2Call` callback only resumes payload delivery. V2 pair WETH payment must be an explicit payload in the queue. This is verified by the V4→V2 and V2→V4 contract tests.
+
+**int128 overflow guard**: V4's `BalanceDelta` uses `int128` per component. The `fits_int128()` function in `degenbot.arbitrage.encoding` allows encoders to skip paths where amounts would overflow (`SafeCastOverflow` revert). All 5 V4 encoder functions check this before constructing swap params.
+
+**V4→V2 amount_out encoding**: V2's `swap(amount0Out, amount1Out, ...)` specifies what V2 SENDS to the recipient. For USDC→WETH@V2, `amount_out` must be `weth_out` (the WETH output), NOT `forward_out` (the USDC input). Previous code passed `forward_out` — caused `INSUFFICIENT_LIQUIDITY` on mainnet.
+
 ## Agent skills
 
 ### Issue tracker
@@ -334,6 +357,34 @@ The original `interface.py` no longer exists — all callers have been updated t
 `solver_hop_builders.py` has been deleted — each pool's `to_hop_state()` method is the single source of truth for pool→hop conversion. The `PoolCompatibility` enum has been removed. The thin free functions `_pool_to_hop_state`, `_extract_fee`, and `_check_pool_compatibility` have been inlined in `arbitrage_path.py`.
 
 ## Solidity
+
+### Contract Testing
+
+An isolated Ape + Foundry test suite under `contracts/tests/` verifies the executor's V4 settlement logic using fake contracts (no mainnet fork). 10 tests across 3 files covering V4-V4, V4-V3, V3-V4, V4-V2, V2-V4 paths, dynamic amounts, and encoding regression.
+
+Run from `contracts/tests/`:
+```bash
+uv run --with eth-ape --with ape-vyper --with ape-foundry ape test -v -n0
+```
+
+Always use `-n0` — Foundry's local EVM is single-process; parallel workers cause flakes. See `contracts/tests/README.md` for fake contract docs and test patterns.
+
+**Key patterns**:
+- V2 callback has NO auto-pay (unlike V3) — WETH transfer to V2 pair must be explicit payload
+- V4→V2/V3 forward tokens: `take()` from PM inside `unlockCallback` Phase 2, then transfer to V2/V3
+- V2/V3→V4: sync BEFORE transfer to PM (records zero balance), then Phase 0 settle() credits the delta before V4 swap
+- V4→V2 `amount_out` must be WETH output (`weth_out`), NOT forward token input (`forward_out`) — the V2 `swap()` specifies what V2 SENDS
+
+### int128 Overflow Guard
+
+V4's `BalanceDelta` packs two int128 values. If `amountSpecified` exceeds ±2^127, V4 reverts with `SafeCastOverflow`. All V4 encoder functions guard against this:
+
+```python
+from degenbot.arbitrage.encoding import fits_int128
+
+if not fits_int128(-optimal_input):
+    return None  # Skip — would overflow
+```
 
 ### V3 amountSpecified Sign Convention
 

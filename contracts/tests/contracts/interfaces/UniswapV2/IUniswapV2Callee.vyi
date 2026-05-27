@@ -1,0 +1,8 @@
+MAX_CALLBACK_DATA_LENGTH: constant(uint256) = 4096
+
+def uniswapV2Call(
+    sender: address,
+    amount0Out: uint256,
+    amount1Out: uint256,
+    data: Bytes[MAX_CALLBACK_DATA_LENGTH]
+): ...

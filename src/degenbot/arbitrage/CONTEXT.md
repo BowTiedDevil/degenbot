@@ -35,6 +35,8 @@
 | **ApprovalStrategy** | A pluggable protocol that injects ERC-20 approval calls before swap calls | Approval injection |
 | **PayloadComposer** | A pluggable protocol that composes a list of `EncodedCall`s into the format a target contract expects | Call composition, multicall wrapper |
 | **V4PoolKey** | See [V4PoolKey](../types/CONTEXT.md) in the types context; used by custom **PayloadComposers** for V4 dispatch | Pool key, V4 key |
+| **Dynamic Amount** | A V4 swap where `amountSpecified=0` and `dynamic_amount=True`; the contract derives the actual amount from `t_v4_deltas` instead of using a pre-computed value. Used for the second swap in V4-V4 paths where the intermediate delta must cancel exactly | Auto-amount, derived amount |
+| **V4 Delta Ledger** | `t_v4_deltas: transient(HashMap[address, int128])` in the tstore executor — tracks ALL currency deltas (not just ETH/WETH) across V4 swaps. Enables correct settlement of intermediate ERC-20 tokens | Delta map, delta tracker |
 
 ## Relationships
 
@@ -46,6 +48,9 @@
 - **Swap Amounts** self-encode into **EncodedCall**s; `generate_payloads()` wires encoding → **ApprovalStrategy** → **PayloadComposer**
 - **Swap Amounts** provide `input_amount()` / `output_amount()` for generic amount extraction; pool classes implement `build_swap_amount()` from the `ArbitragePathPool` protocol
 - A **V4PoolKey** is available to custom **PayloadComposers** for V4's unlock/swap callback dispatch
+- A **Dynamic Amount** is a V4 swap where the contract derives `amountSpecified` from the **V4 Delta Ledger** instead of a pre-computed value; ensures intermediate deltas cancel exactly in V4-V4 paths
+- The **V4 Delta Ledger** (`t_v4_deltas`) tracks all currency deltas across V4 swaps; replaces the former two-accumulator pattern (`ether_delta`/`weth_delta`) to properly handle intermediate ERC-20 tokens
+- **int128 overflow guard** (`fits_int128()`) prevents V4 `SafeCastOverflow` reverts by skipping paths where `amountSpecified` exceeds ±2^127; checked by all 5 V4 encoder functions
 
 ## Resolved ambiguities
 

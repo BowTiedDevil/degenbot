@@ -27,6 +27,7 @@ _Avoid_: Fork, local chain
 - [Rust Extension](rust/CONTEXT.md) — PyO3-wrapped ABI encode/decode, GIL discipline, subscription double-buffer, Möbius solver cache, two-level type intern, f64↔U256 conversion, V2BlockEngine/V3BlockEngine/V4BlockEngine, UniswapArbEngine with V2+V3+V4 composition, V3 Mint/Burn event decoders (`update_tick_liquidity` matching Solidity's `Tick.update()`), V4 hook filtering (0xCC mask) and dynamic fee exclusion (0x100000), V4 amountSpecified sign convention (negative = exact-input, opposite to V3)
 - [Balancer V2](src/degenbot/balancer/CONTEXT.md) — Weighted pools, FixedPoint math, PowVersion detection, scaling helpers, Vault architecture, StableMath invariant versions (V1/V2), MetaStablePool, ComposableStablePool with BPT index, CacheAwareRateProvider, BalancerRateProvider protocol, StaleRateResult, BalancerBuilder, BalancerPairView, BalancerV2SwapAmounts, external_update, to_hop_state, build_swap_amount
 - [Contract Reference](contract_reference/README.md) — Verified Solidity sources for Uniswap (V2/V3/V4) and Aave V3; ground truth for integer-exact Python ports
+- [Tstore Executor](contracts/README.md) — On-chain V2/V3/V4 arbitrage executor, V4 delta ledger, 4-phase auto-settlement, isolated test suite
 
 ## Instructions
 
@@ -74,6 +75,9 @@ _Avoid_: Fork, local chain
 - **CacheablePool** protocol enables **Pool Cache Adapter** registration without introspection
 - **Swap Amounts** carry per-pool swap parameters and self-encode into **EncodedCall**s; `generate_payloads()` wires encoding → **ApprovalStrategy** → **PayloadComposer**
 - **V4PoolKey** lives on `UniswapV4PoolSwapAmounts` for custom **PayloadComposers** handling V4's unlock/swap callback dispatch
+- The **Tstore Executor** (`contracts/tstore_executor.vy`) uses a hybrid V4 settlement approach: V4 swaps via `extcall` in `unlockCallback`, all-currency delta tracking in `t_v4_deltas` (not just ETH/WETH), and 4-phase auto-settlement. Phase 0 pre-settles ERC-20 for V3→V4/V2→V4; Phase 1 executes V4 swaps; Phase 2 delivers queued payloads (take/transfer); Phase 3 settles all nonzero deltas. V2 callback has NO auto-pay (unlike V3) — WETH payment to V2 pair is explicit payload. Verified by 10 contract tests in isolated Ape + Foundry suite (`contracts/tests/`). See `contracts/README.md` and `contracts/tests/README.md`
+- **int128 overflow guard** (`fits_int128()` in `degenbot.arbitrage.encoding`) prevents V4 `SafeCastOverflow` reverts by skipping paths where `amountSpecified` exceeds ±2^127. All 5 V4 encoder functions check this. Tested by 13 unit tests in `tests/arbitrage/test_int128_range.py`
+- **V4→V2 amount_out fix**: V2 `swap(amount0Out, amount1Out, ...)` specifies what V2 SENDS. For USDC→WETH@V2, `amount_out` is `weth_out` (not `forward_out`). Regression test in `TestV4ToV2WrongAmountOut`
 - A **Subscription** is a Rust-backed async iterator over push events from `eth_subscribe` with double-buffer drain for GIL-free accumulation; created by `AsyncProviderAdapter.subscribe_*()`; requires WS/IPC transport; raises **SubscriptionNotSupported** on HTTP providers; sync adapters and `_AsyncWeb3Adapter` inherit subscription stubs from **SyncSubscriptionSupport** / **AsyncSubscriptionSupport** mixins
 - A **LogListener** is a pure Python dispatch registry mapping `(address, topic0)` → handler set; receives raw log dicts via `dispatch(log)`, calls handlers sequentially; created by the user, not owned by Bot
 - **LogSubscriptionFilter** carries `addresses` + `topics` only (no block range) for log subscriptions

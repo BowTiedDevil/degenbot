@@ -9,6 +9,9 @@ default:
 
 # Run Rust tests
 test-rust:
+    #!/usr/bin/env bash
+    python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     cargo test --manifest-path rust/Cargo.toml
 
 # Run wrapped Rust Python tests

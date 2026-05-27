@@ -22,6 +22,12 @@ Payload types:
 - V2/V3: standard payload queue with raw_call delivery
 - V4: PoolKey + SwapParams stored in transient storage, called directly
   with extcall to capture return values for delta tracking
+
+unlockCallback phases:
+- Phase 0: Pre-settle input ERC-20 for V3→V4/V2→V4 paths
+- Phase 1: Execute V4 swaps and tally deltas in t_v4_deltas
+- Phase 2: Deliver remaining queued payloads (take/transfer for V4→V3)
+- Phase 3: Settle all nonzero deltas via _v4_settle_currency
 """
 
 from ethereum.ercs import IERC20
@@ -59,6 +65,7 @@ struct SwapParams:
 struct V4SwapPayload:
     key: PoolKey
     params: SwapParams
+    dynamic_amount: bool
 
 struct Payload:
     target: address
@@ -71,6 +78,7 @@ WETH_ADDR: immutable(address)
 MAX_PAYLOADS: constant(uint256) = 16
 MAX_V4_SWAPS: constant(uint256) = 4
 MAX_PAYLOAD_BYTES: constant(uint256) = 832
+MAX_V4_CURRENCIES: constant(uint256) = 8
 
 # Encoding constants for BalanceDelta (int256 packed as amount0 || amount1)
 # amount0 is in the upper 128 bits (bytes 0-15), amount1 in lower 128 bits (bytes 16-31)
@@ -90,6 +98,11 @@ t_queued_payload_index: transient(uint256)
 t_v4_swaps: transient(V4SwapPayload[MAX_V4_SWAPS])
 t_v4_swap_count: transient(uint256)
 
+# V4 delta ledger: tracks actual currency deltas from V4 swaps.
+# Replaces the old ether_delta/weth_delta pair so intermediate ERC-20
+# tokens (e.g. USDC in a WETH→USDC→ETH path) are properly settled.
+t_v4_deltas: transient(HashMap[address, int128])
+
 
 @payable
 @deploy
@@ -102,6 +115,118 @@ def __init__(weth: address):
             value=msg.value,
             skip_contract_check=True,
         )
+
+
+# ──────────────────── V4 Internal Helpers ─────────────────────
+
+
+@internal
+def _decode_swap_delta_amount0(swap_delta: int256) -> int128:
+    """Extract the amount0 component from a packed BalanceDelta."""
+    return convert(
+        slice(
+            convert(swap_delta, bytes32),
+            SWAP_DELTA_AMOUNT0_OFFSET,
+            SWAP_DELTA_VALUE_LENGTH,
+        ),
+        int128,
+    )
+
+
+@internal
+def _decode_swap_delta_amount1(swap_delta: int256) -> int128:
+    """Extract the amount1 component from a packed BalanceDelta."""
+    return convert(
+        slice(
+            convert(swap_delta, bytes32),
+            SWAP_DELTA_AMOUNT1_OFFSET,
+            SWAP_DELTA_VALUE_LENGTH,
+        ),
+        int128,
+    )
+
+
+@internal
+def _v4_settle_currency(pool_manager: address, currency: address, delta: int128):
+    """
+    Settle a single V4 currency delta against the PoolManager.
+
+    - Positive delta: take() — PM owes us tokens
+    - Negative delta: settle() — we owe PM tokens
+      - Native ETH: unwrap WETH if needed, settle with msg.value
+      - WETH: sync, deposit if needed, transfer, settle
+      - ERC-20: sync, transfer, settle
+
+    Called by Phase 3 for each currency in the delta ledger.
+    """
+    native: address = empty(address)
+
+    if delta > 0:
+        # PM owes us — take the tokens
+        extcall IPoolManager(pool_manager).take(
+            currency, self, convert(delta, uint256)
+        )
+    elif delta < 0:
+        owed: uint256 = convert(-delta, uint256)
+
+        if currency == native:
+            # Settle native ETH — unwrap WETH if insufficient balance
+            if self.balance < owed:
+                extcall IWETH(WETH_ADDR).withdraw(
+                    owed - self.balance,
+                    skip_contract_check=True,
+                )
+            extcall IPoolManager(pool_manager).settle(value=owed)
+
+        elif currency == WETH_ADDR:
+            # Settle WETH — sync before transfer, deposit if needed
+            extcall IPoolManager(pool_manager).sync(WETH_ADDR)
+            weth_balance: uint256 = staticcall IERC20(WETH_ADDR).balanceOf(self)
+            if weth_balance < owed:
+                extcall IWETH(WETH_ADDR).deposit(value=owed - weth_balance)
+            extcall IERC20(WETH_ADDR).transfer(
+                pool_manager, owed, default_return_value=True
+            )
+            extcall IPoolManager(pool_manager).settle()
+
+        else:
+            # Settle ERC-20 — sync before transfer
+            extcall IPoolManager(pool_manager).sync(currency)
+            extcall IERC20(currency).transfer(
+                pool_manager, owed, default_return_value=True
+            )
+            extcall IPoolManager(pool_manager).settle()
+
+
+@internal
+def _zero_intermediate_deltas(swap_count: uint256):
+    """
+    Zero out intermediate ERC-20 deltas in t_v4_deltas.
+
+    Called after Phase 2 when queued payloads (take/transfer) have
+    explicitly handled intermediate ERC-20 tokens. This prevents
+    Phase 3 from double-taking or double-settling those currencies.
+    Native ETH and WETH deltas are never zeroed — Phase 3 handles them.
+    """
+    native: address = empty(address)
+    for i: uint256 in range(MAX_V4_SWAPS):
+        if i >= swap_count:
+            break
+        key: PoolKey = self.t_v4_swaps[i].key
+        for currency: address in [key.currency0, key.currency1]:
+            if currency == native or currency == WETH_ADDR:
+                continue
+            self.t_v4_deltas[currency] = 0
+
+
+@internal
+def _deliver_remaining_payloads():
+    """Deliver all remaining payloads in the queue."""
+    for i: uint256 in range(MAX_PAYLOADS):
+        if self.t_all_payloads_delivered:
+            break
+        else:
+            self.deliver_queued_payload()
 
 
 # ──────────────────────────── Core ────────────────────────────
@@ -152,6 +277,7 @@ def execute_payloads(
     payloads: DynArray[Payload, MAX_PAYLOADS],
     v4_swaps: DynArray[V4SwapPayload, MAX_V4_SWAPS],
     bribe_bips: uint256 = 0,
+    skip_profit_check: bool = False,
 ):
     """
     Execute a queue of payloads with optional V4 swap auto-settlement.
@@ -160,7 +286,8 @@ def execute_payloads(
     will call PM.swap() directly and auto-settle based on actual deltas.
     For V2/V3 paths, pass all operations in payloads (v4_swaps=[]).
 
-    After all payloads + V4 settlement, asserts combined balance did not decrease.
+    After all payloads + V4 settlement, asserts combined balance did not decrease
+    (unless skip_profit_check=True for testing).
 
     If bribe_bips > 0, sends a coinbase bribe proportional to profit.
     """
@@ -189,7 +316,8 @@ def execute_payloads(
             self.deliver_queued_payload()
 
     combined_after: uint256 = staticcall IERC20(WETH_ADDR).balanceOf(self) + self.balance
-    assert combined_after >= combined_before, "combined balance reduction"
+    if not skip_profit_check:
+        assert combined_after >= combined_before, "combined balance reduction"
 
     if bribe_bips > 0:
         raw_call(
@@ -211,11 +339,7 @@ def execute_payloads(
 @internal
 def v2_swap_callback():
     """Resume payload delivery after a V2 flash borrow callback."""
-    for i: uint256 in range(MAX_PAYLOADS):
-        if self.t_all_payloads_delivered:
-            break
-        else:
-            self.deliver_queued_payload()
+    self._deliver_remaining_payloads()
 
 
 @external
@@ -270,11 +394,7 @@ def v3_swap_callback(
 
     If the calling pool is owed WETH, auto-transfer it.
     """
-    for i: uint256 in range(MAX_PAYLOADS):
-        if self.t_all_payloads_delivered:
-            break
-        else:
-            self.deliver_queued_payload()
+    self._deliver_remaining_payloads()
 
     # Auto-pay WETH to the calling V3 pool if it's owed
     if amount1_delta > 0:
@@ -326,27 +446,43 @@ def unlockCallback(data: Bytes[32]) -> Bytes[32]:
     """
     PoolManager unlock callback — execute V4 swaps, then auto-settle.
 
-    Reads V4 swap params from transient storage (set by execute_payloads).
-    Calls PM.swap() directly to capture BalanceDelta return values.
-    After all swaps, takes positive deltas and settles negative deltas
-    using ACTUAL on-chain amounts — no rounding mismatches.
+    Four phases:
+      Phase 0: Pre-settle input ERC-20 currencies for V3→V4/V2→V4 paths.
+               Only runs when payloads were delivered before unlock.
+      Phase 1: Execute V4 swaps, tally deltas in t_v4_deltas.
+               Handles dynamic_amount derivation from ledger.
+      Phase 2: Deliver remaining queued payloads (take/transfer for V4→V3).
+               Zeros intermediate ERC-20 deltas if payloads were delivered.
+      Phase 3: Settle all nonzero deltas via _v4_settle_currency.
 
-    For mixed V2-V4 / V3-V4 paths, non-V4 payloads run before the
-    unlock call, V4 swaps run here, and settlement is automatic.
-
-    Only ETH and WETH deltas are tracked for settlement, since those
-    are the only currencies with open positions in typical arb paths.
-    Intermediate ERC-20 deltas cancel exactly for fully-filled swaps.
+    All currencies tracked in t_v4_deltas (not just ETH/WETH) so
+    intermediate ERC-20 tokens are properly settled.
     """
     assert self.t_allowed_callback_addresses[msg.sender], "Unregistered V4 Callback Address"
     pool_manager: address = msg.sender
-
-    # ── Phase 1: Execute V4 swaps via extcall and tally deltas ──
-    ether_delta: int128 = 0
-    weth_delta: int128 = 0
     native: address = empty(address)
-
     swap_count: uint256 = self.t_v4_swap_count
+
+    # ── Phase 0: Pre-settle input ERC-20 for V3→V4/V2→V4 ──
+    # When forward tokens were transferred+synced before unlock(),
+    # call settle() to credit them BEFORE the V4 swap consumes them.
+    # Only runs when payloads were already delivered (non-V4-first paths).
+    # Skips dynamic_amount swaps (input from ledger) and WETH/native
+    # (handled by Phase 3's WETH/ETH settlement).
+    if self.t_queued_payload_index > 0:
+        for i: uint256 in range(MAX_V4_SWAPS):
+            if i >= swap_count:
+                break
+            swap_payload: V4SwapPayload = self.t_v4_swaps[i]
+            params: SwapParams = swap_payload.params
+            if swap_payload.dynamic_amount:
+                continue
+            input_currency: address = swap_payload.key.currency0 if params.zero_for_one else swap_payload.key.currency1
+            if input_currency != native and input_currency != WETH_ADDR:
+                amount_settled: uint256 = extcall IPoolManager(pool_manager).settle()
+                self.t_v4_deltas[input_currency] += convert(amount_settled, int128)
+
+    # ── Phase 1: Execute V4 swaps and tally deltas ──
     for i: uint256 in range(MAX_V4_SWAPS):
         if i >= swap_count:
             break
@@ -354,84 +490,51 @@ def unlockCallback(data: Bytes[32]) -> Bytes[32]:
         key: PoolKey = swap_payload.key
         params: SwapParams = swap_payload.params
 
-        # Call PM.swap() directly — captures BalanceDelta return value
-        swap_delta: int256 = extcall IPoolManager(pool_manager).swap(
-            key, params, b''
-        )
+        # Dynamic amount: derive from accumulated delta
+        if params.amount_specified == 0 and swap_payload.dynamic_amount:
+            input_currency: address = key.currency0 if params.zero_for_one else key.currency1
+            input_delta: int128 = self.t_v4_deltas[input_currency]
+            assert input_delta > 0, "dynamic: no input credit"
+            params = SwapParams(
+                zero_for_one=params.zero_for_one,
+                amount_specified=-convert(input_delta, int256),
+                sqrt_price_limit_x96=params.sqrt_price_limit_x96,
+            )
 
-        # Decode BalanceDelta: upper 128 bits = amount0, lower 128 bits = amount1
-        delta_amount0: int128 = convert(
-            slice(
-                convert(swap_delta, bytes32),
-                SWAP_DELTA_AMOUNT0_OFFSET,
-                SWAP_DELTA_VALUE_LENGTH,
-            ),
-            int128,
-        )
-        delta_amount1: int128 = convert(
-            slice(
-                convert(swap_delta, bytes32),
-                SWAP_DELTA_AMOUNT1_OFFSET,
-                SWAP_DELTA_VALUE_LENGTH,
-            ),
-            int128,
-        )
+        swap_delta: int256 = extcall IPoolManager(pool_manager).swap(key, params, b'')
 
-        # Tally deltas for ETH and WETH only
-        # In V4, currencies are sorted: address(0) is always currency0
-        if key.currency0 == native:
-            ether_delta += delta_amount0
-        elif key.currency0 == WETH_ADDR:
-            weth_delta += delta_amount0
-
-        if key.currency1 == native:
-            ether_delta += delta_amount1
-        elif key.currency1 == WETH_ADDR:
-            weth_delta += delta_amount1
+        # Tally deltas from BalanceDelta return value
+        self.t_v4_deltas[key.currency0] += self._decode_swap_delta_amount0(swap_delta)
+        self.t_v4_deltas[key.currency1] += self._decode_swap_delta_amount1(swap_delta)
 
     # ── Phase 2: Deliver remaining queued payloads ──
-    # For mixed V4+V2/V3 paths, there may be payloads queued after
-    # the unlock that need to run before settlement.
-    for i: uint256 in range(MAX_PAYLOADS):
-        if self.t_all_payloads_delivered:
+    payloads_delivered_in_phase2: bool = not self.t_all_payloads_delivered
+    self._deliver_remaining_payloads()
+
+    # Zero intermediate ERC-20 deltas that were handled by payloads
+    if payloads_delivered_in_phase2:
+        self._zero_intermediate_deltas(swap_count)
+
+    # ── Phase 3: Settle all nonzero deltas ──
+    native_delta: int128 = self.t_v4_deltas[native]
+    weth_delta: int128 = self.t_v4_deltas[WETH_ADDR]
+
+    if native_delta != 0:
+        self._v4_settle_currency(pool_manager, native, native_delta)
+    if weth_delta != 0:
+        self._v4_settle_currency(pool_manager, WETH_ADDR, weth_delta)
+
+    # Settle intermediate ERC-20 tokens from V4 swap PoolKeys
+    for i: uint256 in range(MAX_V4_SWAPS):
+        if i >= swap_count:
             break
-        else:
-            self.deliver_queued_payload()
-
-    # ── Phase 3: Settle V4 deltas using ACTUAL amounts ──
-
-    # Take positive deltas (credits: PM owes us)
-    if ether_delta > 0:
-        extcall IPoolManager(pool_manager).take(
-            native, self, convert(ether_delta, uint256)
-        )
-    if weth_delta > 0:
-        extcall IPoolManager(pool_manager).take(
-            WETH_ADDR, self, convert(weth_delta, uint256)
-        )
-
-    # Settle negative deltas (debits: we owe PM)
-    if ether_delta < 0:
-        # Owe ETH to PM — settle with msg.value
-        owed_eth: uint256 = convert(-ether_delta, uint256)
-        if self.balance < owed_eth:
-            extcall IWETH(WETH_ADDR).withdraw(
-                owed_eth - self.balance,
-                skip_contract_check=True,
-            )
-        extcall IPoolManager(pool_manager).settle(value=owed_eth)
-
-    if weth_delta < 0:
-        # Owe WETH to PM — transfer + sync + settle
-        owed_weth: uint256 = convert(-weth_delta, uint256)
-        weth_balance: uint256 = staticcall IERC20(WETH_ADDR).balanceOf(self)
-        if weth_balance < owed_weth:
-            extcall IWETH(WETH_ADDR).deposit(value=owed_weth - weth_balance)
-        extcall IERC20(WETH_ADDR).transfer(
-            pool_manager, owed_weth, default_return_value=True
-        )
-        extcall IPoolManager(pool_manager).sync(WETH_ADDR)
-        extcall IPoolManager(pool_manager).settle()
+        key: PoolKey = self.t_v4_swaps[i].key
+        for currency: address in [key.currency0, key.currency1]:
+            if currency == native or currency == WETH_ADDR:
+                continue
+            delta: int128 = self.t_v4_deltas[currency]
+            if delta != 0:
+                self._v4_settle_currency(pool_manager, currency, delta)
 
     return b''
 

@@ -122,6 +122,10 @@ pub struct UniswapEngine {
     results: Vec<(u64, U256, U256)>,
     /// Block number for the last solved results
     results_block: u64,
+    /// Last block number processed by `process_block`.
+    /// `None` means no block has been processed yet.
+    /// Used by the pump to determine the backfill boundary on startup.
+    last_processed_block: Option<u64>,
     /// Whether the engine is running (freezes registration after start)
     running: bool,
     /// Auto-incrementing path ID
@@ -140,6 +144,7 @@ impl UniswapEngine {
             pool_to_paths: HashMap::new(),
             results: Vec::new(),
             results_block: 0,
+            last_processed_block: None,
             running: false,
             next_path_id: 1,
         }
@@ -273,6 +278,7 @@ impl UniswapEngine {
 
         // Re-solve only paths containing updated pools
         self.rebuild_and_solve_affected(&v2_affected, &v3_affected, &v4_affected, block_number);
+        self.last_processed_block = Some(block_number);
     }
 
     /// Process pre-decoded updates for testing.
@@ -288,6 +294,7 @@ impl UniswapEngine {
 
         // Re-solve only paths containing updated pools
         self.rebuild_and_solve_affected(&v2_affected, &v3_affected, &HashSet::new(), block_number);
+        self.last_processed_block = Some(block_number);
     }
 
     /// Process pre-decoded V4 updates.
@@ -312,6 +319,7 @@ impl UniswapEngine {
         let v3_affected = self.v3_engine.apply_swap_updates(v3_updates, block_number);
         let v4_affected = self.v4_engine.apply_swap_updates(v4_updates, block_number);
         self.rebuild_and_solve_affected(&v2_affected, &v3_affected, &v4_affected, block_number);
+        self.last_processed_block = Some(block_number);
     }
 
     /// Re-resolve and re-solve only paths that contain updated pools.
@@ -566,6 +574,13 @@ impl UniswapEngine {
     #[must_use]
     pub const fn is_running(&self) -> bool {
         self.running
+    }
+
+    /// Return the last block number processed by `process_block`.
+    /// Returns `None` if no block has been processed yet.
+    #[must_use]
+    pub const fn last_processed_block(&self) -> Option<u64> {
+        self.last_processed_block
     }
 
     /// Number of registered V2 pools.
@@ -1670,6 +1685,12 @@ impl PyUniswapArbEngine {
     #[allow(clippy::missing_const_for_fn)]
     fn is_running(&self) -> bool {
         self.engine.lock().is_running()
+    }
+
+    /// Last block number processed by `process_block` or `process_logs`.
+    /// Returns `None` if no block has been processed yet.
+    fn last_processed_block(&self) -> Option<u64> {
+        self.engine.lock().last_processed_block()
     }
 
     /// Freeze registration without starting a pump.

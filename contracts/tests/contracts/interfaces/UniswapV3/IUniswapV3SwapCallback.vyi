@@ -1,0 +1,7 @@
+MAX_CALLBACK_DATA_LENGTH: constant(uint256) = 4096
+
+def uniswapV3SwapCallback(
+    amount0Delta: int256,
+    amount1Delta: int256,
+    data: Bytes[MAX_CALLBACK_DATA_LENGTH]
+): ...
