@@ -103,7 +103,7 @@ pub fn decode_v3_swap_log(log: &Log) -> Option<V3SwapEvent> {
 
     // Decode tick (int24, bytes 128..160 — sign-extended to 256 bits in ABI)
     // The actual value fits in the last 4 bytes; read as i32 directly.
-    // int24 range: [-887272, 887272]
+    // int24 range: [-887_272, 887272]
     let tick_bytes: [u8; 4] = data[156..160].try_into().ok()?;
     let tick = i32::from_be_bytes(tick_bytes);
     if !(-887_272..=887_272).contains(&tick) {
@@ -177,8 +177,8 @@ mod tests {
         let pool = Address::from([0xaa; 20]);
         let sender = Address::from([0xbb; 20]);
         let recipient = Address::from([0xcc; 20]);
-        let sqrt_price = U256::from(79228162514264337593543950336u128); // ~1.0 price
-        let liquidity = U128::from(1000000u64);
+        let sqrt_price = U256::from(79_228_162_514_264_337_593_543_950_336_u128); // ~1.0 price
+        let liquidity = U128::from(1_000_000_u64);
         let tick = 0i32;
 
         let log = make_v3_swap_log(
@@ -262,8 +262,8 @@ mod tests {
         let pool = Address::ZERO;
         let sender = Address::ZERO;
         let recipient = Address::ZERO;
-        let sqrt_price = U256::from(77375349197886179843141176482u128); // below 1.0
-        let liquidity = U128::from(5000000u64);
+        let sqrt_price = U256::from(77_375_349_197_886_179_843_141_176_482_u128); // below 1.0
+        let liquidity = U128::from(5_000_000_u64);
         let tick = -100i32;
 
         let log = make_v3_swap_log(
@@ -295,28 +295,28 @@ mod tests {
         // min tick: -887272
         let log_min = make_v3_swap_log(
             pool, sender, recipient,
-            I256::ZERO, I256::ZERO, sqrt_price, liquidity, -887272,
+            I256::ZERO, I256::ZERO, sqrt_price, liquidity, -887_272,
         );
         assert!(decode_v3_swap_log(&log_min).is_some());
 
         // max tick: 887272
         let log_max = make_v3_swap_log(
             pool, sender, recipient,
-            I256::ZERO, I256::ZERO, sqrt_price, liquidity, 887272,
+            I256::ZERO, I256::ZERO, sqrt_price, liquidity, 887_272,
         );
         assert!(decode_v3_swap_log(&log_max).is_some());
 
         // out of range: -887273
         let log_under = make_v3_swap_log(
             pool, sender, recipient,
-            I256::ZERO, I256::ZERO, sqrt_price, liquidity, -887273,
+            I256::ZERO, I256::ZERO, sqrt_price, liquidity, -887_273,
         );
         assert!(decode_v3_swap_log(&log_under).is_none());
 
         // out of range: 887273
         let log_over = make_v3_swap_log(
             pool, sender, recipient,
-            I256::ZERO, I256::ZERO, sqrt_price, liquidity, 887273,
+            I256::ZERO, I256::ZERO, sqrt_price, liquidity, 887_273,
         );
         assert!(decode_v3_swap_log(&log_over).is_none());
     }

@@ -644,6 +644,7 @@ impl PyAlloyProvider {
 }
 
 /// Add provider module to Python module.
+#[allow(clippy::missing_errors_doc)]
 pub fn add_provider_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLogFilter>()?;
     m.add_class::<PyAlloyProvider>()?;

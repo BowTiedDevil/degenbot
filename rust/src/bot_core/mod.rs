@@ -818,6 +818,6 @@ mod tests {
         // Python reference: 531380142665175213
         let amount_in = U256::from(1_000_000_000u64); // 1000 USDC (6dp)
         let amount_out = core.calculate_tokens_out(pool_id, true, amount_in);
-        assert_eq!(amount_out, U256::from(531380142665175213u64));
+        assert_eq!(amount_out, U256::from(531_380_142_665_175_213_u64));
     }
 }

@@ -14,6 +14,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyDict, PyList};
 
 /// Convert a Python list to a JSON array.
+#[allow(clippy::missing_errors_doc)]
 pub fn python_list_to_json(list: &Bound<'_, PyList>) -> PyResult<serde_json::Value> {
     let mut arr = Vec::with_capacity(list.len());
     for item in list.iter() {
@@ -35,6 +36,7 @@ pub fn python_list_to_json(list: &Bound<'_, PyList>) -> PyResult<serde_json::Val
 /// - `list` → JSON `array`
 /// - `dict` → JSON `object`
 /// - Other → JSON `string` (via `str()`, with warning)
+#[allow(clippy::missing_errors_doc)]
 pub fn python_to_json(obj: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
     // None -> null
     if obj.is_none() {

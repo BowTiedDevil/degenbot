@@ -330,6 +330,7 @@ pub struct ParsedSignature {
 }
 
 /// Parse a function signature.
+#[allow(clippy::missing_errors_doc)]
 pub fn parse_signature(input: &str) -> Result<ParsedSignature, ParseError> {
     SignatureParser::new(input).parse()
 }

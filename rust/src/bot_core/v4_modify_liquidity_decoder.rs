@@ -275,7 +275,7 @@ mod tests {
     #[test]
     fn decode_v4_modify_liquidity_insufficient_topics_returns_none() {
         let pool_id = [0u8; 32];
-        let _sender = Address::ZERO;
+        // sender not needed for insufficient-topics test
 
         // Only 2 topics — need 3 (sig + PoolId + sender)
         let inner = alloy::primitives::Log::new_unchecked(

@@ -53,6 +53,7 @@ impl V2EnginePump {
     /// 4. Loops until `shutdown` is set
     ///
     /// Returns a handle that can be used to stop the pump.
+    #[allow(clippy::missing_errors_doc)]
     pub fn spawn(
         rpc_url: String,
         engine: Arc<Mutex<V2BlockEngine>>,

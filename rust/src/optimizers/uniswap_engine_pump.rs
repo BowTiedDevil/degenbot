@@ -129,6 +129,7 @@ impl UniswapEnginePump {
     ///
     /// Returns a handle that can be used to stop the pump, plus a
     /// `watch::Receiver<BlockNotification>` for Python to read.
+    #[allow(clippy::missing_errors_doc)]
     pub fn spawn(
         rpc_url: String,
         engine: Arc<parking_lot::Mutex<UniswapEngine>>,
@@ -182,6 +183,7 @@ impl UniswapEnginePump {
     /// Returns the updated `last_processed_block` and `first_header` flag.
     /// Takes `pending_logs` by mutable reference and clears it as needed.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_lines)]
     async fn handle_block_header(
         &self,
         number: u64,
