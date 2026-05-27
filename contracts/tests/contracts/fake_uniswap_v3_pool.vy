@@ -14,6 +14,7 @@ the input token has been paid (balance == amount_in).
 
 from .interfaces.UniswapV3 import IUniswapV3Pool
 from .interfaces.UniswapV3 import IUniswapV3SwapCallback
+from .interfaces.UniswapV3 import IPancakeV3SwapCallback
 from ethereum.ercs import IERC20
 
 MAX_CALLDATA_LENGTH: constant(uint256) = 4096
@@ -25,15 +26,19 @@ OWNER: immutable(address)
 token0: public(address)
 token1: public(address)
 
+# Which callback selector to invoke: 0 = uniswapV3SwapCallback, 1 = pancakeV3SwapCallback
+callback_variant: public(uint256)
+
 amount_in: public(uint256)
 amount_out: public(uint256)
 
 
 @deploy
-def __init__(token0: address, token1: address):
+def __init__(token0: address, token1: address, _callback_variant: uint256):
     OWNER = msg.sender
     self.token0 = token0
     self.token1 = token1
+    self.callback_variant = _callback_variant
 
 
 @external
@@ -99,9 +104,14 @@ def swap(
     )
 
     # Invoke callback on the caller (the executor)
-    extcall IUniswapV3SwapCallback(msg.sender).uniswapV3SwapCallback(
-        amount0_delta, amount1_delta, data
-    )
+    if self.callback_variant == 0:
+        extcall IUniswapV3SwapCallback(msg.sender).uniswapV3SwapCallback(
+            amount0_delta, amount1_delta, data
+        )
+    else:
+        extcall IPancakeV3SwapCallback(msg.sender).pancakeV3SwapCallback(
+            amount0_delta, amount1_delta, data
+        )
 
     # Verify input tokens were paid after callback
     if zero_for_one:

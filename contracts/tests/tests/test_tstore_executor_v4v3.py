@@ -225,6 +225,7 @@ def v3_pool(
     pool = project.fake_uniswap_v3_pool.deploy(
         token0,
         token1,
+        0,  # callback_variant: 0=uniswapV3SwapCallback
         sender=owner_account,
     )
     return pool

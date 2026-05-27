@@ -78,7 +78,7 @@ WETH_ADDR: immutable(address)
 MAX_PAYLOADS: constant(uint256) = 16
 MAX_V4_SWAPS: constant(uint256) = 4
 MAX_PAYLOAD_BYTES: constant(uint256) = 832
-MAX_V4_CURRENCIES: constant(uint256) = 8
+NATIVE_ADDRESS: constant(address) = empty(address)
 
 # Encoding constants for BalanceDelta (int256 packed as amount0 || amount1)
 # amount0 is in the upper 128 bits (bytes 0-15), amount1 in lower 128 bits (bytes 16-31)
@@ -121,25 +121,12 @@ def __init__(weth: address):
 
 
 @internal
-def _decode_swap_delta_amount0(swap_delta: int256) -> int128:
-    """Extract the amount0 component from a packed BalanceDelta."""
+def _decode_swap_delta(swap_delta: int256, byte_offset: uint256) -> int128:
+    """Extract a component from a packed BalanceDelta at the given byte offset."""
     return convert(
         slice(
             convert(swap_delta, bytes32),
-            SWAP_DELTA_AMOUNT0_OFFSET,
-            SWAP_DELTA_VALUE_LENGTH,
-        ),
-        int128,
-    )
-
-
-@internal
-def _decode_swap_delta_amount1(swap_delta: int256) -> int128:
-    """Extract the amount1 component from a packed BalanceDelta."""
-    return convert(
-        slice(
-            convert(swap_delta, bytes32),
-            SWAP_DELTA_AMOUNT1_OFFSET,
+            byte_offset,
             SWAP_DELTA_VALUE_LENGTH,
         ),
         int128,
@@ -158,8 +145,9 @@ def _v4_settle_currency(pool_manager: address, currency: address, delta: int128)
       - ERC-20: sync, transfer, settle
 
     Called by Phase 3 for each currency in the delta ledger.
+    Zeros the delta after settling to prevent double-settlement when the
+    same ERC-20 appears in multiple V4 swap pool keys.
     """
-    native: address = empty(address)
 
     if delta > 0:
         # PM owes us — take the tokens
@@ -169,7 +157,7 @@ def _v4_settle_currency(pool_manager: address, currency: address, delta: int128)
     elif delta < 0:
         owed: uint256 = convert(-delta, uint256)
 
-        if currency == native:
+        if currency == NATIVE_ADDRESS:
             # Settle native ETH — unwrap WETH if insufficient balance
             if self.balance < owed:
                 extcall IWETH(WETH_ADDR).withdraw(
@@ -197,6 +185,9 @@ def _v4_settle_currency(pool_manager: address, currency: address, delta: int128)
             )
             extcall IPoolManager(pool_manager).settle()
 
+    # Zero the delta to prevent double-settlement in Phase 3
+    self.t_v4_deltas[currency] = 0
+
 
 @internal
 def _zero_intermediate_deltas(swap_count: uint256):
@@ -208,13 +199,12 @@ def _zero_intermediate_deltas(swap_count: uint256):
     Phase 3 from double-taking or double-settling those currencies.
     Native ETH and WETH deltas are never zeroed — Phase 3 handles them.
     """
-    native: address = empty(address)
     for i: uint256 in range(MAX_V4_SWAPS):
         if i >= swap_count:
             break
         key: PoolKey = self.t_v4_swaps[i].key
         for currency: address in [key.currency0, key.currency1]:
-            if currency == native or currency == WETH_ADDR:
+            if currency == NATIVE_ADDRESS or currency == WETH_ADDR:
                 continue
             self.t_v4_deltas[currency] = 0
 
@@ -225,8 +215,7 @@ def _deliver_remaining_payloads():
     for i: uint256 in range(MAX_PAYLOADS):
         if self.t_all_payloads_delivered:
             break
-        else:
-            self.deliver_queued_payload()
+        self.deliver_queued_payload()
 
 
 # ──────────────────────────── Core ────────────────────────────
@@ -309,11 +298,7 @@ def execute_payloads(
 
     combined_before: uint256 = staticcall IERC20(WETH_ADDR).balanceOf(self) + self.balance
 
-    for i: uint256 in range(MAX_PAYLOADS):
-        if self.t_all_payloads_delivered:
-            break
-        else:
-            self.deliver_queued_payload()
+    self._deliver_remaining_payloads()
 
     combined_after: uint256 = staticcall IERC20(WETH_ADDR).balanceOf(self) + self.balance
     if not skip_profit_check:
@@ -336,12 +321,6 @@ def execute_payloads(
 # ──────────────────────── V2 Callbacks ────────────────────────
 
 
-@internal
-def v2_swap_callback():
-    """Resume payload delivery after a V2 flash borrow callback."""
-    self._deliver_remaining_payloads()
-
-
 @external
 @payable
 def uniswapV2Call(
@@ -352,7 +331,7 @@ def uniswapV2Call(
 ):
     """Uniswap V2 & SushiSwap V2 flash borrow callback."""
     assert self.t_allowed_callback_addresses[msg.sender], "Unregistered V2 Callback Address"
-    self.v2_swap_callback()
+    self._deliver_remaining_payloads()
 
 
 @external
@@ -365,7 +344,7 @@ def hook(
 ):
     """Velodrome/Aerodrome V2 flash borrow callback."""
     assert self.t_allowed_callback_addresses[msg.sender], "Unregistered V2 Callback Address"
-    self.v2_swap_callback()
+    self._deliver_remaining_payloads()
 
 
 @external
@@ -378,7 +357,7 @@ def pancakeCall(
 ):
     """PancakeSwap V2 flash borrow callback."""
     assert self.t_allowed_callback_addresses[msg.sender], "Unregistered V2 Callback Address"
-    self.v2_swap_callback()
+    self._deliver_remaining_payloads()
 
 
 # ──────────────────────── V3 Callbacks ────────────────────────
@@ -397,20 +376,19 @@ def v3_swap_callback(
     self._deliver_remaining_payloads()
 
     # Auto-pay WETH to the calling V3 pool if it's owed
+    owed_token: address = NATIVE_ADDRESS
+    owed_amount: uint256 = 0
     if amount1_delta > 0:
-        if staticcall IUniswapV3Pool(msg.sender).token1() == WETH_ADDR:
-            extcall IERC20(WETH_ADDR).transfer(
-                msg.sender,
-                convert(amount1_delta, uint256),
-                default_return_value=True,
-            )
+        owed_token = staticcall IUniswapV3Pool(msg.sender).token1()
+        owed_amount = convert(amount1_delta, uint256)
     elif amount0_delta > 0:
-        if staticcall IUniswapV3Pool(msg.sender).token0() == WETH_ADDR:
-            extcall IERC20(WETH_ADDR).transfer(
-                msg.sender,
-                convert(amount0_delta, uint256),
-                default_return_value=True,
-            )
+        owed_token = staticcall IUniswapV3Pool(msg.sender).token0()
+        owed_amount = convert(amount0_delta, uint256)
+
+    if owed_token == WETH_ADDR and owed_amount > 0:
+        extcall IERC20(WETH_ADDR).transfer(
+            msg.sender, owed_amount, default_return_value=True,
+        )
 
 
 @external
@@ -460,7 +438,6 @@ def unlockCallback(data: Bytes[32]) -> Bytes[32]:
     """
     assert self.t_allowed_callback_addresses[msg.sender], "Unregistered V4 Callback Address"
     pool_manager: address = msg.sender
-    native: address = empty(address)
     swap_count: uint256 = self.t_v4_swap_count
 
     # ── Phase 0: Pre-settle input ERC-20 for V3→V4/V2→V4 ──
@@ -478,7 +455,10 @@ def unlockCallback(data: Bytes[32]) -> Bytes[32]:
             if swap_payload.dynamic_amount:
                 continue
             input_currency: address = swap_payload.key.currency0 if params.zero_for_one else swap_payload.key.currency1
-            if input_currency != native and input_currency != WETH_ADDR:
+            if input_currency != NATIVE_ADDRESS and input_currency != WETH_ADDR:
+                # Skip if already credited (same input currency across multiple swaps)
+                if self.t_v4_deltas[input_currency] > 0:
+                    continue
                 amount_settled: uint256 = extcall IPoolManager(pool_manager).settle()
                 self.t_v4_deltas[input_currency] += convert(amount_settled, int128)
 
@@ -504,8 +484,8 @@ def unlockCallback(data: Bytes[32]) -> Bytes[32]:
         swap_delta: int256 = extcall IPoolManager(pool_manager).swap(key, params, b'')
 
         # Tally deltas from BalanceDelta return value
-        self.t_v4_deltas[key.currency0] += self._decode_swap_delta_amount0(swap_delta)
-        self.t_v4_deltas[key.currency1] += self._decode_swap_delta_amount1(swap_delta)
+        self.t_v4_deltas[key.currency0] += self._decode_swap_delta(swap_delta, SWAP_DELTA_AMOUNT0_OFFSET)
+        self.t_v4_deltas[key.currency1] += self._decode_swap_delta(swap_delta, SWAP_DELTA_AMOUNT1_OFFSET)
 
     # ── Phase 2: Deliver remaining queued payloads ──
     payloads_delivered_in_phase2: bool = not self.t_all_payloads_delivered
@@ -516,11 +496,11 @@ def unlockCallback(data: Bytes[32]) -> Bytes[32]:
         self._zero_intermediate_deltas(swap_count)
 
     # ── Phase 3: Settle all nonzero deltas ──
-    native_delta: int128 = self.t_v4_deltas[native]
+    native_delta: int128 = self.t_v4_deltas[NATIVE_ADDRESS]
     weth_delta: int128 = self.t_v4_deltas[WETH_ADDR]
 
     if native_delta != 0:
-        self._v4_settle_currency(pool_manager, native, native_delta)
+        self._v4_settle_currency(pool_manager, NATIVE_ADDRESS, native_delta)
     if weth_delta != 0:
         self._v4_settle_currency(pool_manager, WETH_ADDR, weth_delta)
 
@@ -530,7 +510,7 @@ def unlockCallback(data: Bytes[32]) -> Bytes[32]:
             break
         key: PoolKey = self.t_v4_swaps[i].key
         for currency: address in [key.currency0, key.currency1]:
-            if currency == native or currency == WETH_ADDR:
+            if currency == NATIVE_ADDRESS or currency == WETH_ADDR:
                 continue
             delta: int128 = self.t_v4_deltas[currency]
             if delta != 0:

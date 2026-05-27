@@ -25,7 +25,12 @@ contracts/
     └── tests/                           ← Test files
         ├── test_tstore_executor_v4v4.py ← V4-V4 settlement tests
         ├── test_tstore_executor_v4v3.py ← V4-V3/V3-V4 hybrid tests
-        └── test_tstore_executor_v4v2.py ← V4-V2/V2-V4 hybrid tests
+        ├── test_tstore_executor_v4v2.py ← V4-V2/V2-V4 hybrid tests
+        ├── test_tstore_executor_v2v2.py ← V2-V2 path tests
+        ├── test_tstore_executor_v3v3.py ← V3-V3 path tests
+        ├── test_tstore_executor_v2v3.py ← V2-V3 and V3-V2 path tests
+        ├── test_tstore_executor_edge_cases.py ← Callback variants, settlement branches, regressions
+        └── test_tstore_executor_three_hop.py ← Three-hop path tests (V4-only and hybrid)
 ```
 
 ### How the Bytecode Files Relate
@@ -70,7 +75,7 @@ V3 and V4 use **opposite** sign conventions for `amountSpecified`. Using the wro
 
 ## Contract Testing
 
-The `contracts/tests/` directory contains an Ape + Foundry test suite with fake contracts that simulate V2/V3/V4 pool behavior. These tests verify the executor's settlement plumbing (delta ledger accounting, `sync()`/`settle()` ordering, callback routing) without requiring mainnet state. 10 tests across 3 test files covering V4-V4, V4-V3, V3-V4, V4-V2, V2-V4 paths, dynamic amounts, and encoding regression.
+The `contracts/tests/` directory contains an Ape + Foundry test suite with fake contracts that simulate V2/V3/V4 pool behavior. These tests verify the executor's settlement plumbing (delta ledger accounting, `sync()`/`settle()` ordering, callback routing) without requiring mainnet state. 27 tests across 8 test files covering V2/V3-only paths, V4-hybrid paths, callback variant selectors, settlement branches, three-hop paths, and encoding regressions.
 
 **Quick start** (from `contracts/tests/`):
 
@@ -226,10 +231,10 @@ The `unlockCallback` is the heart of V4 settlement. It runs inside `PoolManager.
 
 | Phase | Purpose | When it runs | Key logic |
 |-------|---------|--------------|-----------|
-| **Phase 0** | Pre-settle | Before V4 swaps | For V3→V4/V2→V4: calls `settle()` on PM to credit forward ERC-20 tokens that were transferred+synced before `unlock()`. Credits the settled amount to `t_v4_deltas`. Only runs when payloads were already delivered before the unlock (`t_queued_payload_index > 0`). Skips `dynamic_amount` swaps and native/WETH inputs |
+| **Phase 0** | Pre-settle | Before V4 swaps | For V3→V4/V2→V4: calls `settle()` on PM to credit forward ERC-20 tokens that were transferred+synced before `unlock()`. Credits the settled amount to `t_v4_deltas`. Only runs when payloads were already delivered before the unlock (`t_queued_payload_index > 0`). Skips `dynamic_amount` swaps and native/WETH inputs. Skips duplicate settlements when the same input currency appears across multiple V4 swaps (checks if delta already credited) |
 | **Phase 1** | V4 swaps | Core | Executes V4 swaps via `extcall`, reads `BalanceDelta` return values, tallies ALL currency deltas in `t_v4_deltas`. Handles `dynamic_amount`: if `amount_specified == 0` and `dynamic_amount == True`, derives the amount from the delta ledger instead of using a pre-computed value |
 | **Phase 2** | Queued payloads | After V4 swaps | Delivers remaining queued payloads (take, transfer, V2/V3 swaps). If any payloads were delivered, zeros intermediate ERC-20 deltas so Phase 3 doesn't double-take/settle them. Native ETH and WETH deltas are never zeroed |
-| **Phase 3** | Auto-settle | After payloads | Settles all nonzero `t_v4_deltas` entries: native ETH (unwrap if needed), WETH (sync+transfer+settle), and intermediate ERC-20s (sync+transfer+settle). Uses the `_v4_settle_currency` helper |
+| **Phase 3** | Auto-settle | After payloads | Settles all nonzero `t_v4_deltas` entries: native ETH (unwrap if needed), WETH (sync+transfer+settle), and intermediate ERC-20s (sync+transfer+settle). Uses the `_v4_settle_currency` helper, which zeros each delta after settling to prevent double-settlement when the same ERC-20 appears in multiple pool keys |
 
 **For V4-V4 paths**: Only Phase 1 and Phase 3 run (no payloads before unlock, no queued payloads after).
 
@@ -243,18 +248,20 @@ The `unlockCallback` is the heart of V4 settlement. It runs inside `PoolManager.
 
 ### Key Design Decisions
 
-1. **V2 flash borrows work**: All three V2 callback types resume payload delivery.
-2. **V3 auto-pay**: When a V3 pool is owed WETH, the callback auto-transfers it. Python encoders must NOT include separate WETH transfer payloads for V3 pools where auto-pay fires. The auto-pay reads `token0()`/`token1()` from the calling pool to check if the debt is WETH.
-3. **V2 callback has NO auto-pay**: Unlike V3, V2's `uniswapV2Call` only resumes payload delivery. WETH payment to V2 pairs must be an explicit payload in the queue (typically after V4 unlock produces WETH via `take`).
+1. **V2 flash borrows work**: All three V2 callback types (`uniswapV2Call`, `hook`, `pancakeCall`) directly resume payload delivery via `_deliver_remaining_payloads()` — no intermediate wrapper.
+2. **V3 auto-pay**: When a V3 pool is owed WETH, the callback auto-transfers it. Python encoders must NOT include separate WETH transfer payloads for V3 pools where auto-pay fires. The auto-pay computes `owed_token`/`owed_amount` first, then performs a single transfer if the owed token is WETH.
+3. **V2 callbacks have NO auto-pay**: Unlike V3, V2 callbacks only resume payload delivery. WETH payment to V2 pairs must be an explicit payload in the queue (typically after V4 unlock produces WETH via `take`).
 4. **Strict `__default__`**: Reverts on unknown function calls (swallows nothing).
 5. **`will_callback` registration**: Before calling a pool with `will_callback=True`, the target address is registered in `t_allowed_callback_addresses`. Callback handlers assert `msg.sender` is registered. This prevents unauthorized callbacks.
 6. **Transient storage**: All queue state (payloads, V4 swaps, delta ledger, callback addresses) uses TLOAD/TSTORE — automatically cleared between transactions.
-7. **All-currency delta ledger**: `t_v4_deltas` tracks ALL currency deltas (not just ETH/WETH) across V4 swaps. This ensures intermediate ERC-20 tokens (e.g., USDC in a WETH→USDC→ETH path) are properly settled.
+7. **All-currency delta ledger**: `t_v4_deltas` tracks ALL currency deltas (not just ETH/WETH) across V4 swaps. This ensures intermediate ERC-20 tokens (e.g., USDC in a WETH→USDC→ETH path) are properly settled. Each delta is zeroed by `_v4_settle_currency` after settling, preventing double-settlement when the same ERC-20 currency appears in multiple pool keys.
 8. **Dynamic amounts**: For V4-V4 paths, the second swap sets `dynamic_amount=True` and `amount_specified=0`. The contract reads the intermediate delta from `t_v4_deltas` and uses it as the `amountSpecified` for the second swap. This guarantees intermediate deltas cancel exactly.
 9. **Sync before transfer**: When the executor transfers ERC-20 to PM for settlement, `sync()` MUST be called BEFORE the transfer, then `settle()` after. The sequence: sync (records PM's current balance) → transfer (adds tokens to PM) → settle (computes delta = new_balance - old_balance). Calling sync AFTER the transfer causes settle to see zero delta.
 10. **Combined balance check**: After all payloads, the executor asserts `WETH_balance + ETH_balance` did not decrease. This correctly handles paths that unwrap WETH to ETH for V4 native settlement.
 11. **int128 overflow guard**: V4's `BalanceDelta` uses `int128` per component. If `amountSpecified` exceeds ±2^127, V4 reverts with `SafeCastOverflow`. Python encoders guard against this with `fits_int128()` — skipping paths that would overflow.
 12. **V4→V2 `amount_out` = `weth_out`**: V2's `swap(amount0Out, amount1Out, ...)` specifies what V2 SENDS to the recipient. For a USDC→WETH@V2 swap, `amount_out` must be the WETH output, NOT the USDC input. Using the wrong amount causes `INSUFFICIENT_LIQUIDITY`.
+13. **`NATIVE_ADDRESS` constant**: `constant(address) = empty(address)` — used throughout the contract to identify native ETH, replacing inline `native: address = empty(address)` locals. Named constant is clearer and avoids stack variable overhead.
+14. **`_decode_swap_delta` unified helper**: Replaces the former `_decode_swap_delta_amount0`/`_decode_swap_delta_amount1` pair with a single parameterized function `_decode_swap_delta(swap_delta, byte_offset)`, eliminating code duplication.
 
 ### V3 vs V4 Sign Conventions
 
@@ -273,16 +280,21 @@ For V4 paths, `payloads` contains only the `unlock()` call (and optional pre-unl
 
 | Path | Payloads | `v4_swaps` | Flow |
 |------|----------|------------|------|
+| V2→V2 | 4 | `[]` | V2 flash borrow + direct V2 swap + WETH repayment |
+| V3→V3 | 2 | `[]` | Nested V3 callbacks; double auto-pay for WETH debts |
+| V2→V3 | 4 | `[]` | V2 flash borrow + V3 nested callback + WETH repayment |
 | V3→V2 (zfo=True) | 2 | `[]` | V3 callback auto-pays WETH; V2 direct swap |
 | V3→V2 (zfo=False) | 3 | `[]` | V3 callback auto-pays WETH; explicit WETH transfer to V2 |
-| V3→V3 | 4 | `[]` | Nested V3 callbacks; auto-pay for WETH debts |
-| V2→V2 | 4 | `[]` | V2 flash borrow + direct V2 swap + WETH repayment |
-| V2→V3 | 4 | `[]` | V2 flash borrow + V3 nested callback + WETH repayment |
 | V4→V4 | 1 | 2 swaps | `unlock()` + two V4 swaps via `extcall` (second uses `dynamic_amount=True`). Auto-settled. |
 | V4→V3 | 4–6 | 1 swap | `unlock()` → Phase 1: V4 swap → Phase 2: take forward + transfer + V3 swap → Phase 3: settle ETH/WETH |
 | V4→V2 | 4–6 | 1 swap | `unlock()` → Phase 1: V4 swap → Phase 2: take forward + transfer + V2 flash swap → Phase 3: settle ETH/WETH. WETH to V2 is explicit payload. |
 | V3→V4 | 4–7 | 1 swap | V3 swap → sync + transfer to PM → `unlock()` → Phase 0: settle forward → Phase 1: V4 swap → Phase 3: settle ETH/WETH |
 | V2→V4 | 4–7 | 1 swap | V2 flash → sync + transfer to PM → `unlock()` → Phase 0: settle forward → Phase 1: V4 swap → Phase 3: settle ETH/WETH. Post-unlock: WETH transfer to V2 pair. |
+| V4→V4→V4 | 1 | 3 swaps | Three V4 swaps via `extcall`. Swaps 2–3 use `dynamic_amount=True`. Two intermediate currencies cancel exactly via delta ledger. |
+| V4→V4→V3 | 4 | 2 swaps | Two V4 swaps + V3 payload in Phase 2. Phase 2 zeroes both intermediate ERC-20 deltas. |
+| V4→V3→V2 | 6 | 1 swap | V4 swap → take + V3 swap (auto-pay WETH) + V2 direct swap → settle WETH |
+| V4→V2→V3 | 5 | 1 swap | V4 swap → take + V2 flash swap → V3 swap (auto-pay) → USDC to V2 → settle WETH |
+| V2→V3→V4 | 7 | 1 swap | V2 flash → V3 swap → sync + transfer to PM → unlock → V4 swap → WETH to V2 |
 
 ---
 

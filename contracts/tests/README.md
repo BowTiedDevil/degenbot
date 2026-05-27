@@ -13,24 +13,32 @@ contracts/tests/
 │   ├── tstore_executor.vy                 ← symlink → ../../tstore_executor.vy
 │   ├── fake_erc20.vy                      ← Mock ERC-20 with owner-only mint()
 │   ├── fake_weth.vy                       ← Mock WETH with deposit()/withdraw()
-│   ├── fake_uniswap_v2_pair.vy            ← Mock V2 pair with swap + uniswapV2Call callback
-│   ├── fake_uniswap_v3_pool.vy            ← Mock V3 pool with swap + callback
+│   ├── fake_uniswap_v2_pair.vy            ← Mock V2 pair with swap + configurable callback dispatch
+│   ├── fake_uniswap_v3_pool.vy            ← Mock V3 pool with swap + configurable callback dispatch
 │   ├── fake_uniswap_v4_pool_manager.vy   ← Mock V4 PoolManager with unlock/swap/take/settle/sync
 │   ├── utility_functions.vy               ← ERC-55 checksum conversion (used by PM for error messages)
 │   └── interfaces/
 │       ├── UniswapV2/
 │       │   ├── IUniswapV2Pair.vyi         ← swap(), token0(), token1()
-│       │   └── IUniswapV2Callee.vyi       ← uniswapV2Call()
+│       │   ├── IUniswapV2Callee.vyi       ← uniswapV2Call()
+│       │   ├── IHookCallee.vyi            ← hook() (Aerodrome/Velodrome)
+│       │   └── IPancakeCallee.vyi         ← pancakeCall() (PancakeSwap V2)
 │       ├── UniswapV3/
 │       │   ├── IUniswapV3Pool.vyi         ← swap(), token0(), token1()
-│       │   └── IUniswapV3SwapCallback.vyi ← uniswapV3SwapCallback()
+│       │   ├── IUniswapV3SwapCallback.vyi ← uniswapV3SwapCallback()
+│       │   └── IPancakeV3SwapCallback.vyi ← pancakeV3SwapCallback() (PancakeSwap V3)
 │       └── UniswapV4/
 │           ├── IPoolManager.vyi           ← swap(), take(), settle(), sync(), unlock()
 │           └── IUnlockCallback.vyi        ← unlockCallback()
 └── tests/
     ├── test_tstore_executor_v4v4.py       ← V4-V4 same/different currency + dynamic amount tests
     ├── test_tstore_executor_v4v3.py       ← V4→V3 and V3→V4 hybrid path tests
-    └── test_tstore_executor_v4v2.py       ← V4→V2, V2→V4, and V4→V2 amount_out regression tests
+    ├── test_tstore_executor_v4v2.py       ← V4→V2, V2→V4, and V4→V2 amount_out regression tests
+    ├── test_tstore_executor_v2v2.py       ← V2→V2 flash borrow + direct swap + WETH repayment
+    ├── test_tstore_executor_v3v3.py       ← V3→V3 nested callbacks with double auto-pay
+    ├── test_tstore_executor_v2v3.py       ← V2→V3 and V3→V2 path tests
+    ├── test_tstore_executor_edge_cases.py ← Callback variants, settlement branches, regressions
+    └── test_tstore_executor_three_hop.py  ← Three-hop path tests (V4-only and hybrid)
 ```
 
 The `tstore_executor.vy` in `contracts/` is a **symlink** to the real contract at `contracts/tstore_executor.vy` (two directories up). This means any edits to the real contract are immediately picked up by the test suite — no manual copying.
@@ -106,7 +114,7 @@ The executor's `unlockCallback` now has four phases. Understanding these is esse
 | **Phase 0** | Pre-settle | Before V4 swaps | For V3→V4/V2→V4: calls `PM.settle()` for input ERC-20 currencies that were transferred+synced before unlock. Credits the settled amount to `t_v4_deltas`. Only runs when payloads were delivered before the unlock (i.e., non-V4-first paths). Skips `dynamic_amount` swaps and native/WETH inputs. |
 | **Phase 1** | V4 swaps | Core | Executes V4 swaps via `extcall`, reads `BalanceDelta` return values, tallies all currency deltas in `t_v4_deltas`. Handles `dynamic_amount` derivation from ledger. |
 | **Phase 2** | Queued payloads | After V4 swaps | Delivers remaining queued payloads (take, transfer, V3 swap, etc.). If any payloads were delivered, zeros intermediate ERC-20 deltas so Phase 3 doesn't double-take/settle. |
-| **Phase 3** | Auto-settle | After payloads | Settles all remaining nonzero deltas: native ETH, WETH, and any intermediate ERC-20 tokens from V4 swap PoolKeys. Uses `take()` for positive deltas, `sync+transfer+settle()` for negative deltas. |
+| **Phase 3** | Auto-settle | After payloads | Settles all remaining nonzero deltas: native ETH, WETH, and any intermediate ERC-20 tokens from V4 swap PoolKeys. Uses `take()` for positive deltas, `sync+transfer+settle()` for negative deltas. The `_v4_settle_currency` helper zeros each delta after settling to prevent double-settlement when the same ERC-20 appears in multiple pool keys. |
 
 **For V4-V4 paths**: Only Phase 1 and Phase 3 run (no pre-settle, no queued payloads in callback).
 
@@ -188,8 +196,14 @@ Simulates a V2 pair's optimistic swap lifecycle:
 
 | Method | Behavior |
 |--------|----------|
-| `set_next_swap(amount_in, amount_out, zero_for_one)` | Pre-configures the next swap. Validates the pair holds enough output tokens. |
-| `swap(amount0Out, amount1Out, to, data)` | Transfers output tokens to `to`. If `data` is non-empty, invokes `uniswapV2Call` callback on `to`. After callback, asserts input tokens were paid. |
+| `swap(amount0Out, amount1Out, to, data)` | Transfers output tokens to `to`. If `data` is non-empty, invokes callback on `to`. After callback, asserts input tokens were paid. |
+
+**Configurable callback dispatch**: The constructor takes a `_callback_variant` parameter:
+- `0` (default) → `uniswapV2Call()` (Uniswap/SushiSwap)
+- `1` → `hook()` (Aerodrome/Velodrome)
+- `2` → `pancakeCall()` (PancakeSwap V2)
+
+This allows testing all three V2 callback entry points with the same fake pair logic.
 
 The V2 swap is an **optimistic transfer**: output tokens are sent BEFORE any input is received. If `data` is non-empty, a callback gives the caller a chance to pay the input tokens. After the callback (or immediately if no callback), the pair checks its balance has increased by the required input amount.
 
@@ -215,8 +229,15 @@ Simulates a V3 pool's swap lifecycle:
 
 | Method | Behavior |
 |--------|----------|
-| `set_next_swap(amount_in, amount_out, zero_for_one)` | Pre-configures the next swap. Validates the pool holds enough output tokens. |
-| `swap(recipient, zero_for_one, amount_specified, sqrtPriceLimitX96, data)` | Transfers output to `recipient`, then calls `msg.sender.uniswapV3SwapCallback(amount0_delta, amount1_delta, data)`. After the callback returns, asserts the input tokens have been paid. |
+| `swap(recipient, zero_for_one, amount_specified, sqrtPriceLimitX96, data)` | Transfers output to `recipient`, then invokes callback on `msg.sender`. After the callback returns, asserts the input tokens have been paid. |
+
+**Configurable callback dispatch**: The constructor takes a `_callback_variant` parameter:
+- `0` (default) → `uniswapV3SwapCallback()` (Uniswap/SushiSwap)
+- `1` → `pancakeV3SwapCallback()` (PancakeSwap V3)
+
+The V3 sign convention: `amount_specified > 0` = exact-input, `amount_specified < 0` = exact-output.
+
+The callback invocation triggers the executor's callback handler, which resumes payload delivery and auto-pays WETH if owed.
 
 The V3 sign convention: `amount_specified > 0` = exact-input, `amount_specified < 0` = exact-output.
 
@@ -382,9 +403,9 @@ This is the primary bug we're testing for. If you see it:
 
 ### V3 Callback Auto-Pay
 
-The executor's `v3_swap_callback` auto-pays WETH to the V3 pool if owed. This means:
+The executor's `v3_swap_callback` auto-pays WETH to the V3 pool if owed. The callback computes `owed_token`/`owed_amount` first, then performs a single transfer if the owed token is WETH. This means:
 - Do NOT include a separate WETH transfer payload for V3 WETH debts
-- The auto-pay reads `token0()`/`token1()` from the calling pool to check if the debt is WETH
+- The auto-pay only fires when the owed token is WETH — non-WETH debts (e.g., USDC) require explicit transfers in the payload queue
 - The fake V3 pool must declare `implements: IUniswapV3Pool` so the executor's `staticcall` to `token0()`/`token1()` works
 
 ## Relationship to Mainnet Testing

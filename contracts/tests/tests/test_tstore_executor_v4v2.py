@@ -230,6 +230,7 @@ def v2_pair(
     return project.fake_uniswap_v2_pair.deploy(
         token0,
         token1,
+        0,  # callback_variant: 0=uniswapV2Call
         sender=owner_account,
     )
 

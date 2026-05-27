@@ -139,6 +139,18 @@ def unlock(data: Bytes[MAX_CALLDATA_LENGTH]) -> Bytes[MAX_CALLDATA_LENGTH]:
     return result
 
 
+@internal
+def _input_currency(key: IPoolManager.PoolKey, zero_for_one: bool) -> address:
+    """Return the input currency for a swap based on direction."""
+    return key.currency0 if zero_for_one else key.currency1
+
+
+@internal
+def _output_currency(key: IPoolManager.PoolKey, zero_for_one: bool) -> address:
+    """Return the output currency for a swap based on direction."""
+    return key.currency1 if zero_for_one else key.currency0
+
+
 @external
 def set_next_swap(
     pool_key: IPoolManager.PoolKey,
@@ -150,8 +162,8 @@ def set_next_swap(
     assert msg.sender == OWNER
     assert amount_in != 0 and amount_out != 0, "Amounts must be non-zero"
 
-    currency_in: address = pool_key.currency0 if zero_for_one else pool_key.currency1
-    currency_out: address = pool_key.currency1 if zero_for_one else pool_key.currency0
+    currency_in: address = self._input_currency(pool_key, zero_for_one)
+    currency_out: address = self._output_currency(pool_key, zero_for_one)
 
     assert (
         self.balance
@@ -172,12 +184,34 @@ def swap(
     """
     Perform a fake swap if the parameters match the inputs provided in `set_next_swap`.
 
+    Validates the V4 sign convention for amountSpecified:
+      - Exact-input (amountSpecified < 0): |amountSpecified| must equal configured amount_in
+      - Exact-output (amountSpecified > 0): amountSpecified must equal configured amount_out
+      - Dynamic (amountSpecified == 0): executor rewrites before calling; skip validation
+
+    This mirrors the real PoolManager which uses the sign to determine the swap
+    mode and validates the resulting amounts. Without this check, wrong sign
+    conventions (e.g., V3's positive-for-exact-input) would silently succeed.
+
     Returns the swap delta, encoded as two closed-packed int128 values.
     """
     self.t_currencies_used.append(key.currency0)
     self.t_currencies_used.append(key.currency1)
 
     pool_id: bytes32 = self._to_pool_id(key)
+
+    # Validate amountSpecified against configured amounts.
+    # V4 sign convention: negative = exact-input, positive = exact-output
+    currency_in: address = self._input_currency(key, params.zero_for_one)
+    currency_out: address = self._output_currency(key, params.zero_for_one)
+
+    if params.amount_specified < 0:
+        # Exact-input: |amountSpecified| must equal configured amount_in
+        assert convert(-params.amount_specified, uint256) == self.swap_amounts[pool_id][currency_in], "V4 exact-input: |amountSpecified| != amount_in"
+    elif params.amount_specified > 0:
+        # Exact-output: amountSpecified must equal configured amount_out
+        assert convert(params.amount_specified, uint256) == self.swap_amounts[pool_id][currency_out], "V4 exact-output: amountSpecified != amount_out"
+    # amountSpecified == 0 (dynamic): executor rewrites before calling PM, skip
 
     amount0_delta: int128 = convert(self.swap_amounts[pool_id][key.currency0], int128)
     amount1_delta: int128 = convert(self.swap_amounts[pool_id][key.currency1], int128)

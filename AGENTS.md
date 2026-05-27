@@ -288,12 +288,12 @@ The `unlockCallback` has 4 phases:
 
 | Phase | Purpose | Key Logic |
 |-------|---------|-----------|
-| **Phase 0** | Pre-settle | For V3→V4/V2→V4: calls `settle()` to credit forward ERC-20 to `t_v4_deltas` before V4 swap consumes them |
+| **Phase 0** | Pre-settle | For V3→V4/V2→V4: calls `settle()` to credit forward ERC-20 to `t_v4_deltas` before V4 swap consumes them. Skips duplicate settlements when the same input currency appears across multiple V4 swaps |
 | **Phase 1** | V4 swaps | Executes V4 swaps, tallies ALL currency deltas in `t_v4_deltas` (not just ETH/WETH). Handles `dynamic_amount` flag for V4-V4 paths |
 | **Phase 2** | Queued payloads | Delivers remaining queued payloads (take/transfer for V4→V3/V4→V2). Zeros intermediate ERC-20 deltas if payloads were delivered |
-| **Phase 3** | Auto-settle | Settles all nonzero deltas: native ETH, WETH, and intermediate ERC-20s. Uses `_v4_settle_currency` internal helper |
+| **Phase 3** | Auto-settle | Settles all nonzero deltas: native ETH, WETH, and intermediate ERC-20s. Uses `_v4_settle_currency` internal helper, which zeros the delta after settling to prevent double-settlement when the same ERC-20 appears in multiple pool keys |
 
-**V2 callback difference**: Unlike V3 (which auto-pays WETH), the V2 `uniswapV2Call` callback only resumes payload delivery. V2 pair WETH payment must be an explicit payload in the queue. This is verified by the V4→V2 and V2→V4 contract tests.
+**V2 callback difference**: Unlike V3 (which auto-pays WETH), the V2 `uniswapV2Call`/`hook`/`pancakeCall` callbacks directly resume payload delivery via `_deliver_remaining_payloads()` — no intermediate wrapper. V2 pair WETH payment must be an explicit payload in the queue. This is verified by the V4→V2 and V2→V4 contract tests.
 
 **int128 overflow guard**: V4's `BalanceDelta` uses `int128` per component. The `fits_int128()` function in `degenbot.arbitrage.encoding` allows encoders to skip paths where amounts would overflow (`SafeCastOverflow` revert). All 5 V4 encoder functions check this before constructing swap params.
 
@@ -360,7 +360,7 @@ The original `interface.py` no longer exists — all callers have been updated t
 
 ### Contract Testing
 
-An isolated Ape + Foundry test suite under `contracts/tests/` verifies the executor's V4 settlement logic using fake contracts (no mainnet fork). 10 tests across 3 files covering V4-V4, V4-V3, V3-V4, V4-V2, V2-V4 paths, dynamic amounts, and encoding regression.
+An isolated Ape + Foundry test suite under `contracts/tests/` verifies the executor's V4 settlement logic using fake contracts (no mainnet fork). 27 tests across 8 files covering V2/V3-only paths, V4-hybrid paths, callback variant selectors, settlement branches, three-hop paths, and encoding regressions.
 
 Run from `contracts/tests/`:
 ```bash
