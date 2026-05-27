@@ -536,7 +536,15 @@ def execute(
             ),
         )
 
-    return combined_after - combined_before
+    if not skip_profit_check:
+        assert combined_after >= combined_before, "balance reduction"
+        return combined_after - combined_before
+
+    # skip_profit_check: return 0 if loss (avoid uint256 underflow)
+    if combined_after >= combined_before:
+        return combined_after - combined_before
+    else:
+        return 0
 
 
 # ── V2 Callbacks ──
