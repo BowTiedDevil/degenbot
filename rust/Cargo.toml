@@ -10,6 +10,14 @@ license = "MIT"
 [lints.rust]
 warnings = "deny"
 
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"
+pedantic = "warn"
+perf = "warn"
+style = "warn"
+suspicious = "warn"
+
 [lib]
 name = "degenbot_rs"
 crate-type = ["rlib", "cdylib"]
