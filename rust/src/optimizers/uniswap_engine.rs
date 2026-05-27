@@ -273,7 +273,7 @@ impl UniswapEngine {
                     None
                 }
             })
-            .flat_map(|(fwd, rev)| [fwd, rev])
+            .flat_map(|(fwd, rev)| Into::<[u64; 2]>::into([fwd, rev]))
             .collect();
 
         // Re-solve only paths containing updated pools
@@ -1436,6 +1436,147 @@ pub struct PyUniswapArbEngine {
     block_rx: parking_lot::Mutex<Option<tokio::sync::watch::Receiver<crate::optimizers::uniswap_engine_pump::BlockNotification>>>,
 }
 
+impl PyUniswapArbEngine {
+    /// Parse V2 Sync updates from a Python list of 3-tuples.
+    fn parse_v2_updates(
+        v2_sync_updates: &Bound<'_, PyList>,
+    ) -> PyResult<Vec<(Address, U256, U256)>> {
+        let mut rust_v2: Vec<(Address, U256, U256)> = Vec::with_capacity(v2_sync_updates.len());
+        for item in v2_sync_updates.iter() {
+            let tuple = item.cast::<pyo3::types::PyTuple>()?;
+            if tuple.len() != 3 {
+                let msg = format!(
+                    "Expected 3-tuple (address, reserve0, reserve1), got {} elements",
+                    tuple.len()
+                );
+                return Err(pyo3::exceptions::PyValueError::new_err(msg));
+            }
+            let addr_obj = tuple.get_item(0)?;
+            let addr_str: String = addr_obj.extract()?;
+            let addr = addr_str.parse::<Address>().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}"))
+            })?;
+            let r0 = crate::alloy_py::extract_python_u256(&tuple.get_item(1)?)?;
+            let r1 = crate::alloy_py::extract_python_u256(&tuple.get_item(2)?)?;
+            rust_v2.push((addr, r0, r1));
+        }
+        Ok(rust_v2)
+    }
+
+    /// Parse tick priors from a Python list of 2-tuples.
+    fn parse_tick_priors(priors_list: &Bound<'_, PyList>) -> PyResult<Vec<(i32, crate::bot_core::TickInfo)>> {
+        let mut tick_priors = Vec::new();
+        for prior_item in priors_list.iter() {
+            let prior_tuple = prior_item.cast::<pyo3::types::PyTuple>()?;
+            if prior_tuple.len() != 2 {
+                let msg = format!(
+                    "Expected 2-tuple (tick_index, (lg, ln)), got {} elements",
+                    prior_tuple.len()
+                );
+                return Err(pyo3::exceptions::PyValueError::new_err(msg));
+            }
+            let tick_idx: i32 = prior_tuple.get_item(0)?.extract()?;
+            let info_obj = prior_tuple.get_item(1)?;
+            let info_tuple = info_obj.cast::<pyo3::types::PyTuple>()?;
+            if info_tuple.len() != 2 {
+                let msg = format!(
+                    "Expected 2-tuple (liquidity_gross, liquidity_net), got {} elements",
+                    info_tuple.len()
+                );
+                return Err(pyo3::exceptions::PyValueError::new_err(msg));
+            }
+            let lg: u128 = info_tuple.get_item(0)?.extract()?;
+            let ln: i128 = info_tuple.get_item(1)?.extract()?;
+            tick_priors.push((tick_idx, make_tick_info(lg, ln)));
+        }
+        Ok(tick_priors)
+    }
+
+    /// Parse V3 Swap updates from a Python list of 5-tuples.
+    fn parse_v3_updates(
+        v3_swap_updates: &Bound<'_, PyList>,
+    ) -> PyResult<Vec<V3SwapUpdate>> {
+        let mut rust_v3: Vec<V3SwapUpdate> = Vec::with_capacity(v3_swap_updates.len());
+        for item in v3_swap_updates.iter() {
+            let tuple = item.cast::<pyo3::types::PyTuple>()?;
+            if tuple.len() != 5 {
+                let msg = format!(
+                    "Expected 5-tuple (address, sqrt_price, liquidity, tick, tick_priors), got {} elements",
+                    tuple.len()
+                );
+                return Err(pyo3::exceptions::PyValueError::new_err(msg));
+            }
+
+            let addr_obj = tuple.get_item(0)?;
+            let addr_str: String = addr_obj.extract()?;
+            let addr = addr_str.parse::<Address>().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}"))
+            })?;
+            let sqrt_price = crate::alloy_py::extract_python_u256(&tuple.get_item(1)?)?;
+            let liquidity: u128 = tuple.get_item(2)?.extract()?;
+            let tick: i32 = tuple.get_item(3)?.extract()?;
+
+            let priors_obj = tuple.get_item(4)?;
+            let priors_list = priors_obj.cast::<PyList>()?;
+            let tick_priors = Self::parse_tick_priors(priors_list)?;
+
+            rust_v3.push(V3SwapUpdate {
+                pool_address: addr,
+                sqrt_price_x96: sqrt_price,
+                liquidity,
+                tick,
+                tick_priors,
+            });
+        }
+        Ok(rust_v3)
+    }
+
+    /// Parse V4 Swap updates from a Python list of 6-tuples.
+    fn parse_v4_updates(
+        v4_swap_updates: &Bound<'_, PyList>,
+    ) -> PyResult<Vec<V4SwapUpdate>> {
+        let mut rust_v4: Vec<V4SwapUpdate> = Vec::with_capacity(v4_swap_updates.len());
+        for item in v4_swap_updates.iter() {
+            let tuple = item.cast::<pyo3::types::PyTuple>()?;
+            if tuple.len() != 6 {
+                let msg = format!(
+                    "Expected 6-tuple (pool_manager, pool_id_hex, sqrt_price, liquidity, tick, tick_priors), got {} elements",
+                    tuple.len()
+                );
+                return Err(pyo3::exceptions::PyValueError::new_err(msg));
+            }
+
+            let pm_obj = tuple.get_item(0)?;
+            let pm_str: String = pm_obj.extract()?;
+            let pool_manager = pm_str.parse::<Address>().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager address: {e}"))
+            })?;
+
+            let pid_obj = tuple.get_item(1)?;
+            let pid_str: String = pid_obj.extract()?;
+            let pool_id = hex_string_to_pool_id(&pid_str)?;
+
+            let sqrt_price = crate::alloy_py::extract_python_u256(&tuple.get_item(2)?)?;
+            let liquidity: u128 = tuple.get_item(3)?.extract()?;
+            let tick: i32 = tuple.get_item(4)?.extract()?;
+
+            let priors_obj = tuple.get_item(5)?;
+            let priors_list = priors_obj.cast::<PyList>()?;
+            let tick_priors = Self::parse_tick_priors(priors_list)?;
+
+            rust_v4.push(V4SwapUpdate {
+                pool_manager,
+                pool_id,
+                sqrt_price_x96: sqrt_price,
+                liquidity,
+                tick,
+                tick_priors,
+            });
+        }
+        Ok(rust_v4)
+    }
+}
+
 #[pymethods]
 impl PyUniswapArbEngine {
     #[new]
@@ -1740,147 +1881,9 @@ impl PyUniswapArbEngine {
         v4_swap_updates: &Bound<'_, PyList>,
         block_number: u64,
     ) -> PyResult<()> {
-        // Parse V2 Sync updates
-        let mut rust_v2: Vec<(Address, U256, U256)> = Vec::with_capacity(v2_sync_updates.len());
-        for item in v2_sync_updates.iter() {
-            let tuple = item.cast::<pyo3::types::PyTuple>()?;
-            if tuple.len() != 3 {
-                let msg = format!(
-                    "Expected 3-tuple (address, reserve0, reserve1), got {} elements",
-                    tuple.len()
-                );
-                return Err(pyo3::exceptions::PyValueError::new_err(msg));
-            }
-            let addr_obj = tuple.get_item(0)?;
-            let addr_str: String = addr_obj.extract()?;
-            let addr = addr_str.parse::<Address>().map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}"))
-            })?;
-            let r0 = crate::alloy_py::extract_python_u256(&tuple.get_item(1)?)?;
-            let r1 = crate::alloy_py::extract_python_u256(&tuple.get_item(2)?)?;
-            rust_v2.push((addr, r0, r1));
-        }
-
-        // Parse V3 Swap updates
-        let mut rust_v3: Vec<V3SwapUpdate> = Vec::with_capacity(v3_swap_updates.len());
-        for item in v3_swap_updates.iter() {
-            let tuple = item.cast::<pyo3::types::PyTuple>()?;
-            if tuple.len() != 5 {
-                let msg = format!(
-                    "Expected 5-tuple (address, sqrt_price, liquidity, tick, tick_priors), got {} elements",
-                    tuple.len()
-                );
-                return Err(pyo3::exceptions::PyValueError::new_err(msg));
-            }
-
-            let addr_obj = tuple.get_item(0)?;
-            let addr_str: String = addr_obj.extract()?;
-            let addr = addr_str.parse::<Address>().map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}"))
-            })?;
-            let sqrt_price = crate::alloy_py::extract_python_u256(&tuple.get_item(1)?)?;
-            let liquidity: u128 = tuple.get_item(2)?.extract()?;
-            let tick: i32 = tuple.get_item(3)?.extract()?;
-
-            let priors_obj = tuple.get_item(4)?;
-            let priors_list = priors_obj.cast::<PyList>()?;
-            let mut tick_priors = Vec::new();
-            for prior_item in priors_list.iter() {
-                let prior_tuple = prior_item.cast::<pyo3::types::PyTuple>()?;
-                if prior_tuple.len() != 2 {
-                    let msg = format!(
-                        "Expected 2-tuple (tick_index, (lg, ln)), got {} elements",
-                        prior_tuple.len()
-                    );
-                    return Err(pyo3::exceptions::PyValueError::new_err(msg));
-                }
-                let tick_idx: i32 = prior_tuple.get_item(0)?.extract()?;
-                let info_obj = prior_tuple.get_item(1)?;
-                let info_tuple = info_obj.cast::<pyo3::types::PyTuple>()?;
-                if info_tuple.len() != 2 {
-                    let msg = format!(
-                        "Expected 2-tuple (liquidity_gross, liquidity_net), got {} elements",
-                        info_tuple.len()
-                    );
-                    return Err(pyo3::exceptions::PyValueError::new_err(msg));
-                }
-                let lg: u128 = info_tuple.get_item(0)?.extract()?;
-                let ln: i128 = info_tuple.get_item(1)?.extract()?;
-                tick_priors.push((tick_idx, make_tick_info(lg, ln)));
-            }
-
-            rust_v3.push(V3SwapUpdate {
-                pool_address: addr,
-                sqrt_price_x96: sqrt_price,
-                liquidity,
-                tick,
-                tick_priors,
-            });
-        }
-
-        // Parse V4 Swap updates
-        let mut rust_v4: Vec<V4SwapUpdate> = Vec::with_capacity(v4_swap_updates.len());
-        for item in v4_swap_updates.iter() {
-            let tuple = item.cast::<pyo3::types::PyTuple>()?;
-            if tuple.len() != 6 {
-                let msg = format!(
-                    "Expected 6-tuple (pool_manager, pool_id_hex, sqrt_price, liquidity, tick, tick_priors), got {} elements",
-                    tuple.len()
-                );
-                return Err(pyo3::exceptions::PyValueError::new_err(msg));
-            }
-
-            let pm_obj = tuple.get_item(0)?;
-            let pm_str: String = pm_obj.extract()?;
-            let pool_manager = pm_str.parse::<Address>().map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager address: {e}"))
-            })?;
-
-            let pid_obj = tuple.get_item(1)?;
-            let pid_str: String = pid_obj.extract()?;
-            let pool_id = hex_string_to_pool_id(&pid_str)?;
-
-            let sqrt_price = crate::alloy_py::extract_python_u256(&tuple.get_item(2)?)?;
-            let liquidity: u128 = tuple.get_item(3)?.extract()?;
-            let tick: i32 = tuple.get_item(4)?.extract()?;
-
-            let priors_obj = tuple.get_item(5)?;
-            let priors_list = priors_obj.cast::<PyList>()?;
-            let mut tick_priors = Vec::new();
-            for prior_item in priors_list.iter() {
-                let prior_tuple = prior_item.cast::<pyo3::types::PyTuple>()?;
-                if prior_tuple.len() != 2 {
-                    let msg = format!(
-                        "Expected 2-tuple (tick_index, (lg, ln)), got {} elements",
-                        prior_tuple.len()
-                    );
-                    return Err(pyo3::exceptions::PyValueError::new_err(msg));
-                }
-                let tick_idx: i32 = prior_tuple.get_item(0)?.extract()?;
-                let info_obj = prior_tuple.get_item(1)?;
-                let info_tuple = info_obj.cast::<pyo3::types::PyTuple>()?;
-                if info_tuple.len() != 2 {
-                    let msg = format!(
-                        "Expected 2-tuple (liquidity_gross, liquidity_net), got {} elements",
-                        info_tuple.len()
-                    );
-                    return Err(pyo3::exceptions::PyValueError::new_err(msg));
-                }
-                let lg: u128 = info_tuple.get_item(0)?.extract()?;
-                let ln: i128 = info_tuple.get_item(1)?.extract()?;
-                tick_priors.push((tick_idx, make_tick_info(lg, ln)));
-            }
-
-            rust_v4.push(V4SwapUpdate {
-                pool_manager,
-                pool_id,
-                sqrt_price_x96: sqrt_price,
-                liquidity,
-                tick,
-                tick_priors,
-            });
-        }
-
+        let rust_v2 = Self::parse_v2_updates(v2_sync_updates)?;
+        let rust_v3 = Self::parse_v3_updates(v3_swap_updates)?;
+        let rust_v4 = Self::parse_v4_updates(v4_swap_updates)?;
         self.engine.lock().process_all_updates(&rust_v2, &rust_v3, &rust_v4, block_number);
         Ok(())
     }
@@ -1954,7 +1957,7 @@ impl PyUniswapArbEngine {
             .block_rx
             .lock()
             .as_ref()
-            .expect("receiver was just restored")
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("block receiver missing"))?
             .borrow()
             .clone();
 

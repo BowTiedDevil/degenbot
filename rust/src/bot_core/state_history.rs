@@ -760,15 +760,15 @@ mod proptests {
             }
 
             // Restore before each non-first entry's block
-            for target_idx in 1..expected.len() {
-                let target_block = expected[target_idx].block;
+            for entry in expected.iter().skip(1) {
+                let target_block = entry.block;
 
                 // Clone the journal so each restore is independent
                 let mut j = journal.clone();
                 let (r0, r1, blk) = j.restore_before_block(target_block);
 
-                prop_assert_eq!(r0, expected[target_idx].reserve0_before);
-                prop_assert_eq!(r1, expected[target_idx].reserve1_before);
+                prop_assert_eq!(r0, entry.reserve0_before);
+                prop_assert_eq!(r1, entry.reserve1_before);
                 prop_assert_eq!(blk, target_block);
             }
         }

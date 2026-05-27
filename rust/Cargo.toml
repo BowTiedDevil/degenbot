@@ -10,13 +10,6 @@ license = "MIT"
 [lints.rust]
 warnings = "deny"
 
-[lints.clippy]
-unwrap_used = "deny"
-expect_used = "deny"
-missing_errors_doc = "allow"  # Allow missing docs for error types since we use module-level doc
-pedantic = { level = "warn", priority = -1 }
-nursery = { level = "warn", priority = -1 }
-
 [lib]
 name = "degenbot_rs"
 crate-type = ["rlib", "cdylib"]

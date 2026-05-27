@@ -177,6 +177,155 @@ impl UniswapEnginePump {
         v2.iter().chain(v3.iter()).chain(v4.iter()).copied().collect()
     }
 
+    /// Handle a block header event from the WS subscription.
+    ///
+    /// Returns the updated `last_processed_block` and `first_header` flag.
+    /// Takes `pending_logs` by mutable reference and clears it as needed.
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_block_header(
+        &self,
+        number: u64,
+        timestamp: u64,
+        base_fee_per_gas: Option<u64>,
+        gas_used: u64,
+        gas_limit: u64,
+        pending_logs: &mut Vec<Log>,
+        relevant_addrs: &HashSet<Address>,
+        relevant_topic_set: &HashSet<B256>,
+        last_processed_block: Option<u64>,
+        first_header: bool,
+    ) -> (Option<u64>, bool) {
+        match last_processed_block {
+            None => {
+                // Cold start — no Python backfill was done.
+                // Record this block as the starting point and skip processing.
+                // The next block header will trigger normal processing.
+                pending_logs.clear();
+                let _ = self.block_tx.send(BlockNotification {
+                    block_number: number,
+                    timestamp,
+                    base_fee_per_gas,
+                    gas_used,
+                    gas_limit,
+                    backfilled: false,
+                });
+                (Some(number), false)
+            }
+            Some(prior_block) if first_header => {
+                // First header after Python backfill. prior_block
+                // was already processed by Python — we must NOT
+                // call process_completed_block on it, because:
+                //   - pending_logs is empty (WS subscription
+                //     started after prior_block completed)
+                //   - process_completed_block would detect empty
+                //     pending_logs and call backfill_single_block,
+                //     which fetches the SAME events Python already
+                //     applied via eth_getLogs → double-processing.
+                // Instead: backfill any gap between prior_block and
+                // this header, then set last_processed_block to
+                // this block header for normal operation.
+                if number > prior_block + 1 {
+                    log::info!(
+                        "UniswapEnginePump: gap from block {} to {} — backfilling",
+                        prior_block + 1,
+                        number,
+                    );
+                    let mut lpb = prior_block;
+                    self.backfill_range(
+                        prior_block + 1,
+                        number - 1,
+                        relevant_addrs,
+                        relevant_topic_set,
+                        &mut lpb,
+                    )
+                    .await;
+                }
+                // Discard any WS logs — they arrived between the
+                // backfill and the first header, so they're for
+                // blocks that backfill_range just processed via
+                // eth_getLogs (or for the current incomplete block
+                // which will be collected in the next cycle).
+                pending_logs.clear();
+                let _ = self.block_tx.send(BlockNotification {
+                    block_number: number,
+                    timestamp,
+                    base_fee_per_gas,
+                    gas_used,
+                    gas_limit,
+                    backfilled: false,
+                });
+                (Some(number), false)
+            }
+            Some(prior_block) if number == prior_block + 1 => {
+                // Normal case: the new header is exactly one block
+                // ahead. Process the prior block with buffered WS logs.
+                self.process_completed_block(
+                    prior_block,
+                    pending_logs,
+                    relevant_addrs,
+                    relevant_topic_set,
+                )
+                .await;
+                pending_logs.clear();
+                let _ = self.block_tx.send(BlockNotification {
+                    block_number: number,
+                    timestamp,
+                    base_fee_per_gas,
+                    gas_used,
+                    gas_limit,
+                    backfilled: false,
+                });
+                (Some(number), first_header)
+            }
+            Some(prior_block) if number > prior_block + 1 => {
+                // Gap detected during steady-state operation
+                // (e.g., after a 60s timeout recovery).
+                // Backfill the missing blocks, then process the
+                // prior block with WS logs.
+                log::info!(
+                    "UniswapEnginePump: gap from block {} to {} — backfilling",
+                    prior_block + 1,
+                    number,
+                );
+                let mut lpb = prior_block;
+                self.backfill_range(
+                    prior_block + 1,
+                    number - 1,
+                    relevant_addrs,
+                    relevant_topic_set,
+                    &mut lpb,
+                )
+                .await;
+                // Process the prior block with WS logs
+                self.process_completed_block(
+                    prior_block,
+                    pending_logs,
+                    relevant_addrs,
+                    relevant_topic_set,
+                )
+                .await;
+                pending_logs.clear();
+                let _ = self.block_tx.send(BlockNotification {
+                    block_number: number,
+                    timestamp,
+                    base_fee_per_gas,
+                    gas_used,
+                    gas_limit,
+                    backfilled: false,
+                });
+                (Some(number), first_header)
+            }
+            Some(prior_block) => {
+                // number <= prior_block: stale or duplicate header.
+                // Ignore it — we're already past this block.
+                log::debug!(
+                    "UniswapEnginePump: ignoring stale header {number} (current: {prior_block})"
+                );
+                (last_processed_block, first_header)
+            }
+        }
+    }
+
     /// Process the completed block using buffered logs, with backfill on empty.
     ///
     /// Returns `true` if logs were processed from the WS buffer, `false` if
@@ -365,141 +514,22 @@ impl UniswapEnginePump {
                     gas_used,
                     gas_limit,
                 })) => {
-                    match last_processed_block {
-                        None => {
-                            // Cold start — no Python backfill was done.
-                            // Record this block as the starting point and skip processing.
-                            // The next block header will trigger normal processing.
-                            last_processed_block = Some(number);
-                            pending_logs.clear();
-                            first_header = false;
-                            let _ = self.block_tx.send(BlockNotification {
-                                block_number: number,
-                                timestamp,
-                                base_fee_per_gas,
-                                gas_used,
-                                gas_limit,
-                                backfilled: false,
-                            });
-                            continue;
-                        }
-                        Some(prior_block) if first_header => {
-                            // First header after Python backfill. prior_block
-                            // was already processed by Python — we must NOT
-                            // call process_completed_block on it, because:
-                            //   - pending_logs is empty (WS subscription
-                            //     started after prior_block completed)
-                            //   - process_completed_block would detect empty
-                            //     pending_logs and call backfill_single_block,
-                            //     which fetches the SAME events Python already
-                            //     applied via eth_getLogs → double-processing.
-                            // Instead: backfill any gap between prior_block and
-                            // this header, then set last_processed_block to
-                            // this block header for normal operation.
-                            first_header = false;
-                            if number > prior_block + 1 {
-                                // Gap: backfill the missing blocks
-                                log::info!(
-                                    "UniswapEnginePump: gap from block {} to {} — backfilling",
-                                    prior_block + 1,
-                                    number,
-                                );
-                                let mut lpb = prior_block;
-                                self.backfill_range(
-                                    prior_block + 1,
-                                    number - 1,
-                                    &relevant_addrs,
-                                    &relevant_topic_set,
-                                    &mut lpb,
-                                )
-                                .await;
-                            }
-                            // Discard any WS logs — they arrived between the
-                            // backfill and the first header, so they're for
-                            // blocks that backfill_range just processed via
-                            // eth_getLogs (or for the current incomplete block
-                            // which will be collected in the next cycle).
-                            pending_logs.clear();
-                            last_processed_block = Some(number);
-
-                            let _ = self.block_tx.send(BlockNotification {
-                                block_number: number,
-                                timestamp,
-                                base_fee_per_gas,
-                                gas_used,
-                                gas_limit,
-                                backfilled: false,
-                            });
-                        }
-                        Some(prior_block) if number == prior_block + 1 => {
-                            // Normal case: the new header is exactly one block
-                            // ahead. Process the prior block with buffered WS logs.
-                            self.process_completed_block(
-                                prior_block,
-                                &pending_logs,
-                                &relevant_addrs,
-                                &relevant_topic_set,
-                            )
-                            .await;
-                            pending_logs.clear();
-                            last_processed_block = Some(number);
-
-                            let _ = self.block_tx.send(BlockNotification {
-                                block_number: number,
-                                timestamp,
-                                base_fee_per_gas,
-                                gas_used,
-                                gas_limit,
-                                backfilled: false,
-                            });
-                        }
-                        Some(prior_block) if number > prior_block + 1 => {
-                            // Gap detected during steady-state operation
-                            // (e.g., after a 60s timeout recovery).
-                            // Backfill the missing blocks, then process the
-                            // prior block with WS logs.
-                            log::info!(
-                                "UniswapEnginePump: gap from block {} to {} — backfilling",
-                                prior_block + 1,
-                                number,
-                            );
-                            let mut lpb = prior_block;
-                            self.backfill_range(
-                                prior_block + 1,
-                                number - 1,
-                                &relevant_addrs,
-                                &relevant_topic_set,
-                                &mut lpb,
-                            )
-                                .await;
-                            // Process the prior block with WS logs
-                            self.process_completed_block(
-                                prior_block,
-                                &pending_logs,
-                                &relevant_addrs,
-                                &relevant_topic_set,
-                            )
-                                .await;
-                            pending_logs.clear();
-                            last_processed_block = Some(number);
-
-                            let _ = self.block_tx.send(BlockNotification {
-                                block_number: number,
-                                timestamp,
-                                base_fee_per_gas,
-                                gas_used,
-                                gas_limit,
-                                backfilled: false,
-                            });
-                        }
-                        Some(prior_block) => {
-                            // number <= prior_block: stale or duplicate header.
-                            // Ignore it — we're already past this block.
-                            log::debug!(
-                                "UniswapEnginePump: ignoring stale header {number} (current: {prior_block})"
-                            );
-                        }
-                    }
+                    let (new_lpb, new_first) = self
+                        .handle_block_header(
+                            number,
+                            timestamp,
+                            base_fee_per_gas,
+                            gas_used,
+                            gas_limit,
+                            &mut pending_logs,
+                            &relevant_addrs,
+                            &relevant_topic_set,
+                            last_processed_block,
+                            first_header,
+                        )
+                        .await;
+                    last_processed_block = new_lpb;
+                    first_header = new_first;
                 }
 
                 // Got a log event from the combined stream
