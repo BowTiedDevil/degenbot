@@ -327,6 +327,9 @@ impl UniswapEnginePump {
 
         // Buffer for logs received since the last newHeads
         let mut pending_logs: Vec<Log> = Vec::new();
+        // Whether this is the first block header we receive. Used to skip
+        // re-processing the backfill block (already done by Python).
+        let mut first_header = true;
 
         loop {
             // Check shutdown
@@ -369,6 +372,7 @@ impl UniswapEnginePump {
                             // The next block header will trigger normal processing.
                             last_processed_block = Some(number);
                             pending_logs.clear();
+                            first_header = false;
                             let _ = self.block_tx.send(BlockNotification {
                                 block_number: number,
                                 timestamp,
@@ -378,6 +382,54 @@ impl UniswapEnginePump {
                                 backfilled: false,
                             });
                             continue;
+                        }
+                        Some(prior_block) if first_header => {
+                            // First header after Python backfill. prior_block
+                            // was already processed by Python — we must NOT
+                            // call process_completed_block on it, because:
+                            //   - pending_logs is empty (WS subscription
+                            //     started after prior_block completed)
+                            //   - process_completed_block would detect empty
+                            //     pending_logs and call backfill_single_block,
+                            //     which fetches the SAME events Python already
+                            //     applied via eth_getLogs → double-processing.
+                            // Instead: backfill any gap between prior_block and
+                            // this header, then set last_processed_block to
+                            // this block header for normal operation.
+                            first_header = false;
+                            if number > prior_block + 1 {
+                                // Gap: backfill the missing blocks
+                                log::info!(
+                                    "UniswapEnginePump: gap from block {} to {} — backfilling",
+                                    prior_block + 1,
+                                    number,
+                                );
+                                let mut lpb = prior_block;
+                                self.backfill_range(
+                                    prior_block + 1,
+                                    number - 1,
+                                    &relevant_addrs,
+                                    &relevant_topic_set,
+                                    &mut lpb,
+                                )
+                                .await;
+                            }
+                            // Discard any WS logs — they arrived between the
+                            // backfill and the first header, so they're for
+                            // blocks that backfill_range just processed via
+                            // eth_getLogs (or for the current incomplete block
+                            // which will be collected in the next cycle).
+                            pending_logs.clear();
+                            last_processed_block = Some(number);
+
+                            let _ = self.block_tx.send(BlockNotification {
+                                block_number: number,
+                                timestamp,
+                                base_fee_per_gas,
+                                gas_used,
+                                gas_limit,
+                                backfilled: false,
+                            });
                         }
                         Some(prior_block) if number == prior_block + 1 => {
                             // Normal case: the new header is exactly one block
@@ -402,13 +454,12 @@ impl UniswapEnginePump {
                             });
                         }
                         Some(prior_block) if number > prior_block + 1 => {
-                            // Gap between Python backfill and the first WS header.
-                            // For example: backfill ended at 25182221, first
-                            // header is 25182223. Block 25182222 is unprocessed.
-                            // Backfill the gap blocks, then process the last
-                            // backfilled block with any WS logs.
+                            // Gap detected during steady-state operation
+                            // (e.g., after a 60s timeout recovery).
+                            // Backfill the missing blocks, then process the
+                            // prior block with WS logs.
                             log::info!(
-                                "UniswapEnginePump: gap detected from block {} to {} — backfilling",
+                                "UniswapEnginePump: gap from block {} to {} — backfilling",
                                 prior_block + 1,
                                 number,
                             );
@@ -420,10 +471,15 @@ impl UniswapEnginePump {
                                 &relevant_topic_set,
                                 &mut lpb,
                             )
-                            .await;
-                            // lpb now holds the last backfilled block (= number - 1)
-                            // WS logs accumulated so far are for the backfilled
-                            // range — drain and clear before proceeding.
+                                .await;
+                            // Process the prior block with WS logs
+                            self.process_completed_block(
+                                prior_block,
+                                &pending_logs,
+                                &relevant_addrs,
+                                &relevant_topic_set,
+                            )
+                                .await;
                             pending_logs.clear();
                             last_processed_block = Some(number);
 
