@@ -273,7 +273,7 @@ impl UniswapEngine {
                     None
                 }
             })
-            .flat_map(|(fwd, rev)| Into::<[u64; 2]>::into([fwd, rev]))
+            .flat_map(|pair| [pair.0, pair.1])
             .collect();
 
         // Re-solve only paths containing updated pools
