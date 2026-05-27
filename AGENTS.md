@@ -295,6 +295,12 @@ The `unlockCallback` has 4 phases:
 
 **V2 callback difference**: Unlike V3 (which auto-pays WETH), the V2 `uniswapV2Call`/`hook`/`pancakeCall` callbacks directly resume payload delivery via `_deliver_remaining_payloads()` — no intermediate wrapper. V2 pair WETH payment must be an explicit payload in the queue. This is verified by the V4→V2 and V2→V4 contract tests.
 
+**V3 auto-pay pattern**: The V3 callback computes `owed_token`/`owed_amount` first (determining which token the pool is owed and how much), then performs a single WETH transfer only if `owed_token == WETH_ADDR`. This unified pattern replaced the previous per-branch `staticcall`+`extcall` pair, ensuring auto-pay never fires for non-WETH debts. Encoders must NOT include separate WETH transfer payloads for auto-paid V3 pools.
+
+**`NATIVE_ADDRESS` constant**: `constant(address) = empty(address)` — used throughout the contract to identify native ETH, replacing inline `native: address = empty(address)` locals. Named constant is clearer and avoids stack variable overhead.
+
+**`_decode_swap_delta` unified helper**: Replaces the former `_decode_swap_delta_amount0`/`_decode_swap_delta_amount1` pair with a single parameterized function `_decode_swap_delta(swap_delta, byte_offset)`, eliminating code duplication.
+
 **int128 overflow guard**: V4's `BalanceDelta` uses `int128` per component. The `fits_int128()` function in `degenbot.arbitrage.encoding` allows encoders to skip paths where amounts would overflow (`SafeCastOverflow` revert). All 5 V4 encoder functions check this before constructing swap params.
 
 **V4→V2 amount_out encoding**: V2's `swap(amount0Out, amount1Out, ...)` specifies what V2 SENDS to the recipient. For USDC→WETH@V2, `amount_out` must be `weth_out` (the WETH output), NOT `forward_out` (the USDC input). Previous code passed `forward_out` — caused `INSUFFICIENT_LIQUIDITY` on mainnet.

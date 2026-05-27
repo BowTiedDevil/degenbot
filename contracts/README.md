@@ -18,10 +18,23 @@ contracts/
     │   ├── tstore_executor.vy           ← symlink → ../../tstore_executor.vy
     │   ├── fake_erc20.vy                ← Mock ERC-20
     │   ├── fake_weth.vy                 ← Mock WETH with deposit/withdraw
-    │   ├── fake_uniswap_v2_pair.vy      ← Mock V2 pair + uniswapV2Call callback
-    │   ├── fake_uniswap_v3_pool.vy      ← Mock V3 pool + callback
+    │   ├── fake_uniswap_v2_pair.vy      ← Mock V2 pair + configurable callback dispatch
+    │   ├── fake_uniswap_v3_pool.vy      ← Mock V3 pool + configurable callback dispatch
     │   ├── fake_uniswap_v4_pool_manager.vy ← Mock V4 PoolManager
-    │   └── utility_functions.vy          ← ERC-55 checksum helper
+    │   ├── utility_functions.vy          ← ERC-55 checksum helper
+    │   └── interfaces/
+    │       ├── UniswapV2/
+    │       │   ├── IUniswapV2Pair.vyi       ← swap(), token0(), token1()
+    │       │   ├── IUniswapV2Callee.vyi     ← uniswapV2Call() (Uniswap/SushiSwap)
+    │       │   ├── IHookCallee.vyi          ← hook() (Aerodrome/Velodrome)
+    │       │   └── IPancakeCallee.vyi       ← pancakeCall() (PancakeSwap V2)
+    │       ├── UniswapV3/
+    │       │   ├── IUniswapV3Pool.vyi       ← swap(), token0(), token1()
+    │       │   ├── IUniswapV3SwapCallback.vyi ← uniswapV3SwapCallback() (Uniswap/SushiSwap)
+    │       │   └── IPancakeV3SwapCallback.vyi ← pancakeV3SwapCallback() (PancakeSwap V3)
+    │       └── UniswapV4/
+    │           ├── IPoolManager.vyi           ← swap(), take(), settle(), sync(), unlock()
+    │           └── IUnlockCallback.vyi        ← unlockCallback()
     └── tests/                           ← Test files
         ├── test_tstore_executor_v4v4.py ← V4-V4 settlement tests
         ├── test_tstore_executor_v4v3.py ← V4-V3/V3-V4 hybrid tests
