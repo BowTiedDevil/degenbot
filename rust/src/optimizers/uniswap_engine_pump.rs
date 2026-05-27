@@ -379,31 +379,11 @@ impl UniswapEnginePump {
                             });
                             continue;
                         }
-                        Some(prior_block) => {
-                            // Backfill any gap between the last processed block
-                            // and this block header. For example, if Python
-                            // backfill ended at block 25182221 and the first WS
-                            // header is block 25182223, we must fetch events
-                            // for blocks 25182222 (and 25182223 is the new
-                            // current block, not yet complete).
-                            if number > prior_block + 1 {
-                                let mut lpb = prior_block;
-                                self.backfill_range(
-                                    prior_block + 1,
-                                    number - 1,
-                                    &relevant_addrs,
-                                    &relevant_topic_set,
-                                    &mut lpb,
-                                )
-                                .await;
-                                // lpb now holds the last backfilled block
-                                last_processed_block = Some(lpb);
-                            }
-
-                            // Process the block we were sitting on
-                            let block_to_process = last_processed_block.unwrap_or(prior_block);
+                        Some(prior_block) if number == prior_block + 1 => {
+                            // Normal case: the new header is exactly one block
+                            // ahead. Process the prior block with buffered WS logs.
                             self.process_completed_block(
-                                block_to_process,
+                                prior_block,
                                 &pending_logs,
                                 &relevant_addrs,
                                 &relevant_topic_set,
@@ -420,6 +400,48 @@ impl UniswapEnginePump {
                                 gas_limit,
                                 backfilled: false,
                             });
+                        }
+                        Some(prior_block) if number > prior_block + 1 => {
+                            // Gap between Python backfill and the first WS header.
+                            // For example: backfill ended at 25182221, first
+                            // header is 25182223. Block 25182222 is unprocessed.
+                            // Backfill the gap blocks, then process the last
+                            // backfilled block with any WS logs.
+                            log::info!(
+                                "UniswapEnginePump: gap detected from block {} to {} — backfilling",
+                                prior_block + 1,
+                                number,
+                            );
+                            let mut lpb = prior_block;
+                            self.backfill_range(
+                                prior_block + 1,
+                                number - 1,
+                                &relevant_addrs,
+                                &relevant_topic_set,
+                                &mut lpb,
+                            )
+                            .await;
+                            // lpb now holds the last backfilled block (= number - 1)
+                            // WS logs accumulated so far are for the backfilled
+                            // range — drain and clear before proceeding.
+                            pending_logs.clear();
+                            last_processed_block = Some(number);
+
+                            let _ = self.block_tx.send(BlockNotification {
+                                block_number: number,
+                                timestamp,
+                                base_fee_per_gas,
+                                gas_used,
+                                gas_limit,
+                                backfilled: false,
+                            });
+                        }
+                        Some(prior_block) => {
+                            // number <= prior_block: stale or duplicate header.
+                            // Ignore it — we're already past this block.
+                            log::debug!(
+                                "UniswapEnginePump: ignoring stale header {number} (current: {prior_block})"
+                            );
                         }
                     }
                 }

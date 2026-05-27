@@ -469,7 +469,7 @@ impl V3BlockEngine {
         pool.update_block = block_number;
     }
 
-    /// Apply a liquidity update (Mint or Burn) to a V3 pool's tick_data.
+    /// Apply a liquidity update (Mint or Burn) to a V3 pool's `tick_data`.
     ///
     /// For a Mint event at `[tick_lower, tick_upper]` with `amount`:
     /// - `tick_data[tick_lower].liquidity_net += amount`
@@ -1295,7 +1295,7 @@ mod tests {
             sqrt_price_x96: U256::from(79228162514264337593543950336u128),
             liquidity: 1_000_000,
             tick: 0,
-            tick_data: tick_data,
+            tick_data,
             update_block: 0,
         });
 

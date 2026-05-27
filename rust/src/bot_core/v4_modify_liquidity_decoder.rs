@@ -1,9 +1,9 @@
-//! Uniswap V4 ModifyLiquidity event decoder.
+//! Uniswap V4 `ModifyLiquidity` event decoder.
 //!
 //! Decodes `ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)`
-//! events from the Uniswap V4 PoolManager contract.
+//! events from the Uniswap V4 `PoolManager` contract.
 //!
-//! # V4 ModifyLiquidity event format
+//! # V4 `ModifyLiquidity` event format
 //!
 //! ```text
 //! event ModifyLiquidity(
@@ -30,7 +30,7 @@
 //! - `tickLower` and `tickUpper` are in the data (not indexed)
 //! - `liquidityDelta` is `int256` (signed), not `uint128`
 //! - V4 uses `PoolId` (bytes32) instead of pool contract address
-//! - The event is emitted by PoolManager, not by individual pool contracts
+//! - The event is emitted by `PoolManager`, not by individual pool contracts
 
 use alloy::primitives::{Address, B256, I256};
 use alloy::rpc::types::Log;
@@ -45,7 +45,7 @@ pub const V4_MODIFY_LIQUIDITY_TOPIC: B256 = B256::new([
     0xf6, 0x3b, 0xaa, 0x85, 0xf7, 0x11, 0xd5, 0xec,
 ]);
 
-/// Decoded V4 ModifyLiquidity event carrying liquidity change data.
+/// Decoded V4 `ModifyLiquidity` event carrying liquidity change data.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct V4ModifyLiquidityEvent {
     /// The pool ID (bytes32 from topic[1]).
@@ -62,10 +62,10 @@ pub struct V4ModifyLiquidityEvent {
     pub salt: B256,
 }
 
-/// Decode a V4 ModifyLiquidity event from a log.
+/// Decode a V4 `ModifyLiquidity` event from a log.
 ///
 /// Returns `Some(V4ModifyLiquidityEvent)` if the log is a valid
-/// ModifyLiquidity event with correctly formatted data. Returns `None` if:
+/// `ModifyLiquidity` event with correctly formatted data. Returns `None` if:
 /// - The topic doesn't match `V4_MODIFY_LIQUIDITY_TOPIC`
 /// - There are fewer than 3 topics
 /// - The data is too short (< 128 bytes)

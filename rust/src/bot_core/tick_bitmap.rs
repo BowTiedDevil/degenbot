@@ -622,7 +622,7 @@ mod tests {
         }
     }
 
-    /// Helper: verify current_idx is always 0 (range 0 always contains
+    /// Helper: verify `current_idx` is always 0 (range 0 always contains
     /// the current price by construction).
     fn assert_current_idx_is_zero(current_idx: usize) {
         assert_eq!(current_idx, 0, "current_idx should always be 0");
@@ -757,7 +757,7 @@ mod tests {
     }
 
     /// Property: for any tick data with enough initialized ticks on both sides,
-    /// compute_tick_ranges always produces well-formed ranges where
+    /// `compute_tick_ranges` always produces well-formed ranges where
     /// `tick_lower < tick_upper` and `sqrt_price_lower <= sqrt_price_upper`,
     /// and `current_range_index` points to a range that contains the
     /// current tick.

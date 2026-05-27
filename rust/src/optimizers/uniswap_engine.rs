@@ -56,7 +56,7 @@ impl HopType {
     /// V3 and V4 hops are both CL — they share the same solver dispatch.
     #[must_use]
     pub const fn is_concentrated_liquidity(&self) -> bool {
-        matches!(self, HopType::V3 | HopType::V4)
+        matches!(self, Self::V3 | Self::V4)
     }
 }
 
@@ -419,7 +419,7 @@ impl UniswapEngine {
     #[allow(clippy::unused_self)]
     fn solve_path(&self, resolved: &ResolvedMixedPath) -> Option<(U256, U256)> {
         let all_v2 = resolved.hop_types.iter().all(|&t| t == HopType::V2);
-        let all_cl = resolved.hop_types.iter().all(|t| t.is_concentrated_liquidity());
+        let all_cl = resolved.hop_types.iter().all(HopType::is_concentrated_liquidity);
 
         if all_v2 {
             let int_hops: Vec<_> = resolved
@@ -619,7 +619,7 @@ impl UniswapEngine {
         self.v3_engine.registered_addresses()
     }
 
-    /// Return the list of registered V4 PoolManager addresses.
+    /// Return the list of registered V4 `PoolManager` addresses.
     #[must_use]
     pub fn v4_registered_pool_managers(&self) -> Vec<Address> {
         self.v4_engine.registered_pool_managers()
@@ -1533,12 +1533,12 @@ impl PyUniswapArbEngine {
 
     /// Register a V4 pool with the engine.
     ///
-    /// Hook filtering: pools with amount-modifying hook flags (BEFORE_SWAP,
-    /// AFTER_SWAP, BEFORE_SWAP_RETURNS_DELTA, AFTER_SWAP_RETURNS_DELTA)
+    /// Hook filtering: pools with amount-modifying hook flags (`BEFORE_SWAP`,
+    /// `AFTER_SWAP`, `BEFORE_SWAP_RETURNS_DELTA`, `AFTER_SWAP_RETURNS_DELTA`)
     /// are rejected. Dynamic-fee pools (fee=0x100000) are also rejected.
     ///
     /// Returns the forward pool key for use in path registration,
-    /// or raises ValueError if the pool is excluded.
+    /// or raises `ValueError` if the pool is excluded.
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, sqrt_price_x96, liquidity, tick, tick_data, block=0))]
     fn register_v4_pool(
@@ -1603,7 +1603,7 @@ impl PyUniswapArbEngine {
             tick,
             tick_data: rust_tick_data,
             update_block: block,
-        }).map_err(|e| pyo3::exceptions::PyValueError::new_err(e))
+        }).map_err(pyo3::exceptions::PyValueError::new_err)
     }
 
     /// Register a mixed arbitrage path.
@@ -1673,7 +1673,7 @@ impl PyUniswapArbEngine {
             engine,
             &shutdown,
         )
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
+        .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
         *self.pump_handle.lock() = Some(handle);
         *self.block_rx.lock() = Some(block_rx);
@@ -1912,8 +1912,8 @@ impl PyUniswapArbEngine {
     /// Wait for the next block notification from the pump.
     ///
     /// Returns a dict with block header fields:
-    ///   {"block_number": int, "timestamp": int,
-    ///    "base_fee_per_gas": int|None, "gas_used": int, "gas_limit": int}
+    ///   {"`block_number"`: int, "timestamp": int,
+    ///    "`base_fee_per_gas"`: int|None, "`gas_used"`: int, "`gas_limit"`: int}
     ///
     /// This is the primary mechanism for Python to learn about new blocks.
     /// The pump processes events autonomously; this method blocks until the
@@ -1979,7 +1979,7 @@ fn make_tick_info(liquidity_gross: u128, liquidity_net: i128) -> crate::bot_core
     }
 }
 
-/// Helper to decode a hex string (e.g. "0xabcd...") to a V4 PoolId ([u8; 32]).
+/// Helper to decode a hex string (e.g. "0xabcd...") to a V4 `PoolId` ([u8; 32]).
 fn hex_string_to_pool_id(hex_str: &str) -> PyResult<crate::bot_core::v4_swap_decoder::PoolId> {
     let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
     if hex_str.len() != 64 {

@@ -753,6 +753,36 @@ fn compute_v3_candidates_range_max(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Convert an f64 value to U256 by rounding to the nearest integer.
+///
+/// This is an approximation — f64 has 53 bits of mantissa, while U256
+/// can represent up to 256 bits. For values up to 2^53, this is exact.
+/// For larger values, there may be rounding.
+///
+/// Prefer building `IntV3TickRangeHop` directly from U256 values
+/// when they are available (e.g., from pool state).
+#[allow(clippy::cast_possible_truncation)]
+#[allow(clippy::cast_sign_loss)]
+fn f64_to_u256_approx(v: f64) -> alloy::primitives::U256 {
+    if v <= 0.0 || !v.is_finite() {
+        return alloy::primitives::U256::ZERO;
+    }
+    // For values that fit in u64, convert directly
+    if v <= u64::MAX as f64 {
+        alloy::primitives::U256::from(v as u64)
+    } else {
+        // For larger values, split into high and low 64-bit limbs
+        let v = v.floor();
+        let hi = (v / (u64::MAX as f64 + 1.0)).floor() as u64;
+        let lo = (v - hi as f64 * (u64::MAX as f64 + 1.0)).floor() as u64;
+        alloy::primitives::U256::from(hi) << 64 | alloy::primitives::U256::from(lo)
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -914,35 +944,5 @@ mod tests {
             iters < 100,
             "Should converge in < 100 iterations, got {iters}"
         );
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Convert an f64 value to U256 by rounding to the nearest integer.
-///
-/// This is an approximation — f64 has 53 bits of mantissa, while U256
-/// can represent up to 256 bits. For values up to 2^53, this is exact.
-/// For larger values, there may be rounding.
-///
-/// Prefer building `IntV3TickRangeHop` directly from U256 values
-/// when they are available (e.g., from pool state).
-#[allow(clippy::cast_possible_truncation)]
-#[allow(clippy::cast_sign_loss)]
-fn f64_to_u256_approx(v: f64) -> alloy::primitives::U256 {
-    if v <= 0.0 || !v.is_finite() {
-        return alloy::primitives::U256::ZERO;
-    }
-    // For values that fit in u64, convert directly
-    if v <= u64::MAX as f64 {
-        alloy::primitives::U256::from(v as u64)
-    } else {
-        // For larger values, split into high and low 64-bit limbs
-        let v = v.floor();
-        let hi = (v / (u64::MAX as f64 + 1.0)).floor() as u64;
-        let lo = (v - hi as f64 * (u64::MAX as f64 + 1.0)).floor() as u64;
-        alloy::primitives::U256::from(hi) << 64 | alloy::primitives::U256::from(lo)
     }
 }
