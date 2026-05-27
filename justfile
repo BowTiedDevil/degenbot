@@ -20,7 +20,7 @@ test-rust-python:
 
 # Run Rust linter (clippy)
 lint-rust:
-    cargo clippy --all-targets --all-features --fix --manifest-path rust/Cargo.toml -- --deny warnings
+    cargo clippy --all-targets --all-features --fix --allow-dirty --manifest-path rust/Cargo.toml -- --deny warnings
 
 # Build Rust release library (links Python - for testing only)
 build-rust-debug:
