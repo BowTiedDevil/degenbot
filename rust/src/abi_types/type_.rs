@@ -171,6 +171,7 @@ fn normalize_type(abi_type: &str) -> &str {
 }
 
 /// Parse a comma-separated list of types.
+#[allow(clippy::missing_errors_doc)]
 pub fn parse_type_list(types_str: &str) -> Result<Vec<AbiType>, AbiTypeError> {
     if types_str.is_empty() {
         return Ok(Vec::new());

@@ -384,6 +384,7 @@ impl CachedAbiTypes {
 /// Convert an `AbiValue` to a `DynSolValue` for a specific expected type.
 ///
 /// Handles special cases like `FixedBytes` and `FixedArray`.
+#[allow(clippy::missing_errors_doc)]
 pub fn value_to_alloy_for_type(
     value: &AbiValue,
     ty: &alloy::dyn_abi::DynSolType,

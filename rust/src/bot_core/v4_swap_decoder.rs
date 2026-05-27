@@ -123,7 +123,7 @@ pub fn decode_v4_swap_log(log: &Log) -> Option<V4SwapEvent> {
     // Decode fee (uint24, bytes 160..192)
     let fee_bytes: [u8; 4] = data[188..192].try_into().ok()?;
     let fee = u32::from_be_bytes(fee_bytes);
-    if fee > 0xFFFFFF {
+    if fee > 0x00FF_FFFF {
         return None;
     }
 
@@ -199,8 +199,8 @@ mod tests {
     fn decode_valid_v4_swap() {
         let pool_id = [0xABu8; 32];
         let sender = Address::from([0xBBu8; 20]);
-        let sqrt_price = U256::from(79228162514264337593543950336u128);
-        let liquidity = U128::from(1000000u64);
+        let sqrt_price = U256::from(79_228_162_514_264_337_593_543_950_336_u128);
+        let liquidity = U128::from(1_000_000_u64);
         let tick = 0i32;
         let fee = 3000u32;
 
@@ -282,8 +282,8 @@ mod tests {
     fn decode_v4_swap_negative_tick() {
         let pool_id = [0xCDu8; 32];
         let sender = Address::from([0xEEu8; 20]);
-        let sqrt_price = U256::from(77375349197886179843141176482u128);
-        let liquidity = U128::from(5000000u64);
+        let sqrt_price = U256::from(77_375_349_197_886_179_843_141_176_482_u128);
+        let liquidity = U128::from(5_000_000_u64);
         let tick = -100i32;
         let fee = 500u32;
 
@@ -318,28 +318,28 @@ mod tests {
         // min tick: -887272
         let log_min = make_v4_swap_log(
             pool_id, sender,
-            I256::ZERO, I256::ZERO, sqrt_price, liquidity, -887272, fee,
+            I256::ZERO, I256::ZERO, sqrt_price, liquidity, -887_272, fee,
         );
         assert!(decode_v4_swap_log(&log_min).is_some());
 
         // max tick: 887272
         let log_max = make_v4_swap_log(
             pool_id, sender,
-            I256::ZERO, I256::ZERO, sqrt_price, liquidity, 887272, fee,
+            I256::ZERO, I256::ZERO, sqrt_price, liquidity, 887_272, fee,
         );
         assert!(decode_v4_swap_log(&log_max).is_some());
 
         // out of range: -887273
         let log_under = make_v4_swap_log(
             pool_id, sender,
-            I256::ZERO, I256::ZERO, sqrt_price, liquidity, -887273, fee,
+            I256::ZERO, I256::ZERO, sqrt_price, liquidity, -887_273, fee,
         );
         assert!(decode_v4_swap_log(&log_under).is_none());
 
         // out of range: 887273
         let log_over = make_v4_swap_log(
             pool_id, sender,
-            I256::ZERO, I256::ZERO, sqrt_price, liquidity, 887273, fee,
+            I256::ZERO, I256::ZERO, sqrt_price, liquidity, 887_273, fee,
         );
         assert!(decode_v4_swap_log(&log_over).is_none());
     }

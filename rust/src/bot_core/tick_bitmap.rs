@@ -574,7 +574,7 @@ mod tests {
     #[test]
     fn test_gen_ticks_clamps_to_max_tick_ascending() {
         let tick_data = HashMap::new();
-        let ticks = gen_ticks(&tick_data, 887000, 60, false, 100).unwrap();
+        let ticks = gen_ticks(&tick_data, 887_000, 60, false, 100).unwrap();
 
         // Should not include any tick above MAX_TICK (887272)
         for tp in &ticks {
@@ -585,7 +585,7 @@ mod tests {
     #[test]
     fn test_gen_ticks_clamps_to_min_tick_descending() {
         let tick_data = HashMap::new();
-        let ticks = gen_ticks(&tick_data, -887000, 60, true, 100).unwrap();
+        let ticks = gen_ticks(&tick_data, -887_000, 60, true, 100).unwrap();
 
         // Should not include any tick below MIN_TICK (-887272)
         for tp in &ticks {
@@ -594,6 +594,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::similar_names)]
     fn test_position_matches_python() {
         // Python: position(tick) = (tick >> 8, tick % 256)
         for tick in [-1000i32, -256, -1, 0, 1, 255, 256, 1000] {
@@ -601,7 +602,7 @@ mod tests {
             let py_wp = tick >> 8;
             let py_bp = tick.rem_euclid(256);
             assert_eq!(i32::from(wp), py_wp, "word_pos mismatch for tick {tick}");
-            assert_eq!(u32::from(bp), py_bp as u32, "bit_pos mismatch for tick {tick}");
+            assert_eq!(u32::from(bp), py_bp.cast_unsigned(), "bit_pos mismatch for tick {tick}");
         }
     }
 

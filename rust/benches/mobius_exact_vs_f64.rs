@@ -14,6 +14,7 @@ fn u256(n: u64) -> U256 {
 
 /// Convert `IntHopState` to f64 `HopState` for the legacy solver.
 fn int_hop_to_f64(hop: &IntHopState) -> HopState {
+    #[allow(clippy::cast_precision_loss)]
     let fee = 1.0 - hop.gamma_numer as f64 / hop.fee_denom as f64;
     HopState::new(
         degenbot_rs::optimizers::mobius_int::u256_to_f64(hop.reserve_in),

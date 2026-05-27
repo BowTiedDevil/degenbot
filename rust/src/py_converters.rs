@@ -147,6 +147,7 @@ fn hex_to_checksum_address(hex_str: &str) -> PyResult<String> {
 ///
 /// This is the shared implementation used by both sync and async provider log conversion.
 /// Accesses raw bytes directly from Alloy types (no hex decode round-trip).
+#[allow(clippy::missing_errors_doc)]
 pub fn log_to_py_dict<'py>(py: Python<'py>, log: &Log) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
 
@@ -618,6 +619,7 @@ fn withdrawal_to_py_dict<'py>(
 /// Convert an RPC block header to a Python dict.
 ///
 /// Used by the subscription pump for `subscribe_blocks()` events.
+#[allow(clippy::missing_errors_doc)]
 pub fn header_to_py_dict<'py>(
     py: Python<'py>,
     header: &RpcHeader<ConsensusHeader>,
@@ -641,6 +643,7 @@ pub fn header_to_py_dict<'py>(
     Ok(dict)
 }
 
+#[allow(clippy::missing_errors_doc)]
 pub fn block_to_py_dict<'py>(
     py: Python<'py>,
     block: &EthBlock,

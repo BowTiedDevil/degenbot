@@ -530,7 +530,7 @@ impl V3BlockEngine {
                     event.pool_address,
                     event.tick_lower,
                     event.tick_upper,
-                    event.amount as i128,
+                    event.amount.cast_signed(),
                     block_number,
                 );
             } else if let Some(event) = decode_v3_burn_log(log) {
@@ -538,7 +538,7 @@ impl V3BlockEngine {
                     event.pool_address,
                     event.tick_lower,
                     event.tick_upper,
-                    -(event.amount as i128),
+                    -(event.amount.cast_signed()),
                     block_number,
                 );
             }
@@ -801,12 +801,12 @@ fn update_tick_liquidity(
 
     // Update liquidity_gross: += delta (always the same direction for both ticks)
     let current_gross = entry.liquidity_gross.to::<u128>();
-    let new_gross_i128 = current_gross as i128 + delta;
+    let new_gross_i128 = current_gross.cast_signed() + delta;
     // liquidity_gross is always >= 0 in valid state; negative means an underflow bug
     let new_gross = if new_gross_i128 < 0 {
         U128::ZERO
     } else {
-        U128::from(new_gross_i128 as u128)
+        U128::from(new_gross_i128.cast_unsigned())
     };
     entry.liquidity_gross = new_gross;
 
@@ -868,7 +868,7 @@ mod tests {
             fee: 3000,
             tick_spacing: 60,
             factory: Address::ZERO,
-            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             liquidity: 1_000_000,
             tick: 0,
             tick_data: HashMap::new(),
@@ -891,7 +891,7 @@ mod tests {
             fee: 3000,
             tick_spacing: 60,
             factory: Address::ZERO,
-            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             liquidity: 1_000_000,
             tick: 0,
             tick_data: HashMap::new(),
@@ -945,7 +945,7 @@ mod tests {
             fee: 3000,
             tick_spacing: 60,
             factory: Address::ZERO,
-            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             liquidity: 1_000_000,
             tick: 0,
             tick_data: tick_data0,
@@ -959,7 +959,7 @@ mod tests {
             fee: 3000,
             tick_spacing: 60,
             factory: Address::ZERO,
-            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             liquidity: 2_000_000,
             tick: 0,
             tick_data: tick_data1,
@@ -1000,14 +1000,14 @@ mod tests {
             fee: 3000,
             tick_spacing: 60,
             factory: Address::ZERO,
-            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             liquidity: 1_000_000,
             tick: 0,
             tick_data,
         update_block: 0,
         });
 
-        let new_sqrt_price = U256::from(79466191966197645195421774833u128);
+        let new_sqrt_price = U256::from(79_466_191_966_197_645_195_421_774_833_u128);
         engine.apply_swap(addr, new_sqrt_price, 900_000, 60, 42, &[]);
 
         let pool = &engine.pools[&key];
@@ -1029,7 +1029,7 @@ mod tests {
             fee: 3000,
             tick_spacing: 60,
             factory: Address::ZERO,
-            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             liquidity: 1_000_000,
             tick: 0,
             tick_data: HashMap::new(),
@@ -1039,7 +1039,7 @@ mod tests {
         let tick_priors = vec![(60, make_tick_info(200, 100))];
         engine.apply_swap(
             addr,
-            U256::from(79466191966197645195421774833u128),
+            U256::from(79_466_191_966_197_645_195_421_774_833_u128),
             900_000,
             60,
             42,
@@ -1070,7 +1070,7 @@ mod tests {
             Address::ZERO,
             3000,
             60,
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             1_000_000,
             0,
             tick_data,
@@ -1091,7 +1091,7 @@ mod tests {
             Address::ZERO,
             3000,
             60,
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             1_000_000,
             0,
             HashMap::new(),
@@ -1134,7 +1134,7 @@ mod tests {
             fee: 3000,
             tick_spacing: 60,
             factory: Address::ZERO,
-            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             liquidity: 1_000_000_000_000,
             tick: 0,
             tick_data: tick_data0,
@@ -1148,7 +1148,7 @@ mod tests {
             fee: 3000,
             tick_spacing: 60,
             factory: Address::ZERO,
-            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             liquidity: 2_000_000_000_000,
             tick: 0,
             tick_data: tick_data1,
@@ -1192,7 +1192,7 @@ mod tests {
             fee: 3000,
             tick_spacing: 60,
             factory: Address::ZERO,
-            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             liquidity: 10_000_000_000_000,
             tick: 0,
             tick_data: tick_data0,
@@ -1206,7 +1206,7 @@ mod tests {
             fee: 3000,
             tick_spacing: 60,
             factory: Address::ZERO,
-            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             liquidity: 20_000_000_000_000,
             tick: 0,
             tick_data: tick_data1,
@@ -1224,7 +1224,7 @@ mod tests {
         engine.process_swap_updates(
             &[V3SwapUpdate {
                 pool_address: addr0,
-                sqrt_price_x96: U256::from(79466191966197645195421774833u128),
+                sqrt_price_x96: U256::from(79_466_191_966_197_645_195_421_774_833_u128),
                 liquidity: 10_000_000_000_000,
                 tick: 60,
                 tick_priors: vec![],
@@ -1259,7 +1259,7 @@ mod tests {
             fee: 3000,
             tick_spacing: 60,
             factory: Address::ZERO,
-            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             liquidity: 1_000_000,
             tick: 0,
             tick_data: tick_data0,
@@ -1292,7 +1292,7 @@ mod tests {
             fee: 3000,
             tick_spacing: 60,
             factory: Address::ZERO,
-            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             liquidity: 1_000_000,
             tick: 0,
             tick_data,
@@ -1334,7 +1334,7 @@ mod tests {
             fee: 3000,
             tick_spacing: 60,
             factory: Address::ZERO,
-            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             liquidity: 1_000_000,
             tick: 0,
             tick_data: tick_data0,
@@ -1348,7 +1348,7 @@ mod tests {
             fee: 500,
             tick_spacing: 10,
             factory: Address::from([4u8; 20]),
-            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             liquidity: 2_000_000,
             tick: 0,
             tick_data: tick_data1,
@@ -1404,7 +1404,7 @@ mod tests {
             fee: 3000,
             tick_spacing: 60,
             factory: Address::ZERO,
-            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             liquidity: 1_000_000,
             tick: 0,
             tick_data,
@@ -1414,7 +1414,7 @@ mod tests {
         // Apply two swaps in the same block
         engine.apply_swap(
             addr,
-            U256::from(79466191966197645195421774833u128),
+            U256::from(79_466_191_966_197_645_195_421_774_833_u128),
             900_000,
             60,
             42,
@@ -1422,7 +1422,7 @@ mod tests {
         );
         engine.apply_swap(
             addr,
-            U256::from(79714513003271600568814636800u128), // Higher sqrt price
+            U256::from(79_714_513_003_271_600_568_814_636_800_u128), // Higher sqrt price
             800_000,
             120,
             42,
@@ -1453,7 +1453,7 @@ mod tests {
             fee: 3000,
             tick_spacing: 60,
             factory: Address::ZERO,
-            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             liquidity: 1_000_000,
             tick: 0,
             tick_data,
@@ -1491,7 +1491,7 @@ mod tests {
             fee: 3000,
             tick_spacing: 60,
             factory: Address::ZERO,
-            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             liquidity: 1_000_000,
             tick: 0,
             tick_data,
@@ -1529,7 +1529,7 @@ mod tests {
             fee: 3000,
             tick_spacing: 60,
             factory: Address::ZERO,
-            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             liquidity: 1_000_000,
             tick: 0,
             tick_data,
@@ -1560,7 +1560,7 @@ mod tests {
             fee: 3000,
             tick_spacing: 60,
             factory: Address::ZERO,
-            sqrt_price_x96: U256::from(79228162514264337593543950336u128),
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             liquidity: 1_000_000,
             tick: 0,
             tick_data,

@@ -1464,6 +1464,7 @@ impl PyPoolCache {
     }
 }
 
+#[allow(clippy::missing_errors_doc)]
 pub fn add_mobius_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyHopState>()?;
     m.add_class::<PyV3TickRangeHop>()?;

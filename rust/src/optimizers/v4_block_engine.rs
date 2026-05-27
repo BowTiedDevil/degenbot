@@ -31,7 +31,7 @@
 //!
 //! # Dynamic Fee Exclusion
 //!
-//! V4 pools with `fee == 0x100000` (dynamic fee flag) have swap fees that
+//! V4 pools with `fee == 0x0010_0000` (dynamic fee flag) have swap fees that
 //! change between blocks. The solver assumes a fixed fee per pool, so dynamic-
 //! fee pools are excluded at registration time.
 
@@ -57,7 +57,7 @@ const AMOUNT_MODIFYING_HOOK_MASK: u16 = 0x80 | 0x40 | 0x08 | 0x04; // = 0xCC
 
 /// V4 dynamic fee flag. Pools with this fee value have fees that change
 /// at runtime and cannot be used with the fixed-fee solver.
-const V4_DYNAMIC_FEE_FLAG: u32 = 0x100000;
+const V4_DYNAMIC_FEE_FLAG: u32 = 0x0010_0000;
 
 // ---------------------------------------------------------------------------
 // V4 PoolKey
@@ -301,7 +301,7 @@ impl V4BlockEngine {
     ///
     /// Returns `Err` with a description if:
     /// - The pool has amount-modifying hooks (`hook_flags` & 0xCC != 0)
-    /// - The pool has dynamic fees (fee == 0x100000)
+    /// - The pool has dynamic fees (fee == `0x0010_0000`)
     /// - Registration is attempted after `start()`
     ///
     /// # Panics
@@ -776,12 +776,12 @@ fn update_tick_liquidity(
 
     // Update liquidity_gross: += delta (always the same direction for both ticks)
     let current_gross = entry.liquidity_gross.to::<u128>();
-    let new_gross_i128 = current_gross as i128 + delta;
+    let new_gross_i128 = current_gross.cast_signed() + delta;
     // liquidity_gross is always >= 0 in valid state; negative means an underflow bug
     let new_gross = if new_gross_i128 < 0 {
         U128::ZERO
     } else {
-        U128::from(new_gross_i128 as u128)
+        U128::from(new_gross_i128.cast_unsigned())
     };
     entry.liquidity_gross = new_gross;
 
@@ -884,7 +884,7 @@ mod tests {
             3000,
             60,
             0,
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             1_000_000,
             0,
             HashMap::new(),
@@ -905,7 +905,7 @@ mod tests {
             3000,
             60,
             0, // no hooks
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             1_000_000,
             0,
             HashMap::new(),
@@ -940,7 +940,7 @@ mod tests {
             3000,
             60,
             0x80, // BEFORE_SWAP
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             1_000_000,
             0,
             HashMap::new(),
@@ -959,10 +959,10 @@ mod tests {
         let result = engine.register_pool(make_register_params(
             POOL_MANAGER,
             pool_id,
-            0x100000, // dynamic fee flag
+            0x0010_0000, // dynamic fee flag
             60,
             0,
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             1_000_000,
             0,
             HashMap::new(),
@@ -986,7 +986,7 @@ mod tests {
             3000,
             60,
             0x30, // BEFORE_DONATE | AFTER_DONATE
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             1_000_000,
             0,
             HashMap::new(),
@@ -1028,7 +1028,7 @@ mod tests {
             3000,
             60,
             0,
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             1_000_000,
             0,
             tick_data,
@@ -1036,7 +1036,7 @@ mod tests {
 
         engine.start();
 
-        let new_sqrt_price = U256::from(79466191966197645195421774833u128);
+        let new_sqrt_price = U256::from(79_466_191_966_197_645_195_421_774_833_u128);
         engine.apply_swap(
             &V4SwapUpdate {
                 pool_manager: POOL_MANAGER,
@@ -1105,7 +1105,7 @@ mod tests {
             3000,
             60,
             0,
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             1_000_000,
             0,
             tick_data_a,
@@ -1117,7 +1117,7 @@ mod tests {
             3000,
             60,
             0,
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             2_000_000,
             0,
             tick_data_b,
@@ -1153,7 +1153,7 @@ mod tests {
             3000,
             60,
             0,
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             1_000_000,
             0,
             tick_data,
@@ -1190,7 +1190,7 @@ mod tests {
             3000,
             60,
             0,
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             10_000_000_000_000,
             0,
             tick_data_a,
@@ -1202,7 +1202,7 @@ mod tests {
             3000,
             60,
             0,
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             20_000_000_000_000,
             0,
             tick_data_b,
@@ -1220,7 +1220,7 @@ mod tests {
             &[V4SwapUpdate {
                 pool_manager: POOL_MANAGER,
                 pool_id: pool_id_a,
-                sqrt_price_x96: U256::from(79466191966197645195421774833u128),
+                sqrt_price_x96: U256::from(79_466_191_966_197_645_195_421_774_833_u128),
                 liquidity: 10_000_000_000_000,
                 tick: 60,
                 tick_priors: vec![],
@@ -1251,7 +1251,7 @@ mod tests {
             3000,
             60,
             0,
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             1_000_000,
             0,
             tick_data,
@@ -1269,7 +1269,7 @@ mod tests {
             3000,
             60,
             0,
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             2_000_000,
             0,
             tick_data_b,
@@ -1305,6 +1305,7 @@ mod tests {
         ];
 
         for (i, &flags) in amount_modifying_flags.iter().enumerate() {
+            #[allow(clippy::cast_possible_truncation)]
             let pool_id = make_pool_id(i as u8 + 100);
             let result = engine.register_pool(make_register_params(
                 POOL_MANAGER,
@@ -1312,7 +1313,7 @@ mod tests {
                 3000,
                 60,
                 flags,
-                U256::from(79228162514264337593543950336u128),
+                U256::from(79_228_162_514_264_337_593_543_950_336_u128),
                 1_000_000,
                 0,
                 HashMap::new(),
@@ -1335,6 +1336,7 @@ mod tests {
         ];
 
         for (i, &flags) in safe_flags.iter().enumerate() {
+            #[allow(clippy::cast_possible_truncation)]
             let pool_id = make_pool_id(i as u8 + 200);
             let result = engine.register_pool(make_register_params(
                 POOL_MANAGER,
@@ -1342,7 +1344,7 @@ mod tests {
                 3000,
                 60,
                 flags,
-                U256::from(79228162514264337593543950336u128),
+                U256::from(79_228_162_514_264_337_593_543_950_336_u128),
                 1_000_000,
                 0,
                 HashMap::new(),
@@ -1368,7 +1370,7 @@ mod tests {
             3000,
             60,
             0,
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             1_000_000,
             0,
             tick_data,
@@ -1415,7 +1417,7 @@ mod tests {
             3000,
             60,
             0,
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             1_000_000,
             0,
             tick_data,
@@ -1462,7 +1464,7 @@ mod tests {
             3000,
             60,
             0,
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             1_000_000,
             0,
             tick_data,
@@ -1500,7 +1502,7 @@ mod tests {
             3000,
             60,
             0,
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             1_000_000,
             0,
             HashMap::new(),
@@ -1564,7 +1566,7 @@ mod tests {
             3000,
             60,
             0,
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             1_000_000,
             0,
             tick_data,
@@ -1598,7 +1600,7 @@ mod tests {
             3000,
             60,
             0,
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             1_000_000,
             0,
             tick_data,
@@ -1613,7 +1615,7 @@ mod tests {
             Address::ZERO,
             I256::try_from(-1000_i128).unwrap(),
             I256::try_from(500_i128).unwrap(),
-            U256::from(79466191966197645195421774833u128),
+            U256::from(79_466_191_966_197_645_195_421_774_833_u128),
             U128::from(900_000u64),
             10,
             3000,
@@ -1636,7 +1638,7 @@ mod tests {
         let pool = engine.get_pool(fwd_key).unwrap();
 
         // Swap should have updated scalar state
-        assert_eq!(pool.sqrt_price_x96, U256::from(79466191966197645195421774833u128));
+        assert_eq!(pool.sqrt_price_x96, U256::from(79_466_191_966_197_645_195_421_774_833_u128));
         assert_eq!(pool.liquidity, 900_000);
         assert_eq!(pool.tick, 10);
 
@@ -1666,7 +1668,7 @@ mod tests {
             3000,
             60,
             0,
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             1_000_000,
             0,
             HashMap::new(),
@@ -1678,7 +1680,7 @@ mod tests {
             3000,
             60,
             0,
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             1_000_000,
             0,
             HashMap::new(),
@@ -1690,7 +1692,7 @@ mod tests {
             3000,
             60,
             0,
-            U256::from(79228162514264337593543950336u128),
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128),
             1_000_000,
             0,
             HashMap::new(),
