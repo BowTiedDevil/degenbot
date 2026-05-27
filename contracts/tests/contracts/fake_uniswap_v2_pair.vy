@@ -20,6 +20,8 @@ the token contract) before set_next_swap is called.
 
 from .interfaces.UniswapV2 import IUniswapV2Pair
 from .interfaces.UniswapV2 import IUniswapV2Callee
+from .interfaces.UniswapV2 import IHookCallee
+from .interfaces.UniswapV2 import IPancakeCallee
 from ethereum.ercs import IERC20
 
 MAX_CALLDATA_LENGTH: constant(uint256) = 4096
@@ -31,15 +33,19 @@ OWNER: immutable(address)
 token0: public(address)
 token1: public(address)
 
+# Which callback selector to invoke: 0 = uniswapV2Call, 1 = hook, 2 = pancakeCall
+callback_variant: public(uint256)
+
 amount_in: public(uint256)
 amount_out: public(uint256)
 
 
 @deploy
-def __init__(token0: address, token1: address):
+def __init__(token0: address, token1: address, _callback_variant: uint256):
     OWNER = msg.sender
     self.token0 = token0
     self.token1 = token1
+    self.callback_variant = _callback_variant
 
 
 @external
@@ -97,9 +103,18 @@ def swap(
 
     # Invoke callback if data is non-empty
     if len(data) > 0:
-        extcall IUniswapV2Callee(to).uniswapV2Call(
-            msg.sender, amount0Out, amount1Out, data
-        )
+        if self.callback_variant == 0:
+            extcall IUniswapV2Callee(to).uniswapV2Call(
+                msg.sender, amount0Out, amount1Out, data
+            )
+        elif self.callback_variant == 1:
+            extcall IHookCallee(to).hook(
+                msg.sender, amount0Out, amount1Out, data
+            )
+        else:
+            extcall IPancakeCallee(to).pancakeCall(
+                msg.sender, amount0Out, amount1Out, data
+            )
 
     # Verify input tokens were paid after callback
     if zero_for_one:
