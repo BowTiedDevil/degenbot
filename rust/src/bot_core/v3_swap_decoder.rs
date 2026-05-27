@@ -150,8 +150,8 @@ mod tests {
         liq_word[16..32].copy_from_slice(&liq_bytes);
         data.extend_from_slice(&liq_word);
         // tick (int24, sign-extended to int256 → 32 bytes)
-        let tick_i256 = I256::try_from(tick as i128)
-            .unwrap_or_else(|_| I256::ZERO);
+        let tick_i256 = I256::try_from(i128::from(tick))
+            .unwrap_or(I256::ZERO);
         data.extend_from_slice(&tick_i256.to_be_bytes::<32>());
 
         let inner = alloy::primitives::Log::new_unchecked(
@@ -184,8 +184,8 @@ mod tests {
             pool,
             sender,
             recipient,
-            I256::try_from(-1000_i128).unwrap_or_else(|_| I256::ZERO),
-            I256::try_from(500_i128).unwrap_or_else(|_| I256::ZERO),
+            I256::try_from(-1000_i128).unwrap_or(I256::ZERO),
+            I256::try_from(500_i128).unwrap_or(I256::ZERO),
             sqrt_price,
             liquidity,
             tick,
@@ -198,8 +198,8 @@ mod tests {
         assert_eq!(event.pool_address, pool);
         assert_eq!(event.sender, sender);
         assert_eq!(event.recipient, recipient);
-        assert_eq!(event.amount0, I256::try_from(-1000_i128).unwrap_or_else(|_| I256::ZERO));
-        assert_eq!(event.amount1, I256::try_from(500_i128).unwrap_or_else(|_| I256::ZERO));
+        assert_eq!(event.amount0, I256::try_from(-1000_i128).unwrap_or(I256::ZERO));
+        assert_eq!(event.amount1, I256::try_from(500_i128).unwrap_or(I256::ZERO));
         assert_eq!(event.sqrt_price_x96, sqrt_price);
         assert_eq!(event.liquidity, liquidity);
         assert_eq!(event.tick, 0);
@@ -269,8 +269,8 @@ mod tests {
             pool,
             sender,
             recipient,
-            I256::try_from(200_i128).unwrap_or_else(|_| I256::ZERO),
-            I256::try_from(-100_i128).unwrap_or_else(|_| I256::ZERO),
+            I256::try_from(200_i128).unwrap_or(I256::ZERO),
+            I256::try_from(-100_i128).unwrap_or(I256::ZERO),
             sqrt_price,
             liquidity,
             tick,

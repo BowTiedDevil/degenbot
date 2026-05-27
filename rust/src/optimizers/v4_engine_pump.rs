@@ -17,8 +17,8 @@
 //! # V4 vs V2/V3 filtering
 //!
 //! V2 and V3 pumps filter by individual pool contract addresses. V4 pools
-//! live inside a single PoolManager contract, so the filter uses just the
-//! PoolManager address (typically one address for all V4 pools). This makes
+//! live inside a single `PoolManager` contract, so the filter uses just the
+//! `PoolManager` address (typically one address for all V4 pools). This makes
 //! the V4 log filter trivially small compared to V2/V3 which may filter
 //! hundreds of addresses.
 
@@ -42,7 +42,7 @@ pub struct V4EnginePump {
     engine: Arc<Mutex<V4BlockEngine>>,
     /// The Alloy provider (created from the RPC URL)
     provider: Arc<AlloyProvider>,
-    /// Pre-built log filter for Swap/ModifyLiquidity events on PoolManager
+    /// Pre-built log filter for Swap/ModifyLiquidity events on `PoolManager`
     log_filter: Filter,
     /// Shutdown flag — set by `stop()`
     shutdown: Arc<AtomicBool>,
@@ -157,10 +157,10 @@ impl V4EnginePump {
     }
 }
 
-/// Build an Alloy `Filter` for V4 Swap/ModifyLiquidity events on PoolManager.
+/// Build an Alloy `Filter` for V4 Swap/ModifyLiquidity events on `PoolManager`.
 ///
 /// Unlike V2/V3 which filter by individual pool addresses, V4 filters by
-/// the PoolManager contract address — typically just one address.
+/// the `PoolManager` contract address — typically just one address.
 fn build_v4_log_filter(pool_managers: &[Address]) -> Filter {
     let mut filter = Filter::new();
 

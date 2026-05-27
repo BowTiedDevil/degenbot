@@ -1,13 +1,13 @@
 //! V4 Block Engine — Rust-centric arbitrage engine for Uniswap V4 paths.
 //!
 //! Owns the per-block lifecycle for V4 pools: Swap event decoding from
-//! PoolManager, pool state updates (including tick-level changes), tick-range
+//! `PoolManager`, pool state updates (including tick-level changes), tick-range
 //! computation, and solver dispatch.
 //!
 //! # Design
 //!
 //! V4 pools share identical concentrated-liquidity math with V3 (same tick
-//! structure, same sqrtPriceX96, same liquidity tracking). The V4BlockEngine
+//! structure, same sqrtPriceX96, same liquidity tracking). The `V4BlockEngine`
 //! mirrors [`V3BlockEngine`]'s structure but identifies pools by
 //! `(pool_manager, pool_id)` instead of just contract address.
 //!
@@ -50,7 +50,7 @@ use crate::optimizers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence
 // ---------------------------------------------------------------------------
 
 /// Bitmask for the four hook flags that modify swap amounts:
-/// BEFORE_SWAP | AFTER_SWAP | BEFORE_SWAP_RETURNS_DELTA | AFTER_SWAP_RETURNS_DELTA
+/// `BEFORE_SWAP` | `AFTER_SWAP` | `BEFORE_SWAP_RETURNS_DELTA` | `AFTER_SWAP_RETURNS_DELTA`
 ///
 /// A pool with `(hook_flags & AMOUNT_MODIFYING_HOOK_MASK) != 0` is excluded.
 const AMOUNT_MODIFYING_HOOK_MASK: u16 = 0x80 | 0x40 | 0x08 | 0x04; // = 0xCC
@@ -63,7 +63,7 @@ const V4_DYNAMIC_FEE_FLAG: u32 = 0x100000;
 // V4 PoolKey
 // ---------------------------------------------------------------------------
 
-/// V4 PoolKey — identifies a pool within PoolManager.
+/// V4 `PoolKey` — identifies a pool within `PoolManager`.
 ///
 /// Matches the Solidity struct:
 /// ```solidity
@@ -91,11 +91,11 @@ pub struct V4PoolKey {
 /// Parameters for registering a V4 pool with the engine.
 #[derive(Clone, Debug)]
 pub struct RegisterV4PoolParams {
-    /// The PoolManager contract address
+    /// The `PoolManager` contract address
     pub pool_manager: Address,
-    /// The pool's PoolId (bytes32)
+    /// The pool's `PoolId` (bytes32)
     pub pool_id: PoolId,
-    /// The pool's PoolKey
+    /// The pool's `PoolKey`
     pub pool_key: V4PoolKey,
     /// Hook flags (bitmask from the hooks contract address)
     pub hook_flags: u16,
@@ -105,7 +105,7 @@ pub struct RegisterV4PoolParams {
     pub liquidity: u128,
     /// Current tick
     pub tick: i32,
-    /// Tick data: {tick_index: (liquidity_gross, liquidity_net)}
+    /// Tick data: {`tick_index`: (`liquidity_gross`, `liquidity_net`)}
     pub tick_data: HashMap<i32, TickInfo>,
     /// Block number at which this state was captured
     pub update_block: u64,
@@ -224,7 +224,7 @@ impl From<RegisterV4PoolParams> for V4PoolState {
 // Path types
 // ---------------------------------------------------------------------------
 
-/// A pool reference in a V4 path: (pool_key index, zero_for_one direction).
+/// A pool reference in a V4 path: (`pool_key` index, `zero_for_one` direction).
 #[derive(Clone, Debug)]
 pub struct V4PoolRef {
     /// Index into the engine's `pools` map.
@@ -253,16 +253,16 @@ struct ResolvedV4Path {
 // ---------------------------------------------------------------------------
 
 /// The V4 block engine — owns V4 pool state, constructs tick-range sequences,
-/// and solves arbitrage paths. Mirrors [`V3BlockEngine`] but uses PoolId
+/// and solves arbitrage paths. Mirrors [`V3BlockEngine`] but uses `PoolId`
 /// for pool identification instead of contract address.
 pub struct V4BlockEngine {
     /// V4 pool state: auto-incrementing key → state
     pools: HashMap<u64, V4PoolState>,
-    /// (pool_manager, pool_id) → (forward_key, reverse_key)
+    /// (`pool_manager`, `pool_id`) → (`forward_key`, `reverse_key`)
     pool_ids: HashMap<(Address, PoolId), (u64, u64)>,
-    /// Registered paths: path_id → (V4Path, ResolvedV4Path)
+    /// Registered paths: `path_id` → (`V4Path`, `ResolvedV4Path`)
     paths: HashMap<u64, (V4Path, ResolvedV4Path)>,
-    /// Last solved results: (path_id, optimal_input, profit)
+    /// Last solved results: (`path_id`, `optimal_input`, profit)
     results: Vec<(u64, U256, U256)>,
     /// Block number for the last solved results
     results_block: u64,
@@ -300,7 +300,7 @@ impl V4BlockEngine {
     /// # Errors
     ///
     /// Returns `Err` with a description if:
-    /// - The pool has amount-modifying hooks (hook_flags & 0xCC != 0)
+    /// - The pool has amount-modifying hooks (`hook_flags` & 0xCC != 0)
     /// - The pool has dynamic fees (fee == 0x100000)
     /// - Registration is attempted after `start()`
     ///
@@ -322,8 +322,7 @@ impl V4BlockEngine {
         // Dynamic fee filtering: reject pools with dynamic fees
         if params.pool_key.fee == V4_DYNAMIC_FEE_FLAG {
             let msg = format!(
-                "V4 pool has dynamic fee (fee=0x{:06X}) — excluded from arbitrage",
-                V4_DYNAMIC_FEE_FLAG
+                "V4 pool has dynamic fee (fee=0x{V4_DYNAMIC_FEE_FLAG:06X}) — excluded from arbitrage"
             );
             return Err(msg);
         }
@@ -349,7 +348,7 @@ impl V4BlockEngine {
         Ok(forward_key)
     }
 
-    /// Register a V4 arbitrage path as an ordered list of V4PoolRefs.
+    /// Register a V4 arbitrage path as an ordered list of `V4PoolRefs`.
     ///
     /// Returns the auto-assigned path ID.
     ///
@@ -373,7 +372,7 @@ impl V4BlockEngine {
 
     /// Apply a V4 Swap update to a registered pool.
     ///
-    /// Updates the scalar fields (sqrt_price, liquidity, tick) and any
+    /// Updates the scalar fields (`sqrt_price`, liquidity, tick) and any
     /// tick-level priors. Both orientations are updated.
     pub fn apply_swap(
         &mut self,
@@ -412,7 +411,7 @@ impl V4BlockEngine {
         }
     }
 
-    /// Apply a liquidity update (V4 ModifyLiquidity event) to a registered pool.
+    /// Apply a liquidity update (V4 `ModifyLiquidity` event) to a registered pool.
     ///
     /// Updates `tick_data` at `tick_lower` and `tick_upper` using the same
     /// logic as V3's `Tick.update()`: both ticks get `liquidity_gross += delta`,
@@ -458,7 +457,7 @@ impl V4BlockEngine {
         }
     }
 
-    /// Process a block: decode Swap and ModifyLiquidity events, apply updates,
+    /// Process a block: decode Swap and `ModifyLiquidity` events, apply updates,
     /// rebuild paths, solve all, and store results.
     ///
     /// Only processes logs from registered pool managers. Logs from other
@@ -518,7 +517,7 @@ impl V4BlockEngine {
     }
 
     /// Look up the pool keys (forward + reverse) for a registered
-    /// (pool_manager, pool_id) pair.
+    /// (`pool_manager`, `pool_id`) pair.
     #[must_use]
     pub fn pool_keys_for_id(&self, pool_manager: Address, pool_id: &PoolId) -> Option<(u64, u64)> {
         self.pool_ids.get(&(pool_manager, *pool_id)).copied()
@@ -682,7 +681,7 @@ impl V4BlockEngine {
         self.running
     }
 
-    /// Return the set of PoolManager addresses with registered pools.
+    /// Return the set of `PoolManager` addresses with registered pools.
     /// Used by the V4 pump to build the log filter.
     #[must_use]
     pub fn registered_pool_managers(&self) -> Vec<Address> {
@@ -717,7 +716,7 @@ impl V4BlockEngine {
         self.results_block = block_number;
     }
 
-    /// Number of registered pools (counting PoolId entries, not orientations).
+    /// Number of registered pools (counting `PoolId` entries, not orientations).
     #[must_use]
     pub fn pool_count(&self) -> usize {
         self.pool_ids.len()
@@ -1324,7 +1323,7 @@ mod tests {
                 0,
                 HashMap::new(),
             ));
-            assert!(result.is_err(), "should reject hook flags 0x{:04X}", flags);
+            assert!(result.is_err(), "should reject hook flags 0x{flags:04X}");
         }
 
         // Test non-amount-modifying flags (should be accepted)
@@ -1354,7 +1353,7 @@ mod tests {
                 0,
                 HashMap::new(),
             ));
-            assert!(result.is_ok(), "should accept hook flags 0x{:04X}", flags);
+            assert!(result.is_ok(), "should accept hook flags 0x{flags:04X}");
         }
     }
 
@@ -1732,7 +1731,7 @@ mod tests {
         let mut liq_word = [0u8; 32];
         liq_word[16..32].copy_from_slice(&liq_bytes);
         data.extend_from_slice(&liq_word);
-        let tick_i256 = I256::try_from(tick as i128).unwrap_or(I256::ZERO);
+        let tick_i256 = I256::try_from(i128::from(tick)).unwrap_or(I256::ZERO);
         data.extend_from_slice(&tick_i256.to_be_bytes::<32>());
         let mut fee_word = [0u8; 32];
         fee_word[28..32].copy_from_slice(&fee.to_be_bytes());

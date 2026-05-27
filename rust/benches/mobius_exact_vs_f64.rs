@@ -12,7 +12,7 @@ fn u256(n: u64) -> U256 {
     U256::from(n)
 }
 
-/// Convert IntHopState to f64 HopState for the legacy solver.
+/// Convert `IntHopState` to f64 `HopState` for the legacy solver.
 fn int_hop_to_f64(hop: &IntHopState) -> HopState {
     let fee = 1.0 - hop.gamma_numer as f64 / hop.fee_denom as f64;
     HopState::new(
@@ -91,7 +91,7 @@ fn bench_mobius_exact_vs_f64(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark the isqrt_u512 function at different scales.
+/// Benchmark the `isqrt_u512` function at different scales.
 fn bench_isqrt(c: &mut Criterion) {
     let mut group = c.benchmark_group("isqrt_u512");
 

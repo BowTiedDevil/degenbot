@@ -1,7 +1,7 @@
 //! Uniswap V4 Swap event decoder.
 //!
 //! Decodes `Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)`
-//! events from the Uniswap V4 PoolManager contract.
+//! events from the Uniswap V4 `PoolManager` contract.
 //!
 //! # V4 Swap event format
 //!
@@ -26,9 +26,9 @@
 //!
 //! The V4 Swap event differs from V3 in three ways:
 //! 1. `PoolId` (bytes32) replaces the pool contract address — V4 pools
-//!    live inside PoolManager, not as separate contracts.
+//!    live inside `PoolManager`, not as separate contracts.
 //! 2. Amounts are `int128` (not `int256`), and a `fee` field is present.
-//! 3. The event is emitted by PoolManager, not by individual pool contracts.
+//! 3. The event is emitted by `PoolManager`, not by individual pool contracts.
 
 use alloy::primitives::{Address, B256, I256, U128, U256};
 use alloy::rpc::types::Log;
@@ -167,8 +167,8 @@ mod tests {
         liq_word[16..32].copy_from_slice(&liq_bytes);
         data.extend_from_slice(&liq_word);
         // tick (int24, sign-extended to int256 → 32 bytes)
-        let tick_i256 = I256::try_from(tick as i128)
-            .unwrap_or_else(|_| I256::ZERO);
+        let tick_i256 = I256::try_from(i128::from(tick))
+            .unwrap_or(I256::ZERO);
         data.extend_from_slice(&tick_i256.to_be_bytes::<32>());
         // fee (uint24, left-padded to 32 bytes)
         let mut fee_word = [0u8; 32];
@@ -206,8 +206,8 @@ mod tests {
         let log = make_v4_swap_log(
             pool_id,
             sender,
-            I256::try_from(-1000_i128).unwrap_or_else(|_| I256::ZERO),
-            I256::try_from(500_i128).unwrap_or_else(|_| I256::ZERO),
+            I256::try_from(-1000_i128).unwrap_or(I256::ZERO),
+            I256::try_from(500_i128).unwrap_or(I256::ZERO),
             sqrt_price,
             liquidity,
             tick,
@@ -220,8 +220,8 @@ mod tests {
         let event = result.unwrap();
         assert_eq!(event.pool_id, pool_id);
         assert_eq!(event.sender, sender);
-        assert_eq!(event.amount0, I256::try_from(-1000_i128).unwrap_or_else(|_| I256::ZERO));
-        assert_eq!(event.amount1, I256::try_from(500_i128).unwrap_or_else(|_| I256::ZERO));
+        assert_eq!(event.amount0, I256::try_from(-1000_i128).unwrap_or(I256::ZERO));
+        assert_eq!(event.amount1, I256::try_from(500_i128).unwrap_or(I256::ZERO));
         assert_eq!(event.sqrt_price_x96, sqrt_price);
         assert_eq!(event.liquidity, liquidity);
         assert_eq!(event.tick, 0);
@@ -289,8 +289,8 @@ mod tests {
         let log = make_v4_swap_log(
             pool_id,
             sender,
-            I256::try_from(200_i128).unwrap_or_else(|_| I256::ZERO),
-            I256::try_from(-100_i128).unwrap_or_else(|_| I256::ZERO),
+            I256::try_from(200_i128).unwrap_or(I256::ZERO),
+            I256::try_from(-100_i128).unwrap_or(I256::ZERO),
             sqrt_price,
             liquidity,
             tick,

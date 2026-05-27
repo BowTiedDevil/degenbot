@@ -508,7 +508,7 @@ mod proptests {
 
     /// A faithful model that tracks exactly the same state as the journal —
     /// a bounded list subject to same-block replacement, discards, restores,
-    /// and max_depth eviction. No "windowed" approximation.
+    /// and `max_depth` eviction. No "windowed" approximation.
     struct Model {
         deltas: Vec<V2BlockDelta>,
         max_depth: usize,
@@ -522,7 +522,7 @@ mod proptests {
             }
         }
 
-        /// Mirror the journal's push_delta semantics exactly.
+        /// Mirror the journal's `push_delta` semantics exactly.
         fn push_delta(&mut self, delta: V2BlockDelta) -> bool {
             if let Some(last) = self.deltas.last() {
                 if delta.block < last.block {
@@ -542,7 +542,7 @@ mod proptests {
             true
         }
 
-        /// Mirror the journal's discard_before_block semantics exactly.
+        /// Mirror the journal's `discard_before_block` semantics exactly.
         /// Returns false if the operation would be skipped (empty, would-panic).
         fn discard_before_block(&mut self, block: u64) -> bool {
             if self.deltas.is_empty() {
@@ -563,7 +563,7 @@ mod proptests {
             true
         }
 
-        /// Mirror the journal's restore_before_block semantics exactly.
+        /// Mirror the journal's `restore_before_block` semantics exactly.
         /// Returns None if the operation would panic (empty or no prior state).
         fn restore_before_block(&mut self, block: u64) -> Option<(U256, U256, u64)> {
             if self.deltas.is_empty() {
