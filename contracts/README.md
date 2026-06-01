@@ -23,11 +23,50 @@ contracts/
 
 Vyper immutables are loaded via `CODECOPY` from the end of the runtime code. The `*_runtime_bytecode.txt` files have them pre-appended so no storage overrides are needed.
 
-### cmd_executor immutables (3 × 32 bytes)
+### cmd_executor immutables (3 × 32 bytes, appended to runtime bytecode)
 
-1. `OWNER_ADDR` — throwaway key `0x9C56a29c7231974c269E24F9FB3c29203039089E` (override at runtime)
-2. `WETH_ADDR` — `0xC02aaA39b223FE8D0A0e5C4f27eAD9083C756Cc2`
-3. `POOL_MANAGER_ADDR` — `0x0000000000000000000000000000000000000000`
+The immutable ordering in the runtime bytecode tail is `POOL_MANAGER_ADDR`, `WETH_ADDR`,
+`OWNER_ADDR` — matching the Vyper declaration order (not constructor parameter order).
+
+| Slot | Immutable | Value | Notes |
+|------|-----------|-------|-------|
+| 1 | `POOL_MANAGER_ADDR` | **MUST match the target chain's PoolManager** | Controls all V4 operations: `V4_UNLOCK`, `V4_SWAP_*`, `V4_TAKE`, `V4_SETTLE_*` all route through this address. If wrong, every V4-hybrid path reverts at ~38K gas with empty revert data |
+| 2 | `WETH_ADDR` | `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` | WETH on mainnet — unlikely to differ across deployments |
+| 3 | `OWNER_ADDR` | `0x9C56a29c7231974c269E24F9FB3c29203039089E` | Throwaway — overridden by `EXECUTOR_OWNER` at runtime, not used by swap logic |
+
+> ⚠️ **Critical**: The `POOL_MANAGER_ADDR` immutable in the runtime bytecode file **must
+> match the PoolManager address on the target chain**. On Ethereum mainnet, this is
+> `0x000000000004444c5dc75cB358380D2e3De08A90`. If this immutable is wrong (e.g., left as the
+> zero address or a throwaway), all V4-hybrid paths (V4-V4, V4-V3, V3-V4, V4-V2, V2-V4) will
+> revert immediately inside `execute()` with an empty revert at ~38K gas — the `V4_UNLOCK`
+> command calls `extcall IPoolManager(POOL_MANAGER_ADDR).unlock()` against the wrong address.
+> V2-only and V3-only paths work regardless because they never touch the PoolManager.
+>
+> If you patch the immutables manually, remember that each slot is **left-padded to 32 bytes**
+> (12 zero bytes + 20 address bytes). The PM slot is the first 64 hex characters after the
+> main runtime code. See the "Patching immutables" section below for the exact procedure.
+
+### Patching immutables
+
+If the runtime bytecode was compiled with wrong immutables (e.g., a throwaway PM address),
+you can patch the 3 × 32-byte tail without recompiling:
+
+```python
+# Patch POOL_MANAGER_ADDR in the runtime bytecode tail
+pm = "0x000000000004444C5dc75cB358380D2e3De08A90"  # mainnet PM
+pm_padded = "0" * 24 + pm[2:].lower()  # left-pad to 32 bytes
+
+with open("contracts/cmd_executor_runtime_bytecode.txt") as f:
+    code = f.read().strip()[2:]  # strip 0x
+
+# Last 192 hex chars = 3 × 32-byte immutable slots
+# Slot layout: [PM:64][WETH:64][OWNER:64]
+tail = code[-192:]
+new_tail = pm_padded + tail[64:]  # replace slot 1, keep slots 2-3
+
+with open("contracts/cmd_executor_runtime_bytecode.txt", "w") as f:
+    f.write("0x" + code[:-192] + new_tail + "\n")
+```
 
 ### Recompiling
 
