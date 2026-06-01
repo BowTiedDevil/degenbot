@@ -41,18 +41,27 @@ use crate::optimizers::mobius::{mobius_solve, HopState, MobiusError};
 /// Result from simulating a multi-hop swap path.
 ///
 /// `hop_outputs[i]` is the output amount after hop `i` (0-indexed).
+/// `consumed_inputs[i]` is the gross input actually consumed by hop `i`
+/// (including fees). For V2 hops, `consumed_inputs[i] == amount_in_to_hop`
+/// (constant-product pools always consume the full input). For V3/V4 hops,
+/// if the range boundary is hit, `consumed_inputs[i] < amount_in_to_hop`;
+/// the unused remainder is retained by the caller.
+///
 /// `final_output` equals `hop_outputs.last()` for non-empty paths.
 ///
 /// For a 2-hop arbitrage path:
 /// - `hop_outputs[0]` = intermediate output (forward amount from hop 1)
 /// - `hop_outputs[1]` = final output (total received from hop 2)
-/// - `profit = final_output - optimal_input`
+/// - `profit = final_output - consumed_inputs[0]` (actual cost, not full input)
 #[derive(Clone, Debug)]
 pub struct SimulationResult {
     /// Final output amount after all hops.
     pub final_output: U256,
     /// Per-hop output amounts. `hop_outputs[i]` = output after hop `i`.
     pub hop_outputs: Vec<U256>,
+    /// Per-hop consumed input amounts. `consumed_inputs[i]` = gross input
+    /// actually consumed by hop `i` (including fees).
+    pub consumed_inputs: Vec<U256>,
 }
 
 /// Fee parameters for a single pool hop.
@@ -230,16 +239,19 @@ pub fn compute_int_mobius_coefficients(
 /// Each hop applies: `y = gamma_numer * reserve_out * x / (fee_denom * reserve_in + gamma_numer * x)`
 /// with floor division (EVM semantics).
 ///
-/// Returns a [`SimulationResult`] with per-hop output amounts and the final output.
+/// Returns a [`SimulationResult`] with per-hop output and consumed-input amounts.
 #[must_use]
 pub fn int_simulate_path(x: U256, hops: &[IntHopState]) -> SimulationResult {
     let mut amount = x;
     let mut hop_outputs = Vec::with_capacity(hops.len());
+    // V2 constant-product pools always consume the full input
+    let consumed_inputs = vec![x; hops.len()];
     for hop in hops {
         if amount.is_zero() {
             return SimulationResult {
                 final_output: U256::ZERO,
                 hop_outputs,
+                consumed_inputs,
             };
         }
         amount = hop.swap(amount);
@@ -248,6 +260,7 @@ pub fn int_simulate_path(x: U256, hops: &[IntHopState]) -> SimulationResult {
     SimulationResult {
         final_output: amount,
         hop_outputs,
+        consumed_inputs,
     }
 }
 
