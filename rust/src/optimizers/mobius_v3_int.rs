@@ -40,7 +40,7 @@
 
 use alloy::primitives::{U256, U512};
 
-use crate::optimizers::mobius_int::{IntHopState, IntMobiusCoefficients};
+use crate::optimizers::mobius_int::{IntHopState, IntMobiusCoefficients, SimulationResult};
 
 // ---------------------------------------------------------------------------
 // Integer V3 Tick Range Hop
@@ -449,7 +449,7 @@ impl IntV3TickRangeSequence {
 ///   `crossing_output`, then simulates the remainder in the ending range.
 /// - If `crossing.is_none()`, the swap stays within the base range.
 ///
-/// Returns the total output amount (U256).
+/// Returns a [`SimulationResult`] with per-hop output amounts and the final output.
 #[must_use]
 fn int_simulate_v3_v3_path(
     amount_in: U256,
@@ -457,15 +457,21 @@ fn int_simulate_v3_v3_path(
     crossing2: Option<&IntTickRangeCrossing>,
     base_range1: &IntV3TickRangeHop,
     base_range2: &IntV3TickRangeHop,
-) -> U256 {
+) -> SimulationResult {
     if amount_in.is_zero() {
-        return U256::ZERO;
+        return SimulationResult {
+            final_output: U256::ZERO,
+            hop_outputs: Vec::new(),
+        };
     }
 
     // Hop 1 output
     let output1 = if let Some(c1) = crossing1 {
         if amount_in < c1.crossing_gross_input {
-            return U256::ZERO; // Can't cover crossing cost
+            return SimulationResult {
+                final_output: U256::ZERO,
+                hop_outputs: Vec::new(),
+            };
         }
         let remaining = amount_in - c1.crossing_gross_input;
         let ending_out = int_simulate_v3_swap(remaining, &c1.ending_range);
@@ -475,15 +481,23 @@ fn int_simulate_v3_v3_path(
     };
 
     // Hop 2 output
-    if let Some(c2) = crossing2 {
+    let output2 = if let Some(c2) = crossing2 {
         if output1 < c2.crossing_gross_input {
-            return U256::ZERO; // Can't cover crossing cost
+            return SimulationResult {
+                final_output: U256::ZERO,
+                hop_outputs: vec![output1],
+            };
         }
         let remaining = output1 - c2.crossing_gross_input;
         let ending_out = int_simulate_v3_swap(remaining, &c2.ending_range);
         c2.crossing_output.saturating_add(ending_out)
     } else {
         int_simulate_v3_swap(output1, base_range2)
+    };
+
+    SimulationResult {
+        final_output: output2,
+        hop_outputs: vec![output1, output2],
     }
 }
 
@@ -498,7 +512,8 @@ fn int_simulate_v3_v3_path(
 /// 3. Validate with full piecewise simulation (`int_simulate_v3_v3_path`)
 /// 4. Search ±2 neighbors for integer rounding
 ///
-/// Returns `(optimal_input, profit)` or `None` if not profitable.
+/// Returns `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
+/// `hop_outputs[0]` = intermediate output from hop 1, `hop_outputs[1]` = final output.
 ///
 /// This replaces the f64 `solve_v3_v3` which uses golden-section search.
 /// The closed-form approach is both faster and EVM-exact.
@@ -506,7 +521,7 @@ fn int_simulate_v3_v3_path(
 pub fn int_solve_v3_v3(
     seq1: &IntV3TickRangeSequence,
     seq2: &IntV3TickRangeSequence,
-) -> Option<(U256, U256)> {
+) -> Option<(U256, U256, Vec<U256>)> {
     let max_candidates = 10;
 
     // Fast path: both single-range → standard 2-hop Möbius
@@ -520,16 +535,16 @@ pub fn int_solve_v3_v3(
         }
 
         // Validate with integer simulation
-        let output = int_simulate_v3_v3_path(
+        let sim = int_simulate_v3_v3_path(
             result.optimal_input,
             None,
             None,
             &seq1.ranges[0],
             &seq2.ranges[0],
         );
-        if output > result.optimal_input {
-            let profit = output - result.optimal_input;
-            return Some((result.optimal_input, profit));
+        if sim.final_output > result.optimal_input {
+            let profit = sim.final_output - result.optimal_input;
+            return Some((result.optimal_input, profit, sim.hop_outputs));
         }
         return None;
     }
@@ -540,6 +555,7 @@ pub fn int_solve_v3_v3(
 
     let mut best_x = U256::ZERO;
     let mut best_profit = U256::ZERO;
+    let mut best_hop_outputs: Vec<U256> = Vec::new();
 
     for k1 in 0..n1 {
         for k2 in 0..n2 {
@@ -582,7 +598,7 @@ pub fn int_solve_v3_v3(
                     continue;
                 }
 
-                let output = int_simulate_v3_v3_path(
+                let sim = int_simulate_v3_v3_path(
                     candidate,
                     if k1 == 0 { None } else { Some(&crossing1) },
                     if k2 == 0 { None } else { Some(&crossing2) },
@@ -590,11 +606,12 @@ pub fn int_solve_v3_v3(
                     &seq2.ranges[0],
                 );
 
-                if output > candidate {
-                    let profit = output - candidate;
+                if sim.final_output > candidate {
+                    let profit = sim.final_output - candidate;
                     if profit > best_profit {
                         best_profit = profit;
                         best_x = candidate;
+                        best_hop_outputs = sim.hop_outputs;
                     }
                 }
             }
@@ -604,7 +621,7 @@ pub fn int_solve_v3_v3(
     if best_profit.is_zero() {
         None
     } else {
-        Some((best_x, best_profit))
+        Some((best_x, best_profit, best_hop_outputs))
     }
 }
 
@@ -767,7 +784,7 @@ pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> U256
 ///
 /// The `base_v3_hop` is used only when `v3_crossing` is `None` (k=0 case).
 ///
-/// Returns the final output amount (U256).
+/// Returns a [`SimulationResult`] with per-hop output amounts and the final output.
 #[must_use]
 fn int_simulate_mixed_path_with_crossing(
     amount_in: U256,
@@ -775,16 +792,22 @@ fn int_simulate_mixed_path_with_crossing(
     base_v3_hop: &IntV3TickRangeHop,
     v3_crossing: Option<&IntTickRangeCrossing>,
     v3_first: bool,
-) -> U256 {
+) -> SimulationResult {
     if amount_in.is_zero() {
-        return U256::ZERO;
+        return SimulationResult {
+            final_output: U256::ZERO,
+            hop_outputs: Vec::new(),
+        };
     }
 
     if v3_first {
         // V3 → V2: input goes through V3 first, then V2
         let v3_output = if let Some(crossing) = v3_crossing {
             if amount_in < crossing.crossing_gross_input {
-                return U256::ZERO; // Can't cover V3 crossing cost
+                return SimulationResult {
+                    final_output: U256::ZERO,
+                    hop_outputs: Vec::new(),
+                };
             }
             let remaining = amount_in - crossing.crossing_gross_input;
             let ending_out = int_simulate_v3_swap(remaining, &crossing.ending_range);
@@ -794,21 +817,32 @@ fn int_simulate_mixed_path_with_crossing(
         };
 
         // V3 output goes through V2 hops
-        int_simulate_v2_hops(v3_output, v2_hops)
+        let v2_output = int_simulate_v2_hops(v3_output, v2_hops);
+        SimulationResult {
+            final_output: v2_output,
+            hop_outputs: vec![v3_output, v2_output],
+        }
     } else {
         // V2 → V3: input goes through V2 first, then V3
         let v2_output = int_simulate_v2_hops(amount_in, v2_hops);
 
         // V2 output goes through V3 (with optional crossing)
-        if let Some(crossing) = v3_crossing {
+        let v3_output = if let Some(crossing) = v3_crossing {
             if v2_output < crossing.crossing_gross_input {
-                return U256::ZERO; // V2 output can't cover V3 crossing cost
+                return SimulationResult {
+                    final_output: U256::ZERO,
+                    hop_outputs: vec![v2_output],
+                };
             }
             let remaining = v2_output - crossing.crossing_gross_input;
             let ending_out = int_simulate_v3_swap(remaining, &crossing.ending_range);
             crossing.crossing_output.saturating_add(ending_out)
         } else {
             int_simulate_v3_swap(v2_output, base_v3_hop)
+        };
+        SimulationResult {
+            final_output: v3_output,
+            hop_outputs: vec![v2_output, v3_output],
         }
     }
 }
@@ -824,7 +858,8 @@ fn int_simulate_v2_hops(amount_in: U256, v2_hops: &[IntHopState]) -> U256 {
         current = crate::optimizers::mobius_int::int_simulate_path(
             current,
             std::slice::from_ref(hop),
-        );
+        )
+        .final_output;
     }
     current
 }
@@ -846,18 +881,20 @@ fn int_simulate_v2_hops(amount_in: U256, v2_hops: &[IntHopState]) -> U256 {
 /// 5. Validate with crossing-aware simulation
 /// 6. Search ±2 neighbors for integer rounding
 ///
-/// Returns the optimal input and profit, or `None` if not profitable.
+/// Returns `(optimal_input, profit, hop_outputs)` or `None` if not profitable.
+/// `hop_outputs[0]` = output from the first hop, `hop_outputs[1]` = output from the second.
 #[must_use]
 pub fn exact_solve_mixed_v2_v3_sequence(
     v2_hops: &[IntHopState],
     v3_sequence: &IntV3TickRangeSequence,
     v3_first: bool,
-) -> Option<(U256, U256)> {
+) -> Option<(U256, U256, Vec<U256>)> {
     let max_candidates = 10;
     let n_v3 = max_candidates.min(v3_sequence.ranges.len());
 
     let mut best_x = U256::ZERO;
     let mut best_profit = U256::ZERO;
+    let mut best_hop_outputs: Vec<U256> = Vec::new();
 
     for k in 0..n_v3 {
         let Some(crossing) = v3_sequence.compute_crossing(k) else {
@@ -906,7 +943,7 @@ pub fn exact_solve_mixed_v2_v3_sequence(
                 continue;
             }
 
-            let output = int_simulate_mixed_path_with_crossing(
+            let sim = int_simulate_mixed_path_with_crossing(
                 candidate,
                 v2_hops,
                 &v3_sequence.ranges[0],
@@ -914,11 +951,12 @@ pub fn exact_solve_mixed_v2_v3_sequence(
                 v3_first,
             );
 
-            if output > candidate {
-                let profit = output - candidate;
+            if sim.final_output > candidate {
+                let profit = sim.final_output - candidate;
                 if profit > best_profit {
                     best_profit = profit;
                     best_x = candidate;
+                    best_hop_outputs = sim.hop_outputs;
                 }
             }
         }
@@ -927,7 +965,7 @@ pub fn exact_solve_mixed_v2_v3_sequence(
     if best_profit.is_zero() {
         None
     } else {
-        Some((best_x, best_profit))
+        Some((best_x, best_profit, best_hop_outputs))
     }
 }
 
@@ -1376,5 +1414,42 @@ mod tests {
         let seq1 = IntV3TickRangeSequence::new(vec![range1_0, range1_1]).unwrap();
         let seq2 = IntV3TickRangeSequence::new(vec![range2_0]).unwrap();
         let _ = int_solve_v3_v3(&seq1, &seq2);
+    }
+
+    // ── Per-hop output tests ──────────────────────────────────────
+
+    #[test]
+    fn test_int_simulate_v3_v3_path_hop_outputs_single_range() {
+        let hop1 = make_v3_hop_at_1to1(1_000_000_000_000u128, true);
+        let hop2 = make_v3_hop_at_1to1(800_000_000_000u128, false);
+
+        let result = int_simulate_v3_v3_path(
+            U256::from(1_000_000u64),
+            None,
+            None,
+            &hop1,
+            &hop2,
+        );
+
+        // 2 hops → 2 hop_outputs
+        assert_eq!(result.hop_outputs.len(), 2);
+        // Invariant: final_output == hop_outputs.last()
+        assert_eq!(result.final_output, *result.hop_outputs.last().unwrap());
+        // Invariant: hop_outputs[1] is the output after hop 2 using hop 1's output as input
+        let expected_hop1 = int_simulate_v3_swap(U256::from(1_000_000u64), &hop1);
+        assert_eq!(result.hop_outputs[0], expected_hop1);
+        let expected_hop2 = int_simulate_v3_swap(expected_hop1, &hop2);
+        assert_eq!(result.hop_outputs[1], expected_hop2);
+        assert_eq!(result.final_output, expected_hop2);
+    }
+
+    #[test]
+    fn test_int_simulate_v3_v3_path_hop_outputs_zero_input() {
+        let hop1 = make_v3_hop_at_1to1(1_000_000_000_000u128, true);
+        let hop2 = make_v3_hop_at_1to1(800_000_000_000u128, false);
+
+        let result = int_simulate_v3_v3_path(U256::ZERO, None, None, &hop1, &hop2);
+        assert_eq!(result.final_output, U256::ZERO);
+        assert!(result.hop_outputs.is_empty());
     }
 }

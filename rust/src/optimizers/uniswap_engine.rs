@@ -105,6 +105,20 @@ struct ResolvedMixedPath {
 // UniswapEngine
 // ---------------------------------------------------------------------------
 
+/// Result from solving a single arbitrage path.
+///
+/// Includes optimality data and per-hop output amounts for the encoder.
+#[derive(Clone, Debug)]
+pub struct SolvePathResult {
+    /// Optimal input amount (uint256).
+    pub optimal_input: U256,
+    /// Profit = `final_output` - `optimal_input` (uint256).
+    pub profit: U256,
+    /// Per-hop output amounts. `hop_outputs[i]` = output after hop `i`.
+    /// For a 2-hop path: `[forward_out, final_output]`.
+    pub hop_outputs: Vec<U256>,
+}
+
 /// The unified Uniswap engine — owns V2, V3, and V4 pool state and solves
 /// mixed arbitrage paths.
 pub struct UniswapEngine {
@@ -119,7 +133,7 @@ pub struct UniswapEngine {
     /// Reverse index: (`hop_type`, `pool_key`) maps to set of `path_ids` that use this pool
     pool_to_paths: HashMap<(HopType, u64), HashSet<u64>>,
     /// Last solved results
-    results: Vec<(u64, U256, U256)>,
+    results: Vec<(u64, SolvePathResult)>,
     /// Block number for the last solved results
     results_block: u64,
     /// Last block number processed by `process_block`.
@@ -378,12 +392,12 @@ impl UniswapEngine {
         }
 
         // Re-solve affected paths and merge with unchanged results
-        let mut new_results: Vec<(u64, U256, U256)> = Vec::with_capacity(self.paths.len());
+        let mut new_results: Vec<(u64, SolvePathResult)> = Vec::with_capacity(self.paths.len());
 
         // Carry forward unchanged results
-        for &(path_id, ref input, ref profit) in &self.results {
-            if !affected_path_ids.contains(&path_id) {
-                new_results.push((path_id, *input, *profit));
+        for (path_id, solve_result) in &self.results {
+            if !affected_path_ids.contains(path_id) {
+                new_results.push((*path_id, solve_result.clone()));
             }
         }
 
@@ -396,15 +410,15 @@ impl UniswapEngine {
                 continue;
             }
 
-            if let Some((opt_input, profit)) = self.solve_path(resolved) {
-                if !opt_input.is_zero() && !profit.is_zero() {
-                    new_results.push((path_id, opt_input, profit));
+            if let Some(solve_result) = self.solve_path(resolved) {
+                if !solve_result.optimal_input.is_zero() && !solve_result.profit.is_zero() {
+                    new_results.push((path_id, solve_result));
                 }
             }
         }
 
         // Sort by path_id for deterministic output
-        new_results.sort_unstable_by_key(|(path_id, _, _)| *path_id);
+        new_results.sort_unstable_by_key(|(path_id, _)| *path_id);
 
         self.results = new_results;
         self.results_block = block_number;
@@ -417,7 +431,7 @@ impl UniswapEngine {
     /// - V3-V3 / V4-V4 / V3-V4 / V4-V3: integer piecewise-Möbius (CL × CL)
     /// - V2-V3 / V3-V2 / V2-V4 / V4-V2: mixed integer-exact solver
     #[allow(clippy::unused_self)]
-    fn solve_path(&self, resolved: &ResolvedMixedPath) -> Option<(U256, U256)> {
+    fn solve_path(&self, resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
         let all_v2 = resolved.hop_types.iter().all(|&t| t == HopType::V2);
         let all_cl = resolved.hop_types.iter().all(HopType::is_concentrated_liquidity);
 
@@ -436,7 +450,11 @@ impl UniswapEngine {
                             && !result.optimal_input.is_zero()
                             && !result.profit.is_zero()
                         {
-                            Some((result.optimal_input, result.profit))
+                            Some(SolvePathResult {
+                                optimal_input: result.optimal_input,
+                                profit: result.profit,
+                                hop_outputs: result.hop_outputs,
+                            })
                         } else {
                             None
                         }
@@ -456,6 +474,13 @@ impl UniswapEngine {
                     int_sequences[0],
                     int_sequences[1],
                 )
+                .map(|(optimal_input, profit, hop_outputs)| {
+                    SolvePathResult {
+                        optimal_input,
+                        profit,
+                        hop_outputs,
+                    }
+                })
             } else {
                 None
             }
@@ -467,7 +492,7 @@ impl UniswapEngine {
 
     /// Solve all registered paths using `solve_path`.
     #[must_use]
-    fn solve_all(&self) -> Vec<(u64, U256, U256)> {
+    fn solve_all(&self) -> Vec<(u64, SolvePathResult)> {
         let mut results = Vec::with_capacity(self.paths.len());
 
         for (&path_id, (_path, resolved)) in &self.paths {
@@ -475,9 +500,9 @@ impl UniswapEngine {
                 continue;
             }
 
-            if let Some((opt_input, profit)) = self.solve_path(resolved) {
-                if !opt_input.is_zero() && !profit.is_zero() {
-                    results.push((path_id, opt_input, profit));
+            if let Some(solve_result) = self.solve_path(resolved) {
+                if !solve_result.optimal_input.is_zero() && !solve_result.profit.is_zero() {
+                    results.push((path_id, solve_result));
                 }
             }
         }
@@ -497,7 +522,7 @@ impl UniswapEngine {
     /// approximation when swaps exceed the current tick range capacity.
     fn solve_mixed_path_int(
         resolved: &ResolvedMixedPath,
-    ) -> Option<(U256, U256)> {
+    ) -> Option<SolvePathResult> {
         if resolved.hop_types.len() != 2 {
             return None;
         }
@@ -527,11 +552,18 @@ impl UniswapEngine {
             cl_sequence,
             cl_first,
         )
+        .map(|(optimal_input, profit, hop_outputs)| {
+            SolvePathResult {
+                optimal_input,
+                profit,
+                hop_outputs,
+            }
+        })
     }
 
     /// Read the last solved results and block number.
     #[must_use]
-    pub const fn latest_results(&self) -> (&Vec<(u64, U256, U256)>, u64) {
+    pub const fn latest_results(&self) -> (&Vec<(u64, SolvePathResult)>, u64) {
         (&self.results, self.results_block)
     }
 
@@ -1108,9 +1140,9 @@ mod tests {
         let results = engine.solve_all();
         // Should find a profitable arbitrage
         assert!(!results.is_empty(), "should find profitable V2-V2 arb");
-        let (_, x, p) = &results[0];
-        assert!(!x.is_zero());
-        assert!(!p.is_zero());
+        let (_, solve_result) = &results[0];
+        assert!(!solve_result.optimal_input.is_zero());
+        assert!(!solve_result.profit.is_zero());
     }
 
     #[test]
@@ -1901,12 +1933,21 @@ impl PyUniswapArbEngine {
         };
 
         let py_list = PyList::empty(py);
-        for (path_id, optimal_input, profit) in results {
-            py_list.append(path_id)?;
-            let input_py = crate::alloy_py::PyU256(optimal_input).into_pyobject(py)?;
-            py_list.append(input_py)?;
-            let profit_py = crate::alloy_py::PyU256(profit).into_pyobject(py)?;
-            py_list.append(profit_py)?;
+        for (path_id, solve_result) in results {
+            let path_id_py = path_id.into_pyobject(py)?;
+            let input_py = crate::alloy_py::PyU256(solve_result.optimal_input).into_pyobject(py)?;
+            let profit_py = crate::alloy_py::PyU256(solve_result.profit).into_pyobject(py)?;
+
+            // Build hop_outputs as a Python tuple
+            let hop_outputs_py = PyList::empty(py);
+            for hop_out in &solve_result.hop_outputs {
+                let hop_py = crate::alloy_py::PyU256(*hop_out).into_pyobject(py)?;
+                hop_outputs_py.append(hop_py)?;
+            }
+            let hop_tuple = hop_outputs_py.into_pyobject(py)?;
+
+            let result_tuple = (path_id_py, input_py, profit_py, hop_tuple).into_pyobject(py)?;
+            py_list.append(result_tuple)?;
         }
 
         Ok((py_list.unbind(), block_num))

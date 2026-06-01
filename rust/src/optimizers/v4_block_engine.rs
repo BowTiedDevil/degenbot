@@ -580,7 +580,7 @@ impl V4BlockEngine {
                 .collect();
 
             if int_sequences.len() == 2 {
-                if let Some((opt_input, profit)) =
+                if let Some((opt_input, profit, _hop_outputs)) =
                     crate::optimizers::mobius_v3_int::int_solve_v3_v3(
                         int_sequences[0],
                         int_sequences[1],
@@ -636,7 +636,7 @@ impl V4BlockEngine {
                 .collect();
 
             if int_sequences.len() == 2 {
-                if let Some((opt_input, profit)) =
+                if let Some((opt_input, profit, _hop_outputs)) =
                     crate::optimizers::mobius_v3_int::int_solve_v3_v3(
                         int_sequences[0],
                         int_sequences[1],

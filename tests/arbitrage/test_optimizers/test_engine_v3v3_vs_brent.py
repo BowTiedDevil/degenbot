@@ -200,15 +200,14 @@ def build_engine_v3_v3(
 def solve_engine(engine: UniswapArbEngine) -> list[tuple[int, int, int]]:
     """Trigger initial solve + latest_results and return [(path_id, opt_input, profit), ...]."""
     engine.initial_solve(block_number=1)
-    flat, block = engine.latest_results()
+    results_list, block = engine.latest_results()
     assert block == 1
 
     results = []
-    it = iter(flat)
-    for path_id_py in it:
-        path_id = int(path_id_py)
-        opt_input = int(next(it))
-        profit = int(next(it))
+    for item in results_list:
+        path_id = int(item[0])
+        opt_input = int(item[1])
+        profit = int(item[2])
         results.append((path_id, opt_input, profit))
     return results
 

@@ -56,6 +56,9 @@ pub struct ExactMobiusResult {
     pub is_profitable: bool,
     /// Whether the closed-form solution was used (as opposed to bounded search).
     pub used_closed_form: bool,
+    /// Per-hop output amounts. `hop_outputs[i]` = output after hop `i`.
+    /// Empty if not profitable.
+    pub hop_outputs: Vec<U256>,
 }
 
 /// Solve for optimal arbitrage input using integer-exact Möbius coefficients.
@@ -82,6 +85,7 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
             profit: U256::ZERO,
             is_profitable: false,
             used_closed_form: false,
+            hop_outputs: Vec::new(),
         });
     }
 
@@ -91,13 +95,14 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
         // Even though K > M, the integer square root may give x_opt = 0
         // when the profit is vanishingly small (K/M ≈ 1).
         // Try a small input to detect micro-profits.
-        let micro_output = int_simulate_path(U256::from(1u64), hops);
-        if micro_output > U256::from(1u64) {
+        let sim = int_simulate_path(U256::from(1u64), hops);
+        if sim.final_output > U256::from(1u64) {
             return Ok(ExactMobiusResult {
                 optimal_input: U256::from(1u64),
-                profit: micro_output - U256::from(1u64),
+                profit: sim.final_output - U256::from(1u64),
                 is_profitable: true,
                 used_closed_form: false,
+                hop_outputs: sim.hop_outputs,
             });
         }
         return Ok(ExactMobiusResult {
@@ -105,12 +110,14 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
             profit: U256::ZERO,
             is_profitable: false,
             used_closed_form: false,
+            hop_outputs: Vec::new(),
         });
     }
 
     // Search ±2 around x_approx for integer rounding
     let mut best_x = U256::ZERO;
     let mut best_profit = U256::ZERO;
+    let mut best_hop_outputs: Vec<U256> = Vec::new();
 
     for delta in -2i32..=2 {
         let candidate = if delta >= 0 {
@@ -123,13 +130,14 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
             continue;
         }
 
-        let output = int_simulate_path(candidate, hops);
+        let sim = int_simulate_path(candidate, hops);
 
-        if output > candidate {
-            let profit = output - candidate;
+        if sim.final_output > candidate {
+            let profit = sim.final_output - candidate;
             if profit > best_profit {
                 best_profit = profit;
                 best_x = candidate;
+                best_hop_outputs = sim.hop_outputs;
             }
         }
     }
@@ -139,6 +147,7 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
         profit: best_profit,
         is_profitable: !best_profit.is_zero(),
         used_closed_form: true,
+        hop_outputs: best_hop_outputs,
     })
 }
 
@@ -350,7 +359,7 @@ mod tests {
         assert!(!result.profit.is_zero());
 
         // Verify EVM-exact: simulate at optimal_input
-        let output = int_simulate_path(result.optimal_input, &hops);
+        let output = int_simulate_path(result.optimal_input, &hops).final_output;
         assert!(output > result.optimal_input);
         assert_eq!(output - result.optimal_input, result.profit);
     }
@@ -377,7 +386,7 @@ mod tests {
             if candidate.is_zero() {
                 continue;
             }
-            let output = int_simulate_path(candidate, &hops);
+            let output = int_simulate_path(candidate, &hops).final_output;
             if output > candidate {
                 let profit = output - candidate;
                 assert!(
@@ -508,7 +517,7 @@ mod tests {
 
         if exact_result.is_profitable {
             // Verify EVM-exact result
-            let output = int_simulate_path(exact_result.optimal_input, &hops);
+            let output = int_simulate_path(exact_result.optimal_input, &hops).final_output;
             assert!(
                 output > exact_result.optimal_input,
                 "EVM simulation should confirm profit"
@@ -563,7 +572,7 @@ mod tests {
         // These pools barely disagree — fees may eat all profit
         // Just verify no panic and result is consistent
         if result.is_profitable {
-            let output = int_simulate_path(result.optimal_input, &hops);
+            let output = int_simulate_path(result.optimal_input, &hops).final_output;
             assert!(output > result.optimal_input);
             assert_eq!(output - result.optimal_input, result.profit);
         }
@@ -637,7 +646,7 @@ mod proptests {
             ];
             let result = exact_mobius_solve(&hops).unwrap();
             if result.is_profitable {
-                let output = int_simulate_path(result.optimal_input, &hops);
+                let output = int_simulate_path(result.optimal_input, &hops).final_output;
                 assert!(output > result.optimal_input);
                 assert_eq!(output - result.optimal_input, result.profit);
             }
@@ -690,5 +699,50 @@ mod proptests {
             // If exact says not profitable, f64 may or may not agree.
             // This is expected — f64 false positives are common at the margin.
         }
+    }
+
+    // ── Per-hop output tests ──────────────────────────────────────
+
+    fn u256_hop(n: u64) -> U256 {
+        U256::from(n)
+    }
+
+    #[test]
+    fn test_exact_mobius_solve_hop_outputs_profitable() {
+        let hops = vec![
+            IntHopState::new(u256_hop(1_000_000), u256_hop(5_000_000), 997, 1000),
+            IntHopState::new(u256_hop(1_500_000), u256_hop(3_000_000), 997, 1000),
+        ];
+        let result = exact_mobius_solve(&hops).unwrap();
+        assert!(result.is_profitable);
+
+        // 2 hops → 2 hop_outputs
+        assert_eq!(result.hop_outputs.len(), 2);
+
+        // Invariant: hop_outputs[0] = hops[0].swap(optimal_input)
+        let expected_hop1 = hops[0].swap(result.optimal_input);
+        assert_eq!(result.hop_outputs[0], expected_hop1);
+
+        // Invariant: hop_outputs[1] = hops[1].swap(hop_outputs[0])
+        let expected_hop2 = hops[1].swap(expected_hop1);
+        assert_eq!(result.hop_outputs[1], expected_hop2);
+
+        // Invariant: profit = final_output - optimal_input
+        assert_eq!(
+            result.hop_outputs[1] - result.optimal_input,
+            result.profit
+        );
+    }
+
+    #[test]
+    fn test_exact_mobius_solve_hop_outputs_not_profitable() {
+        // Same-product pools → not profitable → empty hop_outputs
+        let hops = vec![
+            IntHopState::new(u256_hop(1_000_000), u256_hop(1_000_000), 997, 1000),
+            IntHopState::new(u256_hop(1_000_000), u256_hop(1_000_000), 997, 1000),
+        ];
+        let result = exact_mobius_solve(&hops).unwrap();
+        assert!(!result.is_profitable);
+        assert!(result.hop_outputs.is_empty());
     }
 }

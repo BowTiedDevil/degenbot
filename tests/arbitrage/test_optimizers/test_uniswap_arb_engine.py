@@ -215,11 +215,13 @@ class TestUniswapArbEngineProcessLogs:
 
         results, block = engine.latest_results()
         assert block == 1
-        # Should find profitable arb
-        assert len(results) >= 3  # At least (path_id, input, profit)
-        assert results[0] == 1  # path_id
-        assert results[1] > 0  # optimal_input
-        assert results[2] > 0  # profit
+        # Should find profitable arb — each result is (path_id, optimal_input, profit, [hop_outputs])
+        assert len(results) >= 1
+        path_id, optimal_input, profit, hop_outputs = results[0]
+        assert path_id == 1  # path_id
+        assert optimal_input > 0
+        assert profit > 0
+        assert len(hop_outputs) == 2  # 2 hops
 
 
 class TestUniswapArbEngineFreeze:
