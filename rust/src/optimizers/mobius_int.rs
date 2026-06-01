@@ -34,6 +34,27 @@ use alloy::primitives::{U256, U512};
 
 use crate::optimizers::mobius::{mobius_solve, HopState, MobiusError};
 
+// ---------------------------------------------------------------------------
+// Simulation Result
+// ---------------------------------------------------------------------------
+
+/// Result from simulating a multi-hop swap path.
+///
+/// `hop_outputs[i]` is the output amount after hop `i` (0-indexed).
+/// `final_output` equals `hop_outputs.last()` for non-empty paths.
+///
+/// For a 2-hop arbitrage path:
+/// - `hop_outputs[0]` = intermediate output (forward amount from hop 1)
+/// - `hop_outputs[1]` = final output (total received from hop 2)
+/// - `profit = final_output - optimal_input`
+#[derive(Clone, Debug)]
+pub struct SimulationResult {
+    /// Final output amount after all hops.
+    pub final_output: U256,
+    /// Per-hop output amounts. `hop_outputs[i]` = output after hop `i`.
+    pub hop_outputs: Vec<U256>,
+}
+
 /// Fee parameters for a single pool hop.
 ///
 /// In Uniswap V2, the fee is expressed as `gamma_numer / fee_denom`:
@@ -208,16 +229,26 @@ pub fn compute_int_mobius_coefficients(
 ///
 /// Each hop applies: `y = gamma_numer * reserve_out * x / (fee_denom * reserve_in + gamma_numer * x)`
 /// with floor division (EVM semantics).
+///
+/// Returns a [`SimulationResult`] with per-hop output amounts and the final output.
 #[must_use]
-pub fn int_simulate_path(x: U256, hops: &[IntHopState]) -> U256 {
+pub fn int_simulate_path(x: U256, hops: &[IntHopState]) -> SimulationResult {
     let mut amount = x;
+    let mut hop_outputs = Vec::with_capacity(hops.len());
     for hop in hops {
         if amount.is_zero() {
-            return U256::ZERO;
+            return SimulationResult {
+                final_output: U256::ZERO,
+                hop_outputs,
+            };
         }
         amount = hop.swap(amount);
+        hop_outputs.push(amount);
     }
-    amount
+    SimulationResult {
+        final_output: amount,
+        hop_outputs,
+    }
 }
 
 /// Result from the integer Möbius solver.
@@ -358,7 +389,7 @@ pub fn int_mobius_solve(hops: &[IntHopState]) -> Result<IntMobiusResult, MobiusE
             continue;
         }
 
-        let output = int_simulate_path(x, hops);
+        let output = int_simulate_path(x, hops).final_output;
         iters += 1;
 
         if output > x {
@@ -461,7 +492,7 @@ pub fn mobius_refine_int(
             }
         }
 
-        let output = int_simulate_path(candidate, hops);
+        let output = int_simulate_path(candidate, hops).final_output;
         iters += 1;
 
         if output > candidate {
@@ -707,8 +738,8 @@ mod tests {
             IntHopState::new(u256(1_000_000), u256(5_000_000), 997, 1000),
             IntHopState::new(u256(1_500_000), u256(3_000_000), 997, 1000),
         ];
-        let output = int_simulate_path(u256(1000), &hops);
-        assert!(!output.is_zero());
+        let result = int_simulate_path(u256(1000), &hops);
+        assert!(!result.final_output.is_zero());
     }
 
     #[test]
@@ -752,7 +783,7 @@ mod tests {
         assert!(!result.profit.is_zero());
 
         // Verify EVM-exact: simulate at optimal_input
-        let output = int_simulate_path(result.optimal_input, &hops);
+        let output = int_simulate_path(result.optimal_input, &hops).final_output;
         assert!(output > result.optimal_input);
         assert_eq!(output - result.optimal_input, result.profit);
     }
@@ -838,12 +869,52 @@ mod tests {
             if candidate.is_zero() {
                 continue;
             }
-            let output = int_simulate_path(candidate, &hops);
+            let output = int_simulate_path(candidate, &hops).final_output;
             if output > candidate {
                 let profit = output - candidate;
                 assert!(profit <= result.profit, "Neighbor has better profit");
             }
         }
+    }
+
+    // ── Per-hop output tests ──────────────────────────────────────
+
+    #[test]
+    fn test_int_simulate_path_hop_outputs_two_hop() {
+        let hops = vec![
+            IntHopState::new(u256(1_000_000), u256(5_000_000), 997, 1000),
+            IntHopState::new(u256(1_500_000), u256(3_000_000), 997, 1000),
+        ];
+        let result = int_simulate_path(u256(1000), &hops);
+        // 2 hops → 2 hop_outputs
+        assert_eq!(result.hop_outputs.len(), 2);
+        // final_output == last hop output
+        assert_eq!(result.final_output, *result.hop_outputs.last().unwrap());
+        // hop_outputs[1] == hop2.swap(hop_outputs[0])
+        let expected_hop1 = hops[0].swap(u256(1000));
+        assert_eq!(result.hop_outputs[0], expected_hop1);
+        let expected_hop2 = hops[1].swap(expected_hop1);
+        assert_eq!(result.hop_outputs[1], expected_hop2);
+    }
+
+    #[test]
+    fn test_int_simulate_path_hop_outputs_single_hop() {
+        let hops = vec![IntHopState::new(u256(1_000_000), u256(5_000_000), 997, 1000)];
+        let result = int_simulate_path(u256(1000), &hops);
+        assert_eq!(result.hop_outputs.len(), 1);
+        assert_eq!(result.final_output, result.hop_outputs[0]);
+        assert_eq!(result.final_output, hops[0].swap(u256(1000)));
+    }
+
+    #[test]
+    fn test_int_simulate_path_hop_outputs_zero_input() {
+        let hops = vec![
+            IntHopState::new(u256(1_000_000), u256(5_000_000), 997, 1000),
+            IntHopState::new(u256(1_500_000), u256(3_000_000), 997, 1000),
+        ];
+        let result = int_simulate_path(U256::ZERO, &hops);
+        assert_eq!(result.final_output, U256::ZERO);
+        assert!(result.hop_outputs.is_empty());
     }
 }
 
@@ -943,7 +1014,7 @@ mod proptests {
             let result = result.unwrap();
             if result.success {
                 assert!(!result.optimal_input.is_zero());
-                let simulated = int_simulate_path(result.optimal_input, &hops);
+                let simulated = int_simulate_path(result.optimal_input, &hops).final_output;
                 assert!(simulated >= result.optimal_input);
                 let expected_profit = simulated - result.optimal_input;
                 assert_eq!(result.profit, expected_profit);

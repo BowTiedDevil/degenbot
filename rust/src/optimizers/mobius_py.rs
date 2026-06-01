@@ -1649,8 +1649,8 @@ fn py_int_simulate_path<'py>(
         int_hops.push(py_hop.inner.clone());
     }
 
-    let output = py.detach(|| int_simulate_path(x_u256, &int_hops));
-    PyU256(output).into_pyobject(py)
+    let result = py.detach(|| int_simulate_path(x_u256, &int_hops));
+    PyU256(result.final_output).into_pyobject(py)
 }
 
 /// Integer refinement around a float optimum using EVM-exact U256 arithmetic.
