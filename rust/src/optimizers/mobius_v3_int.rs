@@ -462,42 +462,53 @@ fn int_simulate_v3_v3_path(
         return SimulationResult {
             final_output: U256::ZERO,
             hop_outputs: Vec::new(),
+            consumed_inputs: vec![U256::ZERO, U256::ZERO],
         };
     }
 
-    // Hop 1 output
-    let output1 = if let Some(c1) = crossing1 {
+    // Hop 1
+    let (consumed1, output1) = if let Some(c1) = crossing1 {
         if amount_in < c1.crossing_gross_input {
             return SimulationResult {
                 final_output: U256::ZERO,
                 hop_outputs: Vec::new(),
+                consumed_inputs: vec![U256::ZERO, U256::ZERO],
             };
         }
         let remaining = amount_in - c1.crossing_gross_input;
-        let ending_out = int_simulate_v3_swap(remaining, &c1.ending_range);
-        c1.crossing_output.saturating_add(ending_out)
+        let ending = int_simulate_v3_swap(remaining, &c1.ending_range);
+        let out = c1.crossing_output.saturating_add(ending.output);
+        // consumed = crossing_gross_input + ending.consumed_input
+        let consumed = c1.crossing_gross_input.saturating_add(ending.consumed_input);
+        (consumed, out)
     } else {
-        int_simulate_v3_swap(amount_in, base_range1)
+        let result = int_simulate_v3_swap(amount_in, base_range1);
+        (result.consumed_input, result.output)
     };
 
-    // Hop 2 output
-    let output2 = if let Some(c2) = crossing2 {
+    // Hop 2
+    let (consumed2, output2) = if let Some(c2) = crossing2 {
         if output1 < c2.crossing_gross_input {
             return SimulationResult {
                 final_output: U256::ZERO,
                 hop_outputs: vec![output1],
+                consumed_inputs: vec![consumed1, U256::ZERO],
             };
         }
         let remaining = output1 - c2.crossing_gross_input;
-        let ending_out = int_simulate_v3_swap(remaining, &c2.ending_range);
-        c2.crossing_output.saturating_add(ending_out)
+        let ending = int_simulate_v3_swap(remaining, &c2.ending_range);
+        let out = c2.crossing_output.saturating_add(ending.output);
+        let consumed = c2.crossing_gross_input.saturating_add(ending.consumed_input);
+        (consumed, out)
     } else {
-        int_simulate_v3_swap(output1, base_range2)
+        let result = int_simulate_v3_swap(output1, base_range2);
+        (result.consumed_input, result.output)
     };
 
     SimulationResult {
         final_output: output2,
         hop_outputs: vec![output1, output2],
+        consumed_inputs: vec![consumed1, consumed2],
     }
 }
 
@@ -680,9 +691,41 @@ pub enum MixedIntHop {
 /// Returns the output amount (U256). Returns 0 if the swap pushes the
 /// price out of range or if inputs are invalid.
 #[must_use]
-pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> U256 {
+/// Result of simulating a V3 swap within a single tick range.
+///
+/// V3's swap function partial-fills: if the input exceeds the range capacity,
+/// only the consumed portion is used and the unused remainder is retained by
+/// the caller (cf. `amountSpecified - amountSpecifiedRemaining` in
+/// UniswapV3Pool.sol). `consumed_input` tracks this consumed amount so that
+/// the profit calculation uses the actual cost, not the full specified input.
+#[derive(Clone, Debug, Default)]
+pub struct V3SwapResult {
+    /// Gross input actually consumed (including fees).
+    ///
+    /// When the swap does NOT reach the range boundary, `consumed_input ==
+    /// amount_in` (the entire input is consumed). When the boundary is hit,
+    /// `consumed_input < amount_in`; the remainder stays with the caller.
+    pub consumed_input: U256,
+    /// Output amount from the swap.
+    pub output: U256,
+}
+
+/// Simulate a V3 swap within a single tick range using integer arithmetic.
+///
+/// Returns a [`V3SwapResult`] with the consumed input and output amounts.
+/// When the range boundary is reached before the full input is consumed,
+/// `consumed_input` is the amount that would actually be charged by the V3
+/// pool — matching the on-chain behavior where `amountSpecifiedRemaining`
+/// tracks the unused portion.
+///
+/// This matches `computeSwapStep` in the Uniswap V3/V4 contracts: each step
+/// computes `amountIn + feeAmount` as the consumed gross input and `amountOut`
+/// as the output. If the price target is reached, only the portion needed to
+/// reach the target is consumed.
+#[must_use]
+pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3SwapResult {
     if amount_in.is_zero() || v3_hop.liquidity == 0 {
-        return U256::ZERO;
+        return V3SwapResult::default();
     }
 
     let gamma = U256::from(v3_hop.gamma_numer);
@@ -694,7 +737,7 @@ pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> U256
     let net_in = u512_to_u256(net_in_u512 / U512::from(fee_denom));
 
     if net_in.is_zero() {
-        return U256::ZERO;
+        return V3SwapResult::default();
     }
 
     let l = U256::from(v3_hop.liquidity);
@@ -718,7 +761,7 @@ pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> U256
         let denominator = U512::from(l) * U512::from(q96) + U512::from(net_in) * U512::from(sp_current);
 
         if denominator.is_zero() {
-            return U256::ZERO;
+            return V3SwapResult::default();
         }
 
         let sp_next_u512 = numerator / denominator;
@@ -726,16 +769,49 @@ pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> U256
 
         // Clamp to range: sp_next must be >= sqrt_price_lower
         let sp_final = sp_next.max(v3_hop.sqrt_price_lower_x96);
+        let hit_boundary = sp_final == v3_hop.sqrt_price_lower_x96;
 
         // Output = L · (√P_current - √P_final) / 2^96
         // In Q96: L · (sp_current - sp_final) / q96
         let sp_diff = sp_current.saturating_sub(sp_final);
         if sp_diff.is_zero() {
-            return U256::ZERO;
+            return V3SwapResult::default();
         }
 
         let output_u512 = U512::from(l) * U512::from(sp_diff);
-        u512_to_u256(output_u512 / U512::from(q96))
+        let output = u512_to_u256(output_u512 / U512::from(q96));
+
+        let consumed_input = if hit_boundary {
+            // Compute the gross input that produces the boundary output.
+            // net_in_for_boundary = output * fee_denom / gamma  (inverse of the fee deduction)
+            // consumed_input = net_in_for_boundary * fee_denom / gamma
+            // Since output = L * (sp_current - sp_lower) / q96 (the full range output),
+            // and net_in_for_output = output (for zfo, output = amount1 delta),
+            // we need to recover the gross input from the output amount.
+            //
+            // In V3's computeSwapStep: if price target is reached,
+            //   amountIn = SqrtPriceMath.getAmount0Delta(sp_final, sp_current, L, roundUp=true)
+            //   feeAmount = amountRemaining - amountIn   (for exact input)
+            //   consumed = amountIn + feeAmount = amountRemaining (full net_in)
+            //
+            // But we need GROSS consumed, which includes the fee:
+            //   consumed_gross = consumed_net * fee_denom / gamma_numer
+            //
+            // The consumed net input for zfo hitting the lower boundary:
+            //   net_consumed = L * 2^96 * (sp_current - sp_lower) / (sp_current * sp_lower)
+            //   gross_consumed = net_consumed * fee_denom / gamma_numer
+            let net_consumed_u512 = U512::from(l) * U512::from(q96) * U512::from(sp_diff);
+            let net_consumed = u512_to_u256(
+                net_consumed_u512 / (U512::from(sp_current) * U512::from(sp_final)),
+            );
+            // gross_consumed = net_consumed * fee_denom / gamma
+            let gross_u512 = U512::from(net_consumed) * U512::from(fee_denom);
+            u512_to_u256(gross_u512 / U512::from(gamma))
+        } else {
+            amount_in
+        };
+
+        V3SwapResult { consumed_input, output }
     } else {
         // ofz: price increases from √P_current toward √P_upper
         // Solidity: sqrtPriceNext = sqrtPriceCurrent + amountRemaining * 2^96 / liquidity
@@ -748,22 +824,37 @@ pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> U256
 
         // Clamp to range: sp_next must be <= sqrt_price_upper
         let sp_final = sp_next.min(v3_hop.sqrt_price_upper_x96);
+        let hit_boundary = sp_final == v3_hop.sqrt_price_upper_x96;
 
         // Output = L · (1/√P_current - 1/√P_final) = L · (√P_final - √P_current) / (√P_current · √P_final / 2^96)
         // In Q96: L · 2^96 · (sp_final - sp_current) / (sp_current · sp_final)
         let sp_diff = sp_final.saturating_sub(sp_current);
         if sp_diff.is_zero() {
-            return U256::ZERO;
+            return V3SwapResult::default();
         }
 
         let numerator_u512 = U512::from(l) * U512::from(q96) * U512::from(sp_diff);
         let denominator_u512 = U512::from(sp_current) * U512::from(sp_final);
 
         if denominator_u512.is_zero() {
-            return U256::ZERO;
+            return V3SwapResult::default();
         }
 
-        u512_to_u256(numerator_u512 / denominator_u512)
+        let output = u512_to_u256(numerator_u512 / denominator_u512);
+
+        let consumed_input = if hit_boundary {
+            // The consumed net input for ofz hitting the upper boundary:
+            //   net_consumed = L * (sp_upper - sp_current) / 2^96
+            //   gross_consumed = net_consumed * fee_denom / gamma
+            let net_consumed_u512 = U512::from(l) * U512::from(sp_diff);
+            let net_consumed = u512_to_u256(net_consumed_u512 / U512::from(q96));
+            let gross_u512 = U512::from(net_consumed) * U512::from(fee_denom);
+            u512_to_u256(gross_u512 / U512::from(gamma))
+        } else {
+            amount_in
+        };
+
+        V3SwapResult { consumed_input, output }
     }
 }
 
@@ -797,52 +888,63 @@ fn int_simulate_mixed_path_with_crossing(
         return SimulationResult {
             final_output: U256::ZERO,
             hop_outputs: Vec::new(),
+            consumed_inputs: vec![U256::ZERO, U256::ZERO],
         };
     }
 
     if v3_first {
         // V3 → V2: input goes through V3 first, then V2
-        let v3_output = if let Some(crossing) = v3_crossing {
+        let (v3_consumed, v3_output) = if let Some(crossing) = v3_crossing {
             if amount_in < crossing.crossing_gross_input {
                 return SimulationResult {
                     final_output: U256::ZERO,
                     hop_outputs: Vec::new(),
+                    consumed_inputs: vec![U256::ZERO, U256::ZERO],
                 };
             }
             let remaining = amount_in - crossing.crossing_gross_input;
-            let ending_out = int_simulate_v3_swap(remaining, &crossing.ending_range);
-            crossing.crossing_output.saturating_add(ending_out)
+            let ending = int_simulate_v3_swap(remaining, &crossing.ending_range);
+            let out = crossing.crossing_output.saturating_add(ending.output);
+            let consumed = crossing.crossing_gross_input.saturating_add(ending.consumed_input);
+            (consumed, out)
         } else {
-            int_simulate_v3_swap(amount_in, base_v3_hop)
+            let result = int_simulate_v3_swap(amount_in, base_v3_hop);
+            (result.consumed_input, result.output)
         };
 
-        // V3 output goes through V2 hops
+        // V3 output goes through V2 hops (V2 always consumes full input)
         let v2_output = int_simulate_v2_hops(v3_output, v2_hops);
         SimulationResult {
             final_output: v2_output,
             hop_outputs: vec![v3_output, v2_output],
+            consumed_inputs: vec![v3_consumed, v3_output],
         }
     } else {
         // V2 → V3: input goes through V2 first, then V3
         let v2_output = int_simulate_v2_hops(amount_in, v2_hops);
 
         // V2 output goes through V3 (with optional crossing)
-        let v3_output = if let Some(crossing) = v3_crossing {
+        let (v3_consumed, v3_output) = if let Some(crossing) = v3_crossing {
             if v2_output < crossing.crossing_gross_input {
                 return SimulationResult {
                     final_output: U256::ZERO,
                     hop_outputs: vec![v2_output],
+                    consumed_inputs: vec![amount_in, U256::ZERO],
                 };
             }
             let remaining = v2_output - crossing.crossing_gross_input;
-            let ending_out = int_simulate_v3_swap(remaining, &crossing.ending_range);
-            crossing.crossing_output.saturating_add(ending_out)
+            let ending = int_simulate_v3_swap(remaining, &crossing.ending_range);
+            let out = crossing.crossing_output.saturating_add(ending.output);
+            let consumed = crossing.crossing_gross_input.saturating_add(ending.consumed_input);
+            (consumed, out)
         } else {
-            int_simulate_v3_swap(v2_output, base_v3_hop)
+            let result = int_simulate_v3_swap(v2_output, base_v3_hop);
+            (result.consumed_input, result.output)
         };
         SimulationResult {
             final_output: v3_output,
             hop_outputs: vec![v2_output, v3_output],
+            consumed_inputs: vec![amount_in, v3_consumed],
         }
     }
 }
@@ -1054,11 +1156,13 @@ mod tests {
 
         // Small swap: 1000 token0 in, zfo
         let input = U256::from(1000u64);
-        let output = int_simulate_v3_swap(input, &hop);
+        let result = int_simulate_v3_swap(input, &hop);
 
         // Should produce positive output less than input (due to fees on 1:1 pool)
-        assert!(output > U256::ZERO, "Output should be positive for a valid swap");
-        assert!(output < input, "Output should be less than input on 1:1 pool with fees: output={output}, input={input}");
+        assert!(result.output > U256::ZERO, "Output should be positive for a valid swap");
+        assert!(result.output < input, "Output should be less than input on 1:1 pool with fees: output={}, input={}", result.output, input);
+        // Small swap should not hit range boundary — full input consumed
+        assert_eq!(result.consumed_input, input);
     }
 
     #[test]
@@ -1067,17 +1171,19 @@ mod tests {
 
         // Small swap: 1000 token1 in, ofz
         let input = U256::from(1000u64);
-        let output = int_simulate_v3_swap(input, &hop);
+        let result = int_simulate_v3_swap(input, &hop);
 
-        assert!(output > U256::ZERO);
-        assert!(output < input, "Output should be less than input on 1:1 pool with fees");
+        assert!(result.output > U256::ZERO);
+        assert!(result.output < input, "Output should be less than input on 1:1 pool with fees");
+        assert_eq!(result.consumed_input, input);
     }
 
     #[test]
     fn test_int_simulate_v3_swap_zero_input() {
         let hop = make_v3_hop_at_1to1(1_000_000u128, true);
-        let output = int_simulate_v3_swap(U256::ZERO, &hop);
-        assert!(output.is_zero());
+        let result = int_simulate_v3_swap(U256::ZERO, &hop);
+        assert!(result.output.is_zero());
+        assert!(result.consumed_input.is_zero());
     }
 
     #[test]
@@ -1091,8 +1197,9 @@ mod tests {
             fee_denom: 1_000_000,
             zero_for_one: true,
         };
-        let output = int_simulate_v3_swap(U256::from(1000u64), &hop);
-        assert!(output.is_zero());
+        let result = int_simulate_v3_swap(U256::from(1000u64), &hop);
+        assert!(result.output.is_zero());
+        assert!(result.consumed_input.is_zero());
     }
 
     #[test]
@@ -1437,10 +1544,10 @@ mod tests {
         assert_eq!(result.final_output, *result.hop_outputs.last().unwrap());
         // Invariant: hop_outputs[1] is the output after hop 2 using hop 1's output as input
         let expected_hop1 = int_simulate_v3_swap(U256::from(1_000_000u64), &hop1);
-        assert_eq!(result.hop_outputs[0], expected_hop1);
-        let expected_hop2 = int_simulate_v3_swap(expected_hop1, &hop2);
-        assert_eq!(result.hop_outputs[1], expected_hop2);
-        assert_eq!(result.final_output, expected_hop2);
+        assert_eq!(result.hop_outputs[0], expected_hop1.output);
+        let expected_hop2 = int_simulate_v3_swap(expected_hop1.output, &hop2);
+        assert_eq!(result.hop_outputs[1], expected_hop2.output);
+        assert_eq!(result.final_output, expected_hop2.output);
     }
 
     #[test]
