@@ -467,8 +467,14 @@ impl UniswapEngine {
                             && !r.optimal_input.is_zero()
                             && !r.profit.is_zero()
                         {
-                            // V2 pools always consume the full input
-                            let consumed_inputs = vec![r.optimal_input; r.hop_outputs.len()];
+                            // V2 constant-product pools: each hop's consumed input
+                            // is the previous hop's output (hop_outputs[i-1]),
+                            // with hop 0 consuming optimal_input.
+                            let mut consumed_inputs = Vec::with_capacity(r.hop_outputs.len());
+                            consumed_inputs.push(r.optimal_input);
+                            for i in 1..r.hop_outputs.len() {
+                                consumed_inputs.push(r.hop_outputs[i - 1]);
+                            }
                             Some(SolvePathResult {
                                 optimal_input: r.optimal_input,
                                 profit: r.profit,
@@ -495,12 +501,16 @@ impl UniswapEngine {
                     int_sequences[1],
                 )
                 .map(|(optimal_input, _profit, hop_outputs)| {
-                    // int_solve_v3_v3 computes profit as final_output - optimal_input,
-                    // but the correct profit uses consumed_inputs[0] (which may be
-                    // less than optimal_input on partial fills). The CL solver always
-                    // fully consumes the input within the first range, so
-                    // consumed_inputs[0] == optimal_input for single-range paths.
-                    let consumed_inputs = vec![optimal_input; hop_outputs.len()];
+                    // consumed_inputs[0] = optimal_input (first hop always consumes
+                    // its full input for single-range paths; no partial fill).
+                    // consumed_inputs[i>0] = hop_outputs[i-1] (the previous hop's
+                    // output becomes this hop's input — matching the pipeline:
+                    // V3 output flows into V4 as amountSpecified).
+                    let mut consumed_inputs = Vec::with_capacity(hop_outputs.len());
+                    consumed_inputs.push(optimal_input);
+                    for i in 1..hop_outputs.len() {
+                        consumed_inputs.push(hop_outputs[i - 1]);
+                    }
                     let profit = hop_outputs.last().copied().unwrap_or(U256::ZERO)
                         .saturating_sub(consumed_inputs[0]);
                     SolvePathResult {
@@ -599,14 +609,14 @@ impl UniswapEngine {
             cl_first,
         )
         .map(|(optimal_input, profit, hop_outputs)| {
-            // For mixed paths: the first hop's consumed input may differ from
-            // optimal_input if the CL hop hits its range boundary.
-            // The mixed solver uses SimulationResult which tracks consumed_inputs,
-            // but the top-level return type only carries (input, profit, outputs).
-            // Use profit = final_output - consumed_inputs[0] for correctness.
-            // For now, consumed_inputs are approximated as [optimal_input; n]
-            // since the mixed solver doesn't return them directly.
-            let consumed_inputs = vec![optimal_input; hop_outputs.len()];
+            // consumed_inputs[0] = optimal_input (first hop consumes full input).
+            // consumed_inputs[i>0] = hop_outputs[i-1] (previous hop's output
+            // becomes this hop's input).
+            let mut consumed_inputs = Vec::with_capacity(hop_outputs.len());
+            consumed_inputs.push(optimal_input);
+            for i in 1..hop_outputs.len() {
+                consumed_inputs.push(hop_outputs[i - 1]);
+            }
             SolvePathResult {
                 optimal_input,
                 profit,

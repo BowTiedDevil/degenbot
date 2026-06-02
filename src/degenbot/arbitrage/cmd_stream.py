@@ -18,10 +18,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 
+from degenbot.arbitrage.encoding import EncodedCall
+from degenbot.arbitrage.types import UniswapV4PoolSwapAmounts
+
 if TYPE_CHECKING:
+    from eth_typing import ChecksumAddress
+
     from degenbot.arbitrage.types import (
         AbstractSwapAmounts,
         UniswapV2PoolSwapAmounts,
@@ -32,12 +36,8 @@ if TYPE_CHECKING:
 
 # ── Sentinel addresses ──
 
-NATIVE_ADDRESS: ChecksumAddress = to_checksum_address(
-    "0x0000000000000000000000000000000000000000"
-)
-ZERO_ADDRESS: ChecksumAddress = to_checksum_address(
-    "0x0000000000000000000000000000000000000000"
-)
+NATIVE_ADDRESS: ChecksumAddress = to_checksum_address("0x0000000000000000000000000000000000000000")
+ZERO_ADDRESS: ChecksumAddress = to_checksum_address("0x0000000000000000000000000000000000000000")
 
 # ── Command opcodes ──
 
@@ -78,6 +78,7 @@ CMD_V4_TAKE_COMPACT = b"\x52"
 CMD_V4_TAKE_DELTA = b"\x53"
 CMD_V4_SYNC = b"\x54"
 # 0x55 = V4_SETTLE
+CMD_V4_SETTLE = b"\x55"
 CMD_V4_SETTLE_DELTA = b"\x56"
 CMD_V4_SETTLE_ALL = b"\x57"
 CMD_V4_MINT_COMPACT = b"\x58"
@@ -681,13 +682,10 @@ class V4V4ArbitragePayload:
         # Pool B: pays pool_a's output, receives profit
 
         # Determine the output currency of pool B (the profit token)
-        output_currency_b = (
-            self.pool_b_key[1] if self.pool_b_zfo else self.pool_b_key[0]
-        )
+        output_currency_b = self.pool_b_key[1] if self.pool_b_zfo else self.pool_b_key[0]
 
         if output_currency_b == NATIVE_ADDRESS or (
-            self.profit_currency is not None
-            and self.profit_currency == NATIVE_ADDRESS
+            self.profit_currency is not None and self.profit_currency == NATIVE_ADDRESS
         ):
             # Cross-currency: native ETH output
             native_idx = at.index_of(NATIVE_ADDRESS)
@@ -756,10 +754,6 @@ class CmdExecutorComposer:
             A single-element list containing the EncodedCall for
             executor.execute(commands_bytes).
         """
-        from degenbot.arbitrage.encoding import EncodedCall
-        from degenbot.arbitrage.types import (
-            UniswapV4PoolSwapAmounts,
-        )
 
         # Route to path-specific encoder based on swap types
         if len(swap_amounts) == 2 and all(
@@ -767,35 +761,33 @@ class CmdExecutorComposer:
         ):
             commands = self._encode_v4_v4(swap_amounts)
         else:
-            msg = (
-                f"Unsupported swap combination: "
-                f"{[type(s).__name__ for s in swap_amounts]}"
-            )
+            msg = f"Unsupported swap combination: {[type(s).__name__ for s in swap_amounts]}"
             raise NotImplementedError(msg)
 
         # Load ABI for encoding
         import json
         from web3 import Web3
 
-        abi_path = (
-            "/home/ralph/code/degenbot/contracts/cmd_executor_abi.json"
-        )
+        abi_path = "/home/ralph/code/degenbot/contracts/cmd_executor_abi.json"
         with open(abi_path) as f:
             abi = json.load(f)
 
         # Encode the execute(commands) call
         selector = Web3.keccak(text="execute(bytes)")[:4]
         from eth_abi import abi as eth_abi_module
+
         data = selector + eth_abi_module.encode(
             types=["bytes"],
             args=[commands],
         )
 
-        return [EncodedCall(
-            to=self.executor,
-            data=data,
-            value=0,
-        )]
+        return [
+            EncodedCall(
+                to=self.executor,
+                data=data,
+                value=0,
+            )
+        ]
 
     def _encode_v4_v4(
         self,
@@ -823,12 +815,12 @@ class CmdExecutorComposer:
         at.add(ZERO_ADDRESS)  # no hooks
 
         # Check if native ETH is involved
-        has_native = (
-            swap_a.pool_key.currency0 == NATIVE_ADDRESS
-            or swap_a.pool_key.currency1 == NATIVE_ADDRESS
-            or swap_b.pool_key.currency0 == NATIVE_ADDRESS
-            or swap_b.pool_key.currency1 == NATIVE_ADDRESS
-        )
+        has_native = NATIVE_ADDRESS in {
+            swap_a.pool_key.currency0,
+            swap_a.pool_key.currency1,
+            swap_b.pool_key.currency0,
+            swap_b.pool_key.currency1,
+        }
         if has_native:
             at.add(NATIVE_ADDRESS)
 
@@ -858,21 +850,19 @@ class CmdExecutorComposer:
 
         # Settlement: determine profit currency and amounts
         output_currency_b = (
-            swap_b.pool_key.currency1
-            if swap_b.zero_for_one
-            else swap_b.pool_key.currency0
+            swap_b.pool_key.currency1 if swap_b.zero_for_one else swap_b.pool_key.currency0
         )
         input_currency_a = (
-            swap_a.pool_key.currency0
-            if swap_a.zero_for_one
-            else swap_a.pool_key.currency1
+            swap_a.pool_key.currency0 if swap_a.zero_for_one else swap_a.pool_key.currency1
         )
 
         if output_currency_b == NATIVE_ADDRESS:
             # Cross-currency: native ETH profit
             native_idx = at.index_of(NATIVE_ADDRESS)
             inner += enc_v4_take(
-                native_idx, at.index_of(self.executor), swap_b.amount_out,
+                native_idx,
+                at.index_of(self.executor),
+                swap_b.amount_out,
             )
             inner += enc_v4_settle_delta(at.index_of(self.weth))
         elif input_currency_a == output_currency_b:
@@ -1062,7 +1052,10 @@ class V4V3ArbitragePayload:
         inner += enc_v4_take(usdc_idx, executor_idx, self.v4_amount_out)
         # Auto-pay: V3 callback auto-transfers owed tokens from executor
         inner += enc_v3_swap_compact(
-            v3_idx, self.v3_zfo, self.v3_amount_in, executor_idx,
+            v3_idx,
+            self.v3_zfo,
+            self.v3_amount_in,
+            executor_idx,
         )
         inner += enc_v4_settle_delta(weth_idx)
 
@@ -1114,7 +1107,10 @@ class V4V3ArbitragePayload:
         )
         inner += enc_v4_take(usdc_idx, executor_idx, self.v4_amount_out)
         inner += enc_v3_swap_compact(
-            v3_idx, self.v3_zfo, self.v3_amount_in, executor_idx,
+            v3_idx,
+            self.v3_zfo,
+            self.v3_amount_in,
+            executor_idx,
             forward_data=v3_callback_cmds,
         )
 
