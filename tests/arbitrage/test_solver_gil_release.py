@@ -86,7 +86,7 @@ def test_solve_raw_releases_gil():
     hops = _make_hops()
 
     # Warm up: ensure the solver is JIT-compiled / caches are populated
-    for _ in range(10):
+    for _ in range(512):
         solver.solve_raw(hops)
 
     concurrent: dict = {"current": 0, "max": 0, "lock": threading.Lock()}

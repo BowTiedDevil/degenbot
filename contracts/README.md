@@ -30,14 +30,15 @@ The immutable ordering in the runtime bytecode tail is `POOL_MANAGER_ADDR`, `WET
 
 | Slot | Immutable | Value | Notes |
 |------|-----------|-------|-------|
-| 1 | `POOL_MANAGER_ADDR` | **MUST match the target chain's PoolManager** | Controls all V4 operations: `V4_UNLOCK`, `V4_SWAP_*`, `V4_TAKE`, `V4_SETTLE_*` all route through this address. If wrong, every V4-hybrid path reverts at ~38K gas with empty revert data |
+| 1 | `OWNER_ADDR` | `0x9C56a29c7231974c269E24F9FB3c29203039089E` | Throwaway — must match `EXECUTOR_OWNER` in the backrun script. `execute()` checks `msg.sender == OWNER_ADDR`, so the simulation's `from` address must equal this |
 | 2 | `WETH_ADDR` | `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` | WETH on mainnet — unlikely to differ across deployments |
-| 3 | `OWNER_ADDR` | `0x9C56a29c7231974c269E24F9FB3c29203039089E` | Throwaway — overridden by `EXECUTOR_OWNER` at runtime, not used by swap logic |
+| 3 | `POOL_MANAGER_ADDR` | **MUST match the target chain's PoolManager** | Controls all V4 operations: `V4_UNLOCK`, `V4_SWAP_*`, `V4_TAKE`, `V4_SETTLE_*` all route through this address. If wrong, every V4-hybrid path reverts at ~38K gas with empty revert data |
 
 > ⚠️ **Critical**: The `POOL_MANAGER_ADDR` immutable in the runtime bytecode file **must
 > match the PoolManager address on the target chain**. On Ethereum mainnet, this is
-> `0x000000000004444c5dc75cB358380D2e3De08A90`. If this immutable is wrong (e.g., left as the
-> zero address or a throwaway), all V4-hybrid paths (V4-V4, V4-V3, V3-V4, V4-V2, V2-V4) will
+> `0x000000000004444c5dc75cB358380D2e3De08A90`. The original compiled bytecode has this slot as
+> the zero address — it **must** be patched before use. If wrong, all V4-hybrid paths (V4-V4,
+> V4-V3, V3-V4, V4-V2, V2-V4) will
 > revert immediately inside `execute()` with an empty revert at ~38K gas — the `V4_UNLOCK`
 > command calls `extcall IPoolManager(POOL_MANAGER_ADDR).unlock()` against the wrong address.
 > V2-only and V3-only paths work regardless because they never touch the PoolManager.
@@ -60,9 +61,9 @@ with open("contracts/cmd_executor_runtime_bytecode.txt") as f:
     code = f.read().strip()[2:]  # strip 0x
 
 # Last 192 hex chars = 3 × 32-byte immutable slots
-# Slot layout: [PM:64][WETH:64][OWNER:64]
+# Slot layout: [OWNER:64][WETH:64][PM:64]
 tail = code[-192:]
-new_tail = pm_padded + tail[64:]  # replace slot 1, keep slots 2-3
+new_tail = tail[:128] + pm_padded  # keep slots 1-2, replace slot 3
 
 with open("contracts/cmd_executor_runtime_bytecode.txt", "w") as f:
     f.write("0x" + code[:-192] + new_tail + "\n")
