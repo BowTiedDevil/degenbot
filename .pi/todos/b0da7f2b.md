@@ -6,6 +6,6 @@
     "3-hop",
     "v3"
   ],
-  "status": "open",
+  "status": "complete",
   "created_at": "2026-06-01T23:53:21.669Z"
 }
