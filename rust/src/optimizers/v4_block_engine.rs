@@ -46,6 +46,31 @@ use crate::bot_core::TickInfo;
 use crate::optimizers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence};
 
 // ---------------------------------------------------------------------------
+// Buffered liquidity update for unregistered V4 pools
+// ---------------------------------------------------------------------------
+
+/// A buffered liquidity update (`ModifyLiquidity`) for an unregistered V4 pool.
+///
+/// V4 uses a single `ModifyLiquidity` event covering both Mint (positive delta)
+/// and Burn (negative delta). When such an event arrives for a pool not yet
+/// registered, the raw update is stored here. When the pool is later
+/// registered, all buffered updates are applied eagerly.
+///
+/// Stores raw event data (not collapsed) to support future reorg handling.
+#[derive(Clone, Debug)]
+pub struct BufferedV4LiquidityUpdate {
+    /// The tick lower boundary of the position.
+    pub tick_lower: i32,
+    /// The tick upper boundary of the position.
+    pub tick_upper: i32,
+    /// The signed liquidity delta: positive for addition, negative for removal.
+    /// Stored as I256 (V4's native type) to avoid overflow and for future reorg.
+    pub liquidity_delta: I256,
+    /// The block number of this event.
+    pub block_number: u64,
+}
+
+// ---------------------------------------------------------------------------
 // Hook filtering constants
 // ---------------------------------------------------------------------------
 
@@ -266,27 +291,43 @@ pub struct V4BlockEngine {
     results: Vec<(u64, U256, U256)>,
     /// Block number for the last solved results
     results_block: u64,
-    /// Whether the engine is running (freezes registration after start)
-    running: bool,
     /// Auto-incrementing path ID
     next_path_id: u64,
     /// Auto-incrementing pool key
     next_pool_key: u64,
+    /// Buffered liquidity updates (`ModifyLiquidity`) for pools not yet registered.
+    /// Keyed by (`pool_manager`, `pool_id`). When a pool is registered, all
+    /// buffered updates for its identifier are applied eagerly.
+    liquidity_event_buffer: HashMap<(Address, PoolId), Vec<BufferedV4LiquidityUpdate>>,
+    /// Maximum age (in blocks) for buffered events. `None` means unbounded.
+    /// Events older than `current_block - max_age` are expired during
+    /// `process_block` or `expire_buffered_events`.
+    event_buffer_max_age: Option<u64>,
 }
 
 impl V4BlockEngine {
-    /// Create a new engine.
+    /// Create a new engine with unbounded event buffer.
     #[must_use]
     pub fn new() -> Self {
+        Self::new_with_buffer_max_age(None)
+    }
+
+    /// Create a new engine with a configurable event buffer staleness limit.
+    ///
+    /// `max_age`: if `Some(n)`, buffered events older than `n` blocks are
+    /// automatically expired during `process_block`. `None` means unbounded.
+    #[must_use]
+    pub fn new_with_buffer_max_age(event_buffer_max_age: Option<u64>) -> Self {
         Self {
             pools: HashMap::new(),
             pool_ids: HashMap::new(),
             paths: HashMap::new(),
             results: Vec::new(),
             results_block: 0,
-            running: false,
             next_path_id: 1,
             next_pool_key: 1,
+            liquidity_event_buffer: HashMap::new(),
+            event_buffer_max_age,
         }
     }
 
@@ -302,13 +343,7 @@ impl V4BlockEngine {
     /// Returns `Err` with a description if:
     /// - The pool has amount-modifying hooks (`hook_flags` & 0xCC != 0)
     /// - The pool has dynamic fees (fee == `0x0010_0000`)
-    /// - Registration is attempted after `start()`
-    ///
-    /// # Panics
-    ///
-    /// Panics if called after `start()`.
     pub fn register_pool(&mut self, params: RegisterV4PoolParams) -> Result<u64, String> {
-        assert!(!self.running, "cannot register pools after start()");
 
         // Hook filtering: reject pools with amount-modifying hooks
         if (params.hook_flags & AMOUNT_MODIFYING_HOOK_MASK) != 0 {
@@ -345,7 +380,66 @@ impl V4BlockEngine {
 
         self.pool_ids.insert((pool_manager, pool_id), (forward_key, reverse_key));
 
+        // Apply any buffered liquidity updates for this pool
+        if let Some(buffered) = self.liquidity_event_buffer.remove(&(pool_manager, pool_id)) {
+            for update in buffered {
+                // Convert I256 liquidity_delta to i128 for tick update
+                let Ok(delta_i128): Result<i128, _> = update.liquidity_delta.try_into() else {
+                    continue;
+                };
+
+                // Apply to forward pool
+                if let Some(pool) = self.pools.get_mut(&forward_key) {
+                    update_tick_liquidity(&mut pool.tick_data, update.tick_lower, delta_i128, true);
+                    update_tick_liquidity(&mut pool.tick_data, update.tick_upper, delta_i128, false);
+                    pool.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+                    pool.update_block = update.block_number;
+                }
+
+                // Apply to reverse pool
+                if let Some(pool) = self.pools.get_mut(&reverse_key) {
+                    update_tick_liquidity(&mut pool.tick_data, update.tick_lower, delta_i128, true);
+                    update_tick_liquidity(&mut pool.tick_data, update.tick_upper, delta_i128, false);
+                    pool.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+                    pool.update_block = update.block_number;
+                }
+            }
+        }
+
         Ok(forward_key)
+    }
+
+    // ── Event buffer management ──────────────────────────────────
+
+    /// Set the maximum age (in blocks) for buffered liquidity events.
+    ///
+    /// `None` means unbounded (no automatic expiry). `Some(n)` means
+    /// events older than `n` blocks from the current block are expired.
+    pub fn set_event_buffer_max_age(&mut self, max_age: Option<u64>) {
+        self.event_buffer_max_age = max_age;
+    }
+
+    /// Discard all buffered liquidity events for all unregistered pools.
+    pub fn flush_event_buffer(&mut self) {
+        self.liquidity_event_buffer.clear();
+    }
+
+    /// Expire buffered events older than `current_block - max_age`.
+    ///
+    /// Called internally during `process_block` and `rebuild_and_solve`.
+    /// If `event_buffer_max_age` is `None`, this is a no-op.
+    pub fn expire_buffered_events(&mut self, current_block: u64) {
+        let Some(max_age) = self.event_buffer_max_age else {
+            return;
+        };
+
+        let cutoff = current_block.saturating_sub(max_age);
+
+        for events in self.liquidity_event_buffer.values_mut() {
+            events.retain(|ev| ev.block_number >= cutoff);
+        }
+
+        self.liquidity_event_buffer.retain(|_, events| !events.is_empty());
     }
 
     /// Register a V4 arbitrage path as an ordered list of `V4PoolRefs`.
@@ -354,9 +448,8 @@ impl V4BlockEngine {
     ///
     /// # Panics
     ///
-    /// Panics if called after `start()` or with fewer than 2 pool refs.
+    /// Panics with fewer than 2 pool refs.
     pub fn register_path(&mut self, pool_refs: Vec<V4PoolRef>) -> u64 {
-        assert!(!self.running, "cannot register paths after start()");
         assert!(pool_refs.len() >= 2, "need at least 2 pool refs");
 
         let path_id = self.next_path_id;
@@ -425,6 +518,16 @@ impl V4BlockEngine {
         block_number: u64,
     ) {
         let Some(&(fwd_key, rev_key)) = self.pool_ids.get(&(pool_manager, pool_id)) else {
+            // Pool not registered — buffer the update for later
+            self.liquidity_event_buffer
+                .entry((pool_manager, pool_id))
+                .or_default()
+                .push(BufferedV4LiquidityUpdate {
+                    tick_lower,
+                    tick_upper,
+                    liquidity_delta,
+                    block_number,
+                });
             return;
         };
 
@@ -483,6 +586,7 @@ impl V4BlockEngine {
             }
         }
 
+        self.expire_buffered_events(block_number);
         self.rebuild_and_solve(block_number);
     }
 
@@ -598,26 +702,6 @@ impl V4BlockEngine {
         self.results_block = block_number;
     }
 
-    /// Perform initial solve of ALL paths.
-    pub fn initial_solve(&mut self, block_number: u64) {
-        let path_pool_refs: Vec<(u64, Vec<V4PoolRef>)> = self
-            .paths
-            .iter()
-            .map(|(&id, (path, _))| (id, path.pools.clone()))
-            .collect();
-
-        for (path_id, pool_refs) in &path_pool_refs {
-            let mut resolved = ResolvedV4Path::default();
-            self.resolve_path(pool_refs, &mut resolved);
-            if let Some((_, stored)) = self.paths.get_mut(path_id) {
-                *stored = resolved;
-            }
-        }
-
-        self.results = self.solve_all();
-        self.results_block = block_number;
-    }
-
     /// Solve all registered V4 paths.
     #[must_use]
     pub fn solve_all(&self) -> Vec<(u64, U256, U256)> {
@@ -657,17 +741,6 @@ impl V4BlockEngine {
     #[allow(clippy::missing_const_for_fn)]
     pub fn latest_results(&self) -> (&Vec<(u64, U256, U256)>, u64) {
         (&self.results, self.results_block)
-    }
-
-    /// Mark the engine as running. Freezes registration.
-    pub const fn start(&mut self) {
-        self.running = true;
-    }
-
-    /// Whether the engine is running.
-    #[must_use]
-    pub const fn is_running(&self) -> bool {
-        self.running
     }
 
     /// Return the set of `PoolManager` addresses with registered pools.
@@ -726,15 +799,15 @@ impl V4BlockEngine {
         self.pools.clone()
     }
 
-    /// Full-sync a V4 pool's tick_data from an external source (e.g., Python backfill).
+    /// Full-sync a V4 pool's `tick_data` from an external source (e.g., Python backfill).
     ///
-    /// Unlike `apply_swap` (which only inserts/overlays tick_priors), this method
+    /// Unlike `apply_swap` (which only inserts/overlays `tick_priors`), this method
     /// **replaces** the entire `tick_data` map. This ensures that ticks removed from
     /// Python (because `liquidityGross` went to zero after a Burn) are also removed
     /// from the Rust engine.
     ///
     /// Updates both forward and reverse pool orientations.
-    /// No-op if the pool_id is not registered.
+    /// No-op if the `pool_id` is not registered.
     pub fn sync_pool_state(
         &mut self,
         pool_manager: Address,
@@ -1047,23 +1120,127 @@ mod tests {
     }
 
     #[test]
-    fn register_v4_pool_after_start_panics() {
+    fn register_v4_pool_after_start_succeeds() {
         let mut engine = V4BlockEngine::new();
-        engine.start();
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _ = engine.register_pool(make_register_params(
-                POOL_MANAGER,
-                make_pool_id(5),
-                3000,
-                60,
-                0,
-                U256::ONE,
-                100,
-                0,
-                HashMap::new(),
-            ));
-        }));
-        assert!(result.is_err());
+        engine.register_pool(make_register_params(
+            POOL_MANAGER,
+            make_pool_id(5),
+            3000,
+            60,
+            0,
+            U256::ONE,
+            100,
+            0,
+            HashMap::new(),
+        )).unwrap();
+        // Registration is always-on; this should not panic
+        engine.register_pool(make_register_params(
+            POOL_MANAGER,
+            make_pool_id(6),
+            3000,
+            60,
+            0,
+            U256::ONE,
+            100,
+            0,
+            HashMap::new(),
+        )).unwrap();
+    }
+
+    #[test]
+    fn modify_liquidity_buffered_for_unregistered_pool_applied_on_registration() {
+        let mut engine = V4BlockEngine::new();
+        let pool_id = make_pool_id(10);
+
+        // Apply a ModifyLiquidity update BEFORE the pool is registered
+        engine.apply_liquidity_update(
+            POOL_MANAGER,
+            pool_id,
+            -60,           // tick_lower
+            60,            // tick_upper
+            I256::try_from(500i128).unwrap(), // liquidity_delta (positive = add)
+            100,           // block_number
+        );
+
+        // The event should be buffered
+        assert!(engine.liquidity_event_buffer.contains_key(&(POOL_MANAGER, pool_id)));
+        assert_eq!(engine.liquidity_event_buffer[&(POOL_MANAGER, pool_id)].len(), 1);
+
+        // Now register the pool
+        let fwd_key = engine.register_pool(make_register_params(
+            POOL_MANAGER,
+            pool_id,
+            3000,
+            60,
+            0,
+            U256::ONE,
+            100,
+            0,
+            HashMap::new(),
+        )).unwrap();
+
+        // The buffer should be consumed
+        assert!(engine.liquidity_event_buffer.is_empty());
+
+        // The buffered update should have been applied to both orientations
+        let fwd_pool = &engine.pools[&fwd_key];
+        assert!(fwd_pool.tick_data.contains_key(&-60));
+        assert!(fwd_pool.tick_data.contains_key(&60));
+        assert_eq!(fwd_pool.tick_data[&-60].liquidity_gross, U128::from(500u64));
+
+        let rev_key = fwd_key + 1;
+        let rev_pool = &engine.pools[&rev_key];
+        assert!(rev_pool.tick_data.contains_key(&-60));
+        assert!(rev_pool.tick_data.contains_key(&60));
+    }
+
+    #[test]
+    fn v4_buffer_max_age_expires_old_events() {
+        let mut engine = V4BlockEngine::new_with_buffer_max_age(Some(10));
+        let pool_id = make_pool_id(20);
+
+        // Buffer an event at block 100
+        engine.apply_liquidity_update(
+            POOL_MANAGER,
+            pool_id,
+            -60,
+            60,
+            I256::try_from(500i128).unwrap(),
+            100,
+        );
+
+        // At block 110, the event is exactly at the boundary
+        engine.expire_buffered_events(110);
+        assert!(engine.liquidity_event_buffer.contains_key(&(POOL_MANAGER, pool_id)));
+
+        // At block 111, the event is too old
+        engine.expire_buffered_events(111);
+        assert!(!engine.liquidity_event_buffer.contains_key(&(POOL_MANAGER, pool_id)));
+    }
+
+    #[test]
+    fn v4_flush_event_buffer_discards_all() {
+        let mut engine = V4BlockEngine::new();
+
+        engine.apply_liquidity_update(
+            POOL_MANAGER,
+            make_pool_id(1),
+            -60, 60,
+            I256::try_from(500i128).unwrap(),
+            100,
+        );
+        engine.apply_liquidity_update(
+            POOL_MANAGER,
+            make_pool_id(2),
+            -60, 60,
+            I256::try_from(300i128).unwrap(),
+            101,
+        );
+
+        assert_eq!(engine.liquidity_event_buffer.len(), 2);
+
+        engine.flush_event_buffer();
+        assert!(engine.liquidity_event_buffer.is_empty());
     }
 
     #[test]
@@ -1085,7 +1262,6 @@ mod tests {
             tick_data,
         )).unwrap();
 
-        engine.start();
 
         let new_sqrt_price = U256::from(79_466_191_966_197_645_195_421_774_833_u128);
         engine.apply_swap(
@@ -1264,7 +1440,6 @@ mod tests {
             V4PoolRef { pool_idx: key_a + 1, zero_for_one: false }, // reverse orientation of same pool would be silly but tests the flow
         ]);
 
-        engine.start();
 
         // Apply swap update
         let affected = engine.apply_swap_updates(
@@ -1288,7 +1463,7 @@ mod tests {
     }
 
     #[test]
-    fn initial_solve_populates_results() {
+    fn solve_all_populates_results() {
         let mut engine = V4BlockEngine::new();
         let pool_id = make_pool_id(1);
 
@@ -1331,8 +1506,8 @@ mod tests {
             V4PoolRef { pool_idx: key_b, zero_for_one: false },
         ]);
 
-        engine.start();
-        engine.initial_solve(0);
+        // Solve all paths (replaces initial_solve which was removed)
+        engine.rebuild_and_solve(0);
 
         let (results, block) = engine.latest_results();
         assert_eq!(block, 0);
@@ -1427,7 +1602,6 @@ mod tests {
             tick_data,
         )).unwrap();
 
-        engine.start();
 
         // Add 500 liquidity: positive delta
         engine.apply_liquidity_update(
@@ -1474,7 +1648,6 @@ mod tests {
             tick_data,
         )).unwrap();
 
-        engine.start();
 
         // Burn 200 liquidity: negative delta
         engine.apply_liquidity_update(
@@ -1521,7 +1694,6 @@ mod tests {
             tick_data,
         )).unwrap();
 
-        engine.start();
 
         // Burn all 100 liquidity: delta = -100, gross goes to 0 → tick removed
         engine.apply_liquidity_update(
@@ -1559,7 +1731,6 @@ mod tests {
             HashMap::new(),
         )).unwrap();
 
-        engine.start();
 
         // Mint adds new ticks at -120 and 120
         engine.apply_liquidity_update(
@@ -1623,7 +1794,6 @@ mod tests {
             tick_data,
         )).unwrap();
 
-        engine.start();
 
         let fwd_key = engine.pool_keys_for_id(POOL_MANAGER, &pool_id).unwrap().0;
         let pool_before = engine.get_pool(fwd_key).unwrap().clone();
@@ -1657,7 +1827,6 @@ mod tests {
             tick_data,
         )).unwrap();
 
-        engine.start();
 
         // Build a swap log
         let swap_log = build_v4_swap_log(
