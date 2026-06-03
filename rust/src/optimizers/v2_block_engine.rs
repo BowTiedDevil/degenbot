@@ -52,8 +52,6 @@ pub struct V2BlockEngine {
     results: Vec<(u64, U256, U256)>,
     /// Block number for the last solved results
     results_block: u64,
-    /// Whether the engine is running (freezes registration after start)
-    running: bool,
     /// Auto-incrementing path ID
     next_path_id: u64,
     /// Auto-incrementing pool ID (forward_id; reverse_id = forward_id + 1)
@@ -70,7 +68,6 @@ impl V2BlockEngine {
             paths: HashMap::new(),
             results: Vec::new(),
             results_block: 0,
-            running: false,
             next_path_id: 1,
             next_pool_id: 1,
         }
@@ -85,8 +82,6 @@ impl V2BlockEngine {
     /// Returns the forward pool_id. The reverse pool_id is `forward_id + 1`.
     ///
     /// # Panics
-    ///
-    /// Panics if called after `start()`.
     pub fn register_pool(
         &mut self,
         address: Address,
@@ -95,7 +90,6 @@ impl V2BlockEngine {
         gamma_numer: u64,
         fee_denom: u64,
     ) -> u64 {
-        assert!(!self.running, "cannot register pools after start()");
         assert!(gamma_numer < fee_denom, "gamma_numer must be less than fee_denom");
 
         let forward_id = self.next_pool_id;
@@ -125,9 +119,8 @@ impl V2BlockEngine {
     ///
     /// # Panics
     ///
-    /// Panics if called after `start()` or with fewer than 2 pool IDs.
+    /// Panics with fewer than 2 pool IDs.
     pub fn register_path(&mut self, pool_ids: Vec<u64>) -> u64 {
-        assert!(!self.running, "cannot register paths after start()");
         assert!(pool_ids.len() >= 2, "need at least 2 pool IDs");
 
         let path_id = self.next_path_id;
@@ -287,18 +280,6 @@ impl V2BlockEngine {
         self.pool_addresses.keys().copied().collect()
     }
 
-    /// Mark the engine as running. Freezes registration.
-    /// Called internally by `start()`. Exposed separately for testing.
-    pub const fn start(&mut self) {
-        self.running = true;
-    }
-
-    /// Whether the engine is running (registration is frozen).
-    #[must_use]
-    pub const fn is_running(&self) -> bool {
-        self.running
-    }
-
     /// Number of registered pools (counting forward orientations only).
     #[must_use]
     pub fn pool_count(&self) -> usize {
@@ -420,13 +401,10 @@ impl PyV2ArbEngine {
     }
 
     /// Start the engine pump with the given RPC URL.
-    /// Freezes registration and spawns the V2EnginePump on the Tokio runtime.
+    /// Spawns the V2EnginePump on the Tokio runtime.
     /// The pump subscribes to block headers and drives process_block() automatically.
     #[pyo3(signature = (rpc_url))]
     fn start(&self, rpc_url: String) -> PyResult<()> {
-        // Freeze registration
-        self.engine.lock().start();
-
         // Don't start twice
         if self.shutdown.load(std::sync::atomic::Ordering::Relaxed) {
             let msg = "Engine already running";
@@ -457,17 +435,6 @@ impl PyV2ArbEngine {
         if let Some(handle) = handle {
             handle.abort();
         }
-    }
-
-    /// Whether the engine is running.
-    fn is_running(&self) -> bool {
-        self.engine.lock().is_running()
-    }
-
-    /// Freeze registration without starting the pump.
-    /// For testing the frozen-registration behavior without a live connection.
-    fn freeze(&self) {
-        self.engine.lock().start();
     }
 
     /// Number of registered pools.
@@ -709,22 +676,20 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "cannot register pools after start()")]
-    fn register_pool_after_start_panics() {
+    fn register_pool_after_start_succeeds() {
         let mut engine = V2BlockEngine::new();
         engine.register_pool(Address::ZERO, U256::ONE, U256::ONE, 997, 1000);
-        engine.start();
+        // Registration is always-on; this should not panic
         engine.register_pool(Address::from([1u8; 20]), U256::ONE, U256::ONE, 997, 1000);
     }
 
     #[test]
-    #[should_panic(expected = "cannot register paths after start()")]
-    fn register_path_after_start_panics() {
+    fn register_path_after_start_succeeds() {
         let mut engine = V2BlockEngine::new();
         let fwd = engine.register_pool(Address::ZERO, U256::ONE, U256::ONE, 997, 1000);
         let fwd2 = engine.register_pool(Address::from([1u8; 20]), U256::ONE, U256::ONE, 997, 1000);
         engine.register_path(vec![fwd, fwd2]);
-        engine.start();
+        // Registration is always-on; this should not panic
         engine.register_path(vec![fwd, fwd2]);
     }
 }
