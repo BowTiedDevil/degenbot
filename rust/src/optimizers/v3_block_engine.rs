@@ -702,6 +702,48 @@ impl V3BlockEngine {
         self.paths.len()
     }
 
+    /// Snapshot all pool state for verification (clones the entire map).
+    ///
+    /// Used by `verify_liquidity_maps` so the engine lock can be released
+    /// before making async RPC calls.
+    #[must_use]
+    pub fn pools_snapshot(&self) -> HashMap<u64, V3PoolState> {
+        self.pools.clone()
+    }
+
+    /// Full-sync a V3 pool's tick_data from an external source (e.g., Python backfill).
+    ///
+    /// Unlike `apply_swap` (which only inserts/overlays tick_priors), this method
+    /// **replaces** the entire `tick_data` map for the pool. This ensures that ticks
+    /// removed from Python (because `liquidityGross` went to zero after a Burn) are
+    /// also removed from the Rust engine.
+    ///
+    /// Also updates scalar state (`sqrt_price_x96`, `liquidity`, `tick`).
+    ///
+    /// No-op if the pool address is not registered.
+    pub fn sync_pool_state(
+        &mut self,
+        pool_address: Address,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        tick_data: HashMap<i32, TickInfo>,
+        update_block: u64,
+    ) {
+        let Some(&key) = self.pool_addresses.get(&pool_address) else {
+            return;
+        };
+        let Some(pool) = self.pools.get_mut(&key) else {
+            return;
+        };
+
+        pool.sqrt_price_x96 = sqrt_price_x96;
+        pool.liquidity = liquidity;
+        pool.tick = tick;
+        pool.tick_data = tick_data;
+        pool.update_block = update_block;
+    }
+
     /// Resolve a path's pool refs into tick-range sequences and hop states.
     fn resolve_path(&self, pool_refs: &[V3PoolRef], resolved: &mut ResolvedV3Path) {
         resolved.tick_range_sequences.clear();

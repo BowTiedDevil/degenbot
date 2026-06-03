@@ -2045,6 +2045,290 @@ impl PyUniswapArbEngine {
         self.engine.lock().path_count()
     }
 
+    /// Verify all V3 and V4 pool liquidity maps against on-chain state.
+    ///
+    /// Calls `TickLens` for V3 pools and `StateView` for V4 pools. Compares
+    /// `sqrtPriceX96`, `tick`, `liquidity`, and every tick's
+    /// `(liquidityGross, liquidityNet)`.
+    ///
+    /// Raises `RuntimeError` on the FIRST mismatch. The bot must not operate
+    /// with stale tick data — fail fast.
+    ///
+    /// Args:
+    ///     `rpc_url`: RPC endpoint URL (WS or HTTP).
+    ///     `tick_lens_address`: Deployed `TickLens` contract address (hex string).
+    ///     `state_view_address`: Deployed `StateView` contract address (hex string).
+    #[pyo3(signature = (rpc_url, tick_lens_address, state_view_address, block_number))]
+    fn verify_liquidity_maps(
+        &self,
+        rpc_url: String,
+        tick_lens_address: String,
+        state_view_address: String,
+        block_number: Option<u64>,
+    ) -> PyResult<()> {
+        let tick_lens: Address = tick_lens_address.parse().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid tick_lens address: {e}"))
+        })?;
+        let state_view: Address = state_view_address.parse().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid state_view address: {e}"))
+        })?;
+
+        let mut engine = self.engine.lock();
+        let v3_pools = engine.v3_engine().pools_snapshot();
+        let v4_pools = engine.v4_engine().pools_snapshot();
+        drop(engine); // Release lock before async I/O
+
+        let runtime = crate::runtime::get_runtime();
+
+        let provider = runtime.block_on(async {
+            crate::provider::AlloyProvider::new(&rpc_url, 3).await.map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "verify_liquidity_maps: failed to create provider: {e}"
+                ))
+            })
+        })?;
+
+        // Verify V3 pools
+        let v3_result = runtime.block_on(async {
+            crate::bot_core::liquidity_verifier::verify_v3_pools(
+                &provider, tick_lens, &v3_pools, block_number,
+            )
+            .await
+        });
+        if let Err(mismatch) = v3_result {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "Liquidity map verification FAILED: {mismatch}"
+            )));
+        }
+
+        // Verify V4 pools
+        let v4_result = runtime.block_on(async {
+            crate::bot_core::liquidity_verifier::verify_v4_pools(
+                &provider, state_view, &v4_pools, block_number,
+            )
+            .await
+        });
+        if let Err(mismatch) = v4_result {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "Liquidity map verification FAILED: {mismatch}"
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Verify V3 liquidity maps only, at a specific block.
+    ///
+    /// Same as `verify_liquidity_maps` but only checks V3 pools.
+    /// Useful for verifying against a V3-specific snapshot block.
+    #[pyo3(signature = (rpc_url, block_number))]
+    fn verify_v3_liquidity_maps(
+        &self,
+        rpc_url: String,
+        block_number: Option<u64>,
+    ) -> PyResult<()> {
+        let mut engine = self.engine.lock();
+        let v3_pools = engine.v3_engine().pools_snapshot();
+        drop(engine);
+
+        let runtime = crate::runtime::get_runtime();
+        let provider = runtime.block_on(async {
+            crate::provider::AlloyProvider::new(&rpc_url, 3).await.map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "verify_v3_liquidity_maps: failed to create provider: {e}"
+                ))
+            })
+        })?;
+
+        // TickLens address not used (V3 calls pool.ticks() directly)
+        let tick_lens = Address::ZERO;
+        let v3_result = runtime.block_on(async {
+            crate::bot_core::liquidity_verifier::verify_v3_pools(
+                &provider, tick_lens, &v3_pools, block_number,
+            )
+            .await
+        });
+        if let Err(mismatch) = v3_result {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "V3 liquidity map verification FAILED: {mismatch}"
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Verify V4 liquidity maps only, at a specific block.
+    ///
+    /// Same as `verify_liquidity_maps` but only checks V4 pools.
+    /// Useful for verifying against a V4-specific snapshot block.
+    #[pyo3(signature = (rpc_url, state_view_address, block_number))]
+    fn verify_v4_liquidity_maps(
+        &self,
+        rpc_url: String,
+        state_view_address: String,
+        block_number: Option<u64>,
+    ) -> PyResult<()> {
+        let state_view: Address = state_view_address.parse().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid state_view address: {e}"))
+        })?;
+
+        let mut engine = self.engine.lock();
+        let v4_pools = engine.v4_engine().pools_snapshot();
+        drop(engine);
+
+        let runtime = crate::runtime::get_runtime();
+        let provider = runtime.block_on(async {
+            crate::provider::AlloyProvider::new(&rpc_url, 3).await.map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "verify_v4_liquidity_maps: failed to create provider: {e}"
+                ))
+            })
+        })?;
+
+        let v4_result = runtime.block_on(async {
+            crate::bot_core::liquidity_verifier::verify_v4_pools(
+                &provider, state_view, &v4_pools, block_number,
+            )
+            .await
+        });
+        if let Err(mismatch) = v4_result {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "V4 liquidity map verification FAILED: {mismatch}"
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Full-sync V3 pool tick_data from Python backfill.
+    ///
+    /// Unlike `process_logs` (which only inserts tick_priors), this method
+    /// **replaces** the entire tick_data map. This ensures that ticks removed
+    /// from Python (because `liquidityGross` went to zero after a Burn) are
+    /// also removed from the Rust engine.
+    ///
+    /// `v3_sync_updates`: list of (`address_str`, `sqrt_price_x96`, liquidity, tick, `tick_data`)
+    ///   where `tick_data` is a dict of {tick_index: (liquidity_gross, liquidity_net)}
+    #[pyo3(signature = (v3_sync_updates, block_number))]
+    fn sync_v3_pool_states(
+        &self,
+        v3_sync_updates: &Bound<'_, PyList>,
+        block_number: u64,
+    ) -> PyResult<()> {
+        let mut engine = self.engine.lock();
+        for item in v3_sync_updates.iter() {
+            let tuple = item.cast::<pyo3::types::PyTuple>()?;
+            if tuple.len() != 5 {
+                let msg = format!(
+                    "Expected 5-tuple (address, sqrt_price, liquidity, tick, tick_data), got {} elements",
+                    tuple.len()
+                );
+                return Err(pyo3::exceptions::PyValueError::new_err(msg));
+            }
+
+            let addr_str: String = tuple.get_item(0)?.extract()?;
+            let addr: Address = addr_str.parse().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}"))
+            })?;
+            let sqrt_price = crate::alloy_py::extract_python_u256(&tuple.get_item(1)?)?;
+            let liquidity: u128 = tuple.get_item(2)?.extract()?;
+            let tick: i32 = tuple.get_item(3)?.extract()?;
+
+            let td_obj = tuple.get_item(4)?;
+            let td_dict = td_obj.cast::<pyo3::types::PyDict>()?;
+            let mut rust_tick_data = HashMap::new();
+            for (key, value) in td_dict.iter() {
+                let tick_idx: i32 = key.extract()?;
+                let info_tuple = value.cast::<pyo3::types::PyTuple>()?;
+                if info_tuple.len() != 2 {
+                    let msg = format!(
+                        "Expected 2-tuple (liquidity_gross, liquidity_net), got {} elements",
+                        info_tuple.len()
+                    );
+                    return Err(pyo3::exceptions::PyValueError::new_err(msg));
+                }
+                let liquidity_gross: u128 = info_tuple.get_item(0)?.extract()?;
+                let liquidity_net: i128 = info_tuple.get_item(1)?.extract()?;
+                rust_tick_data.insert(tick_idx, make_tick_info(liquidity_gross, liquidity_net));
+            }
+
+            engine.v3_engine().sync_pool_state(
+                addr,
+                sqrt_price,
+                liquidity,
+                tick,
+                rust_tick_data,
+                block_number,
+            );
+        }
+        Ok(())
+    }
+
+    /// Full-sync V4 pool tick_data from Python backfill.
+    ///
+    /// Replaces the entire tick_data map. See `sync_v3_pool_states` for rationale.
+    ///
+    /// `v4_sync_updates`: list of (`pool_manager_str`, `pool_id_hex`, `sqrt_price_x96`, liquidity, tick, `tick_data`)
+    ///   where `tick_data` is a dict of {tick_index: (liquidity_gross, liquidity_net)}
+    #[pyo3(signature = (v4_sync_updates, block_number))]
+    fn sync_v4_pool_states(
+        &self,
+        v4_sync_updates: &Bound<'_, PyList>,
+        block_number: u64,
+    ) -> PyResult<()> {
+        let mut engine = self.engine.lock();
+        for item in v4_sync_updates.iter() {
+            let tuple = item.cast::<pyo3::types::PyTuple>()?;
+            if tuple.len() != 6 {
+                let msg = format!(
+                    "Expected 6-tuple (pool_manager, pool_id, sqrt_price, liquidity, tick, tick_data), got {} elements",
+                    tuple.len()
+                );
+                return Err(pyo3::exceptions::PyValueError::new_err(msg));
+            }
+
+            let pm_str: String = tuple.get_item(0)?.extract()?;
+            let pool_manager: Address = pm_str.parse().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager: {e}"))
+            })?;
+            let pid_str: String = tuple.get_item(1)?.extract()?;
+            let pool_id = hex_string_to_pool_id(&pid_str)?;
+
+            let sqrt_price = crate::alloy_py::extract_python_u256(&tuple.get_item(2)?)?;
+            let liquidity: u128 = tuple.get_item(3)?.extract()?;
+            let tick: i32 = tuple.get_item(4)?.extract()?;
+
+            let td_obj = tuple.get_item(5)?;
+            let td_dict = td_obj.cast::<pyo3::types::PyDict>()?;
+            let mut rust_tick_data = HashMap::new();
+            for (key, value) in td_dict.iter() {
+                let tick_idx: i32 = key.extract()?;
+                let info_tuple = value.cast::<pyo3::types::PyTuple>()?;
+                if info_tuple.len() != 2 {
+                    let msg = format!(
+                        "Expected 2-tuple (liquidity_gross, liquidity_net), got {} elements",
+                        info_tuple.len()
+                    );
+                    return Err(pyo3::exceptions::PyValueError::new_err(msg));
+                }
+                let liquidity_gross: u128 = info_tuple.get_item(0)?.extract()?;
+                let liquidity_net: i128 = info_tuple.get_item(1)?.extract()?;
+                rust_tick_data.insert(tick_idx, make_tick_info(liquidity_gross, liquidity_net));
+            }
+
+            engine.v4_engine().sync_pool_state(
+                pool_manager,
+                pool_id,
+                sqrt_price,
+                liquidity,
+                tick,
+                rust_tick_data,
+                block_number,
+            );
+        }
+        Ok(())
+    }
+
     /// Process Sync, V3 Swap, and V4 Swap events synchronously (for testing).
     ///
     /// `v2_sync_updates`: list of (`address_str`, `reserve0`, `reserve1`)
