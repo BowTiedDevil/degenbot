@@ -71,30 +71,17 @@ with open("contracts/cmd_executor_runtime_bytecode.txt", "w") as f:
 
 ### Recompiling
 
-Source lives in `~/code/executor/` (separate project). Compile there, copy here:
+Source lives in `~/code/executor/` (separate project). The `recompile.py` script
+handles the full pipeline: compile, append immutables, patch PM address, and copy:
 
 ```bash
-cd ~/code/executor
-
-# ABI + bytecode
-uv run vyper -f abi contracts/cmd_executor.vy > /tmp/cmd_executor_abi.json
-uv run vyper -f bytecode contracts/cmd_executor.vy > /tmp/cmd_executor_bytecode.txt
-uv run vyper -f bytecode_runtime contracts/cmd_executor.vy > /tmp/cmd_executor_runtime_raw.txt
-
-# Append immutables to runtime bytecode
-python3 -c "
-raw = open('/tmp/cmd_executor_runtime_raw.txt').read().strip().removeprefix('0x')
-OWNER = '0000000000000000000000009C56a29c7231974c269E24F9FB3c29203039089E'
-WETH  = '000000000000000000000000C02aaA39b223FE8D0A0e5C4f27eAD9083C756Cc2'
-PM    = '0000000000000000000000000000000000000000000000000000000000000000'
-open('/tmp/cmd_executor_runtime_bytecode.txt', 'w').write(f'0x{raw}{OWNER}{WETH}{PM}\n')
-"
-
-# Copy into degenbot
-cp /tmp/cmd_executor_abi.json /path/to/degenbot/contracts/
-cp /tmp/cmd_executor_bytecode.txt /path/to/degenbot/contracts/
-cp /tmp/cmd_executor_runtime_bytecode.txt /path/to/degenbot/contracts/
+python3 contracts/recompile.py          # compile + patch mainnet PM
+python3 contracts/recompile.py --no-patch  # compile without PM patch (testnet)
 ```
+
+The script reads `cmd_executor.vy` from `~/code/executor/`, compiles with Vyper,
+appends the 3 × 32-byte immutable slots, patches `POOL_MANAGER_ADDR` to the
+mainnet address, and writes all 3 output files into `contracts/`.
 
 ---
 
