@@ -152,9 +152,9 @@ Files:
 ## Status
 
 - [x] Slice 1: Remove registration guards
-- [ ] Slice 2: Eager path registration
-- [ ] Slice 3: Mint/Burn event buffer
-- [ ] Slice 4: Buffer configuration
-- [ ] Slice 5: Pump subscribe/resume split
-- [ ] Slice 6: Per-block address filter
-- [ ] Slice 7: Python bot refactoring
+- [x] Slice 2: Eager path registration
+- [x] Slice 3: Mint/Burn event buffer
+- [x] Slice 4: Buffer configuration
+- [x] Slice 5: Pump subscribe/resume split
+- [x] Slice 6: Per-block address filter
+- [x] Slice 7: Python bot refactoring

@@ -83,26 +83,40 @@ class TestV3ArbEngineRegistration:
 
         assert engine.pool_count() == 1
 
-    def test_freeze_prevents_registration(self):
+    def test_registration_is_always_on(self):
+        """Registration is always-on — pools can be registered at any time."""
         engine = V3ArbEngine()
-        engine.freeze()
-        assert engine.is_running()
 
-        import pytest
+        engine.register_pool(
+            address="0x" + "33" * 20,
+            token0="0x" + "00" * 20,
+            token1="0x" + "01" * 20,
+            fee=3000,
+            tick_spacing=60,
+            factory="0x" + "00" * 20,
+            sqrt_price_x96=SQRT_PRICE_TICK_0,
+            liquidity=100,
+            tick=0,
+            tick_data={},
+        )
 
-        with pytest.raises(BaseException):  # PanicException from Rust assert!
-            engine.register_pool(
-                address="0x" + "33" * 20,
-                token0="0x" + "00" * 20,
-                token1="0x" + "01" * 20,
-                fee=3000,
-                tick_spacing=60,
-                factory="0x" + "00" * 20,
-                sqrt_price_x96=SQRT_PRICE_TICK_0,
-                liquidity=100,
-                tick=0,
-                tick_data={},
-            )
+        # Process an empty block, then register another pool
+        engine.process_logs([], 1)
+
+        engine.register_pool(
+            address="0x" + "44" * 20,
+            token0="0x" + "02" * 20,
+            token1="0x" + "03" * 20,
+            fee=3000,
+            tick_spacing=60,
+            factory="0x" + "00" * 20,
+            sqrt_price_x96=SQRT_PRICE_TICK_0,
+            liquidity=200,
+            tick=0,
+            tick_data={},
+        )
+
+        assert engine.pool_count() == 2
 
 
 class TestV3ArbEngineProcessLogs:
@@ -125,8 +139,6 @@ class TestV3ArbEngineProcessLogs:
             tick_data={-60: (200, -100), 60: (300, 150)},
         )
 
-        engine.freeze()
-
         # Process a swap update
         engine.process_logs(
             [
@@ -146,7 +158,6 @@ class TestV3ArbEngineProcessLogs:
 
     def test_process_logs_empty_is_noop(self):
         engine = V3ArbEngine()
-        engine.freeze()
 
         engine.process_logs([], 1)
 
@@ -190,7 +201,6 @@ class TestV3ArbEngineProcessLogs:
         )
 
         path_id = engine.register_path([(key0, True), (key1, False)])
-        engine.freeze()
 
         # Process with no updates — just trigger a solve
         engine.process_logs([], 100)

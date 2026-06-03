@@ -157,8 +157,10 @@ pub struct UniswapEngine {
     /// `None` means no block has been processed yet.
     /// Used by the pump to determine the backfill boundary on startup.
     last_processed_block: Option<u64>,
-    /// Whether the engine is running (freezes registration after start)
-    running: bool,
+    /// Paths registered via `register_and_solve_path` that have been eagerly
+    /// solved and appended to `results`. Tracked so `rebuild_and_solve_affected`
+    /// can merge them instead of discarding them when it replaces `self.results`.
+    pending_new_paths: HashSet<u64>,
     /// Auto-incrementing path ID
     next_path_id: u64,
 }
@@ -167,18 +169,41 @@ impl UniswapEngine {
     /// Create a new engine.
     #[must_use]
     pub fn new() -> Self {
+        Self::new_with_buffer_max_age(None)
+    }
+
+    /// Create a new engine with a configurable event buffer staleness limit.
+    ///
+    /// The limit applies to V3 and V4 liquidity event buffers. V2 has no
+    /// buffer (Sync events are stateless).
+    #[must_use]
+    pub fn new_with_buffer_max_age(event_buffer_max_age: Option<u64>) -> Self {
         Self {
             v2_engine: V2BlockEngine::new(),
-            v3_engine: V3BlockEngine::new(),
-            v4_engine: V4BlockEngine::new(),
+            v3_engine: V3BlockEngine::new_with_buffer_max_age(event_buffer_max_age),
+            v4_engine: V4BlockEngine::new_with_buffer_max_age(event_buffer_max_age),
             paths: HashMap::new(),
             pool_to_paths: HashMap::new(),
             results: Vec::new(),
             results_block: 0,
             last_processed_block: None,
-            running: false,
+            pending_new_paths: HashSet::new(),
             next_path_id: 1,
         }
+    }
+
+    /// Set the maximum age (in blocks) for buffered liquidity events.
+    ///
+    /// Applies to V3 and V4 sub-engine buffers. `None` means unbounded.
+    pub fn set_event_buffer_max_age(&mut self, max_age: Option<u64>) {
+        self.v3_engine.set_event_buffer_max_age(max_age);
+        self.v4_engine.set_event_buffer_max_age(max_age);
+    }
+
+    /// Discard all buffered liquidity events for all unregistered pools.
+    pub fn flush_event_buffer(&mut self) {
+        self.v3_engine.flush_event_buffer();
+        self.v4_engine.flush_event_buffer();
     }
 
     /// Access the V2 engine (for registration).
@@ -205,9 +230,8 @@ impl UniswapEngine {
     ///
     /// # Panics
     ///
-    /// Panics if called after `start()` or with fewer than 2 pool refs.
+    /// Panics with fewer than 2 pool refs.
     pub fn register_path(&mut self, pool_refs: Vec<MixedPoolRef>) -> u64 {
-        assert!(!self.running, "cannot register paths after start()");
         assert!(pool_refs.len() >= 2, "need at least 2 pool refs");
 
         let path_id = self.next_path_id;
@@ -223,6 +247,53 @@ impl UniswapEngine {
                 .or_default()
                 .insert(path_id);
         }
+
+        self.paths
+            .insert(path_id, (MixedPath { pools: pool_refs }, resolved));
+        path_id
+    }
+
+    /// Register a path and immediately resolve + solve it.
+    ///
+    /// Unlike `register_path` (which only registers), this method also
+    /// eagerly solves the path and appends any profitable result to
+    /// `self.results`. Used when the engine is already running (after the
+    /// pump has started) so that new paths are immediately available to
+    /// `latest_results()`.
+    ///
+    /// Returns the auto-assigned path ID.
+    ///
+    /// # Panics
+    ///
+    /// Panics with fewer than 2 pool refs.
+    pub fn register_and_solve_path(&mut self, pool_refs: Vec<MixedPoolRef>) -> u64 {
+        assert!(pool_refs.len() >= 2, "need at least 2 pool refs");
+
+        let path_id = self.next_path_id;
+        self.next_path_id += 1;
+
+        let mut resolved = ResolvedMixedPath::default();
+        self.resolve_path(&pool_refs, &mut resolved);
+
+        // Build reverse index: (hop_type, pool_key) → path_id
+        for pool_ref in &pool_refs {
+            self.pool_to_paths
+                .entry((pool_ref.hop_type, pool_ref.pool_key))
+                .or_default()
+                .insert(path_id);
+        }
+
+        // Eagerly solve and append to results if profitable
+        if resolved.valid {
+            if let Some(solve_result) = self.solve_path(&resolved) {
+                if !solve_result.optimal_input.is_zero() && !solve_result.profit.is_zero() {
+                    self.results.push((path_id, solve_result));
+                }
+            }
+        }
+
+        // Track so rebuild_and_solve_affected can merge instead of discard
+        self.pending_new_paths.insert(path_id);
 
         self.paths
             .insert(path_id, (MixedPath { pools: pool_refs }, resolved));
@@ -383,6 +454,14 @@ impl UniswapEngine {
                 affected_path_ids.extend(path_ids);
             }
         }
+
+        // Also re-solve any paths registered via register_and_solve_path that
+        // haven't been through rebuild_and_solve_affected yet. These paths were
+        // eagerly solved at registration time, but the pump's process_block
+        // replaces self.results entirely — so we must include them to avoid
+        // dropping their results.
+        affected_path_ids.extend(&self.pending_new_paths);
+        self.pending_new_paths.clear();
 
         // If no paths are affected, just update the block number
         if affected_path_ids.is_empty() {
@@ -632,21 +711,19 @@ impl UniswapEngine {
         (&self.results, self.results_block)
     }
 
-    /// Mark the engine as running. Freezes registration.
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn start(&mut self) {
-        self.running = true;
-        self.v2_engine.start();
-        self.v3_engine.start();
-        self.v4_engine.start();
+    /// Return the last block number processed by `process_block`.
+    /// Returns `None` if no block has been processed yet.
+    #[must_use]
+    pub const fn last_processed_block(&self) -> Option<u64> {
+        self.last_processed_block
     }
 
-    /// Perform initial solve of ALL paths.
+    /// Resolve and solve all registered paths.
     ///
-    /// Called once after `freeze()` + `start()` to populate `results`
-    /// for the first time. Subsequent updates use `rebuild_and_solve_affected`
-    /// which only re-solves paths containing updated pools.
-    pub fn initial_solve(&mut self, block_number: u64) {
+    /// Called to populate `results` for the first time (replaces the
+    /// removed `initial_solve`). Subsequent `process_logs` calls use
+    /// dependency tracking to only re-solve affected paths.
+    pub fn solve_all_paths(&mut self, block_number: u64) {
         // Resolve all paths
         let path_pool_refs: Vec<(u64, Vec<MixedPoolRef>)> = self
             .paths
@@ -665,19 +742,6 @@ impl UniswapEngine {
         // Solve all paths
         self.results = self.solve_all();
         self.results_block = block_number;
-    }
-
-    /// Whether the engine is running.
-    #[must_use]
-    pub const fn is_running(&self) -> bool {
-        self.running
-    }
-
-    /// Return the last block number processed by `process_block`.
-    /// Returns `None` if no block has been processed yet.
-    #[must_use]
-    pub const fn last_processed_block(&self) -> Option<u64> {
-        self.last_processed_block
     }
 
     /// Number of registered V2 pools.
@@ -1143,24 +1207,132 @@ mod tests {
     }
 
     #[test]
-    fn register_path_after_start_panics() {
+    fn register_path_after_start_succeeds() {
         let mut engine = UniswapEngine::new();
-        engine.start();
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            engine.register_path(vec![
-                MixedPoolRef {
-                    hop_type: HopType::V2,
-                    pool_key: 1,
-                    zero_for_one: true,
-                },
-                MixedPoolRef {
-                    hop_type: HopType::V3,
-                    pool_key: 2,
-                    zero_for_one: false,
-                },
-            ]);
-        }));
-        assert!(result.is_err());
+        let v2_addr = Address::from([0x11u8; 20]);
+        let v2_fwd = engine.v2_engine().register_pool(
+            v2_addr,
+            usdc(1_500_000),
+            weth(800),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let v2_addr2 = Address::from([0x12u8; 20]);
+        let v2_fwd2 = engine.v2_engine().register_pool(
+            v2_addr2,
+            weth(1000),
+            usdc(2_000_000),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        engine.register_path(vec![
+            MixedPoolRef {
+                hop_type: HopType::V2,
+                pool_key: v2_fwd,
+                zero_for_one: true,
+            },
+            MixedPoolRef {
+                hop_type: HopType::V2,
+                pool_key: v2_fwd2,
+                zero_for_one: true,
+            },
+        ]);
+        // Registration is always-on; this should not panic
+        engine.register_path(vec![
+            MixedPoolRef {
+                hop_type: HopType::V2,
+                pool_key: v2_fwd,
+                zero_for_one: true,
+            },
+            MixedPoolRef {
+                hop_type: HopType::V2,
+                pool_key: v2_fwd2,
+                zero_for_one: true,
+            },
+        ]);
+    }
+
+    #[test]
+    fn register_and_solve_path_eagerly_solves() {
+        let mut engine = UniswapEngine::new();
+
+        // Two V2 pools with price divergence
+        let v2_addr_a = Address::from([0x11u8; 20]);
+        let v2_fwd_a = engine.v2_engine().register_pool(
+            v2_addr_a,
+            usdc(1_500_000),
+            weth(800),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let v2_addr_b = Address::from([0x12u8; 20]);
+        let v2_fwd_b = engine.v2_engine().register_pool(
+            v2_addr_b,
+            weth(1000),
+            usdc(2_000_000),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+
+        // register_and_solve_path should eagerly solve and append to results
+        let path_id = engine.register_and_solve_path(vec![
+            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_a, zero_for_one: true },
+            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_b, zero_for_one: true },
+        ]);
+
+        // Should be tracked as pending so rebuild_and_solve_affected can merge
+        assert!(engine.pending_new_paths.contains(&path_id));
+
+        // Results should already contain the eagerly-solved path
+        let (results, _block) = engine.latest_results();
+        let found = results.iter().find(|(pid, _)| *pid == path_id);
+        assert!(found.is_some(), "register_and_solve_path should eagerly solve and add to results");
+
+        let (_, solve_result) = found.unwrap();
+        assert!(!solve_result.optimal_input.is_zero());
+        assert!(!solve_result.profit.is_zero());
+    }
+
+    #[test]
+    fn pending_new_paths_survive_rebuild() {
+        let mut engine = UniswapEngine::new();
+
+        // Two V2 pools with price divergence
+        let v2_addr_a = Address::from([0x11u8; 20]);
+        let v2_fwd_a = engine.v2_engine().register_pool(
+            v2_addr_a,
+            usdc(1_500_000),
+            weth(800),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let v2_addr_b = Address::from([0x12u8; 20]);
+        let v2_fwd_b = engine.v2_engine().register_pool(
+            v2_addr_b,
+            weth(1000),
+            usdc(2_000_000),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+
+        // Register path eagerly
+        let path_id = engine.register_and_solve_path(vec![
+            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_a, zero_for_one: true },
+            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_b, zero_for_one: true },
+        ]);
+
+        // Process an empty block (no affected pools) — rebuild_and_solve_affected
+        // should still include the pending path and not drop it
+        engine.rebuild_and_solve_affected(&HashSet::new(), &HashSet::new(), &HashSet::new(), 1);
+
+        // Pending set should be cleared
+        assert!(engine.pending_new_paths.is_empty());
+
+        // The path's result should survive the rebuild
+        let (results, block) = engine.latest_results();
+        assert_eq!(block, 1);
+        let found = results.iter().find(|(pid, _)| *pid == path_id);
+        assert!(found.is_some(), "pending new path result should survive rebuild_and_solve_affected");
     }
 
     #[test]
@@ -1506,10 +1678,10 @@ mod tests {
         let _ = results_after;
     }
 
-    /// V4 int128 guard: paths where V4 hop amounts exceed int128_max are rejected.
+    /// V4 int128 guard: paths where V4 hop amounts exceed `int128_max` are rejected.
     ///
-    /// V4's toBalanceDelta() calls toInt128() on swap amounts. If either component
-    /// exceeds int128_max, V4 reverts with SafeCastOverflow — the swap cannot
+    /// V4's `toBalanceDelta()` calls `toInt128()` on swap amounts. If either component
+    /// exceeds `int128_max`, V4 reverts with `SafeCastOverflow` — the swap cannot
     /// execute on-chain. The solver must not report such paths as profitable.
     #[test]
     fn v4_int128_overflow_path_rejected() {
@@ -1566,8 +1738,20 @@ mod tests {
             MixedPoolRef { hop_type: HopType::V4, pool_key: 0, zero_for_one: false },
         ]);
 
-        engine.start();
-        engine.initial_solve(0);
+        // Resolve and solve all paths (replaces start() + initial_solve())
+        let path_pool_refs: Vec<(u64, Vec<MixedPoolRef>)> = engine
+            .paths
+            .iter()
+            .map(|(&id, (path, _))| (id, path.pools.clone()))
+            .collect();
+        for (path_id, pool_refs) in &path_pool_refs {
+            let mut resolved = ResolvedMixedPath::default();
+            engine.resolve_path(pool_refs, &mut resolved);
+            if let Some((_, stored)) = engine.paths.get_mut(path_id) {
+                *stored = resolved;
+            }
+        }
+        engine.results = engine.solve_all();
 
         let (results, _block) = engine.latest_results();
 
@@ -1580,8 +1764,7 @@ mod tests {
             let v4_consumed = solve_result.consumed_inputs.get(1).copied().unwrap_or(U256::ZERO);
             assert!(
                 v4_output <= INT128_MAX && v4_consumed <= INT128_MAX,
-                "V4 hop amounts must fit int128: output={}, consumed={}",
-                v4_output, v4_consumed
+                "V4 hop amounts must fit int128: output={v4_output}, consumed={v4_consumed}"
             );
         }
         // Ideally the path should not appear in results at all
@@ -1612,6 +1795,22 @@ pub struct PyUniswapArbEngine {
     pump_handle: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// Watch receiver for block notifications (None until `start()` is called)
     block_rx: parking_lot::Mutex<Option<tokio::sync::watch::Receiver<crate::optimizers::uniswap_engine_pump::BlockNotification>>>,
+    /// Subscribe state held between `subscribe()` and `resume()` calls.
+    /// Contains the live WS stream and first observed block number.
+    subscribe_state: parking_lot::Mutex<Option<PySubscribeState>>,
+}
+
+/// Python-facing subscribe state.
+///
+/// Stores the pump and subscribe results between `subscribe()` and `resume()`
+/// calls so that `resume()` can re-use the same pump instance.
+struct PySubscribeState {
+    /// The pump instance (holds engine, provider, shutdown, and `block_tx`)
+    pump: crate::optimizers::uniswap_engine_pump::UniswapEnginePump,
+    /// First block number observed during subscribe
+    first_block: u64,
+    /// Live WS stream for the resume phase
+    combined_stream: futures_util::stream::BoxStream<'static, crate::optimizers::uniswap_engine_pump::WsEvent>,
 }
 
 impl PyUniswapArbEngine {
@@ -1764,6 +1963,7 @@ impl PyUniswapArbEngine {
             shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pump_handle: parking_lot::Mutex::new(None),
             block_rx: parking_lot::Mutex::new(None),
+            subscribe_state: parking_lot::Mutex::new(None),
         }
     }
 
@@ -1970,6 +2170,53 @@ impl PyUniswapArbEngine {
         Ok(self.engine.lock().register_path(rust_refs))
     }
 
+    /// Register a mixed arbitrage path and eagerly solve it.
+    ///
+    /// Unlike `register_path`, this method also resolves and solves the path
+    /// immediately, appending any profitable result to the engine's results.
+    /// Used when the engine is already running (after the pump has started)
+    /// so that new paths are immediately available to `latest_results()`.
+    #[pyo3(signature = (pool_refs))]
+    fn register_and_solve_path(&self, pool_refs: &Bound<'_, PyList>) -> PyResult<u64> {
+        let mut rust_refs = Vec::with_capacity(pool_refs.len());
+        for item in pool_refs.iter() {
+            let tuple = item.cast::<pyo3::types::PyTuple>()?;
+            if tuple.len() != 3 {
+                let msg = format!(
+                    "Expected 3-tuple (hop_type, pool_key, zero_for_one), got {} elements",
+                    tuple.len()
+                );
+                return Err(pyo3::exceptions::PyValueError::new_err(msg));
+            }
+            let hop_type_str: String = tuple.get_item(0)?.extract()?;
+            let pool_key: u64 = tuple.get_item(1)?.extract()?;
+            let zero_for_one: bool = tuple.get_item(2)?.extract()?;
+
+            let hop_type = match hop_type_str.as_str() {
+                "V2" => HopType::V2,
+                "V3" => HopType::V3,
+                "V4" => HopType::V4,
+                _ => {
+                    let msg = format!("Invalid hop_type: {hop_type_str}. Expected 'V2', 'V3', or 'V4'");
+                    return Err(pyo3::exceptions::PyValueError::new_err(msg));
+                }
+            };
+
+            rust_refs.push(MixedPoolRef {
+                hop_type,
+                pool_key,
+                zero_for_one,
+            });
+        }
+
+        if rust_refs.len() < 2 {
+            let msg = format!("Need at least 2 pool refs, got {}", rust_refs.len());
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+
+        Ok(self.engine.lock().register_and_solve_path(rust_refs))
+    }
+
     /// Start the engine. Freezes registration and spawns the unified pump.
     ///
     /// The pump subscribes to both block headers and log events via WS.
@@ -1982,8 +2229,6 @@ impl PyUniswapArbEngine {
     /// via `wait_for_block()`.
     #[pyo3(signature = (rpc_url))]
     fn start(&self, rpc_url: String) -> PyResult<()> {
-        self.engine.lock().start();
-
         // Spawn the unified pump
         let engine = Arc::clone(&self.engine);
         let shutdown = Arc::clone(&self.shutdown);
@@ -2000,10 +2245,124 @@ impl PyUniswapArbEngine {
         Ok(())
     }
 
-    /// Whether the engine is running (registration is frozen).
-    #[allow(clippy::missing_const_for_fn)]
-    fn is_running(&self) -> bool {
-        self.engine.lock().is_running()
+    /// Subscribe phase: open WS connections and buffer MINT/BURN events.
+    ///
+    /// Returns the first observed block number. Python should:
+    /// 1. Run backfill up to the returned block number
+    /// 2. Call `resume()` to begin normal processing
+    ///
+    /// During this phase, MINT/BURN events are routed to the engine's
+    /// liquidity event buffers. Swap/Sync events are discarded.
+    ///
+    /// `buffer_event_types`: list of event type strings to buffer.
+    ///   Valid values: "SYNC", "SWAP", "MINT", "BURN".
+    ///   Default: ["MINT", "BURN"].
+    ///
+    /// Raises `RuntimeError` if the pump is already started or subscribed.
+    #[pyo3(signature = (rpc_url, buffer_event_types=None))]
+    fn subscribe(
+        &self,
+        rpc_url: String,
+        buffer_event_types: Option<Vec<String>>,
+    ) -> PyResult<u64> {
+        // Ensure we're not already running
+        if self.pump_handle.lock().is_some() {
+            let msg = "Cannot subscribe: pump is already started. Call stop() first.";
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
+        }
+        if self.subscribe_state.lock().is_some() {
+            let msg = "Cannot subscribe: already subscribed. Call resume() first.";
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
+        }
+
+        // Parse event type strings into EventType enums
+        let event_types = match buffer_event_types {
+            Some(ref types) => types
+                .iter()
+                .map(|s| match s.as_str() {
+                    "SYNC" => Ok(crate::optimizers::uniswap_engine_pump::EventType::SYNC),
+                    "SWAP" => Ok(crate::optimizers::uniswap_engine_pump::EventType::SWAP),
+                    "MINT" => Ok(crate::optimizers::uniswap_engine_pump::EventType::MINT),
+                    "BURN" => Ok(crate::optimizers::uniswap_engine_pump::EventType::BURN),
+                    _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Invalid event type: {s}. Expected SYNC, SWAP, MINT, or BURN"
+                    ))),
+                })
+                .collect::<PyResult<Vec<_>>>()?,
+            None => crate::optimizers::uniswap_engine_pump::DEFAULT_BUFFER_EVENTS.to_vec(),
+        };
+
+        let engine = Arc::clone(&self.engine);
+        let shutdown = Arc::clone(&self.shutdown);
+
+        // Run the subscribe phase synchronously (blocks Python until first block observed)
+        let runtime = crate::runtime::get_runtime();
+        let subscribe_result = runtime
+            .block_on(async {
+                crate::optimizers::uniswap_engine_pump::UniswapEnginePump::subscribe(
+                    &rpc_url,
+                    engine,
+                    shutdown,
+                    event_types,
+                )
+                .await
+            })
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+
+        let (pump, state) = subscribe_result;
+
+        // Store the subscribe state for resume()
+        *self.subscribe_state.lock() = Some(PySubscribeState {
+            pump,
+            first_block: state.first_block,
+            combined_stream: state
+                .combined_stream
+                .expect("subscribe() always returns a stream"),
+        });
+
+        Ok(state.first_block)
+    }
+
+    /// Resume phase: begin normal pump processing.
+    ///
+    /// Must be called after `subscribe()`. Takes the WS stream from the
+    /// subscribe phase and begins processing events on block boundaries.
+    ///
+    /// After calling `resume()`, the engine processes events autonomously.
+    /// Python reads results via `latest_results()` and awaits new blocks
+    /// via `wait_for_block()`.
+    ///
+    /// Raises `RuntimeError` if `subscribe()` has not been called first.
+    fn resume(&self, _py: Python<'_>) -> PyResult<()> {
+        let subscribe_state = self.subscribe_state.lock().take();
+        let mut state = subscribe_state.ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "Cannot resume: subscribe() has not been called. Call subscribe() first.",
+            )
+        })?;
+
+        // Get the block_rx from the pump's internal watch channel
+        let block_rx = state.pump.take_block_rx();
+
+        let mut pump = state.pump;
+        let first_block = state.first_block;
+        let combined_stream = state.combined_stream;
+
+        // Spawn the resume task on the Tokio runtime
+        let handle = crate::runtime::get_runtime().spawn(async move {
+            let inner_state =
+                crate::optimizers::uniswap_engine_pump::SubscribeState {
+                    first_block,
+                    first_timestamp: 0,
+                    combined_stream: Some(combined_stream),
+                };
+            pump.resume_from_subscribe(inner_state).await;
+        });
+
+        *self.pump_handle.lock() = Some(handle);
+        *self.block_rx.lock() = Some(block_rx);
+
+        Ok(())
     }
 
     /// Last block number processed by `process_block` or `process_logs`.
@@ -2012,17 +2371,28 @@ impl PyUniswapArbEngine {
         self.engine.lock().last_processed_block()
     }
 
-    /// Freeze registration without starting a pump.
-    fn freeze(&self) {
-        self.engine.lock().start();
+    /// Resolve and solve all registered paths.
+    ///
+    /// Called to populate results for the first time (replaces the
+    /// removed `freeze()` + `initial_solve()`). Subsequent `process_logs`
+    /// calls use dependency tracking to only re-solve affected paths.
+    fn solve_all_paths(&self, block_number: u64) {
+        self.engine.lock().solve_all_paths(block_number);
     }
 
-    /// Perform initial solve of all paths. Call once after `freeze()`.
+    /// Set the maximum age (in blocks) for buffered liquidity events.
     ///
-    /// Populates `results` for the first time. Subsequent `process_logs`
-    /// calls use dependency tracking to only re-solve affected paths.
-    fn initial_solve(&self, block_number: u64) {
-        self.engine.lock().initial_solve(block_number);
+    /// Applies to V3 and V4 sub-engine buffers. Pass `None` for unbounded
+    /// (no automatic expiry). Events older than `current_block - max_age`
+    /// are expired during `process_block`.
+    #[pyo3(signature = (max_age))]
+    fn set_event_buffer_max_age(&self, max_age: Option<u64>) {
+        self.engine.lock().set_event_buffer_max_age(max_age);
+    }
+
+    /// Discard all buffered liquidity events for all unregistered pools.
+    fn flush_event_buffer(&self) {
+        self.engine.lock().flush_event_buffer();
     }
 
     /// Number of registered V2 pools.
@@ -2200,15 +2570,15 @@ impl PyUniswapArbEngine {
         Ok(())
     }
 
-    /// Full-sync V3 pool tick_data from Python backfill.
+    /// Full-sync V3 pool `tick_data` from Python backfill.
     ///
-    /// Unlike `process_logs` (which only inserts tick_priors), this method
-    /// **replaces** the entire tick_data map. This ensures that ticks removed
+    /// Unlike `process_logs` (which only inserts `tick_priors`), this method
+    /// **replaces** the entire `tick_data` map. This ensures that ticks removed
     /// from Python (because `liquidityGross` went to zero after a Burn) are
     /// also removed from the Rust engine.
     ///
     /// `v3_sync_updates`: list of (`address_str`, `sqrt_price_x96`, liquidity, tick, `tick_data`)
-    ///   where `tick_data` is a dict of {tick_index: (liquidity_gross, liquidity_net)}
+    ///   where `tick_data` is a dict of {`tick_index`: (`liquidity_gross`, `liquidity_net`)}
     #[pyo3(signature = (v3_sync_updates, block_number))]
     fn sync_v3_pool_states(
         &self,
@@ -2264,12 +2634,12 @@ impl PyUniswapArbEngine {
         Ok(())
     }
 
-    /// Full-sync V4 pool tick_data from Python backfill.
+    /// Full-sync V4 pool `tick_data` from Python backfill.
     ///
-    /// Replaces the entire tick_data map. See `sync_v3_pool_states` for rationale.
+    /// Replaces the entire `tick_data` map. See `sync_v3_pool_states` for rationale.
     ///
     /// `v4_sync_updates`: list of (`pool_manager_str`, `pool_id_hex`, `sqrt_price_x96`, liquidity, tick, `tick_data`)
-    ///   where `tick_data` is a dict of {tick_index: (liquidity_gross, liquidity_net)}
+    ///   where `tick_data` is a dict of {`tick_index`: (`liquidity_gross`, `liquidity_net`)}
     #[pyo3(signature = (v4_sync_updates, block_number))]
     fn sync_v4_pool_states(
         &self,

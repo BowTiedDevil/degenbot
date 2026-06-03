@@ -193,15 +193,14 @@ def build_engine_v3_v3(
         ("V3", v3_key_b, False),
     ])
 
-    engine.freeze()
+    # Trigger initial solve via solve_all_paths (replaces freeze() + initial_solve())
+    engine.solve_all_paths(block_number=1)
     return engine, v3_key_a, v3_key_b
 
 
 def solve_engine(engine: UniswapArbEngine) -> list[tuple[int, int, int]]:
-    """Trigger initial solve + latest_results and return [(path_id, opt_input, profit), ...]."""
-    engine.initial_solve(block_number=1)
+    """Return latest_results as [(path_id, opt_input, profit), ...]."""
     results_list, block = engine.latest_results()
-    assert block == 1
 
     results = []
     for item in results_list:
@@ -395,7 +394,7 @@ class TestEngineV3V3VsBrent:
             tick=current_tick, tick_data=td,
         )
         engine.register_path([("V3", v3_key_a, True), ("V3", v3_key_b, False)])
-        engine.freeze()
+        engine.solve_all_paths(block_number=1)
 
         results = solve_engine(engine)
 

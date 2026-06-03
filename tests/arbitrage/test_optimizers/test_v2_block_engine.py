@@ -147,26 +147,24 @@ def test_process_logs_ignores_unregistered():
     assert block_num == 1  # block number updated even if no pools changed
 
 
-def test_register_pool_after_start_raises():
-    """Calling register_pool after freeze() panics."""
+def test_register_pool_after_process_logs_succeeds():
+    """Registration is always-on — register_pool works after process_logs."""
     engine = V2ArbEngine()
     engine.register_pool(ADDR_0, USDC_1_5M, WETH_800, GAMMA_03, FEE_DENOM_03)
-    engine.freeze()
 
-    import pytest
+    engine.process_logs([], block_number=1)
 
-    with pytest.raises(BaseException):  # PanicException from Rust
-        engine.register_pool(ADDR_1, WETH_1000, USDC_2M, GAMMA_03, FEE_DENOM_03)
+    # Registration is always-on; this should succeed
+    engine.register_pool(ADDR_1, WETH_1000, USDC_2M, GAMMA_03, FEE_DENOM_03)
 
 
-def test_register_path_after_start_raises():
-    """Calling register_path after freeze() panics."""
+def test_register_path_after_process_logs_succeeds():
+    """Registration is always-on — register_path works after process_logs."""
     engine = V2ArbEngine()
     engine.register_pool(ADDR_0, USDC_1_5M, WETH_800, GAMMA_03, FEE_DENOM_03)
     engine.register_pool(ADDR_1, WETH_1000, USDC_2M, GAMMA_03, FEE_DENOM_03)
-    engine.freeze()
 
-    import pytest
+    engine.process_logs([], block_number=1)
 
-    with pytest.raises(BaseException):  # PanicException from Rust
-        engine.register_path([1, 3])
+    # Registration is always-on; this should succeed
+    engine.register_path([1, 3])

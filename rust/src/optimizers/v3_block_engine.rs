@@ -55,6 +55,25 @@ pub struct RegisterV3PoolParams {
     pub update_block: u64,
 }
 
+/// A buffered liquidity update (Mint or Burn) for an unregistered V3 pool.
+///
+/// When a Mint or Burn event arrives for a pool that hasn't been registered
+/// yet, the raw update is stored here. When the pool is later registered,
+/// all buffered updates are applied eagerly to bring the tick data current.
+///
+/// Stores raw event data (not collapsed) to support future reorg handling.
+#[derive(Clone, Debug)]
+pub struct BufferedV3LiquidityUpdate {
+    /// The tick lower boundary of the position.
+    pub tick_lower: i32,
+    /// The tick upper boundary of the position.
+    pub tick_upper: i32,
+    /// The signed liquidity delta: positive for Mint, negative for Burn.
+    pub liquidity_delta: i128,
+    /// The block number of this event.
+    pub block_number: u64,
+}
+
 /// V3 pool state as owned by the engine.
 #[derive(Clone, Debug)]
 pub struct V3PoolState {
@@ -371,47 +390,121 @@ pub struct V3BlockEngine {
     results: Vec<(u64, U256, U256)>,
     /// Block number for the last solved results
     results_block: u64,
-    /// Whether the engine is running (freezes registration after start)
-    running: bool,
     /// Auto-incrementing path ID
     next_path_id: u64,
     /// Auto-incrementing pool key
     next_pool_key: u64,
+    /// Buffered liquidity updates (Mint/Burn) for pools not yet registered.
+    /// Keyed by pool contract address. When a pool is registered, all
+    /// buffered updates for its address are applied eagerly.
+    liquidity_event_buffer: HashMap<Address, Vec<BufferedV3LiquidityUpdate>>,
+    /// Maximum age (in blocks) for buffered events. `None` means unbounded.
+    /// Events older than `current_block - max_age` are expired during
+    /// `process_block` or `expire_buffered_events`.
+    event_buffer_max_age: Option<u64>,
 }
 
 impl V3BlockEngine {
-    /// Create a new engine.
+    /// Create a new engine with unbounded event buffer.
     #[must_use]
     pub fn new() -> Self {
+        Self::new_with_buffer_max_age(None)
+    }
+
+    /// Create a new engine with a configurable event buffer staleness limit.
+    ///
+    /// `max_age`: if `Some(n)`, buffered events older than `n` blocks are
+    /// automatically expired during `process_block`. `None` means unbounded.
+    #[must_use]
+    pub fn new_with_buffer_max_age(event_buffer_max_age: Option<u64>) -> Self {
         Self {
             pools: HashMap::new(),
             pool_addresses: HashMap::new(),
             paths: HashMap::new(),
             results: Vec::new(),
             results_block: 0,
-            running: false,
             next_path_id: 1,
             next_pool_key: 1,
+            liquidity_event_buffer: HashMap::new(),
+            event_buffer_max_age,
         }
     }
 
     /// Register a V3 pool by contract address and initial state.
     ///
+    /// After inserting the pool, applies any buffered liquidity updates
+    /// (Mint/Burn events received before the pool was registered).
     /// Returns the pool key for use in path registration.
-    ///
-    /// # Panics
-    ///
-    /// Panics if called after `start()`.
     pub fn register_pool(&mut self, params: RegisterV3PoolParams) -> u64 {
-        assert!(!self.running, "cannot register pools after start()");
-
         let key = self.next_pool_key;
         self.next_pool_key += 1;
 
         let address = params.address;
         self.pools.insert(key, V3PoolState::from(params));
         self.pool_addresses.insert(address, key);
+
+        // Apply any buffered liquidity updates for this pool
+        if let Some(buffered) = self.liquidity_event_buffer.remove(&address) {
+            if let Some(pool) = self.pools.get_mut(&key) {
+                for update in buffered {
+                    update_tick_liquidity(
+                        &mut pool.tick_data,
+                        update.tick_lower,
+                        update.liquidity_delta,
+                        true,
+                    );
+                    update_tick_liquidity(
+                        &mut pool.tick_data,
+                        update.tick_upper,
+                        update.liquidity_delta,
+                        false,
+                    );
+                    pool.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+                    pool.update_block = update.block_number;
+                }
+            }
+        }
+
         key
+    }
+
+    // ── Event buffer management ──────────────────────────────────
+
+    /// Set the maximum age (in blocks) for buffered liquidity events.
+    ///
+    /// `None` means unbounded (no automatic expiry). `Some(n)` means
+    /// events older than `n` blocks from the current block are expired.
+    /// Takes effect on the next call to `expire_buffered_events` or
+    /// `process_block`.
+    pub fn set_event_buffer_max_age(&mut self, max_age: Option<u64>) {
+        self.event_buffer_max_age = max_age;
+    }
+
+    /// Discard all buffered liquidity events for all unregistered pools.
+    ///
+    /// Frees memory. Called when the operator knows that certain pools
+    /// will never be registered (e.g., after a path-loading phase completes).
+    pub fn flush_event_buffer(&mut self) {
+        self.liquidity_event_buffer.clear();
+    }
+
+    /// Expire buffered events older than `current_block - max_age`.
+    ///
+    /// Called internally during `process_block` and `rebuild_and_solve`.
+    /// If `event_buffer_max_age` is `None`, this is a no-op.
+    pub fn expire_buffered_events(&mut self, current_block: u64) {
+        let Some(max_age) = self.event_buffer_max_age else {
+            return;
+        };
+
+        let cutoff = current_block.saturating_sub(max_age);
+
+        for events in self.liquidity_event_buffer.values_mut() {
+            events.retain(|ev| ev.block_number >= cutoff);
+        }
+
+        // Remove entries with no remaining events
+        self.liquidity_event_buffer.retain(|_, events| !events.is_empty());
     }
 
     /// Register an arbitrage path as an ordered list of (`pool_key`,
@@ -421,9 +514,8 @@ impl V3BlockEngine {
     ///
     /// # Panics
     ///
-    /// Panics if called after `start()` or with fewer than 2 pool refs.
+    /// Panics with fewer than 2 pool refs.
     pub fn register_path(&mut self, pool_refs: Vec<V3PoolRef>) -> u64 {
-        assert!(!self.running, "cannot register paths after start()");
         assert!(pool_refs.len() >= 2, "need at least 2 pool refs");
 
         let path_id = self.next_path_id;
@@ -491,6 +583,16 @@ impl V3BlockEngine {
         block_number: u64,
     ) {
         let Some(&key) = self.pool_addresses.get(&pool_address) else {
+            // Pool not registered — buffer the update for later
+            self.liquidity_event_buffer
+                .entry(pool_address)
+                .or_default()
+                .push(BufferedV3LiquidityUpdate {
+                    tick_lower,
+                    tick_upper,
+                    liquidity_delta,
+                    block_number,
+                });
             return;
         };
         let Some(pool) = self.pools.get_mut(&key) else {
@@ -544,6 +646,7 @@ impl V3BlockEngine {
             }
         }
 
+        self.expire_buffered_events(block_number);
         self.rebuild_and_solve(block_number);
     }
 
@@ -673,17 +776,6 @@ impl V3BlockEngine {
         self.pool_addresses.keys().copied().collect()
     }
 
-    /// Mark the engine as running. Freezes registration.
-    pub const fn start(&mut self) {
-        self.running = true;
-    }
-
-    /// Whether the engine is running.
-    #[must_use]
-    pub const fn is_running(&self) -> bool {
-        self.running
-    }
-
     /// Number of registered pools.
     #[must_use]
     pub fn pool_count(&self) -> usize {
@@ -711,9 +803,9 @@ impl V3BlockEngine {
         self.pools.clone()
     }
 
-    /// Full-sync a V3 pool's tick_data from an external source (e.g., Python backfill).
+    /// Full-sync a V3 pool's `tick_data` from an external source (e.g., Python backfill).
     ///
-    /// Unlike `apply_swap` (which only inserts/overlays tick_priors), this method
+    /// Unlike `apply_swap` (which only inserts/overlays `tick_priors`), this method
     /// **replaces** the entire `tick_data` map for the pool. This ensures that ticks
     /// removed from Python (because `liquidityGross` went to zero after a Burn) are
     /// also removed from the Rust engine.
@@ -944,25 +1036,35 @@ mod tests {
     }
 
     #[test]
-    fn register_v3_pool_after_start_panics() {
+    fn register_v3_pool_after_start_succeeds() {
         let mut engine = V3BlockEngine::new();
-        engine.start();
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            engine.register_pool(RegisterV3PoolParams {
-                address: Address::ZERO,
-                token0: Address::ZERO,
-                token1: Address::ZERO,
-                fee: 3000,
-                tick_spacing: 60,
-                factory: Address::ZERO,
-                sqrt_price_x96: U256::ONE,
-                liquidity: 100,
-                tick: 0,
-                tick_data: HashMap::new(),
-                update_block: 0,
-            });
-        }));
-        assert!(result.is_err());
+        engine.register_pool(RegisterV3PoolParams {
+            address: Address::ZERO,
+            token0: Address::ZERO,
+            token1: Address::ZERO,
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::ONE,
+            liquidity: 100,
+            tick: 0,
+            tick_data: HashMap::new(),
+            update_block: 0,
+        });
+        // Registration is always-on; this should not panic
+        engine.register_pool(RegisterV3PoolParams {
+            address: Address::from([1u8; 20]),
+            token0: Address::from([2u8; 20]),
+            token1: Address::from([3u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::from([4u8; 20]),
+            sqrt_price_x96: U256::ONE,
+            liquidity: 100,
+            tick: 0,
+            tick_data: HashMap::new(),
+            update_block: 0,
+        });
     }
 
     #[test]
@@ -1260,7 +1362,6 @@ mod tests {
             V3PoolRef { pool_idx: key1, zero_for_one: false },
         ]);
 
-        engine.start();
 
         // Process a swap update that changes price in pool 0
         engine.process_swap_updates(
@@ -1341,7 +1442,6 @@ mod tests {
             update_block: 0,
         });
 
-        engine.start();
 
         // Process a block with no logs — pool state should be unchanged
         engine.process_block(&[], 50);
@@ -1418,16 +1518,183 @@ mod tests {
     }
 
     #[test]
-    fn register_path_after_start_panics() {
+    fn register_path_after_start_succeeds() {
         let mut engine = V3BlockEngine::new();
-        engine.start();
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            engine.register_path(vec![
-                V3PoolRef { pool_idx: 1, zero_for_one: true },
-                V3PoolRef { pool_idx: 2, zero_for_one: false },
-            ]);
-        }));
-        assert!(result.is_err());
+        let key1 = engine.register_pool(RegisterV3PoolParams {
+            address: Address::from([1u8; 20]),
+            token0: Address::ZERO,
+            token1: Address::ZERO,
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::ONE,
+            liquidity: 100,
+            tick: 0,
+            tick_data: HashMap::new(),
+            update_block: 0,
+        });
+        let key2 = engine.register_pool(RegisterV3PoolParams {
+            address: Address::from([2u8; 20]),
+            token0: Address::ZERO,
+            token1: Address::ZERO,
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::ONE,
+            liquidity: 100,
+            tick: 0,
+            tick_data: HashMap::new(),
+            update_block: 0,
+        });
+        engine.register_path(vec![
+            V3PoolRef { pool_idx: key1, zero_for_one: true },
+            V3PoolRef { pool_idx: key2, zero_for_one: false },
+        ]);
+        // Registration is always-on; this should not panic
+        engine.register_path(vec![
+            V3PoolRef { pool_idx: key1, zero_for_one: true },
+            V3PoolRef { pool_idx: key2, zero_for_one: false },
+        ]);
+    }
+
+    #[test]
+    fn mint_buffered_for_unregistered_pool_applied_on_registration() {
+        let mut engine = V3BlockEngine::new();
+        let addr = Address::from([0x11u8; 20]);
+
+        // Apply a Mint update BEFORE the pool is registered
+        engine.apply_liquidity_update(
+            addr,
+            -60,  // tick_lower
+            60,   // tick_upper
+            500,  // liquidity_delta (positive = Mint)
+            100,  // block_number
+        );
+
+        // The event should be buffered, not dropped
+        assert!(engine.liquidity_event_buffer.contains_key(&addr));
+        assert_eq!(engine.liquidity_event_buffer[&addr].len(), 1);
+
+        // Now register the pool
+        let key = engine.register_pool(RegisterV3PoolParams {
+            address: addr,
+            token0: Address::ZERO,
+            token1: Address::ZERO,
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::ONE,
+            liquidity: 100,
+            tick: 0,
+            tick_data: HashMap::new(),
+            update_block: 0,
+        });
+
+        // The buffer should be consumed
+        assert!(engine.liquidity_event_buffer.is_empty());
+
+        // The buffered Mint should have been applied to the pool's tick data
+        let pool = &engine.pools[&key];
+        assert!(pool.tick_data.contains_key(&-60));
+        assert!(pool.tick_data.contains_key(&60));
+        assert_eq!(pool.tick_data[&-60].liquidity_gross, U128::from(500u64));
+        assert_eq!(pool.tick_data[&-60].liquidity_net, I256::try_from(500i128).unwrap());
+        assert_eq!(pool.tick_data[&60].liquidity_gross, U128::from(500u64));
+        assert_eq!(pool.tick_data[&60].liquidity_net, I256::try_from(-500i128).unwrap());
+    }
+
+    #[test]
+    fn buffered_events_apply_in_order() {
+        let mut engine = V3BlockEngine::new();
+        let addr = Address::from([0x22u8; 20]);
+
+        // Mint 500 at [-60, 60]
+        engine.apply_liquidity_update(addr, -60, 60, 500, 100);
+        // Then Burn 200 at [-60, 60]
+        engine.apply_liquidity_update(addr, -60, 60, -200, 101);
+        // Then Mint 300 at [-120, 120] (new tick positions)
+        engine.apply_liquidity_update(addr, -120, 120, 300, 102);
+
+        assert_eq!(engine.liquidity_event_buffer[&addr].len(), 3);
+
+        // Register with existing tick data at [-60, 60]
+        let mut initial_tick_data = HashMap::new();
+        initial_tick_data.insert(-60, make_tick_info(100, 50));
+        initial_tick_data.insert(60, make_tick_info(100, -50));
+
+        let key = engine.register_pool(RegisterV3PoolParams {
+            address: addr,
+            token0: Address::ZERO,
+            token1: Address::ZERO,
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::ONE,
+            liquidity: 100,
+            tick: 0,
+            tick_data: initial_tick_data,
+            update_block: 0,
+        });
+
+        let pool = &engine.pools[&key];
+        // After Mint 500 + Burn 200: net = +300, gross = 100 + 500 - 200 = 400
+        assert_eq!(pool.tick_data[&-60].liquidity_gross, U128::from(400u64));
+        assert_eq!(pool.tick_data[&-60].liquidity_net, I256::try_from(350i128).unwrap()); // 50 + 500 - 200
+        assert_eq!(pool.tick_data[&60].liquidity_gross, U128::from(400u64));
+        assert_eq!(pool.tick_data[&60].liquidity_net, I256::try_from(-350i128).unwrap()); // -50 - 500 + 200
+        // New ticks from the third Mint
+        assert!(pool.tick_data.contains_key(&-120));
+        assert!(pool.tick_data.contains_key(&120));
+        assert_eq!(pool.update_block, 102); // Last buffered event's block
+    }
+
+    #[test]
+    fn buffer_max_age_expires_old_events() {
+        let mut engine = V3BlockEngine::new_with_buffer_max_age(Some(10));
+        let addr = Address::from([0x33u8; 20]);
+
+        // Buffer an event at block 100
+        engine.apply_liquidity_update(addr, -60, 60, 500, 100);
+
+        // At block 110, the event is exactly at the boundary (110 - 10 = 100)
+        engine.expire_buffered_events(110);
+        assert!(engine.liquidity_event_buffer.contains_key(&addr));
+
+        // At block 111, the event is too old (111 - 10 = 101 > 100)
+        engine.expire_buffered_events(111);
+        assert!(!engine.liquidity_event_buffer.contains_key(&addr));
+    }
+
+    #[test]
+    fn flush_event_buffer_discards_all() {
+        let mut engine = V3BlockEngine::new();
+        let addr1 = Address::from([0x11u8; 20]);
+        let addr2 = Address::from([0x22u8; 20]);
+
+        engine.apply_liquidity_update(addr1, -60, 60, 500, 100);
+        engine.apply_liquidity_update(addr2, -60, 60, 300, 101);
+
+        assert_eq!(engine.liquidity_event_buffer.len(), 2);
+
+        engine.flush_event_buffer();
+        assert!(engine.liquidity_event_buffer.is_empty());
+    }
+
+    #[test]
+    fn set_event_buffer_max_age_updates_limit() {
+        let mut engine = V3BlockEngine::new(); // unbounded by default
+        let addr = Address::from([0x44u8; 20]);
+
+        engine.apply_liquidity_update(addr, -60, 60, 500, 100);
+
+        // With no limit, event survives
+        engine.expire_buffered_events(200);
+        assert!(engine.liquidity_event_buffer.contains_key(&addr));
+
+        // Set a limit that expires the event
+        engine.set_event_buffer_max_age(Some(50));
+        engine.expire_buffered_events(200);
+        assert!(!engine.liquidity_event_buffer.contains_key(&addr));
     }
 
     #[test]
@@ -1766,11 +2033,9 @@ impl PyV3ArbEngine {
     }
 
     /// Start the engine pump with the given RPC URL.
-    /// Freezes registration and spawns the `V3EnginePump` on the Tokio runtime.
+    /// Spawns the `V3EnginePump` on the Tokio runtime.
     #[pyo3(signature = (rpc_url))]
     fn start(&self, rpc_url: String) -> PyResult<()> {
-        self.engine.lock().start();
-
         if self.shutdown.load(std::sync::atomic::Ordering::Relaxed) {
             let msg = "Engine already running";
             return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
@@ -1797,16 +2062,6 @@ impl PyV3ArbEngine {
         if let Some(handle) = handle {
             handle.abort();
         }
-    }
-
-    /// Whether the engine is running.
-    fn is_running(&self) -> bool {
-        self.engine.lock().is_running()
-    }
-
-    /// Freeze registration without starting the pump.
-    fn freeze(&self) {
-        self.engine.lock().start();
     }
 
     /// Number of registered pools.
