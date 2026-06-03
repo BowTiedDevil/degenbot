@@ -717,6 +717,57 @@ impl V4BlockEngine {
         self.paths.len()
     }
 
+    /// Snapshot all pool state for verification (clones the entire map).
+    ///
+    /// Used by `verify_liquidity_maps` so the engine lock can be released
+    /// before making async RPC calls.
+    #[must_use]
+    pub fn pools_snapshot(&self) -> HashMap<u64, V4PoolState> {
+        self.pools.clone()
+    }
+
+    /// Full-sync a V4 pool's tick_data from an external source (e.g., Python backfill).
+    ///
+    /// Unlike `apply_swap` (which only inserts/overlays tick_priors), this method
+    /// **replaces** the entire `tick_data` map. This ensures that ticks removed from
+    /// Python (because `liquidityGross` went to zero after a Burn) are also removed
+    /// from the Rust engine.
+    ///
+    /// Updates both forward and reverse pool orientations.
+    /// No-op if the pool_id is not registered.
+    pub fn sync_pool_state(
+        &mut self,
+        pool_manager: Address,
+        pool_id: PoolId,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        tick_data: HashMap<i32, TickInfo>,
+        update_block: u64,
+    ) {
+        let Some(&(fwd_key, rev_key)) = self.pool_ids.get(&(pool_manager, pool_id)) else {
+            return;
+        };
+
+        // Apply to forward pool
+        if let Some(pool) = self.pools.get_mut(&fwd_key) {
+            pool.sqrt_price_x96 = sqrt_price_x96;
+            pool.liquidity = liquidity;
+            pool.tick = tick;
+            pool.tick_data = tick_data.clone();
+            pool.update_block = update_block;
+        }
+
+        // Apply to reverse pool (same state, different PoolKey orientation)
+        if let Some(pool) = self.pools.get_mut(&rev_key) {
+            pool.sqrt_price_x96 = sqrt_price_x96;
+            pool.liquidity = liquidity;
+            pool.tick = tick;
+            pool.tick_data = tick_data;
+            pool.update_block = update_block;
+        }
+    }
+
     /// Resolve a path's pool refs into tick-range sequences.
     fn resolve_path(&self, pool_refs: &[V4PoolRef], resolved: &mut ResolvedV4Path) {
         resolved.int_v4_sequences.clear();

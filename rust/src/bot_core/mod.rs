@@ -12,6 +12,7 @@ use crate::optimizers::mobius_int::IntHopState;
 use crate::bot_core::state_history::{ReorgJournal, V2BlockDelta, V3BlockDelta, TickBefore, V3RestoreResult};
 use crate::bot_core::v2_encoding::{encode_v2_swap, EncodedCall};
 
+pub mod liquidity_verifier;
 pub mod py_bot;
 pub mod py_pool;
 pub mod py_token;
