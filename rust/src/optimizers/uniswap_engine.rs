@@ -718,6 +718,17 @@ impl UniswapEngine {
         self.last_processed_block
     }
 
+    /// Set the last processed block manually.
+    ///
+    /// Called by Python after backfill completes, so the Rust pump
+    /// knows not to re-process the backfilled range. Without this,
+    /// the pump would restart from `first_observed_block` and buffer
+    /// events that the Python pools already reflect, causing
+    /// double-application when pools are later registered.
+    pub fn set_last_processed_block(&mut self, block: u64) {
+        self.last_processed_block = Some(block);
+    }
+
     /// Resolve and solve all registered paths.
     ///
     /// Called to populate `results` for the first time (replaces the
@@ -1769,6 +1780,108 @@ mod tests {
         }
         // Ideally the path should not appear in results at all
     }
+
+    #[test]
+    fn inspect_path_returns_hop_details() {
+        let mut engine = UniswapEngine::new();
+
+        // Register a V2 pool
+        let v2_fwd = engine.v2_engine().register_pool(
+            Address::from([0x11u8; 20]),
+            usdc(1_500_000),
+            weth(800),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+
+        // Register a V3 pool
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            60,
+            crate::bot_core::TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(300),
+                liquidity_net: alloy::primitives::I256::try_from(150i128)
+                    .unwrap_or(alloy::primitives::I256::ZERO),
+            },
+        );
+        tick_data.insert(
+            -60,
+            crate::bot_core::TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(200),
+                liquidity_net: alloy::primitives::I256::try_from(-100i128)
+                    .unwrap_or(alloy::primitives::I256::ZERO),
+            },
+        );
+        let v3_key = engine.v3_engine().register_pool(
+            crate::optimizers::v3_block_engine::RegisterV3PoolParams {
+                address: Address::from([0x22u8; 20]),
+                token0: Address::from([0u8; 20]),
+                token1: Address::from([1u8; 20]),
+                fee: 3000,
+                tick_spacing: 60,
+                factory: Address::ZERO,
+                sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data,
+                update_block: 0,
+            },
+        );
+
+        // Register a V4 pool
+        let v4_key = engine.v4_engine().register_pool(
+            crate::optimizers::v4_block_engine::RegisterV4PoolParams {
+                pool_manager: Address::from([0x33u8; 20]),
+                pool_id: [0xabu8; 32],
+                pool_key: crate::optimizers::v4_block_engine::V4PoolKey {
+                    currency0: Address::from([0u8; 20]),
+                    currency1: Address::from([1u8; 20]),
+                    fee: 10000,
+                    tick_spacing: 100,
+                    hooks: Address::ZERO,
+                },
+                hook_flags: 0,
+                sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+            },
+        ).expect("V4 registration should succeed");
+
+        // Register a 3-hop path: V2 → V3 → V4
+        let path_id = engine.register_path(vec![
+            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd, zero_for_one: true },
+            MixedPoolRef { hop_type: HopType::V3, pool_key: v3_key, zero_for_one: false },
+            MixedPoolRef { hop_type: HopType::V4, pool_key: v4_key, zero_for_one: true },
+        ]);
+
+        // Inspect the path
+        let (path, _resolved) = engine.paths.get(&path_id).expect("path should exist");
+        assert_eq!(path.pools.len(), 3);
+
+        // Verify hop types
+        assert!(matches!(path.pools[0].hop_type, HopType::V2));
+        assert!(matches!(path.pools[1].hop_type, HopType::V3));
+        assert!(matches!(path.pools[2].hop_type, HopType::V4));
+
+        // Verify we can resolve pool addresses via sub-engines
+        let v2_addr = engine.v2_engine().pool_addresses()
+            .iter()
+            .find(|(_, &(fwd, _))| fwd == v2_fwd)
+            .map(|(a, _)| *a);
+        assert_eq!(v2_addr, Some(Address::from([0x11u8; 20])));
+
+        let v3_pool = engine.v3_engine().get_pool(v3_key);
+        assert_eq!(v3_pool.map(|p| p.address), Some(Address::from([0x22u8; 20])));
+
+        let v4_pool = engine.v4_engine().get_pool(v4_key);
+        assert_eq!(v4_pool.map(|p| p.pool_manager), Some(Address::from([0x33u8; 20])));
+        assert_eq!(v4_pool.map(|p| p.pool_id), Some([0xabu8; 32]));
+
+        // Inspect non-existent path
+        assert!(engine.paths.get(&99999).is_none());
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2371,6 +2484,12 @@ impl PyUniswapArbEngine {
         self.engine.lock().last_processed_block()
     }
 
+    /// Set the last processed block manually after Python backfill.
+    #[pyo3(signature = (block))]
+    fn set_last_processed_block(&self, block: u64) {
+        self.engine.lock().set_last_processed_block(block);
+    }
+
     /// Resolve and solve all registered paths.
     ///
     /// Called to populate results for the first time (replaces the
@@ -2722,6 +2841,123 @@ impl PyUniswapArbEngine {
 
     /// Read the last solved results and block number.
     ///
+    /// Inspect a registered path by ID.
+    ///
+    /// Returns a dict with:
+    ///   - "`path_id"`: int
+    ///   - "hops": list of dicts, each with:
+    ///     - "type": "V2" | "V3" | "V4"
+    ///     - "address": str (V2/V3 contract address, or V4 `pool_manager`)
+    ///     - "`pool_id"`: str (V4 only — the pool ID hex)
+    ///     - "`zero_for_one"`: bool
+    ///     - "fee": int (V2: `gamma_numer`; V3: pool fee; V4: pool fee)
+    ///     - "`tick_spacing"`: int (V3/V4 only)
+    ///   Returns None if the `path_id` is not found.
+    #[pyo3(signature = (path_id))]
+    fn inspect_path(&self, path_id: u64, py: Python<'_>) -> PyResult<Option<Py<PyDict>>> {
+        // Phase 1: Collect pool refs from the path
+        let pool_refs: Vec<MixedPoolRef> = {
+            let engine = self.engine.lock();
+            let Some((path, _resolved)) = engine.paths.get(&path_id) else {
+                return Ok(None);
+            };
+            path.pools.clone()
+        };
+
+        // Phase 2: Query sub-engines for pool details
+        struct HopInfo {
+            hop_type: String,
+            address: Option<String>,
+            pool_id: Option<String>,
+            zero_for_one: bool,
+            fee: Option<u64>,
+            tick_spacing: Option<i32>,
+        }
+
+        let mut hops: Vec<HopInfo> = Vec::new();
+        let mut engine = self.engine.lock();
+
+        for pool_ref in &pool_refs {
+            match pool_ref.hop_type {
+                HopType::V2 => {
+                    let v2 = engine.v2_engine();
+                    let addr = v2.pool_addresses()
+                        .iter()
+                        .find(|(_, &(fwd, _))| fwd == pool_ref.pool_key)
+                        .map(|(a, _)| format!("{a}"));
+                    let gamma_numer = v2.get_pool(pool_ref.pool_key).map(|p| p.gamma_numer);
+                    hops.push(HopInfo {
+                        hop_type: "V2".to_string(),
+                        address: addr,
+                        pool_id: None,
+                        zero_for_one: pool_ref.zero_for_one,
+                        fee: gamma_numer,
+                        tick_spacing: None,
+                    });
+                }
+                HopType::V3 => {
+                    let v3 = engine.v3_engine();
+                    let pool = v3.get_pool(pool_ref.pool_key);
+                    let (addr, fee, ts) = pool.map_or((None, None, None), |p| {
+                        (Some(format!("{}", p.address)), Some(u64::from(p.fee)), Some(p.tick_spacing))
+                    });
+                    hops.push(HopInfo {
+                        hop_type: "V3".to_string(),
+                        address: addr,
+                        pool_id: None,
+                        zero_for_one: pool_ref.zero_for_one,
+                        fee,
+                        tick_spacing: ts,
+                    });
+                }
+                HopType::V4 => {
+                    let v4 = engine.v4_engine();
+                    let pool = v4.get_pool(pool_ref.pool_key);
+                    let (pm, pid, fee, ts) = pool.map_or((None, None, None, None), |p| {
+                        (Some(format!("{}", p.pool_manager)), Some(format!("0x{}", alloy::hex::encode(p.pool_id))), Some(u64::from(p.pool_key.fee)), Some(p.pool_key.tick_spacing))
+                    });
+                    hops.push(HopInfo {
+                        hop_type: "V4".to_string(),
+                        address: pm,
+                        pool_id: pid,
+                        zero_for_one: pool_ref.zero_for_one,
+                        fee,
+                        tick_spacing: ts,
+                    });
+                }
+            }
+        }
+
+        drop(engine);
+
+        // Phase 3: Build the Python dict
+        let dict = PyDict::new(py);
+        dict.set_item("path_id", path_id)?;
+
+        let hops_list = PyList::empty(py);
+        for hop in &hops {
+            let hop_dict = PyDict::new(py);
+            hop_dict.set_item("type", hop.hop_type.as_str())?;
+            if let Some(ref a) = hop.address {
+                hop_dict.set_item("address", a)?;
+            }
+            if let Some(ref pid) = hop.pool_id {
+                hop_dict.set_item("pool_id", pid)?;
+            }
+            hop_dict.set_item("zero_for_one", hop.zero_for_one)?;
+            if let Some(f) = hop.fee {
+                hop_dict.set_item("fee", f)?;
+            }
+            if let Some(ts) = hop.tick_spacing {
+                hop_dict.set_item("tick_spacing", ts)?;
+            }
+            hops_list.append(hop_dict)?;
+        }
+        dict.set_item("hops", hops_list)?;
+
+        Ok(Some(dict.unbind()))
+    }
+
     /// Returns (`results`, `block_number`) where results is a flat list:
     /// [`path_id_0`, `optimal_input_0`, `profit_0`, `path_id_1`, ...]
     #[allow(clippy::significant_drop_tightening)]

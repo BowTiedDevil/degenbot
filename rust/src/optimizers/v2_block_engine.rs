@@ -286,6 +286,13 @@ impl V2BlockEngine {
         self.pool_addresses.len()
     }
 
+    /// Access the pool address → (forward_id, reverse_id) map.
+    /// Used for reverse lookups in inspection/debugging.
+    #[must_use]
+    pub fn pool_addresses(&self) -> &HashMap<Address, (u64, u64)> {
+        &self.pool_addresses
+    }
+
     /// Get a reference to a pool's `IntHopState` by pool ID.
     #[must_use]
     pub fn get_pool(&self, pool_id: u64) -> Option<&IntHopState> {
