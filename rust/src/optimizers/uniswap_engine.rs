@@ -568,37 +568,34 @@ impl UniswapEngine {
                 None
             }
         } else if all_cl {
-            // V3-V3, V4-V4, V3-V4, V4-V3: all concentrated-liquidity, same solver
+            // V3-V3, V4-V4, V3-V4, V4-V3, V3-V3-V3, etc: all concentrated-liquidity
             let int_sequences: Vec<_> = resolved
                 .int_v3_sequences
                 .iter()
                 .filter_map(Option::as_ref)
                 .collect();
-            if int_sequences.len() == 2 {
-                crate::optimizers::mobius_v3_int::int_solve_v3_v3(
-                    int_sequences[0],
-                    int_sequences[1],
-                )
-                .map(|(optimal_input, _profit, hop_outputs)| {
-                    // consumed_inputs[0] = optimal_input (first hop always consumes
-                    // its full input for single-range paths; no partial fill).
-                    // consumed_inputs[i>0] = hop_outputs[i-1] (the previous hop's
-                    // output becomes this hop's input — matching the pipeline:
-                    // V3 output flows into V4 as amountSpecified).
-                    let mut consumed_inputs = Vec::with_capacity(hop_outputs.len());
-                    consumed_inputs.push(optimal_input);
-                    for i in 1..hop_outputs.len() {
-                        consumed_inputs.push(hop_outputs[i - 1]);
-                    }
-                    let profit = hop_outputs.last().copied().unwrap_or(U256::ZERO)
-                        .saturating_sub(consumed_inputs[0]);
-                    SolvePathResult {
-                        optimal_input,
-                        profit,
-                        hop_outputs,
-                        consumed_inputs,
-                    }
-                })
+            if int_sequences.len() >= 2 {
+                crate::optimizers::mobius_v3_int::int_solve_cl_path(&int_sequences)
+                    .map(|(optimal_input, _profit, hop_outputs)| {
+                        // consumed_inputs[0] = optimal_input (first hop always consumes
+                        // its full input for single-range paths; no partial fill).
+                        // consumed_inputs[i>0] = hop_outputs[i-1] (the previous hop's
+                        // output becomes this hop's input — matching the pipeline:
+                        // V3 output flows into V4 as amountSpecified).
+                        let mut consumed_inputs = Vec::with_capacity(hop_outputs.len());
+                        consumed_inputs.push(optimal_input);
+                        for i in 1..hop_outputs.len() {
+                            consumed_inputs.push(hop_outputs[i - 1]);
+                        }
+                        let profit = hop_outputs.last().copied().unwrap_or(U256::ZERO)
+                            .saturating_sub(consumed_inputs[0]);
+                        SolvePathResult {
+                            optimal_input,
+                            profit,
+                            hop_outputs,
+                            consumed_inputs,
+                        }
+                    })
             } else {
                 None
             }
@@ -658,34 +655,28 @@ impl UniswapEngine {
     fn solve_mixed_path_int(
         resolved: &ResolvedMixedPath,
     ) -> Option<SolvePathResult> {
-        if resolved.hop_types.len() != 2 {
+        if resolved.hop_types.len() < 2 {
             return None;
         }
 
-        let hop0_is_v2 = resolved.hop_types[0] == HopType::V2;
-        let hop1_is_v2 = resolved.hop_types[1] == HopType::V2;
-
-        // One hop must be V2, the other must be CL (V3 or V4)
-        if hop0_is_v2 == hop1_is_v2 {
-            return None; // both same type — should be handled by other dispatches
+        // Check that this is actually a mixed path (both V2 and CL hops)
+        let has_v2 = resolved.hop_types.contains(&HopType::V2);
+        let has_cl = resolved.hop_types.iter().any(HopType::is_concentrated_liquidity);
+        if !has_v2 || !has_cl {
+            return None; // not a mixed path — should be handled by other dispatches
         }
 
-        // Get V2 hop state and CL tick-range sequence
-        let (v2_hop, cl_sequence, cl_first) = if hop0_is_v2 {
-            let v2 = resolved.v2_hops[0].as_ref()?;
-            let cl_seq = resolved.int_v3_sequences[1].as_ref()?;
-            (v2, cl_seq, false) // V2 is first, CL is second
-        } else {
-            let cl_seq = resolved.int_v3_sequences[0].as_ref()?;
-            let v2 = resolved.v2_hops[1].as_ref()?;
-            (v2, cl_seq, true) // CL is first, V2 is second
-        };
+        // Build hop_order from hop_types
+        let hop_order: Vec<bool> = resolved
+            .hop_types
+            .iter()
+            .map(|t| *t == HopType::V2)
+            .collect();
 
-        // Use the sequence-based integer-exact mixed solver
-        crate::optimizers::mobius_v3_int::exact_solve_mixed_v2_v3_sequence(
-            std::slice::from_ref(v2_hop),
-            cl_sequence,
-            cl_first,
+        crate::optimizers::mobius_v3_int::exact_solve_mixed_path_n(
+            &resolved.v2_hops,
+            &resolved.int_v3_sequences,
+            &hop_order,
         )
         .map(|(optimal_input, profit, hop_outputs)| {
             // consumed_inputs[0] = optimal_input (first hop consumes full input).
@@ -1881,6 +1872,173 @@ mod tests {
 
         // Inspect non-existent path
         assert!(engine.paths.get(&99999).is_none());
+    }
+
+    #[test]
+    fn solve_3hop_v3_v3_v3_path() {
+        let mut engine = UniswapEngine::new();
+
+        let sp_0 = U256::from(79_228_162_514_264_337_593_543_950_336_u128); // 1:1 price (tick 0)
+
+        // Helper to create minimal tick data with initialized ticks at -60 and +60
+        let make_tick_data = || -> HashMap<i32, crate::bot_core::TickInfo> {
+            let mut td = HashMap::new();
+            td.insert(-60, crate::bot_core::TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(100),
+                liquidity_net: alloy::primitives::I256::try_from(100i128)
+                    .unwrap_or(alloy::primitives::I256::ZERO),
+            });
+            td.insert(60, crate::bot_core::TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(100),
+                liquidity_net: alloy::primitives::I256::try_from(-100i128)
+                    .unwrap_or(alloy::primitives::I256::ZERO),
+            });
+            td
+        };
+
+        // Pool 1 at tick 0 with high liquidity
+        let v3_key_a = engine.v3_engine().register_pool(RegisterV3PoolParams {
+            address: Address::from([0xa1u8; 20]),
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: sp_0,
+            liquidity: 10_000_000_000_000u128,
+            tick: 0,
+            tick_data: make_tick_data(),
+            update_block: 0,
+        });
+
+        // Pool 2 at tick 0 with different liquidity (price disagreement)
+        let v3_key_b = engine.v3_engine().register_pool(RegisterV3PoolParams {
+            address: Address::from([0xa2u8; 20]),
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: sp_0,
+            liquidity: 15_000_000_000_000u128,
+            tick: 0,
+            tick_data: make_tick_data(),
+            update_block: 0,
+        });
+
+        // Pool 3 at tick 0 with third liquidity level
+        let v3_key_c = engine.v3_engine().register_pool(RegisterV3PoolParams {
+            address: Address::from([0xa3u8; 20]),
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: sp_0,
+            liquidity: 12_000_000_000_000u128,
+            tick: 0,
+            tick_data: make_tick_data(),
+            update_block: 0,
+        });
+
+        assert_eq!(engine.v3_pool_count(), 3);
+
+        // Register 3-hop V3-V3-V3 path
+        let path_id = engine.register_path(vec![
+            MixedPoolRef { hop_type: HopType::V3, pool_key: v3_key_a, zero_for_one: true },
+            MixedPoolRef { hop_type: HopType::V3, pool_key: v3_key_b, zero_for_one: false },
+            MixedPoolRef { hop_type: HopType::V3, pool_key: v3_key_c, zero_for_one: true },
+        ]);
+
+        assert_eq!(path_id, 1);
+        assert_eq!(engine.path_count(), 1);
+
+        // Verify the path is valid and resolved
+        let (_, resolved) = &engine.paths[&path_id];
+        assert!(resolved.valid, "3-hop V3-V3-V3 path should be valid");
+        assert_eq!(resolved.hop_types.len(), 3);
+        assert_eq!(resolved.hop_types[0], HopType::V3);
+        assert_eq!(resolved.hop_types[1], HopType::V3);
+        assert_eq!(resolved.hop_types[2], HopType::V3);
+        assert!(resolved.int_v3_sequences[0].is_some());
+        assert!(resolved.int_v3_sequences[1].is_some());
+        assert!(resolved.int_v3_sequences[2].is_some());
+
+        // Solve the path — previously returned None for 3+ hop CL paths.
+        // Now the N-hop CL solver runs. With 3 pools at the same price but
+        // different liquidity, the path is unlikely to be profitable after fees,
+        // but the solver must not reject due to hop count.
+        let result = engine.solve_path(resolved);
+        let _ = result; // No panic = test passes
+    }
+
+    #[test]
+    fn solve_3hop_mixed_v2_v3_v2_path() {
+        let mut engine = UniswapEngine::new();
+
+        let sp_0 = U256::from(79_228_162_514_264_337_593_543_950_336_u128); // 1:1 price
+
+        // V2 pool 1: cheap WETH (1.5M USDC / 800 WETH)
+        let v2_fwd_a = engine.v2_engine().register_pool(
+            Address::from([0x11u8; 20]),
+            usdc(1_500_000),
+            weth(800),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+
+        // V3 pool (middle hop): at 1:1 price with tick boundaries
+        let mut tick_data = HashMap::new();
+        tick_data.insert(-60, crate::bot_core::TickInfo {
+            liquidity_gross: alloy::primitives::U128::from(100),
+            liquidity_net: alloy::primitives::I256::try_from(100i128)
+                .unwrap_or(alloy::primitives::I256::ZERO),
+        });
+        tick_data.insert(60, crate::bot_core::TickInfo {
+            liquidity_gross: alloy::primitives::U128::from(100),
+            liquidity_net: alloy::primitives::I256::try_from(-100i128)
+                .unwrap_or(alloy::primitives::I256::ZERO),
+        });
+        let v3_key = engine.v3_engine().register_pool(RegisterV3PoolParams {
+            address: Address::from([0x22u8; 20]),
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: sp_0,
+            liquidity: 10_000_000_000_000u128,
+            tick: 0,
+            tick_data,
+            update_block: 0,
+        });
+
+        // V2 pool 2: expensive WETH (1000 WETH / 2M USDC)
+        let v2_fwd_b = engine.v2_engine().register_pool(
+            Address::from([0x12u8; 20]),
+            weth(1000),
+            usdc(2_000_000),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+
+        // Register 3-hop mixed path: V2 → V3 → V2
+        let path_id = engine.register_path(vec![
+            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_a, zero_for_one: true },
+            MixedPoolRef { hop_type: HopType::V3, pool_key: v3_key, zero_for_one: false },
+            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_b, zero_for_one: true },
+        ]);
+
+        let (_, resolved) = &engine.paths[&path_id];
+        assert!(resolved.valid, "3-hop V2-V3-V2 path should be valid");
+        assert_eq!(resolved.hop_types.len(), 3);
+        assert_eq!(resolved.hop_types[0], HopType::V2);
+        assert_eq!(resolved.hop_types[1], HopType::V3);
+        assert_eq!(resolved.hop_types[2], HopType::V2);
+
+        // Key: previously this returned None due to hop_types.len() != 2
+        let result = engine.solve_path(resolved);
+        let _ = result;
     }
 }
 
