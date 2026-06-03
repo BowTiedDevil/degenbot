@@ -7,7 +7,7 @@
     "v2",
     "v3"
   ],
-  "status": "complete",
+  "status": "closed",
   "created_at": "2026-06-01T23:52:52.342Z"
 }
 
