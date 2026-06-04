@@ -80,7 +80,7 @@ _Avoid_: V3 engine, v3 block processor, v3 arbitrage engine
 **V3PoolState**: The engine-internal state for a Uniswap V3 pool: address, token0/token1, fee, tick_spacing, factory, mutable fields (sqrt_price_x96, liquidity, tick), and `tick_data: HashMap<i32, TickInfo>`. Computes tick-range sequences for both swap directions via `build_tick_range_sequences()`.
 _Avoid_: v3 state, v3 pool data
 
-**RegisterV3PoolParams**: A parameter struct for `V3BlockEngine::register_pool()` and future `BotCore::register_v3_pool()` — bundles address, token pair, fee, tick_spacing, factory, sqrt_price_x96, liquidity, tick, and tick_data into one argument.
+**RegisterV3PoolParams**: A parameter struct for `V3BlockEngine::register_pool()` — bundles address, token pair, fee, tick_spacing, factory, sqrt_price_x96, liquidity, tick, and tick_data into one argument. At registration, any buffered Mint/Burn events (from `backfill_from_snapshot` or the WS subscribe phase) are applied on top of the passed tick_data.
 _Avoid_: v3 params, pool registration params
 
 **V3PoolRef**: A path hop reference: (`pool_idx`, `zero_for_one`). Used in path registration to identify which pool and direction each hop represents.
@@ -89,7 +89,7 @@ _Avoid_: pool ref, v3 hop ref
 **V3SwapUpdate**: A pre-decoded V3 Swap update for testing without log decoding. Carries pool_address, sqrt_price_x96, liquidity, tick, and tick_priors.
 _Avoid_: swap update, v3 swap event data
 
-**PyV3ArbEngine**: The PyO3 wrapper class (exposed as `V3ArbEngine` in Python) that holds `Arc<Mutex<V3BlockEngine>>` plus a shutdown flag and pump handle. Mirrors `PyV2ArbEngine` — Python constructs the engine (registers V3 pools with tick data, registers paths), then starts a Rust-side pump. `process_logs()` drives the engine synchronously for testing.
+**PyV3ArbEngine**: The PyO3 wrapper class (exposed as `V3ArbEngine` in Python) that holds `Arc<Mutex<V3BlockEngine>>` plus a shutdown flag and pump handle. Mirrors `PyV2ArbEngine` — Python registers V3 pools with tick_data from the DB snapshot, then starts a Rust-side pump. Buffered Mint/Burn events are applied on top of the tick_data at registration. `process_logs()` drives the engine synchronously for testing.
 _Avoid_: Python V3 engine, V3 engine wrapper
 
 **V3EnginePump**: A standalone async task that drives `V3BlockEngine`. Owns its own `AlloyProvider` (created from an RPC URL string), subscribes to block headers via WS, fetches V3 Swap/Mint/Burn logs via `eth_getLogs` on each new block, and calls `engine.process_block()`. No dependency on the Python subscription infrastructure. Mirrors `V2EnginePump`. Superseded by `UniswapEnginePump` for mixed-protocol deployments.
@@ -124,9 +124,14 @@ _Avoid_: hop enum, engine type
 **MixedPoolRef**: A pool reference in a mixed path: (`hop_type`, `pool_key`, `zero_for_one`). `pool_key` is the pool ID in the V2 engine or the pool key in the V3 engine.
 _Avoid_: mixed ref, mixed hop ref
 
-**PyUniswapArbEngine**: The PyO3 wrapper class (exposed as `UniswapArbEngine` in Python) that holds `Arc<Mutex<UniswapEngine>>` plus a shutdown flag and pump handle. Provides `register_v2_pool`, `register_v3_pool`, `register_path` (with `hop_type` string "V2"/"V3"), `process_logs`, and `latest_results`. Mirrors `PyV2ArbEngine`/`PyV3ArbEngine` pattern.
+**PyUniswapArbEngine**: The PyO3 wrapper class (exposed as `UniswapArbEngine` in Python) that holds `Arc<Mutex<UniswapEngine>>` plus a shutdown flag and pump handle. Provides `register_v2_pool`, `register_v3_pool`, `register_v4_pool`, `register_path`, `process_logs`, `latest_results`, and `backfill_from_snapshot`. The three-phase startup is `subscribe()` → `backfill_from_snapshot()` → `resume()`.
 _Avoid_: Python mixed engine, uniswap engine wrapper
-_Avoid_: V3 pump, V3 block subscriber, V3 event driver
+
+**backfill_from_snapshot()**: A PyO3 method on `PyUniswapArbEngine` that bridges the gap between the DB snapshot block and the first WS block. Called after `subscribe()`, before `resume()`. Creates an HTTP provider, fetches Swap/Mint/Burn/ModifyLiquidity events from `snapshot_block + 1` to `first_ws_block - 1` in paginated `eth_getLogs` calls, and applies them via `process_backfill_logs()`. The `-1` avoids overlap with WS events from the subscribe phase. For unregistered pools, liquidity events are buffered and applied when `register_pool()` is called later.
+_Avoid_: snapshot backfill, cold-start backfill
+
+**process_backfill_logs()**: A method on `UniswapEngine` that splits raw Alloy logs by topic (V3 Swap/Mint/Burn vs V4 Swap/ModifyLiquidity) and delegates to `V3BlockEngine::process_block()` or `V4BlockEngine::process_block()`. Called by `backfill_from_snapshot()` for each paginated chunk.
+_Avoid_: backfill log processing
 
 **Code Injection**: Injecting contract runtime bytecode at a fresh address via `eth_simulateV1`'s `stateOverrides.code` field, enabling simulation of undeployed contracts. The executor contract's runtime bytecode (with immutables OWNER_ADDR/WETH_ADDR baked in) is loaded from `contracts/tstore_executor_runtime_bytecode.txt`. The committed bytecode uses a randomly generated throwaway OWNER_ADDR to avoid leaking operational addresses — override `EXECUTOR_OWNER_ADDRESS` at runtime with the real key. Vyper immutables are embedded in the code section, not storage — no storage slot overrides are needed. `eth_simulateV1` chains calls sequentially, so the 3-call WETH balanceOf pattern correctly captures profit without WETH storage prefunding.
 _Avoid_: contract injection, bytecode override, code override
@@ -143,10 +148,10 @@ _Avoid_: pool key, v4 key, poolkey
 **V4SwapUpdate**: A pre-decoded V4 Swap update. Carries pool_manager, pool_id, sqrt_price_x96, liquidity, tick, and tick_priors. Same structure as `V3SwapUpdate` with replaced identification fields.
 _Avoid_: v4 swap event data, v4 update
 
-**AMOUNT_MODIFYING_HOOK_MASK**: `0xCC` — a bitmask covering the 4 V4 hook flags that can modify swap amounts: `BEFORE_SWAP` (0x80), `AFTER_SWAP` (0x40), `BEFORE_SWAP_RETURNS_DELTA` (0x08), `AFTER_SWAP_RETURNS_DELTA` (0x04). Pools with `(hook_flags & 0xCC) != 0` are rejected at registration time — they violate the solver's assumption that V3 CL math applies exactly.
+**AMOUNT_MODIFYING_HOOK_MASK**: `0xCC` — a bitmask covering the 4 V4 hook flags that can modify swap amounts: `BEFORE_SWAP` (0x80), `AFTER_SWAP` (0x40), `BEFORE_SWAP_RETURNS_DELTA` (0x08), `AFTER_SWAP_RETURNS_DELTA` (0x04). Pools with `(hook_flags & 0xCC) != 0` are rejected in Python before `register_v4_pool` — the Rust engine is permissive and performs no filtering.
 _Avoid_: hook mask, hook filter, amount mask
 
-**V4_DYNAMIC_FEE_FLAG**: `0x100000` — the fee value indicating a V4 pool has dynamic (swap-dependent) fees. Pools with this fee value are rejected at registration because the solver requires a fixed fee for accurate profit calculation.
+**V4_DYNAMIC_FEE_FLAG**: `0x100000` — the fee value indicating a V4 pool has dynamic (swap-dependent) fees. Pools with this fee value are rejected in Python before `register_v4_pool`. The Rust engine is permissive.
 _Avoid_: dynamic fee, variable fee flag
 
 **V3 amountSpecified Sign Convention**: V3 and V4 use opposite conventions for `amountSpecified`. In V3: positive (> 0) = exact INPUT (swap exactly this much into the pool), negative (< 0) = exact OUTPUT (receive exactly this much from the pool). In V4, the convention is reversed. This is verified in `v3_simulator.py:93` — `exact_input = amount_specified > 0`. For arbitrage (always exact-input mode), V3 swap calldata must use **positive** values. The original bot implementation incorrectly used the V4 convention (negative values), causing all V3-involving simulations to fail with V3's "IIA" (Insufficient Input Amount) error.
@@ -205,7 +210,9 @@ _Avoid_: amount sign, swap direction sign, amount convention
 - **`UniswapEngine`** → **`V4BlockEngine`**: UniswapEngine composes a V4BlockEngine for V4 pool state, tick ranges, and piecewise solving; `start()` calls `v4_engine.start()`
 - **`UniswapEngine`** → **`solve_v3_v3()`**: Pure V3/V4 paths are dispatched to the integer-exact piecewise Mobius solver (`int_solve_v3_v3`); mixed paths use integer sequence solver
 - **`UniswapEngine`** → **`exact_solve_mixed_v2_v3_sequence()`**: Mixed V2-V3 paths use integer effective reserves + piecewise tick-range enumeration with closed-form Möbius solve per range, replacing the former golden-section search
-- **`PyUniswapArbEngine`** → **`UniswapEngine`**: The PyO3 wrapper delegates all operations to the inner engine through a shared `Mutex`; `process_logs()` drives both V2 and V3 updates synchronously
+- **`PyUniswapArbEngine`** → **`UniswapEngine`**: The PyO3 wrapper delegates all operations to the inner engine through a shared `Mutex`; `process_logs()` drives both V2 and V3 updates synchronously; `backfill_from_snapshot()` applies pre-resume events via `process_backfill_logs()`
+- **`backfill_from_snapshot()`** → **`process_backfill_logs()`** → **`V3BlockEngine::process_block()` / `V4BlockEngine::process_block()`**: The cold-start backfill pipeline; splits V3/V4 logs by topic and delegates to each sub-engine
+- **`register_pool()`** → **`liquidity_event_buffer`**: V3 and V4 `register_pool()` apply buffered liquidity events on top of the passed tick_data (instead of discarding); this ensures the engine state is current after the snapshot gap backfill
 - **`MixedPoolRef`** → **`HopType`**: Each pool ref in a mixed path carries a `HopType` (`V2` or `V3`) for solver dispatch
 - **`Code Injection`** → **`PyUniswapArbEngine`**: The bot's code injection feature uses `stateOverrides.code` to test the undeployed executor contract; the engine's `latest_results()` provides profitable paths that are encoded and simulated against the injected code
 

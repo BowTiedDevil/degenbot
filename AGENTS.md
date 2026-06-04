@@ -151,7 +151,7 @@ Use `hasattr()` structural checks for class-level dispatch (not `issubclass()` �
 
 ### V4 Hook Filtering
 
-V4 pools with amount-modifying hooks are rejected at registration time in the Rust engine. The `AMOUNT_MODIFYING_HOOK_MASK = 0xCC` covers 4 hook flags:
+V4 pools with amount-modifying hooks are rejected in Python before calling `register_v4_pool()`. The Rust engine is permissive — it trusts the caller. The `AMOUNT_MODIFYING_HOOK_MASK = 0xCC` covers 4 hook flags:
 
 | Hook Flag | Bit | Effect |
 |-----------|-----|--------|
@@ -160,7 +160,7 @@ V4 pools with amount-modifying hooks are rejected at registration time in the Ru
 | `BEFORE_SWAP_RETURNS_DELTA` | 1<<3 | Hook returns custom swap delta |
 | `AFTER_SWAP_RETURNS_DELTA` | 1<<2 | Hook returns custom swap delta |
 
-If `(hook_flags & 0xCC) != 0`, the pool is excluded — it violates the solver's assumption that V3 CL math applies exactly. V4 pools with dynamic fees (`fee == 0x100000`) are also excluded at registration. Both checks are performed once at registration with zero runtime overhead.
+If `(hook_flags & 0xCC) != 0`, the pool is excluded — it violates the solver's assumption that V3 CL math applies exactly. V4 pools with dynamic fees (`fee == 0x100000`) are also excluded. Both checks are performed in Python before `register_v4_pool` is called.
 
 ### V4 amountSpecified Sign Convention
 
@@ -470,9 +470,14 @@ All pumps follow the same pattern: WS `newHeads` subscription → log processing
 
 ### Snapshot Backfill
 
-Before the Rust pump takes over state updates, the bot must bridge the gap between the last DB snapshot and the current block. After `freeze()` + `initial_solve()`:
+Before the Rust pump takes over state updates, the bot must bridge the gap between the last DB snapshot and the current block. This is handled by `backfill_from_snapshot()`, a PyO3 method on `PyUniswapArbEngine` called after `subscribe()` and before `resume()`.
 
-1. **V3 backfill**: Each V3 tracker applies `backfill_snapshot()` — fetches Mint/Burn events via `snapshot.fetch_new_events()`, applies them to Python pools, pushes updated tick_data to the Rust engine via `process_block()`, then `unload_snapshot()`.
-2. **V4 backfill**: Creates `UniswapV4LiquiditySnapshot` from `DatabaseSnapshot(chain_id=1, db=bot.db)`, fetches ModifyLiquidity events, applies `pending_updates()` to each V4 pool via `pool.update_liquidity_map()`, pushes updated tick_data to the Rust engine. If the DB has no V4 data, the backfill is skipped gracefully.
+**Startup sequence**: `subscribe(rpc_url)` → `fetch_snapshot_events()` → `backfill_from_snapshot(rpc_url, snapshot_block)` → `resume()` → `build_paths()`
 
-After backfill, the Rust pump owns all state updates. Python's role in the hot loop is reduced to reading results and submitting transactions.
+`backfill_from_snapshot()` creates an HTTP provider, fetches Swap/Mint/Burn/ModifyLiquidity events in paginated chunks from `snapshot_block + 1` to `first_ws_block - 1` via `eth_getLogs`, and applies them to the V3/V4 engines via `process_block()`. The `-1` avoids overlap with WS events captured during the subscribe phase. For unregistered pools (all of them at this point), Mint/Burn/ModifyLiquidity events are buffered in `liquidity_event_buffer`.
+
+When `register_pool()` is called later (during `build_paths`), it receives `tick_data` from the DB snapshot and applies any buffered events on top — bringing the engine state current without Python-side event fetching.
+
+The Python `fetch_snapshot_events()` function loads snapshots from the DB only (no `fetch_new_events()` calls). The Rust engine handles all event backfill autonomously.
+
+After backfill and registration, the Rust pump owns all state updates. Python's role in the hot loop is reduced to reading results and submitting transactions.

@@ -33,8 +33,8 @@ Domain terms for Uniswap V2, V3, and V4 liquidity pools and pool trackers.
 | **ConcentratedLiquidityStateManager** | A manager class for V3/V4 that composes with `StateCache` internally, exposing CL-specific convenience properties (`liquidity`, `sqrt_price_x96`, `tick`, etc.) | State manager |
 | **V4BlockEngine** | A pure-Rust engine that owns V4 pool state, tick-range construction, and solver dispatch for V4 pools behind PoolManager; mirrors `V3BlockEngine` but identifies pools by `(pool_manager, pool_id)` instead of contract address; reuses `IntV3TickRangeSequence` (same CL math as V3) | V4 engine, V4 block processor |
 | **V4SwapEvent** | A decoded V4 Swap event (`Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)`) from PoolManager, carrying pool_id, amounts, sqrtPriceX96, liquidity, tick, and fee | V4 swap log |
-| **AMOUNT_MODIFYING_HOOK_MASK** | `0xCC` — bitmask for the 4 V4 hook flags that can modify swap amounts (`BEFORE_SWAP` 0x80, `AFTER_SWAP` 0x40, `BEFORE_SWAP_RETURNS_DELTA` 0x08, `AFTER_SWAP_RETURNS_DELTA` 0x04); pools with any of these flags are rejected at engine registration time | hook filter mask |
-| **V4_DYNAMIC_FEE_FLAG** | `0x100000` — the fee value indicating a V4 pool has dynamic (swap-dependent) fees; pools with this flag are rejected at engine registration | dynamic fee flag |
+| **AMOUNT_MODIFYING_HOOK_MASK** | `0xCC` — bitmask for the 4 V4 hook flags that can modify swap amounts (`BEFORE_SWAP` 0x80, `AFTER_SWAP` 0x40, `BEFORE_SWAP_RETURNS_DELTA` 0x08, `AFTER_SWAP_RETURNS_DELTA` 0x04); pools with any of these flags are rejected in Python before `register_v4_pool` — the Rust engine is permissive | hook filter mask |
+| **V4_DYNAMIC_FEE_FLAG** | `0x100000` — the fee value indicating a V4 pool has dynamic (swap-dependent) fees; pools with this flag are rejected in Python before `register_v4_pool` | dynamic fee flag |
 | **unlockCallback** | The V4 callback fired by `PoolManager.unlock()` inside which all V4 swap/settle/take operations execute; the executor's `unlockCallback` handler resumes payload delivery from the queue | V4 unlock callback |
 
 ## Contract Reference
