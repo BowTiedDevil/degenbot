@@ -140,7 +140,7 @@ async fn verify_v3_pool(
         // Encode: tickBitmap(int16)
         let calldata = encode_calldata(
             V3_TICK_BITMAP_SELECTOR,
-            &[DynSolValue::Int(I256::unchecked_from(i64::from(*word) as i128), 16)],
+            &[DynSolValue::Int(I256::unchecked_from(i128::from(i64::from(*word))), 16)],
         );
 
         let result = provider
@@ -318,7 +318,7 @@ async fn verify_v4_pool(
             STATE_VIEW_GET_TICK_BITMAP_SELECTOR,
             &[
                 DynSolValue::FixedBytes(B256::from(pool_id_bytes), 32),
-                DynSolValue::Int(I256::unchecked_from(i64::from(*word) as i128), 16),
+                DynSolValue::Int(I256::unchecked_from(i128::from(i64::from(*word))), 16),
             ],
         );
 
