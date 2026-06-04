@@ -185,6 +185,3 @@ cython_debug/
 
 # Foundry build artifacts (Aave test contracts)
 tests/aave/libraries/contracts/.foundryrust/proptest-regressions/
-
-# Examples
-examples/
