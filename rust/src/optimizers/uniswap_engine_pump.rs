@@ -65,7 +65,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use alloy::primitives::{Address, B256};
+use alloy::primitives::B256;
+#[cfg(test)]
+use alloy::primitives::Address;
 use alloy::rpc::types::{Filter, Log};
 use futures_util::{StreamExt, stream};
 use tokio::time::timeout;
@@ -546,13 +548,7 @@ impl UniswapEnginePump {
             match event {
                 // Timeout — no activity for 60s. Try to backfill.
                 Err(_) => {
-                    // Take a fresh snapshot of registered addresses for filtering
-                    let relevant_addrs = {
-                        let engine = self.engine.lock();
-                        Self::collect_relevant_addrs(&engine)
-                    };
                     self.handle_timeout(
-                        &relevant_addrs,
                         &relevant_topic_set,
                         &mut last_processed_block,
                     )
@@ -567,11 +563,6 @@ impl UniswapEnginePump {
                     gas_used,
                     gas_limit,
                 })) => {
-                    // Take a fresh snapshot of registered addresses for this block
-                    let relevant_addrs = {
-                        let engine = self.engine.lock();
-                        Self::collect_relevant_addrs(&engine)
-                    };
                     let (new_lpb, new_first) = self
                         .handle_block_header(
                             number,
@@ -580,7 +571,6 @@ impl UniswapEnginePump {
                             gas_used,
                             gas_limit,
                             &mut pending_logs,
-                            &relevant_addrs,
                             &relevant_topic_set,
                             last_processed_block,
                             first_header,
@@ -603,15 +593,6 @@ impl UniswapEnginePump {
         }
     }
 
-    /// Collect the set of registered pool/PoolManager addresses for filtering.
-    fn collect_relevant_addrs(engine: &parking_lot::MutexGuard<'_, UniswapEngine>) -> HashSet<Address> {
-        let v2 = engine.v2_registered_addresses();
-        let v3 = engine.v3_registered_addresses();
-        let v4 = engine.v4_registered_pool_managers();
-
-        v2.iter().chain(v3.iter()).chain(v4.iter()).copied().collect()
-    }
-
     /// Take the watch receiver from the pump's block channel.
     ///
     /// Handle a block header event from the WS subscription.
@@ -628,14 +609,13 @@ impl UniswapEnginePump {
         gas_used: u64,
         gas_limit: u64,
         pending_logs: &mut Vec<Log>,
-        relevant_addrs: &HashSet<Address>,
         relevant_topic_set: &HashSet<B256>,
         last_processed_block: Option<u64>,
         first_header: bool,
     ) -> (Option<u64>, bool) {
         match last_processed_block {
             None => {
-                // Cold start — no Python backfill was done.
+                // Cold start — no backfill was done.
                 // Record this block as the starting point and skip processing.
                 // The next block header will trigger normal processing.
                 pending_logs.clear();
@@ -647,19 +627,15 @@ impl UniswapEnginePump {
                 (Some(number), false)
             }
             Some(prior_block) if first_header => {
-                // First header after Python backfill. prior_block
-                // was already processed by Python — we must NOT
-                // call process_completed_block on it, because:
-                //   - pending_logs is empty (WS subscription
-                //     started after prior_block completed)
-                //   - process_completed_block would detect empty
-                //     pending_logs and call backfill_single_block,
-                //     which fetches the SAME events Python already
-                //     applied via eth_getLogs → double-processing.
-                // Instead: backfill any gap between prior_block and
-                // this header, then set last_processed_block to
-                // this block header for normal operation.
+                // First header after backfill. prior_block (Y-1) was
+                // the last block processed by backfill. This header is
+                // for block Y. We cannot process Y-1 (already done)
+                // and we cannot process Y yet (WS logs are still
+                // arriving for it). Record Y and let the normal case
+                // process it when header Y+1 arrives. Keep WS logs —
+                // they belong to the live range.
                 if number > prior_block + 1 {
+                    // Gap between backfill and this header — backfill it.
                     log::info!(
                         "UniswapEnginePump: gap from block {} to {} — backfilling",
                         prior_block + 1,
@@ -669,23 +645,17 @@ impl UniswapEnginePump {
                     self.backfill_range(
                         prior_block + 1,
                         number - 1,
-                        relevant_addrs,
                         relevant_topic_set,
                         &mut lpb,
                     )
                     .await;
+                    // Discard WS logs that overlap the gap backfill
+                    pending_logs.retain(|log| {
+                        log.block_number.unwrap_or(0) >= number
+                    });
                 }
-                // Discard any WS logs — they arrived between the
-                // backfill and the first header, so they're for
-                // blocks that backfill_range just processed via
-                // eth_getLogs (or for the current incomplete block
-                // which will be collected in the next cycle).
-                pending_logs.clear();
-                // Send an empty batch with block metadata so Python learns about this block
-                {
-                    let mut engine = self.engine.lock();
-                    engine.process_block(&[], number, &BlockMetadata { timestamp, base_fee_per_gas, gas_used, gas_limit });
-                }
+                // Advance past this header. Block Y will be processed
+                // when header Y+1 arrives via the normal case.
                 (Some(number), false)
             }
             Some(prior_block) if number == prior_block + 1 => {
@@ -695,7 +665,6 @@ impl UniswapEnginePump {
                 self.process_completed_block(
                     prior_block,
                     pending_logs,
-                    relevant_addrs,
                     relevant_topic_set,
                     &metadata,
                 )
@@ -717,7 +686,6 @@ impl UniswapEnginePump {
                 self.backfill_range(
                     prior_block + 1,
                     number - 1,
-                    relevant_addrs,
                     relevant_topic_set,
                     &mut lpb,
                 )
@@ -727,7 +695,6 @@ impl UniswapEnginePump {
                 self.process_completed_block(
                     prior_block,
                     pending_logs,
-                    relevant_addrs,
                     relevant_topic_set,
                     &metadata,
                 )
@@ -754,14 +721,13 @@ impl UniswapEnginePump {
         &self,
         block_to_process: u64,
         pending_logs: &[Log],
-        relevant_addrs: &HashSet<Address>,
         relevant_topic_set: &HashSet<B256>,
         metadata: &BlockMetadata,
     ) -> bool {
         let logs_received = !pending_logs.is_empty();
 
         // Filter the buffered logs to relevant events only
-        let filtered = filter_relevant_logs(pending_logs, relevant_addrs, relevant_topic_set);
+        let filtered = filter_relevant_logs(pending_logs, relevant_topic_set);
 
         if logs_received && !filtered.is_empty() {
             // Process buffered logs for the completed block
@@ -785,7 +751,7 @@ impl UniswapEnginePump {
                 "UniswapEnginePump: block {block_to_process} — no logs received, verifying via eth_getLogs"
             );
             let backfilled = self
-                .backfill_single_block(block_to_process, relevant_addrs, relevant_topic_set)
+                .backfill_single_block(block_to_process, relevant_topic_set)
                 .await;
             if !backfilled {
                 // Block truly had no relevant events — advance engine block number
@@ -798,7 +764,6 @@ impl UniswapEnginePump {
     /// Handle a 60s timeout by backfilling any missed blocks.
     async fn handle_timeout(
         &self,
-        relevant_addrs: &HashSet<Address>,
         relevant_topic_set: &HashSet<B256>,
         last_processed_block: &mut Option<u64>,
     ) {
@@ -819,7 +784,6 @@ impl UniswapEnginePump {
                 self.backfill_range(
                     lpb + 1,
                     current_block,
-                    relevant_addrs,
                     relevant_topic_set,
                     &mut lpb_mut,
                 )
@@ -836,7 +800,6 @@ impl UniswapEnginePump {
     async fn backfill_single_block(
         &self,
         block_number: u64,
-        relevant_addrs: &HashSet<Address>,
         relevant_topic_set: &HashSet<B256>,
     ) -> bool {
         let filter = build_backfill_filter(block_number, block_number);
@@ -850,7 +813,7 @@ impl UniswapEnginePump {
             }
         };
 
-        let filtered = filter_relevant_logs(&logs, relevant_addrs, relevant_topic_set);
+        let filtered = filter_relevant_logs(&logs, relevant_topic_set);
         if filtered.is_empty() {
             log::debug!("UniswapEnginePump: backfill confirmed block {block_number} has no relevant events");
             return false;
@@ -871,7 +834,6 @@ impl UniswapEnginePump {
         &self,
         from_block: u64,
         to_block: u64,
-        relevant_addrs: &HashSet<Address>,
         relevant_topic_set: &HashSet<B256>,
         last_processed_block: &mut u64,
     ) {
@@ -909,7 +871,7 @@ impl UniswapEnginePump {
             }
 
             let block_logs = logs_by_block.remove(&block).unwrap_or_default();
-            let filtered = filter_relevant_logs(&block_logs, relevant_addrs, relevant_topic_set);
+            let filtered = filter_relevant_logs(&block_logs, relevant_topic_set);
             if !filtered.is_empty() {
                 self.engine.lock().process_block(&filtered, block, &BlockMetadata::default());
                 any_processed = true;
@@ -932,13 +894,13 @@ impl UniswapEnginePump {
 /// 2. Its emitting address is a registered V2/V3 pool or V4 `PoolManager`
 pub fn filter_relevant_logs(
     logs: &[Log],
-    relevant_addrs: &HashSet<Address>,
     relevant_topic_set: &HashSet<B256>,
 ) -> Vec<Log> {
     logs.iter()
         .filter(|log| {
-            relevant_addrs.contains(&log.address())
-                && log.topics().first().is_some_and(|topic0| relevant_topic_set.contains(topic0))
+            log.topics()
+                .first()
+                .is_some_and(|topic0| relevant_topic_set.contains(topic0))
         })
         .cloned()
         .collect()
@@ -947,8 +909,8 @@ pub fn filter_relevant_logs(
 /// Build an Alloy `Filter` for backfill via `eth_getLogs`.
 ///
 /// Uses topic filtering server-side to reduce response size. No address
-/// filter — the Rust-side `filter_relevant_logs` handles that.
-fn build_backfill_filter(from_block: u64, to_block: u64) -> Filter {
+/// filter — all topic-filtered logs are passed through to the engine.
+pub fn build_backfill_filter(from_block: u64, to_block: u64) -> Filter {
     let mut filter = Filter::new()
         .from_block(from_block)
         .to_block(to_block);
@@ -1009,10 +971,67 @@ mod tests {
 
     #[test]
     fn filter_relevant_logs_empty_input() {
-        let addrs = HashSet::new();
         let topics: HashSet<B256> = RELEVANT_TOPICS.into_iter().collect();
-        let result = filter_relevant_logs(&[], &addrs, &topics);
+        let result = filter_relevant_logs(&[], &topics);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn filter_relevant_logs_filters_by_topic_only() {
+        // filter_relevant_logs only filters by topic. All engines
+        // (V2, V3, V4) handle unregistered addresses gracefully —
+        // V2/V3 ignore unknown pools, V4 buffers them.
+        use alloy::primitives::{Bytes, Log as InnerLog};
+        let topics: HashSet<B256> = RELEVANT_TOPICS.into_iter().collect();
+
+        // All relevant topics pass through regardless of address
+        let pm_address = Address::ZERO;
+
+        let v4_modify_inner = InnerLog::new_unchecked(
+            pm_address,
+            vec![V4_MODIFY_LIQUIDITY_TOPIC, B256::ZERO],
+            Bytes::new(),
+        );
+        let v4_modify_log = Log {
+            inner: v4_modify_inner,
+            block_hash: None,
+            block_number: None,
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
+        };
+
+        let v2_inner = InnerLog::new_unchecked(pm_address, vec![V2_SYNC_TOPIC], Bytes::new());
+        let v2_log = Log {
+            inner: v2_inner,
+            block_hash: None,
+            block_number: None,
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
+        };
+
+        let result = filter_relevant_logs(&[v4_modify_log, v2_log], &topics);
+        assert_eq!(result.len(), 2, "Relevant topic logs should pass through regardless of address");
+
+        // Irrelevant topic filtered out
+        let irrelevant_inner = InnerLog::new_unchecked(pm_address, vec![B256::ZERO], Bytes::new());
+        let irrelevant_log = Log {
+            inner: irrelevant_inner,
+            block_hash: None,
+            block_number: None,
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
+        };
+        let result = filter_relevant_logs(&[irrelevant_log], &topics);
+        assert!(result.is_empty(), "Irrelevant topic should be filtered out");
     }
 
     #[test]

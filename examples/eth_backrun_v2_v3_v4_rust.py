@@ -43,6 +43,15 @@ import dotenv
 import eth_abi.abi
 import eth_account
 import web3
+from eth_backrun_helpers import (
+    HopInfo,
+    PathInfo,
+    V2HopInfo,
+    V3HopInfo,
+    V4HopInfo,
+    _v4_input_is_native,
+    encode_cmd_stream,
+)
 from eth_typing import ChainId
 from hexbytes import HexBytes
 from web3 import AsyncWeb3, Web3
@@ -75,16 +84,6 @@ from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 from degenbot.uniswap.v4_liquidity_pool import NATIVE_CURRENCY_ADDRESS, UniswapV4Pool
 from degenbot.uniswap.v4_snapshot import DatabaseSnapshot as V4DatabaseSnapshot
 from degenbot.uniswap.v4_snapshot import UniswapV4LiquiditySnapshot
-
-from .eth_backrun_helpers import (
-    HopInfo,
-    PathInfo,
-    V2HopInfo,
-    V3HopInfo,
-    V4HopInfo,
-    _v4_input_is_native,
-    encode_cmd_stream,
-)
 
 # ──────────────────────────────────────────────────────────────────
 # Configuration
@@ -699,7 +698,8 @@ async def build_paths(
     This ensures every pool has correct post-backfill state before the pump
     takes over.
     """
-    # V3 snapshot is passed in (events already fetched by fetch_snapshot_events).
+    # V3 snapshot provides tick data for Python pool builds via trackers.
+    # Event backfill is handled by the Rust engine.
     # Trackers use it for tick data at build time.
     uniswap_v3_tracker = bot.add_tracker(
         UniswapV3PoolTracker,
@@ -1048,22 +1048,19 @@ async def build_paths(
     )
 
 
-async def fetch_snapshot_events(
+async def get_snapshots(
     bot: Bot,
-    backfill_to_block: int,
 ) -> tuple[
     UniswapV3LiquiditySnapshot | None, UniswapV4LiquiditySnapshot | None, int | None, int | None
 ]:
-    """Fetch Mint/Burn and ModifyLiquidity events into snapshot objects.
+    """Load V3 and V4 liquidity snapshots from the database.
 
-    Loads V3 and V4 snapshots from the database and fetches liquidity
-    events from the snapshot block to backfill_to_block. The events
-    are buffered in the snapshot objects — call pending_updates() per-pool
-    during build_paths() to consume and apply them.
+    Snapshots provide tick_data for Python pool builds via trackers.
+    The Rust engine backfills events from the snapshot block to the
+    current chain head via backfill_from_snapshot().
 
     Returns (v3_snapshot, v4_snapshot, v3_snapshot_block, v4_snapshot_block).
     """
-    sync_provider = bot.connections.get_provider(chain_id=1)
     v3_snapshot_block: int | None = None
     v4_snapshot_block: int | None = None
 
@@ -1077,23 +1074,8 @@ async def fetch_snapshot_events(
         bot_logger.info("[backfill] V3: no snapshot data in database, skipping")
 
     if v3_snapshot is not None:
-        snapshot_block = v3_snapshot.newest_block
-        v3_snapshot_block = snapshot_block
-        if snapshot_block < backfill_to_block:
-            bot_logger.info(
-                f"[backfill] V3: fetching Mint/Burn events "
-                f"from block {snapshot_block + 1} to {backfill_to_block}"
-            )
-            v3_snapshot.fetch_new_events(
-                backfill_to_block,
-                provider=sync_provider,
-            )
-            bot_logger.info("[backfill] V3: events fetched, apply deferred to build_paths")
-        else:
-            bot_logger.info(
-                f"[backfill] V3: snapshot at {snapshot_block} >= "
-                f"target {backfill_to_block}, skipping"
-            )
+        v3_snapshot_block = v3_snapshot.newest_block
+        bot_logger.info(f"[backfill] V3: DB snapshot at block {v3_snapshot_block}")
 
     # ── V4 snapshot ──────────────────────────────────────────────
     v4_snapshot = None
@@ -1104,23 +1086,8 @@ async def fetch_snapshot_events(
         bot_logger.info("[backfill] V4: no snapshot data in database, skipping")
 
     if v4_snapshot is not None:
-        snapshot_block = v4_snapshot.newest_block
-        v4_snapshot_block = snapshot_block
-        if snapshot_block < backfill_to_block:
-            bot_logger.info(
-                f"[backfill] V4: fetching ModifyLiquidity events "
-                f"from block {snapshot_block + 1} to {backfill_to_block}"
-            )
-            v4_snapshot.fetch_new_events(
-                backfill_to_block,
-                provider=sync_provider,
-            )
-            bot_logger.info("[backfill] V4: events fetched, apply deferred to build_paths")
-        else:
-            bot_logger.info(
-                f"[backfill] V4: snapshot at {snapshot_block} >= "
-                f"target {backfill_to_block}, skipping"
-            )
+        v4_snapshot_block = v4_snapshot.newest_block
+        bot_logger.info(f"[backfill] V4: DB snapshot at block {v4_snapshot_block}")
 
     return v3_snapshot, v4_snapshot, v3_snapshot_block, v4_snapshot_block
 
@@ -1974,7 +1941,7 @@ async def main() -> None:
     state_view_address = EthereumMainnetUniswapV4.state_view.address
 
     # We need the snapshot blocks BEFORE backfill runs, so extract them first.
-    # fetch_snapshot_events returns (v3_snapshot, v4_snapshot, v3_snapshot_block, v4_snapshot_block).
+    # get_snapshots returns (v3_snapshot, v4_snapshot, v3_snapshot_block, v4_snapshot_block).
 
     # ── Subscribe to WS (immediately, before path loading) ────────
     # Open WS subscriptions now so events start buffering.
@@ -1990,25 +1957,32 @@ async def main() -> None:
         current_block = backfill_target
         bot_logger.info(f"[startup] Updated current_block to subscribe target: {current_block}")
 
-    # ── Fetch snapshot events ────────────────────────────────────
-    # Load V3 and V4 snapshots from DB and fetch liquidity events
-    # from the snapshot block to the current block. Events are buffered
-    # in the snapshot objects and applied per-pool during build_paths().
-    v3_snapshot, v4_snapshot, v3_snap_block, v4_snap_block = await fetch_snapshot_events(
+    # ── Load snapshots ───────────────────────────────────────────
+    # Load V3 and V4 snapshots from DB. No Python-side event fetching —
+    # the Rust engine backfills via backfill_from_snapshot().
+    v3_snapshot, v4_snapshot, v3_snap_block, v4_snap_block = await get_snapshots(
         bot,
-        current_block,
     )
+
+    # ── Backfill snapshot gap ────────────────────────────────────
+    # Fetch Mint/Burn/ModifyLiquidity events from the snapshot block
+    # to the first WS block via eth_getLogs, applying them to the
+    # Rust engines. This ensures the engine's tick state and event
+    # buffer are current before pool registration begins.
+    bot_logger.info("[startup] Running Rust backfill from snapshot to WS block...")
+    snapshot_block = min(b for b in (v3_snap_block, v4_snap_block) if b is not None)
+    backfilled = engine_registry.engine.backfill_from_snapshot(node_http, snapshot_block)
+    bot_logger.info(f"[startup] Backfill complete: {backfilled} blocks")
 
     # ── Resume the Rust pump ─────────────────────────────────────
     # The pump was subscribed earlier (WS live, events buffered).
     # Now that backfill is complete, resume normal processing.
-    # The pump will process blocks starting from the backfill target.
-    engine_registry.engine.set_last_processed_block(current_block)
+    # No need to call set_last_processed_block — the engine already
+    # tracks it from backfill (process_backfill_logs sets it on each
+    # chunk, arriving at the actual last backfilled block Y-1).
     engine_registry._pump_running = True
     engine_registry.engine.resume()
-    bot_logger.info(
-        f"[startup] Rust pump resumed (WS={node_ws}, backfill complete to {current_block})"
-    )
+    bot_logger.info(f"[startup] Rust pump resumed (WS={node_ws}, backfill complete)")
 
     # ── Build paths (before main loop) ──────────────────────────
     # build_paths must complete before entering the main loop because
