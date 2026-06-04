@@ -380,31 +380,11 @@ impl V4BlockEngine {
 
         self.pool_ids.insert((pool_manager, pool_id), (forward_key, reverse_key));
 
-        // Apply any buffered liquidity updates for this pool
-        if let Some(buffered) = self.liquidity_event_buffer.remove(&(pool_manager, pool_id)) {
-            for update in buffered {
-                // Convert I256 liquidity_delta to i128 for tick update
-                let Ok(delta_i128): Result<i128, _> = update.liquidity_delta.try_into() else {
-                    continue;
-                };
-
-                // Apply to forward pool
-                if let Some(pool) = self.pools.get_mut(&forward_key) {
-                    update_tick_liquidity(&mut pool.tick_data, update.tick_lower, delta_i128, true);
-                    update_tick_liquidity(&mut pool.tick_data, update.tick_upper, delta_i128, false);
-                    pool.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
-                    pool.update_block = update.block_number;
-                }
-
-                // Apply to reverse pool
-                if let Some(pool) = self.pools.get_mut(&reverse_key) {
-                    update_tick_liquidity(&mut pool.tick_data, update.tick_lower, delta_i128, true);
-                    update_tick_liquidity(&mut pool.tick_data, update.tick_upper, delta_i128, false);
-                    pool.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
-                    pool.update_block = update.block_number;
-                }
-            }
-        }
+        // Discard any buffered liquidity updates for this pool.
+        // The tick_data passed via params already incorporates these events
+        // (applied by Python's update_liquidity_map before registration),
+        // so applying them again would double-count the liquidity.
+        self.liquidity_event_buffer.remove(&(pool_manager, pool_id));
 
         Ok(forward_key)
     }
@@ -1148,7 +1128,7 @@ mod tests {
     }
 
     #[test]
-    fn modify_liquidity_buffered_for_unregistered_pool_applied_on_registration() {
+    fn modify_liquidity_buffered_for_unregistered_pool_discarded_on_registration() {
         let mut engine = V4BlockEngine::new();
         let pool_id = make_pool_id(10);
 
@@ -1166,7 +1146,19 @@ mod tests {
         assert!(engine.liquidity_event_buffer.contains_key(&(POOL_MANAGER, pool_id)));
         assert_eq!(engine.liquidity_event_buffer[&(POOL_MANAGER, pool_id)].len(), 1);
 
-        // Now register the pool
+        // Register the pool WITH tick_data that already includes the event results.
+        // The Python caller applies pending_updates before registration, so the
+        // tick_data already reflects the ModifyLiquidity event.
+        let mut pre_applied_tick_data = HashMap::new();
+        pre_applied_tick_data.insert(-60, TickInfo {
+            liquidity_gross: U128::from(500u64),
+            liquidity_net: I256::try_from(500i128).unwrap(),
+        });
+        pre_applied_tick_data.insert(60, TickInfo {
+            liquidity_gross: U128::from(500u64),
+            liquidity_net: I256::try_from(-500i128).unwrap(),
+        });
+
         let fwd_key = engine.register_pool(make_register_params(
             POOL_MANAGER,
             pool_id,
@@ -1176,13 +1168,13 @@ mod tests {
             U256::ONE,
             100,
             0,
-            HashMap::new(),
+            pre_applied_tick_data,
         )).unwrap();
 
-        // The buffer should be consumed
+        // The buffer should be discarded (consumed without double-applying)
         assert!(engine.liquidity_event_buffer.is_empty());
 
-        // The buffered update should have been applied to both orientations
+        // The tick_data should match what was passed in (not doubled)
         let fwd_pool = &engine.pools[&fwd_key];
         assert!(fwd_pool.tick_data.contains_key(&-60));
         assert!(fwd_pool.tick_data.contains_key(&60));

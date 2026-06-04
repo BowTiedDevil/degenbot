@@ -3051,6 +3051,150 @@ impl PyUniswapArbEngine {
         Ok(())
     }
 
+    /// Verify a single V3 pool's liquidity map against on-chain state.
+    ///
+    /// Takes a pool address and verifies the tick_data at the given block.
+    /// Returns Ok if the liquidity map matches, or a RuntimeError with
+    /// details of the mismatch.
+    ///
+    /// This is an async method — returns a coroutine that must be awaited.
+    /// Uses `future_into_py` instead of `block_on` so it integrates with
+    /// the Python asyncio event loop (no deadlock when called from async code).
+    #[pyo3(signature = (address, rpc_url, block_number))]
+    fn verify_v3_pool<'py>(
+        &self,
+        py: Python<'py>,
+        address: String,
+        rpc_url: String,
+        block_number: Option<u64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let pool_addr: Address = address.parse().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}"))
+        })?;
+
+        let mut engine = self.engine.lock();
+        let v3_key = engine.v3_engine().pool_key_for_address(&pool_addr);
+        let v3_pools = match v3_key {
+            Some(key) => {
+                let mut map = std::collections::HashMap::new();
+                if let Some(pool) = engine.v3_engine().get_pool(key) {
+                    map.insert(key, pool.clone());
+                }
+                map
+            }
+            None => {
+                drop(engine);
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "V3 pool {address} not registered in engine"
+                )));
+            }
+        };
+        drop(engine);
+
+        let tick_lens = Address::ZERO;
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let provider = crate::provider::AlloyProvider::new(&rpc_url, 3)
+                .await
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "verify_v3_pool: failed to create provider: {e}"
+                    ))
+                })?;
+
+            let v3_result =
+                crate::bot_core::liquidity_verifier::verify_v3_pools(
+                    &provider, tick_lens, &v3_pools, block_number,
+                )
+                .await;
+
+            if let Err(mismatch) = v3_result {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "V3 pool {address} liquidity map verification FAILED: {mismatch}"
+                )));
+            }
+
+            Ok(())
+        })
+    }
+
+    /// Verify a single V4 pool's liquidity map against on-chain state.
+    ///
+    /// Takes a pool_id (hex) and verifies the tick_data at the given block
+    /// using the StateView contract.
+    ///
+    /// This is an async method — returns a coroutine that must be awaited.
+    #[pyo3(signature = (pool_id_hex, rpc_url, state_view_address, block_number))]
+    fn verify_v4_pool<'py>(
+        &self,
+        py: Python<'py>,
+        pool_id_hex: String,
+        rpc_url: String,
+        state_view_address: String,
+        block_number: Option<u64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let state_view: Address = state_view_address.parse().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid state_view address: {e}"))
+        })?;
+
+        let pool_id = hex_string_to_pool_id(&pool_id_hex)?;
+
+        let mut engine = self.engine.lock();
+        let v4_keys = engine.v4_engine().pool_keys_for_id(Address::ZERO, &pool_id);
+        // V4 pools are registered with the actual pool_manager address, not ZERO.
+        // Fallback: scan all V4 pools for matching pool_id.
+        let v4_keys = v4_keys.or_else(|| {
+            let v4_snapshot = engine.v4_engine().pools_snapshot();
+            for (key, pool) in &v4_snapshot {
+                if pool.pool_id == pool_id {
+                    return Some((*key, *key + 1));
+                }
+            }
+            None
+        });
+
+        let v4_pools = match v4_keys {
+            Some((fwd_key, _rev_key)) => {
+                let mut map = std::collections::HashMap::new();
+                if let Some(pool) = engine.v4_engine().get_pool(fwd_key) {
+                    map.insert(fwd_key, pool.clone());
+                }
+                map
+            }
+            None => {
+                drop(engine);
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "V4 pool {pool_id_hex} not registered in engine"
+                )));
+            }
+        };
+        drop(engine);
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let provider = crate::provider::AlloyProvider::new(&rpc_url, 3)
+                .await
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "verify_v4_pool: failed to create provider: {e}"
+                    ))
+                })?;
+
+            let v4_result =
+                crate::bot_core::liquidity_verifier::verify_v4_pools(
+                    &provider, state_view, &v4_pools, block_number,
+                )
+                .await;
+
+            if let Err(mismatch) = v4_result {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "V4 pool {pool_id_hex} liquidity map verification FAILED: {mismatch}"
+                )));
+            }
+
+            Ok(())
+        })
+    }
+
     /// Full-sync V3 pool `tick_data` from Python backfill.
     ///
     /// Unlike `process_logs` (which only inserts `tick_priors`), this method
