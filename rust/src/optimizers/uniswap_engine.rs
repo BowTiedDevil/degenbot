@@ -26,13 +26,13 @@ use std::collections::{HashMap, HashSet};
 
 use alloy::primitives::{Address, U256};
 use alloy::rpc::types::Log;
+use tokio::sync::mpsc;
 
 use crate::optimizers::mobius_int::u256_to_f64;
 use crate::optimizers::mobius_v3::V3TickRangeSequence;
 use crate::optimizers::v2_block_engine::V2BlockEngine;
 use crate::optimizers::v3_block_engine::{RegisterV3PoolParams, V3BlockEngine, V3SwapUpdate};
 use crate::optimizers::v4_block_engine::{RegisterV4PoolParams, V4BlockEngine, V4SwapUpdate};
-use crate::runtime::get_runtime;
 
 /// Maximum value that fits in a signed 128-bit integer.
 ///
@@ -117,7 +117,7 @@ struct ResolvedMixedPath {
 /// Includes optimality data, per-hop output amounts for the encoder, and
 /// per-hop consumed input amounts for correct profit calculation and V4
 /// int128 overflow detection.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SolvePathResult {
     /// Optimal input amount (uint256).
     pub optimal_input: U256,
@@ -134,6 +134,48 @@ pub struct SolvePathResult {
     /// is hit, this may be less than the input — the unused remainder is
     /// retained by the caller (matching on-chain partial-fill behavior).
     pub consumed_inputs: Vec<U256>,
+}
+
+/// Block metadata included in each `ResultBatch`.
+///
+/// Passed from the pump's WS block header into `process_block()`,
+/// then forwarded to Python via the result batch channel.
+#[derive(Clone, Debug, Default)]
+pub struct BlockMetadata {
+    /// Block timestamp
+    pub timestamp: u64,
+    /// Base fee per gas (None for pre-EIP-1559 blocks)
+    pub base_fee_per_gas: Option<u64>,
+    /// Gas used in this block
+    pub gas_used: u64,
+    /// Gas limit of this block
+    pub gas_limit: u64,
+}
+
+/// Incremental result batch pushed to Python via the result channel.
+///
+/// Each batch contains only paths that changed since the last batch
+/// Python consumed — unchanged entries stay in Rust.
+#[derive(Clone, Debug)]
+pub struct ResultBatch {
+    /// The block number these results were solved for
+    pub solve_block: u64,
+    /// Block timestamp
+    pub timestamp: u64,
+    /// Base fee per gas (None for pre-EIP-1559 blocks)
+    pub base_fee_per_gas: Option<u64>,
+    /// Gas used in this block
+    pub gas_used: u64,
+    /// Gas limit of this block
+    pub gas_limit: u64,
+    /// Paths above the profit threshold and NOT in the previous delivered set
+    pub fresh: Vec<(u64, SolvePathResult)>,
+    /// Paths above the threshold in both, but any field changed (full `PartialEq`)
+    pub updated: Vec<(u64, SolvePathResult)>,
+    /// Path IDs that were above threshold but are now below (still registered)
+    pub expired: Vec<u64>,
+    /// Path IDs that were de-registered (permanently gone)
+    pub removed: Vec<u64>,
 }
 
 /// The unified Uniswap engine — owns V2, V3, and V4 pool state and solves
@@ -163,6 +205,25 @@ pub struct UniswapEngine {
     pending_new_paths: HashSet<u64>,
     /// Auto-incrementing path ID
     next_path_id: u64,
+    /// The above-threshold results that have been delivered to Python
+    /// via the result channel. Used to compute incremental diffs.
+    delivered: HashMap<u64, SolvePathResult>,
+    /// Path IDs that have been de-registered since the last batch.
+    /// Drained into the next batch's `removed` field.
+    deregistered: Vec<u64>,
+    /// Flag set by `register_and_solve_path` when results are eagerly
+    /// appended between `process_block` calls. The next
+    /// `rebuild_and_solve_affected` call will include pending paths
+    /// and produce a batch.
+    has_unsent_results: bool,
+    /// Minimum profit (in wei) for a result to appear in the batch channel.
+    /// Paths below this threshold are excluded from `delivered` and batches.
+    min_profit: U256,
+    /// Maximum profit (in wei) for a result to appear in the batch channel.
+    /// Paths above this are likely solver defects or scam tokens.
+    max_profit: U256,
+    /// Sender for the result batch channel. Created in `PyUniswapArbEngine::new()`.
+    result_tx: Option<mpsc::Sender<ResultBatch>>,
 }
 
 impl UniswapEngine {
@@ -189,6 +250,12 @@ impl UniswapEngine {
             last_processed_block: None,
             pending_new_paths: HashSet::new(),
             next_path_id: 1,
+            delivered: HashMap::new(),
+            deregistered: Vec::new(),
+            has_unsent_results: false,
+            min_profit: U256::from(5_000_000_000u64), // 5 gwei
+            max_profit: U256::from(5_000_000_000_000_000_000u64), // 5 ETH
+            result_tx: None,
         }
     }
 
@@ -294,6 +361,7 @@ impl UniswapEngine {
 
         // Track so rebuild_and_solve_affected can merge instead of discard
         self.pending_new_paths.insert(path_id);
+        self.has_unsent_results = true;
 
         self.paths
             .insert(path_id, (MixedPath { pools: pool_refs }, resolved));
@@ -302,7 +370,7 @@ impl UniswapEngine {
 
     /// Process a block: decode Sync, V3 Swap/Mint/Burn, and V4 Swap/ModifyLiquidity
     /// events, route to sub-engines, and re-solve only affected paths.
-    pub fn process_block(&mut self, logs: &[Log], block_number: u64) {
+    pub fn process_block(&mut self, logs: &[Log], block_number: u64, metadata: &BlockMetadata) {
         // Separate V2 Sync, V3, and V4 logs by topic
         let mut v2_logs: Vec<&Log> = Vec::new();
         let mut v3_logs: Vec<&Log> = Vec::new();
@@ -379,7 +447,7 @@ impl UniswapEngine {
             .collect();
 
         // Re-solve only paths containing updated pools
-        self.rebuild_and_solve_affected(&v2_affected, &v3_affected, &v4_affected, block_number);
+        self.rebuild_and_solve_affected(&v2_affected, &v3_affected, &v4_affected, block_number, metadata);
         self.last_processed_block = Some(block_number);
     }
 
@@ -389,13 +457,14 @@ impl UniswapEngine {
         v2_updates: &[(Address, U256, U256)],
         v3_updates: &[V3SwapUpdate],
         block_number: u64,
+        metadata: &BlockMetadata,
     ) {
         // Apply updates to sub-engines and collect affected pool keys
         let v2_affected = self.v2_engine.apply_sync_updates(v2_updates);
         let v3_affected = self.v3_engine.apply_swap_updates(v3_updates, block_number);
 
         // Re-solve only paths containing updated pools
-        self.rebuild_and_solve_affected(&v2_affected, &v3_affected, &HashSet::new(), block_number);
+        self.rebuild_and_solve_affected(&v2_affected, &v3_affected, &HashSet::new(), block_number, metadata);
         self.last_processed_block = Some(block_number);
     }
 
@@ -404,9 +473,10 @@ impl UniswapEngine {
         &mut self,
         v4_updates: &[V4SwapUpdate],
         block_number: u64,
+        metadata: &BlockMetadata,
     ) {
         let v4_affected = self.v4_engine.apply_swap_updates(v4_updates, block_number);
-        self.rebuild_and_solve_affected(&HashSet::new(), &HashSet::new(), &v4_affected, block_number);
+        self.rebuild_and_solve_affected(&HashSet::new(), &HashSet::new(), &v4_affected, block_number, metadata);
     }
 
     /// Process all updates at once (V2 + V3 + V4).
@@ -416,11 +486,12 @@ impl UniswapEngine {
         v3_updates: &[V3SwapUpdate],
         v4_updates: &[V4SwapUpdate],
         block_number: u64,
+        metadata: &BlockMetadata,
     ) {
         let v2_affected = self.v2_engine.apply_sync_updates(v2_updates);
         let v3_affected = self.v3_engine.apply_swap_updates(v3_updates, block_number);
         let v4_affected = self.v4_engine.apply_swap_updates(v4_updates, block_number);
-        self.rebuild_and_solve_affected(&v2_affected, &v3_affected, &v4_affected, block_number);
+        self.rebuild_and_solve_affected(&v2_affected, &v3_affected, &v4_affected, block_number, metadata);
         self.last_processed_block = Some(block_number);
     }
 
@@ -435,6 +506,7 @@ impl UniswapEngine {
         v3_affected: &HashSet<u64>,
         v4_affected: &HashSet<u64>,
         block_number: u64,
+        metadata: &BlockMetadata,
     ) {
         // Collect affected path IDs from the reverse index
         let mut affected_path_ids: HashSet<u64> = HashSet::new();
@@ -518,9 +590,10 @@ impl UniswapEngine {
 
         self.results = new_results;
         self.results_block = block_number;
-    }
 
-    /// Solve a single resolved path.
+        // Compute incremental diff and send batch
+        self.compute_diff_and_send(metadata);
+    }
     ///
     /// Dispatches based on path composition:
     /// - V2-V2: integer-exact Möbius solver (closed-form U512 isqrt)
@@ -720,6 +793,131 @@ impl UniswapEngine {
         self.last_processed_block = Some(block);
     }
 
+    /// Set the result batch channel sender.
+    ///
+    /// Called by `PyUniswapArbEngine::new()` to wire the channel.
+    /// The engine sends incremental result batches via this sender
+    /// after each `process_block` or `solve_all_paths`.
+    pub fn set_result_channel(&mut self, tx: mpsc::Sender<ResultBatch>) {
+        self.result_tx = Some(tx);
+    }
+
+    /// Set the profit thresholds for the result batch channel.
+    ///
+    /// Only paths with `profit > min_profit` and `profit < max_profit`
+    /// appear in batch `fresh` / `updated` entries. Paths outside
+    /// this range are excluded from `delivered` and batches.
+    pub fn set_profit_thresholds(&mut self, min_profit: U256, max_profit: U256) {
+        self.min_profit = min_profit;
+        self.max_profit = max_profit;
+    }
+
+    /// De-register a path from the engine.
+    ///
+    /// Removes the path from `paths`, `pool_to_paths` reverse index,
+    /// `results`, `delivered`, and `pending_new_paths`. The path's
+    /// pools are **not** removed from the sub-engines — other paths
+    /// may still reference them.
+    ///
+    /// The de-registered path ID is recorded and included in the next
+    /// batch's `removed` field.
+    ///
+    /// Returns `true` if the path existed and was removed.
+    pub fn deregister_path(&mut self, path_id: u64) -> bool {
+        // Remove from paths and get the pool refs to clean up reverse index
+        let removed = self.paths.remove(&path_id);
+        let existed = removed.is_some();
+        if let Some((path, _)) = removed {
+            // Remove from pool_to_paths reverse index
+            for pool_ref in &path.pools {
+                if let Some(path_ids) =
+                    self.pool_to_paths.get_mut(&(pool_ref.hop_type, pool_ref.pool_key))
+                {
+                    path_ids.remove(&path_id);
+                }
+            }
+        }
+
+        // Remove from results
+        self.results.retain(|(id, _)| *id != path_id);
+
+        // Remove from delivered
+        self.delivered.remove(&path_id);
+
+        // Remove from pending_new_paths
+        self.pending_new_paths.remove(&path_id);
+
+        // Record for the next batch
+        if existed {
+            self.deregistered.push(path_id);
+        }
+
+        existed
+    }
+
+    /// Compute the incremental diff between `delivered` and `new_results`,
+    /// then advance `delivered` to the above-threshold subset.
+    ///
+    /// If `result_tx` is set, sends the batch via `try_send`.
+    /// If the channel is full, the batch is dropped — the next one
+    /// will carry a correct cumulative diff.
+    fn compute_diff_and_send(&mut self, metadata: &BlockMetadata) {
+        // Above-threshold subset of current results
+        let new_above: HashMap<u64, SolvePathResult> = self
+            .results
+            .iter()
+            .filter(|(_, r)| r.profit > self.min_profit && r.profit < self.max_profit)
+            .map(|(id, r)| (*id, r.clone()))
+            .collect();
+
+        let new_above_ids: HashSet<u64> = new_above.keys().copied().collect();
+        let delivered_ids: HashSet<u64> = self.delivered.keys().copied().collect();
+
+        // Fresh: in new_above but not in delivered
+        let fresh: Vec<(u64, SolvePathResult)> = new_above
+            .iter()
+            .filter(|(id, _)| !self.delivered.contains_key(id))
+            .map(|(&id, r)| (id, r.clone()))
+            .collect();
+
+        // Updated: in both, but values differ
+        let updated: Vec<(u64, SolvePathResult)> = new_above
+            .iter()
+            .filter(|(id, new)| matches!(self.delivered.get(id), Some(old) if old != *new))
+            .map(|(&id, r)| (id, r.clone()))
+            .collect();
+
+        // Expired: in delivered but not in new_above (dropped below threshold)
+        let expired: Vec<u64> = delivered_ids.difference(&new_above_ids).copied().collect();
+
+        // Removed: de-registered since last batch
+        let removed: Vec<u64> = self.deregistered.drain(..).collect();
+
+        // Advance delivered to the above-threshold set
+        self.delivered = new_above;
+
+        // Clear the unsent flag
+        self.has_unsent_results = false;
+
+        // Send if channel is available and there's anything to report
+        if let Some(ref tx) = self.result_tx {
+            // Always send a batch even if empty — Python needs the block
+            // metadata and solve_block to drive its main loop.
+            let batch = ResultBatch {
+                solve_block: self.results_block,
+                timestamp: metadata.timestamp,
+                base_fee_per_gas: metadata.base_fee_per_gas,
+                gas_used: metadata.gas_used,
+                gas_limit: metadata.gas_limit,
+                fresh,
+                updated,
+                expired,
+                removed,
+            };
+            let _ = tx.try_send(batch);
+        }
+    }
+
     /// Resolve and solve all registered paths.
     ///
     /// Called to populate `results` for the first time (replaces the
@@ -744,6 +942,10 @@ impl UniswapEngine {
         // Solve all paths
         self.results = self.solve_all();
         self.results_block = block_number;
+
+        // Compute incremental diff and send batch
+        // (block metadata is not available at initial solve time)
+        self.compute_diff_and_send(&BlockMetadata::default());
     }
 
     /// Number of registered V2 pools.
@@ -1046,7 +1248,7 @@ mod tests {
         ]);
 
         // Process with no logs — should not panic
-        engine.process_block(&[], 1);
+        engine.process_block(&[], 1, &BlockMetadata::default());
 
         let (results, block) = engine.latest_results();
         assert_eq!(block, 1);
@@ -1202,6 +1404,7 @@ mod tests {
             &[(v2_addr, usdc(1_400_000), weth(750))],
             &[],
             42,
+            &BlockMetadata::default(),
         );
 
         let (_, block) = engine.latest_results();
@@ -1325,7 +1528,7 @@ mod tests {
 
         // Process an empty block (no affected pools) — rebuild_and_solve_affected
         // should still include the pending path and not drop it
-        engine.rebuild_and_solve_affected(&HashSet::new(), &HashSet::new(), &HashSet::new(), 1);
+        engine.rebuild_and_solve_affected(&HashSet::new(), &HashSet::new(), &HashSet::new(), 1, &BlockMetadata::default());
 
         // Pending set should be cleared
         assert!(engine.pending_new_paths.is_empty());
@@ -1671,6 +1874,7 @@ mod tests {
             &[(v2_addr_a, usdc(1_400_000), weth(750))],
             &[],
             1,
+            &BlockMetadata::default(),
         );
 
         let (results_after, block) = engine.latest_results();
@@ -2048,6 +2252,7 @@ mod tests {
 
 use std::sync::Arc;
 
+use pyo3::exceptions::PyStopAsyncIteration;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
@@ -2064,11 +2269,13 @@ pub struct PyUniswapArbEngine {
     shutdown: Arc<std::sync::atomic::AtomicBool>,
     /// Handle for the pump task (None until `start()` is called)
     pump_handle: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>,
-    /// Watch receiver for block notifications (None until `start()` is called)
-    block_rx: parking_lot::Mutex<Option<tokio::sync::watch::Receiver<crate::optimizers::uniswap_engine_pump::BlockNotification>>>,
     /// Subscribe state held between `subscribe()` and `resume()` calls.
     /// Contains the live WS stream and first observed block number.
     subscribe_state: parking_lot::Mutex<Option<PySubscribeState>>,
+    /// Receiver for the result batch channel.
+    /// Created in `new()`, consumed by `__anext__`.
+    /// Wrapped in Arc so the async coroutine can share it.
+    result_rx: Arc<parking_lot::Mutex<Option<mpsc::Receiver<ResultBatch>>>>,
 }
 
 /// Python-facing subscribe state.
@@ -2229,12 +2436,15 @@ impl PyUniswapArbEngine {
 impl PyUniswapArbEngine {
     #[new]
     fn new() -> Self {
+        let (result_tx, result_rx) = mpsc::channel(8);
+        let mut engine = UniswapEngine::new();
+        engine.set_result_channel(result_tx);
         Self {
-            engine: Arc::new(parking_lot::Mutex::new(UniswapEngine::new())),
+            engine: Arc::new(parking_lot::Mutex::new(engine)),
             shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pump_handle: parking_lot::Mutex::new(None),
-            block_rx: parking_lot::Mutex::new(None),
             subscribe_state: parking_lot::Mutex::new(None),
+            result_rx: Arc::new(parking_lot::Mutex::new(Some(result_rx))),
         }
     }
 
@@ -2496,14 +2706,13 @@ impl PyUniswapArbEngine {
     /// verify. A 60s timeout triggers backfill for the missing range.
     ///
     /// After calling `start()`, the engine processes events autonomously.
-    /// Python reads results via `latest_results()` and awaits new blocks
-    /// via `wait_for_block()`.
+    /// Python reads results via the result batch channel (`async for`).
     #[pyo3(signature = (rpc_url))]
     fn start(&self, rpc_url: String) -> PyResult<()> {
         // Spawn the unified pump
         let engine = Arc::clone(&self.engine);
         let shutdown = Arc::clone(&self.shutdown);
-        let (handle, block_rx) = crate::optimizers::uniswap_engine_pump::UniswapEnginePump::spawn(
+        let handle = crate::optimizers::uniswap_engine_pump::UniswapEnginePump::spawn(
             rpc_url,
             engine,
             &shutdown,
@@ -2511,7 +2720,6 @@ impl PyUniswapArbEngine {
         .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
         *self.pump_handle.lock() = Some(handle);
-        *self.block_rx.lock() = Some(block_rx);
 
         Ok(())
     }
@@ -2606,14 +2814,11 @@ impl PyUniswapArbEngine {
     /// Raises `RuntimeError` if `subscribe()` has not been called first.
     fn resume(&self, _py: Python<'_>) -> PyResult<()> {
         let subscribe_state = self.subscribe_state.lock().take();
-        let mut state = subscribe_state.ok_or_else(|| {
+        let state = subscribe_state.ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err(
                 "Cannot resume: subscribe() has not been called. Call subscribe() first.",
             )
         })?;
-
-        // Get the block_rx from the pump's internal watch channel
-        let block_rx = state.pump.take_block_rx();
 
         let mut pump = state.pump;
         let first_block = state.first_block;
@@ -2631,7 +2836,6 @@ impl PyUniswapArbEngine {
         });
 
         *self.pump_handle.lock() = Some(handle);
-        *self.block_rx.lock() = Some(block_rx);
 
         Ok(())
     }
@@ -2993,7 +3197,9 @@ impl PyUniswapArbEngine {
         let rust_v2 = Self::parse_v2_updates(v2_sync_updates)?;
         let rust_v3 = Self::parse_v3_updates(v3_swap_updates)?;
         let rust_v4 = Self::parse_v4_updates(v4_swap_updates)?;
-        self.engine.lock().process_all_updates(&rust_v2, &rust_v3, &rust_v4, block_number);
+        self.engine
+            .lock()
+            .process_all_updates(&rust_v2, &rust_v3, &rust_v4, block_number, &BlockMetadata::default());
         Ok(())
     }
 
@@ -3155,68 +3361,148 @@ impl PyUniswapArbEngine {
         Ok((py_list.unbind(), block_num))
     }
 
-    /// Wait for the next block notification from the pump.
+    /// De-register a path from the engine.
     ///
-    /// Returns a dict with block header fields:
-    ///   {"`block_number"`: int, "timestamp": int,
-    ///    "`base_fee_per_gas"`: int|None, "`gas_used"`: int, "`gas_limit"`: int}
+    /// Removes the path from the engine's internal state. The path's pools
+    /// are **not** removed — other paths may still reference them.
     ///
-    /// This is the primary mechanism for Python to learn about new blocks.
-    /// The pump processes events autonomously; this method blocks until the
-    /// pump has processed a new block.
+    /// Returns `true` if the path existed and was removed.
+    #[pyo3(signature = (path_id))]
+    fn deregister_path(&self, path_id: u64) -> bool {
+        self.engine.lock().deregister_path(path_id)
+    }
+
+    /// Set the profit thresholds for the result batch channel.
     ///
-    /// On the first call after `start()`, returns immediately with the
-    /// latest notification (which may be block 0 if no block has been
-    /// processed yet). Subsequent calls block until a new block arrives.
-    ///
-    /// Raises `RuntimeError` if the pump has not been started.
-    fn wait_for_block(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
-        let rx_result = self.block_rx.lock().take();
-        let mut rx = rx_result.ok_or_else(|| {
-            pyo3::exceptions::PyRuntimeError::new_err(
-                "Cannot wait for block: pump not started. Call start() first.",
-            )
-        })?;
-
-        // Release the GIL while waiting for the next block notification.
-        // SAFETY: This is called from the Python main thread (not a Tokio
-        // worker), so get_runtime().block_on() is safe — it will not deadlock
-        // against the pump's spawned task.
-        let wait_result = py.detach(|| {
-            get_runtime().block_on(async { rx.changed().await })
-        });
-
-        // Put the receiver back even on error so subsequent calls don't panic
-        *self.block_rx.lock() = Some(rx);
-
-        wait_result.map_err(|_| {
-            pyo3::exceptions::PyRuntimeError::new_err(
-                "Block notification channel closed — pump may have stopped.",
-            )
-        })?;
-
-        // Read the latest value from the receiver (the one that just arrived)
-        let notification = self
-            .block_rx
+    /// Only paths with `profit > min_profit` and `profit < max_profit`
+    /// appear in batch `fresh` / `updated` entries.
+    #[pyo3(signature = (min_profit, max_profit))]
+    fn set_profit_thresholds(&self, min_profit: u64, max_profit: u64) {
+        self.engine
             .lock()
-            .as_ref()
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("block receiver missing"))?
-            .borrow()
-            .clone();
+            .set_profit_thresholds(U256::from(min_profit), U256::from(max_profit));
+    }
 
-        let dict = PyDict::new(py);
-        dict.set_item("block_number", notification.block_number)?;
-        dict.set_item("timestamp", notification.timestamp)?;
-        dict.set_item("base_fee_per_gas", notification.base_fee_per_gas)?;
-        dict.set_item("gas_used", notification.gas_used)?;
-        dict.set_item("gas_limit", notification.gas_limit)?;
-        dict.set_item("backfilled", notification.backfilled)?;
+    /// Return self as an async iterator over result batches.
+    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
 
-        Ok(dict.unbind())
+    /// Await the next result batch from the engine.
+    ///
+    /// Returns a dict with keys:
+    ///   - "`solve_block"`: int
+    ///   - "timestamp": int
+    ///   - "`base_fee_per_gas"`: int | None
+    ///   - "`gas_used"`: int
+    ///   - "`gas_limit"`: int
+    ///   - "fresh": list of (`path_id`, `optimal_input`, profit, `hop_outputs`, `consumed_inputs`)
+    ///   - "updated": list of (`path_id`, `optimal_input`, profit, `hop_outputs`, `consumed_inputs`)
+    ///   - "expired": list of int (`path_ids`)
+    ///   - "removed": list of int (`path_ids`)
+    fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let result_rx = Arc::clone(&self.result_rx);
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            // Take the receiver for awaiting
+            let mut rx = result_rx
+                .lock()
+                .take()
+                .ok_or_else(|| PyStopAsyncIteration::new_err("Result channel closed"))?;
+
+            // Wait for the next batch
+            let batch = rx.recv().await.ok_or_else(|| {
+                PyStopAsyncIteration::new_err(
+                    "Result channel closed — pump may have stopped.",
+                )
+            })?;
+
+            // Put the receiver back
+            *result_rx.lock() = Some(rx);
+
+            // Convert batch to Python dict (requires GIL)
+            Python::attach(|py| batch_to_py_dict(&batch, py))
+        })
     }
 }
 
 /// Helper to construct `TickInfo` from Python-extracted values.
+/// Convert a `ResultBatch` to a Python dict.
+///
+/// Called under the GIL after receiving a batch from the result channel.
+fn batch_to_py_dict(batch: &ResultBatch, py: Python<'_>) -> PyResult<Py<PyDict>> {
+    let dict = PyDict::new(py);
+    dict.set_item("solve_block", batch.solve_block)?;
+    dict.set_item("timestamp", batch.timestamp)?;
+    dict.set_item("base_fee_per_gas", batch.base_fee_per_gas)?;
+    dict.set_item("gas_used", batch.gas_used)?;
+    dict.set_item("gas_limit", batch.gas_limit)?;
+
+    // fresh: list of (path_id, optimal_input, profit, hop_outputs, consumed_inputs)
+    let fresh_list = PyList::empty(py);
+    for (path_id, result) in &batch.fresh {
+        let tuple = solve_result_to_py_tuple(*path_id, result, py)?;
+        fresh_list.append(tuple)?;
+    }
+    dict.set_item("fresh", fresh_list)?;
+
+    // updated: same format as fresh
+    let updated_list = PyList::empty(py);
+    for (path_id, result) in &batch.updated {
+        let tuple = solve_result_to_py_tuple(*path_id, result, py)?;
+        updated_list.append(tuple)?;
+    }
+    dict.set_item("updated", updated_list)?;
+
+    // expired: list of path_ids
+    let expired_list = PyList::empty(py);
+    for &path_id in &batch.expired {
+        expired_list.append(path_id)?;
+    }
+    dict.set_item("expired", expired_list)?;
+
+    // removed: list of path_ids
+    let removed_list = PyList::empty(py);
+    for &path_id in &batch.removed {
+        removed_list.append(path_id)?;
+    }
+    dict.set_item("removed", removed_list)?;
+
+    Ok(dict.unbind())
+}
+
+/// Convert a (`path_id`, `SolvePathResult`) to a Python tuple.
+fn solve_result_to_py_tuple<'py>(
+    path_id: u64,
+    result: &SolvePathResult,
+    py: Python<'py>,
+) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
+    let path_id_py = path_id.into_pyobject(py)?;
+    let input_py = crate::alloy_py::PyU256(result.optimal_input).into_pyobject(py)?;
+    let profit_py = crate::alloy_py::PyU256(result.profit).into_pyobject(py)?;
+
+    let hop_outputs_py = PyList::empty(py);
+    for hop_out in &result.hop_outputs {
+        let hop_py = crate::alloy_py::PyU256(*hop_out).into_pyobject(py)?;
+        hop_outputs_py.append(hop_py)?;
+    }
+
+    let consumed_inputs_py = PyList::empty(py);
+    for consumed in &result.consumed_inputs {
+        let consumed_py = crate::alloy_py::PyU256(*consumed).into_pyobject(py)?;
+        consumed_inputs_py.append(consumed_py)?;
+    }
+
+    (
+        path_id_py,
+        input_py,
+        profit_py,
+        hop_outputs_py,
+        consumed_inputs_py,
+    )
+        .into_pyobject(py)
+}
+
 fn make_tick_info(liquidity_gross: u128, liquidity_net: i128) -> crate::bot_core::TickInfo {
     use alloy::primitives::{I256, U128};
     crate::bot_core::TickInfo {
