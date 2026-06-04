@@ -219,6 +219,6 @@ Existing `just test-rust-python` tests cover the Python↔Rust integration. The 
 
 ## Status
 
-[ ] Slice 1: Rust snapshot storage + backfill + register_pool uses snapshot + buffer application
-[ ] Slice 2: Python integration
-[ ] Slice 3: Validate and clean up
+[x] Slice 1: Rust snapshot storage + backfill + register_pool uses snapshot + buffer application
+[x] Slice 2: Python integration
+[x] Slice 3: Validate and clean up
