@@ -68,7 +68,6 @@ use std::time::Duration;
 use alloy::primitives::{Address, B256};
 use alloy::rpc::types::{Filter, Log};
 use futures_util::{StreamExt, stream};
-use tokio::sync::watch;
 use tokio::time::timeout;
 
 // ---------------------------------------------------------------------------
@@ -123,7 +122,7 @@ use crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC;
 use crate::bot_core::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC;
 use crate::bot_core::v4_swap_decoder::V4_SWAP_TOPIC;
 use crate::optimizers::v2_sync_decoder::V2_SYNC_TOPIC;
-use crate::optimizers::uniswap_engine::UniswapEngine;
+use crate::optimizers::uniswap_engine::{BlockMetadata, UniswapEngine};
 use crate::provider::AlloyProvider;
 use crate::runtime::get_runtime;
 
@@ -131,25 +130,6 @@ use crate::runtime::get_runtime;
 const BACKFILL_TIMEOUT_SECS: u64 = 60;
 
 /// Block data sent from the pump to Python via the watch channel.
-///
-/// Python reads this on each new block to compute base fees and schedule
-/// dispatch — no separate WS subscription needed.
-#[derive(Clone, Debug)]
-pub struct BlockNotification {
-    /// The block number
-    pub block_number: u64,
-    /// Block timestamp
-    pub timestamp: u64,
-    /// Base fee per gas (None for pre-EIP-1559 blocks)
-    pub base_fee_per_gas: Option<u64>,
-    /// Gas used in this block
-    pub gas_used: u64,
-    /// Gas limit of this block
-    pub gas_limit: u64,
-    /// Whether a backfill was performed for this block
-    pub backfilled: bool,
-}
-
 /// Topics we care about — used for in-Rust filtering of incoming logs.
 pub const RELEVANT_TOPICS: [B256; 6] = [
     V2_SYNC_TOPIC,
@@ -187,8 +167,6 @@ pub struct UniswapEnginePump {
     provider: Arc<AlloyProvider>,
     /// Shutdown flag — set by `stop()`
     shutdown: Arc<AtomicBool>,
-    /// Watch sender — publishes `BlockNotification` after each processed block
-    block_tx: watch::Sender<BlockNotification>,
     /// Set of event types to buffer during the subscribe phase.
     /// Defaults to {MINT, BURN}.
     buffer_event_types: Vec<EventType>,
@@ -250,20 +228,11 @@ impl UniswapEnginePump {
 
         let combined = stream_select(block_stream, log_stream).boxed();
 
-        let (block_tx, _block_rx) = watch::channel(BlockNotification {
-            block_number: 0,
-            timestamp: 0,
-            base_fee_per_gas: None,
-            gas_used: 0,
-            gas_limit: 0,
-            backfilled: false,
-        });
 
         let pump = Self {
             engine,
             provider: Arc::new(provider),
             shutdown,
-            block_tx,
             buffer_event_types,
         };
 
@@ -310,17 +279,8 @@ impl UniswapEnginePump {
         rpc_url: String,
         engine: Arc<parking_lot::Mutex<UniswapEngine>>,
         shutdown: &Arc<AtomicBool>,
-    ) -> Result<(tokio::task::JoinHandle<()>, watch::Receiver<BlockNotification>), String> {
+    ) -> Result<tokio::task::JoinHandle<()>, String> {
         let runtime = get_runtime();
-
-        let (block_tx, block_rx) = watch::channel(BlockNotification {
-            block_number: 0,
-            timestamp: 0,
-            base_fee_per_gas: None,
-            gas_used: 0,
-            gas_limit: 0,
-            backfilled: false,
-        });
 
         let shutdown_clone = Arc::clone(shutdown);
         let handle = runtime.spawn(async move {
@@ -333,15 +293,16 @@ impl UniswapEnginePump {
             .await
             {
                 Ok((pump, state)) => {
-                    // Send the first block as a notification
-                    let _ = block_tx.send(BlockNotification {
-                        block_number: state.first_block,
-                        timestamp: state.first_timestamp,
-                        base_fee_per_gas: None,
-                        gas_used: 0,
-                        gas_limit: 0,
-                        backfilled: false,
-                    });
+                    // Send the first block as an empty batch so Python learns about it
+                    {
+                        let mut engine = pump.engine.lock();
+                        engine.process_block(&[], state.first_block, &BlockMetadata {
+                            timestamp: state.first_timestamp,
+                            base_fee_per_gas: None,
+                            gas_used: 0,
+                            gas_limit: 0,
+                        });
+                    }
                     pump
                 }
                 Err(e) => {
@@ -379,10 +340,10 @@ impl UniswapEnginePump {
                 combined_stream: Some(combined2),
             };
 
-            pump.resume(subscribe_state, block_tx).await;
+            pump.resume(subscribe_state).await;
         });
 
-        Ok((handle, block_rx))
+        Ok(handle)
     }
 
     /// Subscribe phase: buffer MINT/BURN events until first block header.
@@ -511,27 +472,18 @@ impl UniswapEnginePump {
     ///
     /// Takes ownership of the `SubscribeState` (containing the first observed
     /// block number and the live WS stream) and starts processing blocks.
-    ///
-    /// The `block_tx` is used instead of `self.block_tx` to allow the legacy
-    /// `spawn()` path to pass a separately-created sender.
     async fn resume(
         &mut self,
         subscribe_state: SubscribeState,
-        block_tx: watch::Sender<BlockNotification>,
     ) {
         let combined = subscribe_state
             .combined_stream
             .expect("resume() called without WS stream — did you call subscribe() first?");
 
-        // Use the block_tx from parameter (allows legacy spawn to inject its own)
-        self.block_tx = block_tx;
-
         self.run_with_stream(combined, subscribe_state.first_block).await;
     }
 
     /// Resume phase using the pump's own watch channel.
-    ///
-    /// Called after `subscribe()` when the pump already has its own `block_tx`.
     pub async fn resume_from_subscribe(&mut self, subscribe_state: SubscribeState) {
         let combined = subscribe_state
             .combined_stream
@@ -662,14 +614,6 @@ impl UniswapEnginePump {
 
     /// Take the watch receiver from the pump's block channel.
     ///
-    /// This is used by `PyUniswapArbEngine.resume()` to obtain the receiver
-    /// for block notifications. The pump retains the sender.
-    pub fn take_block_rx(&mut self) -> watch::Receiver<BlockNotification> {
-        // Subscribe to the existing channel to get a new receiver.
-        // The existing channel might have been created during subscribe().
-        self.block_tx.subscribe()
-    }
-
     /// Handle a block header event from the WS subscription.
     ///
     /// Returns the updated `last_processed_block` and `first_header` flag.
@@ -695,14 +639,11 @@ impl UniswapEnginePump {
                 // Record this block as the starting point and skip processing.
                 // The next block header will trigger normal processing.
                 pending_logs.clear();
-                let _ = self.block_tx.send(BlockNotification {
-                    block_number: number,
-                    timestamp,
-                    base_fee_per_gas,
-                    gas_used,
-                    gas_limit,
-                    backfilled: false,
-                });
+                // Send an empty batch with block metadata so Python learns about this block
+                {
+                    let mut engine = self.engine.lock();
+                    engine.process_block(&[], number, &BlockMetadata { timestamp, base_fee_per_gas, gas_used, gas_limit });
+                }
                 (Some(number), false)
             }
             Some(prior_block) if first_header => {
@@ -740,35 +681,26 @@ impl UniswapEnginePump {
                 // eth_getLogs (or for the current incomplete block
                 // which will be collected in the next cycle).
                 pending_logs.clear();
-                let _ = self.block_tx.send(BlockNotification {
-                    block_number: number,
-                    timestamp,
-                    base_fee_per_gas,
-                    gas_used,
-                    gas_limit,
-                    backfilled: false,
-                });
+                // Send an empty batch with block metadata so Python learns about this block
+                {
+                    let mut engine = self.engine.lock();
+                    engine.process_block(&[], number, &BlockMetadata { timestamp, base_fee_per_gas, gas_used, gas_limit });
+                }
                 (Some(number), false)
             }
             Some(prior_block) if number == prior_block + 1 => {
                 // Normal case: the new header is exactly one block
                 // ahead. Process the prior block with buffered WS logs.
+                let metadata = BlockMetadata { timestamp, base_fee_per_gas, gas_used, gas_limit };
                 self.process_completed_block(
                     prior_block,
                     pending_logs,
                     relevant_addrs,
                     relevant_topic_set,
+                    &metadata,
                 )
                 .await;
                 pending_logs.clear();
-                let _ = self.block_tx.send(BlockNotification {
-                    block_number: number,
-                    timestamp,
-                    base_fee_per_gas,
-                    gas_used,
-                    gas_limit,
-                    backfilled: false,
-                });
                 (Some(number), first_header)
             }
             Some(prior_block) if number > prior_block + 1 => {
@@ -791,22 +723,16 @@ impl UniswapEnginePump {
                 )
                 .await;
                 // Process the prior block with WS logs
+                let metadata = BlockMetadata { timestamp, base_fee_per_gas, gas_used, gas_limit };
                 self.process_completed_block(
                     prior_block,
                     pending_logs,
                     relevant_addrs,
                     relevant_topic_set,
+                    &metadata,
                 )
                 .await;
                 pending_logs.clear();
-                let _ = self.block_tx.send(BlockNotification {
-                    block_number: number,
-                    timestamp,
-                    base_fee_per_gas,
-                    gas_used,
-                    gas_limit,
-                    backfilled: false,
-                });
                 (Some(number), first_header)
             }
             Some(prior_block) => {
@@ -830,6 +756,7 @@ impl UniswapEnginePump {
         pending_logs: &[Log],
         relevant_addrs: &HashSet<Address>,
         relevant_topic_set: &HashSet<B256>,
+        metadata: &BlockMetadata,
     ) -> bool {
         let logs_received = !pending_logs.is_empty();
 
@@ -838,7 +765,7 @@ impl UniswapEnginePump {
 
         if logs_received && !filtered.is_empty() {
             // Process buffered logs for the completed block
-            self.engine.lock().process_block(&filtered, block_to_process);
+            self.engine.lock().process_block(&filtered, block_to_process, metadata);
             log::debug!(
                 "UniswapEnginePump: processed block {block_to_process} ({} filtered logs)",
                 filtered.len()
@@ -847,7 +774,7 @@ impl UniswapEnginePump {
         } else if logs_received && filtered.is_empty() {
             // Got logs but none were relevant — still need to advance the engine's
             // block number so staleness checks work correctly
-            self.engine.lock().process_block(&[], block_to_process);
+            self.engine.lock().process_block(&[], block_to_process, metadata);
             log::debug!(
                 "UniswapEnginePump: processed block {block_to_process} (no relevant logs)"
             );
@@ -862,7 +789,7 @@ impl UniswapEnginePump {
                 .await;
             if !backfilled {
                 // Block truly had no relevant events — advance engine block number
-                self.engine.lock().process_block(&[], block_to_process);
+                self.engine.lock().process_block(&[], block_to_process, metadata);
             }
             false
         }
@@ -929,7 +856,7 @@ impl UniswapEnginePump {
             return false;
         }
 
-        self.engine.lock().process_block(&filtered, block_number);
+        self.engine.lock().process_block(&filtered, block_number, &BlockMetadata::default());
         log::info!(
             "UniswapEnginePump: backfilled block {block_number} with {} events",
             filtered.len()
@@ -984,7 +911,7 @@ impl UniswapEnginePump {
             let block_logs = logs_by_block.remove(&block).unwrap_or_default();
             let filtered = filter_relevant_logs(&block_logs, relevant_addrs, relevant_topic_set);
             if !filtered.is_empty() {
-                self.engine.lock().process_block(&filtered, block);
+                self.engine.lock().process_block(&filtered, block, &BlockMetadata::default());
                 any_processed = true;
             }
             *last_processed_block = block;
