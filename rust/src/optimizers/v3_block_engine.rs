@@ -443,27 +443,11 @@ impl V3BlockEngine {
         self.pools.insert(key, V3PoolState::from(params));
         self.pool_addresses.insert(address, key);
 
-        // Apply any buffered liquidity updates for this pool
-        if let Some(buffered) = self.liquidity_event_buffer.remove(&address) {
-            if let Some(pool) = self.pools.get_mut(&key) {
-                for update in buffered {
-                    update_tick_liquidity(
-                        &mut pool.tick_data,
-                        update.tick_lower,
-                        update.liquidity_delta,
-                        true,
-                    );
-                    update_tick_liquidity(
-                        &mut pool.tick_data,
-                        update.tick_upper,
-                        update.liquidity_delta,
-                        false,
-                    );
-                    pool.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
-                    pool.update_block = update.block_number;
-                }
-            }
-        }
+        // Discard any buffered liquidity updates for this pool.
+        // The tick_data passed via params already incorporates these events
+        // (applied by Python's update_liquidity_map before registration),
+        // so applying them again would double-count the liquidity.
+        self.liquidity_event_buffer.remove(&address);
 
         key
     }
@@ -1558,7 +1542,7 @@ mod tests {
     }
 
     #[test]
-    fn mint_buffered_for_unregistered_pool_applied_on_registration() {
+    fn mint_buffered_for_unregistered_pool_discarded_on_registration() {
         let mut engine = V3BlockEngine::new();
         let addr = Address::from([0x11u8; 20]);
 
@@ -1575,7 +1559,13 @@ mod tests {
         assert!(engine.liquidity_event_buffer.contains_key(&addr));
         assert_eq!(engine.liquidity_event_buffer[&addr].len(), 1);
 
-        // Now register the pool
+        // Register the pool WITH tick_data that already includes the event results.
+        // The Python caller applies pending_updates before registration, so the
+        // tick_data already reflects the Mint event.
+        let mut pre_applied_tick_data = HashMap::new();
+        pre_applied_tick_data.insert(-60, make_tick_info(500, 500));
+        pre_applied_tick_data.insert(60, make_tick_info(500, -500));
+
         let key = engine.register_pool(RegisterV3PoolParams {
             address: addr,
             token0: Address::ZERO,
@@ -1586,14 +1576,14 @@ mod tests {
             sqrt_price_x96: U256::ONE,
             liquidity: 100,
             tick: 0,
-            tick_data: HashMap::new(),
+            tick_data: pre_applied_tick_data,
             update_block: 0,
         });
 
-        // The buffer should be consumed
+        // The buffer should be discarded (consumed without double-applying)
         assert!(engine.liquidity_event_buffer.is_empty());
 
-        // The buffered Mint should have been applied to the pool's tick data
+        // The tick_data should match what was passed in (not doubled)
         let pool = &engine.pools[&key];
         assert!(pool.tick_data.contains_key(&-60));
         assert!(pool.tick_data.contains_key(&60));
@@ -1604,7 +1594,7 @@ mod tests {
     }
 
     #[test]
-    fn buffered_events_apply_in_order() {
+    fn buffered_events_discarded_on_registration() {
         let mut engine = V3BlockEngine::new();
         let addr = Address::from([0x22u8; 20]);
 
@@ -1617,10 +1607,16 @@ mod tests {
 
         assert_eq!(engine.liquidity_event_buffer[&addr].len(), 3);
 
-        // Register with existing tick data at [-60, 60]
-        let mut initial_tick_data = HashMap::new();
-        initial_tick_data.insert(-60, make_tick_info(100, 50));
-        initial_tick_data.insert(60, make_tick_info(100, -50));
+        // Register with tick_data that already includes all event results.
+        // The Python caller applies pending_updates before registration.
+        // Starting from initial lg=100, ln=50 at tick -60 and lg=100, ln=-50 at tick 60:
+        // After Mint 500 + Burn 200: -60: lg=100+500-200=400, ln=50+500-200=350
+        // After Mint 300 at [-120,120]: -120: lg=300, ln=300; 120: lg=300, ln=-300
+        let mut pre_applied_tick_data = HashMap::new();
+        pre_applied_tick_data.insert(-120, make_tick_info(300, 300));
+        pre_applied_tick_data.insert(-60, make_tick_info(400, 350));
+        pre_applied_tick_data.insert(60, make_tick_info(400, -350));
+        pre_applied_tick_data.insert(120, make_tick_info(300, -300));
 
         let key = engine.register_pool(RegisterV3PoolParams {
             address: addr,
@@ -1632,20 +1628,21 @@ mod tests {
             sqrt_price_x96: U256::ONE,
             liquidity: 100,
             tick: 0,
-            tick_data: initial_tick_data,
+            tick_data: pre_applied_tick_data,
             update_block: 0,
         });
 
         let pool = &engine.pools[&key];
-        // After Mint 500 + Burn 200: net = +300, gross = 100 + 500 - 200 = 400
+        // Values should match what was passed in (not doubled)
         assert_eq!(pool.tick_data[&-60].liquidity_gross, U128::from(400u64));
-        assert_eq!(pool.tick_data[&-60].liquidity_net, I256::try_from(350i128).unwrap()); // 50 + 500 - 200
+        assert_eq!(pool.tick_data[&-60].liquidity_net, I256::try_from(350i128).unwrap());
         assert_eq!(pool.tick_data[&60].liquidity_gross, U128::from(400u64));
-        assert_eq!(pool.tick_data[&60].liquidity_net, I256::try_from(-350i128).unwrap()); // -50 - 500 + 200
-        // New ticks from the third Mint
+        assert_eq!(pool.tick_data[&60].liquidity_net, I256::try_from(-350i128).unwrap());
         assert!(pool.tick_data.contains_key(&-120));
         assert!(pool.tick_data.contains_key(&120));
-        assert_eq!(pool.update_block, 102); // Last buffered event's block
+        // update_block should remain at 0 (from registration), not 102
+        // (buffered events were discarded, not applied)
+        assert_eq!(pool.update_block, 0);
     }
 
     #[test]

@@ -918,14 +918,14 @@ async def build_paths(
         for pool, pt in zip(pools, pool_type_strs, strict=True):
             if pt == "V3" and pool.address not in v3_verified_pools:
                 v3_verified_pools.add(pool.address)
-                engine_registry.engine.verify_v3_pool(
+                await engine_registry.engine.verify_v3_pool(
                     pool.address,
                     rpc_url,
                     verify_block,
                 )
             elif pt == "V4" and pool.pool_id not in v4_verified_pools:
                 v4_verified_pools.add(pool.pool_id)
-                engine_registry.engine.verify_v4_pool(
+                await engine_registry.engine.verify_v4_pool(
                     pool.pool_id.to_0x_hex(),
                     rpc_url,
                     state_view_address,
@@ -1999,38 +1999,36 @@ async def main() -> None:
         current_block,
     )
 
-    # ── Build paths, then resume pump ────────────────────────────
-    # The pump's WS subscription is live and buffering events, but
-    # resume is deferred until after build_paths completes. The pump's
-    # async activity was starving find_paths_async's DB-heavy graph
-    # construction on the shared event loop. Build paths first, then
-    # resume the pump so held events are applied before verification.
-    async def _build_paths_background() -> None:
-        bot_logger.info("[startup] Starting path loading...")
-        await build_paths(
-            bot,
-            engine_registry,
-            current_block,
-            v3_snapshot=v3_snapshot,
-            v4_snapshot=v4_snapshot,
-            rpc_url=node_ws,
-            state_view_address=state_view_address,
-        )
-        bot_logger.info("[startup] Path loading complete")
+    # ── Resume the Rust pump ─────────────────────────────────────
+    # The pump was subscribed earlier (WS live, events buffered).
+    # Now that backfill is complete, resume normal processing.
+    # The pump will process blocks starting from the backfill target.
+    engine_registry.engine.set_last_processed_block(current_block)
+    engine_registry._pump_running = True
+    engine_registry.engine.resume()
+    bot_logger.info(
+        f"[startup] Rust pump resumed (WS={node_ws}, backfill complete to {current_block})"
+    )
 
-        # Per-pool verification already confirmed every pool's liquidity
-        # map at construction time. No additional bulk verification needed.
+    # ── Build paths (before main loop) ──────────────────────────
+    # build_paths must complete before entering the main loop because
+    # find_paths_async's DFS yields with asyncio.sleep(0), which gets
+    # starved by the pump's async for batch in engine consuming results.
+    # The pump's WS subscription buffers events — no data is lost.
+    bot_logger.info("[startup] Starting path loading...")
+    await build_paths(
+        bot,
+        engine_registry,
+        current_block,
+        v3_snapshot=v3_snapshot,
+        v4_snapshot=v4_snapshot,
+        rpc_url=node_ws,
+        state_view_address=state_view_address,
+    )
+    bot_logger.info("[startup] Path loading complete")
 
-        # Now resume the pump — WS events buffered during path loading
-        # will be applied as held events to the registered pools.
-        engine_registry.engine.set_last_processed_block(current_block)
-        engine_registry._pump_running = True
-        engine_registry.engine.resume()
-        bot_logger.info(
-            f"[startup] Rust pump resumed (WS={node_ws}, backfill complete to {current_block})"
-        )
-
-    build_paths_task = asyncio.create_task(_build_paths_background())
+    # Per-pool verification already confirmed every pool's liquidity
+    # map at construction time. No additional bulk verification needed.
 
     # ── Main loop: consume result batches from Rust engine ──────────
     bot_logger.info("[startup] Entering main loop — awaiting result batches from Rust pump")
