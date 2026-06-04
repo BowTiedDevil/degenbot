@@ -793,6 +793,44 @@ impl UniswapEngine {
         self.last_processed_block = Some(block);
     }
 
+    /// Apply backfill logs from the snapshot gap to the sub-engines.
+    ///
+    /// Splits raw logs by topic (V3 vs V4) and applies them via
+    /// `process_block()` on each sub-engine. This updates registered pools
+    /// and buffers Mint/Burn/ModifyLiquidity events for unregistered pools.
+    pub fn process_backfill_logs(&mut self, logs: &[Log], block_number: u64) {
+        let mut v3_logs: Vec<Log> = Vec::new();
+        let mut v4_logs: Vec<Log> = Vec::new();
+
+        for log in logs {
+            if let Some(topic0) = log.topic0() {
+                if *topic0 == crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC
+                    || *topic0 == crate::bot_core::v3_mint_burn_decoder::V3_MINT_TOPIC
+                    || *topic0 == crate::bot_core::v3_mint_burn_decoder::V3_BURN_TOPIC
+                {
+                    v3_logs.push(log.clone());
+                } else if *topic0 == crate::bot_core::v4_swap_decoder::V4_SWAP_TOPIC
+                    || *topic0 == crate::bot_core::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC
+                {
+                    v4_logs.push(log.clone());
+                }
+            }
+        }
+
+        if !v3_logs.is_empty() {
+            self.v3_engine.process_block(&v3_logs, block_number);
+        }
+        if !v4_logs.is_empty() {
+            self.v4_engine.process_block(&v4_logs, block_number);
+        }
+
+        // Track the last block processed by backfill so the pump
+        // knows where to resume. Without this, the pump would treat
+        // a None last_processed_block as a cold start and skip the
+        // first WS block.
+        self.last_processed_block = Some(block_number);
+    }
+
     /// Set the result batch channel sender.
     ///
     /// Called by `PyUniswapArbEngine::new()` to wire the channel.
@@ -970,18 +1008,6 @@ impl UniswapEngine {
     #[must_use]
     pub fn path_count(&self) -> usize {
         self.paths.len()
-    }
-
-    /// Return the list of registered V2 pool addresses.
-    #[must_use]
-    pub fn v2_registered_addresses(&self) -> Vec<Address> {
-        self.v2_engine.registered_addresses()
-    }
-
-    /// Return the list of registered V3 pool addresses.
-    #[must_use]
-    pub fn v3_registered_addresses(&self) -> Vec<Address> {
-        self.v3_engine.registered_addresses()
     }
 
     /// Return the list of registered V4 `PoolManager` addresses.
@@ -2800,6 +2826,110 @@ impl PyUniswapArbEngine {
         });
 
         Ok(state.first_block)
+    }
+
+    /// Backfill Mint/Burn/ModifyLiquidity events from the last DB snapshot
+    /// block to the first WS block observed during `subscribe()`.
+    ///
+    /// Must be called after `subscribe()`, before `resume()`. Uses
+    /// `eth_getLogs` to fetch events for the gap between the DB snapshot
+    /// and the live WS connection, then applies them to the V3/V4 engines
+    /// via `backfill_logs()`.
+    ///
+    /// This ensures that when pools are registered (with tick_data from the
+    /// DB snapshot), any liquidity changes between the snapshot block and
+    /// the current chain head are reflected in the Rust engine's state.
+    ///
+    /// Args:
+    ///     rpc_url: HTTP RPC endpoint for `eth_getLogs` requests
+    ///     chunk_size: Number of blocks per `eth_getLogs` request (default 2000)
+    ///
+    /// Returns the number of blocks backfilled (0 if snapshot is current).
+    #[pyo3(signature = (rpc_url, snapshot_block, chunk_size=2000))]
+    fn backfill_from_snapshot(&self, rpc_url: &str, snapshot_block: u64, chunk_size: u64) -> PyResult<u64> {
+        // Ensure subscribe() was called — we need the first WS block
+        let first_ws_block = {
+            let state_lock = self.subscribe_state.lock();
+            match state_lock.as_ref() {
+                Some(s) => s.first_block,
+                None => {
+                    let msg = "Cannot backfill: subscribe() has not been called. Call subscribe() first.";
+                    return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
+                }
+            }
+        };
+
+        if snapshot_block == 0 {
+            log::warn!("backfill_from_snapshot: snapshot_block is 0, skipping");
+            return Ok(0);
+        }
+
+        if snapshot_block >= first_ws_block {
+            log::info!(
+                "backfill_from_snapshot: snapshot at {snapshot_block} >= WS block {first_ws_block}, nothing to backfill"
+            );
+            return Ok(0);
+        }
+
+        let from_block = snapshot_block + 1;
+        // Backfill up to (first_ws_block - 1) to avoid overlap with
+        // WS events that the pump already captured during subscribe().
+        let to_block = first_ws_block - 1;
+        let total_blocks = to_block - from_block + 1;
+
+        log::info!(
+            "backfill_from_snapshot: fetching events from block {from_block} to {to_block} ({total_blocks} blocks, chunk_size={chunk_size})"
+        );
+
+        // Create an HTTP provider for eth_getLogs
+        let runtime = crate::runtime::get_runtime();
+        let provider = runtime.block_on(async {
+            crate::provider::AlloyProvider::new(rpc_url, 3)
+                .await
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create provider: {e}")))
+        })?;
+
+        let provider_arc = provider.provider_arc();
+
+        // Fetch and apply logs in paginated chunks
+        let mut total_logs = 0usize;
+        let mut chunk_start = from_block;
+        while chunk_start <= to_block {
+            let chunk_end = (chunk_start + chunk_size - 1).min(to_block);
+
+            let filter = crate::optimizers::uniswap_engine_pump::build_backfill_filter(
+                chunk_start,
+                chunk_end,
+            );
+
+            let logs = runtime.block_on(async {
+                provider_arc.get_logs(&filter).await
+                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
+                        format!("eth_getLogs failed for blocks {chunk_start}-{chunk_end}: {e}")
+                    ))
+            })?;
+
+            let chunk_log_count = logs.len();
+            total_logs += chunk_log_count;
+
+            // Apply to the engines — process_backfill_logs splits V3/V4
+            {
+                let mut engine = self.engine.lock();
+                engine.process_backfill_logs(&logs, chunk_end);
+            }
+
+            log::info!(
+                "backfill_from_snapshot: blocks {chunk_start}-{chunk_end}: {chunk_log_count} logs applied"
+            );
+
+            chunk_start = chunk_end + 1;
+        }
+
+        log::info!(
+            "backfill_from_snapshot: complete — {total_logs} total logs applied across {total_blocks} blocks"
+        );
+
+        Ok(total_blocks)
     }
 
     /// Resume phase: begin normal pump processing.
