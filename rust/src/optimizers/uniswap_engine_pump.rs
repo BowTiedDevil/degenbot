@@ -589,7 +589,7 @@ impl UniswapEnginePump {
             let wait_timeout = if debounce_active {
                 // Wake up when the debounce timer fires (or earlier on new events)
                 Duration::from_millis(DEBOUNCE_MS)
-                    .saturating_sub(debounce.duration_since(tokio::time::Instant::now()))
+                    .saturating_sub(debounce.saturating_duration_since(tokio::time::Instant::now()))
             } else {
                 Duration::from_secs(BACKFILL_TIMEOUT_SECS)
             };
@@ -598,11 +598,19 @@ impl UniswapEnginePump {
             match event {
                 // Timeout — check if it's the debounce timer or the backfill timer.
                 Err(_) => {
-                    if debounce_active && tokio::time::Instant::now() >= debounce {
-                        // Debounce expired — send results
-                        debounce_active = false;
-                        let mut engine = self.engine.lock();
-                        engine.send_result_batch(&current_metadata);
+                    if debounce_active {
+                        // The timeout must be from the debounce timer (50ms),
+                        // not the backfill timer (60s). If the debounce has
+                        // expired, send the result batch. If not (due to
+                        // timing precision), just loop back — the next
+                        // iteration will handle it.
+                        if tokio::time::Instant::now() >= debounce {
+                            debounce_active = false;
+                            let mut engine = self.engine.lock();
+                            engine.send_result_batch(&current_metadata);
+                        }
+                        // else: debounce timer hasn't quite expired yet.
+                        // Loop back — the next iteration will pick it up.
                     } else {
                         // No activity for 60s — try to backfill
                         self.handle_timeout_eager(
