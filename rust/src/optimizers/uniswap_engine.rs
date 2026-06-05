@@ -232,7 +232,7 @@ pub struct UniswapEngine {
     /// Paths above this are likely solver defects or scam tokens.
     max_profit: U256,
     /// Sender for the result batch channel. Created in `PyUniswapArbEngine::new()`.
-    result_tx: Option<mpsc::Sender<ResultBatch>>,
+    result_tx: Option<mpsc::UnboundedSender<ResultBatch>>,
 }
 
 impl UniswapEngine {
@@ -937,7 +937,7 @@ impl UniswapEngine {
     /// Called by `PyUniswapArbEngine::new()` to wire the channel.
     /// The engine sends incremental result batches via this sender
     /// after each `process_block` or `solve_all_paths`.
-    pub fn set_result_channel(&mut self, tx: mpsc::Sender<ResultBatch>) {
+    pub fn set_result_channel(&mut self, tx: mpsc::UnboundedSender<ResultBatch>) {
         self.result_tx = Some(tx);
     }
 
@@ -997,7 +997,7 @@ impl UniswapEngine {
     /// Compute the incremental diff between `delivered` and `new_results`,
     /// then advance `delivered` to the above-threshold subset.
     ///
-    /// If `result_tx` is set, sends the batch via `try_send`.
+    /// If `result_tx` is set, sends the batch.
     /// If the channel is full, the batch is dropped — the next one
     /// will carry a correct cumulative diff.
     fn compute_diff_and_send(&mut self, metadata: &BlockMetadata) {
@@ -1053,7 +1053,7 @@ impl UniswapEngine {
                 expired,
                 removed,
             };
-            let _ = tx.try_send(batch);
+            let _ = tx.send(batch);
         }
     }
 
@@ -2404,7 +2404,7 @@ pub struct PyUniswapArbEngine {
     /// Receiver for the result batch channel.
     /// Created in `new()`, consumed by `__anext__`.
     /// Wrapped in Arc so the async coroutine can share it.
-    result_rx: Arc<parking_lot::Mutex<Option<mpsc::Receiver<ResultBatch>>>>,
+    result_rx: Arc<parking_lot::Mutex<Option<mpsc::UnboundedReceiver<ResultBatch>>>>,
 }
 
 /// Python-facing subscribe state.
@@ -2565,7 +2565,7 @@ impl PyUniswapArbEngine {
 impl PyUniswapArbEngine {
     #[new]
     fn new() -> Self {
-        let (result_tx, result_rx) = mpsc::channel(8);
+        let (result_tx, result_rx) = mpsc::unbounded_channel();
         let mut engine = UniswapEngine::new();
         engine.set_result_channel(result_tx);
         Self {
