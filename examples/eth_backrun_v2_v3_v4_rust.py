@@ -675,7 +675,7 @@ async def build_paths(
         ],
         max_depth=2,
         pool_types=[
-            UniswapV2PoolTable,
+            # UniswapV2PoolTable,
             UniswapV3PoolTable,
             UniswapV4PoolTable,
         ],
@@ -792,9 +792,7 @@ async def build_paths(
             # raised when on-chain tick state doesn't match the engine state.
             exc_str = str(exc)
             if "tick data mismatch" in exc_str:
-                bot_logger.critical(
-                    f"[build_paths] VERIFICATION FAILURE — shutting down: {exc}"
-                )
+                bot_logger.critical(f"[build_paths] VERIFICATION FAILURE — shutting down: {exc}")
                 raise
             # Other RuntimeErrors (e.g. phase violations) — skip path
             engine_reject_count += 1
@@ -1896,7 +1894,6 @@ async def main() -> None:
     state_view_address = EthereumMainnetUniswapV4.state_view.address
     engine_registry.engine.set_verify_rpc_url(node_http)
     engine_registry.engine.set_verify_state_view(state_view_address)
-    engine_registry.engine.set_verify_on_register(True)
 
     latest_block = await async_w3.eth.get_block("latest")
     current_block = latest_block["number"]
@@ -1969,24 +1966,27 @@ async def main() -> None:
     backfilled = engine_registry.engine.backfill_from_snapshot(node_http, snapshot_block)
     bot_logger.info(f"[startup] Backfill complete: {backfilled} blocks")
 
-    # Capture the stable verification block BEFORE the pump starts advancing
-    # last_processed_block. This is the last block fully processed by backfill —
-    # the engine's tick state is guaranteed consistent at this block. Once the
-    # pump resumes, last_processed_block gets updated on each block header arrival
-    # while the actual log processing lags by 1 block, making it unsuitable for
-    # verification during build_paths.
-    verify_block = engine_registry.engine.last_processed_block()
-    if verify_block is not None:
-        bot_logger.info(f"[startup] Verification block (post-backfill): {verify_block}")
-    else:
-        verify_block = current_block
+    # Verify at the SNAPSHOT block, not the backfill boundary.
+    # At the snapshot block, the engine's tick data matches the DB exactly
+    # (zero events applied yet). This validates that snapshot loading
+    # produced correct data. Using the post-backfill block would cause
+    # false failures: the WS pump applies ModifyLiquidity events beyond
+    # the backfill boundary, bringing the engine state ahead of the
+    # comparison block. Buffer/backfill application bugs are caught by
+    # downstream simulation failures, not by this verification.
+    bot_logger.info(f"[startup] Snapshot block: {snapshot_block}")
+
+    # The verification blocks are captured automatically by the Rust engine
+    # during backfill_from_snapshot():
+    # - verify_snapshot_block: set to snapshot_block (confirms DB tick data)
+    # - verify_backfill_block: set to last_processed_block after backfill
+    #   (confirms event decoding + buffer application)
+    # No Python-side configuration needed — the engine knows these boundaries.
+    engine_registry.engine.set_verify_on_register(True)
 
     # ── Resume the Rust pump ─────────────────────────────────────
     # The pump was subscribed earlier (WS live, events buffered).
     # Now that backfill is complete, resume normal processing.
-    # No need to call set_last_processed_block — the engine already
-    # tracks it from backfill (process_backfill_logs sets it on each
-    # chunk, arriving at the actual last backfilled block Y-1).
     engine_registry.engine.resume()
     bot_logger.info(f"[startup] Rust pump resumed (WS={node_ws}, backfill complete)")
 

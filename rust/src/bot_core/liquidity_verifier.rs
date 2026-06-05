@@ -87,6 +87,73 @@ fn tick_bitmap_position(compressed_tick: i64) -> (i16, u8) {
 // V3 verification
 // ---------------------------------------------------------------------------
 
+/// Verify a V3 pool's raw tick data (before buffer) against on-chain state.
+///
+/// This is used for the snapshot-block verification: compare the DB-derived
+/// `tick_data` against on-chain at the snapshot block, before any buffer events
+/// are applied. Catches snapshot loading/serialization bugs.
+pub async fn verify_v3_liquidity_map(
+    provider: &AlloyProvider,
+    pool_address: Address,
+    tick_data: &HashMap<i32, crate::bot_core::TickInfo>,
+    block_number: u64,
+) -> Result<(), VerificationMismatch> {
+    for (&tick_idx, our_info) in tick_data {
+        let our_lg = our_info.liquidity_gross.to::<u128>();
+        let our_ln: i128 = match our_info.liquidity_net.try_into() {
+            Ok(v) => v,
+            Err(_) => 0i128,
+        };
+
+        let (on_chain_lg, on_chain_ln) =
+            call_v3_ticks(provider, pool_address, tick_idx, Some(block_number)).await?;
+
+        if our_lg != on_chain_lg || our_ln != on_chain_ln {
+            return Err(VerificationMismatch {
+                message: format!(
+                    "V3 pool {pool_address} at snapshot block {block_number}: tick {tick_idx} mismatch — snapshot: (lg={our_lg}, ln={our_ln}), on-chain: (lg={on_chain_lg}, ln={on_chain_ln})"
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Verify a V4 pool's raw tick data (before buffer) against on-chain state.
+///
+/// This is used for the snapshot-block verification: compare the DB-derived
+/// `tick_data` against on-chain at the snapshot block, before any buffer events
+/// are applied. Catches snapshot loading/serialization bugs.
+pub async fn verify_v4_liquidity_map(
+    provider: &AlloyProvider,
+    state_view: Address,
+    pool_id: [u8; 32],
+    tick_data: &HashMap<i32, crate::bot_core::TickInfo>,
+    block_number: u64,
+) -> Result<(), VerificationMismatch> {
+    for (&tick_idx, our_info) in tick_data {
+        let our_lg = our_info.liquidity_gross.to::<u128>();
+        let our_ln: i128 = match our_info.liquidity_net.try_into() {
+            Ok(v) => v,
+            Err(_) => 0i128,
+        };
+
+        let (on_chain_lg, on_chain_ln) =
+            call_state_view_tick_liquidity(provider, state_view, pool_id, tick_idx, Some(block_number))
+                .await?;
+
+        if our_lg != on_chain_lg || our_ln != on_chain_ln {
+            let pool_id_hex = crate::hex_utils::encode_hex(&pool_id);
+            return Err(VerificationMismatch {
+                message: format!(
+                    "V4 pool {pool_id_hex} at snapshot block {block_number}: tick {tick_idx} mismatch — snapshot: (lg={our_lg}, ln={our_ln}), on-chain: (lg={on_chain_lg}, ln={on_chain_ln})"
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Verify all V3 pools' liquidity maps against on-chain state.
 ///
 /// For each V3 pool, verifies that:
@@ -239,6 +306,51 @@ async fn call_v3_ticks(
         return Err(VerificationMismatch {
             message: format!(
                 "V3 pool {pool_addr} {block_tag}: ticks({tick}) returned {} bytes, expected at least 64",
+                result.len()
+            ),
+        });
+    }
+
+    let lg = decode_uint128(&result[0..32]);
+    let ln = decode_int128(&result[32..64]);
+    Ok((lg, ln))
+}
+
+/// Call `StateView.getTickLiquidity(bytes32,int24)` and return `(liquidityGross, liquidityNet)`.
+async fn call_state_view_tick_liquidity(
+    provider: &AlloyProvider,
+    state_view: Address,
+    pool_id: [u8; 32],
+    tick: i32,
+    block_number: Option<u64>,
+) -> Result<(u128, i128), VerificationMismatch> {
+    let pool_id_hex = crate::hex_utils::encode_hex(&pool_id);
+    let block_tag = match block_number {
+        Some(b) => format!("block={b}"),
+        None => "block=pending".to_string(),
+    };
+
+    let calldata = encode_calldata(
+        STATE_VIEW_GET_TICK_LIQUIDITY_SELECTOR,
+        &[
+            DynSolValue::FixedBytes(B256::from(pool_id), 32),
+            DynSolValue::Int(I256::unchecked_from(i128::from(tick)), 24),
+        ],
+    );
+
+    let result = provider
+        .eth_call(&state_view, calldata, block_number)
+        .await
+        .map_err(|e| VerificationMismatch {
+            message: format!(
+                "V4 pool 0x{pool_id_hex} {block_tag}: getTickLiquidity({tick}) RPC call failed: {e}"
+            ),
+        })?;
+
+    if result.len() < 64 {
+        return Err(VerificationMismatch {
+            message: format!(
+                "V4 pool 0x{pool_id_hex} {block_tag}: getTickLiquidity({tick}) returned {} bytes, expected 64",
                 result.len()
             ),
         });
