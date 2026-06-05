@@ -703,7 +703,8 @@ async def build_paths(
         ],
         max_depth=2,
         pool_types=[
-            # V4 only
+            UniswapV2PoolTable,
+            UniswapV3PoolTable,
             UniswapV4PoolTable,
         ],
         db=bot.db,

@@ -39,7 +39,7 @@ use std::collections::{HashMap, HashSet};
 
 use alloy::primitives::{Address, I256, U128, U256};
 
-use crate::bot_core::tick_bitmap::compute_tick_ranges;
+use crate::bot_core::tick_bitmap::{compute_tick_ranges, V3TickRangeForSolver};
 use crate::bot_core::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log;
 use crate::bot_core::v4_swap_decoder::{decode_v4_swap_log, PoolId};
 use crate::bot_core::TickInfo;
@@ -143,7 +143,7 @@ pub struct RegisterV4PoolParams {
 }
 
 /// V4 pool state as owned by the engine.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct V4PoolState {
     pub pool_manager: Address,
     pub pool_id: PoolId,
@@ -157,9 +157,76 @@ pub struct V4PoolState {
 
     // Tick data
     pub tick_data: HashMap<i32, TickInfo>,
+
+    // Cached tick ranges (interior mutability for lazy computation from &self).
+    // Invalidated on apply_swap / apply_liquidity_update.
+    cached_tick_ranges: std::sync::Mutex<TickRangeCache>,
+}
+
+impl Clone for V4PoolState {
+    fn clone(&self) -> Self {
+        Self {
+            pool_manager: self.pool_manager,
+            pool_id: self.pool_id,
+            pool_key: self.pool_key.clone(),
+            sqrt_price_x96: self.sqrt_price_x96,
+            liquidity: self.liquidity,
+            tick: self.tick,
+            update_block: self.update_block,
+            tick_data: self.tick_data.clone(),
+            cached_tick_ranges: std::sync::Mutex::new(TickRangeCache::default()),
+        }
+    }
+}
+
+/// Cached tick ranges for a single pool, keyed by direction.
+#[derive(Clone, Debug, Default)]
+struct TickRangeCache {
+    zfo: Option<Vec<V3TickRangeForSolver>>,
+    ofz: Option<Vec<V3TickRangeForSolver>>,
 }
 
 impl V4PoolState {
+    /// Invalidate the cached tick ranges (call after any state mutation).
+    pub fn invalidate_tick_range_cache(&self) {
+        let mut cache = self.cached_tick_ranges.lock().unwrap();
+        cache.zfo = None;
+        cache.ofz = None;
+    }
+
+    /// Get cached tick ranges for the given direction, computing and caching
+    /// if absent. Uses max_ranges=15 so that all callers can slice the result.
+    fn get_cached_tick_ranges(&self, zero_for_one: bool) -> Option<Vec<V3TickRangeForSolver>> {
+        {
+            let cache = self.cached_tick_ranges.lock().unwrap();
+            let slot = if zero_for_one { &cache.zfo } else { &cache.ofz };
+            if slot.is_some() {
+                return slot.clone();
+            }
+        }
+
+        let ranges = compute_tick_ranges(
+            &self.tick_data,
+            self.tick,
+            self.pool_key.tick_spacing,
+            self.liquidity,
+            zero_for_one,
+            15,
+        )
+        .map(|(ranges, _)| ranges);
+
+        if let Some(ref r) = ranges {
+            let mut cache = self.cached_tick_ranges.lock().unwrap();
+            if zero_for_one {
+                cache.zfo = Some(r.clone());
+            } else {
+                cache.ofz = Some(r.clone());
+            }
+        }
+
+        ranges
+    }
+
     /// Build an integer V3-style tick range sequence for the V4 pool.
     ///
     /// This is identical to [`V3PoolState::build_int_v3_sequence`] because
@@ -173,14 +240,8 @@ impl V4PoolState {
         zero_for_one: bool,
         max_ranges: usize,
     ) -> Option<IntV3TickRangeSequence> {
-        let (ranges, _current_idx) = compute_tick_ranges(
-            &self.tick_data,
-            self.tick,
-            self.pool_key.tick_spacing,
-            self.liquidity,
-            zero_for_one,
-            max_ranges,
-        )?;
+        let mut ranges = self.get_cached_tick_ranges(zero_for_one)?;
+        ranges.truncate(max_ranges);
 
         let gamma_numer = u64::from(1_000_000 - self.pool_key.fee);
         let fee_denom = 1_000_000u64;
@@ -247,6 +308,7 @@ impl From<RegisterV4PoolParams> for V4PoolState {
             tick: params.tick,
             update_block: params.update_block,
             tick_data: params.tick_data,
+            cached_tick_ranges: std::sync::Mutex::new(TickRangeCache::default()),
         }
     }
 }
@@ -494,6 +556,7 @@ impl V4BlockEngine {
             pool.liquidity = update.liquidity;
             pool.tick = update.tick;
             pool.update_block = block_number;
+            pool.invalidate_tick_range_cache();
         }
 
         // Apply to reverse pool (same state, different PoolKey orientation)
@@ -505,6 +568,7 @@ impl V4BlockEngine {
             pool.liquidity = update.liquidity;
             pool.tick = update.tick;
             pool.update_block = block_number;
+            pool.invalidate_tick_range_cache();
         }
 
         Some((fwd_key, rev_key))
@@ -555,6 +619,7 @@ impl V4BlockEngine {
             update_tick_liquidity(&mut pool.tick_data, tick_upper, delta_i128, false);
             pool.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
             pool.update_block = block_number;
+            pool.invalidate_tick_range_cache();
         }
 
         // Apply to reverse pool
@@ -563,6 +628,7 @@ impl V4BlockEngine {
             update_tick_liquidity(&mut pool.tick_data, tick_upper, delta_i128, false);
             pool.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
             pool.update_block = block_number;
+            pool.invalidate_tick_range_cache();
         }
 
         Some((fwd_key, rev_key))

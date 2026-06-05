@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 
 use alloy::primitives::{Address, U128, U256};
 
-use crate::bot_core::tick_bitmap::compute_tick_ranges;
+use crate::bot_core::tick_bitmap::{compute_tick_ranges, V3TickRangeForSolver};
 use crate::bot_core::TickInfo;
 use crate::bot_core::v3_mint_burn_decoder::{decode_v3_mint_log, decode_v3_burn_log};
 use crate::bot_core::v3_swap_decoder::decode_v3_swap_log;
@@ -75,7 +75,7 @@ pub struct BufferedV3LiquidityUpdate {
 }
 
 /// V3 pool state as owned by the engine.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct V3PoolState {
     pub address: Address,
     pub token0: Address,
@@ -92,9 +92,81 @@ pub struct V3PoolState {
 
     // Tick data
     pub tick_data: HashMap<i32, TickInfo>,
+
+    // Cached tick ranges (interior mutability for lazy computation from &self).
+    // Invalidated on apply_swap / apply_liquidity_update.
+    cached_tick_ranges: std::sync::Mutex<TickRangeCache>,
+}
+
+impl Clone for V3PoolState {
+    fn clone(&self) -> Self {
+        Self {
+            address: self.address,
+            token0: self.token0,
+            token1: self.token1,
+            fee: self.fee,
+            tick_spacing: self.tick_spacing,
+            factory: self.factory,
+            sqrt_price_x96: self.sqrt_price_x96,
+            liquidity: self.liquidity,
+            tick: self.tick,
+            update_block: self.update_block,
+            tick_data: self.tick_data.clone(),
+            cached_tick_ranges: std::sync::Mutex::new(TickRangeCache::default()),
+        }
+    }
+}
+
+/// Cached tick ranges for a single pool, keyed by direction.
+#[derive(Clone, Debug, Default)]
+struct TickRangeCache {
+    zfo: Option<Vec<V3TickRangeForSolver>>,
+    ofz: Option<Vec<V3TickRangeForSolver>>,
 }
 
 impl V3PoolState {
+    /// Invalidate the cached tick ranges (call after any state mutation).
+    pub fn invalidate_tick_range_cache(&self) {
+        let mut cache = self.cached_tick_ranges.lock().unwrap();
+        cache.zfo = None;
+        cache.ofz = None;
+    }
+
+    /// Get cached tick ranges for the given direction, computing and caching
+    /// if absent. Uses max_ranges=15 so that all callers can slice the
+    /// result to their needs.
+    fn get_cached_tick_ranges(&self, zero_for_one: bool) -> Option<Vec<V3TickRangeForSolver>> {
+        {
+            let cache = self.cached_tick_ranges.lock().unwrap();
+            let slot = if zero_for_one { &cache.zfo } else { &cache.ofz };
+            if slot.is_some() {
+                return slot.clone();
+            }
+        }
+
+        // Not cached — compute and store
+        let ranges = compute_tick_ranges(
+            &self.tick_data,
+            self.tick,
+            self.tick_spacing,
+            self.liquidity,
+            zero_for_one,
+            15,
+        )
+        .map(|(ranges, _)| ranges);
+
+        if let Some(ref r) = ranges {
+            let mut cache = self.cached_tick_ranges.lock().unwrap();
+            if zero_for_one {
+                cache.zfo = Some(r.clone());
+            } else {
+                cache.ofz = Some(r.clone());
+            }
+        }
+
+        ranges
+    }
+
     /// Compute tick-range sequences for both swap directions using the
     /// current tick data and [`compute_tick_ranges`].
     ///
@@ -116,14 +188,9 @@ impl V3PoolState {
         zero_for_one: bool,
         max_ranges: usize,
     ) -> Option<V3TickRangeSequence> {
-        let (ranges, _current_idx) = compute_tick_ranges(
-            &self.tick_data,
-            self.tick,
-            self.tick_spacing,
-            self.liquidity,
-            zero_for_one,
-            max_ranges,
-        )?;
+        let mut ranges = self.get_cached_tick_ranges(zero_for_one)?;
+        // Truncate to caller's max_ranges
+        ranges.truncate(max_ranges);
 
         let fee_f64 = f64::from(self.fee) / 1_000_000.0;
 
@@ -204,14 +271,7 @@ impl V3PoolState {
         &self,
         zero_for_one: bool,
     ) -> Option<IntV3TickRangeHop> {
-        let (ranges, _current_idx) = compute_tick_ranges(
-            &self.tick_data,
-            self.tick,
-            self.tick_spacing,
-            self.liquidity,
-            zero_for_one,
-            3,
-        )?;
+        let ranges = self.get_cached_tick_ranges(zero_for_one)?;
 
         // Only use the first range (same as the old f64 solver)
         let r = ranges.first()?;
@@ -247,14 +307,8 @@ impl V3PoolState {
         zero_for_one: bool,
         max_ranges: usize,
     ) -> Option<IntV3TickRangeSequence> {
-        let (ranges, _current_idx) = compute_tick_ranges(
-            &self.tick_data,
-            self.tick,
-            self.tick_spacing,
-            self.liquidity,
-            zero_for_one,
-            max_ranges,
-        )?;
+        let mut ranges = self.get_cached_tick_ranges(zero_for_one)?;
+        ranges.truncate(max_ranges);
 
         let gamma_numer = u64::from(1_000_000 - self.fee);
         let fee_denom = 1_000_000u64;
@@ -336,6 +390,7 @@ impl From<RegisterV3PoolParams> for V3PoolState {
             tick: params.tick,
             update_block: params.update_block,
             tick_data: params.tick_data,
+            cached_tick_ranges: std::sync::Mutex::new(TickRangeCache::default()),
         }
     }
 }
@@ -551,6 +606,7 @@ impl V3BlockEngine {
         pool.liquidity = liquidity;
         pool.tick = tick;
         pool.update_block = block_number;
+        pool.invalidate_tick_range_cache();
 
         Some(key)
     }
@@ -606,6 +662,7 @@ impl V3BlockEngine {
         pool.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
 
         pool.update_block = block_number;
+        pool.invalidate_tick_range_cache();
 
         Some(key)
     }
@@ -982,6 +1039,7 @@ mod tests {
             tick,
             update_block: 0,
             tick_data,
+            cached_tick_ranges: std::sync::Mutex::new(TickRangeCache::default()),
         }
     }
 
