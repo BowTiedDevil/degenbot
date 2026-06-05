@@ -74,6 +74,10 @@ from degenbot.logging import logger as bot_logger
 from degenbot.pathfinding import find_paths_async
 from degenbot.provider.sync_adapter import ProviderAdapter
 from degenbot.uniswap.deployments import EthereumMainnetUniswapV4
+from degenbot.uniswap.snapshot_binary import (
+    stream_v3_snapshot_to_engine,
+    stream_v4_snapshot_to_engine,
+)
 from degenbot.uniswap.trackers import UniswapV3PoolTracker
 from degenbot.uniswap.v3_snapshot import DatabaseSnapshot as V3DatabaseSnapshot
 from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
@@ -616,29 +620,13 @@ async def build_paths(
     hooks (mask 0xCC) and dynamic fees (fee == 0x100000) at registration time.
 
     Tick data for V3/V4 engine registration is resolved automatically from
-    the stored binary snapshots (loaded via load_v3_snapshot/load_v4_snapshot).
-    The Rust engine applies buffered events on top of stale snapshot data
-    to bring it current. Verification is handled internally by the engine
-    (verify_on_register) — the tick data snapshot is taken while the engine
-    lock is held, eliminating the race that existed with Python-side async
+    the stored binary snapshots (already loaded via load_v3_snapshot/load_v4_snapshot
+    in main() before backfill). The Rust engine applies buffered events on top
+    of stale snapshot data to bring it current. Verification is handled internally
+    by the engine (verify_on_register) — the tick data snapshot is taken while the
+    engine lock is held, eliminating the race that existed with Python-side async
     verification.
     """
-    # Load binary snapshots into the Rust engine before registration.
-    # The engine will auto-lookup tick_data at registration time.
-    if v3_snapshot is not None:
-        from degenbot.uniswap.snapshot_binary import serialize_v3_snapshot
-        engine_registry.engine.load_v3_snapshot(serialize_v3_snapshot(v3_snapshot))
-
-    if v4_snapshot is not None:
-        from degenbot.uniswap.snapshot_binary import serialize_v4_snapshot
-        # V4 serialization needs the set of (pool_manager, pool_id) tuples.
-        # At this point we don't know which pools will be registered, so we
-        # pass the snapshot's own pool set (populated lazily from the source).
-        managed_pools = v4_snapshot.pools
-        engine_registry.engine.load_v4_snapshot(
-            serialize_v4_snapshot(v4_snapshot, managed_pools=managed_pools)
-        )
-
     # V3 snapshot provides tick data for Python pool builds via trackers.
     # Event backfill is handled by the Rust engine.
     # Trackers use it for tick data at build time.
@@ -1938,9 +1926,21 @@ async def main() -> None:
         bot_logger.info(f"[startup] Updated current_block to subscribe target: {current_block}")
 
     # ── Load snapshots ───────────────────────────────────────────
-    # Load V3 and V4 snapshots from DB. No Python-side event fetching —
+    # Load V3 and V4 snapshots from DB, then transfer to the Rust engine
+    # via binary serialization. No Python-side event fetching —
     # the Rust engine backfills via backfill_from_snapshot().
     v3_snapshot, v4_snapshot, v3_snap_block, v4_snap_block = get_snapshots(bot)
+
+    # Load snapshots into the Rust engine via streaming (transitions to SnapshotLoaded phase).
+    # The engine auto-lookup tick data at registration time.
+    # Streaming avoids building the full snapshot dict in memory.
+
+    if v3_snapshot is not None:
+        stream_v3_snapshot_to_engine(v3_snapshot, engine_registry.engine)
+        bot_logger.info("[startup] V3 snapshot loaded into engine")
+    if v4_snapshot is not None:
+        stream_v4_snapshot_to_engine(v4_snapshot, engine_registry.engine)
+        bot_logger.info("[startup] V4 snapshot loaded into engine")
 
     # ── Backfill snapshot gap ────────────────────────────────────
     # Fetch Mint/Burn/ModifyLiquidity events from the snapshot block

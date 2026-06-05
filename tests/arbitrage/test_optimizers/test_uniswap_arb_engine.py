@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import struct
-
 import pytest
 
 from degenbot.degenbot_rs import UniswapArbEngine
@@ -26,45 +24,16 @@ V4_PM = "0x000000000004444c5dc75cB358380D2e3De08A90"
 
 def _make_v3_snapshot(
     pools: dict[str, dict[int, tuple[int, int]]],
-) -> bytes:
-    """Build a V3 binary snapshot for testing."""
-    buf = bytearray()
-    buf.append(1)  # version
-    buf.extend(struct.pack("<I", len(pools)))
-    for pool_addr, ticks in pools.items():
-        buf.extend(bytes.fromhex(pool_addr[2:]))
-        buf.extend(struct.pack("<I", len(ticks)))
-        for tick_index, (lg, ln) in ticks.items():
-            buf.extend(struct.pack("<i", tick_index))
-            buf.extend(struct.pack("<Q", lg & 0xFFFFFFFFFFFFFFFF))
-            buf.extend(struct.pack("<Q", lg >> 64))
-            unsigned_ln = ln if ln >= 0 else (1 << 128) + ln
-            buf.extend(struct.pack("<Q", unsigned_ln & 0xFFFFFFFFFFFFFFFF))
-            buf.extend(struct.pack("<Q", unsigned_ln >> 64))
-    return bytes(buf)
+) -> dict[str, dict[int, tuple[int, int]]]:
+    """Build a V3 snapshot dict for load_v3_snapshot_from_py()."""
+    return pools
 
 
 def _make_v4_snapshot(
     pool_managers: dict[str, dict[str, dict[int, tuple[int, int]]]],
-) -> bytes:
-    """Build a V4 binary snapshot for testing."""
-    buf = bytearray()
-    buf.append(1)  # version
-    buf.extend(struct.pack("<I", len(pool_managers)))
-    for pm_addr, pool_entries in pool_managers.items():
-        buf.extend(bytes.fromhex(pm_addr[2:]))
-        buf.extend(struct.pack("<I", len(pool_entries)))
-        for pool_id_hex, ticks in pool_entries.items():
-            buf.extend(bytes.fromhex(pool_id_hex[2:]))
-            buf.extend(struct.pack("<I", len(ticks)))
-            for tick_index, (lg, ln) in ticks.items():
-                buf.extend(struct.pack("<i", tick_index))
-                buf.extend(struct.pack("<Q", lg & 0xFFFFFFFFFFFFFFFF))
-                buf.extend(struct.pack("<Q", lg >> 64))
-                unsigned_ln = ln if ln >= 0 else (1 << 128) + ln
-                buf.extend(struct.pack("<Q", unsigned_ln & 0xFFFFFFFFFFFFFFFF))
-                buf.extend(struct.pack("<Q", unsigned_ln >> 64))
-    return bytes(buf)
+) -> dict[str, dict[str, dict[int, tuple[int, int]]]]:
+    """Build a V4 snapshot dict for load_v4_snapshot_from_py()."""
+    return pool_managers
 
 
 def _make_pool_id(suffix: int) -> str:
@@ -89,7 +58,7 @@ class TestUniswapArbEngineRegistration:
 
     def test_register_v3_pool_returns_key(self):
         engine = UniswapArbEngine()
-        engine.load_v3_snapshot(_make_v3_snapshot({
+        engine.load_v3_snapshot_from_py(_make_v3_snapshot({
             V3_POOL: {-60: (200, -100), 60: (300, 150)},
         }))
         key = engine.register_v3_pool(
@@ -115,7 +84,7 @@ class TestUniswapArbEngineRegistration:
             gamma_numer=997,
             fee_denom=1000,
         )
-        engine.load_v3_snapshot(_make_v3_snapshot({
+        engine.load_v3_snapshot_from_py(_make_v3_snapshot({
             V3_POOL: {-60: (200, -100), 60: (300, 150)},
         }))
         v3_key = engine.register_v3_pool(
@@ -141,7 +110,7 @@ class TestUniswapArbEngineRegistration:
             gamma_numer=997,
             fee_denom=1000,
         )
-        engine.load_v3_snapshot(_make_v3_snapshot({
+        engine.load_v3_snapshot_from_py(_make_v3_snapshot({
             V3_POOL: {-60: (200, -100), 60: (300, 150)},
         }))
         v3_key = engine.register_v3_pool(
@@ -367,7 +336,7 @@ class TestUniswapArbEngineProcessLogs:
             fee_denom=1000,
         )
 
-        engine.load_v3_snapshot(_make_v3_snapshot({
+        engine.load_v3_snapshot_from_py(_make_v3_snapshot({
             V3_POOL: {-60: (200, -100), 60: (300, 150)},
         }))
         v3_key = engine.register_v3_pool(
@@ -445,7 +414,7 @@ class TestUniswapArbEngineV4:
     def test_register_v4_pool_returns_key(self):
         engine = UniswapArbEngine()
         pool_id = _make_pool_id(1)
-        engine.load_v4_snapshot(_make_v4_snapshot({
+        engine.load_v4_snapshot_from_py(_make_v4_snapshot({
             V4_PM: {pool_id: {-60: (200, -100), 60: (300, 150)}},
         }))
         key = engine.register_v4_pool(
@@ -468,7 +437,7 @@ class TestUniswapArbEngineV4:
         engine = UniswapArbEngine()
         pool_id_10 = _make_pool_id(10)
         pool_id_11 = _make_pool_id(11)
-        engine.load_v4_snapshot(_make_v4_snapshot({
+        engine.load_v4_snapshot_from_py(_make_v4_snapshot({
             V4_PM: {pool_id_10: {}, pool_id_11: {}},
         }))
 
@@ -504,7 +473,7 @@ class TestUniswapArbEngineV4:
         """Pools with dynamic fees (0x100000) should be rejected."""
         engine = UniswapArbEngine()
         pool_id = _make_pool_id(12)
-        engine.load_v4_snapshot(_make_v4_snapshot({
+        engine.load_v4_snapshot_from_py(_make_v4_snapshot({
             V4_PM: {pool_id: {}},
         }))
 
@@ -526,7 +495,7 @@ class TestUniswapArbEngineV4:
         """Pools with only non-amount hooks (e.g. BEFORE_DONATE) should be accepted."""
         engine = UniswapArbEngine()
         pool_id = _make_pool_id(13)
-        engine.load_v4_snapshot(_make_v4_snapshot({
+        engine.load_v4_snapshot_from_py(_make_v4_snapshot({
             V4_PM: {pool_id: {-60: (200, -100), 60: (300, 150)}},
         }))
         key = engine.register_v4_pool(
@@ -548,7 +517,7 @@ class TestUniswapArbEngineV4:
         engine = UniswapArbEngine()
         pool_id_1 = _make_pool_id(1)
         pool_id_2 = _make_pool_id(2)
-        engine.load_v4_snapshot(_make_v4_snapshot({
+        engine.load_v4_snapshot_from_py(_make_v4_snapshot({
             V4_PM: {
                 pool_id_1: {-60: (500, -200), 60: (800, 300)},
                 pool_id_2: {-60: (600, -250), 60: (900, 350)},
@@ -594,7 +563,7 @@ class TestUniswapArbEngineV4:
         """V4-V2 mixed path should register and resolve."""
         engine = UniswapArbEngine()
         pool_id = _make_pool_id(1)
-        engine.load_v4_snapshot(_make_v4_snapshot({
+        engine.load_v4_snapshot_from_py(_make_v4_snapshot({
             V4_PM: {pool_id: {-60: (200, -100), 60: (300, 150)}},
         }))
 
@@ -631,10 +600,10 @@ class TestUniswapArbEngineV4:
         """V4-V3 mixed path should register and resolve (both CL, same solver)."""
         engine = UniswapArbEngine()
         pool_id = _make_pool_id(1)
-        engine.load_v3_snapshot(_make_v3_snapshot({
+        engine.load_v3_snapshot_from_py(_make_v3_snapshot({
             V3_POOL: {-60: (200, -100), 60: (300, 150)},
         }))
-        engine.load_v4_snapshot(_make_v4_snapshot({
+        engine.load_v4_snapshot_from_py(_make_v4_snapshot({
             V4_PM: {pool_id: {-60: (200, -100), 60: (300, 150)}},
         }))
 

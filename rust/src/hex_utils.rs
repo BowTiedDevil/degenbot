@@ -54,6 +54,25 @@ pub fn decode_hex(hex_str: &str) -> Result<Vec<u8>, HexError> {
     }
 }
 
+/// Decode a 32-byte hex string (with optional "0x" prefix) into a fixed-size array.
+///
+/// # Errors
+///
+/// Returns `HexError::InvalidHex` if the hex is invalid or not exactly 32 bytes.
+pub fn decode_32byte_hex(hex_str: &str) -> Result<[u8; 32], HexError> {
+    let bytes = decode_hex(hex_str)?;
+    if bytes.len() != 32 {
+        let msg = format!(
+            "Expected 32-byte value, got {} bytes",
+            bytes.len()
+        );
+        return Err(HexError::InvalidHex(msg));
+    }
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&bytes);
+    Ok(arr)
+}
+
 /// Encode bytes as a hex string with "0x" prefix.
 ///
 /// # Arguments

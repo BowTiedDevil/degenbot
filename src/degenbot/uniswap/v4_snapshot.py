@@ -233,6 +233,40 @@ class DatabaseSnapshot:
             },
         )
 
+    def get_all_liquidity_maps(
+        self,
+    ) -> dict[tuple[ChecksumAddress, str], dict[int, tuple[int, int]]]:
+        """Return all V4 tick data as plain dicts using a single raw SQL query.
+
+        Returns {(pm_address, pool_id_hex): {tick_index: (liquidity_gross, liquidity_net)}}
+        with no Pydantic model overhead.
+
+        """
+        from sqlalchemy import text as sa_text
+
+        rows = self.session.execute(
+            sa_text(
+                """
+                SELECT pm.address, v4.pool_hash, lp.tick, lp.liquidity_gross, lp.liquidity_net
+                FROM pool_managers pm
+                JOIN managed_pools mp ON mp.manager_id = pm.id
+                JOIN uniswap_v4_pools v4 ON v4.managed_pool_id = mp.id
+                JOIN managed_pool_liquidity_positions lp ON lp.managed_pool_id = mp.id
+                WHERE pm.chain = :chain_id AND mp.kind = 'uniswap_v4'
+                ORDER BY pm.address, v4.pool_hash, lp.tick
+                """
+            )
+        , {"chain_id": self.chain_id}).all()
+
+        result: dict[tuple[ChecksumAddress, str], dict[int, tuple[int, int]]] = {}
+        for pm_address, pool_hash, tick, liquidity_gross, liquidity_net in rows:
+            pm_addr = get_checksum_address(pm_address)
+            key = (pm_addr, pool_hash)
+            if key not in result:
+                result[key] = {}
+            result[key][int(tick)] = (int(liquidity_gross), int(liquidity_net))
+        return result
+
     def get_newest_block(self) -> BlockNumber | None:
         """Return newest block.
 

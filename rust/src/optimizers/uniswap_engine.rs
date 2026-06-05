@@ -3006,6 +3006,244 @@ impl PyUniswapArbEngine {
         *self.v4_snapshot.lock() = None;
     }
 
+    /// Begin streaming V3 snapshot data into the engine, one pool at a time.
+    ///
+    /// Call `insert_v3_pool_snapshot` for each pool, then `finish_v3_snapshot`
+    /// to finalize. This avoids building the entire snapshot dict in memory.
+    ///
+    /// Can be called in Created or Subscribed phase. Idempotent — calling again
+    /// while a stream is in progress is a no-op.
+    fn begin_v3_snapshot_stream(&self) -> PyResult<()> {
+        let phase = self.current_phase();
+        phase.require_before(EnginePhase::Resumed, "begin_v3_snapshot_stream")
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+
+        let mut snap = self.v3_snapshot.lock();
+        if snap.is_some() {
+            let msg = "Cannot begin V3 snapshot stream: snapshot already loaded.";
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
+        }
+        *snap = Some(HashMap::new());
+        Ok(())
+    }
+
+    /// Insert a single V3 pool's tick data into the in-progress snapshot stream.
+    ///
+    /// Args:
+    ///     pool_address: Hex string of the pool address.
+    ///     tick_data: Dict mapping tick_index (int) → (liquidity_gross, liquidity_net) tuple.
+    fn insert_v3_pool_snapshot(
+        &self,
+        pool_address: &str,
+        tick_data: &Bound<'_, pyo3::types::PyDict>,
+    ) -> PyResult<()> {
+        let addr = pool_address.parse::<Address>().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
+        })?;
+
+        let mut rust_tick_data = HashMap::new();
+        for (py_tick, py_values) in tick_data.iter() {
+            let tick_index: i32 = py_tick.extract()?;
+            let values: (u128, i128) = py_values.extract()?;
+            rust_tick_data.insert(tick_index, make_tick_info(values.0, values.1));
+        }
+
+        let mut snap = self.v3_snapshot.lock();
+        match &mut *snap {
+            Some(map) => {
+                map.insert(addr, rust_tick_data);
+            }
+            None => {
+                let msg = "No V3 snapshot stream in progress. Call begin_v3_snapshot_stream() first.";
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
+            }
+        }
+        Ok(())
+    }
+
+    /// Finalize the V3 snapshot stream and transition to SnapshotLoaded phase.
+    fn finish_v3_snapshot(&self) -> PyResult<()> {
+        let phase = self.current_phase();
+        if self.v3_snapshot.lock().is_none() {
+            let msg = "No V3 snapshot stream in progress.";
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
+        }
+        if phase < EnginePhase::SnapshotLoaded {
+            self.set_phase(EnginePhase::SnapshotLoaded);
+        }
+        Ok(())
+    }
+
+    /// Begin streaming V4 snapshot data into the engine, one pool at a time.
+    fn begin_v4_snapshot_stream(&self) -> PyResult<()> {
+        let phase = self.current_phase();
+        phase.require_before(EnginePhase::Resumed, "begin_v4_snapshot_stream")
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+
+        let mut snap = self.v4_snapshot.lock();
+        if snap.is_some() {
+            let msg = "Cannot begin V4 snapshot stream: snapshot already loaded.";
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
+        }
+        *snap = Some(HashMap::new());
+        Ok(())
+    }
+
+    /// Insert a single V4 pool's tick data into the in-progress snapshot stream.
+    ///
+    /// Args:
+    ///     pool_manager: Hex string of the pool manager address.
+    ///     pool_id_hex: Hex string of the 32-byte pool ID.
+    ///     tick_data: Dict mapping tick_index (int) → (liquidity_gross, liquidity_net) tuple.
+    fn insert_v4_pool_snapshot(
+        &self,
+        pool_manager: &str,
+        pool_id_hex: &str,
+        tick_data: &Bound<'_, pyo3::types::PyDict>,
+    ) -> PyResult<()> {
+        let pm_addr = pool_manager.parse::<Address>().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager address: {e}"))
+        })?;
+        let pool_id = crate::hex_utils::decode_32byte_hex(pool_id_hex)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+
+        let mut rust_tick_data = HashMap::new();
+        for (py_tick, py_values) in tick_data.iter() {
+            let tick_index: i32 = py_tick.extract()?;
+            let values: (u128, i128) = py_values.extract()?;
+            rust_tick_data.insert(tick_index, make_tick_info(values.0, values.1));
+        }
+
+        let mut snap = self.v4_snapshot.lock();
+        match &mut *snap {
+            Some(map) => {
+                map.insert((pm_addr, pool_id), rust_tick_data);
+            }
+            None => {
+                let msg = "No V4 snapshot stream in progress. Call begin_v4_snapshot_stream() first.";
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
+            }
+        }
+        Ok(())
+    }
+
+    /// Finalize the V4 snapshot stream and transition to SnapshotLoaded phase.
+    fn finish_v4_snapshot(&self) -> PyResult<()> {
+        let phase = self.current_phase();
+        if self.v4_snapshot.lock().is_none() {
+            let msg = "No V4 snapshot stream in progress.";
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
+        }
+        if phase < EnginePhase::SnapshotLoaded {
+            self.set_phase(EnginePhase::SnapshotLoaded);
+        }
+        Ok(())
+    }
+
+    /// Load a V3 liquidity snapshot from a Python dict.
+    ///
+    /// The dict maps pool address (hex string) → tick data dict,
+    /// where tick data maps tick_index (int) → (liquidity_gross, liquidity_net) tuple.
+    ///
+    /// This is the fast path — no intermediate binary serialization in Python.
+    /// The Rust side iterates the PyO3 dict and builds the internal HashMap directly.
+    fn load_v3_snapshot_from_py(&self, py_data: &Bound<'_, pyo3::types::PyDict>) -> PyResult<()> {
+        let phase = self.current_phase();
+        phase.require_before(EnginePhase::Resumed, "load_v3_snapshot_from_py")
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+
+        {
+            let snap = self.v3_snapshot.lock();
+            if snap.is_some() {
+                let msg = "Cannot load V3 snapshot: already loaded. Call clear_v3_snapshot() first.";
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
+            }
+        }
+
+        let mut result = V3SnapshotData::new();
+        for (py_addr, py_tick_dict) in py_data.iter() {
+            let addr_str: String = py_addr.extract()?;
+            let address = addr_str.parse::<Address>().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
+            })?;
+
+            let tick_dict = py_tick_dict.cast::<pyo3::types::PyDict>().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err("tick_data must be a dict")
+            })?;
+
+            let mut tick_data = HashMap::new();
+            for (py_tick, py_values) in tick_dict.iter() {
+                let tick_index: i32 = py_tick.extract()?;
+                let values: (u128, i128) = py_values.extract()?;
+                tick_data.insert(tick_index, make_tick_info(values.0, values.1));
+            }
+            result.insert(address, tick_data);
+        }
+
+        *self.v3_snapshot.lock() = Some(result);
+        if phase < EnginePhase::SnapshotLoaded {
+            self.set_phase(EnginePhase::SnapshotLoaded);
+        }
+        Ok(())
+    }
+
+    /// Load a V4 liquidity snapshot from a Python dict.
+    ///
+    /// The dict maps pool_manager address (hex) → inner dict,
+    /// where inner dict maps pool_id (hex) → tick data dict,
+    /// and tick data maps tick_index (int) → (liquidity_gross, liquidity_net) tuple.
+    fn load_v4_snapshot_from_py(&self, py_data: &Bound<'_, pyo3::types::PyDict>) -> PyResult<()> {
+        let phase = self.current_phase();
+        phase.require_before(EnginePhase::Resumed, "load_v4_snapshot_from_py")
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+
+        {
+            let snap = self.v4_snapshot.lock();
+            if snap.is_some() {
+                let msg = "Cannot load V4 snapshot: already loaded. Call clear_v4_snapshot() first.";
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
+            }
+        }
+
+        let mut result = V4SnapshotData::new();
+        for (py_pm, py_pool_dict) in py_data.iter() {
+            let pm_str: String = py_pm.extract()?;
+            let pm_address = pm_str.parse::<Address>().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "Invalid pool_manager address: {e}"
+                ))
+            })?;
+
+            let pool_dict = py_pool_dict.cast::<pyo3::types::PyDict>().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err("pool_manager value must be a dict")
+            })?;
+
+            for (py_pool_id, py_tick_dict) in pool_dict.iter() {
+                let pool_id_hex: String = py_pool_id.extract()?;
+                let pool_id = crate::hex_utils::decode_32byte_hex(&pool_id_hex)
+                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+
+                let tick_dict = py_tick_dict.cast::<pyo3::types::PyDict>().map_err(|_| {
+                    pyo3::exceptions::PyTypeError::new_err("tick_data must be a dict")
+                })?;
+
+                let mut tick_data = HashMap::new();
+                for (py_tick, py_values) in tick_dict.iter() {
+                    let tick_index: i32 = py_tick.extract()?;
+                    let values: (u128, i128) = py_values.extract()?;
+                    tick_data.insert(tick_index, make_tick_info(values.0, values.1));
+                }
+                result.insert((pm_address, pool_id), tick_data);
+            }
+        }
+
+        *self.v4_snapshot.lock() = Some(result);
+        if phase < EnginePhase::SnapshotLoaded {
+            self.set_phase(EnginePhase::SnapshotLoaded);
+        }
+        Ok(())
+    }
+
     /// Register a V2 pool by contract address and initial reserves.
     /// Returns the forward `pool_id`. The reverse `pool_id` is `forward_id + 1`.
     #[pyo3(signature = (address, reserve0, reserve1, gamma_numer, fee_denom))]
@@ -3050,11 +3288,8 @@ impl PyUniswapArbEngine {
         tick: i32,
         block: u64,
     ) -> PyResult<u64> {
-        // Phase check: registration after Resumed is not allowed
-        // (the pump is driving the engine in real-time)
-        let phase = self.current_phase();
-        phase.require_before(EnginePhase::Resumed, "register_v3_pool")
-            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+        // No phase check on registration — the engine lock serializes access.
+        // Registration is allowed in any phase.
 
         let addr = address.parse::<Address>().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
@@ -3178,10 +3413,8 @@ impl PyUniswapArbEngine {
         tick: i32,
         block: u64,
     ) -> PyResult<u64> {
-        // Phase check: registration after Resumed is not allowed
-        let phase = self.current_phase();
-        phase.require_before(EnginePhase::Resumed, "register_v4_pool")
-            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+        // No phase check on registration — the engine lock serializes access.
+        // Registration is allowed in any phase.
 
         let pm = pool_manager.parse::<Address>().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager address: {e}"))

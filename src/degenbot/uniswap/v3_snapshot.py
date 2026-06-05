@@ -286,6 +286,9 @@ class DatabaseSnapshot:
         if pool_in_db is None:
             return None
 
+        if not isinstance(pool_in_db, UniswapV3PoolTableBase):
+            return None
+
         if TYPE_CHECKING:
             assert isinstance(pool_in_db, UniswapV3PoolTableBase)
 
@@ -302,6 +305,36 @@ class DatabaseSnapshot:
                 for liquidity_position in pool_in_db.liquidity_positions
             },
         )
+
+    def get_all_liquidity_maps(self) -> dict[ChecksumAddress, dict[int, tuple[int, int]]]:
+        """Return all V3 tick data as plain dicts using a single raw SQL query.
+
+        Returns {pool_address: {tick_index: (liquidity_gross, liquidity_net)}}
+        with no Pydantic model overhead.
+
+        """
+        from sqlalchemy import text as sa_text
+
+        rows = self.session.execute(
+            sa_text(
+                """
+                SELECT p.address, lp.tick, lp.liquidity_gross, lp.liquidity_net
+                FROM pools p
+                JOIN liquidity_positions lp ON lp.pool_id = p.id
+                WHERE p.chain = :chain_id
+                  AND p.kind IN ('uniswap_v3', 'sushiswap_v3', 'pancakeswap_v3', 'aerodrome_v3')
+                ORDER BY p.address, lp.tick
+                """
+            )
+        , {"chain_id": self.chain_id}).all()
+
+        result: dict[ChecksumAddress, dict[int, tuple[int, int]]] = {}
+        for pool_address, tick, liquidity_gross, liquidity_net in rows:
+            addr = get_checksum_address(pool_address)
+            if addr not in result:
+                result[addr] = {}
+            result[addr][int(tick)] = (int(liquidity_gross), int(liquidity_net))
+        return result
 
     def get_newest_block(self) -> BlockNumber | None:
         """Return newest block.
