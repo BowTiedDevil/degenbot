@@ -539,6 +539,17 @@ impl UniswapEnginePump {
         let mut has_logs_this_block: bool = false;
 
         loop {
+            // Solve any dirty paths accumulated from the previous iteration's
+            // log(s). This naturally coalesces multiple logs that arrive
+            // between await points — only one solve per batch of WS events.
+            {
+                let mut engine = self.engine.lock();
+                if engine.has_dirty_paths() {
+                    engine.solve_dirty(current_block, &current_metadata);
+                    last_solved_block = current_block;
+                }
+            }
+
             // Check shutdown
             if self.shutdown.load(Ordering::Relaxed) {
                 log::info!("UniswapEnginePump: shutting down");
@@ -555,13 +566,6 @@ impl UniswapEnginePump {
             match event {
                 // Timeout — no activity for 60s. Try to backfill.
                 Err(_) => {
-                    // Finalize current block if there are unsolved dirty paths
-                    self.finalize_if_dirty(
-                        current_block,
-                        &mut last_solved_block,
-                        &mut has_logs_this_block,
-                    );
-
                     self.handle_timeout_eager(
                         &relevant_topic_set,
                         &mut current_block,
@@ -606,14 +610,9 @@ impl UniswapEnginePump {
                                     &mut current_block,
                                 )
                                 .await;
-                                // backfill_range updates current_block to number-1;
-                                // the next line advances to number (the header block)
-                                current_block = number;
-                                last_solved_block = number;
-                            } else {
-                                current_block = number;
-                                last_solved_block = number;
                             }
+                            current_block = number;
+                            last_solved_block = number;
                         }
                         first_header = false;
                     } else if number > current_block {
@@ -640,7 +639,6 @@ impl UniswapEnginePump {
                                 &mut current_block,
                             )
                             .await;
-                            // backfill_range advanced current_block to number-1
                         }
 
                         current_block = number;
@@ -653,13 +651,15 @@ impl UniswapEnginePump {
                             engine.process_block(&[], current_block, &current_metadata);
                         }
 
-                        last_solved_block = current_block;
-                        has_logs_this_block = true; // reset; will be set false by next log or overwritten at next header
+                        has_logs_this_block = false;
                     }
                     // else: stale/duplicate header — ignore
                 }
 
                 // Got a log event from the combined stream — apply eagerly
+                // but defer solve to the top of the next loop iteration.
+                // This coalesces multiple logs received between await points
+                // into a single solve_dirty call.
                 Ok(Some(WsEvent::Log(log))) => {
                     if !relevant_topic_set.contains(log.topics().first().unwrap_or(&B256::ZERO)) {
                         continue;
@@ -679,21 +679,11 @@ impl UniswapEnginePump {
                         current_block = log_block;
                     }
 
-                    // Apply the log immediately to engine state
-                    let _affected_paths = {
-                        let mut engine = self.engine.lock();
-                        engine.apply_log(&log, current_block)
-                    };
+                    // Apply the log immediately to engine state (no solve yet)
+                    let mut engine = self.engine.lock();
+                    engine.apply_log(&log, current_block);
 
                     has_logs_this_block = true;
-
-                    // Solve affected paths immediately
-                    {
-                        let mut engine = self.engine.lock();
-                        engine.solve_dirty(current_block, &current_metadata);
-                    }
-
-                    last_solved_block = current_block;
                 }
 
                 Ok(None) => {
