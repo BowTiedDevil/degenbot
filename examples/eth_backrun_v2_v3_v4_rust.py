@@ -36,6 +36,7 @@ import operator
 import os
 import pathlib
 import time
+import traceback
 from collections import deque
 from typing import Any
 
@@ -49,8 +50,8 @@ from eth_backrun_helpers import (
     V2HopInfo,
     V3HopInfo,
     V4HopInfo,
-    _v4_input_is_native,
     encode_cmd_stream,
+    v4_input_is_native,
 )
 from eth_typing import ChainId
 from hexbytes import HexBytes
@@ -479,7 +480,13 @@ class EngineRegistry:
         self._v3_keys[pool.address] = key
         return key
 
-    def register_v4_pool(self, pool: UniswapV4Pool, block: int = 0) -> int:
+    def register_v4_pool(
+        self,
+        pool: UniswapV4Pool,
+        block: int = 0,
+        *,
+        override_tick_data: dict[int, tuple[int, int]] | None = None,
+    ) -> int:
         """Register a V4 pool with the Rust engine.
 
         Performs hook filtering at registration:
@@ -488,6 +495,18 @@ class EngineRegistry:
 
         These pools violate the solver's assumption that V3 CL math
         applies exactly, so they would produce phantom profits.
+
+        Args:
+            pool: The V4 pool to register.
+            block: Block number at which the pool state was captured.
+            override_tick_data: If provided, use this tick_data instead
+                of pool.tick_data for engine registration. The Rust engine
+                applies buffered ModifyLiquidity events on top (apply_buffer
+                is always True for V4). Pass snapshot tick_data here to let
+                the engine reconstruct current state from (snapshot + buffer)
+                rather than double-counting events already in RPC-fetched
+                tick_data.
+
         """
         pool_id_hex = pool.pool_id.to_0x_hex()
 
@@ -509,9 +528,13 @@ class EngineRegistry:
             msg = f"V4 pool {pool} has dynamic fees (fee=0x{pool.fee:x})"
             raise ValueError(msg)
 
-        tick_data = {
-            idx: (info.liquidity_gross, info.liquidity_net) for idx, info in pool.tick_data.items()
-        }
+        if override_tick_data is not None:
+            tick_data = override_tick_data
+        else:
+            tick_data = {
+                idx: (info.liquidity_gross, info.liquidity_net)
+                for idx, info in pool.tick_data.items()
+            }
 
         key = self.engine.register_v4_pool(
             pool_manager=pool.address,
@@ -526,6 +549,7 @@ class EngineRegistry:
             tick=pool.tick,
             tick_data=tick_data,
             block=block,
+            apply_buffer=True,
         )
 
         self._v4_keys[pool_id_hex] = key
@@ -679,13 +703,14 @@ def resolve_directions(
 
 
 async def build_paths(
+    *,
     bot: Bot,
     engine_registry: EngineRegistry,
-    current_block: int = 0,
+    current_block: int,
+    rpc_url: str,
+    state_view_address: str,
     v3_snapshot: UniswapV3LiquiditySnapshot | None = None,
     v4_snapshot: UniswapV4LiquiditySnapshot | None = None,
-    rpc_url: str = "",
-    state_view_address: str = "",
 ) -> None:
     """Discover V3/V2/V4 arb paths, build Python pools, register with Rust engine.
 
@@ -731,10 +756,8 @@ async def build_paths(
     other_exc_count = 0
     registered_path_sigs: set[tuple[str, ...]] = set()
 
-    # Track which pools have had their snapshot backfill applied and verified
-    v3_backfilled_pools: set[str] = set()
+    # Track which pools have been verified against on-chain state
     v3_verified_pools: set[str] = set()
-    v4_backfilled_pools: set[bytes] = set()
     v4_verified_pools: set[bytes] = set()
     start = time.perf_counter()
 
@@ -749,8 +772,7 @@ async def build_paths(
             WETH_ADDRESS,
             NATIVE_CURRENCY_ADDRESS,  # V4 allows Ether-paired pools
         ],
-        min_depth=2,
-        max_depth=3,
+        max_depth=2,
         pool_types=[
             # V4 only
             UniswapV4PoolTable,
@@ -840,22 +862,9 @@ async def build_paths(
             continue
 
         # ── Per-pool snapshot backfill ──────────────────────
-        # Apply buffered Mint/Burn/ModifyLiquidity events to each
-        # newly-built pool, then sync updated tick data to the Rust
-        # engine. pending_updates() is consuming — safe to call multiple
-        # times on the same pool (second call returns empty tuple).
-        for pool, pt in zip(pools, pool_type_strs, strict=True):
-            if pt == "V3" and v3_snapshot is not None:
-                pool_addr = get_checksum_address(pool.address)
-                if pool_addr not in v3_backfilled_pools:
-                    v3_backfilled_pools.add(pool_addr)
-                    for liquidity_update in v3_snapshot.pending_updates(pool_addr):
-                        pool.update_liquidity_map(liquidity_update)
-            elif pt == "V4" and v4_snapshot is not None:
-                if pool.pool_id not in v4_backfilled_pools:
-                    v4_backfilled_pools.add(pool.pool_id)
-                    for liquidity_update in v4_snapshot.pending_updates(pool.address, pool.pool_id):
-                        pool.update_liquidity_map(liquidity_update)
+        # No Python-side backfill for V3 or V4. The Rust engine handles
+        # all event backfill via backfill_from_snapshot() at registration
+        # time (Plan 087).
 
         # ── Token quality filter ─────────────────────────────────
         # Extract the intermediate (non-WETH) token from both pools.
@@ -886,7 +895,21 @@ async def build_paths(
                     engine_registry.register_v3_pool(pool)
                 elif pt == "V4":
                     v4_pool_count += 1
-                    engine_registry.register_v4_pool(pool)
+                    # Use snapshot tick_data for engine registration instead of
+                    # the RPC-fetched tick_data from the Python pool object.
+                    # The Rust engine applies buffered ModifyLiquidity events
+                    # from backfill on top (apply_buffer=True), bringing stale
+                    # snapshot state current. Using RPC-fetched tick_data would
+                    # double-count those events since they're already reflected.
+                    if v4_snapshot is not None:
+                        snap_td = v4_snapshot.tick_data(pool.address, pool.pool_id.to_0x_hex())
+                        engine_tick_data = {
+                            idx: (info.liquidity_gross, info.liquidity_net)
+                            for idx, info in (snap_td or {}).items()
+                        }
+                    else:
+                        engine_tick_data = {}
+                    engine_registry.register_v4_pool(pool, override_tick_data=engine_tick_data)
         except ValueError as exc:
             # Hook filtering / dynamic fee rejection — expected, skip path
             exc_str = str(exc)
@@ -1351,7 +1374,7 @@ async def dispatch_profitable_results(
             if not _v2v4_dumped:
                 _v2v4_dumped = True
                 hop_v2, hop_v4 = path_info.hops[0], path_info.hops[1]
-                v4_in_native = _v4_input_is_native(hop_v4)
+                v4_in_native = v4_input_is_native(hop_v4)
                 bot_logger.info(
                     f"[sim-dump] V2-V4 path={path_id} "
                     f"v4_c0={hop_v4.currency0_address[:10]} v4_c1={hop_v4.currency1_address[:10]} "
@@ -1654,7 +1677,7 @@ async def dispatch_profitable_results(
         f"[dispatch] simulating {len(candidates)}/{len(results)} candidates: {cand_types_str}"
     )
     # Track simulation outcomes for path suppression
-    sim_outcomes: dict[int, bool] = {}  # path_id -> succeeded
+    _sim_outcomes: dict[int, bool] = {}  # path_id -> succeeded
 
     sim_tasks = list(itertools.starmap(simulate_one, candidates))
     sim_results = await asyncio.gather(*sim_tasks, return_exceptions=True)
@@ -1667,8 +1690,6 @@ async def dispatch_profitable_results(
     exception_count = 0
     for result in sim_results:
         if isinstance(result, Exception):
-            import traceback
-
             exception_count += 1
             bot_logger.debug(
                 f"[sim-fail] simulation exception: {result}\n"
@@ -1991,13 +2012,13 @@ async def main() -> None:
     # The pump's WS subscription buffers events — no data is lost.
     bot_logger.info("[startup] Starting path loading...")
     await build_paths(
-        bot,
-        engine_registry,
-        current_block,
-        v3_snapshot=v3_snapshot,
-        v4_snapshot=v4_snapshot,
+        bot=bot,
+        engine_registry=engine_registry,
+        current_block=current_block,
         rpc_url=node_ws,
         state_view_address=state_view_address,
+        v3_snapshot=v3_snapshot,
+        v4_snapshot=v4_snapshot,
     )
     bot_logger.info("[startup] Path loading complete")
 

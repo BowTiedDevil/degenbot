@@ -1962,6 +1962,7 @@ mod tests {
             tick: -886983,
             tick_data: std::collections::HashMap::new(),
             update_block: 0,
+            apply_buffer: true,
         });
 
         // Register path: V3 (zfo) → V4 (ofz, which will produce huge token0 output)
@@ -2067,6 +2068,7 @@ mod tests {
                 tick: 0,
                 tick_data: HashMap::new(),
                 update_block: 0,
+                apply_buffer: true,
             },
         ).expect("V4 registration should succeed");
 
@@ -2566,7 +2568,7 @@ impl PyUniswapArbEngine {
     /// Returns the forward pool key for use in path registration,
     /// or raises `ValueError` if the pool is excluded.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, sqrt_price_x96, liquidity, tick, tick_data, block=0))]
+    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, sqrt_price_x96, liquidity, tick, tick_data, block=0, apply_buffer=true))]
     fn register_v4_pool(
         &self,
         pool_manager: &str,
@@ -2581,6 +2583,7 @@ impl PyUniswapArbEngine {
         tick: i32,
         tick_data: &Bound<'_, pyo3::types::PyDict>,
         block: u64,
+        apply_buffer: bool,
     ) -> PyResult<u64> {
         let pm = pool_manager.parse::<Address>().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager address: {e}"))
@@ -2629,6 +2632,7 @@ impl PyUniswapArbEngine {
             tick,
             tick_data: rust_tick_data,
             update_block: block,
+            apply_buffer,
         }).map_err(pyo3::exceptions::PyValueError::new_err)
     }
 
@@ -2836,13 +2840,13 @@ impl PyUniswapArbEngine {
     /// and the live WS connection, then applies them to the V3/V4 engines
     /// via `backfill_logs()`.
     ///
-    /// This ensures that when pools are registered (with tick_data from the
+    /// This ensures that when pools are registered (with `tick_data` from the
     /// DB snapshot), any liquidity changes between the snapshot block and
     /// the current chain head are reflected in the Rust engine's state.
     ///
     /// Args:
-    ///     rpc_url: HTTP RPC endpoint for `eth_getLogs` requests
-    ///     chunk_size: Number of blocks per `eth_getLogs` request (default 2000)
+    ///     `rpc_url`: HTTP RPC endpoint for `eth_getLogs` requests
+    ///     `chunk_size`: Number of blocks per `eth_getLogs` request (default 2000)
     ///
     /// Returns the number of blocks backfilled (0 if snapshot is current).
     #[pyo3(signature = (rpc_url, snapshot_block, chunk_size=2000))]
@@ -2850,12 +2854,9 @@ impl PyUniswapArbEngine {
         // Ensure subscribe() was called — we need the first WS block
         let first_ws_block = {
             let state_lock = self.subscribe_state.lock();
-            match state_lock.as_ref() {
-                Some(s) => s.first_block,
-                None => {
-                    let msg = "Cannot backfill: subscribe() has not been called. Call subscribe() first.";
-                    return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
-                }
+            if let Some(s) = state_lock.as_ref() { s.first_block } else {
+                let msg = "Cannot backfill: subscribe() has not been called. Call subscribe() first.";
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
             }
         };
 
@@ -3183,8 +3184,8 @@ impl PyUniswapArbEngine {
 
     /// Verify a single V3 pool's liquidity map against on-chain state.
     ///
-    /// Takes a pool address and verifies the tick_data at the given block.
-    /// Returns Ok if the liquidity map matches, or a RuntimeError with
+    /// Takes a pool address and verifies the `tick_data` at the given block.
+    /// Returns Ok if the liquidity map matches, or a `RuntimeError` with
     /// details of the mismatch.
     ///
     /// This is an async method — returns a coroutine that must be awaited.
@@ -3204,20 +3205,17 @@ impl PyUniswapArbEngine {
 
         let mut engine = self.engine.lock();
         let v3_key = engine.v3_engine().pool_key_for_address(&pool_addr);
-        let v3_pools = match v3_key {
-            Some(key) => {
-                let mut map = std::collections::HashMap::new();
-                if let Some(pool) = engine.v3_engine().get_pool(key) {
-                    map.insert(key, pool.clone());
-                }
-                map
+        let v3_pools = if let Some(key) = v3_key {
+            let mut map = std::collections::HashMap::new();
+            if let Some(pool) = engine.v3_engine().get_pool(key) {
+                map.insert(key, pool.clone());
             }
-            None => {
-                drop(engine);
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "V3 pool {address} not registered in engine"
-                )));
-            }
+            map
+        } else {
+            drop(engine);
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "V3 pool {address} not registered in engine"
+            )));
         };
         drop(engine);
 
@@ -3250,8 +3248,8 @@ impl PyUniswapArbEngine {
 
     /// Verify a single V4 pool's liquidity map against on-chain state.
     ///
-    /// Takes a pool_id (hex) and verifies the tick_data at the given block
-    /// using the StateView contract.
+    /// Takes a `pool_id` (hex) and verifies the `tick_data` at the given block
+    /// using the `StateView` contract.
     ///
     /// This is an async method — returns a coroutine that must be awaited.
     #[pyo3(signature = (pool_id_hex, rpc_url, state_view_address, block_number))]
@@ -3283,20 +3281,17 @@ impl PyUniswapArbEngine {
             None
         });
 
-        let v4_pools = match v4_keys {
-            Some((fwd_key, _rev_key)) => {
-                let mut map = std::collections::HashMap::new();
-                if let Some(pool) = engine.v4_engine().get_pool(fwd_key) {
-                    map.insert(fwd_key, pool.clone());
-                }
-                map
+        let v4_pools = if let Some((fwd_key, _rev_key)) = v4_keys {
+            let mut map = std::collections::HashMap::new();
+            if let Some(pool) = engine.v4_engine().get_pool(fwd_key) {
+                map.insert(fwd_key, pool.clone());
             }
-            None => {
-                drop(engine);
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "V4 pool {pool_id_hex} not registered in engine"
-                )));
-            }
+            map
+        } else {
+            drop(engine);
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "V4 pool {pool_id_hex} not registered in engine"
+            )));
         };
         drop(engine);
 
