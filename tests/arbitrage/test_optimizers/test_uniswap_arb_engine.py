@@ -640,4 +640,8 @@ class TestSubscribeResume:
         sig = inspect.signature(engine.subscribe)
         params = list(sig.parameters.keys())
         assert "rpc_url" in params
-        assert "buffer_event_types" in params
+        # subscribe() no longer takes buffer_event_types —
+        # the subscribe phase only observes until a complete block
+        # (header + log for same block), then returns. No events
+        # are buffered; backfill is the sole authority for S+1..W-1.
+        assert "buffer_event_types" not in params

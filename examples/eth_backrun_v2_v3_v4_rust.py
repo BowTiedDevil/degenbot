@@ -682,9 +682,10 @@ async def build_paths(
     The Rust engine owns all event processing — no Python-side backfill.
     Snapshot tick_data is used for V4 engine registration (via override_tick_data)
     so the engine can reconstruct current state from (snapshot + buffer) without
-    double-counting events. Each pool is verified against on-chain state at
-    `verify_block` (the last backfilled block — a stable point before the pump
-    starts advancing).
+    double-counting events. Verification is handled internally by the engine
+    (verify_on_register) — the tick data snapshot is taken while the engine
+    lock is held, eliminating the race that existed with Python-side async
+    verification.
     """
     # V3 snapshot provides tick data for Python pool builds via trackers.
     # Event backfill is handled by the Rust engine.
@@ -719,9 +720,6 @@ async def build_paths(
     other_exc_count = 0
     registered_path_sigs: set[tuple[str, ...]] = set()
 
-    # Track which pools have been verified against on-chain state
-    v3_verified_pools: set[str] = set()
-    v4_verified_pools: set[bytes] = set()
     start = time.perf_counter()
 
     bot_logger.info("[build_paths] Calling find_paths_async...")
@@ -851,8 +849,6 @@ async def build_paths(
                 continue
 
         # Register with Rust engine
-        v3_snapshot_verified: set[str] = set()
-        v4_snapshot_verified: set[str] = set()
         try:
             for pool, pt in zip(pools, pool_type_strs, strict=True):
                 if pt == "V2":
@@ -873,9 +869,6 @@ async def build_paths(
                     if v3_snapshot is not None:
                         snap_td = v3_snapshot.tick_data(pool.address)
                         if snap_td is not None and len(snap_td) == 0:
-                            # tick_data() consumed the snapshot on a previous call
-                            # for this pool. Skip — pool already registered with
-                            # the full data from the first call.
                             snap_td = None
                     else:
                         snap_td = None
@@ -885,25 +878,13 @@ async def build_paths(
                             for idx, info in snap_td.items()
                         }
                         engine_registry.register_v3_pool(pool, override_tick_data=engine_tick_data)
-                        v3_snapshot_verified.add(pool.address)
                     else:
-                        # No snapshot data — use RPC tick_data without buffer.
-                        # Skip verification for these pools: the engine is ahead
-                        # of verify_block (pump is running), so a static-block
-                        # comparison would fail due to valid state changes.
                         engine_registry.register_v3_pool(pool, apply_buffer=False)
                 elif pt == "V4":
                     v4_pool_count += 1
-                    # Use snapshot tick_data for engine registration instead of
-                    # the RPC-fetched tick_data from the Python pool object.
-                    # The Rust engine applies buffered ModifyLiquidity events
-                    # from backfill on top (apply_buffer=True), bringing stale
-                    # snapshot state current. Using RPC-fetched tick_data with
-                    # apply_buffer=True would double-count those events.
                     if v4_snapshot is not None:
                         snap_td = v4_snapshot.tick_data(pool.address, pool.pool_id.to_0x_hex())
                         if snap_td is not None and len(snap_td) == 0:
-                            # tick_data() consumed the snapshot on a previous call
                             snap_td = None
                     else:
                         snap_td = None
@@ -913,12 +894,7 @@ async def build_paths(
                             for idx, info in snap_td.items()
                         }
                         engine_registry.register_v4_pool(pool, override_tick_data=engine_tick_data)
-                        v4_snapshot_verified.add(pool.pool_id.to_0x_hex())
                     else:
-                        # No snapshot data — use RPC tick_data without buffer.
-                        # Skip verification for these pools: the engine is ahead
-                        # of verify_block (pump is running), so a static-block
-                        # comparison would fail due to valid state changes.
                         engine_registry.register_v4_pool(pool, apply_buffer=False)
         except ValueError as exc:
             # Hook filtering / dynamic fee rejection — expected, skip path
@@ -942,30 +918,10 @@ async def build_paths(
                 )
             continue
 
-        # ── Per-pool liquidity map verification ──────────────
-        # Verify pools that were registered from snapshot data against
-        # on-chain state. The engine is continuously advancing (pump is
-        # running), so verification must use the engine's current block
-        # — not verify_block — to match the engine's processing state.
-        # Pools registered from RPC data (no snapshot) are NOT verified
-        # since their starting state came from RPC directly.
-        engine_block = engine_registry.engine.last_processed_block()
-        for pool, pt in zip(pools, pool_type_strs, strict=True):
-            if pt == "V3" and pool.address in v3_snapshot_verified and pool.address not in v3_verified_pools:
-                v3_verified_pools.add(pool.address)
-                await engine_registry.engine.verify_v3_pool(
-                    pool.address,
-                    rpc_url,
-                    engine_block,
-                )
-            elif pt == "V4" and pool.pool_id.to_0x_hex() in v4_snapshot_verified and pool.pool_id not in v4_verified_pools:
-                v4_verified_pools.add(pool.pool_id)
-                await engine_registry.engine.verify_v4_pool(
-                    pool.pool_id.to_0x_hex(),
-                    rpc_url,
-                    state_view_address,
-                    engine_block,
-                )
+        # Verification is handled inside the engine at registration time
+        # (see set_verify_on_register). No separate Python-side verification
+        # needed — the engine snapshots tick data while its lock is held, so
+        # the pump cannot race between registration and verification.
 
         # Resolve directions and register path
         # V4 pools use the same token0/token1 model as V3 for direction resolution
@@ -2039,6 +1995,15 @@ async def main() -> None:
     # ── Build engine + paths ─────────────────────────────────────
     engine_registry = EngineRegistry()
 
+    # Configure engine-internal verification: when a pool is registered from
+    # snapshot data (apply_buffer=True), the engine snapshots its tick data
+    # while the lock is held (pump cannot race) and verifies against on-chain
+    # state via RPC after releasing the lock. This eliminates the timing race
+    # that existed when Python called verify_v3_pool/verify_v4_pool async.
+    engine_registry.engine.set_verify_rpc_url(node_http)
+    engine_registry.engine.set_verify_state_view(state_view_address)
+    engine_registry.engine.set_verify_on_register(True)
+
     latest_block = await async_w3.eth.get_block("latest")
     current_block = latest_block["number"]
     base_fee_next = next_base_fee(
@@ -2073,9 +2038,10 @@ async def main() -> None:
     # ── Subscribe to WS (immediately, before path loading) ────────
     # Open WS subscriptions now so events start buffering.
     # subscribe() returns the first observed block number — this is
-    # our backfill target. MINT/BURN events are buffered into the
-    # engine's liquidity event buffers during the subscribe phase.
-    bot_logger.info("[startup] Subscribing to WS for event buffering...")
+    # our backfill target. The subscribe phase waits until both a
+    # newHeads notification and a log for the same block arrive,
+    # confirming the logs subscription is live. No events are buffered.
+    bot_logger.info("[startup] Subscribing to WS...")
     backfill_target = engine_registry.engine.subscribe(node_ws)
     bot_logger.info(f"[startup] WS subscribe complete — first observed block: {backfill_target}")
 

@@ -195,7 +195,7 @@ impl V4PoolState {
     }
 
     /// Get cached tick ranges for the given direction, computing and caching
-    /// if absent. Uses max_ranges=15 so that all callers can slice the result.
+    /// if absent. Uses `max_ranges=15` so that all callers can slice the result.
     fn get_cached_tick_ranges(&self, zero_for_one: bool) -> Option<Vec<V3TickRangeForSolver>> {
         {
             let cache = self.cached_tick_ranges.lock().unwrap();

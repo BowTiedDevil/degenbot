@@ -191,8 +191,8 @@ pub struct UniswapEngine {
     path_pools: HashMap<u64, MixedPath>,
     /// Resolved path states (mutated on each solve).
     path_resolved: HashMap<u64, ResolvedMixedPath>,
-    /// Reverse index: (hop_type, pool_key) maps to list of path_ids that use this pool.
-    /// Vec instead of HashSet — sets are typically 1-4 entries, dedup at collection time.
+    /// Reverse index: (`hop_type`, `pool_key`) maps to list of `path_ids` that use this pool.
+    /// Vec instead of `HashSet` — sets are typically 1-4 entries, dedup at collection time.
     pool_to_paths: HashMap<(HopType, u64), Vec<u64>>,
     /// Last solved results, keyed by path ID for O(1) updates.
     results: HashMap<u64, SolvePathResult>,
@@ -2440,6 +2440,16 @@ pub struct PyUniswapArbEngine {
     /// Created in `new()`, consumed by `__anext__`.
     /// Wrapped in Arc so the async coroutine can share it.
     result_rx: Arc<parking_lot::Mutex<Option<mpsc::UnboundedReceiver<ResultBatch>>>>,
+    /// When True, verify each V3/V4 pool's tick data against on-chain state
+    /// immediately after registration. The snapshot is taken while the engine
+    /// lock is held (so the pump can't race), then verification runs via RPC
+    /// after the lock is released. Failures are logged as errors.
+    verify_on_register: std::sync::atomic::AtomicBool,
+    /// Optional HTTP RPC URL for verification during registration.
+    /// Must be set before `verify_on_register` is enabled.
+    verify_rpc_url: parking_lot::Mutex<Option<String>>,
+    /// Optional `StateView` contract address for V4 verification.
+    verify_state_view: parking_lot::Mutex<Option<Address>>,
 }
 
 /// Python-facing subscribe state.
@@ -2609,6 +2619,9 @@ impl PyUniswapArbEngine {
             pump_handle: parking_lot::Mutex::new(None),
             subscribe_state: parking_lot::Mutex::new(None),
             result_rx: Arc::new(parking_lot::Mutex::new(Some(result_rx))),
+            verify_on_register: std::sync::atomic::AtomicBool::new(false),
+            verify_rpc_url: parking_lot::Mutex::new(None),
+            verify_state_view: parking_lot::Mutex::new(None),
         }
     }
 
@@ -2681,7 +2694,7 @@ impl PyUniswapArbEngine {
             rust_tick_data.insert(tick_idx, make_tick_info(liquidity_gross, liquidity_net));
         }
 
-        Ok(self.engine.lock().v3_engine().register_pool(RegisterV3PoolParams {
+        let key = self.engine.lock().v3_engine().register_pool(RegisterV3PoolParams {
             address: addr,
             token0: t0,
             token1: t1,
@@ -2694,7 +2707,53 @@ impl PyUniswapArbEngine {
             tick_data: rust_tick_data,
             update_block: block,
             apply_buffer,
-        }))
+        });
+
+        // If verify_on_register is enabled and this pool was registered from
+        // snapshot data (apply_buffer=True), snapshot the tick data while the
+        // engine lock is held and spawn an async verification task.
+        if apply_buffer && self.verify_on_register.load(std::sync::atomic::Ordering::Relaxed) {
+            let rpc_url = self.verify_rpc_url.lock().clone();
+            if let Some(url) = rpc_url {
+                // Snapshot tick data while lock is held.
+                // Read the block number first (immutable borrow), then access
+                // the V3 engine (mutable borrow) — these cannot alias.
+                let verify_block;
+                let pool_snapshot = {
+                    let mut engine = self.engine.lock();
+                    verify_block = engine.last_processed_block().unwrap_or(0);
+                    let mut map = HashMap::new();
+                    if let Some(pool) = engine.v3_engine().get_pool(key) {
+                        map.insert(key, pool.clone());
+                    }
+                    map
+                };
+
+                let addr_str = address.to_string();
+                let runtime = crate::runtime::get_runtime();
+                runtime.spawn(async move {
+                    let provider = match crate::provider::AlloyProvider::new(&url, 3).await {
+                        Ok(p) => p,
+                        Err(e) => {
+                            log::error!("verify_on_register: V3 pool {addr_str}: failed to create provider: {e}");
+                            return;
+                        }
+                    };
+                    match crate::bot_core::liquidity_verifier::verify_v3_pools(
+                        &provider, Address::ZERO, &pool_snapshot, Some(verify_block),
+                    ).await {
+                        Ok(()) => {
+                            log::info!("verify_on_register: V3 pool {addr_str} at block {verify_block}: OK");
+                        }
+                        Err(mismatch) => {
+                            log::error!("verify_on_register: V3 pool {addr_str} at block {verify_block}: FAILED: {mismatch}");
+                        }
+                    }
+                });
+            }
+        }
+
+        Ok(key)
     }
 
     /// Register a V4 pool with the engine.
@@ -2754,7 +2813,7 @@ impl PyUniswapArbEngine {
             rust_tick_data.insert(tick_idx, make_tick_info(liquidity_gross, liquidity_net));
         }
 
-        self.engine.lock().v4_engine().register_pool(RegisterV4PoolParams {
+        let key = self.engine.lock().v4_engine().register_pool(RegisterV4PoolParams {
             pool_manager: pm,
             pool_id,
             pool_key: crate::optimizers::v4_block_engine::V4PoolKey {
@@ -2771,7 +2830,54 @@ impl PyUniswapArbEngine {
             tick_data: rust_tick_data,
             update_block: block,
             apply_buffer,
-        }).map_err(pyo3::exceptions::PyValueError::new_err)
+        }).map_err(pyo3::exceptions::PyValueError::new_err)?;
+
+        // If verify_on_register is enabled and this pool was registered from
+        // snapshot data (apply_buffer=True), snapshot the tick data while the
+        // engine lock is held and spawn an async verification task.
+        if apply_buffer && self.verify_on_register.load(std::sync::atomic::Ordering::Relaxed) {
+            let rpc_url = self.verify_rpc_url.lock().clone();
+            let state_view = *self.verify_state_view.lock();
+            if let (Some(url), Some(sv)) = (rpc_url, state_view) {
+                // Snapshot tick data while lock is held.
+                // Read the block number first (immutable borrow), then access
+                // the V4 engine (mutable borrow) — these cannot alias.
+                let verify_block;
+                let pool_snapshot = {
+                    let mut engine = self.engine.lock();
+                    verify_block = engine.last_processed_block().unwrap_or(0);
+                    let mut map = HashMap::new();
+                    if let Some(pool) = engine.v4_engine().get_pool(key) {
+                        map.insert(key, pool.clone());
+                    }
+                    map
+                };
+
+                let pool_id_str = pool_id_hex.to_string();
+                let runtime = crate::runtime::get_runtime();
+                runtime.spawn(async move {
+                    let provider = match crate::provider::AlloyProvider::new(&url, 3).await {
+                        Ok(p) => p,
+                        Err(e) => {
+                            log::error!("verify_on_register: V4 pool {pool_id_str}: failed to create provider: {e}");
+                            return;
+                        }
+                    };
+                    match crate::bot_core::liquidity_verifier::verify_v4_pools(
+                        &provider, sv, &pool_snapshot, Some(verify_block),
+                    ).await {
+                        Ok(()) => {
+                            log::info!("verify_on_register: V4 pool {pool_id_str} at block {verify_block}: OK");
+                        }
+                        Err(mismatch) => {
+                            log::error!("verify_on_register: V4 pool {pool_id_str} at block {verify_block}: FAILED: {mismatch}");
+                        }
+                    }
+                });
+            }
+        }
+
+        Ok(key)
     }
 
     /// Register a mixed arbitrage path.
@@ -2892,25 +2998,23 @@ impl PyUniswapArbEngine {
         Ok(())
     }
 
-    /// Subscribe phase: open WS connections and buffer MINT/BURN events.
+    /// Subscribe phase: open WS connections and observe until first complete block.
     ///
     /// Returns the first observed block number. Python should:
     /// 1. Run backfill up to the returned block number
     /// 2. Call `resume()` to begin normal processing
     ///
-    /// During this phase, MINT/BURN events are routed to the engine's
-    /// liquidity event buffers. Swap/Sync events are discarded.
-    ///
-    /// `buffer_event_types`: list of event type strings to buffer.
-    ///   Valid values: "SYNC", "SWAP", "MINT", "BURN".
-    ///   Default: ["MINT", "BURN"].
+    /// A "complete" block is one where both a `newHeads` notification and at
+    /// least one log for the same block have been received. This guarantees
+    /// the logs subscription did not miss the start of the block.
+    /// No events are buffered during subscribe — the backfill is the sole
+    /// authority for the gap between snapshot and WS start.
     ///
     /// Raises `RuntimeError` if the pump is already started or subscribed.
-    #[pyo3(signature = (rpc_url, buffer_event_types=None))]
+    #[pyo3(signature = (rpc_url))]
     fn subscribe(
         &self,
         rpc_url: String,
-        buffer_event_types: Option<Vec<String>>,
     ) -> PyResult<u64> {
         // Ensure we're not already running
         if self.pump_handle.lock().is_some() {
@@ -2921,23 +3025,6 @@ impl PyUniswapArbEngine {
             let msg = "Cannot subscribe: already subscribed. Call resume() first.";
             return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
         }
-
-        // Parse event type strings into EventType enums
-        let event_types = match buffer_event_types {
-            Some(ref types) => types
-                .iter()
-                .map(|s| match s.as_str() {
-                    "SYNC" => Ok(crate::optimizers::uniswap_engine_pump::EventType::SYNC),
-                    "SWAP" => Ok(crate::optimizers::uniswap_engine_pump::EventType::SWAP),
-                    "MINT" => Ok(crate::optimizers::uniswap_engine_pump::EventType::MINT),
-                    "BURN" => Ok(crate::optimizers::uniswap_engine_pump::EventType::BURN),
-                    _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
-                        "Invalid event type: {s}. Expected SYNC, SWAP, MINT, or BURN"
-                    ))),
-                })
-                .collect::<PyResult<Vec<_>>>()?,
-            None => crate::optimizers::uniswap_engine_pump::DEFAULT_BUFFER_EVENTS.to_vec(),
-        };
 
         let engine = Arc::clone(&self.engine);
         let shutdown = Arc::clone(&self.shutdown);
@@ -2950,7 +3037,6 @@ impl PyUniswapArbEngine {
                     &rpc_url,
                     engine,
                     shutdown,
-                    event_types,
                 )
                 .await
             })
@@ -3456,6 +3542,41 @@ impl PyUniswapArbEngine {
 
             Ok(())
         })
+    }
+
+    /// Enable or disable automatic verification on pool registration.
+    ///
+    /// When enabled, V3 and V4 pools registered from snapshot data (with
+    /// `apply_buffer=True`) are automatically verified against on-chain state.
+    /// The tick data snapshot is taken while the engine lock is held, so the
+    /// pump cannot race between registration and verification. The RPC call
+    /// happens after the lock is released.
+    ///
+    /// Must call `set_verify_rpc_url()` before enabling this.
+    /// V4 verification also requires `set_verify_state_view()`.
+    ///
+    /// Args:
+    ///     enabled: Whether to enable verification on register.
+    #[pyo3(signature = (enabled))]
+    fn set_verify_on_register(&self, enabled: bool) {
+        self.verify_on_register.store(enabled, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Set the HTTP RPC URL used for verification during registration.
+    ///
+    /// Must be called before enabling `verify_on_register`.
+    #[pyo3(signature = (rpc_url))]
+    fn set_verify_rpc_url(&self, rpc_url: String) {
+        *self.verify_rpc_url.lock() = Some(rpc_url);
+    }
+
+    /// Set the `StateView` contract address for V4 verification during registration.
+    ///
+    /// Must be called before any V4 pools are registered with verification enabled.
+    #[pyo3(signature = (state_view_address))]
+    fn set_verify_state_view(&self, state_view_address: String) {
+        let addr: Address = state_view_address.parse().unwrap_or(Address::ZERO);
+        *self.verify_state_view.lock() = Some(addr);
     }
 
     /// Full-sync V3 pool `tick_data` from Python backfill.

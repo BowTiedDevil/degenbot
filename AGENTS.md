@@ -474,7 +474,9 @@ Before the Rust pump takes over state updates, the bot must bridge the gap betwe
 
 **Startup sequence**: `subscribe(rpc_url)` → `fetch_snapshot_events()` → `backfill_from_snapshot(rpc_url, snapshot_block)` → `resume()` → `build_paths()`
 
-`backfill_from_snapshot()` creates an HTTP provider, fetches Swap/Mint/Burn/ModifyLiquidity events in paginated chunks from `snapshot_block + 1` to `first_ws_block - 1` via `eth_getLogs`, and applies them to the V3/V4 engines via `process_block()`. The `-1` avoids overlap with WS events captured during the subscribe phase. For unregistered pools (all of them at this point), Mint/Burn/ModifyLiquidity events are buffered in `liquidity_event_buffer`.
+`subscribe()` opens WS subscriptions (newHeads + unfiltered logs) and waits for the first *complete* block — one where both a header and at least one log for the same block number have been received. This guarantees the logs subscription didn't miss the start of the block (which could happen if the subscription was opened mid-block). The block number W is returned as the backfill boundary. **No events are buffered during subscribe** — the backfill is the sole authority for blocks S+1..W-1, and the pump (resume phase) is the sole authority for W onward. This eliminates overlap between the two sources.
+
+`backfill_from_snapshot()` creates an HTTP provider, fetches Swap/Mint/Burn/ModifyLiquidity events in paginated chunks from `snapshot_block + 1` to `first_ws_block - 1` via `eth_getLogs`, and applies them to the V3/V4 engines via `process_block()`. The `-1` avoids overlap with WS events that the pump will process from block W onward. For unregistered pools (all of them at this point), Mint/Burn/ModifyLiquidity events are buffered in `liquidity_event_buffer`.
 
 When `register_pool()` is called later (during `build_paths`), it receives `tick_data` from the DB snapshot and applies any buffered events on top — bringing the engine state current without Python-side event fetching.
 
