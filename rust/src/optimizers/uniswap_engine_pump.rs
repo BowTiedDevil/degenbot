@@ -32,16 +32,22 @@
 //!     │
 //!     ├─ Subscribe phase: buffer MINT/BURN, discard Swap/Sync
 //!     │
-//!     ├─ Resume phase: logs arrive in real-time, buffered per block
+//!     ├─ Resume phase: logs arrive in real-time, applied eagerly
 //!     │
-//!     └─ on newHeads (resume phase):
-//!          ├─ Take all buffered logs for the just-completed block
-//!          ├─ Filter by topic + address in Rust
-//!          ├─ engine.process_block(filtered_logs, block_number)
-//!          ├─ Send `BlockNotification` via watch channel
+//!     └─ Each WS log:
+//!          ├─ engine.apply_log() — update pool state immediately
+//!          ├─ engine.solve_dirty() — resolve + solve affected paths
+//!          ├─ Reset debounce timer
+//!          │
+//!          └─ Debounce timer fires (50ms after last log):
+//!               engine.send_result_batch() — one dispatch per burst
+//!
+//!     New block header:
+//!          ├─ engine.send_result_batch() — flush any unsent results
+//!          ├─ Advance current_block
 //!          │
 //!          └─ If no logs were received for this block:
-//!               `eth_getLogs` backfill to verify (empty block vs dropped events)
+//!               engine.process_block_and_send() — empty batch for Python
 //!
 //!     Backfill trigger 2: 60s timeout with nothing received on either subscription
 //!          → `eth_getLogs` from last_processed_block+1 to latest
@@ -130,6 +136,12 @@ use crate::runtime::get_runtime;
 
 /// How long to wait with no activity before assuming the connection is dead.
 const BACKFILL_TIMEOUT_SECS: u64 = 60;
+
+/// After the first dirty WS log for a block, wait this long for more logs
+/// before solving and dispatching results to Python. Each new log resets
+/// the timer. This debouncing ensures one dispatch per burst of logs
+/// rather than one per individual log.
+const DEBOUNCE_MS: u64 = 50;
 
 /// Block data sent from the pump to Python via the watch channel.
 /// Topics we care about — used for in-Rust filtering of incoming logs.
@@ -537,11 +549,19 @@ impl UniswapEnginePump {
         let mut current_metadata: BlockMetadata = BlockMetadata::default();
         // Whether any logs were applied for the current block.
         let mut has_logs_this_block: bool = false;
+        // Debounce timer: started when the first dirty log arrives, reset on
+        // each new log. When it fires, we send the accumulated result batch
+        // to Python. This ensures one dispatch per burst of logs rather than
+        // one per individual log.
+        let mut debounce = tokio::time::Instant::now() + Duration::from_millis(DEBOUNCE_MS);
+        let mut debounce_active = false;
 
         loop {
             // Solve any dirty paths accumulated from the previous iteration's
             // log(s). This naturally coalesces multiple logs that arrive
             // between await points — only one solve per batch of WS events.
+            // Note: solving is decoupled from sending — the pump controls
+            // when result batches are dispatched to Python.
             {
                 let mut engine = self.engine.lock();
                 if engine.has_dirty_paths() {
@@ -550,28 +570,48 @@ impl UniswapEnginePump {
                 }
             }
 
+            // Check if the debounce timer has expired — if so, send the
+            // accumulated results to Python (one dispatch per log burst).
+            if debounce_active && tokio::time::Instant::now() >= debounce {
+                debounce_active = false;
+                let mut engine = self.engine.lock();
+                engine.send_result_batch(&current_metadata);
+            }
+
             // Check shutdown
             if self.shutdown.load(Ordering::Relaxed) {
                 log::info!("UniswapEnginePump: shutting down");
                 return;
             }
 
-            // Wait for the next event with a timeout for backfill.
-            let event = timeout(
-                Duration::from_secs(BACKFILL_TIMEOUT_SECS),
-                combined.next(),
-            )
-            .await;
+            // Wait for the next event. Use a shorter timeout when the debounce
+            // timer is active so we can fire it promptly.
+            let wait_timeout = if debounce_active {
+                // Wake up when the debounce timer fires (or earlier on new events)
+                Duration::from_millis(DEBOUNCE_MS)
+                    .saturating_sub(debounce.duration_since(tokio::time::Instant::now()))
+            } else {
+                Duration::from_secs(BACKFILL_TIMEOUT_SECS)
+            };
+            let event = timeout(wait_timeout, combined.next()).await;
 
             match event {
-                // Timeout — no activity for 60s. Try to backfill.
+                // Timeout — check if it's the debounce timer or the backfill timer.
                 Err(_) => {
-                    self.handle_timeout_eager(
-                        &mut current_block,
-                        &mut last_solved_block,
-                        &mut has_logs_this_block,
-                    )
-                    .await;
+                    if debounce_active && tokio::time::Instant::now() >= debounce {
+                        // Debounce expired — send results
+                        debounce_active = false;
+                        let mut engine = self.engine.lock();
+                        engine.send_result_batch(&current_metadata);
+                    } else {
+                        // No activity for 60s — try to backfill
+                        self.handle_timeout_eager(
+                            &mut current_block,
+                            &mut last_solved_block,
+                            &mut has_logs_this_block,
+                        )
+                        .await;
+                    }
                 }
 
                 // Got a block header from the combined stream
@@ -614,9 +654,9 @@ impl UniswapEnginePump {
                         }
                         first_header = false;
                     } else if number > current_block {
-                        // Normal case: header for a new block arrived.
-                        // Finalize the current block (solve any pending dirty
-                        // paths and send a result batch), then advance.
+                        // New block header — finalize the current block.
+                        // Cancel the debounce timer and send immediately.
+                        debounce_active = false;
                         self.finalize_if_dirty(
                             current_block,
                             &mut last_solved_block,
@@ -635,7 +675,7 @@ impl UniswapEnginePump {
                                 number - 1,
                                 &mut current_block,
                             )
-                            .await;
+                                .await;
                         }
 
                         current_block = number;
@@ -645,7 +685,7 @@ impl UniswapEnginePump {
                         // empty batch so Python sees the block boundary.
                         if !has_logs_this_block {
                             let mut engine = self.engine.lock();
-                            engine.process_block(&[], current_block, &current_metadata);
+                            engine.process_block_and_send(&[], current_block, &current_metadata);
                         }
 
                         has_logs_this_block = false;
@@ -653,10 +693,9 @@ impl UniswapEnginePump {
                     // else: stale/duplicate header — ignore
                 }
 
-                // Got a log event from the combined stream — apply eagerly
-                // but defer solve to the top of the next loop iteration.
-                // This coalesces multiple logs received between await points
-                // into a single solve_dirty call.
+                // Got a log event from the combined stream — apply eagerly.
+                // Solve happens at the top of the next iteration. Batch send
+                // is debounced — the timer starts/resets on each log.
                 Ok(Some(WsEvent::Log(log))) => {
                     if !relevant_topic_set.contains(log.topics().first().unwrap_or(&B256::ZERO)) {
                         continue;
@@ -666,7 +705,9 @@ impl UniswapEnginePump {
 
                     // Detect new block via log's block_number
                     if log_block > current_block {
-                        // Finalize the current block first
+                        // New block — finalize the current block first.
+                        // Cancel the debounce timer and send immediately.
+                        debounce_active = false;
                         self.finalize_if_dirty(
                             current_block,
                             &mut last_solved_block,
@@ -681,6 +722,10 @@ impl UniswapEnginePump {
                     engine.apply_log(&log, current_block);
 
                     has_logs_this_block = true;
+
+                    // Start or reset the debounce timer
+                    debounce = tokio::time::Instant::now() + Duration::from_millis(DEBOUNCE_MS);
+                    debounce_active = true;
                 }
 
                 Ok(None) => {
@@ -691,7 +736,8 @@ impl UniswapEnginePump {
         }
     }
 
-    /// Finalize the current block if there are unsolved dirty paths.
+    /// Finalize the current block: solve any dirty paths and send
+    /// the result batch to Python.
     fn finalize_if_dirty(
         &self,
         block: u64,
@@ -703,10 +749,11 @@ impl UniswapEnginePump {
             // Check if there are any dirty pools to solve
             if engine.has_dirty_paths() {
                 engine.solve_dirty(block, &BlockMetadata::default());
+                engine.send_result_batch(&BlockMetadata::default());
             } else if *has_logs_this_block {
                 // Logs arrived but none affected registered pools —
-                // still advance the engine's block number
-                engine.process_block(&[], block, &BlockMetadata::default());
+                // still advance the engine's block number and notify Python
+                engine.process_block_and_send(&[], block, &BlockMetadata::default());
             }
             *last_solved_block = block;
             *has_logs_this_block = false;
