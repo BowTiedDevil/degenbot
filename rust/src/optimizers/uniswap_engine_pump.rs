@@ -8,12 +8,13 @@
 //!
 //! The pump operates in two phases:
 //!
-//! 1. **Subscribe phase** (`subscribe()`): Opens WS subscriptions, receives
-//!    block headers and logs. MINT/BURN events matching the configurable
-//!    inclusion set are buffered into the engine's liquidity event buffers.
-//!    Swap/Sync events are discarded (stateless — registration provides
-//!    current state). Returns the first observed block number so Python knows
-//!    the temporal boundary for backfill.
+//! 1. **Subscribe phase** (`subscribe()`): Opens WS subscriptions (newHeads +
+//!    unfiltered logs) and observes until the first *complete* block — a block
+//!    N where both the header and at least one log for N have arrived. This
+//!    guarantees that the logs subscription did not miss the start of the block.
+//!    Block N is returned as the backfill boundary W. No events are buffered
+//!    during subscribe — the backfill is the sole authority for blocks S+1..W-1,
+//!    and the pump (resume phase) is the sole authority for W onward.
 //!
 //! 2. **Resume phase** (`resume()`): Begins normal processing — logs are
 //!    buffered and processed atomically on block boundaries. The pump uses
@@ -21,36 +22,37 @@
 //!
 //! **Critical ordering**: Python must run backfill AFTER `subscribe()` returns
 //! but BEFORE calling `resume()`. This ensures:
-//! - The backfill target is known (the block `subscribe()` observed)
+//! - The backfill target is known (block W from `subscribe()`)
 //! - No blocks are missed (subscribe was active during backfill)
-//! - MINT/BURN events arrived during subscribe are preserved in the buffer
+//! - No overlap (subscribe discards all events; backfill is authoritative)
 //!
 //! # Architecture
 //!
 //! ```text
 //! WS subscription: newHeads + logs (unfiltered)
-//!     │
-//!     ├─ Subscribe phase: buffer MINT/BURN, discard Swap/Sync
-//!     │
-//!     ├─ Resume phase: logs arrive in real-time, applied eagerly
-//!     │
-//!     └─ Each WS log:
-//!          ├─ engine.apply_log() — update pool state immediately
-//!          ├─ engine.solve_dirty() — resolve + solve affected paths
-//!          ├─ Reset debounce timer
-//!          │
-//!          └─ Debounce timer fires (50ms after last log):
-//!               engine.send_result_batch() — one dispatch per burst
+//!     |
+//!     +-- Subscribe phase: observe until header + log for same block
+//!     |   (no buffering; backfill is sole authority for S+1..W-1)
+//!     |
+//!     +-- Resume phase: logs arrive in real-time, applied eagerly
+//!     |
+//!     +-- Each WS log:
+//!          +-- engine.apply_log() -- update pool state immediately
+//!          +-- engine.solve_dirty() -- resolve + solve affected paths
+//!          +-- Reset debounce timer
+//!          |
+//!          +-- Debounce timer fires (50ms after last log):
+//!               engine.send_result_batch() -- one dispatch per burst
 //!
 //!     New block header:
-//!          ├─ engine.send_result_batch() — flush any unsent results
-//!          ├─ Advance current_block
-//!          │
-//!          └─ If no logs were received for this block:
-//!               engine.process_block_and_send() — empty batch for Python
+//!          +-- engine.send_result_batch() -- flush any unsent results
+//!          +-- Advance current_block
+//!          |
+//!          +-- If no logs were received for this block:
+//!               engine.process_block_and_send() -- empty batch for Python
 //!
 //!     Backfill trigger 2: 60s timeout with nothing received on either subscription
-//!          → `eth_getLogs` from last_processed_block+1 to latest
+//!          -> `eth_getLogs` from last_processed_block+1 to latest
 //! ```
 //!
 //! # Why dual subscriptions instead of `eth_getLogs` every block?
@@ -58,8 +60,8 @@
 //! Push-based log delivery eliminates the per-block RPC round-trip (~50-100ms).
 //! Events are processed as they arrive, not after a poll delay. Two backfill
 //! triggers cover the gap scenarios:
-//! - **60s timeout**: connection is likely dead → backfill the missing range
-//! - **Empty block**: no logs arrived → `eth_getLogs` verifies whether the block
+//! - **60s timeout**: connection is likely dead -> backfill the missing range
+//! - **Empty block**: no logs arrived -> `eth_getLogs` verifies whether the block
 //!   was truly empty or events were silently dropped
 //!
 //! The unfiltered logs subscription avoids provider-specific filter quirks
@@ -77,53 +79,6 @@ use alloy::primitives::Address;
 use alloy::rpc::types::{Filter, Log};
 use futures_util::{StreamExt, stream};
 use tokio::time::timeout;
-
-// ---------------------------------------------------------------------------
-// EventType — configurable inclusion set for subscribe-phase buffering
-// ---------------------------------------------------------------------------
-
-/// Event types that can be buffered during the subscribe phase.
-///
-/// Used to configure which events the pump buffers into the engine's liquidity
-/// event buffers before `resume()` is called. Default: `{MINT, BURN}`.
-///
-/// Swap and Sync events are always discarded during the subscribe phase
-/// because they are stateless — pool registration provides current state.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum EventType {
-    /// V2 Sync event (reserve updates)
-    SYNC,
-    /// V3 Swap event
-    SWAP,
-    /// V3 Mint event (liquidity provision)
-    MINT,
-    /// V3 Burn event (liquidity removal). Also covers V4 `ModifyLiquidity`
-    /// with negative delta.
-    BURN,
-}
-
-/// Default buffer inclusion set: MINT and BURN events.
-///
-/// These are the events that are lossy to discard — they modify tick data
-/// that can only be reconstructed from on-chain queries. Swap/Sync are
-/// stateless and can be safely dropped.
-pub const DEFAULT_BUFFER_EVENTS: [EventType; 2] = [EventType::MINT, EventType::BURN];
-
-/// Check whether a topic matches an event type in the inclusion set.
-fn topic_matches_event_type(topic: &B256, event_types: &[EventType]) -> bool {
-    for &et in event_types {
-        match et {
-            EventType::SYNC if *topic == V2_SYNC_TOPIC => return true,
-            EventType::SWAP if *topic == V3_SWAP_TOPIC || *topic == V4_SWAP_TOPIC => return true,
-            EventType::MINT if *topic == V3_MINT_TOPIC => return true,
-            EventType::BURN if *topic == V3_BURN_TOPIC || *topic == V4_MODIFY_LIQUIDITY_TOPIC => {
-                return true;
-            }
-            _ => {}
-        }
-    }
-    false
-}
 
 use crate::bot_core::v3_mint_burn_decoder::{V3_MINT_TOPIC, V3_BURN_TOPIC};
 use crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC;
@@ -171,8 +126,8 @@ pub enum WsEvent {
 /// The unified pump that drives the `UniswapEngine`.
 ///
 /// Supports a two-phase lifecycle:
-/// 1. `subscribe()` — opens WS connections, buffers MINT/BURN events,
-///    returns first observed block number
+/// 1. `subscribe()` — opens WS connections, observes until first complete
+///    block (header + log for same block), returns that block number
 /// 2. `resume()` — begins normal processing on block boundaries
 pub struct UniswapEnginePump {
     /// Shared engine state
@@ -181,9 +136,6 @@ pub struct UniswapEnginePump {
     provider: Arc<AlloyProvider>,
     /// Shutdown flag — set by `stop()`
     shutdown: Arc<AtomicBool>,
-    /// Set of event types to buffer during the subscribe phase.
-    /// Defaults to {MINT, BURN}.
-    buffer_event_types: Vec<EventType>,
 }
 
 /// State held between `subscribe()` and `resume()` calls.
@@ -202,22 +154,22 @@ pub struct SubscribeState {
 }
 
 impl UniswapEnginePump {
-    /// Subscribe phase: open WS connections and buffer events.
+    /// Subscribe phase: open WS connections and observe until first complete block.
     ///
     /// Returns a `SubscribeState` containing the first observed block number
     /// and the live WS stream. Python should:
     /// 1. Run backfill up to `subscribe_state.first_block`
     /// 2. Call `resume(subscribe_state)` to begin normal processing
     ///
-    /// During this phase, MINT/BURN events matching `buffer_event_types`
-    /// are routed to the engine's liquidity event buffers. Swap/Sync events
-    /// are discarded.
+    /// During this phase, no events are buffered. The backfill is the sole
+    /// authority for blocks S+1..W-1. The subscribe phase only observes until
+    /// both a newHeads notification and a log for the same block arrive,
+    /// confirming the logs subscription is live and caught up.
     #[allow(clippy::missing_errors_doc)]
     pub async fn subscribe(
         rpc_url: &str,
         engine: Arc<parking_lot::Mutex<UniswapEngine>>,
         shutdown: Arc<AtomicBool>,
-        buffer_event_types: Vec<EventType>,
     ) -> Result<(Self, SubscribeState), String> {
         let provider = AlloyProvider::new(rpc_url, 3)
             .await
@@ -242,25 +194,20 @@ impl UniswapEnginePump {
 
         let combined = stream_select(block_stream, log_stream).boxed();
 
-
         let pump = Self {
             engine,
             provider: Arc::new(provider),
             shutdown,
-            buffer_event_types,
         };
 
-        // Buffer events until we see the first block header.
-        // This gives us the temporal anchor for Python backfill.
+        // Observe until we see a "complete" block — both a header and at
+        // least one log for the same block. This guarantees the logs
+        // subscription did not miss the start of the block. The block number
+        // is returned as the backfill boundary W.
         let (first_block, first_timestamp) = pump.subscribe_phase(combined).await;
 
-        // Re-create the combined stream for resume phase.
-        // We need fresh subscriptions for the resume loop.
-        // Actually, we keep the existing stream — it's still live.
-        // The subscribe_phase only consumed events up to the first block header.
-        // We need to re-subscribe because subscribe_phase consumed the stream.
-
         // Re-subscribe to get a fresh stream for the resume phase.
+        // The subscribe_phase consumed events from the first stream.
         let block_stream2 = provider_arc
             .subscribe_blocks()
             .await
@@ -298,14 +245,7 @@ impl UniswapEnginePump {
 
         let shutdown_clone = Arc::clone(shutdown);
         let handle = runtime.spawn(async move {
-            let mut pump = match Self::subscribe(
-                &rpc_url,
-                engine,
-                shutdown_clone,
-                DEFAULT_BUFFER_EVENTS.to_vec(),
-            )
-            .await
-            {
+            let mut pump = match Self::subscribe(&rpc_url, engine, shutdown_clone).await {
                 Ok((pump, state)) => {
                     // Send the first block as an empty batch so Python learns about it
                     {
@@ -360,16 +300,28 @@ impl UniswapEnginePump {
         Ok(handle)
     }
 
-    /// Subscribe phase: buffer MINT/BURN events until first block header.
+    /// Subscribe phase: observe WS subscriptions until the first complete block.
+    ///
+    /// A "complete" block is one where both a `newHeads` notification and at
+    /// least one log from the same block have been received. This guarantees
+    /// that the logs subscription did not miss the start of the block (which
+    /// could happen if the subscription was opened mid-block).
+    ///
+    /// No events are buffered during this phase. The backfill
+    /// (`backfill_from_snapshot`) is the sole authority for blocks S+1..W-1,
+    /// and the pump (resume phase) is the sole authority for W onward.
+    /// This eliminates any overlap between the two sources.
     ///
     /// Returns (`first_block_number`, `first_timestamp`).
     async fn subscribe_phase(
         &self,
         mut combined: stream::BoxStream<'static, WsEvent>,
     ) -> (u64, u64) {
-        let relevant_topic_set: HashSet<B256> = RELEVANT_TOPICS.into_iter().collect();
         let mut first_block: Option<u64> = None;
         let mut first_timestamp: u64 = 0;
+        // Whether we've seen at least one log for the header block.
+        // When both header and log are seen, that block is "complete".
+        let mut saw_log_for_header_block: bool = false;
 
         loop {
             if self.shutdown.load(Ordering::Relaxed) {
@@ -381,13 +333,17 @@ impl UniswapEnginePump {
 
             match event {
                 Err(_) => {
-                    // Timeout during subscribe — try to get current block
+                    // Timeout during subscribe — try to get current block via RPC.
+                    // This is a degraded path: we don't have confirmation that
+                    // both subscriptions are live, but it's better than hanging.
                     log::warn!(
                         "UniswapEnginePump: timeout during subscribe, fetching current block"
                     );
                     match self.provider.provider_arc().get_block_number().await {
                         Ok(block) => {
-                            log::info!("UniswapEnginePump: subscribe observed block {block} via RPC");
+                            log::info!(
+                                "UniswapEnginePump: subscribe observed block {block} via RPC (degraded — no log confirmation)"
+                            );
                             return (block, 0);
                         }
                         Err(e) => {
@@ -404,22 +360,45 @@ impl UniswapEnginePump {
                     gas_used: _,
                     gas_limit: _,
                 })) => {
-                    log::info!("UniswapEnginePump: subscribe observed block {number}");
-                    first_block = Some(number);
-                    first_timestamp = timestamp;
-                    break;
+                    if let Some(fb) = first_block {
+                        if number > fb {
+                            // New header for a later block. If we already saw
+                            // a log for the previous header's block, we're done.
+                            if saw_log_for_header_block {
+                                log::info!(
+                                    "UniswapEnginePump: subscribe observed complete block {fb}"
+                                );
+                                return (fb, first_timestamp);
+                            }
+                            // Previous block had no logs from our subscription.
+                            // Advance to the new header and reset the flag.
+                            first_block = Some(number);
+                            first_timestamp = timestamp;
+                            saw_log_for_header_block = false;
+                        }
+                        // else: duplicate/stale header for the same block — ignore
+                    } else {
+                        // First header ever observed.
+                        first_block = Some(number);
+                        first_timestamp = timestamp;
+                        saw_log_for_header_block = false;
+                    }
                 }
 
                 Ok(Some(WsEvent::Log(log))) => {
-                    // Buffer MINT/BURN events that match the inclusion set
-                    if let Some(topic0) = log.topics().first() {
-                        if relevant_topic_set.contains(topic0)
-                            && topic_matches_event_type(topic0, &self.buffer_event_types)
-                        {
-                            self.buffer_subscribe_log(&log);
+                    // Check if this log is for the header block we're tracking.
+                    if let Some(fb) = first_block {
+                        let log_block = log.block_number.unwrap_or(0);
+                        if log_block == fb || (log_block == 0 && first_block.is_some()) {
+                            // Log for our header's block (or pending log without
+                            // block_number, which is likely for the current block).
+                            log::info!(
+                                "UniswapEnginePump: subscribe observed complete block {fb} (header + log)"
+                            );
+                            return (fb, first_timestamp);
                         }
                     }
-                    // Continue buffering until first block header
+                    // Log arrived before any header, or for a different block — keep waiting.
                 }
 
                 Ok(None) => {
@@ -428,58 +407,6 @@ impl UniswapEnginePump {
                 }
             }
         }
-
-        (first_block.unwrap_or(0), first_timestamp)
-    }
-
-    /// Route a subscribe-phase log to the appropriate engine buffer.
-    ///
-    /// Only MINT/BURN events are routed. Swap/Sync are discarded.
-    fn buffer_subscribe_log(&self, log: &Log) {
-        let Some(topic0) = log.topics().first() else {
-            return;
-        };
-
-        // Extract block number from the log receipt, fall back to 0
-        let block_number = log.block_number.unwrap_or(0);
-
-        let mut engine = self.engine.lock();
-
-        if *topic0 == V3_MINT_TOPIC {
-            if let Some(event) = crate::bot_core::v3_mint_burn_decoder::decode_v3_mint_log(log) {
-                engine.v3_engine().apply_liquidity_update(
-                    log.address(),
-                    event.tick_lower,
-                    event.tick_upper,
-                    event.amount as i128,
-                    block_number,
-                );
-            }
-        } else if *topic0 == V3_BURN_TOPIC {
-            if let Some(event) = crate::bot_core::v3_mint_burn_decoder::decode_v3_burn_log(log) {
-                engine.v3_engine().apply_liquidity_update(
-                    log.address(),
-                    event.tick_lower,
-                    event.tick_upper,
-                    -(event.amount as i128),
-                    block_number,
-                );
-            }
-        } else if *topic0 == V4_MODIFY_LIQUIDITY_TOPIC {
-            if let Some(event) =
-                crate::bot_core::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log(log)
-            {
-                engine.v4_engine().apply_liquidity_update(
-                    log.address(),
-                    event.pool_id,
-                    event.tick_lower,
-                    event.tick_upper,
-                    event.liquidity_delta,
-                    block_number,
-                );
-            }
-        }
-        // SYNC/SWAP: discarded during subscribe phase (stateless)
     }
 
     /// Resume phase: begin normal pump processing.
@@ -1019,41 +946,5 @@ mod tests {
     fn backfill_timeout_constant_is_reasonable() {
         // 60s is the chosen timeout — verify it's set
         assert_eq!(BACKFILL_TIMEOUT_SECS, 60);
-    }
-
-    #[test]
-    fn topic_matches_event_type_mint_and_burn() {
-        // Default buffer set: MINT and BURN
-        let buffer = DEFAULT_BUFFER_EVENTS.to_vec();
-
-        // MINT topic should match
-        assert!(topic_matches_event_type(&V3_MINT_TOPIC, &buffer));
-        // BURN topic should match
-        assert!(topic_matches_event_type(&V3_BURN_TOPIC, &buffer));
-        // ModifyLiquidity maps to BURN in the inclusion set
-        assert!(topic_matches_event_type(&V4_MODIFY_LIQUIDITY_TOPIC, &buffer));
-        // SYNC should NOT match the default buffer
-        assert!(!topic_matches_event_type(&V2_SYNC_TOPIC, &buffer));
-        // SWAP should NOT match the default buffer
-        assert!(!topic_matches_event_type(&V3_SWAP_TOPIC, &buffer));
-    }
-
-    #[test]
-    fn topic_matches_event_type_all_events() {
-        let all_events = vec![EventType::SYNC, EventType::SWAP, EventType::MINT, EventType::BURN];
-
-        assert!(topic_matches_event_type(&V2_SYNC_TOPIC, &all_events));
-        assert!(topic_matches_event_type(&V3_SWAP_TOPIC, &all_events));
-        assert!(topic_matches_event_type(&V4_SWAP_TOPIC, &all_events));
-        assert!(topic_matches_event_type(&V3_MINT_TOPIC, &all_events));
-        assert!(topic_matches_event_type(&V3_BURN_TOPIC, &all_events));
-        assert!(topic_matches_event_type(&V4_MODIFY_LIQUIDITY_TOPIC, &all_events));
-    }
-
-    #[test]
-    fn topic_matches_event_type_unknown_topic() {
-        let buffer = DEFAULT_BUFFER_EVENTS.to_vec();
-        // A random topic should not match
-        assert!(!topic_matches_event_type(&B256::ZERO, &buffer));
     }
 }
