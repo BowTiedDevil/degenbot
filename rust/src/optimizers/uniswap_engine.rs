@@ -216,6 +216,15 @@ pub struct UniswapEngine {
     /// `rebuild_and_solve_affected` call will include pending paths
     /// and produce a batch.
     has_unsent_results: bool,
+    /// Accumulated dirty V2 pool keys from `apply_log` calls since the last
+    /// `finalize_block`. Used by the pump for eager log processing.
+    dirty_v2: HashSet<u64>,
+    /// Accumulated dirty V3 pool keys from `apply_log` calls since the last
+    /// `finalize_block`. Used by the pump for eager log processing.
+    dirty_v3: HashSet<u64>,
+    /// Accumulated dirty V4 pool keys from `apply_log` calls since the last
+    /// `finalize_block`. Used by the pump for eager log processing.
+    dirty_v4: HashSet<u64>,
     /// Minimum profit (in wei) for a result to appear in the batch channel.
     /// Paths below this threshold are excluded from `delivered` and batches.
     min_profit: U256,
@@ -253,6 +262,9 @@ impl UniswapEngine {
             delivered: HashMap::new(),
             deregistered: Vec::new(),
             has_unsent_results: false,
+            dirty_v2: HashSet::new(),
+            dirty_v3: HashSet::new(),
+            dirty_v4: HashSet::new(),
             min_profit: U256::from(5_000_000_000u64), // 5 gwei
             max_profit: U256::from(5_000_000_000_000_000_000u64), // 5 ETH
             result_tx: None,
@@ -368,87 +380,176 @@ impl UniswapEngine {
         path_id
     }
 
-    /// Process a block: decode Sync, V3 Swap/Mint/Burn, and V4 Swap/ModifyLiquidity
-    /// events, route to sub-engines, and re-solve only affected paths.
-    pub fn process_block(&mut self, logs: &[Log], block_number: u64, metadata: &BlockMetadata) {
-        // Separate V2 Sync, V3, and V4 logs by topic
-        let mut v2_logs: Vec<&Log> = Vec::new();
-        let mut v3_logs: Vec<&Log> = Vec::new();
-        let mut v4_logs: Vec<&Log> = Vec::new();
+    /// Apply a single log event to the appropriate sub-engine immediately.
+    ///
+    /// Updates pool state but does NOT solve or send results. The caller
+    /// must call `solve_dirty` to trigger solve and result dispatch.
+    ///
+    /// Returns the set of affected path IDs (looked up from the
+    /// `pool_to_paths` reverse index). The caller can use this to
+    /// enqueue per-path solves.
+    pub fn apply_log(&mut self, log: &Log, block_number: u64) -> HashSet<u64> {
+        let Some(topic) = log.topics().first() else {
+            return HashSet::new();
+        };
 
-        for log in logs {
-            if let Some(topic) = log.topics().first() {
-                if *topic == crate::optimizers::v2_sync_decoder::V2_SYNC_TOPIC {
-                    v2_logs.push(log);
-                } else if *topic == crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC
-                    || *topic == crate::bot_core::v3_mint_burn_decoder::V3_MINT_TOPIC
-                    || *topic == crate::bot_core::v3_mint_burn_decoder::V3_BURN_TOPIC
-                {
-                    v3_logs.push(log);
-                } else if *topic == crate::bot_core::v4_swap_decoder::V4_SWAP_TOPIC
-                    || *topic == crate::bot_core::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC
-                {
-                    v4_logs.push(log);
+        let mut affected_pools_v2: HashSet<u64> = HashSet::new();
+        let mut affected_pools_v3: HashSet<u64> = HashSet::new();
+        let mut affected_pools_v4: HashSet<u64> = HashSet::new();
+
+        if *topic == crate::optimizers::v2_sync_decoder::V2_SYNC_TOPIC {
+            if let Some(event) = crate::optimizers::v2_sync_decoder::decode_sync_log(log) {
+                if let Some(fwd_key) = self.v2_engine.apply_sync(
+                    event.pool_address,
+                    event.reserve0,
+                    event.reserve1,
+                ) {
+                    affected_pools_v2.insert(fwd_key);
+                    affected_pools_v2.insert(fwd_key + 1); // reverse key
+                    self.dirty_v2.insert(fwd_key);
+                    self.dirty_v2.insert(fwd_key + 1);
+                }
+            }
+        } else if *topic == crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC {
+            if let Some(event) = crate::bot_core::v3_swap_decoder::decode_v3_swap_log(log) {
+                if let Some(key) = self.v3_engine.apply_swap(
+                    event.pool_address,
+                    event.sqrt_price_x96,
+                    event.liquidity.to::<u128>(),
+                    event.tick,
+                    block_number,
+                    &[],
+                ) {
+                    affected_pools_v3.insert(key);
+                    self.dirty_v3.insert(key);
+                }
+            }
+        } else if *topic == crate::bot_core::v3_mint_burn_decoder::V3_MINT_TOPIC {
+            if let Some(event) = crate::bot_core::v3_mint_burn_decoder::decode_v3_mint_log(log) {
+                if let Some(key) = self.v3_engine.apply_liquidity_update(
+                    event.pool_address,
+                    event.tick_lower,
+                    event.tick_upper,
+                    event.amount.cast_signed(),
+                    block_number,
+                ) {
+                    affected_pools_v3.insert(key);
+                    self.dirty_v3.insert(key);
+                }
+            }
+        } else if *topic == crate::bot_core::v3_mint_burn_decoder::V3_BURN_TOPIC {
+            if let Some(event) = crate::bot_core::v3_mint_burn_decoder::decode_v3_burn_log(log) {
+                if let Some(key) = self.v3_engine.apply_liquidity_update(
+                    event.pool_address,
+                    event.tick_lower,
+                    event.tick_upper,
+                    -(event.amount.cast_signed()),
+                    block_number,
+                ) {
+                    affected_pools_v3.insert(key);
+                    self.dirty_v3.insert(key);
+                }
+            }
+        } else if *topic == crate::bot_core::v4_swap_decoder::V4_SWAP_TOPIC {
+            if let Some(event) = crate::bot_core::v4_swap_decoder::decode_v4_swap_log(log) {
+                if let Some((fwd_key, rev_key)) = self.v4_engine.apply_swap(
+                    &V4SwapUpdate {
+                        pool_manager: log.address(),
+                        pool_id: event.pool_id,
+                        sqrt_price_x96: event.sqrt_price_x96,
+                        liquidity: event.liquidity.to::<u128>(),
+                        tick: event.tick,
+                        tick_priors: vec![],
+                    },
+                    block_number,
+                ) {
+                    affected_pools_v4.insert(fwd_key);
+                    affected_pools_v4.insert(rev_key);
+                    self.dirty_v4.insert(fwd_key);
+                    self.dirty_v4.insert(rev_key);
+                }
+            }
+        } else if *topic == crate::bot_core::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC {
+            if let Some(event) = crate::bot_core::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log(log) {
+                if let Some((fwd_key, rev_key)) = self.v4_engine.apply_liquidity_update(
+                    log.address(),
+                    event.pool_id,
+                    event.tick_lower,
+                    event.tick_upper,
+                    event.liquidity_delta,
+                    block_number,
+                ) {
+                    affected_pools_v4.insert(fwd_key);
+                    affected_pools_v4.insert(rev_key);
+                    self.dirty_v4.insert(fwd_key);
+                    self.dirty_v4.insert(rev_key);
                 }
             }
         }
 
-        // Collect affected pool addresses before applying updates
-        let v2_addrs: Vec<Address> = v2_logs.iter().map(|log| log.address()).collect();
-        let v3_addrs: Vec<Address> = v3_logs.iter().map(|log| log.address()).collect();
-
-        // Process V2 Sync events
-        if !v2_logs.is_empty() {
-            let v2_log_owned: Vec<Log> = v2_logs.iter().map(|l| (*l).clone()).collect();
-            self.v2_engine.process_block(&v2_log_owned, block_number);
-        }
-
-        // Process V3 Swap/Mint/Burn events
-        if !v3_logs.is_empty() {
-            let v3_log_owned: Vec<Log> = v3_logs.iter().map(|l| (*l).clone()).collect();
-            self.v3_engine.process_block(&v3_log_owned, block_number);
-        }
-
-        // Process V4 Swap/ModifyLiquidity events
-        if !v4_logs.is_empty() {
-            let v4_log_owned: Vec<Log> = v4_logs.iter().map(|l| (*l).clone()).collect();
-            self.v4_engine.process_block(&v4_log_owned, block_number);
-        }
-
-        // Map addresses to pool keys (both orientations for V2)
-        let mut v2_affected: HashSet<u64> = HashSet::new();
-        for addr in &v2_addrs {
-            if let Some((fwd, rev)) = self.v2_engine.pool_keys_for_address(addr) {
-                v2_affected.insert(fwd);
-                v2_affected.insert(rev);
+        // Map affected pool keys to affected path IDs
+        let mut affected_paths: HashSet<u64> = HashSet::new();
+        for key in &affected_pools_v2 {
+            if let Some(path_ids) = self.pool_to_paths.get(&(HopType::V2, *key)) {
+                affected_paths.extend(path_ids);
             }
         }
-        let v3_affected: HashSet<u64> = v3_addrs
-            .iter()
-            .filter_map(|addr| self.v3_engine.pool_key_for_address(addr))
-            .collect();
+        for key in &affected_pools_v3 {
+            if let Some(path_ids) = self.pool_to_paths.get(&(HopType::V3, *key)) {
+                affected_paths.extend(path_ids);
+            }
+        }
+        for key in &affected_pools_v4 {
+            if let Some(path_ids) = self.pool_to_paths.get(&(HopType::V4, *key)) {
+                affected_paths.extend(path_ids);
+            }
+        }
 
-        // V4 affected pools: identified by (pool_manager, pool_id), not address.
-        // Since V4BlockEngine.process_block handles rebuild internally,
-        // we collect V4 pool IDs that were decoded from V4 logs.
-        let v4_affected: HashSet<u64> = v4_logs
-            .iter()
-            .filter_map(|log| {
-                // Try to decode pool_id from V4 Swap or ModifyLiquidity events
-                if let Some(event) = crate::bot_core::v4_swap_decoder::decode_v4_swap_log(log) {
-                    self.v4_engine.pool_keys_for_id(log.address(), &event.pool_id)
-                } else if let Some(event) = crate::bot_core::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log(log) {
-                    self.v4_engine.pool_keys_for_id(log.address(), &event.pool_id)
-                } else {
-                    None
-                }
-            })
-            .flat_map(|pair| [pair.0, pair.1])
-            .collect();
+        affected_paths
+    }
+
+    /// Solve all paths affected by logs applied since the last `solve_dirty`
+    /// call. Expire buffered events, re-solve affected paths, compute
+    /// incremental diff, and send result batch via the channel.
+    ///
+    /// Called by the pump after each log (eager) or on block boundaries.
+    /// Clears the dirty key sets after solving.
+    pub fn solve_dirty(&mut self, block_number: u64, metadata: &BlockMetadata) {
+        // Expire stale buffered events in V3/V4 sub-engines
+        self.v3_engine.expire_buffered_events(block_number);
+        self.v4_engine.expire_buffered_events(block_number);
+
+        // Take ownership of dirty sets to avoid borrow conflict
+        let dirty_v2 = std::mem::take(&mut self.dirty_v2);
+        let dirty_v3 = std::mem::take(&mut self.dirty_v3);
+        let dirty_v4 = std::mem::take(&mut self.dirty_v4);
 
         // Re-solve only paths containing updated pools
-        self.rebuild_and_solve_affected(&v2_affected, &v3_affected, &v4_affected, block_number, metadata);
+        self.rebuild_and_solve_affected(
+            &dirty_v2,
+            &dirty_v3,
+            &dirty_v4,
+            block_number,
+            metadata,
+        );
+
+        // dirty sets are already cleared by std::mem::take
         self.last_processed_block = Some(block_number);
+    }
+
+    /// Returns `true` if there are unsolved dirty pool keys from `apply_log`
+    /// calls that haven't been followed by `solve_dirty` yet.
+    #[must_use]
+    pub fn has_dirty_paths(&self) -> bool {
+        !self.dirty_v2.is_empty() || !self.dirty_v3.is_empty() || !self.dirty_v4.is_empty()
+    }
+
+    /// Process a block: apply all logs then solve affected paths.
+    pub fn process_block(&mut self, logs: &[Log], block_number: u64, metadata: &BlockMetadata) {
+        for log in logs {
+            self.apply_log(log, block_number);
+        }
+        self.solve_dirty(block_number, metadata);
     }
 
     /// Process pre-decoded updates for testing.

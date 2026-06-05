@@ -480,9 +480,9 @@ impl V4BlockEngine {
         &mut self,
         update: &V4SwapUpdate,
         block_number: u64,
-    ) {
+    ) -> Option<(u64, u64)> {
         let Some(&(fwd_key, rev_key)) = self.pool_ids.get(&(update.pool_manager, update.pool_id)) else {
-            return;
+            return None;
         };
 
         // Apply to forward pool
@@ -506,6 +506,8 @@ impl V4BlockEngine {
             pool.tick = update.tick;
             pool.update_block = block_number;
         }
+
+        Some((fwd_key, rev_key))
     }
 
     /// Apply a liquidity update (V4 `ModifyLiquidity` event) to a registered pool.
@@ -525,7 +527,7 @@ impl V4BlockEngine {
         tick_upper: i32,
         liquidity_delta: I256,
         block_number: u64,
-    ) {
+    ) -> Option<(u64, u64)> {
         let Some(&(fwd_key, rev_key)) = self.pool_ids.get(&(pool_manager, pool_id)) else {
             // Pool not registered — buffer the update for later
             self.liquidity_event_buffer
@@ -537,14 +539,14 @@ impl V4BlockEngine {
                     liquidity_delta,
                     block_number,
                 });
-            return;
+            return None;
         };
 
         // Convert I256 liquidity_delta to i128 for tick update
         // If it doesn't fit, skip (shouldn't happen with valid on-chain data)
         let delta_i128: i128 = match liquidity_delta.try_into() {
             Ok(v) => v,
-            Err(_) => return,
+            Err(_) => return None,
         };
 
         // Apply to forward pool
@@ -562,6 +564,8 @@ impl V4BlockEngine {
             pool.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
             pool.update_block = block_number;
         }
+
+        Some((fwd_key, rev_key))
     }
 
     /// Process a block: decode Swap and `ModifyLiquidity` events, apply updates,
@@ -608,12 +612,10 @@ impl V4BlockEngine {
     ) -> HashSet<u64> {
         let mut affected = HashSet::new();
         for update in updates {
-            let Some(&(fwd_key, rev_key)) = self.pool_ids.get(&(update.pool_manager, update.pool_id)) else {
-                continue;
-            };
-            self.apply_swap(update, block_number);
-            affected.insert(fwd_key);
-            affected.insert(rev_key);
+            if let Some((fwd_key, rev_key)) = self.apply_swap(update, block_number) {
+                affected.insert(fwd_key);
+                affected.insert(rev_key);
+            }
         }
         affected
     }

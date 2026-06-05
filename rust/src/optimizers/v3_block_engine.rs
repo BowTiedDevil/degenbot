@@ -534,12 +534,12 @@ impl V3BlockEngine {
         tick: i32,
         block_number: u64,
         tick_priors: &[(i32, TickInfo)], // (tick_index, prior_state)
-    ) {
+    ) -> Option<u64> {
         let Some(&key) = self.pool_addresses.get(&pool_address) else {
-            return;
+            return None;
         };
         let Some(pool) = self.pools.get_mut(&key) else {
-            return;
+            return None;
         };
 
         // Apply tick priors updates to tick_data
@@ -551,6 +551,8 @@ impl V3BlockEngine {
         pool.liquidity = liquidity;
         pool.tick = tick;
         pool.update_block = block_number;
+
+        Some(key)
     }
 
     /// Apply a liquidity update (Mint or Burn) to a V3 pool's `tick_data`.
@@ -573,7 +575,7 @@ impl V3BlockEngine {
         tick_upper: i32,
         liquidity_delta: i128,
         block_number: u64,
-    ) {
+    ) -> Option<u64> {
         let Some(&key) = self.pool_addresses.get(&pool_address) else {
             // Pool not registered — buffer the update for later
             self.liquidity_event_buffer
@@ -585,10 +587,10 @@ impl V3BlockEngine {
                     liquidity_delta,
                     block_number,
                 });
-            return;
+            return None;
         };
         let Some(pool) = self.pools.get_mut(&key) else {
-            return;
+            return None;
         };
 
         // Apply tick-level mutations:
@@ -604,6 +606,8 @@ impl V3BlockEngine {
         pool.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
 
         pool.update_block = block_number;
+
+        Some(key)
     }
 
     /// Process a block: decode Swap, Mint, and Burn events, apply updates,
@@ -663,18 +667,16 @@ impl V3BlockEngine {
     pub fn apply_swap_updates(&mut self, updates: &[V3SwapUpdate], block_number: u64) -> HashSet<u64> {
         let mut affected = HashSet::new();
         for update in updates {
-            let Some(&key) = self.pool_addresses.get(&update.pool_address) else {
-                continue;
-            };
-            self.apply_swap(
+            if let Some(key) = self.apply_swap(
                 update.pool_address,
                 update.sqrt_price_x96,
                 update.liquidity,
                 update.tick,
                 block_number,
                 &update.tick_priors,
-            );
-            affected.insert(key);
+            ) {
+                affected.insert(key);
+            }
         }
         affected
     }

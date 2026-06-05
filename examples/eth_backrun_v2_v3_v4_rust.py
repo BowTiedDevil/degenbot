@@ -898,7 +898,7 @@ async def build_paths(
                 pool_sigs.append(p.pool_id.to_0x_hex())
             else:
                 pool_sigs.append(p.address)
-        path_sig = tuple(v for pair in zip(pool_sigs, zfo_list) for v in pair)
+        path_sig = tuple(v for pair in zip(pool_sigs, zfo_list, strict=True) for v in pair)
         if path_sig in registered_path_sigs:
             dup_count += 1
             continue
@@ -989,7 +989,7 @@ async def build_paths(
     )
 
 
-async def get_snapshots(
+def get_snapshots(
     bot: Bot,
 ) -> tuple[
     UniswapV3LiquiditySnapshot | None, UniswapV4LiquiditySnapshot | None, int | None, int | None
@@ -1748,9 +1748,7 @@ async def dispatch_profitable_results(
             bot_logger.debug(f"Send failed: {exc}")
             continue
 
-        bot_logger.info(
-            f"Submitted path {path_id} hash={tx_hash.to_0x_hex()} nonce={nonce}"
-        )
+        bot_logger.info(f"Submitted path {path_id} hash={tx_hash.to_0x_hex()} nonce={nonce}")
         pending_nonces.add(nonce)
         pending_pools.update(path_pools)
         committed_pools.update(path_pools)
@@ -2014,9 +2012,7 @@ async def main() -> None:
     # ── Load snapshots ───────────────────────────────────────────
     # Load V3 and V4 snapshots from DB. No Python-side event fetching —
     # the Rust engine backfills via backfill_from_snapshot().
-    v3_snapshot, v4_snapshot, v3_snap_block, v4_snap_block = await get_snapshots(
-        bot,
-    )
+    v3_snapshot, v4_snapshot, v3_snap_block, v4_snap_block = get_snapshots(bot)
 
     # ── Backfill snapshot gap ────────────────────────────────────
     # Fetch Mint/Burn/ModifyLiquidity events from the snapshot block
@@ -2073,7 +2069,9 @@ async def main() -> None:
         name="result-consumer",
     )
 
-    bot_logger.info("[startup] Starting path loading (rolling start — consuming results concurrently)...")
+    bot_logger.info(
+        "[startup] Starting path loading (rolling start — consuming results concurrently)..."
+    )
     await build_paths(
         bot=bot,
         engine_registry=engine_registry,
