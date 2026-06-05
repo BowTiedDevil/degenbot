@@ -43,6 +43,80 @@ use crate::optimizers::v4_block_engine::{RegisterV4PoolParams, V4BlockEngine, V4
 const INT128_MAX: U256 = U256::from_limbs([0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 0, 0]);
 
 // ---------------------------------------------------------------------------
+// Engine phase state machine (Plan 098)
+// ---------------------------------------------------------------------------
+
+/// Lifecycle phase of the engine, enforcing correct ordering of
+/// `subscribe()`, `load_snapshot()`, `backfill()`, and `resume()`.
+///
+/// Transitions:
+/// ```text
+/// Created ──subscribe()──► Subscribed ──load_snapshot()──► SnapshotLoaded
+///                                                        ──backfill()──► Backfilled
+///                                                        ──resume()──► Resumed
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+enum EnginePhase {
+    /// Engine just created, no connections.
+    Created = 0,
+    /// WS subscribe() completed, first block observed.
+    Subscribed = 1,
+    /// Snapshot data loaded into Rust (at least one of V3/V4).
+    SnapshotLoaded = 2,
+    /// Backfill from snapshot block to first WS block completed.
+    Backfilled = 3,
+    /// Pump processing live blocks.
+    Resumed = 4,
+}
+
+impl EnginePhase {
+    /// Check that the current phase allows the given required phase.
+    /// Returns `Err` with a descriptive message if the transition is invalid.
+    fn require(&self, required: Self, method_name: &str) -> Result<(), String> {
+        if *self >= required {
+            Ok(())
+        } else {
+            Err(format!(
+                "Cannot call {method_name}: engine is in phase {:?}, but requires {:?}",
+                self, required
+            ))
+        }
+    }
+
+    /// Require that the engine has not yet reached the given phase.
+    fn require_before(&self, phase: Self, method_name: &str) -> Result<(), String> {
+        if *self < phase {
+            Ok(())
+        } else {
+            Err(format!(
+                "Cannot call {method_name}: engine is already in phase {:?} (requires before {:?})",
+                self, phase
+            ))
+        }
+    }
+}
+
+/// Describes the completeness of tick data for a registered pool.
+///
+/// `Tracked` means the snapshot provided complete tick data (may be empty =
+/// genuinely illiquid). `Sparse` means no snapshot data exists for this pool
+/// — solver results may contain errors or phantom profits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PoolTickCoverage {
+    /// Snapshot provided complete tick data. Solver results are trustworthy.
+    Tracked,
+    /// No snapshot data exists. Solver results may be inaccurate.
+    Sparse,
+}
+
+/// V3 snapshot data: pool address → tick data (consumed at registration).
+type V3SnapshotData = HashMap<Address, HashMap<i32, crate::bot_core::TickInfo>>;
+
+/// V4 snapshot data: (pool_manager, pool_id) → tick data (consumed at registration).
+type V4SnapshotData = HashMap<(Address, [u8; 32]), HashMap<i32, crate::bot_core::TickInfo>>;
+
+// ---------------------------------------------------------------------------
 // Path types
 // ---------------------------------------------------------------------------
 
@@ -1337,7 +1411,7 @@ mod tests {
                 tick: 0,
                 tick_data,
                 update_block: 0,
-                apply_buffer: true,
+                coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
             },
         );
 
@@ -1459,7 +1533,7 @@ mod tests {
                 tick: 0,
                 tick_data,
                 update_block: 0,
-                apply_buffer: true,
+                coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
             },
         );
 
@@ -1501,7 +1575,7 @@ mod tests {
                 tick: 0,
                 tick_data: HashMap::new(),
                 update_block: 0,
-                apply_buffer: true,
+                coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
             },
         );
 
@@ -1783,7 +1857,7 @@ mod tests {
                 tick: 0,
                 tick_data: tick_data_a,
                 update_block: 0,
-                apply_buffer: true,
+                coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
             },
         );
 
@@ -1823,7 +1897,7 @@ mod tests {
                 tick: -60,
                 tick_data: tick_data_b,
                 update_block: 0,
-                apply_buffer: true,
+                coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
             },
         );
 
@@ -1895,7 +1969,7 @@ mod tests {
                 tick: 0,
                 tick_data,
                 update_block: 0,
-                apply_buffer: true,
+                coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
             },
         );
 
@@ -1956,7 +2030,7 @@ mod tests {
                 tick: 0,
                 tick_data,
                 update_block: 0,
-                apply_buffer: true,
+                coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
             },
         );
 
@@ -2074,7 +2148,7 @@ mod tests {
             tick: 0,
             tick_data: std::collections::HashMap::new(),
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         // V4 pool: pool at extreme price (tick -886983) with massive liquidity
@@ -2101,7 +2175,7 @@ mod tests {
             tick: -886983,
             tick_data: std::collections::HashMap::new(),
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         // Register path: V3 (zfo) → V4 (ofz, which will produce huge token0 output)
@@ -2178,7 +2252,7 @@ mod tests {
                 tick: 0,
                 tick_data,
                 update_block: 0,
-                apply_buffer: true,
+                coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
             },
         );
 
@@ -2200,7 +2274,7 @@ mod tests {
                 tick: 0,
                 tick_data: HashMap::new(),
                 update_block: 0,
-                apply_buffer: true,
+                coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
             },
         ).expect("V4 registration should succeed");
 
@@ -2273,7 +2347,7 @@ mod tests {
             tick: 0,
             tick_data: make_tick_data(),
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         // Pool 2 at tick 0 with different liquidity (price disagreement)
@@ -2289,7 +2363,7 @@ mod tests {
             tick: 0,
             tick_data: make_tick_data(),
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         // Pool 3 at tick 0 with third liquidity level
@@ -2305,7 +2379,7 @@ mod tests {
             tick: 0,
             tick_data: make_tick_data(),
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         assert_eq!(engine.v3_pool_count(), 3);
@@ -2378,7 +2452,7 @@ mod tests {
             tick: 0,
             tick_data,
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         // V2 pool 2: expensive WETH (1000 WETH / 2M USDC)
@@ -2450,6 +2524,15 @@ pub struct PyUniswapArbEngine {
     verify_rpc_url: parking_lot::Mutex<Option<String>>,
     /// Optional `StateView` contract address for V4 verification.
     verify_state_view: parking_lot::Mutex<Option<Address>>,
+    /// Engine lifecycle phase (Plan 098).
+    /// Enforces ordering: Created → Subscribed → SnapshotLoaded → Backfilled → Resumed.
+    phase: std::sync::atomic::AtomicU8,
+    /// V3 snapshot tick data, loaded via `load_v3_snapshot()` and consumed
+    /// at registration time. One-way transfer: `remove()` not `clone()`.
+    v3_snapshot: parking_lot::Mutex<Option<V3SnapshotData>>,
+    /// V4 snapshot tick data, loaded via `load_v4_snapshot()` and consumed
+    /// at registration time. One-way transfer: `remove()` not `clone()`.
+    v4_snapshot: parking_lot::Mutex<Option<V4SnapshotData>>,
 }
 
 /// Python-facing subscribe state.
@@ -2604,6 +2687,203 @@ impl PyUniswapArbEngine {
         }
         Ok(rust_v4)
     }
+
+    /// Get the current engine phase.
+    fn current_phase(&self) -> EnginePhase {
+        match self.phase.load(std::sync::atomic::Ordering::Relaxed) {
+            0 => EnginePhase::Created,
+            1 => EnginePhase::Subscribed,
+            2 => EnginePhase::SnapshotLoaded,
+            3 => EnginePhase::Backfilled,
+            4 => EnginePhase::Resumed,
+            _ => EnginePhase::Created,
+        }
+    }
+
+    /// Set the engine phase (advancing only).
+    fn set_phase(&self, phase: EnginePhase) {
+        self.phase.store(phase as u8, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Deserialize a V3 binary snapshot into `V3SnapshotData`.
+    fn deserialize_v3_snapshot(data: &[u8]) -> PyResult<V3SnapshotData> {
+        const MIN_HEADER: usize = 5; // version(1) + pool_count(4)
+
+        if data.len() < MIN_HEADER {
+            let msg = format!(
+                "V3 snapshot data too short: {} bytes (minimum {})",
+                data.len(),
+                MIN_HEADER
+            );
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+
+        let version = data[0];
+        if version != 1 {
+            let msg = format!("Unsupported V3 snapshot format version: {version}");
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+
+        let pool_count = u32::from_le_bytes(data[1..5].try_into().unwrap()) as usize;
+        let mut result = HashMap::with_capacity(pool_count);
+
+        let mut offset = MIN_HEADER;
+        for _ in 0..pool_count {
+            // Pool address (20 bytes)
+            if offset + 20 > data.len() {
+                let msg = "V3 snapshot truncated: expected 20-byte pool address";
+                return Err(pyo3::exceptions::PyValueError::new_err(msg));
+            }
+            let addr_bytes: [u8; 20] = data[offset..offset + 20].try_into().unwrap();
+            let address = Address::from(addr_bytes);
+            offset += 20;
+
+            // Tick count (4 bytes LE)
+            if offset + 4 > data.len() {
+                let msg = "V3 snapshot truncated: expected tick_count";
+                return Err(pyo3::exceptions::PyValueError::new_err(msg));
+            }
+            let tick_count = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
+            offset += 4;
+
+            let mut tick_data = HashMap::with_capacity(tick_count);
+            for _ in 0..tick_count {
+                // tick_index (4 bytes LE, i32)
+                if offset + 4 > data.len() {
+                    let msg = "V3 snapshot truncated: expected tick_index";
+                    return Err(pyo3::exceptions::PyValueError::new_err(msg));
+                }
+                let tick_index = i32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
+                offset += 4;
+
+                // liquidity_gross (16 bytes LE, u128)
+                if offset + 16 > data.len() {
+                    let msg = "V3 snapshot truncated: expected liquidity_gross";
+                    return Err(pyo3::exceptions::PyValueError::new_err(msg));
+                }
+                let gross_lo = u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
+                let gross_hi = u64::from_le_bytes(data[offset + 8..offset + 16].try_into().unwrap());
+                let liquidity_gross = (gross_hi as u128) << 64 | (gross_lo as u128);
+                offset += 16;
+
+                // liquidity_net (16 bytes LE, i128)
+                if offset + 16 > data.len() {
+                    let msg = "V3 snapshot truncated: expected liquidity_net";
+                    return Err(pyo3::exceptions::PyValueError::new_err(msg));
+                }
+                let net_lo = u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
+                let net_hi = u64::from_le_bytes(data[offset + 8..offset + 16].try_into().unwrap());
+                let unsigned_net = (net_hi as u128) << 64 | (net_lo as u128);
+                let liquidity_net = unsigned_net as i128;
+                offset += 16;
+
+                tick_data.insert(tick_index, make_tick_info(liquidity_gross, liquidity_net));
+            }
+
+            result.insert(address, tick_data);
+        }
+
+        Ok(result)
+    }
+
+    /// Deserialize a V4 binary snapshot into `V4SnapshotData`.
+    fn deserialize_v4_snapshot(data: &[u8]) -> PyResult<V4SnapshotData> {
+        const MIN_HEADER: usize = 5; // version(1) + pool_manager_count(4)
+
+        if data.len() < MIN_HEADER {
+            let msg = format!(
+                "V4 snapshot data too short: {} bytes (minimum {})",
+                data.len(),
+                MIN_HEADER
+            );
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+
+        let version = data[0];
+        if version != 1 {
+            let msg = format!("Unsupported V4 snapshot format version: {version}");
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+
+        let pm_count = u32::from_le_bytes(data[1..5].try_into().unwrap()) as usize;
+        let mut result = HashMap::with_capacity(pm_count);
+
+        let mut offset = MIN_HEADER;
+        for _ in 0..pm_count {
+            // Pool manager address (20 bytes)
+            if offset + 20 > data.len() {
+                let msg = "V4 snapshot truncated: expected pool_manager address";
+                return Err(pyo3::exceptions::PyValueError::new_err(msg));
+            }
+            let pm_bytes: [u8; 20] = data[offset..offset + 20].try_into().unwrap();
+            let pool_manager = Address::from(pm_bytes);
+            offset += 20;
+
+            // Pool ID count (4 bytes LE)
+            if offset + 4 > data.len() {
+                let msg = "V4 snapshot truncated: expected pool_id_count";
+                return Err(pyo3::exceptions::PyValueError::new_err(msg));
+            }
+            let pool_id_count = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
+            offset += 4;
+
+            for _ in 0..pool_id_count {
+                // Pool ID (32 bytes)
+                if offset + 32 > data.len() {
+                    let msg = "V4 snapshot truncated: expected pool_id";
+                    return Err(pyo3::exceptions::PyValueError::new_err(msg));
+                }
+                let pool_id: [u8; 32] = data[offset..offset + 32].try_into().unwrap();
+                offset += 32;
+
+                // Tick count (4 bytes LE)
+                if offset + 4 > data.len() {
+                    let msg = "V4 snapshot truncated: expected tick_count";
+                    return Err(pyo3::exceptions::PyValueError::new_err(msg));
+                }
+                let tick_count = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
+                offset += 4;
+
+                let mut tick_data = HashMap::with_capacity(tick_count);
+                for _ in 0..tick_count {
+                    // tick_index (4 bytes LE, i32)
+                    if offset + 4 > data.len() {
+                        let msg = "V4 snapshot truncated: expected tick_index";
+                        return Err(pyo3::exceptions::PyValueError::new_err(msg));
+                    }
+                    let tick_index = i32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
+                    offset += 4;
+
+                    // liquidity_gross (16 bytes LE, u128)
+                    if offset + 16 > data.len() {
+                        let msg = "V4 snapshot truncated: expected liquidity_gross";
+                        return Err(pyo3::exceptions::PyValueError::new_err(msg));
+                    }
+                    let gross_lo = u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
+                    let gross_hi = u64::from_le_bytes(data[offset + 8..offset + 16].try_into().unwrap());
+                    let liquidity_gross = (gross_hi as u128) << 64 | (gross_lo as u128);
+                    offset += 16;
+
+                    // liquidity_net (16 bytes LE, i128)
+                    if offset + 16 > data.len() {
+                        let msg = "V4 snapshot truncated: expected liquidity_net";
+                        return Err(pyo3::exceptions::PyValueError::new_err(msg));
+                    }
+                    let net_lo = u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
+                    let net_hi = u64::from_le_bytes(data[offset + 8..offset + 16].try_into().unwrap());
+                    let unsigned_net = (net_hi as u128) << 64 | (net_lo as u128);
+                    let liquidity_net = unsigned_net as i128;
+                    offset += 16;
+
+                    tick_data.insert(tick_index, make_tick_info(liquidity_gross, liquidity_net));
+                }
+
+                result.insert((pool_manager, pool_id), tick_data);
+            }
+        }
+
+        Ok(result)
+    }
 }
 
 #[pymethods]
@@ -2622,7 +2902,108 @@ impl PyUniswapArbEngine {
             verify_on_register: std::sync::atomic::AtomicBool::new(false),
             verify_rpc_url: parking_lot::Mutex::new(None),
             verify_state_view: parking_lot::Mutex::new(None),
+            phase: std::sync::atomic::AtomicU8::new(EnginePhase::Created as u8),
+            v3_snapshot: parking_lot::Mutex::new(None),
+            v4_snapshot: parking_lot::Mutex::new(None),
         }
+    }
+
+    /// Load a V3 liquidity snapshot from a binary buffer.
+    ///
+    /// The binary format is documented in `snapshot_binary.py`:
+    /// ```text
+    /// [1 byte: version] [4 bytes LE: pool_count]
+    /// Per pool:
+    ///   [20 bytes: pool address]
+    ///   [4 bytes LE: tick_count]
+    ///   Per tick:
+    ///     [4 bytes LE: tick_index (i32)]
+    ///     [16 bytes LE: liquidity_gross (u128)]
+    ///     [16 bytes LE: liquidity_net (i128)]
+    /// ```
+    ///
+    /// Requires `Subscribed` or `SnapshotLoaded` phase.
+    /// Raises `RuntimeError` if V3 snapshot already loaded.
+    fn load_v3_snapshot(&self, data: Vec<u8>) -> PyResult<()> {
+        let phase = self.current_phase();
+        // Allow loading from Created (unit tests) or Subscribed/SnapshotLoaded (production)
+        phase.require_before(EnginePhase::Resumed, "load_v3_snapshot")
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+
+        // Check not already loaded
+        {
+            let snap = self.v3_snapshot.lock();
+            if snap.is_some() {
+                let msg = "Cannot load V3 snapshot: already loaded. Call clear_v3_snapshot() first.";
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
+            }
+        }
+
+        let snapshot = Self::deserialize_v3_snapshot(&data)?;
+        *self.v3_snapshot.lock() = Some(snapshot);
+
+        // Advance phase to SnapshotLoaded (if not already there from V4)
+        if phase < EnginePhase::SnapshotLoaded {
+            self.set_phase(EnginePhase::SnapshotLoaded);
+        }
+
+        Ok(())
+    }
+
+    /// Load a V4 liquidity snapshot from a binary buffer.
+    ///
+    /// The binary format is documented in `snapshot_binary.py`:
+    /// ```text
+    /// [1 byte: version] [4 bytes LE: pool_manager_count]
+    /// Per pool_manager:
+    ///   [20 bytes: pool_manager address]
+    ///   [4 bytes LE: pool_id_count]
+    ///   Per pool_id:
+    ///     [32 bytes: pool_id]
+    ///     [4 bytes LE: tick_count]
+    ///     Per tick:
+    ///       [4 bytes LE: tick_index (i32)]
+    ///       [16 bytes LE: liquidity_gross (u128)]
+    ///       [16 bytes LE: liquidity_net (i128)]
+    /// ```
+    ///
+    /// Requires `Subscribed` or `SnapshotLoaded` phase.
+    /// Raises `RuntimeError` if V4 snapshot already loaded.
+    fn load_v4_snapshot(&self, data: Vec<u8>) -> PyResult<()> {
+        let phase = self.current_phase();
+        phase.require_before(EnginePhase::Resumed, "load_v4_snapshot")
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+
+        // Check not already loaded
+        {
+            let snap = self.v4_snapshot.lock();
+            if snap.is_some() {
+                let msg = "Cannot load V4 snapshot: already loaded. Call clear_v4_snapshot() first.";
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
+            }
+        }
+
+        let snapshot = Self::deserialize_v4_snapshot(&data)?;
+        *self.v4_snapshot.lock() = Some(snapshot);
+
+        // Advance phase to SnapshotLoaded (if not already there from V3)
+        if phase < EnginePhase::SnapshotLoaded {
+            self.set_phase(EnginePhase::SnapshotLoaded);
+        }
+
+        Ok(())
+    }
+
+    /// Drop the stored V3 snapshot, freeing memory.
+    /// Idempotent — no-op if no V3 snapshot is loaded.
+    fn clear_v3_snapshot(&self) {
+        *self.v3_snapshot.lock() = None;
+    }
+
+    /// Drop the stored V4 snapshot, freeing memory.
+    /// Idempotent — no-op if no V4 snapshot is loaded.
+    fn clear_v4_snapshot(&self) {
+        *self.v4_snapshot.lock() = None;
     }
 
     /// Register a V2 pool by contract address and initial reserves.
@@ -2647,8 +3028,15 @@ impl PyUniswapArbEngine {
 
     /// Register a V3 pool by contract address and initial state.
     /// Returns the pool key for use in path registration.
+    ///
+    /// Tick data is resolved automatically from the stored V3 snapshot:
+    /// - Pool found in snapshot → `Tracked` coverage (tick_data consumed via `remove()`)
+    /// - Pool not in snapshot → `Sparse` coverage (empty tick_data)
+    ///
+    /// The buffer is always applied (Plan 098: snapshot data is always stale
+    /// from the DB, so the buffer must bring it forward).
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (address, token0, token1, fee, tick_spacing, factory, sqrt_price_x96, liquidity, tick, tick_data, block=0, apply_buffer=true))]
+    #[pyo3(signature = (address, token0, token1, fee, tick_spacing, factory, sqrt_price_x96, liquidity, tick, block=0))]
     fn register_v3_pool(
         &self,
         address: &str,
@@ -2660,10 +3048,14 @@ impl PyUniswapArbEngine {
         sqrt_price_x96: &Bound<'_, pyo3::PyAny>,
         liquidity: u128,
         tick: i32,
-        tick_data: &Bound<'_, pyo3::types::PyDict>,
         block: u64,
-        apply_buffer: bool,
     ) -> PyResult<u64> {
+        // Phase check: registration after Resumed is not allowed
+        // (the pump is driving the engine in real-time)
+        let phase = self.current_phase();
+        phase.require_before(EnginePhase::Resumed, "register_v3_pool")
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+
         let addr = address.parse::<Address>().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
@@ -2678,21 +3070,22 @@ impl PyUniswapArbEngine {
         })?;
         let sp = crate::alloy_py::extract_python_u256(sqrt_price_x96)?;
 
-        let mut rust_tick_data = HashMap::new();
-        for (key, value) in tick_data.iter() {
-            let tick_idx: i32 = key.extract()?;
-            let tuple = value.cast::<pyo3::types::PyTuple>()?;
-            if tuple.len() != 2 {
-                let msg = format!(
-                    "Expected 2-tuple (liquidity_gross, liquidity_net), got {} elements",
-                    tuple.len()
-                );
-                return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        // Look up tick_data from stored V3 snapshot (one-way transfer via remove)
+        let (rust_tick_data, coverage) = {
+            let mut snap = self.v3_snapshot.lock();
+            if let Some(ref mut snapshot) = *snap {
+                if let Some(tick_data) = snapshot.remove(&addr) {
+                    (tick_data, PoolTickCoverage::Tracked)
+                } else {
+                    (HashMap::new(), PoolTickCoverage::Sparse)
+                }
+            } else {
+                // No snapshot loaded — Sparse coverage
+                (HashMap::new(), PoolTickCoverage::Sparse)
             }
-            let liquidity_gross: u128 = tuple.get_item(0)?.extract()?;
-            let liquidity_net: i128 = tuple.get_item(1)?.extract()?;
-            rust_tick_data.insert(tick_idx, make_tick_info(liquidity_gross, liquidity_net));
-        }
+        };
+
+        let is_tracked = coverage == PoolTickCoverage::Tracked;
 
         let key = self.engine.lock().v3_engine().register_pool(RegisterV3PoolParams {
             address: addr,
@@ -2706,18 +3099,16 @@ impl PyUniswapArbEngine {
             tick,
             tick_data: rust_tick_data,
             update_block: block,
-            apply_buffer,
+            coverage,
         });
 
         // If verify_on_register is enabled and this pool was registered from
-        // snapshot data (apply_buffer=True), snapshot the tick data while the
-        // engine lock is held and spawn an async verification task.
-        if apply_buffer && self.verify_on_register.load(std::sync::atomic::Ordering::Relaxed) {
+        // snapshot data (Tracked), snapshot the tick data while the engine
+        // lock is held and spawn an async verification task.
+        if is_tracked && self.verify_on_register.load(std::sync::atomic::Ordering::Relaxed) {
             let rpc_url = self.verify_rpc_url.lock().clone();
             if let Some(url) = rpc_url {
                 // Snapshot tick data while lock is held.
-                // Read the block number first (immutable borrow), then access
-                // the V3 engine (mutable borrow) — these cannot alias.
                 let verify_block;
                 let pool_snapshot = {
                     let mut engine = self.engine.lock();
@@ -2762,10 +3153,17 @@ impl PyUniswapArbEngine {
     /// `AFTER_SWAP`, `BEFORE_SWAP_RETURNS_DELTA`, `AFTER_SWAP_RETURNS_DELTA`)
     /// are rejected. Dynamic-fee pools (fee=0x100000) are also rejected.
     ///
+    /// Tick data is resolved automatically from the stored V4 snapshot:
+    /// - Pool found in snapshot → `Tracked` coverage (tick_data consumed via `remove()`)
+    /// - Pool not in snapshot → `Sparse` coverage (empty tick_data)
+    ///
+    /// The buffer is always applied (Plan 098: snapshot data is always stale
+    /// from the DB, so the buffer must bring it forward).
+    ///
     /// Returns the forward pool key for use in path registration,
     /// or raises `ValueError` if the pool is excluded.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, sqrt_price_x96, liquidity, tick, tick_data, block=0, apply_buffer=true))]
+    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, sqrt_price_x96, liquidity, tick, block=0))]
     fn register_v4_pool(
         &self,
         pool_manager: &str,
@@ -2778,10 +3176,13 @@ impl PyUniswapArbEngine {
         sqrt_price_x96: &Bound<'_, pyo3::PyAny>,
         liquidity: u128,
         tick: i32,
-        tick_data: &Bound<'_, pyo3::types::PyDict>,
         block: u64,
-        apply_buffer: bool,
     ) -> PyResult<u64> {
+        // Phase check: registration after Resumed is not allowed
+        let phase = self.current_phase();
+        phase.require_before(EnginePhase::Resumed, "register_v4_pool")
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+
         let pm = pool_manager.parse::<Address>().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager address: {e}"))
         })?;
@@ -2797,21 +3198,22 @@ impl PyUniswapArbEngine {
         })?;
         let sp = crate::alloy_py::extract_python_u256(sqrt_price_x96)?;
 
-        let mut rust_tick_data = HashMap::new();
-        for (key, value) in tick_data.iter() {
-            let tick_idx: i32 = key.extract()?;
-            let tuple = value.cast::<pyo3::types::PyTuple>()?;
-            if tuple.len() != 2 {
-                let msg = format!(
-                    "Expected 2-tuple (liquidity_gross, liquidity_net), got {} elements",
-                    tuple.len()
-                );
-                return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        // Look up tick_data from stored V4 snapshot (one-way transfer via remove)
+        let (rust_tick_data, coverage) = {
+            let mut snap = self.v4_snapshot.lock();
+            if let Some(ref mut snapshot) = *snap {
+                if let Some(tick_data) = snapshot.remove(&(pm, pool_id)) {
+                    (tick_data, PoolTickCoverage::Tracked)
+                } else {
+                    (HashMap::new(), PoolTickCoverage::Sparse)
+                }
+            } else {
+                // No snapshot loaded — Sparse coverage
+                (HashMap::new(), PoolTickCoverage::Sparse)
             }
-            let liquidity_gross: u128 = tuple.get_item(0)?.extract()?;
-            let liquidity_net: i128 = tuple.get_item(1)?.extract()?;
-            rust_tick_data.insert(tick_idx, make_tick_info(liquidity_gross, liquidity_net));
-        }
+        };
+
+        let is_tracked = coverage == PoolTickCoverage::Tracked;
 
         let key = self.engine.lock().v4_engine().register_pool(RegisterV4PoolParams {
             pool_manager: pm,
@@ -2829,19 +3231,17 @@ impl PyUniswapArbEngine {
             tick,
             tick_data: rust_tick_data,
             update_block: block,
-            apply_buffer,
+            coverage,
         }).map_err(pyo3::exceptions::PyValueError::new_err)?;
 
         // If verify_on_register is enabled and this pool was registered from
-        // snapshot data (apply_buffer=True), snapshot the tick data while the
-        // engine lock is held and spawn an async verification task.
-        if apply_buffer && self.verify_on_register.load(std::sync::atomic::Ordering::Relaxed) {
+        // snapshot data (Tracked), snapshot the tick data while the engine
+        // lock is held and spawn an async verification task.
+        if is_tracked && self.verify_on_register.load(std::sync::atomic::Ordering::Relaxed) {
             let rpc_url = self.verify_rpc_url.lock().clone();
             let state_view = *self.verify_state_view.lock();
             if let (Some(url), Some(sv)) = (rpc_url, state_view) {
                 // Snapshot tick data while lock is held.
-                // Read the block number first (immutable borrow), then access
-                // the V4 engine (mutable borrow) — these cannot alias.
                 let verify_block;
                 let pool_snapshot = {
                     let mut engine = self.engine.lock();
@@ -3016,6 +3416,11 @@ impl PyUniswapArbEngine {
         &self,
         rpc_url: String,
     ) -> PyResult<u64> {
+        // Phase check: must be Created
+        let phase = self.current_phase();
+        phase.require(EnginePhase::Created, "subscribe")
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+
         // Ensure we're not already running
         if self.pump_handle.lock().is_some() {
             let msg = "Cannot subscribe: pump is already started. Call stop() first.";
@@ -3053,6 +3458,9 @@ impl PyUniswapArbEngine {
                 .expect("subscribe() always returns a stream"),
         });
 
+        // Advance phase
+        self.set_phase(EnginePhase::Subscribed);
+
         Ok(state.first_block)
     }
 
@@ -3075,6 +3483,15 @@ impl PyUniswapArbEngine {
     /// Returns the number of blocks backfilled (0 if snapshot is current).
     #[pyo3(signature = (rpc_url, snapshot_block, chunk_size=2000))]
     fn backfill_from_snapshot(&self, rpc_url: &str, snapshot_block: u64, chunk_size: u64) -> PyResult<u64> {
+        // Phase check: must be at least SnapshotLoaded
+        let phase = self.current_phase();
+        phase.require(EnginePhase::SnapshotLoaded, "backfill_from_snapshot")
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+
+        // Ensure no double-backfill
+        phase.require_before(EnginePhase::Backfilled, "backfill_from_snapshot")
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+
         // Ensure subscribe() was called — we need the first WS block
         let first_ws_block = {
             let state_lock = self.subscribe_state.lock();
@@ -3154,6 +3571,9 @@ impl PyUniswapArbEngine {
             "backfill_from_snapshot: complete — {total_logs} total logs applied across {total_blocks} blocks"
         );
 
+        // Advance phase
+        self.set_phase(EnginePhase::Backfilled);
+
         Ok(total_blocks)
     }
 
@@ -3168,6 +3588,17 @@ impl PyUniswapArbEngine {
     ///
     /// Raises `RuntimeError` if `subscribe()` has not been called first.
     fn resume(&self, _py: Python<'_>) -> PyResult<()> {
+        // Phase check: must be at least SnapshotLoaded (can skip backfill)
+        let phase = self.current_phase();
+        phase.require(EnginePhase::SnapshotLoaded, "resume")
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+
+        // No double-resume
+        if phase == EnginePhase::Resumed {
+            let msg = "Cannot resume: engine is already in Resumed phase.";
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
+        }
+
         let subscribe_state = self.subscribe_state.lock().take();
         let state = subscribe_state.ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err(
@@ -3191,6 +3622,9 @@ impl PyUniswapArbEngine {
         });
 
         *self.pump_handle.lock() = Some(handle);
+
+        // Advance phase
+        self.set_phase(EnginePhase::Resumed);
 
         Ok(())
     }
@@ -3547,7 +3981,7 @@ impl PyUniswapArbEngine {
     /// Enable or disable automatic verification on pool registration.
     ///
     /// When enabled, V3 and V4 pools registered from snapshot data (with
-    /// `apply_buffer=True`) are automatically verified against on-chain state.
+    /// `Tracked` coverage) are automatically verified against on-chain state.
     /// The tick data snapshot is taken while the engine lock is held, so the
     /// pump cannot race between registration and verification. The RPC call
     /// happens after the lock is released.
