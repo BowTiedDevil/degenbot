@@ -42,6 +42,7 @@ profitable.
 
 from __future__ import annotations
 
+import struct
 from collections import defaultdict
 
 import pytest
@@ -68,6 +69,31 @@ L = 10_000_000_000_000_000_000  # 1e19 standard liquidity
 ADDR_TOKEN0 = "0x" + "00" * 20
 ADDR_TOKEN1 = "0x" + "01" * 20
 ADDR_FACTORY = "0x" + "ff" * 20
+
+
+# ==============================================================================
+# Helpers: Binary Snapshot for Engine Registration
+# ==============================================================================
+
+
+def _make_v3_snapshot(
+    pools: dict[str, dict[int, tuple[int, int]]],
+) -> bytes:
+    """Build a V3 binary snapshot for testing."""
+    buf = bytearray()
+    buf.append(1)  # version
+    buf.extend(struct.pack("<I", len(pools)))
+    for pool_addr, ticks in pools.items():
+        buf.extend(bytes.fromhex(pool_addr[2:]))
+        buf.extend(struct.pack("<I", len(ticks)))
+        for tick_index, (lg, ln) in ticks.items():
+            buf.extend(struct.pack("<i", tick_index))
+            buf.extend(struct.pack("<Q", lg & 0xFFFFFFFFFFFFFFFF))
+            buf.extend(struct.pack("<Q", lg >> 64))
+            unsigned_ln = ln if ln >= 0 else (1 << 128) + ln
+            buf.extend(struct.pack("<Q", unsigned_ln & 0xFFFFFFFFFFFFFFFF))
+            buf.extend(struct.pack("<Q", unsigned_ln >> 64))
+    return bytes(buf)
 
 
 # ==============================================================================
@@ -161,6 +187,12 @@ def build_engine_v3_v3(
     tick_data_a = ranges_to_engine_tick_data(ranges_a)
     tick_data_b = ranges_to_engine_tick_data(ranges_b)
 
+    # Load tick data into engine via binary snapshot
+    engine.load_v3_snapshot(_make_v3_snapshot({
+        addr_a: tick_data_a,
+        addr_b: tick_data_b,
+    }))
+
     v3_key_a = engine.register_v3_pool(
         address=addr_a,
         token0=ADDR_TOKEN0,
@@ -171,7 +203,6 @@ def build_engine_v3_v3(
         sqrt_price_x96=sqrt_price_a,
         liquidity=liquidity_a,
         tick=current_tick_a,
-        tick_data=tick_data_a,
     )
 
     v3_key_b = engine.register_v3_pool(
@@ -184,7 +215,6 @@ def build_engine_v3_v3(
         sqrt_price_x96=sqrt_price_b,
         liquidity=liquidity_b,
         tick=current_tick_b,
-        tick_data=tick_data_b,
     )
 
     # Path: pool A (zero_for_one=True) → pool B (zero_for_one=False)
@@ -379,19 +409,24 @@ class TestEngineV3V3VsBrent:
         sqrt_price = get_sqrt_ratio_at_tick(current_tick)
         td = ranges_to_engine_tick_data(ranges)
 
+        engine.load_v3_snapshot(_make_v3_snapshot({
+            "0x" + "21" * 20: td,
+            "0x" + "22" * 20: td,
+        }))
+
         v3_key_a = engine.register_v3_pool(
             address="0x" + "21" * 20,
             token0=ADDR_TOKEN0, token1=ADDR_TOKEN1,
             fee=3000, tick_spacing=60, factory=ADDR_FACTORY,
             sqrt_price_x96=sqrt_price, liquidity=L,
-            tick=current_tick, tick_data=td,
+            tick=current_tick,
         )
         v3_key_b = engine.register_v3_pool(
             address="0x" + "22" * 20,
             token0=ADDR_TOKEN0, token1=ADDR_TOKEN1,
             fee=3000, tick_spacing=60, factory=ADDR_FACTORY,
             sqrt_price_x96=sqrt_price, liquidity=L,
-            tick=current_tick, tick_data=td,
+            tick=current_tick,
         )
         engine.register_path([("V3", v3_key_a, True), ("V3", v3_key_b, False)])
         engine.solve_all_paths(block_number=1)

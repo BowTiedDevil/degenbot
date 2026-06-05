@@ -53,12 +53,10 @@ pub struct RegisterV3PoolParams {
     pub tick: i32,
     pub tick_data: HashMap<i32, TickInfo>,
     pub update_block: u64,
-    /// Whether to apply buffered `Mint`/`Burn` events on top of the
-    /// provided `tick_data`. Set to `true` when `tick_data` comes from a
-    /// stale DB snapshot (the buffer brings it forward). Set to `false`
-    /// when `tick_data` was fetched at the current block via RPC (applying
-    /// the buffer would double-count those events).
-    pub apply_buffer: bool,
+    /// Whether tick data came from the snapshot (Tracked) or has no
+    /// snapshot coverage (Sparse). In the new design, the buffer is
+    /// always applied (the snapshot is always stale data from the DB).
+    pub coverage: crate::optimizers::uniswap_engine::PoolTickCoverage,
 }
 
 /// A buffered liquidity update (Mint or Burn) for an unregistered V3 pool.
@@ -99,6 +97,11 @@ pub struct V3PoolState {
     // Tick data
     pub tick_data: HashMap<i32, TickInfo>,
 
+    /// Whether the snapshot provided complete tick data for this pool.
+    /// `Tracked` = complete (may have empty tick_data = genuinely illiquid).
+    /// `Sparse` = no snapshot data, solver results may be inaccurate.
+    pub coverage: crate::optimizers::uniswap_engine::PoolTickCoverage,
+
     // Cached tick ranges (interior mutability for lazy computation from &self).
     // Invalidated on apply_swap / apply_liquidity_update.
     cached_tick_ranges: std::sync::Mutex<TickRangeCache>,
@@ -118,6 +121,7 @@ impl Clone for V3PoolState {
             tick: self.tick,
             update_block: self.update_block,
             tick_data: self.tick_data.clone(),
+            coverage: self.coverage,
             cached_tick_ranges: std::sync::Mutex::new(TickRangeCache::default()),
         }
     }
@@ -396,6 +400,7 @@ impl From<RegisterV3PoolParams> for V3PoolState {
             tick: params.tick,
             update_block: params.update_block,
             tick_data: params.tick_data,
+            coverage: params.coverage,
             cached_tick_ranges: std::sync::Mutex::new(TickRangeCache::default()),
         }
     }
@@ -501,28 +506,21 @@ impl V3BlockEngine {
         self.next_pool_key += 1;
 
         let address = params.address;
-        let apply_buffer = params.apply_buffer;
         self.pools.insert(key, V3PoolState::from(params));
         self.pool_addresses.insert(address, key);
 
         // Apply any buffered liquidity updates that arrived before this
         // pool was registered (e.g. from backfill_from_snapshot or the
-        // WS subscribe phase). These events are NOT yet reflected in the
-        // tick_data when it comes from a stale DB snapshot, so they must
-        // be applied on top. However, if the tick_data was fetched at the
-        // current block via RPC, the buffer would double-count those
-        // events — in that case, simply discard the buffer.
+        // WS subscribe phase). In the new design (Plan 098), the buffer
+        // is always applied because tick_data comes from a stale DB
+        // snapshot and needs to be brought forward.
         if let Some(buffered) = self.liquidity_event_buffer.remove(&address) {
-            if apply_buffer {
-                for update in buffered {
-                    let state = self.pools.get_mut(&key).unwrap();
-                    update_tick_liquidity(&mut state.tick_data, update.tick_lower, update.liquidity_delta, true);
-                    update_tick_liquidity(&mut state.tick_data, update.tick_upper, update.liquidity_delta, false);
-                    state.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
-                }
+            for update in buffered {
+                let state = self.pools.get_mut(&key).unwrap();
+                update_tick_liquidity(&mut state.tick_data, update.tick_lower, update.liquidity_delta, true);
+                update_tick_liquidity(&mut state.tick_data, update.tick_upper, update.liquidity_delta, false);
+                state.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
             }
-            // If !apply_buffer, the buffered events are simply discarded —
-            // the tick_data already reflects them.
         }
 
         key
@@ -1052,6 +1050,7 @@ mod tests {
             tick,
             update_block: 0,
             tick_data,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
             cached_tick_ranges: std::sync::Mutex::new(TickRangeCache::default()),
         }
     }
@@ -1072,7 +1071,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         assert_eq!(key, 1);
@@ -1096,7 +1095,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 21_000_000,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
         let pool = &engine.pools[&key];
         assert_eq!(pool.update_block, 21_000_000);
@@ -1117,7 +1116,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
         // Registration is always-on; this should not panic
         engine.register_pool(RegisterV3PoolParams {
@@ -1132,7 +1131,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
     }
 
@@ -1163,7 +1162,7 @@ mod tests {
             tick: 0,
             tick_data: tick_data0,
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         let key1 = engine.register_pool(RegisterV3PoolParams {
@@ -1178,7 +1177,7 @@ mod tests {
             tick: 0,
             tick_data: tick_data1,
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         let path_id = engine.register_path(vec![
@@ -1220,7 +1219,7 @@ mod tests {
             tick: 0,
             tick_data,
         update_block: 0,
-        apply_buffer: true,
+        coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         let new_sqrt_price = U256::from(79_466_191_966_197_645_195_421_774_833_u128);
@@ -1250,7 +1249,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         let tick_priors = vec![(60, make_tick_info(200, 100))];
@@ -1356,7 +1355,7 @@ mod tests {
             tick: 0,
             tick_data: tick_data0,
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         let key1 = engine.register_pool(RegisterV3PoolParams {
@@ -1371,7 +1370,7 @@ mod tests {
             tick: 0,
             tick_data: tick_data1,
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         let _path_id = engine.register_path(vec![
@@ -1416,7 +1415,7 @@ mod tests {
             tick: 0,
             tick_data: tick_data0,
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         let key1 = engine.register_pool(RegisterV3PoolParams {
@@ -1431,7 +1430,7 @@ mod tests {
             tick: 0,
             tick_data: tick_data1,
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         engine.register_path(vec![
@@ -1484,7 +1483,7 @@ mod tests {
             tick: 0,
             tick_data: tick_data0,
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         // Register a path that references a non-existent pool
@@ -1518,7 +1517,7 @@ mod tests {
             tick: 0,
             tick_data,
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
 
@@ -1560,7 +1559,7 @@ mod tests {
             tick: 0,
             tick_data: tick_data0,
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         let key1 = engine.register_pool(RegisterV3PoolParams {
@@ -1575,7 +1574,7 @@ mod tests {
             tick: 0,
             tick_data: tick_data1,
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         let path_id = engine.register_path(vec![
@@ -1613,7 +1612,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
         let key2 = engine.register_pool(RegisterV3PoolParams {
             address: Address::from([2u8; 20]),
@@ -1627,7 +1626,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
         engine.register_path(vec![
             V3PoolRef { pool_idx: key1, zero_for_one: true },
@@ -1673,7 +1672,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         // The buffer should be consumed (applied, not just discarded)
@@ -1724,7 +1723,7 @@ mod tests {
             tick: 0,
             tick_data: snapshot_tick_data,
             update_block: 0,
-            apply_buffer: true,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         let pool = &engine.pools[&key];
@@ -1807,7 +1806,7 @@ mod tests {
             tick: 0,
             tick_data,
         update_block: 0,
-        apply_buffer: true,
+        coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         // Apply two swaps in the same block
@@ -1857,7 +1856,7 @@ mod tests {
             tick: 0,
             tick_data,
         update_block: 0,
-        apply_buffer: true,
+        coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         // Mint 500 liquidity from tick -60 to tick 60
@@ -1896,7 +1895,7 @@ mod tests {
             tick: 0,
             tick_data,
         update_block: 0,
-        apply_buffer: true,
+        coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         // Burn 200 liquidity from tick -60 to tick 60 (delta is negative)
@@ -1935,7 +1934,7 @@ mod tests {
             tick: 0,
             tick_data,
         update_block: 0,
-        apply_buffer: true,
+        coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         // Burn 100 liquidity (the entire position) — gross goes to 0 at both ticks
@@ -1967,7 +1966,7 @@ mod tests {
             tick: 0,
             tick_data,
         update_block: 0,
-        apply_buffer: true,
+        coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
         // Mint 300 liquidity from tick -120 to tick 120
@@ -2095,7 +2094,11 @@ impl PyV3ArbEngine {
             tick,
             tick_data: rust_tick_data,
             update_block: block,
-            apply_buffer,
+            coverage: if apply_buffer {
+                crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked
+            } else {
+                crate::optimizers::uniswap_engine::PoolTickCoverage::Sparse
+            },
         }))
     }
 

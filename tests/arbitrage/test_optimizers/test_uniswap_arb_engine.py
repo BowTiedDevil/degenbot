@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import struct
+
 import pytest
 
 from degenbot.degenbot_rs import UniswapArbEngine
@@ -13,6 +15,62 @@ SQRT_PRICE_TICK_0 = 79228162514264337593543950336
 USDC = 10**6
 WETH = 10**18
 
+# Common pool addresses used in tests
+V2_POOL_A = "0x" + "11" * 20
+V2_POOL_B = "0x" + "12" * 20
+V3_POOL = "0x" + "22" * 20
+
+# V4 PoolManager address (mainnet)
+V4_PM = "0x000000000004444c5dc75cB358380D2e3De08A90"
+
+
+def _make_v3_snapshot(
+    pools: dict[str, dict[int, tuple[int, int]]],
+) -> bytes:
+    """Build a V3 binary snapshot for testing."""
+    buf = bytearray()
+    buf.append(1)  # version
+    buf.extend(struct.pack("<I", len(pools)))
+    for pool_addr, ticks in pools.items():
+        buf.extend(bytes.fromhex(pool_addr[2:]))
+        buf.extend(struct.pack("<I", len(ticks)))
+        for tick_index, (lg, ln) in ticks.items():
+            buf.extend(struct.pack("<i", tick_index))
+            buf.extend(struct.pack("<Q", lg & 0xFFFFFFFFFFFFFFFF))
+            buf.extend(struct.pack("<Q", lg >> 64))
+            unsigned_ln = ln if ln >= 0 else (1 << 128) + ln
+            buf.extend(struct.pack("<Q", unsigned_ln & 0xFFFFFFFFFFFFFFFF))
+            buf.extend(struct.pack("<Q", unsigned_ln >> 64))
+    return bytes(buf)
+
+
+def _make_v4_snapshot(
+    pool_managers: dict[str, dict[str, dict[int, tuple[int, int]]]],
+) -> bytes:
+    """Build a V4 binary snapshot for testing."""
+    buf = bytearray()
+    buf.append(1)  # version
+    buf.extend(struct.pack("<I", len(pool_managers)))
+    for pm_addr, pool_entries in pool_managers.items():
+        buf.extend(bytes.fromhex(pm_addr[2:]))
+        buf.extend(struct.pack("<I", len(pool_entries)))
+        for pool_id_hex, ticks in pool_entries.items():
+            buf.extend(bytes.fromhex(pool_id_hex[2:]))
+            buf.extend(struct.pack("<I", len(ticks)))
+            for tick_index, (lg, ln) in ticks.items():
+                buf.extend(struct.pack("<i", tick_index))
+                buf.extend(struct.pack("<Q", lg & 0xFFFFFFFFFFFFFFFF))
+                buf.extend(struct.pack("<Q", lg >> 64))
+                unsigned_ln = ln if ln >= 0 else (1 << 128) + ln
+                buf.extend(struct.pack("<Q", unsigned_ln & 0xFFFFFFFFFFFFFFFF))
+                buf.extend(struct.pack("<Q", unsigned_ln >> 64))
+    return bytes(buf)
+
+
+def _make_pool_id(suffix: int) -> str:
+    """Generate a 32-byte pool ID as hex string."""
+    return "0x" + (b"\x00" * 31 + bytes([suffix])).hex()
+
 
 class TestUniswapArbEngineRegistration:
     """Test pool and path registration through the Python wrapper."""
@@ -20,7 +78,7 @@ class TestUniswapArbEngineRegistration:
     def test_register_v2_pool_returns_id(self):
         engine = UniswapArbEngine()
         pool_id = engine.register_v2_pool(
-            address="0x" + "11" * 20,
+            address=V2_POOL_A,
             reserve0=1_500_000 * USDC,
             reserve1=800 * WETH,
             gamma_numer=997,
@@ -31,8 +89,11 @@ class TestUniswapArbEngineRegistration:
 
     def test_register_v3_pool_returns_key(self):
         engine = UniswapArbEngine()
+        engine.load_v3_snapshot(_make_v3_snapshot({
+            V3_POOL: {-60: (200, -100), 60: (300, 150)},
+        }))
         key = engine.register_v3_pool(
-            address="0x" + "22" * 20,
+            address=V3_POOL,
             token0="0x" + "00" * 20,
             token1="0x" + "01" * 20,
             fee=3000,
@@ -41,7 +102,6 @@ class TestUniswapArbEngineRegistration:
             sqrt_price_x96=SQRT_PRICE_TICK_0,
             liquidity=1_000_000,
             tick=0,
-            tick_data={-60: (200, -100), 60: (300, 150)},
         )
         assert key == 1
         assert engine.v3_pool_count() == 1
@@ -49,14 +109,17 @@ class TestUniswapArbEngineRegistration:
     def test_register_both_pool_types(self):
         engine = UniswapArbEngine()
         v2_id = engine.register_v2_pool(
-            address="0x" + "11" * 20,
+            address=V2_POOL_A,
             reserve0=1_500_000 * USDC,
             reserve1=800 * WETH,
             gamma_numer=997,
             fee_denom=1000,
         )
+        engine.load_v3_snapshot(_make_v3_snapshot({
+            V3_POOL: {-60: (200, -100), 60: (300, 150)},
+        }))
         v3_key = engine.register_v3_pool(
-            address="0x" + "22" * 20,
+            address=V3_POOL,
             token0="0x" + "00" * 20,
             token1="0x" + "01" * 20,
             fee=3000,
@@ -65,7 +128,6 @@ class TestUniswapArbEngineRegistration:
             sqrt_price_x96=SQRT_PRICE_TICK_0,
             liquidity=1_000_000,
             tick=0,
-            tick_data={-60: (200, -100), 60: (300, 150)},
         )
         assert engine.v2_pool_count() == 1
         assert engine.v3_pool_count() == 1
@@ -73,14 +135,17 @@ class TestUniswapArbEngineRegistration:
     def test_register_mixed_path(self):
         engine = UniswapArbEngine()
         v2_id = engine.register_v2_pool(
-            address="0x" + "11" * 20,
+            address=V2_POOL_A,
             reserve0=1_500_000 * USDC,
             reserve1=800 * WETH,
             gamma_numer=997,
             fee_denom=1000,
         )
+        engine.load_v3_snapshot(_make_v3_snapshot({
+            V3_POOL: {-60: (200, -100), 60: (300, 150)},
+        }))
         v3_key = engine.register_v3_pool(
-            address="0x" + "22" * 20,
+            address=V3_POOL,
             token0="0x" + "00" * 20,
             token1="0x" + "01" * 20,
             fee=3000,
@@ -89,7 +154,6 @@ class TestUniswapArbEngineRegistration:
             sqrt_price_x96=SQRT_PRICE_TICK_0,
             liquidity=1_000_000,
             tick=0,
-            tick_data={-60: (200, -100), 60: (300, 150)},
         )
         path_id = engine.register_path(
             [
@@ -105,13 +169,11 @@ class TestEventBufferControl:
 
     def test_set_event_buffer_max_age(self):
         engine = UniswapArbEngine()
-        # Should not raise — None means unbounded
         engine.set_event_buffer_max_age(max_age=None)
         engine.set_event_buffer_max_age(max_age=100)
 
     def test_flush_event_buffer(self):
         engine = UniswapArbEngine()
-        # Should not raise even when buffer is empty
         engine.flush_event_buffer()
 
 
@@ -122,23 +184,21 @@ class TestRegisterAndSolvePath:
         """register_and_solve_path should eagerly solve and add results."""
         engine = UniswapArbEngine()
 
-        # Two V2 pools with price divergence
         v2_a = engine.register_v2_pool(
-            address="0x" + "11" * 20,
+            address=V2_POOL_A,
             reserve0=1_500_000 * USDC,
             reserve1=800 * WETH,
             gamma_numer=997,
             fee_denom=1000,
         )
         v2_b = engine.register_v2_pool(
-            address="0x" + "12" * 20,
+            address=V2_POOL_B,
             reserve0=800 * WETH,
             reserve1=1_600_000 * USDC,
             gamma_numer=997,
             fee_denom=1000,
         )
 
-        # register_and_solve_path should immediately produce results
         path_id = engine.register_and_solve_path(
             [
                 ("V2", v2_a, True),
@@ -161,14 +221,14 @@ class TestRegisterAndSolvePath:
         engine = UniswapArbEngine()
 
         v2_a = engine.register_v2_pool(
-            address="0x" + "11" * 20,
+            address=V2_POOL_A,
             reserve0=1_500_000 * USDC,
             reserve1=800 * WETH,
             gamma_numer=997,
             fee_denom=1000,
         )
         v2_b = engine.register_v2_pool(
-            address="0x" + "12" * 20,
+            address=V2_POOL_B,
             reserve0=800 * WETH,
             reserve1=1_600_000 * USDC,
             gamma_numer=997,
@@ -182,7 +242,6 @@ class TestRegisterAndSolvePath:
             ]
         )
 
-        # Process with no updates — pending paths should be merged, not dropped
         engine.process_logs(
             v2_sync_updates=[],
             v3_swap_updates=[],
@@ -200,21 +259,20 @@ class TestRegisterAndSolvePath:
         engine = UniswapArbEngine()
 
         v2_a = engine.register_v2_pool(
-            address="0x" + "11" * 20,
+            address=V2_POOL_A,
             reserve0=1_500_000 * USDC,
             reserve1=800 * WETH,
             gamma_numer=997,
             fee_denom=1000,
         )
         v2_b = engine.register_v2_pool(
-            address="0x" + "12" * 20,
+            address=V2_POOL_B,
             reserve0=800 * WETH,
             reserve1=1_600_000 * USDC,
             gamma_numer=997,
             fee_denom=1000,
         )
 
-        # Register one path normally and solve
         engine.register_path(
             [
                 ("V2", v2_a, True),
@@ -223,7 +281,6 @@ class TestRegisterAndSolvePath:
         )
         engine.solve_all_paths(block_number=1)
 
-        # Now register another path eagerly
         v2_c = engine.register_v2_pool(
             address="0x" + "13" * 20,
             reserve0=900 * WETH,
@@ -247,21 +304,18 @@ class TestRegisterAndSolvePath:
         """Registration is always-on — pools and paths can be registered at any time."""
         engine = UniswapArbEngine()
 
-        # Register a pool, then solve, then register more
         engine.register_v2_pool(
-            address="0x" + "11" * 20,
+            address=V2_POOL_A,
             reserve0=1_500_000 * USDC,
             reserve1=800 * WETH,
             gamma_numer=997,
             fee_denom=1000,
         )
 
-        # Solve (was process_logs, but that doesn't solve without affected pools)
         engine.solve_all_paths(block_number=1)
 
-        # Registration should still work after solving
         engine.register_v2_pool(
-            address="0x" + "12" * 20,
+            address=V2_POOL_B,
             reserve0=800 * WETH,
             reserve1=1_600_000 * USDC,
             gamma_numer=997,
@@ -276,23 +330,21 @@ class TestUniswapArbEngineProcessLogs:
     def test_process_v2_sync_updates(self):
         engine = UniswapArbEngine()
 
-        # Two V2 pools
         v2_a = engine.register_v2_pool(
-            address="0x" + "11" * 20,
+            address=V2_POOL_A,
             reserve0=1_500_000 * USDC,
             reserve1=800 * WETH,
             gamma_numer=997,
             fee_denom=1000,
         )
         v2_b = engine.register_v2_pool(
-            address="0x" + "12" * 20,
+            address=V2_POOL_B,
             reserve0=800 * WETH,
             reserve1=1_600_000 * USDC,
             gamma_numer=997,
             fee_denom=1000,
         )
 
-        # V2-only path
         engine.register_path(
             [
                 ("V2", v2_a, True),
@@ -300,7 +352,6 @@ class TestUniswapArbEngineProcessLogs:
             ]
         )
 
-        # solve_all_paths forces an initial solve (replaces freeze() + initial_solve())
         engine.solve_all_paths(block_number=1)
         results, block = engine.latest_results()
         assert block == 1
@@ -308,18 +359,19 @@ class TestUniswapArbEngineProcessLogs:
     def test_process_mixed_v2_v3_updates(self):
         engine = UniswapArbEngine()
 
-        # V2 pool
         v2_id = engine.register_v2_pool(
-            address="0x" + "11" * 20,
+            address=V2_POOL_A,
             reserve0=1_500_000 * USDC,
             reserve1=800 * WETH,
             gamma_numer=997,
             fee_denom=1000,
         )
 
-        # V3 pool
+        engine.load_v3_snapshot(_make_v3_snapshot({
+            V3_POOL: {-60: (200, -100), 60: (300, 150)},
+        }))
         v3_key = engine.register_v3_pool(
-            address="0x" + "22" * 20,
+            address=V3_POOL,
             token0="0x" + "00" * 20,
             token1="0x" + "01" * 20,
             fee=3000,
@@ -328,10 +380,8 @@ class TestUniswapArbEngineProcessLogs:
             sqrt_price_x96=SQRT_PRICE_TICK_0,
             liquidity=10_000_000_000_000,
             tick=0,
-            tick_data={-60: (200, -100), 60: (300, 150)},
         )
 
-        # Mixed path
         engine.register_path(
             [
                 ("V2", v2_id, True),
@@ -341,7 +391,7 @@ class TestUniswapArbEngineProcessLogs:
 
         engine.process_logs(
             v2_sync_updates=[
-                ("0x" + "11" * 20, 1_400_000 * USDC, 750 * WETH),
+                (V2_POOL_A, 1_400_000 * USDC, 750 * WETH),
             ],
             v3_swap_updates=[],
             v4_swap_updates=[],
@@ -354,23 +404,21 @@ class TestUniswapArbEngineProcessLogs:
     def test_pure_v2_path_finds_arb(self):
         engine = UniswapArbEngine()
 
-        # Two V2 pools with price divergence
         v2_a = engine.register_v2_pool(
-            address="0x" + "11" * 20,
+            address=V2_POOL_A,
             reserve0=1_500_000 * USDC,
             reserve1=800 * WETH,
             gamma_numer=997,
             fee_denom=1000,
         )
         v2_b = engine.register_v2_pool(
-            address="0x" + "12" * 20,
+            address=V2_POOL_B,
             reserve0=800 * WETH,
             reserve1=1_600_000 * USDC,
             gamma_numer=997,
             fee_denom=1000,
         )
 
-        # V2-only path
         engine.register_path(
             [
                 ("V2", v2_a, True),
@@ -378,36 +426,31 @@ class TestUniswapArbEngineProcessLogs:
             ]
         )
 
-        # solve_all_paths triggers initial solve
         engine.solve_all_paths(block_number=1)
 
         results, block = engine.latest_results()
         assert block == 1
-        # Should find profitable arb — each result is (path_id, optimal_input, profit, [hop_outputs], [consumed_inputs])
         assert len(results) >= 1
         path_id, optimal_input, profit, hop_outputs, consumed_inputs = results[0]
-        assert path_id == 1  # path_id
+        assert path_id == 1
         assert optimal_input > 0
         assert profit > 0
-        assert len(hop_outputs) == 2  # 2 hops
-        assert len(consumed_inputs) == 2  # 2 hops
+        assert len(hop_outputs) == 2
+        assert len(consumed_inputs) == 2
 
 
 class TestUniswapArbEngineV4:
     """Test V4 pool registration, hook filtering, and path solving."""
 
-    # PoolManager address on Ethereum mainnet
-    POOL_MANAGER = "0x000000000004444c5dc75cB358380D2e3De08A90"
-
-    def _make_pool_id(self, suffix: int) -> str:
-        """Generate a 32-byte pool ID as hex string."""
-        return "0x" + (b"\x00" * 31 + bytes([suffix])).hex()
-
     def test_register_v4_pool_returns_key(self):
         engine = UniswapArbEngine()
+        pool_id = _make_pool_id(1)
+        engine.load_v4_snapshot(_make_v4_snapshot({
+            V4_PM: {pool_id: {-60: (200, -100), 60: (300, 150)}},
+        }))
         key = engine.register_v4_pool(
-            pool_manager=self.POOL_MANAGER,
-            pool_id_hex=self._make_pool_id(1),
+            pool_manager=V4_PM,
+            pool_id_hex=pool_id,
             currency0="0x" + "00" * 20,
             currency1="0x" + "01" * 20,
             fee=3000,
@@ -416,97 +459,105 @@ class TestUniswapArbEngineV4:
             sqrt_price_x96=SQRT_PRICE_TICK_0,
             liquidity=1_000_000,
             tick=0,
-            tick_data={-60: (200, -100), 60: (300, 150)},
         )
-        # Forward + reverse orientations: key=1 (forward), key=2 (reverse)
         assert key == 1
         assert engine.v4_pool_count() == 1
 
     def test_v4_hook_filtering_rejects_amount_modifying(self):
         """Pools with amount-modifying hooks should be rejected."""
-        import pytest
-
         engine = UniswapArbEngine()
+        pool_id_10 = _make_pool_id(10)
+        pool_id_11 = _make_pool_id(11)
+        engine.load_v4_snapshot(_make_v4_snapshot({
+            V4_PM: {pool_id_10: {}, pool_id_11: {}},
+        }))
 
-        # BEFORE_SWAP (0x80) — should be rejected
         with pytest.raises(ValueError, match="amount-modifying hooks"):
             engine.register_v4_pool(
-                pool_manager=self.POOL_MANAGER,
-                pool_id_hex=self._make_pool_id(10),
+                pool_manager=V4_PM,
+                pool_id_hex=pool_id_10,
                 currency0="0x" + "00" * 20,
                 currency1="0x" + "01" * 20,
                 fee=3000,
                 tick_spacing=60,
-                hook_flags=0x80,  # BEFORE_SWAP
+                hook_flags=0x80,
                 sqrt_price_x96=SQRT_PRICE_TICK_0,
                 liquidity=1_000_000,
                 tick=0,
-                tick_data={},
             )
 
-        # AFTER_SWAP_RETURNS_DELTA (0x04) — should be rejected
         with pytest.raises(ValueError, match="amount-modifying hooks"):
             engine.register_v4_pool(
-                pool_manager=self.POOL_MANAGER,
-                pool_id_hex=self._make_pool_id(11),
+                pool_manager=V4_PM,
+                pool_id_hex=pool_id_11,
                 currency0="0x" + "00" * 20,
                 currency1="0x" + "01" * 20,
                 fee=3000,
                 tick_spacing=60,
-                hook_flags=0x04,  # AFTER_SWAP_RETURNS_DELTA
+                hook_flags=0x04,
                 sqrt_price_x96=SQRT_PRICE_TICK_0,
                 liquidity=1_000_000,
                 tick=0,
-                tick_data={},
             )
 
     def test_v4_dynamic_fee_rejected(self):
         """Pools with dynamic fees (0x100000) should be rejected."""
-        import pytest
-
         engine = UniswapArbEngine()
+        pool_id = _make_pool_id(12)
+        engine.load_v4_snapshot(_make_v4_snapshot({
+            V4_PM: {pool_id: {}},
+        }))
 
         with pytest.raises(ValueError, match="dynamic fee"):
             engine.register_v4_pool(
-                pool_manager=self.POOL_MANAGER,
-                pool_id_hex=self._make_pool_id(12),
+                pool_manager=V4_PM,
+                pool_id_hex=pool_id,
                 currency0="0x" + "00" * 20,
                 currency1="0x" + "01" * 20,
-                fee=0x100000,  # dynamic fee flag
+                fee=0x100000,
                 tick_spacing=60,
                 hook_flags=0,
                 sqrt_price_x96=SQRT_PRICE_TICK_0,
                 liquidity=1_000_000,
                 tick=0,
-                tick_data={},
             )
 
     def test_v4_allows_non_amount_hooks(self):
         """Pools with only non-amount hooks (e.g. BEFORE_DONATE) should be accepted."""
         engine = UniswapArbEngine()
-
+        pool_id = _make_pool_id(13)
+        engine.load_v4_snapshot(_make_v4_snapshot({
+            V4_PM: {pool_id: {-60: (200, -100), 60: (300, 150)}},
+        }))
         key = engine.register_v4_pool(
-            pool_manager=self.POOL_MANAGER,
-            pool_id_hex=self._make_pool_id(13),
+            pool_manager=V4_PM,
+            pool_id_hex=pool_id,
             currency0="0x" + "00" * 20,
             currency1="0x" + "01" * 20,
             fee=3000,
             tick_spacing=60,
-            hook_flags=0x30,  # BEFORE_DONATE | AFTER_DONATE
+            hook_flags=0x30,
             sqrt_price_x96=SQRT_PRICE_TICK_0,
             liquidity=1_000_000,
             tick=0,
-            tick_data={-60: (200, -100), 60: (300, 150)},
         )
         assert key == 1
 
     def test_v4_v4_path_registers_and_solves(self):
         """V4-V4 path should register and solve (same CL math as V3-V3)."""
         engine = UniswapArbEngine()
+        pool_id_1 = _make_pool_id(1)
+        pool_id_2 = _make_pool_id(2)
+        engine.load_v4_snapshot(_make_v4_snapshot({
+            V4_PM: {
+                pool_id_1: {-60: (500, -200), 60: (800, 300)},
+                pool_id_2: {-60: (600, -250), 60: (900, 350)},
+            },
+        }))
 
         v4_a = engine.register_v4_pool(
-            pool_manager=self.POOL_MANAGER,
-            pool_id_hex=self._make_pool_id(1),
+            pool_manager=V4_PM,
+            pool_id_hex=pool_id_1,
             currency0="0x" + "00" * 20,
             currency1="0x" + "01" * 20,
             fee=3000,
@@ -515,12 +566,11 @@ class TestUniswapArbEngineV4:
             sqrt_price_x96=SQRT_PRICE_TICK_0,
             liquidity=10_000_000_000_000,
             tick=0,
-            tick_data={-60: (500, -200), 60: (800, 300)},
         )
 
         v4_b = engine.register_v4_pool(
-            pool_manager=self.POOL_MANAGER,
-            pool_id_hex=self._make_pool_id(2),
+            pool_manager=V4_PM,
+            pool_id_hex=pool_id_2,
             currency0="0x" + "00" * 20,
             currency1="0x" + "01" * 20,
             fee=3000,
@@ -529,7 +579,6 @@ class TestUniswapArbEngineV4:
             sqrt_price_x96=SQRT_PRICE_TICK_0,
             liquidity=20_000_000_000_000,
             tick=0,
-            tick_data={-60: (600, -250), 60: (900, 350)},
         )
 
         path_id = engine.register_path(
@@ -544,10 +593,14 @@ class TestUniswapArbEngineV4:
     def test_v4_v2_mixed_path_registers(self):
         """V4-V2 mixed path should register and resolve."""
         engine = UniswapArbEngine()
+        pool_id = _make_pool_id(1)
+        engine.load_v4_snapshot(_make_v4_snapshot({
+            V4_PM: {pool_id: {-60: (200, -100), 60: (300, 150)}},
+        }))
 
         v4_key = engine.register_v4_pool(
-            pool_manager=self.POOL_MANAGER,
-            pool_id_hex=self._make_pool_id(1),
+            pool_manager=V4_PM,
+            pool_id_hex=pool_id,
             currency0="0x" + "00" * 20,
             currency1="0x" + "01" * 20,
             fee=3000,
@@ -556,11 +609,10 @@ class TestUniswapArbEngineV4:
             sqrt_price_x96=SQRT_PRICE_TICK_0,
             liquidity=10_000_000_000_000,
             tick=0,
-            tick_data={-60: (200, -100), 60: (300, 150)},
         )
 
         v2_id = engine.register_v2_pool(
-            address="0x" + "11" * 20,
+            address=V2_POOL_A,
             reserve0=1_500_000 * USDC,
             reserve1=800 * WETH,
             gamma_numer=997,
@@ -578,10 +630,17 @@ class TestUniswapArbEngineV4:
     def test_v4_v3_mixed_path_registers(self):
         """V4-V3 mixed path should register and resolve (both CL, same solver)."""
         engine = UniswapArbEngine()
+        pool_id = _make_pool_id(1)
+        engine.load_v3_snapshot(_make_v3_snapshot({
+            V3_POOL: {-60: (200, -100), 60: (300, 150)},
+        }))
+        engine.load_v4_snapshot(_make_v4_snapshot({
+            V4_PM: {pool_id: {-60: (200, -100), 60: (300, 150)}},
+        }))
 
         v4_key = engine.register_v4_pool(
-            pool_manager=self.POOL_MANAGER,
-            pool_id_hex=self._make_pool_id(1),
+            pool_manager=V4_PM,
+            pool_id_hex=pool_id,
             currency0="0x" + "00" * 20,
             currency1="0x" + "01" * 20,
             fee=3000,
@@ -590,11 +649,10 @@ class TestUniswapArbEngineV4:
             sqrt_price_x96=SQRT_PRICE_TICK_0,
             liquidity=10_000_000_000_000,
             tick=0,
-            tick_data={-60: (200, -100), 60: (300, 150)},
         )
 
         v3_key = engine.register_v3_pool(
-            address="0x" + "22" * 20,
+            address=V3_POOL,
             token0="0x" + "00" * 20,
             token1="0x" + "01" * 20,
             fee=3000,
@@ -603,7 +661,6 @@ class TestUniswapArbEngineV4:
             sqrt_price_x96=SQRT_PRICE_TICK_0,
             liquidity=10_000_000_000_000,
             tick=0,
-            tick_data={-60: (200, -100), 60: (300, 150)},
         )
 
         path_id = engine.register_path(
@@ -620,7 +677,6 @@ class TestSubscribeResume:
 
     def test_subscribe_returns_block_number_type(self):
         """subscribe() should be callable (won't actually connect in tests)."""
-        # We can't test with a real WS endpoint, but we can verify the API exists
         engine = UniswapArbEngine()
         assert hasattr(engine, "subscribe")
         assert hasattr(engine, "resume")
@@ -628,20 +684,14 @@ class TestSubscribeResume:
     def test_resume_without_subscribe_raises(self):
         """resume() without subscribe() should raise RuntimeError."""
         engine = UniswapArbEngine()
-        with pytest.raises(RuntimeError, match="subscribe"):
+        with pytest.raises(RuntimeError, match="SnapshotLoaded|subscribe"):
             engine.resume()
 
     def test_double_subscribe_raises(self):
         """Calling subscribe() twice without resume() should raise."""
         engine = UniswapArbEngine()
-        # We can't actually call subscribe() without a WS endpoint,
-        # but we can verify the method signature
         import inspect
         sig = inspect.signature(engine.subscribe)
         params = list(sig.parameters.keys())
         assert "rpc_url" in params
-        # subscribe() no longer takes buffer_event_types —
-        # the subscribe phase only observes until a complete block
-        # (header + log for same block), then returns. No events
-        # are buffered; backfill is the sole authority for S+1..W-1.
         assert "buffer_event_types" not in params

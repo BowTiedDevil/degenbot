@@ -93,16 +93,10 @@ FEE_HISTORY_WINDOW = 10
 FEE_PERCENTILES = (10, 50)
 TARGET_PROFIT_RATIO = 1.25
 BLOCKS_BEFORE_NONCE_EXPIRES = 5
-MAX_SIMULATE_CONCURRENT = 150  # Cap concurrent simulation RPC calls (Slice 1)
+MAX_SIMULATE_CONCURRENT = 50  # Cap concurrent simulation RPC calls (Slice 1)
 AGE_DECAY_CONSTANT = 0.25  # Priority fee age decay factor (Slice 3)
 MIN_PRIORITY_FEE_PERCENTILE = 10  # Use Nth percentile from feeHistory as floor (Slice 3)
 MAX_PRIORITY_FEE_PERCENTILE = 50  # Use Nth percentile from feeHistory as ceiling (Slice 3)
-MAX_PROFIT_WEI = 5 * 10**18  # Reject profits above 5 ETH — solver defect / scam token guard
-# Known scam/tax/anti-bot tokens (blacklist). Paths using these
-# will always fail simulation because the token contract blocks or
-# taxes transfers in ways that break the executor's callback flow.
-KNOWN_SCAM_TOKENS: set[str] = set()
-
 
 # ── Path simulation failure suppression ──────────────────────────
 # After a path fails simulation N consecutive times, it is
@@ -115,15 +109,6 @@ PATH_SUPPRESS_THRESHOLD = 10
 
 # How many blocks between retry attempts for suppressed paths.
 PATH_SUPPRESS_RETRY_INTERVAL = 100
-
-# Suppressed paths that succeed on retry are permanently un-suppressed.
-# Suppressed paths that fail on retry keep their suppressed status.
-
-
-# When True, skip paths where any token is in KNOWN_SCAM_TOKENS.
-# This is less restrictive than whitelist mode — it allows unknown tokens
-# but blocks known bad ones.
-TOKEN_BLACKLIST_MODE = os.environ.get("TOKEN_BLACKLIST_MODE", "1") == "1"
 
 # ── Executor code injection via eth_simulateV1 ──────────────────
 # When INJECT_EXECUTOR_CODE=True, we inject the cmd_executor
@@ -446,36 +431,17 @@ class EngineRegistry:
         self,
         pool: UniswapV3Pool,
         block: int = 0,
-        *,
-        override_tick_data: dict[int, tuple[int, int]] | None = None,
-        apply_buffer: bool = True,
     ) -> int:
         """Register a V3 pool with the Rust engine.
 
-        Args:
-            pool: The V3 pool to register.
-            block: Block number at which the pool state was captured.
-            override_tick_data: If provided, use this tick_data instead
-                of pool.tick_data for engine registration. Pass snapshot
-                tick_data here to let the engine reconstruct current state
-                from (snapshot + buffer) rather than double-counting events
-                already in RPC-fetched tick_data.
-            apply_buffer: Whether to apply buffered Mint/Burn events on
-                top of the provided tick_data. Set True when tick_data
-                comes from a stale DB snapshot (buffer brings it forward).
-                Set False when tick_data was fetched at the current block
-                via RPC (buffer would double-count).
+        Tick data is resolved automatically from the stored V3 snapshot
+        (loaded via load_v3_snapshot). The buffer is always applied
+        because snapshot data is stale from the DB and needs to be
+        brought forward.
 
         """
         if pool.address in self._v3_keys:
             return self._v3_keys[pool.address]
-
-        if override_tick_data is not None:
-            tick_data = override_tick_data
-        else:
-            tick_data = {
-                idx: (info.liquidity_gross, info.liquidity_net) for idx, info in pool.tick_data.items()
-            }
 
         key = self.engine.register_v3_pool(
             address=pool.address,
@@ -487,9 +453,7 @@ class EngineRegistry:
             sqrt_price_x96=pool.sqrt_price_x96,
             liquidity=pool.liquidity,
             tick=pool.tick,
-            tick_data=tick_data,
             block=block,
-            apply_buffer=apply_buffer,
         )
         self._v3_keys[pool.address] = key
         return key
@@ -498,11 +462,11 @@ class EngineRegistry:
         self,
         pool: UniswapV4Pool,
         block: int = 0,
-        *,
-        override_tick_data: dict[int, tuple[int, int]] | None = None,
-        apply_buffer: bool = True,
     ) -> int:
         """Register a V4 pool with the Rust engine.
+
+        Tick data is resolved automatically from the stored V4 snapshot
+        (loaded via load_v4_snapshot). The buffer is always applied.
 
         Performs hook filtering at registration:
         - Pools with amount-modifying hooks (mask 0xCC) are rejected
@@ -510,20 +474,6 @@ class EngineRegistry:
 
         These pools violate the solver's assumption that V3 CL math
         applies exactly, so they would produce phantom profits.
-
-        Args:
-            pool: The V4 pool to register.
-            block: Block number at which the pool state was captured.
-            override_tick_data: If provided, use this tick_data instead
-                of pool.tick_data for engine registration. Pass snapshot
-                tick_data here to let the engine reconstruct current state
-                from (snapshot + buffer) rather than double-counting events
-                already in RPC-fetched tick_data.
-            apply_buffer: Whether to apply buffered ModifyLiquidity events
-                on top of the provided tick_data. Set True when tick_data
-                comes from a stale DB snapshot (buffer brings it forward).
-                Set False when tick_data was fetched at the current block
-                via RPC (buffer would double-count).
 
         """
         pool_id_hex = pool.pool_id.to_0x_hex()
@@ -546,14 +496,6 @@ class EngineRegistry:
             msg = f"V4 pool {pool} has dynamic fees (fee=0x{pool.fee:x})"
             raise ValueError(msg)
 
-        if override_tick_data is not None:
-            tick_data = override_tick_data
-        else:
-            tick_data = {
-                idx: (info.liquidity_gross, info.liquidity_net)
-                for idx, info in pool.tick_data.items()
-            }
-
         key = self.engine.register_v4_pool(
             pool_manager=pool.address,
             pool_id_hex=pool_id_hex,
@@ -565,9 +507,7 @@ class EngineRegistry:
             sqrt_price_x96=pool.sqrt_price_x96,
             liquidity=pool.liquidity,
             tick=pool.tick,
-            tick_data=tick_data,
             block=block,
-            apply_buffer=apply_buffer,
         )
 
         self._v4_keys[pool_id_hex] = key
@@ -666,10 +606,6 @@ async def build_paths(
     *,
     bot: Bot,
     engine_registry: EngineRegistry,
-    current_block: int,
-    verify_block: int,
-    rpc_url: str,
-    state_view_address: str,
     v3_snapshot: UniswapV3LiquiditySnapshot | None = None,
     v4_snapshot: UniswapV4LiquiditySnapshot | None = None,
 ) -> None:
@@ -679,14 +615,30 @@ async def build_paths(
     bot.build_managed_pool(). Hook filtering rejects pools with amount-modifying
     hooks (mask 0xCC) and dynamic fees (fee == 0x100000) at registration time.
 
-    The Rust engine owns all event processing — no Python-side backfill.
-    Snapshot tick_data is used for V4 engine registration (via override_tick_data)
-    so the engine can reconstruct current state from (snapshot + buffer) without
-    double-counting events. Verification is handled internally by the engine
+    Tick data for V3/V4 engine registration is resolved automatically from
+    the stored binary snapshots (loaded via load_v3_snapshot/load_v4_snapshot).
+    The Rust engine applies buffered events on top of stale snapshot data
+    to bring it current. Verification is handled internally by the engine
     (verify_on_register) — the tick data snapshot is taken while the engine
     lock is held, eliminating the race that existed with Python-side async
     verification.
     """
+    # Load binary snapshots into the Rust engine before registration.
+    # The engine will auto-lookup tick_data at registration time.
+    if v3_snapshot is not None:
+        from degenbot.uniswap.snapshot_binary import serialize_v3_snapshot
+        engine_registry.engine.load_v3_snapshot(serialize_v3_snapshot(v3_snapshot))
+
+    if v4_snapshot is not None:
+        from degenbot.uniswap.snapshot_binary import serialize_v4_snapshot
+        # V4 serialization needs the set of (pool_manager, pool_id) tuples.
+        # At this point we don't know which pools will be registered, so we
+        # pass the snapshot's own pool set (populated lazily from the source).
+        managed_pools = v4_snapshot.pools
+        engine_registry.engine.load_v4_snapshot(
+            serialize_v4_snapshot(v4_snapshot, managed_pools=managed_pools)
+        )
+
     # V3 snapshot provides tick data for Python pool builds via trackers.
     # Event backfill is handled by the Rust engine.
     # Trackers use it for tick data at build time.
@@ -823,79 +775,16 @@ async def build_paths(
             skip_count += 1
             continue
 
-        # ── Per-pool snapshot backfill ──────────────────────
-        # No Python-side backfill for V3 or V4. The Rust engine handles
-        # all event backfill via backfill_from_snapshot() at registration
-        # time (Plan 087).
-
-        # ── Token quality filter ─────────────────────────────────
-        # Extract the intermediate (non-WETH) token from both pools.
-        # A 2-hop arb has the pattern: WETH ↔ intermediate ↔ WETH
-        # so the intermediate token appears in both pools.
-        # For V4 pools, NATIVE_CURRENCY_ADDRESS (address(0)) represents ETH.
-        # Treat it as equivalent to WETH for filtering purposes.
-        path_tokens: set[str] = set()
-        for pool in pools:
-            path_tokens.add(get_checksum_address(pool.token0.address))
-            path_tokens.add(get_checksum_address(pool.token1.address))
-        # Replace ZERO_ADDRESS (NATIVE) with WETH for filtering
-        non_weth_tokens = (path_tokens - {WETH_ADDRESS}) - {NATIVE_CURRENCY_ADDRESS}
-
-        # Blacklist: skip paths with known scam/tax tokens
-        if TOKEN_BLACKLIST_MODE:
-            blocked = non_weth_tokens & KNOWN_SCAM_TOKENS
-            if blocked:
-                token_filter_count += 1
-                continue
-
         # Register with Rust engine
         try:
             for pool, pt in zip(pools, pool_type_strs, strict=True):
                 if pt == "V2":
                     engine_registry.register_v2_pool(pool)
                 elif pt == "V3":
-                    # Use snapshot tick_data for engine registration instead of
-                    # the RPC-fetched tick_data from the Python pool object.
-                    # The Rust engine applies buffered Mint/Burn events from
-                    # backfill on top (apply_buffer=True), bringing stale
-                    # snapshot state current. Using RPC-fetched tick_data with
-                    # apply_buffer=True would double-count those events.
-                    #
-                    # When the pool has snapshot data: use it with apply_buffer=True
-                    # (snapshot is stale, buffer brings it forward).
-                    # When no snapshot data exists: fall back to RPC-fetched
-                    # pool.tick_data with apply_buffer=False (RPC data is current,
-                    # buffer would double-count).
-                    if v3_snapshot is not None:
-                        snap_td = v3_snapshot.tick_data(pool.address)
-                        if snap_td is not None and len(snap_td) == 0:
-                            snap_td = None
-                    else:
-                        snap_td = None
-                    if snap_td is not None:
-                        engine_tick_data = {
-                            idx: (info.liquidity_gross, info.liquidity_net)
-                            for idx, info in snap_td.items()
-                        }
-                        engine_registry.register_v3_pool(pool, override_tick_data=engine_tick_data)
-                    else:
-                        engine_registry.register_v3_pool(pool, apply_buffer=False)
+                    engine_registry.register_v3_pool(pool)
                 elif pt == "V4":
                     v4_pool_count += 1
-                    if v4_snapshot is not None:
-                        snap_td = v4_snapshot.tick_data(pool.address, pool.pool_id.to_0x_hex())
-                        if snap_td is not None and len(snap_td) == 0:
-                            snap_td = None
-                    else:
-                        snap_td = None
-                    if snap_td is not None:
-                        engine_tick_data = {
-                            idx: (info.liquidity_gross, info.liquidity_net)
-                            for idx, info in snap_td.items()
-                        }
-                        engine_registry.register_v4_pool(pool, override_tick_data=engine_tick_data)
-                    else:
-                        engine_registry.register_v4_pool(pool, apply_buffer=False)
+                    engine_registry.register_v4_pool(pool)
         except ValueError as exc:
             # Hook filtering / dynamic fee rejection — expected, skip path
             exc_str = str(exc)
@@ -912,10 +801,9 @@ async def build_paths(
         except Exception as exc:
             engine_reject_count += 1
             other_exc_count += 1
-            if other_exc_count <= 5:
-                bot_logger.info(
-                    f"[build_paths] Engine registration failed ({type(exc).__name__}): {exc}"
-                )
+            bot_logger.info(
+                f"[build_paths] Engine registration failed ({type(exc).__name__}): {exc}"
+            )
             continue
 
         # Verification is handled inside the engine at registration time
@@ -2000,6 +1888,7 @@ async def main() -> None:
     # while the lock is held (pump cannot race) and verifies against on-chain
     # state via RPC after releasing the lock. This eliminates the timing race
     # that existed when Python called verify_v3_pool/verify_v4_pool async.
+    state_view_address = EthereumMainnetUniswapV4.state_view.address
     engine_registry.engine.set_verify_rpc_url(node_http)
     engine_registry.engine.set_verify_state_view(state_view_address)
     engine_registry.engine.set_verify_on_register(True)
@@ -2029,8 +1918,6 @@ async def main() -> None:
     # Compare the Rust engine's in-memory tick data against on-chain state
     # at the DB snapshot block. This catches stale data that was already
     # wrong at snapshot time.
-
-    state_view_address = EthereumMainnetUniswapV4.state_view.address
 
     # We need the snapshot blocks BEFORE backfill runs, so extract them first.
     # get_snapshots returns (v3_snapshot, v4_snapshot, v3_snapshot_block, v4_snapshot_block).
@@ -2116,10 +2003,6 @@ async def main() -> None:
     await build_paths(
         bot=bot,
         engine_registry=engine_registry,
-        current_block=current_block,
-        verify_block=verify_block,
-        rpc_url=node_ws,
-        state_view_address=state_view_address,
         v3_snapshot=v3_snapshot,
         v4_snapshot=v4_snapshot,
     )
