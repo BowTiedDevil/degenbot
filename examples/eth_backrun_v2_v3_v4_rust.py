@@ -448,6 +448,7 @@ class EngineRegistry:
         block: int = 0,
         *,
         override_tick_data: dict[int, tuple[int, int]] | None = None,
+        apply_buffer: bool = True,
     ) -> int:
         """Register a V3 pool with the Rust engine.
 
@@ -455,12 +456,15 @@ class EngineRegistry:
             pool: The V3 pool to register.
             block: Block number at which the pool state was captured.
             override_tick_data: If provided, use this tick_data instead
-                of pool.tick_data for engine registration. The Rust engine
-                applies buffered Mint/Burn events on top (apply_buffer
-                is always True for V3). Pass snapshot tick_data here to let
-                the engine reconstruct current state from (snapshot + buffer)
-                rather than double-counting events already in RPC-fetched
-                tick_data.
+                of pool.tick_data for engine registration. Pass snapshot
+                tick_data here to let the engine reconstruct current state
+                from (snapshot + buffer) rather than double-counting events
+                already in RPC-fetched tick_data.
+            apply_buffer: Whether to apply buffered Mint/Burn events on
+                top of the provided tick_data. Set True when tick_data
+                comes from a stale DB snapshot (buffer brings it forward).
+                Set False when tick_data was fetched at the current block
+                via RPC (buffer would double-count).
 
         """
         if pool.address in self._v3_keys:
@@ -485,7 +489,7 @@ class EngineRegistry:
             tick=pool.tick,
             tick_data=tick_data,
             block=block,
-            apply_buffer=True,
+            apply_buffer=apply_buffer,
         )
         self._v3_keys[pool.address] = key
         return key
@@ -496,6 +500,7 @@ class EngineRegistry:
         block: int = 0,
         *,
         override_tick_data: dict[int, tuple[int, int]] | None = None,
+        apply_buffer: bool = True,
     ) -> int:
         """Register a V4 pool with the Rust engine.
 
@@ -510,12 +515,15 @@ class EngineRegistry:
             pool: The V4 pool to register.
             block: Block number at which the pool state was captured.
             override_tick_data: If provided, use this tick_data instead
-                of pool.tick_data for engine registration. The Rust engine
-                applies buffered ModifyLiquidity events on top (apply_buffer
-                is always True for V4). Pass snapshot tick_data here to let
-                the engine reconstruct current state from (snapshot + buffer)
-                rather than double-counting events already in RPC-fetched
-                tick_data.
+                of pool.tick_data for engine registration. Pass snapshot
+                tick_data here to let the engine reconstruct current state
+                from (snapshot + buffer) rather than double-counting events
+                already in RPC-fetched tick_data.
+            apply_buffer: Whether to apply buffered ModifyLiquidity events
+                on top of the provided tick_data. Set True when tick_data
+                comes from a stale DB snapshot (buffer brings it forward).
+                Set False when tick_data was fetched at the current block
+                via RPC (buffer would double-count).
 
         """
         pool_id_hex = pool.pool_id.to_0x_hex()
@@ -559,7 +567,7 @@ class EngineRegistry:
             tick=pool.tick,
             tick_data=tick_data,
             block=block,
-            apply_buffer=True,
+            apply_buffer=apply_buffer,
         )
 
         self._v4_keys[pool_id_hex] = key
@@ -843,6 +851,8 @@ async def build_paths(
                 continue
 
         # Register with Rust engine
+        v3_snapshot_verified: set[str] = set()
+        v4_snapshot_verified: set[str] = set()
         try:
             for pool, pt in zip(pools, pool_type_strs, strict=True):
                 if pt == "V2":
@@ -852,34 +862,64 @@ async def build_paths(
                     # the RPC-fetched tick_data from the Python pool object.
                     # The Rust engine applies buffered Mint/Burn events from
                     # backfill on top (apply_buffer=True), bringing stale
-                    # snapshot state current. Using RPC-fetched tick_data would
-                    # double-count those events since they're already reflected.
+                    # snapshot state current. Using RPC-fetched tick_data with
+                    # apply_buffer=True would double-count those events.
+                    #
+                    # When the pool has snapshot data: use it with apply_buffer=True
+                    # (snapshot is stale, buffer brings it forward).
+                    # When no snapshot data exists: fall back to RPC-fetched
+                    # pool.tick_data with apply_buffer=False (RPC data is current,
+                    # buffer would double-count).
                     if v3_snapshot is not None:
                         snap_td = v3_snapshot.tick_data(pool.address)
+                        if snap_td is not None and len(snap_td) == 0:
+                            # tick_data() consumed the snapshot on a previous call
+                            # for this pool. Skip — pool already registered with
+                            # the full data from the first call.
+                            snap_td = None
+                    else:
+                        snap_td = None
+                    if snap_td is not None:
                         engine_tick_data = {
                             idx: (info.liquidity_gross, info.liquidity_net)
-                            for idx, info in (snap_td or {}).items()
+                            for idx, info in snap_td.items()
                         }
+                        engine_registry.register_v3_pool(pool, override_tick_data=engine_tick_data)
+                        v3_snapshot_verified.add(pool.address)
                     else:
-                        engine_tick_data = None
-                    engine_registry.register_v3_pool(pool, override_tick_data=engine_tick_data)
+                        # No snapshot data — use RPC tick_data without buffer.
+                        # Skip verification for these pools: the engine is ahead
+                        # of verify_block (pump is running), so a static-block
+                        # comparison would fail due to valid state changes.
+                        engine_registry.register_v3_pool(pool, apply_buffer=False)
                 elif pt == "V4":
                     v4_pool_count += 1
                     # Use snapshot tick_data for engine registration instead of
                     # the RPC-fetched tick_data from the Python pool object.
                     # The Rust engine applies buffered ModifyLiquidity events
                     # from backfill on top (apply_buffer=True), bringing stale
-                    # snapshot state current. Using RPC-fetched tick_data would
-                    # double-count those events since they're already reflected.
+                    # snapshot state current. Using RPC-fetched tick_data with
+                    # apply_buffer=True would double-count those events.
                     if v4_snapshot is not None:
                         snap_td = v4_snapshot.tick_data(pool.address, pool.pool_id.to_0x_hex())
+                        if snap_td is not None and len(snap_td) == 0:
+                            # tick_data() consumed the snapshot on a previous call
+                            snap_td = None
+                    else:
+                        snap_td = None
+                    if snap_td is not None:
                         engine_tick_data = {
                             idx: (info.liquidity_gross, info.liquidity_net)
-                            for idx, info in (snap_td or {}).items()
+                            for idx, info in snap_td.items()
                         }
+                        engine_registry.register_v4_pool(pool, override_tick_data=engine_tick_data)
+                        v4_snapshot_verified.add(pool.pool_id.to_0x_hex())
                     else:
-                        engine_tick_data = {}
-                    engine_registry.register_v4_pool(pool, override_tick_data=engine_tick_data)
+                        # No snapshot data — use RPC tick_data without buffer.
+                        # Skip verification for these pools: the engine is ahead
+                        # of verify_block (pump is running), so a static-block
+                        # comparison would fail due to valid state changes.
+                        engine_registry.register_v4_pool(pool, apply_buffer=False)
         except ValueError as exc:
             # Hook filtering / dynamic fee rejection — expected, skip path
             exc_str = str(exc)
@@ -903,26 +943,28 @@ async def build_paths(
             continue
 
         # ── Per-pool liquidity map verification ──────────────
-        # After registration (snapshot + backfill + held events applied),
-        # verify each newly-registered pool's tick_data against on-chain
-        # at verify_block — a stable block captured after backfill, before
-        # the pump starts. Raises on failure — no point continuing with
-        # corrupt snapshot/backfill state.
+        # Verify pools that were registered from snapshot data against
+        # on-chain state. The engine is continuously advancing (pump is
+        # running), so verification must use the engine's current block
+        # — not verify_block — to match the engine's processing state.
+        # Pools registered from RPC data (no snapshot) are NOT verified
+        # since their starting state came from RPC directly.
+        engine_block = engine_registry.engine.last_processed_block()
         for pool, pt in zip(pools, pool_type_strs, strict=True):
-            if pt == "V3" and pool.address not in v3_verified_pools:
+            if pt == "V3" and pool.address in v3_snapshot_verified and pool.address not in v3_verified_pools:
                 v3_verified_pools.add(pool.address)
                 await engine_registry.engine.verify_v3_pool(
                     pool.address,
                     rpc_url,
-                    verify_block,
+                    engine_block,
                 )
-            elif pt == "V4" and pool.pool_id not in v4_verified_pools:
+            elif pt == "V4" and pool.pool_id.to_0x_hex() in v4_snapshot_verified and pool.pool_id not in v4_verified_pools:
                 v4_verified_pools.add(pool.pool_id)
                 await engine_registry.engine.verify_v4_pool(
                     pool.pool_id.to_0x_hex(),
                     rpc_url,
                     state_view_address,
-                    verify_block,
+                    engine_block,
                 )
 
         # Resolve directions and register path
