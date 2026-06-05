@@ -53,6 +53,12 @@ pub struct RegisterV3PoolParams {
     pub tick: i32,
     pub tick_data: HashMap<i32, TickInfo>,
     pub update_block: u64,
+    /// Whether to apply buffered `Mint`/`Burn` events on top of the
+    /// provided `tick_data`. Set to `true` when `tick_data` comes from a
+    /// stale DB snapshot (the buffer brings it forward). Set to `false`
+    /// when `tick_data` was fetched at the current block via RPC (applying
+    /// the buffer would double-count those events).
+    pub apply_buffer: bool,
 }
 
 /// A buffered liquidity update (Mint or Burn) for an unregistered V3 pool.
@@ -495,21 +501,28 @@ impl V3BlockEngine {
         self.next_pool_key += 1;
 
         let address = params.address;
+        let apply_buffer = params.apply_buffer;
         self.pools.insert(key, V3PoolState::from(params));
         self.pool_addresses.insert(address, key);
 
         // Apply any buffered liquidity updates that arrived before this
         // pool was registered (e.g. from backfill_from_snapshot or the
         // WS subscribe phase). These events are NOT yet reflected in the
-        // tick_data passed via params (which comes from the DB snapshot),
-        // so they must be applied on top.
+        // tick_data when it comes from a stale DB snapshot, so they must
+        // be applied on top. However, if the tick_data was fetched at the
+        // current block via RPC, the buffer would double-count those
+        // events — in that case, simply discard the buffer.
         if let Some(buffered) = self.liquidity_event_buffer.remove(&address) {
-            for update in buffered {
-                let state = self.pools.get_mut(&key).unwrap();
-                update_tick_liquidity(&mut state.tick_data, update.tick_lower, update.liquidity_delta, true);
-                update_tick_liquidity(&mut state.tick_data, update.tick_upper, update.liquidity_delta, false);
-                state.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+            if apply_buffer {
+                for update in buffered {
+                    let state = self.pools.get_mut(&key).unwrap();
+                    update_tick_liquidity(&mut state.tick_data, update.tick_lower, update.liquidity_delta, true);
+                    update_tick_liquidity(&mut state.tick_data, update.tick_upper, update.liquidity_delta, false);
+                    state.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+                }
             }
+            // If !apply_buffer, the buffered events are simply discarded —
+            // the tick_data already reflects them.
         }
 
         key
@@ -1059,6 +1072,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
+            apply_buffer: true,
         });
 
         assert_eq!(key, 1);
@@ -1082,6 +1096,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 21_000_000,
+            apply_buffer: true,
         });
         let pool = &engine.pools[&key];
         assert_eq!(pool.update_block, 21_000_000);
@@ -1102,6 +1117,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
+            apply_buffer: true,
         });
         // Registration is always-on; this should not panic
         engine.register_pool(RegisterV3PoolParams {
@@ -1116,6 +1132,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
+            apply_buffer: true,
         });
     }
 
@@ -1146,6 +1163,7 @@ mod tests {
             tick: 0,
             tick_data: tick_data0,
             update_block: 0,
+            apply_buffer: true,
         });
 
         let key1 = engine.register_pool(RegisterV3PoolParams {
@@ -1160,6 +1178,7 @@ mod tests {
             tick: 0,
             tick_data: tick_data1,
             update_block: 0,
+            apply_buffer: true,
         });
 
         let path_id = engine.register_path(vec![
@@ -1201,6 +1220,7 @@ mod tests {
             tick: 0,
             tick_data,
         update_block: 0,
+        apply_buffer: true,
         });
 
         let new_sqrt_price = U256::from(79_466_191_966_197_645_195_421_774_833_u128);
@@ -1230,6 +1250,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
+            apply_buffer: true,
         });
 
         let tick_priors = vec![(60, make_tick_info(200, 100))];
@@ -1335,6 +1356,7 @@ mod tests {
             tick: 0,
             tick_data: tick_data0,
             update_block: 0,
+            apply_buffer: true,
         });
 
         let key1 = engine.register_pool(RegisterV3PoolParams {
@@ -1349,6 +1371,7 @@ mod tests {
             tick: 0,
             tick_data: tick_data1,
             update_block: 0,
+            apply_buffer: true,
         });
 
         let _path_id = engine.register_path(vec![
@@ -1393,6 +1416,7 @@ mod tests {
             tick: 0,
             tick_data: tick_data0,
             update_block: 0,
+            apply_buffer: true,
         });
 
         let key1 = engine.register_pool(RegisterV3PoolParams {
@@ -1407,6 +1431,7 @@ mod tests {
             tick: 0,
             tick_data: tick_data1,
             update_block: 0,
+            apply_buffer: true,
         });
 
         engine.register_path(vec![
@@ -1459,6 +1484,7 @@ mod tests {
             tick: 0,
             tick_data: tick_data0,
             update_block: 0,
+            apply_buffer: true,
         });
 
         // Register a path that references a non-existent pool
@@ -1492,6 +1518,7 @@ mod tests {
             tick: 0,
             tick_data,
             update_block: 0,
+            apply_buffer: true,
         });
 
 
@@ -1533,6 +1560,7 @@ mod tests {
             tick: 0,
             tick_data: tick_data0,
             update_block: 0,
+            apply_buffer: true,
         });
 
         let key1 = engine.register_pool(RegisterV3PoolParams {
@@ -1547,6 +1575,7 @@ mod tests {
             tick: 0,
             tick_data: tick_data1,
             update_block: 0,
+            apply_buffer: true,
         });
 
         let path_id = engine.register_path(vec![
@@ -1584,6 +1613,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
+            apply_buffer: true,
         });
         let key2 = engine.register_pool(RegisterV3PoolParams {
             address: Address::from([2u8; 20]),
@@ -1597,6 +1627,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
+            apply_buffer: true,
         });
         engine.register_path(vec![
             V3PoolRef { pool_idx: key1, zero_for_one: true },
@@ -1642,6 +1673,7 @@ mod tests {
             tick: 0,
             tick_data: HashMap::new(),
             update_block: 0,
+            apply_buffer: true,
         });
 
         // The buffer should be consumed (applied, not just discarded)
@@ -1692,6 +1724,7 @@ mod tests {
             tick: 0,
             tick_data: snapshot_tick_data,
             update_block: 0,
+            apply_buffer: true,
         });
 
         let pool = &engine.pools[&key];
@@ -1774,6 +1807,7 @@ mod tests {
             tick: 0,
             tick_data,
         update_block: 0,
+        apply_buffer: true,
         });
 
         // Apply two swaps in the same block
@@ -1823,6 +1857,7 @@ mod tests {
             tick: 0,
             tick_data,
         update_block: 0,
+        apply_buffer: true,
         });
 
         // Mint 500 liquidity from tick -60 to tick 60
@@ -1861,6 +1896,7 @@ mod tests {
             tick: 0,
             tick_data,
         update_block: 0,
+        apply_buffer: true,
         });
 
         // Burn 200 liquidity from tick -60 to tick 60 (delta is negative)
@@ -1899,6 +1935,7 @@ mod tests {
             tick: 0,
             tick_data,
         update_block: 0,
+        apply_buffer: true,
         });
 
         // Burn 100 liquidity (the entire position) — gross goes to 0 at both ticks
@@ -1930,6 +1967,7 @@ mod tests {
             tick: 0,
             tick_data,
         update_block: 0,
+        apply_buffer: true,
         });
 
         // Mint 300 liquidity from tick -120 to tick 120
@@ -1999,7 +2037,7 @@ impl PyV3ArbEngine {
     ///     `tick`: Current tick (int)
     ///     `tick_data`: Dict mapping tick index -> (`liquidity_gross`, `liquidity_net`)
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (address, token0, token1, fee, tick_spacing, factory, sqrt_price_x96, liquidity, tick, tick_data, block=0))]
+    #[pyo3(signature = (address, token0, token1, fee, tick_spacing, factory, sqrt_price_x96, liquidity, tick, tick_data, block=0, apply_buffer=true))]
     fn register_pool(
         &self,
         address: &str,
@@ -2013,6 +2051,7 @@ impl PyV3ArbEngine {
         tick: i32,
         tick_data: &Bound<'_, pyo3::types::PyDict>,
         block: u64,
+        apply_buffer: bool,
     ) -> PyResult<u64> {
         let addr = address.parse::<Address>().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
@@ -2056,6 +2095,7 @@ impl PyV3ArbEngine {
             tick,
             tick_data: rust_tick_data,
             update_block: block,
+            apply_buffer,
         }))
     }
 

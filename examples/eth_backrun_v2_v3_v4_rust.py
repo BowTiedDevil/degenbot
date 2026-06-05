@@ -442,12 +442,37 @@ class EngineRegistry:
         self._v2_keys[pool.address] = key
         return key
 
-    def register_v3_pool(self, pool: UniswapV3Pool, block: int = 0) -> int:
+    def register_v3_pool(
+        self,
+        pool: UniswapV3Pool,
+        block: int = 0,
+        *,
+        override_tick_data: dict[int, tuple[int, int]] | None = None,
+    ) -> int:
+        """Register a V3 pool with the Rust engine.
+
+        Args:
+            pool: The V3 pool to register.
+            block: Block number at which the pool state was captured.
+            override_tick_data: If provided, use this tick_data instead
+                of pool.tick_data for engine registration. The Rust engine
+                applies buffered Mint/Burn events on top (apply_buffer
+                is always True for V3). Pass snapshot tick_data here to let
+                the engine reconstruct current state from (snapshot + buffer)
+                rather than double-counting events already in RPC-fetched
+                tick_data.
+
+        """
         if pool.address in self._v3_keys:
             return self._v3_keys[pool.address]
-        tick_data = {
-            idx: (info.liquidity_gross, info.liquidity_net) for idx, info in pool.tick_data.items()
-        }
+
+        if override_tick_data is not None:
+            tick_data = override_tick_data
+        else:
+            tick_data = {
+                idx: (info.liquidity_gross, info.liquidity_net) for idx, info in pool.tick_data.items()
+            }
+
         key = self.engine.register_v3_pool(
             address=pool.address,
             token0=pool.token0.address,
@@ -460,6 +485,7 @@ class EngineRegistry:
             tick=pool.tick,
             tick_data=tick_data,
             block=block,
+            apply_buffer=True,
         )
         self._v3_keys[pool.address] = key
         return key
@@ -822,7 +848,21 @@ async def build_paths(
                 if pt == "V2":
                     engine_registry.register_v2_pool(pool)
                 elif pt == "V3":
-                    engine_registry.register_v3_pool(pool)
+                    # Use snapshot tick_data for engine registration instead of
+                    # the RPC-fetched tick_data from the Python pool object.
+                    # The Rust engine applies buffered Mint/Burn events from
+                    # backfill on top (apply_buffer=True), bringing stale
+                    # snapshot state current. Using RPC-fetched tick_data would
+                    # double-count those events since they're already reflected.
+                    if v3_snapshot is not None:
+                        snap_td = v3_snapshot.tick_data(pool.address)
+                        engine_tick_data = {
+                            idx: (info.liquidity_gross, info.liquidity_net)
+                            for idx, info in (snap_td or {}).items()
+                        }
+                    else:
+                        engine_tick_data = None
+                    engine_registry.register_v3_pool(pool, override_tick_data=engine_tick_data)
                 elif pt == "V4":
                     v4_pool_count += 1
                     # Use snapshot tick_data for engine registration instead of
