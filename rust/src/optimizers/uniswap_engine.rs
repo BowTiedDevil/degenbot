@@ -3343,8 +3343,8 @@ impl PyUniswapArbEngine {
         });
 
         // If verify_on_register is enabled and this pool was registered from
-        // snapshot data (Tracked), snapshot the tick data while the engine
-        // lock is held and spawn an async verification task.
+        // snapshot data (Tracked), verify tick data synchronously against
+        // on-chain state and raise on mismatch.
         if is_tracked && self.verify_on_register.load(std::sync::atomic::Ordering::Relaxed) {
             let rpc_url = self.verify_rpc_url.lock().clone();
             if let Some(url) = rpc_url {
@@ -3360,27 +3360,23 @@ impl PyUniswapArbEngine {
                     map
                 };
 
-                let addr_str = address.to_string();
                 let runtime = crate::runtime::get_runtime();
-                runtime.spawn(async move {
-                    let provider = match crate::provider::AlloyProvider::new(&url, 3).await {
-                        Ok(p) => p,
-                        Err(e) => {
-                            log::error!("verify_on_register: V3 pool {addr_str}: failed to create provider: {e}");
-                            return;
-                        }
-                    };
-                    match crate::bot_core::liquidity_verifier::verify_v3_pools(
+                let addr_str = address.to_string();
+                let result = runtime.block_on(async {
+                    let provider = crate::provider::AlloyProvider::new(&url, 3)
+                        .await
+                        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
+                            format!("verify_on_register: V3 pool {addr_str}: failed to create provider: {e}")
+                        ))?;
+                    crate::bot_core::liquidity_verifier::verify_v3_pools(
                         &provider, Address::ZERO, &pool_snapshot, Some(verify_block),
-                    ).await {
-                        Ok(()) => {
-                            log::info!("verify_on_register: V3 pool {addr_str} at block {verify_block}: OK");
-                        }
-                        Err(mismatch) => {
-                            log::error!("verify_on_register: V3 pool {addr_str} at block {verify_block}: FAILED: {mismatch}");
-                        }
-                    }
+                    ).await.map_err(|mismatch| {
+                        pyo3::exceptions::PyRuntimeError::new_err(
+                            format!("V3 pool {addr_str} at block {verify_block}: tick data mismatch: {mismatch}")
+                        )
+                    })
                 });
+                result?;
             }
         }
 
@@ -3473,8 +3469,8 @@ impl PyUniswapArbEngine {
         }).map_err(pyo3::exceptions::PyValueError::new_err)?;
 
         // If verify_on_register is enabled and this pool was registered from
-        // snapshot data (Tracked), snapshot the tick data while the engine
-        // lock is held and spawn an async verification task.
+        // snapshot data (Tracked), verify tick data synchronously against
+        // on-chain state and raise on mismatch.
         if is_tracked && self.verify_on_register.load(std::sync::atomic::Ordering::Relaxed) {
             let rpc_url = self.verify_rpc_url.lock().clone();
             let state_view = *self.verify_state_view.lock();
@@ -3491,27 +3487,23 @@ impl PyUniswapArbEngine {
                     map
                 };
 
-                let pool_id_str = pool_id_hex.to_string();
                 let runtime = crate::runtime::get_runtime();
-                runtime.spawn(async move {
-                    let provider = match crate::provider::AlloyProvider::new(&url, 3).await {
-                        Ok(p) => p,
-                        Err(e) => {
-                            log::error!("verify_on_register: V4 pool {pool_id_str}: failed to create provider: {e}");
-                            return;
-                        }
-                    };
-                    match crate::bot_core::liquidity_verifier::verify_v4_pools(
+                let pool_id_str = pool_id_hex.to_string();
+                let result = runtime.block_on(async {
+                    let provider = crate::provider::AlloyProvider::new(&url, 3)
+                        .await
+                        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
+                            format!("verify_on_register: V4 pool {pool_id_str}: failed to create provider: {e}")
+                        ))?;
+                    crate::bot_core::liquidity_verifier::verify_v4_pools(
                         &provider, sv, &pool_snapshot, Some(verify_block),
-                    ).await {
-                        Ok(()) => {
-                            log::info!("verify_on_register: V4 pool {pool_id_str} at block {verify_block}: OK");
-                        }
-                        Err(mismatch) => {
-                            log::error!("verify_on_register: V4 pool {pool_id_str} at block {verify_block}: FAILED: {mismatch}");
-                        }
-                    }
+                    ).await.map_err(|mismatch| {
+                        pyo3::exceptions::PyRuntimeError::new_err(
+                            format!("V4 pool {pool_id_str} at block {verify_block}: tick data mismatch: {mismatch}")
+                        )
+                    })
                 });
+                result?;
             }
         }
 
