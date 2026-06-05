@@ -375,6 +375,11 @@ impl UniswapEngine {
         &mut self.v3_engine
     }
 
+    /// Access the V3 engine (immutable).
+    pub fn v3_engine_ref(&self) -> &V3BlockEngine {
+        &self.v3_engine
+    }
+
     /// Access the V4 engine (for registration).
     #[allow(clippy::missing_const_for_fn)]
     pub fn v4_engine(&mut self) -> &mut V4BlockEngine {
@@ -3911,6 +3916,43 @@ impl PyUniswapArbEngine {
     /// Number of registered V4 pools.
     fn v4_pool_count(&self) -> usize {
         self.engine.lock().v4_pool_count()
+    }
+
+    /// Debug: return the number of buffered liquidity events for a V3 pool address.
+    fn debug_v3_buffer_count(&self, pool_address: &str) -> PyResult<usize> {
+        let addr = pool_address.parse::<Address>().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
+        })?;
+        let engine = self.engine.lock();
+        let count = engine.v3_engine_ref().buffered_event_count(&addr);
+        Ok(count)
+    }
+
+    /// Debug: return the engine's tick data for a V3 pool address as a Python dict.
+    /// Maps tick_index (int) → (liquidity_gross: int, liquidity_net: int) tuple.
+    /// Returns None if the pool is not registered.
+    fn debug_v3_tick_data<'py>(&self, py: Python<'py>, pool_address: &str) -> PyResult<Option<Bound<'py, pyo3::types::PyDict>>> {
+        let addr = pool_address.parse::<Address>().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
+        })?;
+        let tick_data = {
+            let mut engine = self.engine.lock();
+            let Some(key) = engine.v3_engine().pool_key_for_address(&addr) else {
+                return Ok(None);
+            };
+            let Some(pool) = engine.v3_engine().get_pool(key) else {
+                return Ok(None);
+            };
+            pool.tick_data.clone()
+        };
+
+        let dict = pyo3::types::PyDict::new(py);
+        for (&tick_idx, info) in &tick_data {
+            let lg = info.liquidity_gross.to::<u128>();
+            let ln: i128 = info.liquidity_net.try_into().unwrap_or(0i128);
+            dict.set_item(tick_idx, (lg, ln))?;
+        }
+        Ok(Some(dict))
     }
 
     /// Number of registered paths.

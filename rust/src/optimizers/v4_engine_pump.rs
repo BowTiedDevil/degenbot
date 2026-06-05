@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use alloy::primitives::Address;
-use alloy::rpc::types::Filter;
+use alloy::rpc::types::{Filter, Topic};
 use futures_util::StreamExt;
 use parking_lot::Mutex;
 
@@ -165,10 +165,13 @@ impl V4EnginePump {
 fn build_v4_log_filter(pool_managers: &[Address]) -> Filter {
     let mut filter = Filter::new();
 
-    // Set topic0 = V4_SWAP_TOPIC | V4_MODIFY_LIQUIDITY_TOPIC
-    filter = filter
-        .event_signature(V4_SWAP_TOPIC)
-        .event_signature(V4_MODIFY_LIQUIDITY_TOPIC);
+    // Build a single Topic that matches ANY of the V4 event signatures.
+    // Alloy's event_signature() overwrites topics[0] on each call, so we
+    // must build the OR-list ourselves.
+    let mut topic: Topic = Topic::default();
+    topic = topic.extend(V4_SWAP_TOPIC);
+    topic = topic.extend(V4_MODIFY_LIQUIDITY_TOPIC);
+    filter.topics[0] = topic;
 
     // Add all PoolManager addresses
     for addr in pool_managers {

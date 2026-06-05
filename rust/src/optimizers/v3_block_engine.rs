@@ -538,6 +538,15 @@ impl V3BlockEngine {
         self.event_buffer_max_age = max_age;
     }
 
+    /// Return the number of buffered liquidity events for a pool address.
+    #[must_use]
+    pub fn buffered_event_count(&self, address: &Address) -> usize {
+        match self.liquidity_event_buffer.get(address) {
+            Some(events) => events.len(),
+            None => 0,
+        }
+    }
+
     /// Discard all buffered liquidity events for all unregistered pools.
     ///
     /// Frees memory. Called when the operator knows that certain pools

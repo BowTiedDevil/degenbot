@@ -76,7 +76,7 @@ use std::time::Duration;
 use alloy::primitives::B256;
 #[cfg(test)]
 use alloy::primitives::Address;
-use alloy::rpc::types::{Filter, Log};
+use alloy::rpc::types::{Filter, Log, Topic};
 use futures_util::{StreamExt, stream};
 use tokio::time::timeout;
 
@@ -823,10 +823,14 @@ pub fn build_backfill_filter(from_block: u64, to_block: u64) -> Filter {
         .from_block(from_block)
         .to_block(to_block);
 
-    // Add all relevant topics so the server pre-filters
-    for topic in &RELEVANT_TOPICS {
-        filter = filter.event_signature(*topic);
+    // Build a single Topic that matches ANY of the relevant event signatures.
+    // Alloy's event_signature() overwrites topics[0] on each call, so we must
+    // build the OR-list ourselves and set it once.
+    let mut topic: Topic = Topic::default();
+    for sig in &RELEVANT_TOPICS {
+        topic = topic.extend(*sig);
     }
+    filter.topics[0] = topic;
 
     filter
 }
