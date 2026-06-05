@@ -496,7 +496,11 @@ impl UniswapEnginePump {
 
     /// Run the main pump loop with an existing WS stream.
     ///
-    /// This is the core event loop shared between `resume()` and legacy `spawn()`.
+    /// Processes logs eagerly: each WS log is applied to engine state
+    /// immediately and affected paths are solved right away, without
+    /// waiting for a block header. Block headers provide metadata
+    /// (timestamp, fees) and handle empty-block detection.
+    #[allow(unused_assignments)]
     async fn run_with_stream(
         &mut self,
         mut combined: stream::BoxStream<'static, WsEvent>,
@@ -505,31 +509,34 @@ impl UniswapEnginePump {
         let relevant_topic_set: HashSet<B256> = RELEVANT_TOPICS.into_iter().collect();
 
         // Read the last block processed by Python backfill.
-        let mut last_processed_block: Option<u64> = {
+        let mut current_block: u64 = {
             let engine = self.engine.lock();
-            engine.last_processed_block()
+            engine.last_processed_block().unwrap_or(0)
         };
 
-        // If Python already backfilled to first_observed_block, use that.
-        // If not, the first_observed_block becomes our starting point.
-        if last_processed_block.is_none() && first_observed_block > 0 {
-            // Cold start — no Python backfill was done.
-            // Record this block as the starting point and skip processing.
-            last_processed_block = Some(first_observed_block);
+        if current_block == 0 && first_observed_block > 0 {
+            current_block = first_observed_block;
             log::info!(
                 "UniswapEnginePump: cold start from block {first_observed_block}"
             );
-        } else if let Some(lpb) = last_processed_block {
+        } else {
             log::info!(
-                "UniswapEnginePump: starting from block {lpb} (Python backfill)"
+                "UniswapEnginePump: starting from block {current_block} (Python backfill)"
             );
         }
 
-        // Buffer for logs received since the last newHeads
-        let mut pending_logs: Vec<Log> = Vec::new();
-        // Whether this is the first block header we receive. Used to skip
-        // re-processing the backfill block (already done by Python).
+        // Track the last block we've solved for. Used to detect block
+        // boundaries and finalize the previous block when a new one starts.
+        let mut last_solved_block: u64 = current_block;
+        // Whether we're past the first header after resume. The first
+        // header establishes our anchor but shouldn't trigger a solve
+        // (backfill already solved up to this point).
         let mut first_header = true;
+        // Current block metadata — updated from headers, used for
+        // solve batches when logs close out a block.
+        let mut current_metadata: BlockMetadata = BlockMetadata::default();
+        // Whether any logs were applied for the current block.
+        let mut has_logs_this_block: bool = false;
 
         loop {
             // Check shutdown
@@ -548,9 +555,18 @@ impl UniswapEnginePump {
             match event {
                 // Timeout — no activity for 60s. Try to backfill.
                 Err(_) => {
-                    self.handle_timeout(
+                    // Finalize current block if there are unsolved dirty paths
+                    self.finalize_if_dirty(
+                        current_block,
+                        &mut last_solved_block,
+                        &mut has_logs_this_block,
+                    );
+
+                    self.handle_timeout_eager(
                         &relevant_topic_set,
-                        &mut last_processed_block,
+                        &mut current_block,
+                        &mut last_solved_block,
+                        &mut has_logs_this_block,
                     )
                     .await;
                 }
@@ -563,26 +579,121 @@ impl UniswapEnginePump {
                     gas_used,
                     gas_limit,
                 })) => {
-                    let (new_lpb, new_first) = self
-                        .handle_block_header(
-                            number,
-                            timestamp,
-                            base_fee_per_gas,
-                            gas_used,
-                            gas_limit,
-                            &mut pending_logs,
-                            &relevant_topic_set,
-                            last_processed_block,
-                            first_header,
-                        )
-                        .await;
-                    last_processed_block = new_lpb;
-                    first_header = new_first;
+                    // Update metadata for the current block
+                    current_metadata = BlockMetadata {
+                        timestamp,
+                        base_fee_per_gas,
+                        gas_used,
+                        gas_limit,
+                    };
+
+                    if first_header {
+                        // First header after backfill. The backfill already
+                        // solved up to this point — just record the anchor
+                        // and skip solving. Set up for normal operation.
+                        if number > current_block {
+                            // Gap between backfill and this header — backfill it
+                            if number > current_block + 1 {
+                                log::info!(
+                                    "UniswapEnginePump: gap from block {} to {} — backfilling",
+                                    current_block + 1,
+                                    number,
+                                );
+                                self.backfill_range(
+                                    current_block + 1,
+                                    number - 1,
+                                    &relevant_topic_set,
+                                    &mut current_block,
+                                )
+                                .await;
+                                // backfill_range updates current_block to number-1;
+                                // the next line advances to number (the header block)
+                                current_block = number;
+                                last_solved_block = number;
+                            } else {
+                                current_block = number;
+                                last_solved_block = number;
+                            }
+                        }
+                        first_header = false;
+                    } else if number > current_block {
+                        // Normal case: header for a new block arrived.
+                        // Finalize the current block (solve any pending dirty
+                        // paths and send a result batch), then advance.
+                        self.finalize_if_dirty(
+                            current_block,
+                            &mut last_solved_block,
+                            &mut has_logs_this_block,
+                        );
+
+                        // Check for gap and backfill if needed
+                        if number > current_block + 1 {
+                            log::info!(
+                                "UniswapEnginePump: gap from block {} to {} — backfilling",
+                                current_block + 1,
+                                number,
+                            );
+                            self.backfill_range(
+                                current_block + 1,
+                                number - 1,
+                                &relevant_topic_set,
+                                &mut current_block,
+                            )
+                            .await;
+                            // backfill_range advanced current_block to number-1
+                        }
+
+                        current_block = number;
+                        last_solved_block = number;
+
+                        // For empty blocks (no logs arrived), send an
+                        // empty batch so Python sees the block boundary.
+                        if !has_logs_this_block {
+                            let mut engine = self.engine.lock();
+                            engine.process_block(&[], current_block, &current_metadata);
+                        }
+
+                        last_solved_block = current_block;
+                        has_logs_this_block = true; // reset; will be set false by next log or overwritten at next header
+                    }
+                    // else: stale/duplicate header — ignore
                 }
 
-                // Got a log event from the combined stream
+                // Got a log event from the combined stream — apply eagerly
                 Ok(Some(WsEvent::Log(log))) => {
-                    pending_logs.push(log);
+                    if !relevant_topic_set.contains(log.topics().first().unwrap_or(&B256::ZERO)) {
+                        continue;
+                    }
+
+                    let log_block = log.block_number.unwrap_or(current_block);
+
+                    // Detect new block via log's block_number
+                    if log_block > current_block {
+                        // Finalize the current block first
+                        self.finalize_if_dirty(
+                            current_block,
+                            &mut last_solved_block,
+                            &mut has_logs_this_block,
+                        );
+
+                        current_block = log_block;
+                    }
+
+                    // Apply the log immediately to engine state
+                    let _affected_paths = {
+                        let mut engine = self.engine.lock();
+                        engine.apply_log(&log, current_block)
+                    };
+
+                    has_logs_this_block = true;
+
+                    // Solve affected paths immediately
+                    {
+                        let mut engine = self.engine.lock();
+                        engine.solve_dirty(current_block, &current_metadata);
+                    }
+
+                    last_solved_block = current_block;
                 }
 
                 Ok(None) => {
@@ -593,240 +704,69 @@ impl UniswapEnginePump {
         }
     }
 
+    /// Finalize the current block if there are unsolved dirty paths.
+    fn finalize_if_dirty(
+        &self,
+        block: u64,
+        last_solved_block: &mut u64,
+        has_logs_this_block: &mut bool,
+    ) {
+        if block > *last_solved_block {
+            let mut engine = self.engine.lock();
+            // Check if there are any dirty pools to solve
+            if engine.has_dirty_paths() {
+                engine.solve_dirty(block, &BlockMetadata::default());
+            } else if *has_logs_this_block {
+                // Logs arrived but none affected registered pools —
+                // still advance the engine's block number
+                engine.process_block(&[], block, &BlockMetadata::default());
+            }
+            *last_solved_block = block;
+            *has_logs_this_block = false;
+        }
+    }
+
+    /// Handle a 60s timeout by backfilling any missed blocks (eager variant).
+    #[allow(unused_assignments)]
+    async fn handle_timeout_eager(
+        &self,
+        relevant_topic_set: &HashSet<B256>,
+        current_block: &mut u64,
+        last_solved_block: &mut u64,
+        has_logs_this_block: &mut bool,
+    ) {
+        log::warn!(
+            "UniswapEnginePump: no activity for {BACKFILL_TIMEOUT_SECS}s — attempting backfill"
+        );
+        let latest_block = match self.provider.provider_arc().get_block_number().await {
+            Ok(n) => n,
+            Err(e) => {
+                log::error!("UniswapEnginePump: backfill failed — can't get block number: {e}");
+                return;
+            }
+        };
+
+        if latest_block > *current_block {
+            let mut lpb = *current_block;
+            self.backfill_range(
+                *current_block + 1,
+                latest_block,
+                relevant_topic_set,
+                &mut lpb,
+            )
+                .await;
+            *current_block = lpb;
+            *last_solved_block = lpb;
+            *has_logs_this_block = false;
+        }
+    }
+
     /// Take the watch receiver from the pump's block channel.
     ///
     /// Handle a block header event from the WS subscription.
     ///
     /// Returns the updated `last_processed_block` and `first_header` flag.
     /// Takes `pending_logs` by mutable reference and clears it as needed.
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_lines)]
-    async fn handle_block_header(
-        &self,
-        number: u64,
-        timestamp: u64,
-        base_fee_per_gas: Option<u64>,
-        gas_used: u64,
-        gas_limit: u64,
-        pending_logs: &mut Vec<Log>,
-        relevant_topic_set: &HashSet<B256>,
-        last_processed_block: Option<u64>,
-        first_header: bool,
-    ) -> (Option<u64>, bool) {
-        match last_processed_block {
-            None => {
-                // Cold start — no backfill was done.
-                // Record this block as the starting point and skip processing.
-                // The next block header will trigger normal processing.
-                pending_logs.clear();
-                // Send an empty batch with block metadata so Python learns about this block
-                {
-                    let mut engine = self.engine.lock();
-                    engine.process_block(&[], number, &BlockMetadata { timestamp, base_fee_per_gas, gas_used, gas_limit });
-                }
-                (Some(number), false)
-            }
-            Some(prior_block) if first_header => {
-                // First header after backfill. prior_block (Y-1) was
-                // the last block processed by backfill. This header is
-                // for block Y. We cannot process Y-1 (already done)
-                // and we cannot process Y yet (WS logs are still
-                // arriving for it). Record Y and let the normal case
-                // process it when header Y+1 arrives. Keep WS logs —
-                // they belong to the live range.
-                if number > prior_block + 1 {
-                    // Gap between backfill and this header — backfill it.
-                    log::info!(
-                        "UniswapEnginePump: gap from block {} to {} — backfilling",
-                        prior_block + 1,
-                        number,
-                    );
-                    let mut lpb = prior_block;
-                    self.backfill_range(
-                        prior_block + 1,
-                        number - 1,
-                        relevant_topic_set,
-                        &mut lpb,
-                    )
-                    .await;
-                    // Discard WS logs that overlap the gap backfill
-                    pending_logs.retain(|log| {
-                        log.block_number.unwrap_or(0) >= number
-                    });
-                }
-                // Advance past this header. Block Y will be processed
-                // when header Y+1 arrives via the normal case.
-                (Some(number), false)
-            }
-            Some(prior_block) if number == prior_block + 1 => {
-                // Normal case: the new header is exactly one block
-                // ahead. Process the prior block with buffered WS logs.
-                let metadata = BlockMetadata { timestamp, base_fee_per_gas, gas_used, gas_limit };
-                self.process_completed_block(
-                    prior_block,
-                    pending_logs,
-                    relevant_topic_set,
-                    &metadata,
-                )
-                .await;
-                pending_logs.clear();
-                (Some(number), first_header)
-            }
-            Some(prior_block) if number > prior_block + 1 => {
-                // Gap detected during steady-state operation
-                // (e.g., after a 60s timeout recovery).
-                // Backfill the missing blocks, then process the
-                // prior block with WS logs.
-                log::info!(
-                    "UniswapEnginePump: gap from block {} to {} — backfilling",
-                    prior_block + 1,
-                    number,
-                );
-                let mut lpb = prior_block;
-                self.backfill_range(
-                    prior_block + 1,
-                    number - 1,
-                    relevant_topic_set,
-                    &mut lpb,
-                )
-                .await;
-                // Process the prior block with WS logs
-                let metadata = BlockMetadata { timestamp, base_fee_per_gas, gas_used, gas_limit };
-                self.process_completed_block(
-                    prior_block,
-                    pending_logs,
-                    relevant_topic_set,
-                    &metadata,
-                )
-                .await;
-                pending_logs.clear();
-                (Some(number), first_header)
-            }
-            Some(prior_block) => {
-                // number <= prior_block: stale or duplicate header.
-                // Ignore it — we're already past this block.
-                log::debug!(
-                    "UniswapEnginePump: ignoring stale header {number} (current: {prior_block})"
-                );
-                (last_processed_block, first_header)
-            }
-        }
-    }
-
-    /// Process the completed block using buffered logs, with backfill on empty.
-    ///
-    /// Returns `true` if logs were processed from the WS buffer, `false` if
-    /// a backfill was attempted (or the block was truly empty).
-    async fn process_completed_block(
-        &self,
-        block_to_process: u64,
-        pending_logs: &[Log],
-        relevant_topic_set: &HashSet<B256>,
-        metadata: &BlockMetadata,
-    ) -> bool {
-        let logs_received = !pending_logs.is_empty();
-
-        // Filter the buffered logs to relevant events only
-        let filtered = filter_relevant_logs(pending_logs, relevant_topic_set);
-
-        if logs_received && !filtered.is_empty() {
-            // Process buffered logs for the completed block
-            self.engine.lock().process_block(&filtered, block_to_process, metadata);
-            log::debug!(
-                "UniswapEnginePump: processed block {block_to_process} ({} filtered logs)",
-                filtered.len()
-            );
-            true
-        } else if logs_received && filtered.is_empty() {
-            // Got logs but none were relevant — still need to advance the engine's
-            // block number so staleness checks work correctly
-            self.engine.lock().process_block(&[], block_to_process, metadata);
-            log::debug!(
-                "UniswapEnginePump: processed block {block_to_process} (no relevant logs)"
-            );
-            true
-        } else {
-            // No logs received since last newHeads — backfill to verify
-            log::debug!(
-                "UniswapEnginePump: block {block_to_process} — no logs received, verifying via eth_getLogs"
-            );
-            let backfilled = self
-                .backfill_single_block(block_to_process, relevant_topic_set)
-                .await;
-            if !backfilled {
-                // Block truly had no relevant events — advance engine block number
-                self.engine.lock().process_block(&[], block_to_process, metadata);
-            }
-            false
-        }
-    }
-
-    /// Handle a 60s timeout by backfilling any missed blocks.
-    async fn handle_timeout(
-        &self,
-        relevant_topic_set: &HashSet<B256>,
-        last_processed_block: &mut Option<u64>,
-    ) {
-        log::warn!(
-            "UniswapEnginePump: no activity for {BACKFILL_TIMEOUT_SECS}s — attempting backfill"
-        );
-        let current_block = match self.provider.provider_arc().get_block_number().await {
-            Ok(n) => n,
-            Err(e) => {
-                log::error!("UniswapEnginePump: backfill failed — can't get block number: {e}");
-                return; // The timeout will re-trigger next iteration
-            }
-        };
-
-        if let Some(lpb) = *last_processed_block {
-            if current_block > lpb {
-                let mut lpb_mut = lpb;
-                self.backfill_range(
-                    lpb + 1,
-                    current_block,
-                    relevant_topic_set,
-                    &mut lpb_mut,
-                )
-                .await;
-                *last_processed_block = Some(lpb_mut);
-            }
-        }
-    }
-
-    /// Backfill a single block via `eth_getLogs`.
-    ///
-    /// Returns `true` if logs were found and processed, `false` if the block
-    /// genuinely had no relevant events.
-    async fn backfill_single_block(
-        &self,
-        block_number: u64,
-        relevant_topic_set: &HashSet<B256>,
-    ) -> bool {
-        let filter = build_backfill_filter(block_number, block_number);
-        let logs = match self.provider.provider_arc().get_logs(&filter).await {
-            Ok(logs) => logs,
-            Err(e) => {
-                log::warn!(
-                    "UniswapEnginePump: backfill eth_getLogs failed for block {block_number}: {e}"
-                );
-                return false;
-            }
-        };
-
-        let filtered = filter_relevant_logs(&logs, relevant_topic_set);
-        if filtered.is_empty() {
-            log::debug!("UniswapEnginePump: backfill confirmed block {block_number} has no relevant events");
-            return false;
-        }
-
-        self.engine.lock().process_block(&filtered, block_number, &BlockMetadata::default());
-        log::info!(
-            "UniswapEnginePump: backfilled block {block_number} with {} events",
-            filtered.len()
-        );
-        true
-    }
-
     /// Backfill a range of blocks via `eth_getLogs`.
     ///
     /// Processes each block in the range sequentially.

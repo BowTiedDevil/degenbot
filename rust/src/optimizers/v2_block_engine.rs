@@ -138,14 +138,14 @@ impl V2BlockEngine {
     ///
     /// Sync carries absolute reserves — last-event-wins per pool per block.
     /// Both orientations are updated from the same event.
-    pub fn apply_sync(&mut self, pool_address: Address, reserve0: U256, reserve1: U256) {
+    pub fn apply_sync(&mut self, pool_address: Address, reserve0: U256, reserve1: U256) -> Option<u64> {
         let Some(&(forward_id, reverse_id)) = self.pool_addresses.get(&pool_address) else {
-            return; // Not a registered pool — skip
+            return None; // Not a registered pool — skip
         };
 
         // Get gamma_numer/fee_denom from existing forward entry
         let Some(forward_state) = self.pools.get(&forward_id) else {
-            return;
+            return None;
         };
         let gamma_numer = forward_state.gamma_numer;
         let fee_denom = forward_state.fee_denom;
@@ -161,6 +161,8 @@ impl V2BlockEngine {
             reverse_id,
             IntHopState::new(reserve1, reserve0, gamma_numer, fee_denom),
         );
+
+        Some(forward_id)
     }
 
     /// Apply Sync updates and return the set of forward pool keys that changed.
@@ -168,12 +170,11 @@ impl V2BlockEngine {
     pub fn apply_sync_updates(&mut self, updates: &[(Address, U256, U256)]) -> HashSet<u64> {
         let mut affected = HashSet::new();
         for &(addr, r0, r1) in updates {
-            let Some(&(forward_id, reverse_id)) = self.pool_addresses.get(&addr) else {
-                continue;
-            };
-            self.apply_sync(addr, r0, r1);
-            affected.insert(forward_id);
-            affected.insert(reverse_id);
+            if let Some(fwd_key) = self.apply_sync(addr, r0, r1) {
+                affected.insert(fwd_key);
+                // Insert the reverse key too — both orientations may be in paths
+                affected.insert(fwd_key + 1);
+            }
         }
         affected
     }
