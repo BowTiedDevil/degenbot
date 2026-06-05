@@ -955,7 +955,7 @@ async def build_paths(
             continue
 
         path_count += 1
-        if path_count % 100 == 0:
+        if path_count % 1000 == 0:
             bot_logger.info(
                 f"[build_paths] Progress: {path_count} paths registered, "
                 f"{skip_count} skipped, {token_filter_count} token-filtered, "
