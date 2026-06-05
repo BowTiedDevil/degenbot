@@ -910,6 +910,7 @@ pub fn filter_relevant_logs(
 ///
 /// Uses topic filtering server-side to reduce response size. No address
 /// filter — all topic-filtered logs are passed through to the engine.
+#[must_use] 
 pub fn build_backfill_filter(from_block: u64, to_block: u64) -> Filter {
     let mut filter = Filter::new()
         .from_block(from_block)

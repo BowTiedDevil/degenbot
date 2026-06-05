@@ -1870,6 +1870,135 @@ async def dispatch_profitable_results(
         task.add_done_callback(active_tasks.discard)
 
 
+async def consume_result_batches(
+    engine_registry: EngineRegistry,
+    async_w3: AsyncWeb3,
+    executor_address: str,
+    operator_address: str,
+    operator_private_key: str,
+    pending_nonces: set[int],
+    pending_pools: set[int],
+    active_tasks: set[asyncio.Task],
+    current_block_ref: list[int],
+    dry_run: bool,
+    block_times: deque[tuple[int, int]],
+    block_priority_fees: dict[int, dict[int, int]],
+    path_suppression: PathSuppression,
+) -> None:
+    """Consume result batches from the Rust engine and dispatch profitable ones.
+
+    Designed to run as a long-lived asyncio task — started before build_paths
+    so eagerly-solved paths are dispatched during path loading (rolling start),
+    then continues as the permanent main loop after build_paths completes.
+    """
+    bot_logger.info("[consumer] Starting — awaiting result batches from Rust pump")
+
+    async for batch in engine_registry.engine:
+        block_number = batch["solve_block"]
+        block_timestamp = batch["timestamp"]
+        base_fee = batch.get("base_fee_per_gas") or 0
+        gas_used = batch["gas_used"]
+        gas_limit = batch["gas_limit"]
+
+        base_fee_next = next_base_fee(
+            parent_base_fee=base_fee,
+            parent_gas_used=gas_used,
+            parent_gas_limit=gas_limit,
+        )
+        operator_nonce = await async_w3.eth.get_transaction_count(operator_address)
+
+        try:
+            fee_history = await async_w3.eth.fee_history(
+                block_count=1,
+                newest_block=block_number,
+                reward_percentiles=[float(p) for p in FEE_PERCENTILES],
+            )
+            reward = fee_history.get("reward", [[]])
+            if reward and reward[-1]:
+                block_priority_fees[block_number] = dict(
+                    zip(
+                        FEE_PERCENTILES,
+                        reward[-1],
+                        strict=True,
+                    )
+                )
+                if len(block_priority_fees) > FEE_HISTORY_WINDOW:
+                    block_priority_fees.pop(min(block_priority_fees))
+        except Web3Exception:
+            pass
+
+        block_times.append((block_number, block_timestamp))
+        if len(block_times) >= 2:
+            oldest_bn, _oldest_ts = block_times[0]
+            if block_number != oldest_bn:
+                latency = time.time() - block_timestamp
+                bot_logger.info(
+                    f"[{block_number}][+{latency:.1f}s]"
+                    f"[{base_fee / 10**9:.5f}/{base_fee_next / 10**9:.5f}]"
+                )
+
+        current_block_ref[0] = block_number
+
+        # Build results list from fresh + updated entries in the batch
+        results: list[tuple[int, int, int, tuple[int, ...], tuple[int, ...], int]] = []
+        for item in batch["fresh"]:
+            path_id, opt_input, profit, hop_outs, consumed_ins = item
+            results.append((
+                int(path_id),
+                int(opt_input),
+                int(profit),
+                tuple(int(h) for h in hop_outs),
+                tuple(int(c) for c in consumed_ins),
+                block_number,
+            ))
+        for item in batch["updated"]:
+            path_id, opt_input, profit, hop_outs, consumed_ins = item
+            results.append((
+                int(path_id),
+                int(opt_input),
+                int(profit),
+                tuple(int(h) for h in hop_outs),
+                tuple(int(c) for c in consumed_ins),
+                block_number,
+            ))
+
+        # Expired: below threshold, still registered (may reappear)
+        # for path_id in batch["expired"]:
+        #     pass  # No action needed — suppression tracking persists
+
+        # Removed: de-registered, permanently gone
+        for path_id in batch["removed"]:
+            path_suppression.discard(int(path_id))
+
+        if results:
+            # Log top results
+            for pid, inp, pft, _ho, _ci, sb in results[:5]:
+                pi = engine_registry.paths.get(pid)
+                desc = "↔".join(_hop_display_addr(h) for h in pi.hops) if pi else f"path={pid}"
+                bot_logger.info(
+                    f"[engine] {desc} input={inp} profit={pft // 10**9}gwei solve_block={sb}"
+                )
+
+            await dispatch_profitable_results(
+                results=results,
+                engine_registry=engine_registry,
+                async_w3=async_w3,
+                executor_address=executor_address,
+                operator_address=operator_address,
+                operator_private_key=operator_private_key,
+                base_fee_next=base_fee_next,
+                current_block=block_number,
+                operator_nonce=operator_nonce,
+                pending_nonces=pending_nonces,
+                pending_pools=pending_pools,
+                active_tasks=active_tasks,
+                current_block_ref=current_block_ref,
+                dry_run=dry_run,
+                block_priority_fees=block_priority_fees,
+                path_suppression=path_suppression,
+            )
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -2005,12 +2134,31 @@ async def main() -> None:
     engine_registry.engine.resume()
     bot_logger.info(f"[startup] Rust pump resumed (WS={node_ws}, backfill complete)")
 
-    # ── Build paths (before main loop) ──────────────────────────
-    # build_paths must complete before entering the main loop because
-    # find_paths_async's DFS yields with asyncio.sleep(0), which gets
-    # starved by the pump's async for batch in engine consuming results.
-    # The pump's WS subscription buffers events — no data is lost.
-    bot_logger.info("[startup] Starting path loading...")
+    # ── Rolling start: consume results while building paths ─────────
+    # Start the result consumer as a background task BEFORE build_paths,
+    # so eagerly-solved paths are dispatched during path loading instead
+    # of waiting until all paths are registered. Both coroutines yield
+    # at await points, so asyncio interleaves them naturally.
+    result_consumer_task = asyncio.create_task(
+        consume_result_batches(
+            engine_registry=engine_registry,
+            async_w3=async_w3,
+            executor_address=executor_address,
+            operator_address=operator_address,
+            operator_private_key=operator_private_key,
+            pending_nonces=pending_nonces,
+            pending_pools=pending_pools,
+            active_tasks=active_tasks,
+            current_block_ref=current_block_ref,
+            dry_run=dry_run,
+            block_times=block_times,
+            block_priority_fees=block_priority_fees,
+            path_suppression=path_suppression,
+        ),
+        name="result-consumer",
+    )
+
+    bot_logger.info("[startup] Starting path loading (rolling start — consuming results concurrently)...")
     await build_paths(
         bot=bot,
         engine_registry=engine_registry,
@@ -2020,118 +2168,15 @@ async def main() -> None:
         v3_snapshot=v3_snapshot,
         v4_snapshot=v4_snapshot,
     )
-    bot_logger.info("[startup] Path loading complete")
+    bot_logger.info("[startup] Path loading complete — result consumer continues running")
 
     # Per-pool verification already confirmed every pool's liquidity
     # map at construction time. No additional bulk verification needed.
 
-    # ── Main loop: consume result batches from Rust engine ──────────
-    bot_logger.info("[startup] Entering main loop — awaiting result batches from Rust pump")
-
-    async for batch in engine_registry.engine:
-        block_number = batch["solve_block"]
-        block_timestamp = batch["timestamp"]
-        base_fee = batch.get("base_fee_per_gas") or 0
-        gas_used = batch["gas_used"]
-        gas_limit = batch["gas_limit"]
-
-        base_fee_next = next_base_fee(
-            parent_base_fee=base_fee,
-            parent_gas_used=gas_used,
-            parent_gas_limit=gas_limit,
-        )
-        operator_nonce = await async_w3.eth.get_transaction_count(operator_address)
-
-        try:
-            fee_history = await async_w3.eth.fee_history(
-                block_count=1,
-                newest_block=block_number,
-                reward_percentiles=[float(p) for p in FEE_PERCENTILES],
-            )
-            reward = fee_history.get("reward", [[]])
-            if reward and reward[-1]:
-                block_priority_fees[block_number] = dict(
-                    zip(
-                        FEE_PERCENTILES,
-                        reward[-1],
-                        strict=True,
-                    )
-                )
-                if len(block_priority_fees) > FEE_HISTORY_WINDOW:
-                    block_priority_fees.pop(min(block_priority_fees))
-        except Web3Exception:
-            pass
-
-        block_times.append((block_number, block_timestamp))
-        if len(block_times) >= 2:
-            oldest_bn, _oldest_ts = block_times[0]
-            if block_number != oldest_bn:
-                latency = time.time() - block_timestamp
-                bot_logger.info(
-                    f"[{block_number}][+{latency:.1f}s]"
-                    f"[{base_fee / 10**9:.5f}/{base_fee_next / 10**9:.5f}]"
-                )
-
-        current_block_ref[0] = block_number
-
-        # Build results list from fresh + updated entries in the batch
-        results: list[tuple[int, int, int, tuple[int, ...], tuple[int, ...], int]] = []
-        for item in batch["fresh"]:
-            path_id, opt_input, profit, hop_outs, consumed_ins = item
-            results.append((
-                int(path_id),
-                int(opt_input),
-                int(profit),
-                tuple(int(h) for h in hop_outs),
-                tuple(int(c) for c in consumed_ins),
-                block_number,
-            ))
-        for item in batch["updated"]:
-            path_id, opt_input, profit, hop_outs, consumed_ins = item
-            results.append((
-                int(path_id),
-                int(opt_input),
-                int(profit),
-                tuple(int(h) for h in hop_outs),
-                tuple(int(c) for c in consumed_ins),
-                block_number,
-            ))
-
-        # Expired: below threshold, still registered (may reappear)
-        # for path_id in batch["expired"]:
-        #     pass  # No action needed — suppression tracking persists
-
-        # Removed: de-registered, permanently gone
-        for path_id in batch["removed"]:
-            path_suppression.discard(int(path_id))
-
-        if results:
-            # Log top results
-            for pid, inp, pft, _ho, _ci, sb in results[:5]:
-                pi = engine_registry.paths.get(pid)
-                desc = "↔".join(_hop_display_addr(h) for h in pi.hops) if pi else f"path={pid}"
-                bot_logger.info(
-                    f"[engine] {desc} input={inp} profit={pft // 10**9}gwei solve_block={sb}"
-                )
-
-            await dispatch_profitable_results(
-                results=results,
-                engine_registry=engine_registry,
-                async_w3=async_w3,
-                executor_address=executor_address,
-                operator_address=operator_address,
-                operator_private_key=operator_private_key,
-                base_fee_next=base_fee_next,
-                current_block=block_number,
-                operator_nonce=operator_nonce,
-                pending_nonces=pending_nonces,
-                pending_pools=pending_pools,
-                active_tasks=active_tasks,
-                current_block_ref=current_block_ref,
-                dry_run=dry_run,
-                block_priority_fees=block_priority_fees,
-                path_suppression=path_suppression,
-            )
+    # The result consumer task runs indefinitely (it blocks on
+    # async for batch in engine). Just await it — this is the
+    # main loop now.
+    await result_consumer_task
 
 
 if __name__ == "__main__":
