@@ -60,7 +60,7 @@ const INT128_MAX: U256 = U256::from_limbs([0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFF
 enum EnginePhase {
     /// Engine just created, no connections.
     Created = 0,
-    /// WS subscribe() completed, first block observed.
+    /// WS `subscribe()` completed, first block observed.
     Subscribed = 1,
     /// Snapshot data loaded into Rust (at least one of V3/V4).
     SnapshotLoaded = 2,
@@ -78,8 +78,7 @@ impl EnginePhase {
             Ok(())
         } else {
             Err(format!(
-                "Cannot call {method_name}: engine is in phase {:?}, but requires {:?}",
-                self, required
+                "Cannot call {method_name}: engine is in phase {self:?}, but requires {required:?}"
             ))
         }
     }
@@ -90,8 +89,7 @@ impl EnginePhase {
             Ok(())
         } else {
             Err(format!(
-                "Cannot call {method_name}: engine is already in phase {:?} (requires before {:?})",
-                self, phase
+                "Cannot call {method_name}: engine is already in phase {self:?} (requires before {phase:?})"
             ))
         }
     }
@@ -113,7 +111,7 @@ pub enum PoolTickCoverage {
 /// V3 snapshot data: pool address → tick data (consumed at registration).
 type V3SnapshotData = HashMap<Address, HashMap<i32, crate::bot_core::TickInfo>>;
 
-/// V4 snapshot data: (pool_manager, pool_id) → tick data (consumed at registration).
+/// V4 snapshot data: (`pool_manager`, `pool_id`) → tick data (consumed at registration).
 type V4SnapshotData = HashMap<(Address, [u8; 32]), HashMap<i32, crate::bot_core::TickInfo>>;
 
 // ---------------------------------------------------------------------------
@@ -376,6 +374,7 @@ impl UniswapEngine {
     }
 
     /// Access the V3 engine (immutable).
+    #[must_use] 
     pub fn v3_engine_ref(&self) -> &V3BlockEngine {
         &self.v3_engine
     }
@@ -978,7 +977,7 @@ impl UniswapEngine {
                 }
             } else if *topic0 == crate::bot_core::v3_mint_burn_decoder::V3_MINT_TOPIC {
                 if let Some(event) = decode_v3_mint_log(log) {
-                    self.v3_engine.apply_liquidity_update(
+                    self.v3_engine.buffer_backfill_liquidity_update(
                         event.pool_address,
                         event.tick_lower,
                         event.tick_upper,
@@ -989,7 +988,7 @@ impl UniswapEngine {
                 }
             } else if *topic0 == crate::bot_core::v3_mint_burn_decoder::V3_BURN_TOPIC {
                 if let Some(event) = decode_v3_burn_log(log) {
-                    self.v3_engine.apply_liquidity_update(
+                    self.v3_engine.buffer_backfill_liquidity_update(
                         event.pool_address,
                         event.tick_lower,
                         event.tick_upper,
@@ -1015,7 +1014,7 @@ impl UniswapEngine {
                 }
             } else if *topic0 == crate::bot_core::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC {
                 if let Some(event) = decode_v4_modify_liquidity_log(log) {
-                    self.v4_engine.apply_liquidity_update(
+                    self.v4_engine.buffer_backfill_liquidity_update(
                         log.address(),
                         event.pool_id,
                         event.tick_lower,
@@ -2529,8 +2528,17 @@ pub struct PyUniswapArbEngine {
     verify_rpc_url: parking_lot::Mutex<Option<String>>,
     /// Optional `StateView` contract address for V4 verification.
     verify_state_view: parking_lot::Mutex<Option<Address>>,
+    /// The snapshot block — the block at which the DB tick data was captured.
+    /// Set automatically by `backfill_from_snapshot()`. Verification compares
+    /// the raw snapshot `tick_data` (before buffer) against on-chain at this block.
+    verify_snapshot_block: parking_lot::Mutex<Option<u64>>,
+    /// The backfill block — the last block processed by backfill, before the
+    /// WS pump starts. Set automatically by `backfill_from_snapshot()`.
+    /// Verification compares engine state (snapshot + backfill buffer) against
+    /// on-chain at this block.
+    verify_backfill_block: parking_lot::Mutex<Option<u64>>,
     /// Engine lifecycle phase (Plan 098).
-    /// Enforces ordering: Created → Subscribed → SnapshotLoaded → Backfilled → Resumed.
+    /// Enforces ordering: Created → Subscribed → `SnapshotLoaded` → Backfilled → Resumed.
     phase: std::sync::atomic::AtomicU8,
     /// V3 snapshot tick data, loaded via `load_v3_snapshot()` and consumed
     /// at registration time. One-way transfer: `remove()` not `clone()`.
@@ -2768,7 +2776,7 @@ impl PyUniswapArbEngine {
                 }
                 let gross_lo = u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
                 let gross_hi = u64::from_le_bytes(data[offset + 8..offset + 16].try_into().unwrap());
-                let liquidity_gross = (gross_hi as u128) << 64 | (gross_lo as u128);
+                let liquidity_gross = u128::from(gross_hi) << 64 | u128::from(gross_lo);
                 offset += 16;
 
                 // liquidity_net (16 bytes LE, i128)
@@ -2778,7 +2786,7 @@ impl PyUniswapArbEngine {
                 }
                 let net_lo = u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
                 let net_hi = u64::from_le_bytes(data[offset + 8..offset + 16].try_into().unwrap());
-                let unsigned_net = (net_hi as u128) << 64 | (net_lo as u128);
+                let unsigned_net = u128::from(net_hi) << 64 | u128::from(net_lo);
                 let liquidity_net = unsigned_net as i128;
                 offset += 16;
 
@@ -2866,7 +2874,7 @@ impl PyUniswapArbEngine {
                     }
                     let gross_lo = u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
                     let gross_hi = u64::from_le_bytes(data[offset + 8..offset + 16].try_into().unwrap());
-                    let liquidity_gross = (gross_hi as u128) << 64 | (gross_lo as u128);
+                    let liquidity_gross = u128::from(gross_hi) << 64 | u128::from(gross_lo);
                     offset += 16;
 
                     // liquidity_net (16 bytes LE, i128)
@@ -2876,7 +2884,7 @@ impl PyUniswapArbEngine {
                     }
                     let net_lo = u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
                     let net_hi = u64::from_le_bytes(data[offset + 8..offset + 16].try_into().unwrap());
-                    let unsigned_net = (net_hi as u128) << 64 | (net_lo as u128);
+                    let unsigned_net = u128::from(net_hi) << 64 | u128::from(net_lo);
                     let liquidity_net = unsigned_net as i128;
                     offset += 16;
 
@@ -2907,6 +2915,8 @@ impl PyUniswapArbEngine {
             verify_on_register: std::sync::atomic::AtomicBool::new(false),
             verify_rpc_url: parking_lot::Mutex::new(None),
             verify_state_view: parking_lot::Mutex::new(None),
+            verify_snapshot_block: parking_lot::Mutex::new(None),
+            verify_backfill_block: parking_lot::Mutex::new(None),
             phase: std::sync::atomic::AtomicU8::new(EnginePhase::Created as u8),
             v3_snapshot: parking_lot::Mutex::new(None),
             v4_snapshot: parking_lot::Mutex::new(None),
@@ -3035,8 +3045,8 @@ impl PyUniswapArbEngine {
     /// Insert a single V3 pool's tick data into the in-progress snapshot stream.
     ///
     /// Args:
-    ///     pool_address: Hex string of the pool address.
-    ///     tick_data: Dict mapping tick_index (int) → (liquidity_gross, liquidity_net) tuple.
+    ///     `pool_address`: Hex string of the pool address.
+    ///     `tick_data`: Dict mapping `tick_index` (int) → (`liquidity_gross`, `liquidity_net`) tuple.
     fn insert_v3_pool_snapshot(
         &self,
         pool_address: &str,
@@ -3054,19 +3064,16 @@ impl PyUniswapArbEngine {
         }
 
         let mut snap = self.v3_snapshot.lock();
-        match &mut *snap {
-            Some(map) => {
-                map.insert(addr, rust_tick_data);
-            }
-            None => {
-                let msg = "No V3 snapshot stream in progress. Call begin_v3_snapshot_stream() first.";
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
-            }
+        if let Some(map) = &mut *snap {
+            map.insert(addr, rust_tick_data);
+        } else {
+            let msg = "No V3 snapshot stream in progress. Call begin_v3_snapshot_stream() first.";
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
         }
         Ok(())
     }
 
-    /// Finalize the V3 snapshot stream and transition to SnapshotLoaded phase.
+    /// Finalize the V3 snapshot stream and transition to `SnapshotLoaded` phase.
     fn finish_v3_snapshot(&self) -> PyResult<()> {
         let phase = self.current_phase();
         if self.v3_snapshot.lock().is_none() {
@@ -3097,9 +3104,9 @@ impl PyUniswapArbEngine {
     /// Insert a single V4 pool's tick data into the in-progress snapshot stream.
     ///
     /// Args:
-    ///     pool_manager: Hex string of the pool manager address.
-    ///     pool_id_hex: Hex string of the 32-byte pool ID.
-    ///     tick_data: Dict mapping tick_index (int) → (liquidity_gross, liquidity_net) tuple.
+    ///     `pool_manager`: Hex string of the pool manager address.
+    ///     `pool_id_hex`: Hex string of the 32-byte pool ID.
+    ///     `tick_data`: Dict mapping `tick_index` (int) → (`liquidity_gross`, `liquidity_net`) tuple.
     fn insert_v4_pool_snapshot(
         &self,
         pool_manager: &str,
@@ -3120,19 +3127,16 @@ impl PyUniswapArbEngine {
         }
 
         let mut snap = self.v4_snapshot.lock();
-        match &mut *snap {
-            Some(map) => {
-                map.insert((pm_addr, pool_id), rust_tick_data);
-            }
-            None => {
-                let msg = "No V4 snapshot stream in progress. Call begin_v4_snapshot_stream() first.";
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
-            }
+        if let Some(map) = &mut *snap {
+            map.insert((pm_addr, pool_id), rust_tick_data);
+        } else {
+            let msg = "No V4 snapshot stream in progress. Call begin_v4_snapshot_stream() first.";
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
         }
         Ok(())
     }
 
-    /// Finalize the V4 snapshot stream and transition to SnapshotLoaded phase.
+    /// Finalize the V4 snapshot stream and transition to `SnapshotLoaded` phase.
     fn finish_v4_snapshot(&self) -> PyResult<()> {
         let phase = self.current_phase();
         if self.v4_snapshot.lock().is_none() {
@@ -3148,10 +3152,10 @@ impl PyUniswapArbEngine {
     /// Load a V3 liquidity snapshot from a Python dict.
     ///
     /// The dict maps pool address (hex string) → tick data dict,
-    /// where tick data maps tick_index (int) → (liquidity_gross, liquidity_net) tuple.
+    /// where tick data maps `tick_index` (int) → (`liquidity_gross`, `liquidity_net`) tuple.
     ///
     /// This is the fast path — no intermediate binary serialization in Python.
-    /// The Rust side iterates the PyO3 dict and builds the internal HashMap directly.
+    /// The Rust side iterates the `PyO3` dict and builds the internal `HashMap` directly.
     fn load_v3_snapshot_from_py(&self, py_data: &Bound<'_, pyo3::types::PyDict>) -> PyResult<()> {
         let phase = self.current_phase();
         phase.require_before(EnginePhase::Resumed, "load_v3_snapshot_from_py")
@@ -3194,9 +3198,9 @@ impl PyUniswapArbEngine {
 
     /// Load a V4 liquidity snapshot from a Python dict.
     ///
-    /// The dict maps pool_manager address (hex) → inner dict,
-    /// where inner dict maps pool_id (hex) → tick data dict,
-    /// and tick data maps tick_index (int) → (liquidity_gross, liquidity_net) tuple.
+    /// The dict maps `pool_manager` address (hex) → inner dict,
+    /// where inner dict maps `pool_id` (hex) → tick data dict,
+    /// and tick data maps `tick_index` (int) → (`liquidity_gross`, `liquidity_net`) tuple.
     fn load_v4_snapshot_from_py(&self, py_data: &Bound<'_, pyo3::types::PyDict>) -> PyResult<()> {
         let phase = self.current_phase();
         phase.require_before(EnginePhase::Resumed, "load_v4_snapshot_from_py")
@@ -3273,8 +3277,8 @@ impl PyUniswapArbEngine {
     /// Returns the pool key for use in path registration.
     ///
     /// Tick data is resolved automatically from the stored V3 snapshot:
-    /// - Pool found in snapshot → `Tracked` coverage (tick_data consumed via `remove()`)
-    /// - Pool not in snapshot → `Sparse` coverage (empty tick_data)
+    /// - Pool found in snapshot → `Tracked` coverage (`tick_data` consumed via `remove()`)
+    /// - Pool not in snapshot → `Sparse` coverage (empty `tick_data`)
     ///
     /// The buffer is always applied (Plan 098: snapshot data is always stale
     /// from the DB, so the buffer must bring it forward).
@@ -3327,56 +3331,109 @@ impl PyUniswapArbEngine {
 
         let is_tracked = coverage == PoolTickCoverage::Tracked;
 
-        let key = self.engine.lock().v3_engine().register_pool(RegisterV3PoolParams {
-            address: addr,
-            token0: t0,
-            token1: t1,
-            fee,
-            tick_spacing,
-            factory: fac,
-            sqrt_price_x96: sp,
-            liquidity,
-            tick,
-            tick_data: rust_tick_data,
-            update_block: block,
-            coverage,
-        });
+        // Clone tick_data for snapshot verification before it's moved into register_pool.
+        let tick_data_for_snapshot_verify = if is_tracked { Some(rust_tick_data.clone()) } else { None };
+
+        // Stage 1: Register the pool with DB snapshot tick_data (no buffer applied yet).
+        // This creates the pool entry at the snapshot block state.
+        let (key, backfill_verify_snapshot) = {
+            let mut engine = self.engine.lock();
+            let key = engine.v3_engine().register_pool(RegisterV3PoolParams {
+                address: addr,
+                token0: t0,
+                token1: t1,
+                fee,
+                tick_spacing,
+                factory: fac,
+                sqrt_price_x96: sp,
+                liquidity,
+                tick,
+                tick_data: rust_tick_data,
+                update_block: block,
+                coverage,
+            });
+
+            // Stage 2: Apply backfill buffer → pool at backfill boundary.
+            engine.v3_engine().apply_backfill_buffer(&addr);
+
+            // Snapshot pool state at backfill boundary for verification.
+            let backfill_snapshot = if is_tracked {
+                engine.v3_engine().get_pool(key).cloned()
+            } else {
+                None
+            };
+
+            // Stage 3: Apply pump buffer → pool at pump's current block (ready for solving).
+            engine.v3_engine().apply_pump_buffer(&addr);
+
+            (key, backfill_snapshot)
+        };
+        // Lock released — pump is unblocked.
 
         // If verify_on_register is enabled and this pool was registered from
-        // snapshot data (Tracked), verify tick data synchronously against
-        // on-chain state and raise on mismatch.
+        // snapshot data (Tracked), verify tick data at two deterministic
+        // points captured under the lock:
+        // 1. Snapshot block: raw tick_data (before any buffer) vs on-chain.
+        //    Catches snapshot loading/serialization bugs.
+        // 2. Backfill block: pool state after backfill buffer vs on-chain.
+        //    Catches event decoding and buffer application bugs.
         if is_tracked && self.verify_on_register.load(std::sync::atomic::Ordering::Relaxed) {
             let rpc_url = self.verify_rpc_url.lock().clone();
             if let Some(url) = rpc_url {
-                // Snapshot tick data while lock is held.
-                let verify_block;
-                let pool_snapshot = {
-                    let mut engine = self.engine.lock();
-                    verify_block = engine.last_processed_block().unwrap_or(0);
-                    let mut map = HashMap::new();
-                    if let Some(pool) = engine.v3_engine().get_pool(key) {
-                        map.insert(key, pool.clone());
-                    }
-                    map
-                };
+                let snapshot_block = *self.verify_snapshot_block.lock();
+                let backfill_block = *self.verify_backfill_block.lock();
 
-                let runtime = crate::runtime::get_runtime();
-                let addr_str = address.to_string();
-                let result = runtime.block_on(async {
-                    let provider = crate::provider::AlloyProvider::new(&url, 3)
-                        .await
-                        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
-                            format!("verify_on_register: V3 pool {addr_str}: failed to create provider: {e}")
-                        ))?;
-                    crate::bot_core::liquidity_verifier::verify_v3_pools(
-                        &provider, Address::ZERO, &pool_snapshot, Some(verify_block),
-                    ).await.map_err(|mismatch| {
-                        pyo3::exceptions::PyRuntimeError::new_err(
-                            format!("V3 pool {addr_str} at block {verify_block}: tick data mismatch: {mismatch}")
-                        )
-                    })
-                });
-                result?;
+                // ── Check 1: Snapshot block ────────────────────
+                // Compare raw tick_data (before buffer) against on-chain.
+                // This validates the snapshot loading path.
+                if let (Some(snap_blk), Some(td)) = (snapshot_block, &tick_data_for_snapshot_verify) {
+                    let runtime = crate::runtime::get_runtime();
+                    let addr_str = address.to_string();
+                    let result = runtime.block_on(async {
+                        let provider = crate::provider::AlloyProvider::new(&url, 3)
+                            .await
+                            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
+                                format!("verify snapshot: V3 pool {addr_str}: failed to create provider: {e}")
+                            ))?;
+                        crate::bot_core::liquidity_verifier::verify_v3_liquidity_map(
+                            &provider,
+                            addr,
+                            td,
+                            snap_blk,
+                        ).await.map_err(|mismatch| {
+                            pyo3::exceptions::PyRuntimeError::new_err(
+                                format!("V3 pool {addr_str} at snapshot block {snap_blk}: tick data mismatch: {mismatch}")
+                            )
+                        })
+                    });
+                    result?;
+                }
+
+                // ── Check 2: Backfill block ────────────────────
+                // Compare pool state after backfill buffer against on-chain.
+                // This validates event decoding and buffer application.
+                if let (Some(bf_blk), Some(pool_snapshot)) = (backfill_block, backfill_verify_snapshot) {
+                    let mut pool_map = HashMap::new();
+                    pool_map.insert(key, pool_snapshot);
+
+                    let runtime = crate::runtime::get_runtime();
+                    let addr_str = address.to_string();
+                    let result = runtime.block_on(async {
+                        let provider = crate::provider::AlloyProvider::new(&url, 3)
+                            .await
+                            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
+                                format!("verify backfill: V3 pool {addr_str}: failed to create provider: {e}")
+                            ))?;
+                        crate::bot_core::liquidity_verifier::verify_v3_pools(
+                            &provider, Address::ZERO, &pool_map, Some(bf_blk),
+                        ).await.map_err(|mismatch| {
+                            pyo3::exceptions::PyRuntimeError::new_err(
+                                format!("V3 pool {addr_str} at backfill block {bf_blk}: tick data mismatch: {mismatch}")
+                            )
+                        })
+                    });
+                    result?;
+                }
             }
         }
 
@@ -3390,8 +3447,8 @@ impl PyUniswapArbEngine {
     /// are rejected. Dynamic-fee pools (fee=0x100000) are also rejected.
     ///
     /// Tick data is resolved automatically from the stored V4 snapshot:
-    /// - Pool found in snapshot → `Tracked` coverage (tick_data consumed via `remove()`)
-    /// - Pool not in snapshot → `Sparse` coverage (empty tick_data)
+    /// - Pool found in snapshot → `Tracked` coverage (`tick_data` consumed via `remove()`)
+    /// - Pool not in snapshot → `Sparse` coverage (empty `tick_data`)
     ///
     /// The buffer is always applied (Plan 098: snapshot data is always stale
     /// from the DB, so the buffer must bring it forward).
@@ -3449,61 +3506,116 @@ impl PyUniswapArbEngine {
 
         let is_tracked = coverage == PoolTickCoverage::Tracked;
 
-        let key = self.engine.lock().v4_engine().register_pool(RegisterV4PoolParams {
-            pool_manager: pm,
-            pool_id,
-            pool_key: crate::optimizers::v4_block_engine::V4PoolKey {
-                currency0: c0,
-                currency1: c1,
-                fee,
-                tick_spacing,
-                hooks: Address::ZERO, // Not needed for solving; hook filtering already done
-            },
-            hook_flags,
-            sqrt_price_x96: sp,
-            liquidity,
-            tick,
-            tick_data: rust_tick_data,
-            update_block: block,
-            coverage,
-        }).map_err(pyo3::exceptions::PyValueError::new_err)?;
+        // Clone tick_data for snapshot verification before it's moved into register_pool.
+        let tick_data_for_snapshot_verify = if is_tracked { Some(rust_tick_data.clone()) } else { None };
+
+        // Stage 1: Register the pool with DB snapshot tick_data (no buffer applied yet).
+        // This creates the pool entry at the snapshot block state.
+        let (key, backfill_verify_snapshot) = {
+            let mut engine = self.engine.lock();
+            let key = engine.v4_engine().register_pool(RegisterV4PoolParams {
+                pool_manager: pm,
+                pool_id,
+                pool_key: crate::optimizers::v4_block_engine::V4PoolKey {
+                    currency0: c0,
+                    currency1: c1,
+                    fee,
+                    tick_spacing,
+                    hooks: Address::ZERO, // Not needed for solving; hook filtering already done
+                },
+                hook_flags,
+                sqrt_price_x96: sp,
+                liquidity,
+                tick,
+                tick_data: rust_tick_data,
+                update_block: block,
+                coverage,
+            }).map_err(pyo3::exceptions::PyValueError::new_err)?;
+
+            // Stage 2: Apply backfill buffer → pool at backfill boundary.
+            engine.v4_engine().apply_backfill_buffer(pm, pool_id);
+
+            // Snapshot pool state at backfill boundary for verification.
+            let backfill_snapshot = if is_tracked {
+                engine.v4_engine().get_pool(key).cloned()
+            } else {
+                None
+            };
+
+            // Stage 3: Apply pump buffer → pool at pump's current block (ready for solving).
+            engine.v4_engine().apply_pump_buffer(pm, pool_id);
+
+            (key, backfill_snapshot)
+        };
+        // Lock released — pump is unblocked.
 
         // If verify_on_register is enabled and this pool was registered from
-        // snapshot data (Tracked), verify tick data synchronously against
-        // on-chain state and raise on mismatch.
+        // snapshot data (Tracked), verify tick data at two deterministic
+        // points captured under the lock:
+        // 1. Snapshot block: raw tick_data (before any buffer) vs on-chain.
+        //    Catches snapshot loading/serialization bugs.
+        // 2. Backfill block: pool state after backfill buffer vs on-chain.
+        //    Catches event decoding and buffer application bugs.
         if is_tracked && self.verify_on_register.load(std::sync::atomic::Ordering::Relaxed) {
             let rpc_url = self.verify_rpc_url.lock().clone();
             let state_view = *self.verify_state_view.lock();
             if let (Some(url), Some(sv)) = (rpc_url, state_view) {
-                // Snapshot tick data while lock is held.
-                let verify_block;
-                let pool_snapshot = {
-                    let mut engine = self.engine.lock();
-                    verify_block = engine.last_processed_block().unwrap_or(0);
-                    let mut map = HashMap::new();
-                    if let Some(pool) = engine.v4_engine().get_pool(key) {
-                        map.insert(key, pool.clone());
-                    }
-                    map
-                };
+                let snapshot_block = *self.verify_snapshot_block.lock();
+                let backfill_block = *self.verify_backfill_block.lock();
 
-                let runtime = crate::runtime::get_runtime();
-                let pool_id_str = pool_id_hex.to_string();
-                let result = runtime.block_on(async {
-                    let provider = crate::provider::AlloyProvider::new(&url, 3)
-                        .await
-                        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
-                            format!("verify_on_register: V4 pool {pool_id_str}: failed to create provider: {e}")
-                        ))?;
-                    crate::bot_core::liquidity_verifier::verify_v4_pools(
-                        &provider, sv, &pool_snapshot, Some(verify_block),
-                    ).await.map_err(|mismatch| {
-                        pyo3::exceptions::PyRuntimeError::new_err(
-                            format!("V4 pool {pool_id_str} at block {verify_block}: tick data mismatch: {mismatch}")
-                        )
-                    })
-                });
-                result?;
+                // ── Check 1: Snapshot block ────────────────────
+                // Compare raw tick_data (before buffer) against on-chain.
+                // This validates the snapshot loading path.
+                if let (Some(snap_blk), Some(td)) = (snapshot_block, &tick_data_for_snapshot_verify) {
+                    let runtime = crate::runtime::get_runtime();
+                    let pool_id_str = pool_id_hex.to_string();
+                    let pid_for_verify = pool_id;
+                    let result = runtime.block_on(async {
+                        let provider = crate::provider::AlloyProvider::new(&url, 3)
+                            .await
+                            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
+                                format!("verify snapshot: V4 pool {pool_id_str}: failed to create provider: {e}")
+                            ))?;
+                        crate::bot_core::liquidity_verifier::verify_v4_liquidity_map(
+                            &provider,
+                            sv,
+                            pid_for_verify,
+                            td,
+                            snap_blk,
+                        ).await.map_err(|mismatch| {
+                            pyo3::exceptions::PyRuntimeError::new_err(
+                                format!("V4 pool {pool_id_str} at snapshot block {snap_blk}: tick data mismatch: {mismatch}")
+                            )
+                        })
+                    });
+                    result?;
+                }
+
+                // ── Check 2: Backfill block ────────────────────
+                // Compare pool state after backfill buffer against on-chain.
+                // This validates event decoding and buffer application.
+                if let (Some(bf_blk), Some(pool_snapshot)) = (backfill_block, backfill_verify_snapshot) {
+                    let mut pool_map = HashMap::new();
+                    pool_map.insert(key, pool_snapshot);
+
+                    let runtime = crate::runtime::get_runtime();
+                    let pool_id_str = pool_id_hex.to_string();
+                    let result = runtime.block_on(async {
+                        let provider = crate::provider::AlloyProvider::new(&url, 3)
+                            .await
+                            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
+                                format!("verify backfill: V4 pool {pool_id_str}: failed to create provider: {e}")
+                            ))?;
+                        crate::bot_core::liquidity_verifier::verify_v4_pools(
+                            &provider, sv, &pool_map, Some(bf_blk),
+                        ).await.map_err(|mismatch| {
+                            pyo3::exceptions::PyRuntimeError::new_err(
+                                format!("V4 pool {pool_id_str} at backfill block {bf_blk}: tick data mismatch: {mismatch}")
+                            )
+                        })
+                    });
+                    result?;
+                }
             }
         }
 
@@ -3801,6 +3913,14 @@ impl PyUniswapArbEngine {
             "backfill_from_snapshot: complete — {total_logs} total logs applied across {total_blocks} blocks"
         );
 
+        // Capture verification blocks. These are used by verify_on_register
+        // to check tick data at two boundaries:
+        // 1. snapshot_block: raw DB tick_data (before buffer) vs on-chain
+        // 2. backfill block: engine state (after buffer) vs on-chain
+        *self.verify_snapshot_block.lock() = Some(snapshot_block);
+        let backfill_block = self.engine.lock().last_processed_block().unwrap_or(to_block);
+        *self.verify_backfill_block.lock() = Some(backfill_block);
+
         // Advance phase
         self.set_phase(EnginePhase::Backfilled);
 
@@ -3921,7 +4041,7 @@ impl PyUniswapArbEngine {
     }
 
     /// Debug: return the engine's tick data for a V3 pool address as a Python dict.
-    /// Maps tick_index (int) → (liquidity_gross: int, liquidity_net: int) tuple.
+    /// Maps `tick_index` (int) → (`liquidity_gross`: int, `liquidity_net`: int) tuple.
     /// Returns None if the pool is not registered.
     fn debug_v3_tick_data<'py>(&self, py: Python<'py>, pool_address: &str) -> PyResult<Option<Bound<'py, pyo3::types::PyDict>>> {
         let addr = pool_address.parse::<Address>().map_err(|e| {
@@ -4279,6 +4399,8 @@ impl PyUniswapArbEngine {
         let addr: Address = state_view_address.parse().unwrap_or(Address::ZERO);
         *self.verify_state_view.lock() = Some(addr);
     }
+
+
 
     /// Full-sync V3 pool `tick_data` from Python backfill.
     ///
