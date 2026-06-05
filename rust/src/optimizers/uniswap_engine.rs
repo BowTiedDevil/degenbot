@@ -1337,6 +1337,7 @@ mod tests {
                 tick: 0,
                 tick_data,
                 update_block: 0,
+                apply_buffer: true,
             },
         );
 
@@ -1458,6 +1459,7 @@ mod tests {
                 tick: 0,
                 tick_data,
                 update_block: 0,
+                apply_buffer: true,
             },
         );
 
@@ -1499,6 +1501,7 @@ mod tests {
                 tick: 0,
                 tick_data: HashMap::new(),
                 update_block: 0,
+                apply_buffer: true,
             },
         );
 
@@ -1780,6 +1783,7 @@ mod tests {
                 tick: 0,
                 tick_data: tick_data_a,
                 update_block: 0,
+                apply_buffer: true,
             },
         );
 
@@ -1819,6 +1823,7 @@ mod tests {
                 tick: -60,
                 tick_data: tick_data_b,
                 update_block: 0,
+                apply_buffer: true,
             },
         );
 
@@ -1890,6 +1895,7 @@ mod tests {
                 tick: 0,
                 tick_data,
                 update_block: 0,
+                apply_buffer: true,
             },
         );
 
@@ -1950,6 +1956,7 @@ mod tests {
                 tick: 0,
                 tick_data,
                 update_block: 0,
+                apply_buffer: true,
             },
         );
 
@@ -2067,6 +2074,7 @@ mod tests {
             tick: 0,
             tick_data: std::collections::HashMap::new(),
             update_block: 0,
+            apply_buffer: true,
         });
 
         // V4 pool: pool at extreme price (tick -886983) with massive liquidity
@@ -2170,6 +2178,7 @@ mod tests {
                 tick: 0,
                 tick_data,
                 update_block: 0,
+                apply_buffer: true,
             },
         );
 
@@ -2264,6 +2273,7 @@ mod tests {
             tick: 0,
             tick_data: make_tick_data(),
             update_block: 0,
+            apply_buffer: true,
         });
 
         // Pool 2 at tick 0 with different liquidity (price disagreement)
@@ -2279,6 +2289,7 @@ mod tests {
             tick: 0,
             tick_data: make_tick_data(),
             update_block: 0,
+            apply_buffer: true,
         });
 
         // Pool 3 at tick 0 with third liquidity level
@@ -2294,6 +2305,7 @@ mod tests {
             tick: 0,
             tick_data: make_tick_data(),
             update_block: 0,
+            apply_buffer: true,
         });
 
         assert_eq!(engine.v3_pool_count(), 3);
@@ -2366,6 +2378,7 @@ mod tests {
             tick: 0,
             tick_data,
             update_block: 0,
+            apply_buffer: true,
         });
 
         // V2 pool 2: expensive WETH (1000 WETH / 2M USDC)
@@ -2622,7 +2635,7 @@ impl PyUniswapArbEngine {
     /// Register a V3 pool by contract address and initial state.
     /// Returns the pool key for use in path registration.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (address, token0, token1, fee, tick_spacing, factory, sqrt_price_x96, liquidity, tick, tick_data, block=0))]
+    #[pyo3(signature = (address, token0, token1, fee, tick_spacing, factory, sqrt_price_x96, liquidity, tick, tick_data, block=0, apply_buffer=true))]
     fn register_v3_pool(
         &self,
         address: &str,
@@ -2636,6 +2649,7 @@ impl PyUniswapArbEngine {
         tick: i32,
         tick_data: &Bound<'_, pyo3::types::PyDict>,
         block: u64,
+        apply_buffer: bool,
     ) -> PyResult<u64> {
         let addr = address.parse::<Address>().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
@@ -2679,6 +2693,7 @@ impl PyUniswapArbEngine {
             tick,
             tick_data: rust_tick_data,
             update_block: block,
+            apply_buffer,
         }))
     }
 
