@@ -567,7 +567,6 @@ impl UniswapEnginePump {
                 // Timeout — no activity for 60s. Try to backfill.
                 Err(_) => {
                     self.handle_timeout_eager(
-                        &relevant_topic_set,
                         &mut current_block,
                         &mut last_solved_block,
                         &mut has_logs_this_block,
@@ -606,7 +605,6 @@ impl UniswapEnginePump {
                                 self.backfill_range(
                                     current_block + 1,
                                     number - 1,
-                                    &relevant_topic_set,
                                     &mut current_block,
                                 )
                                 .await;
@@ -635,7 +633,6 @@ impl UniswapEnginePump {
                             self.backfill_range(
                                 current_block + 1,
                                 number - 1,
-                                &relevant_topic_set,
                                 &mut current_block,
                             )
                             .await;
@@ -720,7 +717,6 @@ impl UniswapEnginePump {
     #[allow(unused_assignments)]
     async fn handle_timeout_eager(
         &self,
-        relevant_topic_set: &HashSet<B256>,
         current_block: &mut u64,
         last_solved_block: &mut u64,
         has_logs_this_block: &mut bool,
@@ -741,7 +737,6 @@ impl UniswapEnginePump {
             self.backfill_range(
                 *current_block + 1,
                 latest_block,
-                relevant_topic_set,
                 &mut lpb,
             )
                 .await;
@@ -764,7 +759,6 @@ impl UniswapEnginePump {
         &self,
         from_block: u64,
         to_block: u64,
-        relevant_topic_set: &HashSet<B256>,
         last_processed_block: &mut u64,
     ) {
         if from_block > to_block {
@@ -801,9 +795,10 @@ impl UniswapEnginePump {
             }
 
             let block_logs = logs_by_block.remove(&block).unwrap_or_default();
-            let filtered = filter_relevant_logs(&block_logs, relevant_topic_set);
-            if !filtered.is_empty() {
-                self.engine.lock().process_block(&filtered, block, &BlockMetadata::default());
+            if !block_logs.is_empty() {
+                // process_block calls apply_log per log, which filters by topic
+                // internally — no need for filter_relevant_logs here.
+                self.engine.lock().process_block(&block_logs, block, &BlockMetadata::default());
                 any_processed = true;
             }
             *last_processed_block = block;

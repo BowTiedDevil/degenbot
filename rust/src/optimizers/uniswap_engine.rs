@@ -187,12 +187,15 @@ pub struct UniswapEngine {
     v3_engine: V3BlockEngine,
     /// The V4 engine
     v4_engine: V4BlockEngine,
-    /// Registered mixed paths
-    paths: HashMap<u64, (MixedPath, ResolvedMixedPath)>,
-    /// Reverse index: (`hop_type`, `pool_key`) maps to set of `path_ids` that use this pool
-    pool_to_paths: HashMap<(HopType, u64), HashSet<u64>>,
-    /// Last solved results
-    results: Vec<(u64, SolvePathResult)>,
+    /// Registered path pool refs (immutable after registration).
+    path_pools: HashMap<u64, MixedPath>,
+    /// Resolved path states (mutated on each solve).
+    path_resolved: HashMap<u64, ResolvedMixedPath>,
+    /// Reverse index: (hop_type, pool_key) maps to list of path_ids that use this pool.
+    /// Vec instead of HashSet — sets are typically 1-4 entries, dedup at collection time.
+    pool_to_paths: HashMap<(HopType, u64), Vec<u64>>,
+    /// Last solved results, keyed by path ID for O(1) updates.
+    results: HashMap<u64, SolvePathResult>,
     /// Block number for the last solved results
     results_block: u64,
     /// Last block number processed by `process_block`.
@@ -252,9 +255,10 @@ impl UniswapEngine {
             v2_engine: V2BlockEngine::new(),
             v3_engine: V3BlockEngine::new_with_buffer_max_age(event_buffer_max_age),
             v4_engine: V4BlockEngine::new_with_buffer_max_age(event_buffer_max_age),
-            paths: HashMap::new(),
+            path_pools: HashMap::new(),
+            path_resolved: HashMap::new(),
             pool_to_paths: HashMap::new(),
-            results: Vec::new(),
+            results: HashMap::new(),
             results_block: 0,
             last_processed_block: None,
             pending_new_paths: HashSet::new(),
@@ -324,11 +328,11 @@ impl UniswapEngine {
             self.pool_to_paths
                 .entry((pool_ref.hop_type, pool_ref.pool_key))
                 .or_default()
-                .insert(path_id);
+                .push(path_id);
         }
 
-        self.paths
-            .insert(path_id, (MixedPath { pools: pool_refs }, resolved));
+        self.path_pools.insert(path_id, MixedPath { pools: pool_refs });
+        self.path_resolved.insert(path_id, resolved);
         path_id
     }
 
@@ -359,14 +363,14 @@ impl UniswapEngine {
             self.pool_to_paths
                 .entry((pool_ref.hop_type, pool_ref.pool_key))
                 .or_default()
-                .insert(path_id);
+                .push(path_id);
         }
 
-        // Eagerly solve and append to results if profitable
+        // Eagerly solve and insert into results if profitable
         if resolved.valid {
             if let Some(solve_result) = self.solve_path(&resolved) {
                 if !solve_result.optimal_input.is_zero() && !solve_result.profit.is_zero() {
-                    self.results.push((path_id, solve_result));
+                    self.results.insert(path_id, solve_result);
                 }
             }
         }
@@ -375,27 +379,20 @@ impl UniswapEngine {
         self.pending_new_paths.insert(path_id);
         self.has_unsent_results = true;
 
-        self.paths
-            .insert(path_id, (MixedPath { pools: pool_refs }, resolved));
+        self.path_pools.insert(path_id, MixedPath { pools: pool_refs });
+        self.path_resolved.insert(path_id, resolved);
         path_id
     }
 
     /// Apply a single log event to the appropriate sub-engine immediately.
     ///
-    /// Updates pool state but does NOT solve or send results. The caller
-    /// must call `solve_dirty` to trigger solve and result dispatch.
-    ///
-    /// Returns the set of affected path IDs (looked up from the
-    /// `pool_to_paths` reverse index). The caller can use this to
-    /// enqueue per-path solves.
-    pub fn apply_log(&mut self, log: &Log, block_number: u64) -> HashSet<u64> {
+    /// Updates pool state and the dirty key sets but does NOT solve or send
+    /// results. The caller must call `solve_dirty` to trigger solve and
+    /// result dispatch.
+    pub fn apply_log(&mut self, log: &Log, block_number: u64) {
         let Some(topic) = log.topics().first() else {
-            return HashSet::new();
+            return;
         };
-
-        let mut affected_pools_v2: HashSet<u64> = HashSet::new();
-        let mut affected_pools_v3: HashSet<u64> = HashSet::new();
-        let mut affected_pools_v4: HashSet<u64> = HashSet::new();
 
         if *topic == crate::optimizers::v2_sync_decoder::V2_SYNC_TOPIC {
             if let Some(event) = crate::optimizers::v2_sync_decoder::decode_sync_log(log) {
@@ -404,10 +401,8 @@ impl UniswapEngine {
                     event.reserve0,
                     event.reserve1,
                 ) {
-                    affected_pools_v2.insert(fwd_key);
-                    affected_pools_v2.insert(fwd_key + 1); // reverse key
                     self.dirty_v2.insert(fwd_key);
-                    self.dirty_v2.insert(fwd_key + 1);
+                    self.dirty_v2.insert(fwd_key + 1); // reverse key
                 }
             }
         } else if *topic == crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC {
@@ -420,7 +415,6 @@ impl UniswapEngine {
                     block_number,
                     &[],
                 ) {
-                    affected_pools_v3.insert(key);
                     self.dirty_v3.insert(key);
                 }
             }
@@ -433,7 +427,6 @@ impl UniswapEngine {
                     event.amount.cast_signed(),
                     block_number,
                 ) {
-                    affected_pools_v3.insert(key);
                     self.dirty_v3.insert(key);
                 }
             }
@@ -446,7 +439,6 @@ impl UniswapEngine {
                     -(event.amount.cast_signed()),
                     block_number,
                 ) {
-                    affected_pools_v3.insert(key);
                     self.dirty_v3.insert(key);
                 }
             }
@@ -463,8 +455,6 @@ impl UniswapEngine {
                     },
                     block_number,
                 ) {
-                    affected_pools_v4.insert(fwd_key);
-                    affected_pools_v4.insert(rev_key);
                     self.dirty_v4.insert(fwd_key);
                     self.dirty_v4.insert(rev_key);
                 }
@@ -479,33 +469,11 @@ impl UniswapEngine {
                     event.liquidity_delta,
                     block_number,
                 ) {
-                    affected_pools_v4.insert(fwd_key);
-                    affected_pools_v4.insert(rev_key);
                     self.dirty_v4.insert(fwd_key);
                     self.dirty_v4.insert(rev_key);
                 }
             }
         }
-
-        // Map affected pool keys to affected path IDs
-        let mut affected_paths: HashSet<u64> = HashSet::new();
-        for key in &affected_pools_v2 {
-            if let Some(path_ids) = self.pool_to_paths.get(&(HopType::V2, *key)) {
-                affected_paths.extend(path_ids);
-            }
-        }
-        for key in &affected_pools_v3 {
-            if let Some(path_ids) = self.pool_to_paths.get(&(HopType::V3, *key)) {
-                affected_paths.extend(path_ids);
-            }
-        }
-        for key in &affected_pools_v4 {
-            if let Some(path_ids) = self.pool_to_paths.get(&(HopType::V4, *key)) {
-                affected_paths.extend(path_ids);
-            }
-        }
-
-        affected_paths
     }
 
     /// Solve all paths affected by logs applied since the last `solve_dirty`
@@ -642,37 +610,28 @@ impl UniswapEngine {
             return;
         }
 
-        // Re-resolve affected paths
-        let resolve_work: Vec<(u64, Vec<MixedPoolRef>)> = affected_path_ids
-            .iter()
-            .filter_map(|&path_id| {
-                self.paths
-                    .get(&path_id)
-                    .map(|(path, _)| (path_id, path.pools.clone()))
-            })
-            .collect();
+        // Re-resolve and solve only affected paths — update results in-place
+        // without cloning unchanged entries.
 
-        for (path_id, pool_refs) in &resolve_work {
-            let mut resolved = ResolvedMixedPath::default();
-            self.resolve_path(pool_refs, &mut resolved);
-            if let Some((_, stored)) = self.paths.get_mut(path_id) {
-                *stored = resolved;
-            }
-        }
-
-        // Re-solve affected paths and merge with unchanged results
-        let mut new_results: Vec<(u64, SolvePathResult)> = Vec::with_capacity(self.paths.len());
-
-        // Carry forward unchanged results
-        for (path_id, solve_result) in &self.results {
-            if !affected_path_ids.contains(path_id) {
-                new_results.push((*path_id, solve_result.clone()));
-            }
-        }
-
-        // Solve affected paths
+        // Re-resolve affected paths directly (no clone needed — path_pools is
+        // immutable, path_resolved is mutable, no borrow conflict)
         for &path_id in &affected_path_ids {
-            let Some((_path, resolved)) = self.paths.get(&path_id) else {
+            let Some(path) = self.path_pools.get(&path_id) else {
+                continue;
+            };
+            let mut resolved = ResolvedMixedPath::default();
+            self.resolve_path(&path.pools, &mut resolved);
+            self.path_resolved.insert(path_id, resolved);
+        }
+
+        // Remove old results for affected paths (they'll be re-solved below)
+        for &path_id in &affected_path_ids {
+            self.results.remove(&path_id);
+        }
+
+        // Solve affected paths and insert new results
+        for &path_id in &affected_path_ids {
+            let Some(resolved) = self.path_resolved.get(&path_id) else {
                 continue;
             };
             if !resolved.valid {
@@ -681,15 +640,11 @@ impl UniswapEngine {
 
             if let Some(solve_result) = self.solve_path(resolved) {
                 if !solve_result.optimal_input.is_zero() && !solve_result.profit.is_zero() {
-                    new_results.push((path_id, solve_result));
+                    self.results.insert(path_id, solve_result);
                 }
             }
         }
 
-        // Sort by path_id for deterministic output
-        new_results.sort_unstable_by_key(|(path_id, _)| *path_id);
-
-        self.results = new_results;
         self.results_block = block_number;
 
         // Compute incremental diff and send batch
@@ -798,17 +753,17 @@ impl UniswapEngine {
 
     /// Solve all registered paths using `solve_path`.
     #[must_use]
-    fn solve_all(&self) -> Vec<(u64, SolvePathResult)> {
-        let mut results = Vec::with_capacity(self.paths.len());
+    fn solve_all(&self) -> HashMap<u64, SolvePathResult> {
+        let mut results = HashMap::with_capacity(self.path_resolved.len());
 
-        for (&path_id, (_path, resolved)) in &self.paths {
+        for (&path_id, resolved) in &self.path_resolved {
             if !resolved.valid {
                 continue;
             }
 
             if let Some(solve_result) = self.solve_path(resolved) {
                 if !solve_result.optimal_input.is_zero() && !solve_result.profit.is_zero() {
-                    results.push((path_id, solve_result));
+                    results.insert(path_id, solve_result);
                 }
             }
         }
@@ -872,7 +827,7 @@ impl UniswapEngine {
 
     /// Read the last solved results and block number.
     #[must_use]
-    pub const fn latest_results(&self) -> (&Vec<(u64, SolvePathResult)>, u64) {
+    pub fn latest_results(&self) -> (&HashMap<u64, SolvePathResult>, u64) {
         (&self.results, self.results_block)
     }
 
@@ -896,39 +851,96 @@ impl UniswapEngine {
 
     /// Apply backfill logs from the snapshot gap to the sub-engines.
     ///
-    /// Splits raw logs by topic (V3 vs V4) and applies them via
-    /// `process_block()` on each sub-engine. This updates registered pools
-    /// and buffers Mint/Burn/ModifyLiquidity events for unregistered pools.
+    /// Iterates logs once, decoding and applying each to the appropriate
+    /// sub-engine without cloning. After all logs are applied, calls
+    /// `rebuild_and_solve` on each touched sub-engine.
     pub fn process_backfill_logs(&mut self, logs: &[Log], block_number: u64) {
-        let mut v3_logs: Vec<Log> = Vec::new();
-        let mut v4_logs: Vec<Log> = Vec::new();
+        use crate::bot_core::v3_swap_decoder::decode_v3_swap_log;
+        use crate::bot_core::v3_mint_burn_decoder::{decode_v3_mint_log, decode_v3_burn_log};
+        use crate::bot_core::v4_swap_decoder::decode_v4_swap_log;
+        use crate::bot_core::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log;
+
+        let mut v3_touched = false;
+        let mut v4_touched = false;
 
         for log in logs {
-            if let Some(topic0) = log.topic0() {
-                if *topic0 == crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC
-                    || *topic0 == crate::bot_core::v3_mint_burn_decoder::V3_MINT_TOPIC
-                    || *topic0 == crate::bot_core::v3_mint_burn_decoder::V3_BURN_TOPIC
-                {
-                    v3_logs.push(log.clone());
-                } else if *topic0 == crate::bot_core::v4_swap_decoder::V4_SWAP_TOPIC
-                    || *topic0 == crate::bot_core::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC
-                {
-                    v4_logs.push(log.clone());
+            let Some(topic0) = log.topic0() else {
+                continue;
+            };
+
+            if *topic0 == crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC {
+                if let Some(event) = decode_v3_swap_log(log) {
+                    self.v3_engine.apply_swap(
+                        event.pool_address,
+                        event.sqrt_price_x96,
+                        event.liquidity.to::<u128>(),
+                        event.tick,
+                        block_number,
+                        &[],
+                    );
+                    v3_touched = true;
+                }
+            } else if *topic0 == crate::bot_core::v3_mint_burn_decoder::V3_MINT_TOPIC {
+                if let Some(event) = decode_v3_mint_log(log) {
+                    self.v3_engine.apply_liquidity_update(
+                        event.pool_address,
+                        event.tick_lower,
+                        event.tick_upper,
+                        event.amount.cast_signed(),
+                        block_number,
+                    );
+                    v3_touched = true;
+                }
+            } else if *topic0 == crate::bot_core::v3_mint_burn_decoder::V3_BURN_TOPIC {
+                if let Some(event) = decode_v3_burn_log(log) {
+                    self.v3_engine.apply_liquidity_update(
+                        event.pool_address,
+                        event.tick_lower,
+                        event.tick_upper,
+                        -(event.amount.cast_signed()),
+                        block_number,
+                    );
+                    v3_touched = true;
+                }
+            } else if *topic0 == crate::bot_core::v4_swap_decoder::V4_SWAP_TOPIC {
+                if let Some(event) = decode_v4_swap_log(log) {
+                    self.v4_engine.apply_swap(
+                        &V4SwapUpdate {
+                            pool_manager: log.address(),
+                            pool_id: event.pool_id,
+                            sqrt_price_x96: event.sqrt_price_x96,
+                            liquidity: event.liquidity.to::<u128>(),
+                            tick: event.tick,
+                            tick_priors: vec![],
+                        },
+                        block_number,
+                    );
+                    v4_touched = true;
+                }
+            } else if *topic0 == crate::bot_core::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC {
+                if let Some(event) = decode_v4_modify_liquidity_log(log) {
+                    self.v4_engine.apply_liquidity_update(
+                        log.address(),
+                        event.pool_id,
+                        event.tick_lower,
+                        event.tick_upper,
+                        event.liquidity_delta,
+                        block_number,
+                    );
+                    v4_touched = true;
                 }
             }
         }
 
-        if !v3_logs.is_empty() {
-            self.v3_engine.process_block(&v3_logs, block_number);
+        if v3_touched {
+            self.v3_engine.expire_buffered_events(block_number);
+            self.v3_engine.rebuild_and_solve(block_number);
         }
-        if !v4_logs.is_empty() {
-            self.v4_engine.process_block(&v4_logs, block_number);
+        if v4_touched {
+            self.v4_engine.expire_buffered_events(block_number);
+            self.v4_engine.rebuild_and_solve(block_number);
         }
 
-        // Track the last block processed by backfill so the pump
-        // knows where to resume. Without this, the pump would treat
-        // a None last_processed_block as a cold start and skip the
-        // first WS block.
         self.last_processed_block = Some(block_number);
     }
 
@@ -963,22 +975,25 @@ impl UniswapEngine {
     ///
     /// Returns `true` if the path existed and was removed.
     pub fn deregister_path(&mut self, path_id: u64) -> bool {
-        // Remove from paths and get the pool refs to clean up reverse index
-        let removed = self.paths.remove(&path_id);
+        // Remove from path_pools and get the pool refs to clean up reverse index
+        let removed = self.path_pools.remove(&path_id);
         let existed = removed.is_some();
-        if let Some((path, _)) = removed {
+        if let Some(path) = removed {
             // Remove from pool_to_paths reverse index
             for pool_ref in &path.pools {
                 if let Some(path_ids) =
                     self.pool_to_paths.get_mut(&(pool_ref.hop_type, pool_ref.pool_key))
                 {
-                    path_ids.remove(&path_id);
+                    path_ids.retain(|id| *id != path_id);
                 }
             }
         }
 
+        // Remove from path_resolved
+        self.path_resolved.remove(&path_id);
+
         // Remove from results
-        self.results.retain(|(id, _)| *id != path_id);
+        self.results.remove(&path_id);
 
         // Remove from delivered
         self.delivered.remove(&path_id);
@@ -1001,39 +1016,46 @@ impl UniswapEngine {
     /// If the channel is full, the batch is dropped — the next one
     /// will carry a correct cumulative diff.
     fn compute_diff_and_send(&mut self, metadata: &BlockMetadata) {
-        // Above-threshold subset of current results
-        let new_above: HashMap<u64, SolvePathResult> = self
+        // Compute incremental diff directly from results and delivered HashMaps.
+        // No intermediate collections needed — iterate both once.
+
+        // Fresh: above-threshold in results, not in delivered
+        let fresh: Vec<(u64, SolvePathResult)> = self
             .results
             .iter()
             .filter(|(_, r)| r.profit > self.min_profit && r.profit < self.max_profit)
-            .map(|(id, r)| (*id, r.clone()))
-            .collect();
-
-        let new_above_ids: HashSet<u64> = new_above.keys().copied().collect();
-        let delivered_ids: HashSet<u64> = self.delivered.keys().copied().collect();
-
-        // Fresh: in new_above but not in delivered
-        let fresh: Vec<(u64, SolvePathResult)> = new_above
-            .iter()
             .filter(|(id, _)| !self.delivered.contains_key(id))
             .map(|(&id, r)| (id, r.clone()))
             .collect();
 
-        // Updated: in both, but values differ
-        let updated: Vec<(u64, SolvePathResult)> = new_above
+        // Updated: above-threshold in both, values differ
+        let updated: Vec<(u64, SolvePathResult)> = self
+            .results
             .iter()
+            .filter(|(_, r)| r.profit > self.min_profit && r.profit < self.max_profit)
             .filter(|(id, new)| matches!(self.delivered.get(id), Some(old) if old != *new))
             .map(|(&id, r)| (id, r.clone()))
             .collect();
 
-        // Expired: in delivered but not in new_above (dropped below threshold)
-        let expired: Vec<u64> = delivered_ids.difference(&new_above_ids).copied().collect();
+        // Expired: in delivered but not above-threshold in results
+        let expired: Vec<u64> = self
+            .delivered
+            .keys()
+            .filter(|id| !self.results.get(id).is_some_and(|r| r.profit > self.min_profit && r.profit < self.max_profit))
+            .copied()
+            .collect();
 
         // Removed: de-registered since last batch
         let removed: Vec<u64> = self.deregistered.drain(..).collect();
 
-        // Advance delivered to the above-threshold set
-        self.delivered = new_above;
+        // Advance delivered to the above-threshold subset of results
+        self.delivered.retain(|_, r| r.profit > self.min_profit && r.profit < self.max_profit);
+        // Add any new above-threshold entries not yet in delivered
+        for (&id, r) in &self.results {
+            if r.profit > self.min_profit && r.profit < self.max_profit && !self.delivered.contains_key(&id) {
+                self.delivered.insert(id, r.clone());
+            }
+        }
 
         // Clear the unsent flag
         self.has_unsent_results = false;
@@ -1063,19 +1085,11 @@ impl UniswapEngine {
     /// removed `initial_solve`). Subsequent `process_logs` calls use
     /// dependency tracking to only re-solve affected paths.
     pub fn solve_all_paths(&mut self, block_number: u64) {
-        // Resolve all paths
-        let path_pool_refs: Vec<(u64, Vec<MixedPoolRef>)> = self
-            .paths
-            .iter()
-            .map(|(&id, (path, _))| (id, path.pools.clone()))
-            .collect();
-
-        for (path_id, pool_refs) in &path_pool_refs {
+        // Resolve all paths (no clone — path_pools is immutable)
+        for (&path_id, path) in &self.path_pools {
             let mut resolved = ResolvedMixedPath::default();
-            self.resolve_path(pool_refs, &mut resolved);
-            if let Some((_, stored)) = self.paths.get_mut(path_id) {
-                *stored = resolved;
-            }
+            self.resolve_path(&path.pools, &mut resolved);
+            self.path_resolved.insert(path_id, resolved);
         }
 
         // Solve all paths
@@ -1108,7 +1122,7 @@ impl UniswapEngine {
     /// Number of registered mixed paths.
     #[must_use]
     pub fn path_count(&self) -> usize {
-        self.paths.len()
+        self.path_pools.len()
     }
 
     /// Return the list of registered V4 `PoolManager` addresses.
@@ -1330,7 +1344,7 @@ mod tests {
         assert_eq!(engine.path_count(), 1);
 
         // Path should be resolved
-        let (_, resolved) = &engine.paths[&path_id];
+        let resolved = &engine.path_resolved[&path_id];
         assert!(resolved.valid);
         assert_eq!(resolved.hop_types.len(), 2);
         assert_eq!(resolved.hop_types[0], HopType::V2);
@@ -1444,7 +1458,7 @@ mod tests {
             },
         ]);
 
-        let (_, resolved) = &engine.paths[&path_id];
+        let resolved = &engine.path_resolved[&path_id];
         assert!(resolved.valid);
         assert!(resolved.v2_hops[0].is_some());
         assert!(resolved.v3_sequences[1].is_some());
@@ -1485,7 +1499,7 @@ mod tests {
             },
         ]);
 
-        let (_, resolved) = &engine.paths[&path_id];
+        let resolved = &engine.path_resolved[&path_id];
         assert!(!resolved.valid);
     }
 
@@ -1617,10 +1631,10 @@ mod tests {
 
         // Results should already contain the eagerly-solved path
         let (results, _block) = engine.latest_results();
-        let found = results.iter().find(|(pid, _)| *pid == path_id);
-        assert!(found.is_some(), "register_and_solve_path should eagerly solve and add to results");
+        let solve_result = results.get(&path_id);
+        assert!(solve_result.is_some(), "register_and_solve_path should eagerly solve and add to results");
 
-        let (_, solve_result) = found.unwrap();
+        let solve_result = solve_result.unwrap();
         assert!(!solve_result.optimal_input.is_zero());
         assert!(!solve_result.profit.is_zero());
     }
@@ -1663,8 +1677,7 @@ mod tests {
         // The path's result should survive the rebuild
         let (results, block) = engine.latest_results();
         assert_eq!(block, 1);
-        let found = results.iter().find(|(pid, _)| *pid == path_id);
-        assert!(found.is_some(), "pending new path result should survive rebuild_and_solve_affected");
+        assert!(results.contains_key(&path_id), "pending new path result should survive rebuild_and_solve_affected");
     }
 
     #[test]
@@ -1709,7 +1722,7 @@ mod tests {
         let results = engine.solve_all();
         // Should find a profitable arbitrage
         assert!(!results.is_empty(), "should find profitable V2-V2 arb");
-        let (_, solve_result) = &results[0];
+        let solve_result = results.values().next().unwrap();
         assert!(!solve_result.optimal_input.is_zero());
         assert!(!solve_result.profit.is_zero());
     }
@@ -1947,7 +1960,7 @@ mod tests {
             },
         ]);
 
-        let (_, resolved) = &engine.paths[&path_id];
+        let resolved = &engine.path_resolved[&path_id];
         assert!(resolved.valid);
         assert_eq!(resolved.hop_types[0], HopType::V3);
         assert_eq!(resolved.hop_types[1], HopType::V2);
@@ -2073,17 +2086,10 @@ mod tests {
         ]);
 
         // Resolve and solve all paths (replaces start() + initial_solve())
-        let path_pool_refs: Vec<(u64, Vec<MixedPoolRef>)> = engine
-            .paths
-            .iter()
-            .map(|(&id, (path, _))| (id, path.pools.clone()))
-            .collect();
-        for (path_id, pool_refs) in &path_pool_refs {
+        for (&path_id, path) in &engine.path_pools {
             let mut resolved = ResolvedMixedPath::default();
-            engine.resolve_path(pool_refs, &mut resolved);
-            if let Some((_, stored)) = engine.paths.get_mut(path_id) {
-                *stored = resolved;
-            }
+            engine.resolve_path(&path.pools, &mut resolved);
+            engine.path_resolved.insert(path_id, resolved);
         }
         engine.results = engine.solve_all();
 
@@ -2091,8 +2097,7 @@ mod tests {
 
         // The V4 hop's output (token0 at extreme price) would overflow int128.
         // The solver should reject this path — no result should be returned.
-        let found = results.iter().find(|(pid, _)| *pid == path_id);
-        if let Some((_, solve_result)) = found {
+        if let Some(solve_result) = results.get(&path_id) {
             // If a result IS found, verify that V4 hop outputs fit int128
             let v4_output = solve_result.hop_outputs.get(1).copied().unwrap_or(U256::ZERO);
             let v4_consumed = solve_result.consumed_inputs.get(1).copied().unwrap_or(U256::ZERO);
@@ -2181,7 +2186,7 @@ mod tests {
         ]);
 
         // Inspect the path
-        let (path, _resolved) = engine.paths.get(&path_id).expect("path should exist");
+        let path = engine.path_pools.get(&path_id).expect("path should exist");
         assert_eq!(path.pools.len(), 3);
 
         // Verify hop types
@@ -2204,7 +2209,7 @@ mod tests {
         assert_eq!(v4_pool.map(|p| p.pool_id), Some([0xabu8; 32]));
 
         // Inspect non-existent path
-        assert!(engine.paths.get(&99999).is_none());
+        assert!(engine.path_pools.get(&99999).is_none());
     }
 
     #[test]
@@ -2287,7 +2292,7 @@ mod tests {
         assert_eq!(engine.path_count(), 1);
 
         // Verify the path is valid and resolved
-        let (_, resolved) = &engine.paths[&path_id];
+        let resolved = &engine.path_resolved[&path_id];
         assert!(resolved.valid, "3-hop V3-V3-V3 path should be valid");
         assert_eq!(resolved.hop_types.len(), 3);
         assert_eq!(resolved.hop_types[0], HopType::V3);
@@ -2362,7 +2367,7 @@ mod tests {
             MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_b, zero_for_one: true },
         ]);
 
-        let (_, resolved) = &engine.paths[&path_id];
+        let resolved = &engine.path_resolved[&path_id];
         assert!(resolved.valid, "3-hop V2-V3-V2 path should be valid");
         assert_eq!(resolved.hop_types.len(), 3);
         assert_eq!(resolved.hop_types[0], HopType::V2);
@@ -3592,7 +3597,7 @@ impl PyUniswapArbEngine {
         // Phase 1: Collect pool refs from the path
         let pool_refs: Vec<MixedPoolRef> = {
             let engine = self.engine.lock();
-            let Some((path, _resolved)) = engine.paths.get(&path_id) else {
+            let Some(path) = engine.path_pools.get(&path_id) else {
                 return Ok(None);
             };
             path.pools.clone()
