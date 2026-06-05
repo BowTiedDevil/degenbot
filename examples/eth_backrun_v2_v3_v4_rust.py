@@ -1,9 +1,8 @@
 """Ethereum mainnet backrun bot: Uniswap V2/V3/V4 arbitrage using the Rust engine.
 
 A thin Python orchestration layer over the Rust-owned UniswapArbEngine.
-The Rust engine owns all pool state and path solving.
-Python does: pool construction, event routing, swap encoding, simulation,
-and transaction submission.
+The Rust engine owns all pool state and path solving. Python does: pool
+construction, swap encoding, simulation, and transaction submission.
 
 The executor contract (tstore_executor.vy) uses a generic payload queue with
 transient storage. Payloads are delivered sequentially; callbacks resume
@@ -14,18 +13,14 @@ The contract asserts combined WETH + ETH balance does not decrease (profit =
 increase). No WETH prefunding is required — the first pool's callback is the
 flash borrow.
 
-Per-event lifecycle (same-block reactivity):
-1. Python backfill pushes pool state to the Rust engine via process_block,
-   which records last_processed_block. The pump reads this on startup to
-   determine the backfill boundary — no gap between Python backfill and
-   the pump's WS subscription.
-2. WS subscription delivers logs and newHeads concurrently
-3. Each log event is decoded and pushed to the Rust engine immediately
-4. After each engine update, check for profitable results
-5. On newHead: update fee/nonce state, also check for profitable results
-6. For profitable results: encode, simulate, submit
-7. Submitted transactions are monitored; their pools/nonces are released on
-   confirmation or expiry
+Startup sequence:
+1. Subscribe to WS (event buffering begins)
+2. Load DB snapshots (V3 + V4 tick data)
+3. Backfill snapshot→WS gap via Rust engine
+4. Resume pump (Rust owns all event processing from here)
+5. Start result consumer task (rolling start)
+6. build_paths() (paths eagerly solved, results dispatched concurrently)
+7. Consumer task continues as the permanent main loop
 """
 
 import argparse
@@ -103,8 +98,6 @@ AGE_DECAY_CONSTANT = 0.25  # Priority fee age decay factor (Slice 3)
 MIN_PRIORITY_FEE_PERCENTILE = 10  # Use Nth percentile from feeHistory as floor (Slice 3)
 MAX_PRIORITY_FEE_PERCENTILE = 50  # Use Nth percentile from feeHistory as ceiling (Slice 3)
 MAX_PROFIT_WEI = 5 * 10**18  # Reject profits above 5 ETH — solver defect / scam token guard
-DRY_RUN = True
-
 # Known scam/tax/anti-bot tokens (blacklist). Paths using these
 # will always fail simulation because the token contract blocks or
 # taxes transfers in ways that break the executor's callback flow.
@@ -220,10 +213,6 @@ def encode_balanceof_calldata(account: str) -> bytes:
 
 # Cached runtime bytecode (loaded once, reused across all simulations)
 _runtime_bytecode_cache: str | None = None
-_traced_reverts: set[tuple[int, str]] = set()  # Track traced (block, path_type) to avoid spam
-_v4v2_dumped: bool = False  # One-shot dump for V4-V2 debug
-_v2v4_dumped: bool = False  # One-shot dump for V2-V4 debug
-_v4v4_dumped: bool = False  # One-shot dump for V4-V4 debug
 
 
 def _load_executor_runtime_bytecode() -> str:
@@ -425,13 +414,8 @@ class EngineRegistry:
         # Reverse map: key → V4PoolInfo for encoding
         self._v4_pool_info: dict[int, V4PoolInfo] = {}
         self.paths: dict[int, PathInfo] = {}
-        # Whether the Rust pump is running (affects register_path vs
-        # register_and_solve_path dispatch).
         # NOTE: These Python dicts (_v2_keys, _v3_keys, _v4_keys) are plain
         # dicts — NOT thread-safe. All access is on the single asyncio event
-        # loop, so no synchronization is needed. If a multi-threaded consumer
-        # is ever introduced, these must be replaced with thread-safe maps.
-        self._pump_running: bool = False
 
     def register_v2_pool(self, pool: UniswapV2Pool) -> int:
         if pool.address in self._v2_keys:
@@ -570,10 +554,8 @@ class EngineRegistry:
     def register_path(self, hops: list[HopInfo]) -> int:
         """Register a path from a list of HopInfo objects.
 
-        If the pump is already running, uses register_and_solve_path
-        for eager solving so the path is immediately visible to
-        profitable_results(). Otherwise uses register_path (batch solve
-        will happen later via solve_all_paths).
+        Uses register_and_solve_path for eager solving so the path
+        is immediately included in the next result batch.
         """
         engine_hops = []
         for hop in hops:
@@ -591,65 +573,9 @@ class EngineRegistry:
             pool_type = _hop_type_str(hop)
             engine_hops.append((pool_type, key, hop.zfo))
 
-        if self._pump_running:
-            path_id = self.engine.register_and_solve_path(engine_hops)
-        else:
-            path_id = self.engine.register_path(engine_hops)
+        path_id = self.engine.register_and_solve_path(engine_hops)
         self.paths[path_id] = PathInfo(hops=hops)
         return path_id
-
-    def process_block(
-        self,
-        v2_updates: list[tuple[str, int, int]],
-        v3_updates: list[tuple[str, int, int, int, list[tuple[int, tuple[int, int]]]]],
-        v4_updates: list[tuple[str, str, int, int, int, list[tuple[int, tuple[int, int]]]]],
-        block_number: int,
-    ) -> None:
-        """Push one block's worth of updates and solve.
-
-        v4_updates: list of (pool_manager_address, pool_id_hex, sqrt_price_x96,
-                    liquidity, tick, tick_priors) tuples.
-        """
-        if v2_updates or v3_updates or v4_updates:
-            self.engine.process_logs(v2_updates, v3_updates, v4_updates, block_number)
-
-    def profitable_results(
-        self, min_profit: int = MIN_PROFIT_NET
-    ) -> list[tuple[int, int, int, tuple[int, ...], tuple[int, ...], int]]:
-        """Return (path_id, optimal_input, profit, hop_outputs, consumed_inputs, solve_block) for results above min_profit.
-
-        solve_block is the block_number passed to process_logs when the result was computed.
-        Used for staleness tracking — if current_block > solve_block, the pools may have
-        changed and the result may be stale.
-        """
-        results_list, solve_block = self.engine.latest_results()
-        results = []
-        for item in results_list:
-            path_id, opt_input, profit, hop_outs, consumed_ins = (
-                int(item[0]),
-                int(item[1]),
-                int(item[2]),
-                item[3],
-                item[4],
-            )
-            hop_outputs = tuple(int(h) for h in hop_outs)
-            consumed_inputs = tuple(int(c) for c in consumed_ins)
-            if profit > min_profit:
-                if profit > MAX_PROFIT_WEI:
-                    bot_logger.debug(
-                        f"drop: path={path_id} profit={profit // 10**18}ETH "
-                        f"exceeds MAX_PROFIT_WEI={MAX_PROFIT_WEI // 10**18}ETH"
-                    )
-                    continue
-                results.append((
-                    path_id,
-                    opt_input,
-                    profit,
-                    hop_outputs,
-                    consumed_inputs,
-                    solve_block,
-                ))
-        return results
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -712,16 +638,17 @@ async def build_paths(
     v3_snapshot: UniswapV3LiquiditySnapshot | None = None,
     v4_snapshot: UniswapV4LiquiditySnapshot | None = None,
 ) -> None:
-    """Discover V3/V2/V4 arb paths, build Python pools, register with Rust engine.
+    """Discover V2/V3/V4 arb paths, build Python pools, register with Rust engine.
 
-    V4 pools are discovered via find_paths_async (like V2/V3) and built through
+    V4 pools are discovered via find_paths_async and built through
     bot.build_managed_pool(). Hook filtering rejects pools with amount-modifying
     hooks (mask 0xCC) and dynamic fees (fee == 0x100000) at registration time.
 
-    After each pool is built, snapshot backfill events are applied (via
-    pending_updates) and the updated tick data is synced to the Rust engine.
-    This ensures every pool has correct post-backfill state before the pump
-    takes over.
+    The Rust engine owns all event processing — no Python-side backfill.
+    Snapshot tick_data is used for V4 engine registration (via override_tick_data)
+    so the engine can reconstruct current state from (snapshot + buffer) without
+    double-counting events. Each pool is verified against on-chain state after
+    registration.
     """
     # V3 snapshot provides tick data for Python pool builds via trackers.
     # Event backfill is handled by the Rust engine.
@@ -1043,19 +970,8 @@ async def build_paths(
         f"{dup_count} duplicates"
     )
 
-    # If the pump is already running, paths were eagerly solved via
-    # register_and_solve_path — no separate solve needed. If the pump
-    # hasn't started yet, solve all paths now.
-    if not engine_registry._pump_running:
-        bot_logger.info("[build_paths] Running initial solve...")
-        engine_registry.engine.solve_all_paths(current_block)
-        initial_results = engine_registry.profitable_results()
-        bot_logger.info(
-            f"[build_paths] Initial solve: {len(initial_results)} profitable paths "
-            f"(top: {initial_results[0][2] // 10**9}gwei)"
-            if initial_results
-            else "[build_paths] Initial solve: no profitable paths"
-        )
+    # Pump is always running at this point — paths were eagerly solved
+    # via register_and_solve_path. No separate initial solve needed.
 
     bot_logger.info(
         f"[build_paths] Summary: {path_count} paths in "
@@ -1248,6 +1164,11 @@ async def dispatch_profitable_results(
     """
     bot_logger.info(f"[dispatch] entered with {len(results)} results, dry_run={dry_run}")
 
+    # Per-dispatch trace dedup — prevents log spam from debug_traceCall
+    _traced_reverts_local: set[tuple[int, str]] = set()
+    # One-shot dump per V4-hybrid path type (V4-V2, V2-V4, V4-V4)
+    _dumped_path_types: set[str] = set()
+
     _executor_contract = async_w3.eth.contract(
         address=executor_address,
         abi=EXECUTOR_ABI,
@@ -1356,11 +1277,11 @@ async def dispatch_profitable_results(
             f"{pool_addrs} input={optimal_input} outputs={hop_outputs}"
         )
 
-        # Detailed dump for V4-V2 / V2-V4 paths (first occurrence of each)
-        if path_info.path_type == "V4-V2":
-            global _v4v2_dumped  # noqa: PLW0603
-            if not _v4v2_dumped:
-                _v4v2_dumped = True
+        # Detailed dump for V4-hybrid paths (first occurrence of each type)
+        _dump_type = path_info.path_type
+        if _dump_type in {"V4-V2", "V2-V4", "V4-V4"} and _dump_type not in _dumped_path_types:
+            _dumped_path_types.add(_dump_type)
+            if _dump_type == "V4-V2":
                 hop_v4, hop_v2 = path_info.hops[0], path_info.hops[1]
                 bot_logger.info(
                     f"[sim-dump] V4-V2 path={path_id} "
@@ -1369,10 +1290,7 @@ async def dispatch_profitable_results(
                     f"input={optimal_input} fwd={hop_outputs[0]} out={hop_outputs[1]} "
                     f"cmd_len={len(cmd_bytes)}"
                 )
-        elif path_info.path_type == "V2-V4":
-            global _v2v4_dumped  # noqa: PLW0603
-            if not _v2v4_dumped:
-                _v2v4_dumped = True
+            elif _dump_type == "V2-V4":
                 hop_v2, hop_v4 = path_info.hops[0], path_info.hops[1]
                 v4_in_native = v4_input_is_native(hop_v4)
                 bot_logger.info(
@@ -1382,10 +1300,7 @@ async def dispatch_profitable_results(
                     f"v4_native_in={v4_in_native} input={optimal_input} fwd={hop_outputs[0]} out={hop_outputs[1]} "
                     f"cmd_len={len(cmd_bytes)}"
                 )
-        elif path_info.path_type == "V4-V4":
-            global _v4v4_dumped  # noqa: PLW0603
-            if not _v4v4_dumped:
-                _v4v4_dumped = True
+            elif _dump_type == "V4-V4":
                 hop_a, hop_b = path_info.hops[0], path_info.hops[1]
                 bot_logger.info(
                     f"[sim-dump] V4-V4 path={path_id} "
@@ -1461,17 +1376,6 @@ async def dispatch_profitable_results(
 
         calls = sim[0]["calls"]
 
-        # One-shot raw dump for debugging zero-balance issue
-        if not hasattr(simulate_one, "_dumped_raw"):
-            simulate_one._dumped_raw = True
-            for i, c in enumerate(calls):
-                rd = c.get("returnData", b"")
-                rd_hex = rd.hex() if isinstance(rd, bytes) else str(rd)
-                bot_logger.info(
-                    f"[sim-raw] call[{i}] status={c.get('status')} "
-                    f"gasUsed={c.get('gasUsed')} returnData=0x{rd_hex}"
-                )
-
         # Check all three calls succeeded — log which call failed + revert data
         failed_call = None
         for i, c in enumerate(calls):
@@ -1541,12 +1445,12 @@ async def dispatch_profitable_results(
                 )
 
                 # ── Diagnostic: debug_traceCall for V4 settlement issues ──
-                # Only trace once per block to avoid log spam
+                # Only trace once per block+type to avoid log spam
                 _trace_key = (current_block, path_info.path_type)
                 if (
                     revert_hex in ("", "5212cba1")
                     and failed_call is not None
-                    and _trace_key not in _traced_reverts
+                    and _trace_key not in _traced_reverts_local
                 ):
                     try:
                         trace_result = await async_w3.provider.make_request(
@@ -1564,7 +1468,7 @@ async def dispatch_profitable_results(
                             ],
                         )
 
-                        def _walk_trace(trace: dict, depth: int = 0) -> None:
+                        def _walk_trace(trace: dict, depth: int = 0) -> None:  # type: ignore[literal-required]
                             sel = ""
                             inp = trace.get("input", "")
                             out = trace.get("output", "")
@@ -1598,7 +1502,7 @@ async def dispatch_profitable_results(
                             _walk_trace(trace_result)
                     except Exception as trace_exc:
                         bot_logger.debug(f"[trace] debug_traceCall failed: {trace_exc}")
-                    _traced_reverts.add(_trace_key)
+                    _traced_reverts_local.add(_trace_key)
 
                 return None
 
@@ -1823,15 +1727,13 @@ async def dispatch_profitable_results(
         tx_params["maxPriorityFeePerGas"] = priority_fee
         tx_params["maxFeePerGas"] = int(1.5 * base_fee_next) + priority_fee
 
-        # Access list is already computed during simulation (in tx_params).
-        # Re-compute with updated nonce/fees to ensure accuracy.
+        # Access list was computed during simulation. Re-compute with
+        # updated nonce/fees for accuracy.
         try:
             al_result = await async_w3.eth.create_access_list(tx_params, block_identifier="pending")
             tx_params["accessList"] = al_result["accessList"]
-            al_entry_count = len(al_result["accessList"])
         except Exception as al_exc:
-            bot_logger.debug(f"[dispatch] access list computation failed: {al_exc}")
-            al_entry_count = 0
+            bot_logger.debug(f"[dispatch] access list re-computation failed: {al_exc}")
 
         try:
             tx_hash = await async_w3.eth.send_raw_transaction(
@@ -1845,7 +1747,7 @@ async def dispatch_profitable_results(
             continue
 
         bot_logger.info(
-            f"Submitted path {path_id} hash={tx_hash.to_0x_hex()} nonce={nonce} al={al_entry_count}"
+            f"Submitted path {path_id} hash={tx_hash.to_0x_hex()} nonce={nonce}"
         )
         pending_nonces.add(nonce)
         pending_pools.update(path_pools)
@@ -2130,7 +2032,6 @@ async def main() -> None:
     # No need to call set_last_processed_block — the engine already
     # tracks it from backfill (process_backfill_logs sets it on each
     # chunk, arriving at the actual last backfilled block Y-1).
-    engine_registry._pump_running = True
     engine_registry.engine.resume()
     bot_logger.info(f"[startup] Rust pump resumed (WS={node_ws}, backfill complete)")
 
