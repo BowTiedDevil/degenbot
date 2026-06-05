@@ -723,6 +723,15 @@ class UniswapV4Pool(
             raise DegenbotValueError(message="State does not have a block number.")
         return block
 
+    @property
+    def initial_state_block(self) -> int:
+        """Block number at which the pool's initial state was captured.
+
+        Returns:
+            The block number from construction (DB snapshot or RPC fetch).
+        """
+        return self._initial_state_block
+
     def swap_is_viable(
         self,
         state: UniswapV4PoolState,

@@ -134,6 +134,12 @@ pub struct RegisterV4PoolParams {
     pub tick_data: HashMap<i32, TickInfo>,
     /// Block number at which this state was captured
     pub update_block: u64,
+    /// Whether to apply buffered `ModifyLiquidity` events on top of the
+    /// provided `tick_data`. Set to `true` when `tick_data` comes from a
+    /// stale DB snapshot (the buffer brings it forward). Set to `false`
+    /// when `tick_data` was fetched at the current block via RPC (applying
+    /// the buffer would double-count those events).
+    pub apply_buffer: bool,
 }
 
 /// V4 pool state as owned by the engine.
@@ -368,6 +374,7 @@ impl V4BlockEngine {
 
         let pool_manager = params.pool_manager;
         let pool_id = params.pool_id;
+        let apply_buffer = params.apply_buffer;
 
         // Forward state: original orientation
         self.pools.insert(forward_key, V4PoolState::from(params.clone()));
@@ -383,23 +390,29 @@ impl V4BlockEngine {
         // Apply any buffered liquidity updates that arrived before this
         // pool was registered (e.g. from backfill_from_snapshot or the
         // WS subscribe phase). These events are NOT yet reflected in the
-        // tick_data passed via params (which comes from the DB snapshot),
-        // so they must be applied on top.
+        // tick_data when it comes from a stale DB snapshot, so they must
+        // be applied on top. However, if the tick_data was fetched at the
+        // current block via RPC, the buffer would double-count those
+        // events — in that case, simply discard the buffer.
         if let Some(buffered) = self.liquidity_event_buffer.remove(&(pool_manager, pool_id)) {
-            for update in buffered {
-                let delta_i128: i128 = match update.liquidity_delta.try_into() {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-                let fwd_state = self.pools.get_mut(&forward_key).unwrap();
-                update_tick_liquidity(&mut fwd_state.tick_data, update.tick_lower, delta_i128, true);
-                update_tick_liquidity(&mut fwd_state.tick_data, update.tick_upper, delta_i128, false);
-                fwd_state.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
-                let rev_state = self.pools.get_mut(&reverse_key).unwrap();
-                update_tick_liquidity(&mut rev_state.tick_data, update.tick_lower, delta_i128, true);
-                update_tick_liquidity(&mut rev_state.tick_data, update.tick_upper, delta_i128, false);
-                rev_state.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+            if apply_buffer {
+                for update in buffered {
+                    let delta_i128: i128 = match update.liquidity_delta.try_into() {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+                    let fwd_state = self.pools.get_mut(&forward_key).unwrap();
+                    update_tick_liquidity(&mut fwd_state.tick_data, update.tick_lower, delta_i128, true);
+                    update_tick_liquidity(&mut fwd_state.tick_data, update.tick_upper, delta_i128, false);
+                    fwd_state.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+                    let rev_state = self.pools.get_mut(&reverse_key).unwrap();
+                    update_tick_liquidity(&mut rev_state.tick_data, update.tick_lower, delta_i128, true);
+                    update_tick_liquidity(&mut rev_state.tick_data, update.tick_upper, delta_i128, false);
+                    rev_state.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+                }
             }
+            // If !apply_buffer, the buffered events are simply discarded —
+            // the tick_data already reflects them.
         }
 
         Ok(forward_key)
@@ -984,6 +997,7 @@ mod tests {
             tick,
             tick_data,
             update_block: 0,
+            apply_buffer: true,
         }
     }
 

@@ -178,13 +178,13 @@ def encode_cmd_stream(
     return None
 
 
-def _v4_input_is_native(hop: V4HopInfo) -> bool:
+def v4_input_is_native(hop: V4HopInfo) -> bool:
     """True if the V4 swap's input currency is native ETH (address(0))."""
     input_currency = hop.currency0_address if hop.zfo else hop.currency1_address
     return input_currency == NATIVE_CURRENCY_ADDRESS
 
 
-def _v4_output_is_native(hop: V4HopInfo) -> bool:
+def v4_output_is_native(hop: V4HopInfo) -> bool:
     """True if the V4 swap's output currency is native ETH (address(0))."""
     output_currency = hop.currency1_address if hop.zfo else hop.currency0_address
     return output_currency == NATIVE_CURRENCY_ADDRESS
@@ -508,7 +508,7 @@ def _encode_cmd_v4_v3(
         if not fits_int128(optimal_input):
             return None
 
-        v4_output_is_native = _v4_output_is_native(hop_v4)
+        v4_output_is_native = v4_output_is_native(hop_v4)
 
         at = AddressTable()
         _pm_idx = at.add(pool_manager_address)
@@ -570,7 +570,7 @@ def _encode_cmd_v4_v3(
             # 4. Settle V4's input currency debt.
             # V3 auto-pay gave WETH to executor. If V4's input is native ETH,
             # must unwrap WETH→ETH before settling (WETH≠ETH mismatch).
-            v4_input_is_native = _v4_input_is_native(hop_v4)
+            v4_input_is_native = v4_input_is_native(hop_v4)
             if v4_input_is_native:
                 input_idx = c0_v4_idx if hop_v4.zfo else c1_v4_idx
                 inner += enc_weth_withdraw(optimal_input)
@@ -632,7 +632,7 @@ def _encode_cmd_v3_v4(
         if not fits_int128(forward_out) or not fits_int128(weth_out):
             return None
 
-        v4_input_is_native = _v4_input_is_native(hop_v4)
+        v4_input_is_native = v4_input_is_native(hop_v4)
 
         at = AddressTable()
         pm_idx = at.add(pool_manager_address)
@@ -777,7 +777,7 @@ def _encode_cmd_v4_v2(
         if not fits_int128(optimal_input) or not fits_int128(forward_out):
             return None
 
-        v4_output_is_native = _v4_output_is_native(hop_v4)
+        v4_output_is_native = v4_output_is_native(hop_v4)
 
         at = AddressTable()
         pm_idx = at.add(pool_manager_address)
@@ -839,7 +839,7 @@ def _encode_cmd_v4_v2(
 
             # Settle V4's input-currency debt.
             # V2 sent the output (WETH or USDC) to the executor.
-            v4_input_is_native = _v4_input_is_native(hop_v4)
+            v4_input_is_native = v4_input_is_native(hop_v4)
             if v4_input_is_native:
                 # V4's input is native ETH. The executor got WETH from V2.
                 # Must unwrap WETH→ETH before settling the native ETH delta.
@@ -902,7 +902,7 @@ def _encode_cmd_v2_v4(
         if not fits_int128(forward_out) or not fits_int128(weth_out):
             return None
 
-        v4_input_is_native = _v4_input_is_native(hop_v4)
+        v4_input_is_native = v4_input_is_native(hop_v4)
 
         at = AddressTable()
         pm_idx = at.add(pool_manager_address)
@@ -949,7 +949,7 @@ def _encode_cmd_v2_v4(
         else:
             # V4 input is ERC-20 (not native ETH)
             # Check if V4's OUTPUT is native ETH — need WETH_DEPOSIT to wrap
-            v4_output_is_native = _v4_output_is_native(hop_v4)
+            v4_output_is_native = v4_output_is_native(hop_v4)
 
             v4_inner = enc_v4_sync(forward_idx)
             v4_inner += enc_erc20_transfer(forward_idx, pm_idx, forward_out)

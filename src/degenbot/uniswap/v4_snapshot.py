@@ -17,7 +17,7 @@ from web3.types import LogReceipt
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.base import ExchangeTable
-from degenbot.database.models.pools import UniswapV4PoolTable
+from degenbot.database.models.pools import PoolManagerTable, UniswapV4PoolTable
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.pool import UnknownPoolId
@@ -199,7 +199,7 @@ class DatabaseSnapshot:
 
     def get_liquidity_map(
         self,
-        pool_manager: ChecksumAddress,  # noqa: ARG002
+        pool_manager: ChecksumAddress,
         pool_id: bytes | str,
     ) -> LiquidityMap | None:
         """Return liquidity map.
@@ -209,8 +209,11 @@ class DatabaseSnapshot:
 
         """
         pool_in_db = self.session.scalar(
-            select(UniswapV4PoolTable).where(
-                UniswapV4PoolTable.pool_hash == HexBytes(pool_id).to_0x_hex()
+            select(UniswapV4PoolTable)
+            .join(UniswapV4PoolTable.manager)
+            .where(
+                UniswapV4PoolTable.pool_hash == HexBytes(pool_id).to_0x_hex(),
+                PoolManagerTable.address == pool_manager,
             )
         )
         if pool_in_db is None:
