@@ -477,11 +477,11 @@ impl UniswapEngine {
     }
 
     /// Solve all paths affected by logs applied since the last `solve_dirty`
-    /// call. Expire buffered events, re-solve affected paths, compute
-    /// incremental diff, and send result batch via the channel.
+    /// call, but do NOT send a result batch to Python.
     ///
-    /// Called by the pump after each log (eager) or on block boundaries.
-    /// Clears the dirty key sets after solving.
+    /// The pump calls this eagerly after each WS log to keep engine state
+    /// current. The actual batch send is triggered by the pump's debounce
+    /// timer or block boundary logic.
     pub fn solve_dirty(&mut self, block_number: u64, metadata: &BlockMetadata) {
         // Expire stale buffered events in V3/V4 sub-engines
         self.v3_engine.expire_buffered_events(block_number);
@@ -492,7 +492,7 @@ impl UniswapEngine {
         let dirty_v3 = std::mem::take(&mut self.dirty_v3);
         let dirty_v4 = std::mem::take(&mut self.dirty_v4);
 
-        // Re-solve only paths containing updated pools
+        // Re-solve only paths containing updated pools (no batch send)
         self.rebuild_and_solve_affected(
             &dirty_v2,
             &dirty_v3,
@@ -505,6 +505,15 @@ impl UniswapEngine {
         self.last_processed_block = Some(block_number);
     }
 
+    /// Compute the incremental diff and send a result batch to Python.
+    ///
+    /// Called by the pump when the debounce timer fires (mid-block) or
+    /// when a block boundary is detected. Results must already be
+    /// up-to-date (via `solve_dirty`) before calling this.
+    pub fn send_result_batch(&mut self, metadata: &BlockMetadata) {
+        self.compute_diff_and_send(metadata);
+    }
+
     /// Returns `true` if there are unsolved dirty pool keys from `apply_log`
     /// calls that haven't been followed by `solve_dirty` yet.
     #[must_use]
@@ -513,11 +522,20 @@ impl UniswapEngine {
     }
 
     /// Process a block: apply all logs then solve affected paths.
+    /// Does NOT send a result batch — the pump controls dispatch.
     pub fn process_block(&mut self, logs: &[Log], block_number: u64, metadata: &BlockMetadata) {
         for log in logs {
             self.apply_log(log, block_number);
         }
         self.solve_dirty(block_number, metadata);
+    }
+
+    /// Process a block, solve, and send result batch to Python.
+    /// Used for empty-block notifications where the pump doesn't go
+    /// through the debounce path.
+    pub fn process_block_and_send(&mut self, logs: &[Log], block_number: u64, metadata: &BlockMetadata) {
+        self.process_block(logs, block_number, metadata);
+        self.compute_diff_and_send(metadata);
     }
 
     /// Process pre-decoded updates for testing.
@@ -575,7 +593,7 @@ impl UniswapEngine {
         v3_affected: &HashSet<u64>,
         v4_affected: &HashSet<u64>,
         block_number: u64,
-        metadata: &BlockMetadata,
+        _metadata: &BlockMetadata,
     ) {
         // Collect affected path IDs from the reverse index
         let mut affected_path_ids: HashSet<u64> = HashSet::new();
@@ -646,9 +664,8 @@ impl UniswapEngine {
         }
 
         self.results_block = block_number;
-
-        // Compute incremental diff and send batch
-        self.compute_diff_and_send(metadata);
+        // Note: no compute_diff_and_send here — the pump controls when
+        // batches are dispatched (debounce timer or block boundary).
     }
     ///
     /// Dispatches based on path composition:
