@@ -633,6 +633,7 @@ async def build_paths(
     bot: Bot,
     engine_registry: EngineRegistry,
     current_block: int,
+    verify_block: int,
     rpc_url: str,
     state_view_address: str,
     v3_snapshot: UniswapV3LiquiditySnapshot | None = None,
@@ -647,8 +648,9 @@ async def build_paths(
     The Rust engine owns all event processing — no Python-side backfill.
     Snapshot tick_data is used for V4 engine registration (via override_tick_data)
     so the engine can reconstruct current state from (snapshot + buffer) without
-    double-counting events. Each pool is verified against on-chain state after
-    registration.
+    double-counting events. Each pool is verified against on-chain state at
+    `verify_block` (the last backfilled block — a stable point before the pump
+    starts advancing).
     """
     # V3 snapshot provides tick data for Python pool builds via trackers.
     # Event backfill is handled by the Rust engine.
@@ -862,9 +864,9 @@ async def build_paths(
         # ── Per-pool liquidity map verification ──────────────
         # After registration (snapshot + backfill + held events applied),
         # verify each newly-registered pool's tick_data against on-chain
-        # at last_processed_block — the latest block the pump has fully
-        # processed. Raises on failure — no point continuing with corrupt state.
-        verify_block = engine_registry.engine.last_processed_block()
+        # at verify_block — a stable block captured after backfill, before
+        # the pump starts. Raises on failure — no point continuing with
+        # corrupt snapshot/backfill state.
         for pool, pt in zip(pools, pool_type_strs, strict=True):
             if pt == "V3" and pool.address not in v3_verified_pools:
                 v3_verified_pools.add(pool.address)
@@ -2026,6 +2028,18 @@ async def main() -> None:
     backfilled = engine_registry.engine.backfill_from_snapshot(node_http, snapshot_block)
     bot_logger.info(f"[startup] Backfill complete: {backfilled} blocks")
 
+    # Capture the stable verification block BEFORE the pump starts advancing
+    # last_processed_block. This is the last block fully processed by backfill —
+    # the engine's tick state is guaranteed consistent at this block. Once the
+    # pump resumes, last_processed_block gets updated on each block header arrival
+    # while the actual log processing lags by 1 block, making it unsuitable for
+    # verification during build_paths.
+    verify_block = engine_registry.engine.last_processed_block()
+    if verify_block is not None:
+        bot_logger.info(f"[startup] Verification block (post-backfill): {verify_block}")
+    else:
+        verify_block = current_block
+
     # ── Resume the Rust pump ─────────────────────────────────────
     # The pump was subscribed earlier (WS live, events buffered).
     # Now that backfill is complete, resume normal processing.
@@ -2064,6 +2078,7 @@ async def main() -> None:
         bot=bot,
         engine_registry=engine_registry,
         current_block=current_block,
+        verify_block=verify_block,
         rpc_url=node_ws,
         state_view_address=state_view_address,
         v3_snapshot=v3_snapshot,
