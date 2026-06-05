@@ -44,6 +44,10 @@ import struct
 from typing import TYPE_CHECKING
 
 from hexbytes import HexBytes
+from sqlalchemy import text as sa_text
+
+from degenbot.uniswap.v3_snapshot import DatabaseSnapshot as V3DatabaseSnapshot
+from degenbot.uniswap.v4_snapshot import DatabaseSnapshot as V4DatabaseSnapshot
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
@@ -164,12 +168,14 @@ def v4_snapshot_binary_size(
     return size
 
 
-def v3_snapshot_to_py_dict(snapshot: UniswapV3LiquiditySnapshot) -> dict[str, dict[int, tuple[int, int]]]:
+def v3_snapshot_to_py_dict(
+    snapshot: UniswapV3LiquiditySnapshot,
+) -> dict[str, dict[int, tuple[int, int]]]:
     """Convert a V3 snapshot to a dict suitable for load_v3_snapshot_from_py().
 
     Returns {pool_address_hex: {tick_index: (liquidity_gross, liquidity_net)}}.
     """
-    from degenbot.uniswap.v3_snapshot import DatabaseSnapshot as V3DatabaseSnapshot
+
     if isinstance(snapshot._source, V3DatabaseSnapshot):  # noqa: SLF001
         # Batch raw SQL path — already returns {addr: {tick: (lg, ln)}}
         return snapshot._source.get_all_liquidity_maps()  # noqa: SLF001
@@ -201,7 +207,7 @@ def v4_snapshot_to_py_dict(
 
     Returns {pool_manager_hex: {pool_id_hex: {tick_index: (lg, ln)}}}.
     """
-    from degenbot.uniswap.v4_snapshot import DatabaseSnapshot as V4DatabaseSnapshot
+
     if isinstance(snapshot._source, V4DatabaseSnapshot):  # noqa: SLF001
         # Batch raw SQL path — returns {(pm_addr, pool_id_hex): {tick: (lg, ln)}}
         all_maps = snapshot._source.get_all_liquidity_maps()  # noqa: SLF001
@@ -247,13 +253,11 @@ def stream_v3_snapshot_to_engine(
     Falls back to load_v3_snapshot_from_py(v3_snapshot_to_py_dict()) for
     non-DatabaseSnapshot sources.
     """
-    from degenbot.uniswap.v3_snapshot import DatabaseSnapshot as V3DatabaseSnapshot
+
     if not isinstance(snapshot._source, V3DatabaseSnapshot):  # noqa: SLF001
         # Non-DB source — fall back to batch method
         engine.load_v3_snapshot_from_py(v3_snapshot_to_py_dict(snapshot))
         return
-
-    from sqlalchemy import text as sa_text
 
     engine.begin_v3_snapshot_stream()
 
@@ -303,15 +307,13 @@ def stream_v4_snapshot_to_engine(
     Falls back to load_v4_snapshot_from_py(v4_snapshot_to_py_dict()) for
     non-DatabaseSnapshot sources.
     """
-    from degenbot.uniswap.v4_snapshot import DatabaseSnapshot as V4DatabaseSnapshot
+
     if not isinstance(snapshot._source, V4DatabaseSnapshot):  # noqa: SLF001
         # Non-DB source — fall back to batch method
         engine.load_v4_snapshot_from_py(
             v4_snapshot_to_py_dict(snapshot, managed_pools=snapshot.pools)
         )
         return
-
-    from sqlalchemy import text as sa_text
 
     engine.begin_v4_snapshot_stream()
 
@@ -339,18 +341,14 @@ def stream_v4_snapshot_to_engine(
         if key != current_key:
             # Flush previous pool
             if current_key is not None and current_ticks:
-                engine.insert_v4_pool_snapshot(
-                    current_key[0], current_key[1], current_ticks
-                )
+                engine.insert_v4_pool_snapshot(current_key[0], current_key[1], current_ticks)
             current_key = key
             current_ticks = {}
         current_ticks[int(tick)] = (int(liquidity_gross), int(liquidity_net))
 
     # Flush last pool
     if current_key is not None and current_ticks:
-        engine.insert_v4_pool_snapshot(
-            current_key[0], current_key[1], current_ticks
-        )
+        engine.insert_v4_pool_snapshot(current_key[0], current_key[1], current_ticks)
 
     engine.finish_v4_snapshot()
     """Serialize a UniswapV3LiquiditySnapshot into a binary buffer.
