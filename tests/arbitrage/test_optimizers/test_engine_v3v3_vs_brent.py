@@ -42,7 +42,6 @@ profitable.
 
 from __future__ import annotations
 
-import struct
 from collections import defaultdict
 
 import pytest
@@ -78,22 +77,9 @@ ADDR_FACTORY = "0x" + "ff" * 20
 
 def _make_v3_snapshot(
     pools: dict[str, dict[int, tuple[int, int]]],
-) -> bytes:
-    """Build a V3 binary snapshot for testing."""
-    buf = bytearray()
-    buf.append(1)  # version
-    buf.extend(struct.pack("<I", len(pools)))
-    for pool_addr, ticks in pools.items():
-        buf.extend(bytes.fromhex(pool_addr[2:]))
-        buf.extend(struct.pack("<I", len(ticks)))
-        for tick_index, (lg, ln) in ticks.items():
-            buf.extend(struct.pack("<i", tick_index))
-            buf.extend(struct.pack("<Q", lg & 0xFFFFFFFFFFFFFFFF))
-            buf.extend(struct.pack("<Q", lg >> 64))
-            unsigned_ln = ln if ln >= 0 else (1 << 128) + ln
-            buf.extend(struct.pack("<Q", unsigned_ln & 0xFFFFFFFFFFFFFFFF))
-            buf.extend(struct.pack("<Q", unsigned_ln >> 64))
-    return bytes(buf)
+) -> dict[str, dict[int, tuple[int, int]]]:
+    """Build a V3 snapshot dict for load_v3_snapshot_from_py()."""
+    return pools
 
 
 # ==============================================================================
@@ -188,7 +174,7 @@ def build_engine_v3_v3(
     tick_data_b = ranges_to_engine_tick_data(ranges_b)
 
     # Load tick data into engine via binary snapshot
-    engine.load_v3_snapshot(_make_v3_snapshot({
+    engine.load_v3_snapshot_from_py(_make_v3_snapshot({
         addr_a: tick_data_a,
         addr_b: tick_data_b,
     }))
@@ -409,7 +395,7 @@ class TestEngineV3V3VsBrent:
         sqrt_price = get_sqrt_ratio_at_tick(current_tick)
         td = ranges_to_engine_tick_data(ranges)
 
-        engine.load_v3_snapshot(_make_v3_snapshot({
+        engine.load_v3_snapshot_from_py(_make_v3_snapshot({
             "0x" + "21" * 20: td,
             "0x" + "22" * 20: td,
         }))
