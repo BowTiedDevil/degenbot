@@ -689,7 +689,7 @@ impl V3BlockEngine {
     }
 
     /// Rebuild all path resolutions and solve.
-    fn rebuild_and_solve(&mut self, block_number: u64) {
+    pub fn rebuild_and_solve(&mut self, block_number: u64) {
         // Collect path pool refs so we can rebuild without borrowing self.paths
         let path_pool_refs: Vec<(u64, Vec<V3PoolRef>)> = self
             .paths

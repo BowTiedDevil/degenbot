@@ -1873,14 +1873,6 @@ async def consume_result_batches(
             path_suppression.discard(int(path_id))
 
         if results:
-            # Log top results
-            for pid, inp, pft, _ho, _ci, sb in results[:5]:
-                pi = engine_registry.paths.get(pid)
-                desc = "↔".join(_hop_display_addr(h) for h in pi.hops) if pi else f"path={pid}"
-                bot_logger.info(
-                    f"[engine] {desc} input={inp} profit={pft // 10**9}gwei solve_block={sb}"
-                )
-
             await dispatch_profitable_results(
                 results=results,
                 engine_registry=engine_registry,

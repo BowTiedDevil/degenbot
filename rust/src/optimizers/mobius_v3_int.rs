@@ -796,9 +796,9 @@ pub fn int_solve_cl_path(sequences: &[&IntV3TickRangeSequence]) -> Option<(U256,
 
     // Iterate over all combinations using mixed-radix counting
     let mut ks: Vec<usize> = vec![0; n_hops];
+    let mut crossings: Vec<Option<IntTickRangeCrossing>> = Vec::with_capacity(n_hops);
     'outer: loop {
-        // Compute crossings for this combination
-        let mut crossings: Vec<Option<IntTickRangeCrossing>> = Vec::with_capacity(n_hops);
+        crossings.clear();
         let mut total_crossing_cost = U256::ZERO;
         let mut valid = true;
 
