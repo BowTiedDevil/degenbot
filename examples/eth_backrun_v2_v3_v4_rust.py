@@ -786,6 +786,23 @@ async def build_paths(
                     bot_logger.info(f"[build_paths] V4 ValueError (other): {exc}")
             engine_reject_count += 1
             continue
+        except RuntimeError as exc:
+            # Verification failure — tick data mismatch. This is fatal.
+            # The engine's verify_on_register flag causes RuntimeError to be
+            # raised when on-chain tick state doesn't match the engine state.
+            exc_str = str(exc)
+            if "tick data mismatch" in exc_str:
+                bot_logger.critical(
+                    f"[build_paths] VERIFICATION FAILURE — shutting down: {exc}"
+                )
+                raise
+            # Other RuntimeErrors (e.g. phase violations) — skip path
+            engine_reject_count += 1
+            other_exc_count += 1
+            bot_logger.info(
+                f"[build_paths] Engine registration failed ({type(exc).__name__}): {exc}"
+            )
+            continue
         except Exception as exc:
             engine_reject_count += 1
             other_exc_count += 1
