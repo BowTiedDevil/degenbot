@@ -2233,6 +2233,9 @@ def _3hop_v4_v2_v4(
     )
     inner += enc_v4_take(forward_a_idx, at.add(hb.pool_address), out_a)
     inner += enc_v2_swap_direct(at.add(hb.pool_address), hb.zfo, out_b, executor_idx)
+    inner += enc_v4_sync(forward_b_idx)
+    inner += enc_erc20_transfer(forward_b_idx, at.add(pool_manager_address), out_b)
+    inner += enc_v4_settle()
     inner += enc_v4_swap_compact(
         at.add(hc.currency0_address),
         at.add(hc.currency1_address),
@@ -2242,8 +2245,8 @@ def _3hop_v4_v2_v4(
         hc.zfo,
         out_b,
     )
-    inner += enc_v4_settle_delta(forward_b_idx)
-    inner += enc_v4_settle_delta(weth_idx)
+    inner += enc_v4_take_delta(weth_idx, executor_idx)
+    inner += enc_v4_settle_all()
 
     return enc_preamble(at) + enc_v4_unlock(inner)
 
@@ -2423,7 +2426,7 @@ def _3hop_v4_v3_v4(
     inner += enc_v4_sync(forward_b_idx)
     inner += enc_v3_swap_compact(v3b_idx, hb.zfo, out_a, pm_idx, forward_data=b_fwd)
     inner += enc_v4_settle()
-    inner += enc_v4_settle_delta(weth_idx)
+    inner += enc_v4_settle_all()
 
     return enc_preamble(at) + enc_v4_unlock(inner)
 
