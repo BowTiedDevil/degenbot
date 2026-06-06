@@ -452,11 +452,11 @@ The Rust extension (`rust/`) provides PyO3-wrapped ABI encoding/decoding, subscr
 
 ### V3 Block Engine: Mint/Burn Event Handling
 
-`V3BlockEngine.process_block()` decodes Swap, Mint, and Burn events from raw Alloy logs. The `update_tick_liquidity()` function matches Solidity's `Tick.update()`: both lower and upper tick receive `liquidity_gross += delta`, while `liquidity_net += delta` for the lower tick and `liquidity_net -= delta` for the upper tick (controlled by `is_lower_tick` parameter). Ticks with zero `liquidity_gross` after the update are removed (de-initialized). Mint/Burn decoders live in `rust/src/bot_core/v3_mint_burn_decoder.rs`. This replaces the previous O(n) full-tick-data dump from Python on every event (Plan 080 F4, completed).
+`V3BlockEngine.process_block()` decodes Swap, Mint, and Burn events from raw Alloy logs. The `update_tick_liquidity()` helper (shared in `rust/src/bot_core/tick_bitmap.rs`) matches Solidity's `Tick.update()`: both lower and upper tick receive `liquidity_gross += delta`, while `liquidity_net += delta` for the lower tick and `liquidity_net -= delta` for the upper tick (controlled by `is_lower_tick` parameter). Ticks with zero `liquidity_gross` after the update are removed (de-initialized). Mint/Burn decoders live in `rust/src/bot_core/v3_mint_burn_decoder.rs`. This replaces the previous O(n) full-tick-data dump from Python on every event (Plan 080 F4, completed).
 
 ### V4 Block Engine: ModifyLiquidity Event Handling
 
-`V4BlockEngine.process_block()` decodes Swap and ModifyLiquidity events from raw Alloy logs. V4's `ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)` replaces V3's separate Mint and Burn — a signed `liquidityDelta` handles both directions. The `apply_liquidity_update()` method uses the same `update_tick_liquidity()` function as V3, with the delta converted from `I256` to `i128`. Decoder lives in `rust/src/bot_core/v4_modify_liquidity_decoder.rs`. V4 pools are keyed by `(pool_manager, pool_id)` instead of contract address.
+`V4BlockEngine.process_block()` decodes Swap and ModifyLiquidity events from raw Alloy logs. V4's `ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)` replaces V3's separate Mint and Burn — a signed `liquidityDelta` handles both directions. Both V3 and V4 engines delegate tick mutations to the shared `update_tick_liquidity()` and `apply_liquidity_to_tick_range()` helpers in `rust/src/bot_core/tick_bitmap.rs`. Decoder lives in `rust/src/bot_core/v4_modify_liquidity_decoder.rs`. V4 pools are keyed by `(pool_manager, pool_id)` instead of contract address.
 
 ### Rust Engine Pumps
 

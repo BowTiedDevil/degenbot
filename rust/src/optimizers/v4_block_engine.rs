@@ -37,9 +37,11 @@
 
 use std::collections::{HashMap, HashSet};
 
-use alloy::primitives::{Address, I256, U128, U256};
+use alloy::primitives::{Address, I256, U256};
 
-use crate::bot_core::tick_bitmap::{compute_tick_ranges, V3TickRangeForSolver};
+use crate::bot_core::tick_bitmap::{
+    apply_liquidity_to_tick_range, compute_tick_ranges, V3TickRangeForSolver,
+};
 use crate::bot_core::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log;
 use crate::bot_core::v4_swap_decoder::{decode_v4_swap_log, PoolId};
 use crate::bot_core::TickInfo;
@@ -494,13 +496,19 @@ impl V4BlockEngine {
                 Err(_) => continue,
             };
             let fwd_state = self.pools.get_mut(&forward_key).unwrap();
-            update_tick_liquidity(&mut fwd_state.tick_data, update.tick_lower, delta_i128, true);
-            update_tick_liquidity(&mut fwd_state.tick_data, update.tick_upper, delta_i128, false);
-            fwd_state.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+            apply_liquidity_to_tick_range(
+                &mut fwd_state.tick_data,
+                update.tick_lower,
+                update.tick_upper,
+                delta_i128,
+            );
             let rev_state = self.pools.get_mut(&reverse_key).unwrap();
-            update_tick_liquidity(&mut rev_state.tick_data, update.tick_lower, delta_i128, true);
-            update_tick_liquidity(&mut rev_state.tick_data, update.tick_upper, delta_i128, false);
-            rev_state.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+            apply_liquidity_to_tick_range(
+                &mut rev_state.tick_data,
+                update.tick_lower,
+                update.tick_upper,
+                delta_i128,
+            );
         }
     }
 
@@ -529,13 +537,19 @@ impl V4BlockEngine {
                 Err(_) => continue,
             };
             let fwd_state = self.pools.get_mut(&forward_key).unwrap();
-            update_tick_liquidity(&mut fwd_state.tick_data, update.tick_lower, delta_i128, true);
-            update_tick_liquidity(&mut fwd_state.tick_data, update.tick_upper, delta_i128, false);
-            fwd_state.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+            apply_liquidity_to_tick_range(
+                &mut fwd_state.tick_data,
+                update.tick_lower,
+                update.tick_upper,
+                delta_i128,
+            );
             let rev_state = self.pools.get_mut(&reverse_key).unwrap();
-            update_tick_liquidity(&mut rev_state.tick_data, update.tick_lower, delta_i128, true);
-            update_tick_liquidity(&mut rev_state.tick_data, update.tick_upper, delta_i128, false);
-            rev_state.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+            apply_liquidity_to_tick_range(
+                &mut rev_state.tick_data,
+                update.tick_lower,
+                update.tick_upper,
+                delta_i128,
+            );
         }
     }
 
@@ -656,13 +670,9 @@ impl V4BlockEngine {
                 Err(_) => return,
             };
             let fwd_state = self.pools.get_mut(&fwd_key).unwrap();
-            update_tick_liquidity(&mut fwd_state.tick_data, tick_lower, delta_i128, true);
-            update_tick_liquidity(&mut fwd_state.tick_data, tick_upper, delta_i128, false);
-            fwd_state.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+            apply_liquidity_to_tick_range(&mut fwd_state.tick_data, tick_lower, tick_upper, delta_i128);
             let rev_state = self.pools.get_mut(&rev_key).unwrap();
-            update_tick_liquidity(&mut rev_state.tick_data, tick_lower, delta_i128, true);
-            update_tick_liquidity(&mut rev_state.tick_data, tick_upper, delta_i128, false);
-            rev_state.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+            apply_liquidity_to_tick_range(&mut rev_state.tick_data, tick_lower, tick_upper, delta_i128);
             return;
         }
 
@@ -713,18 +723,14 @@ impl V4BlockEngine {
 
         // Apply to forward pool
         if let Some(pool) = self.pools.get_mut(&fwd_key) {
-            update_tick_liquidity(&mut pool.tick_data, tick_lower, delta_i128, true);
-            update_tick_liquidity(&mut pool.tick_data, tick_upper, delta_i128, false);
-            pool.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+            apply_liquidity_to_tick_range(&mut pool.tick_data, tick_lower, tick_upper, delta_i128);
             pool.update_block = block_number;
             pool.invalidate_tick_range_cache();
         }
 
         // Apply to reverse pool
         if let Some(pool) = self.pools.get_mut(&rev_key) {
-            update_tick_liquidity(&mut pool.tick_data, tick_lower, delta_i128, true);
-            update_tick_liquidity(&mut pool.tick_data, tick_upper, delta_i128, false);
-            pool.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+            apply_liquidity_to_tick_range(&mut pool.tick_data, tick_lower, tick_upper, delta_i128);
             pool.update_block = block_number;
             pool.invalidate_tick_range_cache();
         }
@@ -1048,51 +1054,6 @@ impl Default for V4BlockEngine {
     fn default() -> Self {
         Self::new()
     }
-}
-
-// ---------------------------------------------------------------------------
-// Tick liquidity update function (mirrors V3BlockEngine)
-// ---------------------------------------------------------------------------
-
-/// Update a single tick's `liquidity_gross` and `liquidity_net` in-place.
-///
-/// Matches V3's Solidity `Tick.update()`:
-/// - Both lower and upper tick receive `liquidity_gross += delta`
-/// - `liquidity_net += delta` for the lower tick
-/// - `liquidity_net -= delta` for the upper tick (controlled by `is_lower_tick`)
-///
-/// If a tick doesn't exist yet, it's inserted with appropriate initial values.
-/// Ticks with `liquidity_gross == 0` after the update should be removed by the caller.
-fn update_tick_liquidity(
-    tick_data: &mut HashMap<i32, TickInfo>,
-    tick: i32,
-    delta: i128,
-    is_lower_tick: bool,
-) {
-    let entry = tick_data.entry(tick).or_insert(TickInfo {
-        liquidity_gross: U128::ZERO,
-        liquidity_net: I256::ZERO,
-    });
-
-    // Update liquidity_gross: += delta (always the same direction for both ticks)
-    let current_gross = entry.liquidity_gross.to::<u128>();
-    let new_gross_i128 = current_gross.cast_signed() + delta;
-    // liquidity_gross is always >= 0 in valid state; negative means an underflow bug
-    let new_gross = if new_gross_i128 < 0 {
-        U128::ZERO
-    } else {
-        U128::from(new_gross_i128.cast_unsigned())
-    };
-    entry.liquidity_gross = new_gross;
-
-    // Update liquidity_net: += delta for lower tick, -= delta for upper tick
-    let delta_i256 = I256::try_from(delta).unwrap_or(I256::ZERO);
-    let current_net = entry.liquidity_net;
-    entry.liquidity_net = if is_lower_tick {
-        current_net.checked_add(delta_i256).unwrap_or(I256::ZERO)
-    } else {
-        current_net.checked_sub(delta_i256).unwrap_or(I256::ZERO)
-    };
 }
 
 // ---------------------------------------------------------------------------

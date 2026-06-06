@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 
-use alloy::primitives::U256;
+use alloy::primitives::{I256, U128, U256};
 
 use crate::bot_core::TickInfo;
 
@@ -395,6 +395,71 @@ pub struct V3TickRangeForSolver {
     pub sqrt_price_lower: U256,
     /// Sqrt price at the upper tick boundary (Q128.96 as U256).
     pub sqrt_price_upper: U256,
+}
+
+/// Update a single tick's `liquidity_gross` and `liquidity_net` in-place.
+///
+/// Matches the Uniswap V3 `Tick.update()` logic:
+/// - `liquidity_gross += delta` (always, for both lower and upper ticks)
+/// - `liquidity_net += delta` for the lower tick
+/// - `liquidity_net -= delta` for the upper tick
+///
+/// The `is_lower_tick` parameter controls whether to add or subtract the
+/// delta from `liquidity_net` (matches Solidity's `if (upper)` check).
+///
+/// If a tick doesn't exist yet, it's inserted with appropriate initial values.
+/// Ticks with `liquidity_gross == 0` after the update should be removed by the caller.
+pub fn update_tick_liquidity<S: std::hash::BuildHasher>(
+    tick_data: &mut HashMap<i32, TickInfo, S>,
+    tick: i32,
+    delta: i128,
+    is_lower_tick: bool,
+) {
+    let entry = tick_data.entry(tick).or_insert(TickInfo {
+        liquidity_gross: U128::ZERO,
+        liquidity_net: I256::ZERO,
+    });
+
+    // Update liquidity_gross: += delta (always the same direction for both ticks)
+    let current_gross = entry.liquidity_gross.to::<u128>();
+    let new_gross_i128 = current_gross.cast_signed() + delta;
+    // liquidity_gross is always >= 0 in valid state; negative means an underflow bug
+    let new_gross = if new_gross_i128 < 0 {
+        U128::ZERO
+    } else {
+        U128::from(new_gross_i128.cast_unsigned())
+    };
+    entry.liquidity_gross = new_gross;
+
+    // Update liquidity_net: += delta for lower tick, -= delta for upper tick
+    let delta_i256 = I256::try_from(delta).unwrap_or(I256::ZERO);
+    let current_net = entry.liquidity_net;
+    entry.liquidity_net = if is_lower_tick {
+        current_net.checked_add(delta_i256).unwrap_or(I256::ZERO)
+    } else {
+        current_net.checked_sub(delta_i256).unwrap_or(I256::ZERO)
+    };
+}
+
+/// Apply a liquidity delta to a tick range [`tick_lower`, `tick_upper`].
+///
+/// Updates both boundary ticks and removes ticks whose `liquidity_gross`
+/// has dropped to zero. This is the standard `Tick.update()` pattern for
+/// Mint/Burn/ModifyLiquidity events.
+///
+/// # Panics
+///
+/// Never panics in normal operation. Uses `checked_add`/`checked_sub` for
+/// `liquidity_net` and saturates at zero for `liquidity_gross`.
+pub fn apply_liquidity_to_tick_range<S: std::hash::BuildHasher>(
+    tick_data: &mut HashMap<i32, TickInfo, S>,
+    tick_lower: i32,
+    tick_upper: i32,
+    liquidity_delta: i128,
+) {
+    update_tick_liquidity(tick_data, tick_lower, liquidity_delta, true);
+    update_tick_liquidity(tick_data, tick_upper, liquidity_delta, false);
+    tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
 }
 
 #[cfg(test)]
