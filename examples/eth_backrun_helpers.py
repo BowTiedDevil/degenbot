@@ -1541,7 +1541,7 @@ def _3hop_v2_v4_v2(
     weth_idx = at.add(weth_address)
     forward_a_idx = at.add(ha.token1_address if ha.zfo else ha.token0_address)
     forward_b_idx = at.add(
-        hb.currency0_address if hb.currency0_address != weth_address else hb.currency1_address
+        hb.currency1_address if hb.zfo else hb.currency0_address
     )
     executor_idx = at.add(executor_address)
     zero_idx = at.add(CMD_ZERO_ADDRESS)
@@ -1595,7 +1595,7 @@ def _3hop_v2_v4_v3(
     weth_idx = at.add(weth_address)
     forward_a_idx = at.add(ha.token1_address if ha.zfo else ha.token0_address)
     forward_b_idx = at.add(
-        hb.currency0_address if hb.currency0_address != weth_address else hb.currency1_address
+        hb.currency1_address if hb.zfo else hb.currency0_address
     )
     executor_idx = at.add(executor_address)
     zero_idx = at.add(CMD_ZERO_ADDRESS)
@@ -1954,7 +1954,7 @@ def _3hop_v3_v4_v2(
     forward_a_idx = at.add(ha.token1_address if ha.zfo else ha.token0_address)
     # Forward from V4b
     forward_b_idx = at.add(
-        hb.currency0_address if hb.currency0_address != weth_address else hb.currency1_address
+        hb.currency1_address if hb.zfo else hb.currency0_address
     )
 
     v4_inner = enc_v4_settle()
@@ -2009,7 +2009,7 @@ def _3hop_v3_v4_v3(
     forward_a_idx = at.add(ha.token1_address if ha.zfo else ha.token0_address)
     # Forward from V4b
     forward_b_idx = at.add(
-        hb.currency0_address if hb.currency0_address != weth_address else hb.currency1_address
+        hb.currency1_address if hb.zfo else hb.currency0_address
     )
 
     # V3a callback: WETH→V3a + V4 unlock (V4b swap, V4_TAKE forward→V3c)
@@ -2120,7 +2120,7 @@ def _3hop_v4_v2_v2(
 
     # Forward from V4a
     forward_a_idx = at.add(
-        ha.currency0_address if ha.currency0_address != weth_address else ha.currency1_address
+        ha.currency1_address if ha.zfo else ha.currency0_address
     )
 
     b_cmd = enc_v2_swap_direct(at.add(hb.pool_address), hb.zfo, out_b, at.add(hc.pool_address))
@@ -2169,7 +2169,7 @@ def _3hop_v4_v2_v3(
 
     # Forward from V4a
     forward_a_idx = at.add(
-        ha.currency0_address if ha.currency0_address != weth_address else ha.currency1_address
+        ha.currency1_address if ha.zfo else ha.currency0_address
     )
     # Forward from V2b
     _forward_b_idx = at.add(hb.token1_address if hb.zfo else hb.token0_address)
@@ -2218,7 +2218,7 @@ def _3hop_v4_v2_v4(
     zero_idx = at.add(CMD_ZERO_ADDRESS)
 
     forward_a_idx = at.add(
-        ha.currency0_address if ha.currency0_address != weth_address else ha.currency1_address
+        ha.currency1_address if ha.zfo else ha.currency0_address
     )
     forward_b_idx = at.add(hb.token1_address if hb.zfo else hb.token0_address)
 
@@ -2275,7 +2275,7 @@ def _3hop_v4_v3_v2(
 
     # Forward from V4a
     forward_a_idx = at.add(
-        ha.currency0_address if ha.currency0_address != weth_address else ha.currency1_address
+        ha.currency1_address if ha.zfo else ha.currency0_address
     )
     # Forward from V3b
     _forward_b_idx = at.add(hb.token1_address if hb.zfo else hb.token0_address)
@@ -2312,7 +2312,7 @@ def _3hop_v4_v3_v3(
     pool_manager_address: str,
     weth_address: str,
 ) -> bytes | None:
-    """V3c→V3b reverse + V4_TAKE USDC→V3b (IIA ✓), merged WETH settle."""
+    """V3c→V3b reverse + V4_TAKE USDC→V3b (IIA ✓), auto-settle WETH delta."""
     ha, hb, hc = path_info.hops
     out_a, out_b, _out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
@@ -2330,7 +2330,7 @@ def _3hop_v4_v3_v3(
 
     # Forward from V4a
     forward_a_idx = at.add(
-        ha.currency0_address if ha.currency0_address != weth_address else ha.currency1_address
+        ha.currency1_address if ha.zfo else ha.currency0_address
     )
 
     # V3b callback: V4_TAKE USDC→V3b (IIA ✓ during callback)
@@ -2358,9 +2358,7 @@ def _3hop_v4_v3_v3(
             forward_data=b_fwd,
         ),
     )
-    inner += enc_v4_sync(weth_idx)
-    inner += enc_erc20_transfer(weth_idx, pm_idx, optimal_input)
-    inner += enc_v4_settle()
+    inner += enc_v4_settle_delta(weth_idx)
 
     return enc_preamble(at) + enc_v4_unlock(inner)
 
@@ -2393,7 +2391,7 @@ def _3hop_v4_v3_v4(
 
     # Forward from V4a
     forward_a_idx = at.add(
-        ha.currency0_address if ha.currency0_address != weth_address else ha.currency1_address
+        ha.currency1_address if ha.zfo else ha.currency0_address
     )
     # Forward from V3b
     forward_b_idx = at.add(hb.token1_address if hb.zfo else hb.token0_address)
@@ -2456,7 +2454,7 @@ def _3hop_v4_v4_v2(
 
     # Forward from V4b (= output of V4b swap)
     forward_b_idx = at.add(
-        hb.currency0_address if hb.currency0_address != weth_address else hb.currency1_address
+        hb.currency1_address if hb.zfo else hb.currency0_address
     )
 
     c_cmd = enc_v2_swap_direct(at.add(hc.pool_address), hc.zfo, out_c, executor_idx)
@@ -2512,7 +2510,7 @@ def _3hop_v4_v4_v3(
 
     # Forward from V4b
     forward_b_idx = at.add(
-        hb.currency0_address if hb.currency0_address != weth_address else hb.currency1_address
+        hb.currency1_address if hb.zfo else hb.currency0_address
     )
     v3c_idx = at.add(hc.pool_address)
 
@@ -2554,7 +2552,7 @@ def _3hop_v4_v4_v4(
     pool_manager_address: str,
     weth_address: str,
 ) -> bytes | None:
-    """Pure delta netting, V4_TAKE profit only."""
+    """Pure delta netting, V4_TAKE profit, auto-settle WETH delta."""
     if len(hop_outputs) < 3:
         bot_logger.warning(
             f"[cmd-3hop-v4v4v4] hop_outputs has {len(hop_outputs)} elements, expected 3 — skipping"
@@ -2602,6 +2600,7 @@ def _3hop_v4_v4_v4(
     inner += enc_v4_take(
         weth_idx, executor_idx, out_c - optimal_input if out_c > optimal_input else 0
     )
+    inner += enc_v4_settle_delta(weth_idx)
 
     return enc_preamble(at) + enc_v4_unlock(inner)
 
