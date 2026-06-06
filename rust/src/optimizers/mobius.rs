@@ -147,7 +147,7 @@ impl MobiusCoefficients {
 /// M_i = [[γ_i·s_i, 0], [γ_i, r_i]]
 /// ```
 ///
-/// and the product M_1 · M_2 · ... · M_n yields the composite
+/// and the product `M_1` · `M_2` · ... · `M_n` yields the composite
 /// transformation l(x) = K·x / (M + N·x).
 ///
 /// # Errors

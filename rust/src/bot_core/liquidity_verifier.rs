@@ -75,6 +75,11 @@ fn compress_tick(tick: i64, tick_spacing: i64) -> i64 {
 
 /// Compute (wordPos, bitPos) for a compressed tick.
 /// Matches Solidity `TickBitmap.position(compressedTick)`.
+///
+/// In Uniswap V3, `compressedTick` is an `int24` (24-bit signed), so the
+/// range is [-887272, 887272]. After `>> 8`, `wordPos` fits in `i16`
+/// and `bitPos` fits in `u8`.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn tick_bitmap_position(compressed_tick: i64) -> (i16, u8) {
     // wordPos = compressed_tick >> 8 (arithmetic shift right = floor by 256)
     let word_pos = (compressed_tick >> 8) as i16;
@@ -92,26 +97,27 @@ fn tick_bitmap_position(compressed_tick: i64) -> (i16, u8) {
 /// This is used for the snapshot-block verification: compare the DB-derived
 /// `tick_data` against on-chain at the snapshot block, before any buffer events
 /// are applied. Catches snapshot loading/serialization bugs.
-pub async fn verify_v3_liquidity_map(
+/// # Errors
+///
+/// Returns `Err(VerificationMismatch)` if any tick's `liquidityGross` or
+/// `liquidityNet` differs from on-chain.
+pub async fn verify_v3_liquidity_map<S: std::hash::BuildHasher>(
     provider: &AlloyProvider,
     pool_address: Address,
-    tick_data: &HashMap<i32, crate::bot_core::TickInfo>,
+    tick_data: &HashMap<i32, crate::bot_core::TickInfo, S>,
     block_number: u64,
 ) -> Result<(), VerificationMismatch> {
     for (&tick_idx, our_info) in tick_data {
-        let our_lg = our_info.liquidity_gross.to::<u128>();
-        let our_ln: i128 = match our_info.liquidity_net.try_into() {
-            Ok(v) => v,
-            Err(_) => 0i128,
-        };
+        let our_gross = our_info.liquidity_gross.to::<u128>();
+        let our_net: i128 = our_info.liquidity_net.try_into().unwrap_or_default();
 
-        let (on_chain_lg, on_chain_ln) =
+        let (on_chain_gross, on_chain_net) =
             call_v3_ticks(provider, pool_address, tick_idx, Some(block_number)).await?;
 
-        if our_lg != on_chain_lg || our_ln != on_chain_ln {
+        if our_gross != on_chain_gross || our_net != on_chain_net {
             return Err(VerificationMismatch {
                 message: format!(
-                    "V3 pool {pool_address} at snapshot block {block_number}: tick {tick_idx} mismatch — snapshot: (lg={our_lg}, ln={our_ln}), on-chain: (lg={on_chain_lg}, ln={on_chain_ln})"
+                    "V3 pool {pool_address} at snapshot block {block_number}: tick {tick_idx} mismatch — snapshot: (lg={our_gross}, ln={our_net}), on-chain: (lg={on_chain_gross}, ln={on_chain_net})"
                 ),
             });
         }
@@ -124,29 +130,30 @@ pub async fn verify_v3_liquidity_map(
 /// This is used for the snapshot-block verification: compare the DB-derived
 /// `tick_data` against on-chain at the snapshot block, before any buffer events
 /// are applied. Catches snapshot loading/serialization bugs.
-pub async fn verify_v4_liquidity_map(
+/// # Errors
+///
+/// Returns `Err(VerificationMismatch)` if any tick's `liquidityGross` or
+/// `liquidityNet` differs from on-chain.
+pub async fn verify_v4_liquidity_map<S: std::hash::BuildHasher>(
     provider: &AlloyProvider,
     state_view: Address,
     pool_id: [u8; 32],
-    tick_data: &HashMap<i32, crate::bot_core::TickInfo>,
+    tick_data: &HashMap<i32, crate::bot_core::TickInfo, S>,
     block_number: u64,
 ) -> Result<(), VerificationMismatch> {
     for (&tick_idx, our_info) in tick_data {
-        let our_lg = our_info.liquidity_gross.to::<u128>();
-        let our_ln: i128 = match our_info.liquidity_net.try_into() {
-            Ok(v) => v,
-            Err(_) => 0i128,
-        };
+        let our_gross = our_info.liquidity_gross.to::<u128>();
+        let our_net: i128 = our_info.liquidity_net.try_into().unwrap_or_default();
 
-        let (on_chain_lg, on_chain_ln) =
+        let (on_chain_gross, on_chain_net) =
             call_state_view_tick_liquidity(provider, state_view, pool_id, tick_idx, Some(block_number))
                 .await?;
 
-        if our_lg != on_chain_lg || our_ln != on_chain_ln {
+        if our_gross != on_chain_gross || our_net != on_chain_net {
             let pool_id_hex = crate::hex_utils::encode_hex(&pool_id);
             return Err(VerificationMismatch {
                 message: format!(
-                    "V4 pool {pool_id_hex} at snapshot block {block_number}: tick {tick_idx} mismatch — snapshot: (lg={our_lg}, ln={our_ln}), on-chain: (lg={on_chain_lg}, ln={on_chain_ln})"
+                    "V4 pool {pool_id_hex} at snapshot block {block_number}: tick {tick_idx} mismatch — snapshot: (lg={our_gross}, ln={our_net}), on-chain: (lg={on_chain_gross}, ln={on_chain_net})"
                 ),
             });
         }
@@ -162,10 +169,14 @@ pub async fn verify_v4_liquidity_map(
 ///
 /// Only the liquidity map is verified — mutable scalar state (`sqrtPriceX96`,
 /// `tick`, `liquidity`) is NOT checked since it changes on every swap.
-pub async fn verify_v3_pools(
+/// # Errors
+///
+/// Returns `Err(VerificationMismatch)` if any pool's tick bitmap or tick data
+/// differs from on-chain state.
+pub async fn verify_v3_pools<S: std::hash::BuildHasher>(
     provider: &AlloyProvider,
     _tick_lens: Address, // Kept for API compatibility; not used
-    pools: &HashMap<u64, V3PoolState>,
+    pools: &HashMap<u64, V3PoolState, S>,
     block_number: Option<u64>,
 ) -> Result<(), VerificationMismatch> {
     for pool in pools.values() {
@@ -225,8 +236,14 @@ async fn verify_v3_pool(
         }
 
         for bit in 0..256u64 {
+            // SAFETY: bit is 0..255, so cast to usize is safe on any target.
+            // cast_signed(): bit is u64 ≤ 255, so it fits in i64 without wrap.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
             if bitmap_val.bit(bit as usize) {
-                let compressed_tick = i64::from(*word) * 256 + bit as i64;
+                let compressed_tick = i64::from(*word) * 256 + bit.cast_signed();
+                // SAFETY: compressed_tick * tick_spacing fits in the int24 range
+                // that Uniswap V3 uses, so the truncation to i32 is safe.
+                #[allow(clippy::cast_possible_truncation)]
                 let tick = compressed_tick * i64::from(tick_spacing);
                 on_chain_tick_indices.insert(tick as i32);
             }
@@ -235,25 +252,22 @@ async fn verify_v3_pool(
 
     // 2. Verify each tick in our tick_data by calling pool.ticks() directly
     for (&tick_idx, our_info) in &pool.tick_data {
-        let our_lg = our_info.liquidity_gross.to::<u128>();
-        let our_ln: i128 = match our_info.liquidity_net.try_into() {
-            Ok(v) => v,
-            Err(_) => 0i128,
-        };
+        let our_gross = our_info.liquidity_gross.to::<u128>();
+        let our_net: i128 = our_info.liquidity_net.try_into().unwrap_or_default();
 
-        let (on_chain_lg, on_chain_ln) = call_v3_ticks(provider, pool_addr, tick_idx, block_number).await?;
+        let (on_chain_gross, on_chain_net) = call_v3_ticks(provider, pool_addr, tick_idx, block_number).await?;
 
-        if our_lg != on_chain_lg {
+        if our_gross != on_chain_gross {
             return Err(VerificationMismatch {
                 message: format!(
-                    "V3 pool {pool_addr} {block_tag}: tick {tick_idx} liquidityGross mismatch — engine: {our_lg}, on-chain: {on_chain_lg}"
+                    "V3 pool {pool_addr} {block_tag}: tick {tick_idx} liquidityGross mismatch — engine: {our_gross}, on-chain: {on_chain_gross}"
                 ),
             });
         }
-        if our_ln != on_chain_ln {
+        if our_net != on_chain_net {
             return Err(VerificationMismatch {
                 message: format!(
-                    "V3 pool {pool_addr} {block_tag}: tick {tick_idx} liquidityNet mismatch — engine: {our_ln}, on-chain: {on_chain_ln}"
+                    "V3 pool {pool_addr} {block_tag}: tick {tick_idx} liquidityNet mismatch — engine: {our_net}, on-chain: {on_chain_net}"
                 ),
             });
         }
@@ -264,10 +278,10 @@ async fn verify_v3_pool(
 
     // 3. Check for on-chain ticks we're missing
     if let Some(&tick_idx) = on_chain_tick_indices.iter().next() {
-        let (on_chain_lg, on_chain_ln) = call_v3_ticks(provider, pool_addr, tick_idx, block_number).await?;
+        let (on_chain_gross, on_chain_net) = call_v3_ticks(provider, pool_addr, tick_idx, block_number).await?;
         return Err(VerificationMismatch {
             message: format!(
-                "V3 pool {pool_addr} {block_tag}: tick {tick_idx} exists on-chain (lg={on_chain_lg}, ln={on_chain_ln}) but NOT in engine"
+                "V3 pool {pool_addr} {block_tag}: tick {tick_idx} exists on-chain (lg={on_chain_gross}, ln={on_chain_net}) but NOT in engine"
             ),
         });
     }
@@ -372,10 +386,14 @@ async fn call_state_view_tick_liquidity(
 /// 2. Each tick's `liquidityGross` and `liquidityNet` match on-chain
 ///
 /// Only the liquidity map is verified — mutable scalar state is NOT checked.
-pub async fn verify_v4_pools(
+/// # Errors
+///
+/// Returns `Err(VerificationMismatch)` if any pool's tick bitmap or tick data
+/// differs from on-chain state.
+pub async fn verify_v4_pools<S: std::hash::BuildHasher>(
     provider: &AlloyProvider,
     state_view: Address,
-    pools: &HashMap<u64, V4PoolState>,
+    pools: &HashMap<u64, V4PoolState, S>,
     block_number: Option<u64>,
 ) -> Result<(), VerificationMismatch> {
     // Deduplicate by pool_id — both forward and reverse orientations share the same
@@ -391,6 +409,7 @@ pub async fn verify_v4_pools(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 async fn verify_v4_pool(
     provider: &AlloyProvider,
     state_view: Address,
@@ -403,137 +422,185 @@ async fn verify_v4_pool(
         Some(b) => format!("block={b}"),
         None => "block=pending".to_string(),
     };
-    let pool_id_hex: String = pool_id_bytes.iter().map(|b| format!("{b:02x}")).collect();
+    let pool_id_hex = crate::hex_utils::encode_hex(&pool_id_bytes);
 
     // 1. Discover on-chain populated bitmap words
     let mut words_to_check: std::collections::HashSet<i16> = std::collections::HashSet::new();
-
-    // Check words from our tick_data
-    for &tick_idx in pool.tick_data.keys() {
-        let compressed = compress_tick(i64::from(tick_idx), i64::from(tick_spacing));
-        let (word, _) = tick_bitmap_position(compressed);
-        words_to_check.insert(word);
-    }
-
-    // Also check a few words around the current tick
-    let compressed_current = compress_tick(i64::from(pool.tick), i64::from(tick_spacing));
-    let (current_word, _) = tick_bitmap_position(compressed_current);
-    for w in (current_word - 2)..=(current_word + 2) {
-        words_to_check.insert(w);
-    }
+    collect_bitmap_words(&pool.tick_data, pool.tick, tick_spacing, &mut words_to_check);
 
     let mut on_chain_ticks: HashMap<i32, (u128, i128)> = HashMap::new();
 
     for word in &words_to_check {
-        // Encode: getTickBitmap(bytes32, int16)
-        let bitmap_calldata = encode_calldata(
-            STATE_VIEW_GET_TICK_BITMAP_SELECTOR,
-            &[
-                DynSolValue::FixedBytes(B256::from(pool_id_bytes), 32),
-                DynSolValue::Int(I256::unchecked_from(i128::from(i64::from(*word))), 16),
-            ],
-        );
+        let bitmap_val = fetch_v4_tick_bitmap(
+            provider,
+            state_view,
+            pool_id_bytes,
+            pool_id_hex.as_str(),
+            block_tag.as_str(),
+            *word,
+            block_number,
+        )
+        .await?;
 
-        let bitmap_result = provider
-            .eth_call(&state_view, bitmap_calldata, block_number)
-            .await
-            .map_err(|e| VerificationMismatch {
-                message: format!(
-                    "V4 pool 0x{pool_id_hex} {block_tag}: getTickBitmap({word}) RPC call failed: {e}"
-                ),
-            })?;
-
-        let bitmap_val = decode_uint256(&bitmap_result[0..32]);
         if bitmap_val.is_zero() {
             continue;
         }
 
         // Enumerate set bits in the bitmap
+        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
         for bit in 0..256u64 {
             if bitmap_val.bit(bit as usize) {
-                let compressed_tick = i64::from(*word) * 256 + bit as i64;
-                let tick = compressed_tick * i64::from(tick_spacing);
-                let tick_i32 = tick as i32;
+                let compressed_tick = i64::from(*word) * 256 + bit.cast_signed();
+                let tick_i32 = (compressed_tick * i64::from(tick_spacing)) as i32;
 
-                // Call getTickLiquidity for this tick
-                let tick_liq_calldata = encode_calldata(
-                    STATE_VIEW_GET_TICK_LIQUIDITY_SELECTOR,
-                    &[
-                        DynSolValue::FixedBytes(B256::from(pool_id_bytes), 32),
-                        DynSolValue::Int(I256::unchecked_from(i128::from(tick_i32)), 24),
-                    ],
-                );
+                let (gross, net) = fetch_v4_tick_liquidity(
+                    provider,
+                    state_view,
+                    pool_id_bytes,
+                    pool_id_hex.as_str(),
+                    block_tag.as_str(),
+                    tick_i32,
+                    block_number,
+                )
+                .await?;
 
-                let tick_liq_result = provider
-                    .eth_call(&state_view, tick_liq_calldata, block_number)
-                    .await
-                    .map_err(|e| VerificationMismatch {
-                        message: format!(
-                            "V4 pool 0x{pool_id_hex} {block_tag}: getTickLiquidity({tick_i32}) RPC call failed: {e}"
-                        ),
-                    })?;
-
-                // Decode: (uint128 liquidityGross, int128 liquidityNet)
-                if tick_liq_result.len() < 64 {
-                    return Err(VerificationMismatch {
-                        message: format!(
-                            "V4 pool 0x{pool_id_hex} {block_tag}: getTickLiquidity({tick_i32}) returned {} bytes, expected 64",
-                            tick_liq_result.len()
-                        ),
-                    });
-                }
-
-                let lg = decode_uint128(&tick_liq_result[0..32]);
-                let ln = decode_int128(&tick_liq_result[32..64]);
-                on_chain_ticks.insert(tick_i32, (lg, ln));
+                on_chain_ticks.insert(tick_i32, (gross, net));
             }
         }
     }
 
     // 2. Compare every tick in our tick_data against on-chain
     for (&tick_idx, our_info) in &pool.tick_data {
-        let our_lg = our_info.liquidity_gross.to::<u128>();
-        let our_ln: i128 = match our_info.liquidity_net.try_into() {
-            Ok(v) => v,
-            Err(_) => 0i128,
-        };
+        let our_gross = our_info.liquidity_gross.to::<u128>();
+        let our_net: i128 = our_info.liquidity_net.try_into().unwrap_or_default();
 
-        if let Some(&(on_chain_lg, on_chain_ln)) = on_chain_ticks.get(&tick_idx) {
-            if our_lg != on_chain_lg {
+        if let Some(&(on_chain_gross, on_chain_net)) = on_chain_ticks.get(&tick_idx) {
+            if our_gross != on_chain_gross {
                 return Err(VerificationMismatch {
                     message: format!(
-                        "V4 pool 0x{pool_id_hex} {block_tag}: tick {tick_idx} liquidityGross mismatch — engine: {our_lg}, on-chain: {on_chain_lg}"
+                        "V4 pool 0x{pool_id_hex} {block_tag}: tick {tick_idx} liquidityGross mismatch — engine: {our_gross}, on-chain: {on_chain_gross}"
                     ),
                 });
             }
-            if our_ln != on_chain_ln {
+            if our_net != on_chain_net {
                 return Err(VerificationMismatch {
                     message: format!(
-                        "V4 pool 0x{pool_id_hex} {block_tag}: tick {tick_idx} liquidityNet mismatch — engine: {our_ln}, on-chain: {on_chain_ln}"
+                        "V4 pool 0x{pool_id_hex} {block_tag}: tick {tick_idx} liquidityNet mismatch — engine: {our_net}, on-chain: {on_chain_net}"
                     ),
                 });
             }
         } else {
             return Err(VerificationMismatch {
                 message: format!(
-                    "V4 pool 0x{pool_id_hex} {block_tag}: tick {tick_idx} exists in engine (lg={our_lg}, ln={our_ln}) but NOT on-chain"
+                    "V4 pool 0x{pool_id_hex} {block_tag}: tick {tick_idx} exists in engine (lg={our_gross}, ln={our_net}) but NOT on-chain"
                 ),
             });
         }
     }
 
     // 3. Check for on-chain ticks we're missing
-    for (&tick_idx, &(on_chain_lg, on_chain_ln)) in &on_chain_ticks {
+    for (&tick_idx, &(on_chain_gross, on_chain_net)) in &on_chain_ticks {
         if !pool.tick_data.contains_key(&tick_idx) {
             return Err(VerificationMismatch {
                 message: format!(
-                    "V4 pool 0x{pool_id_hex} {block_tag}: tick {tick_idx} exists on-chain (lg={on_chain_lg}, ln={on_chain_ln}) but NOT in engine"
+                    "V4 pool 0x{pool_id_hex} {block_tag}: tick {tick_idx} exists on-chain (lg={on_chain_gross}, ln={on_chain_net}) but NOT in engine"
                 ),
             });
         }
     }
 
     Ok(())
+}
+
+/// Collect bitmap words from tick data and around the current tick.
+fn collect_bitmap_words<S: std::hash::BuildHasher>(
+    tick_data: &HashMap<i32, crate::bot_core::TickInfo, S>,
+    current_tick: i32,
+    tick_spacing: i32,
+    words: &mut std::collections::HashSet<i16>,
+) {
+    for &tick_idx in tick_data.keys() {
+        let compressed = compress_tick(i64::from(tick_idx), i64::from(tick_spacing));
+        let (word, _) = tick_bitmap_position(compressed);
+        words.insert(word);
+    }
+
+    let compressed_current = compress_tick(i64::from(current_tick), i64::from(tick_spacing));
+    let (current_word, _) = tick_bitmap_position(compressed_current);
+    for w in (current_word - 2)..=(current_word + 2) {
+        words.insert(w);
+    }
+}
+
+/// Fetch a V4 tick bitmap word from the `StateView` contract.
+async fn fetch_v4_tick_bitmap(
+    provider: &AlloyProvider,
+    state_view: Address,
+    pool_id_bytes: [u8; 32],
+    pool_id_hex: &str,
+    block_tag: &str,
+    word: i16,
+    block_number: Option<u64>,
+) -> Result<U256, VerificationMismatch> {
+    let bitmap_calldata = encode_calldata(
+        STATE_VIEW_GET_TICK_BITMAP_SELECTOR,
+        &[
+            DynSolValue::FixedBytes(B256::from(pool_id_bytes), 32),
+            DynSolValue::Int(I256::unchecked_from(i128::from(i64::from(word))), 16),
+        ],
+    );
+
+    let bitmap_result = provider
+        .eth_call(&state_view, bitmap_calldata, block_number)
+        .await
+        .map_err(|e| VerificationMismatch {
+            message: format!(
+                "V4 pool 0x{pool_id_hex} {block_tag}: getTickBitmap({word}) RPC call failed: {e}"
+            ),
+        })?;
+
+    Ok(decode_uint256(&bitmap_result[0..32]))
+}
+
+/// Fetch a V4 tick's `(liquidityGross, liquidityNet)` from the `StateView` contract.
+async fn fetch_v4_tick_liquidity(
+    provider: &AlloyProvider,
+    state_view: Address,
+    pool_id_bytes: [u8; 32],
+    pool_id_hex: &str,
+    block_tag: &str,
+    tick_i32: i32,
+    block_number: Option<u64>,
+) -> Result<(u128, i128), VerificationMismatch> {
+    let tick_liq_calldata = encode_calldata(
+        STATE_VIEW_GET_TICK_LIQUIDITY_SELECTOR,
+        &[
+            DynSolValue::FixedBytes(B256::from(pool_id_bytes), 32),
+            DynSolValue::Int(I256::unchecked_from(i128::from(tick_i32)), 24),
+        ],
+    );
+
+    let tick_liq_result = provider
+        .eth_call(&state_view, tick_liq_calldata, block_number)
+        .await
+        .map_err(|e| VerificationMismatch {
+            message: format!(
+                "V4 pool 0x{pool_id_hex} {block_tag}: getTickLiquidity({tick_i32}) RPC call failed: {e}"
+            ),
+        })?;
+
+    if tick_liq_result.len() < 64 {
+        return Err(VerificationMismatch {
+            message: format!(
+                "V4 pool 0x{pool_id_hex} {block_tag}: getTickLiquidity({tick_i32}) returned {} bytes, expected 64",
+                tick_liq_result.len()
+            ),
+        });
+    }
+
+    let gross = decode_uint128(&tick_liq_result[0..32]);
+    let net = decode_int128(&tick_liq_result[32..64]);
+    Ok((gross, net))
 }
 
 // ---------------------------------------------------------------------------
@@ -620,7 +687,7 @@ mod tests {
         assert_eq!(compress_tick(0, 1), 0);
         assert_eq!(compress_tick(100, 1), 100);
         assert_eq!(compress_tick(-100, 1), -100);
-        assert_eq!(compress_tick(-292420, 1), -292420);
+        assert_eq!(compress_tick(-292_420, 1), -292_420);
     }
 
     #[test]
@@ -631,7 +698,7 @@ mod tests {
         assert_eq!(compress_tick(-10, 10), -1);
         assert_eq!(compress_tick(-20, 10), -2);
         assert_eq!(compress_tick(-11, 10), -2); // floor(-1.1) = -2
-        assert_eq!(compress_tick(-292420, 10), -29242); // The bug case
+        assert_eq!(compress_tick(-292_420, 10), -29_242); // The bug case
     }
 
     #[test]
@@ -655,10 +722,10 @@ mod tests {
     #[test]
     fn compress_tick_max_values() {
         // int24 max = 887272
-        assert_eq!(compress_tick(887272, 10), 88727);
-        assert_eq!(compress_tick(-887272, 10), -88728); // floor(-88727.2) = -88728
+        assert_eq!(compress_tick(887_272, 10), 88_727);
+        assert_eq!(compress_tick(-887_272, 10), -88_728); // floor(-88727.2) = -88728
         // int24 min = -887272
-        assert_eq!(compress_tick(-887272, 1), -887272);
+        assert_eq!(compress_tick(-887_272, 1), -887_272);
     }
 
     // --- tick_bitmap_position tests ---
@@ -714,7 +781,7 @@ mod tests {
 
     #[test]
     fn round_trip_positive_tick() {
-        let tick: i64 = 292420;
+        let tick: i64 = 292_420;
         let tick_spacing: i64 = 10;
         let compressed = compress_tick(tick, tick_spacing);
         let (word, bit) = tick_bitmap_position(compressed);
@@ -725,7 +792,7 @@ mod tests {
 
     #[test]
     fn round_trip_negative_tick() {
-        let tick: i64 = -292420;
+        let tick: i64 = -292_420;
         let tick_spacing: i64 = 10;
         let compressed = compress_tick(tick, tick_spacing);
         let (word, bit) = tick_bitmap_position(compressed);
@@ -768,7 +835,7 @@ mod tests {
     fn compress_matches_python_floor_division() {
         // Test every tick_spacing and a range of ticks that produced the original bug
         for &tick_spacing in &[1i64, 10, 60, 200] {
-            for tick in (-500i64..=500).chain([-292420i64, 887272, -887272]) {
+            for tick in (-500i64..=500).chain([-292_420_i64, 887_272, -887_272]) {
                 let rust_result = compress_tick(tick, tick_spacing);
                 // Python floor division
                 let python_result = if tick_spacing != 0 {
@@ -787,19 +854,23 @@ mod tests {
     #[test]
     fn position_matches_python() {
         // Test position() against Python's (tick >> 8, tick % 256)
-        for tick in (-1000i64..=1000).chain([-29242i64, 29242, -887272, 887272]) {
+        for tick in (-1000i64..=1000).chain([-29_242_i64, 29_242, -887_272, 887_272]) {
             let (rust_word, rust_bit) = tick_bitmap_position(tick);
             // Python semantics
             let py_word = tick >> 8; // arithmetic shift right
             let py_bit = tick.rem_euclid(256); // Python's % always non-negative for positive divisor
-            assert_eq!(
-                rust_word, py_word as i16,
-                "position({tick}): Rust word={rust_word}, Python word={py_word}"
-            );
-            assert_eq!(
-                rust_bit, py_bit as u8,
-                "position({tick}): Rust bit={rust_bit}, Python bit={py_bit}"
-            );
+            // SAFETY: py_word fits in i16 and py_bit fits in u8 for any int24 tick value
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            {
+                assert_eq!(
+                    rust_word, py_word as i16,
+                    "position({tick}): Rust word={rust_word}, Python word={py_word}"
+                );
+                assert_eq!(
+                    rust_bit, py_bit as u8,
+                    "position({tick}): Rust bit={rust_bit}, Python bit={py_bit}"
+                );
+            }
         }
     }
 }

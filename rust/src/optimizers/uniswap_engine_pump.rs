@@ -348,7 +348,6 @@ impl UniswapEnginePump {
                         }
                         Err(e) => {
                             log::error!("UniswapEnginePump: can't get block number during subscribe: {e}");
-                            continue;
                         }
                     }
                 }
@@ -425,6 +424,11 @@ impl UniswapEnginePump {
     }
 
     /// Resume phase using the pump's own watch channel.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `subscribe_state.combined_stream` is `None` (i.e., `subscribe()`
+    /// was not called first).
     pub async fn resume_from_subscribe(&mut self, subscribe_state: SubscribeState) {
         let combined = subscribe_state
             .combined_stream
@@ -439,7 +443,7 @@ impl UniswapEnginePump {
     /// immediately and affected paths are solved right away, without
     /// waiting for a block header. Block headers provide metadata
     /// (timestamp, fees) and handle empty-block detection.
-    #[allow(unused_assignments)]
+    #[allow(unused_assignments, clippy::too_many_lines)]
     async fn run_with_stream(
         &mut self,
         mut combined: stream::BoxStream<'static, WsEvent>,
@@ -799,9 +803,9 @@ impl UniswapEnginePump {
 /// A log is relevant if:
 /// 1. Its topic0 matches one of the 6 monitored event types, AND
 /// 2. Its emitting address is a registered V2/V3 pool or V4 `PoolManager`
-pub fn filter_relevant_logs(
+pub fn filter_relevant_logs<S: std::hash::BuildHasher>(
     logs: &[Log],
-    relevant_topic_set: &HashSet<B256>,
+    relevant_topic_set: &HashSet<B256, S>,
 ) -> Vec<Log> {
     logs.iter()
         .filter(|log| {
