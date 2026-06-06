@@ -1664,16 +1664,16 @@ def _3hop_v2_v4_v4(
         hb.zfo,
         out_a,
     )
-    v4_inner += enc_v4_swap_compact(
+    v4_inner += enc_v4_swap_dynamic(
         at.add(hc.currency0_address),
         at.add(hc.currency1_address),
         hc.fee,
         hc.tick_spacing,
         zero_idx,
         hc.zfo,
-        out_b,
     )
-    v4_inner += enc_v4_take(weth_idx, executor_idx, out_c - optimal_input)
+    v4_inner += enc_v4_take_delta(weth_idx, executor_idx)
+    v4_inner += enc_v4_settle_all()
 
     return enc_preamble(at) + enc_v4_unlock(v4_inner)
 
@@ -2075,17 +2075,17 @@ def _3hop_v3_v4_v4(
         hb.zfo,
         out_a,
     )
-    v4_inner += enc_v4_swap_compact(
+    v4_inner += enc_v4_swap_dynamic(
         at.add(hc.currency0_address),
         at.add(hc.currency1_address),
         hc.fee,
         hc.tick_spacing,
         zero_idx,
         hc.zfo,
-        out_b,
     )
     v4_inner += enc_v4_take(weth_idx, v3a_idx, optimal_input)
-    v4_inner += enc_v4_take(weth_idx, executor_idx, out_c - optimal_input)
+    v4_inner += enc_v4_take_delta(weth_idx, executor_idx)
+    v4_inner += enc_v4_settle_all()
 
     a_fwd = enc_v4_unlock(v4_inner)
 
@@ -2468,18 +2468,17 @@ def _3hop_v4_v4_v2(
         ha.zfo,
         optimal_input,
     )
-    inner += enc_v4_swap_compact(
+    inner += enc_v4_swap_dynamic(
         at.add(hb.currency0_address),
         at.add(hb.currency1_address),
         hb.fee,
         hb.tick_spacing,
         zero_idx,
         hb.zfo,
-        out_a,
     )
     inner += enc_v4_take(forward_b_idx, at.add(hc.pool_address), out_b)
     inner += c_cmd
-    inner += enc_v4_settle_delta(weth_idx)
+    inner += enc_v4_settle_all()
 
     return enc_preamble(at) + enc_v4_unlock(inner)
 
@@ -2525,18 +2524,17 @@ def _3hop_v4_v4_v3(
         ha.zfo,
         optimal_input,
     )
-    inner += enc_v4_swap_compact(
+    inner += enc_v4_swap_dynamic(
         at.add(hb.currency0_address),
         at.add(hb.currency1_address),
         hb.fee,
         hb.tick_spacing,
         zero_idx,
         hb.zfo,
-        out_a,
     )
     inner += enc_v4_take(forward_b_idx, executor_idx, out_b)
     inner += enc_v3_swap_compact(v3c_idx, hc.zfo, out_b, executor_idx, forward_data=c_pay)
-    inner += enc_v4_settle_delta(weth_idx)
+    inner += enc_v4_settle_all()
 
     return enc_preamble(at) + enc_v4_unlock(inner)
 
@@ -2579,28 +2577,24 @@ def _3hop_v4_v4_v4(
         ha.zfo,
         optimal_input,
     )
-    inner += enc_v4_swap_compact(
+    inner += enc_v4_swap_dynamic(
         at.add(hb.currency0_address),
         at.add(hb.currency1_address),
         hb.fee,
         hb.tick_spacing,
         zero_idx,
         hb.zfo,
-        out_a,
     )
-    inner += enc_v4_swap_compact(
+    inner += enc_v4_swap_dynamic(
         at.add(hc.currency0_address),
         at.add(hc.currency1_address),
         hc.fee,
         hc.tick_spacing,
         zero_idx,
         hc.zfo,
-        out_b,
     )
-    inner += enc_v4_take(
-        weth_idx, executor_idx, out_c - optimal_input if out_c > optimal_input else 0
-    )
-    inner += enc_v4_settle_delta(weth_idx)
+    inner += enc_v4_take_delta(weth_idx, executor_idx)
+    inner += enc_v4_settle_all()
 
     return enc_preamble(at) + enc_v4_unlock(inner)
 
