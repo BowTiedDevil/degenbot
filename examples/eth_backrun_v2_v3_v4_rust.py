@@ -26,6 +26,7 @@ Startup sequence:
 import argparse
 import asyncio
 import dataclasses
+import gc
 import itertools
 import operator
 import os
@@ -352,18 +353,6 @@ class PathSuppression:
         self._last_retry_block.pop(path_id, None)
 
 
-@dataclasses.dataclass
-class V4PoolInfo:
-    """V4 pool metadata for encoding and event routing.
-
-    Stored in EngineRegistry._v4_pool_info keyed by the Rust engine key.
-    """
-
-    pool: UniswapV4Pool
-    pool_manager_address: str
-    pool_id_hex: str  # e.g. "0x1234..."
-
-
 def _hop_type_str(hop: HopInfo) -> str:
     """Return the Rust HopType string for a HopInfo variant."""
     if isinstance(hop, V2HopInfo):
@@ -400,8 +389,6 @@ class EngineRegistry:
         self._v3_keys: dict[str, int] = {}
         # V4 pools keyed by pool_id hex — for event routing from PoolManager logs
         self._v4_keys: dict[str, int] = {}  # pool_id_hex → key
-        # Reverse map: key → V4PoolInfo for encoding
-        self._v4_pool_info: dict[int, V4PoolInfo] = {}
         self.paths: dict[int, PathInfo] = {}
         # NOTE: These Python dicts (_v2_keys, _v3_keys, _v4_keys) are plain
         # dicts — NOT thread-safe. All access is on the single asyncio event
@@ -515,12 +502,6 @@ class EngineRegistry:
         )
 
         self._v4_keys[pool_id_hex] = key
-        # Store V4 pool info for encoding (pool_key, pool_manager, pool_id)
-        self._v4_pool_info[key] = V4PoolInfo(
-            pool=pool,
-            pool_manager_address=pool.address,
-            pool_id_hex=pool_id_hex,
-        )
         return key
 
     def knows_pool(self, address: str) -> bool:
@@ -673,7 +654,7 @@ async def build_paths(
             WETH_ADDRESS,
             NATIVE_CURRENCY_ADDRESS,  # V4 allows Ether-paired pools
         ],
-        max_depth=2,
+        max_depth=3,
         pool_types=[
             # UniswapV2PoolTable,
             UniswapV3PoolTable,
@@ -834,7 +815,7 @@ async def build_paths(
             continue
         registered_path_sigs.add(path_sig)
 
-        try:
+        try:  # noqa:PLW0717
             hops = []
             for p, pt, zfo in zip(pools, pool_type_strs, zfo_list, strict=True):
                 if pt == "V2":
@@ -901,10 +882,6 @@ async def build_paths(
         f"v4_other={v4_other_value_error}, other_exc={other_exc_count}), "
         f"{dup_count} duplicates"
     )
-
-    # Pump is always running at this point — paths were eagerly solved
-    # via register_and_solve_path. No separate initial solve needed.
-
     bot_logger.info(
         f"[build_paths] Summary: {path_count} paths in "
         f"{time.perf_counter() - start:.1f}s — "
@@ -1147,6 +1124,17 @@ async def dispatch_profitable_results(
     committed_pools: set[int] = set()
 
     # ── Slice 1: Parallel simulation ──────────────────────────────────────
+    # Budget for INFO-level logging of simulation failures (same pattern as
+    # exceptions). Once exhausted, failures are logged at DEBUG only.
+    _sim_info_budget = [5]
+
+    def _sim_log(msg: str) -> None:
+        if _sim_info_budget[0] > 0:
+            _sim_info_budget[0] -= 1
+            bot_logger.info(msg)
+        else:
+            bot_logger.debug(msg)
+
     async def simulate_one(
         path_id: int,
         optimal_input: int,
@@ -1301,7 +1289,7 @@ async def dispatch_profitable_results(
                 block_identifier="pending",
             )
         except Web3Exception as e:
-            bot_logger.debug(
+            _sim_log(
                 f"[sim-fail] path={path_id} {path_info.path_type}: simulation RPC failed ({e})"
             )
             return None
@@ -1370,7 +1358,7 @@ async def dispatch_profitable_results(
                         revert_reason = f" num=0x{revert_hex[24:]}"
                     else:
                         revert_reason = f" sel=0x{selector}"
-                bot_logger.debug(
+                _sim_log(
                     f"[sim-fail] path={path_id} {path_info.path_type}: "
                     f"call[{i}] failed (gasUsed={c.get('gasUsed', 0)}) "
                     f"revert=0x{revert_hex}{revert_reason}"
@@ -1447,7 +1435,7 @@ async def dispatch_profitable_results(
             eth_after = int.from_bytes(calls[5]["returnData"], byteorder="big")
             erc6909_after = int.from_bytes(calls[6]["returnData"], byteorder="big")
         except (IndexError, ValueError):
-            bot_logger.debug(
+            _sim_log(
                 f"[sim-fail] path={path_id} {path_info.path_type}: balance decode failed"
             )
             return None
@@ -1456,7 +1444,7 @@ async def dispatch_profitable_results(
         combined_after = weth_after + eth_after + erc6909_after
         gross_profit = combined_after - combined_before
         if gross_profit <= 0:
-            bot_logger.debug(
+            _sim_log(
                 f"[sim-fail] path={path_id} {path_info.path_type}: no profit (gross={gross_profit}) "
                 f"weth_before={weth_before} weth_after={weth_after} "
                 f"eth_before={eth_before} eth_after={eth_after} "
@@ -1524,13 +1512,21 @@ async def dispatch_profitable_results(
     gas_profitable: list[tuple[int, int, int, int, dict, Any]] = []
     gas_unprofitable: list[tuple[int, int, int, int, dict, Any]] = []
     exception_count = 0
+    _exc_log_limit = 5
     for result in sim_results:
         if isinstance(result, Exception):
             exception_count += 1
-            bot_logger.debug(
-                f"[sim-fail] simulation exception: {result}\n"
-                + "".join(traceback.format_exception(type(result), result, result.__traceback__))
-            )
+            if _exc_log_limit > 0:
+                _exc_log_limit -= 1
+                bot_logger.info(
+                    f"[sim-exc] simulation exception: {result}\n"
+                    + "".join(traceback.format_exception(type(result), result, result.__traceback__))
+                )
+            else:
+                bot_logger.debug(
+                    f"[sim-fail] simulation exception: {result}\n"
+                    + "".join(traceback.format_exception(type(result), result, result.__traceback__))
+                )
             continue
         if result is None:
             continue
@@ -2023,14 +2019,38 @@ async def main() -> None:
         v3_snapshot=v3_snapshot,
         v4_snapshot=v4_snapshot,
     )
-    bot_logger.info("[startup] Path loading complete — result consumer continues running")
+    bot_logger.info("[startup] Path loading complete — trimming redundant Python state")
 
-    # Per-pool verification already confirmed every pool's liquidity
-    # map at construction time. No additional bulk verification needed.
+    # ── Trim redundant Python state — Rust engine owns all pool state ──
+    # 1. Drop tracker caches and snapshots (prevent them from pinning pool objects)
+    for tracker in bot._trackers.values():
+        if hasattr(tracker, "_tracked_pools"):
+            tracker._tracked_pools.clear()
+        if hasattr(tracker, "_untracked_pools"):
+            tracker._untracked_pools.clear()
+        if hasattr(tracker, "unload_snapshot"):
+            tracker.unload_snapshot()
 
-    # The result consumer task runs indefinitely (it blocks on
-    # async for batch in engine). Just await it — this is the
-    # main loop now.
+    # 2. Drop the bot's pool and token registries (Rust owns canonical state)
+    bot.pools._reset()
+    bot.tokens.reset()
+
+    # 3. Drop snapshot wrappers (already streamed to Rust)
+    del v3_snapshot, v4_snapshot
+
+    # 4. Drop the bot session entirely and force full collection
+    #    The hot loop only needs engine_registry, async_w3, and scalars.
+    del bot
+    gc.collect()
+
+    bot_logger.info(
+        f"[startup] State trimmed — {engine_registry.engine.v2_pool_count()} V2, "
+        f"{engine_registry.engine.v3_pool_count()} V3, "
+        f"{engine_registry.engine.v4_pool_count()} V4 pools retained in Rust engine; "
+        f"{engine_registry.engine.path_count()} paths registered. Entering main loop."
+    )
+
+    # The result consumer task runs indefinitely.
     await result_consumer_task
 
 
