@@ -144,9 +144,7 @@ impl V2BlockEngine {
         };
 
         // Get gamma_numer/fee_denom from existing forward entry
-        let Some(forward_state) = self.pools.get(&forward_id) else {
-            return None;
-        };
+        let forward_state = self.pools.get(&forward_id)?;
         let gamma_numer = forward_state.gamma_numer;
         let fee_denom = forward_state.fee_denom;
 
