@@ -45,6 +45,10 @@ pub struct PyUniswapArbEngine {
     /// Optional HTTP RPC URL for verification during registration.
     /// Must be set before `verify_on_register` is enabled.
     verify_rpc_url: parking_lot::Mutex<Option<String>>,
+    /// Cached Alloy provider for verification RPCs.
+    /// Created on first use (or when `set_verify_rpc_url` is called) and reused
+    /// across all verifications to avoid creating a new HTTP client per pool.
+    verify_provider: parking_lot::Mutex<Option<crate::provider::AlloyProvider>>,
     /// Optional `StateView` contract address for V4 verification.
     verify_state_view: parking_lot::Mutex<Option<Address>>,
     /// The snapshot block — the block at which the DB tick data was captured.
@@ -438,6 +442,7 @@ impl PyUniswapArbEngine {
             result_rx: Arc::new(parking_lot::Mutex::new(Some(result_rx))),
             verify_on_register: std::sync::atomic::AtomicBool::new(false),
             verify_rpc_url: parking_lot::Mutex::new(None),
+            verify_provider: parking_lot::Mutex::new(None),
             verify_state_view: parking_lot::Mutex::new(None),
             verify_snapshot_block: parking_lot::Mutex::new(None),
             verify_backfill_block: parking_lot::Mutex::new(None),
@@ -910,6 +915,24 @@ impl PyUniswapArbEngine {
                 let snapshot_block = *self.verify_snapshot_block.lock();
                 let backfill_block = *self.verify_backfill_block.lock();
 
+                // Obtain (or lazily create) the cached verification provider.
+                // Reusing the same HTTP client avoids exhausting the connection
+                // pool when thousands of pools are registered in rapid succession.
+                let provider = {
+                    let mut cached = self.verify_provider.lock();
+                    if cached.is_none() {
+                        let runtime = crate::runtime::get_runtime();
+                        match runtime.block_on(crate::provider::AlloyProvider::new(&url, 3)) {
+                            Ok(p) => *cached = Some(p),
+                            Err(e) => {
+                                let msg = format!("verify: V3 pool {address}: failed to create provider: {e}");
+                                return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
+                            }
+                        }
+                    }
+                    cached.as_ref().unwrap().clone()
+                };
+
                 // ── Check 1: Snapshot block ────────────────────
                 // Compare raw tick_data (before buffer) against on-chain.
                 // This validates the snapshot loading path.
@@ -917,11 +940,6 @@ impl PyUniswapArbEngine {
                     let runtime = crate::runtime::get_runtime();
                     let addr_str = address.to_string();
                     let result = runtime.block_on(async {
-                        let provider = crate::provider::AlloyProvider::new(&url, 3)
-                            .await
-                            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
-                                format!("verify snapshot: V3 pool {addr_str}: failed to create provider: {e}")
-                            ))?;
                         crate::bot_core::liquidity_verifier::verify_v3_liquidity_map(
                             &provider,
                             addr,
@@ -946,11 +964,6 @@ impl PyUniswapArbEngine {
                     let runtime = crate::runtime::get_runtime();
                     let addr_str = address.to_string();
                     let result = runtime.block_on(async {
-                        let provider = crate::provider::AlloyProvider::new(&url, 3)
-                            .await
-                            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
-                                format!("verify backfill: V3 pool {addr_str}: failed to create provider: {e}")
-                            ))?;
                         crate::bot_core::liquidity_verifier::verify_v3_pools(
                             &provider, Address::ZERO, &pool_map, Some(bf_blk),
                         ).await.map_err(|mismatch| {
@@ -1091,6 +1104,22 @@ impl PyUniswapArbEngine {
                 let snapshot_block = *self.verify_snapshot_block.lock();
                 let backfill_block = *self.verify_backfill_block.lock();
 
+                // Obtain (or lazily create) the cached verification provider.
+                let provider = {
+                    let mut cached = self.verify_provider.lock();
+                    if cached.is_none() {
+                        let runtime = crate::runtime::get_runtime();
+                        match runtime.block_on(crate::provider::AlloyProvider::new(&url, 3)) {
+                            Ok(p) => *cached = Some(p),
+                            Err(e) => {
+                                let msg = format!("verify: V4 pool {pool_id_hex}: failed to create provider: {e}");
+                                return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
+                            }
+                        }
+                    }
+                    cached.as_ref().unwrap().clone()
+                };
+
                 // ── Check 1: Snapshot block ────────────────────
                 // Compare raw tick_data (before buffer) against on-chain.
                 // This validates the snapshot loading path.
@@ -1099,11 +1128,6 @@ impl PyUniswapArbEngine {
                     let pool_id_str = pool_id_hex.to_string();
                     let pid_for_verify = pool_id;
                     let result = runtime.block_on(async {
-                        let provider = crate::provider::AlloyProvider::new(&url, 3)
-                            .await
-                            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
-                                format!("verify snapshot: V4 pool {pool_id_str}: failed to create provider: {e}")
-                            ))?;
                         crate::bot_core::liquidity_verifier::verify_v4_liquidity_map(
                             &provider,
                             sv,
@@ -1129,11 +1153,6 @@ impl PyUniswapArbEngine {
                     let runtime = crate::runtime::get_runtime();
                     let pool_id_str = pool_id_hex.to_string();
                     let result = runtime.block_on(async {
-                        let provider = crate::provider::AlloyProvider::new(&url, 3)
-                            .await
-                            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
-                                format!("verify backfill: V4 pool {pool_id_str}: failed to create provider: {e}")
-                            ))?;
                         crate::bot_core::liquidity_verifier::verify_v4_pools(
                             &provider, sv, &pool_map, Some(bf_blk),
                         ).await.map_err(|mismatch| {
@@ -1923,6 +1942,18 @@ impl PyUniswapArbEngine {
     /// Must be called before enabling `verify_on_register`.
     #[pyo3(signature = (rpc_url))]
     fn set_verify_rpc_url(&self, rpc_url: String) {
+        // Eagerly create and cache the provider so verification reuses
+        // the same HTTP connection pool instead of creating a new client
+        // per pool registration.
+        let runtime = crate::runtime::get_runtime();
+        match runtime.block_on(crate::provider::AlloyProvider::new(&rpc_url, 3)) {
+            Ok(provider) => {
+                *self.verify_provider.lock() = Some(provider);
+            }
+            Err(e) => {
+                eprintln!("[warn] Failed to create verification provider: {e}");
+            }
+        }
         *self.verify_rpc_url.lock() = Some(rpc_url);
     }
 

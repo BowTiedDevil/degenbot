@@ -164,15 +164,26 @@ def encode_cmd_stream(
             )
         # V3/V2 mixed paths
         if isinstance(hop0, V3HopInfo) and isinstance(hop1, V3HopInfo):
-            return _encode_cmd_v3_v3(path_info, optimal_input, hop_outputs, executor_address)
+            return _encode_cmd_v3_v3(
+                path_info,
+                optimal_input,
+                hop_outputs,
+                executor_address,
+                pool_manager_address,
+                weth_address,
+            )
         if isinstance(hop0, V2HopInfo) and isinstance(hop1, V3HopInfo):
-            return _encode_cmd_v2_v3(path_info, optimal_input, hop_outputs, executor_address)
+            return _encode_cmd_v2_v3(
+                path_info, optimal_input, hop_outputs, executor_address, weth_address
+            )
         if isinstance(hop0, V3HopInfo) and isinstance(hop1, V2HopInfo):
-            return _encode_cmd_v3_v2(path_info, optimal_input, hop_outputs, executor_address)
+            return _encode_cmd_v3_v2(
+                path_info, optimal_input, hop_outputs, executor_address, weth_address
+            )
 
     # 3-hop paths (optimized patterns from ~/code/executor tests)
     if num_hops == 3:
-        return _encode_cmd_3_hop(path_info, optimal_input, hop_outputs, executor_address)
+        return _encode_cmd_3_hop(path_info, optimal_input, hop_outputs, executor_address, pool_manager_address, weth_address)
 
     # Unsupported path type for cmd_executor
     return None
@@ -1236,6 +1247,8 @@ def _encode_cmd_3_hop(
     optimal_input: int,
     hop_outputs: tuple[int, ...],
     executor_address: str,
+    pool_manager_address: str,
+    weth_address: str,
 ) -> bytes | None:
     """Dispatch 3-hop paths to the correct optimized encoder."""
     hop_types = tuple(
@@ -1246,7 +1259,7 @@ def _encode_cmd_3_hop(
     if encoder is None:
         return None
     try:
-        return encoder(path_info, optimal_input, hop_outputs, executor_address)
+        return encoder(path_info, optimal_input, hop_outputs, executor_address, pool_manager_address, weth_address)
     except (ValueError, OverflowError) as e:
         bot_logger.info(f"[cmd-3hop] {hop_types}: {type(e).__name__}: {e}")
         return None
@@ -1276,6 +1289,7 @@ def _3hop_v2_v2_v2(
     optimal_input: int,
     hop_outputs: tuple[int, ...],
     executor_address: str,
+    pool_manager_address: str,
     weth_address: str,
 ) -> bytes | None:
     """Reverse-order flash borrow: V2c first, V2a→V2b via V2_SWAP_DIRECT."""
@@ -1309,6 +1323,7 @@ def _3hop_v2_v2_v3(
     optimal_input: int,
     hop_outputs: tuple[int, ...],
     executor_address: str,
+    pool_manager_address: str,
     weth_address: str,
 ) -> bytes | None:
     """Reverse-order: V3c fires first, V2a→V2b direct inside V3c callback."""
@@ -1388,6 +1403,7 @@ def _3hop_v2_v3_v2(
     optimal_input: int,
     hop_outputs: tuple[int, ...],
     executor_address: str,
+    pool_manager_address: str,
     weth_address: str,
 ) -> bytes | None:
     """Reverse-order from V2c: V3b(to=V2c), V2a→V3b during V3b callback (IIA ✓)."""
@@ -1423,6 +1439,7 @@ def _3hop_v2_v3_v3(
     optimal_input: int,
     hop_outputs: tuple[int, ...],
     executor_address: str,
+    pool_manager_address: str,
     weth_address: str,
 ) -> bytes | None:
     """V3c outermost, V2a inside V3b callback (to=V3b, IIA ✓)."""
@@ -1669,6 +1686,7 @@ def _3hop_v3_v2_v2(
     optimal_input: int,
     hop_outputs: tuple[int, ...],
     executor_address: str,
+    pool_manager_address: str,
     weth_address: str,
 ) -> bytes | None:
     """V3a outermost: sends USDC→V2b, V2b→V2c direct + WETH→V3a."""
@@ -1701,6 +1719,7 @@ def _3hop_v3_v2_v3(
     optimal_input: int,
     hop_outputs: tuple[int, ...],
     executor_address: str,
+    pool_manager_address: str,
     weth_address: str,
 ) -> bytes | None:
     """Reverse-order from V3c: V3a→V2b, V2b→V3c direct + explicit WETH→V3a."""
@@ -1788,6 +1807,7 @@ def _3hop_v3_v3_v2(
     optimal_input: int,
     hop_outputs: tuple[int, ...],
     executor_address: str,
+    pool_manager_address: str,
     weth_address: str,
 ) -> bytes | None:
     """Reverse-order from V2c: V3a→V3b direct, V2c V2_SWAP_DIRECT + WETH→V3a."""
@@ -1826,6 +1846,7 @@ def _3hop_v3_v3_v3(
     optimal_input: int,
     hop_outputs: tuple[int, ...],
     executor_address: str,
+    pool_manager_address: str,
     weth_address: str,
 ) -> bytes | None:
     """Reverse-order direct custody, all auto-pay."""
