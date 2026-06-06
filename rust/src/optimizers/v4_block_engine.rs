@@ -49,6 +49,8 @@ use crate::optimizers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence
 // Buffered liquidity update for unregistered V4 pools
 // ---------------------------------------------------------------------------
 
+use crate::optimizers::liquidity_event_buffer::LiquidityEvent;
+
 /// A buffered liquidity update (`ModifyLiquidity`) for an unregistered V4 pool.
 ///
 /// V4 uses a single `ModifyLiquidity` event covering both Mint (positive delta)
@@ -68,6 +70,12 @@ pub struct BufferedV4LiquidityUpdate {
     pub liquidity_delta: I256,
     /// The block number of this event.
     pub block_number: u64,
+}
+
+impl LiquidityEvent for BufferedV4LiquidityUpdate {
+    fn block_number(&self) -> u64 {
+        self.block_number
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -192,6 +200,11 @@ struct TickRangeCache {
 
 impl V4PoolState {
     /// Invalidate the cached tick ranges (call after any state mutation).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned (indicates a previous panic
+    /// while holding the lock).
     pub fn invalidate_tick_range_cache(&self) {
         let mut cache = self.cached_tick_ranges.lock().unwrap();
         cache.zfo = None;
@@ -368,21 +381,12 @@ pub struct V4BlockEngine {
     next_path_id: u64,
     /// Auto-incrementing pool key
     next_pool_key: u64,
-    /// Buffered liquidity updates (`ModifyLiquidity`) from the backfill phase
-    /// (`snapshot_block+1` to first_ws_block-1). Keyed by (`pool_manager`, `pool_id`).
-    /// Applied before the pump buffer during registration. Never expired —
-    /// covers a fixed block range and drains pool-by-pool during `build_paths`.
-    backfill_event_buffer: HashMap<(Address, PoolId), Vec<BufferedV4LiquidityUpdate>>,
-    /// Buffered liquidity updates (`ModifyLiquidity`) from the WS pump phase
-    /// (`first_ws_block` onward). Keyed by (`pool_manager`, `pool_id`).
-    /// Applied after the backfill buffer during registration. Expired
-    /// normally via `expire_buffered_events`.
-    pump_event_buffer: HashMap<(Address, PoolId), Vec<BufferedV4LiquidityUpdate>>,
-    /// Maximum age (in blocks) for buffered events. `None` means unbounded.
-    /// Events older than `current_block - max_age` are expired during
-    /// `process_block` or `expire_buffered_events`. Only applies to
-    /// `pump_event_buffer` — `backfill_event_buffer` is never expired.
-    event_buffer_max_age: Option<u64>,
+    /// Dual buffer for liquidity updates (`ModifyLiquidity`) awaiting pool registration.
+    /// Keyed by (`pool_manager`, `pool_id`).
+    event_buffer: crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer<
+        (Address, PoolId),
+        BufferedV4LiquidityUpdate,
+    >,
 }
 
 impl V4BlockEngine {
@@ -398,6 +402,8 @@ impl V4BlockEngine {
     /// automatically expired during `process_block`. `None` means unbounded.
     #[must_use]
     pub fn new_with_buffer_max_age(event_buffer_max_age: Option<u64>) -> Self {
+        let mut event_buffer = crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer::new();
+        event_buffer.set_max_age(event_buffer_max_age);
         Self {
             pools: HashMap::new(),
             pool_ids: HashMap::new(),
@@ -406,9 +412,7 @@ impl V4BlockEngine {
             results_block: 0,
             next_path_id: 1,
             next_pool_key: 1,
-            backfill_event_buffer: HashMap::new(),
-            pump_event_buffer: HashMap::new(),
-            event_buffer_max_age,
+            event_buffer,
         }
     }
 
@@ -470,13 +474,18 @@ impl V4BlockEngine {
     /// `apply_pump_buffer()`. The pool state after this call is at the
     /// backfill boundary — the last block of the backfill range.
     /// This is a deterministic point suitable for verification cloning.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a buffered update references a pool key that does not exist
+    /// in `self.pools` (should never happen given the registration flow).
     pub fn apply_backfill_buffer(&mut self, pool_manager: Address, pool_id: PoolId) {
         let Some(&(_, reverse_key)) = self.pool_ids.get(&(pool_manager, pool_id)) else {
             return;
         };
         let forward_key = reverse_key - 1;
 
-        let Some(buffered) = self.backfill_event_buffer.remove(&(pool_manager, pool_id)) else {
+        let Some(buffered) = self.event_buffer.drain_backfill(&(pool_manager, pool_id)) else {
             return;
         };
         for update in buffered {
@@ -500,13 +509,18 @@ impl V4BlockEngine {
     /// Called during registration, after `apply_backfill_buffer()`.
     /// The pool state after this call reflects all pump-processed events
     /// and is ready for solving.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a buffered update references a pool key that does not exist
+    /// in `self.pools` (should never happen given the registration flow).
     pub fn apply_pump_buffer(&mut self, pool_manager: Address, pool_id: PoolId) {
         let Some(&(_, reverse_key)) = self.pool_ids.get(&(pool_manager, pool_id)) else {
             return;
         };
         let forward_key = reverse_key - 1;
 
-        let Some(buffered) = self.pump_event_buffer.remove(&(pool_manager, pool_id)) else {
+        let Some(buffered) = self.event_buffer.drain_pump(&(pool_manager, pool_id)) else {
             return;
         };
         for update in buffered {
@@ -533,14 +547,13 @@ impl V4BlockEngine {
     /// events older than `n` blocks from the current block are expired.
     /// Only applies to `pump_event_buffer` — `backfill_event_buffer` is never expired.
     pub fn set_event_buffer_max_age(&mut self, max_age: Option<u64>) {
-        self.event_buffer_max_age = max_age;
+        self.event_buffer.set_max_age(max_age);
     }
 
     /// Discard all buffered liquidity events for all unregistered pools.
     /// Clears both backfill and pump buffers.
     pub fn flush_event_buffer(&mut self) {
-        self.backfill_event_buffer.clear();
-        self.pump_event_buffer.clear();
+        self.event_buffer.flush();
     }
 
     /// Expire buffered events older than `current_block - max_age`.
@@ -549,17 +562,7 @@ impl V4BlockEngine {
     /// If `event_buffer_max_age` is `None`, this is a no-op.
     /// Only expires pump buffer events — backfill buffer is never expired.
     pub fn expire_buffered_events(&mut self, current_block: u64) {
-        let Some(max_age) = self.event_buffer_max_age else {
-            return;
-        };
-
-        let cutoff = current_block.saturating_sub(max_age);
-
-        for events in self.pump_event_buffer.values_mut() {
-            events.retain(|ev| ev.block_number >= cutoff);
-        }
-
-        self.pump_event_buffer.retain(|_, events| !events.is_empty());
+        self.event_buffer.expire(current_block);
     }
 
     /// Register a V4 arbitrage path as an ordered list of `V4PoolRefs`.
@@ -592,9 +595,7 @@ impl V4BlockEngine {
         update: &V4SwapUpdate,
         block_number: u64,
     ) -> Option<(u64, u64)> {
-        let Some(&(fwd_key, rev_key)) = self.pool_ids.get(&(update.pool_manager, update.pool_id)) else {
-            return None;
-        };
+        let &(fwd_key, rev_key) = self.pool_ids.get(&(update.pool_manager, update.pool_id))?;
 
         // Apply to forward pool
         if let Some(pool) = self.pools.get_mut(&fwd_key) {
@@ -633,6 +634,11 @@ impl V4BlockEngine {
     /// Unlike `apply_liquidity_update`, this always buffers — during backfill,
     /// no pools are registered yet, so there's no registered-pool fast path.
     /// Routes to `backfill_event_buffer` which is never expired.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the pool is already registered but `self.pools.get_mut()`
+    /// returns `None` for a known key (should never happen).
     pub fn buffer_backfill_liquidity_update(
         &mut self,
         pool_manager: Address,
@@ -660,15 +666,15 @@ impl V4BlockEngine {
             return;
         }
 
-        self.backfill_event_buffer
-            .entry((pool_manager, pool_id))
-            .or_default()
-            .push(BufferedV4LiquidityUpdate {
+        self.event_buffer.buffer_backfill(
+            (pool_manager, pool_id),
+            BufferedV4LiquidityUpdate {
                 tick_lower,
                 tick_upper,
                 liquidity_delta,
                 block_number,
-            });
+            },
+        );
     }
 
     /// `liquidity_net -= delta` for the upper tick.
@@ -686,15 +692,15 @@ impl V4BlockEngine {
     ) -> Option<(u64, u64)> {
         let Some(&(fwd_key, rev_key)) = self.pool_ids.get(&(pool_manager, pool_id)) else {
             // Pool not registered — buffer the update in the pump buffer
-            self.pump_event_buffer
-                .entry((pool_manager, pool_id))
-                .or_default()
-                .push(BufferedV4LiquidityUpdate {
+            self.event_buffer.buffer_pump(
+                (pool_manager, pool_id),
+                BufferedV4LiquidityUpdate {
                     tick_lower,
                     tick_upper,
                     liquidity_delta,
                     block_number,
-                });
+                },
+            );
             return None;
         };
 
@@ -977,6 +983,7 @@ impl V4BlockEngine {
     ///
     /// Updates both forward and reverse pool orientations.
     /// No-op if the `pool_id` is not registered.
+    #[allow(clippy::too_many_arguments)]
     pub fn sync_pool_state(
         &mut self,
         pool_manager: Address,
@@ -996,7 +1003,7 @@ impl V4BlockEngine {
             pool.sqrt_price_x96 = sqrt_price_x96;
             pool.liquidity = liquidity;
             pool.tick = tick;
-            pool.tick_data = tick_data.clone();
+            pool.tick_data.clone_from(&tick_data);
             pool.update_block = update_block;
         }
 
@@ -1333,8 +1340,8 @@ mod tests {
         );
 
         // The event should be buffered in the pump buffer
-        assert!(engine.pump_event_buffer.contains_key(&(POOL_MANAGER, pool_id)));
-        assert_eq!(engine.pump_event_buffer[&(POOL_MANAGER, pool_id)].len(), 1);
+        assert!(engine.event_buffer.pump_contains_key(&(POOL_MANAGER, pool_id)));
+        assert_eq!(engine.event_buffer.pump_event_count(&(POOL_MANAGER, pool_id)), 1);
 
         // Register the pool with DB snapshot tick_data that does NOT include
         // the buffered event. The buffer will be applied via apply_pump_buffer.
@@ -1354,7 +1361,7 @@ mod tests {
         engine.apply_pump_buffer(POOL_MANAGER, pool_id);
 
         // The buffer should be consumed (applied, not discarded)
-        assert!(engine.pump_event_buffer.is_empty());
+        assert!(engine.event_buffer.pump_is_empty());
 
         // The tick_data should reflect the buffered event applied on top
         let fwd_pool = &engine.pools[&fwd_key];
@@ -1385,11 +1392,11 @@ mod tests {
 
         // At block 110, the event is exactly at the boundary
         engine.expire_buffered_events(110);
-        assert!(engine.pump_event_buffer.contains_key(&(POOL_MANAGER, pool_id)));
+        assert!(engine.event_buffer.pump_contains_key(&(POOL_MANAGER, pool_id)));
 
         // At block 111, the event is too old
         engine.expire_buffered_events(111);
-        assert!(!engine.pump_event_buffer.contains_key(&(POOL_MANAGER, pool_id)));
+        assert!(!engine.event_buffer.pump_contains_key(&(POOL_MANAGER, pool_id)));
     }
 
     #[test]
@@ -1411,10 +1418,10 @@ mod tests {
             101,
         );
 
-        assert_eq!(engine.pump_event_buffer.len(), 2);
+        assert_eq!(engine.event_buffer.pump_key_count(), 2);
 
         engine.flush_event_buffer();
-        assert!(engine.pump_event_buffer.is_empty());
+        assert!(engine.event_buffer.pump_is_empty());
     }
 
     #[test]

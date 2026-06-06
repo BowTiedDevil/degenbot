@@ -14,7 +14,7 @@
 //! - [`mobius_batch`] — Batch solver (serial, vectorized, Rayon parallel) *(deprecated: no Python callers)*
 //! - [`mobius_py`] — `PyO3` Python bindings
 
-#[allow(clippy::doc_markdown)]
+pub mod liquidity_event_buffer;
 pub mod mobius;
 #[allow(clippy::doc_markdown)]
 pub mod v2_block_engine;

@@ -59,6 +59,8 @@ pub struct RegisterV3PoolParams {
     pub coverage: crate::optimizers::uniswap_engine::PoolTickCoverage,
 }
 
+use crate::optimizers::liquidity_event_buffer::LiquidityEvent;
+
 /// A buffered liquidity update (Mint or Burn) for an unregistered V3 pool.
 ///
 /// When a Mint or Burn event arrives for a pool that hasn't been registered
@@ -76,6 +78,12 @@ pub struct BufferedV3LiquidityUpdate {
     pub liquidity_delta: i128,
     /// The block number of this event.
     pub block_number: u64,
+}
+
+impl LiquidityEvent for BufferedV3LiquidityUpdate {
+    fn block_number(&self) -> u64 {
+        self.block_number
+    }
 }
 
 /// V3 pool state as owned by the engine.
@@ -136,6 +144,11 @@ struct TickRangeCache {
 
 impl V3PoolState {
     /// Invalidate the cached tick ranges (call after any state mutation).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned (indicates a previous panic
+    /// while holding the lock).
     pub fn invalidate_tick_range_cache(&self) {
         let mut cache = self.cached_tick_ranges.lock().unwrap();
         cache.zfo = None;
@@ -460,24 +473,13 @@ pub struct V3BlockEngine {
     next_path_id: u64,
     /// Auto-incrementing pool key
     next_pool_key: u64,
-    /// Buffered liquidity updates (Mint/Burn) for pools not yet registered.
+    /// Dual buffer for liquidity updates (Mint/Burn) awaiting pool registration.
     /// Keyed by pool contract address. When a pool is registered, all
     /// buffered updates for its address are applied eagerly.
-    /// Buffered liquidity updates (Mint/Burn) from the backfill phase
-    /// (`snapshot_block+1` to first_ws_block-1). Keyed by pool contract address.
-    /// Applied before the pump buffer during registration. Never expired —
-    /// covers a fixed block range and drains pool-by-pool during `build_paths`.
-    backfill_event_buffer: HashMap<Address, Vec<BufferedV3LiquidityUpdate>>,
-    /// Buffered liquidity updates (Mint/Burn) from the WS pump phase
-    /// (`first_ws_block` onward). Keyed by pool contract address.
-    /// Applied after the backfill buffer during registration. Expired
-    /// normally via `expire_buffered_events`.
-    pump_event_buffer: HashMap<Address, Vec<BufferedV3LiquidityUpdate>>,
-    /// Maximum age (in blocks) for buffered events. `None` means unbounded.
-    /// Events older than `current_block - max_age` are expired during
-    /// `process_block` or `expire_buffered_events`. Only applies to
-    /// `pump_event_buffer` — `backfill_event_buffer` is never expired.
-    event_buffer_max_age: Option<u64>,
+    event_buffer: crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer<
+        Address,
+        BufferedV3LiquidityUpdate,
+    >,
 }
 
 impl V3BlockEngine {
@@ -493,6 +495,8 @@ impl V3BlockEngine {
     /// automatically expired during `process_block`. `None` means unbounded.
     #[must_use]
     pub fn new_with_buffer_max_age(event_buffer_max_age: Option<u64>) -> Self {
+        let mut event_buffer = crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer::new();
+        event_buffer.set_max_age(event_buffer_max_age);
         Self {
             pools: HashMap::new(),
             pool_addresses: HashMap::new(),
@@ -501,9 +505,7 @@ impl V3BlockEngine {
             results_block: 0,
             next_path_id: 1,
             next_pool_key: 1,
-            backfill_event_buffer: HashMap::new(),
-            pump_event_buffer: HashMap::new(),
-            event_buffer_max_age,
+            event_buffer,
         }
     }
 
@@ -532,11 +534,16 @@ impl V3BlockEngine {
     /// `apply_pump_buffer()`. The pool state after this call is at the
     /// backfill boundary — the last block of the backfill range.
     /// This is a deterministic point suitable for verification cloning.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a buffered update references a pool key that does not exist
+    /// in `self.pools` (should never happen given the registration flow).
     pub fn apply_backfill_buffer(&mut self, address: &Address) {
         let Some(&key) = self.pool_addresses.get(address) else {
             return;
         };
-        let Some(buffered) = self.backfill_event_buffer.remove(address) else {
+        let Some(buffered) = self.event_buffer.drain_backfill(address) else {
             return;
         };
         for update in buffered {
@@ -552,11 +559,16 @@ impl V3BlockEngine {
     /// Called during registration, after `apply_backfill_buffer()`.
     /// The pool state after this call reflects all pump-processed events
     /// and is ready for solving.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a buffered update references a pool key that does not exist
+    /// in `self.pools` (should never happen given the registration flow).
     pub fn apply_pump_buffer(&mut self, address: &Address) {
         let Some(&key) = self.pool_addresses.get(address) else {
             return;
         };
-        let Some(buffered) = self.pump_event_buffer.remove(address) else {
+        let Some(buffered) = self.event_buffer.drain_pump(address) else {
             return;
         };
         for update in buffered {
@@ -576,16 +588,14 @@ impl V3BlockEngine {
     /// Takes effect on the next call to `expire_buffered_events` or
     /// `process_block`.
     pub fn set_event_buffer_max_age(&mut self, max_age: Option<u64>) {
-        self.event_buffer_max_age = max_age;
+        self.event_buffer.set_max_age(max_age);
     }
 
     /// Return the total number of buffered liquidity events for a pool address
     /// (both backfill and pump buffers).
     #[must_use]
     pub fn buffered_event_count(&self, address: &Address) -> usize {
-        let backfill = self.backfill_event_buffer.get(address).map_or(0, std::vec::Vec::len);
-        let pump = self.pump_event_buffer.get(address).map_or(0, std::vec::Vec::len);
-        backfill + pump
+        self.event_buffer.event_count(address)
     }
 
     /// Discard all buffered liquidity events for all unregistered pools.
@@ -593,8 +603,7 @@ impl V3BlockEngine {
     /// Frees memory. Called when the operator knows that certain pools
     /// will never be registered (e.g., after a path-loading phase completes).
     pub fn flush_event_buffer(&mut self) {
-        self.backfill_event_buffer.clear();
-        self.pump_event_buffer.clear();
+        self.event_buffer.flush();
     }
 
     /// Expire buffered events older than `current_block - max_age`.
@@ -603,18 +612,7 @@ impl V3BlockEngine {
     /// If `event_buffer_max_age` is `None`, this is a no-op.
     /// Only expires pump buffer events — backfill buffer is never expired.
     pub fn expire_buffered_events(&mut self, current_block: u64) {
-        let Some(max_age) = self.event_buffer_max_age else {
-            return;
-        };
-
-        let cutoff = current_block.saturating_sub(max_age);
-
-        for events in self.pump_event_buffer.values_mut() {
-            events.retain(|ev| ev.block_number >= cutoff);
-        }
-
-        // Remove entries with no remaining events
-        self.pump_event_buffer.retain(|_, events| !events.is_empty());
+        self.event_buffer.expire(current_block);
     }
 
     /// Register an arbitrage path as an ordered list of (`pool_key`,
@@ -653,12 +651,8 @@ impl V3BlockEngine {
         block_number: u64,
         tick_priors: &[(i32, TickInfo)], // (tick_index, prior_state)
     ) -> Option<u64> {
-        let Some(&key) = self.pool_addresses.get(&pool_address) else {
-            return None;
-        };
-        let Some(pool) = self.pools.get_mut(&key) else {
-            return None;
-        };
+        let &key = self.pool_addresses.get(&pool_address)?;
+        let pool = self.pools.get_mut(&key)?;
 
         // Apply tick priors updates to tick_data
         for &(tick_index, ref prior) in tick_priors {
@@ -689,6 +683,11 @@ impl V3BlockEngine {
     /// Unlike `apply_liquidity_update`, this always buffers — during backfill,
     /// no pools are registered yet, so there's no registered-pool fast path.
     /// Routes to `backfill_event_buffer` which is never expired.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the pool is already registered but `self.pools.get_mut()`
+    /// returns `None` for the known key (should never happen).
     pub fn buffer_backfill_liquidity_update(
         &mut self,
         pool_address: Address,
@@ -711,15 +710,15 @@ impl V3BlockEngine {
             return;
         }
 
-        self.backfill_event_buffer
-            .entry(pool_address)
-            .or_default()
-            .push(BufferedV3LiquidityUpdate {
+        self.event_buffer.buffer_backfill(
+            pool_address,
+            BufferedV3LiquidityUpdate {
                 tick_lower,
                 tick_upper,
                 liquidity_delta,
                 block_number,
-            });
+            },
+        );
     }
 
     /// If a tick does not yet exist in `tick_data`, it is inserted with
@@ -735,20 +734,18 @@ impl V3BlockEngine {
     ) -> Option<u64> {
         let Some(&key) = self.pool_addresses.get(&pool_address) else {
             // Pool not registered — buffer the update in the pump buffer
-            self.pump_event_buffer
-                .entry(pool_address)
-                .or_default()
-                .push(BufferedV3LiquidityUpdate {
+            self.event_buffer.buffer_pump(
+                pool_address,
+                BufferedV3LiquidityUpdate {
                     tick_lower,
                     tick_upper,
                     liquidity_delta,
                     block_number,
-                });
+                },
+            );
             return None;
         };
-        let Some(pool) = self.pools.get_mut(&key) else {
-            return None;
-        };
+        let pool = self.pools.get_mut(&key)?;
 
         // Apply tick-level mutations:
         // In Solidity's Tick.update(), BOTH lower and upper tick get:
@@ -1744,8 +1741,8 @@ mod tests {
         );
 
         // The event should be buffered in the pump buffer, not dropped
-        assert!(engine.pump_event_buffer.contains_key(&addr));
-        assert_eq!(engine.pump_event_buffer[&addr].len(), 1);
+        assert!(engine.event_buffer.pump_contains_key(&addr));
+        assert_eq!(engine.event_buffer.pump_event_count(&addr), 1);
 
         // Register the pool with tick_data from the DB snapshot (which
         // does NOT include the buffered event). The buffer will be
@@ -1769,7 +1766,7 @@ mod tests {
         engine.apply_pump_buffer(&addr);
 
         // The buffer should be consumed (applied, not just discarded)
-        assert!(engine.pump_event_buffer.is_empty());
+        assert!(engine.event_buffer.pump_is_empty());
 
         // The tick_data should reflect the Mint event applied on top
         let pool = &engine.pools[&key];
@@ -1793,7 +1790,7 @@ mod tests {
         // Then Mint 300 at [-120, 120] (new tick positions)
         engine.apply_liquidity_update(addr, -120, 120, 300, 102);
 
-        assert_eq!(engine.pump_event_buffer[&addr].len(), 3);
+        assert_eq!(engine.event_buffer.pump_event_count(&addr), 3);
 
         // Register with DB snapshot tick_data that does NOT include these events.
         // The buffered events will be applied via apply_pump_buffer on top.
@@ -1841,11 +1838,11 @@ mod tests {
 
         // At block 110, the event is exactly at the boundary (110 - 10 = 100)
         engine.expire_buffered_events(110);
-        assert!(engine.pump_event_buffer.contains_key(&addr));
+        assert!(engine.event_buffer.pump_contains_key(&addr));
 
         // At block 111, the event is too old (111 - 10 = 101 > 100)
         engine.expire_buffered_events(111);
-        assert!(!engine.pump_event_buffer.contains_key(&addr));
+        assert!(!engine.event_buffer.pump_contains_key(&addr));
     }
 
     #[test]
@@ -1857,10 +1854,10 @@ mod tests {
         engine.apply_liquidity_update(addr1, -60, 60, 500, 100);
         engine.apply_liquidity_update(addr2, -60, 60, 300, 101);
 
-        assert_eq!(engine.pump_event_buffer.len(), 2);
+        assert_eq!(engine.event_buffer.pump_key_count(), 2);
 
         engine.flush_event_buffer();
-        assert!(engine.pump_event_buffer.is_empty());
+        assert!(engine.event_buffer.pump_is_empty());
     }
 
     #[test]
@@ -1872,12 +1869,12 @@ mod tests {
 
         // With no limit, event survives
         engine.expire_buffered_events(200);
-        assert!(engine.pump_event_buffer.contains_key(&addr));
+        assert!(engine.event_buffer.pump_contains_key(&addr));
 
         // Set a limit that expires the event
         engine.set_event_buffer_max_age(Some(50));
         engine.expire_buffered_events(200);
-        assert!(!engine.pump_event_buffer.contains_key(&addr));
+        assert!(!engine.event_buffer.pump_contains_key(&addr));
     }
 
     #[test]
