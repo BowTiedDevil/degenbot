@@ -20,7 +20,9 @@ use std::collections::{HashMap, HashSet};
 
 use alloy::primitives::{Address, U128, U256};
 
-use crate::bot_core::tick_bitmap::{compute_tick_ranges, V3TickRangeForSolver};
+use crate::bot_core::tick_bitmap::{
+    apply_liquidity_to_tick_range, compute_tick_ranges, V3TickRangeForSolver,
+};
 use crate::bot_core::TickInfo;
 use crate::bot_core::v3_mint_burn_decoder::{decode_v3_mint_log, decode_v3_burn_log};
 use crate::bot_core::v3_swap_decoder::decode_v3_swap_log;
@@ -548,9 +550,12 @@ impl V3BlockEngine {
         };
         for update in buffered {
             let state = self.pools.get_mut(&key).unwrap();
-            update_tick_liquidity(&mut state.tick_data, update.tick_lower, update.liquidity_delta, true);
-            update_tick_liquidity(&mut state.tick_data, update.tick_upper, update.liquidity_delta, false);
-            state.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+            apply_liquidity_to_tick_range(
+                &mut state.tick_data,
+                update.tick_lower,
+                update.tick_upper,
+                update.liquidity_delta,
+            );
         }
     }
 
@@ -573,9 +578,12 @@ impl V3BlockEngine {
         };
         for update in buffered {
             let state = self.pools.get_mut(&key).unwrap();
-            update_tick_liquidity(&mut state.tick_data, update.tick_lower, update.liquidity_delta, true);
-            update_tick_liquidity(&mut state.tick_data, update.tick_upper, update.liquidity_delta, false);
-            state.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+            apply_liquidity_to_tick_range(
+                &mut state.tick_data,
+                update.tick_lower,
+                update.tick_upper,
+                update.liquidity_delta,
+            );
         }
     }
 
@@ -702,9 +710,7 @@ impl V3BlockEngine {
         if let Some(&key) = self.pool_addresses.get(&pool_address) {
             // Pool already registered (unusual during backfill) — apply directly
             let pool = self.pools.get_mut(&key).unwrap();
-            update_tick_liquidity(&mut pool.tick_data, tick_lower, liquidity_delta, true);
-            update_tick_liquidity(&mut pool.tick_data, tick_upper, liquidity_delta, false);
-            pool.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+            apply_liquidity_to_tick_range(&mut pool.tick_data, tick_lower, tick_upper, liquidity_delta);
             pool.update_block = block_number;
             pool.invalidate_tick_range_cache();
             return;
@@ -753,11 +759,7 @@ impl V3BlockEngine {
         // But liquidity_net differs:
         //   tick_lower: liquidity_net += liquidityDelta
         //   tick_upper: liquidity_net -= liquidityDelta
-        update_tick_liquidity(&mut pool.tick_data, tick_lower, liquidity_delta, true);
-        update_tick_liquidity(&mut pool.tick_data, tick_upper, liquidity_delta, false);
-
-        // Remove ticks with zero liquidity_gross (position fully closed)
-        pool.tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+        apply_liquidity_to_tick_range(&mut pool.tick_data, tick_lower, tick_upper, liquidity_delta);
 
         pool.update_block = block_number;
         pool.invalidate_tick_range_cache();
@@ -1055,52 +1057,6 @@ pub struct V3SwapUpdate {
 /// The [`V3SwapEvent`] stores liquidity as `U128` (alloy).
 fn extract_u128(liquidity: U128) -> u128 {
     liquidity.to::<u128>()
-}
-
-/// Update a single tick's `liquidity_gross` and `liquidity_net` in-place.
-///
-/// Matches the Uniswap V3 `Tick.update()` logic:
-/// - `liquidity_gross += delta` (always, for both lower and upper ticks)
-/// - `liquidity_net += delta` for the lower tick
-/// - `liquidity_net -= delta` for the upper tick
-///
-/// The `is_lower_tick` parameter controls whether to add or subtract the
-/// delta from `liquidity_net` (matches Solidity's `if (upper)` check).
-///
-/// If a tick doesn't exist yet, it's inserted with appropriate initial values.
-/// Ticks with `liquidity_gross == 0` after the update should be removed by the caller.
-fn update_tick_liquidity(
-    tick_data: &mut HashMap<i32, TickInfo>,
-    tick: i32,
-    delta: i128,
-    is_lower_tick: bool,
-) {
-    use alloy::primitives::{I256, U128};
-
-    let entry = tick_data.entry(tick).or_insert(TickInfo {
-        liquidity_gross: U128::ZERO,
-        liquidity_net: I256::ZERO,
-    });
-
-    // Update liquidity_gross: += delta (always the same direction for both ticks)
-    let current_gross = entry.liquidity_gross.to::<u128>();
-    let new_gross_i128 = current_gross.cast_signed() + delta;
-    // liquidity_gross is always >= 0 in valid state; negative means an underflow bug
-    let new_gross = if new_gross_i128 < 0 {
-        U128::ZERO
-    } else {
-        U128::from(new_gross_i128.cast_unsigned())
-    };
-    entry.liquidity_gross = new_gross;
-
-    // Update liquidity_net: += delta for lower tick, -= delta for upper tick
-    let delta_i256 = I256::try_from(delta).unwrap_or(I256::ZERO);
-    let current_net = entry.liquidity_net;
-    entry.liquidity_net = if is_lower_tick {
-        current_net.checked_add(delta_i256).unwrap_or(I256::ZERO)
-    } else {
-        current_net.checked_sub(delta_i256).unwrap_or(I256::ZERO)
-    };
 }
 
 #[cfg(test)]

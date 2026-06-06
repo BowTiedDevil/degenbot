@@ -103,8 +103,11 @@ _Avoid_: unified pump, combined pump, single pump, per-block getLogs pump
 
 **V3_BURN_TOPIC**: `0x0c396cd989a39f4459b5fa1aed6a9a8dcdbc45908acfd67e028cd568da98982c` — the Keccak256 hash of the Uniswap V3 `Burn(address,int24,int24,uint128,uint256,uint256)` event signature. Used by the V3 Mint/Burn decoder to filter and decode Burn logs. Matches the Python `V3_BURN_TOPIC` in `log_decoders.py`.
 
-**update_tick_liquidity**: A module-level function that mutates a single tick's `liquidity_gross` and `liquidity_net` in-place, matching V3's Solidity `Tick.update()`. Both lower and upper tick receive `liquidity_gross += delta`; `liquidity_net += delta` for the lower tick and `liquidity_net -= delta` for the upper tick (controlled by the `is_lower_tick` parameter). Ticks with zero `liquidity_gross` after the update are removed (de-initialized).
+**update_tick_liquidity**: A shared helper in `tick_bitmap.rs` that mutates a single tick's `liquidity_gross` and `liquidity_net` in-place, matching V3's Solidity `Tick.update()`. Both lower and upper tick receive `liquidity_gross += delta`; `liquidity_net += delta` for the lower tick and `liquidity_net -= delta` for the upper tick (controlled by the `is_lower_tick` parameter). Used by both `V3BlockEngine` and `V4BlockEngine`.
 _Avoid_: tick update, tick liquidity mutation
+
+**apply_liquidity_to_tick_range**: A shared helper in `tick_bitmap.rs` that composes the standard Mint/Burn/ModifyLiquidity pattern: calls `update_tick_liquidity` for both `tick_lower` and `tick_upper`, then removes ticks whose `liquidity_gross` has dropped to zero. Used by both `V3BlockEngine` and `V4BlockEngine` (including dual-orientation forward/reverse updates in V4).
+_Avoid_: range update, tick range mutation
 
 **V4_MODIFY_LIQUIDITY_TOPIC**: `0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af63baa85f711d5ec` — the Keccak256 hash of the Uniswap V4 `ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)` event signature. Used by the V4 ModifyLiquidity decoder to filter and decode ModifyLiquidity logs. Matches the Python `V4_MODIFY_LIQUIDITY_TOPIC` in `log_decoders.py`. Unlike V3 Mint/Burn, tickLower and tickUpper are in the data (not indexed), and liquidityDelta is signed (int256, positive for additions, negative for removals).
 _Avoid_: v4 modify liquidity hash, modify liquidity event hash
@@ -112,7 +115,7 @@ _Avoid_: v4 modify liquidity hash, modify liquidity event hash
 **V4ModifyLiquidityEvent**: Decoded V4 ModifyLiquidity event carrying `pool_id`, `sender`, `tick_lower`, `tick_upper`, `liquidity_delta` (I256), `salt`. V4's single ModifyLiquidity event replaces V3's separate Mint and Burn events — a signed `liquidity_delta` handles both directions.
 _Avoid_: v4 liquidity event, modify liquidity result
 
-**apply_liquidity_update**: A method on both `V3BlockEngine` and `V4BlockEngine` that applies a Mint/Burn or ModifyLiquidity event to a pool's `tick_data`. Calls `update_tick_liquidity` for both lower and upper ticks, then removes de-initialized ticks. For V3, `liquidity_delta` is positive for Mint, negative for Burn. For V4, `liquidity_delta` is already signed (I256). Returns the affected pool key: `Option<u64>` for V3, `Option<(u64, u64)>` (fwd+rev) for V4. If the pool is not registered, the event is buffered in `pump_event_buffer` (not `backfill_event_buffer` — backfill events use `buffer_backfill_liquidity_update`).
+**apply_liquidity_update**: A method on both `V3BlockEngine` and `V4BlockEngine` that applies a Mint/Burn or ModifyLiquidity event to a pool's `tick_data`. Delegates to the shared `apply_liquidity_to_tick_range` helper in `tick_bitmap.rs`. For V3, `liquidity_delta` is positive for Mint, negative for Burn. For V4, `liquidity_delta` is already signed (I256). Returns the affected pool key: `Option<u64>` for V3, `Option<(u64, u64)>` (fwd+rev) for V4. If the pool is not registered, the event is buffered in `pump_event_buffer` (not `backfill_event_buffer` — backfill events use `buffer_backfill_liquidity_update`).
 _Avoid_: liquidity mutation, mint/burn handler
 
 **backfill_event_buffer**: A `HashMap<K, Vec<BufferedLiquidityUpdate>>` on `V3BlockEngine` (keyed by `Address`) and `V4BlockEngine` (keyed by `(Address, PoolId)`) that stores liquidity events from the backfill phase (`snapshot_block+1` to `first_ws_block-1`). Never expired — covers a fixed block range and drains pool-by-pool during `build_paths` via `apply_backfill_buffer()`. Populated by `buffer_backfill_liquidity_update()`, which is called by `process_backfill_logs()`.
@@ -233,8 +236,9 @@ _Avoid_: amount sign, swap direction sign, amount convention
 - **`PyUniswapArbEngine`** → **`UniswapEnginePump`**: `start(rpc_url)` spawns the pump; `pump_handle` stores the JoinHandle; `shutdown` `AtomicBool` stops it
 - **`V3BlockEngine`** → **`decode_v3_mint_log()`**: Process_block decodes V3 Mint events from raw logs, then applies updates via `apply_liquidity_update()`
 - **`V3BlockEngine`** → **`decode_v3_burn_log()`**: Process_block decodes V3 Burn events from raw logs, then applies updates via `apply_liquidity_update()` (negated delta)
-- **`update_tick_liquidity`** → **`TickInfo`**: Mutates `liquidity_gross` and `liquidity_net` in-place on the `TickInfo` struct
-- **`apply_liquidity_update`** → **`update_tick_liquidity`**: Calls `update_tick_liquidity` for both lower and upper ticks; removes zero-gross ticks
+- **`update_tick_liquidity`** → **`TickInfo`**: Mutates `liquidity_gross` and `liquidity_net` in-place on the `TickInfo` struct (shared helper in `tick_bitmap.rs`)
+- **`apply_liquidity_to_tick_range`** → **`update_tick_liquidity`**: Calls `update_tick_liquidity` for both lower and upper ticks, then `retain` zero-gross ticks (shared helper in `tick_bitmap.rs`)
+- **`apply_liquidity_update`** → **`apply_liquidity_to_tick_range`**: Delegates tick mutation to the shared helper in `tick_bitmap.rs`
 - **`UniswapEngine`** → **`V2BlockEngine`**: UniswapEngine composes a V2BlockEngine for V2 pool state and constant-product solving; `start()` calls `v2_engine.start()`
 - **`apply_log`** → **sub-engine `apply_*` methods**: `apply_log` decodes a log by topic, routes to `V2BlockEngine::apply_sync`, `V3BlockEngine::apply_swap`, `V3BlockEngine::apply_liquidity_update`, `V4BlockEngine::apply_swap`, or `V4BlockEngine::apply_liquidity_update`, collecting their returned pool keys into dirty sets
 - **`apply_log`** → **`pool_to_paths`**: After applying a log, `apply_log` looks up each dirty pool key in the `pool_to_paths` reverse index to find affected path IDs, which it returns to the caller

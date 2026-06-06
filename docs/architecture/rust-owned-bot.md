@@ -46,7 +46,7 @@ Every hot-path operation — event decoding, pool state mutation, tick-range con
 | UniswapEnginePump | Rust | `rust/src/optimizers/uniswap_engine_pump.rs` | Unified async pump: dual WS subscription (newHeads + logs), backfill on timeout/empty block, routes to sub-engines |
 | BotCore | Rust | `rust/src/bot_core/mod.rs` | Single owner of pool/token state (future all-state owner, currently V2+V3 partial) |
 | ReorgJournal | Rust | `rust/src/bot_core/state_history.rs` | Bounded deque of per-block deltas for rollback (V2: 2 reserves; V3: scalars + tick priors) |
-| Tick bitmap walk | Rust | `rust/src/bot_core/tick_bitmap.rs` | Port of `gen_ticks()` — produces ordered initialized/boundary ticks |
+| Tick bitmap walk & tick mutation | Rust | `rust/src/bot_core/tick_bitmap.rs` | `gen_ticks()` port + shared `update_tick_liquidity` / `apply_liquidity_to_tick_range` helpers used by both V3 and V4 engines |
 | Event decoders | Rust | `rust/src/bot_core/v*_decoder.rs` | Decode Sync, Swap, Mint/Burn, ModifyLiquidity from Alloy logs |
 | Möbius solvers | Rust | `rust/src/optimizers/mobius_*.rs` | Integer-exact arbitrage solvers (V2-V2, mixed V2-V3, V3-V3) |
 | V2 swap encoding | Rust | `rust/src/bot_core/v2_encoding.rs` | Pre-encoded `swap()` calldata production |
@@ -132,10 +132,10 @@ Owns V3 pool state including `tick_data: HashMap<i32, TickInfo>` where each `Tic
 | Event | Effect on pool state |
 |-------|---------------------|
 | Swap | Updates `sqrt_price_x96`, `liquidity`, `tick` (scalar fields) |
-| Mint | Updates `tick_data[tick_lower].liquidity_net += Δ`, `tick_data[tick_upper].liquidity_net -= Δ`, `liquidity_gross` for both |
+| Mint | Delegates to `apply_liquidity_to_tick_range` (lower: `net += Δ`, upper: `net -= Δ`, both: `gross += Δ`) |
 | Burn | Same as Mint with negated `Δ`; ticks with zero `liquidity_gross` are removed (de-initialised) |
 
-Tick-range sequences are built via `build_int_v3_sequence()` which:
+Tick update logic (`update_tick_liquidity` and `apply_liquidity_to_tick_range`) lives in `tick_bitmap.rs` — shared with V4BlockEngine. Tick-range sequences are built via `build_int_v3_sequence()` which:
 1. Calls `compute_tick_ranges()` — the Rust port of `gen_ticks()` that walks `tick_bitmap: HashMap<i16, U256>` and interleaves boundary ticks with initialised ticks
 2. For each range, constructs `IntV3TickRangeHop` with U256 `sqrt_price_*` and u128 `liquidity`
 3. Computes integer effective reserves: `R₀ = L · 2⁹⁶ / √P`, `R₁ = L · √P / 2⁹⁶` (U512 intermediates)
@@ -147,7 +147,7 @@ Mirrors V3BlockEngine exactly but identifies pools by `(pool_manager: Address, p
 - **Hook filtering**: `(hook_flags & AMOUNT_MODIFYING_HOOK_MASK) != 0` where `0xCC = BEFORE_SWAP | AFTER_SWAP | BEFORE_SWAP_RETURNS_DELTA | AFTER_SWAP_RETURNS_DELTA`. Hooked pools can modify swap amounts, violating the solver's V3-math assumption.
 - **Dynamic fee exclusion**: `fee == 0x100000` indicates swap-dependent fees that the fixed-fee solver cannot handle.
 
-V4 `ModifyLiquidity` events replace V3's separate Mint/Burn with a signed `liquidity_delta` (I256). `apply_liquidity_update` uses the same `update_tick_liquidity` function as V3.
+V4 `ModifyLiquidity` events replace V3's separate Mint/Burn with a signed `liquidity_delta` (I256). Both V3 and V4 engines delegate tick mutations to the shared `update_tick_liquidity` (single tick) and `apply_liquidity_to_tick_range` (range with zero-gross cleanup) helpers in `tick_bitmap.rs`.
 
 ---
 
