@@ -1757,9 +1757,15 @@ def _3hop_v3_v2_v4(
     pool_manager_address: str,
     weth_address: str,
 ) -> bytes | None:
-    """V3a→V2b direct, V2b→PM, V4_TAKE→V3a directly (IIA ✓)."""
+    """V3a→V2b→V4c: V3a sends forward_a directly to V2b.
+
+    V3a sends forward_a directly to V2b pool (recipient=v2b_idx), so V2b
+    already has the flash-swap input. V2b callback only runs V4 unlock
+    (no erc20 payment to V2b). V3a callback pays WETH via
+    erc20_transfer with the deterministic optimal_input.
+    """
     ha, hb, hc = path_info.hops
-    _out_a, out_b, out_c = hop_outputs
+    out_a, out_b, out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
     if not fits_int128(optimal_input):
@@ -1773,15 +1779,10 @@ def _3hop_v3_v2_v4(
     v3a_idx = at.add(ha.pool_address)
     v2b_idx = at.add(hb.pool_address)
 
-    # Forward from V2b
-    forward_b_addr = hb.token1_address if hb.zfo else hb.token0_address
-    forward_b_idx = at.add(forward_b_addr)
+    forward_b_idx = at.add(hb.token1_address if hb.zfo else hb.token0_address)
 
-    # V4 unlock: sync WBTC, V2b→PM, settle, V4c swap, V4_TAKE WETH→V3a
-    v4_inner = enc_v4_sync(forward_b_idx)
-    v4_inner += enc_v2_swap_direct(v2b_idx, hb.zfo, out_b, pm_idx)
-    v4_inner += enc_v4_settle()
-    v4_inner += enc_v4_swap_compact(
+    # V4 unlock inner: swap C, take WETH profit, settle forward_b
+    v4_inner = enc_v4_swap_compact(
         at.add(hc.currency0_address),
         at.add(hc.currency1_address),
         hc.fee,
@@ -1790,11 +1791,17 @@ def _3hop_v3_v2_v4(
         hc.zfo,
         out_b,
     )
-    v4_inner += enc_v4_take(weth_idx, v3a_idx, optimal_input)
-    v4_inner += enc_v4_take(weth_idx, executor_idx, out_c - optimal_input)
+    v4_inner += enc_v4_take(weth_idx, executor_idx, out_c)
+    v4_inner += enc_v4_settle_delta(forward_b_idx)
 
-    a_fwd = enc_v4_unlock(v4_inner)
+    # V2b callback: V4 unlock only (V2b already has forward_a from V3a's recipient)
+    b_fwd = enc_v4_unlock(v4_inner)
 
+    # V3a callback: V2b swap + pay WETH to V3a
+    a_fwd = enc_v2_swap_compact(v2b_idx, hb.zfo, out_b, executor_idx, forward_data=b_fwd)
+    a_fwd += enc_erc20_transfer(weth_idx, v3a_idx, optimal_input)
+
+    # Top level: V3a swap (sends forward_a directly to V2b pool)
     commands = enc_v3_swap_compact(v3a_idx, ha.zfo, optimal_input, v2b_idx, forward_data=a_fwd)
     return enc_preamble(at) + commands
 
@@ -1882,7 +1889,14 @@ def _3hop_v3_v3_v4(
     pool_manager_address: str,
     weth_address: str,
 ) -> bytes | None:
-    """V3b→PM, V4_TAKE→V3a directly (IIA ✓)."""
+    """V3a→V3b→V4c: reverse-order V3, V3b→PM, V4_TAKE→V3a.
+
+    Per docs/pool-mechanics.md §5 & §4.1 (V3-V3-V4):
+    V3→V3 requires reverse-order: V3b fires first, V3a sends forward_a
+    to V3b during V3b's callback (IIA ✓). V3b sends forward_b to PM
+    (delta netting). V4_TAKE sends WETH to V3a during V3a's callback
+    (IIA ✓). sync(forward_b) before V3b swap, settle inside V4 unlock.
+    """
     ha, hb, hc = path_info.hops
     out_a, out_b, out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
@@ -1898,10 +1912,9 @@ def _3hop_v3_v3_v4(
     v3a_idx = at.add(ha.pool_address)
     v3b_idx = at.add(hb.pool_address)
 
-    # Forward from V3b
-    forward_b_addr = hb.token1_address if hb.zfo else hb.token0_address
-    forward_b_idx = at.add(forward_b_addr)
+    forward_b_idx = at.add(hb.token1_address if hb.zfo else hb.token0_address)
 
+    # V4 unlock inner: settle forward_b, V4c swap, V4_TAKE WETH→V3a, settle deltas
     v4_inner = enc_v4_settle()
     v4_inner += enc_v4_swap_compact(
         at.add(hc.currency0_address),
@@ -1913,11 +1926,16 @@ def _3hop_v3_v3_v4(
         out_b,
     )
     v4_inner += enc_v4_take(weth_idx, v3a_idx, optimal_input)
-    v4_inner += enc_v4_take(weth_idx, executor_idx, out_c - optimal_input)
+    v4_inner += enc_v4_take_delta(weth_idx, executor_idx)
+    v4_inner += enc_v4_settle_all()
 
+    # V3a callback: V4 unlock + erc20_transfer WETH→V3a (explicit auto-pay)
     a_fwd = enc_v4_unlock(v4_inner)
+
+    # V3b callback: V3a swap (sends forward_a→V3b during callback, IIA ✓) + V3a callback
     b_fwd = enc_v3_swap_compact(v3a_idx, ha.zfo, optimal_input, v3b_idx, forward_data=a_fwd)
 
+    # Top level: sync forward_b + V3b swap (sends forward_b→PM, reverse-order)
     commands = enc_v4_sync(forward_b_idx)
     commands += enc_v3_swap_compact(v3b_idx, hb.zfo, out_a, pm_idx, forward_data=b_fwd)
     return enc_preamble(at) + commands
@@ -1934,7 +1952,13 @@ def _3hop_v3_v4_v2(
     pool_manager_address: str,
     weth_address: str,
 ) -> bytes | None:
-    """V3a→PM, V4_TAKE→V2c direct + V2c V2_SWAP_DIRECT + WETH→V3a."""
+    """V3a→V4b→V2c: V3a sends forward_a to PM, V4_TAKE→V2c direct.
+
+    Per docs/pool-mechanics.md §4.1 (V3-V4-V2):
+    V3a→PM (recipient=pm_idx, sync+settle for delta netting), V4 unlock
+    inside V3a callback, V4_TAKE sends forward_b directly to V2c
+    (V2 K-invariant ✓ for excess balance), V2c V2_SWAP_DIRECT.
+    """
     ha, hb, hc = path_info.hops
     out_a, out_b, out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
@@ -1950,13 +1974,12 @@ def _3hop_v3_v4_v2(
     v3a_idx = at.add(ha.pool_address)
     v2c_idx = at.add(hc.pool_address)
 
-    # Forward from V3a
     forward_a_idx = at.add(ha.token1_address if ha.zfo else ha.token0_address)
-    # Forward from V4b
     forward_b_idx = at.add(
         hb.currency1_address if hb.zfo else hb.currency0_address
     )
 
+    # V4 unlock inner: settle forward_a, V4b swap, V4_TAKE forward_b→V2c, settle deltas
     v4_inner = enc_v4_settle()
     v4_inner += enc_v4_swap_compact(
         at.add(hb.currency0_address),
@@ -1968,13 +1991,18 @@ def _3hop_v3_v4_v2(
         out_a,
     )
     v4_inner += enc_v4_take(forward_b_idx, v2c_idx, out_b)
+    v4_inner += enc_v4_take_delta(weth_idx, executor_idx)
+    v4_inner += enc_v4_settle_all()
 
-    c_cmd = enc_v2_swap_direct(v2c_idx, hc.zfo, out_c, executor_idx)
-    a_fwd = enc_v4_unlock(v4_inner) + c_cmd
+    # V3a callback: V4 unlock + V2c swap (forward_b at V2c, auto-pay K-invariant ✓) + pay WETH to V3a
+    a_fwd = enc_v4_unlock(v4_inner)
+    a_fwd += enc_v2_swap_direct(v2c_idx, hc.zfo, out_c, executor_idx)
     a_fwd += enc_erc20_transfer(weth_idx, v3a_idx, optimal_input)
 
+    # Top level: sync forward_a (before V3a sends to PM) + V3a swap (forward_a→PM)
     commands = enc_v4_sync(forward_a_idx)
     commands += enc_v3_swap_compact(v3a_idx, ha.zfo, optimal_input, pm_idx, forward_data=a_fwd)
+    return enc_preamble(at) + commands
     return enc_preamble(at) + commands
 
 
@@ -1989,7 +2017,15 @@ def _3hop_v3_v4_v3(
     pool_manager_address: str,
     weth_address: str,
 ) -> bytes | None:
-    """V3c reverse, V3a WETH→V3a payment + V4_TAKE WBTC→V3c (IIA ✓)."""
+    """V3a→V4b→V3c: V3c-reverse pattern.
+
+    Per docs/pool-mechanics.md §4.1 (V3-V4-V3):
+    V3c fires first (outermost). Inside V3c callback: V3a swap
+    (forward_a→PM), V3a forward_data with ERC20 WETH→V3a +
+    V4 unlock (V4b swap + V4_TAKE forward_b→V3c during V3c
+    callback, IIA ✓). V4_SYNC(forward_a) before V3c swap to
+    capture V3a→PM deposit for delta netting.
+    """
     ha, hb, hc = path_info.hops
     out_a, out_b, _out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
@@ -2005,16 +2041,13 @@ def _3hop_v3_v4_v3(
     v3a_idx = at.add(ha.pool_address)
     v3c_idx = at.add(hc.pool_address)
 
-    # Forward from V3a
     forward_a_idx = at.add(ha.token1_address if ha.zfo else ha.token0_address)
-    # Forward from V4b
     forward_b_idx = at.add(
         hb.currency1_address if hb.zfo else hb.currency0_address
     )
 
-    # V3a callback: WETH→V3a + V4 unlock (V4b swap, V4_TAKE forward→V3c)
-    v4_inner = enc_v4_settle()
-    v4_inner += enc_v4_swap_compact(
+    # V3a callback forward_data: erc20_transfer WETH→V3a + V4 unlock
+    v4_inner = enc_v4_swap_compact(
         at.add(hb.currency0_address),
         at.add(hb.currency1_address),
         hb.fee,
@@ -2024,13 +2057,15 @@ def _3hop_v3_v4_v3(
         out_a,
     )
     v4_inner += enc_v4_take(forward_b_idx, v3c_idx, out_b)
+    v4_inner += enc_v4_settle_delta(forward_a_idx)
 
     a_fwd = enc_erc20_transfer(weth_idx, v3a_idx, optimal_input)
     a_fwd += enc_v4_unlock(v4_inner)
 
-    # V3c fires first
+    # V3c callback: V3a swap (forward_a→PM) with forward_data
     c_fwd = enc_v3_swap_compact(v3a_idx, ha.zfo, optimal_input, pm_idx, forward_data=a_fwd)
 
+    # Top level: sync forward_a before V3c swap (for PM delta netting), V3c swap
     commands = enc_v4_sync(forward_a_idx)
     commands += enc_v3_swap_compact(v3c_idx, hc.zfo, out_b, executor_idx, forward_data=c_fwd)
     return enc_preamble(at) + commands
@@ -2047,7 +2082,13 @@ def _3hop_v3_v4_v4(
     pool_manager_address: str,
     weth_address: str,
 ) -> bytes | None:
-    """V3a→PM, delta netting, V4_TAKE→V3a (IIA ✓)."""
+    """V3a→V4b→V4c: V3a callback runs V4 unlock with delta netting.
+
+    Pattern from test_cmd_executor_three_hop_permutations.py::TestV3V4V4:
+    V3a sends forward_a to executor, V3a callback runs V4 unlock
+    (swap B + swap C, take WETH, settle forward_a) then pays WETH to V3a.
+    V4b and V4c deltas net: forward_a cancels, leaving WETH take + settle.
+    """
     ha, hb, hc = path_info.hops
     out_a, out_b, out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
@@ -2062,11 +2103,10 @@ def _3hop_v3_v4_v4(
     zero_idx = at.add(CMD_ZERO_ADDRESS)
     v3a_idx = at.add(ha.pool_address)
 
-    # Forward from V3a
     forward_a_idx = at.add(ha.token1_address if ha.zfo else ha.token0_address)
 
-    v4_inner = enc_v4_settle()
-    v4_inner += enc_v4_swap_compact(
+    # V4 unlock inner: swap B + swap C, take WETH, settle forward_a
+    v4_inner = enc_v4_swap_compact(
         at.add(hb.currency0_address),
         at.add(hb.currency1_address),
         hb.fee,
@@ -2075,22 +2115,24 @@ def _3hop_v3_v4_v4(
         hb.zfo,
         out_a,
     )
-    v4_inner += enc_v4_swap_dynamic(
+    v4_inner += enc_v4_swap_compact(
         at.add(hc.currency0_address),
         at.add(hc.currency1_address),
         hc.fee,
         hc.tick_spacing,
         zero_idx,
         hc.zfo,
+        out_b,
     )
-    v4_inner += enc_v4_take(weth_idx, v3a_idx, optimal_input)
-    v4_inner += enc_v4_take_delta(weth_idx, executor_idx)
-    v4_inner += enc_v4_settle_all()
+    v4_inner += enc_v4_take(weth_idx, executor_idx, out_c)
+    v4_inner += enc_v4_settle_delta(forward_a_idx)
 
+    # V3a callback: V4 unlock + pay WETH to V3a
     a_fwd = enc_v4_unlock(v4_inner)
+    a_fwd += enc_erc20_transfer(weth_idx, v3a_idx, optimal_input)
 
-    commands = enc_v4_sync(forward_a_idx)
-    commands += enc_v3_swap_compact(v3a_idx, ha.zfo, optimal_input, pm_idx, forward_data=a_fwd)
+    # Top level: V3a swap
+    commands = enc_v3_swap_compact(v3a_idx, ha.zfo, optimal_input, executor_idx, forward_data=a_fwd)
     return enc_preamble(at) + commands
 
 
@@ -2204,7 +2246,14 @@ def _3hop_v4_v2_v4(
     pool_manager_address: str,
     weth_address: str,
 ) -> bytes | None:
-    """Single unlock: V4_TAKE→V2b, V2b→exec, V4c swap, settle deltas."""
+    """V4a→V2b→V4c inside single unlock.
+
+    Per docs/pool-mechanics.md §4.1 (V4-V2-V4):
+    V4a swap → V4_TAKE forward_a→V2b (creates excess balance) →
+    V2b V2_SWAP_CALC→executor (sends forward_b to executor) →
+    V4c swap (consumes forward_b via delta after settle) →
+    V4_SETTLE_DELTA for remaining currencies.
+    """
     ha, hb, hc = path_info.hops
     out_a, out_b, _out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
@@ -2232,10 +2281,7 @@ def _3hop_v4_v2_v4(
         optimal_input,
     )
     inner += enc_v4_take(forward_a_idx, at.add(hb.pool_address), out_a)
-    inner += enc_v2_swap_direct(at.add(hb.pool_address), hb.zfo, out_b, executor_idx)
-    inner += enc_v4_sync(forward_b_idx)
-    inner += enc_erc20_transfer(forward_b_idx, at.add(pool_manager_address), out_b)
-    inner += enc_v4_settle()
+    inner += enc_v2_swap_calc(at.add(hb.pool_address), hb.zfo, executor_idx, fee=hb.fee)
     inner += enc_v4_swap_compact(
         at.add(hc.currency0_address),
         at.add(hc.currency1_address),
@@ -2246,7 +2292,8 @@ def _3hop_v4_v2_v4(
         out_b,
     )
     inner += enc_v4_take_delta(weth_idx, executor_idx)
-    inner += enc_v4_settle_all()
+    inner += enc_v4_settle_delta(forward_a_idx)
+    inner += enc_v4_settle_delta(forward_b_idx)
 
     return enc_preamble(at) + enc_v4_unlock(inner)
 
@@ -2377,7 +2424,14 @@ def _3hop_v4_v3_v4(
     pool_manager_address: str,
     weth_address: str,
 ) -> bytes | None:
-    """V4_TAKE forward→V3b (IIA ✓), V3b→PM, delta netting."""
+    """V4a→V3b→V4c inside single unlock with V4_TAKE→V3b during callback.
+
+    Per docs/pool-mechanics.md §4.1 (V4-V3-V4):
+    V4a swap → V3b swap (recipient=PM for delta netting), V3b callback
+    receives V4_TAKE(USDC→V3b) during V3b's callback (IIA ✓), then
+    settle credits WBTC deposit, V4c swap consumes WBTC via delta,
+    V4_TAKE WETH profit, settle remaining deltas.
+    """
     ha, hb, hc = path_info.hops
     out_a, out_b, out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
@@ -2399,20 +2453,8 @@ def _3hop_v4_v3_v4(
     # Forward from V3b
     forward_b_idx = at.add(hb.token1_address if hb.zfo else hb.token0_address)
 
-    # V3b callback: V4_TAKE forward→V3b (IIA ✓) + V4c swap + take profit
+    # V3b callback: V4_TAKE(USDC→V3b) during V3b's own callback (IIA ✓)
     b_fwd = enc_v4_take(forward_a_idx, v3b_idx, out_a)
-    b_fwd += enc_v4_swap_compact(
-        at.add(hc.currency0_address),
-        at.add(hc.currency1_address),
-        hc.fee,
-        hc.tick_spacing,
-        zero_idx,
-        hc.zfo,
-        out_b,
-    )
-    b_fwd += enc_v4_take(
-        weth_idx, executor_idx, out_c - optimal_input if out_c > optimal_input else 0
-    )
 
     inner = enc_v4_swap_compact(
         at.add(ha.currency0_address),
@@ -2426,6 +2468,16 @@ def _3hop_v4_v3_v4(
     inner += enc_v4_sync(forward_b_idx)
     inner += enc_v3_swap_compact(v3b_idx, hb.zfo, out_a, pm_idx, forward_data=b_fwd)
     inner += enc_v4_settle()
+    inner += enc_v4_swap_compact(
+        at.add(hc.currency0_address),
+        at.add(hc.currency1_address),
+        hc.fee,
+        hc.tick_spacing,
+        zero_idx,
+        hc.zfo,
+        out_b,
+    )
+    inner += enc_v4_take_delta(weth_idx, executor_idx)
     inner += enc_v4_settle_all()
 
     return enc_preamble(at) + enc_v4_unlock(inner)

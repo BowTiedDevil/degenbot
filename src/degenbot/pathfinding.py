@@ -48,11 +48,18 @@ def _dfs(
     graph: MultiGraph,
     min_depth: int,
     max_depth: int | None,
+    pool_type_per_depth: Sequence[set[type] | None] | None = None,
 ) -> Iterator[Sequence[PathStep]]:
     """Perform an iterative depth-first search from the start token to the end token.
 
     When a valid path is found, yield the result and backtrack one step to discover
     additional paths.
+
+    Args:
+        pool_type_per_depth: If set, a sequence of allowed pool type sets at each
+            depth. Depth 0 = first hop, depth 1 = second hop, etc. A ``None`` entry
+            allows all pool types at that depth. Edges whose pool_type is not in
+            the allowed set are pruned before recursion.
 
     Yields:
         Sequence[PathStep]: A valid path from start token to end token.
@@ -111,6 +118,12 @@ def _dfs(
             pool_type = attr["pool_type"]
 
             if (pool_id, pool_type) not in working_path:
+                # Prune edges that don't match the pool type filter at this depth
+                if pool_type_per_depth is not None:
+                    allowed = pool_type_per_depth[len(working_path)]
+                    if allowed is not None and not issubclass(pool_type, tuple(allowed)):
+                        continue
+
                 # Extend path
                 working_path.append((pool_id, pool_type))
 
@@ -123,6 +136,7 @@ def _dfs(
                     graph=graph,
                     min_depth=min_depth,
                     max_depth=max_depth,
+                    pool_type_per_depth=pool_type_per_depth,
                 )
 
                 # Backtrack
@@ -139,11 +153,18 @@ async def _dfs_async(
     graph: MultiGraph,
     min_depth: int,
     max_depth: int | None,
+    pool_type_per_depth: Sequence[set[type] | None] | None = None,
 ) -> AsyncIterator[Sequence[PathStep]]:
     """Perform an iterative depth-first search from the start token to the end token.
 
     When a valid path is found, yield the result and backtrack one step to discover
     additional paths.
+
+    Args:
+        pool_type_per_depth: If set, a sequence of allowed pool type sets at each
+            depth. Depth 0 = first hop, depth 1 = second hop, etc. A ``None`` entry
+            allows all pool types at that depth. When provided, edges whose
+            pool_type is not in the allowed set are pruned before recursion.
 
     Yields:
         Sequence[PathStep]: A valid path from start token to end token.
@@ -204,6 +225,12 @@ async def _dfs_async(
             pool_type = attr["pool_type"]
 
             if (pool_id, pool_type) not in working_path:
+                # Prune edges that don't match the pool type filter at this depth
+                if pool_type_per_depth is not None:
+                    allowed = pool_type_per_depth[len(working_path)]
+                    if allowed is not None and not issubclass(pool_type, tuple(allowed)):
+                        continue
+
                 # Extend path
                 working_path.append((pool_id, pool_type))
 
@@ -216,6 +243,7 @@ async def _dfs_async(
                     graph=graph,
                     min_depth=min_depth,
                     max_depth=max_depth,
+                    pool_type_per_depth=pool_type_per_depth,
                 ):
                     yield step
 
@@ -382,6 +410,7 @@ def find_paths(
     max_depth: int | None = None,
     pool_types: Sequence[type] = (LiquidityPoolTable, UniswapV4PoolTable),
     db: DatabaseSessionManager,
+    pool_type_per_depth: Sequence[set[type] | None] | None = None,
 ) -> Iterator[Sequence[PathStep]]:
     """Find paths from each of the given start tokens to each of the given end tokens.
 
@@ -391,19 +420,12 @@ def find_paths(
     Paths may be constrained to a subset of pool types. If not specified, all valid
     pool types will be included.
 
-    The function is a generator which yields results one-by-one as they are discovered.
-    Callers must consume the results or capture the yielded results in a container.
-
-    The path search assumes this strategy:
-        Beginning at an arbitrary start token, T_s, perform successive swaps through
-        a sequence of pools. Swaps between successive pools require a common forward
-        token F_n between. The final swap yields an arbitrary end token, T_e.
-
-        POOL    TOKEN PAIR
-        0       T_s  - T_f0
-        1       T_f0 - T_f1
-        2       T_f1 - T_f2
-        3       T_f2 - T_e
+    Args:
+        pool_type_per_depth: If set, a sequence of allowed pool type sets at each
+            depth. Depth 0 = first hop, depth 1 = second hop, etc. A ``None`` entry
+            allows all pool types at that depth. When provided, edges whose
+            pool_type is not in the allowed set are pruned before recursion, and
+            the pool_type is not in the allowed set are pruned before recursion.
 
     Yields:
         Sequence[PathStep]: A valid arbitrage path from a start token to an end token.
@@ -417,6 +439,9 @@ def find_paths(
 
     start = time.perf_counter()
 
+    # Build the full graph from all requested pool_types.
+    # Structural pruning happens in DFS — skipping edges whose pool_type
+    # doesn't match the allowed set at each depth.
     with db() as session:
         graph = _prepare_graph(
             chain_id=chain_id,
@@ -468,6 +493,7 @@ def find_paths(
                 graph=graph,
                 min_depth=min_depth,
                 max_depth=max_depth,
+                pool_type_per_depth=pool_type_per_depth,
             )
 
             logger.debug(
@@ -485,18 +511,24 @@ async def find_paths_async(
     max_depth: int | None = None,
     pool_types: Sequence[type] = [LiquidityPoolTable, UniswapV4PoolTable],
     db: DatabaseSessionManager,
+    pool_type_per_depth: Sequence[set[type] | None] | None = None,
 ) -> AsyncIterator[Sequence[PathStep]]:
     """Async version of ``find_paths``.
 
-    Yields:
-        Sequence[PathStep]: A valid arbitrage path from a start token to an end token.
-
+    Args:
+        pool_type_per_depth: If set, a sequence of allowed pool type sets at each
+            depth. Depth 0 = first hop, depth 1 = second hop, etc. A ``None`` entry
+            allows all pool types at that depth. When provided, edges whose
+            pool_type is not in the allowed set are pruned before recursion, and
     Raises:
         DegenbotValueError: If no pools are found for the given chain ID or tokens.
 
     """
     start = time.perf_counter()
 
+    # Build the full graph from all requested pool_types.
+    # Structural pruning happens in DFS — skipping edges whose pool_type
+    # doesn't match the allowed set at each depth.
     with db() as session:
         graph = _prepare_graph(
             chain_id=chain_id,
@@ -548,6 +580,7 @@ async def find_paths_async(
                 graph=graph,
                 min_depth=min_depth,
                 max_depth=max_depth,
+                pool_type_per_depth=pool_type_per_depth,
             ):
                 yield path
 
