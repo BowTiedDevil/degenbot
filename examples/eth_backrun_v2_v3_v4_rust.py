@@ -109,6 +109,73 @@ MAX_PRIORITY_FEE_PERCENTILE = 50  # Use Nth percentile from feeHistory as ceilin
 # budget goes to paths with a real chance of succeeding. Suppressed
 # paths are retried periodically in case conditions change.
 
+# ── Path permutation filter ─────────────────────────────────────
+# Only build paths matching these pool-version permutations.
+# Set to None (or empty) to allow all permutations.
+# Example: {"V3-V3-V4", "V3-V4-V3"} to debug specific orderings.
+# Integrated at the pathfinding level: only the required pool types are
+# loaded into the graph, and DFS edges are pruned at each hop, so
+# discovery is fast and no post-filtering is needed.
+PATH_PERMUTATION_FILTER: set[str] | None = None  # e.g. {"V3-V4-V3"}
+
+# Mapping from short version tag to the DB table base class(es) that
+# represent that pool family.
+def _concrete_pool_types(base_type: type) -> list[type]:
+    """Expand an abstract pool table base into its concrete subclasses."""
+    if not getattr(base_type, "__abstract__", False):
+        return [base_type]
+    subs = base_type.__subclasses__()
+    if not subs:
+        return [base_type]
+    result: list[type] = []
+    for s in subs:
+        result.extend(_concrete_pool_types(s))
+    return result
+
+
+_POOL_VERSION_MAP: dict[str, list[type]] = {
+    "V2": _concrete_pool_types(UniswapV2PoolTableBase),
+    "V3": _concrete_pool_types(UniswapV3PoolTableBase),
+    "V4": [UniswapV4PoolTable],
+}
+
+
+def _parse_permutation_filter(
+    perms: set[str] | None,
+) -> list[set[type] | None] | None:
+    """Convert a set of permutation strings like {\"V3-V4-V3\"} into a
+    pool_type_per_depth list suitable for find_paths_async.
+
+    Returns None if perms is None/empty (no filter).
+    Returns a list of sets, one per depth, where each set contains the
+    allowed pool table types at that depth. If all permutations agree
+    that any type is allowed at a depth, that entry is None.
+    """
+    if not perms:
+        return None
+    # Parse each permutation string into list of version tags
+    parsed: list[list[str]] = []
+    for perm in perms:
+        parts = perm.split("-")
+        if not all(p in _POOL_VERSION_MAP for p in parts):
+            msg = f"Invalid permutation '{perm}': unknown version tag"
+            raise ValueError(msg)
+        parsed.append(parts)
+    # All permutations must have the same depth
+    if len(set(len(p) for p in parsed)) != 1:
+        msg = f"All permutations must have the same depth, got: {perms}"
+        raise ValueError(msg)
+    max_depth = len(parsed[0])
+    # Build per-depth allowed types
+    result: list[set[type] | None] = []
+    for depth in range(max_depth):
+        allowed_this_depth: set[type] = set()
+        for perm_parts in parsed:
+            for base_type in _POOL_VERSION_MAP[perm_parts[depth]]:
+                allowed_this_depth.add(base_type)
+        result.append(allowed_this_depth if allowed_this_depth else None)
+    return result
+
 # Number of consecutive sim-failures before a path is suppressed.
 PATH_SUPPRESS_THRESHOLD = 10
 
@@ -369,6 +436,18 @@ def _hop_display_addr(hop: HopInfo) -> str:
     if isinstance(hop, V3HopInfo):
         return hop.pool_address
     return hop.pool_id_hex
+
+
+def _hop_token_summary(hops: tuple[HopInfo, ...]) -> str:
+    """One-line summary of hop input→output tokens for sim-fail diagnostics."""
+    parts: list[str] = []
+    for i, h in enumerate(hops):
+        if isinstance(h, (V2HopInfo, V3HopInfo)):
+            t0, t1 = h.token0_address[:8], h.token1_address[:8]
+        else:
+            t0, t1 = h.currency0_address[:8], h.currency1_address[:8]
+        parts.append(f"{t0}→{t1}{'↗' if h.zfo else '↘'}")
+    return " ".join(parts)
 
 
 class EngineRegistry:
@@ -644,6 +723,9 @@ async def build_paths(
     start = time.perf_counter()
 
     bot_logger.info("[build_paths] Calling find_paths_async...")
+    _pool_type_per_depth = _parse_permutation_filter(PATH_PERMUTATION_FILTER)
+    if _pool_type_per_depth is not None:
+        bot_logger.info(f"[build_paths] Permutation filter active: {PATH_PERMUTATION_FILTER} → depths={_pool_type_per_depth}")
     async for path_steps in find_paths_async(  # noqa:PLR1702
         chain_id=bot.connections.default_chain_id,
         start_tokens=[
@@ -661,6 +743,7 @@ async def build_paths(
             UniswapV4PoolTable,
         ],
         db=bot.db,
+        pool_type_per_depth=_pool_type_per_depth,
     ):
         await asyncio.sleep(0)
 
@@ -1361,7 +1444,8 @@ async def dispatch_profitable_results(
                 _sim_log(
                     f"[sim-fail] path={path_id} {path_info.path_type}: "
                     f"call[{i}] failed (gasUsed={c.get('gasUsed', 0)}) "
-                    f"revert=0x{revert_hex}{revert_reason}"
+                    f"revert=0x{revert_hex}{revert_reason} "
+                    f"tokens=[{_hop_token_summary(path_info.hops)}]"
                 )
 
                 # ── Diagnostic: debug_traceCall for V4 settlement issues ──
