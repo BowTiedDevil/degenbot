@@ -116,6 +116,11 @@ MAX_PRIORITY_FEE_PERCENTILE = 50  # Use Nth percentile from feeHistory as ceilin
 # Integrated at the pathfinding level: only the required pool types are
 # loaded into the graph, and DFS edges are pruned at each hop, so
 # discovery is fast and no post-filtering is needed.
+#
+# When set, pool_types is automatically derived from the version tags
+# in the filter. E.g. {"V2-V3-V4"} loads all V2/V3/V4 table types into
+# the graph and prunes to V2 at depth 0, V3 at depth 1, V4 at depth 2.
+# When None, all V2/V3/V4 table types are loaded (no pruning).
 PATH_PERMUTATION_FILTER: set[str] | None = None  # e.g. {"V3-V4-V3"}
 
 # Mapping from short version tag to the DB table base class(es) that
@@ -175,6 +180,36 @@ def _parse_permutation_filter(
                 allowed_this_depth.add(base_type)
         result.append(allowed_this_depth if allowed_this_depth else None)
     return result
+
+def _pool_types_from_filter(perms: set[str] | None) -> list[type]:
+    """Derive the pool_types list from the permutation filter.
+
+    When a permutation filter is set, only include pool table types for
+    the version tags mentioned in the permutations. When the filter is
+    None/empty, include all V2/V3/V4 types so every permutation is
+    discoverable.
+
+    This ensures the graph contains the right pool tables for the
+    requested permutations, regardless of which version tags appear.
+    """
+    if not perms:
+        # No filter — include all pool types for maximum coverage
+        types: set[type] = set()
+        for version_types in _POOL_VERSION_MAP.values():
+            types.update(version_types)
+        return list(types)
+
+    # Only include types for versions mentioned in the filter
+    versions_needed: set[str] = set()
+    for perm in perms:
+        for part in perm.split("-"):
+            versions_needed.add(part)
+
+    types = set()
+    for version in versions_needed:
+        types.update(_POOL_VERSION_MAP[version])
+    return list(types)
+
 
 # Number of consecutive sim-failures before a path is suppressed.
 PATH_SUPPRESS_THRESHOLD = 10
@@ -724,8 +759,10 @@ async def build_paths(
 
     bot_logger.info("[build_paths] Calling find_paths_async...")
     _pool_type_per_depth = _parse_permutation_filter(PATH_PERMUTATION_FILTER)
+    _pool_types = _pool_types_from_filter(PATH_PERMUTATION_FILTER)
     if _pool_type_per_depth is not None:
         bot_logger.info(f"[build_paths] Permutation filter active: {PATH_PERMUTATION_FILTER} → depths={_pool_type_per_depth}")
+    bot_logger.info(f"[build_paths] Pool types: {[t.__name__ for t in _pool_types]}")
     async for path_steps in find_paths_async(  # noqa:PLR1702
         chain_id=bot.connections.default_chain_id,
         start_tokens=[
@@ -737,11 +774,7 @@ async def build_paths(
             NATIVE_CURRENCY_ADDRESS,  # V4 allows Ether-paired pools
         ],
         max_depth=3,
-        pool_types=[
-            # UniswapV2PoolTable,
-            UniswapV3PoolTable,
-            UniswapV4PoolTable,
-        ],
+        pool_types=_pool_types,
         db=bot.db,
         pool_type_per_depth=_pool_type_per_depth,
     ):
@@ -1908,8 +1941,24 @@ async def main() -> None:
     parser.add_argument(
         "--live", action="store_true", help="Enable live mode (submits real transactions)"
     )
+    parser.add_argument(
+        "--permutation",
+        type=str,
+        default=None,
+        help=(
+            "Pool version permutation filter (e.g. V2-V3-V4). "
+            "Only paths matching this 3-hop ordering will be built and simulated. "
+            "Overrides PATH_PERMUTATION_FILTER in the source file."
+        ),
+    )
     args = parser.parse_args()
     dry_run = not args.live
+
+    # Override PATH_PERMUTATION_FILTER from CLI if --permutation is set
+    global PATH_PERMUTATION_FILTER
+    if args.permutation is not None:
+        PATH_PERMUTATION_FILTER = {args.permutation}
+        bot_logger.info(f"[startup] Permutation filter from CLI: {PATH_PERMUTATION_FILTER}")
     if not dry_run:
         bot_logger.info("\n*** LIVE MODE — BOT WILL SUBMIT REAL TRANSACTIONS! ***\n")
 

@@ -38,6 +38,44 @@ class Direction(enum.Enum):
     FORWARD_AND_REVERSE = enum.auto()
 
 
+def _compute_node_valid_depths(
+    graph: MultiGraph,
+    pool_type_per_depth: Sequence[set[type] | None],
+) -> dict[int, set[int]]:
+    """Pre-compute which depths each node can participate in.
+
+    For each node in the graph, determine which depth positions its edges
+    satisfy. A node can appear at depth d if it has at least one incident edge
+    whose pool_type is in the allowed set at depth d.
+
+    This enables "lookahead" pruning: before recursing into a neighbor, the DFS
+    can check (in O(1)) whether that neighbor can continue at the next depth.
+    For permutations like V3-V4-V3, this eliminates exploration of V3-to-V3-only
+    tokens that could never bridge to the V4 depth.
+
+    Returns:
+        Mapping from token ID to the set of depth positions it can appear at.
+    """
+    node_valid_depths: dict[int, set[int]] = {}
+    for node in graph.nodes():
+        # Collect all pool types this node has edges for
+        node_pool_types: set[type] = set()
+        for _neighbor, edges_dict in graph[node].items():
+            for attr in edges_dict.values():
+                node_pool_types.add(attr["pool_type"])
+
+        # Determine which depths this node can appear at
+        valid_depths: set[int] = set()
+        for d, allowed in enumerate(pool_type_per_depth):
+            if allowed is None:
+                valid_depths.add(d)
+            elif any(issubclass(pt, tuple(allowed)) for pt in node_pool_types):
+                valid_depths.add(d)
+
+        node_valid_depths[node] = valid_depths
+    return node_valid_depths
+
+
 def _dfs(
     *,
     start_token_id: TokenId,
@@ -49,6 +87,7 @@ def _dfs(
     min_depth: int,
     max_depth: int | None,
     pool_type_per_depth: Sequence[set[type] | None] | None = None,
+    node_valid_depths: dict[int, set[int]] | None = None,
 ) -> Iterator[Sequence[PathStep]]:
     """Perform an iterative depth-first search from the start token to the end token.
 
@@ -60,6 +99,10 @@ def _dfs(
             depth. Depth 0 = first hop, depth 1 = second hop, etc. A ``None`` entry
             allows all pool types at that depth. Edges whose pool_type is not in
             the allowed set are pruned before recursion.
+        node_valid_depths: If set, a mapping from token ID to the set of depth
+            positions it can appear at (based on its edge types). Used for
+            lookahead pruning: edges leading to nodes that can't continue at
+            the next depth are skipped without recursion.
 
     Yields:
         Sequence[PathStep]: A valid path from start token to end token.
@@ -124,6 +167,18 @@ def _dfs(
                     if allowed is not None and not issubclass(pool_type, tuple(allowed)):
                         continue
 
+                    # Lookahead: skip if the neighbor can't continue at the
+                    # next depth (e.g. a V3-only token at depth 0 when depth 1
+                    # requires V4). This eliminates exploration of dead-end
+                    # branches without recursing into them.
+                    next_depth = len(working_path) + 1
+                    if (
+                        next_depth < len(pool_type_per_depth)
+                        and node_valid_depths is not None
+                        and next_depth not in node_valid_depths.get(neighbor_token_id, set())
+                    ):
+                        continue
+
                 # Extend path
                 working_path.append((pool_id, pool_type))
 
@@ -137,6 +192,7 @@ def _dfs(
                     min_depth=min_depth,
                     max_depth=max_depth,
                     pool_type_per_depth=pool_type_per_depth,
+                    node_valid_depths=node_valid_depths,
                 )
 
                 # Backtrack
@@ -154,6 +210,7 @@ async def _dfs_async(
     min_depth: int,
     max_depth: int | None,
     pool_type_per_depth: Sequence[set[type] | None] | None = None,
+    node_valid_depths: dict[int, set[int]] | None = None,
 ) -> AsyncIterator[Sequence[PathStep]]:
     """Perform an iterative depth-first search from the start token to the end token.
 
@@ -165,6 +222,10 @@ async def _dfs_async(
             depth. Depth 0 = first hop, depth 1 = second hop, etc. A ``None`` entry
             allows all pool types at that depth. When provided, edges whose
             pool_type is not in the allowed set are pruned before recursion.
+        node_valid_depths: If set, a mapping from token ID to the set of depth
+            positions it can appear at (based on its edge types). Used for
+            lookahead pruning: edges leading to nodes that can't continue at
+            the next depth are skipped without recursion.
 
     Yields:
         Sequence[PathStep]: A valid path from start token to end token.
@@ -231,6 +292,18 @@ async def _dfs_async(
                     if allowed is not None and not issubclass(pool_type, tuple(allowed)):
                         continue
 
+                    # Lookahead: skip if the neighbor can't continue at the
+                    # next depth (e.g. a V3-only token at depth 0 when depth 1
+                    # requires V4). This eliminates exploration of dead-end
+                    # branches without recursing into them.
+                    next_depth = len(working_path) + 1
+                    if (
+                        next_depth < len(pool_type_per_depth)
+                        and node_valid_depths is not None
+                        and next_depth not in node_valid_depths.get(neighbor_token_id, set())
+                    ):
+                        continue
+
                 # Extend path
                 working_path.append((pool_id, pool_type))
 
@@ -244,6 +317,7 @@ async def _dfs_async(
                     min_depth=min_depth,
                     max_depth=max_depth,
                     pool_type_per_depth=pool_type_per_depth,
+                    node_valid_depths=node_valid_depths,
                 ):
                     yield step
 
@@ -439,15 +513,23 @@ def find_paths(
 
     start = time.perf_counter()
 
-    # Build the full graph from all requested pool_types.
-    # Structural pruning happens in DFS — skipping edges whose pool_type
-    # doesn't match the allowed set at each depth.
     with db() as session:
         graph = _prepare_graph(
             chain_id=chain_id,
             pool_types=pool_types,
             session=session,
         )
+
+        # Pre-compute valid depths per node for lookahead pruning when
+        # pool_type_per_depth is set. This eliminates exploration of
+        # dead-end branches (e.g. V3-only tokens when depth 1 requires V4).
+        _node_valid_depths: dict[int, set[int]] | None = None
+        if pool_type_per_depth is not None:
+            _node_valid_depths = _compute_node_valid_depths(graph, pool_type_per_depth)
+            logger.debug(
+                f"Computed node valid depths for lookahead pruning: "
+                f"{sum(1 for v in _node_valid_depths.values() if len(v) > 1)} bridge nodes"
+            )
 
         traversal_plan = _prepare_traversal_plan(
             start_tokens={get_checksum_address(token) for token in start_tokens},
@@ -494,6 +576,7 @@ def find_paths(
                 min_depth=min_depth,
                 max_depth=max_depth,
                 pool_type_per_depth=pool_type_per_depth,
+                node_valid_depths=_node_valid_depths,
             )
 
             logger.debug(
@@ -526,15 +609,23 @@ async def find_paths_async(
     """
     start = time.perf_counter()
 
-    # Build the full graph from all requested pool_types.
-    # Structural pruning happens in DFS — skipping edges whose pool_type
-    # doesn't match the allowed set at each depth.
     with db() as session:
         graph = _prepare_graph(
             chain_id=chain_id,
             pool_types=pool_types,
             session=session,
         )
+
+        # Pre-compute valid depths per node for lookahead pruning when
+        # pool_type_per_depth is set. This eliminates exploration of
+        # dead-end branches (e.g. V3-only tokens when depth 1 requires V4).
+        _node_valid_depths: dict[int, set[int]] | None = None
+        if pool_type_per_depth is not None:
+            _node_valid_depths = _compute_node_valid_depths(graph, pool_type_per_depth)
+            logger.debug(
+                f"Computed node valid depths for lookahead pruning: "
+                f"{sum(1 for v in _node_valid_depths.values() if len(v) > 1)} bridge nodes"
+            )
 
         traversal_plan = _prepare_traversal_plan(
             start_tokens={get_checksum_address(token) for token in start_tokens},
@@ -581,6 +672,7 @@ async def find_paths_async(
                 min_depth=min_depth,
                 max_depth=max_depth,
                 pool_type_per_depth=pool_type_per_depth,
+                node_valid_depths=_node_valid_depths,
             ):
                 yield path
 
