@@ -2003,7 +2003,6 @@ def _3hop_v3_v4_v2(
     commands = enc_v4_sync(forward_a_idx)
     commands += enc_v3_swap_compact(v3a_idx, ha.zfo, optimal_input, pm_idx, forward_data=a_fwd)
     return enc_preamble(at) + commands
-    return enc_preamble(at) + commands
 
 
 # ── V3-V4-V3 ──────────────────────────────────────────────────────────────
