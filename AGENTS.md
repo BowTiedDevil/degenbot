@@ -276,6 +276,22 @@ Each `SwapAmounts` subclass (V2, V3, Curve, V4, Balancer) has an `encode(recipie
 
 Library callers extend this by implementing custom `ApprovalStrategy` and `PayloadComposer` for their specific smart contracts. V4 encoding requires a custom `PayloadComposer` since V4 uses an unlock/swap callback pattern. The `V4PoolKey` dataclass is available on `UniswapV4PoolSwapAmounts.pool_key` for V4 dispatch. See `src/degenbot/arbitrage/CONTEXT.md` for full terminology.
 
+### Command Stream Encoding (cmd_executor)
+
+The `encode_cmd_stream()` function in `eth_backrun_helpers.py` builds the `execute(bytes)` calldata for the cmd_executor contract. It dispatches to type-specific encoders based on the hop composition:
+
+| Path type | Encoder | Approach |
+|-----------|---------|----------|
+| All V2 (N≥2) | `_encode_cmd_v2_n_hop` | V2_SWAP_COMPACT flash + chained V2_SWAP_CALC |
+| V2+V3 | `_encode_cmd_v2_v3` / `_encode_cmd_v3_v2` | Hybrid callback + auto-pay |
+| V2+V4 | `_encode_cmd_v2_v4` / `_encode_cmd_v4_v2` | V4 unlock wrapping V2 callback |
+| V3+V3 | `_encode_cmd_v3_v3` | Nested V3 callbacks with auto-pay |
+| V3+V4 | `_encode_cmd_v3_v4` / `_encode_cmd_v4_v3` | V4 unlock + V3 callback |
+| V4+V4 | `_encode_cmd_v4_v4` | V4 batch with dynamic amounts |
+| 3-hop mixed | `_encode_cmd_3_hop` | Dispatches to 27 permutations |
+
+**Address table index hygiene**: The `AddressTable` deduplicates by checksummed address. In list comprehensions that build index lists (e.g., `pool_indices`), the iteration variable **must** match the attribute accessor. A mismatch (e.g., `for h in hops` but `hop.pool_address`) silently references an outer-scope variable from a prior loop's final iteration — all addresses resolve to the same deduplicated index. This produces a command stream that calls the wrong pool for every hop, reverting with `V2_SWAP_CALC: no excess balance` or similar errors. Symptom: 100% simulation failure for a path type with zero sub-calls in `debug_traceCall`.
+
 ### Tstore Executor V4 Architecture
 
 The `tstore_executor.vy` contract handles V2/V3/V4 arbitrage via a hybrid approach:
