@@ -51,6 +51,7 @@
 - A **Dynamic Amount** is a V4 swap where the contract derives `amountSpecified` from the **V4 Delta Ledger** instead of a pre-computed value; ensures intermediate deltas cancel exactly in V4-V4 paths
 - The **V4 Delta Ledger** (`t_v4_deltas`) tracks all currency deltas across V4 swaps; replaces the former two-accumulator pattern (`ether_delta`/`weth_delta`) to properly handle intermediate ERC-20 tokens
 - **int128 overflow guard** (`fits_int128()`) prevents V4 `SafeCastOverflow` reverts by skipping paths where `amountSpecified` exceeds ±2^127; checked by all 5 V4 encoder functions
+- **Address table index hygiene**: `AddressTable` deduplicates by checksummed address. When building index lists in list comprehensions (e.g., `pool_indices = [at.add(hop.pool_address) for h in hops]`), a mismatch between the iteration variable (`h`) and the attribute accessor (`hop.`) silently references an outer-scope variable bound to the last prior-loop iteration — all addresses resolve to the same deduplicated index, producing a command stream that calls the wrong pool. The encoding function `encode_cmd_stream()` dispatches to `_encode_cmd_v2_n_hop()` for pure-V2 paths (Approach 2: V2_SWAP_COMPACT flash + chained V2_SWAP_CALC)
 
 ## Resolved ambiguities
 

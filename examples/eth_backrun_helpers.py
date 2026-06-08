@@ -249,7 +249,7 @@ def _encode_cmd_v2_n_hop(
         executor_idx = at.add(executor_address)
 
         # Register all pool addresses (preserves insertion order)
-        pool_indices = [at.add(hop.pool_address) for h in path_info.hops]
+        pool_indices = [at.add(h.pool_address) for h in path_info.hops]
 
         # Forward token from pool A (the intermediate sent to pool B)
         hop_a = path_info.hops[0]

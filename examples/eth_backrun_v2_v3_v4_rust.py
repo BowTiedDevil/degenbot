@@ -93,6 +93,24 @@ from degenbot.uniswap.v4_snapshot import UniswapV4LiquiditySnapshot
 WETH_ADDRESS = WRAPPED_NATIVE_TOKENS[ChainId.ETH]
 MULTICALL3_ADDRESS = "0xcA11bde05977b3631167028862bE2a173976CA11"
 
+# Verified standard ERC-20 intermediates for Ethereum mainnet.
+# Every token here is confirmed to have NO transfer fees and NO rebase.
+ETH_MAINNET_ALLOWED_TOKENS: set[str] = {
+    "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  # WETH
+    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",  # USDC
+    "0xdAC17F958D2ee523a2206206994597C13D831ec7",  # USDT
+    "0x6B175474E89094C44Da98b954EedeAC495271d0F",  # DAI
+    "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",  # WBTC
+    "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",  # UNI
+    "0x514910771AF9Ca656af840dff83E8264EcF986CA",  # LINK
+    "0x6B3595068778DD592e39A122f4f5a5cF09C90fE2",  # SUSHI
+    "0xD533a949740bb3306d119CC777fa900bA034cd52",  # CRV
+    "0xc00e94Cb662C3520282E6f5717214004A7f26888",  # COMP
+    "0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e",  # YFI
+    "0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0",  # MATIC/POL
+    "0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32",  # LDO
+}
+
 MIN_PROFIT_NET = 5 * 10**9  # 5 gwei
 FEE_HISTORY_WINDOW = 10
 FEE_PERCENTILES = (10, 50)
@@ -122,6 +140,20 @@ MAX_PRIORITY_FEE_PERCENTILE = 50  # Use Nth percentile from feeHistory as ceilin
 # the graph and prunes to V2 at depth 0, V3 at depth 1, V4 at depth 2.
 # When None, all V2/V3/V4 table types are loaded (no pruning).
 PATH_PERMUTATION_FILTER: set[str] | None = None  # e.g. {"V3-V4-V3"}
+
+# ── Intermediate token whitelist ────────────────────────────────
+# Only build paths where intermediate hops use these tokens.
+# Set to None to allow all tokens (default). When set, pools that
+# connect any non-whitelisted token are excluded from the graph,
+# eliminating tax/fee-on-transfer tokens that would waste simulation
+# gas and always revert.
+#
+# All tokens below are verified standard ERC-20 (no transfer fees,
+# no rebase mechanics). Do NOT add tokens without verifying:
+#   - stETH: rebase token (balance changes without transfers) — use wstETH instead
+#   - AMPL: rebase token — exclude
+#   - HEX: origin fee on transfer — exclude
+ALLOWED_INTERMEDIATE_TOKENS: set[str] | None = ETH_MAINNET_ALLOWED_TOKENS
 
 # Mapping from short version tag to the DB table base class(es) that
 # represent that pool family.
@@ -777,6 +809,7 @@ async def build_paths(
         pool_types=_pool_types,
         db=bot.db,
         pool_type_per_depth=_pool_type_per_depth,
+        allowed_intermediate_tokens=ALLOWED_INTERMEDIATE_TOKENS,
     ):
         await asyncio.sleep(0)
 
@@ -1414,9 +1447,11 @@ async def dispatch_profitable_results(
 
         # Check all three calls succeeded — log which call failed + revert data
         failed_call = None
+        failed_call_idx = -1
         for i, c in enumerate(calls):
             if c.get("status", 0) != 1:
                 failed_call = c
+                failed_call_idx = i
                 revert_data = c.get("returnData", b"")
                 revert_hex = (
                     revert_data.hex() if isinstance(revert_data, bytes) else str(revert_data)
