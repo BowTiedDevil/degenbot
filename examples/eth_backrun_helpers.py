@@ -287,6 +287,7 @@ def _encode_cmd_v2_n_hop(
             zfo=zfo_a,
             amount_out=hop_outputs[0],
             recipient_idx=executor_idx,
+            fee=hop_a.fee,
             forward_data=callback_cmds,
         )
 
@@ -828,6 +829,7 @@ def _encode_cmd_v4_v2(
                 zfo=hop_v2.zfo,
                 amount_out=weth_out,
                 recipient_idx=executor_idx,
+                fee=hop_v2.fee,
                 forward_data=v2_callback_cmds,
             )
             # 4. Settle V4's input-currency debt (e.g., USDC)
@@ -997,6 +999,7 @@ def _encode_cmd_v2_v4(
             zfo=hop_v2.zfo,
             amount_out=forward_out,
             recipient_idx=executor_idx,
+            fee=hop_v2.fee,
             forward_data=callback_cmds,
         )
 
@@ -1143,6 +1146,7 @@ def _encode_cmd_v2_v3(
             zfo=hop_a.zfo,
             amount_out=forward_out,
             recipient_idx=executor_idx,
+            fee=hop_a.fee,
             forward_data=callback_cmds,
         )
 
@@ -1218,6 +1222,7 @@ def _encode_cmd_v3_v2(
             hop_b.zfo,
             weth_out,
             executor_idx,
+            fee=hop_b.fee,
         )
 
         # Top-level: V3 swap with forward_data (V3 amount = optimal_input = WETH in)
@@ -1311,7 +1316,7 @@ def _3hop_v2_v2_v2(
     c_fwd += enc_v2_swap_direct(v2b_idx, hb.zfo, out_b, v2c_idx)
 
     # Flash borrow from V2c
-    commands = enc_v2_swap_compact(v2c_idx, hc.zfo, out_c, executor_idx, forward_data=c_fwd)
+    commands = enc_v2_swap_compact(v2c_idx, hc.zfo, out_c, executor_idx, fee=hc.fee, forward_data=c_fwd)
     return enc_preamble(at) + commands
 
 
@@ -1432,7 +1437,7 @@ def _3hop_v2_v3_v2(
     # V2c callback: V3b swap (to=V2c)
     c_fwd = enc_v3_swap_compact(v3b_idx, hb.zfo, out_a, v2c_idx, forward_data=b_fwd)
 
-    commands = enc_v2_swap_compact(v2c_idx, hc.zfo, out_c, executor_idx, forward_data=c_fwd)
+    commands = enc_v2_swap_compact(v2c_idx, hc.zfo, out_c, executor_idx, fee=hc.fee, forward_data=c_fwd)
     return enc_preamble(at) + commands
 
 
@@ -1572,7 +1577,7 @@ def _3hop_v2_v4_v2(
     c_fwd = enc_erc20_transfer(weth_idx, v2a_idx, optimal_input)
     c_fwd += enc_v4_unlock(v4_inner)
 
-    commands = enc_v2_swap_compact(v2c_idx, hc.zfo, out_c, executor_idx, forward_data=c_fwd)
+    commands = enc_v2_swap_compact(v2c_idx, hc.zfo, out_c, executor_idx, fee=hc.fee, forward_data=c_fwd)
     return enc_preamble(at) + commands
 
 
@@ -1803,7 +1808,7 @@ def _3hop_v3_v2_v4(
     b_fwd = enc_v4_unlock(v4_inner)
 
     # V3a callback: V2b swap + pay WETH to V3a
-    a_fwd = enc_v2_swap_compact(v2b_idx, hb.zfo, out_b, executor_idx, forward_data=b_fwd)
+    a_fwd = enc_v2_swap_compact(v2b_idx, hb.zfo, out_b, executor_idx, fee=hb.fee, forward_data=b_fwd)
     a_fwd += enc_erc20_transfer(weth_idx, v3a_idx, optimal_input)
 
     # Top level: V3a swap (sends forward_a directly to V2b pool)
