@@ -250,16 +250,22 @@ def enc_v2_swap_compact(
     zfo: bool,
     amount_out: int,
     recipient_idx: int,
+    fee: int = 30,
     forward_data: bytes = b"",
 ) -> bytes:
     """V2_SWAP_COMPACT: [0x20][pool_idx:1][zfo:1][amount_out:16]
-    [recipient_idx:1][fwd_len:2][fwd_data:N] = 22 + N bytes."""
+    [recipient_idx:1][fee:2][fwd_len:2][fwd_data:N] = 24 + N bytes.
+
+    fee is a fraction of 10000 (30 = 0.3% UniswapV2, 25 = 0.25% PancakeSwap).
+    Written to t_v2_pair_fee[pool] before swap() for correct auto-pay.
+    """
     return b"".join([
         CMD_V2_SWAP_COMPACT,
         _e(pool_idx, 1),
         b"\x01" if zfo else b"\x00",
         _e(amount_out, 16),
         _e(recipient_idx, 1),
+        _e(fee, 2),
         _e(len(forward_data), 2),
         forward_data,
     ])
