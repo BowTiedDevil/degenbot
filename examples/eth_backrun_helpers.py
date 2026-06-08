@@ -1360,7 +1360,12 @@ def _3hop_v2_v2_v4(
     pool_manager_address: str,
     weth_address: str,
 ) -> bytes | None:
-    """V4_TAKE→V2a direct, V2b→PM delta netting, all inside V4 unlock."""
+    """V4 swap + V4_TAKE→V2a, V2b→PM delta netting, all inside V4 unlock.
+
+    Uses V2_SWAP_CALC (not V2_SWAP_DIRECT) for both V2 swaps to compute
+    amounts on-chain from actual reserves, avoiding K-invariant failures
+    when solver reserves are stale relative to on-chain state.
+    """
     ha, hb, hc = path_info.hops
     out_a, out_b, _out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
@@ -1386,9 +1391,9 @@ def _3hop_v2_v2_v4(
         c0_idx, c1_idx, hc.fee, hc.tick_spacing, zero_idx, hc.zfo, out_b
     )
     inner += enc_v4_take(weth_idx, v2a_idx, optimal_input)
-    inner += enc_v2_swap_direct(v2a_idx, ha.zfo, out_a, v2b_idx)
+    inner += enc_v2_swap_calc(v2a_idx, ha.zfo, v2b_idx, fee=ha.fee)
     inner += enc_v4_sync(forward_b_idx)
-    inner += enc_v2_swap_direct(v2b_idx, hb.zfo, out_b, pm_idx)
+    inner += enc_v2_swap_calc(v2b_idx, hb.zfo, pm_idx, fee=hb.fee)
     inner += enc_v4_settle()
     inner += enc_v4_settle_delta(weth_idx)
 
@@ -1550,7 +1555,7 @@ def _3hop_v2_v4_v2(
 
     # V4 unlock: sync/settle from V2a→PM, V4b swap, V4_TAKE→V2c
     v4_inner = enc_v4_sync(forward_a_idx)
-    v4_inner += enc_v2_swap_direct(v2a_idx, ha.zfo, out_a, pm_idx)
+    v4_inner += enc_v2_swap_calc(v2a_idx, ha.zfo, pm_idx, fee=ha.fee)
     v4_inner += enc_v4_settle()
     v4_inner += enc_v4_swap_compact(
         at.add(hb.currency0_address),
@@ -1604,7 +1609,7 @@ def _3hop_v2_v4_v3(
 
     # V4 unlock: sync, V2a→PM, settle, V4b swap, V4_TAKE forward→V3c
     v4_inner = enc_v4_sync(forward_a_idx)
-    v4_inner += enc_v2_swap_direct(v2a_idx, ha.zfo, out_a, pm_idx)
+    v4_inner += enc_v2_swap_calc(v2a_idx, ha.zfo, pm_idx, fee=ha.fee)
     v4_inner += enc_v4_settle()
     v4_inner += enc_v4_swap_compact(
         at.add(hb.currency0_address),
@@ -1653,7 +1658,7 @@ def _3hop_v2_v4_v4(
 
     v4_inner = enc_v4_sync(forward_a_idx)
     v4_inner += enc_v4_take(weth_idx, at.add(ha.pool_address), optimal_input)
-    v4_inner += enc_v2_swap_direct(at.add(ha.pool_address), ha.zfo, out_a, pm_idx)
+    v4_inner += enc_v2_swap_calc(at.add(ha.pool_address), ha.zfo, pm_idx, fee=ha.fee)
     v4_inner += enc_v4_settle()
     v4_inner += enc_v4_swap_compact(
         at.add(hb.currency0_address),
@@ -2164,8 +2169,8 @@ def _3hop_v4_v2_v2(
         ha.currency1_address if ha.zfo else ha.currency0_address
     )
 
-    b_cmd = enc_v2_swap_direct(at.add(hb.pool_address), hb.zfo, out_b, at.add(hc.pool_address))
-    c_cmd = enc_v2_swap_direct(at.add(hc.pool_address), hc.zfo, out_c, executor_idx)
+    b_cmd = enc_v2_swap_calc(at.add(hb.pool_address), hb.zfo, at.add(hc.pool_address), fee=hb.fee)
+    c_cmd = enc_v2_swap_calc(at.add(hc.pool_address), hc.zfo, executor_idx, fee=hc.fee)
 
     inner = enc_v4_swap_compact(
         at.add(ha.currency0_address),
@@ -2225,7 +2230,7 @@ def _3hop_v4_v2_v3(
         optimal_input,
     )
     v4_inner += enc_v4_take(forward_a_idx, at.add(hb.pool_address), out_a)
-    v4_inner += enc_v2_swap_direct(at.add(hb.pool_address), hb.zfo, out_b, v3c_idx)
+    v4_inner += enc_v2_swap_calc(at.add(hb.pool_address), hb.zfo, v3c_idx, fee=hb.fee)
     v4_inner += enc_v4_settle_delta(weth_idx)
 
     commands = enc_v3_swap_compact(
