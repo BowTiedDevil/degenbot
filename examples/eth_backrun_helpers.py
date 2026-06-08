@@ -2063,8 +2063,11 @@ def _3hop_v3_v4_v3(
         out_a,
     )
     v4_inner += enc_v4_take(forward_b_idx, v3c_idx, out_b)
-    v4_inner += enc_v4_settle_delta(forward_a_idx)
-    v4_inner += enc_v4_settle_all()
+
+    # Plain settle credits forward_a delta from V3a's direct deposit to PM.
+    # V4_SETTLE_DELTA would fail because it tries to transfer from executor,
+    # but V3a sent directly to PM — the executor holds zero forward_a tokens.
+    v4_inner = enc_v4_settle() + v4_inner
 
     a_fwd = enc_erc20_transfer(weth_idx, v3a_idx, optimal_input)
     a_fwd += enc_v4_unlock(v4_inner)
@@ -2132,8 +2135,11 @@ def _3hop_v3_v4_v4(
         out_b,
     )
     v4_inner += enc_v4_take(weth_idx, executor_idx, out_c)
-    v4_inner += enc_v4_settle_delta(forward_a_idx)
-    v4_inner += enc_v4_settle_all()
+
+    # Plain settle credits forward_a delta from V3a's direct deposit to PM.
+    # V4_SETTLE_DELTA would fail because it tries to transfer from executor,
+    # but V3a sent directly to PM — the executor holds zero forward_a tokens.
+    v4_inner = enc_v4_settle() + v4_inner
 
     # V3a callback: V4 unlock + pay WETH to V3a
     a_fwd = enc_v4_unlock(v4_inner)
