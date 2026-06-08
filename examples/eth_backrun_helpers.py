@@ -520,7 +520,7 @@ def _encode_cmd_v4_v3(
         if not fits_int128(optimal_input):
             return None
 
-        v4_output_is_native = v4_output_is_native(hop_v4)
+        _v4_out_native = v4_output_is_native(hop_v4)
 
         at = AddressTable()
         _pm_idx = at.add(pool_manager_address)
@@ -531,7 +531,7 @@ def _encode_cmd_v4_v3(
         c1_v4_idx = at.add(hop_v4.currency1_address)
         v3_idx = at.add(hop_v3.pool_address)
         weth_idx = at.add(weth_address)
-        if v4_output_is_native:
+        if _v4_out_native:
             native_idx = at.add(NATIVE_CURRENCY_ADDRESS)
 
         # 1. V4 swap (input→forward)
@@ -545,7 +545,7 @@ def _encode_cmd_v4_v3(
             amount_u128=optimal_input,
         )
 
-        if v4_output_is_native:
+        if _v4_out_native:
             # V4 output is native ETH — take to executor, then wrap
             inner += enc_v4_take(native_idx, executor_idx, forward_out)
             inner += enc_weth_deposit(forward_out)
@@ -582,8 +582,8 @@ def _encode_cmd_v4_v3(
             # 4. Settle V4's input currency debt.
             # V3 auto-pay gave WETH to executor. If V4's input is native ETH,
             # must unwrap WETH→ETH before settling (WETH≠ETH mismatch).
-            v4_input_is_native = v4_input_is_native(hop_v4)
-            if v4_input_is_native:
+            _v4_in_native = v4_input_is_native(hop_v4)
+            if _v4_in_native:
                 input_idx = c0_v4_idx if hop_v4.zfo else c1_v4_idx
                 inner += enc_weth_withdraw(optimal_input)
                 inner += enc_v4_settle_delta(input_idx)
@@ -644,7 +644,7 @@ def _encode_cmd_v3_v4(
         if not fits_int128(forward_out) or not fits_int128(weth_out):
             return None
 
-        v4_input_is_native = v4_input_is_native(hop_v4)
+        _v4_in_native = v4_input_is_native(hop_v4)
 
         at = AddressTable()
         pm_idx = at.add(pool_manager_address)
@@ -655,10 +655,10 @@ def _encode_cmd_v3_v4(
         c0_v4_idx = at.add(hop_v4.currency0_address)
         c1_v4_idx = at.add(hop_v4.currency1_address)
         weth_idx = at.add(weth_address)
-        if v4_input_is_native:
+        if _v4_in_native:
             native_idx = at.add(NATIVE_CURRENCY_ADDRESS)
 
-        if v4_input_is_native:
+        if _v4_in_native:
             # V4 needs native ETH — unwrap WETH→ETH first, then V4 swap
             # Pattern from test_cmd_executor_inline_wrap_unwrap.py::TestV3ToV4InlineUnwrap
             v4_inner = enc_v4_swap_compact(
@@ -789,7 +789,7 @@ def _encode_cmd_v4_v2(
         if not fits_int128(optimal_input) or not fits_int128(forward_out):
             return None
 
-        v4_output_is_native = v4_output_is_native(hop_v4)
+        _v4_out_native = v4_output_is_native(hop_v4)
 
         at = AddressTable()
         pm_idx = at.add(pool_manager_address)
@@ -800,7 +800,7 @@ def _encode_cmd_v4_v2(
         c1_v4_idx = at.add(hop_v4.currency1_address)
         v2_idx = at.add(hop_v2.pool_address)
         weth_idx = at.add(weth_address)
-        if v4_output_is_native:
+        if _v4_out_native:
             native_idx = at.add(NATIVE_CURRENCY_ADDRESS)
 
         # 1. V4 swap (input→forward)
@@ -814,7 +814,7 @@ def _encode_cmd_v4_v2(
             amount_u128=optimal_input,
         )
 
-        if v4_output_is_native:
+        if _v4_out_native:
             # V4 output is native ETH, V2 needs WETH
             # Pattern from test_cmd_executor_inline_wrap_unwrap.py::TestV4ToV2InlineWrap
             # 2. Take ETH to executor, wrap to WETH
@@ -852,8 +852,8 @@ def _encode_cmd_v4_v2(
 
             # Settle V4's input-currency debt.
             # V2 sent the output (WETH or USDC) to the executor.
-            v4_input_is_native = v4_input_is_native(hop_v4)
-            if v4_input_is_native:
+            _v4_in_native = v4_input_is_native(hop_v4)
+            if _v4_in_native:
                 # V4's input is native ETH. The executor got WETH from V2.
                 # Must unwrap WETH→ETH before settling the native ETH delta.
                 # Pattern: WETH_WITHDRAW → V4_SETTLE_DELTA(native_idx)
@@ -915,7 +915,7 @@ def _encode_cmd_v2_v4(
         if not fits_int128(forward_out) or not fits_int128(weth_out):
             return None
 
-        v4_input_is_native = v4_input_is_native(hop_v4)
+        _v4_in_native = v4_input_is_native(hop_v4)
 
         at = AddressTable()
         pm_idx = at.add(pool_manager_address)
@@ -926,14 +926,14 @@ def _encode_cmd_v2_v4(
         c0_v4_idx = at.add(hop_v4.currency0_address)
         c1_v4_idx = at.add(hop_v4.currency1_address)
         weth_idx = at.add(weth_address)
-        if v4_input_is_native:
+        if _v4_in_native:
             native_idx = at.add(NATIVE_CURRENCY_ADDRESS)
 
         # Forward token = output of V2 swap
         forward_addr = hop_v2.token1_address if hop_v2.zfo else hop_v2.token0_address
         forward_idx = at.add(forward_addr)
 
-        if v4_input_is_native:
+        if _v4_in_native:
             # V4 needs native ETH — unwrap WETH first, then V4 swap + settle + take
             # Pattern from test_cmd_executor_inline_wrap_unwrap.py::TestV2ToV4InlineUnwrap
             v4_inner = enc_v4_swap_compact(
@@ -962,7 +962,7 @@ def _encode_cmd_v2_v4(
         else:
             # V4 input is ERC-20 (not native ETH)
             # Check if V4's OUTPUT is native ETH — need WETH_DEPOSIT to wrap
-            v4_output_is_native = v4_output_is_native(hop_v4)
+            _v4_out_native = v4_output_is_native(hop_v4)
 
             v4_inner = enc_v4_sync(forward_idx)
             v4_inner += enc_erc20_transfer(forward_idx, pm_idx, forward_out)
@@ -977,7 +977,7 @@ def _encode_cmd_v2_v4(
                 amount_u128=forward_out,
             )
             # Take profit: if V4 outputs native ETH, add native_idx and use it
-            if v4_output_is_native:
+            if _v4_out_native:
                 native_idx = at.add(NATIVE_CURRENCY_ADDRESS)
                 v4_inner += enc_v4_take(native_idx, executor_idx, weth_out)
             else:
@@ -988,7 +988,7 @@ def _encode_cmd_v2_v4(
 
             # V2 callback: V4 unlock first (executor gets V4 output), then pay V2
             callback_cmds = enc_v4_unlock(v4_inner)
-            if v4_output_is_native:
+            if _v4_out_native:
                 # V4 gave native ETH — wrap to WETH before paying V2
                 callback_cmds += enc_weth_deposit(weth_out)
             callback_cmds += enc_erc20_transfer(weth_idx, v2_idx, optimal_input)
@@ -1682,7 +1682,6 @@ def _3hop_v2_v4_v4(
         zero_idx,
         hc.zfo,
     )
-    v4_inner += enc_v4_take_delta(weth_idx, executor_idx)
     v4_inner += enc_v4_settle_all()
 
     return enc_preamble(at) + enc_v4_unlock(v4_inner)
@@ -1936,7 +1935,6 @@ def _3hop_v3_v3_v4(
         out_b,
     )
     v4_inner += enc_v4_take(weth_idx, v3a_idx, optimal_input)
-    v4_inner += enc_v4_take_delta(weth_idx, executor_idx)
     v4_inner += enc_v4_settle_all()
 
     # V3a callback: V4 unlock + erc20_transfer WETH→V3a (explicit auto-pay)
@@ -2001,7 +1999,6 @@ def _3hop_v3_v4_v2(
         out_a,
     )
     v4_inner += enc_v4_take(forward_b_idx, v2c_idx, out_b)
-    v4_inner += enc_v4_take_delta(weth_idx, executor_idx)
     v4_inner += enc_v4_settle_all()
 
     # V3a callback: V4 unlock + V2c swap (forward_b at V2c, auto-pay K-invariant ✓) + pay WETH to V3a
@@ -2067,6 +2064,7 @@ def _3hop_v3_v4_v3(
     )
     v4_inner += enc_v4_take(forward_b_idx, v3c_idx, out_b)
     v4_inner += enc_v4_settle_delta(forward_a_idx)
+    v4_inner += enc_v4_settle_all()
 
     a_fwd = enc_erc20_transfer(weth_idx, v3a_idx, optimal_input)
     a_fwd += enc_v4_unlock(v4_inner)
@@ -2135,6 +2133,7 @@ def _3hop_v3_v4_v4(
     )
     v4_inner += enc_v4_take(weth_idx, executor_idx, out_c)
     v4_inner += enc_v4_settle_delta(forward_a_idx)
+    v4_inner += enc_v4_settle_all()
 
     # V3a callback: V4 unlock + pay WETH to V3a
     a_fwd = enc_v4_unlock(v4_inner)
@@ -2300,9 +2299,7 @@ def _3hop_v4_v2_v4(
         hc.zfo,
         out_b,
     )
-    inner += enc_v4_take_delta(weth_idx, executor_idx)
-    inner += enc_v4_settle_delta(forward_a_idx)
-    inner += enc_v4_settle_delta(forward_b_idx)
+    inner += enc_v4_settle_all()
 
     return enc_preamble(at) + enc_v4_unlock(inner)
 
@@ -2486,7 +2483,6 @@ def _3hop_v4_v3_v4(
         hc.zfo,
         out_b,
     )
-    inner += enc_v4_take_delta(weth_idx, executor_idx)
     inner += enc_v4_settle_all()
 
     return enc_preamble(at) + enc_v4_unlock(inner)
@@ -2657,7 +2653,6 @@ def _3hop_v4_v4_v4(
         zero_idx,
         hc.zfo,
     )
-    inner += enc_v4_take_delta(weth_idx, executor_idx)
     inner += enc_v4_settle_all()
 
     return enc_preamble(at) + enc_v4_unlock(inner)
