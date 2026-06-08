@@ -1383,7 +1383,7 @@ def _3hop_v2_v2_v4(
     forward_b_idx = at.add(forward_b_addr)
 
     inner = enc_v4_swap_compact(
-        c0_idx, c1_idx, hc.fee, hc.tick_spacing, zero_idx, hc.zfo, optimal_input
+        c0_idx, c1_idx, hc.fee, hc.tick_spacing, zero_idx, hc.zfo, out_b
     )
     inner += enc_v4_take(weth_idx, v2a_idx, optimal_input)
     inner += enc_v2_swap_direct(v2a_idx, ha.zfo, out_a, v2b_idx)
