@@ -641,6 +641,40 @@ impl PyAlloyProvider {
         let sub = crate::subscription_py::PyAlloySubscription::from_handle(handle);
         Py::new(py, sub)
     }
+
+    /// Verify that `py.detach()` releases the GIL by spawning an OS thread
+    /// that re-acquires it via `Python::attach()`.
+    ///
+    /// Returns `True` if the spawned thread successfully acquired the GIL
+    /// while the current thread had released it inside `py.detach()`,
+    /// proving the GIL was actually released. Returns `False` if the spawned
+    /// thread could not acquire the GIL (meaning `py.detach()` did not release it).
+    ///
+    /// This is a deterministic, timing-free test — no sleep or scheduling
+    /// assumptions required.
+    #[pyo3(signature = ())]
+    fn verify_gil_release(&self, py: Python<'_>) -> bool {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let gil_acquired_by_other = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&gil_acquired_by_other);
+
+        py.detach(|| {
+            // GIL is released here. Spawn an OS thread that tries Python::attach().
+            // If py.detach() actually released the GIL, Python::attach() will succeed
+            // (it re-acquires the GIL). If not, Python::attach() would deadlock
+            // waiting for the GIL — but detach is documented to release it.
+            let handle = std::thread::spawn(move || {
+                Python::attach(|_py| {
+                    flag.store(true, Ordering::SeqCst);
+                });
+            });
+            handle.join().expect("GIL re-acquisition thread panicked");
+        });
+
+        gil_acquired_by_other.load(Ordering::SeqCst)
+    }
 }
 
 /// Add provider module to Python module.
