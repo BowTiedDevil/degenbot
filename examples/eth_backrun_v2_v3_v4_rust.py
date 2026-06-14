@@ -51,10 +51,11 @@ from eth_backrun_helpers import (
     encode_cmd_stream,
     v4_input_is_native,
 )
-from eth_typing import ChainId
+from eth_typing import ChainId, ChecksumAddress
 from hexbytes import HexBytes
 from web3 import AsyncWeb3, Web3
 from web3.exceptions import TransactionNotFound, Web3Exception
+from web3.types import BlockStateCallV1, SimulateV1Payload, StateOverrideParams, TxParams
 
 from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, get_checksum_address
 from degenbot.arbitrage.cmd_stream import (
@@ -389,7 +390,7 @@ def build_simulation_state_overrides(
     executor_owner: str,
     inject_code: bool = False,
     injected_address: str | None = None,
-) -> dict:
+) -> dict[ChecksumAddress, StateOverrideParams]:
     """Build the stateOverrides dict for eth_simulateV1.
 
     All fields (code, balance, nonce, state, stateDiff) go under
@@ -413,26 +414,24 @@ def build_simulation_state_overrides(
       - Only funds the executor owner with ETH for gas
     """
 
-    overrides: dict[str, Any] = {}
+    overrides: dict[ChecksumAddress, StateOverrideParams] = {}
 
     # Fund executor owner with ETH for gas
-    overrides[Web3.to_checksum_address(executor_owner)] = {
-        "balance": 100 * 10**18,
-    }
+    overrides[get_checksum_address(executor_owner)] = StateOverrideParams(balance=100 * 10**18)
 
     if inject_code and injected_address:
         # Inject executor runtime bytecode at the fresh address.
         # CBOR metadata must remain intact — see IMPORTANT note in the
         # docstring and contracts/recompile.py.
         runtime_code = _load_executor_runtime_bytecode()
-        overrides[Web3.to_checksum_address(injected_address)] = {
-            "code": runtime_code,
+        overrides[get_checksum_address(injected_address)] = StateOverrideParams(
+            code=runtime_code,
             # Fund the injected executor with ETH for V4 settlement and
             # V3 callback WETH payments (the deployed contract wraps 10 ETH
             # at construction; code injection skips this, so we must set
             # the balance explicitly).
-            "balance": 10 * 10**18,
-        }
+            balance=10 * 10**18,
+        )
 
         # Pre-warm ERC6909 and WETH storage slots to avoid cold SSTORE
         # penalties. compute_simulation_warmup_slots() returns stateDiff
@@ -447,7 +446,7 @@ def build_simulation_state_overrides(
         )
 
         for contract_addr, contract_overrides in warmup.items():
-            addr = Web3.to_checksum_address(contract_addr)
+            addr = get_checksum_address(contract_addr)
             if addr not in overrides:
                 overrides[addr] = {}
             for key, value in contract_overrides.items():
@@ -465,7 +464,7 @@ def build_simulation_state_overrides(
         # Override the WETH balance with the operational amount (10 ETH)
         # for V3 callbacks. The warmup function set it to 1 wei for
         # slot-warming purposes; we need a much larger balance.
-        overrides[Web3.to_checksum_address(WETH_ADDRESS)].setdefault("stateDiff", {})
+        overrides[get_checksum_address(WETH_ADDRESS)].setdefault("stateDiff", {})
 
         # Compute the WETH balanceOf slot (same formula as the warmup
         # function uses internally — keccak256(pad(executor, 32) || pad(3, 32)))
@@ -570,7 +569,7 @@ def _hop_display_addr(hop: HopInfo) -> str:
 def _hop_token_summary(hops: tuple[HopInfo, ...]) -> str:
     """One-line summary of hop input→output tokens for sim-fail diagnostics."""
     parts: list[str] = []
-    for i, h in enumerate(hops):
+    for h in hops:
         if isinstance(h, (V2HopInfo, V3HopInfo)):
             t0, t1 = h.token0_address[:8], h.token1_address[:8]
         else:
@@ -1298,21 +1297,20 @@ async def dispatch_profitable_results(
 
     # Pre-build the balanceOf call for the executor
     weth_balance_calldata = encode_balanceof_calldata(executor_address)
-    weth_balance_call = {
-        "to": WETH_ADDRESS,
-        "data": weth_balance_calldata,
-    }
-
+    weth_balance_call = TxParams(
+        to=WETH_ADDRESS,
+        data=weth_balance_calldata,
+    )
     # Pre-build the getEthBalance call for the executor (via Multicall3)
     get_eth_balance_selector = web3.Web3.keccak(text="getEthBalance(address)")[:4]
     eth_balance_calldata = get_eth_balance_selector + eth_abi.abi.encode(
         types=["address"],
         args=[executor_address],
     )
-    eth_balance_call = {
-        "to": MULTICALL3_ADDRESS,
-        "data": eth_balance_calldata,
-    }
+    eth_balance_call = TxParams(
+        to=MULTICALL3_ADDRESS,
+        data=eth_balance_calldata,
+    )
 
     # Pre-build the ERC-6909 balanceOf call for the executor in the PM.
     # PM.balanceOf(executor, uint160(WETH_ADDRESS)) returns the executor's
@@ -1325,10 +1323,10 @@ async def dispatch_profitable_results(
         types=["address", "uint256"],
         args=[executor_address, weth_erc6909_id],
     )
-    erc6909_balance_call = {
-        "to": UNISWAP_V4_POOL_MANAGER_ADDRESS,
-        "data": erc6909_balance_calldata,
-    }
+    erc6909_balance_call = TxParams(
+        to=UNISWAP_V4_POOL_MANAGER_ADDRESS,
+        data=erc6909_balance_calldata,
+    )
 
     # ── Slice 4: Sort by engine profit descending — best paths first ──
     results.sort(key=operator.itemgetter(2), reverse=True)
@@ -1455,43 +1453,46 @@ async def dispatch_profitable_results(
             types=["bytes", "uint256"],
             args=[cmd_bytes, expected_balance],
         )
-        tx_params = {
-            "from": Web3.to_checksum_address(EXECUTOR_OWNER),
-            "to": Web3.to_checksum_address(executor_address),
-            "data": calldata,
-            "chainId": 1,
-            "type": 2,
-            "value": 0,
-            "gas": 5_000_000,  # Generous gas for V3 tick-crossing swaps
-            "maxFeePerGas": 0,
-            "maxPriorityFeePerGas": 0,
-            "nonce": 0,
-        }
+        tx_params = TxParams(
+            to=Web3.to_checksum_address(executor_address),
+            data=calldata,
+            chainId=1,
+            type=2,
+            value=0,
+            gas=5_000_000,  # Generous gas for V3 tick-crossing swaps
+            maxFeePerGas=0,
+            maxPriorityFeePerGas=0,
+            nonce=0,
+        )
+        tx_params["from"] = get_checksum_address(EXECUTOR_OWNER)
 
         # Compute EIP-2930 access list before simulation so gas_used
         # reflects the savings from pre-warmed storage slots
         try:
             al_result = await async_w3.eth.create_access_list(tx_params, block_identifier="pending")
-            tx_params["accessList"] = al_result["accessList"]
         except Exception as al_exc:
             # If AL computation fails (e.g. revert), simulate without it.
             # The simulation itself will reject this path.
             bot_logger.debug(f"[sim-debug] path={path_id} access list failed: {al_exc}")
+        else:
+            tx_params["accessList"] = al_result["accessList"]
 
         # Simulate with 3-call pattern
-        state_overrides = build_simulation_state_overrides(
-            executor_owner=EXECUTOR_OWNER,
-            inject_code=INJECT_EXECUTOR_CODE,
-            injected_address=INJECTED_EXECUTOR_ADDRESS if INJECT_EXECUTOR_CODE else None,
-        )
         try:
             # All override fields (code, balance, nonce, state, stateDiff)
             # go under stateOverrides per the Alloy AccountOverride spec.
             sim = await async_w3.eth.simulate_v1(
-                payload={
-                    "blockStateCalls": [
-                        {
-                            "calls": [
+                payload=SimulateV1Payload(
+                    blockStateCalls=[
+                        BlockStateCallV1(
+                            stateOverrides=build_simulation_state_overrides(
+                                executor_owner=EXECUTOR_OWNER,
+                                inject_code=INJECT_EXECUTOR_CODE,
+                                injected_address=INJECTED_EXECUTOR_ADDRESS
+                                if INJECT_EXECUTOR_CODE
+                                else None,
+                            ),
+                            calls=[
                                 weth_balance_call,  # [0] WETH balance before
                                 eth_balance_call,  # [1] ETH balance before
                                 erc6909_balance_call,  # [2] ERC-6909 WETH balance before
@@ -1500,10 +1501,9 @@ async def dispatch_profitable_results(
                                 eth_balance_call,  # [5] ETH balance after
                                 erc6909_balance_call,  # [6] ERC-6909 WETH balance after
                             ],
-                            "stateOverrides": state_overrides,
-                        }
+                        )
                     ],
-                },
+                ),
                 block_identifier="pending",
             )
         except Web3Exception as e:
@@ -1516,11 +1516,10 @@ async def dispatch_profitable_results(
 
         # Check all three calls succeeded — log which call failed + revert data
         failed_call = None
-        failed_call_idx = -1
-        for i, c in enumerate(calls):
+        for c in calls:
             if c.get("status", 0) != 1:
                 failed_call = c
-                failed_call_idx = i
+
                 revert_data = c.get("returnData", b"")
                 revert_hex = (
                     revert_data.hex() if isinstance(revert_data, bytes) else str(revert_data)
