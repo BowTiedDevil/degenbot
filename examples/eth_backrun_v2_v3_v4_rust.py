@@ -118,7 +118,7 @@ ETH_MAINNET_ALLOWED_TOKENS: set[str] = {
     "0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0",  # MATIC/POL
 }
 
-MIN_PROFIT_NET = 1  # 5 * 10**9  # 5 gwei
+MIN_PROFIT_NET = 1  # was 5 * 10**9 (5 gwei)
 FEE_HISTORY_WINDOW = 10
 FEE_PERCENTILES = (10, 50)
 TARGET_PROFIT_RATIO = 1.25
@@ -262,8 +262,9 @@ PATH_SUPPRESS_RETRY_INTERVAL = 100
 # runtime bytecode at a fresh address via stateOverrides.code.
 # This lets us test the new V2/V3/V4-capable executor contract
 # WITHOUT deploying it on mainnet first.
-# The runtime bytecode must have immutables (WETH_ADDR, POOL_MANAGER_ADDR,
-# USER0_ADDR, USER1_ADDR, plus 4 precomputed delta slots) already baked
+# The runtime bytecode must have immutables (OWNER_ADDR, WETH_ADDR,
+# POOL_MANAGER_ADDR, USER0_ADDR, USER1_ADDR, plus 4 precomputed delta slots)
+# already baked
 # in — see contracts/cmd_executor_runtime_bytecode.txt.
 #
 # IMPORTANT: the runtime bytecode must have Vyper CBOR metadata
@@ -277,7 +278,7 @@ PATH_SUPPRESS_RETRY_INTERVAL = 100
 # web3.py's simulate_v1 formatter hex-encodes balance/code values.
 #
 # eth_simulateV1 calls within a blockStateCalls group chain their
-# state changes sequentially, so the 3-call pattern (balanceOf before
+# state changes sequentially, so the 7-call pattern (WETH balanceOf + ETH
 # → execute(commands) → balanceOf after) correctly measures profit
 # without needing WETH storage overrides or prefunding.
 INJECT_EXECUTOR_CODE = os.environ.get("INJECT_EXECUTOR_CODE", "1") == "1"
@@ -362,7 +363,9 @@ _runtime_bytecode_cache: str | None = None
 def _load_executor_runtime_bytecode() -> str:
     """Load the patched runtime bytecode from contracts/ directory.
 
-    The bytecode has OWNER_ADDR and WETH_ADDR immutables already baked in.
+    The bytecode has all 9 immutable slots baked in: OWNER_ADDR, WETH_ADDR,
+    POOL_MANAGER_ADDR, USER0_ADDR, USER1_ADDR, and 4 precomputed delta
+    slots. See contracts/recompile.py for the full layout.
     """
     global _runtime_bytecode_cache
     if _runtime_bytecode_cache is not None:
@@ -585,9 +588,12 @@ class EngineRegistry:
     to the right engine pool, and results can be mapped back to Python
     pool objects for encoding.
 
-    V3 is always the first pool in the path (provides flash borrow via callback).
-    V4 pools are identified by (pool_manager_address, pool_id) — stored in
-    _v4_keys keyed by pool_id hex string for fast lookup during event routing.
+    The first pool in each path provides the flash borrow: V2 via
+    uniswapV2Call, V3 via swapCallback, V4 via unlockCallback.
+
+    V4 pools are keyed by pool_id hex string (sufficient since the bot
+    uses a single PoolManager). The Rust engine additionally receives
+    the pool_manager address at registration time.
     """
 
     def __init__(self) -> None:
@@ -598,7 +604,7 @@ class EngineRegistry:
         self._v4_keys: dict[str, int] = {}  # pool_id_hex → key
         self.paths: dict[int, PathInfo] = {}
         # NOTE: These Python dicts (_v2_keys, _v3_keys, _v4_keys) are plain
-        # dicts — NOT thread-safe. All access is on the single asyncio event
+        # dicts — NOT thread-safe. All access is on the single asyncio event loop.
 
     def register_v2_pool(self, pool: UniswapV2Pool) -> int:
         if pool.address in self._v2_keys:
@@ -632,10 +638,9 @@ class EngineRegistry:
     ) -> int:
         """Register a V3 pool with the Rust engine.
 
-        Tick data is resolved automatically from the stored V3 snapshot
-        (loaded via load_v3_snapshot). The buffer is always applied
-        because snapshot data is stale from the DB and needs to be
-        brought forward.
+        Tick data is resolved automatically by the Rust engine from
+        the streamed snapshot (loaded via stream_v3_snapshot_to_engine).
+        The engine applies buffered events on top of stale snapshot data.
 
         """
         if pool.address in self._v3_keys:
@@ -663,8 +668,9 @@ class EngineRegistry:
     ) -> int:
         """Register a V4 pool with the Rust engine.
 
-        Tick data is resolved automatically from the stored V4 snapshot
-        (loaded via load_v4_snapshot). The buffer is always applied.
+        Tick data is resolved automatically by the Rust engine from
+        the streamed snapshot (loaded via stream_v4_snapshot_to_engine).
+        The engine applies buffered events on top of stale snapshot data.
 
         Performs hook filtering at registration:
         - Pools with amount-modifying hooks (mask 0xCC) are rejected
@@ -808,7 +814,8 @@ async def build_paths(
     hooks (mask 0xCC) and dynamic fees (fee == 0x100000) at registration time.
 
     Tick data for V3/V4 engine registration is resolved automatically from
-    the stored binary snapshots (already loaded via load_v3_snapshot/load_v4_snapshot
+    the stored binary snapshots (already streamed via
+    stream_v3_snapshot_to_engine/stream_v4_snapshot_to_engine
     in main() before backfill). The Rust engine applies buffered events on top
     of stale snapshot data to bring it current. Verification is handled internally
     by the engine (verify_on_register) — the tick data snapshot is taken while the
@@ -1263,7 +1270,7 @@ async def dispatch_profitable_results(
     Pipeline (Slices 1-5):
     1. Sort by engine profit descending (Slice 4 — best-path first)
     2. Fan out parallel simulation with asyncio.gather (Slice 1)
-    3. Each simulation: stale check (Slice 2), encode, simulate, gas from sim (Slice 5)
+    3. Each simulation: encode, simulate, gas from sim (Slice 5)
     4. Market-aware priority fee with age decay (Slice 3)
     5. Submit profit-descending with mutual exclusivity (Slice 4)
 
@@ -1477,7 +1484,7 @@ async def dispatch_profitable_results(
         else:
             tx_params["accessList"] = al_result["accessList"]
 
-        # Simulate with 3-call pattern
+        # Simulate with 7-call pattern
         try:
             # All override fields (code, balance, nonce, state, stateDiff)
             # go under stateOverrides per the Alloy AccountOverride spec.
@@ -1514,7 +1521,7 @@ async def dispatch_profitable_results(
 
         calls = sim[0]["calls"]
 
-        # Check all three calls succeeded — log which call failed + revert data
+        # Check all calls succeeded — log which call failed + revert data
         failed_call = None
         for c in calls:
             if c.get("status", 0) != 1:
@@ -1671,8 +1678,7 @@ async def dispatch_profitable_results(
             return None
 
         # ── Slice 5: Gas estimation from simulation ──────────────────
-        # Use the simulation's actual gasUsed with a 10% safety margin
-        # instead of the 1.5x heuristic that wastes ~50K gas per tx.
+        # Use the simulation's actual gasUsed with a 1.5x safety margin.
         gas_used = calls[3]["gasUsed"]
         tx_params["gas"] = int(gas_used * 1.5)
 
@@ -1686,8 +1692,8 @@ async def dispatch_profitable_results(
             block_priority_fees=block_priority_fees,
         )
 
-        l2_fee = gas_used * (base_fee_next + priority_fee)
-        net_profit = gross_profit - l2_fee
+        gas_fee = gas_used * (base_fee_next + priority_fee)
+        net_profit = gross_profit - gas_fee
 
         # Return all gross-profitable results — the caller separates
         # gas-profitable from gas-unprofitable but onchain-valid.
