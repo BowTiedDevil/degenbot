@@ -1684,10 +1684,10 @@ mod tests {
         let sp_0 = U256::from(1u128) << 96;
         // Tick -60 → lower bound
         let sp_lower =
-            crate::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default();
+            crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default();
         // Tick +60 → upper bound
         let sp_upper =
-            crate::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default();
+            crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default();
 
         IntV3TickRangeHop {
             liquidity,
@@ -1847,10 +1847,10 @@ mod tests {
             liquidity: 10_000_000_000_000u128,
             sqrt_price_x96: U256::from(1u128) << 96, // 1:1 price
             sqrt_price_lower_x96: U256::from(
-                crate::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default(),
+                crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default(),
             ),
             sqrt_price_upper_x96: U256::from(
-                crate::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default(),
+                crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default(),
             ),
             gamma_numer: 997_000,
             fee_denom: 1_000_000,
@@ -1900,11 +1900,11 @@ mod tests {
         // Two-range zfo sequence: current range + next range below
         let sp_0 = U256::from(1u128) << 96;
         let sp_lower0 =
-            U256::from(crate::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default());
+            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default());
         let sp_upper0 =
-            U256::from(crate::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default());
+            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default());
         let sp_lower1 =
-            U256::from(crate::tick_math::get_sqrt_ratio_at_tick_internal(-120).unwrap_or_default());
+            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-120).unwrap_or_default());
         let sp_upper1 = sp_lower0; // Range 1 starts where range 0 ends
 
         let hop0 = IntV3TickRangeHop {
@@ -1942,11 +1942,11 @@ mod tests {
     fn test_compute_crossing_k1_ofz() {
         let sp_0 = U256::from(1u128) << 96;
         let sp_lower0 =
-            U256::from(crate::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default());
+            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default());
         let sp_upper0 =
-            U256::from(crate::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default());
+            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default());
         let sp_upper1 =
-            U256::from(crate::tick_math::get_sqrt_ratio_at_tick_internal(120).unwrap_or_default());
+            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(120).unwrap_or_default());
         let sp_lower1 = sp_upper0; // Range 1 starts where range 0 ends
 
         let hop0 = IntV3TickRangeHop {
@@ -1982,11 +1982,11 @@ mod tests {
         // equal to range 0's max_gross_input_in_range
         let sp_0 = U256::from(1u128) << 96;
         let sp_lower0 =
-            U256::from(crate::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default());
+            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default());
         let sp_upper0 =
-            U256::from(crate::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default());
+            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default());
         let sp_lower1 =
-            U256::from(crate::tick_math::get_sqrt_ratio_at_tick_internal(-120).unwrap_or_default());
+            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-120).unwrap_or_default());
 
         let hop0 = IntV3TickRangeHop {
             liquidity: 10_000_000_000_000u128,
@@ -2036,9 +2036,9 @@ mod tests {
         // but must not panic
         let sp_0 = U256::from(1u128) << 96;
         let sp_lower =
-            U256::from(crate::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default());
+            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default());
         let sp_upper =
-            U256::from(crate::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default());
+            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default());
 
         // Asymmetric: high-liquidity pool vs low-liquidity pool
         let hop1 = IntV3TickRangeHop {
@@ -2071,11 +2071,11 @@ mod tests {
     fn test_int_solve_v3_v3_multi_range_no_panic() {
         let sp_0 = U256::from(1u128) << 96;
         let sp_lower0 =
-            U256::from(crate::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default());
+            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default());
         let sp_upper0 =
-            U256::from(crate::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default());
+            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default());
         let sp_lower1 =
-            U256::from(crate::tick_math::get_sqrt_ratio_at_tick_internal(-120).unwrap_or_default());
+            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-120).unwrap_or_default());
 
         let range1_0 = IntV3TickRangeHop {
             liquidity: 10_000_000_000_000u128,
@@ -2280,17 +2280,17 @@ mod tests {
         // Use custom V3 hops with shifted sqrt prices.
 
         // Pool 1: zfo at below 1:1 (more token0 per token1)
-        let sp_below = crate::tick_math::get_sqrt_ratio_at_tick_internal(-100)
+        let sp_below = crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-100)
             .unwrap_or_default();
         let hop1 = IntV3TickRangeHop {
             liquidity: 5_000_000_000_000u128,
             sqrt_price_x96: U256::from(sp_below),
             sqrt_price_lower_x96: U256::from(
-                crate::tick_math::get_sqrt_ratio_at_tick_internal(-200)
+                crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-200)
                     .unwrap_or_default(),
             ),
             sqrt_price_upper_x96: U256::from(
-                crate::tick_math::get_sqrt_ratio_at_tick_internal(0)
+                crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(0)
                     .unwrap_or_default(),
             ),
             gamma_numer: 997_000,
@@ -2302,17 +2302,17 @@ mod tests {
         let hop2 = make_v3_hop_at_1to1(10_000_000_000_000u128, false);
 
         // Pool 3: zfo at above 1:1 (less token0 per token1)
-        let sp_above = crate::tick_math::get_sqrt_ratio_at_tick_internal(100)
+        let sp_above = crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(100)
             .unwrap_or_default();
         let hop3 = IntV3TickRangeHop {
             liquidity: 5_000_000_000_000u128,
             sqrt_price_x96: U256::from(sp_above),
             sqrt_price_lower_x96: U256::from(
-                crate::tick_math::get_sqrt_ratio_at_tick_internal(0)
+                crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(0)
                     .unwrap_or_default(),
             ),
             sqrt_price_upper_x96: U256::from(
-                crate::tick_math::get_sqrt_ratio_at_tick_internal(200)
+                crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(200)
                     .unwrap_or_default(),
             ),
             gamma_numer: 997_000,

@@ -21,6 +21,57 @@ pub enum TickMathError {
     },
 }
 
+/// Errors from the concentrated-liquidity math library.
+#[derive(Debug, thiserror::Error, PartialEq)]
+#[non_exhaustive]
+pub enum ClMathError {
+    /// Division by zero.
+    #[error("DIVISION BY ZERO")]
+    DivisionByZero,
+    /// Result would overflow uint256.
+    #[error("product > MAX_UINT256")]
+    Uint256Overflow,
+    /// Zero input where a non-zero value is required.
+    #[error("Zero input")]
+    ZeroInput,
+    /// Invalid price (zero where non-zero is required).
+    #[error("InvalidPrice")]
+    InvalidPrice,
+    /// Invalid price or liquidity (either is zero where non-zero is required).
+    #[error("InvalidPriceOrLiquidity")]
+    InvalidPriceOrLiquidity,
+    /// Price overflow (exceeds uint160 or subtraction underflow).
+    #[error("PriceOverflow")]
+    PriceOverflow,
+    /// Result overflowed uint160.
+    #[error("Result overflowed MAX_UINT160")]
+    ResultOverflowedUint160,
+    /// Insufficient liquidity for the requested output.
+    #[error("NotEnoughLiquidity")]
+    InsufficientLiquidity,
+    /// Invalid liquidity (negative where non-negative is required).
+    #[error("InvalidLiquidity")]
+    InvalidLiquidity,
+    /// Safe cast overflow (value doesn't fit in target type).
+    #[error("SafeCastOverflow")]
+    SafeCastOverflow,
+}
+
+impl From<ClMathError> for PyErr {
+    fn from(err: ClMathError) -> Self {
+        Self::new::<PyValueError, _>(err.to_string())
+    }
+}
+
+impl From<TickMathError> for ClMathError {
+    fn from(err: TickMathError) -> Self {
+        match err {
+            TickMathError::InvalidTick(_) => Self::InvalidPrice,
+            TickMathError::SqrtRatioOutOfBounds { .. } => Self::InvalidPrice,
+        }
+    }
+}
+
 impl From<TickMathError> for PyErr {
     fn from(err: TickMathError) -> Self {
         // Forward the Display impl so the Python error message matches

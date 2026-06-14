@@ -12,7 +12,7 @@ use alloy::primitives::aliases::U160;
 use pyo3::{exceptions::PyTypeError, exceptions::PyValueError, prelude::*, types::PyAny, PyTypeInfo};
 
 use crate::alloy_py;
-use crate::tick_math::{get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal};
+use crate::cl_lib::tick_math::{get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal};
 
 /// Extract a U160 from a Python object (accepts int or bytes).
 #[inline]
@@ -112,8 +112,8 @@ pub fn get_sqrt_ratio_at_tick(py: Python<'_>, tick: i32) -> PyResult<Bound<'_, P
 /// - The input is too large (exceeds 20 bytes)
 /// - The sqrt price is outside the valid [`MIN_SQRT_RATIO`, `MAX_SQRT_RATIO`) range
 ///
-/// [`MIN_SQRT_RATIO`]: crate::tick_math::MIN_SQRT_RATIO
-/// [`MAX_SQRT_RATIO`]: crate::tick_math::MAX_SQRT_RATIO
+/// [`MIN_SQRT_RATIO`]: crate::cl_lib::tick_math::MIN_SQRT_RATIO
+/// [`MAX_SQRT_RATIO`]: crate::cl_lib::tick_math::MAX_SQRT_RATIO
 ///
 /// Returns `PyTypeError` if the input is not an int or bytes
 ///

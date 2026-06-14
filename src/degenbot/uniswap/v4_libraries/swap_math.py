@@ -1,8 +1,13 @@
 """Uniswap V4 SwapMath: swap step amounts and fees.
 
+Rust-accelerated implementation used by default via wrapper that
+preserves the keyword-argument API.
+
 See: contract_reference/uniswap/V4/PoolManager.sol (SwapMath library)
 """
-from degenbot.uniswap.v4_libraries import full_math, sqrt_price_math
+
+from degenbot.degenbot_rs import cl_compute_swap_step_v4 as _rs_compute_swap_step
+from degenbot.exceptions.pool import EVMRevertError
 
 MAX_SWAP_FEE = 1 * 10**6
 
@@ -41,114 +46,20 @@ def compute_swap_step(
 ) -> tuple[int, int, int, int]:
     """Compute the result of swapping some amount in, or amount out.
 
-    Given the parameters of the swap, returns the next sqrt price and amounts.
+    Delegates to Rust implementation. Preserves keyword-argument API
+    for compatibility with V4 simulator.
 
     Returns:
         A tuple of (sqrt_price_next_x96, amount_in, amount_out, fee_amount).
 
     """
-    zero_for_one = sqrt_ratio_x96_current >= sqrt_ratio_x96_target
-    exact_in = amount_remaining < 0
-
-    if exact_in:
-        amount_remaining_less_fee = full_math.muldiv(
-            -amount_remaining, MAX_SWAP_FEE - fee_pips, MAX_SWAP_FEE
-        )
-        amount_in = (
-            sqrt_price_math.get_amount0_delta(
-                sqrt_price_a_x96=sqrt_ratio_x96_target,
-                sqrt_price_b_x96=sqrt_ratio_x96_current,
-                liquidity=liquidity,
-                round_up=True,
-            )
-            if zero_for_one
-            else sqrt_price_math.get_amount1_delta(
-                sqrt_price_a_x96=sqrt_ratio_x96_current,
-                sqrt_price_b_x96=sqrt_ratio_x96_target,
-                liquidity=liquidity,
-                round_up=True,
-            )
-        )
-        if amount_remaining_less_fee >= amount_in:
-            # `amountIn` is capped by the target price
-            sqrt_price_next_x96 = sqrt_ratio_x96_target
-            fee_amount = (
-                amount_in  # amountIn is always 0 here, as amountRemainingLessFee == 0 and amountRemainingLessFee >= amountIn # noqa
-                if fee_pips == MAX_SWAP_FEE
-                else full_math.muldiv_rounding_up(amount_in, fee_pips, MAX_SWAP_FEE - fee_pips)
-            )
-        else:
-            # exhaust the remaining amount
-            amount_in = amount_remaining_less_fee
-            sqrt_price_next_x96 = sqrt_price_math.get_next_sqrt_price_from_input(
-                sqrt_price_x96=sqrt_ratio_x96_current,
-                liquidity=liquidity,
-                amount_in=amount_remaining_less_fee,
-                zero_for_one=zero_for_one,
-            )
-            # we didn't reach the target, so take the remainder of the maximum input as fee
-            fee_amount = -amount_remaining - amount_in
-
-        amount_out = (
-            sqrt_price_math.get_amount1_delta(
-                sqrt_price_a_x96=sqrt_price_next_x96,
-                sqrt_price_b_x96=sqrt_ratio_x96_current,
-                liquidity=liquidity,
-                round_up=False,
-            )
-            if zero_for_one
-            else sqrt_price_math.get_amount0_delta(
-                sqrt_price_a_x96=sqrt_ratio_x96_current,
-                sqrt_price_b_x96=sqrt_price_next_x96,
-                liquidity=liquidity,
-                round_up=False,
-            )
-        )
-    else:
-        amount_out = (
-            sqrt_price_math.get_amount1_delta(
-                sqrt_price_a_x96=sqrt_ratio_x96_target,
-                sqrt_price_b_x96=sqrt_ratio_x96_current,
-                liquidity=liquidity,
-                round_up=False,
-            )
-            if zero_for_one
-            else sqrt_price_math.get_amount0_delta(
-                sqrt_price_a_x96=sqrt_ratio_x96_current,
-                sqrt_price_b_x96=sqrt_ratio_x96_target,
-                liquidity=liquidity,
-                round_up=False,
-            )
-        )
-        if amount_remaining >= amount_out:
-            # `amountOut` is capped by the target price
-            sqrt_price_next_x96 = sqrt_ratio_x96_target
-        else:
-            # cap the output amount to not exceed the remaining output amount
-            amount_out = amount_remaining
-            sqrt_price_next_x96 = sqrt_price_math.get_next_sqrt_price_from_output(
-                sqrt_price_x96=sqrt_ratio_x96_current,
-                liquidity=liquidity,
-                amount_out=amount_out,
-                zero_for_one=zero_for_one,
-            )
-
-        amount_in = (
-            sqrt_price_math.get_amount0_delta(
-                sqrt_price_a_x96=sqrt_price_next_x96,
-                sqrt_price_b_x96=sqrt_ratio_x96_current,
-                liquidity=liquidity,
-                round_up=True,
-            )
-            if zero_for_one
-            else sqrt_price_math.get_amount1_delta(
-                sqrt_price_a_x96=sqrt_ratio_x96_current,
-                sqrt_price_b_x96=sqrt_price_next_x96,
-                liquidity=liquidity,
-                round_up=True,
-            )
-        )
-        # `feePips` cannot be `MAX_SWAP_FEE` for exact out
-        fee_amount = full_math.muldiv_rounding_up(amount_in, fee_pips, MAX_SWAP_FEE - fee_pips)
-
-    return sqrt_price_next_x96, amount_in, amount_out, fee_amount
+    try:
+        return _rs_compute_swap_step(
+        sqrt_ratio_x96_current,
+        sqrt_ratio_x96_target,
+        liquidity,
+        amount_remaining,
+        fee_pips,
+    )
+    except (ValueError, OverflowError) as e:
+        raise EVMRevertError(error=str(e)) from e

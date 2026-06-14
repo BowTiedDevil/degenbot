@@ -50,6 +50,8 @@ pub mod runtime;
 pub mod signature_parser;
 pub mod subscription;
 pub mod subscription_py;
+pub mod cl_lib;
+pub mod cl_lib_py;
 pub mod tick_math;
 pub mod tick_math_py;
 
@@ -58,8 +60,11 @@ pub use address_utils::{parse_address, to_checksum_address_bytes, to_checksum_ad
 pub use address_utils_py::to_checksum_address;
 pub use hex_utils::{decode_hex, encode_hex, HexError};
 
-pub use errors::{AbiDecodeError, AddressError, ProviderError, TickMathError};
-pub use tick_math::{get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MIN_SQRT_RATIO, MAX_SQRT_RATIO};
+pub use cl_lib::tick_math::{get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MIN_SQRT_RATIO, MAX_SQRT_RATIO};
+pub use cl_lib::{
+    bit_math, full_math, functions, liquidity_math, sqrt_price_math, swap_math, unsafe_math,
+};
+pub use errors::{AbiDecodeError, AddressError, ClMathError, ProviderError, TickMathError};
 pub use tick_math_py::{get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio};
 
 /// Ensure Python is initialized before the test harness spawns threads.
@@ -97,6 +102,9 @@ fn degenbot_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Address utilities
     m.add_function(wrap_pyfunction!(address_utils_py::to_checksum_address, m)?)?;
+
+    // CL math library
+    cl_lib_py::add_cl_lib_module(m)?;
 
     // ABI decoder functions
     m.add_function(wrap_pyfunction!(abi_decoder::decode, m)?)?;
