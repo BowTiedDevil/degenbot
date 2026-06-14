@@ -1,24 +1,25 @@
 import dataclasses
 import typing
 
-from degenbot.arbitrage.cmd_stream import (
-    ZERO_ADDRESS as CMD_ZERO_ADDRESS,
-)
+from degenbot.arbitrage.cmd_stream import SENTINEL_NATIVE, SENTINEL_PM, SENTINEL_SELF, SENTINEL_WETH
 from degenbot.arbitrage.cmd_stream import (
     AddressTable,
     enc_erc20_transfer,
+    enc_erc20_xfer_balance,
     enc_preamble,
     enc_v2_swap_calc,
     enc_v2_swap_compact,
     enc_v2_swap_direct,
     enc_v3_swap_compact,
+    enc_v4_batch,
+    enc_v4_mint_compact,
     enc_v4_settle,
     enc_v4_settle_all,
     enc_v4_settle_delta,
     enc_v4_swap_compact,
     enc_v4_swap_dynamic,
     enc_v4_sync,
-    enc_v4_take,
+    enc_v4_take_compact,
     enc_v4_take_delta,
     enc_v4_unlock,
     enc_weth_deposit,
@@ -98,6 +99,10 @@ def encode_cmd_stream(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    *,
+    bribe_bips: int = 0,
+    erc6909_profit: bool = False,
+    use_v4_batch: bool = False,
 ) -> bytes | None:
     """Encode an arbitrage path as a cmd_executor command stream.
 
@@ -106,12 +111,21 @@ def encode_cmd_stream(
     with an address table for minimal calldata size.
 
     Returns None if encoding fails for this path type.
+
+    Args:
+        bribe_bips: Profit fraction (in bips, 10000=100%) to send as bribe.
+            0 = no bribe. Included in preamble preprocessing section.
+        erc6909_profit: If True, use V4_MINT_COMPACT instead of V4_TAKE_DELTA
+            for profit capture on pure V4 paths. Saves ~20K gas. Requires
+            check_mode=2 on expected_balance. See §13 of user guide.
+        use_v4_batch: If True, use V4_BATCH instead of individual V4 swap
+            commands for pure V4 paths. Saves gas from single PM extcall.
     """
     num_hops = len(path_info.hops)
 
     # Generalized N-hop V2 (2+ hops): flash borrow + chained V2_SWAP_CALC
     if all(isinstance(h, V2HopInfo) for h in path_info.hops):
-        return _encode_cmd_v2_n_hop(path_info, optimal_input, hop_outputs, executor_address)
+        return _encode_cmd_v2_n_hop(path_info, optimal_input, hop_outputs, executor_address, weth_address, bribe_bips=bribe_bips)
 
     # 2-hop paths
     if num_hops == 2:
@@ -125,6 +139,9 @@ def encode_cmd_stream(
                 executor_address,
                 pool_manager_address,
                 weth_address,
+                bribe_bips=bribe_bips,
+                erc6909_profit=erc6909_profit,
+                use_v4_batch=use_v4_batch,
             )
         if isinstance(hop0, V4HopInfo) and isinstance(hop1, V3HopInfo):
             return _encode_cmd_v4_v3(
@@ -183,7 +200,7 @@ def encode_cmd_stream(
 
     # 3-hop paths (optimized patterns from ~/code/executor tests)
     if num_hops == 3:
-        return _encode_cmd_3_hop(path_info, optimal_input, hop_outputs, executor_address, pool_manager_address, weth_address)
+        return _encode_cmd_3_hop(path_info, optimal_input, hop_outputs, executor_address, pool_manager_address, weth_address, bribe_bips=bribe_bips, erc6909_profit=erc6909_profit, use_v4_batch=use_v4_batch)
 
     # Unsupported path type for cmd_executor
     return None
@@ -206,6 +223,9 @@ def _encode_cmd_v2_n_hop(
     optimal_input: int,
     hop_outputs: tuple[int, ...],
     executor_address: str,
+    weth_address: str,
+    *,
+    bribe_bips: int = 0,
 ) -> bytes | None:
     """Encode N-hop V2 arbitrage as cmd_executor command stream (N >= 2).
 
@@ -245,8 +265,11 @@ def _encode_cmd_v2_n_hop(
         return None
 
     try:
-        at = AddressTable()
-        executor_idx = at.add(executor_address)
+        at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+        )
+        executor_idx = SENTINEL_SELF
 
         # Register all pool addresses (preserves insertion order)
         pool_indices = [at.add(h.pool_address) for h in path_info.hops]
@@ -304,6 +327,10 @@ def _encode_cmd_v4_v4(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    *,
+    bribe_bips: int = 0,
+    erc6909_profit: bool = False,
+    use_v4_batch: bool = False,
 ) -> bytes | None:
     """Encode V4-V4 2-hop arbitrage as cmd_executor command stream.
 
@@ -356,16 +383,20 @@ def _encode_cmd_v4_v4(
         needs_unwrap = not a_outputs_native and b_needs_native  # WETH → WETH_WITHDRAW → ETH
         currency_gap = needs_wrap or needs_unwrap
 
-        at = AddressTable()
-        _pm_idx = at.add(pool_manager_address)
-        executor_idx = at.add(executor_address)
-        zero_idx = at.add(CMD_ZERO_ADDRESS)
+        at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
+        pm_idx = SENTINEL_PM
+        executor_idx = SENTINEL_SELF
+        zero_idx = SENTINEL_NATIVE
 
         c0_a_idx = at.add(hop_a.currency0_address)
         c1_a_idx = at.add(hop_a.currency1_address)
         c0_b_idx = at.add(hop_b.currency0_address)
         c1_b_idx = at.add(hop_b.currency1_address)
-        weth_idx = at.add(weth_address)
+        weth_idx = SENTINEL_WETH
         if (
             a_outputs_native
             or b_needs_native
@@ -374,16 +405,20 @@ def _encode_cmd_v4_v4(
         ):
             native_idx = at.add(NATIVE_CURRENCY_ADDRESS)
 
-        # 1. V4_SWAP_COMPACT for pool A (always explicit amount)
-        inner = enc_v4_swap_compact(
-            c0_idx=c0_a_idx,
-            c1_idx=c1_a_idx,
-            fee=hop_a.fee,
-            tick_spacing=hop_a.tick_spacing,
-            hooks_idx=zero_idx,
-            zfo=hop_a.zfo,
-            amount_u128=optimal_input,
-        )
+        # 1. V4 swap for pool A (always explicit amount)
+        if not (use_v4_batch and not currency_gap):
+            # Individual command (default path, or wrap/unwrap case)
+            inner = enc_v4_swap_compact(
+                c0_idx=c0_a_idx,
+                c1_idx=c1_a_idx,
+                fee=hop_a.fee,
+                tick_spacing=hop_a.tick_spacing,
+                hooks_idx=zero_idx,
+                zfo=hop_a.zfo,
+                amount_u96=optimal_input,
+            )
+        else:
+            inner = b""  # V4_BATCH will handle both swaps
 
         if currency_gap:
             # Take intermediate token out of PM, convert, then second swap with
@@ -394,12 +429,12 @@ def _encode_cmd_v4_v4(
             # 2. Take intermediate token to executor
             if a_outputs_native:
                 # Pool A output is ETH
-                inner += enc_v4_take(native_idx, executor_idx, forward_out)
+                inner += enc_v4_take_compact(native_idx, executor_idx, forward_out)
                 # 3. Wrap ETH → WETH
                 inner += enc_weth_deposit(forward_out)
             else:
                 # Pool A output is WETH
-                inner += enc_v4_take(weth_idx, executor_idx, forward_out)
+                inner += enc_v4_take_compact(weth_idx, executor_idx, forward_out)
                 # 3. Unwrap WETH → ETH
                 inner += enc_weth_withdraw(forward_out)
 
@@ -411,7 +446,7 @@ def _encode_cmd_v4_v4(
                 tick_spacing=hop_b.tick_spacing,
                 hooks_idx=zero_idx,
                 zfo=hop_b.zfo,
-                amount_u128=forward_out,
+                amount_u96=forward_out,
             )
 
             # 5. Settle pool B's input currency
@@ -435,38 +470,61 @@ def _encode_cmd_v4_v4(
             inner += enc_v4_settle_all()
 
         else:
-            # Same intermediate currency — use V4_SWAP_DYNAMIC for pool B
-            # (intermediate token stays in PM's delta ledger)
+            # Same intermediate currency — delta netting
+            # Intermediate token stays in PM's delta ledger between swaps.
 
-            # 2. V4_SWAP_DYNAMIC for pool B (reads amount from PM exttload)
-            inner += enc_v4_swap_dynamic(
-                c0_idx=c0_b_idx,
-                c1_idx=c1_b_idx,
-                fee=hop_b.fee,
-                tick_spacing=hop_b.tick_spacing,
-                hooks_idx=zero_idx,
-                zfo=hop_b.zfo,
-            )
-
-            # 3. Settlement: take net profit, auto-settle remaining deltas
-            # Use V4_TAKE_DELTA (reads actual PM delta) + V4_SETTLE_ALL
-            # (auto-settles all nonzero deltas). V4_TAKE with explicit amount
-            # and V4_SETTLE (raw settle) fail because V4 swap math produces
-            # rounding residuals that the explicit amounts don't cover.
-            if output_currency_b == NATIVE_CURRENCY_ADDRESS:
-                inner += enc_v4_take_delta(native_idx, executor_idx)
-            elif output_currency_b == weth_address:
-                inner += enc_v4_take_delta(weth_idx, executor_idx)
+            if use_v4_batch:
+                # V4_BATCH: single extcall to PM, auto-settles WETH/native ETH
+                inner += enc_v4_batch([
+                    (
+                        c0_a_idx, c1_a_idx, hop_a.fee, hop_a.tick_spacing,
+                        zero_idx, hop_a.zfo, optimal_input,
+                    ),
+                    (
+                        c0_b_idx, c1_b_idx, hop_b.fee, hop_b.tick_spacing,
+                        zero_idx, hop_b.zfo, 0,  # dynamic amount from delta
+                    ),
+                ])
+                # V4_BATCH auto-settles WETH + native ETH deltas.
+                # For ERC-20 profit, still need explicit take.
+                if output_currency_b not in (NATIVE_CURRENCY_ADDRESS, weth_address):
+                    profit_idx = c1_b_idx if hop_b.zfo else c0_b_idx
+                    inner += enc_v4_take_delta(profit_idx, executor_idx)
             else:
-                # ERC-20 profit (shouldn't happen for ETH/WETH-denominated arb)
-                profit_idx = c1_b_idx if hop_b.zfo else c0_b_idx
-                inner += enc_v4_take_delta(profit_idx, executor_idx)
+                # Individual swap commands — more calldata-efficient for 2 hops
+                inner += enc_v4_swap_dynamic(
+                    c0_idx=c0_b_idx,
+                    c1_idx=c1_b_idx,
+                    fee=hop_b.fee,
+                    tick_spacing=hop_b.tick_spacing,
+                    hooks_idx=zero_idx,
+                    zfo=hop_b.zfo,
+                )
+
+            # Profit capture: V4_MINT_COMPACT (ERC6909) or V4_TAKE_DELTA (physical)
+            if erc6909_profit and output_currency_b == weth_address:
+                # V4_MINT_COMPACT: convert profit delta to ERC6909 balance.
+                # No physical transfer — saves ~20K gas. Requires check_mode=2.
+                # Rounding residuals handled by V4_SETTLE_ALL below.
+                profit_amount = weth_out - optimal_input
+                if profit_amount > 0:
+                    inner += enc_v4_mint_compact(weth_idx, executor_idx, profit_amount)
+            else:
+                # V4_TAKE_DELTA: reads actual positive delta from PM exttload.
+                if not use_v4_batch or output_currency_b not in (NATIVE_CURRENCY_ADDRESS, weth_address):
+                    if output_currency_b == NATIVE_CURRENCY_ADDRESS:
+                        inner += enc_v4_take_delta(native_idx, executor_idx)
+                    elif output_currency_b == weth_address:
+                        inner += enc_v4_take_delta(weth_idx, executor_idx)
+                    else:
+                        profit_idx = c1_b_idx if hop_b.zfo else c0_b_idx
+                        inner += enc_v4_take_delta(profit_idx, executor_idx)
 
             # Auto-settle all remaining nonzero deltas (handles rounding residuals)
             inner += enc_v4_settle_all()
 
         commands = enc_v4_unlock(inner)
-        return enc_preamble(at) + commands
+        return enc_preamble(at, bribe_bips=bribe_bips) + commands
     except (ValueError, OverflowError) as e:
         bot_logger.info(f"[cmd-v4v4] {type(e).__name__}: {e}")
         return None
@@ -479,6 +537,7 @@ def _encode_cmd_v4_v3(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """Encode V4-V3 2-hop arbitrage as cmd_executor command stream.
 
@@ -522,15 +581,19 @@ def _encode_cmd_v4_v3(
 
         _v4_out_native = v4_output_is_native(hop_v4)
 
-        at = AddressTable()
-        _pm_idx = at.add(pool_manager_address)
-        executor_idx = at.add(executor_address)
-        zero_idx = at.add(CMD_ZERO_ADDRESS)
+        at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
+        pm_idx = SENTINEL_PM
+        executor_idx = SENTINEL_SELF
+        zero_idx = SENTINEL_NATIVE
 
         c0_v4_idx = at.add(hop_v4.currency0_address)
         c1_v4_idx = at.add(hop_v4.currency1_address)
         v3_idx = at.add(hop_v3.pool_address)
-        weth_idx = at.add(weth_address)
+        weth_idx = SENTINEL_WETH
         if _v4_out_native:
             native_idx = at.add(NATIVE_CURRENCY_ADDRESS)
 
@@ -542,12 +605,12 @@ def _encode_cmd_v4_v3(
             tick_spacing=hop_v4.tick_spacing,
             hooks_idx=zero_idx,
             zfo=hop_v4.zfo,
-            amount_u128=optimal_input,
+            amount_u96=optimal_input,
         )
 
         if _v4_out_native:
             # V4 output is native ETH — take to executor, then wrap
-            inner += enc_v4_take(native_idx, executor_idx, forward_out)
+            inner += enc_v4_take_compact(native_idx, executor_idx, forward_out)
             inner += enc_weth_deposit(forward_out)
             # 3. V3 swap with auto-pay (executor has WETH after deposit)
             # Pattern: TestV4ToV3InlineWrap
@@ -568,7 +631,7 @@ def _encode_cmd_v4_v3(
             # V4 output is ERC-20 — take to executor, V3 auto-pay
             # Pattern: TestV4ToV3AutoPay
             forward_idx = c1_v4_idx if hop_v4.zfo else c0_v4_idx
-            inner += enc_v4_take(forward_idx, executor_idx, forward_out)
+            inner += enc_v4_take_compact(forward_idx, executor_idx, forward_out)
 
             # 3. V3 swap with auto-pay — V3 sends WETH to executor,
             #    auto-pays the forward token (e.g., USDC).
@@ -606,6 +669,7 @@ def _encode_cmd_v3_v4(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """Encode V3-V4 2-hop arbitrage as cmd_executor command stream.
 
@@ -646,15 +710,19 @@ def _encode_cmd_v3_v4(
 
         _v4_in_native = v4_input_is_native(hop_v4)
 
-        at = AddressTable()
+        at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
         pm_idx = at.add(pool_manager_address)
-        executor_idx = at.add(executor_address)
-        zero_idx = at.add(CMD_ZERO_ADDRESS)
+        executor_idx = SENTINEL_SELF
+        zero_idx = SENTINEL_NATIVE
 
         v3_idx = at.add(hop_v3.pool_address)
         c0_v4_idx = at.add(hop_v4.currency0_address)
         c1_v4_idx = at.add(hop_v4.currency1_address)
-        weth_idx = at.add(weth_address)
+        weth_idx = SENTINEL_WETH
         if _v4_in_native:
             native_idx = at.add(NATIVE_CURRENCY_ADDRESS)
 
@@ -668,18 +736,18 @@ def _encode_cmd_v3_v4(
                 tick_spacing=hop_v4.tick_spacing,
                 hooks_idx=zero_idx,
                 zfo=hop_v4.zfo,
-                amount_u128=forward_out,
+                amount_u96=forward_out,
             )
             # V4 settle native ETH (executor pays unwrapped ETH to PM)
             v4_inner += enc_v4_settle_delta(native_idx)
             # V4 take profit (WETH or USDC)
             output_currency = hop_v4.currency1_address if hop_v4.zfo else hop_v4.currency0_address
             if output_currency == NATIVE_CURRENCY_ADDRESS:
-                v4_inner += enc_v4_take(native_idx, executor_idx, weth_out)
+                v4_inner += enc_v4_take_compact(native_idx, executor_idx, weth_out)
             else:
                 # V4 output is ERC-20 — take normally
                 output_idx = c1_v4_idx if hop_v4.zfo else c0_v4_idx
-                v4_inner += enc_v4_take(output_idx, executor_idx, weth_out)
+                v4_inner += enc_v4_take_compact(output_idx, executor_idx, weth_out)
             # Settle any rounding residuals inside V4 unlock
             v4_inner += enc_v4_settle_all()
 
@@ -713,12 +781,12 @@ def _encode_cmd_v3_v4(
                 tick_spacing=hop_v4.tick_spacing,
                 hooks_idx=zero_idx,
                 zfo=hop_v4.zfo,
-                amount_u128=forward_out,
+                amount_u96=forward_out,
             )
             # Take profit: use the V4 output currency (positive delta side)
             # zfo=True → output is currency1; zfo=False → output is currency0
             output_idx = c1_v4_idx if hop_v4.zfo else c0_v4_idx
-            v4_inner += enc_v4_take(output_idx, executor_idx, weth_out)
+            v4_inner += enc_v4_take_compact(output_idx, executor_idx, weth_out)
             # Settle any rounding residuals inside V4 unlock
             v4_inner += enc_v4_settle_all()
 
@@ -748,6 +816,7 @@ def _encode_cmd_v4_v2(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """Encode V4-V2 2-hop arbitrage as cmd_executor command stream.
 
@@ -791,15 +860,19 @@ def _encode_cmd_v4_v2(
 
         _v4_out_native = v4_output_is_native(hop_v4)
 
-        at = AddressTable()
+        at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
         pm_idx = at.add(pool_manager_address)
-        executor_idx = at.add(executor_address)
-        zero_idx = at.add(CMD_ZERO_ADDRESS)
+        executor_idx = SENTINEL_SELF
+        zero_idx = SENTINEL_NATIVE
 
         c0_v4_idx = at.add(hop_v4.currency0_address)
         c1_v4_idx = at.add(hop_v4.currency1_address)
         v2_idx = at.add(hop_v2.pool_address)
-        weth_idx = at.add(weth_address)
+        weth_idx = SENTINEL_WETH
         if _v4_out_native:
             native_idx = at.add(NATIVE_CURRENCY_ADDRESS)
 
@@ -811,14 +884,14 @@ def _encode_cmd_v4_v2(
             tick_spacing=hop_v4.tick_spacing,
             hooks_idx=zero_idx,
             zfo=hop_v4.zfo,
-            amount_u128=optimal_input,
+            amount_u96=optimal_input,
         )
 
         if _v4_out_native:
             # V4 output is native ETH, V2 needs WETH
             # Pattern from test_cmd_executor_inline_wrap_unwrap.py::TestV4ToV2InlineWrap
             # 2. Take ETH to executor, wrap to WETH
-            inner += enc_v4_take(native_idx, executor_idx, forward_out)
+            inner += enc_v4_take_compact(native_idx, executor_idx, forward_out)
             inner += enc_weth_deposit(forward_out)
             # 3. V2_SWAP_COMPACT with callback — V2 sends USDC to executor,
             #    then callback pays WETH to V2 from just-wrapped balance.
@@ -843,7 +916,7 @@ def _encode_cmd_v4_v2(
         else:
             # V4 output is ERC-20 — take directly to V2 pool (direct custody)
             forward_idx = c1_v4_idx if hop_v4.zfo else c0_v4_idx
-            inner += enc_v4_take(forward_idx, v2_idx, forward_out)
+            inner += enc_v4_take_compact(forward_idx, v2_idx, forward_out)
 
             # V2_SWAP_CALC reads excess balance in V2 pool, no callback needed.
             # V4_TAKE sent the forward token directly to V2 (direct custody),
@@ -883,6 +956,7 @@ def _encode_cmd_v2_v4(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """Encode V2-V4 2-hop arbitrage as cmd_executor command stream.
 
@@ -917,15 +991,19 @@ def _encode_cmd_v2_v4(
 
         _v4_in_native = v4_input_is_native(hop_v4)
 
-        at = AddressTable()
+        at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
         pm_idx = at.add(pool_manager_address)
-        executor_idx = at.add(executor_address)
-        zero_idx = at.add(CMD_ZERO_ADDRESS)
+        executor_idx = SENTINEL_SELF
+        zero_idx = SENTINEL_NATIVE
 
         v2_idx = at.add(hop_v2.pool_address)
         c0_v4_idx = at.add(hop_v4.currency0_address)
         c1_v4_idx = at.add(hop_v4.currency1_address)
-        weth_idx = at.add(weth_address)
+        weth_idx = SENTINEL_WETH
         if _v4_in_native:
             native_idx = at.add(NATIVE_CURRENCY_ADDRESS)
 
@@ -943,13 +1021,13 @@ def _encode_cmd_v2_v4(
                 tick_spacing=hop_v4.tick_spacing,
                 hooks_idx=zero_idx,
                 zfo=hop_v4.zfo,
-                amount_u128=forward_out,
+                amount_u96=forward_out,
             )
             # V4 settle native ETH (executor pays unwrapped ETH to PM)
             v4_inner += enc_v4_settle_delta(native_idx)
             # V4 take profit — use the V4 output currency index
             output_idx = c1_v4_idx if hop_v4.zfo else c0_v4_idx
-            v4_inner += enc_v4_take(output_idx, executor_idx, weth_out)
+            v4_inner += enc_v4_take_compact(output_idx, executor_idx, weth_out)
             # Settle any rounding residuals inside V4 unlock
             v4_inner += enc_v4_settle_all()
 
@@ -974,15 +1052,15 @@ def _encode_cmd_v2_v4(
                 tick_spacing=hop_v4.tick_spacing,
                 hooks_idx=zero_idx,
                 zfo=hop_v4.zfo,
-                amount_u128=forward_out,
+                amount_u96=forward_out,
             )
             # Take profit: if V4 outputs native ETH, add native_idx and use it
             if _v4_out_native:
                 native_idx = at.add(NATIVE_CURRENCY_ADDRESS)
-                v4_inner += enc_v4_take(native_idx, executor_idx, weth_out)
+                v4_inner += enc_v4_take_compact(native_idx, executor_idx, weth_out)
             else:
                 output_idx = c1_v4_idx if hop_v4.zfo else c0_v4_idx
-                v4_inner += enc_v4_take(output_idx, executor_idx, weth_out)
+                v4_inner += enc_v4_take_compact(output_idx, executor_idx, weth_out)
             # Settle any rounding residuals inside V4 unlock
             v4_inner += enc_v4_settle_all()
 
@@ -1016,6 +1094,7 @@ def _encode_cmd_v3_v3(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """Encode V3-V3 2-hop arbitrage as cmd_executor command stream.
 
@@ -1051,11 +1130,15 @@ def _encode_cmd_v3_v3(
         if forward_out <= 0 or weth_out <= 0:
             return None
 
-        at = AddressTable()
-        executor_idx = at.add(executor_address)
+        at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
+        executor_idx = SENTINEL_SELF
         v3_a_idx = at.add(hop_a.pool_address)
         v3_b_idx = at.add(hop_b.pool_address)
-        weth_idx = at.add(weth_address)
+        weth_idx = SENTINEL_WETH
 
         # V3_A callback: pay WETH to V3_A, then V3_B swap (auto-pay)
         # Pattern from test_cmd_executor_v2v2_v3v3.py::TestV3V3
@@ -1089,6 +1172,7 @@ def _encode_cmd_v2_v3(
     hop_outputs: tuple[int, ...],
     executor_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """Encode V2-V3 2-hop arbitrage as cmd_executor command stream.
 
@@ -1115,11 +1199,14 @@ def _encode_cmd_v2_v3(
         if forward_out <= 0 or weth_out <= 0:
             return None
 
-        at = AddressTable()
-        executor_idx = at.add(executor_address)
+        at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+        )
+        executor_idx = SENTINEL_SELF
         v2_idx = at.add(hop_a.pool_address)
         v3_idx = at.add(hop_b.pool_address)
-        weth_idx = at.add(weth_address)
+        weth_idx = SENTINEL_WETH
 
         # Forward token from V2
         forward_addr = hop_a.token1_address if hop_a.zfo else hop_a.token0_address
@@ -1162,6 +1249,7 @@ def _encode_cmd_v3_v2(
     hop_outputs: tuple[int, ...],
     executor_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """Encode V3-V2 2-hop arbitrage as cmd_executor command stream.
 
@@ -1200,11 +1288,14 @@ def _encode_cmd_v3_v2(
         if forward_out <= 0 or weth_out <= 0:
             return None
 
-        at = AddressTable()
-        executor_idx = at.add(executor_address)
+        at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+        )
+        executor_idx = SENTINEL_SELF
         v3_idx = at.add(hop_a.pool_address)
         v2_idx = at.add(hop_b.pool_address)
-        weth_idx = at.add(weth_address)
+        weth_idx = SENTINEL_WETH
 
         # Forward token from V3
         forward_addr = hop_a.token1_address if hop_a.zfo else hop_a.token0_address
@@ -1254,6 +1345,10 @@ def _encode_cmd_3_hop(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    *,
+    bribe_bips: int = 0,
+    erc6909_profit: bool = False,
+    use_v4_batch: bool = False,
 ) -> bytes | None:
     """Dispatch 3-hop paths to the correct optimized encoder."""
     hop_types = tuple(
@@ -1264,7 +1359,11 @@ def _encode_cmd_3_hop(
     if encoder is None:
         return None
     try:
-        return encoder(path_info, optimal_input, hop_outputs, executor_address, pool_manager_address, weth_address)
+        return encoder(
+            path_info, optimal_input, hop_outputs,
+            executor_address, pool_manager_address, weth_address,
+            bribe_bips=bribe_bips, erc6909_profit=erc6909_profit, use_v4_batch=use_v4_batch,
+        )
     except (ValueError, OverflowError) as e:
         bot_logger.info(f"[cmd-3hop] {hop_types}: {type(e).__name__}: {e}")
         return None
@@ -1274,7 +1373,7 @@ def _enc_v4_swap(hop: V4HopInfo, at: AddressTable) -> bytes:
     """Encode V4_SWAP_COMPACT for a V4HopInfo, adding addresses to table."""
     c0_idx = at.add(hop.currency0_address)
     c1_idx = at.add(hop.currency1_address)
-    zero_idx = at.add(CMD_ZERO_ADDRESS)
+    zero_idx = SENTINEL_NATIVE
     return enc_v4_swap_compact(
         c0_idx=c0_idx,
         c1_idx=c1_idx,
@@ -1282,7 +1381,7 @@ def _enc_v4_swap(hop: V4HopInfo, at: AddressTable) -> bytes:
         tick_spacing=hop.tick_spacing,
         hooks_idx=zero_idx,
         zfo=hop.zfo,
-        amount_u128=0,  # will be overridden by caller
+        amount_u96=0,  # will be overridden by caller
     )
 
 
@@ -1296,6 +1395,7 @@ def _3hop_v2_v2_v2(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """Reverse-order flash borrow: V2c first, V2a→V2b via V2_SWAP_DIRECT."""
     ha, hb, hc = path_info.hops
@@ -1303,9 +1403,13 @@ def _3hop_v2_v2_v2(
     if any(x <= 0 for x in hop_outputs):
         return None
 
-    at = AddressTable()
-    weth_idx = at.add(weth_address)
-    executor_idx = at.add(executor_address)
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
+    weth_idx = SENTINEL_WETH
+    executor_idx = SENTINEL_SELF
     v2a_idx = at.add(ha.pool_address)
     v2b_idx = at.add(hb.pool_address)
     v2c_idx = at.add(hc.pool_address)
@@ -1330,6 +1434,7 @@ def _3hop_v2_v2_v3(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """Reverse-order: V3c fires first, V2a→V2b direct inside V3c callback."""
     ha, hb, hc = path_info.hops
@@ -1337,9 +1442,13 @@ def _3hop_v2_v2_v3(
     if any(x <= 0 for x in hop_outputs):
         return None
 
-    at = AddressTable()
-    weth_idx = at.add(weth_address)
-    executor_idx = at.add(executor_address)
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
+    weth_idx = SENTINEL_WETH
+    executor_idx = SENTINEL_SELF
     v2a_idx = at.add(ha.pool_address)
     v2b_idx = at.add(hb.pool_address)
     v3c_idx = at.add(hc.pool_address)
@@ -1364,6 +1473,7 @@ def _3hop_v2_v2_v4(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """V4 swap + V4_TAKE→V2a, V2b→PM delta netting, all inside V4 unlock.
 
@@ -1378,11 +1488,15 @@ def _3hop_v2_v2_v4(
     if not fits_int128(optimal_input):
         return None
 
-    at = AddressTable()
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
     pm_idx = at.add(pool_manager_address)
-    weth_idx = at.add(weth_address)
-    _executor_idx = at.add(executor_address)
-    zero_idx = at.add(CMD_ZERO_ADDRESS)
+    weth_idx = SENTINEL_WETH
+    _executor_idx = SENTINEL_SELF
+    zero_idx = SENTINEL_NATIVE
     v2a_idx = at.add(ha.pool_address)
     v2b_idx = at.add(hb.pool_address)
     c0_idx = at.add(hc.currency0_address)
@@ -1395,7 +1509,7 @@ def _3hop_v2_v2_v4(
     inner = enc_v4_swap_compact(
         c0_idx, c1_idx, hc.fee, hc.tick_spacing, zero_idx, hc.zfo, out_b
     )
-    inner += enc_v4_take(weth_idx, v2a_idx, optimal_input)
+    inner += enc_v4_take_compact(weth_idx, v2a_idx, optimal_input)
     inner += enc_v2_swap_calc(v2a_idx, ha.zfo, v2b_idx, fee=ha.fee)
     inner += enc_v4_sync(forward_b_idx)
     inner += enc_v2_swap_calc(v2b_idx, hb.zfo, pm_idx, fee=hb.fee)
@@ -1415,6 +1529,7 @@ def _3hop_v2_v3_v2(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """Reverse-order from V2c: V3b(to=V2c), V2a→V3b during V3b callback (IIA ✓)."""
     ha, hb, hc = path_info.hops
@@ -1422,10 +1537,14 @@ def _3hop_v2_v3_v2(
     if any(x <= 0 for x in hop_outputs):
         return None
 
-    at = AddressTable()
-    weth_idx = at.add(weth_address)
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
+    weth_idx = SENTINEL_WETH
     _usdc_idx = at.add(ha.token1_address if ha.zfo else ha.token0_address)
-    executor_idx = at.add(executor_address)
+    executor_idx = SENTINEL_SELF
     v2a_idx = at.add(ha.pool_address)
     v2c_idx = at.add(hc.pool_address)
     v3b_idx = at.add(hb.pool_address)
@@ -1451,6 +1570,7 @@ def _3hop_v2_v3_v3(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """V3c outermost, V2a inside V3b callback (to=V3b, IIA ✓)."""
     ha, hb, hc = path_info.hops
@@ -1458,9 +1578,13 @@ def _3hop_v2_v3_v3(
     if any(x <= 0 for x in hop_outputs):
         return None
 
-    at = AddressTable()
-    weth_idx = at.add(weth_address)
-    executor_idx = at.add(executor_address)
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
+    weth_idx = SENTINEL_WETH
+    executor_idx = SENTINEL_SELF
     v2a_idx = at.add(ha.pool_address)
     v3b_idx = at.add(hb.pool_address)
     v3c_idx = at.add(hc.pool_address)
@@ -1486,6 +1610,7 @@ def _3hop_v2_v3_v4(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """V3b outermost, V2a inside V3b callback, V3b→PM + V4 unlock."""
     ha, hb, hc = path_info.hops
@@ -1495,11 +1620,15 @@ def _3hop_v2_v3_v4(
     if not fits_int128(optimal_input):
         return None
 
-    at = AddressTable()
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
     pm_idx = at.add(pool_manager_address)
-    weth_idx = at.add(weth_address)
-    executor_idx = at.add(executor_address)
-    zero_idx = at.add(CMD_ZERO_ADDRESS)
+    weth_idx = SENTINEL_WETH
+    executor_idx = SENTINEL_SELF
+    zero_idx = SENTINEL_NATIVE
     v2a_idx = at.add(ha.pool_address)
     v3b_idx = at.add(hb.pool_address)
     c0_idx = at.add(hc.currency0_address)
@@ -1514,8 +1643,8 @@ def _3hop_v2_v3_v4(
     v4_inner += enc_v4_swap_compact(
         c0_idx, c1_idx, hc.fee, hc.tick_spacing, zero_idx, hc.zfo, out_b
     )
-    v4_inner += enc_v4_take(weth_idx, v2a_idx, optimal_input)
-    v4_inner += enc_v4_take(weth_idx, executor_idx, out_c - optimal_input)
+    v4_inner += enc_v4_take_compact(weth_idx, v2a_idx, optimal_input)
+    v4_inner += enc_v4_take_compact(weth_idx, executor_idx, out_c - optimal_input)
     v4_inner += enc_v4_sync(weth_idx)
     v4_inner += enc_v4_settle()
 
@@ -1537,6 +1666,7 @@ def _3hop_v2_v4_v2(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """Reverse-order from V2c, V2a→PM delta netting."""
     ha, hb, hc = path_info.hops
@@ -1546,15 +1676,19 @@ def _3hop_v2_v4_v2(
     if not fits_int128(optimal_input):
         return None
 
-    at = AddressTable()
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
     pm_idx = at.add(pool_manager_address)
-    weth_idx = at.add(weth_address)
+    weth_idx = SENTINEL_WETH
     forward_a_idx = at.add(ha.token1_address if ha.zfo else ha.token0_address)
     forward_b_idx = at.add(
         hb.currency1_address if hb.zfo else hb.currency0_address
     )
-    executor_idx = at.add(executor_address)
-    zero_idx = at.add(CMD_ZERO_ADDRESS)
+    executor_idx = SENTINEL_SELF
+    zero_idx = SENTINEL_NATIVE
     v2a_idx = at.add(ha.pool_address)
     v2c_idx = at.add(hc.pool_address)
 
@@ -1571,7 +1705,7 @@ def _3hop_v2_v4_v2(
         hb.zfo,
         out_a,
     )
-    v4_inner += enc_v4_take(forward_b_idx, v2c_idx, out_b)
+    v4_inner += enc_v4_take_compact(forward_b_idx, v2c_idx, out_b)
 
     # V2c fires first (reverse-order). Callback: WETH→V2a, V4 unlock
     c_fwd = enc_erc20_transfer(weth_idx, v2a_idx, optimal_input)
@@ -1591,6 +1725,7 @@ def _3hop_v2_v4_v3(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """V3c reverse, V2a→PM inside unlock, V4_TAKE forward→V3c."""
     ha, hb, hc = path_info.hops
@@ -1600,15 +1735,19 @@ def _3hop_v2_v4_v3(
     if not fits_int128(optimal_input):
         return None
 
-    at = AddressTable()
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
     pm_idx = at.add(pool_manager_address)
-    weth_idx = at.add(weth_address)
+    weth_idx = SENTINEL_WETH
     forward_a_idx = at.add(ha.token1_address if ha.zfo else ha.token0_address)
     forward_b_idx = at.add(
         hb.currency1_address if hb.zfo else hb.currency0_address
     )
-    executor_idx = at.add(executor_address)
-    zero_idx = at.add(CMD_ZERO_ADDRESS)
+    executor_idx = SENTINEL_SELF
+    zero_idx = SENTINEL_NATIVE
     v2a_idx = at.add(ha.pool_address)
     v3c_idx = at.add(hc.pool_address)
 
@@ -1625,7 +1764,7 @@ def _3hop_v2_v4_v3(
         hb.zfo,
         out_a,
     )
-    v4_inner += enc_v4_take(forward_b_idx, v3c_idx, out_b)
+    v4_inner += enc_v4_take_compact(forward_b_idx, v3c_idx, out_b)
 
     # V3c fires first. Callback: WETH→V2a, V4 unlock
     c_fwd = enc_erc20_transfer(weth_idx, v2a_idx, optimal_input)
@@ -1645,6 +1784,7 @@ def _3hop_v2_v4_v4(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """V4_TAKE WETH→V2a (excess), V2a→PM, delta netting, V4_TAKE profit."""
     ha, hb, hc = path_info.hops
@@ -1654,15 +1794,19 @@ def _3hop_v2_v4_v4(
     if not fits_int128(optimal_input):
         return None
 
-    at = AddressTable()
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
     pm_idx = at.add(pool_manager_address)
-    weth_idx = at.add(weth_address)
+    weth_idx = SENTINEL_WETH
     forward_a_idx = at.add(ha.token1_address if ha.zfo else ha.token0_address)
-    executor_idx = at.add(executor_address)
-    zero_idx = at.add(CMD_ZERO_ADDRESS)
+    executor_idx = SENTINEL_SELF
+    zero_idx = SENTINEL_NATIVE
 
     v4_inner = enc_v4_sync(forward_a_idx)
-    v4_inner += enc_v4_take(weth_idx, at.add(ha.pool_address), optimal_input)
+    v4_inner += enc_v4_take_compact(weth_idx, at.add(ha.pool_address), optimal_input)
     v4_inner += enc_v2_swap_calc(at.add(ha.pool_address), ha.zfo, pm_idx, fee=ha.fee)
     v4_inner += enc_v4_settle()
     v4_inner += enc_v4_swap_compact(
@@ -1697,6 +1841,7 @@ def _3hop_v3_v2_v2(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """V3a outermost: sends USDC→V2b, V2b→V2c direct + WETH→V3a."""
     ha, hb, hc = path_info.hops
@@ -1704,9 +1849,13 @@ def _3hop_v3_v2_v2(
     if any(x <= 0 for x in hop_outputs):
         return None
 
-    at = AddressTable()
-    weth_idx = at.add(weth_address)
-    executor_idx = at.add(executor_address)
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
+    weth_idx = SENTINEL_WETH
+    executor_idx = SENTINEL_SELF
     v2b_idx = at.add(hb.pool_address)
     v2c_idx = at.add(hc.pool_address)
     v3a_idx = at.add(ha.pool_address)
@@ -1730,6 +1879,7 @@ def _3hop_v3_v2_v3(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """Reverse-order from V3c: V3a→V2b, V2b→V3c direct + explicit WETH→V3a."""
     ha, hb, hc = path_info.hops
@@ -1737,9 +1887,13 @@ def _3hop_v3_v2_v3(
     if any(x <= 0 for x in hop_outputs):
         return None
 
-    at = AddressTable()
-    weth_idx = at.add(weth_address)
-    executor_idx = at.add(executor_address)
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
+    weth_idx = SENTINEL_WETH
+    executor_idx = SENTINEL_SELF
     v2b_idx = at.add(hb.pool_address)
     v3a_idx = at.add(ha.pool_address)
     v3c_idx = at.add(hc.pool_address)
@@ -1765,6 +1919,7 @@ def _3hop_v3_v2_v4(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """V3a→V2b→V4c: V3a sends forward_a directly to V2b.
 
@@ -1780,11 +1935,15 @@ def _3hop_v3_v2_v4(
     if not fits_int128(optimal_input):
         return None
 
-    at = AddressTable()
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
     pm_idx = at.add(pool_manager_address)
-    weth_idx = at.add(weth_address)
-    executor_idx = at.add(executor_address)
-    zero_idx = at.add(CMD_ZERO_ADDRESS)
+    weth_idx = SENTINEL_WETH
+    executor_idx = SENTINEL_SELF
+    zero_idx = SENTINEL_NATIVE
     v3a_idx = at.add(ha.pool_address)
     v2b_idx = at.add(hb.pool_address)
 
@@ -1800,7 +1959,7 @@ def _3hop_v3_v2_v4(
         hc.zfo,
         out_b,
     )
-    v4_inner += enc_v4_take(weth_idx, executor_idx, out_c)
+    v4_inner += enc_v4_take_compact(weth_idx, executor_idx, out_c)
     v4_inner += enc_v4_settle_delta(forward_b_idx)
 
     # V2b callback: V4 unlock only (V2b already has forward_a from V3a's recipient)
@@ -1825,6 +1984,7 @@ def _3hop_v3_v3_v2(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """Reverse-order from V2c: V3a→V3b direct, V2c V2_SWAP_DIRECT + WETH→V3a."""
     ha, hb, hc = path_info.hops
@@ -1832,9 +1992,13 @@ def _3hop_v3_v3_v2(
     if any(x <= 0 for x in hop_outputs):
         return None
 
-    at = AddressTable()
-    weth_idx = at.add(weth_address)
-    executor_idx = at.add(executor_address)
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
+    weth_idx = SENTINEL_WETH
+    executor_idx = SENTINEL_SELF
     v2c_idx = at.add(hc.pool_address)
     v3a_idx = at.add(ha.pool_address)
 
@@ -1864,6 +2028,7 @@ def _3hop_v3_v3_v3(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """Reverse-order direct custody, all auto-pay."""
     ha, hb, hc = path_info.hops
@@ -1871,8 +2036,12 @@ def _3hop_v3_v3_v3(
     if any(x <= 0 for x in hop_outputs):
         return None
 
-    at = AddressTable()
-    executor_idx = at.add(executor_address)
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
+    executor_idx = SENTINEL_SELF
     v3a_idx = at.add(ha.pool_address)
     v3b_idx = at.add(hb.pool_address)
     v3c_idx = at.add(hc.pool_address)
@@ -1897,6 +2066,7 @@ def _3hop_v3_v3_v4(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """V3a→V3b→V4c: reverse-order V3, V3b→PM, V4_TAKE→V3a.
 
@@ -1913,11 +2083,15 @@ def _3hop_v3_v3_v4(
     if not fits_int128(optimal_input):
         return None
 
-    at = AddressTable()
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
     pm_idx = at.add(pool_manager_address)
-    weth_idx = at.add(weth_address)
-    executor_idx = at.add(executor_address)
-    zero_idx = at.add(CMD_ZERO_ADDRESS)
+    weth_idx = SENTINEL_WETH
+    executor_idx = SENTINEL_SELF
+    zero_idx = SENTINEL_NATIVE
     v3a_idx = at.add(ha.pool_address)
     v3b_idx = at.add(hb.pool_address)
 
@@ -1934,7 +2108,7 @@ def _3hop_v3_v3_v4(
         hc.zfo,
         out_b,
     )
-    v4_inner += enc_v4_take(weth_idx, v3a_idx, optimal_input)
+    v4_inner += enc_v4_take_compact(weth_idx, v3a_idx, optimal_input)
     v4_inner += enc_v4_settle_all()
 
     # V3a callback: V4 unlock + erc20_transfer WETH→V3a (explicit auto-pay)
@@ -1959,6 +2133,7 @@ def _3hop_v3_v4_v2(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """V3a→V4b→V2c: V3a sends forward_a to PM, V4_TAKE→V2c direct.
 
@@ -1974,11 +2149,15 @@ def _3hop_v3_v4_v2(
     if not fits_int128(optimal_input):
         return None
 
-    at = AddressTable()
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
     pm_idx = at.add(pool_manager_address)
-    weth_idx = at.add(weth_address)
-    executor_idx = at.add(executor_address)
-    zero_idx = at.add(CMD_ZERO_ADDRESS)
+    weth_idx = SENTINEL_WETH
+    executor_idx = SENTINEL_SELF
+    zero_idx = SENTINEL_NATIVE
     v3a_idx = at.add(ha.pool_address)
     v2c_idx = at.add(hc.pool_address)
 
@@ -1998,7 +2177,7 @@ def _3hop_v3_v4_v2(
         hb.zfo,
         out_a,
     )
-    v4_inner += enc_v4_take(forward_b_idx, v2c_idx, out_b)
+    v4_inner += enc_v4_take_compact(forward_b_idx, v2c_idx, out_b)
     v4_inner += enc_v4_settle_all()
 
     # V3a callback: V4 unlock + V2c swap (forward_b at V2c, auto-pay K-invariant ✓) + pay WETH to V3a
@@ -2022,6 +2201,7 @@ def _3hop_v3_v4_v3(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """V3a→V4b→V3c: V3c-reverse pattern.
 
@@ -2039,11 +2219,15 @@ def _3hop_v3_v4_v3(
     if not fits_int128(optimal_input):
         return None
 
-    at = AddressTable()
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
     pm_idx = at.add(pool_manager_address)
-    weth_idx = at.add(weth_address)
-    executor_idx = at.add(executor_address)
-    zero_idx = at.add(CMD_ZERO_ADDRESS)
+    weth_idx = SENTINEL_WETH
+    executor_idx = SENTINEL_SELF
+    zero_idx = SENTINEL_NATIVE
     v3a_idx = at.add(ha.pool_address)
     v3c_idx = at.add(hc.pool_address)
 
@@ -2062,7 +2246,7 @@ def _3hop_v3_v4_v3(
         hb.zfo,
         out_a,
     )
-    v4_inner += enc_v4_take(forward_b_idx, v3c_idx, out_b)
+    v4_inner += enc_v4_take_compact(forward_b_idx, v3c_idx, out_b)
 
     # Plain settle credits forward_a delta from V3a's direct deposit to PM.
     # V4_SETTLE_DELTA would fail because it tries to transfer from executor,
@@ -2091,6 +2275,7 @@ def _3hop_v3_v4_v4(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """V3a→V4b→V4c: V3a callback runs V4 unlock with delta netting.
 
@@ -2106,11 +2291,15 @@ def _3hop_v3_v4_v4(
     if not fits_int128(optimal_input):
         return None
 
-    at = AddressTable()
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
     pm_idx = at.add(pool_manager_address)
-    weth_idx = at.add(weth_address)
-    executor_idx = at.add(executor_address)
-    zero_idx = at.add(CMD_ZERO_ADDRESS)
+    weth_idx = SENTINEL_WETH
+    executor_idx = SENTINEL_SELF
+    zero_idx = SENTINEL_NATIVE
     v3a_idx = at.add(ha.pool_address)
 
     forward_a_idx = at.add(ha.token1_address if ha.zfo else ha.token0_address)
@@ -2134,7 +2323,7 @@ def _3hop_v3_v4_v4(
         hc.zfo,
         out_b,
     )
-    v4_inner += enc_v4_take(weth_idx, executor_idx, out_c)
+    v4_inner += enc_v4_take_compact(weth_idx, executor_idx, out_c)
 
     # Plain settle credits forward_a delta from V3a's direct deposit to PM.
     # V4_SETTLE_DELTA would fail because it tries to transfer from executor,
@@ -2160,6 +2349,7 @@ def _3hop_v4_v2_v2(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """V4_TAKE→V2b direct, V2b→V2c V2_SWAP_DIRECT chain."""
     ha, hb, hc = path_info.hops
@@ -2169,10 +2359,14 @@ def _3hop_v4_v2_v2(
     if not fits_int128(optimal_input):
         return None
 
-    at = AddressTable()
-    weth_idx = at.add(weth_address)
-    executor_idx = at.add(executor_address)
-    zero_idx = at.add(CMD_ZERO_ADDRESS)
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
+    weth_idx = SENTINEL_WETH
+    executor_idx = SENTINEL_SELF
+    zero_idx = SENTINEL_NATIVE
 
     # Forward from V4a
     forward_a_idx = at.add(
@@ -2191,7 +2385,7 @@ def _3hop_v4_v2_v2(
         ha.zfo,
         optimal_input,
     )
-    inner += enc_v4_take(forward_a_idx, at.add(hb.pool_address), out_a)
+    inner += enc_v4_take_compact(forward_a_idx, at.add(hb.pool_address), out_a)
     inner += b_cmd + c_cmd
     inner += enc_v4_settle_delta(weth_idx)
 
@@ -2208,6 +2402,7 @@ def _3hop_v4_v2_v3(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """V3c-reverse: V4_TAKE→V2b, V2b→V3c direct (IIA ✓ during V3c callback)."""
     ha, hb, hc = path_info.hops
@@ -2217,10 +2412,14 @@ def _3hop_v4_v2_v3(
     if not fits_int128(optimal_input):
         return None
 
-    at = AddressTable()
-    weth_idx = at.add(weth_address)
-    executor_idx = at.add(executor_address)
-    zero_idx = at.add(CMD_ZERO_ADDRESS)
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
+    weth_idx = SENTINEL_WETH
+    executor_idx = SENTINEL_SELF
+    zero_idx = SENTINEL_NATIVE
     v3c_idx = at.add(hc.pool_address)
 
     # Forward from V4a
@@ -2239,7 +2438,7 @@ def _3hop_v4_v2_v3(
         ha.zfo,
         optimal_input,
     )
-    v4_inner += enc_v4_take(forward_a_idx, at.add(hb.pool_address), out_a)
+    v4_inner += enc_v4_take_compact(forward_a_idx, at.add(hb.pool_address), out_a)
     v4_inner += enc_v2_swap_calc(at.add(hb.pool_address), hb.zfo, v3c_idx, fee=hb.fee)
     v4_inner += enc_v4_settle_delta(weth_idx)
 
@@ -2259,6 +2458,7 @@ def _3hop_v4_v2_v4(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """V4a→V2b→V4c inside single unlock.
 
@@ -2275,10 +2475,14 @@ def _3hop_v4_v2_v4(
     if not fits_int128(optimal_input):
         return None
 
-    at = AddressTable()
-    weth_idx = at.add(weth_address)
-    executor_idx = at.add(executor_address)
-    zero_idx = at.add(CMD_ZERO_ADDRESS)
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
+    weth_idx = SENTINEL_WETH
+    executor_idx = SENTINEL_SELF
+    zero_idx = SENTINEL_NATIVE
 
     forward_a_idx = at.add(
         ha.currency1_address if ha.zfo else ha.currency0_address
@@ -2294,7 +2498,7 @@ def _3hop_v4_v2_v4(
         ha.zfo,
         optimal_input,
     )
-    inner += enc_v4_take(forward_a_idx, at.add(hb.pool_address), out_a)
+    inner += enc_v4_take_compact(forward_a_idx, at.add(hb.pool_address), out_a)
     inner += enc_v2_swap_calc(at.add(hb.pool_address), hb.zfo, executor_idx, fee=hb.fee)
     inner += enc_v4_swap_compact(
         at.add(hc.currency0_address),
@@ -2320,6 +2524,7 @@ def _3hop_v4_v3_v2(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """V4_TAKE USDC→V3b (IIA ✓), V3b→V2c + WETH→V3b."""
     ha, hb, hc = path_info.hops
@@ -2329,10 +2534,14 @@ def _3hop_v4_v3_v2(
     if not fits_int128(optimal_input):
         return None
 
-    at = AddressTable()
-    weth_idx = at.add(weth_address)
-    executor_idx = at.add(executor_address)
-    zero_idx = at.add(CMD_ZERO_ADDRESS)
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
+    weth_idx = SENTINEL_WETH
+    executor_idx = SENTINEL_SELF
+    zero_idx = SENTINEL_NATIVE
     v3b_idx = at.add(hb.pool_address)
 
     # Forward from V4a
@@ -2343,7 +2552,7 @@ def _3hop_v4_v3_v2(
     _forward_b_idx = at.add(hb.token1_address if hb.zfo else hb.token0_address)
 
     # V3b callback: V4_TAKE USDC→V3b (IIA ✓) + V2c swap calc
-    b_fwd = enc_v4_take(forward_a_idx, v3b_idx, out_a)
+    b_fwd = enc_v4_take_compact(forward_a_idx, v3b_idx, out_a)
     b_fwd += enc_v2_swap_direct(at.add(hc.pool_address), hc.zfo, out_c, executor_idx)
 
     inner = enc_v4_swap_compact(
@@ -2373,6 +2582,7 @@ def _3hop_v4_v3_v3(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """V3c→V3b reverse + V4_TAKE USDC→V3b (IIA ✓), auto-settle WETH delta."""
     ha, hb, hc = path_info.hops
@@ -2382,11 +2592,15 @@ def _3hop_v4_v3_v3(
     if not fits_int128(optimal_input):
         return None
 
-    at = AddressTable()
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
     pm_idx = at.add(pool_manager_address)
-    weth_idx = at.add(weth_address)
-    executor_idx = at.add(executor_address)
-    zero_idx = at.add(CMD_ZERO_ADDRESS)
+    weth_idx = SENTINEL_WETH
+    executor_idx = SENTINEL_SELF
+    zero_idx = SENTINEL_NATIVE
     v3b_idx = at.add(hb.pool_address)
     v3c_idx = at.add(hc.pool_address)
 
@@ -2396,7 +2610,7 @@ def _3hop_v4_v3_v3(
     )
 
     # V3b callback: V4_TAKE USDC→V3b (IIA ✓ during callback)
-    b_fwd = enc_v4_take(forward_a_idx, v3b_idx, out_a)
+    b_fwd = enc_v4_take_compact(forward_a_idx, v3b_idx, out_a)
 
     inner = enc_v4_swap_compact(
         at.add(ha.currency0_address),
@@ -2435,6 +2649,7 @@ def _3hop_v4_v3_v4(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """V4a→V3b→V4c inside single unlock with V4_TAKE→V3b during callback.
 
@@ -2451,11 +2666,15 @@ def _3hop_v4_v3_v4(
     if not fits_int128(optimal_input):
         return None
 
-    at = AddressTable()
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
     pm_idx = at.add(pool_manager_address)
-    weth_idx = at.add(weth_address)
-    executor_idx = at.add(executor_address)
-    zero_idx = at.add(CMD_ZERO_ADDRESS)
+    weth_idx = SENTINEL_WETH
+    executor_idx = SENTINEL_SELF
+    zero_idx = SENTINEL_NATIVE
     v3b_idx = at.add(hb.pool_address)
 
     # Forward from V4a
@@ -2466,7 +2685,7 @@ def _3hop_v4_v3_v4(
     forward_b_idx = at.add(hb.token1_address if hb.zfo else hb.token0_address)
 
     # V3b callback: V4_TAKE(USDC→V3b) during V3b's own callback (IIA ✓)
-    b_fwd = enc_v4_take(forward_a_idx, v3b_idx, out_a)
+    b_fwd = enc_v4_take_compact(forward_a_idx, v3b_idx, out_a)
 
     inner = enc_v4_swap_compact(
         at.add(ha.currency0_address),
@@ -2504,6 +2723,7 @@ def _3hop_v4_v4_v2(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """Delta netting V4a↔V4b, V4_TAKE→V2c direct."""
     ha, hb, hc = path_info.hops
@@ -2513,10 +2733,14 @@ def _3hop_v4_v4_v2(
     if not fits_int128(optimal_input):
         return None
 
-    at = AddressTable()
-    weth_idx = at.add(weth_address)
-    executor_idx = at.add(executor_address)
-    zero_idx = at.add(CMD_ZERO_ADDRESS)
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
+    weth_idx = SENTINEL_WETH
+    executor_idx = SENTINEL_SELF
+    zero_idx = SENTINEL_NATIVE
 
     # Forward from V4b (= output of V4b swap)
     forward_b_idx = at.add(
@@ -2542,7 +2766,7 @@ def _3hop_v4_v4_v2(
         zero_idx,
         hb.zfo,
     )
-    inner += enc_v4_take(forward_b_idx, at.add(hc.pool_address), out_b)
+    inner += enc_v4_take_compact(forward_b_idx, at.add(hc.pool_address), out_b)
     inner += c_cmd
     inner += enc_v4_settle_all()
 
@@ -2559,6 +2783,7 @@ def _3hop_v4_v4_v3(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    **kwargs,
 ) -> bytes | None:
     """Delta netting V4a↔V4b, V4_TAKE forward→exec, ERC20 forward→V3c (IIA ✓)."""
     ha, hb, hc = path_info.hops
@@ -2568,10 +2793,14 @@ def _3hop_v4_v4_v3(
     if not fits_int128(optimal_input):
         return None
 
-    at = AddressTable()
-    weth_idx = at.add(weth_address)
-    executor_idx = at.add(executor_address)
-    zero_idx = at.add(CMD_ZERO_ADDRESS)
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
+    weth_idx = SENTINEL_WETH
+    executor_idx = SENTINEL_SELF
+    zero_idx = SENTINEL_NATIVE
 
     # Forward from V4b
     forward_b_idx = at.add(
@@ -2598,7 +2827,7 @@ def _3hop_v4_v4_v3(
         zero_idx,
         hb.zfo,
     )
-    inner += enc_v4_take(forward_b_idx, executor_idx, out_b)
+    inner += enc_v4_take_compact(forward_b_idx, executor_idx, out_b)
     inner += enc_v3_swap_compact(v3c_idx, hc.zfo, out_b, executor_idx, forward_data=c_pay)
     inner += enc_v4_settle_all()
 
@@ -2615,8 +2844,20 @@ def _3hop_v4_v4_v4(
     executor_address: str,
     pool_manager_address: str,
     weth_address: str,
+    *,
+    bribe_bips: int = 0,
+    erc6909_profit: bool = False,
+    use_v4_batch: bool = False,
 ) -> bytes | None:
-    """Pure delta netting, V4_TAKE profit, auto-settle WETH delta."""
+    """Pure delta netting with V4_MINT or V4_TAKE profit capture.
+
+    Per user-guide §12.27: all 3 V4 swaps inside unlock, intermediate
+    deltas cancel, only net WETH profit is taken (or minted as ERC6909).
+
+    With V4_MINT_COMPACT: 0 transfers (profit as ERC6909 accounting entry).
+    With V4_TAKE_DELTA: 1 transfer (PM sends profit WETH to executor).
+    With V4_BATCH: single PM extcall (gas savings, slightly more calldata).
+    """
     if len(hop_outputs) < 3:
         bot_logger.warning(
             f"[cmd-3hop-v4v4v4] hop_outputs has {len(hop_outputs)} elements, expected 3 — skipping"
@@ -2629,39 +2870,98 @@ def _3hop_v4_v4_v4(
     if not fits_int128(optimal_input):
         return None
 
-    at = AddressTable()
-    weth_idx = at.add(weth_address)
-    executor_idx = at.add(executor_address)
-    zero_idx = at.add(CMD_ZERO_ADDRESS)
+    at = AddressTable(
+            weth_address=weth_address,
+            executor_address=executor_address,
+            pool_manager_address=pool_manager_address,
+        )
+    weth_idx = SENTINEL_WETH
+    executor_idx = SENTINEL_SELF
+    zero_idx = SENTINEL_NATIVE
 
-    inner = enc_v4_swap_compact(
-        at.add(ha.currency0_address),
-        at.add(ha.currency1_address),
-        ha.fee,
-        ha.tick_spacing,
-        zero_idx,
-        ha.zfo,
-        optimal_input,
-    )
-    inner += enc_v4_swap_dynamic(
-        at.add(hb.currency0_address),
-        at.add(hb.currency1_address),
-        hb.fee,
-        hb.tick_spacing,
-        zero_idx,
-        hb.zfo,
-    )
-    inner += enc_v4_swap_dynamic(
-        at.add(hc.currency0_address),
-        at.add(hc.currency1_address),
-        hc.fee,
-        hc.tick_spacing,
-        zero_idx,
-        hc.zfo,
-    )
+    # Determine output (profit) currency of the final V4 swap
+    output_currency_c = hc.currency1_address if hc.zfo else hc.currency0_address
+
+    if use_v4_batch:
+        # V4_BATCH: single PM extcall, auto-settles WETH/native ETH deltas.
+        # More calldata per swap (20 bytes entry vs 9/21 individual) but
+        # saves ~5K gas per swap from fewer extcalls.
+        inner = enc_v4_batch([
+            (
+                at.add(ha.currency0_address),
+                at.add(ha.currency1_address),
+                ha.fee, ha.tick_spacing,
+                zero_idx, ha.zfo, optimal_input,
+            ),
+            (
+                at.add(hb.currency0_address),
+                at.add(hb.currency1_address),
+                hb.fee, hb.tick_spacing,
+                zero_idx, hb.zfo, 0,  # dynamic amount from delta
+            ),
+            (
+                at.add(hc.currency0_address),
+                at.add(hc.currency1_address),
+                hc.fee, hc.tick_spacing,
+                zero_idx, hc.zfo, 0,  # dynamic amount from delta
+            ),
+        ])
+        # V4_BATCH auto-settles WETH + native ETH deltas.
+        # For ERC-20 profit, still need explicit take.
+        if output_currency_c not in (NATIVE_CURRENCY_ADDRESS, weth_address):
+            profit_idx = at.add(output_currency_c)
+            inner += enc_v4_take_delta(profit_idx, executor_idx)
+    else:
+        # Individual swap commands — more calldata-efficient for small counts
+        inner = enc_v4_swap_compact(
+            at.add(ha.currency0_address),
+            at.add(ha.currency1_address),
+            ha.fee,
+            ha.tick_spacing,
+            zero_idx,
+            ha.zfo,
+            optimal_input,
+        )
+        inner += enc_v4_swap_dynamic(
+            at.add(hb.currency0_address),
+            at.add(hb.currency1_address),
+            hb.fee,
+            hb.tick_spacing,
+            zero_idx,
+            hb.zfo,
+        )
+        inner += enc_v4_swap_dynamic(
+            at.add(hc.currency0_address),
+            at.add(hc.currency1_address),
+            hc.fee,
+            hc.tick_spacing,
+            zero_idx,
+            hc.zfo,
+        )
+
+    # Profit capture: V4_MINT_COMPACT (ERC6909) or V4_TAKE_DELTA (physical)
+    if erc6909_profit and output_currency_c == weth_address:
+        # V4_MINT_COMPACT: profit as ERC6909, no physical transfer.
+        # Saves ~20K gas. Requires check_mode=2 on expected_balance.
+        profit_amount = out_c - optimal_input
+        if profit_amount > 0:
+            inner += enc_v4_mint_compact(weth_idx, executor_idx, profit_amount)
+    elif not use_v4_batch:
+        # V4_TAKE_DELTA: reads actual positive delta from PM exttload.
+        # When use_v4_batch, V4_BATCH already handles WETH/native ETH.
+        if output_currency_c == NATIVE_CURRENCY_ADDRESS:
+            native_idx = at.add(NATIVE_CURRENCY_ADDRESS)
+            inner += enc_v4_take_delta(native_idx, executor_idx)
+        elif output_currency_c == weth_address:
+            inner += enc_v4_take_delta(weth_idx, executor_idx)
+        else:
+            profit_idx = at.add(output_currency_c)
+            inner += enc_v4_take_delta(profit_idx, executor_idx)
+
+    # Auto-settle all remaining nonzero deltas (handles rounding residuals)
     inner += enc_v4_settle_all()
 
-    return enc_preamble(at) + enc_v4_unlock(inner)
+    return enc_preamble(at, bribe_bips=bribe_bips) + enc_v4_unlock(inner)
 
 
 # ── Dispatch table ──────────────────────────────────────────────────────
