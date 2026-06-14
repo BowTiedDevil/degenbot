@@ -643,7 +643,7 @@ def _encode_cmd_v4_v3(
             )
 
             # 4. Settle V4's input currency debt.
-            # V3 auto-pay gave WETH to executor. If V4's input is native ETH,
+            # V3's swap sent WETH to executor. If V4's input is native ETH,
             # must unwrap WETH→ETH before settling (WETH≠ETH mismatch).
             _v4_in_native = v4_input_is_native(hop_v4)
             if _v4_in_native:
@@ -692,7 +692,7 @@ def _encode_cmd_v3_v4(
           [if V4 input is native ETH]:
             WETH_WITHDRAW (unwrap WETH→ETH)
             V4_UNLOCK: swap + settle_delta(ETH) + take
-            (no USDC debt to V3 — V3 already sent WETH before callback)
+            ERC20_TRANSFER V4 output to V3 (pay V3's input-token debt)
     """
     hop_v3 = path_info.hops[0]
     hop_v4 = path_info.hops[1]
@@ -969,7 +969,8 @@ def _encode_cmd_v2_v4(
       [V4 input is native ETH]:
         V2_SWAP_COMPACT (flash, callback)
           V2 callback: WETH_WITHDRAW → V4_UNLOCK(swap + settle_delta(ETH) + take(output))
-          → ERC20_TRANSFER(forward_token→V2) — pay V2's flash debt
+          → ERC20_TRANSFER(forward_token→V2) — satisfy V2's K-invariant with forward
+            token (V2 is owed WETH, but receiving forward token also satisfies K)
       [V4 input is WETH/ERC-20]:
         V2_SWAP_COMPACT (flash, callback)
           V2 callback: ERC20_TRANSFER(WETH→V2) — pay V2's flash debt
@@ -1176,16 +1177,21 @@ def _encode_cmd_v2_v3(
 ) -> bytes | None:
     """Encode V2-V3 2-hop arbitrage as cmd_executor command stream.
 
-    V2 flash borrow sends forward to executor. In the callback:
-      1. Transfer forward token to V3 pool (so V3 has input)
-      2. V3 swap with auto-pay (forward→WETH, no callback needed)
-      3. Transfer WETH to V2 (flash repayment)
+    V2 flash borrow sends forward to executor. In the callback, V3 swap
+    runs with forward_data containing an ERC20_TRANSFER that satisfies
+    V3's IIA check, then WETH is repaid to V2.
+
+    CRITICAL: The ERC20_TRANSFER must be inside V3's forward_data, NOT
+    before V3.swap(). If the transfer runs before the swap, V3 captures
+    it in balance_before and IIA fails (no new tokens arrive during
+    the callback itself).
 
     Flow:
       V2_SWAP_COMPACT (WETH→forward, flash borrow, recipient=executor)
         callback (forward_data):
-          ERC20_TRANSFER forward to V3 pool
-          V3_SWAP_COMPACT (forward→WETH, auto-pay, recipient=executor)
+          V3_SWAP_COMPACT (forward→WETH, recipient=executor, forward_data)
+            V3 callback (forward_data):
+              ERC20_TRANSFER forward to V3 (satisfies IIA during callback)
           ERC20_TRANSFER WETH to V2 (flash repayment)
     """
     hop_a = path_info.hops[0]
@@ -2030,7 +2036,7 @@ def _3hop_v3_v3_v3(
     weth_address: str,
     **kwargs,
 ) -> bytes | None:
-    """Reverse-order direct custody, all auto-pay."""
+    """Reverse-order direct custody, WETH auto-pay (no explicit ERC20 transfers)."""
     ha, hb, hc = path_info.hops
     out_a, out_b, _out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
@@ -2325,9 +2331,10 @@ def _3hop_v3_v4_v4(
     )
     v4_inner += enc_v4_take_compact(weth_idx, executor_idx, out_c)
 
-    # Plain settle credits forward_a delta from V3a's direct deposit to PM.
-    # V4_SETTLE_DELTA would fail because it tries to transfer from executor,
-    # but V3a sent directly to PM — the executor holds zero forward_a tokens.
+    # Settlement: V3a sent forward_a to executor (not PM directly),
+    # so the executor holds forward_a tokens. V4_SETTLE credits any
+    # PM delta from prior sync+transfer; V4_SETTLE_DELTA would also
+    # work here since the executor holds the tokens to transfer.
     v4_inner = enc_v4_settle() + v4_inner
 
     # V3a callback: V4 unlock + pay WETH to V3a
