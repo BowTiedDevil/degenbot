@@ -519,7 +519,7 @@ mod tests {
         );
 
         // V3 pool B at tick -60 (slightly cheaper token1), high liquidity
-        let sqrt_price_lower_u160 = crate::tick_math::get_sqrt_ratio_at_tick_internal(-60)
+        let sqrt_price_lower_u160 = crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-60)
             .unwrap_or(alloy::primitives::U160::ZERO);
         let sqrt_price_lower = U256::from(sqrt_price_lower_u160);
 
@@ -812,7 +812,7 @@ mod tests {
         // This produces virtual reserves >> int128_max
         let v4_pool_manager = Address::from([0x40u8; 20]);
         // tick -886_983 → sqrtPrice ≈ 4.36e9 (very low price, token0 is nearly worthless)
-        let sp_extreme = crate::tick_math::get_sqrt_ratio_at_tick_internal(-886_983)
+        let sp_extreme = crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-886_983)
             .unwrap_or_default();
         let extreme_liquidity: u128 = 76_688_550_121_478_947_320_312_764_923_207_804;
 

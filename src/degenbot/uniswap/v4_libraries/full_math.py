@@ -1,72 +1,36 @@
 """Uniswap V4 FullMath: 512-bit multiplication with Q96 rounding.
 
+Rust-accelerated implementation used by default.
+
 See: contract_reference/uniswap/V4/PoolManager.sol (FullMath library)
 """
-from degenbot.constants import MAX_UINT256
+
+from degenbot.degenbot_rs import (
+    cl_muldiv as _rs_muldiv,
+    cl_muldiv_rounding_up as _rs_muldiv_rounding_up,
+)
 from degenbot.exceptions.pool import EVMRevertError
+
 from degenbot.uniswap.v4_libraries.functions import mulmod
 
-
-def muldiv(
-    a: int,
-    b: int,
-    denominator: int,
-) -> int:
-    """Calculate floor(a*b/denominator) with full precision.
-
-    Throws if result overflows a uint256 or denominator == 0.
-
-    Returns:
-        The floor of (a*b)/denominator as an integer.
-
-    Raises:
-        EVMRevertError: If the result overflows uint256 or denominator is zero.
-
-    ref: https://github.com/Uniswap/v4-core/blob/main/src/libraries/FullMath.sol
-
-    Python integers do not overflow and have no bit depth limitation, so this function simply
-    checks for an invalid result.
-
-    """
-    if denominator <= 0:
-        msg = "required: denominator > 0"
-        raise EVMRevertError(msg)
-
-    result = (a * b) // denominator
-
-    if result > MAX_UINT256:
-        msg = "product > MAX_UINT256"
-        raise EVMRevertError(msg)
-
-    return result
+# Translation table: Rust core messages → V4 Solidity revert messages
+_V4_MESSAGE_MAP = {
+    "DIVISION BY ZERO": "required: denominator > 0",
+}
 
 
-def muldiv_rounding_up(
-    a: int,
-    b: int,
-    denominator: int,
-) -> int:
-    """Calculate ceil(a*b//denominator) with full precision.
+def _wrap(fn):
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except (ValueError, OverflowError) as e:
+            msg = _V4_MESSAGE_MAP.get(str(e), str(e))
+            raise EVMRevertError(error=msg) from e
+        except OverflowError as e:
+            raise EVMRevertError(error=str(e)) from e
+    wrapper.__name__ = fn.__name__
+    return wrapper
 
-    Throws if result overflows a uint256 or denominator == 0.
 
-    Returns:
-        The ceiling of (a*b)/denominator as an integer.
-
-    Raises:
-        EVMRevertError: If the result overflows uint256 or denominator is zero.
-
-    ref: https://github.com/Uniswap/v4-core/blob/main/src/libraries/FullMath.sol
-
-    """
-    if denominator <= 0:
-        msg = "required: denominator > 0"
-        raise EVMRevertError(msg)
-
-    result = muldiv(a, b, denominator) + int(mulmod(a, b, denominator) > 0)
-
-    if result > MAX_UINT256:
-        msg = "product > MAX_UINT256"
-        raise EVMRevertError(msg)
-
-    return result
+muldiv = _wrap(_rs_muldiv)
+muldiv_rounding_up = _wrap(_rs_muldiv_rounding_up)

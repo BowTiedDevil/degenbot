@@ -2303,7 +2303,7 @@ impl PyUniswapArbEngine {
     }
 
     /// DIAG-a3f2: Dump V2 pool state for a given address.
-    /// Returns (forward_key, reverse_key, fwd_reserve_in, fwd_reserve_out, rev_reserve_in, rev_reserve_out) or None.
+    /// Returns (`forward_key`, `reverse_key`, `fwd_reserve_in`, `fwd_reserve_out`, `rev_reserve_in`, `rev_reserve_out`) or None.
     #[pyo3(signature = (address_hex))]
     fn diag_v2_pool(&self, address_hex: &str) -> PyResult<Option<(u64, u64, String, String, String, String)>> {
         let addr: Address = address_hex.parse().map_err(|e| {
@@ -2316,8 +2316,8 @@ impl PyUniswapArbEngine {
         };
         let fwd_state = v2.get_pool(fwd);
         let rev_state = v2.get_pool(rev);
-        let (fr_in, fr_out) = fwd_state.map(|s| (s.reserve_in.to_string(), s.reserve_out.to_string())).unwrap_or(("?".to_string(), "?".to_string()));
-        let (rr_in, rr_out) = rev_state.map(|s| (s.reserve_in.to_string(), s.reserve_out.to_string())).unwrap_or(("?".to_string(), "?".to_string()));
+        let (fr_in, fr_out) = fwd_state.map_or(("?".to_string(), "?".to_string()), |s| (s.reserve_in.to_string(), s.reserve_out.to_string()));
+        let (rr_in, rr_out) = rev_state.map_or(("?".to_string(), "?".to_string()), |s| (s.reserve_in.to_string(), s.reserve_out.to_string()));
         Ok(Some((fwd, rev, fr_in, fr_out, rr_in, rr_out)))
     }
 
