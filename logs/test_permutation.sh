@@ -59,10 +59,15 @@ log = open('$LOGFILE').read()
 ok_total = sum(int(m.group(1)) for m in re.finditer(r'(\d+) ok \(', log))
 fail_total = sum(int(m.group(1)) for m in re.finditer(r'(\d+) failed', log))
 total = ok_total + fail_total
-pct = ok_total * 100 // total if total > 0 else 0
-if pct >= 80: cls = 'PASS'
-elif pct >= 20: cls = 'PARTIAL'
-else: cls = 'BROKEN'
+if total == 0:
+    # No simulation results — solver never found a profitable candidate
+    cls = 'NO_OPPORTUNITY'
+    pct = -1
+else:
+    pct = ok_total * 100 // total
+    if pct >= 80: cls = 'PASS'
+    elif pct >= 20: cls = 'PARTIAL'
+    else: cls = 'BROKEN'
 print(f'{total}\t{ok_total}\t{fail_total}\t{pct}\t{cls}')
 ")
 TOTAL=$(echo "$ANALYSIS" | cut -f1)
@@ -74,15 +79,22 @@ CLASS=$(echo "$ANALYSIS" | cut -f5)
 echo "  Candidates: $TOTAL"
 echo "  Simulatable: $OK_TOTAL"
 echo "  Failed:      $FAIL_TOTAL"
-echo "  Rate:        ${PERCENT}%"
-if [[ "$CLASS" == "PASS" ]]; then echo "  Class:       ✅ Passing"; elif [[ "$CLASS" == "PARTIAL" ]]; then echo "  Class:       ⚠️ Partial"; else echo "  Class:       ❌ Broken"; fi
+if [[ "$CLASS" == "NO_OPPORTUNITY" ]]; then
+    echo "  Rate:        —"
+    echo "  Class:       ⬜ No Opportunity"
+else
+    echo "  Rate:        ${PERCENT}%"
+    if [[ "$CLASS" == "PASS" ]]; then echo "  Class:       ✅ Passing"; elif [[ "$CLASS" == "PARTIAL" ]]; then echo "  Class:       ⚠️ Partial"; else echo "  Class:       ❌ Broken"; fi
+fi
 
 # Extract top failure modes from [sim-fail] lines
-echo ""
-echo "=== Top failure modes ==="
-grep '\[sim-fail\]' "$LOGFILE" 2>/dev/null | \
-    sed -E 's/.*revert=0x[0-9a-f]*( sel=0x[0-9a-f]+| [A-Z].*)?/\1/' | \
-    sort | uniq -c | sort -rn | head -10
+if [[ "$CLASS" != "NO_OPPORTUNITY" ]]; then
+    echo ""
+    echo "=== Top failure modes ==="
+    grep '\[sim-fail\]' "$LOGFILE" 2>/dev/null | \
+        sed -E 's/.*revert=0x[0-9a-f]*( sel=0x[0-9a-f]+| [A-Z].*)?/\1/' | \
+        sort | uniq -c | sort -rn | head -10
+fi
 
 # Extract path counts from build_paths summary
 echo ""

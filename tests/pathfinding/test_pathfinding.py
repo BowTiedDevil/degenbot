@@ -263,3 +263,79 @@ def test_four_pool_pathfinding_cycling_weth_with_limited_types(db):
     )
     assert paths
     print(f"Found {len(paths)} 4-pool paths (WETH)")
+
+
+def test_whitelist_restricts_intermediate_tokens(db):
+    """Token whitelist should restrict graph to only whitelisted intermediates."""
+    # Without whitelist: should find paths
+    all_paths = list(
+        find_paths(
+            db=db,
+            chain_id=BASE_CHAIN_ID,
+            start_tokens=[WETH_BASE_ADDRESS],
+            end_tokens=[WETH_BASE_ADDRESS],
+            max_depth=2,
+            pool_types=[
+                UniswapV2PoolTable,
+                UniswapV3PoolTable,
+            ],
+        )
+    )
+    assert all_paths, "Should find paths without whitelist"
+
+    # With whitelist containing only WETH: only WETH→WETH paths survive
+    # (i.e. pools that are WETH/WETH, which shouldn't exist)
+    weth_only_paths = list(
+        find_paths(
+            db=db,
+            chain_id=BASE_CHAIN_ID,
+            start_tokens=[WETH_BASE_ADDRESS],
+            end_tokens=[WETH_BASE_ADDRESS],
+            max_depth=2,
+            pool_types=[
+                UniswapV2PoolTable,
+                UniswapV3PoolTable,
+            ],
+            allowed_intermediate_tokens=[WETH_BASE_ADDRESS],
+        )
+    )
+    # WETH-only intermediate means only pools of form WETH/WETH exist,
+    # which are degenerate and shouldn't appear. So result should be empty
+    # or very small.
+    assert len(weth_only_paths) < len(all_paths), (
+        f"Whitelist should reduce path count: got {len(weth_only_paths)} vs {len(all_paths)}"
+    )
+
+
+def test_whitelist_none_is_same_as_no_whitelist(db):
+    """Passing None for allowed_intermediate_tokens should behave identically to omitting it."""
+    paths_no_arg = list(
+        find_paths(
+            db=db,
+            chain_id=BASE_CHAIN_ID,
+            start_tokens=[WETH_BASE_ADDRESS],
+            end_tokens=[WETH_BASE_ADDRESS],
+            max_depth=2,
+            pool_types=[
+                UniswapV2PoolTable,
+                UniswapV3PoolTable,
+            ],
+        )
+    )
+    paths_none_arg = list(
+        find_paths(
+            db=db,
+            chain_id=BASE_CHAIN_ID,
+            start_tokens=[WETH_BASE_ADDRESS],
+            end_tokens=[WETH_BASE_ADDRESS],
+            max_depth=2,
+            pool_types=[
+                UniswapV2PoolTable,
+                UniswapV3PoolTable,
+            ],
+            allowed_intermediate_tokens=None,
+        )
+    )
+    assert len(paths_no_arg) == len(paths_none_arg), (
+        f"None whitelist should match no-arg: {len(paths_none_arg)} vs {len(paths_no_arg)}"
+    )

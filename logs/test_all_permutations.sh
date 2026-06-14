@@ -1,18 +1,24 @@
 #!/usr/bin/env bash
-# test_all_permutations.sh — Run the bot for all 27 three-hop permutations sequentially.
+# test_all_permutations.sh — Run the bot for all 27 three-hop permutations.
 #
-# Each permutation runs for 15 minutes (configurable via TEST_DURATION env var).
-# Results are appended to logs/permutation_results.tsv
+# Multiple permutations run in parallel (default: 4, configurable via
+# PARALLEL env var). Each permutation runs for 10 minutes (configurable
+# via TEST_DURATION env var). Results are saved to logs/permutation_results.tsv
 #
 # Usage: ./logs/test_all_permutations.sh [START_INDEX]
 #
 # START_INDEX: 1-27, to resume from a specific permutation (default: 1)
+# PARALLEL:    max concurrent bots (default: 4)
+# TEST_DURATION: minutes per permutation (default: 10)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RESULTS_FILE="${SCRIPT_DIR}/permutation_results.tsv"
-DURATION_MINUTES="${TEST_DURATION:-15}"
+LOCK_FILE="${SCRIPT_DIR}/.results.lock"
+JOBS_DIR="${SCRIPT_DIR}/.jobs"
+DURATION_MINUTES="${TEST_DURATION:-10}"
+PARALLEL="${PARALLEL:-4}"
 
 PERMUTATIONS=(
     "V2-V2-V2"
@@ -46,22 +52,24 @@ PERMUTATIONS=(
 
 START_INDEX="${1:-1}"
 
-# Write TSV header if file is new
+# Ensure TSV exists with header before launching parallel workers
 if [[ ! -f "$RESULTS_FILE" ]] || [[ ! -s "$RESULTS_FILE" ]]; then
     echo -e "#\tPermutation\tCandidates\tSimulatable\tFailed\tRate\tClassification" > "$RESULTS_FILE"
     echo "Created results file: $RESULTS_FILE"
 fi
 
-echo "=== Testing all 27 permutations (${DURATION_MINUTES} min each) ==="
-echo "Starting from index $START_INDEX"
-echo ""
+# Clean up job tracking directory
+rm -rf "$JOBS_DIR"
+mkdir -p "$JOBS_DIR"
+trap 'rm -rf "$JOBS_DIR"' EXIT
 
-for i in $(seq "$START_INDEX" 27); do
-    PERM="${PERMUTATIONS[$((i - 1))]}"
-    echo ""
-    echo "=== [$i/27] $PERM ==="
+# --- Worker: runs a single permutation end-to-end ---
+run_permutation() {
+    local i=$1
+    local PERM=$2
+    local LOGFILE="${SCRIPT_DIR}/perm-${PERM}.log"
 
-    LOGFILE="${SCRIPT_DIR}/perm-${PERM}.log"
+    echo "=== [$i/27] Starting $PERM ==="
 
     # Kill any existing run for this permutation.
     # Use pkill -f to kill both the uv wrapper and the child Python process.
@@ -69,7 +77,7 @@ for i in $(seq "$START_INDEX" 27); do
     if [[ -n "$EXISTING" ]]; then
         echo "Killing existing process(es) for $PERM: $EXISTING"
         pkill -f "eth_backrun_v2_v3_v4_rust.py --permutation $PERM" 2>/dev/null || true
-        sleep 3
+        sleep 10
         pkill -9 -f "eth_backrun_v2_v3_v4_rust.py --permutation $PERM" 2>/dev/null || true
     fi
 
@@ -79,12 +87,11 @@ for i in $(seq "$START_INDEX" 27); do
         --permutation "$PERM" \
         > "$LOGFILE" 2>&1 &
 
-    # Wait
-    echo "Waiting ${DURATION_MINUTES} minutes..."
+    # Wait for duration
     sleep "$((DURATION_MINUTES * 60))"
 
     # Stop the bot — pkill -f catches both uv wrapper and Python child
-    echo "Stopping bot for $PERM..."
+    echo "=== [$i/27] Stopping bot for $PERM ==="
     pkill -f "eth_backrun_v2_v3_v4_rust.py --permutation $PERM" 2>/dev/null || true
     sleep 3
     pkill -9 -f "eth_backrun_v2_v3_v4_rust.py --permutation $PERM" 2>/dev/null || true
@@ -96,11 +103,17 @@ log = open('$LOGFILE').read()
 ok_total = sum(int(m.group(1)) for m in re.finditer(r'(\d+) ok \(', log))
 fail_total = sum(int(m.group(1)) for m in re.finditer(r'(\d+) failed', log))
 total = ok_total + fail_total
-pct = ok_total * 100 // total if total > 0 else 0
-if pct >= 80: cls = '✅ Passing'
-elif pct >= 20: cls = '⚠️ Partial'
-else: cls = '❌ Broken'
-print(f'{total}\t{ok_total}\t{fail_total}\t{pct}%\t{cls}')
+if total == 0:
+    # No simulation results — solver never found a profitable candidate
+    cls = '⬜ No Opportunity'
+    pct = '—'
+else:
+    pct_val = ok_total * 100 // total
+    if pct_val >= 80: cls = '✅ Passing'
+    elif pct_val >= 20: cls = '⚠️ Partial'
+    else: cls = '❌ Broken'
+    pct = f'{pct_val}%'
+print(f'{total}\t{ok_total}\t{fail_total}\t{pct}\t{cls}')
 ")
     TOTAL=$(echo "$ANALYSIS" | cut -f1)
     OK_TOTAL=$(echo "$ANALYSIS" | cut -f2)
@@ -108,12 +121,40 @@ print(f'{total}\t{ok_total}\t{fail_total}\t{pct}%\t{cls}')
     PERCENT=$(echo "$ANALYSIS" | cut -f4)
     CLASS=$(echo "$ANALYSIS" | cut -f5)
 
-    echo "$PERM: $OK_TOTAL/$TOTAL simulatable ($PERCENT) $CLASS"
-    echo -e "$i\t$PERM\t$TOTAL\t$OK_TOTAL\t$FAIL_TOTAL\t$PERCENT\t$CLASS" >> "$RESULTS_FILE"
+    echo "=== [$i/27] $PERM: $OK_TOTAL/$TOTAL simulatable ($PERCENT) $CLASS ==="
 
-    # Brief pause between permutations
-    sleep 10
+    # Update TSV under lock (prevent parallel workers corrupting the file)
+    (
+        flock -x 200
+        sed -i "/\t${PERM}\t/d" "$RESULTS_FILE"
+        echo -e "$i\t$PERM\t$TOTAL\t$OK_TOTAL\t$FAIL_TOTAL\t$PERCENT\t$CLASS" >> "$RESULTS_FILE"
+        { head -1 "$RESULTS_FILE"; tail -n +2 "$RESULTS_FILE" | sort -t$'\t' -k1,1n; } > "${RESULTS_FILE}.tmp" && mv "${RESULTS_FILE}.tmp" "$RESULTS_FILE"
+    ) 200>"$LOCK_FILE"
+}
+
+echo "=== Testing all 27 permutations (${DURATION_MINUTES} min each, ${PARALLEL} parallel) ==="
+echo "Starting from index $START_INDEX"
+echo ""
+
+for i in $(seq "$START_INDEX" 27); do
+    PERM="${PERMUTATIONS[$((i - 1))]}"
+
+    # Throttle: wait until a slot opens up
+    while [[ $(ls "$JOBS_DIR" 2>/dev/null | wc -l) -ge $PARALLEL ]]; do
+        sleep 10
+    done
+
+    # Launch worker in a subshell — creates a job marker, removes when done
+    (
+        touch "$JOBS_DIR/$i"
+        run_permutation "$i" "$PERM"
+        rm -f "$JOBS_DIR/$i"
+    ) &
 done
+
+echo ""
+echo "All permutations launched — waiting for remaining workers..."
+wait
 
 echo ""
 echo "=== All permutations complete ==="
