@@ -1,4 +1,5 @@
 """Pathfinding utilities for discovering arbitrage routes."""
+
 import asyncio
 import enum
 import itertools
@@ -61,15 +62,12 @@ def _compute_node_valid_depths(
         # Collect all pool types this node has edges for
         node_pool_types: set[type] = set()
         for _neighbor, edges_dict in graph[node].items():
-            for attr in edges_dict.values():
-                node_pool_types.add(attr["pool_type"])
+            node_pool_types.update(attr["pool_type"] for attr in edges_dict.values())
 
         # Determine which depths this node can appear at
         valid_depths: set[int] = set()
         for d, allowed in enumerate(pool_type_per_depth):
-            if allowed is None:
-                valid_depths.add(d)
-            elif any(issubclass(pt, tuple(allowed)) for pt in node_pool_types):
+            if allowed is None or any(issubclass(pt, tuple(allowed)) for pt in node_pool_types):
                 valid_depths.add(d)
 
         node_valid_depths[node] = valid_depths
@@ -373,6 +371,7 @@ def _prepare_graph(
     chain_id: int,
     pool_types: Sequence[type],
     session: Session,
+    allowed_intermediate_tokens: set[TokenId] | None = None,
 ) -> MultiGraph:
 
     start = time.perf_counter()
@@ -384,6 +383,13 @@ def _prepare_graph(
         pool_types=pool_types,
     )
     logger.debug(f"Found {len(candidate_tokens)} candidate tokens held by 2 or more pools")
+
+    if allowed_intermediate_tokens is not None:
+        before = len(candidate_tokens)
+        candidate_tokens &= allowed_intermediate_tokens
+        logger.debug(
+            f"Token whitelist applied: {before} → {len(candidate_tokens)} candidate tokens"
+        )
 
     # Build the graph by creating edges (pools) connecting nodes (tokens) in the
     # candidate set
@@ -485,6 +491,7 @@ def find_paths(
     pool_types: Sequence[type] = (LiquidityPoolTable, UniswapV4PoolTable),
     db: DatabaseSessionManager,
     pool_type_per_depth: Sequence[set[type] | None] | None = None,
+    allowed_intermediate_tokens: Iterable[ChecksumAddress | str] | None = None,
 ) -> Iterator[Sequence[PathStep]]:
     """Find paths from each of the given start tokens to each of the given end tokens.
 
@@ -500,6 +507,11 @@ def find_paths(
             allows all pool types at that depth. When provided, edges whose
             pool_type is not in the allowed set are pruned before recursion, and
             the pool_type is not in the allowed set are pruned before recursion.
+        allowed_intermediate_tokens: If set, restrict the graph to only these token
+            addresses as intermediate nodes. Pools connecting any non-whitelisted
+            intermediate token are excluded from the graph. Use this to filter out
+            tax tokens, fee-on-transfer tokens, and low-quality pairs that would
+            waste simulation gas.
 
     Yields:
         Sequence[PathStep]: A valid arbitrage path from a start token to an end token.
@@ -514,21 +526,35 @@ def find_paths(
     start = time.perf_counter()
 
     with db() as session:
+        allowed_token_ids: set[TokenId] | None = None
+        if allowed_intermediate_tokens is not None:
+            allowed_token_ids = set(
+                session.scalars(
+                    sqlalchemy.select(Erc20TokenTable.id).where(
+                        Erc20TokenTable.address.in_({
+                            get_checksum_address(t) for t in allowed_intermediate_tokens
+                        }),
+                        Erc20TokenTable.chain == chain_id,
+                    )
+                ).all()
+            )
+
         graph = _prepare_graph(
             chain_id=chain_id,
             pool_types=pool_types,
             session=session,
+            allowed_intermediate_tokens=allowed_token_ids,
         )
 
         # Pre-compute valid depths per node for lookahead pruning when
         # pool_type_per_depth is set. This eliminates exploration of
         # dead-end branches (e.g. V3-only tokens when depth 1 requires V4).
-        _node_valid_depths: dict[int, set[int]] | None = None
+        node_valid_depths: dict[int, set[int]] | None = None
         if pool_type_per_depth is not None:
-            _node_valid_depths = _compute_node_valid_depths(graph, pool_type_per_depth)
+            node_valid_depths = _compute_node_valid_depths(graph, pool_type_per_depth)
             logger.debug(
                 f"Computed node valid depths for lookahead pruning: "
-                f"{sum(1 for v in _node_valid_depths.values() if len(v) > 1)} bridge nodes"
+                f"{sum(1 for v in node_valid_depths.values() if len(v) > 1)} bridge nodes"
             )
 
         traversal_plan = _prepare_traversal_plan(
@@ -576,7 +602,7 @@ def find_paths(
                 min_depth=min_depth,
                 max_depth=max_depth,
                 pool_type_per_depth=pool_type_per_depth,
-                node_valid_depths=_node_valid_depths,
+                node_valid_depths=node_valid_depths,
             )
 
             logger.debug(
@@ -595,6 +621,7 @@ async def find_paths_async(
     pool_types: Sequence[type] = [LiquidityPoolTable, UniswapV4PoolTable],
     db: DatabaseSessionManager,
     pool_type_per_depth: Sequence[set[type] | None] | None = None,
+    allowed_intermediate_tokens: Iterable[ChecksumAddress | str] | None = None,
 ) -> AsyncIterator[Sequence[PathStep]]:
     """Async version of ``find_paths``.
 
@@ -603,6 +630,11 @@ async def find_paths_async(
             depth. Depth 0 = first hop, depth 1 = second hop, etc. A ``None`` entry
             allows all pool types at that depth. When provided, edges whose
             pool_type is not in the allowed set are pruned before recursion, and
+        allowed_intermediate_tokens: If set, restrict the graph to only these token
+            addresses as intermediate nodes. Pools connecting any non-whitelisted
+            intermediate token are excluded from the graph. Use this to filter out
+            tax tokens, fee-on-transfer tokens, and low-quality pairs that would
+            waste simulation gas.
     Raises:
         DegenbotValueError: If no pools are found for the given chain ID or tokens.
 
@@ -610,10 +642,24 @@ async def find_paths_async(
     start = time.perf_counter()
 
     with db() as session:
+        allowed_token_ids: set[TokenId] | None = None
+        if allowed_intermediate_tokens is not None:
+            allowed_token_ids = set(
+                session.scalars(
+                    sqlalchemy.select(Erc20TokenTable.id).where(
+                        Erc20TokenTable.address.in_({
+                            get_checksum_address(t) for t in allowed_intermediate_tokens
+                        }),
+                        Erc20TokenTable.chain == chain_id,
+                    )
+                ).all()
+            )
+
         graph = _prepare_graph(
             chain_id=chain_id,
             pool_types=pool_types,
             session=session,
+            allowed_intermediate_tokens=allowed_token_ids,
         )
 
         # Pre-compute valid depths per node for lookahead pruning when

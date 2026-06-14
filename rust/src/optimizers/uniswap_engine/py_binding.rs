@@ -2302,6 +2302,25 @@ impl PyUniswapArbEngine {
             .set_profit_thresholds(U256::from(min_profit), U256::from(max_profit));
     }
 
+    /// DIAG-a3f2: Dump V2 pool state for a given address.
+    /// Returns (forward_key, reverse_key, fwd_reserve_in, fwd_reserve_out, rev_reserve_in, rev_reserve_out) or None.
+    #[pyo3(signature = (address_hex))]
+    fn diag_v2_pool(&self, address_hex: &str) -> PyResult<Option<(u64, u64, String, String, String, String)>> {
+        let addr: Address = address_hex.parse().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}"))
+        })?;
+        let mut engine = self.engine.lock();
+        let v2 = engine.v2_engine();
+        let Some(&(fwd, rev)) = v2.pool_addresses().get(&addr) else {
+            return Ok(None);
+        };
+        let fwd_state = v2.get_pool(fwd);
+        let rev_state = v2.get_pool(rev);
+        let (fr_in, fr_out) = fwd_state.map(|s| (s.reserve_in.to_string(), s.reserve_out.to_string())).unwrap_or(("?".to_string(), "?".to_string()));
+        let (rr_in, rr_out) = rev_state.map(|s| (s.reserve_in.to_string(), s.reserve_out.to_string())).unwrap_or(("?".to_string(), "?".to_string()));
+        Ok(Some((fwd, rev, fr_in, fr_out, rr_in, rr_out)))
+    }
+
     /// Return self as an async iterator over result batches.
     fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
