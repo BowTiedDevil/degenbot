@@ -111,20 +111,27 @@ cd ~/code/degenbot && python3 contracts/recompile.py
 
 This script:
 1. Compiles `cmd_executor.vy` from `~/code/executor/` via Vyper
-2. Appends 3 × 32-byte immutable slots (OWNER, WETH, PM) to the runtime bytecode
+2. Appends 9 x 32-byte immutable slots after the CBOR metadata
 3. Patches the POOL_MANAGER_ADDR slot to the mainnet address
 4. Writes `contracts/cmd_executor_runtime_bytecode.txt` (and ABI, init bytecode)
 
 Pass `--no-patch` to skip the PM patch (e.g. for testnets).
 
+The CBOR metadata is preserved in the compiled output. Vyper's CODECOPY
+offsets assume deployed layout `[code][CBOR][immutables]`; the CBOR bytes
+also serve as the function dispatch jump table and JUMPDEST targets.
+Stripping the CBOR breaks immutable reads, the jump table, and JUMPDEST
+targets.
+
 Verify after recompilation — the script prints the tail slots:
 
 ```
 Verification:
-  Runtime code:  22025 bytes
-  OWNER slot:    0x9c56a29c7231974c269e24f9fb3c29203039089e
-  WETH slot:     0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
-  PM slot:       0x000000000004444c5dc75cb358380d2e3de08a90
+  Code + CBOR:  16476 bytes
+  Immutables:   288 bytes
+  Total:        16764 bytes
+  OWNER slot:   0x9c56a29c7231974c269e24f9fb3c29203039089e
+  ...
 ```
 
 If `OWNER slot` shows anything other than `0x9c56a29c...`, the bot will fail with `!OWNER` on every simulated path.

@@ -918,7 +918,7 @@ The new `tstore_executor.vy` contract has full V2/V3 callback support, but deplo
 
 ### How it works
 
-1. **Runtime bytecode with immutables baked in**: Vyper immutables (OWNER_ADDR, WETH_ADDR) are embedded in the runtime code at construction time, not in storage. The patched runtime bytecode in `contracts/tstore_executor_runtime_bytecode.txt` has both addresses already set. Note: the committed bytecode uses a randomly generated throwaway OWNER_ADDR (`0x9C56a29c...`) to avoid leaking operational addresses — override `EXECUTOR_OWNER_ADDRESS` at runtime with the real key.
+1. **Runtime bytecode with immutables baked in**: Vyper immutables (9 slots: OWNER, WETH, PM, USER0, USER1, plus 4 delta slots) are appended after the CBOR metadata in the deployed bytecode layout `[code][CBOR][immutables]`. The CBOR must NOT be stripped — it contains the function dispatch jump table and JUMPDEST targets. The patched runtime bytecode in `contracts/cmd_executor_runtime_bytecode.txt` has all addresses already set.
 
 2. **Code injection at a fresh address**: `stateOverrides.{address}.code = <runtime_bytecode>` injects the contract at `INJECTED_EXECUTOR_ADDRESS` (default `0xBadb1053...`). The address has no on-chain code, so this is completely safe.
 

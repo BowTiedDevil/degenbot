@@ -550,7 +550,7 @@ Gross profit = WETH balance after − WETH balance before.
 
 ### 11.4 Code Injection
 
-When `INJECT_EXECUTOR_CODE=True`, the bot loads the executor's runtime bytecode from `contracts/tstore_executor_runtime_bytecode.txt` and injects it at a fresh address via `stateOverrides.code`. This enables simulation of undeployed contracts without mainnet deployment. The Vyper immutables (`OWNER_ADDR`, `WETH_ADDR`) are embedded in the code section — no storage slot overrides needed.
+When `INJECT_EXECUTOR_CODE=True`, the bot loads the executor's runtime bytecode from `contracts/cmd_executor_runtime_bytecode.txt` and injects it at a fresh address via `stateOverrides.code`. This enables simulation of undeployed contracts without mainnet deployment. The Vyper immutables (9 slots: OWNER, WETH, PM, USER0, USER1, plus 4 precomputed delta slots) are appended after the CBOR metadata in the deployed bytecode layout `[code][CBOR][immutables]`. The CBOR must remain intact — it contains the function dispatch jump table and JUMPDEST targets used by the code section.
 
 ---
 

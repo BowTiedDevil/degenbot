@@ -9,7 +9,7 @@ contracts/
 ├── README.md                            ← you are here
 ├── cmd_executor_bytecode.txt            ← Init bytecode (for deployment)
 ├── cmd_executor_init_bytecode.txt       ← Init bytecode (pre-constructor-args)
-├── cmd_executor_runtime_bytecode.txt    ← Runtime bytecode + immutables (for code injection)
+├── cmd_executor_runtime_bytecode.txt    ← Runtime bytecode + CBOR + immutables (for code injection)
 ├── cmd_executor_abi.json                ← ABI (for web3.py contract objects)
 └── tests/                               ← Ape + Foundry test suite
 ```
@@ -19,38 +19,56 @@ contracts/
 | File | Contents | Use |
 |------|----------|-----|
 | `*_bytecode.txt` | `vyper -f bytecode` output | Deployment (`cast send --create`) |
-| `*_runtime_bytecode.txt` | Runtime bytecode + 32-byte-padded immutables | Code injection (`eth_simulateV1`) |
+| `*_runtime_bytecode.txt` | Runtime bytecode + CBOR + 32-byte-padded immutables | Code injection (`eth_simulateV1`) |
 
-Vyper immutables are loaded via `CODECOPY` from the end of the runtime code. The `*_runtime_bytecode.txt` files have them pre-appended so no storage overrides are needed.
+### Vyper bytecode layout
 
-### cmd_executor immutables (3 × 32 bytes, appended to runtime bytecode)
+Vyper immutables are loaded via `CODECOPY` from fixed offsets in the deployed
+code. The Vyper compiler outputs runtime bytecode as
+`[code_section][CBOR_metadata]`, where the CBOR bytes serve dual purpose:
+compiler identification AND runtime data (function dispatch jump table at
+offset `0x404a`, JUMPDEST target at `0x4046`).
 
-The immutable ordering in the runtime bytecode tail is `POOL_MANAGER_ADDR`, `WETH_ADDR`,
-`OWNER_ADDR` — matching the Vyper declaration order (not constructor parameter order).
+The deployed bytecode appends immutable data **after** the CBOR:
+
+```
+[code_section][CBOR_metadata][immutable_data]
+```
+
+The CODECOPY offset `0x405c` (= code_section + CBOR size) reads the first
+immutable; subsequent offsets read later slots. **The CBOR metadata must NOT
+be stripped** --- removing it breaks the jump table, JUMPDEST targets, and
+CODECOPY offsets.
+
+The `*_runtime_bytecode.txt` files have immutables pre-appended (after the
+CBOR) so no storage overrides are needed.
+
+### cmd_executor immutables (9 × 32 bytes, appended after CBOR metadata)
 
 | Slot | Immutable | Value | Notes |
 |------|-----------|-------|-------|
-| 1 | `OWNER_ADDR` | `0x9C56a29c7231974c269E24F9FB3c29203039089E` | Throwaway — must match `EXECUTOR_OWNER` in the backrun script. `execute()` checks `msg.sender == OWNER_ADDR`, so the simulation's `from` address must equal this |
-| 2 | `WETH_ADDR` | `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` | WETH on mainnet — unlikely to differ across deployments |
-| 3 | `POOL_MANAGER_ADDR` | **MUST match the target chain's PoolManager** | Controls all V4 operations: `V4_UNLOCK`, `V4_SWAP_*`, `V4_TAKE`, `V4_SETTLE_*` all route through this address. If wrong, every V4-hybrid path reverts at ~38K gas with empty revert data |
+| 0 | `OWNER_ADDR` | `0x9C56a29c7231974c269E24F9FB3c29203039089E` | Must match `EXECUTOR_OWNER` in the backrun script. `execute()` checks `msg.sender == OWNER_ADDR`, so the simulation's `from` address must equal this |
+| 1 | `WETH_ADDR` | `0xC02aaA39b223Fe8D0A0e5C4f27eAD9083C756Cc2` | WETH on mainnet |
+| 2 | `POOL_MANAGER_ADDR` | **MUST match the target chain's PoolManager** | Controls all V4 operations. If wrong, V4-hybrid paths revert at ~38K gas |
+| 3 | `USER0_ADDR` | `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48` | USDC on mainnet --- used for V4 delta slot precomputation |
+| 4 | `USER1_ADDR` | `0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599` | WBTC on mainnet --- used for V4 delta slot precomputation |
+| 5 | `WETH_DELTA_SLOT` | `keccak256(self, WETH)` | V4 CurrencyDelta precomputed slot |
+| 6 | `NATIVE_DELTA_SLOT` | `keccak256(self, NATIVE)` | V4 CurrencyDelta precomputed slot |
+| 7 | `USER0_DELTA_SLOT` | `keccak256(self, USER0)` | V4 CurrencyDelta precomputed slot |
+| 8 | `USER1_DELTA_SLOT` | `keccak256(self, USER1)` | V4 CurrencyDelta precomputed slot |
 
 > ⚠️ **Critical**: The `POOL_MANAGER_ADDR` immutable in the runtime bytecode file **must
 > match the PoolManager address on the target chain**. On Ethereum mainnet, this is
-> `0x000000000004444c5dc75cB358380D2e3De08A90`. The original compiled bytecode has this slot as
-> the zero address — it **must** be patched before use. If wrong, all V4-hybrid paths (V4-V4,
-> V4-V3, V3-V4, V4-V2, V2-V4) will
-> revert immediately inside `execute()` with an empty revert at ~38K gas — the `V4_UNLOCK`
-> command calls `extcall IPoolManager(POOL_MANAGER_ADDR).unlock()` against the wrong address.
+> `0x000000000004444c5dc75cB358380D2e3De08A90`. The recompile.py script patches it
+> automatically. If wrong, all V4-hybrid paths will revert immediately inside
+> `execute()` with an empty revert at ~38K gas --- the `V4_UNLOCK` command calls
+> `extcall IPoolManager(POOL_MANAGER_ADDR).unlock()` against the wrong address.
 > V2-only and V3-only paths work regardless because they never touch the PoolManager.
->
-> If you patch the immutables manually, remember that each slot is **left-padded to 32 bytes**
-> (12 zero bytes + 20 address bytes). The PM slot is the first 64 hex characters after the
-> main runtime code. See the "Patching immutables" section below for the exact procedure.
 
 ### Patching immutables
 
 If the runtime bytecode was compiled with wrong immutables (e.g., a throwaway PM address),
-you can patch the 3 × 32-byte tail without recompiling:
+you can patch the 9 × 32-byte tail without recompiling:
 
 ```python
 # Patch POOL_MANAGER_ADDR in the runtime bytecode tail
@@ -60,19 +78,21 @@ pm_padded = "0" * 24 + pm[2:].lower()  # left-pad to 32 bytes
 with open("contracts/cmd_executor_runtime_bytecode.txt") as f:
     code = f.read().strip()[2:]  # strip 0x
 
-# Last 192 hex chars = 3 × 32-byte immutable slots
-# Slot layout: [OWNER:64][WETH:64][PM:64]
-tail = code[-192:]
-new_tail = tail[:128] + pm_padded  # keep slots 1-2, replace slot 3
+# Last 576 hex chars = 9 × 32-byte immutable slots
+# Slot layout: [0:OWNER][1:WETH][2:PM]...[8:USER1_DELTA]
+tail = code[-576:]
+pm_offset = 2 * 64  # slot index 2, each slot is 64 hex chars
+new_tail = tail[:pm_offset] + pm_padded + tail[pm_offset + 64:]
 
 with open("contracts/cmd_executor_runtime_bytecode.txt", "w") as f:
-    f.write("0x" + code[:-192] + new_tail + "\n")
+    f.write("0x" + code[:-576] + new_tail + "\n")
 ```
 
 ### Recompiling
 
 Source lives in `~/code/executor/` (separate project). The `recompile.py` script
-handles the full pipeline: compile, append immutables, patch PM address, and copy:
+handles the full pipeline: compile, append immutables after CBOR metadata, patch
+PM address, and copy:
 
 ```bash
 python3 contracts/recompile.py          # compile + patch mainnet PM
@@ -80,14 +100,16 @@ python3 contracts/recompile.py --no-patch  # compile without PM patch (testnet)
 ```
 
 The script reads `cmd_executor.vy` from `~/code/executor/`, compiles with Vyper,
-appends the 3 × 32-byte immutable slots, patches `POOL_MANAGER_ADDR` to the
-mainnet address, and writes all 3 output files into `contracts/`.
+appends the 9 × 32-byte immutable slots after the CBOR metadata, patches
+`POOL_MANAGER_ADDR` to the mainnet address, and writes all 3 output files into
+`contracts/`. The CBOR metadata is preserved in the compiled output --- it must
+NOT be stripped (see "Vyper bytecode layout" above).
 
 ---
 
 ## cmd_executor — Command-Stream Executor
 
-**Vyper**: 0.5.0a2 | **EVM**: Cancun | **Runtime**: 22,025 bytes
+**Vyper**: 0.5.0a2 | **EVM**: Cancun | **Runtime**: 16,764 bytes (code + CBOR + immutables)
 **Source**: `~/code/executor/contracts/cmd_executor.vy`
 **Tests**: `~/code/executor/tests/` (224 passing, Ape + Foundry)
 

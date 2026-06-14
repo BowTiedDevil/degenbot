@@ -57,6 +57,11 @@ from web3 import AsyncWeb3, Web3
 from web3.exceptions import TransactionNotFound, Web3Exception
 
 from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, get_checksum_address
+from degenbot.arbitrage.cmd_stream import (
+    _mapping_slot,
+    compute_simulation_warmup_slots,
+    pack_expected_balance,
+)
 from degenbot.arbitrage.encoding import fits_int128
 from degenbot.calculations.evm_math import next_base_fee
 from degenbot.constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
@@ -201,7 +206,7 @@ def _parse_permutation_filter(
             raise ValueError(msg)
         parsed.append(parts)
     # All permutations must have the same depth
-    if len(set(len(p) for p in parsed)) != 1:
+    if len({len(p) for p in parsed}) != 1:
         msg = f"All permutations must have the same depth, got: {perms}"
         raise ValueError(msg)
     max_depth = len(parsed[0])
@@ -256,8 +261,19 @@ PATH_SUPPRESS_RETRY_INTERVAL = 100
 # runtime bytecode at a fresh address via stateOverrides.code.
 # This lets us test the new V2/V3/V4-capable executor contract
 # WITHOUT deploying it on mainnet first.
-# The runtime bytecode must have immutables (WETH_ADDR, POOL_MANAGER_ADDR)
-# already baked in — see contracts/cmd_executor_runtime_bytecode.txt.
+# The runtime bytecode must have immutables (WETH_ADDR, POOL_MANAGER_ADDR,
+# USER0_ADDR, USER1_ADDR, plus 4 precomputed delta slots) already baked
+# in — see contracts/cmd_executor_runtime_bytecode.txt.
+#
+# IMPORTANT: the runtime bytecode must have Vyper CBOR metadata
+# intact and immutables appended AFTER it. Vyper's CODECOPY offsets
+# assume the deployed layout [code][CBOR][immutables]; removing
+# the CBOR breaks the jump table, JUMPDEST targets, and immutable
+# reads. The recompile.py script handles this automatically.
+#
+# All override fields (code, balance, nonce, state, stateDiff) are
+# passed under stateOverrides per the Alloy AccountOverride spec.
+# web3.py's simulate_v1 formatter hex-encodes balance/code values.
 #
 # eth_simulateV1 calls within a blockStateCalls group chain their
 # state changes sequentially, so the 3-call pattern (balanceOf before
@@ -369,15 +385,25 @@ def _load_executor_runtime_bytecode() -> str:
 
 
 def build_simulation_state_overrides(
-    executor_address: str,
+    *,
     executor_owner: str,
     inject_code: bool = False,
     injected_address: str | None = None,
 ) -> dict:
     """Build the stateOverrides dict for eth_simulateV1.
 
+    All fields (code, balance, nonce, state, stateDiff) go under
+    stateOverrides per the Alloy AccountOverride spec. Reth v2.3.0
+    applies all of them correctly from stateOverrides in eth_simulateV1.
+
+    IMPORTANT: the runtime bytecode must have Vyper CBOR metadata
+    intact and immutables appended AFTER it. Vyper's CODECOPY offsets
+    assume the deployed layout [code][CBOR][immutables]; removing
+    the CBOR breaks the jump table, JUMPDEST targets, and immutable
+    reads. The recompile.py script handles this automatically.
+
     When inject_code=True:
-      - Injects runtime bytecode at injected_address via stateOverrides.code
+      - Injects runtime bytecode at injected_address via code
       - Pre-warms the executor's ERC6909 and WETH storage slots via
         stateDiff (avoids ~61K gas in cold SSTORE penalties per simulation)
       - Funds the injected executor with ETH and WETH for V3 callbacks
@@ -385,15 +411,7 @@ def build_simulation_state_overrides(
 
     When inject_code=False:
       - Only funds the executor owner with ETH for gas
-
-    The warmup stateDiff pre-populates 3 storage slots that initialize()
-    would normally warm via a 1-wei WETH deposit → PM settlement → ERC6909
-    mint. Since code injection skips initialize(), these slots are cold.
-    Pre-warming via stateDiff saves ~61,000 gas per simulation (≈2.8
-    cold-SSTORE-equivalents) because eth_simulateV1 treats stateDiff
-    entries as already-accessed for EIP-2929 gas accounting.
     """
-    from degenbot.arbitrage.cmd_stream import compute_simulation_warmup_slots
 
     overrides: dict[str, Any] = {}
 
@@ -403,14 +421,16 @@ def build_simulation_state_overrides(
     }
 
     if inject_code and injected_address:
-        # Inject executor runtime bytecode at the fresh address
+        # Inject executor runtime bytecode at the fresh address.
+        # CBOR metadata must remain intact — see IMPORTANT note in the
+        # docstring and contracts/recompile.py.
         runtime_code = _load_executor_runtime_bytecode()
         overrides[Web3.to_checksum_address(injected_address)] = {
             "code": runtime_code,
             # Fund the injected executor with ETH for V4 settlement and
             # V3 callback WETH payments (the deployed contract wraps 10 ETH
             # at construction; code injection skips this, so we must set
-            # the balance explicitly via stateOverrides).
+            # the balance explicitly).
             "balance": 10 * 10**18,
         }
 
@@ -420,9 +440,6 @@ def build_simulation_state_overrides(
         #   1. WETH9.balanceOf[executor] = 1 wei (mapping slot 3)
         #   2. PM.erc6909_balanceOf[executor][weth_id] = 1 (slot 4)
         #   3. PM.erc6909_balanceOf[executor][native_id] = 1 (slot 4)
-        #
-        # We merge these into the overrides, then overwrite the WETH
-        # balance with the operational amount (10 ETH for V3 callbacks).
         warmup = compute_simulation_warmup_slots(
             executor_address=injected_address,
             weth_address=WETH_ADDRESS,
@@ -453,7 +470,6 @@ def build_simulation_state_overrides(
         # Compute the WETH balanceOf slot (same formula as the warmup
         # function uses internally — keccak256(pad(executor, 32) || pad(3, 32)))
         # We overwrite the warmup's 1-wei entry with 10 ETH.
-        from degenbot.arbitrage.cmd_stream import _mapping_slot
 
         WETH_BALANCEOF_MAPPING_SLOT = 3
         weth_balance_slot = _mapping_slot(WETH_BALANCEOF_MAPPING_SLOT, int(injected_address, 16))
@@ -1432,7 +1448,6 @@ async def dispatch_profitable_results(
         # Build transaction: encode execute(commands, expected_balance) call
         # expected_balance=0 (check_mode=0): skip on-chain profit check,
         # operator verifies profitability off-chain via the pre/post balance reads.
-        from degenbot.arbitrage.cmd_stream import pack_expected_balance
 
         expected_balance = pack_expected_balance(check_mode=0, expected_value=0)
         selector = web3.Web3.keccak(text="execute(bytes,uint256)")[:4]
@@ -1465,12 +1480,13 @@ async def dispatch_profitable_results(
 
         # Simulate with 3-call pattern
         state_overrides = build_simulation_state_overrides(
-            executor_address=executor_address,
             executor_owner=EXECUTOR_OWNER,
             inject_code=INJECT_EXECUTOR_CODE,
             injected_address=INJECTED_EXECUTOR_ADDRESS if INJECT_EXECUTOR_CODE else None,
         )
         try:
+            # All override fields (code, balance, nonce, state, stateDiff)
+            # go under stateOverrides per the Alloy AccountOverride spec.
             sim = await async_w3.eth.simulate_v1(
                 payload={
                     "blockStateCalls": [

@@ -10,7 +10,17 @@ Sentinel indices (0xF0-0xFF) resolve to common addresses without
 SET_ADDRESS or TLOAD, saving ~476 gas per use.
 
 Command stream format:
-  [0xFE][SET_ADDRESS commands][BRIBE commands][0xFF][execution commands]
+  [SET_ADDRESS commands][BRIBE commands][0xFF][execution commands]
+
+The contract's _preprocess function reads opcodes from offset 0.
+Preprocessing opcodes: 0x00 (SET_ADDRESS), 0x02/0x03 (BRIBE).
+0xFF marks the end of preprocessing / start of execution.
+The stream does NOT start with 0xFE — the contract no longer
+consumes a 0xFE prefix.
+
+Profit check is controlled by the expected_balance parameter on
+execute() — expected_balance=0 skips the check. The old 0x01
+(SKIP_PROFIT_CHECK) opcode is no longer recognized by the contract.
 
 See contracts/cmd_executor.vy for the full command set and encoding.
 """
@@ -42,7 +52,7 @@ ZERO_ADDRESS: ChecksumAddress = to_checksum_address("0x0000000000000000000000000
 
 # Control / Preprocessing: 0x00-0x0F
 CMD_SET_ADDRESS = b"\x00"
-CMD_SKIP_PROFIT_CHECK = b"\x01"
+CMD_SKIP_PROFIT_CHECK = b"\x01"  # Deprecated — contract no longer handles 0x01 in preprocessing
 CMD_BRIBE_COINBASE = b"\x02"
 CMD_BRIBE_ADDRESS = b"\x03"
 
@@ -84,7 +94,7 @@ CMD_V4_MINT_COMPACT = b"\x58"
 CMD_V4_BURN_COMPACT = b"\x59"
 
 # Stream separators
-BEGIN_PREPROCESSING = b"\xfe"
+BEGIN_PREPROCESSING = b"\xfe"  # Deprecated — contract no longer reads 0xFE prefix
 BEGIN_EXECUTION = b"\xff"
 
 
@@ -225,12 +235,15 @@ def enc_set_addresses(address_table: AddressTable) -> bytes:
 
 
 def enc_skip_profit_check() -> bytes:
-    """SKIP_PROFIT_CHECK: [0x01] — 1 byte.
+    """SKIP_PROFIT_CHECK: [0x01] — deprecated, emits empty bytes.
 
-    Prefer using expected_balance parameter on execute() instead.
-    This command is kept for backwards compatibility.
+    The contract no longer handles opcode 0x01 in preprocessing.
+    Profit check is controlled by the expected_balance parameter on
+    execute() — passing expected_balance=0 skips the check.
+    This function is kept as a no-op for backwards compatibility with
+    callers that unconditionally include it.
     """
-    return CMD_SKIP_PROFIT_CHECK
+    return b""
 
 
 def enc_bribe_coinbase(bips: int) -> bytes:
@@ -263,22 +276,32 @@ def enc_preamble(
 ) -> bytes:
     """Encode the full preprocessing section + separator.
 
-    Builds: [0xFE][SET_ADDRESS commands][BRIBE commands][SKIP_PROFIT_CHECK][0xFF]
+    Builds: [SET_ADDRESS commands][BRIBE commands][0xFF]
+
+    The stream starts directly with SET_ADDRESS commands — no 0xFE prefix.
+    The contract's _preprocess function reads opcodes from offset 0 and
+    processes 0x00 (SET_ADDRESS), 0x02/0x03 (BRIBE), 0xFF (BEGIN_EXECUTION).
+    Any unrecognized opcode (including the old 0xFE prefix and 0x01
+    skip-profit-check) causes _preprocess to break, then execution
+    dispatches that opcode as an invalid command → revert.
+
+    Profit check is controlled by the expected_balance parameter on
+    execute() — passing expected_balance=0 skips the check. The old
+    0x01 (SKIP_PROFIT_CHECK) opcode is no longer recognized.
 
     Args:
         address_table: Address table with sentinel support.
-        skip_profit: If True, add SKIP_PROFIT_CHECK (use 0 expected_balance instead).
+        skip_profit: Deprecated — profit check is now controlled by
+            expected_balance parameter on execute(). Kept for API compat.
         bribe_bips: Profit fraction (in bips, 10000=100%) to send as bribe.
         bribe_address_idx: If set, bribe to this address index instead of coinbase.
     """
-    preamble = BEGIN_PREPROCESSING + enc_set_addresses(address_table)
+    preamble = enc_set_addresses(address_table)
     if bribe_bips > 0:
         if bribe_address_idx is not None:
             preamble += enc_bribe_address(bribe_address_idx, bribe_bips)
         else:
             preamble += enc_bribe_coinbase(bribe_bips)
-    if skip_profit:
-        preamble += enc_skip_profit_check()
     preamble += BEGIN_EXECUTION
     return preamble
 
