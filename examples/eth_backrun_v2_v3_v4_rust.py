@@ -4,10 +4,12 @@ A thin Python orchestration layer over the Rust-owned UniswapArbEngine.
 The Rust engine owns all pool state and path solving. Python does: pool
 construction, swap encoding, simulation, and transaction submission.
 
-The executor contract (tstore_executor.vy) uses a generic payload queue with
-transient storage. Payloads are delivered sequentially; callbacks resume
-queue delivery, enabling nested callback chains. V4 swaps execute via extcall
-inside unlockCallback and auto-settle based on BalanceDelta return values.
+The executor contract (cmd_executor.vy) uses a compact command-stream
+format with 1-byte opcodes and tightly-packed parameters. Address indices
+reference a shared address table with sentinel support for common addresses
+(WETH, PoolManager, executor, USDC, WBTC). V4 swaps execute inside a
+single unlock context with automatic delta settlement. Profit is verified
+via the expected_balance parameter (packed: value<<8 | check_mode).
 
 The contract asserts combined WETH + ETH balance does not decrease (profit =
 increase). No WETH prefunding is required — the first pool's callback is the
@@ -108,10 +110,9 @@ ETH_MAINNET_ALLOWED_TOKENS: set[str] = {
     "0xc00e94Cb662C3520282E6f5717214004A7f26888",  # COMP
     "0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e",  # YFI
     "0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0",  # MATIC/POL
-    "0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32",  # LDO
 }
 
-MIN_PROFIT_NET = 5 * 10**9  # 5 gwei
+MIN_PROFIT_NET = 1  # 5 * 10**9  # 5 gwei
 FEE_HISTORY_WINDOW = 10
 FEE_PERCENTILES = (10, 50)
 TARGET_PROFIT_RATIO = 1.25
@@ -155,6 +156,7 @@ PATH_PERMUTATION_FILTER: set[str] | None = None  # e.g. {"V3-V4-V3"}
 #   - HEX: origin fee on transfer — exclude
 ALLOWED_INTERMEDIATE_TOKENS: set[str] | None = ETH_MAINNET_ALLOWED_TOKENS
 
+
 # Mapping from short version tag to the DB table base class(es) that
 # represent that pool family.
 def _concrete_pool_types(base_type: type) -> list[type]:
@@ -180,7 +182,7 @@ _POOL_VERSION_MAP: dict[str, list[type]] = {
 def _parse_permutation_filter(
     perms: set[str] | None,
 ) -> list[set[type] | None] | None:
-    """Convert a set of permutation strings like {\"V3-V4-V3\"} into a
+    """Convert a set of permutation strings like {'V3-V4-V3'} into a
     pool_type_per_depth list suitable for find_paths_async.
 
     Returns None if perms is None/empty (no filter).
@@ -208,10 +210,10 @@ def _parse_permutation_filter(
     for depth in range(max_depth):
         allowed_this_depth: set[type] = set()
         for perm_parts in parsed:
-            for base_type in _POOL_VERSION_MAP[perm_parts[depth]]:
-                allowed_this_depth.add(base_type)
-        result.append(allowed_this_depth if allowed_this_depth else None)
+            allowed_this_depth.update(_POOL_VERSION_MAP[perm_parts[depth]])
+        result.append(allowed_this_depth or None)
     return result
+
 
 def _pool_types_from_filter(perms: set[str] | None) -> list[type]:
     """Derive the pool_types list from the permutation filter.
@@ -305,13 +307,14 @@ EXECUTOR_OWNER = os.environ.get(
     "0x9C56a29c7231974c269E24F9FB3c29203039089E",  # Throwaway — override with real key at runtime
 )
 EXECUTOR_ABI = [
-    # execute(commands) — cmd_executor
+    # execute(commands, expected_balance) — cmd_executor
     {
         "stateMutability": "payable",
         "type": "function",
         "name": "execute",
         "inputs": [
             {"name": "commands", "type": "bytes"},
+            {"name": "expected_balance", "type": "uint256"},
         ],
         "outputs": [
             {"name": "", "type": "uint256"},
@@ -375,15 +378,23 @@ def build_simulation_state_overrides(
 
     When inject_code=True:
       - Injects runtime bytecode at injected_address via stateOverrides.code
+      - Pre-warms the executor's ERC6909 and WETH storage slots via
+        stateDiff (avoids ~61K gas in cold SSTORE penalties per simulation)
+      - Funds the injected executor with ETH and WETH for V3 callbacks
       - Funds the executor owner with ETH for gas
 
     When inject_code=False:
       - Only funds the executor owner with ETH for gas
 
-    Note: No WETH storage override is needed. eth_simulateV1 chains calls
-    sequentially within a blockStateCalls group, so the 3-call balanceOf
-    pattern correctly captures WETH balance changes from execute(commands).
+    The warmup stateDiff pre-populates 3 storage slots that initialize()
+    would normally warm via a 1-wei WETH deposit → PM settlement → ERC6909
+    mint. Since code injection skips initialize(), these slots are cold.
+    Pre-warming via stateDiff saves ~61,000 gas per simulation (≈2.8
+    cold-SSTORE-equivalents) because eth_simulateV1 treats stateDiff
+    entries as already-accessed for EIP-2929 gas accounting.
     """
+    from degenbot.arbitrage.cmd_stream import compute_simulation_warmup_slots
+
     overrides: dict[str, Any] = {}
 
     # Fund executor owner with ETH for gas
@@ -403,16 +414,51 @@ def build_simulation_state_overrides(
             "balance": 10 * 10**18,
         }
 
-        # Set WETH balance for the injected executor so V3 callbacks can
-        # pay the first V3 pool. WETH uses slot 3 for the balances mapping.
-        # Storage key = keccak256(pad(executor_address, 32) || pad(3, 32))
-        weth_balance_slot = Web3.keccak(
-            bytes.fromhex(injected_address[2:].lower().rjust(64, "0") + f"{3:x}".rjust(64, "0"))
-        ).hex()
-        if Web3.to_checksum_address(WETH_ADDRESS) not in overrides:
-            overrides[Web3.to_checksum_address(WETH_ADDRESS)] = {}
-        overrides[Web3.to_checksum_address(WETH_ADDRESS)].setdefault("stateDiff", {})[
-            f"0x{weth_balance_slot}"
+        # Pre-warm ERC6909 and WETH storage slots to avoid cold SSTORE
+        # penalties. compute_simulation_warmup_slots() returns stateDiff
+        # entries for 3 slots:
+        #   1. WETH9.balanceOf[executor] = 1 wei (mapping slot 3)
+        #   2. PM.erc6909_balanceOf[executor][weth_id] = 1 (slot 4)
+        #   3. PM.erc6909_balanceOf[executor][native_id] = 1 (slot 4)
+        #
+        # We merge these into the overrides, then overwrite the WETH
+        # balance with the operational amount (10 ETH for V3 callbacks).
+        warmup = compute_simulation_warmup_slots(
+            executor_address=injected_address,
+            weth_address=WETH_ADDRESS,
+            pool_manager_address=UNISWAP_V4_POOL_MANAGER_ADDRESS,
+        )
+
+        for contract_addr, contract_overrides in warmup.items():
+            addr = Web3.to_checksum_address(contract_addr)
+            if addr not in overrides:
+                overrides[addr] = {}
+            for key, value in contract_overrides.items():
+                if key == "stateDiff":
+                    overrides[addr].setdefault("stateDiff", {})
+                    overrides[addr]["stateDiff"].update(value)
+                elif key == "balance":
+                    # Don't let the warmup's 1 wei balance override the
+                    # 10 ETH we already set for the executor or owner
+                    if "balance" not in overrides[addr]:
+                        overrides[addr][key] = value
+                else:
+                    overrides[addr][key] = value
+
+        # Override the WETH balance with the operational amount (10 ETH)
+        # for V3 callbacks. The warmup function set it to 1 wei for
+        # slot-warming purposes; we need a much larger balance.
+        overrides[Web3.to_checksum_address(WETH_ADDRESS)].setdefault("stateDiff", {})
+
+        # Compute the WETH balanceOf slot (same formula as the warmup
+        # function uses internally — keccak256(pad(executor, 32) || pad(3, 32)))
+        # We overwrite the warmup's 1-wei entry with 10 ETH.
+        from degenbot.arbitrage.cmd_stream import _mapping_slot
+
+        WETH_BALANCEOF_MAPPING_SLOT = 3
+        weth_balance_slot = _mapping_slot(WETH_BALANCEOF_MAPPING_SLOT, int(injected_address, 16))
+        overrides[Web3.to_checksum_address(WETH_ADDRESS)]["stateDiff"][
+            f"0x{weth_balance_slot:064x}"
         ] = "0x" + (10 * 10**18).to_bytes(32, "big").hex()
 
     return overrides
@@ -790,11 +836,13 @@ async def build_paths(
     start = time.perf_counter()
 
     bot_logger.info("[build_paths] Calling find_paths_async...")
-    _pool_type_per_depth = _parse_permutation_filter(PATH_PERMUTATION_FILTER)
-    _pool_types = _pool_types_from_filter(PATH_PERMUTATION_FILTER)
-    if _pool_type_per_depth is not None:
-        bot_logger.info(f"[build_paths] Permutation filter active: {PATH_PERMUTATION_FILTER} → depths={_pool_type_per_depth}")
-    bot_logger.info(f"[build_paths] Pool types: {[t.__name__ for t in _pool_types]}")
+    pool_type_per_depth = _parse_permutation_filter(PATH_PERMUTATION_FILTER)
+    pool_types = _pool_types_from_filter(PATH_PERMUTATION_FILTER)
+    if pool_type_per_depth is not None:
+        bot_logger.info(
+            f"[build_paths] Permutation filter active: {PATH_PERMUTATION_FILTER} → depths={pool_type_per_depth}"
+        )
+    bot_logger.info(f"[build_paths] Pool types: {[t.__name__ for t in pool_types]}")
     async for path_steps in find_paths_async(  # noqa:PLR1702
         chain_id=bot.connections.default_chain_id,
         start_tokens=[
@@ -806,9 +854,9 @@ async def build_paths(
             NATIVE_CURRENCY_ADDRESS,  # V4 allows Ether-paired pools
         ],
         max_depth=3,
-        pool_types=_pool_types,
+        pool_types=pool_types,
         db=bot.db,
-        pool_type_per_depth=_pool_type_per_depth,
+        pool_type_per_depth=pool_type_per_depth,
         allowed_intermediate_tokens=ALLOWED_INTERMEDIATE_TOKENS,
     ):
         await asyncio.sleep(0)
@@ -1381,11 +1429,16 @@ async def dispatch_profitable_results(
                     f"cmd_len={len(cmd_bytes)}"
                 )
 
-        # Build transaction: encode execute(commands) call
-        selector = web3.Web3.keccak(text="execute(bytes)")[:4]
+        # Build transaction: encode execute(commands, expected_balance) call
+        # expected_balance=0 (check_mode=0): skip on-chain profit check,
+        # operator verifies profitability off-chain via the pre/post balance reads.
+        from degenbot.arbitrage.cmd_stream import pack_expected_balance
+
+        expected_balance = pack_expected_balance(check_mode=0, expected_value=0)
+        selector = web3.Web3.keccak(text="execute(bytes,uint256)")[:4]
         calldata = selector + eth_abi.abi.encode(
-            types=["bytes"],
-            args=[cmd_bytes],
+            types=["bytes", "uint256"],
+            args=[cmd_bytes, expected_balance],
         )
         tx_params = {
             "from": Web3.to_checksum_address(EXECUTOR_OWNER),
@@ -1587,9 +1640,7 @@ async def dispatch_profitable_results(
             eth_after = int.from_bytes(calls[5]["returnData"], byteorder="big")
             erc6909_after = int.from_bytes(calls[6]["returnData"], byteorder="big")
         except (IndexError, ValueError):
-            _sim_log(
-                f"[sim-fail] path={path_id} {path_info.path_type}: balance decode failed"
-            )
+            _sim_log(f"[sim-fail] path={path_id} {path_info.path_type}: balance decode failed")
             return None
 
         combined_before = weth_before + eth_before + erc6909_before
@@ -1672,12 +1723,16 @@ async def dispatch_profitable_results(
                 _exc_log_limit -= 1
                 bot_logger.info(
                     f"[sim-exc] simulation exception: {result}\n"
-                    + "".join(traceback.format_exception(type(result), result, result.__traceback__))
+                    + "".join(
+                        traceback.format_exception(type(result), result, result.__traceback__)
+                    )
                 )
             else:
                 bot_logger.debug(
                     f"[sim-fail] simulation exception: {result}\n"
-                    + "".join(traceback.format_exception(type(result), result, result.__traceback__))
+                    + "".join(
+                        traceback.format_exception(type(result), result, result.__traceback__)
+                    )
                 )
             continue
         if result is None:
