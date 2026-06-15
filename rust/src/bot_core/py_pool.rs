@@ -21,7 +21,7 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 ///
 /// Does not own any state — all data lives in Rust inside `BotCore`.
 /// Property reads cross `PyO3` on every access.
-#[pyclass(name = "Pool")]
+#[pyclass(name = "Pool", skip_from_py_object)]
 pub struct PyPool {
     core: Arc<parking_lot::Mutex<BotCore>>,
     pool_id: u64,

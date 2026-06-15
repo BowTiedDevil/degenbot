@@ -28,7 +28,7 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 ///
 /// Python constructs `BotCore`, registers pools/tokens, then reads results.
 /// All state lives in Rust; Python holds a thin handle.
-#[pyclass(name = "BotCore")]
+#[pyclass(name = "BotCore", skip_from_py_object)]
 pub struct PyBotCore {
     core: Arc<parking_lot::Mutex<BotCore>>,
 }

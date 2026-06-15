@@ -179,7 +179,7 @@ impl PyV3TickRangeHop {
 }
 
 /// Python wrapper for V3TickRangeSequence.
-#[pyclass(name = "RustV3TickRangeSequence")]
+#[pyclass(name = "RustV3TickRangeSequence", skip_from_py_object)]
 pub struct PyV3TickRangeSequence {
     pub inner: V3TickRangeSequence,
 }
@@ -239,7 +239,7 @@ impl PyV3TickRangeSequence {
 }
 
 /// Python wrapper for TickRangeCrossing.
-#[pyclass(name = "RustTickRangeCrossing")]
+#[pyclass(name = "RustTickRangeCrossing", skip_from_py_object)]
 pub struct PyTickRangeCrossing {
     pub inner: TickRangeCrossing,
 }
@@ -302,7 +302,7 @@ enum SolveMethod {
 }
 
 /// Result from the unified arb solver.
-#[pyclass(name = "RustArbResult")]
+#[pyclass(name = "RustArbResult", skip_from_py_object)]
 pub struct PyArbResult {
     pub optimal_input: f64,
     pub profit: f64,
@@ -495,7 +495,7 @@ fn solve_mobius(
 /// Accepts mixed hop types and automatically selects the best solver.
 /// Returns `supported=False` for hop types not handled by Rust
 /// (Solidly, Balancer, Curve), so Python can fall back.
-#[pyclass(name = "RustArbSolver")]
+#[pyclass(name = "RustArbSolver", skip_from_py_object)]
 pub struct PyArbSolver;
 
 #[pymethods]
@@ -891,7 +891,7 @@ fn u256_to_py_fast(py: Python<'_>, val: U256) -> PyResult<Bound<'_, PyAny>> {
 /// free-threaded Python builds: the lock is uncontended in normal use
 /// (GIL-enabled: only one thread runs Python code at a time), and the
 /// solve path calls no Python code while holding the lock.
-#[pyclass(name = "RustPoolCache")]
+#[pyclass(name = "RustPoolCache", skip_from_py_object)]
 pub struct PyPoolCache {
     pools: Mutex<LruCache<u64, IntHopState>>,
     /// Pre-registered paths: path_id → resolved (HopState, IntHopState) pairs.
@@ -1588,7 +1588,7 @@ impl PyIntHopState {
 }
 
 /// Result from integer Möbius solver (EVM-exact).
-#[pyclass(name = "RustIntMobiusResult")]
+#[pyclass(name = "RustIntMobiusResult", skip_from_py_object)]
 pub struct PyIntMobiusResult {
     pub optimal_input: U256,
     pub profit: U256,

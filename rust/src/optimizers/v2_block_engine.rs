@@ -355,7 +355,7 @@ impl Default for V2BlockEngine {
 /// Python constructs the engine (registers pools and paths), then starts
 /// a Rust-side pump that drives the full per-block lifecycle. Python reads
 /// results via `latest_results()`.
-#[pyclass(name = "V2ArbEngine")]
+#[pyclass(name = "V2ArbEngine", skip_from_py_object)]
 pub struct PyV2ArbEngine {
     /// Shared engine state — Arc allows the pump to hold a reference too
     engine: Arc<parking_lot::Mutex<V2BlockEngine>>,

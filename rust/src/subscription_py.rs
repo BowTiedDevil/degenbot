@@ -39,7 +39,7 @@ use std::sync::Arc;
 /// ```python
 /// await subscription.started()  # Raises on failure
 /// ```
-#[pyclass(name = "AlloySubscription")]
+#[pyclass(name = "AlloySubscription", skip_from_py_object)]
 pub struct PyAlloySubscription {
     /// The shared subscription handle.
     handle: Arc<SubscriptionHandle>,

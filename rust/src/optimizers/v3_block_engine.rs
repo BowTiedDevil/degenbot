@@ -2048,7 +2048,7 @@ use std::sync::Arc;
 /// Python constructs the engine (registers pools and paths), then starts
 /// a Rust-side pump that drives the full per-block lifecycle. Python reads
 /// results via `latest_results()`.
-#[pyclass(name = "V3ArbEngine")]
+#[pyclass(name = "V3ArbEngine", skip_from_py_object)]
 pub struct PyV3ArbEngine {
     /// Shared engine state — Arc allows the pump to hold a reference too
     engine: Arc<parking_lot::Mutex<V3BlockEngine>>,
