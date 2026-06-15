@@ -4,6 +4,14 @@
 # Usage: ./logs/test_permutation.sh V2-V3-V4 [DURATION_MINUTES]
 #
 # Produces: logs/perm-V2-V3-V4.log
+#
+# Simulation outcomes are classified into three categories:
+#   ok        — simulation completed without revert (subdivided: profitable / below_threshold)
+#   no_profit — simulation completed (no revert), but gross profit ≤ 0
+#   revert    — simulation reverted on-chain (encoding bug or token transfer issue)
+#
+# The simulatability rate = (ok + no_profit) / (ok + no_profit + revert).
+# A "no_profit" path is not broken — the encoding works, the arb just isn't profitable.
 
 set -euo pipefail
 
@@ -20,14 +28,11 @@ if [[ ! "$PERM" =~ ^V[234]-V[234]-V[234]$ ]]; then
 fi
 
 # Kill any existing run for this permutation.
-# Use pkill -f to kill both the uv wrapper and the child Python process
-# (kill on the wrapper PID alone leaves the child orphaned).
 EXISTING=$(pgrep -f "eth_backrun_v2_v3_v4_rust.py --permutation $PERM" 2>/dev/null || true)
 if [[ -n "$EXISTING" ]]; then
     echo "Killing existing process(es) for $PERM: $EXISTING"
     pkill -f "eth_backrun_v2_v3_v4_rust.py --permutation $PERM" 2>/dev/null || true
     sleep 3
-    # Force-kill any survivors
     pkill -9 -f "eth_backrun_v2_v3_v4_rust.py --permutation $PERM" 2>/dev/null || true
 fi
 
@@ -46,53 +51,64 @@ nohup uv run python examples/eth_backrun_v2_v3_v4_rust.py \
 echo "Waiting ${DURATION_MINUTES} minutes..."
 sleep "$DURATION_SECONDS"
 
-# Stop the bot — pkill -f catches both uv wrapper and Python child
+# Stop the bot
 echo "Stopping bot for $PERM..."
 pkill -f "eth_backrun_v2_v3_v4_rust.py --permutation $PERM" 2>/dev/null || true
 sleep 3
 pkill -9 -f "eth_backrun_v2_v3_v4_rust.py --permutation $PERM" 2>/dev/null || true
 
-# Analyze results
+# ── Analyze results ──────────────────────────────────────────
 ANALYSIS=$(cd /home/ralph/code/degenbot && uv run python3 -c "
 import re, sys
 log = open('$LOGFILE').read()
+
+# [sim] summary: 'N ok (X profitable, Y below threshold), M failed, Z exceptions'
 ok_total = sum(int(m.group(1)) for m in re.finditer(r'(\d+) ok \(', log))
-fail_total = sum(int(m.group(1)) for m in re.finditer(r'(\d+) failed', log))
-total = ok_total + fail_total
+
+# sim-fail lines split into: no_profit vs revert
+no_profit = log.count('no profit')
+revert_total = log.count('revert=')
+
+total = ok_total + no_profit + revert_total
+
 if total == 0:
-    # No simulation results — solver never found a profitable candidate
-    cls = 'NO_OPPORTUNITY'
-    pct = -1
+    print(f'0\t0\t0\t0\t—\tNO_OPPORTUNITY')
 else:
-    pct = ok_total * 100 // total
+    sim_ok = ok_total + no_profit  # encoding works (just may be unprofitable)
+    pct = sim_ok * 100 // total
     if pct >= 80: cls = 'PASS'
     elif pct >= 20: cls = 'PARTIAL'
     else: cls = 'BROKEN'
-print(f'{total}\t{ok_total}\t{fail_total}\t{pct}\t{cls}')
+    print(f'{total}\t{ok_total}\t{no_profit}\t{revert_total}\t{pct}%\t{cls}')
 ")
 TOTAL=$(echo "$ANALYSIS" | cut -f1)
 OK_TOTAL=$(echo "$ANALYSIS" | cut -f2)
-FAIL_TOTAL=$(echo "$ANALYSIS" | cut -f3)
-PERCENT=$(echo "$ANALYSIS" | cut -f4)
-CLASS=$(echo "$ANALYSIS" | cut -f5)
+NO_PROFIT=$(echo "$ANALYSIS" | cut -f3)
+REVERT_TOTAL=$(echo "$ANALYSIS" | cut -f4)
+PERCENT=$(echo "$ANALYSIS" | cut -f5)
+CLASS=$(echo "$ANALYSIS" | cut -f6)
 
-echo "  Candidates: $TOTAL"
-echo "  Simulatable: $OK_TOTAL"
-echo "  Failed:      $FAIL_TOTAL"
+echo "  Total candidates: $TOTAL"
+echo "  Sim-OK (profitable + below-threshold): $OK_TOTAL"
+echo "  No-profit (encoding works, arb not profitable): $NO_PROFIT"
+echo "  Reverts (encoding/state error):          $REVERT_TOTAL"
 if [[ "$CLASS" == "NO_OPPORTUNITY" ]]; then
-    echo "  Rate:        —"
-    echo "  Class:       ⬜ No Opportunity"
+    echo "  Simulatability: —"
+    echo "  Class:          ⬜ No Opportunity"
 else
-    echo "  Rate:        ${PERCENT}%"
-    if [[ "$CLASS" == "PASS" ]]; then echo "  Class:       ✅ Passing"; elif [[ "$CLASS" == "PARTIAL" ]]; then echo "  Class:       ⚠️ Partial"; else echo "  Class:       ❌ Broken"; fi
+    echo "  Simulatability: ${PERCENT}"
+    if [[ "$CLASS" == "PASS" ]]; then echo "  Class:          ✅ Passing"
+    elif [[ "$CLASS" == "PARTIAL" ]]; then echo "  Class:          ⚠️ Partial"
+    else echo "  Class:          ❌ Broken"; fi
 fi
 
-# Extract top failure modes from [sim-fail] lines
-if [[ "$CLASS" != "NO_OPPORTUNITY" ]]; then
+# Extract top revert reasons (with decoded error names)
+if [[ "$REVERT_TOTAL" -gt 0 ]]; then
     echo ""
-    echo "=== Top failure modes ==="
-    grep '\[sim-fail\]' "$LOGFILE" 2>/dev/null | \
-        sed -E 's/.*revert=0x[0-9a-f]*( sel=0x[0-9a-f]+| [A-Z].*)?/\1/' | \
+    echo "=== Top revert reasons ==="
+    grep '\[sim-fail\]' "$LOGFILE" 2>/dev/null | grep 'revert=' | \
+        sed -E 's/.*revert=0x[0-9a-f]*/revert=0x/' | \
+        sed -E 's/.*(InsufficientProfit|InsufficientBalance|InvalidCallback|Unauthorized|InvalidCommand|BipsTooHigh|InvalidMsgValue|NotPlainEthTransfer|CurrencyNotSettled|PoolNotInitialized|IIA|!OWNER).*/\1/' | \
         sort | uniq -c | sort -rn | head -10
 fi
 

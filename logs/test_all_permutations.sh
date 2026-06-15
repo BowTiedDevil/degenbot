@@ -5,6 +5,14 @@
 # PARALLEL env var). Each permutation runs for 10 minutes (configurable
 # via TEST_DURATION env var). Results are saved to logs/permutation_results.tsv
 #
+# Simulation outcomes are classified into three categories:
+#   ok        — simulation completed without revert (subdivided: profitable / below_threshold)
+#   no_profit — simulation completed (no revert), but gross profit ≤ 0
+#   revert    — simulation reverted on-chain (encoding bug or token transfer issue)
+#
+# The simulatability rate = (ok + no_profit) / (ok + no_profit + revert).
+# A "no_profit" path is not broken — the encoding works, the arb just isn't profitable.
+#
 # Usage: ./logs/test_all_permutations.sh [START_INDEX]
 #
 # START_INDEX: 1-27, to resume from a specific permutation (default: 1)
@@ -54,7 +62,7 @@ START_INDEX="${1:-1}"
 
 # Ensure TSV exists with header before launching parallel workers
 if [[ ! -f "$RESULTS_FILE" ]] || [[ ! -s "$RESULTS_FILE" ]]; then
-    echo -e "#\tPermutation\tCandidates\tSimulatable\tFailed\tRate\tClassification" > "$RESULTS_FILE"
+    echo -e "#\tPermutation\tCandidates\tSimOK\tNoProfit\tReverts\tSimRate\tClassification" > "$RESULTS_FILE"
     echo "Created results file: $RESULTS_FILE"
 fi
 
@@ -72,7 +80,6 @@ run_permutation() {
     echo "=== [$i/27] Starting $PERM ==="
 
     # Kill any existing run for this permutation.
-    # Use pkill -f to kill both the uv wrapper and the child Python process.
     EXISTING=$(pgrep -f "eth_backrun_v2_v3_v4_rust.py --permutation $PERM" 2>/dev/null || true)
     if [[ -n "$EXISTING" ]]; then
         echo "Killing existing process(es) for $PERM: $EXISTING"
@@ -90,44 +97,52 @@ run_permutation() {
     # Wait for duration
     sleep "$((DURATION_MINUTES * 60))"
 
-    # Stop the bot — pkill -f catches both uv wrapper and Python child
+    # Stop the bot
     echo "=== [$i/27] Stopping bot for $PERM ==="
     pkill -f "eth_backrun_v2_v3_v4_rust.py --permutation $PERM" 2>/dev/null || true
     sleep 3
     pkill -9 -f "eth_backrun_v2_v3_v4_rust.py --permutation $PERM" 2>/dev/null || true
 
-    # Analyze results
+    # ── Analyze results (three-category split) ──
     ANALYSIS=$(cd /home/ralph/code/degenbot && uv run python3 -c "
 import re, sys
 log = open('$LOGFILE').read()
+
+# [sim] summary: 'N ok (X profitable, Y below threshold), M failed, Z exceptions'
 ok_total = sum(int(m.group(1)) for m in re.finditer(r'(\d+) ok \(', log))
-fail_total = sum(int(m.group(1)) for m in re.finditer(r'(\d+) failed', log))
-total = ok_total + fail_total
+
+# sim-fail lines split into: no_profit vs revert
+no_profit = log.count('no profit')
+revert_total = log.count('revert=')
+
+total = ok_total + no_profit + revert_total
+
 if total == 0:
-    # No simulation results — solver never found a profitable candidate
     cls = '⬜ No Opportunity'
     pct = '—'
 else:
-    pct_val = ok_total * 100 // total
+    sim_ok = ok_total + no_profit
+    pct_val = sim_ok * 100 // total
     if pct_val >= 80: cls = '✅ Passing'
     elif pct_val >= 20: cls = '⚠️ Partial'
     else: cls = '❌ Broken'
     pct = f'{pct_val}%'
-print(f'{total}\t{ok_total}\t{fail_total}\t{pct}\t{cls}')
+print(f'{total}\t{ok_total}\t{no_profit}\t{revert_total}\t{pct}\t{cls}')
 ")
     TOTAL=$(echo "$ANALYSIS" | cut -f1)
     OK_TOTAL=$(echo "$ANALYSIS" | cut -f2)
-    FAIL_TOTAL=$(echo "$ANALYSIS" | cut -f3)
-    PERCENT=$(echo "$ANALYSIS" | cut -f4)
-    CLASS=$(echo "$ANALYSIS" | cut -f5)
+    NO_PROFIT=$(echo "$ANALYSIS" | cut -f3)
+    REVERT_TOTAL=$(echo "$ANALYSIS" | cut -f4)
+    PERCENT=$(echo "$ANALYSIS" | cut -f5)
+    CLASS=$(echo "$ANALYSIS" | cut -f6)
 
-    echo "=== [$i/27] $PERM: $OK_TOTAL/$TOTAL simulatable ($PERCENT) $CLASS ==="
+    echo "=== [$i/27] $PERM: ok=$OK_TOTAL no_profit=$NO_PROFIT reverts=$REVERT_TOTAL simulatable=$PERCENT $CLASS ==="
 
     # Update TSV under lock (prevent parallel workers corrupting the file)
     (
         flock -x 200
         sed -i "/\t${PERM}\t/d" "$RESULTS_FILE"
-        echo -e "$i\t$PERM\t$TOTAL\t$OK_TOTAL\t$FAIL_TOTAL\t$PERCENT\t$CLASS" >> "$RESULTS_FILE"
+        echo -e "$i\t$PERM\t$TOTAL\t$OK_TOTAL\t$NO_PROFIT\t$REVERT_TOTAL\t$PERCENT\t$CLASS" >> "$RESULTS_FILE"
         { head -1 "$RESULTS_FILE"; tail -n +2 "$RESULTS_FILE" | sort -t$'\t' -k1,1n; } > "${RESULTS_FILE}.tmp" && mv "${RESULTS_FILE}.tmp" "$RESULTS_FILE"
     ) 200>"$LOCK_FILE"
 }
