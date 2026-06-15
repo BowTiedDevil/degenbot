@@ -11,7 +11,7 @@ use crate::bot_core::BotCore;
 ///
 /// Does not own any state — all data lives in Rust inside `BotCore`.
 /// Property reads cross `PyO3` on every access.
-#[pyclass(name = "Token")]
+#[pyclass(name = "Token", skip_from_py_object)]
 pub struct PyToken {
     #[allow(dead_code)]
     core: Arc<parking_lot::Mutex<BotCore>>,

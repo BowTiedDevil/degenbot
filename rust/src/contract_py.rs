@@ -11,7 +11,7 @@ use pyo3::types::{PyBool, PyBytes, PyList};
 use std::sync::Arc;
 
 /// Python wrapper for a Contract.
-#[pyclass(name = "Contract")]
+#[pyclass(name = "Contract", skip_from_py_object)]
 pub struct PyContract {
     contract: Contract,
 }

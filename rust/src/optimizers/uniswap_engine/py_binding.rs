@@ -21,7 +21,7 @@ use super::{UniswapEngine, ResultBatch, V3SnapshotData, V4SnapshotData, EnginePh
 ///
 /// Wraps [`UniswapEngine`] with a `parking_lot::Mutex` for safe access
 /// from the Tokio pump task.
-#[pyclass(name = "UniswapArbEngine")]
+#[pyclass(name = "UniswapArbEngine", skip_from_py_object)]
 #[allow(dead_code)]
 pub struct PyUniswapArbEngine {
     /// Shared engine state

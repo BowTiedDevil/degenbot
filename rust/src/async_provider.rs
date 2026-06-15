@@ -27,7 +27,7 @@ use pyo3_async_runtimes::tokio::future_into_py;
 use std::sync::Arc;
 
 /// Python wrapper for async provider operations.
-#[pyclass(name = "AsyncAlloyProvider")]
+#[pyclass(name = "AsyncAlloyProvider", skip_from_py_object)]
 pub struct PyAsyncAlloyProvider {
     provider: Arc<AlloyProvider>,
     max_blocks_per_request: u64,
