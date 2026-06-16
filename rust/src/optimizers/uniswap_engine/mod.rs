@@ -353,8 +353,19 @@ pub struct UniswapEngine {
     pending_new_paths: HashSet<u64>,
     /// Auto-incrementing path ID
     next_path_id: u64,
-    /// The above-threshold results that have been delivered to Python
-    /// via the result channel. Used to compute incremental diffs.
+    /// The above-threshold results that have been **actually delivered to
+    /// Python** via the result channel. Used to compute incremental diffs.
+    ///
+    /// # Invariant
+    ///
+    /// `delivered` is advanced **only** by `compute_diff_and_send`, and only
+    /// after building a `ResultBatch` for the current above-threshold subset
+    /// of `results`. It must stay **empty before the first pump-driven send**
+    /// (e.g. during cold-start / `solve_all_paths`), since Python has not yet
+    /// received anything. Advancing it without a live channel would poison
+    /// `fresh`/`expired` computation for the next real send — see
+    /// `solve_all_paths` (solve-only) and the `ResultBatch` CONTEXT.md note.
+    /// [`deregister_path`] removes entries as paths are de-registered.
     delivered: HashMap<u64, SolvePathResult>,
     /// Path IDs that have been de-registered since the last batch.
     /// Drained into the next batch's `removed` field.

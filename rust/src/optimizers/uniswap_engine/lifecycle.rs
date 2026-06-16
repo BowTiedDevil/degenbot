@@ -1,6 +1,6 @@
 //! Path registration, buffer management, and engine accessors.
 
-use super::{UniswapEngine, MixedPoolRef, MixedPath, ResolvedMixedPath, V2BlockEngine, V3BlockEngine, V4BlockEngine, HashMap, SolvePathResult, BlockMetadata, Address};
+use super::{UniswapEngine, MixedPoolRef, MixedPath, ResolvedMixedPath, V2BlockEngine, V3BlockEngine, V4BlockEngine, HashMap, SolvePathResult, Address};
 
 impl UniswapEngine {
     /// Register a mixed path and return its ID.
@@ -120,11 +120,21 @@ impl UniswapEngine {
         self.last_processed_block = Some(block);
     }
 
-    /// Resolve and solve all registered paths.
+    /// Resolve and solve all registered paths. **Solve-only — does NOT dispatch
+    /// a batch** (matches `solve_dirty`'s contract; dispatch is the pump's job
+    /// via `send_result_batch`, driven by the 50ms debounce timer).
     ///
-    /// Called to populate `results` for the first time (replaces the
-    /// removed `initial_solve`). Subsequent `process_logs` calls use
-    /// dependency tracking to only re-solve affected paths.
+    /// Cold-start / test synchronization entry point (replaces the removed
+    /// `initial_solve`). Populates `self.results` and advances `results_block`;
+    /// leaves `delivered` untouched (Python has not yet received anything —
+    /// `delivered`'s invariant is "what Python has seen via the channel," and
+    /// that stays empty until the pump's first real send). Subsequent
+    /// `process_logs` calls use dependency tracking to only re-solve affected
+    /// paths.
+    ///
+    /// Callers read results via `latest_results()`; none reads a dispatched
+    /// `ResultBatch` from this entry (grep-verified across `tests/`, `examples/`,
+    /// and `src/degenbot/`).
     pub fn solve_all_paths(&mut self, block_number: u64) {
         // Resolve all paths (no clone — path_pools is immutable)
         for (&path_id, path) in &self.path_pools {
@@ -137,16 +147,10 @@ impl UniswapEngine {
         self.results = self.solve_all();
         self.results_block = block_number;
 
-        // Compute incremental diff and send batch.
-        // NOTE: empty metadata — block metadata is not available at initial
-        // solve time. This `solve_all_paths` entry point currently has no
-        // Python callers (grep-verified); the live rolling-start dispatch
-        // flows through the pump's `solve_dirty` + debounce
-        // `send_result_batch(&current_metadata)` (real metadata) instead. If
-        // this method is ever wired up, prefer threading real block metadata
-        // in to avoid an all-zero `ResultBatch` (see `finalize_if_dirty` doc
-        // comment in `uniswap_engine_pump.rs` for the consumer-side impact).
-        self.compute_diff_and_send(&BlockMetadata::default());
+        // Intentionally no compute_diff_and_send here: dispatching would
+        // advance `delivered` (claiming "Python has seen these") before any
+        // channel exists — poisoning the diff for the first real send. The
+        // pump owns dispatch via `send_result_batch`.
     }
 
     /// Number of registered V2 pools.
