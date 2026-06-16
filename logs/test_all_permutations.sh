@@ -17,7 +17,7 @@
 #
 # START_INDEX: 1-27, to resume from a specific permutation (default: 1)
 # PARALLEL:    max concurrent bots (default: 4)
-# TEST_DURATION: minutes per permutation (default: 10)
+# TEST_DURATION: minutes per permutation (default: 15)
 
 set -euo pipefail
 
@@ -25,7 +25,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RESULTS_FILE="${SCRIPT_DIR}/permutation_results.tsv"
 LOCK_FILE="${SCRIPT_DIR}/.results.lock"
 JOBS_DIR="${SCRIPT_DIR}/.jobs"
-DURATION_MINUTES="${TEST_DURATION:-10}"
+DURATION_MINUTES="${TEST_DURATION:-15}"
 PARALLEL="${PARALLEL:-4}"
 
 PERMUTATIONS=(
@@ -62,7 +62,7 @@ START_INDEX="${1:-1}"
 
 # Ensure TSV exists with header before launching parallel workers
 if [[ ! -f "$RESULTS_FILE" ]] || [[ ! -s "$RESULTS_FILE" ]]; then
-    echo -e "#\tPermutation\tCandidates\tSimOK\tNoProfit\tReverts\tSimRate\tClassification" > "$RESULTS_FILE"
+    echo -e "#\tPermutation\tCandidates\tSimOK\tNoProfit\tReverts\tSimRate\tClassification\tIIA_Reverts\tOther_Reverts" > "$RESULTS_FILE"
     echo "Created results file: $RESULTS_FILE"
 fi
 
@@ -103,7 +103,7 @@ run_permutation() {
     sleep 3
     pkill -9 -f "eth_backrun_v2_v3_v4_rust.py --permutation $PERM" 2>/dev/null || true
 
-    # ── Analyze results (three-category split) ──
+    # ── Analyze results (three-category split, with revert decomposition) ──
     ANALYSIS=$(cd /home/ralph/code/degenbot && uv run python3 -c "
 import re, sys
 log = open('$LOGFILE').read()
@@ -111,9 +111,28 @@ log = open('$LOGFILE').read()
 # [sim] summary: 'N ok (X profitable, Y below threshold), M failed, Z exceptions'
 ok_total = sum(int(m.group(1)) for m in re.finditer(r'(\d+) ok \(', log))
 
-# sim-fail lines split into: no_profit vs revert
-no_profit = log.count('no profit')
-revert_total = log.count('revert=')
+# Count reverts from [sim-fail] lines ONLY (not [sim-revert-data] which
+# duplicates the same data with calldata for offline debugging).
+revert_total = len(re.findall(r'\[sim-fail\].*revert=0x', log))
+no_profit = len(re.findall(r'\[sim-fail\].*no profit', log))
+
+# Decompose reverts by the decoded reason.
+# error.data extraction means revert_hex is now populated for all
+# Error(string) reverts. The revert_reason is appended after the hex.
+# Log format: [sim-fail] ... revert=0x08c379a0... IIA ...
+# or: [sim-fail] ... revert=0x4e487b71... PANIC(0x...) ...
+# or: [sim-fail] ... revert=0x5212cba1... CurrencyNotSettled() ...
+
+iia_reverts = len(re.findall(r'\[sim-fail\].*revert=0x.*IIA', log))
+currency_not_settled = len(re.findall(r'\[sim-fail\].*revert=0x.*CurrencyNotSettled', log))
+invalid_command = len(re.findall(r'\[sim-fail\].*revert=0x.*InvalidCommand', log))
+insufficient_balance = len(re.findall(r'\[sim-fail\].*revert=0x.*InsufficientBalance', log))
+insufficient_profit = len(re.findall(r'\[sim-fail\].*revert=0x.*InsufficientProfit', log))
+panic_reverts = len(re.findall(r'\[sim-fail\].*revert=0x4e487b71', log))
+
+# Classify known categories
+known_reverts = iia_reverts + currency_not_settled + invalid_command + insufficient_balance + insufficient_profit + panic_reverts
+other_reverts = revert_total - known_reverts
 
 total = ok_total + no_profit + revert_total
 
@@ -127,7 +146,11 @@ else:
     elif pct_val >= 20: cls = '⚠️ Partial'
     else: cls = '❌ Broken'
     pct = f'{pct_val}%'
-print(f'{total}\t{ok_total}\t{no_profit}\t{revert_total}\t{pct}\t{cls}')
+
+# Revert decomposition: IIA (state divergence) vs encoding bugs vs unknown
+stale_pct = f'{iia_reverts}' if revert_total > 0 else '0'
+bug_pct = f'{other_reverts}' if revert_total > 0 else '0'
+print(f'{total}\t{ok_total}\t{no_profit}\t{revert_total}\t{pct}\t{cls}\t{stale_pct}\t{bug_pct}')
 ")
     TOTAL=$(echo "$ANALYSIS" | cut -f1)
     OK_TOTAL=$(echo "$ANALYSIS" | cut -f2)
@@ -135,14 +158,16 @@ print(f'{total}\t{ok_total}\t{no_profit}\t{revert_total}\t{pct}\t{cls}')
     REVERT_TOTAL=$(echo "$ANALYSIS" | cut -f4)
     PERCENT=$(echo "$ANALYSIS" | cut -f5)
     CLASS=$(echo "$ANALYSIS" | cut -f6)
+    STALE=$(echo "$ANALYSIS" | cut -f7)
+    BUG=$(echo "$ANALYSIS" | cut -f8)
 
-    echo "=== [$i/27] $PERM: ok=$OK_TOTAL no_profit=$NO_PROFIT reverts=$REVERT_TOTAL simulatable=$PERCENT $CLASS ==="
+    echo "=== [$i/27] $PERM: ok=$OK_TOTAL no_profit=$NO_PROFIT reverts=$REVERT_TOTAL (iia=$STALE other=$BUG) simulatable=$PERCENT $CLASS ==="
 
     # Update TSV under lock (prevent parallel workers corrupting the file)
     (
         flock -x 200
         sed -i "/\t${PERM}\t/d" "$RESULTS_FILE"
-        echo -e "$i\t$PERM\t$TOTAL\t$OK_TOTAL\t$NO_PROFIT\t$REVERT_TOTAL\t$PERCENT\t$CLASS" >> "$RESULTS_FILE"
+        echo -e "$i\t$PERM\t$TOTAL\t$OK_TOTAL\t$NO_PROFIT\t$REVERT_TOTAL\t$PERCENT\t$CLASS\t$STALE\t$BUG" >> "$RESULTS_FILE"
         { head -1 "$RESULTS_FILE"; tail -n +2 "$RESULTS_FILE" | sort -t$'\t' -k1,1n; } > "${RESULTS_FILE}.tmp" && mv "${RESULTS_FILE}.tmp" "$RESULTS_FILE"
     ) 200>"$LOCK_FILE"
 }
