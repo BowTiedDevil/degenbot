@@ -48,13 +48,11 @@ ZERO_ADDRESS: ChecksumAddress = to_checksum_address("0x0000000000000000000000000
 
 # ── Command opcodes ──
 
-# Control / Preprocessing: 0x00-0x0F
 CMD_SET_ADDRESS = b"\x00"
 CMD_SKIP_PROFIT_CHECK = b"\x01"  # Deprecated — contract no longer handles 0x01 in preprocessing
 CMD_BRIBE_COINBASE = b"\x02"
 CMD_BRIBE_ADDRESS = b"\x03"
 
-# ERC20 / ETH / Native: 0x10-0x1F
 CMD_ERC20_TRANSFER = b"\x10"
 CMD_ERC20_XFER_BALANCE = b"\x11"
 CMD_WETH_DEPOSIT = b"\x12"
@@ -64,27 +62,21 @@ CMD_WETH_WITHDRAW_ALL = b"\x15"
 CMD_SEND_ETH = b"\x16"
 CMD_SEND_ETH_ALL = b"\x17"
 
-# V2: 0x20-0x2F
 CMD_V2_SWAP_COMPACT = b"\x20"
 CMD_V2_SWAP_CALC = b"\x21"
 CMD_V2_SWAP_DIRECT = b"\x22"
 
-# V3: 0x30-0x3F
 CMD_V3_SWAP_COMPACT = b"\x30"
 CMD_V3_SWAP_DELTA = b"\x31"
 
-# V4 Swaps: 0x40-0x4F
 CMD_V4_SWAP_COMPACT = b"\x40"
 CMD_V4_SWAP_DYNAMIC = b"\x41"
 CMD_V4_BATCH = b"\x42"
-
-# V4 Settlement / ERC6909: 0x50-0x5F
 CMD_V4_UNLOCK = b"\x50"
 CMD_V4_TAKE = b"\x51"
 CMD_V4_TAKE_COMPACT = b"\x52"
 CMD_V4_TAKE_DELTA = b"\x53"
 CMD_V4_SYNC = b"\x54"
-# 0x55 = V4_SETTLE
 CMD_V4_SETTLE = b"\x55"
 CMD_V4_SETTLE_DELTA = b"\x56"
 CMD_V4_SETTLE_ALL = b"\x57"
@@ -465,8 +457,9 @@ def enc_v2_swap_compact(
     fee: int = 30,
     forward_data: bytes = b"",
 ) -> bytes:
-    """V2_SWAP_COMPACT: [0x20][pool_idx:1][zfo:1][amount_out:12]
-    [recipient_idx:1][fee:2][fwd_len:1][fwd_data:N] = 19 + N bytes.
+    """Encode a V2_SWAP_COMPACT command.
+
+    ref: [0x20][pool_idx:1][zfo:1][amount_out:12][recipient_idx:1][fee:2][fwd_len:1][fwd_data:N] = 19 + N bytes.
 
     fee is a fraction of 10000 (30 = 0.3% UniswapV2, 25 = 0.25% PancakeSwap).
     Written to t_v2_pair_fee[pool] before swap() for correct auto-pay.
@@ -475,7 +468,7 @@ def enc_v2_swap_compact(
     Returns:
         The encoded V2_SWAP_COMPACT command bytes.
 
-    """
+    """  # noqa:E501
     return b"".join([
         CMD_V2_SWAP_COMPACT,
         _e(pool_idx, 1),
@@ -494,7 +487,9 @@ def enc_v2_swap_calc(
     recipient_idx: int,
     fee: int = 30,
 ) -> bytes:
-    """V2_SWAP_CALC: [0x21][pool_idx:1][zfo:1][recipient_idx:1][fee:2] — 6 bytes.
+    """Encode a V2_SWAP_CALC command.
+
+    ref: [0x21][pool_idx:1][zfo:1][recipient_idx:1][fee:2] — 6 bytes.
 
     Returns:
         The encoded V2_SWAP_CALC command bytes.
@@ -515,15 +510,16 @@ def enc_v2_swap_direct(
     amount_out: int,
     recipient_idx: int,
 ) -> bytes:
-    """V2_SWAP_DIRECT: [0x22][pool_idx:1][zfo:1][amount_out:12][recipient_idx:1]
-    — 16 bytes. V2 swap with explicit amount and no callback.
+    """Encode a V2_SWAP_DIRECT command.
+
+    ref: [0x22][pool_idx:1][zfo:1][amount_out:12][recipient_idx:1] — 16 bytes. V2 swap with explicit amount and no callback.
 
     Amount is uint96. No fee field — the pair applies its stored fee.
 
     Returns:
         The encoded V2_SWAP_DIRECT command bytes.
 
-    """
+    """  # noqa:E501
     return b"".join([
         CMD_V2_SWAP_DIRECT,
         _e(pool_idx, 1),
@@ -543,8 +539,9 @@ def enc_v3_swap_compact(
     recipient_idx: int,
     forward_data: bytes = b"",
 ) -> bytes:
-    """V3_SWAP_COMPACT: [0x30][pool_idx:1][zfo:1][amount_specified:12]
-    [recipient_idx:1][fwd_len:1][fwd_data:N] = 17 + N bytes.
+    """Encode a V3_SWAP_COMPACT command.
+
+    ref: [0x30][pool_idx:1][zfo:1][amount_specified:12][recipient_idx:1][fwd_len:1][fwd_data:N] = 17 + N bytes.
 
     Amount is uint96 (positive exact-input — contract negates internally).
     Sqrt price limit auto-set to widest range. Forward data max 255 bytes.
@@ -552,7 +549,7 @@ def enc_v3_swap_compact(
     Returns:
         The encoded V3_SWAP_COMPACT command bytes.
 
-    """
+    """  # noqa:E501
     return b"".join([
         CMD_V3_SWAP_COMPACT,
         _e(pool_idx, 1),
@@ -569,7 +566,9 @@ def enc_v3_swap_delta(
     zfo: bool,
     recipient_idx: int,
 ) -> bytes:
-    """V3_SWAP_DELTA: [0x31][pool_idx:1][zfo:1][recipient_idx:1] — 4 bytes.
+    """Encode a V3_SWAP_DELTA command.
+
+    ref: [0x31][pool_idx:1][zfo:1][recipient_idx:1] — 4 bytes.
 
     Returns:
         The encoded V3_SWAP_DELTA command bytes.
@@ -595,7 +594,9 @@ def enc_v4_swap_compact(
     zfo: bool,
     amount_u96: int,
 ) -> bytes:
-    """V4_SWAP_COMPACT: [0x40][c0_idx:1][c1_idx:1][fee:2][ts:2]
+    """Encode a V4_SWAP_COMPACT command.
+
+    ref: [0x40][c0_idx:1][c1_idx:1][fee:2][ts:2]
     [hooks_idx:1][zfo:1][amount:12] — 21 bytes.
 
     Fee is uint16 (e.g., 3000 = 0.3%). Tick spacing is int16 encoded as unsigned.
@@ -626,7 +627,9 @@ def enc_v4_swap_dynamic(
     hooks_idx: int,
     zfo: bool,
 ) -> bytes:
-    """V4_SWAP_DYNAMIC: [0x41][c0_idx:1][c1_idx:1][fee:2][ts:2]
+    """Encode a V4_SWAP_DYNAMIC command.
+
+    ref: [0x41][c0_idx:1][c1_idx:1][fee:2][ts:2]
     [hooks_idx:1][zfo:1] — 9 bytes. Amount from PM exttload.
 
     Fee is uint16. Tick spacing is int16 encoded as unsigned.
@@ -648,7 +651,9 @@ def enc_v4_swap_dynamic(
 
 
 def enc_v4_batch(swaps: list[tuple[int, int, int, int, int, bool, int]]) -> bytes:
-    """V4_BATCH: [0x42][num_swaps:1][entry_1:20]...[entry_N:20]
+    """Encode a V4_BATCH command.
+
+    ref: [0x42][num_swaps:1][entry_1:20]...[entry_N:20]
 
     Each 20-byte entry: [c0_idx:1][c1_idx:1][fee:2][ts:2][hooks_idx:1]
     [zfo:1][amount:12]. Amount=0 means dynamic (from PM exttload).
@@ -679,7 +684,9 @@ def enc_v4_batch(swaps: list[tuple[int, int, int, int, int, bool, int]]) -> byte
 
 
 def enc_v4_unlock(forward_data: bytes) -> bytes:
-    """V4_UNLOCK: [0x50][len:1][data:N] — 2 + N bytes.
+    """Encode a V4_UNLOCK command.
+
+    ref: [0x50][len:1][data:N] — 2 + N bytes.
 
     Forward data max 255 bytes. Enters the PoolManager unlock context.
 
@@ -695,7 +702,9 @@ def enc_v4_take(
     recipient_idx: int,
     amount: int,
 ) -> bytes:
-    """V4_TAKE: [0x51][currency_idx:1][recipient_idx:1][amount:32] — 35 bytes.
+    """Encode a V4_TAKE command.
+
+    ref: [0x51][currency_idx:1][recipient_idx:1][amount:32] — 35 bytes.
 
     Rarely used — prefer V4_TAKE_COMPACT (15 bytes) or V4_TAKE_DELTA (3 bytes).
 
@@ -716,7 +725,9 @@ def enc_v4_take_compact(
     recipient_idx: int,
     amount_u96: int,
 ) -> bytes:
-    """V4_TAKE_COMPACT: [0x52][currency_idx:1][recipient_idx:1][amount:12] — 15 bytes.
+    """Encode a V4_TAKE_COMPACT command.
+
+    ref: [0x52][currency_idx:1][recipient_idx:1][amount:12] — 15 bytes.
 
     Amount is uint96. Preferred over enc_v4_take for all known amounts.
 
@@ -736,7 +747,9 @@ def enc_v4_take_delta(
     currency_idx: int,
     recipient_idx: int,
 ) -> bytes:
-    """V4_TAKE_DELTA: [0x53][currency_idx:1][recipient_idx:1] — 3 bytes.
+    """Encode a V4_TAKE_DELTA command.
+
+    ref: [0x53][currency_idx:1][recipient_idx:1] — 3 bytes.
 
     Returns:
         The encoded V4_TAKE_DELTA command bytes.
@@ -750,7 +763,9 @@ def enc_v4_take_delta(
 
 
 def enc_v4_sync(currency_idx: int) -> bytes:
-    """V4_SYNC: [0x54][currency_idx:1] — 2 bytes.
+    """Encode a V4_SYNC command.
+
+    ref: [0x54][currency_idx:1] — 2 bytes.
 
     Returns:
         The encoded V4_SYNC command bytes.
@@ -760,7 +775,9 @@ def enc_v4_sync(currency_idx: int) -> bytes:
 
 
 def enc_v4_settle() -> bytes:
-    """V4_SETTLE: [0x55] — 1 byte.
+    """Encode a V4_SETTLE command.
+
+    ref: [0x55] — 1 byte.
 
     Returns:
         The encoded V4_SETTLE command byte.
@@ -770,7 +787,9 @@ def enc_v4_settle() -> bytes:
 
 
 def enc_v4_settle_delta(currency_idx: int) -> bytes:
-    """V4_SETTLE_DELTA: [0x56][currency_idx:1] — 2 bytes.
+    """Encode a V4_SETTLE_DELTA command.
+
+    ref: [0x56][currency_idx:1] — 2 bytes.
 
     Returns:
         The encoded V4_SETTLE_DELTA command bytes.
@@ -780,7 +799,9 @@ def enc_v4_settle_delta(currency_idx: int) -> bytes:
 
 
 def enc_v4_settle_all() -> bytes:
-    """V4_SETTLE_ALL: [0x57] — 1 byte.
+    """Encode a V4_SETTLE_ALL command.
+
+    ref: [0x57] — 1 byte.
 
     Returns:
         The encoded V4_SETTLE_ALL command byte.
@@ -794,7 +815,9 @@ def enc_v4_mint_compact(
     recipient_idx: int,
     amount_u96: int,
 ) -> bytes:
-    """V4_MINT_COMPACT: [0x58][currency_idx:1][recipient_idx:1][amount:12] — 15 bytes.
+    """Encode a V4_MINT_COMPACT command.
+
+    ref: [0x58][currency_idx:1][recipient_idx:1][amount:12] — 15 bytes.
 
     Convert positive PM delta into ERC6909 balance for recipient.
     No physical token transfer — asset stays inside PoolManager.
@@ -816,7 +839,9 @@ def enc_v4_burn_compact(
     currency_idx: int,
     amount_u96: int,
 ) -> bytes:
-    """V4_BURN_COMPACT: [0x59][currency_idx:1][amount:12] — 14 bytes.
+    """Encode a V4_BURN_COMPACT command.
+
+    ref: [0x59][currency_idx:1][amount:12] — 14 bytes.
 
     Convert ERC6909 balance into a payable PM delta (offsets a debt).
     Amount is uint96.
@@ -866,8 +891,6 @@ def _keccak256(data: bytes) -> bytes:
         The 32-byte Keccak-256 hash.
 
     """
-    from web3 import Web3
-
     return Web3.keccak(data)
 
 
@@ -901,8 +924,7 @@ def compute_simulation_warmup_slots(
     weth_address: str | ChecksumAddress,
     pool_manager_address: str | ChecksumAddress,
 ) -> dict[str, dict]:
-    """Compute the eth_simulateV1 stateDiff overrides that replicate
-    the effect of cmd_executor.initialize().
+    """Compute the eth_simulateV1 stateDiff overrides that replicate the effect of cmd_executor.initialize().
 
     The cmd_executor's ``initialize()`` warms 3 storage slots to avoid
     cold SSTORE costs (~22,100 gas per 0→nonzero write) during arbitrage:
@@ -965,13 +987,13 @@ def compute_simulation_warmup_slots(
     weth_id = weth_int & ((1 << 160) - 1)  # uint160
     native_id = 0  # uint160(address(0)) = 0
 
-    ONE_WEI = "0x0000000000000000000000000000000000000000000000000000000000000001"
+    one_wei_as_uint256 = "0x0000000000000000000000000000000000000000000000000000000000000001"
 
     # WETH9 storage layout: name(slot 0, short string), symbol(slot 1, short
     # string), decimals(slot 2, uint8), balanceOf(slot 3, mapping).
     # Note: WETH9 does NOT use 'constant' for name/symbol — they occupy slots.
-    WETH9_BALANCEOF_SLOT = 3
-    weth_balance_slot = _mapping_slot(WETH9_BALANCEOF_SLOT, executor_int)
+    weth9_balance_slot = 3
+    weth_balance_slot = _mapping_slot(weth9_balance_slot, executor_int)
 
     # PoolManager ERC6909 storage layout (verified on mainnet via C3 linearization):
     #   slot 0: owner (Owned)
@@ -983,22 +1005,26 @@ def compute_simulation_warmup_slots(
     # balanceOf is NOT at slot 1 — Owned and ProtocolFees come before ERC6909
     # in the C3 linearization, and protocolFeesAccrued interleaves between
     # isOperator and balanceOf.
-    PM_ERC6909_BALANCEOF_SLOT = 4
-    erc6909_weth_slot = _nested_mapping_slot(PM_ERC6909_BALANCEOF_SLOT, executor_int, weth_id)
-    erc6909_native_slot = _nested_mapping_slot(PM_ERC6909_BALANCEOF_SLOT, executor_int, native_id)
+    pool_manager_erc6909_balance_slot = 4
+    erc6909_weth_slot = _nested_mapping_slot(
+        pool_manager_erc6909_balance_slot, executor_int, weth_id
+    )
+    erc6909_native_slot = _nested_mapping_slot(
+        pool_manager_erc6909_balance_slot, executor_int, native_id
+    )
 
     return {
         # WETH contract: pre-warm executor's WETH balance slot
         weth: {
             "stateDiff": {
-                f"0x{weth_balance_slot:064x}": ONE_WEI,
+                f"0x{weth_balance_slot:064x}": one_wei_as_uint256,
             }
         },
         # PoolManager: pre-warm executor's ERC6909 slots
         pm: {
             "stateDiff": {
-                f"0x{erc6909_weth_slot:064x}": ONE_WEI,
-                f"0x{erc6909_native_slot:064x}": ONE_WEI,
+                f"0x{erc6909_weth_slot:064x}": one_wei_as_uint256,
+                f"0x{erc6909_native_slot:064x}": one_wei_as_uint256,
             }
         },
         # Executor: 1 wei ETH remaining from initialize() (msg.value=2, deposit=1)
@@ -1079,7 +1105,7 @@ class V4V4ArbitragePayload:
             at.add(self.pool_b_key[1])  # currency1
         # No need to explicitly add WETH, executor, PM — they're sentinels
         # No need to explicitly add ZERO_ADDRESS — it maps to SENTINEL_NATIVE (0xFF)
-        if self.profit_currency and self.profit_currency not in (ZERO_ADDRESS, NATIVE_ADDRESS):
+        if self.profit_currency and self.profit_currency not in {ZERO_ADDRESS, NATIVE_ADDRESS}:
             at.add(self.profit_currency)
         if self.profit_currency == NATIVE_ADDRESS:
             at.add(NATIVE_ADDRESS)  # Will resolve to SENTINEL_NATIVE

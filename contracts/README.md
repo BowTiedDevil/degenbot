@@ -194,7 +194,7 @@ If the first byte is not `0xFE`, the entire stream is execution (no preprocessin
 
 ### Python Encoding
 
-`degenbot.arbitrage.cmd_stream` provides:
+`contracts.cmd_stream` provides:
 
 | Component | Purpose |
 |-----------|---------|

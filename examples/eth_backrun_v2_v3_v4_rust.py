@@ -26,6 +26,12 @@ Startup sequence:
 """
 
 import argparse
+import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 import asyncio
 import dataclasses
 import gc
@@ -58,7 +64,7 @@ from web3.exceptions import TransactionNotFound, Web3Exception
 from web3.types import BlockStateCallV1, SimulateV1Payload, StateOverrideParams, TxParams
 
 from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, get_checksum_address
-from degenbot.arbitrage.cmd_stream import (
+from contracts.cmd_stream import (
     _mapping_slot,
     compute_simulation_warmup_slots,
     pack_expected_balance,
