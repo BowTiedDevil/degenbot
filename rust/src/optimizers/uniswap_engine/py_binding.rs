@@ -2305,6 +2305,7 @@ impl PyUniswapArbEngine {
     /// DIAG-a3f2: Dump V2 pool state for a given address.
     /// Returns (`forward_key`, `reverse_key`, `fwd_reserve_in`, `fwd_reserve_out`, `rev_reserve_in`, `rev_reserve_out`) or None.
     #[pyo3(signature = (address_hex))]
+    #[allow(clippy::type_complexity)]
     fn diag_v2_pool(&self, address_hex: &str) -> PyResult<Option<(u64, u64, String, String, String, String)>> {
         let addr: Address = address_hex.parse().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}"))
@@ -2322,6 +2323,7 @@ impl PyUniswapArbEngine {
     }
 
     /// Return self as an async iterator over result batches.
+    #[allow(clippy::missing_const_for_fn)]
     fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }

@@ -88,7 +88,7 @@ where
     /// Set the maximum age (in blocks) for pump buffer events.
     ///
     /// `None` means unbounded (no automatic expiry).
-    pub(crate) fn set_max_age(&mut self, max_age: Option<u64>) {
+    pub(crate) const fn set_max_age(&mut self, max_age: Option<u64>) {
         self.max_age = max_age;
     }
 

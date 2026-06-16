@@ -16,14 +16,16 @@ use crate::errors::ClMathError;
 /// # Errors
 ///
 /// Returns [`ClMathError::ZeroInput`] if `x` is zero.
-#[must_use]
+#[must_use = "result should be used"]
 pub fn most_significant_bit(x: U256) -> Result<u8, ClMathError> {
     if x.is_zero() {
         return Err(ClMathError::ZeroInput);
     }
     // U256 is 256 bits; bit_length() returns 1..=256 for non-zero values.
-    // MSB position = bit_length - 1.
-    Ok(x.bit_len() as u8 - 1)
+    // MSB position = bit_length - 1. Subtract before cast: result is 0..=255,
+    // which fits in u8 without truncation.
+    #[allow(clippy::cast_possible_truncation)]
+    Ok((x.bit_len() - 1) as u8)
 }
 
 /// Return the index of the least significant bit set in `x`.
@@ -33,12 +35,14 @@ pub fn most_significant_bit(x: U256) -> Result<u8, ClMathError> {
 /// # Errors
 ///
 /// Returns [`ClMathError::ZeroInput`] if `x` is zero.
-#[must_use]
+#[must_use = "result should be used"]
 pub fn least_significant_bit(x: U256) -> Result<u8, ClMathError> {
     if x.is_zero() {
         return Err(ClMathError::ZeroInput);
     }
     // Trailing zeros count gives the LSB position directly.
+    // Safe: trailing_zeros() returns 0..=255 for non-zero U256, which fits in u8.
+    #[allow(clippy::cast_possible_truncation)]
     Ok(x.trailing_zeros() as u8)
 }
 

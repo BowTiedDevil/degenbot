@@ -653,6 +653,7 @@ impl PyAlloyProvider {
     /// This is a deterministic, timing-free test — no sleep or scheduling
     /// assumptions required.
     #[pyo3(signature = ())]
+    #[allow(clippy::unused_self)]
     fn verify_gil_release(&self, py: Python<'_>) -> bool {
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;

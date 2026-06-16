@@ -66,8 +66,7 @@ impl From<ClMathError> for PyErr {
 impl From<TickMathError> for ClMathError {
     fn from(err: TickMathError) -> Self {
         match err {
-            TickMathError::InvalidTick(_) => Self::InvalidPrice,
-            TickMathError::SqrtRatioOutOfBounds { .. } => Self::InvalidPrice,
+            TickMathError::InvalidTick(_) | TickMathError::SqrtRatioOutOfBounds { .. } => Self::InvalidPrice,
         }
     }
 }

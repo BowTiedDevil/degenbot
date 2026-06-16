@@ -267,8 +267,7 @@ impl V2BlockEngine {
 
     /// Read the last solved results and block number.
     #[must_use]
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn latest_results(&self) -> (&Vec<(u64, U256, U256)>, u64) {
+    pub const fn latest_results(&self) -> (&Vec<(u64, U256, U256)>, u64) {
         (&self.results, self.results_block)
     }
 
@@ -288,7 +287,7 @@ impl V2BlockEngine {
     /// Access the pool address → (forward_id, reverse_id) map.
     /// Used for reverse lookups in inspection/debugging.
     #[must_use]
-    pub fn pool_addresses(&self) -> &HashMap<Address, (u64, u64)> {
+    pub const fn pool_addresses(&self) -> &HashMap<Address, (u64, u64)> {
         &self.pool_addresses
     }
 

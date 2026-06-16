@@ -294,10 +294,7 @@ impl V4PoolState {
                 if l.is_negative() {
                     0u128
                 } else {
-                    #[allow(clippy::cast_sign_loss)]
-                    {
-                        l as u128
-                    }
+                    l.cast_unsigned()
                 }
             };
 
@@ -560,7 +557,7 @@ impl V4BlockEngine {
     /// `None` means unbounded (no automatic expiry). `Some(n)` means
     /// events older than `n` blocks from the current block are expired.
     /// Only applies to `pump_event_buffer` — `backfill_event_buffer` is never expired.
-    pub fn set_event_buffer_max_age(&mut self, max_age: Option<u64>) {
+    pub const fn set_event_buffer_max_age(&mut self, max_age: Option<u64>) {
         self.event_buffer.set_max_age(max_age);
     }
 
@@ -919,8 +916,7 @@ impl V4BlockEngine {
 
     /// Read the last solved results and block number.
     #[must_use]
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn latest_results(&self) -> (&Vec<(u64, U256, U256)>, u64) {
+    pub const fn latest_results(&self) -> (&Vec<(u64, U256, U256)>, u64) {
         (&self.results, self.results_block)
     }
 

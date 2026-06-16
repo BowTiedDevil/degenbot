@@ -16,7 +16,7 @@ impl UniswapEngine {
     /// Only paths with `profit > min_profit` and `profit < max_profit`
     /// appear in batch `fresh` / `updated` entries. Paths outside
     /// this range are excluded from `delivered` and batches.
-    pub fn set_profit_thresholds(&mut self, min_profit: U256, max_profit: U256) {
+    pub const fn set_profit_thresholds(&mut self, min_profit: U256, max_profit: U256) {
         self.min_profit = min_profit;
         self.max_profit = max_profit;
     }

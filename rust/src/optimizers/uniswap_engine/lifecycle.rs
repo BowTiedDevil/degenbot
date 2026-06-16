@@ -71,29 +71,29 @@ impl UniswapEngine {
     }
 
     /// Get a mutable reference to the V2 engine.
-    pub fn v2_engine(&mut self) -> &mut V2BlockEngine {
+    pub const fn v2_engine(&mut self) -> &mut V2BlockEngine {
         &mut self.v2_engine
     }
 
     /// Get a mutable reference to the V3 engine.
-    pub fn v3_engine(&mut self) -> &mut V3BlockEngine {
+    pub const fn v3_engine(&mut self) -> &mut V3BlockEngine {
         &mut self.v3_engine
     }
 
     /// Get a shared reference to the V3 engine.
     #[must_use] 
-    pub fn v3_engine_ref(&self) -> &V3BlockEngine {
+    pub const fn v3_engine_ref(&self) -> &V3BlockEngine {
         &self.v3_engine
     }
 
     /// Get a mutable reference to the V4 engine.
-    pub fn v4_engine(&mut self) -> &mut V4BlockEngine {
+    pub const fn v4_engine(&mut self) -> &mut V4BlockEngine {
         &mut self.v4_engine
     }
 
     /// Read the last solved results and block number.
     #[must_use]
-    pub fn latest_results(&self) -> (&HashMap<u64, SolvePathResult>, u64) {
+    pub const fn latest_results(&self) -> (&HashMap<u64, SolvePathResult>, u64) {
         (&self.results, self.results_block)
     }
 
@@ -111,7 +111,7 @@ impl UniswapEngine {
     /// the pump would restart from `first_observed_block` and buffer
     /// events that the Python pools already reflect, causing
     /// double-application when pools are later registered.
-    pub fn set_last_processed_block(&mut self, block: u64) {
+    pub const fn set_last_processed_block(&mut self, block: u64) {
         self.last_processed_block = Some(block);
     }
 

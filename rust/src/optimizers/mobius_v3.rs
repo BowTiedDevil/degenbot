@@ -22,7 +22,6 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::module_name_repetitions)]
 #![allow(clippy::cast_possible_truncation)]
-#![allow(clippy::cast_sign_loss)]
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::float_cmp)]
 #![allow(clippy::suboptimal_flops)]
@@ -195,10 +194,14 @@ impl V3TickRangeHop {
         // Convert fee fraction to gamma_numer / fee_denom
         // fee is stored as a fraction (e.g., 0.003)
         // gamma = 1 - fee, so gamma_numer = (1 - fee) * 1_000_000
+        // f64 → u64: gamma is always in [0, 1_000_000], so sign loss doesn't occur
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let gamma_numer = ((1.0 - self.fee) * 1_000_000.0).round() as u64;
         let fee_denom = 1_000_000u64;
 
         IntV3TickRangeHop {
+            // f64 → u128: inherent precision loss from float approximation to integer
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             liquidity: self.liquidity as u128,
             sqrt_price_x96: sp_current_x96,
             sqrt_price_lower_x96: sp_lower_x96,

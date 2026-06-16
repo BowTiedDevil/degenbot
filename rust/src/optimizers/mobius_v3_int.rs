@@ -31,13 +31,11 @@
 #![allow(non_snake_case)]
 #![allow(clippy::must_use_candidate)]
 #![allow(clippy::cast_possible_truncation)]
-#![allow(clippy::cast_sign_loss)]
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::too_many_lines)]
 #![allow(clippy::module_name_repetitions)]
 #![allow(clippy::similar_names)]
-#![allow(clippy::unreadable_literal)]
 
 use alloy::primitives::{U256, U512};
 
@@ -686,9 +684,9 @@ pub fn int_solve_v3_v3(
             // Search ±2 around total_optimal_input
             for delta in -2i32..=2 {
                 let candidate = if delta >= 0 {
-                    total_optimal_input.saturating_add(U256::from(delta as u64))
+                    total_optimal_input.saturating_add(U256::from(delta.cast_unsigned()))
                 } else {
-                    total_optimal_input.saturating_sub(U256::from((-delta) as u64))
+                    total_optimal_input.saturating_sub(U256::from((-delta).cast_unsigned()))
                 };
 
                 if candidate.is_zero() {
@@ -839,9 +837,9 @@ pub fn int_solve_cl_path(sequences: &[&IntV3TickRangeSequence]) -> Option<(U256,
                     // Search ±2 around total_optimal_input
                     for delta in -2i32..=2 {
                         let candidate = if delta >= 0 {
-                            total_optimal_input.saturating_add(U256::from(delta as u64))
+                            total_optimal_input.saturating_add(U256::from(delta.cast_unsigned()))
                         } else {
-                            total_optimal_input.saturating_sub(U256::from((-delta) as u64))
+                            total_optimal_input.saturating_sub(U256::from((-delta).cast_unsigned()))
                         };
 
                         if candidate.is_zero() {
@@ -1290,9 +1288,9 @@ pub fn exact_solve_mixed_v2_v3_sequence(
         // Search ±2 around total_optimal_input
         for delta in -2i32..=2 {
             let candidate = if delta >= 0 {
-                total_optimal_input.saturating_add(U256::from(delta as u64))
+                total_optimal_input.saturating_add(U256::from(delta.cast_unsigned()))
             } else {
-                total_optimal_input.saturating_sub(U256::from((-delta) as u64))
+                total_optimal_input.saturating_sub(U256::from((-delta).cast_unsigned()))
             };
 
             if candidate.is_zero() {
@@ -1602,10 +1600,10 @@ pub fn exact_solve_mixed_path_n(
                         for delta in -2i32..=2 {
                             let candidate = if delta >= 0 {
                                 total_optimal_input
-                                    .saturating_add(U256::from(delta as u64))
+                                    .saturating_add(U256::from(delta.cast_unsigned()))
                             } else {
                                 total_optimal_input
-                                    .saturating_sub(U256::from((-delta) as u64))
+                                    .saturating_sub(U256::from((-delta).cast_unsigned()))
                             };
 
                             if candidate.is_zero() {

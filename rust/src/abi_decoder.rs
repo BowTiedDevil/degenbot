@@ -218,8 +218,7 @@ fn decoded_values_to_py_list<'py>(
 /// Map `AbiDecodeError` to the appropriate Python exception.
 ///
 /// Fixed-point types map to `NotImplementedError`; all others map to `ValueError`.
-#[allow(clippy::needless_pass_by_value)]
-fn map_decode_error(e: AbiDecodeError) -> PyErr {
+fn map_decode_error(e: &AbiDecodeError) -> PyErr {
     if matches!(e, AbiDecodeError::FixedPointNotImplemented) {
         PyNotImplementedError::new_err(e.to_string())
     } else {
@@ -267,7 +266,7 @@ pub fn decode(
         .collect::<Result<_, _>>()?;
     let type_refs: Vec<&str> = type_strings.iter().map(String::as_str).collect();
 
-    let values = py.detach(|| decode_rust(&type_refs, data)).map_err(map_decode_error)?;
+    let values = py.detach(|| decode_rust(&type_refs, data)).map_err(|e| map_decode_error(&e))?;
 
     let list = decoded_values_to_py_list(py, &values, checksum)?;
     Ok(list.into())
@@ -291,7 +290,7 @@ pub fn decode_single(
 ) -> PyResult<Py<PyAny>> {
     let value = py
         .detach(|| decode_single_rust(abi_type, data))
-        .map_err(map_decode_error)?;
+        .map_err(|e| map_decode_error(&e))?;
 
     let py_value = abi_value_to_python(&value, py, checksum)?;
     Ok(py_value.unbind())

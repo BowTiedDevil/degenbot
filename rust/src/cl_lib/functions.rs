@@ -10,10 +10,10 @@ use crate::errors::ClMathError;
 
 /// Maximum value of uint160.
 const MAX_UINT160: U256 = U256::from_limbs([
-    0xffffffffffffffffu64,
-    0xffffffffffffffffu64,
-    0xffffffffffffffffu64,
-    0x0000000000000000u64,
+    0xffff_ffff_ffff_ffff_u64,
+    0xffff_ffff_ffff_ffff_u64,
+    0xffff_ffff_ffff_ffff_u64,
+    0x0000_0000_0000_0000_u64,
 ]);
 
 /// Compute `(x * y) % k`, matching Yul `mulmod` semantics.
@@ -38,7 +38,7 @@ pub fn mulmod(x: U256, y: U256, k: U256) -> U256 {
 /// values. For negative values, uses [`i32::div_euclid`] which floors
 /// toward negative infinity.
 #[must_use]
-pub fn compress(tick: i32, tick_spacing: i32) -> i32 {
+pub const fn compress(tick: i32, tick_spacing: i32) -> i32 {
     tick.div_euclid(tick_spacing)
 }
 
@@ -47,7 +47,7 @@ pub fn compress(tick: i32, tick_spacing: i32) -> i32 {
 /// # Errors
 ///
 /// Returns [`ClMathError::SafeCastOverflow`] if `x` exceeds `uint160` max.
-#[must_use]
+#[must_use = "safe-cast results should be checked"]
 pub fn to_uint160(x: U256) -> Result<U256, ClMathError> {
     if x > MAX_UINT160 {
         return Err(ClMathError::SafeCastOverflow);
@@ -60,7 +60,7 @@ pub fn to_uint160(x: U256) -> Result<U256, ClMathError> {
 /// # Errors
 ///
 /// Returns [`ClMathError::SafeCastOverflow`] if `x` doesn't fit in `int128`.
-#[must_use]
+#[must_use = "safe-cast results should be checked"]
 pub fn to_int128(x: I256) -> Result<i128, ClMathError> {
     // Check if the I256 value fits in i128 by extracting bytes and checking sign extension
     let bytes = x.to_be_bytes::<32>();
@@ -81,8 +81,8 @@ pub fn to_int128(x: I256) -> Result<i128, ClMathError> {
 /// # Errors
 ///
 /// Currently never errors — `I256` is already the target type.
-#[must_use]
-pub fn to_int256(x: I256) -> Result<I256, ClMathError> {
+#[must_use = "safe-cast results should be checked"]
+pub const fn to_int256(x: I256) -> Result<I256, ClMathError> {
     Ok(x)
 }
 
