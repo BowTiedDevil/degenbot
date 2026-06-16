@@ -607,6 +607,7 @@ impl UniswapEnginePump {
                         debounce_active = false;
                         self.finalize_if_dirty(
                             current_block,
+                            &current_metadata,
                             &mut last_solved_block,
                             &mut has_logs_this_block,
                         );
@@ -658,6 +659,7 @@ impl UniswapEnginePump {
                         debounce_active = false;
                         self.finalize_if_dirty(
                             current_block,
+                            &current_metadata,
                             &mut last_solved_block,
                             &mut has_logs_this_block,
                         );
@@ -684,28 +686,25 @@ impl UniswapEnginePump {
         }
     }
 
-    /// Finalize the current block: solve any dirty paths and send
-    /// the result batch to Python.
+    /// Finalize the current block: solve any dirty paths and send the result
+    /// batch to Python, carrying the caller's real `current_metadata`.
+    ///
+    /// Delegates to [`UniswapEngine::finalize_block`] (see that method for the
+    /// guard semantics and the rationale for threading real metadata rather
+    /// than `BlockMetadata::default()`). Kept here as a thin wrapper so the
+    /// pump owns the `last_solved_block` / `has_logs_this_block` bookkeeping
+    /// locals; all engine-state mutation happens under the single
+    /// `self.engine.lock()` inside `finalize_block`.
     fn finalize_if_dirty(
         &self,
         block: u64,
+        metadata: &BlockMetadata,
         last_solved_block: &mut u64,
         has_logs_this_block: &mut bool,
     ) {
-        if block > *last_solved_block {
-            let mut engine = self.engine.lock();
-            // Check if there are any dirty pools to solve
-            if engine.has_dirty_paths() {
-                engine.solve_dirty(block, &BlockMetadata::default());
-                engine.send_result_batch(&BlockMetadata::default());
-            } else if *has_logs_this_block {
-                // Logs arrived but none affected registered pools —
-                // still advance the engine's block number and notify Python
-                engine.process_block_and_send(&[], block, &BlockMetadata::default());
-            }
-            *last_solved_block = block;
-            *has_logs_this_block = false;
-        }
+        self.engine
+            .lock()
+            .finalize_block(block, metadata, last_solved_block, has_logs_this_block);
     }
 
     /// Handle a 60s timeout by backfilling any missed blocks (eager variant).
@@ -793,6 +792,12 @@ impl UniswapEnginePump {
             if !block_logs.is_empty() {
                 // process_block calls apply_log per log, which filters by topic
                 // internally — no need for filter_relevant_logs here.
+                //
+                // NOTE: empty metadata here is fine — `process_block` solves
+                // but does NOT send a batch. Accumulated results piggyback
+                // onto the next debounce `send_result_batch(&current_metadata)`
+                // in `run_with_stream`, which carries real metadata (and the
+                // newer block's `results_block`).
                 self.engine.lock().process_block(&block_logs, block, &BlockMetadata::default());
                 any_processed = true;
             }

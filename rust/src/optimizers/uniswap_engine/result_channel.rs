@@ -115,9 +115,6 @@ impl UniswapEngine {
             }
         }
 
-        // Clear the unsent flag
-        self.has_unsent_results = false;
-
         // Send if channel is available and there's anything to report
         if let Some(ref tx) = self.result_tx {
             // Always send a batch even if empty — Python needs the block

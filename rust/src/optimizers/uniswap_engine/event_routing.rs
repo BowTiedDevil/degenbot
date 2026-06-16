@@ -159,6 +159,44 @@ impl UniswapEngine {
         self.compute_diff_and_send(metadata);
     }
 
+    /// Finalize the current block: if dirty paths accumulated since the last
+    /// solve would be left behind by a block advance, solve them and send a
+    /// result batch carrying `metadata`. Otherwise, if logs were observed but
+    /// touched no registered pools, send an empty block-boundary batch so
+    /// Python sees the advance.
+    ///
+    /// This is the engine-side logic behind `UniswapEnginePump::finalize_if_dirty`.
+    /// Holding it on the engine (rather than the pump) keeps it next to its
+    /// siblings (`solve_dirty`, `send_result_batch`, `process_block_and_send`)
+    /// and makes the metadata-threading contract unit-testable without a live
+    /// WS connection. The pump passes its real `current_metadata` so that any
+    /// batch emitted here carries genuine fees/gas/timestamp (previously this
+    /// path sent `BlockMetadata::default()`, which would make the Python
+    /// consumer compute `base_fee_next = 0` and broadcast underpriced txs —
+    /// see `rust/CONTEXT.md` `ResultBatch` entry).
+    ///
+    /// The `block > *last_solved_block` guard is load-bearing: the pump runs
+    /// `solve_dirty` at the top of every loop iteration before awaiting the
+    /// next event, so this normally only sends on a genuine block advance.
+    pub fn finalize_block(
+        &mut self,
+        block: u64,
+        metadata: &BlockMetadata,
+        last_solved_block: &mut u64,
+        has_logs_this_block: &mut bool,
+    ) {
+        if block > *last_solved_block {
+            if self.has_dirty_paths() {
+                self.solve_dirty(block, metadata);
+                self.send_result_batch(metadata);
+            } else if *has_logs_this_block {
+                self.process_block_and_send(&[], block, metadata);
+            }
+            *last_solved_block = block;
+            *has_logs_this_block = false;
+        }
+    }
+
     /// Process pre-decoded updates for testing.
     pub fn process_updates(
         &mut self,
