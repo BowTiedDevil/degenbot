@@ -2,6 +2,7 @@
 
 See: contract_reference/uniswap/V4/PoolManager.sol (TickMath library)
 """
+
 import functools
 
 from degenbot.calculations.evm_math import evm_divide

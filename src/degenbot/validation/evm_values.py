@@ -1,4 +1,5 @@
 """EVM value validators (uint256, address, etc.)."""
+
 from typing import Annotated
 
 from pydantic import Field

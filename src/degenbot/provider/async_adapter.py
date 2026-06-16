@@ -315,9 +315,7 @@ class AsyncProviderAdapter:
         backend: AsyncProviderBackend,
         *,
         provider_type: Literal["web3", "alloy"],
-        raw_provider: (
-            AsyncWeb3[Any] | AlloyProvider | AsyncAlloyProvider | None
-        ) = None,
+        raw_provider: (AsyncWeb3[Any] | AlloyProvider | AsyncAlloyProvider | None) = None,
     ) -> None:
         """Initialize the instance."""
         self._backend = backend

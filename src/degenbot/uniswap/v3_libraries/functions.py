@@ -1,4 +1,5 @@
 """Uniswap V3 pure helper functions for tick and price conversion."""
+
 from degenbot.constants import MAX_INT128, MAX_INT256, MAX_UINT160, MIN_INT128, MIN_INT256
 from degenbot.exceptions.pool import EVMRevertError
 

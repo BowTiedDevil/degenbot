@@ -1,4 +1,5 @@
 """Balancer V2 query helpers that format and validate RPC inputs."""
+
 from eth_typing import ChecksumAddress
 
 from degenbot.exceptions.pool import EVMRevertError

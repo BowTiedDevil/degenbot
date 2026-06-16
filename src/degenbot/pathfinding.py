@@ -56,12 +56,13 @@ def _compute_node_valid_depths(
 
     Returns:
         Mapping from token ID to the set of depth positions it can appear at.
+
     """
     node_valid_depths: dict[int, set[int]] = {}
     for node in graph.nodes():
         # Collect all pool types this node has edges for
         node_pool_types: set[type] = set()
-        for _neighbor, edges_dict in graph[node].items():
+        for edges_dict in graph[node].values():
             node_pool_types.update(attr["pool_type"] for attr in edges_dict.values())
 
         # Determine which depths this node can appear at
@@ -93,6 +94,18 @@ def _dfs(
     additional paths.
 
     Args:
+        start_token_id: The ID of the token where the search begins.
+        end_token_id: The ID of the token the path must return to.
+        working_path: The sequence of ``(pool_id, pool_type)`` tuples currently
+            being explored. This list is mutated in place during backtracking.
+        session: An active SQLAlchemy ORM session for resolving pool addresses.
+        include_reverse: If ``True``, yield each found path again in reverse
+            order.
+        graph: A networkx ``MultiGraph`` where nodes are token IDs and edges are
+            liquidity pools.
+        min_depth: The minimum number of hops a completed path must contain.
+        max_depth: The maximum number of hops a completed path may contain, or
+            ``None`` for no limit.
         pool_type_per_depth: If set, a sequence of allowed pool type sets at each
             depth. Depth 0 = first hop, depth 1 = second hop, etc. A ``None`` entry
             allows all pool types at that depth. Edges whose pool_type is not in
@@ -149,8 +162,15 @@ def _dfs(
         if include_reverse:
             yield path_steps[::-1]
 
-    # Stop recursion if the working path has reached the maximum depth
-    if len(working_path) == max_depth:
+    # Stop recursion if the working path has reached the maximum depth.
+    # pool_type_per_depth implicitly sets a maximum depth equal to its length,
+    # since there are no allowed pool types beyond its last entry.
+    effective_max_depth = max_depth
+    if pool_type_per_depth is not None and (
+        effective_max_depth is None or len(pool_type_per_depth) < effective_max_depth
+    ):
+        effective_max_depth = len(pool_type_per_depth)
+    if effective_max_depth is not None and len(working_path) >= effective_max_depth:
         return
 
     for neighbor_token_id, edges_dict in graph[start_token_id].items():
@@ -216,6 +236,18 @@ async def _dfs_async(
     additional paths.
 
     Args:
+        start_token_id: The ID of the token where the search begins.
+        end_token_id: The ID of the token the path must return to.
+        working_path: The sequence of ``(pool_id, pool_type)`` tuples currently
+            being explored. This list is mutated in place during backtracking.
+        session: An active SQLAlchemy ORM session for resolving pool addresses.
+        include_reverse: If ``True``, yield each found path again in reverse
+            order.
+        graph: A networkx ``MultiGraph`` where nodes are token IDs and edges are
+            liquidity pools.
+        min_depth: The minimum number of hops a completed path must contain.
+        max_depth: The maximum number of hops a completed path may contain, or
+            ``None`` for no limit.
         pool_type_per_depth: If set, a sequence of allowed pool type sets at each
             depth. Depth 0 = first hop, depth 1 = second hop, etc. A ``None`` entry
             allows all pool types at that depth. When provided, edges whose
@@ -274,8 +306,15 @@ async def _dfs_async(
         if include_reverse:
             yield path_steps[::-1]
 
-    # Stop recursion if the working path has reached the maximum depth
-    if len(working_path) == max_depth:
+    # Stop recursion if the working path has reached the maximum depth.
+    # pool_type_per_depth implicitly sets a maximum depth equal to its length,
+    # since there are no allowed pool types beyond its last entry.
+    effective_max_depth = max_depth
+    if pool_type_per_depth is not None and (
+        effective_max_depth is None or len(pool_type_per_depth) < effective_max_depth
+    ):
+        effective_max_depth = len(pool_type_per_depth)
+    if effective_max_depth is not None and len(working_path) >= effective_max_depth:
         return
 
     for neighbor_token_id, edges_dict in graph[start_token_id].items():
@@ -502,11 +541,18 @@ def find_paths(
     pool types will be included.
 
     Args:
+        chain_id: The chain ID to restrict pool and token queries.
+        start_tokens: Token addresses to use as the start of each path.
+        end_tokens: Token addresses to use as the end of each path.
+        min_depth: The minimum number of hops in yielded paths.
+        max_depth: The optional maximum number of hops in yielded paths.
+        pool_types: Database model classes for the pool types to include in the
+            graph (default: ``LiquidityPoolTable`` and ``UniswapV4PoolTable``).
+        db: The database session manager used to open a read session.
         pool_type_per_depth: If set, a sequence of allowed pool type sets at each
             depth. Depth 0 = first hop, depth 1 = second hop, etc. A ``None`` entry
             allows all pool types at that depth. When provided, edges whose
-            pool_type is not in the allowed set are pruned before recursion, and
-            the pool_type is not in the allowed set are pruned before recursion.
+            pool_type is not in the allowed set are pruned before recursion.
         allowed_intermediate_tokens: If set, restrict the graph to only these token
             addresses as intermediate nodes. Pools connecting any non-whitelisted
             intermediate token are excluded from the graph. Use this to filter out
@@ -626,15 +672,27 @@ async def find_paths_async(
     """Async version of ``find_paths``.
 
     Args:
+        chain_id: The chain ID to restrict pool and token queries.
+        start_tokens: Token addresses to use as the start of each path.
+        end_tokens: Token addresses to use as the end of each path.
+        min_depth: The minimum number of hops in yielded paths.
+        max_depth: The optional maximum number of hops in yielded paths.
+        pool_types: Database model classes for the pool types to include in the
+            graph (default: ``LiquidityPoolTable`` and ``UniswapV4PoolTable``).
+        db: The database session manager used to open a read session.
         pool_type_per_depth: If set, a sequence of allowed pool type sets at each
             depth. Depth 0 = first hop, depth 1 = second hop, etc. A ``None`` entry
             allows all pool types at that depth. When provided, edges whose
-            pool_type is not in the allowed set are pruned before recursion, and
+            pool_type is not in the allowed set are pruned before recursion.
         allowed_intermediate_tokens: If set, restrict the graph to only these token
             addresses as intermediate nodes. Pools connecting any non-whitelisted
             intermediate token are excluded from the graph. Use this to filter out
             tax tokens, fee-on-transfer tokens, and low-quality pairs that would
             waste simulation gas.
+
+    Yields:
+        Sequences of PathStep objects representing arbitrage paths.
+
     Raises:
         DegenbotValueError: If no pools are found for the given chain ID or tokens.
 
@@ -665,12 +723,12 @@ async def find_paths_async(
         # Pre-compute valid depths per node for lookahead pruning when
         # pool_type_per_depth is set. This eliminates exploration of
         # dead-end branches (e.g. V3-only tokens when depth 1 requires V4).
-        _node_valid_depths: dict[int, set[int]] | None = None
+        node_valid_depths: dict[int, set[int]] | None = None
         if pool_type_per_depth is not None:
-            _node_valid_depths = _compute_node_valid_depths(graph, pool_type_per_depth)
+            node_valid_depths = _compute_node_valid_depths(graph, pool_type_per_depth)
             logger.debug(
                 f"Computed node valid depths for lookahead pruning: "
-                f"{sum(1 for v in _node_valid_depths.values() if len(v) > 1)} bridge nodes"
+                f"{sum(1 for v in node_valid_depths.values() if len(v) > 1)} bridge nodes"
             )
 
         traversal_plan = _prepare_traversal_plan(
@@ -718,7 +776,7 @@ async def find_paths_async(
                 min_depth=min_depth,
                 max_depth=max_depth,
                 pool_type_per_depth=pool_type_per_depth,
-                node_valid_depths=_node_valid_depths,
+                node_valid_depths=node_valid_depths,
             ):
                 yield path
 

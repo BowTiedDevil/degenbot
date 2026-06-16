@@ -21,8 +21,14 @@ INT128_MIN: int = -(1 << 127)
 
 
 def fits_int128(value: int) -> bool:
-    """Return True if value fits in a signed 128-bit integer."""
+    """Return True if value fits in a signed 128-bit integer.
+
+    Returns:
+        True if the value fits, False otherwise.
+
+    """
     return INT128_MIN <= value <= INT128_MAX
+
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress

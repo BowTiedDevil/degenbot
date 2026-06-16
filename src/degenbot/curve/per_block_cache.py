@@ -260,10 +260,7 @@ class PerBlockCache:
         if not self._base_pool_is_set:
             # Non-metapool: fetch directly
             if self._data_provider is None:
-                msg = (
-                    "virtual_price requires a data_provider."
-                    " Provide one via Bot.build_pool()."
-                )
+                msg = "virtual_price requires a data_provider. Provide one via Bot.build_pool()."
                 raise MissingCurveData(self._address, "virtual_price", msg)
             base_virtual_price = self._data_provider.virtual_price(block_number)
         else:
@@ -274,8 +271,7 @@ class PerBlockCache:
                 # Cache expired — fetch live virtual_price
                 if self._data_provider is None:
                     msg = (
-                        "virtual_price requires a data_provider."
-                        " Provide one via Bot.build_pool()."
+                        "virtual_price requires a data_provider. Provide one via Bot.build_pool()."
                     )
                     raise MissingCurveData(self._address, "virtual_price", msg)
                 base_virtual_price = self._data_provider.virtual_price(block_number)

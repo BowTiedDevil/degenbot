@@ -1,4 +1,5 @@
 """Aave operation type enums (deposit, withdraw, borrow, repay)."""
+
 from enum import Enum, auto
 
 

@@ -1,4 +1,5 @@
 """PancakeSwap V2/V3 pool implementations."""
+
 from fractions import Fraction
 from typing import ClassVar
 

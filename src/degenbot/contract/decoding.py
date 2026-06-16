@@ -1,4 +1,5 @@
 """ABI decoding utilities for contract return data."""
+
 import eth_abi.abi
 from eth_typing import ChecksumAddress
 

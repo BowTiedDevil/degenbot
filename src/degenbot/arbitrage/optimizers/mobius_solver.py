@@ -218,7 +218,10 @@ class MobiusSolver(Solver):
         return self._process_rust_result(result, start_ns, solve_input)
 
     def _process_rust_result(
-        self, result: Any, start_ns: int, solve_input: SolveInput  # noqa: ANN401
+        self,
+        result: Any,  # noqa: ANN401
+        start_ns: int,
+        solve_input: SolveInput,
     ) -> SolveResult:
         if not result.supported:
             raise OptimizationError(

@@ -1,4 +1,5 @@
 """Uniswap V3 pool snapshot and subscription handler."""
+
 import asyncio
 import pathlib
 from collections import defaultdict, deque
@@ -312,8 +313,11 @@ class DatabaseSnapshot:
         Returns {pool_address: {tick_index: (liquidity_gross, liquidity_net)}}
         with no Pydantic model overhead.
 
+        Returns:
+            A dict mapping pool addresses to tick data dicts.
+
         """
-        from sqlalchemy import text as sa_text
+        from sqlalchemy import text as sa_text  # noqa: PLC0415
 
         rows = self.session.execute(
             sa_text(
@@ -325,8 +329,9 @@ class DatabaseSnapshot:
                   AND p.kind IN ('uniswap_v3', 'sushiswap_v3', 'pancakeswap_v3', 'aerodrome_v3')
                 ORDER BY p.address, lp.tick
                 """
-            )
-        , {"chain_id": self.chain_id}).all()
+            ),
+            {"chain_id": self.chain_id},
+        ).all()
 
         result: dict[ChecksumAddress, dict[int, tuple[int, int]]] = {}
         for pool_address, tick, liquidity_gross, liquidity_net in rows:

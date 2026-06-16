@@ -1,4 +1,5 @@
 """Uniswap V3 swap and burn amount calculations."""
+
 from collections.abc import Callable, Iterable, Iterator
 from fractions import Fraction
 from itertools import cycle

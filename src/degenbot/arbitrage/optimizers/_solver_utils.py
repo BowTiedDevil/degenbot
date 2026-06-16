@@ -4,19 +4,20 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from degenbot.exceptions.arbitrage import OptimizationError
 from degenbot.degenbot_rs import (
     RustIntHopState as _RustIntHopState,
 )
 from degenbot.degenbot_rs import (
     py_mobius_refine_int as _py_mobius_refine_int,
 )
+from degenbot.exceptions.arbitrage import OptimizationError
 from degenbot.types.hop_types import BalancerMultiTokenHop, BoundedProductHop, HopType
 from degenbot.uniswap.v3_libraries.constants import Q96
 
 
 def _infer_zero_for_one(v3_hop: BoundedProductHop) -> bool:
-    """Infer swap direction from BoundedProductHop data.
+    (
+        """Infer swap direction from BoundedProductHop data.
 
     Uses the stored zero_for_one if available. Otherwise computes it
     from the reserve ratio vs the expected ratio from L/sqrt_price.
@@ -30,13 +31,18 @@ def _infer_zero_for_one(v3_hop: BoundedProductHop) -> bool:
     Returns:
         The computed value.
 
+    Raises:
+        OptimizationError: If reserve_out is zero.
+
     """
+        ""
+    )
     if v3_hop.zero_for_one is not None:
         return v3_hop.zero_for_one
 
     sqrt_p = float(v3_hop.sqrt_price) / Q96
     price = sqrt_p * sqrt_p
-    if float(v3_hop.reserve_out) == 0.0:
+    if v3_hop.reserve_out == 0:
         msg = "reserve_out is zero, cannot infer zero_for_one"
         raise OptimizationError(
             message=msg,

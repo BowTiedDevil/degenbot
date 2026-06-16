@@ -192,9 +192,7 @@ class AsyncV3PoolBuilder:
             if pool_id_db is not None:
                 with contextlib.suppress(Exception), self._db() as session:
                     pool_with_data = session.scalar(
-                        select(LiquidityPoolTable).where(
-                            LiquidityPoolTable.id == pool_id_db
-                        )
+                        select(LiquidityPoolTable).where(LiquidityPoolTable.id == pool_id_db)
                     )
                     if pool_with_data is not None and isinstance(
                         pool_with_data, UniswapV3PoolTableBase

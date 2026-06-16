@@ -1,4 +1,5 @@
 """Curve-specific type definitions (swap style, metapool enums)."""
+
 from __future__ import annotations
 
 import dataclasses

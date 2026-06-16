@@ -172,7 +172,7 @@ def fetch_logs_retrying(
         )
 
     while not fetcher.is_complete:
-        try:
+        try:  # noqa: PLW0717
             for attempt in retrier:
                 chunk_end = fetcher.chunk_end
 

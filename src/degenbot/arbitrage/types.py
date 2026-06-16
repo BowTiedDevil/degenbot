@@ -1,4 +1,5 @@
 """Shared types for the arbitrage module."""
+
 import dataclasses
 
 import eth_abi.abi
