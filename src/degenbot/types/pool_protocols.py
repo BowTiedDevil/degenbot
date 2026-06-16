@@ -103,8 +103,8 @@ class ArbitrageCapablePool(PoolSimulation, Protocol):
 
     def to_hop_state(
         self,
-        zero_for_one: bool,  # noqa: FBT001
+        zero_for_one: bool,
         state_override: AbstractPoolState | None = None,
     ) -> HopType: ...
 
-    def extract_fee(self, zero_for_one: bool) -> Fraction: ...  # noqa: FBT001
+    def extract_fee(self, zero_for_one: bool) -> Fraction: ...

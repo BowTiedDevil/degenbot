@@ -37,6 +37,12 @@
 
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
+#[cfg(all(test, feature = "extension-module"))]
+compile_error!(
+    "Rust integration/unit tests must not be built with `extension-module`. \
+Use `cargo test --features auto-initialize` (or `just test-rust`) for tests."
+);
+
 pub mod abi_decoder;
 pub mod abi_encoder;
 pub mod abi_types;

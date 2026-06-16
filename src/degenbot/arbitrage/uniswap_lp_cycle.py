@@ -98,6 +98,28 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         )
         return max(pool_state_blocks) if len(pool_state_blocks) == len(self.swap_pools) else None
 
+    @staticmethod
+    def _extract_input_amount(swap_amount: SwapAmount) -> int:
+        match swap_amount:
+            case UniswapV2PoolSwapAmounts():
+                return max(swap_amount.amounts_in)
+            case UniswapV3PoolSwapAmounts():
+                return swap_amount.amount_in
+            case UniswapV4PoolSwapAmounts():
+                return swap_amount.amount_in
+        raise DegenbotValueError(message=f"Unsupported swap amount type: {type(swap_amount)!r}")
+
+    @staticmethod
+    def _extract_output_amount(swap_amount: SwapAmount, input_swap_amount: int) -> int:
+        match swap_amount:
+            case UniswapV2PoolSwapAmounts():
+                return max(swap_amount.amounts_out) - input_swap_amount
+            case UniswapV3PoolSwapAmounts():
+                return swap_amount.amount_out - input_swap_amount
+            case UniswapV4PoolSwapAmounts():
+                return swap_amount.amount_out - input_swap_amount
+        raise DegenbotValueError(message=f"Unsupported swap amount type: {type(swap_amount)!r}")
+
     def __init__(
         self,
         input_token: Erc20Token,
@@ -542,20 +564,11 @@ class UniswapLpCycle(PublisherMixin, AbstractArbitrage):
         )
 
         input_swap, *_, output_swap = optimal_amounts
-        match input_swap:
-            case UniswapV2PoolSwapAmounts():
-                input_swap_amount = max(input_swap.amounts_in)
-            case UniswapV3PoolSwapAmounts():
-                input_swap_amount = input_swap.amount_in
-            case UniswapV4PoolSwapAmounts():
-                input_swap_amount = input_swap.amount_in
-        match output_swap:
-            case UniswapV2PoolSwapAmounts():
-                best_profit_amount = max(output_swap.amounts_out) - input_swap_amount
-            case UniswapV3PoolSwapAmounts():
-                best_profit_amount = output_swap.amount_out - input_swap_amount
-            case UniswapV4PoolSwapAmounts():
-                best_profit_amount = output_swap.amount_out - input_swap_amount
+        input_swap_amount = self._extract_input_amount(swap_amount=input_swap)
+        best_profit_amount = self._extract_output_amount(
+            swap_amount=output_swap,
+            input_swap_amount=input_swap_amount,
+        )
 
         return ArbitrageCalculationResult(
             id=self.id,

@@ -122,12 +122,21 @@ mod tests {
     #[tokio::test]
     async fn connect_smoke_test() {
         // Integration check — runs only when a WS endpoint is configured.
+        if std::env::var("RUN_MONITOR_WS_TESTS").is_err() {
+            return;
+        }
         let Ok(url) = std::env::var("ARB_RPC_WS") else {
             return;
         };
         if url.trim().is_empty() {
             return;
         }
-        assert!(Subscriber::connect(&url).await.is_ok());
+        assert!(
+            matches!(
+                tokio::time::timeout(Duration::from_secs(5), Subscriber::connect(&url)).await,
+                Ok(Ok(_))
+            ),
+            "WS integration test failed to connect to configured ARB_RPC_WS"
+        );
     }
 }

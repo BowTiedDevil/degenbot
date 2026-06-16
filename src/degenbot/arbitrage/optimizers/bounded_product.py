@@ -2,16 +2,16 @@
 Bounded Product CFMM optimizer for V3 tick ranges.
 
 Each V3 tick range is a bounded product CFMM with trading function:
-    φ(R) = (R₀ + α)(R₁ + β) ≥ k
+    phi(R) = (R0 + alpha)(R1 + beta) >= k
 
 where:
-- α = L / sqrt(P_upper) is the lower bound on R₀
+- alpha = L / sqrt(P_upper) is the lower bound on R0
 - β = L * sqrt(P_lower) is the lower bound on R₁
 - k = L² is the effective constant product
 
 Closed-form optimal arbitrage:
-    R₁_opt = L × sqrt(external_price) - β
-    R₀_opt = L / sqrt(external_price) - α
+    R1_opt = L * sqrt(external_price) - beta
+    R0_opt = L / sqrt(external_price) - alpha
 
 This provides O(1) optimization per tick range, similar to V2's Newton method.
 """
@@ -94,12 +94,12 @@ class BoundedProductCFMM:
         sqrt_price_external = math.sqrt(external_price)
 
         # Optimal reserves from closed-form solution
-        # R1 + β = L × sqrt(P_external)
-        # R0 + α = L / sqrt(P_external)
-        R1_opt = self.liquidity * sqrt_price_external - self.beta
-        R0_opt = self.liquidity / sqrt_price_external - self.alpha
+        # R1 + beta = L * sqrt(P_external)
+        # R0 + alpha = L / sqrt(P_external)
+        r1_opt = self.liquidity * sqrt_price_external - self.beta
+        r0_opt = self.liquidity / sqrt_price_external - self.alpha
 
-        return max(R0_opt, 0.0), max(R1_opt, 0.0)
+        return max(r0_opt, 0.0), max(r1_opt, 0.0)
 
     def contains_sqrt_price(self, sqrt_price: float) -> bool:
         """Check if sqrt price is within this tick range."""
@@ -202,8 +202,9 @@ class BoundedProductOptimizer:
         start_time = time.perf_counter_ns()
 
         if len(pools) != 1:
+            msg = "Bounded product optimizer requires single V3 pool"
             raise OptimizationError(
-                "Bounded product optimizer requires single V3 pool",
+                msg,
                 iterations=0,
                 method="bounded_product",
             )
@@ -211,8 +212,9 @@ class BoundedProductOptimizer:
         pool = pools[0]
 
         if not isinstance(pool, UniswapV3Pool):
+            msg = "Pool must be UniswapV3Pool"
             raise OptimizationError(
-                "Pool must be UniswapV3Pool",
+                msg,
                 iterations=0,
                 method="bounded_product",
             )
@@ -245,38 +247,40 @@ class BoundedProductOptimizer:
 
             # If no external price provided, can't optimize
             if external_price is None:
+                msg = "External price required for bounded product optimization"
                 raise OptimizationError(
-                    "External price required for bounded product optimization",
+                    msg,
                     iterations=0,
                     method="bounded_product",
                 )
 
             # Find optimal reserves
-            R0_opt, R1_opt = cfmm.find_optimal_reserves(external_price)
+            r0_opt, r1_opt = cfmm.find_optimal_reserves(external_price)
 
             # Calculate current reserves
             sqrt_price = sqrt_price_x96 / (2**96)
-            R0_current = liquidity / sqrt_price
-            R1_current = liquidity * sqrt_price
+            r0_current = liquidity / sqrt_price
+            r1_current = liquidity * sqrt_price
 
             # Calculate trade needed
-            delta_R0 = R0_opt - R0_current
-            delta_R1 = R1_current - R1_opt
+            delta_r0 = r0_opt - r0_current
+            delta_r1 = r1_current - r1_opt
 
             elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
             self._last_solve_time_ms = elapsed_ms
 
             # Determine optimal input (which token to input)
             if input_token == pool.token0:
-                optimal_input = int(abs(delta_R0))
-                profit = int(delta_R1) if delta_R0 > 0 else 0
+                optimal_input = int(abs(delta_r0))
+                profit = int(delta_r1) if delta_r0 > 0 else 0
             else:
-                optimal_input = int(abs(delta_R1))
-                profit = int(delta_R0) if delta_R1 > 0 else 0
+                optimal_input = int(abs(delta_r1))
+                profit = int(delta_r0) if delta_r1 > 0 else 0
 
             if optimal_input <= 0 or profit <= 0:
+                msg = "No profitable arbitrage"
                 raise OptimizationError(
-                    "No profitable arbitrage",
+                    msg,
                     iterations=1,
                     method="bounded_product",
                 )

@@ -24,6 +24,7 @@ from degenbot.arbitrage.optimizers.base import (
     OptimizerResult,
     OptimizerType,
 )
+from degenbot.arbitrage.path.pool_hop_adapter import extract_fee
 
 if TYPE_CHECKING:
     from degenbot.erc20.erc20 import Erc20Token
@@ -88,12 +89,12 @@ class VectorizedPathState:
         Returns:
             Tuple of (buy_R0, buy_R1, sell_R0, sell_R1) arrays
         """
-        buy_R0 = np.where(self.buying_token0, self.buy_reserves1, self.buy_reserves0)
-        buy_R1 = np.where(self.buying_token0, self.buy_reserves0, self.buy_reserves1)
-        sell_R0 = np.where(self.buying_token0, self.sell_reserves1, self.sell_reserves0)
-        sell_R1 = np.where(self.buying_token0, self.sell_reserves0, self.sell_reserves1)
+        buy_r0 = np.where(self.buying_token0, self.buy_reserves1, self.buy_reserves0)
+        buy_r1 = np.where(self.buying_token0, self.buy_reserves0, self.buy_reserves1)
+        sell_r0 = np.where(self.buying_token0, self.sell_reserves1, self.sell_reserves0)
+        sell_r1 = np.where(self.buying_token0, self.sell_reserves0, self.sell_reserves1)
 
-        return buy_R0, buy_R1, sell_R0, sell_R1
+        return buy_r0, buy_r1, sell_r0, sell_r1
 
 
 @dataclass
@@ -155,7 +156,7 @@ class VectorizedNewtonSolver:
         max_iterations: int = 10,
         tolerance: float = 1e-9,
         initial_guess_fraction: float = 0.01,
-    ):
+    ) -> None:
         self.max_iterations = max_iterations
         self.tolerance = tolerance
         self.initial_guess_fraction = initial_guess_fraction
@@ -178,12 +179,12 @@ class VectorizedNewtonSolver:
         start_time = time.perf_counter_ns()
 
         # Get direction-adjusted reserves
-        buy_R0, buy_R1, sell_R0, sell_R1 = paths.get_direction_adjusted_reserves()
+        buy_r0, buy_r1, sell_r0, sell_r1 = paths.get_direction_adjusted_reserves()
         gamma_buy = paths.buy_fee_multiplier
         gamma_sell = paths.sell_fee_multiplier
 
         # Initialize input amounts (1% of reserves)
-        x = buy_R0 * self.initial_guess_fraction
+        x = buy_r0 * self.initial_guess_fraction
 
         # Track best solutions
         best_x = x.copy()
@@ -192,12 +193,12 @@ class VectorizedNewtonSolver:
         # Newton iterations - all paths run together
         for _i in range(self.max_iterations):
             # Forward amount y = output from buy pool
-            denominator_buy = buy_R0 + x * gamma_buy
-            y = x * gamma_buy * buy_R1 / denominator_buy
+            denominator_buy = buy_r0 + x * gamma_buy
+            y = x * gamma_buy * buy_r1 / denominator_buy
 
             # Gross output z = output from sell pool
-            denominator_sell = sell_R1 + y * gamma_sell
-            z = y * gamma_sell * sell_R0 / denominator_sell
+            denominator_sell = sell_r1 + y * gamma_sell
+            z = y * gamma_sell * sell_r0 / denominator_sell
 
             # Profit
             profit = z - x
@@ -208,15 +209,15 @@ class VectorizedNewtonSolver:
             best_profit = np.where(improved, profit, best_profit)
 
             # First derivatives
-            dy_dx = gamma_buy * buy_R1 * buy_R0 / denominator_buy**2
-            dz_dy = gamma_sell * sell_R0 * sell_R1 / denominator_sell**2
+            dy_dx = gamma_buy * buy_r1 * buy_r0 / denominator_buy**2
+            dz_dy = gamma_sell * sell_r0 * sell_r1 / denominator_sell**2
 
             # Gradient: dP/dx = dz_dy * dy_dx - 1 # noqa: ERA001
             dprofit_dx = dz_dy * dy_dx - 1
 
             # Second derivatives
-            d2y_dx2 = -2 * gamma_buy * buy_R1 * buy_R0 / denominator_buy**3
-            d2z_dy2 = -2 * gamma_sell**2 * sell_R0 * sell_R1 / denominator_sell**3
+            d2y_dx2 = -2 * gamma_buy * buy_r1 * buy_r0 / denominator_buy**3
+            d2z_dy2 = -2 * gamma_sell**2 * sell_r0 * sell_r1 / denominator_sell**3
             d2profit_dx2 = d2z_dy2 * dy_dx**2 + dz_dy * d2y_dx2
 
             # Newton step
@@ -231,10 +232,10 @@ class VectorizedNewtonSolver:
             x = np.maximum(x, 1.0)
 
         # Calculate final profits with best solutions
-        denominator_buy = buy_R0 + best_x * gamma_buy
-        y = best_x * gamma_buy * buy_R1 / denominator_buy
-        denominator_sell = sell_R1 + y * gamma_sell
-        z = y * gamma_sell * sell_R0 / denominator_sell
+        denominator_buy = buy_r0 + best_x * gamma_buy
+        y = best_x * gamma_buy * buy_r1 / denominator_buy
+        denominator_sell = sell_r1 + y * gamma_sell
+        z = y * gamma_sell * sell_r0 / denominator_sell
         profit = z - best_x
 
         elapsed_ms = (time.perf_counter_ns() - start_time) / 1_000_000
@@ -275,19 +276,23 @@ class VectorizedNewtonSolver:
 
         for pool_buy, pool_sell, input_token in pool_pairs:
             # Determine direction
-            if input_token == pool_buy.token0:
+            buy_zero_for_one = input_token == pool_buy.token0
+            if buy_zero_for_one:
                 buying_token0.append(False)
+                intermediate_token = pool_buy.token1
             else:
                 buying_token0.append(True)
+                intermediate_token = pool_buy.token0
+            sell_zero_for_one = intermediate_token == pool_sell.token0
 
             # Get reserves
             buy_reserves0.append(float(pool_buy.state.reserves_token0))
             buy_reserves1.append(float(pool_buy.state.reserves_token1))
-            buy_fee_mult.append(1.0 - float(pool_buy.fee))
+            buy_fee_mult.append(1.0 - float(extract_fee(pool_buy, zero_for_one=buy_zero_for_one)))
 
             sell_reserves0.append(float(pool_sell.state.reserves_token0))
             sell_reserves1.append(float(pool_sell.state.reserves_token1))
-            sell_fee_mult.append(1.0 - float(pool_sell.fee))
+            sell_fee_mult.append(1.0 - float(extract_fee(pool_sell, zero_for_one=sell_zero_for_one)))
 
         return VectorizedPathState(
             buy_reserves0=np.array(buy_reserves0, dtype=np.float64),
@@ -312,7 +317,7 @@ class BatchNewtonOptimizer:
         self,
         max_iterations: int = 10,
         min_paths_for_batch: int = 20,
-    ):
+    ) -> None:
         """
         Parameters
         ----------

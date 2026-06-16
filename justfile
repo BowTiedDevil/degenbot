@@ -7,7 +7,7 @@ default:
 
 # ========== Rust Development ==========
 
-# Run Rust tests
+# Run Rust tests (auto-initialize only; do not pass `extension-module` here)
 test-rust:
     env PYO3_PYTHON="{{justfile_directory()}}/.venv/bin/python" cargo test --features auto-initialize --manifest-path rust/Cargo.toml -- --test-threads=1
 
@@ -21,7 +21,7 @@ test-stylus:
 
 # Run Rust linter (clippy)
 lint-rust:
-    env PYO3_PYTHON="{{justfile_directory()}}/.venv/bin/python" cargo clippy --all-targets --all-features --manifest-path rust/Cargo.toml -- -D warnings
+    env PYO3_PYTHON="{{justfile_directory()}}/.venv/bin/python" cargo clippy --all-targets --manifest-path rust/Cargo.toml -- -D warnings
 
 # Run Stylus linter
 lint-stylus:

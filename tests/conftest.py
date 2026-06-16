@@ -33,6 +33,7 @@ LIVE_RPC_NODEID_PREFIXES = (
 )
 DATABASE_NODEID_PREFIXES = (
     "tests/database/",
+    "tests/test_pathfinding.py",
     "tests/uniswap/v3/test_uniswap_v3_snapshot.py",
 )
 

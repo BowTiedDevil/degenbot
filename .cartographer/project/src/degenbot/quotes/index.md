@@ -1,0 +1,4 @@
+# quotes
+
+> [← back](../index.md)
+

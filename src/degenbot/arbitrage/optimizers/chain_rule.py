@@ -178,7 +178,7 @@ class ChainRuleNewtonOptimizer:
         self,
         max_iterations: int = 50,
         tolerance: float = 1e-8,
-    ):
+    ) -> None:
         self.max_iterations = max_iterations
         self.tolerance = tolerance
         self._last_solve_time_ms = 0.0
@@ -213,8 +213,9 @@ class ChainRuleNewtonOptimizer:
         start_time = time.perf_counter_ns()
 
         if len(pools) < 2:
+            msg = "Chain rule optimizer requires 2+ pools"
             raise OptimizationError(
-                "Chain rule optimizer requires 2+ pools",
+                msg,
                 iterations=0,
                 method="chain_rule",
             )
@@ -226,8 +227,9 @@ class ChainRuleNewtonOptimizer:
         for pool in pools:
             # Accept both real and mock pools
             if type(pool).__name__ not in {"UniswapV2Pool", "MockV2Pool"}:
+                msg = "All pools must be V2 pools"
                 raise OptimizationError(
-                    "All pools must be V2 pools",
+                    msg,
                     iterations=0,
                     method="chain_rule",
                 )
@@ -242,8 +244,9 @@ class ChainRuleNewtonOptimizer:
                 reserve_out = float(pool.state.reserves_token0)
                 next_token = pool.token0
             else:
+                msg = f"Token {current_token} not in pool"
                 raise OptimizationError(
-                    f"Token {current_token} not in pool",
+                    msg,
                     iterations=0,
                     method="chain_rule",
                 )
@@ -272,8 +275,9 @@ class ChainRuleNewtonOptimizer:
         optimal_input = int(x_opt)
 
         if optimal_input <= 0 or profit <= 0:
+            msg = "No profitable arbitrage"
             raise OptimizationError(
-                "No profitable arbitrage",
+                msg,
                 iterations=iterations,
                 method="chain_rule",
             )
@@ -292,8 +296,9 @@ class ChainRuleNewtonOptimizer:
         self._last_solve_time_ms = elapsed_ms
 
         if actual_profit <= 0:
+            msg = "No profitable arbitrage"
             raise OptimizationError(
-                "No profitable arbitrage",
+                msg,
                 iterations=iterations,
                 method="chain_rule",
             )

@@ -226,15 +226,18 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
             final_state=initial_state,
         )
 
-    def extract_fee(self, zero_for_one: bool) -> Fraction:  # noqa: FBT001
+    def extract_fee(self, zero_for_one: bool) -> Fraction:
         return self.fee
 
     def to_hop_state(
         self,
-        zero_for_one: bool,  # noqa: FBT001
+        zero_for_one: bool,
         state_override: BalancerV2PoolState | None = None,
     ) -> HopType:
-        raise NotImplementedError(
+        msg = (
             "Balancer pool to_hop_state is not yet implemented. "
             "Pair-wise hop state extraction from N-token pools is not straightforward."
+        )
+        raise NotImplementedError(
+            msg
         )

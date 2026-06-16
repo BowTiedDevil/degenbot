@@ -27,6 +27,7 @@ from degenbot.arbitrage.optimizers.v3_tick_predictor import (
     tick_range_to_bounded_product,
     tick_to_sqrt_price,
 )
+from degenbot.arbitrage.path.pool_hop_adapter import extract_fee
 
 if TYPE_CHECKING:
     from degenbot.erc20.erc20 import Erc20Token
@@ -98,8 +99,8 @@ def estimate_equilibrium_price(
     Estimate equilibrium price after arbitrage.
 
     At equilibrium, both pools have the same effective marginal rate.
-    For V2: MR = γ * R1 * R0 / (R0 + x)²
-    For V3: MR = γ * L² / (R0 + x)²
+    For V2: MR = gamma * R1 * R0 / (R0 + x)^2
+    For V3: MR = gamma * L^2 / (R0 + x)^2
 
     Simplifying: equilibrium occurs where prices are equal (adjusted for fees).
 
@@ -134,7 +135,7 @@ def estimate_equilibrium_price(
     avg_fee = (v2_state.fee + v3_state.fee) / 2
     fee_adjustment = (1 - avg_fee) ** 0.5
 
-    return p_eq * fee_adjustment
+    return float(p_eq * fee_adjustment)
 
 
 def estimate_equilibrium_sqrt_price(
@@ -327,12 +328,12 @@ def solve_v2_v3_single_range(
     gamma_v2 = 1.0 - v2_state.fee
     gamma_v3 = 1.0 - v2_state.fee  # Assume same fee for simplicity
 
-    R0_v2 = v2_state.reserve0
-    R1_v2 = v2_state.reserve1
-    L = v3_cfmm.liquidity
+    r0_v2 = v2_state.reserve0
+    r1_v2 = v2_state.reserve1
+    liquidity_val = v3_cfmm.liquidity
 
     # Initial guess
-    x = R0_v2 * 0.01
+    x = r0_v2 * 0.01
 
     best_x = x
     best_profit = 0.0
@@ -342,7 +343,7 @@ def solve_v2_v3_single_range(
             break
 
         # Simulate V2 swap: token0 → token1
-        y_v2 = x * gamma_v2 * R1_v2 / (R0_v2 + x * gamma_v2)
+        y_v2 = x * gamma_v2 * r1_v2 / (r0_v2 + x * gamma_v2)
 
         # Simulate V3 swap: token1 → token0 (reverse direction)
         # Or V3 swap: token0 → token1 (same direction)
@@ -351,7 +352,7 @@ def solve_v2_v3_single_range(
         # Simplified: assume we buy low on one pool, sell high on other
         # Direction depends on which pool has better price
 
-        v2_price = R1_v2 / R0_v2
+        v2_price = r1_v2 / r0_v2
         v3_price = v3_current_sqrt_price**2
 
         if v2_price > v3_price:
@@ -360,10 +361,10 @@ def solve_v2_v3_single_range(
             # Input token0 to V3, receive token1, sell token1 to V2
 
             # V3: token0 → token1
-            y_v3 = x * gamma_v3 * L**2 / (L / v3_current_sqrt_price + x * gamma_v3)
+            y_v3 = x * gamma_v3 * liquidity_val**2 / (liquidity_val / v3_current_sqrt_price + x * gamma_v3)
 
             # Profit: sell y_v3 to V2
-            z_v2 = y_v3 * gamma_v2 * R0_v2 / (R1_v2 + y_v3 * gamma_v2)
+            z_v2 = y_v3 * gamma_v2 * r0_v2 / (r1_v2 + y_v3 * gamma_v2)
             profit = z_v2 - x
         else:
             # V3 has higher price for token1
@@ -371,10 +372,10 @@ def solve_v2_v3_single_range(
             # Input token0 to V2, receive token1, sell token1 to V3
 
             # V2: token0 → token1
-            y_v2 = x * gamma_v2 * R1_v2 / (R0_v2 + x * gamma_v2)
+            y_v2 = x * gamma_v2 * r1_v2 / (r0_v2 + x * gamma_v2)
 
             # V3: token1 → token0
-            z_v3 = y_v2 * gamma_v3 * L**2 / (L * v3_current_sqrt_price + y_v2 * gamma_v3)
+            z_v3 = y_v2 * gamma_v3 * liquidity_val**2 / (liquidity_val * v3_current_sqrt_price + y_v2 * gamma_v3)
             profit = z_v3 - x
 
         if profit > best_profit:
@@ -388,13 +389,13 @@ def solve_v2_v3_single_range(
         # Recompute with x + eps
         x_plus = x + eps
         if v2_price > v3_price:
-            y_v3_plus = x_plus * gamma_v3 * L**2 / (L / v3_current_sqrt_price + x_plus * gamma_v3)
-            z_v2_plus = y_v3_plus * gamma_v2 * R0_v2 / (R1_v2 + y_v3_plus * gamma_v2)
+            y_v3_plus = x_plus * gamma_v3 * liquidity_val**2 / (liquidity_val / v3_current_sqrt_price + x_plus * gamma_v3)
+            z_v2_plus = y_v3_plus * gamma_v2 * r0_v2 / (r1_v2 + y_v3_plus * gamma_v2)
             profit_plus = z_v2_plus - x_plus
         else:
-            y_v2_plus = x_plus * gamma_v2 * R1_v2 / (R0_v2 + x_plus * gamma_v2)
+            y_v2_plus = x_plus * gamma_v2 * r1_v2 / (r0_v2 + x_plus * gamma_v2)
             z_v3_plus = (
-                y_v2_plus * gamma_v3 * L**2 / (L * v3_current_sqrt_price + y_v2_plus * gamma_v3)
+                y_v2_plus * gamma_v3 * liquidity_val**2 / (liquidity_val * v3_current_sqrt_price + y_v2_plus * gamma_v3)
             )
             profit_plus = z_v3_plus - x_plus
 
@@ -407,14 +408,14 @@ def solve_v2_v3_single_range(
         x_minus = max(1.0, x - eps)
         if v2_price > v3_price:
             y_v3_minus = (
-                x_minus * gamma_v3 * L**2 / (L / v3_current_sqrt_price + x_minus * gamma_v3)
+                x_minus * gamma_v3 * liquidity_val**2 / (liquidity_val / v3_current_sqrt_price + x_minus * gamma_v3)
             )
-            z_v2_minus = y_v3_minus * gamma_v2 * R0_v2 / (R1_v2 + y_v3_minus * gamma_v2)
+            z_v2_minus = y_v3_minus * gamma_v2 * r0_v2 / (r1_v2 + y_v3_minus * gamma_v2)
             profit_minus = z_v2_minus - x_minus
         else:
-            y_v2_minus = x_minus * gamma_v2 * R1_v2 / (R0_v2 + x_minus * gamma_v2)
+            y_v2_minus = x_minus * gamma_v2 * r1_v2 / (r0_v2 + x_minus * gamma_v2)
             z_v3_minus = (
-                y_v2_minus * gamma_v3 * L**2 / (L * v3_current_sqrt_price + y_v2_minus * gamma_v3)
+                y_v2_minus * gamma_v3 * liquidity_val**2 / (liquidity_val * v3_current_sqrt_price + y_v2_minus * gamma_v3)
             )
             profit_minus = z_v3_minus - x_minus
 
@@ -429,7 +430,7 @@ def solve_v2_v3_single_range(
         x_new = x - step
 
         # Bounds
-        x = max(1.0, min(x_new, R0_v2 * 0.5))
+        x = max(1.0, min(x_new, r0_v2 * 0.5))
 
     return best_x, best_profit, best_profit
 
@@ -507,7 +508,7 @@ class V2V3Optimizer:
         max_candidates: int = 3,
         max_iterations: int = 50,
         tolerance: float = 1e-9,
-    ):
+    ) -> None:
         """
         Parameters
         ----------
@@ -559,7 +560,7 @@ class V2V3Optimizer:
         v2_state = V2PoolState(
             reserve0=float(v2_pool.state.reserves_token0),
             reserve1=float(v2_pool.state.reserves_token1),
-            fee=float(v2_pool.fee),
+            fee=float(extract_fee(v2_pool, zero_for_one=input_token == v2_pool.token0)),
             token0_address=v2_pool.token0.address,
             token1_address=v2_pool.token1.address,
         )

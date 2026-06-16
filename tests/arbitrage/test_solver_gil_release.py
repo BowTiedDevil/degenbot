@@ -8,7 +8,7 @@ from typing import Any
 from degenbot.degenbot_rs import mobius as rs_mobius
 
 
-def _make_hops() -> list[int]:
+def _make_hops(repetitions: int = 1) -> list[int]:
     """Create realistic 2-hop flat input for solve_raw."""
     fee_denom = 1_000_000
     gamma_numer = 997_000
@@ -16,7 +16,7 @@ def _make_hops() -> list[int]:
     reserve_out_1 = 1_000_000_000_000_000_000_000
     reserve_in_2 = 1_500_000_000_000
     reserve_out_2 = 800_000_000_000_000_000_000
-    return [
+    base_hops = [
         reserve_in_1,
         reserve_out_1,
         gamma_numer,
@@ -26,6 +26,7 @@ def _make_hops() -> list[int]:
         gamma_numer,
         fee_denom,
     ]
+    return base_hops * repetitions
 
 
 def _solve_with_counter(solver: Any, hops: list[int], concurrent: dict[str, Any]) -> None:
@@ -44,15 +45,15 @@ def _solve_with_counter(solver: Any, hops: list[int], concurrent: dict[str, Any]
 def test_solve_raw_releases_gil() -> None:
     """Multiple solve_raw calls can be inside Rust concurrently."""
     solver = rs_mobius.RustArbSolver()
-    hops = _make_hops()
-    for _ in range(10):
+    hops = _make_hops(repetitions=100_000)
+    for _ in range(2):
         solver.solve_raw(hops)
 
     concurrent: dict[str, Any] = {"current": 0, "max": 0, "lock": threading.Lock()}
 
     with ThreadPoolExecutor(max_workers=4) as executor:
         futures = [
-            executor.submit(_solve_with_counter, solver, hops, concurrent) for _ in range(64)
+            executor.submit(_solve_with_counter, solver, hops, concurrent) for _ in range(8)
         ]
         for future in as_completed(futures):
             future.result()

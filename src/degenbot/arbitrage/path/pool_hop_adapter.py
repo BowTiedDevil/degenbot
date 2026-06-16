@@ -12,7 +12,7 @@ as a fallback for concrete classes that do not (yet) carry the methods.
 from __future__ import annotations
 
 from fractions import Fraction
-from typing import Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from degenbot.arbitrage.optimizers._v3_utils import _get_cached_tick_ranges, _v3_virtual_reserves
 from degenbot.types.hop_types import (
@@ -22,31 +22,54 @@ from degenbot.types.hop_types import (
     SolidlyStableHop,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+
+@runtime_checkable
+class _FeeExtractor(Protocol):
+    def extract_fee(self, zero_for_one: bool) -> Fraction: ...
+
+
+@runtime_checkable
+class _HopStateExtractor(Protocol):
+    def to_hop_state(
+        self,
+        zero_for_one: bool,
+        state_override: Any = None,
+    ) -> HopType: ...
+
 
 def extract_fee(pool: Any, *, zero_for_one: bool) -> Fraction:
     """Extract the trading fee for a swap direction from any supported pool."""
     # Prefer duck-typing — allows test fakes and custom pools to work
-    if hasattr(pool, "extract_fee") and callable(pool.extract_fee):
+    if isinstance(pool, _FeeExtractor):
         return pool.extract_fee(zero_for_one=zero_for_one)
 
     if (cls_name := type(pool).__name__) == "UniswapV2Pool":
-        return pool.fee_token0 if zero_for_one else pool.fee_token1
+        return Fraction(pool.fee_token0 if zero_for_one else pool.fee_token1)
 
     if cls_name in {"UniswapV3Pool", "UniswapV4Pool", "AerodromeV2Pool"}:
-        return pool.fee
+        return Fraction(pool.fee)
 
     if cls_name == "CurveStableswapPool":
         return Fraction(pool.fee, pool.FEE_DENOMINATOR)
 
     if cls_name == "BalancerV2Pool":
-        raise NotImplementedError(
+        msg = (
             "BalancerV2Pool.extract_fee is not yet implemented. "
             "See architecture candidate #5 for future implementation."
+        )
+        raise NotImplementedError(
+            msg
         )
 
     if cls_name == "CamelotLiquidityPool":
         fee_tuple = pool.fee  # (fee_0to1, fee_1to0)
-        return fee_tuple[0] if zero_for_one else fee_tuple[1]
+        return Fraction(fee_tuple[0] if zero_for_one else fee_tuple[1])
+
+    if hasattr(pool, "fee"):
+        return Fraction(pool.fee)
 
     msg = f"Unsupported pool type for fee extraction: {type(pool).__name__}"
     raise TypeError(msg)
@@ -139,7 +162,7 @@ def to_hop_state(
 ) -> HopType:
     """Convert any supported pool to its solver-compatible ``HopType``."""
     # Prefer duck-typing — allows test fakes and custom pools to work
-    if hasattr(pool, "to_hop_state") and callable(pool.to_hop_state):
+    if isinstance(pool, _HopStateExtractor):
         return pool.to_hop_state(zero_for_one=zero_for_one, state_override=state_override)
 
     state = state_override or pool.state
@@ -174,16 +197,32 @@ def to_hop_state(
         reserve_out = balances[j]
         from degenbot.types.hop_types import CurveStableswapHop
 
+        swap_fn: Callable[[int], int] | None = None
+        get_dy = getattr(pool, "get_dy", None)
+        if callable(get_dy):
+            def swap_fn(dx: int) -> int:
+                return int(get_dy(i=i, j=j, dx=dx, override_state=state_override))
+
         return CurveStableswapHop(
             reserve_in=reserve_in,
             reserve_out=reserve_out,
             fee=extract_fee(pool, zero_for_one=zero_for_one),
+            curve_a=int(pool.a_coefficient),
+            curve_n_coins=len(pool.tokens),
+            curve_d=0,
+            token_index_in=i,
+            token_index_out=j,
+            precisions=tuple(pool.precision_multipliers),
+            swap_fn=swap_fn,
         )
 
     if cls_name == "BalancerV2Pool":
-        raise NotImplementedError(
+        msg = (
             "BalancerV2Pool.to_hop_state is not yet implemented. "
             "See architecture candidate #5 for future implementation."
+        )
+        raise NotImplementedError(
+            msg
         )
 
     msg = f"Unsupported pool type for hop state extraction: {type(pool).__name__}"

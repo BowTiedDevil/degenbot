@@ -107,7 +107,7 @@ def _init_settings() -> Settings:
     logger.info(f"Created a configuration file at {CONFIG_FILE}.")
 
     if not settings.database.path.exists():
-        from degenbot.database.operations import create_new_sqlite_database  # noqa: PLC0415
+        from degenbot.database.operations import create_new_sqlite_database
 
         create_new_sqlite_database(db_path=settings.database.path)
 

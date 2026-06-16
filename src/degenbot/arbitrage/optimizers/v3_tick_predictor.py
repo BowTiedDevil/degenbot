@@ -65,7 +65,7 @@ def tick_to_sqrt_price(tick: int) -> float:
 
     sqrt_price = sqrt(1.0001^tick) = 1.0001^(tick/2)
     """
-    return 1.0001 ** (tick / 2)
+    return float(1.0001 ** (tick / 2))
 
 
 def sqrt_price_to_tick(sqrt_price: float) -> int:
@@ -382,15 +382,15 @@ class BoundedProductCFMM:
     """
     Bounded product CFMM representation of a V3 tick range.
 
-    Trading function: φ(R) = (R₀ + α)(R₁ + β) ≥ L²
+    Trading function: phi(R) = (R0 + alpha)(R1 + beta) >= L^2
 
     where:
-    - α = L / sqrt(P_upper) is the lower bound on R₀
-    - β = L * sqrt(P_lower) is the lower bound on R₁
+    - alpha = L / sqrt(P_upper) is the lower bound on R0
+    - beta = L * sqrt(P_lower) is the lower bound on R1
 
     At optimum, marginal price = external price:
-    - R₁_opt + β = L × sqrt(P_external)
-    - R₀_opt + α = L / sqrt(P_external)
+    - R1_opt + beta = L * sqrt(P_external)
+    - R0_opt + alpha = L / sqrt(P_external)
     """
 
     tick_lower: int
@@ -438,10 +438,10 @@ class BoundedProductCFMM:
         sqrt_p_ext = math.sqrt(external_price)
 
         # Closed-form solution
-        R1_opt = self.liquidity * sqrt_p_ext - self.beta
-        R0_opt = self.liquidity / sqrt_p_ext - self.alpha
+        r1_opt = self.liquidity * sqrt_p_ext - self.beta
+        r0_opt = self.liquidity / sqrt_p_ext - self.alpha
 
-        return max(R0_opt, 0.0), max(R1_opt, 0.0)
+        return max(r0_opt, 0.0), max(r1_opt, 0.0)
 
     def optimal_swap_at_price(
         self,
@@ -466,20 +466,20 @@ class BoundedProductCFMM:
         tuple[float, float]
             (amount_in, amount_out)
         """
-        R0_opt, R1_opt = self.optimal_reserves_at_price(external_price)
+        r0_opt, r1_opt = self.optimal_reserves_at_price(external_price)
 
         # Current reserves at current sqrt price
-        R0_current = self.liquidity / current_sqrt_price
-        R1_current = self.liquidity * current_sqrt_price
+        r0_current = self.liquidity / current_sqrt_price
+        r1_current = self.liquidity * current_sqrt_price
 
         if zero_for_one:
             # Token0 in, token1 out
-            amount_in = max(0.0, R0_opt - R0_current)
-            amount_out = max(0.0, R1_current - R1_opt)
+            amount_in = max(0.0, r0_opt - r0_current)
+            amount_out = max(0.0, r1_current - r1_opt)
         else:
             # Token1 in, token0 out
-            amount_in = max(0.0, R1_opt - R1_current)
-            amount_out = max(0.0, R0_current - R0_opt)
+            amount_in = max(0.0, r1_opt - r1_current)
+            amount_out = max(0.0, r0_current - r0_opt)
 
         return amount_in, amount_out
 
