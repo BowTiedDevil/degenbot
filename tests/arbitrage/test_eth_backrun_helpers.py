@@ -11,6 +11,9 @@ from web3 import Web3
 from contracts.cmd_stream import (
     BEGIN_EXECUTION,
     CMD_V2_SWAP_CALC,
+    CMD_V2_SWAP_COMPACT,
+    CMD_V2_SWAP_DIRECT,
+    CMD_V3_SWAP_COMPACT,
     CMD_V4_SETTLE,
     CMD_V4_SETTLE_ALL,
     CMD_V4_SWAP_COMPACT,
@@ -19,7 +22,15 @@ from contracts.cmd_stream import (
     CMD_V4_TAKE_COMPACT,
     CMD_V4_UNLOCK,
 )
-from examples.eth_backrun_helpers import PathInfo, V2HopInfo, V4HopInfo, _3hop_v2_v2_v4
+from examples.eth_backrun_helpers import (
+    PathInfo,
+    V2HopInfo,
+    V3HopInfo,
+    V4HopInfo,
+    _3hop_v2_v2_v2,
+    _3hop_v2_v2_v3,
+    _3hop_v2_v2_v4,
+)
 
 WETH = Web3.to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 USDC = Web3.to_checksum_address("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
@@ -105,3 +116,119 @@ def test_v2_v2_v4_final_v4_swap_is_dynamic_and_settled() -> None:
     # amount for the final V4 hop caused CurrencyNotSettled when the actual V2b
     # output differed by rounding or stale reserves.
     assert CMD_V4_SWAP_COMPACT not in inner
+
+
+def _extract_forward_data(cmd_stream: bytes, top_opcode: bytes) -> bytes:
+    """Return the forward_data payload of a V2/V3 compact top-level command."""
+    exec_pos = cmd_stream.index(BEGIN_EXECUTION)
+    top_pos = exec_pos + 1
+    assert cmd_stream[top_pos] == top_opcode[0]
+    if top_opcode == CMD_V2_SWAP_COMPACT:
+        # [0x20][pool:1][zfo:1][amount:12][recipient:1][fee:2][fwd_len:1][fwd_data:N]
+        fwd_len_pos = top_pos + 1 + 1 + 12 + 1 + 2
+    elif top_opcode == CMD_V3_SWAP_COMPACT:
+        # [0x30][pool:1][zfo:1][amount:12][recipient:1][fwd_len:1][fwd_data:N]
+        fwd_len_pos = top_pos + 1 + 1 + 12 + 1
+    else:
+        msg = f"unsupported top opcode: {top_opcode}"
+        raise ValueError(msg)
+    fwd_len = cmd_stream[fwd_len_pos]
+    fwd_start = fwd_len_pos + 1
+    return cmd_stream[fwd_start : fwd_start + fwd_len]
+
+
+def test_v2_v2_v2_uses_calc_not_direct_for_intermediate_hops() -> None:
+    """Regression for V2-V2-V2 UniswapV2: K reverts.
+
+    Static V2_SWAP_DIRECT amounts on intermediate hops become stale relative
+    to on-chain reserves. The encoder should use V2_SWAP_CALC so the contract
+    derives the correct output from actual reserves.
+    """
+    ha = V2HopInfo(
+        pool_key=1,
+        pool_address=V2A,
+        token0_address=COMP,
+        token1_address=WETH,
+        fee=30,
+        zfo=False,
+    )
+    hb = V2HopInfo(
+        pool_key=2,
+        pool_address=V2B,
+        token0_address=USDC,
+        token1_address=COMP,
+        fee=30,
+        zfo=False,
+    )
+    hc = V2HopInfo(
+        pool_key=3,
+        pool_address="0x4444444444444444444444444444444444444444",
+        token0_address=USDC,
+        token1_address=WETH,
+        fee=30,
+        zfo=True,
+    )
+    path_info = PathInfo(hops=[ha, hb, hc])
+
+    cmd = _3hop_v2_v2_v2(
+        path_info,
+        optimal_input=10**18,
+        hop_outputs=(2 * 10**18, 2_000_000, 11 * 10**17),
+        executor_address=EXECUTOR,
+        pool_manager_address=POOL_MANAGER,
+        weth_address=WETH,
+    )
+    assert cmd is not None
+
+    fwd = _extract_forward_data(cmd, CMD_V2_SWAP_COMPACT)
+    assert CMD_V2_SWAP_CALC in fwd
+    assert CMD_V2_SWAP_DIRECT not in fwd
+    assert fwd.count(CMD_V2_SWAP_CALC[0]) >= 2
+
+
+def test_v2_v2_v3_uses_calc_not_direct_for_v2_hops() -> None:
+    """Regression for V2-V2-V3 UniswapV2: K reverts.
+
+    The two V2 hops inside the V3 callback must use V2_SWAP_CALC rather than
+    static V2_SWAP_DIRECT amounts.
+    """
+    ha = V2HopInfo(
+        pool_key=1,
+        pool_address=V2A,
+        token0_address=COMP,
+        token1_address=WETH,
+        fee=30,
+        zfo=False,
+    )
+    hb = V2HopInfo(
+        pool_key=2,
+        pool_address=V2B,
+        token0_address=USDC,
+        token1_address=COMP,
+        fee=30,
+        zfo=False,
+    )
+    hc = V3HopInfo(
+        pool_key=3,
+        pool_address="0x4444444444444444444444444444444444444444",
+        token0_address=USDC,
+        token1_address=WETH,
+        fee=500,
+        zfo=True,
+    )
+    path_info = PathInfo(hops=[ha, hb, hc])
+
+    cmd = _3hop_v2_v2_v3(
+        path_info,
+        optimal_input=10**18,
+        hop_outputs=(2 * 10**18, 2_000_000, 11 * 10**17),
+        executor_address=EXECUTOR,
+        pool_manager_address=POOL_MANAGER,
+        weth_address=WETH,
+    )
+    assert cmd is not None
+
+    fwd = _extract_forward_data(cmd, CMD_V3_SWAP_COMPACT)
+    assert CMD_V2_SWAP_CALC in fwd
+    assert CMD_V2_SWAP_DIRECT not in fwd
+    assert fwd.count(CMD_V2_SWAP_CALC[0]) >= 2
