@@ -359,11 +359,6 @@ pub struct UniswapEngine {
     /// Path IDs that have been de-registered since the last batch.
     /// Drained into the next batch's `removed` field.
     deregistered: Vec<u64>,
-    /// Flag set by `register_and_solve_path` when results are eagerly
-    /// appended between `process_block` calls. The next
-    /// `rebuild_and_solve_affected` call will include pending paths
-    /// and produce a batch.
-    has_unsent_results: bool,
     /// Accumulated dirty V2 pool keys from `apply_log` calls since the last
     /// `finalize_block`. Used by the pump for eager log processing.
     dirty_v2: HashSet<u64>,
@@ -401,7 +396,6 @@ impl UniswapEngine {
             next_path_id: 1, // path IDs start at 1
             delivered: HashMap::new(),
             deregistered: Vec::new(),
-            has_unsent_results: false,
             dirty_v2: HashSet::new(),
             dirty_v3: HashSet::new(),
             dirty_v4: HashSet::new(),

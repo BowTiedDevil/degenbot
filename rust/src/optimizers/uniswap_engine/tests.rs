@@ -432,6 +432,78 @@ mod tests {
     }
 
     #[test]
+    fn finalize_block_threads_metadata_into_send() {
+        // Contract guard for the metadata-threading fix: when the pump's
+        // `finalize_if_dirty` guard fires on a dirty profitable path, the
+        // emitted `ResultBatch` must carry the caller's real `BlockMetadata` —
+        // not `BlockMetadata::default()` (which would make the Python consumer
+        // compute `base_fee_next = next_base_fee(0,0,0) = 0` and broadcast an
+        // underpriced transaction).
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut engine = UniswapEngine::new();
+        engine.set_result_channel(tx);
+
+        // Two V2 pools with price divergence → a profitable pure-V2 path
+        // (same setup as `register_and_solve_path_eagerly_solves`).
+        let v2_addr_a = Address::from([0x11u8; 20]);
+        let v2_fwd_a = engine.v2_engine().register_pool(
+            v2_addr_a,
+            usdc(1_500_000),
+            weth(800),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let v2_addr_b = Address::from([0x12u8; 20]);
+        let v2_fwd_b = engine.v2_engine().register_pool(
+            v2_addr_b,
+            weth(1000),
+            usdc(2_000_000),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let path_id = engine.register_and_solve_path(vec![
+            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_a, zero_for_one: true },
+            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_b, zero_for_one: true },
+        ]);
+
+        // Mark a pool dirty so `has_dirty_paths()` is true (mirrors a WS log
+        // having arrived). The eagerly-solved result is already in `results`.
+        engine.dirty_v2.insert(v2_fwd_a);
+
+        // Non-default metadata — every field non-zero and distinct from default.
+        let metadata = BlockMetadata {
+            timestamp: 1_700_000_000,
+            base_fee_per_gas: Some(1_000_000_000),
+            gas_used: 5_000_000,
+            gas_limit: 30_000_000,
+        };
+
+        // `last_solved_block < block(=10)` so the guard fires.
+        let mut last_solved_block: u64 = 0;
+        let mut has_logs_this_block = true;
+
+        engine.finalize_block(10, &metadata, &mut last_solved_block, &mut has_logs_this_block);
+
+        // The emitted batch must carry the passed metadata, not default.
+        let batch = rx.try_recv().expect("finalize_block should emit a result batch");
+        assert_eq!(batch.solve_block, 10);
+        assert_eq!(batch.timestamp, 1_700_000_000, "batch must carry the caller's timestamp");
+        assert_eq!(batch.base_fee_per_gas, Some(1_000_000_000));
+        assert_eq!(batch.gas_used, 5_000_000);
+        assert_eq!(batch.gas_limit, 30_000_000);
+
+        // The profitable path should surface in fresh/updated.
+        assert!(
+            batch.fresh.iter().any(|(id, _)| *id == path_id)
+                || batch.updated.iter().any(|(id, _)| *id == path_id),
+            "expected the profitable path in fresh/updated"
+        );
+        // Guard advanced + logs flag cleared by finalize_block.
+        assert_eq!(last_solved_block, 10);
+        assert!(!has_logs_this_block);
+    }
+
+    #[test]
     fn pure_v2_path_finds_profitable_arb() {
         let mut engine = UniswapEngine::new();
 

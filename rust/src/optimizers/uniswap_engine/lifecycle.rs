@@ -49,7 +49,6 @@ impl UniswapEngine {
                     if !solve_result.optimal_input.is_zero() && !solve_result.profit.is_zero() {
                         self.results.insert(path_id, solve_result);
                         self.pending_new_paths.insert(path_id);
-                        self.has_unsent_results = true;
                     }
                 }
             }
@@ -138,8 +137,15 @@ impl UniswapEngine {
         self.results = self.solve_all();
         self.results_block = block_number;
 
-        // Compute incremental diff and send batch
-        // (block metadata is not available at initial solve time)
+        // Compute incremental diff and send batch.
+        // NOTE: empty metadata — block metadata is not available at initial
+        // solve time. This `solve_all_paths` entry point currently has no
+        // Python callers (grep-verified); the live rolling-start dispatch
+        // flows through the pump's `solve_dirty` + debounce
+        // `send_result_batch(&current_metadata)` (real metadata) instead. If
+        // this method is ever wired up, prefer threading real block metadata
+        // in to avoid an all-zero `ResultBatch` (see `finalize_if_dirty` doc
+        // comment in `uniswap_engine_pump.rs` for the consumer-side impact).
         self.compute_diff_and_send(&BlockMetadata::default());
     }
 
