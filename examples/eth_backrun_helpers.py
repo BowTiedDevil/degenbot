@@ -1,8 +1,14 @@
 import dataclasses
+import sys
 import typing
+from pathlib import Path
 
-from degenbot.arbitrage.cmd_stream import SENTINEL_NATIVE, SENTINEL_PM, SENTINEL_SELF, SENTINEL_WETH
-from degenbot.arbitrage.cmd_stream import (
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from contracts.cmd_stream import SENTINEL_NATIVE, SENTINEL_PM, SENTINEL_SELF, SENTINEL_WETH
+from contracts.cmd_stream import (
     AddressTable,
     enc_erc20_transfer,
     enc_erc20_xfer_balance,
