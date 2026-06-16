@@ -59,7 +59,7 @@ impl UniswapEngine {
     }
 
     /// Set the maximum age for buffered events in V3/V4 sub-engines.
-    pub fn set_event_buffer_max_age(&mut self, max_age: Option<u64>) {
+    pub const fn set_event_buffer_max_age(&mut self, max_age: Option<u64>) {
         self.v3_engine.set_event_buffer_max_age(max_age);
         self.v4_engine.set_event_buffer_max_age(max_age);
     }
