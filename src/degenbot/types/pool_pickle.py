@@ -1,4 +1,5 @@
 """Pickle helpers for pool serialization and deserialization."""
+
 from collections.abc import Generator
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from typing import Any, ClassVar

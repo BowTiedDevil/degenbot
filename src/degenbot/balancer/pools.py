@@ -1,4 +1,5 @@
 """Balancer V2 weighted pool implementation."""
+
 from collections.abc import Sequence
 from fractions import Fraction
 from threading import Lock

@@ -1,4 +1,5 @@
 """Camelot V2 liquidity pool implementation."""
+
 from __future__ import annotations
 
 from fractions import Fraction

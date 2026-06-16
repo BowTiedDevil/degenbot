@@ -1,4 +1,5 @@
 """SQLAlchemy model for Aave positions."""
+
 from typing import TYPE_CHECKING, Annotated
 
 from sqlalchemy import ForeignKey, Index

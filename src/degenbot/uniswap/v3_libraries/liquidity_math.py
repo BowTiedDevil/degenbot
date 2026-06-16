@@ -15,6 +15,13 @@ def add_delta(x: int, y: int) -> int:
 
     Delegates to Rust implementation.  Input validation runs in Python
     so that V3-specific revert messages match the Solidity contract.
+
+    Returns:
+        The resulting uint128 liquidity value.
+
+    Raises:
+        EVMRevertError: If the result overflows (LA) or underflows (LS).
+
     """
     # Validate x fits in uint128
     if x < 0 or x > MAX_UINT128:
@@ -29,10 +36,8 @@ def add_delta(x: int, y: int) -> int:
         # V3 Solidity distinguishes: LA (add overflow) vs LS (subtract underflow)
         if y >= 0:
             raise EVMRevertError(error="LA") from e
-        else:
-            raise EVMRevertError(error="LS") from e
+        raise EVMRevertError(error="LS") from e
     except OverflowError as e:
         if y >= 0:
             raise EVMRevertError(error="LA") from e
-        else:
-            raise EVMRevertError(error="LS") from e
+        raise EVMRevertError(error="LS") from e

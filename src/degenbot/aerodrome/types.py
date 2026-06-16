@@ -1,4 +1,5 @@
 """Aerodrome-specific data types and state definitions."""
+
 from dataclasses import dataclass
 
 from eth_typing import ChecksumAddress

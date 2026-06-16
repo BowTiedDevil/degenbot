@@ -1,4 +1,5 @@
 """Checksum address conversion with LRU caching."""
+
 import functools
 from typing import cast
 

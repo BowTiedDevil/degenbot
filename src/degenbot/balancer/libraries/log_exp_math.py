@@ -1,4 +1,5 @@
 """Balancer V2 LogExpMath: fixed-point exponentiation via Taylor series."""
+
 from degenbot.exceptions.pool import EVMRevertError
 
 

@@ -65,9 +65,7 @@ def _v3_virtual_reserves(
 
 
 # Cache for tick range lookups: (pool_address, current_tick, zero_for_one) -> result
-_tick_range_cache: dict[
-    tuple[str, int, bool], tuple[tuple[V3TickRangeInfo, ...], int] | None
-] = {}
+_tick_range_cache: dict[tuple[str, int, bool], tuple[tuple[V3TickRangeInfo, ...], int] | None] = {}
 _MAX_TICK_RANGE_CACHE_SIZE = 128
 
 
@@ -148,9 +146,7 @@ def _v3_get_adjacent_tick_ranges(
     current_tick = pool.tick
 
     # Generate ticks in swap direction
-    less_than_or_equal = (
-        not zero_for_one
-    )  # token0→token1: price goes down, tick goes down
+    less_than_or_equal = not zero_for_one  # token0→token1: price goes down, tick goes down
 
     ticks_along_path = gen_ticks(
         tick_data=tick_data,
@@ -162,7 +158,7 @@ def _v3_get_adjacent_tick_ranges(
     # Build list of initialized ticks
     # Clamp ticks to MIN_TICK/MAX_TICK bounds like real V3 pool does
     initialized_ticks: list[int] = []
-    try:
+    try:  # noqa: PLW0717
         for tick, is_initialized in ticks_along_path:
             # Clamp to valid tick range (like UniswapV3Pool._calculate_swap)
             clamped_tick = (

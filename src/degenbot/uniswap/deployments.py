@@ -1,4 +1,5 @@
 """Uniswap V2/V3 deployment addresses and chain configuration."""
+
 from dataclasses import dataclass
 
 import eth_typing

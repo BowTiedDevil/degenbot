@@ -1,4 +1,5 @@
 """BalancerPairView: N-token pool adapter for two-token arbitrage paths."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

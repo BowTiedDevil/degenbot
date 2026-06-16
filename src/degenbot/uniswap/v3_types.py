@@ -1,4 +1,5 @@
 """Uniswap V3-specific data types and state definitions."""
+
 import dataclasses
 
 from degenbot.types.abstract import AbstractPoolState, AbstractSimulationResult

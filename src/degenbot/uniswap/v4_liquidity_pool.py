@@ -725,11 +725,15 @@ class UniswapV4Pool(
 
     @property
     def initial_state_block(self) -> int:
-        """Block number at which the pool's initial state was captured.
+        (
+            """Block number at which the pool's initial state was captured.
 
         Returns:
             The block number from construction (DB snapshot or RPC fetch).
+
         """
+            ""
+        )
         return self._initial_state_block
 
     def swap_is_viable(
@@ -1084,7 +1088,7 @@ class UniswapV4Pool(
             return None
 
         initialized_ticks: list[int] = []
-        try:
+        try:  # noqa: PLW0717
             for tick, is_initialized in ticks_along_path:
                 clamped_tick = max(MIN_TICK, tick) if less_than_or_equal else min(MAX_TICK, tick)
                 if clamped_tick != tick:

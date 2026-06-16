@@ -1,4 +1,5 @@
 """SushiSwap pool trackers for event-driven updates."""
+
 from degenbot.sushiswap.pools import SushiswapV2Pool, SushiswapV3Pool
 from degenbot.uniswap.trackers import UniswapV2PoolTracker, UniswapV3PoolTracker
 

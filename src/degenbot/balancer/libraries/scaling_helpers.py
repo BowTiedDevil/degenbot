@@ -1,4 +1,5 @@
 """Balancer V2 token amount scaling and rate normalization."""
+
 from collections.abc import Sequence
 from typing import cast
 

@@ -11,7 +11,8 @@ These methods match the Uniswap V3 contract's math:
 - extract_fee: fee extraction for hop building
 - _get_tick_ranges / _compute_tick_ranges: bounded-product optimization
 
-See: contract_reference/uniswap/V3/UniswapV3Factory.sol (UniswapV3Pool swap, Oracle, Tick, TickBitmap, SqrtPriceMath, SwapMath)
+See: contract_reference/uniswap/V3/UniswapV3Factory.sol
+(UniswapV3Pool swap, Oracle, Tick, TickBitmap, SqrtPriceMath, SwapMath)
 """
 
 from __future__ import annotations

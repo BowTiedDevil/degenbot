@@ -5,7 +5,8 @@ by V4PoolState. The swap calculation methods (calculate_tokens_in/out)
 stay in the pool class because they're tightly coupled to V4-specific
 internals (SwapDelta, Hooks, HookedPoolResult).
 
-See: contract_reference/uniswap/V4/PoolManager.sol (PoolManager swap/modifyLiquidity, Pool, Hooks, SqrtPriceMath, SwapMath)
+See: contract_reference/uniswap/V4/PoolManager.sol
+(PoolManager swap/modifyLiquidity, Pool, Hooks, SqrtPriceMath, SwapMath)
 """
 
 from __future__ import annotations

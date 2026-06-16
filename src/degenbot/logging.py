@@ -1,4 +1,5 @@
 """Lazy logger that defers ``getLogger`` until first use."""
+
 import functools
 import inspect
 import logging

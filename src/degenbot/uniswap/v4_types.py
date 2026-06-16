@@ -1,4 +1,5 @@
 """Uniswap V4-specific data types and state definitions."""
+
 import dataclasses
 
 from eth_typing import ChecksumAddress

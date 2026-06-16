@@ -1,4 +1,5 @@
 """Balancer V2 WeightedMath invariant and swap calculations."""
+
 from degenbot.balancer.libraries.constants import ONE, PowVersion
 from degenbot.balancer.libraries.fixed_point import (
     complement,

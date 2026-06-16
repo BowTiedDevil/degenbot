@@ -1,4 +1,5 @@
 """SQLAlchemy base model classes and column types."""
+
 from typing import Annotated, ClassVar
 
 from eth_typing import ChecksumAddress

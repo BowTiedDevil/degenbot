@@ -952,7 +952,7 @@ class UniswapV3Pool(
             return None
 
         initialized_ticks: list[int] = []
-        try:
+        try:  # noqa: PLW0717
             for tick, is_initialized in ticks_along_path:
                 clamped_tick = max(MIN_TICK, tick) if less_than_or_equal else min(MAX_TICK, tick)
                 if clamped_tick != tick:

@@ -52,14 +52,17 @@ def compute_swap_step(
     Returns:
         A tuple of (sqrt_price_next_x96, amount_in, amount_out, fee_amount).
 
+    Raises:
+        EVMRevertError: If the Rust computation fails.
+
     """
     try:
         return _rs_compute_swap_step(
-        sqrt_ratio_x96_current,
-        sqrt_ratio_x96_target,
-        liquidity,
-        amount_remaining,
-        fee_pips,
-    )
+            sqrt_ratio_x96_current,
+            sqrt_ratio_x96_target,
+            liquidity,
+            amount_remaining,
+            fee_pips,
+        )
     except (ValueError, OverflowError) as e:
         raise EVMRevertError(error=str(e)) from e

@@ -2,6 +2,7 @@
 
 See: contract_reference/uniswap/V3/UniswapV3Factory.sol (TickMath library)
 """
+
 import functools
 
 from degenbot.constants import MAX_UINT128, MAX_UINT256

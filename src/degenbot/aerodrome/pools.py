@@ -1,4 +1,5 @@
 """Aerodrome V2 liquidity pool implementations (volatile and stable)."""
+
 from __future__ import annotations
 
 import dataclasses

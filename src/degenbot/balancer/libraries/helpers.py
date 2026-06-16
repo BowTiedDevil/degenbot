@@ -1,4 +1,5 @@
 """Balancer V2 pool helper calculations (token ratios, invariant checks)."""
+
 from decimal import Decimal
 
 SCALING_FACTOR = Decimal(1 * 10**18)

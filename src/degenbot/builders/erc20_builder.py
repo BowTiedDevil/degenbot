@@ -1,4 +1,5 @@
 """ERC-20 token builder that fetches on-chain metadata."""
+
 from __future__ import annotations
 
 import contextlib

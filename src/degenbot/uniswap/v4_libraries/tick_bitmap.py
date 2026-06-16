@@ -2,6 +2,7 @@
 
 See: contract_reference/uniswap/V4/PoolManager.sol (TickBitmap library)
 """
+
 import bisect
 from collections.abc import Generator
 from itertools import count
