@@ -20,6 +20,318 @@ from degenbot.types.rpc_types import (
 # ABI encoding / decoding
 # ------------------------------------------------------------------
 
+# ------------------------------------------------------------------
+# Concentrated-liquidity math (cl_*)
+# ------------------------------------------------------------------
+
+def cl_most_significant_bit(x: int) -> int:
+    """Find the index of the most significant bit set in x.
+
+    Args:
+        x: A non-negative integer
+
+    Returns:
+        The index (0-255) of the highest set bit
+
+    Raises:
+        ValueError: If x is zero
+
+    """
+
+def cl_least_significant_bit(x: int) -> int:
+    """Find the index of the least significant bit set in x.
+
+    Args:
+        x: A non-negative integer
+
+    Returns:
+        The index (0-255) of the lowest set bit
+
+    Raises:
+        ValueError: If x is zero
+
+    """
+
+def cl_muldiv(a: int, b: int, denominator: int) -> int:
+    """Compute floor(a * b / denominator) with full 512-bit precision.
+
+    Args:
+        a: First multiplicand
+        b: Second multiplicand
+        denominator: Divisor
+
+    Returns:
+        The floored result as a Python int
+
+    Raises:
+        ValueError: On division by zero or overflow
+
+    """
+
+def cl_muldiv_rounding_up(a: int, b: int, denominator: int) -> int:
+    """Compute ceil(a * b / denominator) with full 512-bit precision.
+
+    Args:
+        a: First multiplicand
+        b: Second multiplicand
+        denominator: Divisor
+
+    Returns:
+        The ceiling result as a Python int
+
+    Raises:
+        ValueError: On division by zero or overflow
+
+    """
+
+def cl_div_rounding_up(x: int, y: int) -> int:
+    """Compute ceil(x / y) without overflow checking.
+
+    Args:
+        x: Dividend
+        y: Divisor
+
+    Returns:
+        The ceiling result as a Python int
+
+    Raises:
+        ValueError: If y is zero
+
+    """
+
+def cl_simple_mul_div(a: int, b: int, denominator: int) -> int:
+    """Compute (a * b) / denominator without overflow checking.
+
+    Args:
+        a: First multiplicand
+        b: Second multiplicand
+        denominator: Divisor
+
+    Returns:
+        The result as a Python int
+
+    Raises:
+        ValueError: If denominator is zero
+
+    """
+
+def cl_add_delta(x: int, y: int) -> int:
+    """Add a signed delta y to x, checking that the result fits in uint128.
+
+    Args:
+        x: Base value (must fit in uint128)
+        y: Signed delta (must fit in int128)
+
+    Returns:
+        The result as a Python int
+
+    Raises:
+        ValueError: If the result overflows or inputs are out of range
+
+    """
+
+def cl_get_amount0_delta(
+    sqrt_price_a: int,
+    sqrt_price_b: int,
+    liquidity: int,
+    round_up: bool | None = None,
+) -> int:
+    """Get the amount0 delta between two prices for a given liquidity.
+
+    Args:
+        sqrt_price_a: First sqrt price (X96)
+        sqrt_price_b: Second sqrt price (X96)
+        liquidity: Liquidity value
+        round_up: Whether to round up
+
+    Returns:
+        The token0 amount delta as a Python int
+
+    Raises:
+        ValueError: On invalid input (zero price, overflow, etc.)
+
+    """
+
+def cl_get_amount1_delta(
+    sqrt_price_a: int,
+    sqrt_price_b: int,
+    liquidity: int,
+    round_up: bool | None = None,
+) -> int:
+    """Get the amount1 delta between two prices for a given liquidity.
+
+    Args:
+        sqrt_price_a: First sqrt price (X96)
+        sqrt_price_b: Second sqrt price (X96)
+        liquidity: Liquidity value
+        round_up: Whether to round up
+
+    Returns:
+        The token1 amount delta as a Python int
+
+    Raises:
+        ValueError: On invalid input (negative liquidity, overflow, etc.)
+
+    """
+
+def cl_get_next_sqrt_price_from_amount0_rounding_up(
+    sqrt_price_x96: int,
+    liquidity: int,
+    amount: int,
+    add: bool,
+) -> int:
+    """Get the next sqrt price given a delta of token0, rounding up.
+
+    Args:
+        sqrt_price_x96: Current sqrt price (X96)
+        liquidity: Liquidity value
+        amount: Token0 amount
+        add: Whether to add (True) or remove (False)
+
+    Returns:
+        The next sqrt price (X96) as a Python int
+
+    Raises:
+        ValueError: On overflow or insufficient liquidity
+
+    """
+
+def cl_get_next_sqrt_price_from_amount1_rounding_down(
+    sqrt_price_x96: int,
+    liquidity: int,
+    amount: int,
+    add: bool,
+) -> int:
+    """Get the next sqrt price given a delta of token1, rounding down.
+
+    Args:
+        sqrt_price_x96: Current sqrt price (X96)
+        liquidity: Liquidity value
+        amount: Token1 amount
+        add: Whether to add (True) or remove (False)
+
+    Returns:
+        The next sqrt price (X96) as a Python int
+
+    Raises:
+        ValueError: On overflow or insufficient liquidity
+
+    """
+
+def cl_get_next_sqrt_price_from_input(
+    sqrt_price_x96: int,
+    liquidity: int,
+    amount_in: int,
+    zero_for_one: bool,
+) -> int:
+    """Get the next sqrt price given an input amount.
+
+    Args:
+        sqrt_price_x96: Current sqrt price (X96)
+        liquidity: Liquidity value
+        amount_in: Input amount
+        zero_for_one: Direction flag
+
+    Returns:
+        The next sqrt price (X96) as a Python int
+
+    Raises:
+        ValueError: On invalid price/liquidity or overflow
+
+    """
+
+def cl_get_next_sqrt_price_from_output(
+    sqrt_price_x96: int,
+    liquidity: int,
+    amount_out: int,
+    zero_for_one: bool,
+) -> int:
+    """Get the next sqrt price given an output amount.
+
+    Args:
+        sqrt_price_x96: Current sqrt price (X96)
+        liquidity: Liquidity value
+        amount_out: Output amount
+        zero_for_one: Direction flag
+
+    Returns:
+        The next sqrt price (X96) as a Python int
+
+    Raises:
+        ValueError: On invalid price/liquidity or overflow
+
+    """
+
+def cl_compute_swap_step_v3(
+    sqrt_price_current: int,
+    sqrt_price_target: int,
+    liquidity: int,
+    amount_remaining: int,
+    fee_pips: int,
+) -> tuple[int, int, int, int]:
+    """Compute a V3-style swap step.
+
+    Args:
+        sqrt_price_current: Current sqrt price (X96)
+        sqrt_price_target: Target sqrt price (X96)
+        liquidity: Liquidity value
+        amount_remaining: Remaining amount (signed)
+        fee_pips: Fee in pips
+
+    Returns:
+        Tuple of (sqrt_price_next, amount_in, amount_out, fee_amount)
+
+    Raises:
+        ValueError: On invalid input, overflow, or if liquidity exceeds int128
+
+    """
+
+def cl_compute_swap_step_v4(
+    sqrt_price_current: int,
+    sqrt_price_target: int,
+    liquidity: int,
+    amount_remaining: int,
+    fee_pips: int,
+) -> tuple[int, int, int, int]:
+    """Compute a V4-style swap step.
+
+    Args:
+        sqrt_price_current: Current sqrt price (X96)
+        sqrt_price_target: Target sqrt price (X96)
+        liquidity: Liquidity value
+        amount_remaining: Remaining amount (signed)
+        fee_pips: Fee in pips
+
+    Returns:
+        Tuple of (sqrt_price_next, amount_in, amount_out, fee_amount)
+
+    Raises:
+        ValueError: On invalid input, overflow, or if liquidity exceeds int128
+
+    """
+
+def cl_max_usable_tick(tick_spacing: int) -> int:
+    """Compute the maximum usable tick for a given tick spacing.
+
+    Args:
+        tick_spacing: The tick spacing value
+
+    Returns:
+        The maximum usable tick as an int
+
+    """
+
+def cl_min_usable_tick(tick_spacing: int) -> int:
+    """Compute the minimum usable tick for a given tick spacing.
+
+    Args:
+        tick_spacing: The tick spacing value
+
+    Returns:
+        The minimum usable tick as an int
+
+    """
+
 def get_sqrt_ratio_at_tick(tick: int) -> int:
     """Convert a tick value to its corresponding sqrt price (X96 format).
 
@@ -158,7 +470,6 @@ def decode_single(
     data: bytes,
     checksum: bool = True,
 ) -> str | bool | int | bytes: ...
-
 def encode(
     types: list[str],
     values: list[str | bool | int | bytes],
@@ -669,6 +980,23 @@ __all__ = [
     "RustV3TickRangeSequence",
     "TransactionData",
     "TransactionReceiptData",
+    "cl_add_delta",
+    "cl_compute_swap_step_v3",
+    "cl_compute_swap_step_v4",
+    "cl_div_rounding_up",
+    "cl_get_amount0_delta",
+    "cl_get_amount1_delta",
+    "cl_get_next_sqrt_price_from_amount0_rounding_up",
+    "cl_get_next_sqrt_price_from_amount1_rounding_down",
+    "cl_get_next_sqrt_price_from_input",
+    "cl_get_next_sqrt_price_from_output",
+    "cl_least_significant_bit",
+    "cl_max_usable_tick",
+    "cl_min_usable_tick",
+    "cl_most_significant_bit",
+    "cl_muldiv",
+    "cl_muldiv_rounding_up",
+    "cl_simple_mul_div",
     "decode",
     "decode_return_data",
     "decode_single",
