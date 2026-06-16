@@ -1,5 +1,5 @@
 [build-system]
-requires = ["maturin ~= 1.12"]
+requires = ["maturin ~= 1"]
 build-backend = "maturin"
 
 [project]
@@ -13,15 +13,15 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "alembic ~= 1.18",
-    "click ~= 8.3",
-    "cvxpy ~= 1.8",
+    "click ~= 8.4",
+    "cvxpy ~= 1.9",
     "networkx ~= 3.6",
-    "pydantic ~= 2.12",
-    "pydantic-settings ~= 2.13",
+    "pydantic ~= 2.13",
+    "pydantic-settings ~= 2.14",
     "scipy ~= 1.17",
     "sqlalchemy ~= 2.0",
     "tenacity ~= 9.1",
-    "tomlkit ~= 0.14",
+    "tomlkit ~= 0.15",
     "tqdm ~= 4.67",
     "ujson ~= 5.12",
     "web3 ~= 7.14",
