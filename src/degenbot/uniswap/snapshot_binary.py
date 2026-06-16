@@ -22,6 +22,7 @@ from degenbot.uniswap.v3_snapshot import DatabaseSnapshot as V3DatabaseSnapshot
 from degenbot.uniswap.v4_snapshot import DatabaseSnapshot as V4DatabaseSnapshot
 
 if TYPE_CHECKING:
+    from degenbot.degenbot_rs import UniswapArbEngine
     from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
     from degenbot.uniswap.v4_snapshot import ManagedPoolIdentifier, UniswapV4LiquiditySnapshot
 
@@ -48,11 +49,16 @@ def _prime_v4_snapshot(
     accessed). The caller must provide the set of (pool_manager, pool_id) pairs.
     """
     for pool_manager, pool_id in managed_pools:
-        _ = snapshot._liquidity_snapshot[(pool_manager, pool_id)]  # noqa: SLF001
+        _ = snapshot._liquidity_snapshot[pool_manager, pool_id]  # noqa: SLF001
 
 
 def _normalize_v4_pool_id(pool_id: str | bytes) -> str:
-    """Normalize a V4 pool_id to a 0x-prefixed hex string."""
+    """Normalize a V4 pool_id to a 0x-prefixed hex string.
+
+    Returns:
+        The pool_id as a 0x-prefixed lowercase hex string.
+
+    """
     if isinstance(pool_id, bytes):
         return HexBytes(pool_id).to_0x_hex()
     if pool_id.startswith("0x"):
@@ -65,11 +71,16 @@ def _v3_snapshot_to_py_dict(
 ) -> dict[str, dict[int, tuple[int, int]]]:
     """Convert a V3 snapshot to a dict suitable for load_v3_snapshot_from_py().
 
-    Returns {pool_address_hex: {tick_index: (liquidity_gross, liquidity_net)}}.
+    Returns {pool_address_hex: {tick_index: (liquidity_gross, liquidity_net)}}
+    with no Pydantic model overhead.
+
+    Returns:
+        A dict mapping pool addresses to tick data dicts.
+
     """
     if isinstance(snapshot._source, V3DatabaseSnapshot):  # noqa: SLF001
         # Batch raw SQL path — already returns {addr: {tick: (lg, ln)}}
-        return snapshot._source.get_all_liquidity_maps()  # noqa: SLF001
+        return {str(k): v for k, v in snapshot._source.get_all_liquidity_maps().items()}  # noqa: SLF001
 
     # Fallback: prime the lazy dict and convert from Pydantic models
     _prime_v3_snapshot(snapshot)
@@ -96,7 +107,12 @@ def _v4_snapshot_to_py_dict(
 ) -> dict[str, dict[str, dict[int, tuple[int, int]]]]:
     """Convert a V4 snapshot to a dict suitable for load_v4_snapshot_from_py().
 
-    Returns {pool_manager_hex: {pool_id_hex: {tick_index: (lg, ln)}}}.
+    Returns {pool_manager_hex: {pool_id_hex: {tick_index: (lg, ln)}}}
+    with no Pydantic model overhead.
+
+    Returns:
+        A dict mapping pool manager addresses to pool ID dicts.
+
     """
     if isinstance(snapshot._source, V4DatabaseSnapshot):  # noqa: SLF001
         # Batch raw SQL path — returns {(pm_addr, pool_id_hex): {tick: (lg, ln)}}
@@ -132,7 +148,7 @@ def _v4_snapshot_to_py_dict(
 
 def stream_v3_snapshot_to_engine(
     snapshot: UniswapV3LiquiditySnapshot,
-    engine: object,
+    engine: UniswapArbEngine,
 ) -> None:
     """Stream V3 tick data from the DB into the Rust engine, one pool at a time.
 
@@ -185,7 +201,7 @@ def stream_v3_snapshot_to_engine(
 
 def stream_v4_snapshot_to_engine(
     snapshot: UniswapV4LiquiditySnapshot,
-    engine: object,
+    engine: UniswapArbEngine,
 ) -> None:
     """Stream V4 tick data from the DB into the Rust engine, one pool at a time.
 
