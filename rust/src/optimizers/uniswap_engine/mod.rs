@@ -43,6 +43,7 @@ use crate::optimizers::v4_block_engine::V4BlockEngine;
 
 // Sub-modules — each contains `impl UniswapEngine` or `impl PyUniswapArbEngine` blocks.
 #[allow(clippy::module_inception)]
+mod diagnostic;
 mod event_routing;
 mod lifecycle;
 mod py_binding;
@@ -50,6 +51,8 @@ mod result_channel;
 mod solver_dispatch;
 #[cfg(test)]
 mod tests;
+
+pub use diagnostic::{DiagnosticHop, DiagnosticPathState, DiagnosticPoolState};
 
 // Re-export public types from this module.
 pub use py_binding::PyUniswapArbEngine;
