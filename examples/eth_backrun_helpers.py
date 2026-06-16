@@ -1487,14 +1487,15 @@ def _3hop_v2_v2_v4(
     weth_address: str,
     **kwargs,
 ) -> bytes | None:
-    """V4 swap + V4_TAKE→V2a, V2b→PM delta netting, all inside V4 unlock.
+    """V2a→V2b inside V4 unlock, V4 final hop dynamic.
 
-    Uses V2_SWAP_CALC (not V2_SWAP_DIRECT) for both V2 swaps to compute
-    amounts on-chain from actual reserves, avoiding K-invariant failures
-    when solver reserves are stale relative to on-chain state.
+    Uses V2_SWAP_CALC for both V2 swaps so amounts derive from on-chain
+    reserves. The final V4 swap is dynamic: it reads the actual forward_b
+    balance delivered to the PoolManager by V2b, avoiding CurrencyNotSettled
+    when solver hop_outputs are stale/rounded relative to chain state.
     """
     ha, hb, hc = path_info.hops
-    out_a, out_b, _out_c = hop_outputs
+    _out_a, _out_b, _out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
     if not fits_int128(optimal_input):
@@ -1514,19 +1515,26 @@ def _3hop_v2_v2_v4(
     c0_idx = at.add(hc.currency0_address)
     c1_idx = at.add(hc.currency1_address)
 
-    # Forward token from V2b (output of V2b swap)
+    # Forward token from V2b (output of V2b swap, input to V4c)
     forward_b_addr = hb.token1_address if hb.zfo else hb.token0_address
     forward_b_idx = at.add(forward_b_addr)
 
-    inner = enc_v4_swap_compact(
-        c0_idx, c1_idx, hc.fee, hc.tick_spacing, zero_idx, hc.zfo, out_b
-    )
+    # Phase order inside V4 unlock:
+    # 1. Record PM forward_b balance (0) so V2b->PM can be settled.
+    # 2. Borrow WETH from PM to kickstart V2a flash swap.
+    # 3. V2a -> V2b, then V2b -> PM (delivers forward_b).
+    # 4. Settle forward_b delta so the dynamic V4 swap can consume it.
+    # 5. Dynamic V4c consumes forward_b; net WETH delta is profit.
+    # 6. Settle all remaining WETH/native deltas.
+    inner = enc_v4_sync(forward_b_idx)
     inner += enc_v4_take_compact(weth_idx, v2a_idx, optimal_input)
     inner += enc_v2_swap_calc(v2a_idx, ha.zfo, v2b_idx, fee=ha.fee)
-    inner += enc_v4_sync(forward_b_idx)
     inner += enc_v2_swap_calc(v2b_idx, hb.zfo, pm_idx, fee=hb.fee)
     inner += enc_v4_settle()
-    inner += enc_v4_settle_delta(weth_idx)
+    inner += enc_v4_swap_dynamic(
+        c0_idx, c1_idx, hc.fee, hc.tick_spacing, zero_idx, hc.zfo
+    )
+    inner += enc_v4_settle_all()
 
     return enc_preamble(at) + enc_v4_unlock(inner)
 
