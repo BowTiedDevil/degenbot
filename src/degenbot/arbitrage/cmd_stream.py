@@ -100,12 +100,22 @@ BEGIN_EXECUTION = b"\xff"
 
 
 def _e(v: int, n: int = 32, signed: bool = False) -> bytes:
-    """Encode an integer as n big-endian bytes."""
+    """Encode an integer as n big-endian bytes.
+
+    Returns:
+        The integer encoded as n big-endian bytes.
+
+    """
     return v.to_bytes(n, "big", signed=signed)
 
 
 def _address_to_bytes(addr: str | ChecksumAddress) -> bytes:
-    """Convert a checksummed address string to 20 raw bytes."""
+    """Convert a checksummed address string to 20 raw bytes.
+
+    Returns:
+        The address as 20 raw bytes.
+
+    """
     addr_str = addr
     addr_bytes = bytes.fromhex(addr_str[2:])
     msg = f"Invalid address length: {len(addr_bytes)}"
@@ -131,6 +141,10 @@ def pack_expected_balance(check_mode: int, expected_value: int) -> int:
     Format: (expected_value << 8) | check_mode
 
     check_mode: 0=skip, 1=WETH+ETH, 2=ERC6909
+
+    Returns:
+        The packed expected_balance value.
+
     """
     return (expected_value << 8) | check_mode
 
@@ -182,6 +196,10 @@ class AddressTable:
 
         Sentinel addresses (WETH, PM, executor, USDC, WBTC, NATIVE)
         return their fixed sentinel index without adding to the table.
+
+        Returns:
+            The table index (or sentinel index) for the address.
+
         """
         if isinstance(addr, str):
             addr = to_checksum_address(addr)
@@ -198,7 +216,12 @@ class AddressTable:
         return idx
 
     def index_of(self, addr: str | ChecksumAddress) -> int:
-        """Return the index for an address. Raises KeyError if not found."""
+        """Return the index for an address. Raises KeyError if not found.
+
+        Returns:
+            The table index (or sentinel index) for the address.
+
+        """
         if isinstance(addr, str):
             addr = to_checksum_address(addr)
         if addr in self._sentinel_map:
@@ -220,12 +243,22 @@ class AddressTable:
 
 
 def enc_set_address(addr: str | ChecksumAddress) -> bytes:
-    """SET_ADDRESS: [0x00][address:20] — 21 bytes."""
+    """SET_ADDRESS: [0x00][address:20] — 21 bytes.
+
+    Returns:
+        The encoded SET_ADDRESS command bytes.
+
+    """
     return CMD_SET_ADDRESS + _address_to_bytes(addr)
 
 
 def enc_set_addresses(address_table: AddressTable) -> bytes:
-    """Encode SET_ADDRESS commands for all table addresses (skip sentinels)."""
+    """Encode SET_ADDRESS commands for all table addresses (skip sentinels).
+
+    Returns:
+        The encoded SET_ADDRESS commands bytes.
+
+    """
     result = b""
     for addr in address_table.addresses:  # .addresses excludes sentinels
         result += enc_set_address(addr)
@@ -240,6 +273,10 @@ def enc_skip_profit_check() -> bytes:
     execute() — passing expected_balance=0 skips the check.
     This function is kept as a no-op for backwards compatibility with
     callers that unconditionally include it.
+
+    Returns:
+        Empty bytes (the opcode is deprecated).
+
     """
     return b""
 
@@ -249,6 +286,10 @@ def enc_bribe_coinbase(bips: int) -> bytes:
 
     Sends profit * bips // 10000 ETH to block.coinbase.
     Max bips: 10000 (= 100% of profit). Never reverts on shortfall.
+
+    Returns:
+        The encoded BRIBE_COINBASE command bytes.
+
     """
     msg = f"bips must be 0-10000, got {bips}"
     assert 0 <= bips <= 10_000, msg
@@ -260,6 +301,10 @@ def enc_bribe_address(recipient_idx: int, bips: int) -> bytes:
 
     Sends profit x bips / 10000 ETH to an arbitrary address.
     Max bips: 10000 (= 100% of profit). Never reverts on shortfall.
+
+    Returns:
+        The encoded BRIBE_ADDRESS command bytes.
+
     """
     msg = f"bips must be 0-10000, got {bips}"
     assert 0 <= bips <= 10_000, msg
@@ -294,6 +339,9 @@ def enc_preamble(
         bribe_bips: Profit fraction (in bips, 10000=100%) to send as bribe.
         bribe_address_idx: If set, bribe to this address index instead of coinbase.
 
+    Returns:
+        The full encoded preprocessing preamble bytes.
+
     """
     preamble = enc_set_addresses(address_table)
     if bribe_bips > 0:
@@ -316,6 +364,10 @@ def enc_erc20_transfer(
     """ERC20_TRANSFER: [0x10][token_idx:1][recipient_idx:1][amount:12] — 15 bytes.
 
     Amount is uint96 (max 7.9e28 -- covers all practical token amounts).
+
+    Returns:
+        The encoded ERC20_TRANSFER command bytes.
+
     """
     return b"".join([
         CMD_ERC20_TRANSFER,
@@ -329,7 +381,12 @@ def enc_erc20_xfer_balance(
     token_idx: int,
     recipient_idx: int,
 ) -> bytes:
-    """ERC20_XFER_BALANCE: [0x11][token_idx:1][recipient_idx:1] — 3 bytes."""
+    """ERC20_XFER_BALANCE: [0x11][token_idx:1][recipient_idx:1] — 3 bytes.
+
+    Returns:
+        The encoded ERC20_XFER_BALANCE command bytes.
+
+    """
     return b"".join([
         CMD_ERC20_XFER_BALANCE,
         _e(token_idx, 1),
@@ -338,32 +395,62 @@ def enc_erc20_xfer_balance(
 
 
 def enc_weth_deposit(amount: int) -> bytes:
-    """WETH_DEPOSIT: [0x12][amount:32] — 33 bytes."""
+    """WETH_DEPOSIT: [0x12][amount:32] — 33 bytes.
+
+    Returns:
+        The encoded WETH_DEPOSIT command bytes.
+
+    """
     return b"".join([CMD_WETH_DEPOSIT, _e(amount)])
 
 
 def enc_weth_withdraw(amount: int) -> bytes:
-    """WETH_WITHDRAW: [0x13][amount:32] — 33 bytes."""
+    """WETH_WITHDRAW: [0x13][amount:32] — 33 bytes.
+
+    Returns:
+        The encoded WETH_WITHDRAW command bytes.
+
+    """
     return b"".join([CMD_WETH_WITHDRAW, _e(amount)])
 
 
 def enc_weth_deposit_all() -> bytes:
-    """WETH_DEPOSIT_ALL: [0x14] — 1 byte."""
+    """WETH_DEPOSIT_ALL: [0x14] — 1 byte.
+
+    Returns:
+        The encoded WETH_DEPOSIT_ALL command byte.
+
+    """
     return CMD_WETH_DEPOSIT_ALL
 
 
 def enc_weth_withdraw_all() -> bytes:
-    """WETH_WITHDRAW_ALL: [0x15] — 1 byte."""
+    """WETH_WITHDRAW_ALL: [0x15] — 1 byte.
+
+    Returns:
+        The encoded WETH_WITHDRAW_ALL command byte.
+
+    """
     return CMD_WETH_WITHDRAW_ALL
 
 
 def enc_send_eth(recipient_idx: int, amount: int) -> bytes:
-    """SEND_ETH: [0x16][recipient_idx:1][amount:12] — 14 bytes."""
+    """SEND_ETH: [0x16][recipient_idx:1][amount:12] — 14 bytes.
+
+    Returns:
+        The encoded SEND_ETH command bytes.
+
+    """
     return b"".join([CMD_SEND_ETH, _e(recipient_idx, 1), _e(amount, 12)])
 
 
 def enc_send_eth_all(recipient_idx: int) -> bytes:
-    """SEND_ETH_ALL: [0x17][recipient_idx:1] — 2 bytes."""
+    """SEND_ETH_ALL: [0x17][recipient_idx:1] — 2 bytes.
+
+    Returns:
+        The encoded SEND_ETH_ALL command bytes.
+
+    """
     return b"".join([CMD_SEND_ETH_ALL, _e(recipient_idx, 1)])
 
 
@@ -384,6 +471,10 @@ def enc_v2_swap_compact(
     fee is a fraction of 10000 (30 = 0.3% UniswapV2, 25 = 0.25% PancakeSwap).
     Written to t_v2_pair_fee[pool] before swap() for correct auto-pay.
     Amount is uint96. Forward data max 255 bytes.
+
+    Returns:
+        The encoded V2_SWAP_COMPACT command bytes.
+
     """
     return b"".join([
         CMD_V2_SWAP_COMPACT,
@@ -403,7 +494,12 @@ def enc_v2_swap_calc(
     recipient_idx: int,
     fee: int = 30,
 ) -> bytes:
-    """V2_SWAP_CALC: [0x21][pool_idx:1][zfo:1][recipient_idx:1][fee:2] — 6 bytes."""
+    """V2_SWAP_CALC: [0x21][pool_idx:1][zfo:1][recipient_idx:1][fee:2] — 6 bytes.
+
+    Returns:
+        The encoded V2_SWAP_CALC command bytes.
+
+    """
     return b"".join([
         CMD_V2_SWAP_CALC,
         _e(pool_idx, 1),
@@ -423,6 +519,10 @@ def enc_v2_swap_direct(
     — 16 bytes. V2 swap with explicit amount and no callback.
 
     Amount is uint96. No fee field — the pair applies its stored fee.
+
+    Returns:
+        The encoded V2_SWAP_DIRECT command bytes.
+
     """
     return b"".join([
         CMD_V2_SWAP_DIRECT,
@@ -448,6 +548,10 @@ def enc_v3_swap_compact(
 
     Amount is uint96 (positive exact-input — contract negates internally).
     Sqrt price limit auto-set to widest range. Forward data max 255 bytes.
+
+    Returns:
+        The encoded V3_SWAP_COMPACT command bytes.
+
     """
     return b"".join([
         CMD_V3_SWAP_COMPACT,
@@ -465,7 +569,12 @@ def enc_v3_swap_delta(
     zfo: bool,
     recipient_idx: int,
 ) -> bytes:
-    """V3_SWAP_DELTA: [0x31][pool_idx:1][zfo:1][recipient_idx:1] — 4 bytes."""
+    """V3_SWAP_DELTA: [0x31][pool_idx:1][zfo:1][recipient_idx:1] — 4 bytes.
+
+    Returns:
+        The encoded V3_SWAP_DELTA command bytes.
+
+    """
     return b"".join([
         CMD_V3_SWAP_DELTA,
         _e(pool_idx, 1),
@@ -492,6 +601,10 @@ def enc_v4_swap_compact(
     Fee is uint16 (e.g., 3000 = 0.3%). Tick spacing is int16 encoded as unsigned.
     Amount is uint96 (positive exact-input — contract negates internally).
     Use hooks_idx=0xFF (SENTINEL_NATIVE) for "no hooks".
+
+    Returns:
+        The encoded V4_SWAP_COMPACT command bytes.
+
     """
     return b"".join([
         CMD_V4_SWAP_COMPACT,
@@ -518,6 +631,10 @@ def enc_v4_swap_dynamic(
 
     Fee is uint16. Tick spacing is int16 encoded as unsigned.
     Use hooks_idx=0xFF (SENTINEL_NATIVE) for "no hooks".
+
+    Returns:
+        The encoded V4_SWAP_DYNAMIC command bytes.
+
     """
     return b"".join([
         CMD_V4_SWAP_DYNAMIC,
@@ -537,6 +654,10 @@ def enc_v4_batch(swaps: list[tuple[int, int, int, int, int, bool, int]]) -> byte
     [zfo:1][amount:12]. Amount=0 means dynamic (from PM exttload).
     After all swaps, auto-settles native ETH and WETH deltas.
     Max swaps: 8 (contract limit).
+
+    Returns:
+        The encoded V4_BATCH command bytes.
+
     """
     msg = f"V4_BATCH max 8 swaps, got {len(swaps)}"
     assert len(swaps) <= 8, msg
@@ -561,6 +682,10 @@ def enc_v4_unlock(forward_data: bytes) -> bytes:
     """V4_UNLOCK: [0x50][len:1][data:N] — 2 + N bytes.
 
     Forward data max 255 bytes. Enters the PoolManager unlock context.
+
+    Returns:
+        The encoded V4_UNLOCK command bytes.
+
     """
     return b"".join([CMD_V4_UNLOCK, _e(len(forward_data), 1), forward_data])
 
@@ -573,6 +698,10 @@ def enc_v4_take(
     """V4_TAKE: [0x51][currency_idx:1][recipient_idx:1][amount:32] — 35 bytes.
 
     Rarely used — prefer V4_TAKE_COMPACT (15 bytes) or V4_TAKE_DELTA (3 bytes).
+
+    Returns:
+        The encoded V4_TAKE command bytes.
+
     """
     return b"".join([
         CMD_V4_TAKE,
@@ -590,6 +719,10 @@ def enc_v4_take_compact(
     """V4_TAKE_COMPACT: [0x52][currency_idx:1][recipient_idx:1][amount:12] — 15 bytes.
 
     Amount is uint96. Preferred over enc_v4_take for all known amounts.
+
+    Returns:
+        The encoded V4_TAKE_COMPACT command bytes.
+
     """
     return b"".join([
         CMD_V4_TAKE_COMPACT,
@@ -603,7 +736,12 @@ def enc_v4_take_delta(
     currency_idx: int,
     recipient_idx: int,
 ) -> bytes:
-    """V4_TAKE_DELTA: [0x53][currency_idx:1][recipient_idx:1] — 3 bytes."""
+    """V4_TAKE_DELTA: [0x53][currency_idx:1][recipient_idx:1] — 3 bytes.
+
+    Returns:
+        The encoded V4_TAKE_DELTA command bytes.
+
+    """
     return b"".join([
         CMD_V4_TAKE_DELTA,
         _e(currency_idx, 1),
@@ -612,22 +750,42 @@ def enc_v4_take_delta(
 
 
 def enc_v4_sync(currency_idx: int) -> bytes:
-    """V4_SYNC: [0x54][currency_idx:1] — 2 bytes."""
+    """V4_SYNC: [0x54][currency_idx:1] — 2 bytes.
+
+    Returns:
+        The encoded V4_SYNC command bytes.
+
+    """
     return b"".join([CMD_V4_SYNC, _e(currency_idx, 1)])
 
 
 def enc_v4_settle() -> bytes:
-    """V4_SETTLE: [0x55] — 1 byte."""
+    """V4_SETTLE: [0x55] — 1 byte.
+
+    Returns:
+        The encoded V4_SETTLE command byte.
+
+    """
     return b"\x55"
 
 
 def enc_v4_settle_delta(currency_idx: int) -> bytes:
-    """V4_SETTLE_DELTA: [0x56][currency_idx:1] — 2 bytes."""
+    """V4_SETTLE_DELTA: [0x56][currency_idx:1] — 2 bytes.
+
+    Returns:
+        The encoded V4_SETTLE_DELTA command bytes.
+
+    """
     return b"".join([CMD_V4_SETTLE_DELTA, _e(currency_idx, 1)])
 
 
 def enc_v4_settle_all() -> bytes:
-    """V4_SETTLE_ALL: [0x57] — 1 byte."""
+    """V4_SETTLE_ALL: [0x57] — 1 byte.
+
+    Returns:
+        The encoded V4_SETTLE_ALL command byte.
+
+    """
     return CMD_V4_SETTLE_ALL
 
 
@@ -641,6 +799,10 @@ def enc_v4_mint_compact(
     Convert positive PM delta into ERC6909 balance for recipient.
     No physical token transfer — asset stays inside PoolManager.
     Amount is uint96.
+
+    Returns:
+        The encoded V4_MINT_COMPACT command bytes.
+
     """
     return b"".join([
         CMD_V4_MINT_COMPACT,
@@ -658,6 +820,10 @@ def enc_v4_burn_compact(
 
     Convert ERC6909 balance into a payable PM delta (offsets a debt).
     Amount is uint96.
+
+    Returns:
+        The encoded V4_BURN_COMPACT command bytes.
+
     """
     return b"".join([
         CMD_V4_BURN_COMPACT,
@@ -694,7 +860,12 @@ def make_pool_key(
 
 
 def _keccak256(data: bytes) -> bytes:
-    """Keccak-256 hash."""
+    """Keccak-256 hash.
+
+    Returns:
+        The 32-byte Keccak-256 hash.
+
+    """
     from web3 import Web3
 
     return Web3.keccak(data)
@@ -704,6 +875,10 @@ def _mapping_slot(base_slot: int, key: int) -> int:
     """Compute Solidity mapping storage slot: keccak256(key . base_slot).
 
     ```. is concatenation, both key and base_slot are 32-byte big-endian.
+
+    Returns:
+        The computed mapping storage slot as an integer.
+
     """
     return int.from_bytes(
         _keccak256(key.to_bytes(32, "big") + base_slot.to_bytes(32, "big")),
@@ -712,7 +887,12 @@ def _mapping_slot(base_slot: int, key: int) -> int:
 
 
 def _nested_mapping_slot(base_slot: int, key1: int, key2: int) -> int:
-    """Compute storage slot for mapping[key1][key2] at base_slot."""
+    """Compute storage slot for mapping[key1][key2] at base_slot.
+
+    Returns:
+        The computed nested mapping storage slot as an integer.
+
+    """
     return _mapping_slot(_mapping_slot(base_slot, key1), key2)
 
 
@@ -879,7 +1059,12 @@ class V4V4ArbitragePayload:
     _at: AddressTable = field(default_factory=AddressTable, init=False, repr=False)
 
     def _ensure_table(self) -> AddressTable:
-        """Populate the address table with all needed addresses."""
+        """Populate the address table with all needed addresses.
+
+        Returns:
+            The populated address table.
+
+        """
         at = AddressTable(
             weth_address=self.weth,
             executor_address=self.executor,
@@ -952,6 +1137,10 @@ class V4V4ArbitragePayload:
         V4_TAKE for the net profit delta.
         For cross-currency paths (e.g., output is native ETH), use
         V4_TAKE for native + V4_SETTLE_DELTA for WETH input.
+
+        Returns:
+            The complete encoded command stream bytes.
+
         """
         at = self._ensure_table()
         msg = "Pool A not configured"
@@ -1011,6 +1200,10 @@ class V4V4ArbitragePayload:
 
         V4_BATCH packs both swaps into a single command with auto-settle.
         The second swap uses dynamic amounts (amount=0) read from PM exttload.
+
+        Returns:
+            The complete encoded command stream bytes.
+
         """
         at = self._ensure_table()
         msg = "Pool A not configured"
@@ -1137,6 +1330,10 @@ class CmdExecutorComposer:
         Uses V4_SWAP_COMPACT for both swaps, V4_TAKE for profit,
         and V4_SETTLE_DELTA for remaining WETH input debt.
         All operations happen inside a single V4_UNLOCK.
+
+        Returns:
+            The encoded V4→V4 command stream bytes.
+
         """
         swap_a: UniswapV4PoolSwapAmounts = swap_amounts[0]
         swap_b: UniswapV4PoolSwapAmounts = swap_amounts[1]
@@ -1328,6 +1525,10 @@ class V4V3ArbitragePayload:
         2. V4_TAKE USDC to executor
         3. V3_SWAP_COMPACT with auto-pay (USDC→WETH, no forward_data)
         4. V4_SETTLE_DELTA WETH (settle input debt)
+
+        Returns:
+            The complete encoded command stream bytes.
+
         """
         at = self._ensure_table()
         msg = "V4 pool not configured"
@@ -1378,6 +1579,10 @@ class V4V3ArbitragePayload:
         2. V4_SYNC WETH
         3. ERC20_TRANSFER WETH to PM
         4. V4_SETTLE
+
+        Returns:
+            The complete encoded command stream bytes.
+
         """
         at = self._ensure_table()
         msg = "V4 pool not configured"
