@@ -277,3 +277,8 @@ _Avoid_: amount sign, swap direction sign, amount convention
 ### f64_to_u256 decomposition
 
 **Ruling: Iterative 4-limb decomposition.** The previous 2-limb decomposition (`hi * 2^64 + lo`) silently produced wrong results for values exceeding 128 bits. The 4-limb iterative decomposition correctly handles the full U256 range. f64's 52-bit mantissa limits round-trip precision to ~15-16 significant digits; the lower ~61 digits of a 77-digit U256 are lost in the float conversion (inherent to f64, not fixable).
+
+## Observability
+
+**DiagnosticPathState**: A serializable snapshot of a Rust-engine arbitrage path at a single block, returned by `PyUniswapArbEngine.diagnostic_inspect_path()`. Captures each hop's pool ID, version, zero-for-one flag, token/currency pair, engine reserves/state, and — when an RPC URL is configured — on-chain state plus a per-field `diff` showing mismatches against the engine view.
+_Avoid_: dump, state dump, debug snapshot

@@ -1650,6 +1650,77 @@ impl PyUniswapArbEngine {
         self.engine.lock().path_count()
     }
 
+    /// Snapshot the engine-owned state for every hop in a registered path.
+    ///
+    /// This is a diagnostic helper for investigating simulation failures.
+    /// Engine state is captured while the engine lock is held; the lock is
+    /// released before any RPC calls. The `rpc_url` argument is accepted for
+    /// forward compatibility with on-chain comparison (Slice 3) but is
+    /// currently ignored.
+    ///
+    /// Returns a Python `dict` containing `path_id`, `path_type`, `solve_block`,
+    /// and a `hops` list with per-hop engine state.
+    ///
+    /// Raises `KeyError` if `path_id` is not registered.
+    #[allow(clippy::needless_pass_by_value)]
+    #[pyo3(signature = (path_id, rpc_url=None))]
+    fn diagnostic_inspect_path(
+        &self,
+        py: Python<'_>,
+        path_id: u64,
+        rpc_url: Option<String>,
+    ) -> PyResult<pyo3::Py<pyo3::PyAny>> {
+        // 1. Snapshot engine-owned state under the lock.
+        let engine = self.engine.lock();
+        let snapshot = engine.diagnostic_path_state(path_id);
+        drop(engine);
+
+        let Some(mut snapshot) = snapshot else {
+            return Err(pyo3::exceptions::PyKeyError::new_err(format!(
+                "path_id {path_id} is not registered"
+            )));
+        };
+
+        // 2. Optionally fetch on-chain state and compute diffs.
+        let rpc_url = rpc_url.or_else(|| self.verify_rpc_url.lock().clone());
+        if let Some(rpc_url) = rpc_url {
+            let runtime = crate::runtime::get_runtime();
+            let state_view = *self.verify_state_view.lock();
+
+            match runtime.block_on(crate::provider::AlloyProvider::new(&rpc_url, 3)) {
+                Ok(provider) => {
+                    if let Err(e) =
+                        runtime.block_on(snapshot.fetch_onchain(&provider, state_view))
+                    {
+                        eprintln!(
+                            "[diagnostic_inspect_path] on-chain fetch failed for path {path_id}: {e}"
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[diagnostic_inspect_path] failed to create provider for path {path_id}: {e}"
+                    );
+                }
+            }
+        }
+
+        // 3. Convert the snapshot to a Python dict via JSON round-trip.
+        let json = serde_json::to_string(&snapshot).map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "diagnostic_inspect_path: serialization failed: {e}"
+            ))
+        })?;
+
+        let json_module = py.import("json").map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "diagnostic_inspect_path: failed to import json: {e}"
+            ))
+        })?;
+        let dict = json_module.getattr("loads")?.call1((json,))?;
+        Ok(dict.unbind())
+    }
+
     /// Verify all V3 and V4 pool liquidity maps against on-chain state.
     ///
     /// Calls `TickLens` for V3 pools and `StateView` for V4 pools. Compares
