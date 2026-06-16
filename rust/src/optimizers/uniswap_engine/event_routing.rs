@@ -20,55 +20,54 @@ impl UniswapEngine {
 
         if *topic == crate::optimizers::v2_sync_decoder::V2_SYNC_TOPIC {
             if let Some(event) = crate::optimizers::v2_sync_decoder::decode_sync_log(log) {
-                if let Some(fwd_key) = self.v2_engine.apply_sync(
+                for key in self.v2_engine.apply_sync(
                     event.pool_address,
                     event.reserve0,
                     event.reserve1,
-                ) {
-                    self.dirty_v2.insert(fwd_key);
-                    self.dirty_v2.insert(fwd_key + 1); // reverse key
+                ).iter() {
+                    self.dirty_v2.insert(key);
                 }
             }
         } else if *topic == crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC {
             if let Some(event) = crate::bot_core::v3_swap_decoder::decode_v3_swap_log(log) {
-                if let Some(key) = self.v3_engine.apply_swap(
+                for key in self.v3_engine.apply_swap(
                     event.pool_address,
                     event.sqrt_price_x96,
                     event.liquidity.to::<u128>(),
                     event.tick,
                     block_number,
                     &[],
-                ) {
+                ).iter() {
                     self.dirty_v3.insert(key);
                 }
             }
         } else if *topic == crate::bot_core::v3_mint_burn_decoder::V3_MINT_TOPIC {
             if let Some(event) = crate::bot_core::v3_mint_burn_decoder::decode_v3_mint_log(log) {
-                if let Some(key) = self.v3_engine.apply_liquidity_update(
+                for key in self.v3_engine.apply_liquidity_update(
                     event.pool_address,
                     event.tick_lower,
                     event.tick_upper,
                     event.amount.cast_signed(),
                     block_number,
-                ) {
+                ).iter() {
                     self.dirty_v3.insert(key);
                 }
             }
         } else if *topic == crate::bot_core::v3_mint_burn_decoder::V3_BURN_TOPIC {
             if let Some(event) = crate::bot_core::v3_mint_burn_decoder::decode_v3_burn_log(log) {
-                if let Some(key) = self.v3_engine.apply_liquidity_update(
+                for key in self.v3_engine.apply_liquidity_update(
                     event.pool_address,
                     event.tick_lower,
                     event.tick_upper,
                     -(event.amount.cast_signed()),
                     block_number,
-                ) {
+                ).iter() {
                     self.dirty_v3.insert(key);
                 }
             }
         } else if *topic == crate::bot_core::v4_swap_decoder::V4_SWAP_TOPIC {
             if let Some(event) = crate::bot_core::v4_swap_decoder::decode_v4_swap_log(log) {
-                if let Some((fwd_key, rev_key)) = self.v4_engine.apply_swap(
+                for key in self.v4_engine.apply_swap(
                     &V4SwapUpdate {
                         pool_manager: log.address(),
                         pool_id: event.pool_id,
@@ -78,23 +77,21 @@ impl UniswapEngine {
                         tick_priors: vec![],
                     },
                     block_number,
-                ) {
-                    self.dirty_v4.insert(fwd_key);
-                    self.dirty_v4.insert(rev_key);
+                ).iter() {
+                    self.dirty_v4.insert(key);
                 }
             }
         } else if *topic == crate::bot_core::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC {
             if let Some(event) = crate::bot_core::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log(log) {
-                if let Some((fwd_key, rev_key)) = self.v4_engine.apply_liquidity_update(
+                for key in self.v4_engine.apply_liquidity_update(
                     log.address(),
                     event.pool_id,
                     event.tick_lower,
                     event.tick_upper,
                     event.liquidity_delta,
                     block_number,
-                ) {
-                    self.dirty_v4.insert(fwd_key);
-                    self.dirty_v4.insert(rev_key);
+                ).iter() {
+                    self.dirty_v4.insert(key);
                 }
             }
         }

@@ -12,6 +12,7 @@ use alloy::rpc::types::Log;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 
+use crate::optimizers::affected_keys::AffectedKeys;
 use crate::optimizers::mobius::HopState;
 use crate::optimizers::mobius_int::{mobius_solve_with_refinement, u256_to_f64, IntHopState};
 use crate::optimizers::v2_sync_decoder::{decode_sync_log, SyncEvent};
@@ -138,13 +139,22 @@ impl V2BlockEngine {
     ///
     /// Sync carries absolute reserves — last-event-wins per pool per block.
     /// Both orientations are updated from the same event.
-    pub fn apply_sync(&mut self, pool_address: Address, reserve0: U256, reserve1: U256) -> Option<u64> {
+    ///
+    /// Returns the affected pool keys (forward + reverse orientations), or
+    /// an empty [`AffectedKeys`] if the pool is not registered.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the address is registered but the forward orientation is
+    /// missing from `self.pools` (indicates an internal inconsistency).
+    pub fn apply_sync(&mut self, pool_address: Address, reserve0: U256, reserve1: U256) -> AffectedKeys {
         let Some(&(forward_id, reverse_id)) = self.pool_addresses.get(&pool_address) else {
-            return None; // Not a registered pool — skip
+            return AffectedKeys::empty(); // Not a registered pool — skip
         };
 
         // Get gamma_numer/fee_denom from existing forward entry
-        let forward_state = self.pools.get(&forward_id)?;
+        let forward_state = self.pools.get(&forward_id)
+            .expect("forward pool entry must exist when address is registered");
         let gamma_numer = forward_state.gamma_numer;
         let fee_denom = forward_state.fee_denom;
 
@@ -160,18 +170,16 @@ impl V2BlockEngine {
             IntHopState::new(reserve1, reserve0, gamma_numer, fee_denom),
         );
 
-        Some(forward_id)
+        AffectedKeys::pair(forward_id, reverse_id)
     }
 
-    /// Apply Sync updates and return the set of forward pool keys that changed.
+    /// Apply Sync updates and return the set of pool keys that changed.
     /// Does NOT rebuild paths or solve — caller handles that.
     pub fn apply_sync_updates(&mut self, updates: &[(Address, U256, U256)]) -> HashSet<u64> {
         let mut affected = HashSet::new();
         for &(addr, r0, r1) in updates {
-            if let Some(fwd_key) = self.apply_sync(addr, r0, r1) {
-                affected.insert(fwd_key);
-                // Insert the reverse key too — both orientations may be in paths
-                affected.insert(fwd_key + 1);
+            for key in self.apply_sync(addr, r0, r1).iter() {
+                affected.insert(key);
             }
         }
         affected

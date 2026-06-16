@@ -98,6 +98,18 @@ const BACKFILL_TIMEOUT_SECS: u64 = 60;
 /// rather than one per individual log.
 const DEBOUNCE_MS: u64 = 50;
 
+/// Whether a log confirms that a tracked header block is "complete".
+///
+/// A log confirms the header block only when its `block_number` is known
+/// and matches the header block exactly. Pending logs with an unknown
+/// block number (`None`) are intentionally ignored — otherwise a log
+/// arriving before the logs subscription has caught the current block
+/// could make `subscribe_phase` return early and miss events.
+#[must_use]
+fn log_confirms_header_block(log_block_number: Option<u64>, first_block: u64) -> bool {
+    log_block_number == Some(first_block)
+}
+
 /// Block data sent from the pump to Python via the watch channel.
 /// Topics we care about — used for in-Rust filtering of incoming logs.
 pub const RELEVANT_TOPICS: [B256; 6] = [
@@ -387,17 +399,14 @@ impl UniswapEnginePump {
                 Ok(Some(WsEvent::Log(log))) => {
                     // Check if this log is for the header block we're tracking.
                     if let Some(fb) = first_block {
-                        let log_block = log.block_number.unwrap_or(0);
-                        if log_block == fb || (log_block == 0 && first_block.is_some()) {
-                            // Log for our header's block (or pending log without
-                            // block_number, which is likely for the current block).
+                        if log_confirms_header_block(log.block_number, fb) {
                             log::info!(
                                 "UniswapEnginePump: subscribe observed complete block {fb} (header + log)"
                             );
                             return (fb, first_timestamp);
                         }
                     }
-                    // Log arrived before any header, or for a different block — keep waiting.
+                    // Log arrived before any header, or for a different/pending block — keep waiting.
                 }
 
                 Ok(None) => {
@@ -954,5 +963,15 @@ mod tests {
     fn backfill_timeout_constant_is_reasonable() {
         // 60s is the chosen timeout — verify it's set
         assert_eq!(BACKFILL_TIMEOUT_SECS, 60);
+    }
+
+    #[test]
+    fn log_confirms_header_block_requires_matching_block_number() {
+        assert!(super::log_confirms_header_block(Some(100), 100));
+        assert!(!super::log_confirms_header_block(Some(101), 100));
+        // Pending logs with no block number must not confirm the header block.
+        assert!(!super::log_confirms_header_block(None, 100));
+        // A log explicitly tagged as block 0 does not confirm a non-zero header.
+        assert!(!super::log_confirms_header_block(Some(0), 100));
     }
 }

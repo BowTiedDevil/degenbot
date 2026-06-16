@@ -2,8 +2,6 @@
 
 use alloy::primitives::U256;
 
-use crate::optimizers::mobius_int::u256_to_f64;
-
 use super::{UniswapEngine, HashSet, BlockMetadata, HopType, ResolvedHop, ResolvedMixedPath, SolvePathResult, INT128_MAX, HashMap, MixedPoolRef};
 
 impl UniswapEngine {
@@ -286,38 +284,20 @@ impl UniswapEngine {
                         return; // Missing pool → invalid
                     };
 
-                    let base = hop_state.to_base_hop();
-                    resolved.hops.push(ResolvedHop::V2 { state: hop_state.clone(), base });
+                    resolved.hops.push(ResolvedHop::V2 { state: hop_state.clone() });
                 }
                 HopType::V3 => {
-                    // Look up V3 pool state and build tick-range sequence
+                    // Look up V3 pool state and build the integer tick-range
+                    // sequence used by the mixed/CL solver.
                     let Some(pool_state) = self.v3_engine.get_pool(pool_ref.pool_key) else {
                         return; // Missing pool → invalid
                     };
 
-                    let Some(sequence) = pool_state.build_sequence(pool_ref.zero_for_one, 3) else {
-                        return; // No sequence → invalid
-                    };
-                    let Some(first_range) = sequence.ranges.first() else {
-                        return; // Empty sequence → invalid
-                    };
-                    let base = first_range.to_hop_state();
-
-                    // Build integer V3 hop from original U256 values (exact, no f64 conversion)
-                    let Some(int_hop) = pool_state.build_int_v3_hop(pool_ref.zero_for_one) else {
-                        return; // No integer hop → invalid
-                    };
-                    // Build integer V3 sequence for V3-V3 paths
                     let Some(int_seq) = pool_state.build_int_v3_sequence(pool_ref.zero_for_one, 10) else {
                         return; // No integer sequence → invalid
                     };
 
-                    resolved.hops.push(ResolvedHop::V3 {
-                        seq: sequence,
-                        int_hop,
-                        int_seq,
-                        base,
-                    });
+                    resolved.hops.push(ResolvedHop::V3 { int_seq });
                 }
                 HopType::V4 => {
                     // V4 pools use identical concentrated-liquidity math as V3.
@@ -331,12 +311,7 @@ impl UniswapEngine {
                         return; // No integer sequence → invalid
                     };
 
-                    // V4 doesn't use f64-based tick-range sequences
-                    // (the integer solver is sufficient).
-                    resolved.hops.push(ResolvedHop::V4 {
-                        int_seq,
-                        base: crate::optimizers::mobius::HopState::new(0.0, 0.0, 0.0),
-                    });
+                    resolved.hops.push(ResolvedHop::V4 { int_seq });
                 }
             }
         }
@@ -348,25 +323,5 @@ impl UniswapEngine {
 impl Default for UniswapEngine {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// IntHopState extension for base hop conversion
-// ---------------------------------------------------------------------------
-
-/// Extension trait for converting `IntHopState` to base f64 `HopState`.
-trait IntHopStateExt {
-    /// Convert to a f64 `HopState` for Mobius initial estimates.
-    fn to_base_hop(&self) -> crate::optimizers::mobius::HopState;
-}
-
-impl IntHopStateExt for crate::optimizers::mobius_int::IntHopState {
-    #[allow(clippy::cast_precision_loss)]
-    fn to_base_hop(&self) -> crate::optimizers::mobius::HopState {
-        let fee = 1.0 - (self.gamma_numer as f64 / self.fee_denom as f64);
-        let r_in = u256_to_f64(self.reserve_in);
-        let r_out = u256_to_f64(self.reserve_out);
-        crate::optimizers::mobius::HopState::new(r_in, r_out, fee)
     }
 }

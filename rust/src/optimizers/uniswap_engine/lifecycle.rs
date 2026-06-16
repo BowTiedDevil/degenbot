@@ -91,6 +91,12 @@ impl UniswapEngine {
         &mut self.v4_engine
     }
 
+    /// Get a shared reference to the V4 engine.
+    #[must_use]
+    pub const fn v4_engine_ref(&self) -> &V4BlockEngine {
+        &self.v4_engine
+    }
+
     /// Read the last solved results and block number.
     #[must_use]
     pub const fn latest_results(&self) -> (&HashMap<u64, SolvePathResult>, u64) {
