@@ -1409,9 +1409,9 @@ def _3hop_v2_v2_v2(
     weth_address: str,
     **kwargs,
 ) -> bytes | None:
-    """Reverse-order flash borrow: V2c first, V2a→V2b via V2_SWAP_DIRECT."""
+    """Reverse-order flash borrow: V2c first, V2a→V2b via V2_SWAP_CALC."""
     ha, hb, hc = path_info.hops
-    out_a, out_b, out_c = hop_outputs
+    _out_a, _out_b, out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
 
@@ -1426,10 +1426,12 @@ def _3hop_v2_v2_v2(
     v2b_idx = at.add(hb.pool_address)
     v2c_idx = at.add(hc.pool_address)
 
-    # Inside V2c callback: WETH→V2a (creates excess), V2a→V2b, V2b→V2c
+    # Inside V2c callback: WETH→V2a (creates excess), V2a→V2b, V2b→V2c.
+    # Use V2_SWAP_CALC so amounts derive from on-chain reserves, avoiding
+    # UniswapV2: K reverts when solver reserve estimates are stale.
     c_fwd = enc_erc20_transfer(weth_idx, v2a_idx, optimal_input)
-    c_fwd += enc_v2_swap_direct(v2a_idx, ha.zfo, out_a, v2b_idx)
-    c_fwd += enc_v2_swap_direct(v2b_idx, hb.zfo, out_b, v2c_idx)
+    c_fwd += enc_v2_swap_calc(v2a_idx, ha.zfo, v2b_idx, fee=ha.fee)
+    c_fwd += enc_v2_swap_calc(v2b_idx, hb.zfo, v2c_idx, fee=hb.fee)
 
     # Flash borrow from V2c
     commands = enc_v2_swap_compact(v2c_idx, hc.zfo, out_c, executor_idx, fee=hc.fee, forward_data=c_fwd)
@@ -1448,9 +1450,9 @@ def _3hop_v2_v2_v3(
     weth_address: str,
     **kwargs,
 ) -> bytes | None:
-    """Reverse-order: V3c fires first, V2a→V2b direct inside V3c callback."""
+    """Reverse-order: V3c fires first, V2a→V2b via V2_SWAP_CALC."""
     ha, hb, hc = path_info.hops
-    out_a, out_b, _out_c = hop_outputs
+    _out_a, out_b, _out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
 
@@ -1465,10 +1467,12 @@ def _3hop_v2_v2_v3(
     v2b_idx = at.add(hb.pool_address)
     v3c_idx = at.add(hc.pool_address)
 
-    # Inside V3c callback: WETH→V2a, V2a→V2b, V2b→V3c
+    # Inside V3c callback: WETH→V2a, V2a→V2b, V2b→V3c.
+    # V2_SWAP_CALC reads actual reserves so the intermediate amounts match
+    # current state, avoiding UniswapV2: K on the first V2 hop.
     c_fwd = enc_erc20_transfer(weth_idx, v2a_idx, optimal_input)
-    c_fwd += enc_v2_swap_direct(v2a_idx, ha.zfo, out_a, v2b_idx)
-    c_fwd += enc_v2_swap_direct(v2b_idx, hb.zfo, out_b, v3c_idx)
+    c_fwd += enc_v2_swap_calc(v2a_idx, ha.zfo, v2b_idx, fee=ha.fee)
+    c_fwd += enc_v2_swap_calc(v2b_idx, hb.zfo, v3c_idx, fee=hb.fee)
 
     # V3c fires first (reverse order)
     commands = enc_v3_swap_compact(v3c_idx, hc.zfo, out_b, executor_idx, forward_data=c_fwd)
