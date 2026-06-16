@@ -432,6 +432,123 @@ mod tests {
     }
 
     #[test]
+    fn solve_all_paths_does_not_advance_delivered_without_channel() {
+        // Contract: `solve_all_paths` is solve-only. It populates `results`
+        // but must NOT advance `delivered` — `delivered`'s invariant is
+        // "what Python has actually received via the result channel," and
+        // with no channel set Python has received nothing. Advancing it here
+        // would poison the `fresh`/`expired` computation for the first real
+        // pump-driven send (any path falsely marked "delivered" gets
+        // silently omitted from the next batch's `fresh` list).
+        let mut engine = UniswapEngine::new();
+        // No set_result_channel call — mirrors `solve_all_paths`'s real
+        // callers (every one in tests/ builds an engine and reads
+        // `latest_results()`, none sets a channel).
+
+        let v2_addr_a = Address::from([0x11u8; 20]);
+        let v2_fwd_a = engine.v2_engine().register_pool(
+            v2_addr_a,
+            usdc(1_500_000),
+            weth(800),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let v2_addr_b = Address::from([0x12u8; 20]);
+        let v2_fwd_b = engine.v2_engine().register_pool(
+            v2_addr_b,
+            weth(1000),
+            usdc(2_000_000),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let path_id = engine.register_path(vec![
+            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_a, zero_for_one: true },
+            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_b, zero_for_one: true },
+        ]);
+
+        engine.solve_all_paths(1);
+
+        // Solve actually ran: results populated with a profitable path.
+        let (results, block) = engine.latest_results();
+        assert_eq!(block, 1);
+        let solve_result = results.get(&path_id).expect("solve_all_paths should populate results");
+        assert!(!solve_result.optimal_input.is_zero());
+        assert!(!solve_result.profit.is_zero());
+
+        // Delivered untouched — Python has not received anything.
+        assert!(
+            engine.delivered.is_empty(),
+            "solve_all_paths must not advance `delivered` without a channel"
+        );
+    }
+
+    #[test]
+    fn send_result_batch_advances_delivered_to_above_threshold() {
+        // Contract: after a real `send_result_batch` (channel live + send
+        // fires), `delivered` equals the above-threshold subset of `results`.
+        //
+        // Note the asymmetry this test documents: `compute_diff_and_send`
+        // advances `delivered` *unconditionally* and only guards the actual
+        // channel send with `if let Some(ref tx)`. That is correct WHEN a
+        // channel exists and the send fires — the advance truthfully records
+        // "Python now knows these." It is only a bug when the send does NOT
+        // fire (the case the previous test guards). This test pins the live
+        // invariant; the previous test pins the cold-start one.
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut engine = UniswapEngine::new();
+        engine.set_result_channel(tx);
+        // Defaults already min_profit=0, max_profit=MAX (window fully open).
+
+        let v2_addr_a = Address::from([0x11u8; 20]);
+        let v2_fwd_a = engine.v2_engine().register_pool(
+            v2_addr_a,
+            usdc(1_500_000),
+            weth(800),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let v2_addr_b = Address::from([0x12u8; 20]);
+        let v2_fwd_b = engine.v2_engine().register_pool(
+            v2_addr_b,
+            weth(1000),
+            usdc(2_000_000),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let path_id = engine.register_and_solve_path(vec![
+            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_a, zero_for_one: true },
+            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_b, zero_for_one: true },
+        ]);
+
+        // Eagerly solved → path is in `results` and above-threshold.
+        let (results_before, _) = engine.latest_results();
+        let solve_result = results_before.get(&path_id).expect("eagerly solved path present");
+        assert!(!solve_result.profit.is_zero());
+
+        // send_result_batch computes the diff, sends it, and advances
+        // `delivered` to the above-threshold subset.
+        engine.send_result_batch(&BlockMetadata::default());
+
+        // Batch was actually delivered to the channel.
+        let batch = rx.try_recv().expect("send_result_batch should deliver a batch");
+        assert!(
+            batch.fresh.iter().any(|(id, _)| *id == path_id),
+            "profitable path should appear in fresh"
+        );
+
+        // `delivered` now equals the above-threshold subset of `results`.
+        assert_eq!(
+            engine.delivered.len(),
+            1,
+            "delivered should contain exactly the one above-threshold path"
+        );
+        assert!(
+            engine.delivered.contains_key(&path_id),
+            "delivered should include the just-sent profitable path"
+        );
+    }
+
+    #[test]
     fn finalize_block_threads_metadata_into_send() {
         // Contract guard for the metadata-threading fix: when the pump's
         // `finalize_if_dirty` guard fires on a dirty profitable path, the
