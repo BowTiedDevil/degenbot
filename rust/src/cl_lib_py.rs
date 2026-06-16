@@ -80,12 +80,22 @@ fn extract_i128(obj: &Bound<'_, PyAny>) -> PyResult<i128> {
 }
 // ─── BitMath ───────────────────────────────────────────────────────────
 
+/// Find the index of the most significant bit set in `x`.
+///
+/// # Errors
+///
+/// Returns `PyValueError` if `x` is zero.
 #[pyfunction(signature = (x))]
 pub fn cl_most_significant_bit(x: &Bound<'_, PyAny>) -> PyResult<u8> {
     let v = extract_u256(x)?;
     bit_math::most_significant_bit(v).map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
+/// Find the index of the least significant bit set in `x`.
+///
+/// # Errors
+///
+/// Returns `PyValueError` if `x` is zero.
 #[pyfunction(signature = (x))]
 pub fn cl_least_significant_bit(x: &Bound<'_, PyAny>) -> PyResult<u8> {
     let v = extract_u256(x)?;
@@ -94,6 +104,11 @@ pub fn cl_least_significant_bit(x: &Bound<'_, PyAny>) -> PyResult<u8> {
 
 // ─── FullMath ──────────────────────────────────────────────────────────
 
+/// Compute `floor(a * b / denominator)` with full 512-bit precision.
+///
+/// # Errors
+///
+/// Returns `PyValueError` on division by zero or overflow.
 #[pyfunction(signature = (a, b, denominator))]
 pub fn cl_muldiv(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>, denominator: &Bound<'_, PyAny>) -> PyResult<PyObject> {
     let py = a.py();
@@ -101,6 +116,11 @@ pub fn cl_muldiv(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>, denominator: &Bound
     u256_to_py_obj(py, result)
 }
 
+/// Compute `ceil(a * b / denominator)` with full 512-bit precision.
+///
+/// # Errors
+///
+/// Returns `PyValueError` on division by zero or overflow.
 #[pyfunction(signature = (a, b, denominator))]
 pub fn cl_muldiv_rounding_up(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>, denominator: &Bound<'_, PyAny>) -> PyResult<PyObject> {
     let py = a.py();
@@ -110,6 +130,11 @@ pub fn cl_muldiv_rounding_up(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>, denomin
 
 // ─── UnsafeMath ────────────────────────────────────────────────────────
 
+/// Compute `ceil(x / y)` without overflow checking.
+///
+/// # Errors
+///
+/// Returns `PyValueError` if `y` is zero.
 #[pyfunction(signature = (x, y))]
 pub fn cl_div_rounding_up(x: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResult<PyObject> {
     let py = x.py();
@@ -117,6 +142,11 @@ pub fn cl_div_rounding_up(x: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResul
     u256_to_py_obj(py, result)
 }
 
+/// Compute `(a * b) / denominator` without overflow checking.
+///
+/// # Errors
+///
+/// Returns `PyValueError` if `denominator` is zero.
 #[pyfunction(signature = (a, b, denominator))]
 pub fn cl_simple_mul_div(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>, denominator: &Bound<'_, PyAny>) -> PyResult<PyObject> {
     let py = a.py();
@@ -126,6 +156,11 @@ pub fn cl_simple_mul_div(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>, denominator
 
 // ─── LiquidityMath ─────────────────────────────────────────────────────
 
+/// Add a signed delta `y` to `x`, checking that the result fits in `uint128`.
+///
+/// # Errors
+///
+/// Returns `PyValueError` if the result overflows or inputs are out of range.
 #[pyfunction(signature = (x, y))]
 pub fn cl_add_delta(x: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResult<PyObject> {
     let py = x.py();
@@ -145,6 +180,11 @@ pub fn cl_add_delta(x: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResult<PyOb
 
 // ─── SqrtPriceMath ─────────────────────────────────────────────────────
 
+/// Get the amount0 delta between two prices for a given liquidity.
+///
+/// # Errors
+///
+/// Returns `PyValueError` on invalid input (zero price, overflow, etc.).
 #[pyfunction(signature = (sqrt_price_a, sqrt_price_b, liquidity, round_up=None))]
 pub fn cl_get_amount0_delta(
     sqrt_price_a: &Bound<'_, PyAny>,
@@ -162,6 +202,11 @@ pub fn cl_get_amount0_delta(
     u256_to_py_obj(py, result)
 }
 
+/// Get the amount1 delta between two prices for a given liquidity.
+///
+/// # Errors
+///
+/// Returns `PyValueError` on invalid input (negative liquidity, overflow, etc.).
 #[pyfunction(signature = (sqrt_price_a, sqrt_price_b, liquidity, round_up=None))]
 pub fn cl_get_amount1_delta(
     sqrt_price_a: &Bound<'_, PyAny>,
@@ -179,6 +224,11 @@ pub fn cl_get_amount1_delta(
     u256_to_py_obj(py, result)
 }
 
+/// Get the next sqrt price given a delta of token0, rounding up.
+///
+/// # Errors
+///
+/// Returns `PyValueError` on overflow or insufficient liquidity.
 #[pyfunction(signature = (sqrt_price_x96, liquidity, amount, add))]
 pub fn cl_get_next_sqrt_price_from_amount0_rounding_up(
     sqrt_price_x96: &Bound<'_, PyAny>,
@@ -196,6 +246,11 @@ pub fn cl_get_next_sqrt_price_from_amount0_rounding_up(
     u256_to_py_obj(py, result)
 }
 
+/// Get the next sqrt price given a delta of token1, rounding down.
+///
+/// # Errors
+///
+/// Returns `PyValueError` on overflow or insufficient liquidity.
 #[pyfunction(signature = (sqrt_price_x96, liquidity, amount, add))]
 pub fn cl_get_next_sqrt_price_from_amount1_rounding_down(
     sqrt_price_x96: &Bound<'_, PyAny>,
@@ -213,6 +268,11 @@ pub fn cl_get_next_sqrt_price_from_amount1_rounding_down(
     u256_to_py_obj(py, result)
 }
 
+/// Get the next sqrt price given an input amount.
+///
+/// # Errors
+///
+/// Returns `PyValueError` on invalid price/liquidity or overflow.
 #[pyfunction(signature = (sqrt_price_x96, liquidity, amount_in, zero_for_one))]
 pub fn cl_get_next_sqrt_price_from_input(
     sqrt_price_x96: &Bound<'_, PyAny>,
@@ -230,6 +290,11 @@ pub fn cl_get_next_sqrt_price_from_input(
     u256_to_py_obj(py, result)
 }
 
+/// Get the next sqrt price given an output amount.
+///
+/// # Errors
+///
+/// Returns `PyValueError` on invalid price/liquidity or overflow.
 #[pyfunction(signature = (sqrt_price_x96, liquidity, amount_out, zero_for_one))]
 pub fn cl_get_next_sqrt_price_from_output(
     sqrt_price_x96: &Bound<'_, PyAny>,
@@ -249,6 +314,12 @@ pub fn cl_get_next_sqrt_price_from_output(
 
 // ─── SwapMath ──────────────────────────────────────────────────────────
 
+/// Compute a V3-style swap step.
+///
+/// # Errors
+///
+/// Returns `PyValueError` on invalid input, overflow, or if liquidity exceeds int128.
+#[allow(clippy::similar_names)]
 #[pyfunction(signature = (sqrt_price_current, sqrt_price_target, liquidity, amount_remaining, fee_pips))]
 pub fn cl_compute_swap_step_v3(
     sqrt_price_current: &Bound<'_, PyAny>,
@@ -264,10 +335,13 @@ pub fn cl_compute_swap_step_v3(
         Ok(v) => v,
         Err(_) => return Err(PyValueError::new_err("liquidity exceeds u128")),
     };
-    let liquidity_i128 = liquidity_u128 as i128; // wraps for values >= 2^127
+    // Validate before cast to avoid using a wrapped value.
     if liquidity_u128 > i128::MAX as u128 {
         return Err(PyValueError::new_err("liquidity exceeds int128 range"));
     }
+    // Safe: validated above that liquidity_u128 <= i128::MAX.
+    #[allow(clippy::similar_names)]
+    let liquidity_i128 = liquidity_u128.cast_signed();
 
     let result = swap_math::compute_swap_step_v3(
         extract_u256(sqrt_price_current)?,
@@ -286,6 +360,12 @@ pub fn cl_compute_swap_step_v3(
     Ok(tuple.into_any().unbind())
 }
 
+/// Compute a V4-style swap step.
+///
+/// # Errors
+///
+/// Returns `PyValueError` on invalid input, overflow, or if liquidity exceeds int128.
+#[allow(clippy::similar_names)]
 #[pyfunction(signature = (sqrt_price_current, sqrt_price_target, liquidity, amount_remaining, fee_pips))]
 pub fn cl_compute_swap_step_v4(
     sqrt_price_current: &Bound<'_, PyAny>,
@@ -304,11 +384,13 @@ pub fn cl_compute_swap_step_v4(
     // V4's compute_swap_step takes i128 for liquidity, but V4 Solidity uses uint128.
     // Positive i128 values cover the full uint128 range (0..2^127-1). Values >= 2^127
     // are not expected in practice since max uint128 = 2^128-1 cannot fit in i128.
-    // The Rust core validates that liquidity >= 0.
-    let liquidity_i128 = liquidity_u128 as i128; // wraps for values >= 2^127
+    // Validate before cast to avoid using a wrapped value.
     if liquidity_u128 > i128::MAX as u128 {
         return Err(PyValueError::new_err("liquidity exceeds int128 range"));
     }
+    // Safe: validated above that liquidity_u128 <= i128::MAX.
+    #[allow(clippy::similar_names)]
+    let liquidity_i128 = liquidity_u128.cast_signed();
 
     let result = swap_math::compute_swap_step_v4(
         extract_u256(sqrt_price_current)?,
@@ -331,12 +413,14 @@ pub fn cl_compute_swap_step_v4(
 
 #[pyfunction(signature = (tick_spacing))]
 #[must_use]
+#[allow(clippy::missing_const_for_fn)]
 pub fn cl_max_usable_tick(tick_spacing: i32) -> i32 {
     tick_math::max_usable_tick(tick_spacing)
 }
 
 #[pyfunction(signature = (tick_spacing))]
 #[must_use]
+#[allow(clippy::missing_const_for_fn)]
 pub fn cl_min_usable_tick(tick_spacing: i32) -> i32 {
     tick_math::min_usable_tick(tick_spacing)
 }
@@ -344,6 +428,10 @@ pub fn cl_min_usable_tick(tick_spacing: i32) -> i32 {
 // ─── Register all CL math functions ────────────────────────────────────
 
 /// Add all concentrated-liquidity math functions to the Python module.
+///
+/// # Errors
+///
+/// Returns `PyErr` if any function fails to register.
 pub fn add_cl_lib_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // BitMath
     m.add_function(wrap_pyfunction!(cl_most_significant_bit, m)?)?;

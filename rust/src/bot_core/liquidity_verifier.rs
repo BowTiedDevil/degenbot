@@ -63,7 +63,7 @@ const STATE_VIEW_GET_TICK_LIQUIDITY_SELECTOR: [u8; 4] = [0xca, 0xed, 0xab, 0x54]
 
 /// Compress a tick using floor-division toward negative infinity.
 /// Matches Solidity `TickBitmap.compress(tick, tickSpacing)`.
-fn compress_tick(tick: i64, tick_spacing: i64) -> i64 {
+const fn compress_tick(tick: i32, tick_spacing: i32) -> i32 {
     let q = tick / tick_spacing;
     // If tick < 0 and tick % tick_spacing != 0, subtract 1 to floor
     if tick < 0 && tick % tick_spacing != 0 {
@@ -80,10 +80,10 @@ fn compress_tick(tick: i64, tick_spacing: i64) -> i64 {
 /// range is [-887272, 887272]. After `>> 8`, `wordPos` fits in `i16`
 /// and `bitPos` fits in `u8`.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn tick_bitmap_position(compressed_tick: i64) -> (i16, u8) {
+const fn tick_bitmap_position(compressed_tick: i32) -> (i16, u8) {
     // wordPos = compressed_tick >> 8 (arithmetic shift right = floor by 256)
     let word_pos = (compressed_tick >> 8) as i16;
-    // bitPos = compressed_tick & 0xFF (low 8 bits, treating as unsigned)
+    // bitPos = compressed_tick & 0xFF (low 8 bits, always 0..=255)
     let bit_pos = (compressed_tick & 0xFF) as u8;
     (word_pos, bit_pos)
 }
@@ -201,11 +201,11 @@ async fn verify_v3_pool(
     // Scan words from our tick_data plus ±2 around the current tick
     let mut words_to_check: std::collections::HashSet<i16> = std::collections::HashSet::new();
     for &tick_idx in pool.tick_data.keys() {
-        let compressed = compress_tick(i64::from(tick_idx), i64::from(tick_spacing));
+        let compressed = compress_tick(tick_idx, tick_spacing);
         let (word, _) = tick_bitmap_position(compressed);
         words_to_check.insert(word);
     }
-    let compressed_current = compress_tick(i64::from(pool.tick), i64::from(tick_spacing));
+    let compressed_current = compress_tick(pool.tick, tick_spacing);
     let (current_word, _) = tick_bitmap_position(compressed_current);
     for w in (current_word - 2)..=(current_word + 2) {
         words_to_check.insert(w);
@@ -237,15 +237,13 @@ async fn verify_v3_pool(
 
         for bit in 0..256u64 {
             // SAFETY: bit is 0..255, so cast to usize is safe on any target.
-            // cast_signed(): bit is u64 ≤ 255, so it fits in i64 without wrap.
-            #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+            #[allow(clippy::cast_possible_truncation)]
             if bitmap_val.bit(bit as usize) {
-                let compressed_tick = i64::from(*word) * 256 + bit.cast_signed();
+                let compressed_tick = i32::from(*word) * 256 + i32::try_from(bit).unwrap();
                 // SAFETY: compressed_tick * tick_spacing fits in the int24 range
                 // that Uniswap V3 uses, so the truncation to i32 is safe.
-                #[allow(clippy::cast_possible_truncation)]
-                let tick = compressed_tick * i64::from(tick_spacing);
-                on_chain_tick_indices.insert(tick as i32);
+                let tick = compressed_tick * tick_spacing;
+                on_chain_tick_indices.insert(tick);
             }
         }
     }
@@ -447,11 +445,11 @@ async fn verify_v4_pool(
         }
 
         // Enumerate set bits in the bitmap
-        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+        #[allow(clippy::cast_possible_truncation)]
         for bit in 0..256u64 {
             if bitmap_val.bit(bit as usize) {
-                let compressed_tick = i64::from(*word) * 256 + bit.cast_signed();
-                let tick_i32 = (compressed_tick * i64::from(tick_spacing)) as i32;
+                let compressed_tick = i32::from(*word) * 256 + i32::try_from(bit).unwrap();
+                let tick_i32 = compressed_tick * tick_spacing;
 
                 let (gross, net) = fetch_v4_tick_liquidity(
                     provider,
@@ -520,12 +518,12 @@ fn collect_bitmap_words<S: std::hash::BuildHasher>(
     words: &mut std::collections::HashSet<i16>,
 ) {
     for &tick_idx in tick_data.keys() {
-        let compressed = compress_tick(i64::from(tick_idx), i64::from(tick_spacing));
+        let compressed = compress_tick(tick_idx, tick_spacing);
         let (word, _) = tick_bitmap_position(compressed);
         words.insert(word);
     }
 
-    let compressed_current = compress_tick(i64::from(current_tick), i64::from(tick_spacing));
+    let compressed_current = compress_tick(current_tick, tick_spacing);
     let (current_word, _) = tick_bitmap_position(compressed_current);
     for w in (current_word - 2)..=(current_word + 2) {
         words.insert(w);
@@ -781,33 +779,33 @@ mod tests {
 
     #[test]
     fn round_trip_positive_tick() {
-        let tick: i64 = 292_420;
-        let tick_spacing: i64 = 10;
+        let tick: i32 = 292_420;
+        let tick_spacing: i32 = 10;
         let compressed = compress_tick(tick, tick_spacing);
         let (word, bit) = tick_bitmap_position(compressed);
         // Reverse: compressed_tick = word * 256 + bit, tick = compressed_tick * tick_spacing
-        let recovered_tick = (i64::from(word) * 256 + i64::from(bit)) * tick_spacing;
-        assert_eq!(recovered_tick, tick);
+        let recovered_tick = (i64::from(word) * 256 + i64::from(bit)) * i64::from(tick_spacing);
+        assert_eq!(recovered_tick, i64::from(tick));
     }
 
     #[test]
     fn round_trip_negative_tick() {
-        let tick: i64 = -292_420;
-        let tick_spacing: i64 = 10;
+        let tick: i32 = -292_420;
+        let tick_spacing: i32 = 10;
         let compressed = compress_tick(tick, tick_spacing);
         let (word, bit) = tick_bitmap_position(compressed);
-        let recovered_tick = (i64::from(word) * 256 + i64::from(bit)) * tick_spacing;
-        assert_eq!(recovered_tick, tick);
+        let recovered_tick = (i64::from(word) * 256 + i64::from(bit)) * i64::from(tick_spacing);
+        assert_eq!(recovered_tick, i64::from(tick));
     }
 
     #[test]
     fn round_trip_negative_tick_spacing_60() {
-        let tick: i64 = -120;
-        let tick_spacing: i64 = 60;
+        let tick: i32 = -120;
+        let tick_spacing: i32 = 60;
         let compressed = compress_tick(tick, tick_spacing);
         let (word, bit) = tick_bitmap_position(compressed);
-        let recovered_tick = (i64::from(word) * 256 + i64::from(bit)) * tick_spacing;
-        assert_eq!(recovered_tick, tick);
+        let recovered_tick = (i64::from(word) * 256 + i64::from(bit)) * i64::from(tick_spacing);
+        assert_eq!(recovered_tick, i64::from(tick));
     }
 
     #[test]
@@ -816,17 +814,17 @@ mod tests {
         // compressed = floor(-61/60) = -2
         // position(-2): word = -1 >> 8... wait, -2 >> 8 in arithmetic = -1
         // Python: (-2) >> 8 = -1, (-2) % 256 = 254
-        let tick: i64 = -61;
-        let tick_spacing: i64 = 60;
+        let tick: i32 = -61;
+        let tick_spacing: i32 = 60;
         let compressed = compress_tick(tick, tick_spacing);
         assert_eq!(compressed, -2);
         let (word, bit) = tick_bitmap_position(compressed);
         assert_eq!((word, bit), (-1, 254));
         // Reverse: compressed_tick = -1 * 256 + 254 = -2
         let recovered_compressed = i64::from(word) * 256 + i64::from(bit);
-        assert_eq!(recovered_compressed, compressed);
+        assert_eq!(recovered_compressed, i64::from(compressed));
         // tick = -2 * 60 = -120 (the nearest aligned tick, not -61)
-        let recovered_tick = recovered_compressed * tick_spacing;
+        let recovered_tick = recovered_compressed * i64::from(tick_spacing);
         assert_eq!(recovered_tick, -120);
     }
 
@@ -834,8 +832,8 @@ mod tests {
     #[test]
     fn compress_matches_python_floor_division() {
         // Test every tick_spacing and a range of ticks that produced the original bug
-        for &tick_spacing in &[1i64, 10, 60, 200] {
-            for tick in (-500i64..=500).chain([-292_420_i64, 887_272, -887_272]) {
+        for &tick_spacing in &[1i32, 10, 60, 200] {
+            for tick in (-500i32..=500).chain([-292_420_i32, 887_272, -887_272]) {
                 let rust_result = compress_tick(tick, tick_spacing);
                 // Python floor division
                 let python_result = if tick_spacing != 0 {
@@ -854,7 +852,7 @@ mod tests {
     #[test]
     fn position_matches_python() {
         // Test position() against Python's (tick >> 8, tick % 256)
-        for tick in (-1000i64..=1000).chain([-29_242_i64, 29_242, -887_272, 887_272]) {
+        for tick in (-1000i32..=1000).chain([-29_242_i32, 29_242, -887_272, 887_272]) {
             let (rust_word, rust_bit) = tick_bitmap_position(tick);
             // Python semantics
             let py_word = tick >> 8; // arithmetic shift right

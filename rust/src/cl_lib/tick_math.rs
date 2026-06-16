@@ -199,7 +199,7 @@ pub fn get_tick_at_sqrt_ratio_internal(sqrt_price_x96: U160) -> Result<I24, Tick
 ///
 /// Returns the maximum tick that is a multiple of `tick_spacing`.
 #[must_use]
-pub fn max_usable_tick(tick_spacing: i32) -> i32 {
+pub const fn max_usable_tick(tick_spacing: i32) -> i32 {
     (MAX_TICK / tick_spacing) * tick_spacing
 }
 
@@ -208,7 +208,7 @@ pub fn max_usable_tick(tick_spacing: i32) -> i32 {
 /// Returns the minimum tick that is a multiple of `tick_spacing`.
 /// Uses EVM-style division (truncation toward zero) to match Solidity semantics.
 #[must_use]
-pub fn min_usable_tick(tick_spacing: i32) -> i32 {
+pub const fn min_usable_tick(tick_spacing: i32) -> i32 {
     // EVM division truncates toward zero for signed integers.
     // Rust's `/` operator also truncates toward zero.
     (MIN_TICK / tick_spacing) * tick_spacing
@@ -219,7 +219,7 @@ pub fn min_usable_tick(tick_spacing: i32) -> i32 {
 /// Matches Solidity's `tick / tick_spacing` with rounding toward zero,
 /// then adjusting for negative values.
 #[must_use]
-pub fn compress(tick: i32, tick_spacing: i32) -> i32 {
+pub const fn compress(tick: i32, tick_spacing: i32) -> i32 {
     tick.div_euclid(tick_spacing)
 }
 

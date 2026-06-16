@@ -216,7 +216,7 @@ pub(super) enum ResolvedHop {
 impl ResolvedHop {
     /// The hop type for this resolved hop.
     #[allow(dead_code)] // Used in tests and future callers
-    pub(super) fn hop_type(&self) -> HopType {
+    pub(super) const fn hop_type(&self) -> HopType {
         match self {
             Self::V2 { .. } => HopType::V2,
             Self::V3 { .. } => HopType::V3,
@@ -226,14 +226,14 @@ impl ResolvedHop {
 
     /// The base (f64) hop state for Mobius initial estimates.
     #[allow(dead_code)] // Will be used by f64-based solver paths
-    pub(super) fn base(&self) -> &crate::optimizers::mobius::HopState {
+    pub(super) const fn base(&self) -> &crate::optimizers::mobius::HopState {
         match self {
             Self::V2 { base, .. } | Self::V3 { base, .. } | Self::V4 { base, .. } => base,
         }
     }
 
     /// The V2 `IntHopState`, if this is a V2 hop.
-    pub(super) fn as_v2_state(&self) -> Option<&crate::optimizers::mobius_int::IntHopState> {
+    pub(super) const fn as_v2_state(&self) -> Option<&crate::optimizers::mobius_int::IntHopState> {
         match self {
             Self::V2 { state, .. } => Some(state),
             _ => None,
@@ -241,7 +241,7 @@ impl ResolvedHop {
     }
 
     /// The integer tick-range sequence, if this is a CL hop (V3 or V4).
-    pub(super) fn as_int_sequence(&self) -> Option<&crate::optimizers::mobius_v3_int::IntV3TickRangeSequence> {
+    pub(super) const fn as_int_sequence(&self) -> Option<&crate::optimizers::mobius_v3_int::IntV3TickRangeSequence> {
         match self {
             Self::V3 { int_seq, .. } | Self::V4 { int_seq, .. } => Some(int_seq),
             Self::V2 { .. } => None,

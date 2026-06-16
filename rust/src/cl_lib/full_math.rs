@@ -16,7 +16,7 @@ use crate::errors::ClMathError;
 ///
 /// - [`ClMathError::DivisionByZero`] if `denominator` is zero.
 /// - [`ClMathError::Uint256Overflow`] if the result exceeds `U256::MAX`.
-#[must_use]
+#[must_use = "computation result should be used"]
 pub fn muldiv(a: U256, b: U256, denominator: U256) -> Result<U256, ClMathError> {
     if denominator.is_zero() {
         return Err(ClMathError::DivisionByZero);
@@ -40,7 +40,7 @@ pub fn muldiv(a: U256, b: U256, denominator: U256) -> Result<U256, ClMathError> 
 ///
 /// - [`ClMathError::DivisionByZero`] if `denominator` is zero.
 /// - [`ClMathError::Uint256Overflow`] if the result exceeds `U256::MAX`.
-#[must_use]
+#[must_use = "computation result should be used"]
 pub fn muldiv_rounding_up(a: U256, b: U256, denominator: U256) -> Result<U256, ClMathError> {
     let result = muldiv(a, b, denominator)?;
 

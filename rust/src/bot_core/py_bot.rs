@@ -46,7 +46,6 @@ impl PyBotCore {
     ///
     /// Returns the auto-assigned pool ID.
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (address, token0, token1, reserve0, reserve1, gamma_numer0, fee_denom0, gamma_numer1, fee_denom1, factory))]
     fn register_v2_pool(
         &self,

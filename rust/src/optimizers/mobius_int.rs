@@ -21,13 +21,10 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::module_name_repetitions)]
 #![allow(clippy::cast_possible_truncation)]
-#![allow(clippy::cast_sign_loss)]
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::float_cmp)]
 #![allow(clippy::suboptimal_flops)]
 #![allow(clippy::similar_names)]
-#![allow(clippy::unreadable_literal)]
-#![allow(clippy::unnecessary_cast)]
 #![allow(clippy::type_complexity)]
 
 use alloy::primitives::{U256, U512};
@@ -393,9 +390,9 @@ pub fn int_mobius_solve(hops: &[IntHopState]) -> Result<IntMobiusResult, MobiusE
     // Search ±2 around x_approx (integer truncation can shift by ±1)
     for delta in -2i32..=2 {
         let x = if delta >= 0 {
-            x_approx.saturating_add(U256::from(delta as u64))
+            x_approx.saturating_add(U256::from(delta.cast_unsigned()))
         } else {
-            x_approx.saturating_sub(U256::from((-delta) as u64))
+            x_approx.saturating_sub(U256::from((-delta).cast_unsigned()))
         };
 
         if x.is_zero() {
@@ -488,9 +485,9 @@ pub fn mobius_refine_int(
 
     for offset in lo_offset..=hi_offset {
         let candidate = if offset >= 0 {
-            x_floor_u256.saturating_add(U256::from(offset as u64))
+            x_floor_u256.saturating_add(U256::from(offset.cast_unsigned()))
         } else {
-            x_floor_u256.saturating_sub(U256::from((-offset) as u64))
+            x_floor_u256.saturating_sub(U256::from((-offset).cast_unsigned()))
         };
 
         // Skip zero inputs
@@ -599,7 +596,7 @@ pub fn u256_to_f64(v: U256) -> f64 {
 /// Convert f64 to U256, capping at U256::MAX.
 fn f64_to_u256(v: f64) -> U256 {
     // U256::MAX ≈ 1.16e77
-    const U256_MAX_AS_F64: f64 = 1.157920892373162e77;
+    const U256_MAX_AS_F64: f64 = 1.157_920_892_373_162e77;
     // u64::MAX as f64
     const U64_MAX_AS_F64: f64 = u64::MAX as f64;
 
@@ -613,6 +610,8 @@ fn f64_to_u256(v: f64) -> U256 {
 
     if v < U64_MAX_AS_F64 {
         // u64::MAX as f64
+        // SAFETY: v < u64::MAX as f64, so v is non-negative and fits in u64
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
         return U256::from(v as u64);
     }
 
@@ -628,9 +627,11 @@ fn f64_to_u256(v: f64) -> U256 {
     let mut limbs = [0u64; 4];
     for limb in &mut limbs {
         let upper = remaining / 2f64.powi(64);
-        let lower_f64 = remaining - (upper as f64) * 2f64.powi(64);
+        let lower_f64 = remaining - upper * 2f64.powi(64);
         // lower_f64 should be in [0, 2^64), safe to cast
-        *limb = lower_f64 as u64;
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+        let limb_val = lower_f64 as u64;
+        *limb = limb_val;
         remaining = upper;
         if upper == 0.0 {
             break;
@@ -790,7 +791,7 @@ mod tests {
             IntHopState::new(u256(1_500_000), u256(3_000_000), 997, 1000),
         ];
         // x_approx from float solver is ~333333
-        let result = mobius_refine_int(333333.0, &hops, None);
+        let result = mobius_refine_int(333_333.0, &hops, None);
         assert!(result.success);
         assert!(!result.optimal_input.is_zero());
         assert!(!result.profit.is_zero());
@@ -811,7 +812,7 @@ mod tests {
         let int_result = int_mobius_solve(&hops).unwrap();
         assert!(int_result.success);
 
-        let refine_result = mobius_refine_int(499445.0, &hops, None);
+        let refine_result = mobius_refine_int(499_445.0, &hops, None);
         assert!(refine_result.success);
         // Both should find the same profit (flat peak)
         assert_eq!(refine_result.profit, int_result.profit);
@@ -868,16 +869,16 @@ mod tests {
             IntHopState::new(u256(1_000_000), u256(5_000_000), 997, 1000),
             IntHopState::new(u256(1_500_000), u256(3_000_000), 997, 1000),
         ];
-        let result = mobius_refine_int(499445.0, &hops, None);
+        let result = mobius_refine_int(499_445.0, &hops, None);
         assert!(result.success);
 
         // Check that no ±2 neighbor has better profit
         let x_opt = result.optimal_input;
         for delta in -2i64..=2i64 {
             let candidate = if delta >= 0 {
-                x_opt.saturating_add(U256::from(delta as u64))
+                x_opt.saturating_add(U256::from(delta.cast_unsigned()))
             } else {
-                x_opt.saturating_sub(U256::from((-delta) as u64))
+                x_opt.saturating_sub(U256::from((-delta).cast_unsigned()))
             };
             if candidate.is_zero() {
                 continue;

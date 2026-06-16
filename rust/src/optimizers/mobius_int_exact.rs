@@ -19,13 +19,10 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::module_name_repetitions)]
 #![allow(clippy::cast_possible_truncation)]
-#![allow(clippy::cast_sign_loss)]
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::float_cmp)]
 #![allow(clippy::suboptimal_flops)]
 #![allow(clippy::similar_names)]
-#![allow(clippy::unreadable_literal)]
-#![allow(clippy::unnecessary_cast)]
 #![allow(clippy::type_complexity)]
 
 use alloy::primitives::{U256, U512};
@@ -121,9 +118,9 @@ pub fn exact_mobius_solve(hops: &[IntHopState]) -> Result<ExactMobiusResult, Mob
 
     for delta in -2i32..=2 {
         let candidate = if delta >= 0 {
-            x_approx.saturating_add(U256::from(delta as u64))
+            x_approx.saturating_add(U256::from(delta.cast_unsigned()))
         } else {
-            x_approx.saturating_sub(U256::from((-delta) as u64))
+            x_approx.saturating_sub(U256::from((-delta).cast_unsigned()))
         };
 
         if candidate.is_zero() {
@@ -379,9 +376,9 @@ mod tests {
         let x_opt = result.optimal_input;
         for delta in -3i64..=3 {
             let candidate = if delta >= 0 {
-                x_opt.saturating_add(U256::from(delta as u64))
+                x_opt.saturating_add(U256::from(delta.cast_unsigned()))
             } else {
-                x_opt.saturating_sub(U256::from((-delta) as u64))
+                x_opt.saturating_sub(U256::from((-delta).cast_unsigned()))
             };
             if candidate.is_zero() {
                 continue;

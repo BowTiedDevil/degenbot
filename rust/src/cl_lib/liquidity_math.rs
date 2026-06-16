@@ -18,12 +18,12 @@ use crate::errors::ClMathError;
 /// # Errors
 ///
 /// Returns [`ClMathError::SafeCastOverflow`] if the result overflows `uint128`.
-#[must_use]
+#[must_use = "overflow-checked result should be used"]
 pub fn add_delta(x: u128, y: i128) -> Result<u128, ClMathError> {
     // Promote to i256 to avoid overflow when x is near u128::MAX
     // (matching Solidity: int256 z = int256(uint256(x)) + y)
     let x_u256 = U256::from(x);
-    let x_i256 = I256::from_raw(x_u256); // Zero-extends correctly since x fits in u128
+    let x_signed = I256::from_raw(x_u256); // Zero-extends correctly since x fits in u128
     let y_i256 = I256::from_be_bytes::<32>({
         let b = y.to_be_bytes();
         let mut padded = [0u8; 32];
@@ -31,7 +31,7 @@ pub fn add_delta(x: u128, y: i128) -> Result<u128, ClMathError> {
         padded[16..32].copy_from_slice(&b);
         padded
     });
-    let result = x_i256.checked_add(y_i256).ok_or(ClMathError::SafeCastOverflow)?;
+    let result = x_signed.checked_add(y_i256).ok_or(ClMathError::SafeCastOverflow)?;
     // Result must be in [0, u128::MAX]
     let max_u128_i256 = I256::from_raw(U256::from(u128::MAX));
     if result < I256::ZERO || result > max_u128_i256 {

@@ -21,10 +21,10 @@ use crate::errors::ClMathError;
 
 /// Q96 = 2^96 — the fixed-point scale for sqrt-price values.
 const Q96: U256 = U256::from_limbs([
-    0x0000000000000000u64,
-    0x0000000100000000u64,
-    0x0000000000000000u64,
-    0x0000000000000000u64,
+    0x0000_0000_0000_0000_u64,
+    0x0000_0001_0000_0000_u64,
+    0x0000_0000_0000_0000_u64,
+    0x0000_0000_0000_0000_u64,
 ]);
 
 /// Q96 resolution (96 bits).
@@ -32,13 +32,11 @@ const RESOLUTION: u32 = 96;
 
 /// Maximum value of uint160.
 const MAX_UINT160: U256 = U256::from_limbs([
-    0xffffffffffffffffu64,
-    0xffffffffffffffffu64,
-    0x00000000ffffffffu64,
-    0x0000000000000000u64,
+    0xffff_ffff_ffff_ffff_u64,
+    0xffff_ffff_ffff_ffff_u64,
+    0x0000_0000_ffff_ffff_u64,
+    0x0000_0000_0000_0000_u64,
 ]);
-
-/// Maximum value of uint256.
 
 /// Get the amount0 delta between two prices for a given liquidity.
 ///
@@ -72,7 +70,7 @@ pub fn get_amount0_delta(
 
             // In the unsigned path, liquidity is guaranteed >= 0 by Solidity's uint128 type.
             // We cast to u128 assuming the caller has validated this.
-            let liquidity_u256 = U256::from(liquidity as u128);
+            let liquidity_u256 = U256::from(liquidity.unsigned_abs());
             let numerator1 = liquidity_u256 << RESOLUTION;
             let numerator2 = sp_b - sp_a;
 
@@ -134,7 +132,7 @@ pub fn get_amount1_delta(
                 (sqrt_price_a, sqrt_price_b)
             };
 
-            let liquidity_u256 = U256::from(liquidity as u128);
+            let liquidity_u256 = U256::from(liquidity.unsigned_abs());
             let numerator = sp_b - sp_a;
 
             if round_up {
@@ -181,7 +179,7 @@ pub fn get_next_sqrt_price_from_amount0_rounding_up(
         return Ok(sqrt_price_x96);
     }
 
-    let liquidity_u256 = U256::from(liquidity as u128);
+    let liquidity_u256 = U256::from(liquidity.unsigned_abs());
     let numerator1 = liquidity_u256 << RESOLUTION;
     let (product, overflowed) = amount.overflowing_mul(sqrt_price_x96);
 
@@ -241,7 +239,7 @@ pub fn get_next_sqrt_price_from_amount1_rounding_down(
     amount: U256,
     add: bool,
 ) -> Result<U256, ClMathError> {
-    let liquidity_u256 = U256::from(liquidity as u128);
+    let liquidity_u256 = U256::from(liquidity.unsigned_abs());
 
     if add {
         let quotient = if amount <= MAX_UINT160 {
@@ -343,8 +341,8 @@ mod tests {
 
     #[test]
     fn test_get_amount0_delta_unsigned() {
-        let sp_a = U256::from(79228162514264337593543950336u128); // tick 0
-        let sp_b = U256::from(79232123823359799118286999568u128); // tick 1
+        let sp_a = U256::from(79_228_162_514_264_337_593_543_950_336_u128); // tick 0
+        let sp_b = U256::from(79_232_123_823_359_799_118_286_999_568_u128); // tick 1
 
         let up = get_amount0_delta(sp_a, sp_b, 1000, Some(true)).unwrap();
         let down = get_amount0_delta(sp_a, sp_b, 1000, Some(false)).unwrap();
@@ -353,8 +351,8 @@ mod tests {
 
     #[test]
     fn test_get_amount1_delta_unsigned() {
-        let sp_a = U256::from(79228162514264337593543950336u128); // tick 0
-        let sp_b = U256::from(79232123823359799118286999568u128); // tick 1
+        let sp_a = U256::from(79_228_162_514_264_337_593_543_950_336_u128); // tick 0
+        let sp_b = U256::from(79_232_123_823_359_799_118_286_999_568_u128); // tick 1
 
         let up = get_amount1_delta(sp_a, sp_b, 1000, Some(true)).unwrap();
         let down = get_amount1_delta(sp_a, sp_b, 1000, Some(false)).unwrap();
@@ -370,7 +368,7 @@ mod tests {
     #[test]
     fn test_v3_virtual_reserves() {
         let liquidity = U256::from(1_000_000u64);
-        let sqrt_price = U256::from(79228162514264337593543950336u128); // tick 0
+        let sqrt_price = U256::from(79_228_162_514_264_337_593_543_950_336_u128); // tick 0
         let (x, y) = v3_virtual_reserves(liquidity, sqrt_price, true);
         assert!(!x.is_zero());
         assert!(!y.is_zero());

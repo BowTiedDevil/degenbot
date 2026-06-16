@@ -379,10 +379,7 @@ impl V3PoolState {
                 if l.is_negative() {
                     0u128
                 } else {
-                    #[allow(clippy::cast_sign_loss)]
-                    {
-                        l as u128
-                    }
+                    l.cast_unsigned()
                 }
             };
 
@@ -595,7 +592,7 @@ impl V3BlockEngine {
     /// events older than `n` blocks from the current block are expired.
     /// Takes effect on the next call to `expire_buffered_events` or
     /// `process_block`.
-    pub fn set_event_buffer_max_age(&mut self, max_age: Option<u64>) {
+    pub const fn set_event_buffer_max_age(&mut self, max_age: Option<u64>) {
         self.event_buffer.set_max_age(max_age);
     }
 
@@ -899,8 +896,7 @@ impl V3BlockEngine {
                     10, // max_candidates
                 );
                 if x > 0.0 && profit > 0.0 {
-                    #[allow(clippy::cast_possible_truncation)]
-                    #[allow(clippy::cast_sign_loss)]
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                     {
                         let x_int = U256::from(x as u128);
                         let profit_int = U256::from(profit as u128);
