@@ -27,10 +27,8 @@ See contracts/cmd_executor.vy for the full command set and encoding.
 
 from __future__ import annotations
 
-import json
-import pathlib
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from eth_abi import abi as eth_abi_module
 from eth_utils.address import to_checksum_address
@@ -108,7 +106,7 @@ def _e(v: int, n: int = 32, signed: bool = False) -> bytes:
 
 def _address_to_bytes(addr: str | ChecksumAddress) -> bytes:
     """Convert a checksummed address string to 20 raw bytes."""
-    addr_str = addr if isinstance(addr, str) else addr
+    addr_str = addr
     addr_bytes = bytes.fromhex(addr_str[2:])
     msg = f"Invalid address length: {len(addr_bytes)}"
     assert len(addr_bytes) == 20, msg
@@ -260,7 +258,7 @@ def enc_bribe_coinbase(bips: int) -> bytes:
 def enc_bribe_address(recipient_idx: int, bips: int) -> bytes:
     """BRIBE_ADDRESS: [0x03][recipient_idx:1][bips:2] — 4 bytes (preprocessing).
 
-    Sends profit × bips / 10000 ETH to an arbitrary address.
+    Sends profit x bips / 10000 ETH to an arbitrary address.
     Max bips: 10000 (= 100% of profit). Never reverts on shortfall.
     """
     msg = f"bips must be 0-10000, got {bips}"
@@ -295,6 +293,7 @@ def enc_preamble(
             expected_balance parameter on execute(). Kept for API compat.
         bribe_bips: Profit fraction (in bips, 10000=100%) to send as bribe.
         bribe_address_idx: If set, bribe to this address index instead of coinbase.
+
     """
     preamble = enc_set_addresses(address_table)
     if bribe_bips > 0:
@@ -316,7 +315,7 @@ def enc_erc20_transfer(
 ) -> bytes:
     """ERC20_TRANSFER: [0x10][token_idx:1][recipient_idx:1][amount:12] — 15 bytes.
 
-    Amount is uint96 (max 7.9×10²⁸ — covers all practical token amounts).
+    Amount is uint96 (max 7.9e28 -- covers all practical token amounts).
     """
     return b"".join([
         CMD_ERC20_TRANSFER,
@@ -682,6 +681,7 @@ def make_pool_key(
     Returns:
         (currency0, currency1, fee, tick_spacing, hooks) with
         currency0 < currency1 (lexicographic).
+
     """
     c0, c1 = sorted(
         [to_checksum_address(currency0), to_checksum_address(currency1)],
@@ -696,6 +696,7 @@ def make_pool_key(
 def _keccak256(data: bytes) -> bytes:
     """Keccak-256 hash."""
     from web3 import Web3
+
     return Web3.keccak(data)
 
 
@@ -771,6 +772,7 @@ def compute_simulation_warmup_slots(
         )
         # Pass as stateDiff in eth_simulateV1:
         # {"stateDiff": overrides}
+
     """
     executor = to_checksum_address(executor_address)
     weth = to_checksum_address(weth_address)
@@ -956,7 +958,7 @@ class V4V4ArbitragePayload:
         assert self.pool_a_key is not None, msg
         assert self.pool_b_key is not None, "Pool B not configured"
 
-        pm_idx = at.index_of(self.pool_manager)
+        at.index_of(self.pool_manager)  # ensure PM is in table
         weth_idx = at.index_of(self.weth)
         executor_idx = at.index_of(self.executor)
         zero_idx = SENTINEL_NATIVE  # "No hooks" — always 0xFF
@@ -1002,6 +1004,46 @@ class V4V4ArbitragePayload:
             inner += enc_v4_settle_delta(weth_idx)
 
         commands = enc_v4_unlock(inner)
+        return enc_preamble(at, skip_profit=skip_profit) + commands
+
+    def encode_batch(self, *, skip_profit: bool = True) -> bytes:
+        """Encode using V4_BATCH for maximum compactness.
+
+        V4_BATCH packs both swaps into a single command with auto-settle.
+        The second swap uses dynamic amounts (amount=0) read from PM exttload.
+        """
+        at = self._ensure_table()
+        msg = "Pool A not configured"
+        assert self.pool_a_key is not None, msg
+        assert self.pool_b_key is not None, "Pool B not configured"
+
+        zero_idx = SENTINEL_NATIVE  # "No hooks" — always 0xFF
+
+        # V4_BATCH: first swap explicit, second dynamic
+        batch = enc_v4_batch([
+            # Swap 1: explicit amount
+            (
+                at.index_of(self.pool_a_key[0]),
+                at.index_of(self.pool_a_key[1]),
+                self.pool_a_key[2],
+                self.pool_a_key[3],
+                zero_idx,
+                self.pool_a_zfo,
+                self.pool_a_amount_in,
+            ),
+            # Swap 2: dynamic amount
+            (
+                at.index_of(self.pool_b_key[0]),
+                at.index_of(self.pool_b_key[1]),
+                self.pool_b_key[2],
+                self.pool_b_key[3],
+                zero_idx,
+                self.pool_b_zfo,
+                0,
+            ),
+        ])
+
+        commands = enc_v4_unlock(batch)
         return enc_preamble(at, skip_profit=skip_profit) + commands
 
 
@@ -1056,13 +1098,15 @@ class CmdExecutorComposer:
         Returns:
             A single-element list containing the EncodedCall for
             executor.execute(commands_bytes, expected_balance).
-        """
 
+        """
         # Route to path-specific encoder based on swap types
         if len(swap_amounts) == 2 and all(
             isinstance(s, UniswapV4PoolSwapAmounts) for s in swap_amounts
         ):
-            commands = self._encode_v4_v4(swap_amounts)
+            commands = self._encode_v4_v4(
+                cast("tuple[UniswapV4PoolSwapAmounts, ...]", swap_amounts)
+            )
         else:
             msg = f"Unsupported swap combination: {[type(s).__name__ for s in swap_amounts]}"
             raise NotImplementedError(msg)
@@ -1094,7 +1138,6 @@ class CmdExecutorComposer:
         and V4_SETTLE_DELTA for remaining WETH input debt.
         All operations happen inside a single V4_UNLOCK.
         """
-
         swap_a: UniswapV4PoolSwapAmounts = swap_amounts[0]
         swap_b: UniswapV4PoolSwapAmounts = swap_amounts[1]
 
@@ -1182,46 +1225,6 @@ class CmdExecutorComposer:
 
         commands = enc_v4_unlock(inner)
         return enc_preamble(at, skip_profit=True) + commands
-
-    def encode_batch(self, *, skip_profit: bool = True) -> bytes:
-        """Encode using V4_BATCH for maximum compactness.
-
-        V4_BATCH packs both swaps into a single command with auto-settle.
-        The second swap uses dynamic amounts (amount=0) read from PM exttload.
-        """
-        at = self._ensure_table()
-        msg = "Pool A not configured"
-        assert self.pool_a_key is not None, msg
-        assert self.pool_b_key is not None, "Pool B not configured"
-
-        zero_idx = SENTINEL_NATIVE  # "No hooks" — always 0xFF
-
-        # V4_BATCH: first swap explicit, second dynamic
-        batch = enc_v4_batch([
-            # Swap 1: explicit amount
-            (
-                at.index_of(self.pool_a_key[0]),
-                at.index_of(self.pool_a_key[1]),
-                self.pool_a_key[2],
-                self.pool_a_key[3],
-                zero_idx,
-                self.pool_a_zfo,
-                self.pool_a_amount_in,
-            ),
-            # Swap 2: dynamic amount
-            (
-                at.index_of(self.pool_b_key[0]),
-                at.index_of(self.pool_b_key[1]),
-                self.pool_b_key[2],
-                self.pool_b_key[3],
-                zero_idx,
-                self.pool_b_zfo,
-                0,
-            ),
-        ])
-
-        commands = enc_v4_unlock(batch)
-        return enc_preamble(at, skip_profit=skip_profit) + commands
 
 
 # ── Command-stream builder for 2-pool V4→V3 arbitrage ──
@@ -1330,7 +1333,7 @@ class V4V3ArbitragePayload:
         msg = "V4 pool not configured"
         assert self.v4_key is not None, msg
 
-        pm_idx = at.index_of(self.pool_manager)
+        at.index_of(self.pool_manager)  # ensure PM is in table
         weth_idx = at.index_of(self.weth)
         usdc_idx = at.index_of(self.intermediate_token)
         executor_idx = at.index_of(self.executor)

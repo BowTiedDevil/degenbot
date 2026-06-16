@@ -6,10 +6,14 @@ Python implementation preserved as ``_py_muldiv`` / ``_py_muldiv_rounding_up`` f
 See: contract_reference/uniswap/V3/UniswapV3Factory.sol (FullMath library)
 """
 
-from degenbot.constants import MAX_UINT256, MIN_UINT256
-from degenbot.exceptions.pool import EVMRevertError
-from degenbot.degenbot_rs import cl_muldiv as _rs_muldiv, cl_muldiv_rounding_up as _rs_muldiv_rounding_up
+import functools
+from collections.abc import Callable
+from typing import Any
 
+from degenbot.constants import MAX_UINT256, MIN_UINT256
+from degenbot.degenbot_rs import cl_muldiv as _rs_muldiv
+from degenbot.degenbot_rs import cl_muldiv_rounding_up as _rs_muldiv_rounding_up
+from degenbot.exceptions.pool import EVMRevertError
 from degenbot.uniswap.v3_libraries.functions import mulmod
 
 # Translation table: Rust core messages → V3 Solidity revert messages
@@ -18,9 +22,16 @@ _V3_MESSAGE_MAP = {
 }
 
 
-def _wrap_evmrevert(fn):
-    """Wrap Rust function to convert ValueError/OverflowError → EVMRevertError."""
-    def wrapper(*args, **kwargs):
+def _wrap_evmrevert(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrap Rust function to convert ValueError/OverflowError → EVMRevertError.
+
+    Returns:
+        A wrapper function that re-raises as EVMRevertError.
+
+    """
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
         try:
             return fn(*args, **kwargs)
         except ValueError as e:
@@ -28,8 +39,7 @@ def _wrap_evmrevert(fn):
             raise EVMRevertError(error=msg) from e
         except OverflowError as e:
             raise EVMRevertError(error=str(e)) from e
-    wrapper.__name__ = fn.__name__
-    wrapper.__qualname__ = fn.__qualname__
+
     return wrapper
 
 
@@ -44,9 +54,13 @@ def _py_muldiv(
 ) -> int:
     """Compute a * b / d with full 512-bit precision (Python fallback).
 
+    Returns:
+        The result of (a * b) // denominator.
+
     Raises:
         EVMRevertError: If inputs are out of uint256 range, denominator is zero,
             or result overflows.
+
     """
     if a < MIN_UINT256 or a > MAX_UINT256:
         raise EVMRevertError(error="Invalid value for a.")
@@ -69,8 +83,12 @@ def _py_muldiv(
 def _py_muldiv_rounding_up(a: int, b: int, denominator: int) -> int:
     """Return muldiv rounding up (Python fallback).
 
+    Returns:
+        The result of (a * b + d - 1) // denominator (rounded up).
+
     Raises:
         EVMRevertError: If the result would overflow uint256.
+
     """
     result = _py_muldiv(a, b, denominator)
     if mulmod(a, b, denominator) > 0:
