@@ -26,6 +26,8 @@ Startup sequence:
 """
 
 import argparse
+import datetime
+import json
 import sys
 from pathlib import Path
 
@@ -288,6 +290,8 @@ PATH_SUPPRESS_RETRY_INTERVAL = 100
 # → execute(commands) → balanceOf after) correctly measures profit
 # without needing WETH storage overrides or prefunding.
 INJECT_EXECUTOR_CODE = os.environ.get("INJECT_EXECUTOR_CODE", "1") == "1"
+STATE_DUMP_ON_REVERT = os.environ.get("STATE_DUMP_ON_REVERT", "0") == "1"
+STATE_DUMP_DIR = Path(os.environ.get("STATE_DUMP_DIR", "logs/state_dumps"))
 INJECTED_EXECUTOR_ADDRESS = get_checksum_address(
     os.environ.get(
         "INJECTED_EXECUTOR_ADDRESS",
@@ -580,9 +584,9 @@ def _hop_token_summary(hops: tuple[HopInfo, ...]) -> str:
     parts: list[str] = []
     for h in hops:
         if isinstance(h, (V2HopInfo, V3HopInfo)):
-            t0, t1 = h.token0_address[:8], h.token1_address[:8]
+            t0, t1 = h.token0_address, h.token1_address
         else:
-            t0, t1 = h.currency0_address[:8], h.currency1_address[:8]
+            t0, t1 = h.currency0_address, h.currency1_address
         parts.append(f"{t0}→{t1}{'↗' if h.zfo else '↘'}")
     return " ".join(parts)
 
@@ -1302,6 +1306,8 @@ async def dispatch_profitable_results(
     _traced_reverts_local: set[tuple[int, str]] = set()
     # One-shot dump per V4-hybrid path type (V4-V2, V2-V4, V4-V4)
     _dumped_path_types: set[str] = set()
+    # Per-dump deduplication for JSONL state dumps
+    _state_dump_keys: set[tuple[int, int]] = set()
 
     _executor_contract = async_w3.eth.contract(
         address=executor_address,
@@ -1359,6 +1365,49 @@ async def dispatch_profitable_results(
         else:
             bot_logger.debug(msg)
 
+    def _write_jsonl(file_path: Path, obj: dict[str, Any]) -> None:
+        """Synchronous JSONL writer helper for asyncio.to_thread."""
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        with file_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(obj, default=str) + "\n")
+
+    async def _dump_state_for_revert(
+        path_id: int,
+        solve_block: int,
+        path_type: str,
+        revert_info: str,
+        calldata: str,
+    ) -> None:
+        """Write a JSONL engine/on-chain state dump after a simulation revert.
+
+        Deduplicated by (path_id, solve_block) so the same failing path only
+        produces one dump per block.
+        """
+        key = (path_id, solve_block)
+        if key in _state_dump_keys:
+            return
+        _state_dump_keys.add(key)
+
+        try:
+            snapshot = await asyncio.to_thread(
+                engine_registry.engine.diagnostic_inspect_path,
+                path_id,
+            )
+        except Exception as exc:
+            bot_logger.debug(
+                f"[state-dump] engine dump failed for path={path_id}: {exc}"
+            )
+            return
+
+        snapshot["failed_calldata"] = calldata
+        snapshot["revert_info"] = revert_info
+        snapshot["path_type"] = path_type
+
+        timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        dump_file = STATE_DUMP_DIR / f"{timestamp}.jsonl"
+        await asyncio.to_thread(_write_jsonl, dump_file, snapshot)
+        bot_logger.debug(f"[state-dump] wrote {dump_file} for path={path_id}")
+
     async def simulate_one(
         path_id: int,
         optimal_input: int,
@@ -1415,48 +1464,66 @@ async def dispatch_profitable_results(
             msg = "Encoding command stream failed!"
             raise ValueError(msg)
 
-        pool_addrs = "→".join(f"{_hop_display_addr(h)[:10]}(zfo={h.zfo})" for h in path_info.hops)
+        pool_addrs = "→".join(f"{_hop_display_addr(h)}(zfo={h.zfo})" for h in path_info.hops)
         bot_logger.debug(
             f"[sim-debug] path={path_id} {path_info.path_type}: "
             f"{pool_addrs} input={optimal_input} outputs={hop_outputs}"
         )
 
-        # Detailed dump for V4-hybrid paths (first occurrence of each type)
-        _dump_type = path_info.path_type
-        if _dump_type in {"V4-V2", "V2-V4", "V4-V4"} and _dump_type not in _dumped_path_types:
-            _dumped_path_types.add(_dump_type)
-            if _dump_type == "V4-V2":
+        # Detailed dump for first occurrence of each path type
+        dump_type = path_info.path_type
+        if dump_type not in _dumped_path_types:
+            _dumped_path_types.add(dump_type)
+            if dump_type == "V4-V2":
                 hop_v4, hop_v2 = path_info.hops[0], path_info.hops[1]
                 bot_logger.info(
                     f"[sim-dump] V4-V2 path={path_id} "
-                    f"v4_c0={hop_v4.currency0_address[:10]} v4_c1={hop_v4.currency1_address[:10]} "
-                    f"v4_zfo={hop_v4.zfo} v2_zfo={hop_v2.zfo} v2_pool={hop_v2.pool_address[:10]} "
+                    f"v4_c0={hop_v4.currency0_address} v4_c1={hop_v4.currency1_address} "
+                    f"v4_zfo={hop_v4.zfo} v2_zfo={hop_v2.zfo} v2_pool={hop_v2.pool_address} "
                     f"input={optimal_input} fwd={hop_outputs[0]} out={hop_outputs[1]} "
                     f"cmd_len={len(cmd_bytes)}"
                 )
-            elif _dump_type == "V2-V4":
+            elif dump_type == "V2-V4":
                 hop_v2, hop_v4 = path_info.hops[0], path_info.hops[1]
                 v4_in_native = v4_input_is_native(hop_v4)
                 bot_logger.info(
                     f"[sim-dump] V2-V4 path={path_id} "
-                    f"v4_c0={hop_v4.currency0_address[:10]} v4_c1={hop_v4.currency1_address[:10]} "
-                    f"v4_zfo={hop_v4.zfo} v2_zfo={hop_v2.zfo} v2_pool={hop_v2.pool_address[:10]} "
+                    f"v4_c0={hop_v4.currency0_address} v4_c1={hop_v4.currency1_address} "
+                    f"v4_zfo={hop_v4.zfo} v2_zfo={hop_v2.zfo} v2_pool={hop_v2.pool_address} "
                     f"v4_native_in={v4_in_native} input={optimal_input} fwd={hop_outputs[0]} out={hop_outputs[1]} "
                     f"cmd_len={len(cmd_bytes)}"
                 )
-            elif _dump_type == "V4-V4":
+            elif dump_type == "V4-V4":
                 hop_a, hop_b = path_info.hops[0], path_info.hops[1]
                 bot_logger.info(
                     f"[sim-dump] V4-V4 path={path_id} "
-                    f"a_c0={hop_a.currency0_address[:10]} a_c1={hop_a.currency1_address[:10]} "
+                    f"a_c0={hop_a.currency0_address} a_c1={hop_a.currency1_address} "
                     f"a_zfo={hop_a.zfo} a_fee={hop_a.fee} "
-                    f"b_c0={hop_b.currency0_address[:10]} b_c1={hop_b.currency1_address[:10]} "
+                    f"b_c0={hop_b.currency0_address} b_c1={hop_b.currency1_address} "
                     f"b_zfo={hop_b.zfo} b_fee={hop_b.fee} "
                     f"input={optimal_input} fwd={hop_outputs[0]} out={hop_outputs[1]} "
                     f"cmd_len={len(cmd_bytes)}"
                 )
-
-        # Build transaction: encode execute(commands, expected_balance) call
+            else:
+                # Generic dump for all other path types (V3-V3-V3 etc.)
+                _hop_parts = []
+                for _h in path_info.hops:
+                    _part = f"{_hop_display_addr(_h)}(zfo={_h.zfo}"
+                    if isinstance(_h, V2HopInfo):
+                        _part += f" t0={_h.token0_address} t1={_h.token1_address}"
+                    elif isinstance(_h, V3HopInfo):
+                        _part += f" t0={_h.token0_address} t1={_h.token1_address} fee={_h.fee}"
+                    elif isinstance(_h, V4HopInfo):
+                        _part += f" c0={_h.currency0_address} c1={_h.currency1_address} fee={_h.fee}"
+                    _part += ")"
+                    _hop_parts.append(_part)
+                _amounts_str = ",".join(str(a) for a in hop_outputs)
+                bot_logger.info(
+                    f"[sim-dump] {dump_type} path={path_id} "
+                    f"hops=[{' → '.join(_hop_parts)}] "
+                    f"input={optimal_input} outputs=[{_amounts_str}] "
+                    f"cmd_len={len(cmd_bytes)}"
+                )
         # expected_balance=0 (check_mode=0): skip on-chain profit check,
         # operator verifies profitability off-chain via the pre/post balance reads.
 
@@ -1465,6 +1532,9 @@ async def dispatch_profitable_results(
         calldata = selector + eth_abi.abi.encode(
             types=["bytes", "uint256"],
             args=[cmd_bytes, expected_balance],
+        )
+        bot_logger.info(
+            f"[sim-dump] {dump_type} full_calldata_len={len(calldata)} cmd_stream_len={len(cmd_bytes)}"
         )
         tx_params = TxParams(
             to=Web3.to_checksum_address(executor_address),
@@ -1529,19 +1599,55 @@ async def dispatch_profitable_results(
 
         # Check all calls succeeded — log which call failed + revert data
         failed_call = None
-        for c in calls:
+        for call_idx, c in enumerate(calls):  # noqa:PLR1702
             if c.get("status", 0) != 1:
                 failed_call = c
 
+                # eth_simulateV1 returns revert reason in error.data when
+                # returnData is HexBytes(b'') (empty). The error field contains:
+                #   AttributeDict(code=3, message='execution reverted: IIA',
+                #                 data='0x08c379a0...')  (full ABI-encoded Error(string))
+                # Fall back to error.data when returnData is empty.
+                # Note: returnData may be HexBytes(b'') from web3.py's wrapper,
+                # or raw string "0x" from make_request — handle both.
                 revert_data = c.get("returnData", b"")
-                revert_hex = (
-                    revert_data.hex() if isinstance(revert_data, bytes) else str(revert_data)
-                )
+                if isinstance(revert_data, str):
+                    # Raw RPC returns hex strings; normalize to bytes
+                    if revert_data == "0x" or not revert_data:
+                        revert_data = b""
+                    else:
+                        revert_data = bytes.fromhex(revert_data.removeprefix("0x"))
+                elif isinstance(revert_data, bytes):
+                    # HexBytes or regular bytes from web3.py wrapper
+                    # HexBytes(b'') has len=0, bool=False — already empty
+                    if revert_data == HexBytes("0x") or len(revert_data) == 0:
+                        revert_data = b""
+                else:
+                    revert_data = b""
+                _error_obj = c.get("error")
+                _error_msg_from_obj = ""  # from error.message as last resort
+                # web3.py wraps the error field as AttributeDict (Mapping, NOT
+                # a dict subclass) so isinstance(_error_obj, dict) is False.
+                # Use dict-style access which works for both dict and AttributeDict.
+                if not revert_data and _error_obj is not None:
+                    try:
+                        _error_data = _error_obj["data"]
+                    except (KeyError, TypeError, IndexError):
+                        _error_data = None
+                    if _error_data and isinstance(_error_data, str) and _error_data.startswith("0x") and len(_error_data) > 2:
+                        revert_data = bytes.fromhex(_error_data[2:])
+                    else:
+                        try:
+                            _error_msg_from_obj = _error_obj["message"]
+                        except (KeyError, TypeError, IndexError):
+                            pass
+                # revert_data is always bytes now (normalized above)
+                revert_hex = revert_data.hex()
 
                 # Log full call result for V4 empty reverts
                 if path_info.path_type in {"V4-V4", "V2-V4", "V4-V2"} and not revert_hex:
                     bot_logger.debug(
-                        f"[sim-raw] path={path_id} {path_info.path_type}: call[{i}] DUMP={c}"
+                        f"[sim-raw] path={path_id} {path_info.path_type}: call[{call_idx}] DUMP={c}"
                     )
                 # Decode common revert patterns
                 revert_reason = ""
@@ -1557,8 +1663,18 @@ async def dispatch_profitable_results(
                     "54e3ca0d": "ManagerLocked()",
                 }
                 _EXECUTOR_ERRORS = {
+                    # Legacy (bare assert)
                     "4b9dfc58": "!OWNER",
                     "49494100": "IIA(insufficient-input-amount)",
+                    # Custom errors (Vyper 0.5.0a3+)
+                    "8e4a23d6": "Unauthorized(caller)",
+                    "b028a63a": "InvalidCallback(caller)",
+                    "cf479181": "InsufficientBalance(amount,available)",
+                    "4e88422a": "InsufficientProfit(actual,expected)",
+                    "83276224": "InvalidCommand(opcode)",
+                    "60ef0bb0": "BipsTooHigh(bips)",
+                    "a61be9f0": "InvalidMsgValue(value)",
+                    "e5b6bf32": "NotPlainEthTransfer()",
                 }
                 if len(revert_hex) >= 8:
                     selector = revert_hex[:8]
@@ -1583,6 +1699,62 @@ async def dispatch_profitable_results(
                         revert_reason = f" {_V4_ERRORS[selector]}"
                     elif selector in _EXECUTOR_ERRORS:
                         revert_reason = f" {_EXECUTOR_ERRORS[selector]}"
+                        # Decode ABI-encoded params for parameterized executor errors
+                        params_hex = revert_hex[8:]
+                        if (
+                            selector == "4e88422a" and len(params_hex) >= 128
+                        ):  # InsufficientProfit(uint256,uint256)
+                            try:
+                                actual = int(params_hex[0:64], 16)
+                                expected = int(params_hex[64:128], 16)
+                                revert_reason = (
+                                    f" InsufficientProfit(actual={actual},expected={expected})"
+                                )
+                            except (ValueError, IndexError):
+                                pass
+                        elif (
+                            selector == "cf479181" and len(params_hex) >= 128
+                        ):  # InsufficientBalance(uint256,uint256)
+                            try:
+                                amount = int(params_hex[0:64], 16)
+                                available = int(params_hex[64:128], 16)
+                                revert_reason = (
+                                    f" InsufficientBalance(amount={amount},available={available})"
+                                )
+                            except (ValueError, IndexError):
+                                pass
+                        elif (
+                            selector == "8e4a23d6" and len(params_hex) >= 64
+                        ):  # Unauthorized(address)
+                            try:
+                                addr = int(params_hex[0:64], 16)
+                                revert_reason = f" Unauthorized(caller=0x{addr:040x})"
+                            except (ValueError, IndexError):
+                                pass
+                        elif (
+                            selector == "b028a63a" and len(params_hex) >= 64
+                        ):  # InvalidCallback(address)
+                            try:
+                                addr = int(params_hex[0:64], 16)
+                                revert_reason = f" InvalidCallback(caller=0x{addr:040x})"
+                            except (ValueError, IndexError):
+                                pass
+                        elif (
+                            selector == "83276224" and len(params_hex) >= 64
+                        ):  # InvalidCommand(uint256)
+                            try:
+                                opcode = int(params_hex[0:64], 16)
+                                revert_reason = f" InvalidCommand(opcode={opcode}/0x{opcode:02x})"
+                            except (ValueError, IndexError):
+                                pass
+                        elif (
+                            selector == "60ef0bb0" and len(params_hex) >= 64
+                        ):  # BipsTooHigh(uint256)
+                            try:
+                                bips = int(params_hex[0:64], 16)
+                                revert_reason = f" BipsTooHigh(bips={bips})"
+                            except (ValueError, IndexError):
+                                pass
                     elif revert_hex.startswith(
                         "00000000000000000000000000000000000000000000000000000000"
                     ):
@@ -1590,76 +1762,142 @@ async def dispatch_profitable_results(
                         revert_reason = f" num=0x{revert_hex[24:]}"
                     else:
                         revert_reason = f" sel=0x{selector}"
+                elif not revert_hex and _error_msg_from_obj:
+                    revert_reason = f" {_error_msg_from_obj}"
                 _sim_log(
                     f"[sim-fail] path={path_id} {path_info.path_type}: "
-                    f"call[{i}] failed (gasUsed={c.get('gasUsed', 0)}) "
+                    f"call[{call_idx}] failed (gasUsed={c.get('gasUsed', 0)}) "
                     f"revert=0x{revert_hex}{revert_reason} "
+                    f"block={current_block} age={current_block - solve_block} "
                     f"tokens=[{_hop_token_summary(path_info.hops)}]"
                 )
 
-                # ── Diagnostic: debug_traceCall for V4 settlement issues ──
-                # Only trace once per block+type to avoid log spam
+                # ── Diagnostic: on-chain state for sim-fail paths ──
+                # Only check once per block+type to avoid log spam
                 _trace_key = (current_block, path_info.path_type)
                 if (
-                    revert_hex in ("", "5212cba1")
-                    and failed_call is not None
+                    failed_call is not None
                     and _trace_key not in _traced_reverts_local
                 ):
-                    try:
-                        trace_result = await async_w3.provider.make_request(
-                            "debug_traceCall",
-                            [
-                                {
-                                    "from": Web3.to_checksum_address(EXECUTOR_OWNER),
-                                    "to": Web3.to_checksum_address(executor_address),
-                                    "data": tx_params.get("data", tx_params.get("input", "")),
-                                    "value": "0x0",
-                                    "gas": "0x4c4b40",  # 5M
-                                },
-                                "pending",
-                                {"tracer": "callTracer", "tracerConfig": {"onlyTopCall": False}},
-                            ],
-                        )
-
-                        def _walk_trace(trace: dict, depth: int = 0) -> None:  # type: ignore[literal-required]
-                            sel = ""
-                            inp = trace.get("input", "")
-                            out = trace.get("output", "")
-                            typ = trace.get("type", "")
-                            tgt = trace.get("to", "")
-                            err = trace.get("error", "")
-                            val = trace.get("value", "0x0")
-                            if isinstance(inp, str) and len(inp) >= 10:
-                                sel = inp[:10]
-                            status = "OK" if trace.get("status", True) else "FAIL"
-                            gas_s = trace.get("gasUsed", "0x0")
-                            val_int = int(val, 16) if isinstance(val, str) else val
-                            val_str = f" val={val_int}" if val_int else ""
-                            extra = ""
-                            if not trace.get("status", True):
-                                extra = f" err={err[:120]}" if err else ""
-                                extra += f" out={out[:80]}" if out else ""
-                            # Show PM calldata details: swap/take/settle/sync/unlock
-                            if tgt.lower() == UNISWAP_V4_POOL_MANAGER_ADDRESS.lower() and sel:
-                                extra += f" inp={inp[:138]}"  # Full selector + first param
-                            bot_logger.debug(
-                                f"  [trace] {'  ' * depth}{typ} {tgt} sel={sel} "
-                                f"status={status} gas={gas_s}{val_str}{extra}"
+                    # On-chain state at 'pending' — matches what the
+                    # simulation sees. hex(current_block) would give state
+                    # after block N-1, which differs when current-block txs
+                    # modify pool state.
+                    amounts_per_hop = [optimal_input] + list(hop_outputs)
+                    for hi, hop in enumerate(path_info.hops):
+                        hop_amount = amounts_per_hop[hi] if hi < len(amounts_per_hop) else "?"
+                        if isinstance(hop, V2HopInfo):
+                            pool_addr = hop.pool_address
+                            try:
+                                reserves = await async_w3.eth.call(
+                                    {
+                                        "to": Web3.to_checksum_address(pool_addr),
+                                        "data": web3.Web3.keccak(text="getReserves()")[:4],
+                                    },
+                                    "pending",
+                                )
+                                if len(reserves) >= 96:
+                                    r0 = int.from_bytes(reserves[0:32], "big")
+                                    r1 = int.from_bytes(reserves[32:64], "big")
+                                    bot_logger.info(
+                                        f"[v2-state] path={path_id} hop[{hi}] "
+                                        f"pool={pool_addr} "
+                                        f"reserve0={r0} reserve1={r1} "
+                                        f"token0={hop.token0_address} token1={hop.token1_address} "
+                                        f"zfo={hop.zfo} amount={hop_amount}"
+                                    )
+                            except Exception:
+                                pass
+                        elif isinstance(hop, V3HopInfo):
+                            pool_addr = hop.pool_address
+                            try:
+                                # Check pool has code at pending
+                                _code = await async_w3.eth.get_code(
+                                    Web3.to_checksum_address(pool_addr),
+                                    "pending",
+                                )
+                                if not _code or _code == b"\x00" or (isinstance(_code, str) and _code in ("0x", "0x00")):
+                                    bot_logger.info(
+                                        f"[v3-state] path={path_id} hop[{hi}] "
+                                        f"pool={pool_addr} NO CODE at block {current_block}"
+                                    )
+                                    continue
+                                slot0_data = await async_w3.eth.call(
+                                    {
+                                        "to": Web3.to_checksum_address(pool_addr),
+                                        "data": web3.Web3.keccak(text="slot0()")[:4],
+                                    },
+                                    "pending",
+                                )
+                                liq_data = await async_w3.eth.call(
+                                    {
+                                        "to": Web3.to_checksum_address(pool_addr),
+                                        "data": web3.Web3.keccak(text="liquidity()")[:4],
+                                    },
+                                    "pending",
+                                )
+                                if len(slot0_data) < 64:
+                                    bot_logger.info(
+                                        f"[v3-state] path={path_id} hop[{hi}] "
+                                        f"pool={pool_addr} slot0 returned {len(slot0_data)} bytes (expected 96+)"
+                                    )
+                                    continue
+                                sqrt_price = int.from_bytes(slot0_data[0:32], "big")
+                                tick = int.from_bytes(slot0_data[32:64], "big")
+                                if tick >= 2**255:
+                                    tick -= 2**256  # signed int24
+                                liq = int.from_bytes(liq_data[0:32], "big") if len(liq_data) >= 32 else 0
+                                bot_logger.info(
+                                    f"[v3-state] path={path_id} hop[{hi}] "
+                                    f"pool={pool_addr} "
+                                    f"sqrtPriceX96={sqrt_price} tick={tick} "
+                                    f"liquidity={liq} fee={hop.fee} "
+                                    f"token0={hop.token0_address} token1={hop.token1_address} "
+                                    f"zfo={hop.zfo} amount={hop_amount}"
+                                )
+                            except Exception:
+                                pass
+                        elif isinstance(hop, V4HopInfo):
+                            # V4 pool state lives in PoolManager — we can't
+                            # easily query slot0 via eth_call on the PM.
+                            # Log what we have from the hop metadata.
+                            bot_logger.info(
+                                f"[v4-state] path={path_id} hop[{hi}] "
+                                f"pm={hop.pool_manager_address} pool_id={hop.pool_id_hex} "
+                                f"c0={hop.currency0_address} c1={hop.currency1_address} "
+                                f"fee={hop.fee} tick_spacing={hop.tick_spacing} "
+                                f"hook={hop.hook_address} "
+                                f"zfo={hop.zfo} amount={hop_amount}"
                             )
-                            for sub in trace.get("calls", []):
-                                _walk_trace(sub, depth + 1)
 
-                        if isinstance(trace_result, dict) and "result" in trace_result:
-                            _walk_trace(trace_result["result"])
-                        elif isinstance(trace_result, dict):
-                            _walk_trace(trace_result)
-                    except Exception as trace_exc:
-                        bot_logger.debug(f"[trace] debug_traceCall failed: {trace_exc}")
                     _traced_reverts_local.add(_trace_key)
 
-                return None
+                # Log the revert calldata for manual debugging (always INFO)
+                # Always log full calldata for sim-failures so we can
+                # reproduce offline with debug_traceCall or cast call
+                _cd = tx_params.get("data", tx_params.get("input", b""))
+                if isinstance(_cd, bytes):
+                    _cd = "0x" + _cd.hex()
+                elif isinstance(_cd, str):
+                    _cd = _cd if _cd.startswith("0x") else "0x" + _cd
 
-        # Extract gross profit from (WETH + native ETH + ERC-6909) balance change
+                if STATE_DUMP_ON_REVERT:
+                    await _dump_state_for_revert(
+                        path_id=path_id,
+                        solve_block=solve_block,
+                        path_type=path_info.path_type,
+                        revert_info=f"0x{revert_hex}{revert_reason}",
+                        calldata=_cd,
+                    )
+
+                bot_logger.info(
+                    f"[sim-revert-data] path={path_id} {path_info.path_type} "
+                    f"revert=0x{revert_hex[:16]}{'...' if len(revert_hex) > 16 else ''}{revert_reason} "
+                    f"block={current_block} age={current_block - solve_block} "
+                    f"calldata={_cd}"
+                )
+
+                return None
         try:
             weth_before = int.from_bytes(calls[0]["returnData"], byteorder="big")
             eth_before = int.from_bytes(calls[1]["returnData"], byteorder="big")
