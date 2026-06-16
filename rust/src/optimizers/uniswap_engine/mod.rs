@@ -189,46 +189,35 @@ pub(super) struct MixedPath {
 /// Each variant bundles only the data its hop type needs — no parallel
 /// `Vec<Option<T>>` with `None` placeholders. The hop type is the enum
 /// variant itself, not a separate index.
+///
+/// Variant sizes differ because V2 carries full reserve/fee state while
+/// CL hops only carry a pre-built integer sequence pointer. This is
+/// intentional and not a hot allocation path.
 #[derive(Clone, Debug)]
-#[allow(dead_code)] // Fields accessed via accessor methods and pattern matching
+#[allow(clippy::large_enum_variant)]
 pub(super) enum ResolvedHop {
     /// V2 constant-product hop
     V2 {
         state: crate::optimizers::mobius_int::IntHopState,
-        base: crate::optimizers::mobius::HopState,
     },
     /// V3 concentrated-liquidity hop
     V3 {
-        seq: crate::optimizers::mobius_v3::V3TickRangeSequence,
-        int_hop: crate::optimizers::mobius_v3_int::IntV3TickRangeHop,
         int_seq: crate::optimizers::mobius_v3_int::IntV3TickRangeSequence,
-        base: crate::optimizers::mobius::HopState,
     },
     /// V4 concentrated-liquidity hop (same CL math as V3, different settlement)
     V4 {
         int_seq: crate::optimizers::mobius_v3_int::IntV3TickRangeSequence,
-        /// Zero base hop placeholder — V4 uses the integer solver exclusively.
-        /// Kept for interface compatibility with the f64-based Mobius solver.
-        base: crate::optimizers::mobius::HopState,
     },
 }
 
 impl ResolvedHop {
     /// The hop type for this resolved hop.
-    #[allow(dead_code)] // Used in tests and future callers
+    #[allow(dead_code)] // Used in unit tests and available for future dispatch.
     pub(super) const fn hop_type(&self) -> HopType {
         match self {
             Self::V2 { .. } => HopType::V2,
             Self::V3 { .. } => HopType::V3,
             Self::V4 { .. } => HopType::V4,
-        }
-    }
-
-    /// The base (f64) hop state for Mobius initial estimates.
-    #[allow(dead_code)] // Will be used by f64-based solver paths
-    pub(super) const fn base(&self) -> &crate::optimizers::mobius::HopState {
-        match self {
-            Self::V2 { base, .. } | Self::V3 { base, .. } | Self::V4 { base, .. } => base,
         }
     }
 

@@ -36,6 +36,7 @@
 //! fee pools are excluded at registration time.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use alloy::primitives::{Address, I256, U256};
 
@@ -45,6 +46,7 @@ use crate::bot_core::tick_bitmap::{
 use crate::bot_core::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log;
 use crate::bot_core::v4_swap_decoder::{decode_v4_swap_log, PoolId};
 use crate::bot_core::TickInfo;
+use crate::optimizers::affected_keys::AffectedKeys;
 use crate::optimizers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence};
 
 // ---------------------------------------------------------------------------
@@ -173,7 +175,7 @@ pub struct V4PoolState {
 
     // Cached tick ranges (interior mutability for lazy computation from &self).
     // Invalidated on apply_swap / apply_liquidity_update.
-    cached_tick_ranges: std::sync::Mutex<TickRangeCache>,
+    cached_tick_ranges: parking_lot::Mutex<TickRangeCache>,
 }
 
 impl Clone for V4PoolState {
@@ -188,7 +190,7 @@ impl Clone for V4PoolState {
             update_block: self.update_block,
             tick_data: self.tick_data.clone(),
             coverage: self.coverage,
-            cached_tick_ranges: std::sync::Mutex::new(TickRangeCache::default()),
+            cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
         }
     }
 }
@@ -196,31 +198,26 @@ impl Clone for V4PoolState {
 /// Cached tick ranges for a single pool, keyed by direction.
 #[derive(Clone, Debug, Default)]
 struct TickRangeCache {
-    zfo: Option<Vec<V3TickRangeForSolver>>,
-    ofz: Option<Vec<V3TickRangeForSolver>>,
+    zfo: Option<Arc<[V3TickRangeForSolver]>>,
+    ofz: Option<Arc<[V3TickRangeForSolver]>>,
 }
 
 impl V4PoolState {
     /// Invalidate the cached tick ranges (call after any state mutation).
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal mutex is poisoned (indicates a previous panic
-    /// while holding the lock).
     pub fn invalidate_tick_range_cache(&self) {
-        let mut cache = self.cached_tick_ranges.lock().unwrap();
+        let mut cache = self.cached_tick_ranges.lock();
         cache.zfo = None;
         cache.ofz = None;
     }
 
     /// Get cached tick ranges for the given direction, computing and caching
     /// if absent. Uses `max_ranges=15` so that all callers can slice the result.
-    fn get_cached_tick_ranges(&self, zero_for_one: bool) -> Option<Vec<V3TickRangeForSolver>> {
+    fn get_cached_tick_ranges(&self, zero_for_one: bool) -> Option<Arc<[V3TickRangeForSolver]>> {
         {
-            let cache = self.cached_tick_ranges.lock().unwrap();
+            let cache = self.cached_tick_ranges.lock();
             let slot = if zero_for_one { &cache.zfo } else { &cache.ofz };
-            if slot.is_some() {
-                return slot.clone();
+            if let Some(ranges) = slot {
+                return Some(Arc::clone(ranges));
             }
         }
 
@@ -232,14 +229,14 @@ impl V4PoolState {
             zero_for_one,
             15,
         )
-        .map(|(ranges, _)| ranges);
+        .map(|(ranges, _)| Arc::<[V3TickRangeForSolver]>::from(ranges));
 
         if let Some(ref r) = ranges {
-            let mut cache = self.cached_tick_ranges.lock().unwrap();
+            let mut cache = self.cached_tick_ranges.lock();
             if zero_for_one {
-                cache.zfo = Some(r.clone());
+                cache.zfo = Some(Arc::clone(r));
             } else {
-                cache.ofz = Some(r.clone());
+                cache.ofz = Some(Arc::clone(r));
             }
         }
 
@@ -259,23 +256,23 @@ impl V4PoolState {
         zero_for_one: bool,
         max_ranges: usize,
     ) -> Option<IntV3TickRangeSequence> {
-        let mut ranges = self.get_cached_tick_ranges(zero_for_one)?;
-        ranges.truncate(max_ranges);
+        let ranges = self.get_cached_tick_ranges(zero_for_one)?;
+        let use_ranges = ranges.get(..ranges.len().min(max_ranges))?;
 
         let gamma_numer = u64::from(1_000_000 - self.pool_key.fee);
         let fee_denom = 1_000_000u64;
 
-        let mut int_ranges = Vec::with_capacity(ranges.len());
-        for (i, r) in ranges.iter().enumerate() {
+        let mut int_ranges = Vec::with_capacity(use_ranges.len());
+        for (i, r) in use_ranges.iter().enumerate() {
             // Current sqrt price for this range
             let sqrt_price_x96 = if i == 0 {
                 self.sqrt_price_x96
             } else if zero_for_one {
                 // Walking down: entered from the upper boundary of prior range
-                ranges[i - 1].sqrt_price_upper
+                use_ranges[i - 1].sqrt_price_upper
             } else {
                 // Walking up: entered from the lower boundary of prior range
-                ranges[i - 1].sqrt_price_lower
+                use_ranges[i - 1].sqrt_price_lower
             };
 
             // Compute the active liquidity for this range
@@ -283,7 +280,7 @@ impl V4PoolState {
                 self.liquidity
             } else {
                 let mut l = self.liquidity.cast_signed();
-                for prev_range in &ranges[..i] {
+                for prev_range in &use_ranges[..i] {
                     let net = prev_range.liquidity_net;
                     if zero_for_one {
                         l -= net;
@@ -325,7 +322,7 @@ impl From<RegisterV4PoolParams> for V4PoolState {
             update_block: params.update_block,
             tick_data: params.tick_data,
             coverage: params.coverage,
-            cached_tick_ranges: std::sync::Mutex::new(TickRangeCache::default()),
+            cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
         }
     }
 }
@@ -605,8 +602,10 @@ impl V4BlockEngine {
         &mut self,
         update: &V4SwapUpdate,
         block_number: u64,
-    ) -> Option<(u64, u64)> {
-        let &(fwd_key, rev_key) = self.pool_ids.get(&(update.pool_manager, update.pool_id))?;
+    ) -> AffectedKeys {
+        let Some(&(fwd_key, rev_key)) = self.pool_ids.get(&(update.pool_manager, update.pool_id)) else {
+            return AffectedKeys::empty();
+        };
 
         // Apply to forward pool
         if let Some(pool) = self.pools.get_mut(&fwd_key) {
@@ -632,7 +631,7 @@ impl V4BlockEngine {
             pool.invalidate_tick_range_cache();
         }
 
-        Some((fwd_key, rev_key))
+        AffectedKeys::pair(fwd_key, rev_key)
     }
 
     /// Apply a liquidity update (V4 `ModifyLiquidity` event) to a registered pool.
@@ -696,7 +695,7 @@ impl V4BlockEngine {
         tick_upper: i32,
         liquidity_delta: I256,
         block_number: u64,
-    ) -> Option<(u64, u64)> {
+    ) -> AffectedKeys {
         let Some(&(fwd_key, rev_key)) = self.pool_ids.get(&(pool_manager, pool_id)) else {
             // Pool not registered — buffer the update in the pump buffer
             self.event_buffer.buffer_pump(
@@ -708,14 +707,14 @@ impl V4BlockEngine {
                     block_number,
                 },
             );
-            return None;
+            return AffectedKeys::empty();
         };
 
         // Convert I256 liquidity_delta to i128 for tick update
         // If it doesn't fit, skip (shouldn't happen with valid on-chain data)
         let delta_i128: i128 = match liquidity_delta.try_into() {
             Ok(v) => v,
-            Err(_) => return None,
+            Err(_) => return AffectedKeys::empty(),
         };
 
         // Apply to forward pool
@@ -732,7 +731,7 @@ impl V4BlockEngine {
             pool.invalidate_tick_range_cache();
         }
 
-        Some((fwd_key, rev_key))
+        AffectedKeys::pair(fwd_key, rev_key)
     }
 
     /// Process a block: decode Swap and `ModifyLiquidity` events, apply updates,
@@ -779,9 +778,8 @@ impl V4BlockEngine {
     ) -> HashSet<u64> {
         let mut affected = HashSet::new();
         for update in updates {
-            if let Some((fwd_key, rev_key)) = self.apply_swap(update, block_number) {
-                affected.insert(fwd_key);
-                affected.insert(rev_key);
+            for key in self.apply_swap(update, block_number).iter() {
+                affected.insert(key);
             }
         }
         affected
