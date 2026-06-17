@@ -54,15 +54,22 @@ impl UniswapEngine {
         // Re-resolve and solve only affected paths — update results in-place
         // without cloning unchanged entries.
 
-        // Re-resolve affected paths directly (no clone needed — path_pools is
-        // immutable, path_resolved is mutable, no borrow conflict)
-        for &path_id in &affected_path_ids {
-            let Some(path) = self.path_pools.get(&path_id) else {
-                continue;
-            };
-            let mut resolved = ResolvedMixedPath::default();
-            self.resolve_path(&path.pools, &mut resolved);
-            self.path_resolved.insert(path_id, resolved);
+        // Re-derive resolved hop states under the core lock — a single
+        // consistent snapshot of BotCore for the whole re-derive (ADR-003
+        // Option A: one core-lock window per `solve_dirty`). V3/V4 state still
+        // reads from the per-family block engines here; Slices 2/3 migrate
+        // those into BotCore too. The guard drops before `solve_path` runs,
+        // which is pure `&self`.
+        {
+            let core = self.core.lock();
+            for &path_id in &affected_path_ids {
+                let Some(path) = self.path_pools.get(&path_id) else {
+                    continue;
+                };
+                let mut resolved = ResolvedMixedPath::default();
+                self.resolve_path(&core, &path.pools, &mut resolved);
+                self.path_resolved.insert(path_id, resolved);
+            }
         }
 
         // Remove old results for affected paths (they'll be re-solved below)
@@ -266,7 +273,16 @@ impl UniswapEngine {
     }
 
     /// Resolve a path's pool refs into hop states and tick-range sequences.
-    pub(super) fn resolve_path(&self, pool_refs: &[MixedPoolRef], resolved: &mut ResolvedMixedPath) {
+    ///
+    /// `core` is the locked [`BotCore`] snapshot to read V2 state from
+    /// (ADR-003). V3/V4 hops still read the per-family block engines; their
+    /// state migrates into `core` in Slices 2/3.
+    pub(super) fn resolve_path(
+        &self,
+        core: &crate::bot_core::BotCore,
+        pool_refs: &[MixedPoolRef],
+        resolved: &mut ResolvedMixedPath,
+    ) {
         resolved.hops.clear();
         resolved.valid = false;
 
@@ -279,12 +295,36 @@ impl UniswapEngine {
         for pool_ref in pool_refs {
             match pool_ref.hop_type {
                 HopType::V2 => {
-                    // Look up the V2 pool state
-                    let Some(hop_state) = self.v2_engine.get_pool(pool_ref.pool_key) else {
+                    // Read V2 state from BotCore and build the orientation-specific
+                    // `IntHopState` at resolve time from `zero_for_one` (ADR-003
+                    // "Swap Orientation": single PoolEntry per address, orientation
+                    // derived at solve — the engine never mutates this state).
+                    let Some(state) = core.get_v2_pool_state(pool_ref.pool_key) else {
                         return; // Missing pool → invalid
                     };
-
-                    resolved.hops.push(ResolvedHop::V2 { state: hop_state.clone() });
+                    let (reserve_in, reserve_out, gamma_numer, fee_denom) =
+                        if pool_ref.zero_for_one {
+                            (
+                                state.reserve0,
+                                state.reserve1,
+                                state.fee_token0.0,
+                                state.fee_token0.1,
+                            )
+                        } else {
+                            (
+                                state.reserve1,
+                                state.reserve0,
+                                state.fee_token1.0,
+                                state.fee_token1.1,
+                            )
+                        };
+                    let hop_state = crate::optimizers::mobius_int::IntHopState::new(
+                        reserve_in,
+                        reserve_out,
+                        gamma_numer,
+                        fee_denom,
+                    );
+                    resolved.hops.push(ResolvedHop::V2 { state: hop_state });
                 }
                 HopType::V3 => {
                     // Look up V3 pool state and build the integer tick-range

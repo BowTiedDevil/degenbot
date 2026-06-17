@@ -6,7 +6,7 @@ use alloy::rpc::types::Log;
 use crate::optimizers::v3_block_engine::V3SwapUpdate;
 use crate::optimizers::v4_block_engine::V4SwapUpdate;
 
-use super::{UniswapEngine, BlockMetadata, HashSet};
+use super::{UniswapEngine, BlockMetadata, HashSet, HopType};
 
 impl UniswapEngine {
     /// Route a single WS log to the appropriate sub-engine.
@@ -20,12 +20,17 @@ impl UniswapEngine {
 
         if *topic == crate::optimizers::v2_sync_decoder::V2_SYNC_TOPIC {
             if let Some(event) = crate::optimizers::v2_sync_decoder::decode_sync_log(log) {
-                for key in self.v2_engine.apply_sync(
+                // ADR-003: V2 state lives in BotCore. apply under the core lock
+                // (nested inside the engine lock the pump already holds —
+                // engine-then-core ordering). The returned single pool_id marks
+                // every path using this pool in EITHER direction dirty.
+                if let Some(pool_id) = self.core.lock().apply_v2_sync(
                     event.pool_address,
                     event.reserve0,
                     event.reserve1,
-                ).iter() {
-                    self.dirty_v2.insert(key);
+                    block_number,
+                ) {
+                    self.dirty_v2.insert(pool_id);
                 }
             }
         } else if *topic == crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC {
@@ -142,6 +147,46 @@ impl UniswapEngine {
         !self.dirty_v2.is_empty() || !self.dirty_v3.is_empty() || !self.dirty_v4.is_empty()
     }
 
+    /// Handle a reorg detected by the pump (ADR-003 Option α).
+    ///
+    /// Restores every registered pool's state to just before `target_block`,
+    /// then invalidates all resolved path states and marks every pool used by
+    /// a registered path dirty — so the next `solve_dirty` re-derives and
+    /// re-solves from the post-restore state, and `compute_diff_and_send`
+    /// naturally emits `expired`/`updated` diffs against `delivered`.
+    ///
+    /// The pump calls this under the engine lock when a WS log arrives with
+    /// `removed: true`. Lock ordering: engine (held by caller) → core (acquired
+    /// inside `restore_all_pools_before_block`) — never the reverse.
+    ///
+    /// Idempotent: pools untouched by the fork are no-ops.
+    pub fn handle_reorg(&mut self, target_block: u64) {
+        // 1. Restore all V2 pool state to before the target. V3/V4 state still
+        //    lives on the per-family engines (Slices 2/3 migrate them + their
+        //    reorg handling into BotCore).
+        self.core.lock().restore_all_pools_before_block(target_block);
+
+        // 2. Invalidate resolved hop states — they were derived from pre-restore
+        //    pool state. Clearing forces `solve_dirty`'s re-derive to rebuild.
+        self.path_resolved.clear();
+
+        // 3. Mark every pool referenced by any registered path dirty so all
+        //    paths re-solve (a reorg may have touched any of them).
+        for &(hop_type, pool_key) in self.pool_to_paths.keys() {
+            match hop_type {
+                HopType::V2 => {
+                    self.dirty_v2.insert(pool_key);
+                }
+                HopType::V3 => {
+                    self.dirty_v3.insert(pool_key);
+                }
+                HopType::V4 => {
+                    self.dirty_v4.insert(pool_key);
+                }
+            }
+        }
+    }
+
     /// Process a block: apply all logs then solve affected paths.
     /// Does NOT send a result batch — the pump controls dispatch.
     pub fn process_block(&mut self, logs: &[Log], block_number: u64, metadata: &BlockMetadata) {
@@ -205,8 +250,16 @@ impl UniswapEngine {
         block_number: u64,
         metadata: &BlockMetadata,
     ) {
-        // Apply updates to sub-engines and collect affected pool keys
-        let v2_affected = self.v2_engine.apply_sync_updates(v2_updates);
+        // Apply V2 updates to BotCore and collect affected pool ids (ADR-003)
+        let mut v2_affected = HashSet::new();
+        {
+            let mut core = self.core.lock();
+            for &(addr, r0, r1) in v2_updates {
+                if let Some(pool_id) = core.apply_v2_sync(addr, r0, r1, block_number) {
+                    v2_affected.insert(pool_id);
+                }
+            }
+        }
         let v3_affected = self.v3_engine.apply_swap_updates(v3_updates, block_number);
 
         // Re-solve only paths containing updated pools
@@ -234,7 +287,15 @@ impl UniswapEngine {
         block_number: u64,
         metadata: &BlockMetadata,
     ) {
-        let v2_affected = self.v2_engine.apply_sync_updates(v2_updates);
+        let mut v2_affected = HashSet::new();
+        {
+            let mut core = self.core.lock();
+            for &(addr, r0, r1) in v2_updates {
+                if let Some(pool_id) = core.apply_v2_sync(addr, r0, r1, block_number) {
+                    v2_affected.insert(pool_id);
+                }
+            }
+        }
         let v3_affected = self.v3_engine.apply_swap_updates(v3_updates, block_number);
         let v4_affected = self.v4_engine.apply_swap_updates(v4_updates, block_number);
         self.rebuild_and_solve_affected(&v2_affected, &v3_affected, &v4_affected, block_number, metadata);

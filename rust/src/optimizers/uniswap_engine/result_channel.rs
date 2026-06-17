@@ -106,11 +106,21 @@ impl UniswapEngine {
         // Removed: de-registered since last batch
         let removed: Vec<u64> = self.deregistered.drain(..).collect();
 
-        // Advance delivered to the above-threshold subset of results
-        self.delivered.retain(|_, r| r.profit > self.min_profit && r.profit < self.max_profit);
-        // Add any new above-threshold entries not yet in delivered
+        // Advance `delivered` to the above-threshold subset of current
+        // `results` (ADR-003: this is what makes reorg `expired` diffs real —
+        // a path that was profitable but rolled back must leave `delivered`).
+        //   1. retain only paths still above-threshold in current results
+        //      (drops expired entries — `removed` is handled separately via
+        //      `deregistered`);
+        //   2. insert/overwrite current values so `updated` paths stop
+        //      re-firing every batch once their new value is delivered.
+        self.delivered.retain(|id, _| {
+            self.results
+                .get(id)
+                .is_some_and(|r| r.profit > self.min_profit && r.profit < self.max_profit)
+        });
         for (&id, r) in &self.results {
-            if r.profit > self.min_profit && r.profit < self.max_profit && !self.delivered.contains_key(&id) {
+            if r.profit > self.min_profit && r.profit < self.max_profit {
                 self.delivered.insert(id, r.clone());
             }
         }

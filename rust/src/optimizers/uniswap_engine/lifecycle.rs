@@ -1,6 +1,6 @@
 //! Path registration, buffer management, and engine accessors.
 
-use super::{UniswapEngine, MixedPoolRef, MixedPath, ResolvedMixedPath, V2BlockEngine, V3BlockEngine, V4BlockEngine, HashMap, SolvePathResult, Address};
+use super::{UniswapEngine, MixedPoolRef, MixedPath, ResolvedMixedPath, V3BlockEngine, V4BlockEngine, HashMap, SolvePathResult, Address};
 
 impl UniswapEngine {
     /// Register a mixed path and return its ID.
@@ -23,10 +23,12 @@ impl UniswapEngine {
         // Store the immutable pool refs
         self.path_pools.insert(path_id, MixedPath { pools: pool_refs });
 
-        // Resolve the path immediately (no solve yet)
+        // Resolve the path immediately (no solve yet). V2 state is read from
+        // BotCore under the core lock (ADR-003).
         let mut resolved = ResolvedMixedPath::default();
         if let Some(path) = self.path_pools.get(&path_id) {
-            self.resolve_path(&path.pools, &mut resolved);
+            let core = self.core.lock();
+            self.resolve_path(&core, &path.pools, &mut resolved);
         }
         self.path_resolved.insert(path_id, resolved);
 
@@ -67,11 +69,6 @@ impl UniswapEngine {
     pub fn flush_event_buffer(&mut self) {
         self.v3_engine.flush_event_buffer();
         self.v4_engine.flush_event_buffer();
-    }
-
-    /// Get a mutable reference to the V2 engine.
-    pub const fn v2_engine(&mut self) -> &mut V2BlockEngine {
-        &mut self.v2_engine
     }
 
     /// Get a mutable reference to the V3 engine.
@@ -136,11 +133,15 @@ impl UniswapEngine {
     /// `ResultBatch` from this entry (grep-verified across `tests/`, `examples/`,
     /// and `src/degenbot/`).
     pub fn solve_all_paths(&mut self, block_number: u64) {
-        // Resolve all paths (no clone — path_pools is immutable)
-        for (&path_id, path) in &self.path_pools {
-            let mut resolved = ResolvedMixedPath::default();
-            self.resolve_path(&path.pools, &mut resolved);
-            self.path_resolved.insert(path_id, resolved);
+        // Resolve all paths under the core lock (single consistent V2
+        // snapshot). V3/V4 state still reads the per-family block engines.
+        {
+            let core = self.core.lock();
+            for (&path_id, path) in &self.path_pools {
+                let mut resolved = ResolvedMixedPath::default();
+                self.resolve_path(&core, &path.pools, &mut resolved);
+                self.path_resolved.insert(path_id, resolved);
+            }
         }
 
         // Solve all paths
@@ -153,10 +154,10 @@ impl UniswapEngine {
         // pump owns dispatch via `send_result_batch`.
     }
 
-    /// Number of registered V2 pools.
+    /// Number of registered V2 pools (state lives in `BotCore` under ADR-003).
     #[must_use]
     pub fn v2_pool_count(&self) -> usize {
-        self.v2_engine.pool_count()
+        self.core.lock().pool_count()
     }
 
     /// Number of registered V3 pools.

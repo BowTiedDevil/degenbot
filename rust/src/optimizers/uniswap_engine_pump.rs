@@ -652,6 +652,25 @@ impl UniswapEnginePump {
 
                     let log_block = log.block_number.unwrap_or(current_block);
 
+                    if log.removed {
+                        // Reorg signal (ADR-003 Option α): this log was
+                        // orphaned by a fork at `log_block`. Restore engine
+                        // state to just before that block rather than applying
+                        // it forward. Idempotent — repeated removed logs for
+                        // the same block no-op once the block's deltas are
+                        // popped. The next loop iteration's `solve_dirty`
+                        // re-derives affected paths from the restored state,
+                        // and the debounce-bounded `send_result_batch` emits
+                        // `expired` diffs against `delivered` so Python sees
+                        // the forked paths vanish.
+                        let mut engine = self.engine.lock();
+                        engine.handle_reorg(log_block);
+                        // Cancel any pending debounce: results accumulated
+                        // from pre-reorg state are invalid.
+                        debounce_active = false;
+                        continue;
+                    }
+
                     // Detect new block via log's block_number
                     if log_block > current_block {
                         // New block — finalize the current block first.

@@ -303,27 +303,29 @@ impl BotCore {
         pool_id
     }
 
-    /// Update a V2 pool's reserves from a Sync event.
+    /// Apply a V2 `Sync` event to a registered pool's state.
     ///
-    /// Looks up the pool by contract address. No-op if the pool is not registered.
+    /// This is the live-path mutation method (ADR-003): journals the prior
+    /// reserves, then updates `reserve0`/`reserve1`/`update_block` in place.
+    /// Returns the affected `pool_id` so the engine can mark the right path set
+    /// dirty; returns `None` if the pool is not registered (a no-op).
     ///
     /// # Panics
     ///
     /// Panics if a `pool_id` is found in `pool_addresses` but not in `pools`
     /// (should never happen — they are inserted together).
-    pub fn update_v2_pool(
+    #[must_use]
+    pub fn apply_v2_sync(
         &mut self,
         pool_address: Address,
         reserve0: U256,
         reserve1: U256,
         block_number: u64,
-    ) {
-        let Some(&pool_id) = self.pool_addresses.get(&pool_address) else {
-            return;
-        };
+    ) -> Option<u64> {
+        let &pool_id = self.pool_addresses.get(&pool_address)?;
 
         let Some(PoolEntry::V2(state)) = self.pools.get_mut(&pool_id) else {
-            return;
+            return None;
         };
 
         // Stash "before" values in the reorg journal before updating
@@ -336,6 +338,41 @@ impl BotCore {
         state.reserve0 = reserve0;
         state.reserve1 = reserve1;
         state.update_block = block_number;
+
+        Some(pool_id)
+    }
+
+    /// Update a V2 pool's reserves from a Sync event.
+    ///
+    /// Looks up the pool by contract address. No-op if the pool is not registered.
+    /// Thin wrapper over [`apply_v2_sync`](Self::apply_v2_sync) that discards
+    /// the returned `pool_id` (kept for the `PyBotCore` surface).
+    ///
+    /// # Panics
+    ///
+    /// Panics if a `pool_id` is found in `pool_addresses` but not in `pools`
+    /// (should never happen — they are inserted together).
+    pub fn update_v2_pool(
+        &mut self,
+        pool_address: Address,
+        reserve0: U256,
+        reserve1: U256,
+        block_number: u64,
+    ) {
+        let _ = self.apply_v2_sync(pool_address, reserve0, reserve1, block_number);
+    }
+
+    /// Read a registered V2 pool's state by `pool_id`.
+    ///
+    /// The solve engine reads state by reference through this accessor
+    /// (ADR-003: "Pool's authority over its own math") and builds the
+    /// orientation-specific `IntHopState` at resolve time from `zero_for_one`.
+    #[must_use]
+    pub fn get_v2_pool_state(&self, pool_id: u64) -> Option<&V2PoolState> {
+        match self.pools.get(&pool_id)? {
+            PoolEntry::V2(state) => Some(state),
+            PoolEntry::V3(_) => None,
+        }
     }
 
     /// Update a V3 pool's state from a Swap event.
@@ -560,6 +597,38 @@ impl BotCore {
         state.reserve1 = r1;
         state.update_block = blk;
         Some((r0, r1, blk))
+    }
+
+    /// Restore **every** registered V2 pool's state to just before `target`.
+    ///
+    /// The pump-driven reorg path (ADR-003 Option α): on detecting a fork via
+    /// a `removed: true` WS log, the engine calls this under the core lock to
+    /// roll every affected pool back, so the next `solve_dirty` re-derives from
+    /// consistent post-restore state.
+    ///
+    /// Pools with no journal delta at/after `target` are left as-is (idempotent
+    /// — a reorg touches only a subset of pools). Returns the count of pools
+    /// that were rolled back. (V3/V4 restore lands in Slices 2/3; V3 entries in
+    /// `BotCore` today come only from `PyBotCore` and are skipped here.)
+    pub fn restore_all_pools_before_block(&mut self, target: u64) -> usize {
+        let pool_ids: Vec<u64> = self.pools.keys().copied().collect();
+        let mut restored = 0usize;
+        for pool_id in pool_ids {
+            let Some(PoolEntry::V2(state)) = self.pools.get_mut(&pool_id) else {
+                continue; // V3 (and future V4) — handled in later slices
+            };
+            // Only restore pools with a delta at/after the reorg target;
+            // untouched pools keep their current state.
+            if state.journal.newest_block().is_none_or(|b| b < target) {
+                continue;
+            }
+            let (r0, r1, blk) = state.journal.restore_before_block(target);
+            state.reserve0 = r0;
+            state.reserve1 = r1;
+            state.update_block = blk;
+            restored += 1;
+        }
+        restored
     }
 
     // --- V3 journal methods ---

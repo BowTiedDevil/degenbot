@@ -164,6 +164,16 @@ impl<D: BlockDelta> ReorgJournal<D> {
         self.deltas.is_empty()
     }
 
+    /// The block number of the newest delta, or `None` if the journal is empty.
+    ///
+    /// Used by reorg rollback to gate per-pool restores: a pool whose newest
+    /// delta is before the reorg target was untouched by the fork and is left
+    /// as-is (idempotent restore).
+    #[must_use]
+    pub fn newest_block(&self) -> Option<u64> {
+        self.deltas.back().map(BlockDelta::block)
+    }
+
     /// Append a new delta to the journal.
     ///
     /// If the delta's block matches the newest delta's block,
@@ -233,7 +243,9 @@ impl ReorgJournal<V2BlockDelta> {
     ///
     /// # Panics
     ///
-    /// Panics if no delta exists before the target block.
+    /// Panics only if the journal is empty. A pool whose *first* Sync is at
+    /// the target block (a single delta at `block`) restores to that delta's
+    /// "before" values — the registration reserves — without panicking.
     pub fn restore_before_block(
         &mut self,
         block: u64,
@@ -251,28 +263,26 @@ impl ReorgJournal<V2BlockDelta> {
             return (newest.reserve0_before, newest.reserve1_before, newest.block);
         }
 
-        let earliest_block = self.deltas[0].block();
-        assert!(
-            earliest_block < block,
-            "No pool state known prior to block {block}"
-        );
-
         // Pop all deltas at or after the target block.
-        // The last one popped gives us the "before" values to restore.
+        // The last one popped gives us the "before" values to restore. This
+        // includes the case where the pool's only delta IS at the target block
+        // (earliest == block): it is popped and its registration-time "before"
+        // values are returned. The emptiness guard prevents indexing an empty
+        // deque once all deltas have been popped.
         let mut last_popped: Option<V2BlockDelta> = None;
-        while self.deltas[self.deltas.len() - 1].block() >= block {
+        while !self.deltas.is_empty()
+            && self.deltas[self.deltas.len() - 1].block() >= block
+        {
             last_popped = self.deltas.pop_back();
         }
 
-        // SAFETY: We verified earliest < block and newest >= block, so at
-        // least one delta was popped. `Option<T>` is always `Some` here.
+        // SAFETY: newest >= block (we skipped the early return), so at least
+        // one delta was popped. `Option<T>` is always `Some` here.
         let Some(popped) = last_popped else {
-            unreachable!("earliest < block <= newest guarantees at least one pop");
+            unreachable!("newest >= block guarantees at least one pop");
         };
-        // Now we need the "before" values from *just before* the target block.
-        // The deltas remaining in the deque represent blocks before the target.
         // The last popped delta's "before" values ARE the state just before
-        // the target block (since they were captured before that delta's update).
+        // the target block (captured before that delta's update).
         (popped.reserve0_before, popped.reserve1_before, popped.block)
     }
 }
@@ -290,7 +300,8 @@ impl ReorgJournal<V3BlockDelta> {
     ///
     /// # Panics
     ///
-    /// Panics if no delta exists before the target block.
+    /// Panics only if the journal is empty. A pool whose first Swap/Mint/Burn
+    /// is at the target block restores to registration state without panicking.
     pub fn restore_before_block(&mut self, block: u64) -> V3RestoreResult {
         assert!(
             !self.deltas.is_empty(),
@@ -311,22 +322,20 @@ impl ReorgJournal<V3BlockDelta> {
             };
         }
 
-        let earliest_block = self.deltas[0].block();
-        assert!(
-            earliest_block < block,
-            "No pool state known prior to block {block}"
-        );
-
-        // Pop all deltas at or after the target block.
+        // Pop all deltas at or after the target block. Includes the case where
+        // the pool's only delta IS at the target block (earliest == block); the
+        // emptiness guard prevents indexing an empty deque once all are popped.
         let mut last_popped: Option<V3BlockDelta> = None;
-        while self.deltas[self.deltas.len() - 1].block() >= block {
+        while !self.deltas.is_empty()
+            && self.deltas[self.deltas.len() - 1].block() >= block
+        {
             last_popped = self.deltas.pop_back();
         }
 
-        // SAFETY: We verified earliest < block and newest >= block, so at
-        // least one delta was popped.
+        // SAFETY: newest >= block (we skipped the early return), so at least
+        // one delta was popped.
         let Some(popped) = last_popped else {
-            unreachable!("earliest < block <= newest guarantees at least one pop");
+            unreachable!("newest >= block guarantees at least one pop");
         };
 
         V3RestoreResult {
@@ -463,13 +472,20 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "No pool state known prior to block 1")]
-    fn restore_before_block_panics_if_earliest_at_target() {
+    fn restore_before_block_at_earliest_returns_registration_state() {
+        // The realistic reorg case: a pool's first (and only) Sync is at the
+        // reorg target block. restore pops that delta and returns its "before"
+        // values (the registration reserves) without panicking — reorg
+        // rollback must reach the live hot path (ADR-003).
         let mut j = ReorgJournal::<V2BlockDelta>::new(8);
+        // delta{1}.before = (10, 20) = registration reserves
         j.push_delta(delta(1, 10, 20));
 
-        // The delta at block 1 gives "before" state, but it IS at the target
-        j.restore_before_block(1);
+        let (r0, r1, blk) = j.restore_before_block(1);
+        assert_eq!(r0, U256::from(10));
+        assert_eq!(r1, U256::from(20));
+        assert_eq!(blk, 1);
+        assert!(j.is_empty(), "the only delta was popped back to registration");
     }
 
     #[test]
@@ -564,7 +580,7 @@ mod proptests {
         }
 
         /// Mirror the journal's `restore_before_block` semantics exactly.
-        /// Returns None if the operation would panic (empty or no prior state).
+        /// Returns None if the operation would panic (empty journal).
         fn restore_before_block(&mut self, block: u64) -> Option<(U256, U256, u64)> {
             if self.deltas.is_empty() {
                 return None;
@@ -576,12 +592,10 @@ mod proptests {
                 let d = &self.deltas[len - 1];
                 return Some((d.reserve0_before, d.reserve1_before, d.block));
             }
-            let earliest = self.deltas[0].block;
-            if earliest >= block {
-                // No prior state — would panic
-                return None;
-            }
-            // Pop all at/after target, return last popped's before values
+            // Pop all at/after target, return last popped's before values.
+            // Includes the single-delta-at-target case (pops it, returns
+            // registration reserves) — mirrors the journal's emptiness-guarded
+            // loop.
             let mut last_popped: Option<V2BlockDelta> = None;
             while self.deltas.last().map(|d| d.block) >= Some(block) {
                 last_popped = self.deltas.pop();

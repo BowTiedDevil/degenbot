@@ -28,7 +28,7 @@ mod tests {
         let mut engine = UniswapEngine::new();
 
         // Register a V2 pool
-        let v2_fwd = engine.v2_engine().register_pool(
+        let v2_fwd = engine.register_v2_pool(
             Address::ZERO,
             usdc(1_500_000),
             weth(800),
@@ -106,7 +106,7 @@ mod tests {
 
         // Register V2 pools
         let v2_addr = Address::ZERO;
-        let v2_fwd = engine.v2_engine().register_pool(
+        let v2_fwd = engine.register_v2_pool(
             v2_addr,
             usdc(1_500_000),
             weth(800),
@@ -115,7 +115,7 @@ mod tests {
         );
 
         let v2_addr1 = Address::from([1u8; 20]);
-        let v2_fwd1 = engine.v2_engine().register_pool(
+        let v2_fwd1 = engine.register_v2_pool(
             v2_addr1,
             weth(800),
             usdc(1_600_000),
@@ -150,7 +150,7 @@ mod tests {
         let mut engine = UniswapEngine::new();
 
         // V2 pool
-        let v2_fwd = engine.v2_engine().register_pool(
+        let v2_fwd = engine.register_v2_pool(
             Address::ZERO,
             usdc(1_500_000),
             weth(800),
@@ -260,7 +260,7 @@ mod tests {
 
         // Register V2 pools
         let v2_addr = Address::from([0x11u8; 20]);
-        let v2_fwd = engine.v2_engine().register_pool(
+        let v2_fwd = engine.register_v2_pool(
             v2_addr,
             usdc(1_500_000),
             weth(800),
@@ -269,7 +269,7 @@ mod tests {
         );
 
         let v2_addr1 = Address::from([0x12u8; 20]);
-        let v2_fwd1 = engine.v2_engine().register_pool(
+        let v2_fwd1 = engine.register_v2_pool(
             v2_addr1,
             weth(800),
             usdc(1_600_000),
@@ -307,7 +307,7 @@ mod tests {
     fn register_path_after_start_succeeds() {
         let mut engine = UniswapEngine::new();
         let v2_addr = Address::from([0x11u8; 20]);
-        let v2_fwd = engine.v2_engine().register_pool(
+        let v2_fwd = engine.register_v2_pool(
             v2_addr,
             usdc(1_500_000),
             weth(800),
@@ -315,7 +315,7 @@ mod tests {
             FEE_DENOM_03,
         );
         let v2_addr2 = Address::from([0x12u8; 20]);
-        let v2_fwd2 = engine.v2_engine().register_pool(
+        let v2_fwd2 = engine.register_v2_pool(
             v2_addr2,
             weth(1000),
             usdc(2_000_000),
@@ -355,7 +355,7 @@ mod tests {
 
         // Two V2 pools with price divergence
         let v2_addr_a = Address::from([0x11u8; 20]);
-        let v2_fwd_a = engine.v2_engine().register_pool(
+        let v2_fwd_a = engine.register_v2_pool(
             v2_addr_a,
             usdc(1_500_000),
             weth(800),
@@ -363,7 +363,7 @@ mod tests {
             FEE_DENOM_03,
         );
         let v2_addr_b = Address::from([0x12u8; 20]);
-        let v2_fwd_b = engine.v2_engine().register_pool(
+        let v2_fwd_b = engine.register_v2_pool(
             v2_addr_b,
             weth(1000),
             usdc(2_000_000),
@@ -396,7 +396,7 @@ mod tests {
 
         // Two V2 pools with price divergence
         let v2_addr_a = Address::from([0x11u8; 20]);
-        let v2_fwd_a = engine.v2_engine().register_pool(
+        let v2_fwd_a = engine.register_v2_pool(
             v2_addr_a,
             usdc(1_500_000),
             weth(800),
@@ -404,7 +404,7 @@ mod tests {
             FEE_DENOM_03,
         );
         let v2_addr_b = Address::from([0x12u8; 20]);
-        let v2_fwd_b = engine.v2_engine().register_pool(
+        let v2_fwd_b = engine.register_v2_pool(
             v2_addr_b,
             weth(1000),
             usdc(2_000_000),
@@ -446,7 +446,7 @@ mod tests {
         // `latest_results()`, none sets a channel).
 
         let v2_addr_a = Address::from([0x11u8; 20]);
-        let v2_fwd_a = engine.v2_engine().register_pool(
+        let v2_fwd_a = engine.register_v2_pool(
             v2_addr_a,
             usdc(1_500_000),
             weth(800),
@@ -454,7 +454,7 @@ mod tests {
             FEE_DENOM_03,
         );
         let v2_addr_b = Address::from([0x12u8; 20]);
-        let v2_fwd_b = engine.v2_engine().register_pool(
+        let v2_fwd_b = engine.register_v2_pool(
             v2_addr_b,
             weth(1000),
             usdc(2_000_000),
@@ -500,7 +500,7 @@ mod tests {
         // Defaults already min_profit=0, max_profit=MAX (window fully open).
 
         let v2_addr_a = Address::from([0x11u8; 20]);
-        let v2_fwd_a = engine.v2_engine().register_pool(
+        let v2_fwd_a = engine.register_v2_pool(
             v2_addr_a,
             usdc(1_500_000),
             weth(800),
@@ -508,7 +508,7 @@ mod tests {
             FEE_DENOM_03,
         );
         let v2_addr_b = Address::from([0x12u8; 20]);
-        let v2_fwd_b = engine.v2_engine().register_pool(
+        let v2_fwd_b = engine.register_v2_pool(
             v2_addr_b,
             weth(1000),
             usdc(2_000_000),
@@ -563,7 +563,7 @@ mod tests {
         // Two V2 pools with price divergence → a profitable pure-V2 path
         // (same setup as `register_and_solve_path_eagerly_solves`).
         let v2_addr_a = Address::from([0x11u8; 20]);
-        let v2_fwd_a = engine.v2_engine().register_pool(
+        let v2_fwd_a = engine.register_v2_pool(
             v2_addr_a,
             usdc(1_500_000),
             weth(800),
@@ -571,7 +571,7 @@ mod tests {
             FEE_DENOM_03,
         );
         let v2_addr_b = Address::from([0x12u8; 20]);
-        let v2_fwd_b = engine.v2_engine().register_pool(
+        let v2_fwd_b = engine.register_v2_pool(
             v2_addr_b,
             weth(1000),
             usdc(2_000_000),
@@ -626,7 +626,7 @@ mod tests {
 
         // V2 pool A: USDC/WETH with price ~1875 USDC/WETH
         let v2_addr_a = Address::from([0x11u8; 20]);
-        let v2_fwd_a = engine.v2_engine().register_pool(
+        let v2_fwd_a = engine.register_v2_pool(
             v2_addr_a,
             usdc(1_500_000),
             weth(800),
@@ -636,7 +636,7 @@ mod tests {
 
         // V2 pool B: WETH/USDC with price ~2000 USDC/WETH (mispriced — arb opportunity)
         let v2_addr_b = Address::from([0x12u8; 20]);
-        let v2_fwd_b = engine.v2_engine().register_pool(
+        let v2_fwd_b = engine.register_v2_pool(
             v2_addr_b,
             weth(800),
             usdc(1_600_000),
@@ -775,7 +775,7 @@ mod tests {
 
         // V2 pool: USDC/WETH
         let v2_addr = Address::from([0x11u8; 20]);
-        let v2_fwd = engine.v2_engine().register_pool(
+        let v2_fwd = engine.register_v2_pool(
             v2_addr,
             usdc(1_500_000),
             weth(800),
@@ -882,7 +882,7 @@ mod tests {
 
         // V2 pool
         let v2_addr = Address::from([0x11u8; 20]);
-        let v2_fwd = engine.v2_engine().register_pool(
+        let v2_fwd = engine.register_v2_pool(
             v2_addr,
             usdc(1_500_000),
             weth(800),
@@ -918,7 +918,7 @@ mod tests {
 
         // V2 pool A: USDC/WETH
         let v2_addr_a = Address::from([0x11u8; 20]);
-        let v2_fwd_a = engine.v2_engine().register_pool(
+        let v2_fwd_a = engine.register_v2_pool(
             v2_addr_a,
             usdc(1_500_000),
             weth(800),
@@ -928,7 +928,7 @@ mod tests {
 
         // V2 pool B: WETH/USDC
         let v2_addr_b = Address::from([0x12u8; 20]);
-        let v2_fwd_b = engine.v2_engine().register_pool(
+        let v2_fwd_b = engine.register_v2_pool(
             v2_addr_b,
             weth(800),
             usdc(1_600_000),
@@ -1031,10 +1031,13 @@ mod tests {
         ]);
 
         // Resolve and solve all paths (replaces start() + initial_solve())
-        for (&path_id, path) in &engine.path_pools {
-            let mut resolved = ResolvedMixedPath::default();
-            engine.resolve_path(&path.pools, &mut resolved);
-            engine.path_resolved.insert(path_id, resolved);
+        {
+            let core = engine.core.lock();
+            for (&path_id, path) in &engine.path_pools {
+                let mut resolved = ResolvedMixedPath::default();
+                engine.resolve_path(&core, &path.pools, &mut resolved);
+                engine.path_resolved.insert(path_id, resolved);
+            }
         }
         engine.results = engine.solve_all();
 
@@ -1059,7 +1062,7 @@ mod tests {
         let mut engine = UniswapEngine::new();
 
         // Register a V2 pool
-        let v2_fwd = engine.v2_engine().register_pool(
+        let v2_fwd = engine.register_v2_pool(
             Address::from([0x11u8; 20]),
             usdc(1_500_000),
             weth(800),
@@ -1140,11 +1143,8 @@ mod tests {
         assert!(matches!(path.pools[1].hop_type, HopType::V3));
         assert!(matches!(path.pools[2].hop_type, HopType::V4));
 
-        // Verify we can resolve pool addresses via sub-engines
-        let v2_addr = engine.v2_engine().pool_addresses()
-            .iter()
-            .find(|(_, &(fwd, _))| fwd == v2_fwd)
-            .map(|(a, _)| *a);
+        // Verify we can resolve pool addresses via BotCore (V2) / sub-engines (V3/V4)
+        let v2_addr = engine.core.lock().pool_address(v2_fwd);
         assert_eq!(v2_addr, Some(Address::from([0x11u8; 20])));
 
         let v3_pool = engine.v3_engine().get_pool(v3_key);
@@ -1266,7 +1266,7 @@ mod tests {
         let sp_0 = U256::from(79_228_162_514_264_337_593_543_950_336_u128); // 1:1 price
 
         // V2 pool 1: cheap WETH (1.5M USDC / 800 WETH)
-        let v2_fwd_a = engine.v2_engine().register_pool(
+        let v2_fwd_a = engine.register_v2_pool(
             Address::from([0x11u8; 20]),
             usdc(1_500_000),
             weth(800),
@@ -1302,7 +1302,7 @@ mod tests {
         });
 
         // V2 pool 2: expensive WETH (1000 WETH / 2M USDC)
-        let v2_fwd_b = engine.v2_engine().register_pool(
+        let v2_fwd_b = engine.register_v2_pool(
             Address::from([0x12u8; 20]),
             weth(1000),
             usdc(2_000_000),
@@ -1327,5 +1327,107 @@ mod tests {
         // Key: previously this returned None due to hop_types.len() != 2
         let result = engine.solve_path(resolved);
         let _ = result;
+    }
+
+    #[test]
+    fn handle_reorg_rolls_back_v2_sync_and_expires_delivered_result() {
+        // What: a V2→V2 cycle is balanced (no profit), then a Sync at block 5
+        // creates a mispricing (arb appears, delivered to Python). A reorg
+        // targeting block 5 rolls back that Sync; the next solve finds no arb
+        // and the previously-delivered result expires.
+        // Why: ADR-003 reorg path — `removed`-flag detection feeds
+        // `engine.handle_reorg`, which restores BotCore state and emits an
+        // `expired` diff against `delivered`. This is the realistic case where
+        // the pool's first Sync is at the reorg target block.
+        use tokio::sync::mpsc;
+
+        let mut engine = UniswapEngine::new();
+
+        // Two balanced V2 pools forming a cycle (price ≈ 1:1875).
+        let pool_a = Address::from([0x11u8; 20]);
+        let pool_b = Address::from([0x12u8; 20]);
+        let id_a = engine.register_v2_pool(
+            pool_a,
+            usdc(1_500_000),
+            weth(800),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let id_b = engine.register_v2_pool(
+            pool_b,
+            weth(800),
+            usdc(1_500_000),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+
+        // Path: A (USDC→WETH) → B (WETH→USDC). Initially balanced → no profit.
+        let path_id = engine.register_path(vec![
+            MixedPoolRef { hop_type: HopType::V2, pool_key: id_a, zero_for_one: true },
+            MixedPoolRef { hop_type: HopType::V2, pool_key: id_b, zero_for_one: true },
+        ]);
+
+        // Install a result channel to capture the diff batches.
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        engine.set_result_channel(tx);
+
+        // Sanity: the balanced cycle is not profitable.
+        engine.solve_dirty(4, &BlockMetadata::default());
+        engine.send_result_batch(&BlockMetadata::default());
+        let (results_before, _) = engine.latest_results();
+        assert!(
+            !results_before.contains_key(&path_id),
+            "balanced cycle should not be profitable before the Sync"
+        );
+
+        // Sync pool A at block 5 to misprice it hard (A's WETH drops to 1250
+        // USDC/WETH vs B's 1875 — clears the ~0.6% round-trip fee).
+        engine.process_updates(
+            &[(pool_a, usdc(1_000_000), weth(800))],
+            &[],
+            5,
+            &BlockMetadata::default(),
+        );
+        engine.send_result_batch(&BlockMetadata::default());
+
+        let (results_after, _) = engine.latest_results();
+        assert!(
+            results_after.contains_key(&path_id),
+            "arbitrage should appear after the mispricing Sync"
+        );
+        assert!(
+            engine.delivered.contains_key(&path_id),
+            "profitable result should be delivered"
+        );
+
+        // Drain all batches queued so far (sanity + post-Sync) so the next
+        // receive is the reorg batch.
+        while rx.try_recv().is_ok() {}
+
+        // Reorg: roll back block 5 (the Sync that created the arb).
+        engine.handle_reorg(5);
+        engine.solve_dirty(5, &BlockMetadata::default());
+        engine.send_result_batch(&BlockMetadata::default());
+
+        // The arb is gone.
+        let (results_reorg, _) = engine.latest_results();
+        assert!(
+            !results_reorg.contains_key(&path_id),
+            "path should be unprofitable after reorg rollback"
+        );
+        assert!(
+            !engine.delivered.contains_key(&path_id),
+            "previously-delivered result should expire out of `delivered`"
+        );
+
+        // The reorg batch must carry an `expired` entry for this path.
+        let batch = rx
+            .try_recv()
+            .expect("a result batch should be sent after the reorg solve");
+        assert!(
+            batch.expired.contains(&path_id),
+            "reorg batch should expire the rolled-back path, got expired={:?}",
+            batch.expired
+        );
     }
 }
