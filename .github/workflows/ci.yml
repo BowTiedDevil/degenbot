@@ -141,13 +141,29 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
       - name: Install just
         uses: extractions/setup-just@v4
 
+      - name: Build and install Rust extension
+        run: just dev
+
       - name: Check formatting
-        run: |
-          uv sync --locked
-          just fmt-check-python
+        run: just fmt-check-python
+
+      - name: Run Python linters
+        run: just lint-python
 
   python-test:
     name: Python Tests
