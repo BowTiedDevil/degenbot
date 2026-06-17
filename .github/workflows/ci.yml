@@ -130,6 +130,25 @@ jobs:
       - name: Build
         run: just build-rust-extension
 
+  python-lint:
+    name: Python Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install just
+        uses: extractions/setup-just@v4
+
+      - name: Check formatting
+        run: |
+          uv sync --locked
+          just fmt-check-python
+
   python-test:
     name: Python Tests
     runs-on: ubuntu-latest

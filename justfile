@@ -66,8 +66,12 @@ lint-python:
     uv run ruff check src/
     uv run ty check --no-progress src/
 
+# Check Python formatting (read-only; fails on drift). Run `just format` to fix.
+fmt-check-python:
+    uv run ruff format --check src/
+
 # Run all linters (Rust + Python + Markdown)
-lint: fmt-check lint-rust lint-python lint-markdown
+lint: fmt-check fmt-check-python lint-rust lint-python lint-markdown
 
 # Format all code
 format: 
