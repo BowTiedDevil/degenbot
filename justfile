@@ -22,6 +22,10 @@ test-rust-python:
 lint-rust:
     cargo clippy --all-targets --all-features --fix --allow-dirty --manifest-path rust/Cargo.toml -- --deny warnings
 
+# Check Rust formatting (read-only; fails on drift). Run `just format` to fix.
+fmt-check:
+    cargo fmt --manifest-path rust/Cargo.toml -- --check
+
 # Build Rust release library (links Python - for testing only)
 build-rust-debug:
     cargo build --release --manifest-path rust/Cargo.toml
@@ -63,7 +67,7 @@ lint-python:
     uv run ty check --no-progress src/
 
 # Run all linters (Rust + Python + Markdown)
-lint: lint-rust lint-python lint-markdown    
+lint: fmt-check lint-rust lint-python lint-markdown
 
 # Format all code
 format: 
@@ -80,7 +84,7 @@ update-deps:
 # ========== CI/CD ==========
 
 # Simulate CI Rust checks
-ci-rust: lint-rust test-rust
+ci-rust: fmt-check lint-rust test-rust
     cargo build --release --features extension-module --manifest-path rust/Cargo.toml
 
 # Simulate full CI pipeline
