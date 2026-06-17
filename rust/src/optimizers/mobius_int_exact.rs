@@ -27,7 +27,7 @@
 
 use alloy::primitives::{U256, U512};
 
-use crate::optimizers::mobius::MobiusError;
+use crate::optimizers::mobius_int::MobiusError;
 use crate::optimizers::mobius_int::{
     compute_int_mobius_coefficients, int_simulate_path, IntHopState, IntMobiusCoefficients,
 };
@@ -255,8 +255,6 @@ pub(crate) fn u512_to_u256_internal(v: U512) -> U256 {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::optimizers::mobius::mobius_solve;
-    use crate::optimizers::mobius::HopState;
 
     fn u256(n: u64) -> U256 {
         U256::from(n)
@@ -425,50 +423,7 @@ mod tests {
         assert!(!result.profit.is_zero());
     }
 
-    // ── Comparison tests: exact vs f64 ────────────────────────────
-
-    /// Compare the integer-exact solver against the f64 Möbius solver.
-    /// The exact solver should produce the same or better profit.
-    fn make_base_hops(int_hops: &[IntHopState]) -> Vec<HopState> {
-        int_hops
-            .iter()
-            .map(|h| HopState::new(
-                crate::optimizers::mobius_int::u256_to_f64(h.reserve_in),
-                crate::optimizers::mobius_int::u256_to_f64(h.reserve_out),
-                1.0 - h.gamma_numer as f64 / h.fee_denom as f64,
-            ))
-            .collect()
-    }
-
-    #[test]
-    fn test_exact_vs_f64_same_result_small_reserves() {
-        let hops = vec![
-            IntHopState::new(u256(1_000_000), u256(5_000_000), 997, 1000),
-            IntHopState::new(u256(1_500_000), u256(3_000_000), 997, 1000),
-        ];
-
-        let base_hops = make_base_hops(&hops);
-        let (x_f64, profit_f64, _iters) = mobius_solve(&base_hops, None);
-        let exact_result = exact_mobius_solve(&hops).unwrap();
-
-        if exact_result.is_profitable && x_f64 > 0.0 && profit_f64 > 0.0 {
-            // The exact solver's profit must be EVM-exact (verified by simulation)
-            // The f64 solver's profit is an approximation — may be off by rounding
-            let x_exact_f64 = crate::optimizers::mobius_int::u256_to_f64(exact_result.optimal_input);
-            let profit_exact_f64 = crate::optimizers::mobius_int::u256_to_f64(exact_result.profit);
-
-            // Both should find profitable results
-            assert!(x_exact_f64 > 0.0, "Exact solver should find positive input");
-            assert!(profit_exact_f64 > 0.0, "Exact solver should find positive profit");
-
-            // The exact solver's profit should be at least 99% of the f64 approximation's
-            // (allowing for integer truncation)
-            assert!(
-                profit_exact_f64 >= profit_f64 * 0.99 - 1.0,
-                "Exact profit {profit_exact_f64} much less than f64 profit {profit_f64}"
-            );
-        }
-    }
+    // ── Realistic-reserve exact-solve tests ────────────────────
 
     #[test]
     fn test_exact_vs_f64_realistic_weth_usdc() {
@@ -485,50 +440,6 @@ mod tests {
 
         // Same-product with fees → never profitable
         assert!(!exact_result.is_profitable);
-    }
-
-    #[test]
-    fn test_exact_vs_f64_price_disagreement() {
-        // Two V2 pools with same pair but different prices
-        // Pool 1: 1M WETH in, 2M USDC out (cheap WETH)
-        // Pool 2: 2M WETH in, 3M USDC out (expensive WETH)
-        // Note: Reserves expressed in the token being deposited/withdrawn
-        let pool1_weth = U256::from(1_000_000_000_000_000_000_000u128); // 1000 WETH
-        let pool1_usdc = U256::from(2_000_000_000_000u64); // 2M USDC
-        let pool2_weth = U256::from(2_000_000_000_000_000_000_000u128); // 2000 WETH
-        let pool2_usdc = U256::from(3_000_000_000_000u64); // 3M USDC
-
-        let hops = vec![
-            // Hop 1: deposit WETH, receive USDC
-            IntHopState::new(pool1_weth, pool1_usdc, 997, 1000),
-            // Hop 2: deposit USDC, receive WETH
-            IntHopState::new(pool2_usdc, pool2_weth, 997, 1000),
-        ];
-
-        let exact_result = exact_mobius_solve(&hops).unwrap();
-        let base_hops = make_base_hops(&hops);
-        let (x_f64, profit_f64, _) = mobius_solve(&base_hops, None);
-
-        // Both should agree on profitability
-        assert_eq!(exact_result.is_profitable, x_f64 > 0.0 && profit_f64 > 0.0);
-
-        if exact_result.is_profitable {
-            // Verify EVM-exact result
-            let output = int_simulate_path(exact_result.optimal_input, &hops).final_output;
-            assert!(
-                output > exact_result.optimal_input,
-                "EVM simulation should confirm profit"
-            );
-            assert_eq!(output - exact_result.optimal_input, exact_result.profit);
-
-            // Verify exact profit is at least 99% of f64 approximation
-            let profit_exact_f64 =
-                crate::optimizers::mobius_int::u256_to_f64(exact_result.profit);
-            assert!(
-                profit_exact_f64 >= profit_f64 * 0.99 - 1.0,
-                "Exact profit {profit_exact_f64} much less than f64 profit {profit_f64}"
-            );
-        }
     }
 
     // ── u512_to_u256 tests ────────────────────────────────────────
@@ -598,8 +509,6 @@ mod proptests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::tuple_array_conversions)]
 
     use super::*;
-    use crate::optimizers::mobius::mobius_solve;
-    use crate::optimizers::mobius::HopState;
     use proptest::prelude::*;
 
     /// Generate a U256 value by filling from 4 u64 limbs.
@@ -647,54 +556,6 @@ mod proptests {
                 assert!(output > result.optimal_input);
                 assert_eq!(output - result.optimal_input, result.profit);
             }
-        }
-
-        /// For 2-hop paths where the exact solver finds profit,
-        /// the profit must be >= the f64 solver's profit (both are
-        /// expected to be close, but the exact solver verifies with
-        /// EVM-exact simulation).
-        #[test]
-        fn exact_profit_close_to_f64_profit(
-            r1_lo in 1000u64..1_000_000u64,
-            s1_lo in 1000u64..1_000_000u64,
-            r2_lo in 1000u64..1_000_000u64,
-            s2_lo in 1000u64..1_000_000u64,
-        ) {
-            let hops = vec![
-                IntHopState::new(U256::from(r1_lo), U256::from(s1_lo), 997, 1000),
-                IntHopState::new(U256::from(r2_lo), U256::from(s2_lo), 997, 1000),
-            ];
-
-            let base_hops: Vec<HopState> = hops.iter().map(|h| {
-                HopState::new(
-                    crate::optimizers::mobius_int::u256_to_f64(h.reserve_in),
-                    crate::optimizers::mobius_int::u256_to_f64(h.reserve_out),
-                    1.0 - h.gamma_numer as f64 / h.fee_denom as f64,
-                )
-            }).collect();
-
-            let (x_f64, profit_f64, _) = mobius_solve(&base_hops, None);
-            let exact_result = exact_mobius_solve(&hops).unwrap();
-
-            // The exact solver is the ground truth. The f64 solver may have
-            // false positives (reports profit where there is none in EVM-exact
-            // terms) due to rounding. But the exact solver must never report
-            // profit where the f64 solver doesn't (the f64 approximation is
-            // always more optimistic than the exact answer).
-            //
-            // If exact is profitable, f64 must also be profitable (or the
-            // signal is very small). If f64 is profitable but exact is not,
-            // it's a f64 false positive.
-            if exact_result.is_profitable {
-                let f64_profitable = x_f64 > 0.0 && profit_f64 > 0.0;
-                // Exact says profitable — f64 should agree (or it's a marginal case
-                // where f64 rounding in the other direction miscounted)
-                // We don't assert strict equality because f64 may disagree
-                // on very marginal cases. The exact solver is authoritative.
-                let _ = f64_profitable;
-            }
-            // If exact says not profitable, f64 may or may not agree.
-            // This is expected — f64 false positives are common at the margin.
         }
     }
 
