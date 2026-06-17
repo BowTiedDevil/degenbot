@@ -13,7 +13,6 @@ use crate::bot_core::BotCore;
 /// Property reads cross `PyO3` on every access.
 #[pyclass(name = "Token", skip_from_py_object)]
 pub struct PyToken {
-    #[allow(dead_code)]
     core: Arc<parking_lot::Mutex<BotCore>>,
     address: Address,
 }
@@ -32,5 +31,44 @@ impl PyToken {
     fn address(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let addr_str = format!("{}", self.address);
         Ok(addr_str.into_pyobject(py)?.into_any().unbind())
+    }
+
+    /// Token decimals (e.g. 6 for USDC, 18 for WETH).
+    #[getter]
+    fn decimals(&self) -> PyResult<u8> {
+        let core = self.core.lock();
+        let Some(entry) = core.token_entry(&self.address) else {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "token not registered: {}",
+                self.address
+            )));
+        };
+        Ok(entry.decimals)
+    }
+
+    /// Token symbol (e.g. "WETH", "USDC").
+    #[getter]
+    fn symbol(&self) -> PyResult<String> {
+        let core = self.core.lock();
+        let Some(entry) = core.token_entry(&self.address) else {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "token not registered: {}",
+                self.address
+            )));
+        };
+        Ok(entry.symbol.clone())
+    }
+
+    /// Token name (e.g. "Wrapped Ether").
+    #[getter]
+    fn name(&self) -> PyResult<String> {
+        let core = self.core.lock();
+        let Some(entry) = core.token_entry(&self.address) else {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "token not registered: {}",
+                self.address
+            )));
+        };
+        Ok(entry.name.clone())
     }
 }
