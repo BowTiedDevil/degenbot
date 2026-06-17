@@ -1,7 +1,8 @@
 //! `PyPool` — thin Python handle over a `pool_id` key into `Bot`.
 //!
-//! Shares the same `Arc<RwLock<Bot>>` as the owning `PyBot` (Polars-style:
-//! one Rust-owned `Bot`, many thin Python handles).
+//! Shares the same `Arc<parking_lot::RwLock<Bot>>` as the owning `PyBot` (one
+//! Rust-owned `Bot`, many thin Python handles). Part of the Polars-inspired
+//! three-layer topology — see `docs/adr/ADR-005-polars-inspired-three-layer-architecture.md`.
 //!
 //! Owns no state — property reads and calculation calls cross `PyO3` on every
 //! access, locking the shared `Bot` for reading.
@@ -26,7 +27,7 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 /// A thin Python handle to a pool registered in `Bot`.
 ///
 /// Does not own any state — all data lives in Rust inside `Bot`.
-#[pyclass(name = "Pool", skip_from_py_object)]
+#[pyclass(skip_from_py_object)]
 pub struct PyPool {
     core: Arc<parking_lot::RwLock<Bot>>,
     pool_id: u64,

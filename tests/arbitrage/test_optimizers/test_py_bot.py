@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from degenbot.degenbot_rs import PyBot, Pool
+from degenbot.degenbot_rs import PyBot, PyPool
 
 
 class TestPyBotV2Pool:

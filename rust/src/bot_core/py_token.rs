@@ -1,7 +1,8 @@
 //! `PyToken` — thin Python handle over a token address key into `Bot`.
 //!
-//! Shares the same `Arc<RwLock<Bot>>` as the owning `PyBot` (Polars-style:
-//! one Rust-owned `Bot`, many thin Python handles).
+//! Shares the same `Arc<parking_lot::RwLock<Bot>>` as the owning `PyBot` (one
+//! Rust-owned `Bot`, many thin Python handles). Part of the Polars-inspired
+//! three-layer topology — see `docs/adr/ADR-005-polars-inspired-three-layer-architecture.md`.
 
 use std::sync::Arc;
 
@@ -13,7 +14,7 @@ use crate::bot_core::Bot;
 /// A thin Python handle to a token registered in `Bot`.
 ///
 /// Does not own any state — all data lives in Rust inside `Bot`.
-#[pyclass(name = "Token", skip_from_py_object)]
+#[pyclass(skip_from_py_object)]
 pub struct PyToken {
     core: Arc<parking_lot::RwLock<Bot>>,
     address: Address,

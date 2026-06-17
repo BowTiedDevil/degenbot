@@ -234,6 +234,10 @@ Sync pool builders for each pool family inherit a base class with shared `@stati
 - **`V4BuilderBase`** — helpers: `decode_slot0`, `extract_db_values`, `load_tick_snapshot`, `resolve_tick_data_args`; frozen dataclasses `V4Slot0Data`, `V4DbValues` (`V4PoolBuilder` inherits; `AsyncV4PoolBuilder` calls static methods)
 - **`BalancerBuilderBase`** — helpers: `decode_pool_id`, `decode_vault_tokens`, `detect_bpt_index`, `resolve_invariant_version`, `_fetch_pool_id`, `_fetch_vault_tokens`, `_fetch_swap_fee`, `_fetch_weights`, `_fetch_amp`, `_fetch_rate_providers`, `_fetch_rates`, `_detect_pool_type`; frozen dataclasses `DecodedPoolId`, `VaultTokensResult`, `_BalancerPoolType` enum (`BalancerBuilder` inherits; future `AsyncBalancerBuilder` calls static methods)
 
+### Polars-Inspired Three-Layer Architecture
+
+The complement to the Bot Session Pattern above: how the Python `Bot` session reaches Rust-owned state across the FFI. For stateful Rust resources the three layers gain a sharing topology — a `#[pyclass]` wrapper (`PyBot`) holding `Arc<parking_lot::RwLock<Core>>` *is* the sharing mechanism; thin handles (`PyPool` carrying a `pool_id` key, `PyToken` carrying an `Address` key) clone that `Arc` so N Python objects reference one Rust-owned `Bot`; the Python `Bot` constructs `self._py_bot = PyBot()` and delegates Rust-owned state through it. Read methods take a read guard, mutations a write guard. Canonicalized in **ADR-005** (decision, rejected alternatives, deferred `UniswapEngine` unification); the stateful specialization of `rust/AGENTS.md`'s generic three-layer convention; complements **ADR-003** (which answers *who owns state*, not how Python reaches it).
+
 ### Fetcher Protocols
 
 **Curve pools** use a **CurveDataProvider** seam for fully I/O-free operation — all on-chain data access flows through a single injected object with 13 methods (`D()`, `gamma()`, `virtual_price()`, `base_virtual_price()`, `price_scale()`, `admin_balances()`, `lending_rates()`, `redemption_price()`, `block_timestamp()`, `block_number()`, `token_balance()`, `token_total_supply()`, `is_crypto()`). The pool calls `self._data_provider.xxx()` on-demand:

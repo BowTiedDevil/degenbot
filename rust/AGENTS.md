@@ -34,6 +34,8 @@ Every Rust-accelerated feature follows three layers with strict separation of co
    - Parallel processing without GIL
    - Reuse in non-Python Rust code
 
+**Stateful specialization (ADR-005).** When the Rust core holds long-lived *mutable* state that many Python objects must reference, the three layers gain a sharing topology: a `#[pyclass]` wrapper holding `Arc<parking_lot::RwLock<Core>>`, thin handles (`PyPool`/`PyToken`) cloning that `Arc`, and the Python session owning the wrapper. This is the `Bot`/`PyBot`/`PyPool`/`PyToken` family — see ADR-005 (Polars-Inspired Three-Layer Architecture). The `*_py.rs`-only rule above still holds; the wrapper adds the shared-core pattern, not `pyo3` business logic.
+
 Example from `abi_decoder.rs`:
 ```rust
 // Pure Rust core - no PyO3 dependencies
