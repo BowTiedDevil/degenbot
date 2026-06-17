@@ -1,6 +1,6 @@
 //! Path registration, buffer management, and engine accessors.
 
-use super::{UniswapEngine, MixedPoolRef, MixedPath, ResolvedMixedPath, V3BlockEngine, V4BlockEngine, HashMap, SolvePathResult, Address};
+use super::{UniswapEngine, MixedPoolRef, MixedPath, ResolvedMixedPath, V4BlockEngine, HashMap, SolvePathResult, Address};
 
 impl UniswapEngine {
     /// Register a mixed path and return its ID.
@@ -59,27 +59,17 @@ impl UniswapEngine {
         path_id
     }
 
-    /// Set the maximum age for buffered events in V3/V4 sub-engines.
-    pub const fn set_event_buffer_max_age(&mut self, max_age: Option<u64>) {
-        self.v3_engine.set_event_buffer_max_age(max_age);
+    /// Set the maximum age for buffered events in the V4 sub-engine
+    /// (V3 now lives on `BotCore` — ADR-003).
+    pub fn set_event_buffer_max_age(&mut self, max_age: Option<u64>) {
+        self.core.lock().set_v3_buffer_max_age(max_age);
         self.v4_engine.set_event_buffer_max_age(max_age);
     }
 
-    /// Flush all buffered events in V3/V4 sub-engines.
+    /// Flush all buffered events in the V4 sub-engine and the V3 buffer on `BotCore`.
     pub fn flush_event_buffer(&mut self) {
-        self.v3_engine.flush_event_buffer();
+        self.core.lock().flush_v3_buffer();
         self.v4_engine.flush_event_buffer();
-    }
-
-    /// Get a mutable reference to the V3 engine.
-    pub const fn v3_engine(&mut self) -> &mut V3BlockEngine {
-        &mut self.v3_engine
-    }
-
-    /// Get a shared reference to the V3 engine.
-    #[must_use] 
-    pub const fn v3_engine_ref(&self) -> &V3BlockEngine {
-        &self.v3_engine
     }
 
     /// Get a mutable reference to the V4 engine.
@@ -157,13 +147,13 @@ impl UniswapEngine {
     /// Number of registered V2 pools (state lives in `BotCore` under ADR-003).
     #[must_use]
     pub fn v2_pool_count(&self) -> usize {
-        self.core.lock().pool_count()
+        self.core.lock().v2_pool_count()
     }
 
-    /// Number of registered V3 pools.
+    /// Number of registered V3 pools (state lives in `BotCore` under ADR-003).
     #[must_use]
     pub fn v3_pool_count(&self) -> usize {
-        self.v3_engine.pool_count()
+        self.core.lock().v3_pool_count()
     }
 
     /// Number of registered V4 pools.

@@ -191,9 +191,8 @@ impl PyBotCore {
         let t1 = parse_address(token1)?;
         let fac = parse_address(factory)?;
         let spx = crate::alloy_py::extract_python_u256(sqrt_price_x96)?;
-        // liquidity is uint128 — extract as U256 then convert
-        let liq_u256 = crate::alloy_py::extract_python_u256(liquidity)?;
-        let liq = alloy::primitives::U128::from(liq_u256.to::<u128>());
+        // liquidity is uint128 — extracted as U256 then narrowed.
+        let liq = crate::alloy_py::extract_python_u256(liquidity)?.to::<u128>();
 
         Ok(self.core.lock().register_v3_pool(&RegisterV3PoolParams {
             address: addr,
@@ -205,8 +204,9 @@ impl PyBotCore {
             sqrt_price_x96: spx,
             liquidity: liq,
             tick,
-            tick_bitmap: std::collections::HashMap::new(),
             tick_data: std::collections::HashMap::new(),
+            update_block: 0,
+            coverage: crate::bot_core::PoolTickCoverage::Sparse,
         }))
     }
 
@@ -224,8 +224,7 @@ impl PyBotCore {
     ) -> PyResult<()> {
         let addr = parse_address(address)?;
         let spx = crate::alloy_py::extract_python_u256(sqrt_price_x96)?;
-        let liq_u256 = crate::alloy_py::extract_python_u256(liquidity)?;
-        let liq = alloy::primitives::U128::from(liq_u256.to::<u128>());
+        let liq = crate::alloy_py::extract_python_u256(liquidity)?.to::<u128>();
 
         self.core.lock().update_v3_pool(addr, spx, liq, tick, block_number, vec![]);
         Ok(())
@@ -258,7 +257,7 @@ impl PyBotCore {
         let result = self.core.lock().v3_restore_before_block(pool_id, block);
         match result {
             Some(restore) => {
-                let liq_u128 = restore.liquidity_before.to::<u128>();
+                let liq_u128 = restore.liquidity_before;
                 let tuple = pyo3::types::PyTuple::new(
                     py,
                     [

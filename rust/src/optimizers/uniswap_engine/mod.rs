@@ -8,7 +8,8 @@
 //! The engine composes:
 //! - A [`BotCore`] for V2 pool state and constant-product solving (ADR-003:
 //!   `BotCore` is the single state owner; the engine is a consumer)
-//! - A [`V3BlockEngine`] for V3 pool state, tick ranges, and piecewise V3 solving
+//! - A [`BotCore`](crate::bot_core::BotCore) for V2+V3 pool state (ADR-003:
+//!   `BotCore` is the single state owner, peer to this engine)
 //! - A [`V4BlockEngine`] for V4 pool state (same CL math as V3, different settlement)
 //!
 //! V4 pools share identical concentrated-liquidity math with V3. The solver
@@ -40,7 +41,6 @@ use std::sync::Arc;
 use alloy::primitives::{Address, U256};
 
 use crate::bot_core::BotCore;
-use crate::optimizers::v3_block_engine::V3BlockEngine;
 use crate::optimizers::v4_block_engine::V4BlockEngine;
 
 // Sub-modules — each contains `impl UniswapEngine` or `impl PyUniswapArbEngine` blocks.
@@ -130,16 +130,10 @@ impl EnginePhase {
 
 /// Describes the completeness of tick data for a registered pool.
 ///
-/// `Tracked` means the snapshot provided complete tick data (may be empty =
-/// genuinely illiquid). `Sparse` means no snapshot data exists for this pool
-/// — solver results may contain errors or phantom profits.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PoolTickCoverage {
-    /// Snapshot provided complete tick data. Solver results are trustworthy.
-    Tracked,
-    /// No snapshot data exists. Solver results may be inaccurate.
-    Sparse,
-}
+/// Re-exported from [`crate::bot_core`] where it now lives alongside V3 state
+/// (ADR-003). `Tracked` = complete (may have empty `tick_data` = genuinely
+/// illiquid); `Sparse` = no snapshot data — solver results may be inaccurate.
+pub use crate::bot_core::PoolTickCoverage;
 
 /// V3 snapshot data: pool address → tick data (consumed at registration).
 pub(crate) type V3SnapshotData = HashMap<Address, HashMap<i32, crate::bot_core::TickInfo>>;
@@ -333,11 +327,11 @@ pub struct ResultBatch {
 /// mutates V2 state through it. Lock ordering when nested is
 /// **engine-then-core** — no code path ever nests core-then-engine.
 pub struct UniswapEngine {
-    /// V2 pool state owner (ADR-003). V3/V4 state still lives on the
-    /// per-family block engines until Slices 2/3 migrate them.
+    /// V2 + V3 pool state owner (ADR-003). The engine holds an
+    /// `Arc<Mutex<BotCore>>` and reads/writes V2+V3 state through it. Lock
+    /// ordering when nested is engine-then-core. V4 state still lives on the
+    /// per-family `V4BlockEngine` until Slice 3 migrates it.
     core: Arc<parking_lot::Mutex<BotCore>>,
-    /// The V3 engine
-    v3_engine: V3BlockEngine,
     /// The V4 engine
     v4_engine: V4BlockEngine,
     /// Registered path pool refs (immutable after registration).
@@ -403,7 +397,6 @@ impl UniswapEngine {
     pub fn new() -> Self {
         Self {
             core: Arc::new(parking_lot::Mutex::new(BotCore::new())),
-            v3_engine: V3BlockEngine::new(),
             v4_engine: V4BlockEngine::new(),
             path_pools: HashMap::new(),
             path_resolved: HashMap::new(),
@@ -424,11 +417,11 @@ impl UniswapEngine {
         }
     }
 
-    /// Create a new engine with a custom event buffer max age for V3/V4 sub-engines.
+    /// Create a new engine with a custom event buffer max age for the V4
+    /// sub-engine (V3 buffer lives on `BotCore` — ADR-003).
     #[must_use] 
     pub fn new_with_buffer_max_age(event_buffer_max_age: Option<u64>) -> Self {
         Self {
-            v3_engine: V3BlockEngine::new_with_buffer_max_age(event_buffer_max_age),
             v4_engine: V4BlockEngine::new_with_buffer_max_age(event_buffer_max_age),
             ..Self::new()
         }
@@ -466,5 +459,16 @@ impl UniswapEngine {
             factory: Address::ZERO,
         };
         self.core.lock().register_v2_pool(&params)
+    }
+
+    /// Register a V3 pool by contract address and initial state.
+    ///
+    /// Delegates to [`BotCore::register_v3_pool`] (ADR-003: V3 state lives in
+    /// the core). The buffer is applied separately via the staged-drain
+    /// sequence (`apply_backfill_buffer_v3` → `apply_pump_buffer_v3`) so the
+    /// caller can snapshot state at deterministic points for verification.
+    #[must_use]
+    pub fn register_v3_pool(&self, params: &crate::bot_core::RegisterV3PoolParams) -> u64 {
+        self.core.lock().register_v3_pool(params)
     }
 }

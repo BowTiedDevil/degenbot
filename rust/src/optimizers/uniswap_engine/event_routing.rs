@@ -3,7 +3,7 @@
 use alloy::primitives::{Address, U256};
 use alloy::rpc::types::Log;
 
-use crate::optimizers::v3_block_engine::V3SwapUpdate;
+use crate::bot_core::V3SwapUpdate;
 use crate::optimizers::v4_block_engine::V4SwapUpdate;
 
 use super::{UniswapEngine, BlockMetadata, HashSet, HopType};
@@ -35,39 +35,41 @@ impl UniswapEngine {
             }
         } else if *topic == crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC {
             if let Some(event) = crate::bot_core::v3_swap_decoder::decode_v3_swap_log(log) {
-                for key in self.v3_engine.apply_swap(
+                // ADR-003: V3 state lives in BotCore; apply under the core lock
+                // (nested inside the engine lock the pump already holds).
+                if let Some(pool_id) = self.core.lock().apply_v3_swap(
                     event.pool_address,
                     event.sqrt_price_x96,
                     event.liquidity.to::<u128>(),
                     event.tick,
                     block_number,
                     &[],
-                ).iter() {
-                    self.dirty_v3.insert(key);
+                ) {
+                    self.dirty_v3.insert(pool_id);
                 }
             }
         } else if *topic == crate::bot_core::v3_mint_burn_decoder::V3_MINT_TOPIC {
             if let Some(event) = crate::bot_core::v3_mint_burn_decoder::decode_v3_mint_log(log) {
-                for key in self.v3_engine.apply_liquidity_update(
+                if let Some(pool_id) = self.core.lock().apply_v3_liquidity_update(
                     event.pool_address,
                     event.tick_lower,
                     event.tick_upper,
                     event.amount.cast_signed(),
                     block_number,
-                ).iter() {
-                    self.dirty_v3.insert(key);
+                ) {
+                    self.dirty_v3.insert(pool_id);
                 }
             }
         } else if *topic == crate::bot_core::v3_mint_burn_decoder::V3_BURN_TOPIC {
             if let Some(event) = crate::bot_core::v3_mint_burn_decoder::decode_v3_burn_log(log) {
-                for key in self.v3_engine.apply_liquidity_update(
+                if let Some(pool_id) = self.core.lock().apply_v3_liquidity_update(
                     event.pool_address,
                     event.tick_lower,
                     event.tick_upper,
                     -(event.amount.cast_signed()),
                     block_number,
-                ).iter() {
-                    self.dirty_v3.insert(key);
+                ) {
+                    self.dirty_v3.insert(pool_id);
                 }
             }
         } else if *topic == crate::bot_core::v4_swap_decoder::V4_SWAP_TOPIC {
@@ -109,8 +111,8 @@ impl UniswapEngine {
     /// current. The actual batch send is triggered by the pump's debounce
     /// timer or block boundary logic.
     pub fn solve_dirty(&mut self, block_number: u64, metadata: &BlockMetadata) {
-        // Expire stale buffered events in V3/V4 sub-engines
-        self.v3_engine.expire_buffered_events(block_number);
+        // Expire stale buffered events in the V3 buffer (V4 still on its engine)
+        self.core.lock().expire_v3_buffered(block_number);
         self.v4_engine.expire_buffered_events(block_number);
 
         // Take ownership of dirty sets to avoid borrow conflict
@@ -250,8 +252,9 @@ impl UniswapEngine {
         block_number: u64,
         metadata: &BlockMetadata,
     ) {
-        // Apply V2 updates to BotCore and collect affected pool ids (ADR-003)
+        // Apply V2+V3 updates to BotCore and collect affected pool ids (ADR-003)
         let mut v2_affected = HashSet::new();
+        let mut v3_affected = HashSet::new();
         {
             let mut core = self.core.lock();
             for &(addr, r0, r1) in v2_updates {
@@ -259,8 +262,19 @@ impl UniswapEngine {
                     v2_affected.insert(pool_id);
                 }
             }
+            for update in v3_updates {
+                if let Some(pool_id) = core.apply_v3_swap(
+                    update.pool_address,
+                    update.sqrt_price_x96,
+                    update.liquidity,
+                    update.tick,
+                    block_number,
+                    &update.tick_priors,
+                ) {
+                    v3_affected.insert(pool_id);
+                }
+            }
         }
-        let v3_affected = self.v3_engine.apply_swap_updates(v3_updates, block_number);
 
         // Re-solve only paths containing updated pools
         self.rebuild_and_solve_affected(&v2_affected, &v3_affected, &HashSet::new(), block_number, metadata);
@@ -288,6 +302,7 @@ impl UniswapEngine {
         metadata: &BlockMetadata,
     ) {
         let mut v2_affected = HashSet::new();
+        let mut v3_affected = HashSet::new();
         {
             let mut core = self.core.lock();
             for &(addr, r0, r1) in v2_updates {
@@ -295,8 +310,19 @@ impl UniswapEngine {
                     v2_affected.insert(pool_id);
                 }
             }
+            for update in v3_updates {
+                if let Some(pool_id) = core.apply_v3_swap(
+                    update.pool_address,
+                    update.sqrt_price_x96,
+                    update.liquidity,
+                    update.tick,
+                    block_number,
+                    &update.tick_priors,
+                ) {
+                    v3_affected.insert(pool_id);
+                }
+            }
         }
-        let v3_affected = self.v3_engine.apply_swap_updates(v3_updates, block_number);
         let v4_affected = self.v4_engine.apply_swap_updates(v4_updates, block_number);
         self.rebuild_and_solve_affected(&v2_affected, &v3_affected, &v4_affected, block_number, metadata);
         self.last_processed_block = Some(block_number);
@@ -324,7 +350,7 @@ impl UniswapEngine {
 
             if *topic0 == crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC {
                 if let Some(event) = decode_v3_swap_log(log) {
-                    self.v3_engine.apply_swap(
+                    self.core.lock().apply_v3_swap(
                         event.pool_address,
                         event.sqrt_price_x96,
                         event.liquidity.to::<u128>(),
@@ -336,7 +362,7 @@ impl UniswapEngine {
                 }
             } else if *topic0 == crate::bot_core::v3_mint_burn_decoder::V3_MINT_TOPIC {
                 if let Some(event) = decode_v3_mint_log(log) {
-                    self.v3_engine.buffer_backfill_liquidity_update(
+                    self.core.lock().buffer_backfill_v3_liquidity_update(
                         event.pool_address,
                         event.tick_lower,
                         event.tick_upper,
@@ -347,7 +373,7 @@ impl UniswapEngine {
                 }
             } else if *topic0 == crate::bot_core::v3_mint_burn_decoder::V3_BURN_TOPIC {
                 if let Some(event) = decode_v3_burn_log(log) {
-                    self.v3_engine.buffer_backfill_liquidity_update(
+                    self.core.lock().buffer_backfill_v3_liquidity_update(
                         event.pool_address,
                         event.tick_lower,
                         event.tick_upper,
@@ -387,7 +413,7 @@ impl UniswapEngine {
         }
 
         if v3_touched {
-            self.v3_engine.expire_buffered_events(block_number);
+            self.core.lock().expire_v3_buffered(block_number);
         }
         if v4_touched {
             self.v4_engine.expire_buffered_events(block_number);

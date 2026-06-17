@@ -20,9 +20,15 @@ pub mod state_history;
 pub mod tick_bitmap;
 pub mod v2_encoding;
 pub mod v3_mint_burn_decoder;
+pub mod v3_state;
 pub mod v3_swap_decoder;
 pub mod v4_modify_liquidity_decoder;
 pub mod v4_swap_decoder;
+
+// Re-export the merged V3 state types (ADR-003: BotCore owns V3 state).
+pub use v3_state::{
+    BufferedV3LiquidityUpdate, PoolTickCoverage, RegisterV3PoolParams, V3PoolState, V3SwapUpdate,
+};
 
 // ---------------------------------------------------------------------------
 // Pool state types
@@ -77,52 +83,8 @@ pub struct RegisterV2PoolParams {
 }
 
 // ---------------------------------------------------------------------------
-// V3 pool state
+// V3 pool state — defined in [`v3_state`] (merged engine + journal types).
 // ---------------------------------------------------------------------------
-
-/// State for a Uniswap V3 concentrated-liquidity pool.
-///
-/// The current mutable fields (`sqrt_price_x96`, `liquidity`, `tick`,
-/// `tick_bitmap`, `tick_data`) are the authoritative current values.
-/// The journal stores "before" values for reorg rollback.
-///
-/// Swap calculations never touch the journal — they always read the
-/// current mutable fields. Zero penalty on the hot path.
-#[derive(Clone, Debug)]
-pub struct V3PoolState {
-    /// Pool contract address.
-    pub address: Address,
-    /// Token0 contract address.
-    pub token0: Address,
-    /// Token1 contract address.
-    pub token1: Address,
-    /// Pool fee in pips (e.g., 3000 = 0.3%).
-    pub fee: u32,
-    /// Tick spacing for this pool (e.g., 60 for 0.3% fee tier).
-    pub tick_spacing: i32,
-    /// Pool factory address.
-    pub factory: Address,
-
-    // --- Current mutable state (authoritative) ---
-
-    /// Current sqrt price × 2^96.
-    pub sqrt_price_x96: U256,
-    /// Current active liquidity.
-    pub liquidity: alloy::primitives::U128,
-    /// Current tick.
-    pub tick: i32,
-    /// Tick bitmap: word position → bitmap value.
-    /// `i16` matches the Python `BitmapWord` type (word position in the bitmap).
-    pub tick_bitmap: std::collections::HashMap<i16, U256>,
-    /// Tick data: tick index → (`liquidity_gross`, `liquidity_net`).
-    /// Only initialized ticks are stored.
-    pub tick_data: std::collections::HashMap<i32, TickInfo>,
-    /// Block number of the last update.
-    pub update_block: u64,
-
-    /// Reorg journal — scalar priors + per-tick priors for rollback.
-    pub journal: ReorgJournal<V3BlockDelta>,
-}
 
 /// Liquidity data at an initialized tick.
 ///
@@ -136,21 +98,7 @@ pub struct TickInfo {
     pub liquidity_net: alloy::primitives::I256,
 }
 
-/// Parameters for registering a V3 pool.
-#[derive(Clone, Debug)]
-pub struct RegisterV3PoolParams {
-    pub address: Address,
-    pub token0: Address,
-    pub token1: Address,
-    pub fee: u32,
-    pub tick_spacing: i32,
-    pub factory: Address,
-    pub sqrt_price_x96: U256,
-    pub liquidity: alloy::primitives::U128,
-    pub tick: i32,
-    pub tick_bitmap: std::collections::HashMap<i16, U256>,
-    pub tick_data: std::collections::HashMap<i32, TickInfo>,
-}
+// `RegisterV3PoolParams` lives in [`v3_state`] (re-exported above).
 
 // ---------------------------------------------------------------------------
 // Token state
@@ -183,17 +131,37 @@ pub struct BotCore {
     tokens: HashMap<Address, TokenEntry>,
     /// Auto-incrementing pool ID.
     next_pool_id: u64,
+    /// Reorg journal depth (in blocks) for every pool — one mainnet epoch
+    /// by default (ADR-003). Applied uniformly to V2/V3 (V4 in S3).
+    journal_depth: usize,
+    /// Dual-buffer for V3 liquidity (Mint/Burn) events awaiting pool
+    /// registration (ADR-003: the accurate-state buffer lives on `BotCore`, not
+    /// the dissolved `V3BlockEngine`).
+    v3_buffer:
+        crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer<
+            Address,
+            BufferedV3LiquidityUpdate,
+        >,
 }
 
 impl BotCore {
-    /// Create a new, empty `BotCore`.
+    /// Create a new, empty `BotCore` with the default 32-block reorg journal.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_journal_depth(32)
+    }
+
+    /// Create a new, empty `BotCore` with a custom reorg journal depth.
+    #[must_use]
+    pub fn with_journal_depth(journal_depth: usize) -> Self {
         Self {
             pools: HashMap::new(),
             pool_addresses: HashMap::new(),
             tokens: HashMap::new(),
             next_pool_id: 1,
+            journal_depth,
+            v3_buffer:
+                crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer::new(),
         }
     }
 
@@ -225,7 +193,7 @@ impl BotCore {
             factory,
         } = *params;
 
-        let journal = ReorgJournal::<V2BlockDelta>::new(8);
+        let journal = ReorgJournal::<V2BlockDelta>::new(self.journal_depth);
 
         self.pools.insert(
             pool_id,
@@ -264,41 +232,9 @@ impl BotCore {
         let pool_id = self.next_pool_id;
         self.next_pool_id += 1;
 
-        let RegisterV3PoolParams {
-            address,
-            token0,
-            token1,
-            fee,
-            tick_spacing,
-            factory,
-            sqrt_price_x96,
-            liquidity,
-            tick,
-            tick_bitmap,
-            tick_data,
-        } = params.clone();
-
-        let journal = ReorgJournal::<V3BlockDelta>::new(8);
-
-        self.pools.insert(
-            pool_id,
-            PoolEntry::V3(V3PoolState {
-                address,
-                token0,
-                token1,
-                fee,
-                tick_spacing,
-                factory,
-                sqrt_price_x96,
-                liquidity,
-                tick,
-                tick_bitmap,
-                tick_data,
-                update_block: 0,
-                journal,
-            }),
-        );
-        self.pool_addresses.insert(address, pool_id);
+        let state = V3PoolState::from_params(params.clone(), self.journal_depth);
+        self.pools.insert(pool_id, PoolEntry::V3(state));
+        self.pool_addresses.insert(params.address, pool_id);
 
         pool_id
     }
@@ -378,15 +314,15 @@ impl BotCore {
     /// Update a V3 pool's state from a Swap event.
     ///
     /// Looks up the pool by contract address. No-op if the pool is not registered.
-    ///
-    /// Stashes scalar "before" values in the reorg journal before updating.
-    /// Also stashes per-tick priors for any ticks in `tick_priors` that were
-    /// modified during this block.
+    /// Stashes scalar "before" values (and any provided per-tick priors) in the
+    /// reorg journal before updating. Kept as the `PyBotCore` entry; the live
+    /// pump path uses [`apply_v3_swap`](Self::apply_v3_swap) (which returns the
+    /// affected `pool_id` and overlays `tick_priors` into `tick_data`).
     pub fn update_v3_pool(
         &mut self,
         pool_address: Address,
         sqrt_price_x96: U256,
-        liquidity: alloy::primitives::U128,
+        liquidity: u128,
         tick: i32,
         block_number: u64,
         tick_priors: Vec<(i32, TickBefore)>,
@@ -412,6 +348,254 @@ impl BotCore {
         state.liquidity = liquidity;
         state.tick = tick;
         state.update_block = block_number;
+        state.invalidate_tick_range_cache();
+    }
+
+    /// Apply a V3 `Swap` event to a registered pool's state (ADR-003 live path).
+    ///
+    /// Mirrors the dissolved `V3BlockEngine::apply_swap`: overlays `tick_priors`
+    /// into `tick_data` (the live pump path passes `&[]` — swaps don't modify
+    /// `tick_data`), sets the scalar fields, invalidates the tick-range cache,
+    /// and returns the affected `pool_id`. Returns `None` if the pool is not
+    /// registered (a no-op). I/O-free; the engine calls this under the core
+    /// lock inside the engine lock (engine-then-core ordering).
+    ///
+    /// Note: scalar reorg journaling for V3 swaps lands in S2b alongside the
+    /// `handle_reorg` V3 extension; this S2a step is a pure structural
+    /// relocation (behavior-identical to the former engine method).
+    pub fn apply_v3_swap(
+        &mut self,
+        pool_address: Address,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        block_number: u64,
+        tick_priors: &[(i32, TickInfo)],
+    ) -> Option<u64> {
+        let &pool_id = self.pool_addresses.get(&pool_address)?;
+
+        let Some(PoolEntry::V3(state)) = self.pools.get_mut(&pool_id) else {
+            return None;
+        };
+
+        // Apply tick priors overlay to tick_data (live path passes `&[]`).
+        for &(tick_index, ref prior) in tick_priors {
+            state.tick_data.insert(tick_index, prior.clone());
+        }
+
+        state.sqrt_price_x96 = sqrt_price_x96;
+        state.liquidity = liquidity;
+        state.tick = tick;
+        state.update_block = block_number;
+        state.invalidate_tick_range_cache();
+
+        Some(pool_id)
+    }
+
+    /// Apply a V3 liquidity update (Mint/Burn) to a registered pool's
+    /// `tick_data`, or buffer it for an unregistered pool (ADR-003 live path).
+    ///
+    /// Registered pool: applies via `apply_liquidity_to_tick_range` (matching
+    /// Solidity `Tick.update` — both lower and upper get `liquidity_gross +=
+    /// delta`; `liquidity_net` `+=` at lower, `-=` at upper), invalidates the
+    /// tick-range cache, returns the affected `pool_id`.
+    ///
+    /// Unregistered pool: buffers into the pump buffer for staged application
+    /// at registration; returns `None`.
+    pub fn apply_v3_liquidity_update(
+        &mut self,
+        pool_address: Address,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: i128,
+        block_number: u64,
+    ) -> Option<u64> {
+        let Some(&pool_id) = self.pool_addresses.get(&pool_address) else {
+            self.v3_buffer.buffer_pump(
+                pool_address,
+                BufferedV3LiquidityUpdate {
+                    tick_lower,
+                    tick_upper,
+                    liquidity_delta,
+                    block_number,
+                },
+            );
+            return None;
+        };
+
+        let Some(PoolEntry::V3(state)) = self.pools.get_mut(&pool_id) else {
+            return None;
+        };
+        crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
+            &mut state.tick_data,
+            tick_lower,
+            tick_upper,
+            liquidity_delta,
+        );
+        state.update_block = block_number;
+        state.invalidate_tick_range_cache();
+        Some(pool_id)
+    }
+
+    /// Buffer a V3 liquidity update from the backfill phase. During backfill no
+    /// pools are registered yet, so this always buffers (routes to the
+    /// never-expired backfill buffer). If the pool happens to be registered
+    /// already (defensive), applies directly.
+    pub fn buffer_backfill_v3_liquidity_update(
+        &mut self,
+        pool_address: Address,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: i128,
+        block_number: u64,
+    ) {
+        if let Some(&key) = self.pool_addresses.get(&pool_address) {
+            if let Some(PoolEntry::V3(state)) = self.pools.get_mut(&key) {
+                crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
+                    &mut state.tick_data,
+                    tick_lower,
+                    tick_upper,
+                    liquidity_delta,
+                );
+                state.update_block = block_number;
+                state.invalidate_tick_range_cache();
+                return;
+            }
+        }
+        self.v3_buffer.buffer_backfill(
+            pool_address,
+            BufferedV3LiquidityUpdate {
+                tick_lower,
+                tick_upper,
+                liquidity_delta,
+                block_number,
+            },
+        );
+    }
+
+    /// Apply all buffered **backfill** V3 events for a pool address.
+    /// Call this during registration, after `register_v3_pool` and before
+    /// [`apply_pump_buffer_v3`](Self::apply_pump_buffer_v3). No-op if there are
+    /// none. The post-call state is at the backfill boundary (a deterministic
+    /// point suitable for verification cloning).
+    pub fn apply_backfill_buffer_v3(&mut self, address: &Address) {
+        let Some(&key) = self.pool_addresses.get(address) else {
+            return;
+        };
+        let Some(buffered) = self.v3_buffer.drain_backfill(address) else {
+            return;
+        };
+        for update in buffered {
+            if let Some(PoolEntry::V3(state)) = self.pools.get_mut(&key) {
+                crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
+                    &mut state.tick_data,
+                    update.tick_lower,
+                    update.tick_upper,
+                    update.liquidity_delta,
+                );
+                state.invalidate_tick_range_cache();
+            }
+        }
+    }
+
+    /// Apply all buffered **pump** V3 events for a pool address.
+    /// Call this during registration, after [`apply_backfill_buffer_v3`].
+    pub fn apply_pump_buffer_v3(&mut self, address: &Address) {
+        let Some(&key) = self.pool_addresses.get(address) else {
+            return;
+        };
+        let Some(buffered) = self.v3_buffer.drain_pump(address) else {
+            return;
+        };
+        for update in buffered {
+            if let Some(PoolEntry::V3(state)) = self.pools.get_mut(&key) {
+                crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
+                    &mut state.tick_data,
+                    update.tick_lower,
+                    update.tick_upper,
+                    update.liquidity_delta,
+                );
+                state.invalidate_tick_range_cache();
+            }
+        }
+    }
+
+    /// Set the maximum age (in blocks) for buffered V3 pump events.
+    /// `None` means unbounded. Takes effect on the next `expire_v3_buffered`.
+    pub const fn set_v3_buffer_max_age(&mut self, max_age: Option<u64>) {
+        self.v3_buffer.set_max_age(max_age);
+    }
+
+    /// Number of buffered V3 liquidity events for a pool address (backfill + pump).
+    #[must_use]
+    pub fn buffered_v3_event_count(&self, address: &Address) -> usize {
+        self.v3_buffer.event_count(address)
+    }
+
+    /// Discard all buffered V3 liquidity events for all pools.
+    pub fn flush_v3_buffer(&mut self) {
+        self.v3_buffer.flush();
+    }
+
+    /// Expire V3 pump-buffer events older than `current_block - max_age`.
+    /// No-op if `max_age` is `None`. Backfill buffer is never expired.
+    pub fn expire_v3_buffered(&mut self, current_block: u64) {
+        self.v3_buffer.expire(current_block);
+    }
+
+    /// Read a registered V3 pool's state by `pool_id`.
+    ///
+    /// The solve engine reads state by reference through this accessor
+    /// (ADR-003: "Pool's authority over its own math") and calls
+    /// `build_int_v3_sequence(zfo, 10)` to build the per-hop state.
+    #[must_use]
+    pub fn get_v3_pool(&self, pool_id: u64) -> Option<&V3PoolState> {
+        match self.pools.get(&pool_id)? {
+            PoolEntry::V3(state) => Some(state),
+            PoolEntry::V2(_) => None,
+        }
+    }
+
+    /// Snapshot all V3 pool state for verification (clones every V3 entry).
+    ///
+    /// Used by `verify_liquidity_maps` so the engine+core locks can be
+    /// released before making async RPC calls.
+    #[must_use]
+    pub fn v3_pools_snapshot(&self) -> HashMap<u64, V3PoolState> {
+        self.pools
+            .iter()
+            .filter_map(|(id, e)| match e {
+                PoolEntry::V3(state) => Some((*id, state.clone())),
+                PoolEntry::V2(_) => None,
+            })
+            .collect()
+    }
+
+    /// Full-sync a V3 pool's `tick_data` from an external source (e.g. Python
+    /// backfill). Replaces the entire `tick_data` map (so ticks Burn-removed
+    /// on-chain are also removed here) and updates scalar state. No-op if the
+    /// pool address is not registered.
+    pub fn sync_v3_pool_state(
+        &mut self,
+        pool_address: Address,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        tick_data: HashMap<i32, TickInfo>,
+        update_block: u64,
+    ) {
+        let Some(&key) = self.pool_addresses.get(&pool_address) else {
+            return;
+        };
+        let Some(PoolEntry::V3(state)) = self.pools.get_mut(&key) else {
+            return;
+        };
+        state.sqrt_price_x96 = sqrt_price_x96;
+        state.liquidity = liquidity;
+        state.tick = tick;
+        state.tick_data = tick_data;
+        state.update_block = update_block;
+        state.invalidate_tick_range_cache();
     }
 
     /// Calculate the output token amount for a given input amount.
@@ -533,6 +717,24 @@ impl BotCore {
     #[must_use]
     pub fn pool_count(&self) -> usize {
         self.pools.len()
+    }
+
+    /// Number of registered V3 pools.
+    #[must_use]
+    pub fn v3_pool_count(&self) -> usize {
+        self.pools
+            .values()
+            .filter(|e| matches!(e, PoolEntry::V3(_)))
+            .count()
+    }
+
+    /// Number of registered V2 pools.
+    #[must_use]
+    pub fn v2_pool_count(&self) -> usize {
+        self.pools
+            .values()
+            .filter(|e| matches!(e, PoolEntry::V2(_)))
+            .count()
     }
 
     /// Check if a pool ID is registered.

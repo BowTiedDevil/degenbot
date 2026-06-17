@@ -327,9 +327,9 @@ impl UniswapEngine {
                     resolved.hops.push(ResolvedHop::V2 { state: hop_state });
                 }
                 HopType::V3 => {
-                    // Look up V3 pool state and build the integer tick-range
-                    // sequence used by the mixed/CL solver.
-                    let Some(pool_state) = self.v3_engine.get_pool(pool_ref.pool_key) else {
+                    // Look up V3 pool state (now owned by BotCore — ADR-003) and
+                    // build the integer tick-range sequence used by the CL solver.
+                    let Some(pool_state) = core.get_v3_pool(pool_ref.pool_key) else {
                         return; // Missing pool → invalid
                     };
 

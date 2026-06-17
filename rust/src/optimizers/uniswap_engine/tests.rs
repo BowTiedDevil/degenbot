@@ -9,7 +9,7 @@ mod tests {
         BlockMetadata, HopType, MixedPoolRef, ResolvedHop, UniswapEngine, INT128_MAX,
     };
     use crate::optimizers::uniswap_engine::ResolvedMixedPath;
-    use crate::optimizers::v3_block_engine::RegisterV3PoolParams;
+    use crate::bot_core::RegisterV3PoolParams;
     use crate::optimizers::v4_block_engine::RegisterV4PoolParams;
 
     fn usdc(amount: u64) -> U256 {
@@ -55,8 +55,8 @@ mod tests {
             },
         );
 
-        let v3_key = engine.v3_engine().register_pool(
-            crate::optimizers::v3_block_engine::RegisterV3PoolParams {
+        let v3_key = engine.register_v3_pool(
+            &crate::bot_core::RegisterV3PoolParams {
                 address: Address::from([0x22u8; 20]),
                 token0: Address::from([0u8; 20]),
                 token1: Address::from([1u8; 20]),
@@ -177,8 +177,8 @@ mod tests {
             },
         );
 
-        let v3_key = engine.v3_engine().register_pool(
-            crate::optimizers::v3_block_engine::RegisterV3PoolParams {
+        let v3_key = engine.register_v3_pool(
+            &crate::bot_core::RegisterV3PoolParams {
                 address: Address::from([0x22u8; 20]),
                 token0: Address::from([0u8; 20]),
                 token1: Address::from([1u8; 20]),
@@ -219,8 +219,8 @@ mod tests {
         let mut engine = UniswapEngine::new();
 
         // Only register V3 pool
-        let v3_key = engine.v3_engine().register_pool(
-            crate::optimizers::v3_block_engine::RegisterV3PoolParams {
+        let v3_key = engine.register_v3_pool(
+            &crate::bot_core::RegisterV3PoolParams {
                 address: Address::from([0x22u8; 20]),
                 token0: Address::from([0u8; 20]),
                 token1: Address::from([1u8; 20]),
@@ -690,8 +690,8 @@ mod tests {
             },
         );
 
-        let v3_key_a = engine.v3_engine().register_pool(
-            crate::optimizers::v3_block_engine::RegisterV3PoolParams {
+        let v3_key_a = engine.register_v3_pool(
+            &crate::bot_core::RegisterV3PoolParams {
                 address: Address::from([0x21u8; 20]),
                 token0: Address::ZERO,
                 token1: Address::from([1u8; 20]),
@@ -730,8 +730,8 @@ mod tests {
             },
         );
 
-        let v3_key_b = engine.v3_engine().register_pool(
-            crate::optimizers::v3_block_engine::RegisterV3PoolParams {
+        let v3_key_b = engine.register_v3_pool(
+            &crate::bot_core::RegisterV3PoolParams {
                 address: Address::from([0x22u8; 20]),
                 token0: Address::ZERO,
                 token1: Address::from([1u8; 20]),
@@ -802,8 +802,8 @@ mod tests {
             },
         );
 
-        let v3_key = engine.v3_engine().register_pool(
-            crate::optimizers::v3_block_engine::RegisterV3PoolParams {
+        let v3_key = engine.register_v3_pool(
+            &crate::bot_core::RegisterV3PoolParams {
                 address: Address::from([0x22u8; 20]),
                 token0: Address::ZERO,
                 token1: Address::from([1u8; 20]),
@@ -863,8 +863,8 @@ mod tests {
             },
         );
 
-        let v3_key = engine.v3_engine().register_pool(
-            crate::optimizers::v3_block_engine::RegisterV3PoolParams {
+        let v3_key = engine.register_v3_pool(
+            &crate::bot_core::RegisterV3PoolParams {
                 address: Address::from([0x22u8; 20]),
                 token0: Address::ZERO,
                 token1: Address::from([1u8; 20]),
@@ -982,7 +982,7 @@ mod tests {
         let v3_factory = Address::from([0x21u8; 20]);
         let sp_0 = U256::from(1u128) << 96;
 
-        engine.v3_engine().register_pool(RegisterV3PoolParams {
+        let _ = engine.register_v3_pool(&RegisterV3PoolParams {
             address: v3_addr,
             token0: Address::from([0x30u8; 20]),
             token1: Address::from([0x31u8; 20]),
@@ -1088,8 +1088,8 @@ mod tests {
                     .unwrap_or(alloy::primitives::I256::ZERO),
             },
         );
-        let v3_key = engine.v3_engine().register_pool(
-            crate::optimizers::v3_block_engine::RegisterV3PoolParams {
+        let v3_key = engine.register_v3_pool(
+            &crate::bot_core::RegisterV3PoolParams {
                 address: Address::from([0x22u8; 20]),
                 token0: Address::from([0u8; 20]),
                 token1: Address::from([1u8; 20]),
@@ -1147,8 +1147,10 @@ mod tests {
         let v2_addr = engine.core.lock().pool_address(v2_fwd);
         assert_eq!(v2_addr, Some(Address::from([0x11u8; 20])));
 
-        let v3_pool = engine.v3_engine().get_pool(v3_key);
+        let core = engine.core.lock();
+        let v3_pool = core.get_v3_pool(v3_key);
         assert_eq!(v3_pool.map(|p| p.address), Some(Address::from([0x22u8; 20])));
+        drop(core);
 
         let v4_pool = engine.v4_engine().get_pool(v4_key);
         assert_eq!(v4_pool.map(|p| p.pool_manager), Some(Address::from([0x33u8; 20])));
@@ -1181,7 +1183,7 @@ mod tests {
         };
 
         // Pool 1 at tick 0 with high liquidity
-        let v3_key_a = engine.v3_engine().register_pool(RegisterV3PoolParams {
+        let v3_key_a = engine.register_v3_pool(&RegisterV3PoolParams {
             address: Address::from([0xa1u8; 20]),
             token0: Address::ZERO,
             token1: Address::from([1u8; 20]),
@@ -1197,7 +1199,7 @@ mod tests {
         });
 
         // Pool 2 at tick 0 with different liquidity (price disagreement)
-        let v3_key_b = engine.v3_engine().register_pool(RegisterV3PoolParams {
+        let v3_key_b = engine.register_v3_pool(&RegisterV3PoolParams {
             address: Address::from([0xa2u8; 20]),
             token0: Address::ZERO,
             token1: Address::from([1u8; 20]),
@@ -1213,7 +1215,7 @@ mod tests {
         });
 
         // Pool 3 at tick 0 with third liquidity level
-        let v3_key_c = engine.v3_engine().register_pool(RegisterV3PoolParams {
+        let v3_key_c = engine.register_v3_pool(&RegisterV3PoolParams {
             address: Address::from([0xa3u8; 20]),
             token0: Address::ZERO,
             token1: Address::from([1u8; 20]),
@@ -1286,7 +1288,7 @@ mod tests {
             liquidity_net: alloy::primitives::I256::try_from(-100i128)
                 .unwrap_or(alloy::primitives::I256::ZERO),
         });
-        let v3_key = engine.v3_engine().register_pool(RegisterV3PoolParams {
+        let v3_key = engine.register_v3_pool(&RegisterV3PoolParams {
             address: Address::from([0x22u8; 20]),
             token0: Address::ZERO,
             token1: Address::from([1u8; 20]),

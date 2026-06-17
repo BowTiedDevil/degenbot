@@ -71,7 +71,7 @@ pub struct V3BlockDelta {
     /// Sqrt price X96 *before* this block's update.
     pub sqrt_price_x96_before: alloy::primitives::U256,
     /// Active liquidity *before* this block's update.
-    pub liquidity_before: alloy::primitives::U128,
+    pub liquidity_before: u128,
     /// Current tick *before* this block's update.
     pub tick_before: i32,
     /// Per-tick priors for ticks modified during this block.
@@ -109,7 +109,7 @@ pub struct V3RestoreResult {
     /// Sqrt price X96 *before* the target block.
     pub sqrt_price_x96_before: alloy::primitives::U256,
     /// Active liquidity *before* the target block.
-    pub liquidity_before: alloy::primitives::U128,
+    pub liquidity_before: u128,
     /// Current tick *before* the target block.
     pub tick_before: i32,
     /// Per-tick priors from the last popped delta.
