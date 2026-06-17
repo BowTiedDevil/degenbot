@@ -108,6 +108,7 @@ class Bot:
             pools=self.pools,
             tokens=self.tokens,
             erc20_builder=self._erc20_builder,
+            py_bot=self._py_bot,
             default_chain_id=None,
             managed_pools=self.managed_pools,
         )

@@ -13,6 +13,7 @@ from degenbot.types.hop_types import ConstantProductHop, HopType, SolidlyStableH
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 if TYPE_CHECKING:
+    from degenbot.degenbot_rs import PyLiquidityPool
     from degenbot.erc20 import Erc20Token
     from degenbot.types.aliases import ChainId
     from degenbot.uniswap.v2_types import UniswapV2PoolState
@@ -29,22 +30,20 @@ class CamelotLiquidityPool(CamelotPoolCalc, UniswapV2Pool):
 
     def __init__(
         self,
-        address: str,
+        py_pool: PyLiquidityPool,
         *,
+        address: str,
         token0: Erc20Token,
         token1: Erc20Token,
         factory: str,
         fee_token0: int,
         fee_token1: int,
         fee_denominator: int,
-        reserves_token0: int,
-        reserves_token1: int,
         stable_swap: bool,
         chain_id: ChainId | None = None,
-        state_block: int | None = None,
         deployer_address: str | None = None,
     ) -> None:
-        """Initialize the instance."""
+        """Initialize the instance (ADR-005 slice 4 companion)."""
         address = get_checksum_address(address)
         self.fee_denominator = fee_denominator
         self.stable_swap = stable_swap
@@ -53,6 +52,7 @@ class CamelotLiquidityPool(CamelotPoolCalc, UniswapV2Pool):
         self._wire_camelot_calculations(stable_swap=stable_swap)
 
         super().__init__(
+            py_pool,
             address=address,
             chain_id=chain_id if chain_id is not None else token0.chain_id,
             init_hash=self.CAMELOT_ARBITRUM_POOL_INIT_HASH,
@@ -61,9 +61,6 @@ class CamelotLiquidityPool(CamelotPoolCalc, UniswapV2Pool):
             factory=factory,
             fee_token0=Fraction(fee_token0, fee_denominator),
             fee_token1=Fraction(fee_token1, fee_denominator),
-            reserves_token0=reserves_token0,
-            reserves_token1=reserves_token1,
-            state_block=state_block,
             deployer_address=deployer_address,
         )
 

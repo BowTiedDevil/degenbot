@@ -104,7 +104,27 @@ class CamelotBuilder(V2BuilderBase):
             msg = f"No V2 pool class registered for chain {chain_id}, factory {common.factory}"
             raise ValueError(msg)
 
+        # Register the pool in the shared Rust Bot and wrap the handle with
+        # the Python companion (ADR-005 slice 4). Camelot's fee is
+        # (fee_tokenN_raw, fee_denominator) — split into numerator/denominator.
+        pool_id = self._py_bot.register_v2_pool(
+            address=common.pool_address,
+            token0=common.token0_address,
+            token1=common.token1_address,
+            reserve0=common.reserves0,
+            reserve1=common.reserves1,
+            gamma_numer0=fee_token0_raw,
+            fee_denom0=fee_denominator,
+            gamma_numer1=fee_token1_raw,
+            fee_denom1=fee_denominator,
+            factory=common.factory,
+            update_block=common.state_block,
+        )
+        py_pool = self._py_bot.get_pool(pool_id)
+        assert py_pool is not None, "register_v2_pool returned a pool_id with no handle"
+
         pool = pool_class(
+            py_pool,
             address=pool_address,
             token0=token0,
             token1=token1,
@@ -112,11 +132,8 @@ class CamelotBuilder(V2BuilderBase):
             fee_token0=fee_token0_raw,
             fee_token1=fee_token1_raw,
             fee_denominator=fee_denominator,
-            reserves_token0=common.reserves0,
-            reserves_token1=common.reserves1,
             stable_swap=stable_swap,
             chain_id=common.chain_id,
-            state_block=common.state_block,
             deployer_address=common.deployer,
         )
         assert isinstance(pool, CamelotLiquidityPool)

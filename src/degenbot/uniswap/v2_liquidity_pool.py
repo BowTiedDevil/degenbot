@@ -2,13 +2,14 @@
 
 import dataclasses
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import Any, ClassVar
 from weakref import WeakSet
 
 from eth_typing import ChecksumAddress
 
 from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.degenbot_rs import PyLiquidityPool
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import (
@@ -21,7 +22,6 @@ from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import ConstantProductHop, HopType
 from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
-from degenbot.types.state_cache import StateCache
 from degenbot.uniswap.log_decoders import V2_SYNC_TOPIC, decode_v2_sync
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v2_functions import (
@@ -54,8 +54,15 @@ class UniswapV2Pool(
         "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
     )
 
+    # Pickle (TRANSIENT — removed by TODO-cddc72d1 / Slice 15): drop the
+    # non-picklable Rust handle (``_py_pool`` wraps an ``Arc<RwLock<Bot>>``)
+    # and the weakref subscriber set. Unpickled pools are detached snapshots
+    # (no live Rust handle; state reads raise ``AttributeError``). Slice 15
+    # retires Python-pickle multiprocessing entirely (replaced by Rust-side
+    # parallel solve fan-out) and deletes ``PoolPickleMixin`` + these tests.
     _pickle_drops: ClassVar[frozenset[str]] = frozenset({
         "_subscribers",
+        "_py_pool",
     })
     _pickle_reconstructs: ClassVar[dict[str, Any]] = {
         "_subscribers": WeakSet,
@@ -63,25 +70,32 @@ class UniswapV2Pool(
 
     def __init__(
         self,
-        address: ChecksumAddress | str,
+        py_pool: PyLiquidityPool,
         *,
+        address: ChecksumAddress | str,
         chain_id: ChainId | None = None,
         deployer_address: str | None = None,
         init_hash: str | None = None,
-        state_block: BlockNumber | None = None,
-        state_cache_depth: int = 8,
         token0: Erc20Token,
         token1: Erc20Token,
         factory: str,
         fee_token0: Fraction,
         fee_token1: Fraction,
-        reserves_token0: int,
-        reserves_token1: int,
     ) -> None:
-        """I/O-free representation of an x*y=k invariant automatic matchmaker, based on Uniswap V2.
+        """I/O-free companion over a ``PyLiquidityPool`` handle (ADR-005).
 
-        Construct via Bot.build_pool() or manager.get_pool() to fetch data from the chain.
+        Rust owns the mutable state (reserves + reorg journal) as
+        ``V2PoolState``; this companion reads it through ``self._py_pool``
+        (via the atomic ``snapshot()``) and delegates ``external_update``
+        (Sync) / discard / restore to the handle. Immutable identity (tokens,
+        factory, fees) stays Python-side this slice — calc (slice 5) and
+        identity (later) follow.
+
+        Construct via ``Bot.build_pool()`` (which registers in Rust and
+        hands the handle here); tests use ``make_v2_pool``.
         """
+        self._py_pool = py_pool
+
         self.address = get_checksum_address(address)
         self._chain_id = chain_id if chain_id is not None else token0.chain_id
         self._token0 = token0
@@ -90,33 +104,23 @@ class UniswapV2Pool(
         self._fee_token0 = fee_token0
         self._fee_token1 = fee_token1
 
-        # Derive deployer/init_hash from constructor args or class defaults
+        # Derive deployer/init_hash from constructor args or class defaults.
         self.init_hash = (
             init_hash if init_hash is not None else self.UNISWAP_V2_MAINNET_POOL_INIT_HASH
         )
         self.deployer = get_checksum_address(deployer_address or self.factory)
 
-        state_block_ = state_block if state_block is not None else 0
-
-        fee_string = (
-            f"{100 * self._fee_token0.numerator / self._fee_token0.denominator:.2f}"
-            if self._fee_token0 == self._fee_token1
-            else (
-                f"{100 * self._fee_token0.numerator / self._fee_token0.denominator:.2f}"
+        fee_numerator_0 = 100 * self._fee_token0.numerator / self._fee_token0.denominator
+        if self._fee_token0 == self._fee_token1:
+            fee_string = f"{fee_numerator_0:.2f}"
+        else:
+            fee_string = (
+                f"{fee_numerator_0:.2f}"
                 f"/"
                 f"{100 * self._fee_token1.numerator / self._fee_token1.denominator:.2f}"
             )
-        )
         self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {fee_string}%)"
 
-        initial_state = self.PoolState.__value__(
-            address=self.address,
-            reserves_token0=reserves_token0,
-            reserves_token1=reserves_token1,
-            block=state_block_,
-        )
-        self._state_cache = StateCache(max_depth=state_cache_depth)
-        self._state_cache.append(initial_state, block=state_block_)
         self._subscribers: WeakSet[Subscriber] = WeakSet()
 
     @property
@@ -136,7 +140,7 @@ class UniswapV2Pool(
             The string representation of the pool.
 
         """
-        return f"{self.__class__.__name__}(address={self.address}, token0={self._token0}, token1={self._token1})"  # noqa:E501
+        return f"{self.__class__.__name__}(address={self.address}, token0={self._token0}, token1={self._token1})"  # noqa: E501
 
     def _verified_address(self) -> ChecksumAddress:
         """Compute the deterministic pool address via CREATE2.
@@ -156,19 +160,17 @@ class UniswapV2Pool(
         """Update block.
 
         Returns:
-            The block number of the most recent state update.
+            The block number of the most recent state update (from Rust).
 
         """
-        if TYPE_CHECKING:
-            assert self.state.block is not None
-        return self.state.block
+        return self._py_pool.update_block
 
     @property
     def reserves_token0(self) -> int:
         """Return reserves token0.
 
         Returns:
-            The reserve amount for token0.
+            The reserve amount for token0 (from Rust).
 
         """
         return self.state.reserves_token0
@@ -178,7 +180,7 @@ class UniswapV2Pool(
         """Return reserves token1.
 
         Returns:
-            The reserve amount for token1.
+            The reserve amount for token1 (from Rust).
 
         """
         return self.state.reserves_token1
@@ -188,10 +190,26 @@ class UniswapV2Pool(
         """State.
 
         Returns:
-            The current pool state from the state cache.
+            The current pool state, built from one atomic Rust snapshot
+            (``_py_pool.snapshot()``) so a Rust-side ``sync_reserves``
+            (pump update) can't interleave between the reserve reads.
+
+        Raises:
+            DegenbotValueError: If the pool is not registered in Rust (no
+                V2 state to snapshot).
 
         """
-        return self._state_cache.current
+        snapshot = self._py_pool.snapshot()
+        if snapshot is None:
+            msg = "No V2 pool state available (pool not registered in Rust)"
+            raise DegenbotValueError(message=msg)
+        reserve0, reserve1, block = snapshot
+        return self.PoolState.__value__(
+            address=self.address,
+            reserves_token0=reserve0,
+            reserves_token1=reserve1,
+            block=block,
+        )
 
     @staticmethod
     def swap_is_viable(
@@ -220,7 +238,7 @@ class UniswapV2Pool(
         """
         if update.block_number < self.update_block:
             raise ExternalUpdateError(
-                message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}"  # noqa:E501
+                message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}"  # noqa: E501
             )
 
         if (
@@ -232,18 +250,14 @@ class UniswapV2Pool(
         ):
             return
 
-        with self._state_cache.lock():
-            working_state = dataclasses.replace(
-                self.state,
-                reserves_token0=update.reserves_token0,
-                reserves_token1=update.reserves_token1,
-                block=update.block_number,
-            )
-
-            self._state_cache.append(working_state, block=update.block_number)
-            self._notify_subscribers(
-                message=UniswapV2PoolStateUpdated(self.state),
-            )
+        self._py_pool.sync_reserves(
+            reserve0=update.reserves_token0,
+            reserve1=update.reserves_token1,
+            block_number=update.block_number,
+        )
+        self._notify_subscribers(
+            message=UniswapV2PoolStateUpdated(self.state),
+        )
 
     def discard_states_before_block(
         self,
@@ -252,12 +266,11 @@ class UniswapV2Pool(
         """Discard cached states earlier than the given block.
 
         Raises:
-            NoPoolStateAvailable: If no state exists for the given block.
+            NoPoolStateAvailable: If the target is past the newest delta.
 
         """
         try:
-            with self._state_cache.lock():
-                self._state_cache.discard_before_block(block)
+            self._py_pool.discard_before_block(block)
         except ValueError as e:
             raise NoPoolStateAvailable(block=block) from e
 
@@ -268,12 +281,11 @@ class UniswapV2Pool(
         """Restore the last pool state recorded prior to a target block.
 
         Raises:
-            NoPoolStateAvailable: If no state exists for the given block.
+            NoPoolStateAvailable: If no state exists prior to the target block.
 
         """
         try:
-            with self._state_cache.lock():
-                self._state_cache.restore_before_block(block)
+            self._py_pool.restore_before_block(block)
         except ValueError as e:
             raise NoPoolStateAvailable(block=block) from e
         self._notify_subscribers(message=UniswapV2PoolStateUpdated(self.state))
@@ -290,25 +302,18 @@ class UniswapV2Pool(
             The simulation result with delta amounts and state transitions.
 
         """
-        with self._state_cache.lock():
-            reserves_token0 = (
-                override_state.reserves_token0 if override_state else self.reserves_token0
-            )
-            reserves_token1 = (
-                override_state.reserves_token1 if override_state else self.reserves_token1
-            )
-
-            return UniswapV2PoolSimulationResult(
-                amount0_delta=added_reserves_token0,
-                amount1_delta=added_reserves_token1,
-                initial_state=override_state or self.state,
-                final_state=dataclasses.replace(
-                    self.state,
-                    reserves_token0=reserves_token0 + added_reserves_token0,
-                    reserves_token1=reserves_token1 + added_reserves_token1,
-                    block=self.update_block if override_state is not None else None,
-                ),
-            )
+        state = override_state if override_state is not None else self.state
+        return UniswapV2PoolSimulationResult(
+            amount0_delta=added_reserves_token0,
+            amount1_delta=added_reserves_token1,
+            initial_state=state,
+            final_state=dataclasses.replace(
+                state,
+                reserves_token0=state.reserves_token0 + added_reserves_token0,
+                reserves_token1=state.reserves_token1 + added_reserves_token1,
+                block=self.update_block if override_state is not None else None,
+            ),
+        )
 
     def simulate_remove_liquidity(
         self,
@@ -322,25 +327,18 @@ class UniswapV2Pool(
             The simulation result with delta amounts and state transitions.
 
         """
-        with self._state_cache.lock():
-            reserves_token0 = (
-                override_state.reserves_token0 if override_state else self.reserves_token0
-            )
-            reserves_token1 = (
-                override_state.reserves_token1 if override_state else self.reserves_token1
-            )
-
-            return UniswapV2PoolSimulationResult(
-                amount0_delta=-removed_reserves_token0,
-                amount1_delta=-removed_reserves_token1,
-                initial_state=override_state or self.state,
-                final_state=dataclasses.replace(
-                    self.state,
-                    reserves_token0=reserves_token0 - removed_reserves_token0,
-                    reserves_token1=reserves_token1 - removed_reserves_token1,
-                    block=self.update_block if override_state is not None else None,
-                ),
-            )
+        state = override_state if override_state is not None else self.state
+        return UniswapV2PoolSimulationResult(
+            amount0_delta=-removed_reserves_token0,
+            amount1_delta=-removed_reserves_token1,
+            initial_state=state,
+            final_state=dataclasses.replace(
+                state,
+                reserves_token0=state.reserves_token0 - removed_reserves_token0,
+                reserves_token1=state.reserves_token1 - removed_reserves_token1,
+                block=self.update_block if override_state is not None else None,
+            ),
+        )
 
     def simulate_exact_input_swap(
         self,
@@ -360,11 +358,15 @@ class UniswapV2Pool(
         if token_in not in self.tokens:
             raise DegenbotValueError(message="token_in is unknown.")
 
+        # One atomic snapshot drives the whole simulation: calc + final_state
+        # both read `state.reserves_*`, so a Rust-side sync_reserves (pump)
+        # can't interleave between the calc and the delta computation.
+        state = override_state if override_state is not None else self.state
         zero_for_one = token_in == self._token0
         token_out_quantity = self.calculate_tokens_out_from_tokens_in(
             token_in=token_in,
             token_in_quantity=token_in_quantity,
-            override_state=override_state,
+            override_state=state,
         )
         token0_delta = -token_out_quantity if zero_for_one is False else token_in_quantity
         token1_delta = -token_out_quantity if zero_for_one is True else token_in_quantity
@@ -372,11 +374,11 @@ class UniswapV2Pool(
         return UniswapV2PoolSimulationResult(
             amount0_delta=token0_delta,
             amount1_delta=token1_delta,
-            initial_state=override_state or self.state,
+            initial_state=state,
             final_state=dataclasses.replace(
-                self.state,
-                reserves_token0=self.reserves_token0 + token0_delta,
-                reserves_token1=self.reserves_token1 + token1_delta,
+                state,
+                reserves_token0=state.reserves_token0 + token0_delta,
+                reserves_token1=state.reserves_token1 + token1_delta,
                 block=self.update_block if override_state is not None else None,
             ),
         )
@@ -399,12 +401,13 @@ class UniswapV2Pool(
         if token_out not in self.tokens:
             raise DegenbotValueError(message="token_out is unknown.")
 
+        state = override_state if override_state is not None else self.state
         zero_for_one = token_out == self._token1
 
         token_in_quantity = self.calculate_tokens_in_from_tokens_out(
             token_out=token_out,
             token_out_quantity=token_out_quantity,
-            override_state=override_state,
+            override_state=state,
         )
         token0_delta = token_in_quantity if zero_for_one is True else -token_out_quantity
         token1_delta = token_in_quantity if zero_for_one is False else -token_out_quantity
@@ -412,11 +415,11 @@ class UniswapV2Pool(
         return UniswapV2PoolSimulationResult(
             amount0_delta=token0_delta,
             amount1_delta=token1_delta,
-            initial_state=override_state or self.state,
+            initial_state=state,
             final_state=dataclasses.replace(
-                self.state,
-                reserves_token0=self.reserves_token0 + token0_delta,
-                reserves_token1=self.reserves_token1 + token1_delta,
+                state,
+                reserves_token0=state.reserves_token0 + token0_delta,
+                reserves_token1=state.reserves_token1 + token1_delta,
                 block=self.update_block if override_state is not None else None,
             ),
         )
@@ -530,7 +533,7 @@ class UniswapV2Pool(
         """
         # token_in/token_out unused — 2-token pools determine pair from zero_for_one.
         # Callers should ensure these match pool.token0/pool.token1 if provided.
-        state = state_override or self.state
+        state = state_override if state_override is not None else self.state
         fee = self.extract_fee(zero_for_one=zero_for_one)
         if zero_for_one:
             reserve_in = state.reserves_token0

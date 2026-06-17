@@ -6,6 +6,7 @@ from fractions import Fraction
 from unittest.mock import MagicMock
 
 import eth_abi.abi
+import pytest
 from web3.exceptions import Web3Exception
 
 from degenbot.bot import Bot
@@ -18,6 +19,7 @@ from degenbot.uniswap.trackers import UniswapV2PoolTracker
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.v2_pool_factory import make_v2_pool
 
 _PY_BOT = PyBot()
 
@@ -63,7 +65,7 @@ class TestV2PoolIOFreeConstructor:
         weth = _make_weth()
         usdc = _make_usdc()
 
-        pool = UniswapV2Pool(
+        pool = make_v2_pool(
             address=WETH_USDC_V2_POOL,
             chain_id=1,
             token0=weth,
@@ -92,7 +94,7 @@ class TestV2PoolIOFreeConstructor:
         weth = _make_weth()
         usdc = _make_usdc()
 
-        pool = UniswapV2Pool(
+        pool = make_v2_pool(
             address=WETH_USDC_V2_POOL,
             chain_id=1,
             token0=weth,
@@ -128,7 +130,7 @@ class TestV2PoolIOFreeConstructor:
         weth = _make_weth()
         usdc = _make_usdc()
 
-        pool = UniswapV2Pool(
+        pool = make_v2_pool(
             address=WETH_USDC_V2_POOL,
             chain_id=1,
             token0=weth,
@@ -145,11 +147,18 @@ class TestV2PoolIOFreeConstructor:
         assert pool.fee_token1 == Fraction(2, 1000)
 
     def test_io_free_pool_pickle(self) -> None:
-        """I/O-free pools can be pickled and unpickled."""
+        """I/O-free pools pickle their immutable identity (transient — slice 15).
+
+        The ``PyLiquidityPool`` handle is not picklable, so ``__getstate__``
+        drops it: an unpickled pool is a detached snapshot. Mutable state
+        reads (reserves/update_block) raise ``AttributeError`` on a detached
+        pool (no ``_py_pool``); only immutable identity survives the round-trip.
+        Slice 15 (TODO-cddc72d1) retires pickle entirely and deletes this test.
+        """
         weth = _make_weth()
         usdc = _make_usdc()
 
-        pool = UniswapV2Pool(
+        pool = make_v2_pool(
             address=WETH_USDC_V2_POOL,
             chain_id=1,
             token0=weth,
@@ -165,9 +174,11 @@ class TestV2PoolIOFreeConstructor:
         pickled = pickle.dumps(pool)
         unpickled = pickle.loads(pickled)
 
+        # Immutable identity survives; reserves require the Rust handle (dropped).
         assert unpickled.address == pool.address
-        assert unpickled.reserves_token0 == pool.reserves_token0
-        assert unpickled.reserves_token1 == pool.reserves_token1
+        assert not hasattr(unpickled, "_py_pool")
+        with pytest.raises(AttributeError):
+            _ = unpickled.reserves_token0
 
 
 class TestBotBuildV2Pool:
@@ -321,7 +332,7 @@ class TestV2PoolTrackerWithBot:
         # We'll verify this by mocking bot.build_pool
         weth = _make_weth()
         usdc = _make_usdc()
-        mock_pool = UniswapV2Pool(
+        mock_pool = make_v2_pool(
             address=WETH_USDC_V2_POOL,
             chain_id=1,
             token0=weth,

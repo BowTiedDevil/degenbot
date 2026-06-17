@@ -26,6 +26,7 @@ from fractions import Fraction
 import pytest
 
 from degenbot.arbitrage._legacy import _UniswapLpCycle as UniswapLpCycle
+from tests.helpers.v2_pool_factory import make_v2_pool
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions.arbitrage import ArbitrageError, RateOfExchangeBelowMinimum
 from degenbot.exceptions.base import DegenbotValueError
@@ -78,7 +79,7 @@ def ether_placeholder() -> FakeToken:
 @pytest.fixture
 def wbtc_weth_v2_lp(wbtc: FakeToken, weth: FakeToken) -> UniswapV2Pool:
     """V2 WBTC/WETH pool matching the integration test fixture."""
-    return UniswapV2Pool(
+    return make_v2_pool(
         address=WBTC_WETH_V2_POOL_ADDRESS,
         token0=wbtc,  # type: ignore[arg-type]
         token1=weth,  # type: ignore[arg-type]
@@ -236,7 +237,7 @@ class TestDirectionDetection:
         Mirrors the logic from test_pre_calc_check in test_uniswap_lp_cycle.py.
         """
         # Pool A: 16000 WBTC / 2500 WETH (WETH cheaper → buy WETH here)
-        pool_a = UniswapV2Pool(
+        pool_a = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             token0=wbtc,
             token1=weth,
@@ -250,7 +251,7 @@ class TestDirectionDetection:
         )
 
         # Pool B: 15000 WBTC / 2500 WETH (WETH more expensive)
-        pool_b = UniswapV2Pool(
+        pool_b = make_v2_pool(
             address="0x0000000000000000000000000000000000000002",
             token0=wbtc,
             token1=weth,
@@ -282,7 +283,7 @@ class TestDirectionDetection:
 
         Mirrors test_pre_calc_check in test_uniswap_lp_cycle.py.
         """
-        pool_a = UniswapV2Pool(
+        pool_a = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             token0=wbtc,
             token1=weth,
@@ -294,7 +295,7 @@ class TestDirectionDetection:
         state_block=1,
 
         )
-        pool_b = UniswapV2Pool(
+        pool_b = make_v2_pool(
             address="0x0000000000000000000000000000000000000002",
             token0=wbtc,
             token1=weth,
@@ -328,7 +329,7 @@ class TestDirectionDetection:
         Mirrors test_v2_v4_calculation from test_uniswap_2pool_cycle.py.
         """
         # Create a second V2 pool with more WBTC (cheaper WBTC)
-        pool_b = UniswapV2Pool(
+        pool_b = make_v2_pool(
             address="0xBb2b8038a1640196FbE3e38816F3e67Cba72D941",
             token0=wbtc,
             token1=weth,
@@ -360,7 +361,7 @@ class TestDirectionDetection:
         Mirrors test_v2_v4_calculation_rejects_unprofitable_opportunity.
         """
         # Pool A: 16000 WBTC / 2500 WETH (WETH cheaper here)
-        pool_a = UniswapV2Pool(
+        pool_a = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             token0=wbtc,
             token1=weth,
@@ -373,7 +374,7 @@ class TestDirectionDetection:
 
         )
         # Pool B: 15000 WBTC / 2500 WETH (WETH more expensive here)
-        pool_b = UniswapV2Pool(
+        pool_b = make_v2_pool(
             address="0x0000000000000000000000000000000000000002",
             token0=wbtc,
             token1=weth,
@@ -425,7 +426,7 @@ class TestV2V2Arbitrage:
         weth: FakeToken,
     ):
         """V2-V2 arbitrage with full-precision reserves produces a positive profit."""
-        pool_a = UniswapV2Pool(
+        pool_a = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             token0=usdc,
             token1=weth,
@@ -437,7 +438,7 @@ class TestV2V2Arbitrage:
         state_block=1,
 
         )
-        pool_b = UniswapV2Pool(
+        pool_b = make_v2_pool(
             address="0x0000000000000000000000000000000000000002",
             token0=usdc,
             token1=weth,
@@ -469,7 +470,7 @@ class TestV2V2Arbitrage:
 
         Mirrors test_arbitrage_with_overrides from test_uniswap_lp_cycle.py.
         """
-        pool_a = UniswapV2Pool(
+        pool_a = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             token0=usdc,
             token1=weth,
@@ -481,7 +482,7 @@ class TestV2V2Arbitrage:
         state_block=1,
 
         )
-        pool_b = UniswapV2Pool(
+        pool_b = make_v2_pool(
             address="0x0000000000000000000000000000000000000002",
             token0=usdc,
             token1=weth,
@@ -523,7 +524,7 @@ class TestV2V2Arbitrage:
         weth: FakeToken,
     ):
         """Only one direction is profitable for a given pair of pools."""
-        pool_a = UniswapV2Pool(
+        pool_a = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             token0=usdc,
             token1=weth,
@@ -535,7 +536,7 @@ class TestV2V2Arbitrage:
         state_block=1,
 
         )
-        pool_b = UniswapV2Pool(
+        pool_b = make_v2_pool(
             address="0x0000000000000000000000000000000000000002",
             token0=usdc,
             token1=weth,
@@ -688,7 +689,7 @@ class TestEdgeCases:
 
         Mirrors test_arb_calculation_pre_checks_v2.
         """
-        pool = UniswapV2Pool(
+        pool = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             token0=wbtc,
             token1=weth,
@@ -702,7 +703,7 @@ class TestEdgeCases:
         )
 
         # Zero-reserve pool should not be viable
-        pool_b = UniswapV2Pool(
+        pool_b = make_v2_pool(
             address="0x0000000000000000000000000000000000000002",
             token0=wbtc,
             token1=weth,
@@ -761,7 +762,7 @@ class TestV2PoolAccuracy:
         weth: FakeToken,
     ):
         """UniswapV2Pool swap calculation matches manual V2 formula."""
-        pool = UniswapV2Pool(
+        pool = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             token0=usdc,
             token1=weth,
@@ -796,7 +797,7 @@ class TestV2PoolAccuracy:
         weth: FakeToken,
     ):
         """UniswapV2Pool reverse swap (WETH for USDC) matches manual formula."""
-        pool = UniswapV2Pool(
+        pool = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             token0=usdc,
             token1=weth,
@@ -832,7 +833,7 @@ class TestV2PoolAccuracy:
         weth: FakeToken,
     ):
         """UniswapV2Pool exchange rate matches manual calculation."""
-        pool = UniswapV2Pool(
+        pool = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             token0=usdc,
             token1=weth,

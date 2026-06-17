@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from degenbot.arbitrage.optimizers.hop_types import SolverMethod
+from tests.helpers.v2_pool_factory import make_v2_pool
 from degenbot.arbitrage.optimizers.solver import MobiusSolver, NewtonSolver
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.arbitrage.path.types import SwapVector
@@ -171,23 +172,23 @@ ADDR_POOL2 = "0x00000000000000000000000000000000000000a2"
 
 @pytest.fixture
 def t0() -> FakeToken:
-    return FakeToken("0x0000000000000000000000000000000000000T0", decimals=18)
+    return FakeToken("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", decimals=18)
 
 
 @pytest.fixture
 def t1() -> FakeToken:
-    return FakeToken("0x0000000000000000000000000000000000000T1", decimals=18)
+    return FakeToken("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", decimals=18)
 
 
 @pytest.fixture
 def t2() -> FakeToken:
-    return FakeToken("0x0000000000000000000000000000000000000T2", decimals=18)
+    return FakeToken("0xcccccccccccccccccccccccccccccccccccccccc", decimals=18)
 
 
 @pytest.fixture
 def v2_pool_0(t0: FakeToken, t1: FakeToken) -> UniswapV2Pool:
     """Pool 0: t0 -> t1."""
-    return UniswapV2Pool(
+    return make_v2_pool(
         address=ADDR_POOL0,  # type: ignore[arg-type]
         token0=t0,  # type: ignore[arg-type]
         token1=t1,  # type: ignore[arg-type]
@@ -203,7 +204,7 @@ def v2_pool_0(t0: FakeToken, t1: FakeToken) -> UniswapV2Pool:
 @pytest.fixture
 def v2_pool_1(t1: FakeToken, t2: FakeToken) -> UniswapV2Pool:
     """Pool 1: t1 -> t2."""
-    return UniswapV2Pool(
+    return make_v2_pool(
         address=ADDR_POOL1,  # type: ignore[arg-type]
         token0=t1,  # type: ignore[arg-type]
         token1=t2,  # type: ignore[arg-type]
@@ -219,7 +220,7 @@ def v2_pool_1(t1: FakeToken, t2: FakeToken) -> UniswapV2Pool:
 @pytest.fixture
 def v2_pool_2(t2: FakeToken, t0: FakeToken) -> UniswapV2Pool:
     """Pool 2: t2 -> t0 (closes the cycle)."""
-    return UniswapV2Pool(
+    return make_v2_pool(
         address=ADDR_POOL2,  # type: ignore[arg-type]
         token0=t2,  # type: ignore[arg-type]
         token1=t0,  # type: ignore[arg-type]
@@ -348,7 +349,7 @@ class TestV2OnlyEquivalence:
         New: raises OptimizationError (from Solver)
         """
         # Symmetric pools with identical prices — no arb opportunity
-        pool_0 = UniswapV2Pool(
+        pool_0 = make_v2_pool(
             address="0x00000000000000000000000000000000000000c0",  # type: ignore[arg-type]
             token0=t0,  # type: ignore[arg-type]
             token1=t1,  # type: ignore[arg-type]
@@ -359,7 +360,7 @@ class TestV2OnlyEquivalence:
             reserves_token1=100 * 10**18,
             state_block=1,
         )
-        pool_1 = UniswapV2Pool(
+        pool_1 = make_v2_pool(
             address="0x00000000000000000000000000000000000000c1",  # type: ignore[arg-type]
             token0=t1,  # type: ignore[arg-type]
             token1=t0,  # type: ignore[arg-type]
@@ -461,7 +462,7 @@ class TestTwoHopEquivalence:
         """For a 2-hop V2 path, MobiusSolver (closed-form) and NewtonSolver
         (iterative) should converge to the same optimal integer input.
         """
-        pool_0 = UniswapV2Pool(
+        pool_0 = make_v2_pool(
             address="0x00000000000000000000000000000000000000d0",  # type: ignore[arg-type]
             token0=t0,  # type: ignore[arg-type]
             token1=t1,  # type: ignore[arg-type]
@@ -472,7 +473,7 @@ class TestTwoHopEquivalence:
             reserves_token1=200 * 10**18,
             state_block=1,
         )
-        pool_1 = UniswapV2Pool(
+        pool_1 = make_v2_pool(
             address="0x00000000000000000000000000000000000000d1",  # type: ignore[arg-type]
             token0=t1,  # type: ignore[arg-type]
             token1=t0,  # type: ignore[arg-type]

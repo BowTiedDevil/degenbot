@@ -196,17 +196,26 @@ class TestV2PoolStateManagement:
         self,
         offline_wbtc_weth_v2_pool: UniswapV2Pool,
     ):
-        """Test that offline pool can be pickled."""
+        """Test that offline pool can be pickled (transient — slice 15).
+
+        The ``PyLiquidityPool`` handle is not picklable, so ``__getstate__``
+        drops it: an unpickled pool is a detached snapshot. Mutable state reads
+        raise ``AttributeError`` (no ``_py_pool``); only immutable identity
+        survives. Tokens are likewise detached (slice-3's ``Erc20Token`` hack),
+        so their metadata reads raise too. Slice 15 (TODO-cddc72d1) retires
+        pickle entirely and deletes this test.
+        """
         pool = offline_wbtc_weth_v2_pool
 
         # Should not raise
         pickled = pickle.dumps(pool)
         unpickled = pickle.loads(pickled)
 
-        # Verify basic attributes
+        # Immutable identity survives; reserves require the Rust handle (dropped).
         assert unpickled.address == pool.address
-        assert unpickled.token0.address == pool.token0.address
-        assert unpickled.token1.address == pool.token1.address
+        assert not hasattr(unpickled, "_py_pool")
+        with pytest.raises(AttributeError):
+            _ = unpickled.reserves_token0
 
     def test_external_update(
         self,

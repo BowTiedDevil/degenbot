@@ -386,6 +386,20 @@ impl Bot {
         }
     }
 
+    /// Snapshot a V2 pool's current mutable state (reserves + block) under one
+    /// read guard (ADR-005 slice 4 step 3). Returns `None` if the pool is not
+    /// registered or isn't a V2 pool (no V2 state to read).
+    ///
+    /// The Python companion's `state` property + `simulate_*` methods build a
+    /// `UniswapV2PoolState` from this single snapshot so a Rust-side
+    /// `sync_reserves` (pump update) can't interleave between separate reads —
+    /// the `StateCache.lock()` atomicity the drop-`StateCache` refactor loses.
+    #[must_use]
+    pub fn v2_snapshot(&self, pool_id: u64) -> Option<(U256, U256, u64)> {
+        let state = self.get_v2_pool_state(pool_id)?;
+        Some((state.reserve0, state.reserve1, state.update_block))
+    }
+
     /// Update a V3 pool's state from a Swap event.
     ///
     /// Looks up the pool by contract address. No-op if the pool is not registered.

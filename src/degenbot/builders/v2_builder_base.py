@@ -66,6 +66,7 @@ class V2BuilderBase:
         self._pools = ctx.pools
         self._tokens = ctx.tokens
         self._erc20_builder = ctx.erc20_builder
+        self._py_bot = ctx.py_bot
 
     @staticmethod
     def decode_immutable_data(
