@@ -274,4 +274,12 @@ def test_arb_path_build_solve_input_runs_without_rustpoolcache():
 [x] Slice 5: PyToken completion + PyBotCore finalization — **done**
     - `PyToken` (the stub returning only `address`) completed with `decimals`/`symbol`/`name` getters that read Rust-owned `TokenEntry` metadata through `BotCore::token_entry(&Address) -> Option<&TokenEntry>` (T3 decision realized). `PyBotCore.register_token` now returns the `PyToken` handle (matching `register_v2_pool`/`register_v3_pool`/`register_v4_pool`); `PyBotCore.get_token` returns `Option<PyToken>` as before. `PyToken`'s `address` getter preserved (alloy's checksum case).
     - Python `TestTokenHandle.test_register_and_get_token` extended to assert `PyToken.decimals`/`symbol`/`name`/`address` + `register_token` returning the handle. 460 Rust + 345 Python optimizer tests + clippy clean.
-[ ] Slice 6: Validate and clean up (lint, test-all, CONTEXT sync, ADR-003 status flip)
+[x] Slice 6: Validate and clean up — **done**
+    - `just lint` (Rust clippy + Python ruff + ty + markdownlint) all pass.
+    - `just test-all`: 460 Rust + 3022 Python tests pass.
+    - `rust/CONTEXT.md`: `BotCore` + `Reorg Journal` terms flipped from 'V3/V4 pending' to 'V2/V3/V4 live, engines dissolved, full V3BlockDelta restore semantics'.
+    - `CONTEXT-MAP.md` Rust Extension bullet synced (engines dissolved, legacy retired).
+    - `src/degenbot/arbitrage/CONTEXT.md`: `Pool Cache Adapter` term marked *(removed)*.
+    - ADR-003 Status flipped `proposed → accepted`.
+    - Standalone `LiquidityMap` generic extraction deferred (design rationale recorded: no abstraction against a sample of one — the inline-`PoolEntry`+`BotCore::apply_*` pattern suited V2/V3/V4; deferred until Curve ports as a third family).
+    - `Bot`/`PoolRegistry`-wrapping-`PyPool` migration tracked as a follow-up in `TODO-69cc2bea` (intentionally out of Plan 100 scope — ADR-003 records the state-and-concerns decisions, the Python session-class migration is a separate ADR).
