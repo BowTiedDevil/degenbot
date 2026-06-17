@@ -9,7 +9,7 @@ use alloy::dyn_abi::{DynSolType, DynSolValue};
 use alloy::primitives::{Address, Bytes, B256, U256};
 use serde::{Deserialize, Serialize};
 
-use super::{HopType, UniswapEngine};
+use super::{HopType, MixedPoolRef, UniswapEngine};
 
 /// A snapshot of a single pool's state, formatted for diagnostics.
 ///
@@ -700,62 +700,7 @@ impl UniswapEngine {
         snapshot.path_type = type_tags.join("-");
 
         for (position, pool_ref) in path.pools.iter().enumerate() {
-            let engine_state = match pool_ref.hop_type {
-                HopType::V2 => core.get_v2_pool_state(pool_ref.pool_key).map(|state| {
-                    let (reserve_in, reserve_out, gamma_numer, fee_denom) = if pool_ref.zero_for_one
-                    {
-                        (
-                            state.reserve0,
-                            state.reserve1,
-                            state.fee_token0.0,
-                            state.fee_token0.1,
-                        )
-                    } else {
-                        (
-                            state.reserve1,
-                            state.reserve0,
-                            state.fee_token1.0,
-                            state.fee_token1.1,
-                        )
-                    };
-                    DiagnosticPoolState::V2 {
-                        address: fmt_addr(state.address),
-                        reserve_in: fmt_u256(reserve_in),
-                        reserve_out: fmt_u256(reserve_out),
-                        fee_denom: format!("0x{fee_denom:x}"),
-                        gamma_numer: format!("0x{gamma_numer:x}"),
-                    }
-                }),
-                HopType::V3 => {
-                    core.get_v3_pool(pool_ref.pool_key)
-                        .map(|state| DiagnosticPoolState::V3 {
-                            address: fmt_addr(state.address),
-                            token0: fmt_addr(state.token0),
-                            token1: fmt_addr(state.token1),
-                            fee: state.fee,
-                            tick_spacing: state.tick_spacing,
-                            sqrt_price_x96: fmt_u256(state.sqrt_price_x96),
-                            tick: state.tick,
-                            liquidity: format!("0x{:x}", state.liquidity),
-                        })
-                }
-                HopType::V4 => {
-                    core.get_v4_pool(pool_ref.pool_key)
-                        .map(|state| DiagnosticPoolState::V4 {
-                            pool_manager: fmt_addr(state.pool_manager),
-                            pool_id: format!("0x{}", alloy::hex::encode(state.pool_id)),
-                            currency0: state.pool_key.currency0.to_checksum(None),
-                            currency1: state.pool_key.currency1.to_checksum(None),
-                            fee: state.pool_key.fee,
-                            tick_spacing: state.pool_key.tick_spacing,
-                            hook_flags: 0,
-                            hooks: state.pool_key.hooks.to_checksum(None),
-                            sqrt_price_x96: fmt_u256(state.sqrt_price_x96),
-                            tick: state.tick,
-                            liquidity: format!("0x{:x}", state.liquidity),
-                        })
-                }
-            };
+            let engine_state = build_engine_pool_state(&core, pool_ref);
             let Some(engine_state) = engine_state else {
                 // Pool referenced by the path is missing from the sub-engine.
                 // This is itself a diagnostic signal; record a placeholder
@@ -788,6 +733,70 @@ impl UniswapEngine {
         }
 
         Some(snapshot)
+    }
+}
+
+/// Build the per-hop [`DiagnosticPoolState`] from a locked [`Bot`] snapshot.
+///
+/// Returns `None` when the pool referenced by `pool_ref` is absent from the
+/// sub-engine — the caller records a "missing pool" placeholder in that case
+/// so the rest of the hops remain visible.
+fn build_engine_pool_state(
+    core: &crate::bot_core::Bot,
+    pool_ref: &MixedPoolRef,
+) -> Option<DiagnosticPoolState> {
+    match pool_ref.hop_type {
+        HopType::V2 => core.get_v2_pool_state(pool_ref.pool_key).map(|state| {
+            let (reserve_in, reserve_out, gamma_numer, fee_denom) = if pool_ref.zero_for_one {
+                (
+                    state.reserve0,
+                    state.reserve1,
+                    state.fee_token0.0,
+                    state.fee_token0.1,
+                )
+            } else {
+                (
+                    state.reserve1,
+                    state.reserve0,
+                    state.fee_token1.0,
+                    state.fee_token1.1,
+                )
+            };
+            DiagnosticPoolState::V2 {
+                address: fmt_addr(state.address),
+                reserve_in: fmt_u256(reserve_in),
+                reserve_out: fmt_u256(reserve_out),
+                fee_denom: format!("0x{fee_denom:x}"),
+                gamma_numer: format!("0x{gamma_numer:x}"),
+            }
+        }),
+        HopType::V3 => core
+            .get_v3_pool(pool_ref.pool_key)
+            .map(|state| DiagnosticPoolState::V3 {
+                address: fmt_addr(state.address),
+                token0: fmt_addr(state.token0),
+                token1: fmt_addr(state.token1),
+                fee: state.fee,
+                tick_spacing: state.tick_spacing,
+                sqrt_price_x96: fmt_u256(state.sqrt_price_x96),
+                tick: state.tick,
+                liquidity: format!("0x{:x}", state.liquidity),
+            }),
+        HopType::V4 => core
+            .get_v4_pool(pool_ref.pool_key)
+            .map(|state| DiagnosticPoolState::V4 {
+                pool_manager: fmt_addr(state.pool_manager),
+                pool_id: format!("0x{}", alloy::hex::encode(state.pool_id)),
+                currency0: state.pool_key.currency0.to_checksum(None),
+                currency1: state.pool_key.currency1.to_checksum(None),
+                fee: state.pool_key.fee,
+                tick_spacing: state.pool_key.tick_spacing,
+                hook_flags: 0,
+                hooks: state.pool_key.hooks.to_checksum(None),
+                sqrt_price_x96: fmt_u256(state.sqrt_price_x96),
+                tick: state.tick,
+                liquidity: format!("0x{:x}", state.liquidity),
+            }),
     }
 }
 

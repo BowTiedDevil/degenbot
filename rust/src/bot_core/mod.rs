@@ -36,7 +36,7 @@ pub use v3_state::{
 };
 pub use v4_state::{
     v4_simulate_swap, BufferedV4LiquidityUpdate, RegisterV4PoolParams, V4PoolKey, V4PoolState,
-    V4SwapUpdate, AMOUNT_MODIFYING_HOOK_MASK, V4_DYNAMIC_FEE_FLAG,
+    V4StateSync, V4SwapUpdate, AMOUNT_MODIFYING_HOOK_MASK, V4_DYNAMIC_FEE_FLAG,
 };
 
 // Re-export the ADR-004 typed TickMap boundary trait (V3 + V4 impls both live
@@ -878,8 +878,6 @@ impl Bot {
             .count()
     }
 
-    /// Number of registered V4 pools.
-
     /// Check if a pool ID is registered.
     #[must_use]
     pub fn has_pool(&self, pool_id: u64) -> bool {
@@ -1150,6 +1148,12 @@ impl Bot {
     ///
     /// ADR-003 hook filter inline: pools with amount-modifying hooks or dynamic
     /// fees are rejected. Returns `Err(String)` on rejection.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the pool has amount-modifying hooks
+    /// (`hook_flags & 0xCC != 0`), uses a dynamic fee (`fee == 0x100000`),
+    /// or a pool with the same `(pool_manager, pool_id)` is already registered.
     pub fn register_v4_pool(&mut self, params: &RegisterV4PoolParams) -> Result<u64, String> {
         if (params.hook_flags & AMOUNT_MODIFYING_HOOK_MASK) != 0 {
             return Err(format!(
@@ -1164,12 +1168,13 @@ impl Bot {
         }
 
         let key = (params.pool_manager, params.pool_id);
-        assert!(
-            !self.v4_pool_ids.contains_key(&key),
-            "V4 pool already registered: pool_manager={}, pool_id=0x{}",
-            params.pool_manager,
-            alloy::hex::encode(params.pool_id),
-        );
+        if self.v4_pool_ids.contains_key(&key) {
+            return Err(format!(
+                "V4 pool already registered: pool_manager={}, pool_id=0x{}",
+                params.pool_manager,
+                alloy::hex::encode(params.pool_id),
+            ));
+        }
 
         let pool_id = self.next_pool_id;
         self.next_pool_id += 1;
@@ -1453,11 +1458,7 @@ impl Bot {
         &mut self,
         pool_manager: Address,
         pool_id: crate::bot_core::v4_swap_decoder::PoolId,
-        sqrt_price_x96: U256,
-        liquidity: u128,
-        tick: i32,
-        tick_data: HashMap<i32, TickInfo>,
-        update_block: u64,
+        update: V4StateSync,
     ) {
         let Some(&id) = self.v4_pool_ids.get(&(pool_manager, pool_id)) else {
             return;
@@ -1465,11 +1466,11 @@ impl Bot {
         let Some(PoolEntry::V4(state)) = self.pools.get_mut(&id) else {
             return;
         };
-        state.sqrt_price_x96 = sqrt_price_x96;
-        state.liquidity = liquidity;
-        state.tick = tick;
-        state.tick_data = tick_data;
-        state.update_block = update_block;
+        state.sqrt_price_x96 = update.sqrt_price_x96;
+        state.liquidity = update.liquidity;
+        state.tick = update.tick;
+        state.tick_data = update.tick_data;
+        state.update_block = update.update_block;
         state.invalidate_tick_range_cache();
     }
 

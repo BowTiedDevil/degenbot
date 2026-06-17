@@ -106,6 +106,25 @@ pub struct RegisterV4PoolParams {
     pub coverage: PoolTickCoverage,
 }
 
+/// Full V4 state overwrite applied by [`crate::bot_core::Bot::sync_v4_pool_state`].
+///
+/// Groups the five mutable state fields so `sync_v4_pool_state` stays under
+/// clippy's argument limit — the pool is identified separately by
+/// `(pool_manager, pool_id)`.
+#[derive(Clone, Debug)]
+pub struct V4StateSync {
+    /// New sqrt price (Q64.96).
+    pub sqrt_price_x96: U256,
+    /// New active in-range liquidity.
+    pub liquidity: u128,
+    /// Current tick.
+    pub tick: i32,
+    /// Full tick-data overwrite (`liquidity_gross`/`liquidity_net`).
+    pub tick_data: HashMap<i32, TickInfo>,
+    /// Block number of this state update.
+    pub update_block: u64,
+}
+
 /// A pre-decoded V4 Swap update for testing without log decoding.
 #[derive(Clone, Debug)]
 pub struct V4SwapUpdate {
