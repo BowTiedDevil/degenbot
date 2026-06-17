@@ -794,164 +794,6 @@ class AsyncContract:
         block_number: int | None = None,
     ) -> Coroutine[Any, Any, list[list[str]]]: ...
 
-# ------------------------------------------------------------------
-# Möbius optimizer types
-# ------------------------------------------------------------------
-
-class RustHopState:
-    """Pool hop state with reserves and fee for float-based Möbius solving."""
-
-    def __init__(self, reserve_in: float, reserve_out: float, fee: float) -> None: ...
-    @property
-    def reserve_in(self) -> float: ...
-    @property
-    def reserve_out(self) -> float: ...
-    @property
-    def fee(self) -> float: ...
-
-class RustV3TickRangeHop:
-    """Uniswap V3 tick range state for piecewise Möbius solving."""
-
-    def __init__(
-        self,
-        liquidity: float,
-        sqrt_price_current: float,
-        sqrt_price_lower: float,
-        sqrt_price_upper: float,
-        fee: float,
-        zero_for_one: bool,
-    ) -> None: ...
-    @property
-    def liquidity(self) -> float: ...
-    @property
-    def sqrt_price_current(self) -> float: ...
-    @property
-    def sqrt_price_lower(self) -> float: ...
-    @property
-    def sqrt_price_upper(self) -> float: ...
-    @property
-    def fee(self) -> float: ...
-    @property
-    def zero_for_one(self) -> bool: ...
-    def alpha(self) -> float: ...
-    def beta(self) -> float: ...
-    def to_hop_state(self) -> RustHopState: ...
-    def contains_sqrt_price(self, sqrt_price: float) -> bool: ...
-    def max_gross_input_in_range(self) -> float: ...
-
-class RustV3TickRangeSequence:
-    """Sequence of adjacent V3 tick ranges for multi-range solving."""
-
-    def __init__(self, ranges: list[RustV3TickRangeHop]) -> None: ...
-    def __len__(self) -> int: ...
-    def __getitem__(self, idx: int) -> RustV3TickRangeHop: ...
-    def compute_crossing(self, k: int) -> RustTickRangeCrossing: ...
-
-class RustTickRangeCrossing:
-    """Tick range crossing data for piecewise Möbius calculation."""
-
-    def __init__(
-        self,
-        crossing_gross_input: float,
-        crossing_output: float,
-        ending_range: RustV3TickRangeHop,
-    ) -> None: ...
-    @property
-    def crossing_gross_input(self) -> float: ...
-    @property
-    def crossing_output(self) -> float: ...
-    @property
-    def ending_range(self) -> RustV3TickRangeHop: ...
-
-class RustArbResult:
-    """Result from unified arbitrage solver (RustArbSolver)."""
-
-    @property
-    def optimal_input(self) -> float: ...
-    @property
-    def profit(self) -> float: ...
-    @property
-    def optimal_input_int(self) -> int | None: ...
-    @property
-    def profit_int(self) -> int | None: ...
-    @property
-    def iterations(self) -> int: ...
-    @property
-    def success(self) -> bool: ...
-    @property
-    def supported(self) -> bool: ...
-    @property
-    def method(self) -> int: ...
-
-class RustArbSolver:
-    """Unified arbitrage solver with automatic method selection."""
-
-    def __init__(self) -> None: ...
-    def solve(
-        self,
-        hops: list[RustHopState | RustIntHopState | tuple[float, float, float]],
-        v3_sequences: list[tuple[int, RustV3TickRangeSequence]] | None = None,
-        max_input: float | None = None,
-        max_candidates: int = 10,
-    ) -> RustArbResult: ...
-    def solve_raw(
-        self,
-        int_hops_flat: list[int],
-        max_input: float | None = None,
-    ) -> RustArbResult: ...
-
-class RustPoolCache:
-    """Cached pool state storage for fast solve-by-ID operations."""
-
-    def __init__(self) -> None: ...
-    def insert(
-        self,
-        pool_id: int,
-        reserve_in: int,
-        reserve_out: int,
-        gamma_numer: int,
-        fee_denom: int,
-    ) -> None: ...
-    def remove(self, pool_id: int) -> bool: ...
-    def solve(self, path: list[int], max_input: float | None = None) -> RustArbResult: ...
-    def contains(self, pool_id: int) -> bool: ...
-    def register_path(self, pool_ids: list[int]) -> int: ...
-    def update_path(self, path_id: int) -> bool: ...
-    def update_all_paths(self) -> int: ...
-    def remove_path(self, path_id: int) -> bool: ...
-    def solve_registered(
-        self, path_ids: list[int], max_input: float | None = None
-    ) -> list[RustArbResult]: ...
-    def solve_registered_ints(
-        self, path_ids: list[int], max_input: float | None = None
-    ) -> list[int]: ...
-    def solve_batch(
-        self, paths: list[list[int]], max_input: float | None = None
-    ) -> list[RustArbResult]: ...
-    def __len__(self) -> int: ...
-    def __bool__(self) -> bool: ...
-
-class RustIntHopState:
-    """Integer-based hop state for EVM-exact Möbius solving."""
-
-    def __init__(
-        self,
-        reserve_in: int,
-        reserve_out: int,
-        gamma_numer: int,
-        fee_denom: int,
-    ) -> None: ...
-    @property
-    def reserve_in(self) -> int: ...
-    @property
-    def reserve_out(self) -> int: ...
-    @property
-    def gamma_numer(self) -> int: ...
-    @property
-    def fee_numer(self) -> int: ...
-    @property
-    def fee_denom(self) -> int: ...
-
 class UniswapArbEngine:
     """Rust-side engine for Uniswap arbitrage path solving."""
 
@@ -971,28 +813,6 @@ class UniswapArbEngine:
     ) -> None: ...
     def finish_v4_snapshot(self) -> None: ...
 
-class RustIntMobiusResult:
-    """Result from integer Möbius solver."""
-
-    @property
-    def optimal_input(self) -> int: ...
-    @property
-    def profit(self) -> int: ...
-    @property
-    def iterations(self) -> int: ...
-    @property
-    def success(self) -> bool: ...
-
-def py_int_mobius_solve(
-    hops: list[RustIntHopState],
-) -> RustIntMobiusResult: ...
-def py_int_simulate_path(x: int, hops: list[RustIntHopState]) -> int: ...
-def py_mobius_refine_int(
-    x_approx: float,
-    hops: list[RustIntHopState],
-    max_input: float | None = None,
-) -> RustIntMobiusResult: ...
-
 __all__ = [
     "AlloyProvider",
     "AlloySubscription",
@@ -1002,14 +822,6 @@ __all__ = [
     "Contract",
     "LogData",
     "LogFilter",
-    "RustArbResult",
-    "RustArbSolver",
-    "RustHopState",
-    "RustIntMobiusResult",
-    "RustPoolCache",
-    "RustTickRangeCrossing",
-    "RustV3TickRangeHop",
-    "RustV3TickRangeSequence",
     "TransactionData",
     "TransactionReceiptData",
     "UniswapArbEngine",
@@ -1039,8 +851,5 @@ __all__ = [
     "get_function_selector",
     "get_sqrt_ratio_at_tick",
     "get_tick_at_sqrt_ratio",
-    "py_int_mobius_solve",
-    "py_int_simulate_path",
-    "py_mobius_refine_int",
     "to_checksum_address",
 ]

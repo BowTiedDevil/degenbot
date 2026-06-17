@@ -263,6 +263,13 @@ def test_arb_path_build_solve_input_runs_without_rustpoolcache():
     - **Dual-orientation retired**: V4 single `pool_id` per `(pool_manager, pool_id)`; orientation derived at solve from `zero_for_one` (matching S1/S2a V2/V3).
     - `V4BlockEngine` + `V4EnginePump` (orphan alternative entry point, zero non-test callers) **deleted**; their module declarations removed. The `liquidity_verifier::V4PoolState` import re-pointed to `crate::bot_core`.
     - Engine layer fully re-pointed through `core.lock()` (event_routing, solver_dispatch, lifecycle, diagnostic, py_binding, tests). 460 Rust + 352 Python optimizer tests + clippy clean.
-[ ] Slice 4: Legacy retirement (delete RustPoolCache + ArbPoolCacheAdapter + ArbSolver registered-path surface)
+[x] Slice 4: Legacy retirement (delete RustPoolCache + ArbPoolCacheAdapter + ArbSolver registered-path surface) — **done**
+    - Rust: `rust/src/optimizers/mobius_py.rs` (entire file — exported only `PyArbResult`/`PyPoolCache`/`PyIntHopState`) + its mod declaration + `lib.rs` `add_mobius_module(m)` registration deleted.
+    - Python: `src/degenbot/arbitrage/optimizers/pool_cache_adapter.py` deleted; `solver.py`'s registered-path surface (`register_pool`, `update_pool`, `remove_pool`, `register_path`, `update_path`, `update_all_paths`, `remove_path`, `solve_registered`, `solve_registered_ints`, `solve_cached`, `solve_cached_batch`, `get_pool_cache`) + `_pool_cache`/`_next_pool_id`/`_pool_id_map`/`_RUST_METHOD_MAP` fields + `from degenbot.degenbot_rs import RustPoolCache as _RustPoolCache` deleted. `ArbSolver.__init__` + `ArbSolver.solve(SolveInput)` + `_RUST_MAP` etc. retained (the kept pure-Python f64 path).
+    - `CacheablePool` protocol + V3/Aerodrome `reserves_for_cache`/`fee_for_cache` methods deleted (verified: sole consumer was the deleted `ArbPoolCacheAdapter`). V4/Camelot don't define separate variants.
+    - `ArbitragePath` docstrings updated (RustPoolCache references → "ArbSolver no longer carries a RustPoolCache under ADR-003 Slice 4").
+    - `degenbot_rs.pyi` legacy stubs removed (RustPoolCache/RustIntHopState/RustArbResult/RustArbSolver/RustHopState/RustV3TickRangeHop/RustV3TickRangeSequence/RustTickRangeCrossing/RustIntMobiusResult + their methods + the 3 module-level fns + `__all__` entries).
+    - `tests/arbitrage/test_optimizers/test_pool_cache_adapter.py` deleted (tested deleted code).
+    - 460 Rust + 345 Python optimizer tests + ruff + ty + clippy + markdownlint all green.
 [ ] Slice 5: PyToken completion + PyBotCore finalization
 [ ] Slice 6: Validate and clean up (lint, test-all, CONTEXT sync, ADR-003 status flip)

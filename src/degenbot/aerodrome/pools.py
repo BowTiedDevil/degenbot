@@ -443,24 +443,6 @@ class AerodromeV2Pool(
             final_state=initial_state,
         )
 
-    def reserves_for_cache(self) -> tuple[int, int]:
-        """Return (reserve_token0, reserve_token1) for the Rust solver cache.
-
-        Returns:
-            The computed value.
-
-        """
-        return (self.state.reserves_token0, self.state.reserves_token1)
-
-    def fee_for_cache(self) -> Fraction:
-        """Return the pool fee for the Rust solver cache.
-
-        Returns:
-            The computed value.
-
-        """
-        return self._fee
-
     def to_hop_state(
         self,
         zero_for_one: bool,  # noqa: FBT001

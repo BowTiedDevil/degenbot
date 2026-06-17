@@ -10,7 +10,6 @@
 //! - [`mobius_int`] — U512/U256 integer-exact Möbius recurrence + simulation
 //! - [`mobius_int_exact`] — closed-form U512-native solver (`exact_mobius_solve`)
 //! - [`mobius_v3_int`] — integer V3 tick-range types, crossing, CL solvers
-//! - [`mobius_py`] — `PyO3` Python bindings (integer-exact seam)
 
 pub mod affected_keys;
 pub mod liquidity_event_buffer;
@@ -19,8 +18,6 @@ pub mod v2_sync_decoder;
 pub mod mobius_int;
 #[allow(clippy::doc_markdown)]
 pub mod mobius_int_exact;
-#[allow(clippy::doc_markdown)]
-pub mod mobius_py;
 #[allow(clippy::doc_markdown)]
 pub mod mobius_v3_int;
 pub mod uniswap_engine;
