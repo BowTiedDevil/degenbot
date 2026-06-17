@@ -17,6 +17,7 @@ from degenbot.erc20.erc20 import Erc20Token
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.arbitrage.integration.test_v3_only_legacy_equivalence import _make_profitable_v3_pair
 from tests.fakes.tokens import FakeToken
+from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.erc20_factory import make_erc20
 
 _PY_BOT = PyBot()
@@ -95,7 +96,7 @@ class TestArbSolverParityWithLpCycle:
             decimals=18,
         )
 
-        pool_a = UniswapV2Pool(
+        pool_a = make_v2_pool(
             address="0xAAAA1111222233334444555566667777888899a1",
             token0=usdc,
             token1=weth,
@@ -105,7 +106,7 @@ class TestArbSolverParityWithLpCycle:
             reserves_token0=2_000_000 * 10**6,
             reserves_token1=1_000 * 10**18,
         )
-        pool_b = UniswapV2Pool(
+        pool_b = make_v2_pool(
             address="0xBBBB1111222233334444555566667777888899b2",
             token0=usdc,
             token1=weth,
@@ -145,7 +146,7 @@ class TestArbSolverParityWithLpCycle:
             address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", symbol="WETH", decimals=18
         )
 
-        v2_pool = UniswapV2Pool(
+        v2_pool = make_v2_pool(
             address="0xAAAA1111222233334444555566667777888899a1",
             token0=make_erc20(
                 _PY_BOT,
@@ -254,7 +255,7 @@ class TestArbSolverParityWithLpCycle:
             decimals=18,
         )
 
-        pool_a = UniswapV2Pool(
+        pool_a = make_v2_pool(
             address="0xAAAA1111222233334444555566667777888899a1",
             token0=usdc,
             token1=weth,
@@ -264,7 +265,7 @@ class TestArbSolverParityWithLpCycle:
             reserves_token0=2_000_000 * 10**6,
             reserves_token1=1_000 * 10**18,
         )
-        pool_b = UniswapV2Pool(
+        pool_b = make_v2_pool(
             address="0xBBBB1111222233334444555566667777888899b2",
             token0=usdc,
             token1=weth,

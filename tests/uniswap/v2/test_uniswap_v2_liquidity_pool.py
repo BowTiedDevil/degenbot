@@ -6,6 +6,7 @@ import pytest
 from hexbytes import HexBytes
 
 from degenbot.anvil_fork import AnvilFork
+from tests.helpers.v2_pool_factory import make_v2_pool
 from degenbot.bot import Bot
 from degenbot.camelot.abi import CAMELOT_POOL_ABI
 from degenbot.camelot.pools import CamelotLiquidityPool
@@ -458,7 +459,7 @@ def test_comparisons(
     )
 
     # Construct another pool with I/O-free constructor using the same tokens
-    other_lp = UniswapV2Pool(
+    other_lp = make_v2_pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         chain_id=1,
         init_hash=UNISWAP_V2_FACTORY_POOL_INIT_HASH,
@@ -484,13 +485,9 @@ def test_comparisons(
     indirect=True,
 )
 def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: UniswapV2Pool):
-    # Replace the state cache with a deeper one so additional states can be tracked
-    old_cache = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache
-    new_cache = StateCache(max_depth=100)
-    for state in old_cache:
-        new_cache.append(state, block=state.block)
-    ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache = new_cache
-
+    # The reorg journal is now Rust-owned (ADR-005 slice 4) with a default
+    # depth of 32 blocks — ample for the 10 dummy updates below, so the former
+    # custom StateCache(max_depth=100) swap is no longer needed.
     starting_state = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.state
     starting_block = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.update_block
 
@@ -519,7 +516,7 @@ def test_reorg(ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block: 
             )
         )
         assert (
-            ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache.current.block
+            ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.update_block
             == block_number
         )
         expected_block_states[block_number] = (
@@ -565,7 +562,7 @@ def test_discard_before_finalized(
     starting_state = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.state
     starting_block = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.update_block
 
-    assert ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache is not None
+    assert ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._py_pool is not None
 
     first_update_block = (
         ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.update_block + 1
@@ -593,7 +590,7 @@ def test_discard_before_finalized(
             )
         )
         assert (
-            ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache.current.block
+            ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.update_block
             == block_number
         )
         expected_block_states[block_number] = (
@@ -604,7 +601,7 @@ def test_discard_before_finalized(
         last_update_block
     )
     assert (
-        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block._state_cache.current.block
+        ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.update_block
         == last_update_block
     )
 
@@ -619,11 +616,12 @@ def test_discard_earlier_than_created(
 ) -> None:
     lp = ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block
 
-    states_before_discard = list(lp._state_cache)
+    # Discarding before the registration block is a no-op (the journal is unchanged).
+    journal_len_before = lp._py_pool.journal_len()
     ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.discard_states_before_block(
         lp.update_block - 1
     )
-    assert list(lp._state_cache) == states_before_discard
+    assert lp._py_pool.journal_len() == journal_len_before
 
 
 @pytest.mark.parametrize(
@@ -772,9 +770,13 @@ def test_simulations_with_override(
         final_state=UniswapV2PoolState(
             address=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.address,
             block=17_600_000,
-            reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.reserves_token0
+            # ADR-005 slice 4: simulate_with_override now builds final_state
+            # from the OVERRIDE reserves (consistent with the delta computed
+            # from them). Pre-slice-4 it mixed override reserves for the delta
+            # with LIVE reserves for the final_state base — a latent bug.
+            reserves_token0=pool_state_override.reserves_token0
             + 8000000000,
-            reserves_token1=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.reserves_token1
+            reserves_token1=pool_state_override.reserves_token1
             - 864834865217768537471,
         ),
     )
@@ -795,9 +797,11 @@ def test_simulations_with_override(
         final_state=UniswapV2PoolState(
             address=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.address,
             block=17_600_000,
-            reserves_token0=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.reserves_token0
+            # ADR-005 slice 4: final_state built from OVERRIDE reserves
+            # (consistent with the delta). Pre-slice-4 used LIVE reserves.
+            reserves_token0=pool_state_override.reserves_token0
             + 13752842264,
-            reserves_token1=ethereum_uniswap_v2_wbtc_weth_liquiditypool_at_historical_block.reserves_token1
+            reserves_token1=pool_state_override.reserves_token1
             - 1200000000000000000000,
         ),
     )

@@ -159,6 +159,33 @@ impl PyLiquidityPool {
             .unwrap_or_default()
     }
 
+    /// Atomic snapshot of (reserve0, reserve1, `update_block`) under one read guard.
+    ///
+    /// The companion's `state` property + `simulate_*` methods build their
+    /// state object from this single snapshot so a Rust-side `sync_reserves`
+    /// (pump update) can't interleave between separate `reserve0`/`reserve1`
+    /// reads (replaces the `StateCache.lock()` atomicity the drop-`StateCache`
+    /// refactor loses). Returns `None` if the pool isn't registered or isn't a
+    /// V2 pool.
+    #[pyo3(signature = ())]
+    fn snapshot(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        let snap = { self.core.read().v2_snapshot(self.pool_id) };
+        match snap {
+            None => Ok(None),
+            Some((r0, r1, blk)) => {
+                let tuple = pyo3::types::PyTuple::new(
+                    py,
+                    [
+                        crate::alloy_py::u256_to_py(py, &r0)?.unbind(),
+                        crate::alloy_py::u256_to_py(py, &r1)?.unbind(),
+                        blk.into_pyobject(py)?.into_any().unbind(),
+                    ],
+                )?;
+                Ok(Some(tuple.into_any().unbind()))
+            }
+        }
+    }
+
     // --- Mutations (per-handle, pool_id-keyed) ---
 
     /// Apply a V2 `Sync` event: journals the prior reserves then lands the new.

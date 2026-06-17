@@ -32,17 +32,17 @@ from tests.fakes.tokens import FakeToken
 
 @pytest.fixture
 def t0():
-    return FakeToken("0x0000000000000000000000000000000000000T0", decimals=18)
+    return FakeToken("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", decimals=18)
 
 
 @pytest.fixture
 def t1():
-    return FakeToken("0x0000000000000000000000000000000000000T1", decimals=18)
+    return FakeToken("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", decimals=18)
 
 
 @pytest.fixture
 def t2():
-    return FakeToken("0x0000000000000000000000000000000000000T2", decimals=18)
+    return FakeToken("0xcccccccccccccccccccccccccccccccccccccccc", decimals=18)
 
 
 @pytest.fixture

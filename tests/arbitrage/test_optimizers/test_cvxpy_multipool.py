@@ -17,6 +17,7 @@ from tests.arbitrage.generator.hypothesis_strategies import (
     liquidity_depth_strategy,
     seed_strategy,
 )
+from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.erc20_factory import make_erc20
 
 _PY_BOT = PyBot()
@@ -119,7 +120,7 @@ class TestMultiPoolConvergence:
         wbtc = make_fake_token("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", "WBTC", 8)
 
         # Pool 1: LINK-WETH with skewed price (LINK is cheap)
-        lp_1 = UniswapV2Pool(
+        lp_1 = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             token0=link,
             token1=weth,
@@ -132,7 +133,7 @@ class TestMultiPoolConvergence:
         )
 
         # Pool 2: WBTC-LINK with normal price
-        lp_2 = UniswapV2Pool(
+        lp_2 = make_v2_pool(
             address="0x0000000000000000000000000000000000000002",
             token0=wbtc,
             token1=link,
@@ -145,7 +146,7 @@ class TestMultiPoolConvergence:
         )
 
         # Pool 3: WBTC-WETH with skewed price (WBTC expensive)
-        lp_3 = UniswapV2Pool(
+        lp_3 = make_v2_pool(
             address="0x0000000000000000000000000000000000000003",
             token0=wbtc,
             token1=weth,
@@ -181,7 +182,7 @@ class TestMultiPoolConvergence:
         fee = Fraction(0)
 
         # Pool 1: WETH-LINK (skewed)
-        lp_1 = UniswapV2Pool(
+        lp_1 = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             token0=weth,
             token1=link,
@@ -194,7 +195,7 @@ class TestMultiPoolConvergence:
         )
 
         # Pool 2: LINK-USDC (normal)
-        lp_2 = UniswapV2Pool(
+        lp_2 = make_v2_pool(
             address="0x0000000000000000000000000000000000000002",
             token0=usdc,
             token1=link,
@@ -207,7 +208,7 @@ class TestMultiPoolConvergence:
         )
 
         # Pool 3: USDC-WBTC (normal)
-        lp_3 = UniswapV2Pool(
+        lp_3 = make_v2_pool(
             address="0x0000000000000000000000000000000000000003",
             token0=usdc,
             token1=wbtc,
@@ -220,7 +221,7 @@ class TestMultiPoolConvergence:
         )
 
         # Pool 4: WBTC-WETH (skewed for profit)
-        lp_4 = UniswapV2Pool(
+        lp_4 = make_v2_pool(
             address="0x0000000000000000000000000000000000000004",
             token0=weth,
             token1=wbtc,

@@ -23,6 +23,7 @@ from cvxpy.atoms.affine.sum import sum as cvxpy_sum
 from cvxpy.atoms.geo_mean import geo_mean
 
 from degenbot.anvil_fork import AnvilFork
+from tests.helpers.v2_pool_factory import make_v2_pool
 from degenbot.arbitrage._legacy import _UniswapMultiPoolCycleTesting
 from degenbot.bot import Bot
 from degenbot.erc20.erc20 import Erc20Token
@@ -93,7 +94,7 @@ def xxx_base_token(fork_base_full: AnvilFork, bot_base_full: Bot) -> Erc20Token:
 
 @pytest.fixture
 def wbtc_pool_a(wbtc_token, weth_token) -> UniswapV2Pool:
-    return UniswapV2Pool(
+    return make_v2_pool(
         address="0xBb2b8038a1640196FbE3e38816F3e67Cba72D940",
         token0=wbtc_token,
         token1=weth_token,
@@ -108,7 +109,7 @@ def wbtc_pool_a(wbtc_token, weth_token) -> UniswapV2Pool:
 
 @pytest.fixture
 def wbtc_pool_b(wbtc_token, weth_token) -> UniswapV2Pool:
-    return UniswapV2Pool(
+    return make_v2_pool(
         address="0xBb2b8038a1640196FbE3e38816F3e67Cba72D941",
         token0=wbtc_token,
         token1=weth_token,
@@ -123,7 +124,7 @@ def wbtc_pool_b(wbtc_token, weth_token) -> UniswapV2Pool:
 
 @pytest.fixture
 def test_pool_base_a(xxx_base_token, weth_base_token) -> UniswapV2Pool:
-    return UniswapV2Pool(
+    return make_v2_pool(
         address="0x214356Cc4aAb907244A791CA9735292860490D5A",
         token0=weth_base_token,
         token1=xxx_base_token,
@@ -138,7 +139,7 @@ def test_pool_base_a(xxx_base_token, weth_base_token) -> UniswapV2Pool:
 
 @pytest.fixture
 def test_pool_base_b(xxx_base_token, weth_base_token) -> UniswapV2Pool:
-    return UniswapV2Pool(
+    return make_v2_pool(
         address="0x404E927b203375779a6aBD52A2049cE0ADf6609B",
         token0=weth_base_token,
         token1=xxx_base_token,
@@ -624,7 +625,7 @@ class TestMultiPoolKnownValues:
         # 1 WETH = 200 LINK
         # 1 WBTC = 4000 LINK
 
-        lp_1 = UniswapV2Pool(
+        lp_1 = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             token0=link_token,
             token1=weth_token,
@@ -636,7 +637,7 @@ class TestMultiPoolKnownValues:
             state_block=1,
         )
 
-        lp_2 = UniswapV2Pool(
+        lp_2 = make_v2_pool(
             address="0x0000000000000000000000000000000000000002",
             token0=wbtc_token,
             token1=link_token,
@@ -648,7 +649,7 @@ class TestMultiPoolKnownValues:
             state_block=1,
         )
 
-        lp_3 = UniswapV2Pool(
+        lp_3 = make_v2_pool(
             address="0x0000000000000000000000000000000000000003",
             token0=wbtc_token,
             token1=weth_token,
@@ -682,7 +683,7 @@ class TestMultiPoolKnownValues:
         # 1 WETH = 200 LINK (LINK = $25)
         # 1 WBTC = 4000 LINK
 
-        weth_link = UniswapV2Pool(
+        weth_link = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             token0=weth_token,
             token1=link_token,
@@ -694,7 +695,7 @@ class TestMultiPoolKnownValues:
             state_block=1,
         )
 
-        link_usdc = UniswapV2Pool(
+        link_usdc = make_v2_pool(
             address="0x0000000000000000000000000000000000000002",
             token0=usdc_token,
             token1=link_token,
@@ -706,7 +707,7 @@ class TestMultiPoolKnownValues:
             state_block=1,
         )
 
-        usdc_wbtc = UniswapV2Pool(
+        usdc_wbtc = make_v2_pool(
             address="0x0000000000000000000000000000000000000003",
             token0=usdc_token,
             token1=wbtc_token,
@@ -718,7 +719,7 @@ class TestMultiPoolKnownValues:
             state_block=1,
         )
 
-        weth_wbtc = UniswapV2Pool(
+        weth_wbtc = make_v2_pool(
             address="0x0000000000000000000000000000000000000004",
             token0=weth_token,
             token1=wbtc_token,
@@ -744,7 +745,7 @@ class TestMultiPoolKnownValues:
         weth_token: Erc20Token,
     ):
         """2-pool simple arbitrage: WETH-WBTC with price discrepancy."""
-        weth_wbtc_1 = UniswapV2Pool(
+        weth_wbtc_1 = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             token0=weth_token,
             token1=wbtc_token,
@@ -756,7 +757,7 @@ class TestMultiPoolKnownValues:
             state_block=1,
         )
 
-        weth_wbtc_2 = UniswapV2Pool(
+        weth_wbtc_2 = make_v2_pool(
             address="0x0000000000000000000000000000000000000002",
             token0=weth_token,
             token1=wbtc_token,

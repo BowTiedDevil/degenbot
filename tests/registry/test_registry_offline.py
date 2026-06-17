@@ -15,6 +15,7 @@ from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.fakes.pools import FakeUniswapV4Pool
+from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.erc20_factory import make_erc20
 
 _PY_BOT = PyBot()
@@ -59,7 +60,7 @@ def _get_offline_v2_pool() -> UniswapV2Pool:
         return_types=["uint112", "uint112", "uint32"],
         block_identifier=24945920,
     )
-    return UniswapV2Pool(
+    return make_v2_pool(
         address=UNISWAP_V2_WBTC_WETH_POOL,
         chain_id=1,
         state_block=24945920,

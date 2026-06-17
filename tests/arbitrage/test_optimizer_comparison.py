@@ -12,6 +12,7 @@ from eth_typing import ChecksumAddress
 from scipy.optimize import minimize_scalar
 
 from degenbot.exceptions import DegenbotError
+from tests.helpers.v2_pool_factory import make_v2_pool
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from tests.arbitrage.generator import FixtureFactory
@@ -47,7 +48,7 @@ def build_pools_from_fixture(
     weth = FakeToken(WETH_ADDRESS, symbol="WETH", decimals=18)
 
     # Create production V2 pools
-    pool_a = UniswapV2Pool(
+    pool_a = make_v2_pool(
         address=addresses[0],
         token0=usdc,  # type: ignore[arg-type]
         token1=weth,  # type: ignore[arg-type]
@@ -58,7 +59,7 @@ def build_pools_from_fixture(
         reserves_token1=pool_states[0].reserves_token1,
         state_block=pool_states[0].block,
     )
-    pool_b = UniswapV2Pool(
+    pool_b = make_v2_pool(
         address=addresses[1],
         token0=usdc,  # type: ignore[arg-type]
         token1=weth,  # type: ignore[arg-type]

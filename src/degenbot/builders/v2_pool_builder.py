@@ -80,20 +80,36 @@ class V2PoolBuilder(V2BuilderBase):
             msg = f"No V2 pool class registered for chain {chain_id}, factory {common.factory}"
             raise ValueError(msg)
 
+        # Register the pool in the shared Rust Bot and wrap the handle with
+        # the Python companion (ADR-005 slice 4). The builder's update_block is
+        # the fetched state block; reserves are the genesis delta's after-values.
+        pool_id = self._py_bot.register_v2_pool(
+            address=common.pool_address,
+            token0=common.token0_address,
+            token1=common.token1_address,
+            reserve0=common.reserves0,
+            reserve1=common.reserves1,
+            gamma_numer0=common.fee_token0.numerator,
+            fee_denom0=common.fee_token0.denominator,
+            gamma_numer1=common.fee_token1.numerator,
+            fee_denom1=common.fee_token1.denominator,
+            factory=common.factory,
+            update_block=common.state_block,
+        )
+        py_pool = self._py_bot.get_pool(pool_id)
+        assert py_pool is not None, "register_v2_pool returned a pool_id with no handle"
+
         pool = pool_class(
-            address=pool_address,
+            py_pool,
+            address=common.pool_address,
             chain_id=common.chain_id,
             token0=token0,
             token1=token1,
             factory=common.factory,
             fee_token0=common.fee_token0,
             fee_token1=common.fee_token1,
-            reserves_token0=common.reserves0,
-            reserves_token1=common.reserves1,
-            state_block=common.state_block,
             deployer_address=common.deployer,
             init_hash=common.init_hash,
-            state_cache_depth=request.state_cache_depth,
         )
 
         # Register pool

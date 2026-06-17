@@ -292,6 +292,39 @@ class TestPoolHandleState:
         assert pool.reserve1 == 2000
         assert pool.update_block == 0  # update_block defaults to 0 at registration
 
+    def test_pool_snapshot_is_atomic(self):
+        """snapshot() reads reserves+block under one read guard (atomicity).
+
+        The companion's simulate_* methods build a state object from this
+        single snapshot so a Rust-side sync_reserves (pump) can't interleave
+        between separate reserve0/reserve1 reads.
+        """
+        core, pool_id = self._make_core_with_pool()
+        pool = core.get_pool(pool_id)
+        assert pool is not None
+        pool.sync_reserves(reserve0=2000, reserve1=1000, block_number=10)
+
+        r0, r1, block = pool.snapshot()
+        assert (r0, r1, block) == (2000, 1000, 10)
+
+    def test_pool_snapshot_returns_none_for_v3(self):
+        """snapshot() returns None for non-V2 pools (no V2 state to read)."""
+        core = PyBot()
+        pool_id = core.register_v3_pool(
+            address=self.POOL_ADDR,
+            token0=self.TOKEN0_ADDR,
+            token1=self.TOKEN1_ADDR,
+            fee=3000,
+            tick_spacing=60,
+            factory=self.FACTORY_ADDR,
+            sqrt_price_x96=79228162514264337593543950336,
+            liquidity=1000000,
+            tick=0,
+        )
+        pool = core.get_pool(pool_id)
+        assert pool is not None
+        assert pool.snapshot() is None
+
     def test_pool_sync_reserves_updates_state(self):
         """sync_reserves journals + lands the new state on the handle."""
         core, pool_id = self._make_core_with_pool()

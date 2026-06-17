@@ -18,6 +18,7 @@ from hexbytes import HexBytes
 from web3 import Web3
 
 from degenbot.builders.aerodrome_v2_builder import AerodromeV2Builder
+from tests.helpers.v2_pool_factory import make_v2_pool
 from degenbot.builders.async_context import AsyncBuilderContext
 from degenbot.builders.async_v2_pool_builder import AsyncV2PoolBuilder
 from degenbot.builders.async_v3_pool_builder import AsyncV3PoolBuilder
@@ -31,6 +32,7 @@ from degenbot.builders.v2_pool_builder import V2PoolBuilder
 from degenbot.builders.v3_pool_builder import V3PoolBuilder
 from degenbot.builders.v4_pool_builder import V4PoolBuilder
 from degenbot.database.session_manager import DatabaseSessionManager
+from degenbot.degenbot_rs import PyBot
 from degenbot.registry import PoolRegistry, TokenRegistry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -53,6 +55,7 @@ def _fake_builder_context() -> BuilderContext:
         pools=MagicMock(spec=PoolRegistry),
         tokens=MagicMock(spec=TokenRegistry),
         erc20_builder=erc20_builder,
+        py_bot=PyBot(),
         default_chain_id=1,
         managed_pools=MagicMock(),
     )
@@ -223,11 +226,11 @@ class TestV2BuilderUpdateBehavior:
         io = SyncPoolIO(provider)
 
         # Create a real V2 pool with different reserves
-        pool = UniswapV2Pool(
+        pool = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             chain_id=1,
-            token0=MagicMock(address="0x02", chain_id=1),
-            token1=MagicMock(address="0x03", chain_id=1),
+            token0=MagicMock(address="0x0000000000000000000000000000000000000002", chain_id=1),
+            token1=MagicMock(address="0x0000000000000000000000000000000000000003", chain_id=1),
             factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
             fee_token0=Fraction(3, 1000),
             fee_token1=Fraction(3, 1000),
@@ -250,11 +253,11 @@ class TestV2BuilderUpdateBehavior:
         provider = FakeSyncProvider(_v2_update_responses(reserves0=1000, reserves1=2000))
         io = SyncPoolIO(provider)
 
-        pool = UniswapV2Pool(
+        pool = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             chain_id=1,
-            token0=MagicMock(address="0x02", chain_id=1),
-            token1=MagicMock(address="0x03", chain_id=1),
+            token0=MagicMock(address="0x0000000000000000000000000000000000000002", chain_id=1),
+            token1=MagicMock(address="0x0000000000000000000000000000000000000003", chain_id=1),
             factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
             fee_token0=Fraction(3, 1000),
             fee_token1=Fraction(3, 1000),
@@ -275,11 +278,11 @@ class TestV2BuilderUpdateBehavior:
         provider = FakeSyncProvider(_v2_update_responses(reserves0=5000, reserves1=6000))
         io = SyncPoolIO(provider)
 
-        pool = UniswapV2Pool(
+        pool = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             chain_id=1,
-            token0=MagicMock(address="0x02", chain_id=1),
-            token1=MagicMock(address="0x03", chain_id=1),
+            token0=MagicMock(address="0x0000000000000000000000000000000000000002", chain_id=1),
+            token1=MagicMock(address="0x0000000000000000000000000000000000000003", chain_id=1),
             factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
             fee_token0=Fraction(3, 1000),
             fee_token1=Fraction(3, 1000),
@@ -307,11 +310,11 @@ class TestAsyncV2BuilderUpdateBehavior:
         provider = FakeAsyncProvider(_v2_update_responses(reserves0=5000, reserves1=6000))
         io = AsyncPoolIO(provider)
 
-        pool = UniswapV2Pool(
+        pool = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             chain_id=1,
-            token0=MagicMock(address="0x02", chain_id=1),
-            token1=MagicMock(address="0x03", chain_id=1),
+            token0=MagicMock(address="0x0000000000000000000000000000000000000002", chain_id=1),
+            token1=MagicMock(address="0x0000000000000000000000000000000000000003", chain_id=1),
             factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
             fee_token0=Fraction(3, 1000),
             fee_token1=Fraction(3, 1000),
@@ -336,11 +339,11 @@ class TestAsyncV2BuilderUpdateBehavior:
         provider = FakeAsyncProvider(_v2_update_responses(reserves0=1000, reserves1=2000))
         io = AsyncPoolIO(provider)
 
-        pool = UniswapV2Pool(
+        pool = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             chain_id=1,
-            token0=MagicMock(address="0x02", chain_id=1),
-            token1=MagicMock(address="0x03", chain_id=1),
+            token0=MagicMock(address="0x0000000000000000000000000000000000000002", chain_id=1),
+            token1=MagicMock(address="0x0000000000000000000000000000000000000003", chain_id=1),
             factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
             fee_token0=Fraction(3, 1000),
             fee_token1=Fraction(3, 1000),
@@ -363,11 +366,11 @@ class TestAsyncV2BuilderUpdateBehavior:
         provider = FakeAsyncProvider(_v2_update_responses(reserves0=5000, reserves1=6000))
         io = AsyncPoolIO(provider)
 
-        pool = UniswapV2Pool(
+        pool = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             chain_id=1,
-            token0=MagicMock(address="0x02", chain_id=1),
-            token1=MagicMock(address="0x03", chain_id=1),
+            token0=MagicMock(address="0x0000000000000000000000000000000000000002", chain_id=1),
+            token1=MagicMock(address="0x0000000000000000000000000000000000000003", chain_id=1),
             factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
             fee_token0=Fraction(3, 1000),
             fee_token1=Fraction(3, 1000),

@@ -15,6 +15,7 @@ from fractions import Fraction
 import pytest
 
 from degenbot.arbitrage.optimizers.solver import BrentSolver, MobiusSolver
+from tests.helpers.v2_pool_factory import make_v2_pool
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.exceptions.arbitrage import OptimizationError
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
@@ -57,17 +58,17 @@ def dai() -> FakeToken:
 
 @pytest.fixture
 def t0() -> FakeToken:
-    return FakeToken("0x0000000000000000000000000000000000000T0", decimals=18)
+    return FakeToken("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", decimals=18)
 
 
 @pytest.fixture
 def t1() -> FakeToken:
-    return FakeToken("0x0000000000000000000000000000000000000T1", decimals=18)
+    return FakeToken("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", decimals=18)
 
 
 @pytest.fixture
 def t2() -> FakeToken:
-    return FakeToken("0x0000000000000000000000000000000000000T2", decimals=18)
+    return FakeToken("0xcccccccccccccccccccccccccccccccccccccccc", decimals=18)
 
 
 @pytest.fixture
@@ -79,7 +80,7 @@ def v2_v2_v2_pools(
     Same reserve ratios as verify_legacy_equivalence.py, known profitable.
     """
     fee = Fraction(3, 1000)
-    pool_0 = UniswapV2Pool(
+    pool_0 = make_v2_pool(
         address=ADDR_POOL0,  # type: ignore[arg-type]
         token0=t0,  # type: ignore[arg-type]
         token1=t1,  # type: ignore[arg-type]
@@ -90,7 +91,7 @@ def v2_v2_v2_pools(
         reserves_token1=200 * 10**18,
         state_block=1,
     )
-    pool_1 = UniswapV2Pool(
+    pool_1 = make_v2_pool(
         address=ADDR_POOL1,  # type: ignore[arg-type]
         token0=t1,  # type: ignore[arg-type]
         token1=t2,  # type: ignore[arg-type]
@@ -101,7 +102,7 @@ def v2_v2_v2_pools(
         reserves_token1=300 * 10**18,
         state_block=1,
     )
-    pool_2 = UniswapV2Pool(
+    pool_2 = make_v2_pool(
         address=ADDR_POOL2,  # type: ignore[arg-type]
         token0=t2,  # type: ignore[arg-type]
         token1=t0,  # type: ignore[arg-type]
@@ -285,7 +286,7 @@ class TestCalculateWithPool:
         """Unprofitable cycle raises OptimizationError in executor too."""
         # Symmetric pools — no arb
         fee = Fraction(3, 1000)
-        pool_a = UniswapV2Pool(
+        pool_a = make_v2_pool(
             address=ADDR_UNPROF_A,  # type: ignore[arg-type]
             token0=usdc,  # type: ignore[arg-type]
             token1=dai,  # type: ignore[arg-type]
@@ -296,7 +297,7 @@ class TestCalculateWithPool:
             reserves_token1=1_000_000 * 10**18,
             state_block=1,
         )
-        pool_b = UniswapV2Pool(
+        pool_b = make_v2_pool(
             address=ADDR_UNPROF_B,  # type: ignore[arg-type]
             token0=usdc,  # type: ignore[arg-type]
             token1=dai,  # type: ignore[arg-type]
