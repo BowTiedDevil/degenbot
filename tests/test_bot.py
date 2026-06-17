@@ -8,11 +8,11 @@ import pytest
 from degenbot.async_bot import AsyncBot
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.degenbot_rs import PyBot
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.connection.async_connection_manager import AsyncConnectionManager
 from degenbot.connection.connection_manager import ConnectionManager
 from degenbot.database.session_manager import DatabaseSessionManager
+from degenbot.degenbot_rs import PyBot
 from degenbot.exceptions.pool import TrackerAlreadyInitialized
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.uniswap.trackers import UniswapV2PoolTracker
@@ -66,11 +66,12 @@ class TestBotInit:
 
 
 class TestBotPyBotHandle:
-    """Bot constructs and owns a PyO3 PyBot handle (Polars-style middle layer).
+    """Bot constructs and owns a PyO3 PyBot handle.
 
-    The Python ``Bot`` session delegates Rust-owned state to an inner
-    ``PyBot`` wrapper holding an ``RwLock<Bot>``. This lets multiple Python
-    handles share a single Rust-owned ``Bot`` thread-safely.
+    Implements the Polars-inspired three-layer architecture (ADR-005). The
+    Python ``Bot`` session delegates Rust-owned state to an inner ``PyBot``
+    wrapper holding an ``RwLock<Bot>``. This lets multiple Python handles share
+    a single Rust-owned ``Bot`` thread-safely.
     """
 
     def test_bot_constructs_py_bot(self, tmp_path: pathlib.Path) -> None:

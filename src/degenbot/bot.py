@@ -81,12 +81,12 @@ class Bot:
         """Initialize the instance."""
         self.config = config
 
-        # Polars-style middle layer: a ``PyBot`` PyO3 wrapper that owns the
-        # Rust ``Bot`` state behind an ``RwLock``. Multiple Python handles
-        # (this session, plus any ``Pool``/``Token`` handles it vends) share
-        # the same Rust-owned ``Bot`` thread-safely. Construction is cheap and
-        # side-effect-free (no I/O, no DB) — pool/token registration flows
-        # here in later slices.
+        # Polars-inspired three-layer architecture (ADR-005): a ``PyBot``
+        # PyO3 wrapper owns the Rust ``Bot`` state behind an ``RwLock``.
+        # Multiple Python handles (this session, plus any ``Pool``/``Token``
+        # handles it vends) share the same Rust-owned ``Bot`` thread-safely.
+        # Construction is cheap and side-effect-free (no I/O, no DB) —
+        # pool/token registration flows here in later slices.
         self._py_bot = PyBot()
 
         self.connections = ConnectionManager()

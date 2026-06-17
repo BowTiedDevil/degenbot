@@ -1,12 +1,13 @@
 //! `PyO3` wrappers for `Bot` — thin Python handle over Rust-owned state.
 //!
-//! Polars-style middle layer:
-//! - Rust [`Bot`] (in [`crate::bot_core`]) is the pure-Rust state owner.
-//! - [`PyBot`] is the `PyO3` wrapper that holds an `Arc<parking_lot::RwLock<Bot>>`,
-//!   so multiple Python handles (`PyBot`, [`PyPool`], [`PyToken`]) can share one
-//!   Rust-owned `Bot` and read it concurrently while serialising writes.
-//! - The Python `Bot` session class owns a `PyBot` instance and delegates
-//!   Rust-owned state through it.
+//! Implements the Polars-inspired three-layer topology (ADR-005): Rust [`Bot`]
+//! core → `PyBot` `#[pyclass]` wrapper holding `Arc<parking_lot::RwLock<Bot>>`
+//! → Python `Bot` session that constructs `self._py_bot = PyBot()` in `__init__`.
+//! `PyPool`/`PyToken` clone the same `Arc` so many Python handles reference one
+//! Rust-owned `Bot`; reads take a read guard, mutations a write guard.
+//!
+//! See: `docs/adr/ADR-005-polars-inspired-three-layer-architecture.md` (the
+//! decision, rejected alternatives, and the deferred `UniswapEngine` unification).
 
 use std::sync::Arc;
 

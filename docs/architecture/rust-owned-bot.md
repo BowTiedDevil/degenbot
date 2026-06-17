@@ -584,22 +584,19 @@ Eliminates ~95%+ of simulation failures from scam/tax/honeypot tokens.
 
 ---
 
-## 13. Bot: The Future State Owner
+## 13. Bot: State Owner & FFI Topology
 
-### 13.1 Current State
+### 13.1 Role
 
-`Bot` (in `rust/src/bot_core/mod.rs`) is a partial implementation of the full Rust-owned state vision from Plan 079. Currently it owns:
+`Bot` (in `rust/src/bot_core/mod.rs`) is the single Rust owner of all runtime pool/token state — the state layer ADR-003 makes a peer to `UniswapEngine`. Under Plan 100 it holds V2/V3/V4 `PoolEntry` state, the reorg journal, per-pool swap math (`calculate_tokens_out`/`calculate_tokens_in` via `v3_simulate_swap`/`v4_simulate_swap`), and V2 swap encoding. The block engines (`V2BlockEngine`/`V3BlockEngine`/`V4BlockEngine`) are dissolved — `UniswapEngine` holds `core: Arc<Mutex<Bot>>` and reads/writes all pool state through it. See `rust/CONTEXT.md` {Bot} for the field inventory and **ADR-003** for the state-ownership decision.
 
-- `pools: HashMap<u64, PoolEntry>` — V2 and V3 pool state
-- `pool_addresses: HashMap<Address, u64>` — address → pool_id lookup
-- `tokens: HashMap<Address, TokenEntry>` — ERC20 metadata
-- Reorg journal integration for V2 and V3
-- `calculate_tokens_out/in` for V2 (V3 returns 0 — not yet implemented)
-- `encode_swap` for V2 (V3 encoding not yet in Bot)
+### 13.2 FFI Topology — Polars-Inspired Three-Layer Architecture
 
-### 13.2 Intended Architecture
+How Python reaches that Rust-owned state across the FFI is canonicalized in **ADR-005: Polars-Inspired Three-Layer Architecture** — the stateful specialization of `rust/AGENTS.md`'s generic three-layer convention. The realized topology:
 
-Plan 079 envisions `Bot` as the **single owner** of all runtime state. The Python `Bot` session holds a `PyBot` PyO3 wrapper (`Arc<parking_lot::RwLock<Bot>>`); pools and tokens are thin `PyPool`/`PyToken` handles that clone the same `Arc`:
+- **Rust core** — `Bot`, pure Rust, zero `pyo3` imports.
+- **PyO3 wrapper** — `PyBot` (`#[pyclass]`) holds `Arc<parking_lot::RwLock<Bot>>` and *is* the sharing mechanism; `PyPool` (carrying a `pool_id` key) and `PyToken` (carrying an `Address` key) clone that `Arc` so N Python handles reference one Rust-owned `Bot`. Reads take a read guard; mutations take a write guard.
+- **Python session** — `bot.py:Bot` constructs `self._py_bot = PyBot()` in `__init__` and delegates Rust-owned state through it.
 
 ```python
 class Bot:
@@ -610,18 +607,19 @@ class Bot:
     # PyO3 write → mutation under a write guard
 ```
 
+Grounded in Polars' `RwLock<DataFrame>` + `Arc`-shared `SharedStorage`: many Python views, one Rust-owned buffer set. See ADR-005 for the rejected alternatives (engine-`Mutex` parity; Python-`Bot`-as-`#[pyclass]`; global-registry handles; `Mutex`-status-quo) and the deferred unification of `UniswapEngine` onto the shared `Arc<RwLock<Bot>>`.
+
 ### 13.3 Deferred Items
 
-The following Plan 079 slices are deferred (not blocking the current bot):
+The Plan 079 slices still genuinely deferred. The engines are dissolved — these are pool families whose *math* has not yet ported to Rust, not engines holding separate state:
 
 | Slice | Description | Status |
 |-------|-------------|--------|
 | 5 | Solidly-stable math in Rust | Deferred |
 | 9 | Stableswap math in Rust | Deferred |
 | 10 | Balancer math in Rust | Deferred |
-| 13 | Python thin handles + backward compat | Deferred |
 
-These are not needed for the current V2/V3/V4 backrun bot because the engines own their own state independently of `Bot`.
+These families are still served by the pure-Python solver stack (`ArbSolver`/`MobiusSolver`/`PiecewiseMobiusSolver`) until their Rust-native equivalents land.
 
 ---
 
