@@ -96,6 +96,16 @@ setup-git-hooks:
 
 # ========== Documentation ==========
 
+# Render a Mermaid diagram (Markdown or .mmd) to PNG.
+# Example: just mermaid-png docs/architecture/rust-solver-engine.md
+mermaid-png input output='':
+    scripts/mermaid-export {{input}} {{output}} -f png
+
+# Render a Mermaid diagram (Markdown or .mmd) to SVG.
+# Example: just mermaid-svg docs/architecture/rust-solver-engine.md
+mermaid-svg input output='':
+    scripts/mermaid-export {{input}} {{output}} -f svg
+
 # Build documentation
 docs:
     cargo doc --no-deps --manifest-path rust/Cargo.toml
