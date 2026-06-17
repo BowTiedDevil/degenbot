@@ -31,10 +31,26 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
             FROM="${{ github.event.before }}"
+            # A force push rewrites history and orphans the `before` SHA: a fresh
+            # checkout (fetch-depth:0 fetches only objects reachable from refs)
+            # won't contain it, so commitlint throws "Invalid revision range".
+            # Fall back to a guaranteed-present range that still covers the
+            # rewritten commits (HEAD history is fully fetched).
+            if ! git rev-parse --verify --quiet "${FROM}^{commit}" >/dev/null 2>&1; then
+              echo "::warning::Push 'before' SHA ${FROM} is absent (likely a force push); using fallback range."
+              n=$(git rev-list --count HEAD)
+              if [ "$n" -gt 200 ]; then n=200; fi
+              if [ "$n" -ge 1 ]; then FROM="HEAD~$((n - 1))"; else FROM="HEAD"; fi
+            fi
           elif [ "${{ github.event_name }}" = "pull_request" ]; then
             FROM=$(git merge-base origin/main HEAD)
           else
             FROM=HEAD~20
+          fi
+          # An empty range makes commitlint throw "Invalid revision range".
+          if [ "$(git rev-list --count "${FROM}..HEAD" 2>/dev/null || echo 0)" -eq 0 ]; then
+            echo "No commits in range ${FROM}..HEAD; nothing to lint."
+            exit 0
           fi
           echo "Linting commits from $FROM to HEAD"
           npx --yes @commitlint/cli --from="$FROM" --to=HEAD
