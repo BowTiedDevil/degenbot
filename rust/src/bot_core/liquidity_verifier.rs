@@ -18,8 +18,7 @@ use std::collections::HashMap;
 use alloy::dyn_abi::DynSolValue;
 use alloy::primitives::{Address, Bytes, I256, B256, U256};
 
-use crate::bot_core::V3PoolState;
-use crate::optimizers::v4_block_engine::V4PoolState;
+use crate::bot_core::{V3PoolState, V4PoolState};
 use crate::provider::AlloyProvider;
 
 // ---------------------------------------------------------------------------

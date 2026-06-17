@@ -340,13 +340,11 @@ impl UniswapEngine {
                     resolved.hops.push(ResolvedHop::V3 { int_seq });
                 }
                 HopType::V4 => {
-                    // V4 pools use identical concentrated-liquidity math as V3.
-                    // They produce the same `IntV3TickRangeSequence` type.
-                    let Some(pool_state) = self.v4_engine.get_pool(pool_ref.pool_key) else {
+                    // V4 pools use identical CL math as V3 (BotCore-owned, ADR-003).
+                    let Some(pool_state) = core.get_v4_pool(pool_ref.pool_key) else {
                         return; // Missing pool → invalid
                     };
 
-                    // Build integer V4 sequence (same type as V3)
                     let Some(int_seq) = pool_state.build_int_v4_sequence(pool_ref.zero_for_one, 10) else {
                         return; // No integer sequence → invalid
                     };

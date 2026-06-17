@@ -1,6 +1,6 @@
 //! Path registration, buffer management, and engine accessors.
 
-use super::{UniswapEngine, MixedPoolRef, MixedPath, ResolvedMixedPath, V4BlockEngine, HashMap, SolvePathResult, Address};
+use super::{UniswapEngine, MixedPoolRef, MixedPath, ResolvedMixedPath, HashMap, SolvePathResult, Address};
 
 impl UniswapEngine {
     /// Register a mixed path and return its ID.
@@ -59,28 +59,17 @@ impl UniswapEngine {
         path_id
     }
 
-    /// Set the maximum age for buffered events in the V4 sub-engine
-    /// (V3 now lives on `BotCore` — ADR-003).
+    /// Set the maximum age for buffered events in the V3/V4 buffers
+    /// (ADR-003: both live on `BotCore`).
     pub fn set_event_buffer_max_age(&mut self, max_age: Option<u64>) {
         self.core.lock().set_v3_buffer_max_age(max_age);
-        self.v4_engine.set_event_buffer_max_age(max_age);
+        self.core.lock().set_v4_buffer_max_age(max_age);
     }
 
-    /// Flush all buffered events in the V4 sub-engine and the V3 buffer on `BotCore`.
+    /// Flush all buffered events in the V3/V4 buffers on `BotCore` (ADR-003).
     pub fn flush_event_buffer(&mut self) {
         self.core.lock().flush_v3_buffer();
-        self.v4_engine.flush_event_buffer();
-    }
-
-    /// Get a mutable reference to the V4 engine.
-    pub const fn v4_engine(&mut self) -> &mut V4BlockEngine {
-        &mut self.v4_engine
-    }
-
-    /// Get a shared reference to the V4 engine.
-    #[must_use]
-    pub const fn v4_engine_ref(&self) -> &V4BlockEngine {
-        &self.v4_engine
+        self.core.lock().flush_v4_buffer();
     }
 
     /// Read the last solved results and block number.
@@ -156,10 +145,10 @@ impl UniswapEngine {
         self.core.lock().v3_pool_count()
     }
 
-    /// Number of registered V4 pools.
+    /// Number of registered V4 pools (state lives in `BotCore` under ADR-003).
     #[must_use]
     pub fn v4_pool_count(&self) -> usize {
-        self.v4_engine.pool_count()
+        self.core.lock().v4_pool_count()
     }
 
     /// Number of registered mixed paths.
@@ -171,6 +160,6 @@ impl UniswapEngine {
     /// Return the list of registered V4 `PoolManager` addresses.
     #[must_use]
     pub fn v4_registered_pool_managers(&self) -> Vec<Address> {
-        self.v4_engine.registered_pool_managers()
+        self.core.lock().v4_registered_pool_managers()
     }
 }

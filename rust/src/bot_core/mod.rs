@@ -4,7 +4,7 @@
 //! live here. Python objects are thin `PyO3` handles carrying keys into
 //! `BotCore`'s `HashMaps`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use alloy::primitives::{Address, I256, U256};
 
@@ -23,12 +23,17 @@ pub mod v3_mint_burn_decoder;
 pub mod v3_state;
 pub mod v3_swap_decoder;
 pub mod v4_modify_liquidity_decoder;
+pub mod v4_state;
 pub mod v4_swap_decoder;
 
-// Re-export the merged V3 state types (ADR-003: BotCore owns V3 state).
+// Re-export the merged V3/V4 state types (ADR-003: BotCore owns CL state).
 pub use v3_state::{
     BufferedV3LiquidityUpdate, PoolTickCoverage, RegisterV3PoolParams, V3PoolState, V3SwapOutcome,
     V3SwapUpdate, v3_simulate_swap,
+};
+pub use v4_state::{
+    AMOUNT_MODIFYING_HOOK_MASK, BufferedV4LiquidityUpdate, RegisterV4PoolParams, V4PoolKey,
+    V4PoolState, V4SwapUpdate, V4_DYNAMIC_FEE_FLAG, v4_simulate_swap,
 };
 
 // ---------------------------------------------------------------------------
@@ -40,6 +45,7 @@ pub use v3_state::{
 pub enum PoolEntry {
     V2(V2PoolState),
     V3(V3PoolState),
+    V4(V4PoolState),
 }
 
 /// State for a Uniswap V2-style constant-product pool.
@@ -133,7 +139,7 @@ pub struct BotCore {
     /// Auto-incrementing pool ID.
     next_pool_id: u64,
     /// Reorg journal depth (in blocks) for every pool — one mainnet epoch
-    /// by default (ADR-003). Applied uniformly to V2/V3 (V4 in S3).
+    /// by default (ADR-003). Applied uniformly to V2/V3/V4.
     journal_depth: usize,
     /// Dual-buffer for V3 liquidity (Mint/Burn) events awaiting pool
     /// registration (ADR-003: the accurate-state buffer lives on `BotCore`, not
@@ -143,6 +149,17 @@ pub struct BotCore {
             Address,
             BufferedV3LiquidityUpdate,
         >,
+    /// Dual-buffer for V4 `ModifyLiquidity` events awaiting pool registration.
+    /// Keyed by `(pool_manager, pool_id)`.
+    v4_buffer:
+        crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer<
+            (Address, crate::bot_core::v4_swap_decoder::PoolId),
+            BufferedV4LiquidityUpdate,
+        >,
+    /// V4 pool registry: `(pool_manager, pool_id)` → `pool_id` (single entry
+    /// per pool — ADR-003 Option I: orientation derived at solve from
+    /// `zero_for_one`, not stored as separate forward/reverse entries).
+    v4_pool_ids: HashMap<(Address, crate::bot_core::v4_swap_decoder::PoolId), u64>,
 }
 
 impl BotCore {
@@ -163,6 +180,9 @@ impl BotCore {
             journal_depth,
             v3_buffer:
                 crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer::new(),
+            v4_buffer:
+                crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer::new(),
+            v4_pool_ids: HashMap::new(),
         }
     }
 
@@ -308,7 +328,7 @@ impl BotCore {
     pub fn get_v2_pool_state(&self, pool_id: u64) -> Option<&V2PoolState> {
         match self.pools.get(&pool_id)? {
             PoolEntry::V2(state) => Some(state),
-            PoolEntry::V3(_) => None,
+            PoolEntry::V3(_) | PoolEntry::V4(_) => None,
         }
     }
 
@@ -603,7 +623,7 @@ impl BotCore {
     pub fn get_v3_pool(&self, pool_id: u64) -> Option<&V3PoolState> {
         match self.pools.get(&pool_id)? {
             PoolEntry::V3(state) => Some(state),
-            PoolEntry::V2(_) => None,
+            PoolEntry::V2(_) | PoolEntry::V4(_) => None,
         }
     }
 
@@ -617,7 +637,7 @@ impl BotCore {
             .iter()
             .filter_map(|(id, e)| match e {
                 PoolEntry::V3(state) => Some((*id, state.clone())),
-                PoolEntry::V2(_) => None,
+                PoolEntry::V2(_) | PoolEntry::V4(_) => None,
             })
             .collect()
     }
@@ -705,6 +725,22 @@ impl BotCore {
                 };
                 if zero_for_one { outcome.amount1 } else { outcome.amount0 }
             }
+            // V4 concentrated-liquidity math. Same CL math as V3; sign
+            // convention: V4 exact-input is `amountSpecified < 0` (negative),
+            // opposite to V3. The caller (calculate_tokens_out) flips so the
+            // simulator sees the V4-native sign.
+            PoolEntry::V4(state) => {
+                if amount_in.is_zero() {
+                    return U256::ZERO;
+                }
+                let Some(spec) = I256::try_from(amount_in).ok() else {
+                    return U256::ZERO;
+                };
+                let Some(outcome) = v4_simulate_swap(state, zero_for_one, -spec) else {
+                    return U256::ZERO;
+                };
+                if zero_for_one { outcome.amount1 } else { outcome.amount0 }
+            }
         }
     }
 
@@ -781,6 +817,22 @@ impl BotCore {
                 };
                 if zero_for_one { outcome.amount0 } else { outcome.amount1 }
             }
+            // V4: exact-output. V4 sign convention is opposite to V3: V4
+            // exact-output uses `amountSpecified > 0` (positive). So the
+            // magnitude passed to the V4 simulator is already positive (no
+            // negation, unlike V3's `-spec`).
+            PoolEntry::V4(state) => {
+                if amount_out.is_zero() {
+                    return U256::ZERO;
+                }
+                let Some(spec) = I256::try_from(amount_out).ok() else {
+                    return U256::ZERO;
+                };
+                let Some(outcome) = v4_simulate_swap(state, zero_for_one, spec) else {
+                    return U256::ZERO;
+                };
+                if zero_for_one { outcome.amount0 } else { outcome.amount1 }
+            }
         }
     }
 
@@ -813,6 +865,8 @@ impl BotCore {
             .filter(|e| matches!(e, PoolEntry::V2(_)))
             .count()
     }
+
+    /// Number of registered V4 pools.
 
     /// Check if a pool ID is registered.
     #[must_use]
@@ -887,8 +941,8 @@ impl BotCore {
     ///
     /// Pools with no journal delta at/after `target` are left as-is (idempotent
     /// — a reorg touches only a subset of pools). Returns the count of pools
-    /// that were rolled back. (V3/V4 restore lands in Slices 2/3; V3 entries in
-    /// `BotCore` today come only from `PyBotCore` and are skipped here.)
+    /// that were rolled back. V4 restore lands in S3 (delegates to
+    /// `v4_restore_before_block`, same `V3BlockDelta` shape).
     pub fn restore_all_pools_before_block(&mut self, target: u64) -> usize {
         let pool_ids: Vec<u64> = self.pools.keys().copied().collect();
         let mut restored = 0usize;
@@ -901,6 +955,9 @@ impl BotCore {
                     state.journal.newest_block().is_some_and(|b| b >= target)
                 }
                 Some(PoolEntry::V3(state)) => {
+                    state.journal.newest_block().is_some_and(|b| b >= target)
+                }
+                Some(PoolEntry::V4(state)) => {
                     state.journal.newest_block().is_some_and(|b| b >= target)
                 }
                 None => false,
@@ -921,6 +978,11 @@ impl BotCore {
                     // Reuse the existing V3 restore path: scalars + reverse-
                     // applied tick priors + cache invalidation.
                     self.v3_restore_before_block(pool_id, target).is_some()
+                }
+                Some(PoolEntry::V4(_)) => {
+                    // V4 restore: same V3BlockDelta shape (scalar + per-tick
+                    // priors); delegated to `v4_restore_before_block`.
+                    self.v4_restore_before_block(pool_id, target).is_some()
                 }
                 None => false,
             };
@@ -1032,7 +1094,7 @@ impl BotCore {
                 Some(call)
             }
             // V3 encoding is not yet implemented
-            PoolEntry::V3(_) => None,
+            PoolEntry::V3(_) | PoolEntry::V4(_) => None,
         }
     }
 
@@ -1042,7 +1104,395 @@ impl BotCore {
         match self.pools.get(&pool_id)? {
             PoolEntry::V2(state) => Some(state.address),
             PoolEntry::V3(state) => Some(state.address),
+            PoolEntry::V4(_) => None,
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // V4 state (ADR-003: single entry per `(pool_manager, pool_id)`;
+    // orientation derived at solve from `zero_for_one`)
+    // -----------------------------------------------------------------------
+
+    /// Register a V4 pool by `(pool_manager, pool_id)`.
+    ///
+    /// ADR-003 hook filter inline: pools with amount-modifying hooks or dynamic
+    /// fees are rejected. Returns `Err(String)` on rejection.
+    pub fn register_v4_pool(
+        &mut self,
+        params: &RegisterV4PoolParams,
+    ) -> Result<u64, String> {
+        if (params.hook_flags & AMOUNT_MODIFYING_HOOK_MASK) != 0 {
+            return Err(format!(
+                "V4 pool has amount-modifying hooks (flags=0x{:04X}, mask=0x{:04X}) — excluded from arbitrage",
+                params.hook_flags, AMOUNT_MODIFYING_HOOK_MASK
+            ));
+        }
+        if params.pool_key.fee == V4_DYNAMIC_FEE_FLAG {
+            return Err(format!(
+                "V4 pool has dynamic fee (fee=0x{V4_DYNAMIC_FEE_FLAG:06X}) — excluded from arbitrage"
+            ));
+        }
+
+        let key = (params.pool_manager, params.pool_id);
+        assert!(
+            !self.v4_pool_ids.contains_key(&key),
+            "V4 pool already registered: pool_manager={}, pool_id=0x{}",
+            params.pool_manager,
+            alloy::hex::encode(params.pool_id),
+        );
+
+        let pool_id = self.next_pool_id;
+        self.next_pool_id += 1;
+
+        let state = V4PoolState::from_params(params.clone(), self.journal_depth);
+        self.pools.insert(pool_id, PoolEntry::V4(state));
+        self.v4_pool_ids.insert(key, pool_id);
+
+        Ok(pool_id)
+    }
+
+    /// Apply a V4 Swap event to a registered pool (ADR-003 live path).
+    pub fn apply_v4_swap(&mut self, update: &V4SwapUpdate, block_number: u64) -> Option<u64> {
+        let key = (update.pool_manager, update.pool_id);
+        let &pool_id = self.v4_pool_ids.get(&key)?;
+
+        let Some(PoolEntry::V4(state)) = self.pools.get_mut(&pool_id) else {
+            return None;
+        };
+
+        let mut journaled_priors: Vec<(i32, TickBefore)> =
+            Vec::with_capacity(update.tick_priors.len());
+        for &(tick_index, ref new_info) in &update.tick_priors {
+            let prior = state.tick_data.get(&tick_index).cloned();
+            journaled_priors.push((
+                tick_index,
+                TickBefore {
+                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
+                    liquidity_net_before: prior
+                        .as_ref()
+                        .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
+                },
+            ));
+            state.tick_data.insert(tick_index, new_info.clone());
+        }
+
+        state.journal.push_delta(V3BlockDelta {
+            block: block_number,
+            sqrt_price_x96_before: state.sqrt_price_x96,
+            liquidity_before: state.liquidity,
+            tick_before: state.tick,
+            tick_priors: journaled_priors,
+        });
+
+        state.sqrt_price_x96 = update.sqrt_price_x96;
+        state.liquidity = update.liquidity;
+        state.tick = update.tick;
+        state.update_block = block_number;
+        state.invalidate_tick_range_cache();
+
+        Some(pool_id)
+    }
+
+    /// Apply a V4 `ModifyLiquidity` event to a registered pool, or buffer it
+    /// for an unregistered pool (ADR-003 live path).
+    pub fn apply_v4_liquidity_update(
+        &mut self,
+        pool_manager: Address,
+        pool_id: crate::bot_core::v4_swap_decoder::PoolId,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: alloy::primitives::I256,
+        block_number: u64,
+    ) -> Option<u64> {
+        let key = (pool_manager, pool_id);
+        let Some(&pool_id) = self.v4_pool_ids.get(&key) else {
+            self.v4_buffer.buffer_pump(
+                key,
+                BufferedV4LiquidityUpdate {
+                    tick_lower,
+                    tick_upper,
+                    liquidity_delta,
+                    block_number,
+                },
+            );
+            return None;
+        };
+
+        let Some(PoolEntry::V4(state)) = self.pools.get_mut(&pool_id) else {
+            return None;
+        };
+
+        let delta_i128: i128 = i128::try_from(liquidity_delta).ok()?;
+
+        let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
+        for &tick_idx in &[tick_lower, tick_upper] {
+            let prior = state.tick_data.get(&tick_idx).cloned();
+            journaled_priors.push((
+                tick_idx,
+                TickBefore {
+                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
+                    liquidity_net_before: prior
+                        .as_ref()
+                        .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
+                },
+            ));
+        }
+
+        crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
+            &mut state.tick_data,
+            tick_lower,
+            tick_upper,
+            delta_i128,
+        );
+
+        state.journal.push_delta(V3BlockDelta {
+            block: block_number,
+            sqrt_price_x96_before: state.sqrt_price_x96,
+            liquidity_before: state.liquidity,
+            tick_before: state.tick,
+            tick_priors: journaled_priors,
+        });
+
+        state.update_block = block_number;
+        state.invalidate_tick_range_cache();
+        Some(pool_id)
+    }
+
+    /// Buffer a V4 `ModifyLiquidity` event from the backfill phase.
+    pub fn buffer_backfill_v4_liquidity_update(
+        &mut self,
+        pool_manager: Address,
+        pool_id: crate::bot_core::v4_swap_decoder::PoolId,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: alloy::primitives::I256,
+        block_number: u64,
+    ) {
+        let key = (pool_manager, pool_id);
+        if let Some(&id) = self.v4_pool_ids.get(&key) {
+            if let Some(PoolEntry::V4(state)) = self.pools.get_mut(&id) {
+                if let Ok(delta_i128) = i128::try_from(liquidity_delta) {
+                    crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
+                        &mut state.tick_data,
+                        tick_lower,
+                        tick_upper,
+                        delta_i128,
+                    );
+                    state.update_block = block_number;
+                    state.invalidate_tick_range_cache();
+                    return;
+                }
+            }
+        }
+        self.v4_buffer.buffer_backfill(
+            key,
+            BufferedV4LiquidityUpdate {
+                tick_lower,
+                tick_upper,
+                liquidity_delta,
+                block_number,
+            },
+        );
+    }
+
+    /// Apply all buffered **backfill** V4 `ModifyLiquidity` events for a pool.
+    pub fn apply_backfill_buffer_v4(
+        &mut self,
+        pool_manager: Address,
+        pool_id: crate::bot_core::v4_swap_decoder::PoolId,
+    ) {
+        let key = (pool_manager, pool_id);
+        let Some(&id) = self.v4_pool_ids.get(&key) else {
+            return;
+        };
+        let Some(buffered) = self.v4_buffer.drain_backfill(&key) else {
+            return;
+        };
+        for update in buffered {
+            let Some(PoolEntry::V4(state)) = self.pools.get_mut(&id) else {
+                continue;
+            };
+            if let Ok(delta_i128) = i128::try_from(update.liquidity_delta) {
+                crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
+                    &mut state.tick_data,
+                    update.tick_lower,
+                    update.tick_upper,
+                    delta_i128,
+                );
+                state.invalidate_tick_range_cache();
+            }
+        }
+    }
+
+    /// Apply all buffered **pump** V4 `ModifyLiquidity` events for a pool.
+    pub fn apply_pump_buffer_v4(
+        &mut self,
+        pool_manager: Address,
+        pool_id: crate::bot_core::v4_swap_decoder::PoolId,
+    ) {
+        let key = (pool_manager, pool_id);
+        let Some(&id) = self.v4_pool_ids.get(&key) else {
+            return;
+        };
+        let Some(buffered) = self.v4_buffer.drain_pump(&key) else {
+            return;
+        };
+        for update in buffered {
+            let Some(PoolEntry::V4(state)) = self.pools.get_mut(&id) else {
+                continue;
+            };
+            if let Ok(delta_i128) = i128::try_from(update.liquidity_delta) {
+                crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
+                    &mut state.tick_data,
+                    update.tick_lower,
+                    update.tick_upper,
+                    delta_i128,
+                );
+                state.invalidate_tick_range_cache();
+            }
+        }
+    }
+
+    /// Set the maximum age for buffered V4 pump events. `None` = unbounded.
+    pub fn set_v4_buffer_max_age(&mut self, max_age: Option<u64>) {
+        self.v4_buffer.set_max_age(max_age);
+    }
+
+    pub fn flush_v4_buffer(&mut self) {
+        self.v4_buffer.flush();
+    }
+
+    pub fn expire_v4_buffered(&mut self, current_block: u64) {
+        self.v4_buffer.expire(current_block);
+    }
+
+    /// Read a registered V4 pool's state by `pool_id`.
+    #[must_use]
+    pub fn get_v4_pool(&self, pool_id: u64) -> Option<&V4PoolState> {
+        match self.pools.get(&pool_id)? {
+            PoolEntry::V4(state) => Some(state),
+            PoolEntry::V2(_) | PoolEntry::V3(_) => None,
+        }
+    }
+
+    /// Look up the pool ID for a registered `(pool_manager, pool_id)` pair.
+    #[must_use]
+    pub fn v4_pool_id_by_key(
+        &self,
+        pool_manager: Address,
+        pool_id: &crate::bot_core::v4_swap_decoder::PoolId,
+    ) -> Option<u64> {
+        self.v4_pool_ids.get(&(pool_manager, *pool_id)).copied()
+    }
+
+    /// Number of registered V4 pools.
+    #[must_use]
+    pub fn v4_pool_count(&self) -> usize {
+        self.v4_pool_ids.len()
+    }
+
+    /// Return the set of V4 `PoolManager` addresses with registered pools.
+    #[must_use]
+    pub fn v4_registered_pool_managers(&self) -> Vec<Address> {
+        self.v4_pool_ids
+            .keys()
+            .map(|(pm, _)| *pm)
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
+    /// Snapshot all V4 pool state for verification.
+    #[must_use]
+    pub fn v4_pools_snapshot(&self) -> HashMap<u64, V4PoolState> {
+        self.pools
+            .iter()
+            .filter_map(|(id, e)| match e {
+                PoolEntry::V4(state) => Some((*id, state.clone())),
+                PoolEntry::V2(_) | PoolEntry::V3(_) => None,
+            })
+            .collect()
+    }
+
+    /// Full-sync a V4 pool's `tick_data` from an external source.
+    pub fn sync_v4_pool_state(
+        &mut self,
+        pool_manager: Address,
+        pool_id: crate::bot_core::v4_swap_decoder::PoolId,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        tick_data: HashMap<i32, TickInfo>,
+        update_block: u64,
+    ) {
+        let Some(&id) = self.v4_pool_ids.get(&(pool_manager, pool_id)) else {
+            return;
+        };
+        let Some(PoolEntry::V4(state)) = self.pools.get_mut(&id) else {
+            return;
+        };
+        state.sqrt_price_x96 = sqrt_price_x96;
+        state.liquidity = liquidity;
+        state.tick = tick;
+        state.tick_data = tick_data;
+        state.update_block = update_block;
+        state.invalidate_tick_range_cache();
+    }
+
+    // --- V4 journal methods ---
+
+    /// Get the number of deltas in the reorg journal for a V4 pool.
+    #[must_use]
+    pub fn v4_journal_len(&self, pool_id: u64) -> usize {
+        match self.pools.get(&pool_id) {
+            Some(PoolEntry::V4(state)) => state.journal.len(),
+            _ => 0,
+        }
+    }
+
+    /// Discard V4 reorg journal deltas earlier than the given block.
+    pub fn v4_discard_before_block(&mut self, pool_id: u64, block: u64) {
+        let Some(PoolEntry::V4(state)) = self.pools.get_mut(&pool_id) else {
+            return;
+        };
+        state.journal.discard_before_block(block);
+    }
+
+    /// Restore V4 pool state prior to a target block (same `V3BlockDelta` shape).
+    pub fn v4_restore_before_block(
+        &mut self,
+        pool_id: u64,
+        block: u64,
+    ) -> Option<V3RestoreResult> {
+        let PoolEntry::V4(state) = self.pools.get_mut(&pool_id)? else {
+            return None;
+        };
+        let result = state.journal.restore_before_block(block);
+
+        state.sqrt_price_x96 = result.sqrt_price_x96_before;
+        state.liquidity = result.liquidity_before;
+        state.tick = result.tick_before;
+        state.update_block = result.block;
+        state.invalidate_tick_range_cache();
+
+        for (tick_idx, tick_before) in &result.tick_priors {
+            match tick_before.liquidity_gross_before {
+                Some(gross_before) => {
+                    state.tick_data.insert(
+                        *tick_idx,
+                        TickInfo {
+                            liquidity_gross: gross_before,
+                            liquidity_net: tick_before.liquidity_net_before,
+                        },
+                    );
+                }
+                None => {
+                    state.tick_data.remove(tick_idx);
+                }
+            }
+        }
+
+        Some(result)
     }
 
     /// Register a token.
