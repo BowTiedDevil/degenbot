@@ -83,15 +83,18 @@ class V2PoolBuilder(V2BuilderBase):
         # Register the pool in the shared Rust Bot and wrap the handle with
         # the Python companion (ADR-005 slice 4). The builder's update_block is
         # the fetched state block; reserves are the genesis delta's after-values.
+        # ``gamma_numer`` is the retained POST-FEE fraction (Rust convention per
+        # the ``IntHopState`` docs: ``gamma_numer=997`` for 0.3%); the source
+        # ``fee_tokenN`` Fraction is the FEE — convert by subtraction.
         pool_id = self._py_bot.register_v2_pool(
             address=common.pool_address,
             token0=common.token0_address,
             token1=common.token1_address,
             reserve0=common.reserves0,
             reserve1=common.reserves1,
-            gamma_numer0=common.fee_token0.numerator,
+            gamma_numer0=common.fee_token0.denominator - common.fee_token0.numerator,
             fee_denom0=common.fee_token0.denominator,
-            gamma_numer1=common.fee_token1.numerator,
+            gamma_numer1=common.fee_token1.denominator - common.fee_token1.numerator,
             fee_denom1=common.fee_token1.denominator,
             factory=common.factory,
             update_block=common.state_block,

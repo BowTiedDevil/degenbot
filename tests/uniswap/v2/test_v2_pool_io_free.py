@@ -14,10 +14,16 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.degenbot_rs import PyBot
 from degenbot.erc20.erc20 import Erc20Token
+from degenbot.exceptions import DegenbotValueError
+from degenbot.exceptions.pool import InvalidSwapInputAmount, LiquidityPoolError
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.uniswap.trackers import UniswapV2PoolTracker
+from degenbot.uniswap.v2_functions import (
+    constant_product_calc_exact_in,
+    constant_product_calc_exact_out,
+)
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
-from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
+from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate, UniswapV2PoolState
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 
@@ -425,3 +431,225 @@ class TestV2PoolTrackerWithBot:
         # Second call returns the same instance from tracking
         pool2 = manager.get_pool(WETH_USDC_V2_POOL)
         assert pool2 is pool
+
+
+class _DelegateSpy:
+    """Wraps a ``PyLiquidityPool`` to record ``calculate_tokens_out/in`` calls.
+
+    ADR-005 slice 5 delegation-test for the V2 constant-product calc path:
+    ``UniswapV2Pool.calculate_tokens_out_from_tokens_in`` (no override) routes
+    through ``PyLiquidityPool.calculate_tokens_out``. Pass-through for all other
+    handle methods via ``__getattr__``.
+    """
+
+    def __init__(self, real_pool):
+        self._real = real_pool
+        self.calc_out_calls: list[tuple[bool, int]] = []
+        self.calc_in_calls: list[tuple[bool, int]] = []
+
+    def calculate_tokens_out(self, *, zero_for_one, amount_in):
+        self.calc_out_calls.append((zero_for_one, int(amount_in)))
+        return self._real.calculate_tokens_out(zero_for_one=zero_for_one, amount_in=amount_in)
+
+    def calculate_tokens_in(self, *, zero_for_one, amount_out):
+        self.calc_in_calls.append((zero_for_one, int(amount_out)))
+        return self._real.calculate_tokens_in(zero_for_one=zero_for_one, amount_out=amount_out)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+class TestV2CalcDelegation:
+    """ADR-005 slice 5 — V2 calc delegation to ``PyLiquidityPool``.
+
+    The constant-product calc math delegates to Rust's
+    ``PyLiquidityPool.calculate_tokens_out/in`` when no ``override_state`` is
+    given (single read guard — no separate Python state read before the calc,
+    so no pump-interleave risk). The override path stays Python
+    (``constant_product_calc_exact_in/out`` against the override reserves) so
+    ``simulate_*`` can hold one snapshot Python-side for delta + final_state
+    consistency (slice 4's fix).
+    """
+
+    @staticmethod
+    def _make_pool() -> UniswapV2Pool:
+        weth = _make_weth()
+        usdc = _make_usdc()
+        return make_v2_pool(
+            address=WETH_USDC_V2_POOL,
+            chain_id=1,
+            token0=weth,
+            token1=usdc,
+            factory=UNISWAP_V2_FACTORY,
+            fee_token0=Fraction(3, 1000),
+            fee_token1=Fraction(3, 1000),
+            reserves_token0=1000 * 10**18,
+            reserves_token1=2_000_000 * 10**6,
+            state_block=18_000_000,
+        )
+
+    def test_calculate_tokens_out_delegates_to_rust_no_override(self) -> None:
+        """No override_state: calc delegates to PyLiquidityPool.calculate_tokens_out."""
+        pool = self._make_pool()
+        weth = pool.token0
+        spy = _DelegateSpy(pool._py_pool)
+        pool._py_pool = spy
+
+        result = pool.calculate_tokens_out_from_tokens_in(
+            token_in=weth, token_in_quantity=10**18
+        )
+
+        # token0 in → zero_for_one=True
+        assert spy.calc_out_calls == [(True, 10**18)]
+        assert spy.calc_in_calls == []
+        assert result > 0
+
+    def test_calculate_tokens_out_reverse_delegates_to_rust(self) -> None:
+        """token1 in → zero_for_one=False, still delegates to Rust."""
+        pool = self._make_pool()
+        usdc = pool.token1
+        spy = _DelegateSpy(pool._py_pool)
+        pool._py_pool = spy
+
+        result = pool.calculate_tokens_out_from_tokens_in(
+            token_in=usdc, token_in_quantity=10**6
+        )
+
+        assert spy.calc_out_calls == [(False, 10**6)]
+        assert result > 0
+
+    def test_calculate_tokens_out_uses_python_path_with_override(self) -> None:
+        """override_state: calc stays Python (constant_product_calc_exact_in
+        against the override reserves). simulate_* relies on this."""
+        pool = self._make_pool()
+        weth = pool.token0
+        spy = _DelegateSpy(pool._py_pool)
+        pool._py_pool = spy
+
+        override = UniswapV2PoolState(
+            address=pool.address,
+            block=None,
+            reserves_token0=2000 * 10**18,
+            reserves_token1=4_000_000 * 10**6,
+        )
+
+        result = pool.calculate_tokens_out_from_tokens_in(
+            token_in=weth, token_in_quantity=10**18, override_state=override
+        )
+
+        # Rust untouched — pure Python path
+        assert spy.calc_out_calls == []
+        assert spy.calc_in_calls == []
+        assert result == constant_product_calc_exact_in(
+            amount_in=10**18,
+            reserves_in=override.reserves_token0,
+            reserves_out=override.reserves_token1,
+            fee=Fraction(3, 1000),
+        )
+
+    def test_calculate_tokens_in_delegates_to_rust_no_override(self) -> None:
+        """No override_state: calc delegates to PyLiquidityPool.calculate_tokens_in."""
+        pool = self._make_pool()
+        usdc = pool.token1
+        spy = _DelegateSpy(pool._py_pool)
+        pool._py_pool = spy
+
+        result = pool.calculate_tokens_in_from_tokens_out(
+            token_out_quantity=10**6, token_out=usdc
+        )
+
+        # token1 out (received by user) → t0 in → zero_for_one=True
+        assert spy.calc_in_calls == [(True, 10**6)]
+        assert spy.calc_out_calls == []
+        assert result > 0
+
+    def test_calculate_tokens_in_reverse_delegates_to_rust(self) -> None:
+        """token0 out → zero_for_one=False, still delegates to Rust."""
+        pool = self._make_pool()
+        weth = pool.token0
+        spy = _DelegateSpy(pool._py_pool)
+        pool._py_pool = spy
+
+        result = pool.calculate_tokens_in_from_tokens_out(
+            token_out_quantity=10**18, token_out=weth
+        )
+
+        assert spy.calc_in_calls == [(False, 10**18)]
+        assert result > 0
+
+    def test_calculate_tokens_in_uses_python_path_with_override(self) -> None:
+        """override_state: calc-in stays Python (constant_product_calc_exact_out)."""
+        pool = self._make_pool()
+        usdc = pool.token1
+        spy = _DelegateSpy(pool._py_pool)
+        pool._py_pool = spy
+
+        override = UniswapV2PoolState(
+            address=pool.address,
+            block=None,
+            reserves_token0=2000 * 10**18,
+            reserves_token1=4_000_000 * 10**6,
+        )
+
+        result = pool.calculate_tokens_in_from_tokens_out(
+            token_out_quantity=10**6, token_out=usdc, override_state=override
+        )
+
+        assert spy.calc_in_calls == []
+        assert spy.calc_out_calls == []
+        assert result == constant_product_calc_exact_out(
+            amount_out=10**6,
+            reserves_in=override.reserves_token0,
+            reserves_out=override.reserves_token1,
+            fee=Fraction(3, 1000),
+        )
+
+    def test_calculate_tokens_in_raises_on_overdraw_via_rust(self) -> None:
+        """Non-override overdraw: Rust returns 0, Python raises LiquidityPoolError
+        (preserves the original Python contract). Spy confirms Rust WAS hit."""
+        pool = self._make_pool()
+        usdc = pool.token1
+        spy = _DelegateSpy(pool._py_pool)
+        pool._py_pool = spy
+
+        # token1 reserves = 2_000_000 * 10^6 = 2_000_000_000_000 — request more
+        with pytest.raises(LiquidityPoolError):
+            pool.calculate_tokens_in_from_tokens_out(
+                token_out_quantity=2_000_000_000_001,
+                token_out=usdc,
+            )
+
+        # Rust was called with the overdraw amount and returned 0 (Python raises)
+        assert spy.calc_in_calls == [(True, 2_000_000_000_001)]
+
+    def test_calculate_tokens_out_rejects_zero_input(self) -> None:
+        """InvalidSwapInputAmount still raised before delegation is attempted."""
+        pool = self._make_pool()
+        weth = pool.token0
+        spy = _DelegateSpy(pool._py_pool)
+        pool._py_pool = spy
+
+        with pytest.raises(InvalidSwapInputAmount):
+            pool.calculate_tokens_out_from_tokens_in(token_in=weth, token_in_quantity=0)
+
+        # Delegation NOT attempted — pre-check failed first
+        assert spy.calc_out_calls == []
+
+    def test_calculate_tokens_out_rejects_unknown_token(self) -> None:
+        """Unknown token_in raises DegenbotValueError before delegation."""
+        pool = self._make_pool()
+        bogus = make_erc20(
+            _PY_BOT,
+            "0x0000000000000000000000000000000000000009",
+            chain_id=1,
+            name="Bogus",
+            symbol="BOG",
+            decimals=18,
+        )
+        spy = _DelegateSpy(pool._py_pool)
+        pool._py_pool = spy
+
+        with pytest.raises(DegenbotValueError):
+            pool.calculate_tokens_out_from_tokens_in(token_in=bogus, token_in_quantity=10**18)
+
+        assert spy.calc_out_calls == []

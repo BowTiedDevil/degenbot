@@ -118,8 +118,8 @@ class TestUniswapV4InputOutputAmounts:
 
 class TestCurveInputOutputAmounts:
     def test_input_amount(self):
-        token0 = FakeToken("0xt0")
-        token1 = FakeToken("0xt1")
+        token0 = FakeToken("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        token1 = FakeToken("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         swap = CurveStableSwapPoolSwapAmounts(
             pool=ChecksumAddress("0x" + "a" * 40),
             token_in=token0,
@@ -133,8 +133,8 @@ class TestCurveInputOutputAmounts:
         assert swap.input_amount() == 3000
 
     def test_output_amount(self):
-        token0 = FakeToken("0xt0")
-        token1 = FakeToken("0xt1")
+        token0 = FakeToken("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        token1 = FakeToken("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         swap = CurveStableSwapPoolSwapAmounts(
             pool=ChecksumAddress("0x" + "a" * 40),
             token_in=token0,

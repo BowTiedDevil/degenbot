@@ -26,9 +26,16 @@ if TYPE_CHECKING:
     from degenbot.types.aliases import ChainId
 
 
-def _fee_parts(fee: Fraction) -> tuple[int, int]:
-    """Return the ``(numerator, denominator)`` of a fee ``Fraction``."""
-    return (fee.numerator, fee.denominator)
+def _gamma_complement(fee: Fraction) -> tuple[int, int]:
+    """Return the ``(gamma_numer, fee_denom)`` Rust registration pair for a fee.
+
+    Rust's ``Bot::register_v2_pool`` and the Möbius ``IntHopState`` interpret
+    ``gamma_numer`` as the post-fee RETAINED fraction (e.g. 997 for a 0.3% fee,
+    where ``fee_denom=1000`` and ``gamma_numer=1000-3=997`` — the slice-4
+    parity tests confirm this). Source data from Python is the FEE ``Fraction``
+    (e.g. ``Fraction(3, 1000)``), so we convert to the retained-fraction form.
+    """
+    return (fee.denominator - fee.numerator, fee.denominator)
 
 
 def make_v2_pool(
@@ -66,8 +73,8 @@ def make_v2_pool(
     address = get_checksum_address(address)
     resolved_chain_id = chain_id if chain_id is not None else token0.chain_id
 
-    gamma_numer0, fee_denom0 = _fee_parts(fee_token0)
-    gamma_numer1, fee_denom1 = _fee_parts(fee_token1)
+    gamma_numer0, fee_denom0 = _gamma_complement(fee_token0)
+    gamma_numer1, fee_denom1 = _gamma_complement(fee_token1)
 
     py_bot = PyBot()
     pool_id = py_bot.register_v2_pool(

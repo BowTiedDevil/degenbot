@@ -29,24 +29,24 @@ FEE_03 = Fraction(3, 1000)
 
 class TestSwapVector:
     def test_construction(self):
-        t0 = _make_token("0xt0")
-        t1 = _make_token("0xt1")
+        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         sv = SwapVector(t0, t1, zero_for_one=True)
         assert sv.token_in == t0
         assert sv.token_out == t1
         assert sv.zero_for_one
 
     def test_equality(self):
-        t0 = _make_token("0xt0")
-        t1 = _make_token("0xt1")
+        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         sv1 = SwapVector(t0, t1, zero_for_one=True)
         sv2 = SwapVector(t0, t1, zero_for_one=True)
         assert sv1 == sv2
 
     def test_inequality(self):
-        t0 = _make_token("0xt0")
-        t1 = _make_token("0xt1")
-        t2 = _make_token("0xt2")
+        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        t2 = _make_token("0xcccccccccccccccccccccccccccccccccccccccc")
         sv1 = SwapVector(t0, t1, zero_for_one=True)
         sv2 = SwapVector(t0, t2, zero_for_one=True)
         assert sv1 != sv2
@@ -54,32 +54,32 @@ class TestSwapVector:
 
 class TestPoolCompatibility:
     def test_v2_compatible(self):
-        t0 = _make_token("0xt0")
-        t1 = _make_token("0xt1")
+        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         pool = _make_v2_pool(t0, t1)
         pool.to_hop_state(zero_for_one=True)  # should not raise
 
     def test_v3_compatible(self):
-        t0 = _make_token("0xt0")
-        t1 = _make_token("0xt1")
+        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         pool = _make_v3_pool(t0, t1)
         pool.to_hop_state(zero_for_one=True)  # should not raise
 
     def test_v4_compatible(self):
-        t0 = _make_token("0xt0")
-        t1 = _make_token("0xt1")
+        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         pool = _make_v3_pool(t0, t1)
         pool.to_hop_state(zero_for_one=True)  # should not raise
 
     def test_aerodrome_volatile_compatible(self):
-        t0 = _make_token("0xt0")
-        t1 = _make_token("0xt1")
+        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         pool = _make_aerodrome_pool(t0, t1, stable=False)
         pool.to_hop_state(zero_for_one=True)  # should not raise
 
     def test_aerodrome_stable_compatible(self):
-        t0 = _make_token("0xt0")
-        t1 = _make_token("0xt1")
+        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         pool = _make_aerodrome_pool(t0, t1, stable=True)
         pool.to_hop_state(zero_for_one=True)  # should not raise
 
@@ -93,22 +93,22 @@ class TestPoolCompatibility:
 
 class TestFeeExtraction:
     def test_v3_fee(self):
-        t0 = _make_token("0xt0")
-        t1 = _make_token("0xt1")
+        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         pool = _make_v3_pool(t0, t1, fee=3000)
         fee = pool.extract_fee(zero_for_one=True)
         assert fee == Fraction(3000, 1_000_000)
 
     def test_v2_fee_zero_for_one(self):
-        t0 = _make_token("0xt0")
-        t1 = _make_token("0xt1")
+        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         pool = _make_v2_pool(t0, t1, fee=Fraction(3, 1000))
         fee = pool.extract_fee(zero_for_one=True)
         assert fee == Fraction(3, 1000)
 
     def test_v2_fee_one_for_zero(self):
-        t0 = _make_token("0xt0")
-        t1 = _make_token("0xt1")
+        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         pool = _make_v2_pool(
             t0,
             t1,
@@ -123,8 +123,8 @@ class TestFeeExtraction:
 
 class TestPoolToHopState:
     def test_v2_produces_constant_product_hop(self):
-        t0 = _make_token("0xt0")
-        t1 = _make_token("0xt1")
+        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         pool = _make_v2_pool(t0, t1)
         hop = pool.to_hop_state(zero_for_one=True)
         assert isinstance(hop, ConstantProductHop)
@@ -133,15 +133,15 @@ class TestPoolToHopState:
         assert hop.fee == FEE_03
 
     def test_v3_produces_bounded_product_hop(self):
-        t0 = _make_token("0xt0")
-        t1 = _make_token("0xt1")
+        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         pool = _make_v3_pool(t0, t1)
         hop = pool.to_hop_state(zero_for_one=True)
         assert isinstance(hop, BoundedProductHop)
 
     def test_v2_direction(self):
-        t0 = _make_token("0xt0")
-        t1 = _make_token("0xt1")
+        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         pool = _make_v2_pool(t0, t1, reserve0=1000, reserve1=2000)
         hop_forward = pool.to_hop_state(zero_for_one=True)
         assert hop_forward.reserve_in == 1000
@@ -154,8 +154,8 @@ class TestPoolToHopState:
 
 class TestArbitragePathConstruction:
     def _make_cyclic_v2_pools(self):
-        t0 = _make_token("0xtokenA")
-        t1 = _make_token("0xtokenB")
+        t0 = _make_token("0x1111111111111111111111111111111111111111")
+        t1 = _make_token("0x2222222222222222222222222222222222222222")
         pool0 = _make_v2_pool(
             t0,
             t1,
@@ -272,17 +272,17 @@ class TestArbitragePathConstruction:
 
 class TestArbitragePathValidation:
     def test_rejects_single_pool(self):
-        t0 = _make_token("0xt0")
-        t1 = _make_token("0xt1")
+        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         pool = _make_v2_pool(t0, t1)
         solver = MobiusSolver()
         with pytest.raises(PathValidationError, match="at least 2"):
             ArbitragePath(pools=[pool], input_token=t0, solver=solver)
 
     def test_rejects_broken_token_chain(self):
-        t0 = _make_token("0xt0")
-        t1 = _make_token("0xt1")
-        t2 = _make_token("0xt2")
+        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        t2 = _make_token("0xcccccccccccccccccccccccccccccccccccccccc")
         pool0 = _make_v2_pool(t0, t1, address="0x00000000000000000000000000000000000000a0")
         pool1 = _make_v2_pool(t1, t2, address="0x00000000000000000000000000000000000000a1")
         solver = MobiusSolver()
@@ -290,9 +290,9 @@ class TestArbitragePathValidation:
             ArbitragePath(pools=[pool0, pool1], input_token=t0, solver=solver)
 
     def test_rejects_input_token_not_in_first_pool(self):
-        t0 = _make_token("0xt0")
-        t1 = _make_token("0xt1")
-        t2 = _make_token("0xt2")
+        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        t2 = _make_token("0xcccccccccccccccccccccccccccccccccccccccc")
         pool0 = _make_v2_pool(t0, t1, address="0x00000000000000000000000000000000000000a0")
         pool1 = _make_v2_pool(t1, t2, address="0x00000000000000000000000000000000000000a1")
         solver = MobiusSolver()
@@ -304,8 +304,8 @@ class TestArbitragePathValidation:
             )
 
     def test_rejects_incompatible_pool(self):
-        t0 = _make_token("0xt0")
-        t1 = _make_token("0xt1")
+        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 
         pool0 = _make_v2_pool(t0, t1, address="0x00000000000000000000000000000000000000a0")
 
@@ -443,8 +443,8 @@ class TestV3VirtualReservesIntegerMath:
 
 class TestArbitragePathClose:
     def test_close_unsubscribes_from_pools(self):
-        t0 = _make_token("0xtokenA")
-        t1 = _make_token("0xtokenB")
+        t0 = _make_token("0x1111111111111111111111111111111111111111")
+        t1 = _make_token("0x2222222222222222222222222222222222222222")
         pool0 = _make_v2_pool(
             t0,
             t1,
@@ -476,8 +476,8 @@ class TestArbitragePathClose:
         assert path not in pool1._subscribers
 
     def test_close_clears_subscribers(self):
-        t0 = _make_token("0xtokenA")
-        t1 = _make_token("0xtokenB")
+        t0 = _make_token("0x1111111111111111111111111111111111111111")
+        t1 = _make_token("0x2222222222222222222222222222222222222222")
         pool0 = _make_v2_pool(
             t0,
             t1,

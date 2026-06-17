@@ -8,12 +8,12 @@ from .conftest import _make_aerodrome_pool, _make_v2_pool, _make_v3_pool
 
 @pytest.fixture
 def token0():
-    return FakeToken("0xt0")
+    return FakeToken("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 
 
 @pytest.fixture
 def token1():
-    return FakeToken("0xt1")
+    return FakeToken("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 
 
 class TestProtocolSatisfaction:
