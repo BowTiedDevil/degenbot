@@ -1,8 +1,8 @@
-//! `BotCore` — the single owner of all runtime state.
+//! `Bot` — the single owner of all runtime state.
 //!
 //! All pool data, token metadata, calculation methods, and swap encoding
 //! live here. Python objects are thin `PyO3` handles carrying keys into
-//! `BotCore`'s `HashMaps`.
+//! `Bot`'s `HashMaps`.
 
 use std::collections::{HashMap, HashSet};
 
@@ -27,7 +27,7 @@ pub mod v4_state;
 pub mod v4_swap_decoder;
 pub mod tick_map;
 
-// Re-export the merged V3/V4 state types (ADR-003: BotCore owns CL state).
+// Re-export the merged V3/V4 state types (ADR-003: Bot owns CL state).
 pub use v3_state::{
     BufferedV3LiquidityUpdate, PoolTickCoverage, RegisterV3PoolParams, V3PoolState, V3SwapOutcome,
     V3SwapUpdate, v3_simulate_swap,
@@ -128,14 +128,14 @@ pub struct TokenEntry {
 }
 
 // ---------------------------------------------------------------------------
-// BotCore
+// Bot
 // ---------------------------------------------------------------------------
 
 /// The single owner of all runtime state.
 ///
 /// All pool data, token metadata, engines, and encoded results live here.
-/// Python holds `PyBotCore` — an `Arc` pointing here.
-pub struct BotCore {
+/// Python holds `PyBot` — an `Arc` pointing here.
+pub struct Bot {
     /// Pool registry: `pool_id` → `PoolEntry`.
     pools: HashMap<u64, PoolEntry>,
     /// Pool contract address → `pool_id`.
@@ -148,7 +148,7 @@ pub struct BotCore {
     /// by default (ADR-003). Applied uniformly to V2/V3/V4.
     journal_depth: usize,
     /// Dual-buffer for V3 liquidity (Mint/Burn) events awaiting pool
-    /// registration (ADR-003: the accurate-state buffer lives on `BotCore`, not
+    /// registration (ADR-003: the accurate-state buffer lives on `Bot`, not
     /// the dissolved `V3BlockEngine`).
     v3_buffer:
         crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer<
@@ -168,14 +168,14 @@ pub struct BotCore {
     v4_pool_ids: HashMap<(Address, crate::bot_core::v4_swap_decoder::PoolId), u64>,
 }
 
-impl BotCore {
-    /// Create a new, empty `BotCore` with the default 32-block reorg journal.
+impl Bot {
+    /// Create a new, empty `Bot` with the default 32-block reorg journal.
     #[must_use]
     pub fn new() -> Self {
         Self::with_journal_depth(32)
     }
 
-    /// Create a new, empty `BotCore` with a custom reorg journal depth.
+    /// Create a new, empty `Bot` with a custom reorg journal depth.
     #[must_use]
     pub fn with_journal_depth(journal_depth: usize) -> Self {
         Self {
@@ -309,7 +309,7 @@ impl BotCore {
     ///
     /// Looks up the pool by contract address. No-op if the pool is not registered.
     /// Thin wrapper over [`apply_v2_sync`](Self::apply_v2_sync) that discards
-    /// the returned `pool_id` (kept for the `PyBotCore` surface).
+    /// the returned `pool_id` (kept for the `PyBot` surface).
     ///
     /// # Panics
     ///
@@ -342,7 +342,7 @@ impl BotCore {
     ///
     /// Looks up the pool by contract address. No-op if the pool is not registered.
     /// Stashes scalar "before" values (and any provided per-tick priors) in the
-    /// reorg journal before updating. Kept as the `PyBotCore` entry; the live
+    /// reorg journal before updating. Kept as the `PyBot` entry; the live
     /// pump path uses [`apply_v3_swap`](Self::apply_v3_swap) (which returns the
     /// affected `pool_id` and overlays `tick_priors` into `tick_data`).
     pub fn update_v3_pool(
@@ -1582,7 +1582,7 @@ impl BotCore {
     }
 }
 
-impl Default for BotCore {
+impl Default for Bot {
     fn default() -> Self {
         Self::new()
     }
@@ -1622,7 +1622,7 @@ mod tests {
 
     #[test]
     fn register_v2_pool_and_calculate_tokens_out() {
-        let mut core = BotCore::new();
+        let mut core = Bot::new();
         let pool_id = core.register_v2_pool(&make_params(U256::from(1000), U256::from(2000)));
 
         // Python reference: constant_product_calc_exact_in(100, 1000, 2000, 3/1000) = 181
@@ -1632,7 +1632,7 @@ mod tests {
 
     #[test]
     fn calculate_tokens_out_reverse_direction() {
-        let mut core = BotCore::new();
+        let mut core = Bot::new();
         let pool_id = core.register_v2_pool(&make_params(U256::from(2000), U256::from(1000)));
 
         // Python reference: constant_product_calc_exact_in(100, 1000, 2000, 3/1000) = 181
@@ -1642,7 +1642,7 @@ mod tests {
 
     #[test]
     fn update_v2_pool_changes_calculation_result() {
-        let mut core = BotCore::new();
+        let mut core = Bot::new();
         let pool_id = core.register_v2_pool(&make_params(U256::from(1000), U256::from(2000)));
 
         // Before update: swap 100 token0 → 181 token1
@@ -1659,7 +1659,7 @@ mod tests {
 
     #[test]
     fn calculate_tokens_in_for_v2_pool() {
-        let mut core = BotCore::new();
+        let mut core = Bot::new();
         let pool_id = core.register_v2_pool(&make_params(U256::from(1000), U256::from(2000)));
 
         // Python: constant_product_calc_exact_out(50, 1000, 2000, 3/1000) = 26
@@ -1673,7 +1673,7 @@ mod tests {
 
     #[test]
     fn calculate_tokens_out_realistic_amounts() {
-        let mut core = BotCore::new();
+        let mut core = Bot::new();
 
         // Realistic: 1.5M USDC / 800 WETH, 0.3% fee
         let reserve0 = U256::from(1_500_000_000_000u64); // 1.5M USDC (6dp)

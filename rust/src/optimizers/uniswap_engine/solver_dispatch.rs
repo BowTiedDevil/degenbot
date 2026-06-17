@@ -55,10 +55,10 @@ impl UniswapEngine {
         // without cloning unchanged entries.
 
         // Re-derive resolved hop states under the core lock — a single
-        // consistent snapshot of BotCore for the whole re-derive (ADR-003
+        // consistent snapshot of Bot for the whole re-derive (ADR-003
         // Option A: one core-lock window per `solve_dirty`). V3/V4 state still
         // reads from the per-family block engines here; Slices 2/3 migrate
-        // those into BotCore too. The guard drops before `solve_path` runs,
+        // those into Bot too. The guard drops before `solve_path` runs,
         // which is pure `&self`.
         {
             let core = self.core.lock();
@@ -274,12 +274,12 @@ impl UniswapEngine {
 
     /// Resolve a path's pool refs into hop states and tick-range sequences.
     ///
-    /// `core` is the locked [`BotCore`] snapshot to read V2 state from
+    /// `core` is the locked [`Bot`] snapshot to read V2 state from
     /// (ADR-003). V3/V4 hops still read the per-family block engines; their
     /// state migrates into `core` in Slices 2/3.
     pub(super) fn resolve_path(
         &self,
-        core: &crate::bot_core::BotCore,
+        core: &crate::bot_core::Bot,
         pool_refs: &[MixedPoolRef],
         resolved: &mut ResolvedMixedPath,
     ) {
@@ -295,7 +295,7 @@ impl UniswapEngine {
         for pool_ref in pool_refs {
             match pool_ref.hop_type {
                 HopType::V2 => {
-                    // Read V2 state from BotCore and build the orientation-specific
+                    // Read V2 state from Bot and build the orientation-specific
                     // `IntHopState` at resolve time from `zero_for_one` (ADR-003
                     // "Swap Orientation": single PoolEntry per address, orientation
                     // derived at solve — the engine never mutates this state).
@@ -327,7 +327,7 @@ impl UniswapEngine {
                     resolved.hops.push(ResolvedHop::V2 { state: hop_state });
                 }
                 HopType::V3 => {
-                    // Look up V3 pool state (now owned by BotCore — ADR-003) and
+                    // Look up V3 pool state (now owned by Bot — ADR-003) and
                     // build the integer tick-range sequence used by the CL solver.
                     let Some(pool_state) = core.get_v3_pool(pool_ref.pool_key) else {
                         return; // Missing pool → invalid
@@ -340,7 +340,7 @@ impl UniswapEngine {
                     resolved.hops.push(ResolvedHop::V3 { int_seq });
                 }
                 HopType::V4 => {
-                    // V4 pools use identical CL math as V3 (BotCore-owned, ADR-003).
+                    // V4 pools use identical CL math as V3 (Bot-owned, ADR-003).
                     let Some(pool_state) = core.get_v4_pool(pool_ref.pool_key) else {
                         return; // Missing pool → invalid
                     };

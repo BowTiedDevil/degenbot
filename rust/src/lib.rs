@@ -123,8 +123,8 @@ fn degenbot_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Uniswap mixed V2/V3/V4 engine
     m.add_class::<optimizers::uniswap_engine::PyUniswapArbEngine>()?;
 
-    // BotCore — Rust-owned state
-    m.add_class::<bot_core::py_bot::PyBotCore>()?;
+    // Bot — Rust-owned state
+    m.add_class::<bot_core::py_bot::PyBot>()?;
     m.add_class::<bot_core::py_pool::PyPool>()?;
     m.add_class::<bot_core::py_token::PyToken>()?;
 

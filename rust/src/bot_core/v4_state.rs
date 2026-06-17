@@ -1,4 +1,4 @@
-//! V4 concentrated-liquidity pool state — the single BotCore-owned home for
+//! V4 concentrated-liquidity pool state — the single Bot-owned home for
 //! V4 pool data (ADR-003). Supersedes the engine-side `V4PoolState` that lived
 //! in `optimizers/v4_block_engine.rs`; that engine's path/solve subsystem is
 //! deleted as orphan dead code (the unified `UniswapEngine` already handles V4
@@ -86,7 +86,7 @@ impl LiquidityEvent for BufferedV4LiquidityUpdate {
 // Registration params + swap update type
 // ---------------------------------------------------------------------------
 
-/// Parameters for registering a V4 pool with `BotCore`.
+/// Parameters for registering a V4 pool with `Bot`.
 #[derive(Clone, Debug)]
 pub struct RegisterV4PoolParams {
     pub pool_manager: Address,
@@ -127,7 +127,7 @@ struct TickRangeCache {
     ofz: Option<Arc<[V3TickRangeForSolver]>>,
 }
 
-/// V4 concentrated-liquidity pool state owned by [`crate::bot_core::BotCore`].
+/// V4 concentrated-liquidity pool state owned by [`crate::bot_core::Bot`].
 /// Carries authoritative mutable state plus a per-pool reorg journal (same
 /// `V3BlockDelta` shape — V4 `ModifyLiquidity` carries a signed liquidity
 /// delta, but the journal records the same scalar + per-tick priors as V3).
@@ -306,7 +306,7 @@ impl V4PoolState {
 ///
 /// `amount_specified` uses the V4 sign convention supplied by the caller:
 /// negative = exact input, positive = exact output (opposite to V3). The
-/// `BotCore` `calculate_tokens_*` callers flip before calling so this stays
+/// `Bot` `calculate_tokens_*` callers flip before calling so this stays
 /// a pure V4 port.
 #[must_use]
 #[allow(clippy::too_many_lines)] // faithful port of V3/V4's `_calculate_swap`; mirroring `v3_simulate_swap`.

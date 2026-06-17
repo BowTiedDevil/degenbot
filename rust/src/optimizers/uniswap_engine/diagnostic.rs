@@ -596,7 +596,7 @@ impl UniswapEngine {
 
         let mut snapshot = DiagnosticPathState::new(path_id, solve_block);
 
-        // ADR-003: V2 state lives in BotCore. One core-lock window covers all
+        // ADR-003: V2 state lives in Bot. One core-lock window covers all
         // V2 lookups in this loop; V3/V4 state still reads the per-family
         // block engines (disjoint fields, immutable borrows coexist).
         let core = self.core.lock();
@@ -693,7 +693,7 @@ impl UniswapEngine {
 }
 
 // ---------------------------------------------------------------------------
-// Sub-engine accessors (V3/V4 state now reads from BotCore — ADR-003)
+// Sub-engine accessors (V3/V4 state now reads from Bot — ADR-003)
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

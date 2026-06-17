@@ -24,7 +24,7 @@ impl UniswapEngine {
         self.path_pools.insert(path_id, MixedPath { pools: pool_refs });
 
         // Resolve the path immediately (no solve yet). V2 state is read from
-        // BotCore under the core lock (ADR-003).
+        // Bot under the core lock (ADR-003).
         let mut resolved = ResolvedMixedPath::default();
         if let Some(path) = self.path_pools.get(&path_id) {
             let core = self.core.lock();
@@ -60,13 +60,13 @@ impl UniswapEngine {
     }
 
     /// Set the maximum age for buffered events in the V3/V4 buffers
-    /// (ADR-003: both live on `BotCore`).
+    /// (ADR-003: both live on `Bot`).
     pub fn set_event_buffer_max_age(&mut self, max_age: Option<u64>) {
         self.core.lock().set_v3_buffer_max_age(max_age);
         self.core.lock().set_v4_buffer_max_age(max_age);
     }
 
-    /// Flush all buffered events in the V3/V4 buffers on `BotCore` (ADR-003).
+    /// Flush all buffered events in the V3/V4 buffers on `Bot` (ADR-003).
     pub fn flush_event_buffer(&mut self) {
         self.core.lock().flush_v3_buffer();
         self.core.lock().flush_v4_buffer();
@@ -133,19 +133,19 @@ impl UniswapEngine {
         // pump owns dispatch via `send_result_batch`.
     }
 
-    /// Number of registered V2 pools (state lives in `BotCore` under ADR-003).
+    /// Number of registered V2 pools (state lives in `Bot` under ADR-003).
     #[must_use]
     pub fn v2_pool_count(&self) -> usize {
         self.core.lock().v2_pool_count()
     }
 
-    /// Number of registered V3 pools (state lives in `BotCore` under ADR-003).
+    /// Number of registered V3 pools (state lives in `Bot` under ADR-003).
     #[must_use]
     pub fn v3_pool_count(&self) -> usize {
         self.core.lock().v3_pool_count()
     }
 
-    /// Number of registered V4 pools (state lives in `BotCore` under ADR-003).
+    /// Number of registered V4 pools (state lives in `Bot` under ADR-003).
     #[must_use]
     pub fn v4_pool_count(&self) -> usize {
         self.core.lock().v4_pool_count()

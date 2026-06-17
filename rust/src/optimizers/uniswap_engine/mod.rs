@@ -6,11 +6,11 @@
 //! # Design
 //!
 //! The engine composes:
-//! - A [`BotCore`] for V2 pool state and constant-product solving (ADR-003:
-//!   `BotCore` is the single state owner; the engine is a consumer)
-//! - A [`BotCore`](crate::bot_core::BotCore) for V2+V3 pool state (ADR-003:
-//!   `BotCore` is the single state owner, peer to this engine)
-//! - A [`BotCore`](crate::bot_core::BotCore) for all pool state (V2+V3+V4 —
+//! - A [`Bot`] for V2 pool state and constant-product solving (ADR-003:
+//!   `Bot` is the single state owner; the engine is a consumer)
+//! - A [`Bot`](crate::bot_core::Bot) for V2+V3 pool state (ADR-003:
+//!   `Bot` is the single state owner, peer to this engine)
+//! - A [`Bot`](crate::bot_core::Bot) for all pool state (V2+V3+V4 —
 //!   ADR-003), the single Rust state owner peer to this engine
 //!
 //! V4 pools share identical concentrated-liquidity math with V3. The solver
@@ -41,7 +41,7 @@ use std::sync::Arc;
 
 use alloy::primitives::{Address, U256};
 
-use crate::bot_core::BotCore;
+use crate::bot_core::Bot;
 
 // Sub-modules — each contains `impl UniswapEngine` or `impl PyUniswapArbEngine` blocks.
 #[allow(clippy::module_inception)]
@@ -322,16 +322,16 @@ pub struct ResultBatch {
 /// The unified Uniswap engine — owns V2, V3, and V4 pool state and solves
 /// mixed arbitrage paths.
 ///
-/// V2 pool state lives in [`BotCore`] (ADR-003: the single Rust state owner,
-/// peer to this engine). The engine holds an `Arc<Mutex<BotCore>>` and reads /
+/// V2 pool state lives in [`Bot`] (ADR-003: the single Rust state owner,
+/// peer to this engine). The engine holds an `Arc<Mutex<Bot>>` and reads /
 /// mutates V2 state through it. Lock ordering when nested is
 /// **engine-then-core** — no code path ever nests core-then-engine.
 pub struct UniswapEngine {
     /// V2 + V3 + V4 pool state owner (ADR-003). The engine holds an
-    /// `Arc<Mutex<BotCore>>` and reads/writes all pool state through it. Lock
+    /// `Arc<Mutex<Bot>>` and reads/writes all pool state through it. Lock
     /// ordering when nested is engine-then-core; no code path ever nests in
     /// the opposite direction.
-    core: Arc<parking_lot::Mutex<BotCore>>,
+    core: Arc<parking_lot::Mutex<Bot>>,
     /// Registered path pool refs (immutable after registration).
     path_pools: HashMap<u64, MixedPath>,
     /// Resolved path states (mutated on each solve).
@@ -394,7 +394,7 @@ impl UniswapEngine {
     #[must_use] 
     pub fn new() -> Self {
         Self {
-            core: Arc::new(parking_lot::Mutex::new(BotCore::new())),
+            core: Arc::new(parking_lot::Mutex::new(Bot::new())),
             path_pools: HashMap::new(),
             path_resolved: HashMap::new(),
             pool_to_paths: HashMap::new(),
@@ -415,10 +415,10 @@ impl UniswapEngine {
     }
 
     /// Create a new engine with a custom event buffer max age for the V4
-    /// sub-engine (V3 buffer lives on `BotCore` — ADR-003).
+    /// sub-engine (V3 buffer lives on `Bot` — ADR-003).
     #[must_use] 
     pub fn new_with_buffer_max_age(event_buffer_max_age: Option<u64>) -> Self {
-        let core = Arc::new(parking_lot::Mutex::new(BotCore::new()));
+        let core = Arc::new(parking_lot::Mutex::new(Bot::new()));
         if let Some(age) = event_buffer_max_age {
             core.lock().set_v3_buffer_max_age(Some(age));
             core.lock().set_v4_buffer_max_age(Some(age));
@@ -431,7 +431,7 @@ impl UniswapEngine {
 
     /// Register a V2 pool by contract address and initial reserves.
     ///
-    /// Delegates to [`BotCore::register_v2_pool`] (ADR-003: V2 state lives in
+    /// Delegates to [`Bot::register_v2_pool`] (ADR-003: V2 state lives in
     /// the core). The single fee `(gamma_numer, fee_denom)` is applied
     /// symmetrically to both swap directions — V2-fork asymmetric fees are a
     /// future concern. Token0/token1/factory default to zero (the V2 *solve*
@@ -465,7 +465,7 @@ impl UniswapEngine {
 
     /// Register a V3 pool by contract address and initial state.
     ///
-    /// Delegates to [`BotCore::register_v3_pool`] (ADR-003: V3 state lives in
+    /// Delegates to [`Bot::register_v3_pool`] (ADR-003: V3 state lives in
     /// the core). The buffer is applied separately via the staged-drain
     /// sequence (`apply_backfill_buffer_v3` → `apply_pump_buffer_v3`) so the
     /// caller can snapshot state at deterministic points for verification.
@@ -475,7 +475,7 @@ impl UniswapEngine {
     }
 
     /// Register a V4 pool by `(pool_manager, pool_id)` and initial state.
-    /// Delegates to [`BotCore::register_v4_pool`] (ADR-003).
+    /// Delegates to [`Bot::register_v4_pool`] (ADR-003).
     pub fn register_v4_pool(
         &self,
         params: &crate::bot_core::RegisterV4PoolParams,

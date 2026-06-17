@@ -44,7 +44,7 @@ Every hot-path operation — event decoding, pool state mutation, tick-range con
 | V3BlockEngine | Rust | `rust/src/optimizers/v3_block_engine.rs` | V3 pool state, Swap/Mint/Burn decoding, tick-range construction, piecewise solving |
 | V4BlockEngine | Rust | `rust/src/optimizers/v4_block_engine.rs` | V4 pool state, Swap/ModifyLiquidity decoding, same CL math as V3 |
 | UniswapEnginePump | Rust | `rust/src/optimizers/uniswap_engine_pump.rs` | Unified async pump: dual WS subscription (newHeads + logs), backfill on timeout/empty block, routes to sub-engines |
-| BotCore | Rust | `rust/src/bot_core/mod.rs` | Single owner of pool/token state (future all-state owner, currently V2+V3 partial) |
+| Bot | Rust | `rust/src/bot_core/mod.rs` | Single owner of pool/token state (future all-state owner, currently V2+V3 partial) |
 | ReorgJournal | Rust | `rust/src/bot_core/state_history.rs` | Bounded deque of per-block deltas for rollback (V2: 2 reserves; V3: scalars + tick priors) |
 | Tick bitmap walk & tick mutation | Rust | `rust/src/bot_core/tick_bitmap.rs` | `gen_ticks()` port + shared `update_tick_liquidity` / `apply_liquidity_to_tick_range` helpers used by both V3 and V4 engines |
 | Event decoders | Rust | `rust/src/bot_core/v*_decoder.rs` | Decode Sync, Swap, Mint/Burn, ModifyLiquidity from Alloy logs |
@@ -337,7 +337,7 @@ For future consumers that want per-event granularity (not just per-block), the p
 
 ### 7.1 Design
 
-Each pool in `BotCore` carries a `ReorgJournal<D: BlockDelta>` — a bounded `VecDeque` of per-block deltas storing **prior** values of modified state fields.
+Each pool in `Bot` carries a `ReorgJournal<D: BlockDelta>` — a bounded `VecDeque` of per-block deltas storing **prior** values of modified state fields.
 
 **Forward progress**: stash "before" values → update current state.
 
@@ -584,31 +584,30 @@ Eliminates ~95%+ of simulation failures from scam/tax/honeypot tokens.
 
 ---
 
-## 13. BotCore: The Future State Owner
+## 13. Bot: The Future State Owner
 
 ### 13.1 Current State
 
-`BotCore` (in `rust/src/bot_core/mod.rs`) is a partial implementation of the full Rust-owned state vision from Plan 079. Currently it owns:
+`Bot` (in `rust/src/bot_core/mod.rs`) is a partial implementation of the full Rust-owned state vision from Plan 079. Currently it owns:
 
 - `pools: HashMap<u64, PoolEntry>` — V2 and V3 pool state
 - `pool_addresses: HashMap<Address, u64>` — address → pool_id lookup
 - `tokens: HashMap<Address, TokenEntry>` — ERC20 metadata
 - Reorg journal integration for V2 and V3
 - `calculate_tokens_out/in` for V2 (V3 returns 0 — not yet implemented)
-- `encode_swap` for V2 (V3 encoding not yet in BotCore)
+- `encode_swap` for V2 (V3 encoding not yet in Bot)
 
 ### 13.2 Intended Architecture
 
-Plan 079 envisions `BotCore` as the **single owner** of all runtime state. Python objects become thin `PyO3` handles:
+Plan 079 envisions `Bot` as the **single owner** of all runtime state. The Python `Bot` session holds a `PyBot` PyO3 wrapper (`Arc<parking_lot::RwLock<Bot>>`); pools and tokens are thin `PyPool`/`PyToken` handles that clone the same `Arc`:
 
 ```python
-class Pool:
-    _core: PyBotCore   # Arc<BotCore>
-    _pool_id: u64       # Key into BotCore.pools
+class Bot:
+    _py_bot: PyBot   # Arc<parking_lot::RwLock<Bot>>
 
-    @property
-    def reserves_token0(self) -> int:
-        # PyO3 → BotCore.pools[pool_id].reserves_token0
+    # pools/tokens: PyPool/PyToken handles sharing the same Arc
+    # PyO3 read  → Bot.pools[pool_id] under a read guard
+    # PyO3 write → mutation under a write guard
 ```
 
 ### 13.3 Deferred Items
@@ -622,7 +621,7 @@ The following Plan 079 slices are deferred (not blocking the current bot):
 | 10 | Balancer math in Rust | Deferred |
 | 13 | Python thin handles + backward compat | Deferred |
 
-These are not needed for the current V2/V3/V4 backrun bot because the engines own their own state independently of `BotCore`.
+These are not needed for the current V2/V3/V4 backrun bot because the engines own their own state independently of `Bot`.
 
 ---
 
@@ -673,7 +672,7 @@ Every `Python::attach()` call site has a `// SAFETY:` comment documenting the no
   ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
 
               ┌──────────────────────────┐
-              │      BotCore (partial)   │
+              │      Bot (partial)   │
               │  pools: HashMap<u64,     │
               │    PoolEntry>            │
               │  ReorgJournal per pool   │
@@ -743,7 +742,7 @@ Each math port follows the pattern:
 |------------|--------|------------|
 | V2 asymmetric fees: register_v2_pool only uses `_fee_token0` | Wrong fee for one direction if asymmetric | Runtime warning on detection; full fix requires Rust engine API change |
 | Python pool objects used for encoding | Encoding calls `calculate_tokens_out_from_tokens_in()` on Python pools — may use stale state if Rust owns updates | Encoding uses amounts from the same block (before dispatch); long-term fix is Rust-owned encoding |
-| `BotCore` is partial | V3 calculation/encoding not in BotCore; Curve/Balancer math not ported | Engines own their own state; BotCore is a future consolidation point |
+| `Bot` is partial | V3 calculation/encoding not in Bot; Curve/Balancer math not ported | Engines own their own state; Bot is a future consolidation point |
 | V4 encoding not validated on anvil fork | ABI selectors and amountSpecified verified in unit tests, not against real node | Dry-run mode validates via `eth_simulateV1` before live submission |
 | No three-hop paths | Path discovery limited to `max_depth=2` | Would require solver extension (3-hop Möbius composition) and more complex encoding |
 | WS stability depends on Alloy | Rust pump uses Alloy's WS provider for dual subscriptions | Timeout backfill (60s) covers dead connections; empty-block backfill covers silent event drops; Alloy auto-reconnects |

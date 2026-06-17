@@ -794,6 +794,110 @@ class AsyncContract:
         block_number: int | None = None,
     ) -> Coroutine[Any, Any, list[list[str]]]: ...
 
+class Token:
+    """Thin PyO3 handle to a token registered in the Rust `Bot`.
+
+    All metadata lives in Rust; reads cross PyO3 on every access. Not directly
+    constructible — obtain one via `PyBot.register_token` / `PyBot.get_token`.
+    """
+
+    @property
+    def address(self) -> str: ...
+    @property
+    def decimals(self) -> int: ...
+    @property
+    def symbol(self) -> str: ...
+    @property
+    def name(self) -> str: ...
+
+class Pool:
+    """Thin PyO3 handle to a pool registered in the Rust `Bot`.
+
+    Owns no state — calculation/encoding calls cross PyO3 on every access,
+    reading the shared Rust-owned `Bot` under a read guard. Not directly
+    constructible — obtain one via `PyBot.get_pool`.
+    """
+
+    @property
+    def pool_id(self) -> int: ...
+    def calculate_tokens_out(self, zero_for_one: bool, amount_in: int) -> int: ...
+    def calculate_tokens_in(self, zero_for_one: bool, amount_out: int) -> int: ...
+    def encode_swap(
+        self, zero_for_one: bool, amount_out: int, recipient: str
+    ) -> tuple[str, str, int] | None: ...
+
+class PyBot:
+    """PyO3 wrapper (exposed as `PyBot` in Python) holding `Arc<RwLock<Bot>>`.
+
+    The Polars-style middle layer between the pure-Rust `Bot` and the Python
+    `Bot` session. The Python ``Bot.__init__`` constructs one; `Pool`/`Token`
+    handles share the same `Arc`. Queries/calcs take a read guard on the
+    shared `Bot`; mutations take a write guard.
+    """
+
+    def __init__(self) -> None: ...
+    def register_v2_pool(
+        self,
+        address: str,
+        token0: str,
+        token1: str,
+        reserve0: int,
+        reserve1: int,
+        gamma_numer0: int,
+        fee_denom0: int,
+        gamma_numer1: int,
+        fee_denom1: int,
+        factory: str,
+    ) -> int: ...
+    def update_v2_pool(
+        self, address: str, reserve0: int, reserve1: int, block_number: int
+    ) -> None: ...
+    def calculate_tokens_out(
+        self, pool_id: int, zero_for_one: bool, amount_in: int
+    ) -> int: ...
+    def calculate_tokens_in(
+        self, pool_id: int, zero_for_one: bool, amount_out: int
+    ) -> int: ...
+    def pool_count(self) -> int: ...
+    def get_pool(self, pool_id: int) -> Pool | None: ...
+    def register_v3_pool(
+        self,
+        address: str,
+        token0: str,
+        token1: str,
+        fee: int,
+        tick_spacing: int,
+        factory: str,
+        sqrt_price_x96: int,
+        liquidity: int,
+        tick: int,
+    ) -> int: ...
+    def update_v3_pool(
+        self,
+        address: str,
+        sqrt_price_x96: int,
+        liquidity: int,
+        tick: int,
+        block_number: int,
+    ) -> None: ...
+    def v3_journal_len(self, pool_id: int) -> int: ...
+    def v3_discard_before_block(self, pool_id: int, block: int) -> None: ...
+    def v3_restore_before_block(
+        self, pool_id: int, block: int
+    ) -> tuple[int, int, int, int] | None: ...
+    def register_token(
+        self, address: str, name: str, symbol: str, decimals: int, chain_id: int
+    ) -> Token: ...
+    def get_token(self, address: str) -> Token | None: ...
+    def encode_swap(
+        self, pool_id: int, zero_for_one: bool, amount_out: int, recipient: str
+    ) -> tuple[str, str, int] | None: ...
+    def v2_journal_len(self, pool_id: int) -> int: ...
+    def v2_discard_before_block(self, pool_id: int, block: int) -> None: ...
+    def v2_restore_before_block(
+        self, pool_id: int, block: int
+    ) -> tuple[int, int, int] | None: ...
+
 class UniswapArbEngine:
     """Rust-side engine for Uniswap arbitrage path solving."""
 
@@ -822,6 +926,9 @@ __all__ = [
     "Contract",
     "LogData",
     "LogFilter",
+    "Pool",
+    "PyBot",
+    "Token",
     "TransactionData",
     "TransactionReceiptData",
     "UniswapArbEngine",
