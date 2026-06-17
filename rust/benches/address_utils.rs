@@ -27,8 +27,7 @@ fn bench_to_checksum_address(c: &mut Criterion) {
     group.bench_function("to_checksum_address/pure_rust", |b| {
         b.iter(|| {
             black_box(
-                degenbot_rs::address_utils::to_checksum_address_str(black_box(ADDR_HEX))
-                    .unwrap(),
+                degenbot_rs::address_utils::to_checksum_address_str(black_box(ADDR_HEX)).unwrap(),
             )
         });
     });

@@ -45,9 +45,7 @@ fn build_runtime() -> Result<Runtime, std::io::Error> {
     let env_worker_count = env_raw.as_deref().and_then(|v| v.parse::<usize>().ok());
 
     if env_worker_count.is_none() && env_raw.is_some() {
-        log::warn!(
-            "{ENV_VAR} is set but could not be parsed as a usize; ignoring"
-        );
+        log::warn!("{ENV_VAR} is set but could not be parsed as a usize; ignoring");
         // Remove the invalid env var so Tokio's internal machinery
         // doesn't panic when it tries to parse it.
         std::env::remove_var(ENV_VAR);
@@ -150,6 +148,9 @@ mod tests {
         std::env::set_var(ENV_VAR, "not_a_number");
         let result = build_runtime();
         std::env::remove_var(ENV_VAR);
-        assert!(result.is_ok(), "build_runtime should ignore invalid env var");
+        assert!(
+            result.is_ok(),
+            "build_runtime should ignore invalid env var"
+        );
     }
 }

@@ -231,10 +231,7 @@ impl PyAsyncAlloyProvider {
         let provider = Arc::clone(&self.provider);
 
         future_into_py(py, async move {
-            provider
-                .get_gas_price()
-                .await
-                .map_err(Into::<PyErr>::into)
+            provider.get_gas_price().await.map_err(Into::<PyErr>::into)
         })
     }
 
@@ -411,9 +408,7 @@ impl PyAsyncAlloyProvider {
                 .await
                 .map_err(Into::<PyErr>::into)?;
 
-            Python::attach(|py| {
-                json_to_py_with_hexbytes(py, result).map(Bound::unbind)
-            })
+            Python::attach(|py| json_to_py_with_hexbytes(py, result).map(Bound::unbind))
         })
     }
 

@@ -35,10 +35,8 @@ use alloy::rpc::types::Log;
 
 /// Keccak256 of `Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)`.
 pub const V4_SWAP_TOPIC: B256 = B256::new([
-    0x40, 0xe9, 0xce, 0xcb, 0x9f, 0x5f, 0x1f, 0x1c,
-    0x5b, 0x9c, 0x97, 0xde, 0xc2, 0x91, 0x7b, 0x7e,
-    0xe9, 0x2e, 0x57, 0xba, 0x55, 0x63, 0x70, 0x8d,
-    0xac, 0xa9, 0x4d, 0xd8, 0x4a, 0xd7, 0x11, 0x2f,
+    0x40, 0xe9, 0xce, 0xcb, 0x9f, 0x5f, 0x1f, 0x1c, 0x5b, 0x9c, 0x97, 0xde, 0xc2, 0x91, 0x7b, 0x7e,
+    0xe9, 0x2e, 0x57, 0xba, 0x55, 0x63, 0x70, 0x8d, 0xac, 0xa9, 0x4d, 0xd8, 0x4a, 0xd7, 0x11, 0x2f,
 ]);
 
 /// V4 pool identifier — a `bytes32` derived from `keccak256(PoolKey)`.
@@ -168,8 +166,7 @@ mod tests {
         liq_word[16..32].copy_from_slice(&liq_bytes);
         data.extend_from_slice(&liq_word);
         // tick (int24, sign-extended to int256 → 32 bytes)
-        let tick_i256 = I256::try_from(i128::from(tick))
-            .unwrap_or(I256::ZERO);
+        let tick_i256 = I256::try_from(i128::from(tick)).unwrap_or(I256::ZERO);
         data.extend_from_slice(&tick_i256.to_be_bytes::<32>());
         // fee (uint24, left-padded to 32 bytes)
         let mut fee_word = [0u8; 32];
@@ -221,8 +218,14 @@ mod tests {
         let event = result.unwrap();
         assert_eq!(event.pool_id, pool_id);
         assert_eq!(event.sender, sender);
-        assert_eq!(event.amount0, I256::try_from(-1000_i128).unwrap_or(I256::ZERO));
-        assert_eq!(event.amount1, I256::try_from(500_i128).unwrap_or(I256::ZERO));
+        assert_eq!(
+            event.amount0,
+            I256::try_from(-1000_i128).unwrap_or(I256::ZERO)
+        );
+        assert_eq!(
+            event.amount1,
+            I256::try_from(500_i128).unwrap_or(I256::ZERO)
+        );
         assert_eq!(event.sqrt_price_x96, sqrt_price);
         assert_eq!(event.liquidity, liquidity);
         assert_eq!(event.tick, 0);
@@ -317,29 +320,53 @@ mod tests {
 
         // min tick: -887272
         let log_min = make_v4_swap_log(
-            pool_id, sender,
-            I256::ZERO, I256::ZERO, sqrt_price, liquidity, -887_272, fee,
+            pool_id,
+            sender,
+            I256::ZERO,
+            I256::ZERO,
+            sqrt_price,
+            liquidity,
+            -887_272,
+            fee,
         );
         assert!(decode_v4_swap_log(&log_min).is_some());
 
         // max tick: 887272
         let log_max = make_v4_swap_log(
-            pool_id, sender,
-            I256::ZERO, I256::ZERO, sqrt_price, liquidity, 887_272, fee,
+            pool_id,
+            sender,
+            I256::ZERO,
+            I256::ZERO,
+            sqrt_price,
+            liquidity,
+            887_272,
+            fee,
         );
         assert!(decode_v4_swap_log(&log_max).is_some());
 
         // out of range: -887273
         let log_under = make_v4_swap_log(
-            pool_id, sender,
-            I256::ZERO, I256::ZERO, sqrt_price, liquidity, -887_273, fee,
+            pool_id,
+            sender,
+            I256::ZERO,
+            I256::ZERO,
+            sqrt_price,
+            liquidity,
+            -887_273,
+            fee,
         );
         assert!(decode_v4_swap_log(&log_under).is_none());
 
         // out of range: 887273
         let log_over = make_v4_swap_log(
-            pool_id, sender,
-            I256::ZERO, I256::ZERO, sqrt_price, liquidity, 887_273, fee,
+            pool_id,
+            sender,
+            I256::ZERO,
+            I256::ZERO,
+            sqrt_price,
+            liquidity,
+            887_273,
+            fee,
         );
         assert!(decode_v4_swap_log(&log_over).is_none());
     }

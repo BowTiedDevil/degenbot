@@ -68,7 +68,13 @@ mod tests {
 
     #[test]
     fn test_zero_input() {
-        assert!(matches!(most_significant_bit(U256::ZERO), Err(ClMathError::ZeroInput)));
-        assert!(matches!(least_significant_bit(U256::ZERO), Err(ClMathError::ZeroInput)));
+        assert!(matches!(
+            most_significant_bit(U256::ZERO),
+            Err(ClMathError::ZeroInput)
+        ));
+        assert!(matches!(
+            least_significant_bit(U256::ZERO),
+            Err(ClMathError::ZeroInput)
+        ));
     }
 }

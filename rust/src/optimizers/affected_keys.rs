@@ -14,19 +14,28 @@ impl AffectedKeys {
     /// No affected keys (e.g., event for an unregistered pool).
     #[must_use]
     pub const fn empty() -> Self {
-        Self { keys: [0; 2], len: 0 }
+        Self {
+            keys: [0; 2],
+            len: 0,
+        }
     }
 
     /// Exactly one affected key (V3 engines).
     #[must_use]
     pub const fn single(key: u64) -> Self {
-        Self { keys: [key, 0], len: 1 }
+        Self {
+            keys: [key, 0],
+            len: 1,
+        }
     }
 
     /// Two affected keys (V2/V4 dual-orientation engines).
     #[must_use]
     pub const fn pair(k1: u64, k2: u64) -> Self {
-        Self { keys: [k1, k2], len: 2 }
+        Self {
+            keys: [k1, k2],
+            len: 2,
+        }
     }
 
     /// Iterate over affected keys.

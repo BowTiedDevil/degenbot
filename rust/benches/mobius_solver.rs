@@ -16,8 +16,18 @@ fn bench_mobius_solver(c: &mut Criterion) {
 
     // 2-hop path with typical DEX reserves
     let hops_2 = vec![
-        IntHopState::new(u256(1_000_000_000_000_000_000), u256(2_000_000_000_000_000_000), 997, 1000),
-        IntHopState::new(u256(2_000_000_000_000_000_000), u256(500_000_000_000_000_000), 997, 1000),
+        IntHopState::new(
+            u256(1_000_000_000_000_000_000),
+            u256(2_000_000_000_000_000_000),
+            997,
+            1000,
+        ),
+        IntHopState::new(
+            u256(2_000_000_000_000_000_000),
+            u256(500_000_000_000_000_000),
+            997,
+            1000,
+        ),
     ];
 
     group.bench_function("int_simulate_path/2hop", |b| {
@@ -31,9 +41,24 @@ fn bench_mobius_solver(c: &mut Criterion) {
 
     // 3-hop path with typical DEX reserves
     let hops_3 = vec![
-        IntHopState::new(u256(1_000_000_000_000_000_000), u256(2_000_000_000_000_000_000), 997, 1000),
-        IntHopState::new(u256(2_000_000_000_000_000_000), u256(800_000_000_000_000_000), 997, 1000),
-        IntHopState::new(u256(800_000_000_000_000_000), u256(1_500_000_000_000_000_000), 997, 1000),
+        IntHopState::new(
+            u256(1_000_000_000_000_000_000),
+            u256(2_000_000_000_000_000_000),
+            997,
+            1000,
+        ),
+        IntHopState::new(
+            u256(2_000_000_000_000_000_000),
+            u256(800_000_000_000_000_000),
+            997,
+            1000,
+        ),
+        IntHopState::new(
+            u256(800_000_000_000_000_000),
+            u256(1_500_000_000_000_000_000),
+            997,
+            1000,
+        ),
     ];
 
     group.bench_function("int_simulate_path/3hop", |b| {

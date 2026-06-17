@@ -49,10 +49,7 @@ pub const fn tick_position(compressed: i32) -> (i16, u8) {
     // (max compressed tick ~887272 / 60 ~14787, which fits in i16)
     // bit_pos is 0..255, fits in u8
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    (
-        word_pos as i16,
-        bit_pos as u8,
-    )
+    (word_pos as i16, bit_pos as u8)
 }
 
 /// Error type for [`gen_ticks`].
@@ -268,8 +265,14 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
     // tick_lower > tick_upper (invalid for the solver).
     let less_than_or_equal = zero_for_one;
 
-    let ticks = gen_ticks(tick_data, current_tick, tick_spacing, less_than_or_equal, max_ranges + 10)
-        .ok()?;
+    let ticks = gen_ticks(
+        tick_data,
+        current_tick,
+        tick_spacing,
+        less_than_or_equal,
+        max_ranges + 10,
+    )
+    .ok()?;
 
     // Collect initialized ticks (and the current tick), clamping to MIN/MAX tick
     let mut initialized_ticks: Vec<i32> = Vec::new();
@@ -329,17 +332,15 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
         //   zfo=true (going DOWN): cross tick_lower from above → use tick_lower's net
         //   zfo=false (going UP): cross tick_upper from below → use tick_upper's net
         let tick_key = if zero_for_one { tick_lower } else { tick_upper };
-        let range_liquidity = tick_data
-            .get(&tick_key)
-            .map_or_else(
-                || i128::try_from(liquidity).unwrap_or(0),
-                |info| {
-                    // liquidity_net is I256 — extract the low 128 bits as i128
-                    let bytes = info.liquidity_net.to_be_bytes::<32>();
-                    let low_bytes: [u8; 16] = bytes[16..32].try_into().unwrap_or([0u8; 16]);
-                    i128::from_be_bytes(low_bytes)
-                },
-            );
+        let range_liquidity = tick_data.get(&tick_key).map_or_else(
+            || i128::try_from(liquidity).unwrap_or(0),
+            |info| {
+                // liquidity_net is I256 — extract the low 128 bits as i128
+                let bytes = info.liquidity_net.to_be_bytes::<32>();
+                let low_bytes: [u8; 16] = bytes[16..32].try_into().unwrap_or([0u8; 16]);
+                i128::from_be_bytes(low_bytes)
+            },
+        );
 
         let sqrt_price_lower =
             crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(tick_lower).ok()?;
@@ -515,8 +516,16 @@ mod tests {
         // Merge: init=0, boundary=0 → equal → yield (0, true), advance both
         // Then boundary = -15360, init = -60
         // init(-60) > boundary(-15360) → yield (-60, true)
-        let init_ticks: Vec<(i32, bool)> = ticks.iter().take(4).map(|t| (t.tick, t.is_initialized)).collect();
-        assert_eq!(init_ticks[0], (0, true), "first tick should be 0 (initialized boundary)");
+        let init_ticks: Vec<(i32, bool)> = ticks
+            .iter()
+            .take(4)
+            .map(|t| (t.tick, t.is_initialized))
+            .collect();
+        assert_eq!(
+            init_ticks[0],
+            (0, true),
+            "first tick should be 0 (initialized boundary)"
+        );
         assert_eq!(init_ticks[1], (-60, true), "second tick should be -60");
     }
 
@@ -535,9 +544,16 @@ mod tests {
         // first_boundary_tick = 60 * (256*0 + 255) = 60*255 = 15300
         // If 15200 < 15300, starting from boundary at same level
         // init=15300 < boundary=15300... depends on exact ordering
-        let init_ticks: Vec<(i32, bool)> = ticks.iter().take(5).map(|t| (t.tick, t.is_initialized)).collect();
+        let init_ticks: Vec<(i32, bool)> = ticks
+            .iter()
+            .take(5)
+            .map(|t| (t.tick, t.is_initialized))
+            .collect();
         // First tick should be at the boundary (initialized or not)
-        assert!(init_ticks[0].0 <= 15360, "first ticks should be near current tick");
+        assert!(
+            init_ticks[0].0 <= 15360,
+            "first ticks should be near current tick"
+        );
     }
 
     #[test]
@@ -625,7 +641,11 @@ mod tests {
         // first_boundary_tick = 60 * (256 * 0 + 255) = 15300
         // All initialized ticks (60, 120, 180) are less than 15300
         // So they should all be yielded as initialized ticks first
-        let init_ticks: Vec<i32> = ticks.iter().filter(|t| t.is_initialized).map(|t| t.tick).collect();
+        let init_ticks: Vec<i32> = ticks
+            .iter()
+            .filter(|t| t.is_initialized)
+            .map(|t| t.tick)
+            .collect();
         assert_eq!(init_ticks, vec![60, 120, 180]);
     }
 
@@ -667,7 +687,11 @@ mod tests {
             let py_wp = tick >> 8;
             let py_bp = tick.rem_euclid(256);
             assert_eq!(i32::from(wp), py_wp, "word_pos mismatch for tick {tick}");
-            assert_eq!(u32::from(bp), py_bp.cast_unsigned(), "bit_pos mismatch for tick {tick}");
+            assert_eq!(
+                u32::from(bp),
+                py_bp.cast_unsigned(),
+                "bit_pos mismatch for tick {tick}"
+            );
         }
     }
 
@@ -869,13 +893,12 @@ mod tests {
                         // of the first range (by construction — the walk starts
                         // at current_tick, which becomes one boundary of range 0)
                         let r0 = &ranges[0];
-                        let at_boundary = current_tick == r0.tick_lower
-                            || current_tick == r0.tick_upper;
+                        let at_boundary =
+                            current_tick == r0.tick_lower || current_tick == r0.tick_upper;
                         assert!(
                             at_boundary,
                             "current_tick {current_tick} not at boundary of first range [{}, {}]",
-                            r0.tick_lower,
-                            r0.tick_upper
+                            r0.tick_lower, r0.tick_upper
                         );
                     }
                 }

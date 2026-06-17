@@ -294,9 +294,7 @@ impl ReorgJournal<V2BlockDelta> {
         // values are returned. The emptiness guard prevents indexing an empty
         // deque once all deltas have been popped.
         let mut last_popped: Option<V2BlockDelta> = None;
-        while !self.deltas.is_empty()
-            && self.deltas[self.deltas.len() - 1].block() >= block
-        {
+        while !self.deltas.is_empty() && self.deltas[self.deltas.len() - 1].block() >= block {
             last_popped = self.deltas.pop_back();
         }
 
@@ -362,9 +360,7 @@ impl ReorgJournal<V3BlockDelta> {
             std::collections::HashMap::new();
         let mut scalar_priors: Option<ScalarPriors> = None;
         let mut oldest_popped_block: Option<u64> = None;
-        while !self.deltas.is_empty()
-            && self.deltas[self.deltas.len() - 1].block() >= block
-        {
+        while !self.deltas.is_empty() && self.deltas[self.deltas.len() - 1].block() >= block {
             let popped = self.deltas.pop_back().expect("checked non-empty above");
             for (tick_idx, tick_before) in &popped.tick_priors {
                 accumulated_priors.insert(*tick_idx, tick_before.clone());
@@ -542,7 +538,10 @@ mod tests {
         assert_eq!(r0, U256::from(10));
         assert_eq!(r1, U256::from(20));
         assert_eq!(blk, 1);
-        assert!(j.is_empty(), "the only delta was popped back to registration");
+        assert!(
+            j.is_empty(),
+            "the only delta was popped back to registration"
+        );
     }
 
     #[test]
@@ -794,7 +793,11 @@ mod proptests {
     #[derive(Clone, Debug)]
     enum Op {
         /// Push a delta at the given block with the given "before" values.
-        Push { block: u64, reserve0: u64, reserve1: u64 },
+        Push {
+            block: u64,
+            reserve0: u64,
+            reserve1: u64,
+        },
         /// Discard deltas before the given block.
         DiscardBefore { block: u64 },
         /// Restore to before the given block. Only performed when the model
@@ -804,12 +807,13 @@ mod proptests {
 
     fn op_strategy() -> impl Strategy<Value = Op> {
         prop_oneof![
-            (1u64..=100u64, 0u64..=1000u64, 0u64..=1000u64)
-                .prop_map(|(block, r0, r1)| Op::Push { block, reserve0: r0, reserve1: r1 }),
-            (1u64..=100u64)
-                .prop_map(|block| Op::DiscardBefore { block }),
-            (1u64..=100u64)
-                .prop_map(|block| Op::RestoreBefore { block }),
+            (1u64..=100u64, 0u64..=1000u64, 0u64..=1000u64).prop_map(|(block, r0, r1)| Op::Push {
+                block,
+                reserve0: r0,
+                reserve1: r1
+            }),
+            (1u64..=100u64).prop_map(|block| Op::DiscardBefore { block }),
+            (1u64..=100u64).prop_map(|block| Op::RestoreBefore { block }),
         ]
     }
 

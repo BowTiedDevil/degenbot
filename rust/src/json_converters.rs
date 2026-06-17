@@ -106,9 +106,7 @@ pub fn python_to_json(obj: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
 
     // Fallback: convert to string with warning
     let s = obj.str()?.to_string();
-    log::warn!(
-        "Converting unexpected Python type to string in JSON conversion: {s}"
-    );
+    log::warn!("Converting unexpected Python type to string in JSON conversion: {s}");
     Ok(serde_json::Value::String(s))
 }
 

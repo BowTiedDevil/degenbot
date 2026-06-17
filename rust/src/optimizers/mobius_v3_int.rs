@@ -163,7 +163,9 @@ impl IntV3TickRangeHop {
         if self.zero_for_one {
             // max_net_input = L · 2^96 · (sp_cur - sp_low) / (sp_low · sp_cur)
             // max_gross = max_net · fee_denom / gamma_numer
-            let sp_diff = self.sqrt_price_x96.saturating_sub(self.sqrt_price_lower_x96);
+            let sp_diff = self
+                .sqrt_price_x96
+                .saturating_sub(self.sqrt_price_lower_x96);
             if sp_diff.is_zero() {
                 return U256::ZERO;
             }
@@ -186,7 +188,9 @@ impl IntV3TickRangeHop {
         } else {
             // max_net_input = L · (sp_upper - sp_current) / 2^96
             // max_gross = max_net · fee_denom / gamma_numer
-            let sp_diff = self.sqrt_price_upper_x96.saturating_sub(self.sqrt_price_x96);
+            let sp_diff = self
+                .sqrt_price_upper_x96
+                .saturating_sub(self.sqrt_price_x96);
             if sp_diff.is_zero() {
                 return U256::ZERO;
             }
@@ -361,8 +365,8 @@ impl IntV3TickRangeSequence {
 
             let (net_input, output) = if zfo {
                 let sp_end = r.sqrt_price_lower_x96; // zfo: price decreases to lower bound
-                // net_in = L · 2^96 · (sp_start - sp_end) / (sp_end · sp_start)
-                // output  = L · (sp_start - sp_end) / 2^96
+                                                     // net_in = L · 2^96 · (sp_start - sp_end) / (sp_end · sp_start)
+                                                     // output  = L · (sp_start - sp_end) / 2^96
                 let sp_diff = sp_start.saturating_sub(sp_end);
                 if sp_diff.is_zero() {
                     (U256::ZERO, U256::ZERO)
@@ -380,8 +384,8 @@ impl IntV3TickRangeSequence {
                 }
             } else {
                 let sp_end = r.sqrt_price_upper_x96; // ofz: price increases to upper bound
-                // net_in = L · (sp_end - sp_start) / 2^96
-                // output  = L · 2^96 · (sp_end - sp_start) / (sp_start · sp_end)
+                                                     // net_in = L · (sp_end - sp_start) / 2^96
+                                                     // output  = L · 2^96 · (sp_end - sp_start) / (sp_start · sp_end)
                 let sp_diff = sp_end.saturating_sub(sp_start);
                 if sp_diff.is_zero() {
                     (U256::ZERO, U256::ZERO)
@@ -563,7 +567,9 @@ fn int_simulate_v3_v3_path(
         let ending = int_simulate_v3_swap(remaining, &c1.ending_range);
         let out = c1.crossing_output.saturating_add(ending.output);
         // consumed = crossing_gross_input + ending.consumed_input
-        let consumed = c1.crossing_gross_input.saturating_add(ending.consumed_input);
+        let consumed = c1
+            .crossing_gross_input
+            .saturating_add(ending.consumed_input);
         (consumed, out)
     } else {
         let result = int_simulate_v3_swap(amount_in, base_range1);
@@ -582,7 +588,9 @@ fn int_simulate_v3_v3_path(
         let remaining = output1 - c2.crossing_gross_input;
         let ending = int_simulate_v3_swap(remaining, &c2.ending_range);
         let out = c2.crossing_output.saturating_add(ending.output);
-        let consumed = c2.crossing_gross_input.saturating_add(ending.consumed_input);
+        let consumed = c2
+            .crossing_gross_input
+            .saturating_add(ending.consumed_input);
         (consumed, out)
     } else {
         let result = int_simulate_v3_swap(output1, base_range2);
@@ -666,7 +674,8 @@ pub fn int_solve_v3_v3(
             let hop2 = crossing2.ending_range.to_int_hop_state();
 
             // Closed-form optimal input for this piece
-            let Ok(result) = crate::optimizers::mobius_int_exact::exact_mobius_solve(&[hop1, hop2]) else {
+            let Ok(result) = crate::optimizers::mobius_int_exact::exact_mobius_solve(&[hop1, hop2])
+            else {
                 continue;
             };
 
@@ -676,7 +685,9 @@ pub fn int_solve_v3_v3(
 
             // The optimal input must be at least crossing_gross_input for hop 1
             // to reach the ending range k1
-            let total_optimal_input = result.optimal_input.saturating_add(crossing1.crossing_gross_input);
+            let total_optimal_input = result
+                .optimal_input
+                .saturating_add(crossing1.crossing_gross_input);
 
             // Also check: the output of hop 1 at optimal must cover crossing_gross_input for hop 2
             // This is validated by the full piecewise simulation below
@@ -759,8 +770,7 @@ pub fn int_solve_cl_path(sequences: &[&IntV3TickRangeSequence]) -> Option<(U256,
             .iter()
             .map(|s| s.ranges[0].to_int_hop_state())
             .collect();
-        let result =
-            crate::optimizers::mobius_int_exact::exact_mobius_solve(&flat_hops).ok()?;
+        let result = crate::optimizers::mobius_int_exact::exact_mobius_solve(&flat_hops).ok()?;
 
         if !result.is_profitable || result.optimal_input.is_zero() || result.profit.is_zero() {
             return None;
@@ -827,8 +837,7 @@ pub fn int_solve_cl_path(sequences: &[&IntV3TickRangeSequence]) -> Option<(U256,
                 .collect();
 
             // Closed-form optimal input for this piece
-            if let Ok(result) =
-                crate::optimizers::mobius_int_exact::exact_mobius_solve(&flat_hops)
+            if let Ok(result) = crate::optimizers::mobius_int_exact::exact_mobius_solve(&flat_hops)
             {
                 if result.is_profitable && !result.optimal_input.is_zero() {
                     let total_optimal_input =
@@ -1010,7 +1019,8 @@ pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3Sw
         // denominator: max(128+97, 256+160) = 416 bits → fits in U512
 
         let numerator = U512::from(l) * U512::from(sp_current) * U512::from(q96);
-        let denominator = U512::from(l) * U512::from(q96) + U512::from(net_in) * U512::from(sp_current);
+        let denominator =
+            U512::from(l) * U512::from(q96) + U512::from(net_in) * U512::from(sp_current);
 
         if denominator.is_zero() {
             return V3SwapResult::default();
@@ -1053,9 +1063,8 @@ pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3Sw
             //   net_consumed = L * 2^96 * (sp_current - sp_lower) / (sp_current * sp_lower)
             //   gross_consumed = net_consumed * fee_denom / gamma_numer
             let net_consumed_u512 = U512::from(l) * U512::from(q96) * U512::from(sp_diff);
-            let net_consumed = u512_to_u256(
-                net_consumed_u512 / (U512::from(sp_current) * U512::from(sp_final)),
-            );
+            let net_consumed =
+                u512_to_u256(net_consumed_u512 / (U512::from(sp_current) * U512::from(sp_final)));
             // gross_consumed = net_consumed * fee_denom / gamma
             let gross_u512 = U512::from(net_consumed) * U512::from(fee_denom);
             u512_to_u256(gross_u512 / U512::from(gamma))
@@ -1063,7 +1072,10 @@ pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3Sw
             amount_in
         };
 
-        V3SwapResult { consumed_input, output }
+        V3SwapResult {
+            consumed_input,
+            output,
+        }
     } else {
         // ofz: price increases from √P_current toward √P_upper
         // Solidity: sqrtPriceNext = sqrtPriceCurrent + amountRemaining * 2^96 / liquidity
@@ -1106,7 +1118,10 @@ pub fn int_simulate_v3_swap(amount_in: U256, v3_hop: &IntV3TickRangeHop) -> V3Sw
             amount_in
         };
 
-        V3SwapResult { consumed_input, output }
+        V3SwapResult {
+            consumed_input,
+            output,
+        }
     }
 }
 
@@ -1157,7 +1172,9 @@ fn int_simulate_mixed_path_with_crossing(
             let remaining = amount_in - crossing.crossing_gross_input;
             let ending = int_simulate_v3_swap(remaining, &crossing.ending_range);
             let out = crossing.crossing_output.saturating_add(ending.output);
-            let consumed = crossing.crossing_gross_input.saturating_add(ending.consumed_input);
+            let consumed = crossing
+                .crossing_gross_input
+                .saturating_add(ending.consumed_input);
             (consumed, out)
         } else {
             let result = int_simulate_v3_swap(amount_in, base_v3_hop);
@@ -1187,7 +1204,9 @@ fn int_simulate_mixed_path_with_crossing(
             let remaining = v2_output - crossing.crossing_gross_input;
             let ending = int_simulate_v3_swap(remaining, &crossing.ending_range);
             let out = crossing.crossing_output.saturating_add(ending.output);
-            let consumed = crossing.crossing_gross_input.saturating_add(ending.consumed_input);
+            let consumed = crossing
+                .crossing_gross_input
+                .saturating_add(ending.consumed_input);
             (consumed, out)
         } else {
             let result = int_simulate_v3_swap(v2_output, base_v3_hop);
@@ -1209,11 +1228,9 @@ fn int_simulate_v2_hops(amount_in: U256, v2_hops: &[IntHopState]) -> U256 {
         if current.is_zero() {
             return U256::ZERO;
         }
-        current = crate::optimizers::mobius_int::int_simulate_path(
-            current,
-            std::slice::from_ref(hop),
-        )
-        .final_output;
+        current =
+            crate::optimizers::mobius_int::int_simulate_path(current, std::slice::from_ref(hop))
+                .final_output;
     }
     current
 }
@@ -1261,7 +1278,8 @@ pub fn exact_solve_mixed_v2_v3_sequence(
             h.extend(v2_hops.iter().map(|h| MixedIntHop::V2(h.clone())));
             h
         } else {
-            let mut h: Vec<MixedIntHop> = v2_hops.iter().map(|h| MixedIntHop::V2(h.clone())).collect();
+            let mut h: Vec<MixedIntHop> =
+                v2_hops.iter().map(|h| MixedIntHop::V2(h.clone())).collect();
             h.push(MixedIntHop::V3(crossing.ending_range.clone()));
             h
         };
@@ -1276,7 +1294,8 @@ pub fn exact_solve_mixed_v2_v3_sequence(
         }
 
         // Closed-form optimal input for the remaining (post-crossing) swap
-        let x_piece = crate::optimizers::mobius_int_exact::compute_exact_optimal_input_from_coeffs(&coeffs);
+        let x_piece =
+            crate::optimizers::mobius_int_exact::compute_exact_optimal_input_from_coeffs(&coeffs);
 
         if x_piece.is_zero() {
             continue;
@@ -1692,7 +1711,7 @@ mod tests {
             sqrt_price_x96: sp_0,
             sqrt_price_lower_x96: U256::from(sp_lower),
             sqrt_price_upper_x96: U256::from(sp_upper),
-            gamma_numer: 997_000,  // 0.3% fee → gamma = 997_000 / 1_000_000
+            gamma_numer: 997_000, // 0.3% fee → gamma = 997_000 / 1_000_000
             fee_denom: 1_000_000,
             zero_for_one: zfo,
         }
@@ -1746,8 +1765,16 @@ mod tests {
         let result = int_simulate_v3_swap(input, &hop);
 
         // Should produce positive output less than input (due to fees on 1:1 pool)
-        assert!(result.output > U256::ZERO, "Output should be positive for a valid swap");
-        assert!(result.output < input, "Output should be less than input on 1:1 pool with fees: output={}, input={}", result.output, input);
+        assert!(
+            result.output > U256::ZERO,
+            "Output should be positive for a valid swap"
+        );
+        assert!(
+            result.output < input,
+            "Output should be less than input on 1:1 pool with fees: output={}, input={}",
+            result.output,
+            input
+        );
         // Small swap should not hit range boundary — full input consumed
         assert_eq!(result.consumed_input, input);
     }
@@ -1761,7 +1788,10 @@ mod tests {
         let result = int_simulate_v3_swap(input, &hop);
 
         assert!(result.output > U256::ZERO);
-        assert!(result.output < input, "Output should be less than input on 1:1 pool with fees");
+        assert!(
+            result.output < input,
+            "Output should be less than input on 1:1 pool with fees"
+        );
         assert_eq!(result.consumed_input, input);
     }
 
@@ -1834,7 +1864,7 @@ mod tests {
         // V2 pool: 1.5M USDC / 800 WETH (cheap WETH)
         // V3 pool at 1:1 with different effective reserves
         let v2_hop = IntHopState::new(
-            U256::from(1_500_000_000_000u64),  // 1.5M USDC
+            U256::from(1_500_000_000_000u64),            // 1.5M USDC
             U256::from(800_000_000_000_000_000_000u128), // 800 WETH (18 dec)
             997,
             1000,
@@ -1897,12 +1927,15 @@ mod tests {
     fn test_compute_crossing_k1_zfo() {
         // Two-range zfo sequence: current range + next range below
         let sp_0 = U256::from(1u128) << 96;
-        let sp_lower0 =
-            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default());
-        let sp_upper0 =
-            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default());
-        let sp_lower1 =
-            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-120).unwrap_or_default());
+        let sp_lower0 = U256::from(
+            crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default(),
+        );
+        let sp_upper0 = U256::from(
+            crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default(),
+        );
+        let sp_lower1 = U256::from(
+            crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-120).unwrap_or_default(),
+        );
         let sp_upper1 = sp_lower0; // Range 1 starts where range 0 ends
 
         let hop0 = IntV3TickRangeHop {
@@ -1928,8 +1961,14 @@ mod tests {
         let crossing = seq.compute_crossing(1).unwrap();
 
         // Crossing k=1 must consume range 0's capacity
-        assert!(!crossing.crossing_gross_input.is_zero(), "k=1 crossing should require input");
-        assert!(!crossing.crossing_output.is_zero(), "k=1 crossing should produce output");
+        assert!(
+            !crossing.crossing_gross_input.is_zero(),
+            "k=1 crossing should require input"
+        );
+        assert!(
+            !crossing.crossing_output.is_zero(),
+            "k=1 crossing should produce output"
+        );
 
         // The ending range should have entry price = range 0's lower bound
         assert_eq!(crossing.ending_range.sqrt_price_x96, sp_lower0);
@@ -1939,12 +1978,15 @@ mod tests {
     #[test]
     fn test_compute_crossing_k1_ofz() {
         let sp_0 = U256::from(1u128) << 96;
-        let sp_lower0 =
-            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default());
-        let sp_upper0 =
-            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default());
-        let sp_upper1 =
-            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(120).unwrap_or_default());
+        let sp_lower0 = U256::from(
+            crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default(),
+        );
+        let sp_upper0 = U256::from(
+            crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default(),
+        );
+        let sp_upper1 = U256::from(
+            crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(120).unwrap_or_default(),
+        );
         let sp_lower1 = sp_upper0; // Range 1 starts where range 0 ends
 
         let hop0 = IntV3TickRangeHop {
@@ -1979,12 +2021,15 @@ mod tests {
         // For a 2-range sequence, crossing k=1 should have gross_input
         // equal to range 0's max_gross_input_in_range
         let sp_0 = U256::from(1u128) << 96;
-        let sp_lower0 =
-            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default());
-        let sp_upper0 =
-            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default());
-        let sp_lower1 =
-            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-120).unwrap_or_default());
+        let sp_lower0 = U256::from(
+            crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default(),
+        );
+        let sp_upper0 = U256::from(
+            crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default(),
+        );
+        let sp_lower1 = U256::from(
+            crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-120).unwrap_or_default(),
+        );
 
         let hop0 = IntV3TickRangeHop {
             liquidity: 10_000_000_000_000u128,
@@ -2025,7 +2070,10 @@ mod tests {
         let seq1 = IntV3TickRangeSequence::new(vec![hop1]).unwrap();
         let seq2 = IntV3TickRangeSequence::new(vec![hop2]).unwrap();
         let result = int_solve_v3_v3(&seq1, &seq2);
-        assert!(result.is_none(), "Same-price pools should not be profitable");
+        assert!(
+            result.is_none(),
+            "Same-price pools should not be profitable"
+        );
     }
 
     #[test]
@@ -2033,10 +2081,12 @@ mod tests {
         // Different effective reserves — may or may not be profitable,
         // but must not panic
         let sp_0 = U256::from(1u128) << 96;
-        let sp_lower =
-            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default());
-        let sp_upper =
-            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default());
+        let sp_lower = U256::from(
+            crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default(),
+        );
+        let sp_upper = U256::from(
+            crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default(),
+        );
 
         // Asymmetric: high-liquidity pool vs low-liquidity pool
         let hop1 = IntV3TickRangeHop {
@@ -2068,12 +2118,15 @@ mod tests {
     #[test]
     fn test_int_solve_v3_v3_multi_range_no_panic() {
         let sp_0 = U256::from(1u128) << 96;
-        let sp_lower0 =
-            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default());
-        let sp_upper0 =
-            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default());
-        let sp_lower1 =
-            U256::from(crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-120).unwrap_or_default());
+        let sp_lower0 = U256::from(
+            crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-60).unwrap_or_default(),
+        );
+        let sp_upper0 = U256::from(
+            crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(60).unwrap_or_default(),
+        );
+        let sp_lower1 = U256::from(
+            crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-120).unwrap_or_default(),
+        );
 
         let range1_0 = IntV3TickRangeHop {
             liquidity: 10_000_000_000_000u128,
@@ -2117,13 +2170,7 @@ mod tests {
         let hop1 = make_v3_hop_at_1to1(1_000_000_000_000u128, true);
         let hop2 = make_v3_hop_at_1to1(800_000_000_000u128, false);
 
-        let result = int_simulate_v3_v3_path(
-            U256::from(1_000_000u64),
-            None,
-            None,
-            &hop1,
-            &hop2,
-        );
+        let result = int_simulate_v3_v3_path(U256::from(1_000_000u64), None, None, &hop1, &hop2);
 
         // 2 hops → 2 hop_outputs
         assert_eq!(result.hop_outputs.len(), 2);
@@ -2197,11 +2244,8 @@ mod tests {
 
         let amount_in = U256::from(1_000_000u64);
 
-        let result_n = int_simulate_cl_path_n(
-            amount_in,
-            &[None, None],
-            &[hop1.clone(), hop2.clone()],
-        );
+        let result_n =
+            int_simulate_cl_path_n(amount_in, &[None, None], &[hop1.clone(), hop2.clone()]);
 
         let result_v3v3 = int_simulate_v3_v3_path(amount_in, None, None, &hop1, &hop2);
 
@@ -2255,7 +2299,10 @@ mod tests {
 
         // Same-product 3-hop — should not be profitable
         let result = int_solve_cl_path(&[&seq1, &seq2, &seq3]);
-        assert!(result.is_none(), "Same-product 3-hop should not be profitable");
+        assert!(
+            result.is_none(),
+            "Same-product 3-hop should not be profitable"
+        );
     }
 
     #[test]
@@ -2278,18 +2325,16 @@ mod tests {
         // Use custom V3 hops with shifted sqrt prices.
 
         // Pool 1: zfo at below 1:1 (more token0 per token1)
-        let sp_below = crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-100)
-            .unwrap_or_default();
+        let sp_below =
+            crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-100).unwrap_or_default();
         let hop1 = IntV3TickRangeHop {
             liquidity: 5_000_000_000_000u128,
             sqrt_price_x96: U256::from(sp_below),
             sqrt_price_lower_x96: U256::from(
-                crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-200)
-                    .unwrap_or_default(),
+                crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-200).unwrap_or_default(),
             ),
             sqrt_price_upper_x96: U256::from(
-                crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(0)
-                    .unwrap_or_default(),
+                crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(0).unwrap_or_default(),
             ),
             gamma_numer: 997_000,
             fee_denom: 1_000_000,
@@ -2300,18 +2345,16 @@ mod tests {
         let hop2 = make_v3_hop_at_1to1(10_000_000_000_000u128, false);
 
         // Pool 3: zfo at above 1:1 (less token0 per token1)
-        let sp_above = crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(100)
-            .unwrap_or_default();
+        let sp_above =
+            crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(100).unwrap_or_default();
         let hop3 = IntV3TickRangeHop {
             liquidity: 5_000_000_000_000u128,
             sqrt_price_x96: U256::from(sp_above),
             sqrt_price_lower_x96: U256::from(
-                crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(0)
-                    .unwrap_or_default(),
+                crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(0).unwrap_or_default(),
             ),
             sqrt_price_upper_x96: U256::from(
-                crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(200)
-                    .unwrap_or_default(),
+                crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(200).unwrap_or_default(),
             ),
             gamma_numer: 997_000,
             fee_denom: 1_000_000,
@@ -2343,7 +2386,10 @@ mod tests {
                     seq3.ranges[0].clone(),
                 ],
             );
-            assert!(sim.final_output > optimal_input, "Simulation should confirm profit");
+            assert!(
+                sim.final_output > optimal_input,
+                "Simulation should confirm profit"
+            );
             assert_eq!(sim.final_output - optimal_input, profit);
         }
         // If not profitable due to fees, that's also a valid result
@@ -2379,14 +2425,14 @@ mod tests {
     fn test_exact_solve_mixed_path_n_3hop_v2_cl_v2() {
         // 3-hop mixed path: V2 → CL → V2
         let v2_hop1 = IntHopState::new(
-            U256::from(2_000_000_000_000u64),           // 2M USDC
+            U256::from(2_000_000_000_000u64),              // 2M USDC
             U256::from(1_000_000_000_000_000_000_000u128), // 1000 WETH
             997,
             1000,
         );
         let v2_hop2 = IntHopState::new(
             U256::from(1_000_000_000_000_000_000_000u128), // 1000 WETH
-            U256::from(2_100_000_000_000u64),           // 2.1M USDC
+            U256::from(2_100_000_000_000u64),              // 2.1M USDC
             997,
             1000,
         );
@@ -2440,7 +2486,7 @@ mod tests {
             amount_in,
             &[Some(v2_hop1.clone()), None, Some(v2_hop2.clone())],
             &[None, Some(cl_base), None],
-            &[None, None, None], // no crossings
+            &[None, None, None],  // no crossings
             &[true, false, true], // V2 → CL → V2
         );
 

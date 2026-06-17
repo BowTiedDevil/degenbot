@@ -39,10 +39,8 @@ use crate::bot_core::v4_swap_decoder::PoolId;
 
 /// Keccak256 of `ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)`.
 pub const V4_MODIFY_LIQUIDITY_TOPIC: B256 = B256::new([
-    0xf2, 0x08, 0xf4, 0x91, 0x27, 0x82, 0xfd, 0x25,
-    0xc7, 0xf1, 0x14, 0xca, 0x37, 0x23, 0xa2, 0xd5,
-    0xdd, 0x6f, 0x3b, 0xcc, 0x3a, 0xc8, 0xdb, 0x5a,
-    0xf6, 0x3b, 0xaa, 0x85, 0xf7, 0x11, 0xd5, 0xec,
+    0xf2, 0x08, 0xf4, 0x91, 0x27, 0x82, 0xfd, 0x25, 0xc7, 0xf1, 0x14, 0xca, 0x37, 0x23, 0xa2, 0xd5,
+    0xdd, 0x6f, 0x3b, 0xcc, 0x3a, 0xc8, 0xdb, 0x5a, 0xf6, 0x3b, 0xaa, 0x85, 0xf7, 0x11, 0xd5, 0xec,
 ]);
 
 /// Decoded V4 `ModifyLiquidity` event carrying liquidity change data.
@@ -183,7 +181,12 @@ mod tests {
         let salt = B256::ZERO;
 
         let log = make_v4_modify_liquidity_log(
-            pool_id, sender, tick_lower, tick_upper, liquidity_delta, salt,
+            pool_id,
+            sender,
+            tick_lower,
+            tick_upper,
+            liquidity_delta,
+            salt,
         );
 
         let result = decode_v4_modify_liquidity_log(&log);
@@ -209,7 +212,12 @@ mod tests {
         let salt = B256::from([0xFFu8; 32]);
 
         let log = make_v4_modify_liquidity_log(
-            pool_id, sender, tick_lower, tick_upper, liquidity_delta, salt,
+            pool_id,
+            sender,
+            tick_lower,
+            tick_upper,
+            liquidity_delta,
+            salt,
         );
 
         let result = decode_v4_modify_liquidity_log(&log);
@@ -255,7 +263,11 @@ mod tests {
 
         let inner = alloy::primitives::Log::new_unchecked(
             Address::ZERO,
-            vec![V4_MODIFY_LIQUIDITY_TOPIC, B256::from(pool_id), sender.into_word()],
+            vec![
+                V4_MODIFY_LIQUIDITY_TOPIC,
+                B256::from(pool_id),
+                sender.into_word(),
+            ],
             Bytes::from(vec![0u8; 64]), // too short — need 128
         );
         let log = Log {
@@ -304,15 +316,13 @@ mod tests {
         let liquidity_delta = I256::try_from(100_i128).unwrap();
 
         // tick_lower = -887273 (out of range)
-        let log = make_v4_modify_liquidity_log(
-            pool_id, sender, -887273, 0, liquidity_delta, B256::ZERO,
-        );
+        let log =
+            make_v4_modify_liquidity_log(pool_id, sender, -887273, 0, liquidity_delta, B256::ZERO);
         assert!(decode_v4_modify_liquidity_log(&log).is_none());
 
         // tick_upper = 887273 (out of range)
-        let log = make_v4_modify_liquidity_log(
-            pool_id, sender, 0, 887273, liquidity_delta, B256::ZERO,
-        );
+        let log =
+            make_v4_modify_liquidity_log(pool_id, sender, 0, 887273, liquidity_delta, B256::ZERO);
         assert!(decode_v4_modify_liquidity_log(&log).is_none());
     }
 
@@ -323,15 +333,13 @@ mod tests {
         let liquidity_delta = I256::try_from(100_i128).unwrap();
 
         // min tick: -887272
-        let log_min = make_v4_modify_liquidity_log(
-            pool_id, sender, -887272, 0, liquidity_delta, B256::ZERO,
-        );
+        let log_min =
+            make_v4_modify_liquidity_log(pool_id, sender, -887272, 0, liquidity_delta, B256::ZERO);
         assert!(decode_v4_modify_liquidity_log(&log_min).is_some());
 
         // max tick: 887272
-        let log_max = make_v4_modify_liquidity_log(
-            pool_id, sender, 0, 887272, liquidity_delta, B256::ZERO,
-        );
+        let log_max =
+            make_v4_modify_liquidity_log(pool_id, sender, 0, 887272, liquidity_delta, B256::ZERO);
         assert!(decode_v4_modify_liquidity_log(&log_max).is_some());
     }
 
@@ -363,7 +371,11 @@ mod tests {
 
         let inner = alloy::primitives::Log::new_unchecked(
             Address::ZERO,
-            vec![crate::bot_core::v4_swap_decoder::V4_SWAP_TOPIC, B256::from(pool_id), sender.into_word()],
+            vec![
+                crate::bot_core::v4_swap_decoder::V4_SWAP_TOPIC,
+                B256::from(pool_id),
+                sender.into_word(),
+            ],
             Bytes::from(vec![0u8; 192]),
         );
         let log = Log {
@@ -388,7 +400,11 @@ mod tests {
         // Construct a log with MODIFY_LIQUIDITY_TOPIC but Swap-like data
         let inner = alloy::primitives::Log::new_unchecked(
             Address::ZERO,
-            vec![V4_MODIFY_LIQUIDITY_TOPIC, B256::from(pool_id), sender.into_word()],
+            vec![
+                V4_MODIFY_LIQUIDITY_TOPIC,
+                B256::from(pool_id),
+                sender.into_word(),
+            ],
             Bytes::from(vec![0u8; 128]),
         );
         let log = Log {

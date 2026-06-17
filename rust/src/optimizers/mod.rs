@@ -13,7 +13,6 @@
 
 pub mod affected_keys;
 pub mod liquidity_event_buffer;
-pub mod v2_sync_decoder;
 #[allow(clippy::doc_markdown)]
 pub mod mobius_int;
 #[allow(clippy::doc_markdown)]
@@ -22,3 +21,4 @@ pub mod mobius_int_exact;
 pub mod mobius_v3_int;
 pub mod uniswap_engine;
 pub mod uniswap_engine_pump;
+pub mod v2_sync_decoder;

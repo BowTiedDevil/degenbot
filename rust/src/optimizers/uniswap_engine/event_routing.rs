@@ -6,7 +6,7 @@ use alloy::rpc::types::Log;
 use crate::bot_core::V3SwapUpdate;
 use crate::bot_core::V4SwapUpdate;
 
-use super::{UniswapEngine, BlockMetadata, HashSet, HopType};
+use super::{BlockMetadata, HashSet, HopType, UniswapEngine};
 
 impl UniswapEngine {
     /// Route a single WS log to the appropriate sub-engine.
@@ -88,8 +88,11 @@ impl UniswapEngine {
                     self.dirty_v4.insert(pool_id);
                 }
             }
-        } else if *topic == crate::bot_core::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC {
-            if let Some(event) = crate::bot_core::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log(log) {
+        } else if *topic == crate::bot_core::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC
+        {
+            if let Some(event) =
+                crate::bot_core::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log(log)
+            {
                 if let Some(pool_id) = self.core.lock().apply_v4_liquidity_update(
                     log.address(),
                     event.pool_id,
@@ -122,13 +125,7 @@ impl UniswapEngine {
         let dirty_v4 = std::mem::take(&mut self.dirty_v4);
 
         // Re-solve only paths containing updated pools (no batch send)
-        self.rebuild_and_solve_affected(
-            &dirty_v2,
-            &dirty_v3,
-            &dirty_v4,
-            block_number,
-            metadata,
-        );
+        self.rebuild_and_solve_affected(&dirty_v2, &dirty_v3, &dirty_v4, block_number, metadata);
 
         // dirty sets are already cleared by std::mem::take
         self.last_processed_block = Some(block_number);
@@ -167,7 +164,9 @@ impl UniswapEngine {
         // 1. Restore all V2 pool state to before the target. V3/V4 state still
         //    lives on the per-family engines (Slices 2/3 migrate them + their
         //    reorg handling into Bot).
-        self.core.lock().restore_all_pools_before_block(target_block);
+        self.core
+            .lock()
+            .restore_all_pools_before_block(target_block);
 
         // 2. Invalidate resolved hop states — they were derived from pre-restore
         //    pool state. Clearing forces `solve_dirty`'s re-derive to rebuild.
@@ -202,7 +201,12 @@ impl UniswapEngine {
     /// Process a block, solve, and send result batch to Python.
     /// Used for empty-block notifications where the pump doesn't go
     /// through the debounce path.
-    pub fn process_block_and_send(&mut self, logs: &[Log], block_number: u64, metadata: &BlockMetadata) {
+    pub fn process_block_and_send(
+        &mut self,
+        logs: &[Log],
+        block_number: u64,
+        metadata: &BlockMetadata,
+    ) {
         self.process_block(logs, block_number, metadata);
         self.compute_diff_and_send(metadata);
     }
@@ -278,7 +282,13 @@ impl UniswapEngine {
         }
 
         // Re-solve only paths containing updated pools
-        self.rebuild_and_solve_affected(&v2_affected, &v3_affected, &HashSet::new(), block_number, metadata);
+        self.rebuild_and_solve_affected(
+            &v2_affected,
+            &v3_affected,
+            &HashSet::new(),
+            block_number,
+            metadata,
+        );
         self.last_processed_block = Some(block_number);
     }
 
@@ -298,7 +308,13 @@ impl UniswapEngine {
                 }
             }
         }
-        self.rebuild_and_solve_affected(&HashSet::new(), &HashSet::new(), &v4_affected, block_number, metadata);
+        self.rebuild_and_solve_affected(
+            &HashSet::new(),
+            &HashSet::new(),
+            &v4_affected,
+            block_number,
+            metadata,
+        );
     }
 
     /// Process all updates at once (V2 + V3 + V4).
@@ -338,7 +354,13 @@ impl UniswapEngine {
                 }
             }
         }
-        self.rebuild_and_solve_affected(&v2_affected, &v3_affected, &v4_affected, block_number, metadata);
+        self.rebuild_and_solve_affected(
+            &v2_affected,
+            &v3_affected,
+            &v4_affected,
+            block_number,
+            metadata,
+        );
         self.last_processed_block = Some(block_number);
     }
 
@@ -349,10 +371,10 @@ impl UniswapEngine {
     /// After all logs are processed, expired buffers are purged and
     /// the sub-engines rebuild their solve states.
     pub fn process_backfill_logs(&mut self, logs: &[Log], block_number: u64) {
+        use crate::bot_core::v3_mint_burn_decoder::{decode_v3_burn_log, decode_v3_mint_log};
         use crate::bot_core::v3_swap_decoder::decode_v3_swap_log;
-        use crate::bot_core::v3_mint_burn_decoder::{decode_v3_mint_log, decode_v3_burn_log};
-        use crate::bot_core::v4_swap_decoder::decode_v4_swap_log;
         use crate::bot_core::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log;
+        use crate::bot_core::v4_swap_decoder::decode_v4_swap_log;
 
         let mut v3_touched = false;
         let mut v4_touched = false;
@@ -411,7 +433,9 @@ impl UniswapEngine {
                     );
                     v4_touched = true;
                 }
-            } else if *topic0 == crate::bot_core::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC {
+            } else if *topic0
+                == crate::bot_core::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC
+            {
                 if let Some(event) = decode_v4_modify_liquidity_log(log) {
                     self.core.lock().buffer_backfill_v4_liquidity_update(
                         log.address(),

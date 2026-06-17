@@ -162,7 +162,10 @@ fn test_python_int_i128_boundary() {
         let py_int = i128::MAX.into_pyobject(py).unwrap();
         abi_value_from_python(py, &py_int).unwrap()
     });
-    assert_eq!(result_max, AbiValue::Uint(U256::from(i128::MAX as u128), 256));
+    assert_eq!(
+        result_max,
+        AbiValue::Uint(U256::from(i128::MAX as u128), 256)
+    );
 
     let result_min = with_python(|py| {
         let py_int = i128::MIN.into_pyobject(py).unwrap();

@@ -27,7 +27,6 @@
 //! See individual module documentation for usage examples.
 
 pub mod abi_decoder;
-pub mod bot_core;
 pub mod abi_encoder;
 pub mod abi_types;
 pub mod address_utils;
@@ -35,7 +34,10 @@ pub mod address_utils_py;
 pub mod alloy_py;
 pub mod async_contract;
 pub mod async_provider;
+pub mod bot_core;
 
+pub mod cl_lib;
+pub mod cl_lib_py;
 pub mod contract;
 pub mod contract_py;
 pub mod errors;
@@ -50,8 +52,6 @@ pub mod runtime;
 pub mod signature_parser;
 pub mod subscription;
 pub mod subscription_py;
-pub mod cl_lib;
-pub mod cl_lib_py;
 pub mod tick_math;
 pub mod tick_math_py;
 
@@ -60,7 +60,10 @@ pub use address_utils::{parse_address, to_checksum_address_bytes, to_checksum_ad
 pub use address_utils_py::to_checksum_address;
 pub use hex_utils::{decode_hex, encode_hex, HexError};
 
-pub use cl_lib::tick_math::{get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MIN_SQRT_RATIO, MAX_SQRT_RATIO};
+pub use cl_lib::tick_math::{
+    get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO,
+    MIN_SQRT_RATIO,
+};
 pub use cl_lib::{
     bit_math, full_math, functions, liquidity_math, sqrt_price_math, swap_math, unsafe_math,
 };

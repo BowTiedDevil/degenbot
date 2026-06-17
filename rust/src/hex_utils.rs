@@ -62,10 +62,7 @@ pub fn decode_hex(hex_str: &str) -> Result<Vec<u8>, HexError> {
 pub fn decode_32byte_hex(hex_str: &str) -> Result<[u8; 32], HexError> {
     let bytes = decode_hex(hex_str)?;
     if bytes.len() != 32 {
-        let msg = format!(
-            "Expected 32-byte value, got {} bytes",
-            bytes.len()
-        );
+        let msg = format!("Expected 32-byte value, got {} bytes", bytes.len());
         return Err(HexError::InvalidHex(msg));
     }
     let mut arr = [0u8; 32];

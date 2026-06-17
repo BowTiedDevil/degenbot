@@ -15,12 +15,13 @@ use alloy::primitives::{Address, I256, U160, U256};
 
 use crate::bot_core::state_history::{ReorgJournal, V3BlockDelta};
 use crate::bot_core::tick_bitmap::{compute_tick_ranges, gen_ticks, V3TickRangeForSolver};
-use crate::bot_core::TickInfo;
 use crate::bot_core::v3_state::{PoolTickCoverage, V3SwapOutcome};
 use crate::bot_core::v4_swap_decoder::PoolId;
+use crate::bot_core::TickInfo;
 use crate::cl_lib::swap_math::compute_swap_step_v4;
 use crate::cl_lib::tick_math::{
-    get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO, MIN_SQRT_RATIO,
+    get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO,
+    MIN_SQRT_RATIO,
 };
 use crate::optimizers::liquidity_event_buffer::LiquidityEvent;
 use crate::optimizers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence};
@@ -335,14 +336,7 @@ pub fn v4_simulate_swap(
     let fee_pips = U256::from(state.pool_key.fee);
     let tick_spacing = state.pool_key.tick_spacing;
 
-    let ticks = gen_ticks(
-        &state.tick_data,
-        tick,
-        tick_spacing,
-        zero_for_one,
-        30_000,
-    )
-    .ok()?;
+    let ticks = gen_ticks(&state.tick_data, tick, tick_spacing, zero_for_one, 30_000).ok()?;
 
     for tick_along_path in ticks {
         if amount_specified_remaining.is_zero() || sqrt_price_x96 == sqrt_price_limit {
@@ -358,8 +352,7 @@ pub fn v4_simulate_swap(
             tick_next.min(887_272)
         };
 
-        let sqrt_price_next =
-            U256::from(get_sqrt_ratio_at_tick_internal(tick_next).ok()?);
+        let sqrt_price_next = U256::from(get_sqrt_ratio_at_tick_internal(tick_next).ok()?);
 
         let sqrt_price_target = if (zero_for_one && sqrt_price_next < sqrt_price_limit)
             || (!zero_for_one && sqrt_price_next > sqrt_price_limit)
@@ -382,10 +375,8 @@ pub fn v4_simulate_swap(
         sqrt_price_x96 = step.sqrt_price_next;
 
         if exact_in {
-            let consumed =
-                I256::try_from(step.amount_in.saturating_add(step.fee_amount)).ok()?;
-            amount_specified_remaining =
-                amount_specified_remaining.checked_sub(consumed)?;
+            let consumed = I256::try_from(step.amount_in.saturating_add(step.fee_amount)).ok()?;
+            amount_specified_remaining = amount_specified_remaining.checked_sub(consumed)?;
             amount_calculated =
                 amount_calculated.checked_sub(I256::try_from(step.amount_out).ok()?)?;
         } else {
@@ -418,7 +409,7 @@ pub fn v4_simulate_swap(
                 tick_next
             };
         } else if sqrt_price_x96 != sqrt_price_start {
-                tick = get_tick_at_sqrt_ratio_internal(sqrt_price_x96.to::<U160>())
+            tick = get_tick_at_sqrt_ratio_internal(sqrt_price_x96.to::<U160>())
                 .ok()?
                 .as_i32();
         }

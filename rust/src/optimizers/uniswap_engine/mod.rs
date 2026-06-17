@@ -69,7 +69,8 @@ pub use py_binding::PyUniswapArbEngine;
 /// V4's `toBalanceDelta()` reverts with `SafeCastOverflow` if either
 /// component exceeds this value. The solver must reject paths where any
 /// V4 hop would produce amounts exceeding this limit.
-pub(super) const INT128_MAX: U256 = U256::from_limbs([0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_FFFF_FFFF, 0, 0]);
+pub(super) const INT128_MAX: U256 =
+    U256::from_limbs([0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_FFFF_FFFF, 0, 0]);
 
 // ---------------------------------------------------------------------------
 // Engine phase state machine (Plan 098)
@@ -139,7 +140,8 @@ pub use crate::bot_core::PoolTickCoverage;
 pub(crate) type V3SnapshotData = HashMap<Address, HashMap<i32, crate::bot_core::TickInfo>>;
 
 /// V4 snapshot data: (`pool_manager`, `pool_id`) → tick data (consumed at registration).
-pub(crate) type V4SnapshotData = HashMap<(Address, [u8; 32]), HashMap<i32, crate::bot_core::TickInfo>>;
+pub(crate) type V4SnapshotData =
+    HashMap<(Address, [u8; 32]), HashMap<i32, crate::bot_core::TickInfo>>;
 
 // ---------------------------------------------------------------------------
 // Path types
@@ -229,7 +231,9 @@ impl ResolvedHop {
     }
 
     /// The integer tick-range sequence, if this is a CL hop (V3 or V4).
-    pub(super) const fn as_int_sequence(&self) -> Option<&crate::optimizers::mobius_v3_int::IntV3TickRangeSequence> {
+    pub(super) const fn as_int_sequence(
+        &self,
+    ) -> Option<&crate::optimizers::mobius_v3_int::IntV3TickRangeSequence> {
         match self {
             Self::V3 { int_seq, .. } | Self::V4 { int_seq, .. } => Some(int_seq),
             Self::V2 { .. } => None,
@@ -391,7 +395,7 @@ pub struct UniswapEngine {
 
 impl UniswapEngine {
     /// Create a new engine.
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             core: Arc::new(parking_lot::Mutex::new(Bot::new())),
@@ -416,7 +420,7 @@ impl UniswapEngine {
 
     /// Create a new engine with a custom event buffer max age for the V4
     /// sub-engine (V3 buffer lives on `Bot` — ADR-003).
-    #[must_use] 
+    #[must_use]
     pub fn new_with_buffer_max_age(event_buffer_max_age: Option<u64>) -> Self {
         let core = Arc::new(parking_lot::Mutex::new(Bot::new()));
         if let Some(age) = event_buffer_max_age {

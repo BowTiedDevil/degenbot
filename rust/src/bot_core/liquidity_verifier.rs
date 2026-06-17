@@ -25,7 +25,7 @@
 use std::collections::HashMap;
 
 use alloy::dyn_abi::DynSolValue;
-use alloy::primitives::{Address, Bytes, I256, B256, U256};
+use alloy::primitives::{Address, Bytes, B256, I256, U256};
 
 use crate::bot_core::{TickMap, V3PoolState, V4PoolState};
 use crate::provider::AlloyProvider;
@@ -153,9 +153,14 @@ pub async fn verify_v4_liquidity_map<S: std::hash::BuildHasher>(
         let our_gross = our_info.liquidity_gross.to::<u128>();
         let our_net: i128 = our_info.liquidity_net.try_into().unwrap_or_default();
 
-        let (on_chain_gross, on_chain_net) =
-            call_state_view_tick_liquidity(provider, state_view, pool_id, tick_idx, Some(block_number))
-                .await?;
+        let (on_chain_gross, on_chain_net) = call_state_view_tick_liquidity(
+            provider,
+            state_view,
+            pool_id,
+            tick_idx,
+            Some(block_number),
+        )
+        .await?;
 
         if our_gross != on_chain_gross || our_net != on_chain_net {
             let pool_id_hex = crate::hex_utils::encode_hex(&pool_id);
@@ -227,13 +232,17 @@ async fn verify_v3_pool<T: TickMap + ?Sized>(
     }
 
     // Collect all on-chain tick indices from bitmap scanning
-    let mut on_chain_tick_indices: std::collections::HashSet<i32> = std::collections::HashSet::new();
+    let mut on_chain_tick_indices: std::collections::HashSet<i32> =
+        std::collections::HashSet::new();
 
     for word in &words_to_check {
         // Encode: tickBitmap(int16)
         let calldata = encode_calldata(
             V3_TICK_BITMAP_SELECTOR,
-            &[DynSolValue::Int(I256::unchecked_from(i128::from(i64::from(*word))), 16)],
+            &[DynSolValue::Int(
+                I256::unchecked_from(i128::from(i64::from(*word))),
+                16,
+            )],
         );
 
         let result = provider
@@ -268,7 +277,8 @@ async fn verify_v3_pool<T: TickMap + ?Sized>(
         let our_gross = our_info.liquidity_gross.to::<u128>();
         let our_net: i128 = our_info.liquidity_net.try_into().unwrap_or_default();
 
-        let (on_chain_gross, on_chain_net) = call_v3_ticks(provider, pool_addr, tick_idx, block_number).await?;
+        let (on_chain_gross, on_chain_net) =
+            call_v3_ticks(provider, pool_addr, tick_idx, block_number).await?;
 
         if our_gross != on_chain_gross {
             return Err(VerificationMismatch {
@@ -291,7 +301,8 @@ async fn verify_v3_pool<T: TickMap + ?Sized>(
 
     // 3. Check for on-chain ticks we're missing
     if let Some(&tick_idx) = on_chain_tick_indices.iter().next() {
-        let (on_chain_gross, on_chain_net) = call_v3_ticks(provider, pool_addr, tick_idx, block_number).await?;
+        let (on_chain_gross, on_chain_net) =
+            call_v3_ticks(provider, pool_addr, tick_idx, block_number).await?;
         return Err(VerificationMismatch {
             message: format!(
                 "V3 pool {pool_addr} {block_tag}: tick {tick_idx} exists on-chain (lg={on_chain_gross}, ln={on_chain_net}) but NOT in engine"
@@ -322,9 +333,7 @@ async fn call_v3_ticks(
         .eth_call(&pool_addr, calldata, block_number)
         .await
         .map_err(|e| VerificationMismatch {
-            message: format!(
-                "V3 pool {pool_addr} {block_tag}: ticks({tick}) RPC call failed: {e}"
-            ),
+            message: format!("V3 pool {pool_addr} {block_tag}: ticks({tick}) RPC call failed: {e}"),
         })?;
 
     // ticks() returns (uint128 liquidityGross, int128 liquidityNet, ...)
@@ -745,7 +754,7 @@ mod tests {
         // int24 max = 887272
         assert_eq!(compress_tick(887_272, 10), 88_727);
         assert_eq!(compress_tick(-887_272, 10), -88_728); // floor(-88727.2) = -88728
-        // int24 min = -887272
+                                                          // int24 min = -887272
         assert_eq!(compress_tick(-887_272, 1), -887_272);
     }
 
@@ -880,7 +889,7 @@ mod tests {
             // Python semantics
             let py_word = tick >> 8; // arithmetic shift right
             let py_bit = tick.rem_euclid(256); // Python's % always non-negative for positive divisor
-            // SAFETY: py_word fits in i16 and py_bit fits in u8 for any int24 tick value
+                                               // SAFETY: py_word fits in i16 and py_bit fits in u8 for any int24 tick value
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             {
                 assert_eq!(

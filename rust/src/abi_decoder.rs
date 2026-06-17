@@ -266,7 +266,9 @@ pub fn decode(
         .collect::<Result<_, _>>()?;
     let type_refs: Vec<&str> = type_strings.iter().map(String::as_str).collect();
 
-    let values = py.detach(|| decode_rust(&type_refs, data)).map_err(|e| map_decode_error(&e))?;
+    let values = py
+        .detach(|| decode_rust(&type_refs, data))
+        .map_err(|e| map_decode_error(&e))?;
 
     let list = decoded_values_to_py_list(py, &values, checksum)?;
     Ok(list.into())

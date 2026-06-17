@@ -103,8 +103,7 @@ pub fn compute_swap_step_v3(
             } else {
                 get_amount0_delta(sqrt_price_current, sqrt_price_next, liquidity, Some(false))?
             };
-            let fee_amount =
-                muldiv_rounding_up(amount_in, fee_pips, MAX_SWAP_FEE - fee_pips)?;
+            let fee_amount = muldiv_rounding_up(amount_in, fee_pips, MAX_SWAP_FEE - fee_pips)?;
             Ok(SwapStepResult {
                 sqrt_price_next,
                 amount_in,
@@ -141,9 +140,19 @@ pub fn compute_swap_step_v3(
     } else {
         // Exact out
         let amount_out = if zero_for_one {
-            get_amount1_delta(sqrt_price_target, sqrt_price_current, liquidity, Some(false))?
+            get_amount1_delta(
+                sqrt_price_target,
+                sqrt_price_current,
+                liquidity,
+                Some(false),
+            )?
         } else {
-            get_amount0_delta(sqrt_price_current, sqrt_price_target, liquidity, Some(false))?
+            get_amount0_delta(
+                sqrt_price_current,
+                sqrt_price_target,
+                liquidity,
+                Some(false),
+            )?
         };
 
         if amount_remaining_u256 >= amount_out {
@@ -153,8 +162,7 @@ pub fn compute_swap_step_v3(
             } else {
                 get_amount1_delta(sqrt_price_current, sqrt_price_next, liquidity, Some(true))?
             };
-            let fee_amount =
-                muldiv_rounding_up(amount_in, fee_pips, MAX_SWAP_FEE - fee_pips)?;
+            let fee_amount = muldiv_rounding_up(amount_in, fee_pips, MAX_SWAP_FEE - fee_pips)?;
             Ok(SwapStepResult {
                 sqrt_price_next,
                 amount_in,
@@ -175,8 +183,7 @@ pub fn compute_swap_step_v3(
             } else {
                 get_amount1_delta(sqrt_price_current, sqrt_price_next, liquidity, Some(true))?
             };
-            let fee_amount =
-                muldiv_rounding_up(amount_in, fee_pips, MAX_SWAP_FEE - fee_pips)?;
+            let fee_amount = muldiv_rounding_up(amount_in, fee_pips, MAX_SWAP_FEE - fee_pips)?;
             Ok(SwapStepResult {
                 sqrt_price_next,
                 amount_in,
@@ -263,9 +270,19 @@ pub fn compute_swap_step_v4(
     } else {
         // Exact out
         let amount_out = if zero_for_one {
-            get_amount1_delta(sqrt_price_target, sqrt_price_current, liquidity, Some(false))?
+            get_amount1_delta(
+                sqrt_price_target,
+                sqrt_price_current,
+                liquidity,
+                Some(false),
+            )?
         } else {
-            get_amount0_delta(sqrt_price_current, sqrt_price_target, liquidity, Some(false))?
+            get_amount0_delta(
+                sqrt_price_current,
+                sqrt_price_target,
+                liquidity,
+                Some(false),
+            )?
         };
 
         if amount_remaining_u256 >= amount_out {
@@ -275,8 +292,7 @@ pub fn compute_swap_step_v4(
             } else {
                 get_amount1_delta(sqrt_price_current, sqrt_price_next, liquidity, Some(true))?
             };
-            let fee_amount =
-                muldiv_rounding_up(amount_in, fee_pips, MAX_SWAP_FEE - fee_pips)?;
+            let fee_amount = muldiv_rounding_up(amount_in, fee_pips, MAX_SWAP_FEE - fee_pips)?;
             Ok(SwapStepResult {
                 sqrt_price_next,
                 amount_in,
@@ -297,8 +313,7 @@ pub fn compute_swap_step_v4(
             } else {
                 get_amount1_delta(sqrt_price_current, sqrt_price_next, liquidity, Some(true))?
             };
-            let fee_amount =
-                muldiv_rounding_up(amount_in, fee_pips, MAX_SWAP_FEE - fee_pips)?;
+            let fee_amount = muldiv_rounding_up(amount_in, fee_pips, MAX_SWAP_FEE - fee_pips)?;
             Ok(SwapStepResult {
                 sqrt_price_next,
                 amount_in,
@@ -318,7 +333,13 @@ mod tests {
         let sp_next = U256::from(100u64);
         let sp_limit = U256::from(200u64);
 
-        assert_eq!(get_sqrt_price_target(true, sp_next, sp_limit), U256::from(200u64));
-        assert_eq!(get_sqrt_price_target(false, sp_next, sp_limit), U256::from(100u64));
+        assert_eq!(
+            get_sqrt_price_target(true, sp_next, sp_limit),
+            U256::from(200u64)
+        );
+        assert_eq!(
+            get_sqrt_price_target(false, sp_next, sp_limit),
+            U256::from(100u64)
+        );
     }
 }

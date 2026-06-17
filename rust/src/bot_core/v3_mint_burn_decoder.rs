@@ -51,18 +51,14 @@ use alloy::rpc::types::Log;
 
 /// Keccak256 of `Mint(address,address,int24,int24,uint128,uint256,uint256)`.
 pub const V3_MINT_TOPIC: B256 = B256::new([
-    0x7a, 0x53, 0x08, 0x0b, 0xa4, 0x14, 0x15, 0x8b,
-    0xe7, 0xec, 0x69, 0xb9, 0x87, 0xb5, 0xfb, 0x7d,
-    0x07, 0xde, 0xe1, 0x01, 0xfe, 0x85, 0x48, 0x8f,
-    0x08, 0x53, 0xae, 0x16, 0x23, 0x9d, 0x0b, 0xde,
+    0x7a, 0x53, 0x08, 0x0b, 0xa4, 0x14, 0x15, 0x8b, 0xe7, 0xec, 0x69, 0xb9, 0x87, 0xb5, 0xfb, 0x7d,
+    0x07, 0xde, 0xe1, 0x01, 0xfe, 0x85, 0x48, 0x8f, 0x08, 0x53, 0xae, 0x16, 0x23, 0x9d, 0x0b, 0xde,
 ]);
 
 /// Keccak256 of `Burn(address,int24,int24,uint128,uint256,uint256)`.
 pub const V3_BURN_TOPIC: B256 = B256::new([
-    0x0c, 0x39, 0x6c, 0xd9, 0x89, 0xa3, 0x9f, 0x44,
-    0x59, 0xb5, 0xfa, 0x1a, 0xed, 0x6a, 0x9a, 0x8d,
-    0xcd, 0xbc, 0x45, 0x90, 0x8a, 0xcf, 0xd6, 0x7e,
-    0x02, 0x8c, 0xd5, 0x68, 0xda, 0x98, 0x98, 0x2c,
+    0x0c, 0x39, 0x6c, 0xd9, 0x89, 0xa3, 0x9f, 0x44, 0x59, 0xb5, 0xfa, 0x1a, 0xed, 0x6a, 0x9a, 0x8d,
+    0xcd, 0xbc, 0x45, 0x90, 0x8a, 0xcf, 0xd6, 0x7e, 0x02, 0x8c, 0xd5, 0x68, 0xda, 0x98, 0x98, 0x2c,
 ]);
 
 /// Decoded V3 Mint event carrying liquidity position data.
@@ -268,7 +264,12 @@ mod tests {
 
         let inner = alloy::primitives::Log::new_unchecked(
             pool_address,
-            vec![V3_MINT_TOPIC, owner.into_word(), tick_lower_topic, tick_upper_topic],
+            vec![
+                V3_MINT_TOPIC,
+                owner.into_word(),
+                tick_lower_topic,
+                tick_upper_topic,
+            ],
             Bytes::from(data),
         );
         Log {
@@ -310,7 +311,12 @@ mod tests {
 
         let inner = alloy::primitives::Log::new_unchecked(
             pool_address,
-            vec![V3_BURN_TOPIC, owner.into_word(), tick_lower_topic, tick_upper_topic],
+            vec![
+                V3_BURN_TOPIC,
+                owner.into_word(),
+                tick_lower_topic,
+                tick_upper_topic,
+            ],
             Bytes::from(data),
         );
         Log {
@@ -344,7 +350,9 @@ mod tests {
         let amount0 = U256::from(500u64);
         let amount1 = U256::from(1000u64);
 
-        let log = make_v3_mint_log(pool, sender, owner, tick_lower, tick_upper, amount, amount0, amount1);
+        let log = make_v3_mint_log(
+            pool, sender, owner, tick_lower, tick_upper, amount, amount0, amount1,
+        );
 
         let result = decode_v3_mint_log(&log);
         assert!(result.is_some());
@@ -455,7 +463,16 @@ mod tests {
         let sender = Address::from([0xbb; 20]);
         let owner = Address::from([0xcc; 20]);
 
-        let log = make_v3_mint_log(pool, sender, owner, 100, 200, 50, U256::from(10u64), U256::from(20u64));
+        let log = make_v3_mint_log(
+            pool,
+            sender,
+            owner,
+            100,
+            200,
+            50,
+            U256::from(10u64),
+            U256::from(20u64),
+        );
         let event = decode_v3_mint_log(&log).unwrap();
 
         assert_eq!(event.tick_lower, 100);
@@ -496,7 +513,9 @@ mod tests {
         let amount0 = U256::from(200u64);
         let amount1 = U256::from(400u64);
 
-        let log = make_v3_burn_log(pool, owner, tick_lower, tick_upper, amount, amount0, amount1);
+        let log = make_v3_burn_log(
+            pool, owner, tick_lower, tick_upper, amount, amount0, amount1,
+        );
 
         let result = decode_v3_burn_log(&log);
         assert!(result.is_some());

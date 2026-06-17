@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 
 use super::{HopType, UniswapEngine};
 
-
 /// A snapshot of a single pool's state, formatted for diagnostics.
 ///
 /// Numeric values are stored as hex strings so the output is
@@ -160,19 +159,85 @@ impl DiagnosticPathState {
 
         for hop in &mut self.hops {
             let result = match &hop.engine_state {
-                DiagnosticPoolState::V2 { address, reserve_in, reserve_out, fee_denom, gamma_numer } => {
-                    fetch_v2_onchain(provider, block_number, hop.zero_for_one, address, reserve_in, reserve_out, fee_denom, gamma_numer).await
+                DiagnosticPoolState::V2 {
+                    address,
+                    reserve_in,
+                    reserve_out,
+                    fee_denom,
+                    gamma_numer,
+                } => {
+                    fetch_v2_onchain(
+                        provider,
+                        block_number,
+                        hop.zero_for_one,
+                        address,
+                        reserve_in,
+                        reserve_out,
+                        fee_denom,
+                        gamma_numer,
+                    )
+                    .await
                 }
-                DiagnosticPoolState::V3 { address, token0, token1, fee, tick_spacing, sqrt_price_x96, tick, liquidity } => {
-                    fetch_v3_onchain(provider, block_number, address, token0, token1, *fee, *tick_spacing, sqrt_price_x96, *tick, liquidity).await
+                DiagnosticPoolState::V3 {
+                    address,
+                    token0,
+                    token1,
+                    fee,
+                    tick_spacing,
+                    sqrt_price_x96,
+                    tick,
+                    liquidity,
+                } => {
+                    fetch_v3_onchain(
+                        provider,
+                        block_number,
+                        address,
+                        token0,
+                        token1,
+                        *fee,
+                        *tick_spacing,
+                        sqrt_price_x96,
+                        *tick,
+                        liquidity,
+                    )
+                    .await
                 }
-                DiagnosticPoolState::V4 { pool_manager, pool_id, currency0, currency1, fee, tick_spacing, hook_flags, hooks, sqrt_price_x96, tick, liquidity } => {
+                DiagnosticPoolState::V4 {
+                    pool_manager,
+                    pool_id,
+                    currency0,
+                    currency1,
+                    fee,
+                    tick_spacing,
+                    hook_flags,
+                    hooks,
+                    sqrt_price_x96,
+                    tick,
+                    liquidity,
+                } => {
                     if let Some(sv) = state_view {
-                        fetch_v4_onchain(provider, block_number, sv, pool_manager, pool_id, currency0, currency1, *fee, *tick_spacing, *hook_flags, hooks, sqrt_price_x96, *tick, liquidity).await
+                        fetch_v4_onchain(
+                            provider,
+                            block_number,
+                            sv,
+                            pool_manager,
+                            pool_id,
+                            currency0,
+                            currency1,
+                            *fee,
+                            *tick_spacing,
+                            *hook_flags,
+                            hooks,
+                            sqrt_price_x96,
+                            *tick,
+                            liquidity,
+                        )
+                        .await
                     } else {
                         Ok(FetchOutcome {
                             onchain_state: None,
-                            diffs: vec!["V4 on-chain fetch skipped: no StateView address provided".to_string()],
+                            diffs: vec!["V4 on-chain fetch skipped: no StateView address provided"
+                                .to_string()],
                         })
                     }
                 }
@@ -278,15 +343,18 @@ async fn fetch_v2_onchain(
     fee_denom: &str,
     gamma_numer: &str,
 ) -> Result<FetchOutcome, crate::errors::ProviderError> {
-    let pool_address: Address = address.parse().map_err(|e| {
-        crate::errors::ProviderError::Other {
-            message: format!("invalid V2 pool address {address}: {e}"),
-        }
-    })?;
+    let pool_address: Address =
+        address
+            .parse()
+            .map_err(|e| crate::errors::ProviderError::Other {
+                message: format!("invalid V2 pool address {address}: {e}"),
+            })?;
 
     let selector = fn_selector("getReserves()");
     let calldata = encode_call(selector, &[]);
-    let raw = provider.eth_call(&pool_address, calldata, block_number).await?;
+    let raw = provider
+        .eth_call(&pool_address, calldata, block_number)
+        .await?;
 
     let return_type = DynSolType::Tuple(vec![
         DynSolType::Uint(112),
@@ -305,11 +373,15 @@ async fn fetch_v2_onchain(
         });
     };
 
-    let reserve0 = uint_value(&values[0], 112).ok_or_else(|| crate::errors::ProviderError::SerializationError {
-        message: "getReserves reserve0 decode mismatch".to_string(),
+    let reserve0 = uint_value(&values[0], 112).ok_or_else(|| {
+        crate::errors::ProviderError::SerializationError {
+            message: "getReserves reserve0 decode mismatch".to_string(),
+        }
     })?;
-    let reserve1 = uint_value(&values[1], 112).ok_or_else(|| crate::errors::ProviderError::SerializationError {
-        message: "getReserves reserve1 decode mismatch".to_string(),
+    let reserve1 = uint_value(&values[1], 112).ok_or_else(|| {
+        crate::errors::ProviderError::SerializationError {
+            message: "getReserves reserve1 decode mismatch".to_string(),
+        }
     })?;
 
     let (chain_reserve_in, chain_reserve_out) = if zero_for_one {
@@ -358,16 +430,21 @@ async fn fetch_v3_onchain(
     engine_tick: i32,
     engine_liquidity: &str,
 ) -> Result<FetchOutcome, crate::errors::ProviderError> {
-    let pool_address: Address = address.parse().map_err(|e| {
-        crate::errors::ProviderError::Other {
-            message: format!("invalid V3 pool address {address}: {e}"),
-        }
-    })?;
+    let pool_address: Address =
+        address
+            .parse()
+            .map_err(|e| crate::errors::ProviderError::Other {
+                message: format!("invalid V3 pool address {address}: {e}"),
+            })?;
 
     // slot0() -> (sqrtPriceX96, tick, observationIndex, observationCardinality, observationCardinalityNext, feeProtocol, unlocked)
     let slot0_selector = fn_selector("slot0()");
     let raw_slot0 = provider
-        .eth_call(&pool_address, encode_call(slot0_selector, &[]), block_number)
+        .eth_call(
+            &pool_address,
+            encode_call(slot0_selector, &[]),
+            block_number,
+        )
         .await?;
     let slot0_type = DynSolType::Tuple(vec![
         DynSolType::Uint(160),
@@ -403,7 +480,11 @@ async fn fetch_v3_onchain(
     // liquidity() -> uint128
     let liquidity_selector = fn_selector("liquidity()");
     let raw_liquidity = provider
-        .eth_call(&pool_address, encode_call(liquidity_selector, &[]), block_number)
+        .eth_call(
+            &pool_address,
+            encode_call(liquidity_selector, &[]),
+            block_number,
+        )
         .await?;
     let liquidity_type = DynSolType::Uint(128);
     let decoded_liquidity = liquidity_type.abi_decode(&raw_liquidity).map_err(|e| {
@@ -435,9 +516,7 @@ async fn fetch_v3_onchain(
         ));
     }
     if engine_tick != chain_tick {
-        outcome.record_diff(format!(
-            "tick: engine={engine_tick}, onchain={chain_tick}"
-        ));
+        outcome.record_diff(format!("tick: engine={engine_tick}, onchain={chain_tick}"));
     }
     if parse_hex_u128(engine_liquidity) != Some(chain_liquidity) {
         outcome.record_diff(format!(
@@ -477,7 +556,11 @@ async fn fetch_v4_onchain(
     // StateView.getSlot0(bytes32 poolId) -> (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 swapFee)
     let slot0_selector = fn_selector("getSlot0(bytes32)");
     let raw_slot0 = provider
-        .eth_call(&state_view, encode_call(slot0_selector, std::slice::from_ref(&pool_id_value)), block_number)
+        .eth_call(
+            &state_view,
+            encode_call(slot0_selector, std::slice::from_ref(&pool_id_value)),
+            block_number,
+        )
         .await?;
     let slot0_type = DynSolType::Tuple(vec![
         DynSolType::Uint(160),
@@ -510,7 +593,11 @@ async fn fetch_v4_onchain(
     // StateView.getLiquidity(bytes32 poolId) -> uint128
     let liquidity_selector = fn_selector("getLiquidity(bytes32)");
     let raw_liquidity = provider
-        .eth_call(&state_view, encode_call(liquidity_selector, &[pool_id_value]), block_number)
+        .eth_call(
+            &state_view,
+            encode_call(liquidity_selector, &[pool_id_value]),
+            block_number,
+        )
         .await?;
     let liquidity_type = DynSolType::Uint(128);
     let decoded_liquidity = liquidity_type.abi_decode(&raw_liquidity).map_err(|e| {
@@ -615,12 +702,22 @@ impl UniswapEngine {
         for (position, pool_ref) in path.pools.iter().enumerate() {
             let engine_state = match pool_ref.hop_type {
                 HopType::V2 => core.get_v2_pool_state(pool_ref.pool_key).map(|state| {
-                    let (reserve_in, reserve_out, gamma_numer, fee_denom) =
-                        if pool_ref.zero_for_one {
-                            (state.reserve0, state.reserve1, state.fee_token0.0, state.fee_token0.1)
-                        } else {
-                            (state.reserve1, state.reserve0, state.fee_token1.0, state.fee_token1.1)
-                        };
+                    let (reserve_in, reserve_out, gamma_numer, fee_denom) = if pool_ref.zero_for_one
+                    {
+                        (
+                            state.reserve0,
+                            state.reserve1,
+                            state.fee_token0.0,
+                            state.fee_token0.1,
+                        )
+                    } else {
+                        (
+                            state.reserve1,
+                            state.reserve0,
+                            state.fee_token1.0,
+                            state.fee_token1.1,
+                        )
+                    };
                     DiagnosticPoolState::V2 {
                         address: fmt_addr(state.address),
                         reserve_in: fmt_u256(reserve_in),
@@ -629,33 +726,35 @@ impl UniswapEngine {
                         gamma_numer: format!("0x{gamma_numer:x}"),
                     }
                 }),
-                HopType::V3 => core.get_v3_pool(pool_ref.pool_key).map(|state| {
-                    DiagnosticPoolState::V3 {
-                        address: fmt_addr(state.address),
-                        token0: fmt_addr(state.token0),
-                        token1: fmt_addr(state.token1),
-                        fee: state.fee,
-                        tick_spacing: state.tick_spacing,
-                        sqrt_price_x96: fmt_u256(state.sqrt_price_x96),
-                        tick: state.tick,
-                        liquidity: format!("0x{:x}", state.liquidity),
-                    }
-                }),
-                HopType::V4 => core.get_v4_pool(pool_ref.pool_key).map(|state| {
-                    DiagnosticPoolState::V4 {
-                        pool_manager: fmt_addr(state.pool_manager),
-                        pool_id: format!("0x{}", alloy::hex::encode(state.pool_id)),
-                        currency0: state.pool_key.currency0.to_checksum(None),
-                        currency1: state.pool_key.currency1.to_checksum(None),
-                        fee: state.pool_key.fee,
-                        tick_spacing: state.pool_key.tick_spacing,
-                        hook_flags: 0,
-                        hooks: state.pool_key.hooks.to_checksum(None),
-                        sqrt_price_x96: fmt_u256(state.sqrt_price_x96),
-                        tick: state.tick,
-                        liquidity: format!("0x{:x}", state.liquidity),
-                    }
-                }),
+                HopType::V3 => {
+                    core.get_v3_pool(pool_ref.pool_key)
+                        .map(|state| DiagnosticPoolState::V3 {
+                            address: fmt_addr(state.address),
+                            token0: fmt_addr(state.token0),
+                            token1: fmt_addr(state.token1),
+                            fee: state.fee,
+                            tick_spacing: state.tick_spacing,
+                            sqrt_price_x96: fmt_u256(state.sqrt_price_x96),
+                            tick: state.tick,
+                            liquidity: format!("0x{:x}", state.liquidity),
+                        })
+                }
+                HopType::V4 => {
+                    core.get_v4_pool(pool_ref.pool_key)
+                        .map(|state| DiagnosticPoolState::V4 {
+                            pool_manager: fmt_addr(state.pool_manager),
+                            pool_id: format!("0x{}", alloy::hex::encode(state.pool_id)),
+                            currency0: state.pool_key.currency0.to_checksum(None),
+                            currency1: state.pool_key.currency1.to_checksum(None),
+                            fee: state.pool_key.fee,
+                            tick_spacing: state.pool_key.tick_spacing,
+                            hook_flags: 0,
+                            hooks: state.pool_key.hooks.to_checksum(None),
+                            sqrt_price_x96: fmt_u256(state.sqrt_price_x96),
+                            tick: state.tick,
+                            liquidity: format!("0x{:x}", state.liquidity),
+                        })
+                }
             };
             let Some(engine_state) = engine_state else {
                 // Pool referenced by the path is missing from the sub-engine.
@@ -702,11 +801,11 @@ mod tests {
 
     use alloy::primitives::{Address, U256};
 
+    use crate::bot_core::RegisterV3PoolParams as V3Params;
+    use crate::bot_core::{RegisterV4PoolParams as V4Params, V4PoolKey};
     use crate::optimizers::uniswap_engine::{
         DiagnosticPathState, HopType, MixedPoolRef, PoolTickCoverage, UniswapEngine,
     };
-    use crate::bot_core::RegisterV3PoolParams as V3Params;
-    use crate::bot_core::{RegisterV4PoolParams as V4Params, V4PoolKey};
 
     fn usdc(amount: u64) -> U256 {
         U256::from(amount) * U256::from(10u64).pow(U256::from(6))

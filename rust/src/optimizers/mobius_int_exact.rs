@@ -302,8 +302,7 @@ mod tests {
     #[test]
     fn test_isqrt_large_non_perfect_square() {
         // (10^9)^2 - 1 → floor = 10^9 - 1
-        let n = U512::from(1_000_000_000u64) * U512::from(1_000_000_000u64)
-            - U512::from(1u64);
+        let n = U512::from(1_000_000_000u64) * U512::from(1_000_000_000u64) - U512::from(1u64);
         // This is (10^9-1)*(10^9+1) = 10^18 - 1, so isqrt = 999999999
         assert_eq!(isqrt_u512(n), U512::from(999_999_999u64));
     }
@@ -403,7 +402,12 @@ mod tests {
         // Single hop cannot be an arbitrage cycle but K > M is
         // technically possible (γs > r). The solver should produce
         // a valid result since simulate_path works for single hops.
-        let hops = vec![IntHopState::new(u256(1_000_000), u256(2_000_000), 997, 1000)];
+        let hops = vec![IntHopState::new(
+            u256(1_000_000),
+            u256(2_000_000),
+            997,
+            1000,
+        )];
         let result = exact_mobius_solve(&hops).unwrap();
         // K = 997 * 2_000_000 = 1_994_000_000
         // M = 1000 * 1_000_000 = 1_000_000_000
@@ -506,7 +510,11 @@ mod tests {
 
 #[cfg(test)]
 mod proptests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::tuple_array_conversions)]
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::tuple_array_conversions
+    )]
 
     use super::*;
     use proptest::prelude::*;
@@ -586,10 +594,7 @@ mod proptests {
         assert_eq!(result.hop_outputs[1], expected_hop2);
 
         // Invariant: profit = final_output - optimal_input
-        assert_eq!(
-            result.hop_outputs[1] - result.optimal_input,
-            result.profit
-        );
+        assert_eq!(result.hop_outputs[1] - result.optimal_input, result.profit);
     }
 
     #[test]

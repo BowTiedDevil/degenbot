@@ -529,9 +529,8 @@ impl PyAlloyProvider {
             .map_err(Into::<PyErr>::into)?;
 
         // Convert JSON result back to Python
-        let py_obj = json_to_py_with_hexbytes(py, result).map_err(|e| {
-            PyValueError::new_err(format!("Failed to convert result: {e}"))
-        })?;
+        let py_obj = json_to_py_with_hexbytes(py, result)
+            .map_err(|e| PyValueError::new_err(format!("Failed to convert result: {e}")))?;
 
         Ok(py_obj)
     }
@@ -554,7 +553,10 @@ impl PyAlloyProvider {
     /// via the async iterator protocol.
     ///
     /// Requires a WebSocket or IPC transport. Raises `RuntimeError` for HTTP providers.
-    fn subscribe_blocks(&self, py: Python<'_>) -> PyResult<Py<crate::subscription_py::PyAlloySubscription>> {
+    fn subscribe_blocks(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Py<crate::subscription_py::PyAlloySubscription>> {
         let handle = self.provider.subscribe_blocks();
         let sub = crate::subscription_py::PyAlloySubscription::from_handle(handle);
         Py::new(py, sub)
@@ -563,7 +565,10 @@ impl PyAlloyProvider {
     /// Subscribe to full block bodies.
     ///
     /// Returns an `AlloySubscription` that yields full block dicts.
-    fn subscribe_full_blocks(&self, py: Python<'_>) -> PyResult<Py<crate::subscription_py::PyAlloySubscription>> {
+    fn subscribe_full_blocks(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Py<crate::subscription_py::PyAlloySubscription>> {
         let handle = self.provider.subscribe_full_blocks();
         let sub = crate::subscription_py::PyAlloySubscription::from_handle(handle);
         Py::new(py, sub)
@@ -572,7 +577,10 @@ impl PyAlloyProvider {
     /// Subscribe to pending transaction hashes.
     ///
     /// Returns an `AlloySubscription` that yields transaction hash hex strings.
-    fn subscribe_pending_transactions(&self, py: Python<'_>) -> PyResult<Py<crate::subscription_py::PyAlloySubscription>> {
+    fn subscribe_pending_transactions(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Py<crate::subscription_py::PyAlloySubscription>> {
         let handle = self.provider.subscribe_pending_transactions();
         let sub = crate::subscription_py::PyAlloySubscription::from_handle(handle);
         Py::new(py, sub)
@@ -581,7 +589,10 @@ impl PyAlloyProvider {
     /// Subscribe to full pending transaction bodies.
     ///
     /// Returns an `AlloySubscription` that yields transaction dicts.
-    fn subscribe_full_pending_transactions(&self, py: Python<'_>) -> PyResult<Py<crate::subscription_py::PyAlloySubscription>> {
+    fn subscribe_full_pending_transactions(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Py<crate::subscription_py::PyAlloySubscription>> {
         let handle = self.provider.subscribe_full_pending_transactions();
         let sub = crate::subscription_py::PyAlloySubscription::from_handle(handle);
         Py::new(py, sub)
@@ -620,16 +631,14 @@ impl PyAlloyProvider {
             let mut parsed_topics: [Topic; 4] = Default::default();
             for (i, group) in topic_groups.iter().enumerate() {
                 if i >= 4 {
-                    return Err(PyValueError::new_err(
-                        "Topic index out of range (0-3)"
-                    ));
+                    return Err(PyValueError::new_err("Topic index out of range (0-3)"));
                 }
                 let hashes: Vec<alloy::primitives::B256> = group
                     .iter()
                     .map(|topic| {
-                        topic.parse::<alloy::primitives::B256>().map_err(|e| {
-                            PyValueError::new_err(format!("Invalid topic hash: {e}"))
-                        })
+                        topic
+                            .parse::<alloy::primitives::B256>()
+                            .map_err(|e| PyValueError::new_err(format!("Invalid topic hash: {e}")))
                     })
                     .collect::<PyResult<Vec<_>>>()?;
                 parsed_topics[i] = Topic::from(hashes);
