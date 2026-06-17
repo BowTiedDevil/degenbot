@@ -29,10 +29,8 @@ use alloy::rpc::types::Log;
 
 /// Keccak256 of `Swap(address,address,int256,int256,uint160,uint128,int24)`.
 pub const V3_SWAP_TOPIC: B256 = B256::new([
-    0xc4, 0x20, 0x79, 0xf9, 0x4a, 0x63, 0x50, 0xd7,
-    0xe6, 0x23, 0x5f, 0x29, 0x17, 0x49, 0x24, 0xf9,
-    0x28, 0xcc, 0x2a, 0xc8, 0x18, 0xeb, 0x64, 0xfe,
-    0xd8, 0x00, 0x4e, 0x11, 0x5f, 0xbc, 0xca, 0x67,
+    0xc4, 0x20, 0x79, 0xf9, 0x4a, 0x63, 0x50, 0xd7, 0xe6, 0x23, 0x5f, 0x29, 0x17, 0x49, 0x24, 0xf9,
+    0x28, 0xcc, 0x2a, 0xc8, 0x18, 0xeb, 0x64, 0xfe, 0xd8, 0x00, 0x4e, 0x11, 0x5f, 0xbc, 0xca, 0x67,
 ]);
 
 /// Decoded V3 Swap event carrying post-swap state.
@@ -151,8 +149,7 @@ mod tests {
         liq_word[16..32].copy_from_slice(&liq_bytes);
         data.extend_from_slice(&liq_word);
         // tick (int24, sign-extended to int256 → 32 bytes)
-        let tick_i256 = I256::try_from(i128::from(tick))
-            .unwrap_or(I256::ZERO);
+        let tick_i256 = I256::try_from(i128::from(tick)).unwrap_or(I256::ZERO);
         data.extend_from_slice(&tick_i256.to_be_bytes::<32>());
 
         let inner = alloy::primitives::Log::new_unchecked(
@@ -199,8 +196,14 @@ mod tests {
         assert_eq!(event.pool_address, pool);
         assert_eq!(event.sender, sender);
         assert_eq!(event.recipient, recipient);
-        assert_eq!(event.amount0, I256::try_from(-1000_i128).unwrap_or(I256::ZERO));
-        assert_eq!(event.amount1, I256::try_from(500_i128).unwrap_or(I256::ZERO));
+        assert_eq!(
+            event.amount0,
+            I256::try_from(-1000_i128).unwrap_or(I256::ZERO)
+        );
+        assert_eq!(
+            event.amount1,
+            I256::try_from(500_i128).unwrap_or(I256::ZERO)
+        );
         assert_eq!(event.sqrt_price_x96, sqrt_price);
         assert_eq!(event.liquidity, liquidity);
         assert_eq!(event.tick, 0);
@@ -294,29 +297,53 @@ mod tests {
 
         // min tick: -887272
         let log_min = make_v3_swap_log(
-            pool, sender, recipient,
-            I256::ZERO, I256::ZERO, sqrt_price, liquidity, -887_272,
+            pool,
+            sender,
+            recipient,
+            I256::ZERO,
+            I256::ZERO,
+            sqrt_price,
+            liquidity,
+            -887_272,
         );
         assert!(decode_v3_swap_log(&log_min).is_some());
 
         // max tick: 887272
         let log_max = make_v3_swap_log(
-            pool, sender, recipient,
-            I256::ZERO, I256::ZERO, sqrt_price, liquidity, 887_272,
+            pool,
+            sender,
+            recipient,
+            I256::ZERO,
+            I256::ZERO,
+            sqrt_price,
+            liquidity,
+            887_272,
         );
         assert!(decode_v3_swap_log(&log_max).is_some());
 
         // out of range: -887273
         let log_under = make_v3_swap_log(
-            pool, sender, recipient,
-            I256::ZERO, I256::ZERO, sqrt_price, liquidity, -887_273,
+            pool,
+            sender,
+            recipient,
+            I256::ZERO,
+            I256::ZERO,
+            sqrt_price,
+            liquidity,
+            -887_273,
         );
         assert!(decode_v3_swap_log(&log_under).is_none());
 
         // out of range: 887273
         let log_over = make_v3_swap_log(
-            pool, sender, recipient,
-            I256::ZERO, I256::ZERO, sqrt_price, liquidity, 887_273,
+            pool,
+            sender,
+            recipient,
+            I256::ZERO,
+            I256::ZERO,
+            sqrt_price,
+            liquidity,
+            887_273,
         );
         assert!(decode_v3_swap_log(&log_over).is_none());
     }
@@ -324,11 +351,8 @@ mod tests {
     #[test]
     fn decode_v3_swap_no_topics_returns_none() {
         let pool = Address::ZERO;
-        let inner = alloy::primitives::Log::new_unchecked(
-            pool,
-            vec![],
-            Bytes::from(vec![0u8; 160]),
-        );
+        let inner =
+            alloy::primitives::Log::new_unchecked(pool, vec![], Bytes::from(vec![0u8; 160]));
         let log = Log {
             inner,
             block_hash: None,

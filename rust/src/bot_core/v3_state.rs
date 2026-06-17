@@ -19,7 +19,8 @@ use crate::bot_core::tick_bitmap::{compute_tick_ranges, gen_ticks, V3TickRangeFo
 use crate::bot_core::TickInfo;
 use crate::cl_lib::swap_math::compute_swap_step_v3;
 use crate::cl_lib::tick_math::{
-    get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO, MIN_SQRT_RATIO,
+    get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO,
+    MIN_SQRT_RATIO,
 };
 use crate::optimizers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence};
 
@@ -332,8 +333,9 @@ pub struct V3SwapOutcome {
 /// See: `contract_reference/uniswap/V3/UniswapV3Factory.sol` (`SwapMath`,
 /// `TickBitmap`, `TickMath`).
 #[must_use]
-#[allow(unused_assignments)] // `tick` tracks the contract's post-step tick; kept faithful to the V3
-                              // `_calculate_swap` loop even though this pure simulator returns only amounts.
+#[allow(unused_assignments)]
+// `tick` tracks the contract's post-step tick; kept faithful to the V3
+// `_calculate_swap` loop even though this pure simulator returns only amounts.
 #[allow(clippy::too_many_lines)] // faithful port of V3's `_calculate_swap`; splitting would obscure the loop.
 pub fn v3_simulate_swap(
     state: &V3PoolState,
@@ -389,8 +391,7 @@ pub fn v3_simulate_swap(
             tick_next.min(887_272)
         };
 
-        let sqrt_price_next =
-            U256::from(get_sqrt_ratio_at_tick_internal(tick_next).ok()?);
+        let sqrt_price_next = U256::from(get_sqrt_ratio_at_tick_internal(tick_next).ok()?);
 
         // Target price: clamp to the swap price-limit if the next tick would
         // cross it.
@@ -416,10 +417,8 @@ pub fn v3_simulate_swap(
 
         if exact_in {
             // Gross input consumed this step = amount_in + fee_amount.
-            let consumed =
-                I256::try_from(step.amount_in.saturating_add(step.fee_amount)).ok()?;
-            amount_specified_remaining =
-                amount_specified_remaining.checked_sub(consumed)?;
+            let consumed = I256::try_from(step.amount_in.saturating_add(step.fee_amount)).ok()?;
+            amount_specified_remaining = amount_specified_remaining.checked_sub(consumed)?;
             amount_calculated =
                 amount_calculated.checked_sub(I256::try_from(step.amount_out).ok()?)?;
         } else {
@@ -604,7 +603,10 @@ mod tests {
     fn zero_amount_returns_none() {
         let state = pool_1to1_with_position(1_000_000u128);
         let outcome = v3_simulate_swap(&state, true, I256::ZERO);
-        assert!(outcome.is_none(), "zero amount_specified should return None (AS)");
+        assert!(
+            outcome.is_none(),
+            "zero amount_specified should return None (AS)"
+        );
     }
 
     #[test]
@@ -612,20 +614,12 @@ mod tests {
         // Larger exact-input swaps produce larger outputs (within the same
         // tick range, pre-crossing).
         let state = pool_1to1_with_position(10_000_000_000_000u128);
-        let small = v3_simulate_swap(
-            &state,
-            true,
-            I256::try_from(U256::from(100u64)).unwrap(),
-        )
-        .unwrap()
-        .amount1;
-        let large = v3_simulate_swap(
-            &state,
-            true,
-            I256::try_from(U256::from(10_000u64)).unwrap(),
-        )
-        .unwrap()
-        .amount1;
+        let small = v3_simulate_swap(&state, true, I256::try_from(U256::from(100u64)).unwrap())
+            .unwrap()
+            .amount1;
+        let large = v3_simulate_swap(&state, true, I256::try_from(U256::from(10_000u64)).unwrap())
+            .unwrap()
+            .amount1;
         assert!(
             large > small,
             "larger input must produce larger output (small={small}, large={large})"

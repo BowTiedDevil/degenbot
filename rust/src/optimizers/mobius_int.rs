@@ -117,12 +117,7 @@ impl IntHopState {
     ///
     /// Not `const fn` because `U512::from(U256)` is not `const fn` in ruint.
     #[must_use]
-    pub fn new(
-        reserve_in: U256,
-        reserve_out: U256,
-        gamma_numer: u64,
-        fee_denom: u64,
-    ) -> Self {
+    pub fn new(reserve_in: U256, reserve_out: U256, gamma_numer: u64, fee_denom: u64) -> Self {
         Self {
             reserve_in,
             reserve_out,

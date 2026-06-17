@@ -86,20 +86,16 @@ pub fn get_amount0_delta(
             // Signed path: positive liquidity → negative result (token0 is debt)
             // Negative liquidity → positive result
             if liquidity < 0 {
-                let unsigned = get_amount0_delta(
-                    sqrt_price_a, sqrt_price_b, -liquidity, Some(false),
-                )?;
+                let unsigned =
+                    get_amount0_delta(sqrt_price_a, sqrt_price_b, -liquidity, Some(false))?;
                 // Negate as int256: result = -unsigned
-                let signed = I256::try_from(unsigned)
-                    .map_err(|_| ClMathError::Uint256Overflow)?;
+                let signed = I256::try_from(unsigned).map_err(|_| ClMathError::Uint256Overflow)?;
                 let negated = -signed;
                 Ok(negated.to::<U256>())
             } else {
-                let unsigned = get_amount0_delta(
-                    sqrt_price_a, sqrt_price_b, liquidity, Some(true),
-                )?;
-                let signed = I256::try_from(unsigned)
-                    .map_err(|_| ClMathError::Uint256Overflow)?;
+                let unsigned =
+                    get_amount0_delta(sqrt_price_a, sqrt_price_b, liquidity, Some(true))?;
+                let signed = I256::try_from(unsigned).map_err(|_| ClMathError::Uint256Overflow)?;
                 let negated = -signed;
                 Ok(negated.to::<U256>())
             }
@@ -143,19 +139,15 @@ pub fn get_amount1_delta(
         }
         None => {
             if liquidity < 0 {
-                let unsigned = get_amount1_delta(
-                    sqrt_price_a, sqrt_price_b, -liquidity, Some(false),
-                )?;
-                let signed = I256::try_from(unsigned)
-                    .map_err(|_| ClMathError::Uint256Overflow)?;
+                let unsigned =
+                    get_amount1_delta(sqrt_price_a, sqrt_price_b, -liquidity, Some(false))?;
+                let signed = I256::try_from(unsigned).map_err(|_| ClMathError::Uint256Overflow)?;
                 let negated = -signed;
                 Ok(negated.to::<U256>())
             } else {
-                let unsigned = get_amount1_delta(
-                    sqrt_price_a, sqrt_price_b, liquidity, Some(true),
-                )?;
-                let signed = I256::try_from(unsigned)
-                    .map_err(|_| ClMathError::Uint256Overflow)?;
+                let unsigned =
+                    get_amount1_delta(sqrt_price_a, sqrt_price_b, liquidity, Some(true))?;
+                let signed = I256::try_from(unsigned).map_err(|_| ClMathError::Uint256Overflow)?;
                 let negated = -signed;
                 Ok(negated.to::<U256>())
             }

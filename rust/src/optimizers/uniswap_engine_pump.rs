@@ -69,23 +69,23 @@
 //! in Rust after receipt.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
-use alloy::primitives::B256;
 #[cfg(test)]
 use alloy::primitives::Address;
+use alloy::primitives::B256;
 use alloy::rpc::types::{Filter, Log, Topic};
-use futures_util::{StreamExt, stream};
+use futures_util::{stream, StreamExt};
 use tokio::time::timeout;
 
-use crate::bot_core::v3_mint_burn_decoder::{V3_MINT_TOPIC, V3_BURN_TOPIC};
+use crate::bot_core::v3_mint_burn_decoder::{V3_BURN_TOPIC, V3_MINT_TOPIC};
 use crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC;
 use crate::bot_core::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC;
 use crate::bot_core::v4_swap_decoder::V4_SWAP_TOPIC;
-use crate::optimizers::v2_sync_decoder::V2_SYNC_TOPIC;
 use crate::optimizers::uniswap_engine::{BlockMetadata, UniswapEngine};
+use crate::optimizers::v2_sync_decoder::V2_SYNC_TOPIC;
 use crate::provider::AlloyProvider;
 use crate::runtime::get_runtime;
 
@@ -262,12 +262,16 @@ impl UniswapEnginePump {
                     // Send the first block as an empty batch so Python learns about it
                     {
                         let mut engine = pump.engine.lock();
-                        engine.process_block(&[], state.first_block, &BlockMetadata {
-                            timestamp: state.first_timestamp,
-                            base_fee_per_gas: None,
-                            gas_used: 0,
-                            gas_limit: 0,
-                        });
+                        engine.process_block(
+                            &[],
+                            state.first_block,
+                            &BlockMetadata {
+                                timestamp: state.first_timestamp,
+                                base_fee_per_gas: None,
+                                gas_used: 0,
+                                gas_limit: 0,
+                            },
+                        );
                     }
                     pump
                 }
@@ -359,7 +363,9 @@ impl UniswapEnginePump {
                             return (block, 0);
                         }
                         Err(e) => {
-                            log::error!("UniswapEnginePump: can't get block number during subscribe: {e}");
+                            log::error!(
+                                "UniswapEnginePump: can't get block number during subscribe: {e}"
+                            );
                         }
                     }
                 }
@@ -421,15 +427,13 @@ impl UniswapEnginePump {
     ///
     /// Takes ownership of the `SubscribeState` (containing the first observed
     /// block number and the live WS stream) and starts processing blocks.
-    async fn resume(
-        &mut self,
-        subscribe_state: SubscribeState,
-    ) {
+    async fn resume(&mut self, subscribe_state: SubscribeState) {
         let combined = subscribe_state
             .combined_stream
             .expect("resume() called without WS stream — did you call subscribe() first?");
 
-        self.run_with_stream(combined, subscribe_state.first_block).await;
+        self.run_with_stream(combined, subscribe_state.first_block)
+            .await;
     }
 
     /// Resume phase using the pump's own watch channel.
@@ -443,7 +447,8 @@ impl UniswapEnginePump {
             .combined_stream
             .expect("resume() called without WS stream — did you call subscribe() first?");
 
-        self.run_with_stream(combined, subscribe_state.first_block).await;
+        self.run_with_stream(combined, subscribe_state.first_block)
+            .await;
     }
 
     /// Run the main pump loop with an existing WS stream.
@@ -468,13 +473,9 @@ impl UniswapEnginePump {
 
         if current_block == 0 && first_observed_block > 0 {
             current_block = first_observed_block;
-            log::info!(
-                "UniswapEnginePump: cold start from block {first_observed_block}"
-            );
+            log::info!("UniswapEnginePump: cold start from block {first_observed_block}");
         } else {
-            log::info!(
-                "UniswapEnginePump: starting from block {current_block} (Python backfill)"
-            );
+            log::info!("UniswapEnginePump: starting from block {current_block} (Python backfill)");
         }
 
         // Track the last block we've solved for. Used to detect block
@@ -619,11 +620,7 @@ impl UniswapEnginePump {
                                 current_block + 1,
                                 number,
                             );
-                            self.backfill_range(
-                                current_block + 1,
-                                number - 1,
-                                &mut current_block,
-                            )
+                            self.backfill_range(current_block + 1, number - 1, &mut current_block)
                                 .await;
                         }
 
@@ -747,11 +744,7 @@ impl UniswapEnginePump {
 
         if latest_block > *current_block {
             let mut lpb = *current_block;
-            self.backfill_range(
-                *current_block + 1,
-                latest_block,
-                &mut lpb,
-            )
+            self.backfill_range(*current_block + 1, latest_block, &mut lpb)
                 .await;
             *current_block = lpb;
             *last_solved_block = lpb;
@@ -768,19 +761,12 @@ impl UniswapEnginePump {
     /// Backfill a range of blocks via `eth_getLogs`.
     ///
     /// Processes each block in the range sequentially.
-    async fn backfill_range(
-        &self,
-        from_block: u64,
-        to_block: u64,
-        last_processed_block: &mut u64,
-    ) {
+    async fn backfill_range(&self, from_block: u64, to_block: u64, last_processed_block: &mut u64) {
         if from_block > to_block {
             return;
         }
 
-        log::info!(
-            "UniswapEnginePump: backfilling blocks {from_block} to {to_block}"
-        );
+        log::info!("UniswapEnginePump: backfilling blocks {from_block} to {to_block}");
 
         let filter = build_backfill_filter(from_block, to_block);
         let logs = match self.provider.provider_arc().get_logs(&filter).await {
@@ -795,7 +781,10 @@ impl UniswapEnginePump {
         let mut logs_by_block: HashMap<u64, Vec<Log>> = HashMap::new();
         for log in &logs {
             if let Some(block_num) = log.block_number {
-                logs_by_block.entry(block_num).or_default().push(log.clone());
+                logs_by_block
+                    .entry(block_num)
+                    .or_default()
+                    .push(log.clone());
             }
         }
 
@@ -817,7 +806,9 @@ impl UniswapEnginePump {
                 // onto the next debounce `send_result_batch(&current_metadata)`
                 // in `run_with_stream`, which carries real metadata (and the
                 // newer block's `results_block`).
-                self.engine.lock().process_block(&block_logs, block, &BlockMetadata::default());
+                self.engine
+                    .lock()
+                    .process_block(&block_logs, block, &BlockMetadata::default());
                 any_processed = true;
             }
             *last_processed_block = block;
@@ -854,11 +845,9 @@ pub fn filter_relevant_logs<S: std::hash::BuildHasher>(
 ///
 /// Uses topic filtering server-side to reduce response size. No address
 /// filter — all topic-filtered logs are passed through to the engine.
-#[must_use] 
+#[must_use]
 pub fn build_backfill_filter(from_block: u64, to_block: u64) -> Filter {
-    let mut filter = Filter::new()
-        .from_block(from_block)
-        .to_block(to_block);
+    let mut filter = Filter::new().from_block(from_block).to_block(to_block);
 
     // Build a single Topic that matches ANY of the relevant event signatures.
     // Alloy's event_signature() overwrites topics[0] on each call, so we must
@@ -965,7 +954,11 @@ mod tests {
         };
 
         let result = filter_relevant_logs(&[v4_modify_log, v2_log], &topics);
-        assert_eq!(result.len(), 2, "Relevant topic logs should pass through regardless of address");
+        assert_eq!(
+            result.len(),
+            2,
+            "Relevant topic logs should pass through regardless of address"
+        );
 
         // Irrelevant topic filtered out
         let irrelevant_inner = InnerLog::new_unchecked(pm_address, vec![B256::ZERO], Bytes::new());

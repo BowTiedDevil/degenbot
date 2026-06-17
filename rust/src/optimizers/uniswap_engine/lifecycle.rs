@@ -1,6 +1,8 @@
 //! Path registration, buffer management, and engine accessors.
 
-use super::{UniswapEngine, MixedPoolRef, MixedPath, ResolvedMixedPath, HashMap, SolvePathResult, Address};
+use super::{
+    Address, HashMap, MixedPath, MixedPoolRef, ResolvedMixedPath, SolvePathResult, UniswapEngine,
+};
 
 impl UniswapEngine {
     /// Register a mixed path and return its ID.
@@ -21,7 +23,8 @@ impl UniswapEngine {
         }
 
         // Store the immutable pool refs
-        self.path_pools.insert(path_id, MixedPath { pools: pool_refs });
+        self.path_pools
+            .insert(path_id, MixedPath { pools: pool_refs });
 
         // Resolve the path immediately (no solve yet). V2 state is read from
         // Bot under the core lock (ADR-003).

@@ -5,12 +5,12 @@ mod tests {
 
     use alloy::primitives::{Address, U256};
 
+    use crate::bot_core::RegisterV3PoolParams;
+    use crate::bot_core::RegisterV4PoolParams;
+    use crate::optimizers::uniswap_engine::ResolvedMixedPath;
     use crate::optimizers::uniswap_engine::{
         BlockMetadata, HopType, MixedPoolRef, ResolvedHop, UniswapEngine, INT128_MAX,
     };
-    use crate::optimizers::uniswap_engine::ResolvedMixedPath;
-    use crate::bot_core::RegisterV3PoolParams;
-    use crate::bot_core::RegisterV4PoolParams;
 
     fn usdc(amount: u64) -> U256 {
         U256::from(amount) * U256::from(10u64).pow(U256::from(6))
@@ -55,22 +55,20 @@ mod tests {
             },
         );
 
-        let v3_key = engine.register_v3_pool(
-            &crate::bot_core::RegisterV3PoolParams {
-                address: Address::from([0x22u8; 20]),
-                token0: Address::from([0u8; 20]),
-                token1: Address::from([1u8; 20]),
-                fee: 3000,
-                tick_spacing: 60,
-                factory: Address::ZERO,
-                sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
-                liquidity: 1_000_000,
-                tick: 0,
-                tick_data,
-                update_block: 0,
-                coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
-            },
-        );
+        let v3_key = engine.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
+            address: Address::from([0x22u8; 20]),
+            token0: Address::from([0u8; 20]),
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data,
+            update_block: 0,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
+        });
 
         assert_eq!(engine.v2_pool_count(), 1);
         assert_eq!(engine.v3_pool_count(), 1);
@@ -106,22 +104,12 @@ mod tests {
 
         // Register V2 pools
         let v2_addr = Address::ZERO;
-        let v2_fwd = engine.register_v2_pool(
-            v2_addr,
-            usdc(1_500_000),
-            weth(800),
-            GAMMA_03,
-            FEE_DENOM_03,
-        );
+        let v2_fwd =
+            engine.register_v2_pool(v2_addr, usdc(1_500_000), weth(800), GAMMA_03, FEE_DENOM_03);
 
         let v2_addr1 = Address::from([1u8; 20]);
-        let v2_fwd1 = engine.register_v2_pool(
-            v2_addr1,
-            weth(800),
-            usdc(1_600_000),
-            GAMMA_03,
-            FEE_DENOM_03,
-        );
+        let v2_fwd1 =
+            engine.register_v2_pool(v2_addr1, weth(800), usdc(1_600_000), GAMMA_03, FEE_DENOM_03);
 
         // Register a pure V2 path
         engine.register_path(vec![
@@ -177,22 +165,20 @@ mod tests {
             },
         );
 
-        let v3_key = engine.register_v3_pool(
-            &crate::bot_core::RegisterV3PoolParams {
-                address: Address::from([0x22u8; 20]),
-                token0: Address::from([0u8; 20]),
-                token1: Address::from([1u8; 20]),
-                fee: 3000,
-                tick_spacing: 60,
-                factory: Address::ZERO,
-                sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
-                liquidity: 10_000_000_000_000,
-                tick: 0,
-                tick_data,
-                update_block: 0,
-                coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
-            },
-        );
+        let v3_key = engine.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
+            address: Address::from([0x22u8; 20]),
+            token0: Address::from([0u8; 20]),
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
+            liquidity: 10_000_000_000_000,
+            tick: 0,
+            tick_data,
+            update_block: 0,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
+        });
 
         // Mixed V2→V3 path
         let path_id = engine.register_path(vec![
@@ -219,22 +205,20 @@ mod tests {
         let mut engine = UniswapEngine::new();
 
         // Only register V3 pool
-        let v3_key = engine.register_v3_pool(
-            &crate::bot_core::RegisterV3PoolParams {
-                address: Address::from([0x22u8; 20]),
-                token0: Address::from([0u8; 20]),
-                token1: Address::from([1u8; 20]),
-                fee: 3000,
-                tick_spacing: 60,
-                factory: Address::ZERO,
-                sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
-                liquidity: 1_000_000,
-                tick: 0,
-                tick_data: HashMap::new(),
-                update_block: 0,
-                coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
-            },
-        );
+        let v3_key = engine.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
+            address: Address::from([0x22u8; 20]),
+            token0: Address::from([0u8; 20]),
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: HashMap::new(),
+            update_block: 0,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
+        });
 
         // Reference a non-existent V2 pool
         let path_id = engine.register_path(vec![
@@ -260,22 +244,12 @@ mod tests {
 
         // Register V2 pools
         let v2_addr = Address::from([0x11u8; 20]);
-        let v2_fwd = engine.register_v2_pool(
-            v2_addr,
-            usdc(1_500_000),
-            weth(800),
-            GAMMA_03,
-            FEE_DENOM_03,
-        );
+        let v2_fwd =
+            engine.register_v2_pool(v2_addr, usdc(1_500_000), weth(800), GAMMA_03, FEE_DENOM_03);
 
         let v2_addr1 = Address::from([0x12u8; 20]);
-        let v2_fwd1 = engine.register_v2_pool(
-            v2_addr1,
-            weth(800),
-            usdc(1_600_000),
-            GAMMA_03,
-            FEE_DENOM_03,
-        );
+        let v2_fwd1 =
+            engine.register_v2_pool(v2_addr1, weth(800), usdc(1_600_000), GAMMA_03, FEE_DENOM_03);
 
         // Register V2-only path
         engine.register_path(vec![
@@ -307,13 +281,8 @@ mod tests {
     fn register_path_after_start_succeeds() {
         let mut engine = UniswapEngine::new();
         let v2_addr = Address::from([0x11u8; 20]);
-        let v2_fwd = engine.register_v2_pool(
-            v2_addr,
-            usdc(1_500_000),
-            weth(800),
-            GAMMA_03,
-            FEE_DENOM_03,
-        );
+        let v2_fwd =
+            engine.register_v2_pool(v2_addr, usdc(1_500_000), weth(800), GAMMA_03, FEE_DENOM_03);
         let v2_addr2 = Address::from([0x12u8; 20]);
         let v2_fwd2 = engine.register_v2_pool(
             v2_addr2,
@@ -373,8 +342,16 @@ mod tests {
 
         // register_and_solve_path should eagerly solve and append to results
         let path_id = engine.register_and_solve_path(vec![
-            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_a, zero_for_one: true },
-            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_b, zero_for_one: true },
+            MixedPoolRef {
+                hop_type: HopType::V2,
+                pool_key: v2_fwd_a,
+                zero_for_one: true,
+            },
+            MixedPoolRef {
+                hop_type: HopType::V2,
+                pool_key: v2_fwd_b,
+                zero_for_one: true,
+            },
         ]);
 
         // Should be tracked as pending so rebuild_and_solve_affected can merge
@@ -383,7 +360,10 @@ mod tests {
         // Results should already contain the eagerly-solved path
         let (results, _block) = engine.latest_results();
         let solve_result = results.get(&path_id);
-        assert!(solve_result.is_some(), "register_and_solve_path should eagerly solve and add to results");
+        assert!(
+            solve_result.is_some(),
+            "register_and_solve_path should eagerly solve and add to results"
+        );
 
         let solve_result = solve_result.unwrap();
         assert!(!solve_result.optimal_input.is_zero());
@@ -414,13 +394,27 @@ mod tests {
 
         // Register path eagerly
         let path_id = engine.register_and_solve_path(vec![
-            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_a, zero_for_one: true },
-            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_b, zero_for_one: true },
+            MixedPoolRef {
+                hop_type: HopType::V2,
+                pool_key: v2_fwd_a,
+                zero_for_one: true,
+            },
+            MixedPoolRef {
+                hop_type: HopType::V2,
+                pool_key: v2_fwd_b,
+                zero_for_one: true,
+            },
         ]);
 
         // Process an empty block (no affected pools) — rebuild_and_solve_affected
         // should still include the pending path and not drop it
-        engine.rebuild_and_solve_affected(&HashSet::new(), &HashSet::new(), &HashSet::new(), 1, &BlockMetadata::default());
+        engine.rebuild_and_solve_affected(
+            &HashSet::new(),
+            &HashSet::new(),
+            &HashSet::new(),
+            1,
+            &BlockMetadata::default(),
+        );
 
         // Pending set should be cleared
         assert!(engine.pending_new_paths.is_empty());
@@ -428,7 +422,10 @@ mod tests {
         // The path's result should survive the rebuild
         let (results, block) = engine.latest_results();
         assert_eq!(block, 1);
-        assert!(results.contains_key(&path_id), "pending new path result should survive rebuild_and_solve_affected");
+        assert!(
+            results.contains_key(&path_id),
+            "pending new path result should survive rebuild_and_solve_affected"
+        );
     }
 
     #[test]
@@ -462,8 +459,16 @@ mod tests {
             FEE_DENOM_03,
         );
         let path_id = engine.register_path(vec![
-            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_a, zero_for_one: true },
-            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_b, zero_for_one: true },
+            MixedPoolRef {
+                hop_type: HopType::V2,
+                pool_key: v2_fwd_a,
+                zero_for_one: true,
+            },
+            MixedPoolRef {
+                hop_type: HopType::V2,
+                pool_key: v2_fwd_b,
+                zero_for_one: true,
+            },
         ]);
 
         engine.solve_all_paths(1);
@@ -471,7 +476,9 @@ mod tests {
         // Solve actually ran: results populated with a profitable path.
         let (results, block) = engine.latest_results();
         assert_eq!(block, 1);
-        let solve_result = results.get(&path_id).expect("solve_all_paths should populate results");
+        let solve_result = results
+            .get(&path_id)
+            .expect("solve_all_paths should populate results");
         assert!(!solve_result.optimal_input.is_zero());
         assert!(!solve_result.profit.is_zero());
 
@@ -516,13 +523,23 @@ mod tests {
             FEE_DENOM_03,
         );
         let path_id = engine.register_and_solve_path(vec![
-            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_a, zero_for_one: true },
-            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_b, zero_for_one: true },
+            MixedPoolRef {
+                hop_type: HopType::V2,
+                pool_key: v2_fwd_a,
+                zero_for_one: true,
+            },
+            MixedPoolRef {
+                hop_type: HopType::V2,
+                pool_key: v2_fwd_b,
+                zero_for_one: true,
+            },
         ]);
 
         // Eagerly solved → path is in `results` and above-threshold.
         let (results_before, _) = engine.latest_results();
-        let solve_result = results_before.get(&path_id).expect("eagerly solved path present");
+        let solve_result = results_before
+            .get(&path_id)
+            .expect("eagerly solved path present");
         assert!(!solve_result.profit.is_zero());
 
         // send_result_batch computes the diff, sends it, and advances
@@ -530,7 +547,9 @@ mod tests {
         engine.send_result_batch(&BlockMetadata::default());
 
         // Batch was actually delivered to the channel.
-        let batch = rx.try_recv().expect("send_result_batch should deliver a batch");
+        let batch = rx
+            .try_recv()
+            .expect("send_result_batch should deliver a batch");
         assert!(
             batch.fresh.iter().any(|(id, _)| *id == path_id),
             "profitable path should appear in fresh"
@@ -579,8 +598,16 @@ mod tests {
             FEE_DENOM_03,
         );
         let path_id = engine.register_and_solve_path(vec![
-            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_a, zero_for_one: true },
-            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_b, zero_for_one: true },
+            MixedPoolRef {
+                hop_type: HopType::V2,
+                pool_key: v2_fwd_a,
+                zero_for_one: true,
+            },
+            MixedPoolRef {
+                hop_type: HopType::V2,
+                pool_key: v2_fwd_b,
+                zero_for_one: true,
+            },
         ]);
 
         // Mark a pool dirty so `has_dirty_paths()` is true (mirrors a WS log
@@ -599,12 +626,22 @@ mod tests {
         let mut last_solved_block: u64 = 0;
         let mut has_logs_this_block = true;
 
-        engine.finalize_block(10, &metadata, &mut last_solved_block, &mut has_logs_this_block);
+        engine.finalize_block(
+            10,
+            &metadata,
+            &mut last_solved_block,
+            &mut has_logs_this_block,
+        );
 
         // The emitted batch must carry the passed metadata, not default.
-        let batch = rx.try_recv().expect("finalize_block should emit a result batch");
+        let batch = rx
+            .try_recv()
+            .expect("finalize_block should emit a result batch");
         assert_eq!(batch.solve_block, 10);
-        assert_eq!(batch.timestamp, 1_700_000_000, "batch must carry the caller's timestamp");
+        assert_eq!(
+            batch.timestamp, 1_700_000_000,
+            "batch must carry the caller's timestamp"
+        );
         assert_eq!(batch.base_fee_per_gas, Some(1_000_000_000));
         assert_eq!(batch.gas_used, 5_000_000);
         assert_eq!(batch.gas_limit, 30_000_000);
@@ -690,22 +727,20 @@ mod tests {
             },
         );
 
-        let v3_key_a = engine.register_v3_pool(
-            &crate::bot_core::RegisterV3PoolParams {
-                address: Address::from([0x21u8; 20]),
-                token0: Address::ZERO,
-                token1: Address::from([1u8; 20]),
-                fee: 3000,
-                tick_spacing: 60,
-                factory: Address::ZERO,
-                sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
-                liquidity: 10_000_000_000_000_000,
-                tick: 0,
-                tick_data: tick_data_a,
-                update_block: 0,
-                coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
-            },
-        );
+        let v3_key_a = engine.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
+            address: Address::from([0x21u8; 20]),
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
+            liquidity: 10_000_000_000_000_000,
+            tick: 0,
+            tick_data: tick_data_a,
+            update_block: 0,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
+        });
 
         // V3 pool B at tick -60 (slightly cheaper token1), high liquidity
         let sqrt_price_lower_u160 = crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-60)
@@ -730,22 +765,20 @@ mod tests {
             },
         );
 
-        let v3_key_b = engine.register_v3_pool(
-            &crate::bot_core::RegisterV3PoolParams {
-                address: Address::from([0x22u8; 20]),
-                token0: Address::ZERO,
-                token1: Address::from([1u8; 20]),
-                fee: 3000,
-                tick_spacing: 60,
-                factory: Address::ZERO,
-                sqrt_price_x96: sqrt_price_lower,
-                liquidity: 10_000_000_000_000_000,
-                tick: -60,
-                tick_data: tick_data_b,
-                update_block: 0,
-                coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
-            },
-        );
+        let v3_key_b = engine.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
+            address: Address::from([0x22u8; 20]),
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: sqrt_price_lower,
+            liquidity: 10_000_000_000_000_000,
+            tick: -60,
+            tick_data: tick_data_b,
+            update_block: 0,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
+        });
 
         // V3→V3 path: pool A (zfo) → pool B (ofz)
         engine.register_path(vec![
@@ -775,13 +808,8 @@ mod tests {
 
         // V2 pool: USDC/WETH
         let v2_addr = Address::from([0x11u8; 20]);
-        let v2_fwd = engine.register_v2_pool(
-            v2_addr,
-            usdc(1_500_000),
-            weth(800),
-            GAMMA_03,
-            FEE_DENOM_03,
-        );
+        let v2_fwd =
+            engine.register_v2_pool(v2_addr, usdc(1_500_000), weth(800), GAMMA_03, FEE_DENOM_03);
 
         // V3 pool: same pair but different price
         let mut tick_data = HashMap::new();
@@ -802,22 +830,20 @@ mod tests {
             },
         );
 
-        let v3_key = engine.register_v3_pool(
-            &crate::bot_core::RegisterV3PoolParams {
-                address: Address::from([0x22u8; 20]),
-                token0: Address::ZERO,
-                token1: Address::from([1u8; 20]),
-                fee: 3000,
-                tick_spacing: 60,
-                factory: Address::ZERO,
-                sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
-                liquidity: 10_000_000_000_000,
-                tick: 0,
-                tick_data,
-                update_block: 0,
-                coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
-            },
-        );
+        let v3_key = engine.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
+            address: Address::from([0x22u8; 20]),
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
+            liquidity: 10_000_000_000_000,
+            tick: 0,
+            tick_data,
+            update_block: 0,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
+        });
 
         // Mixed V2→V3 path
         engine.register_path(vec![
@@ -863,32 +889,25 @@ mod tests {
             },
         );
 
-        let v3_key = engine.register_v3_pool(
-            &crate::bot_core::RegisterV3PoolParams {
-                address: Address::from([0x22u8; 20]),
-                token0: Address::ZERO,
-                token1: Address::from([1u8; 20]),
-                fee: 3000,
-                tick_spacing: 60,
-                factory: Address::ZERO,
-                sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
-                liquidity: 10_000_000_000_000,
-                tick: 0,
-                tick_data,
-                update_block: 0,
-                coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
-            },
-        );
+        let v3_key = engine.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
+            address: Address::from([0x22u8; 20]),
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
+            liquidity: 10_000_000_000_000,
+            tick: 0,
+            tick_data,
+            update_block: 0,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
+        });
 
         // V2 pool
         let v2_addr = Address::from([0x11u8; 20]);
-        let v2_fwd = engine.register_v2_pool(
-            v2_addr,
-            usdc(1_500_000),
-            weth(800),
-            GAMMA_03,
-            FEE_DENOM_03,
-        );
+        let v2_fwd =
+            engine.register_v2_pool(v2_addr, usdc(1_500_000), weth(800), GAMMA_03, FEE_DENOM_03);
 
         // V3→V2 path
         let path_id = engine.register_path(vec![
@@ -1001,8 +1020,8 @@ mod tests {
         // This produces virtual reserves >> int128_max
         let v4_pool_manager = Address::from([0x40u8; 20]);
         // tick -886_983 → sqrtPrice ≈ 4.36e9 (very low price, token0 is nearly worthless)
-        let sp_extreme = crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-886_983)
-            .unwrap_or_default();
+        let sp_extreme =
+            crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-886_983).unwrap_or_default();
         let extreme_liquidity: u128 = 76_688_550_121_478_947_320_312_764_923_207_804;
 
         let _ = engine.register_v4_pool(&RegisterV4PoolParams {
@@ -1026,8 +1045,16 @@ mod tests {
 
         // Register path: V3 (zfo) → V4 (ofz, which will produce huge token0 output)
         let path_id = engine.register_path(vec![
-            MixedPoolRef { hop_type: HopType::V3, pool_key: 0, zero_for_one: true },
-            MixedPoolRef { hop_type: HopType::V4, pool_key: 0, zero_for_one: false },
+            MixedPoolRef {
+                hop_type: HopType::V3,
+                pool_key: 0,
+                zero_for_one: true,
+            },
+            MixedPoolRef {
+                hop_type: HopType::V4,
+                pool_key: 0,
+                zero_for_one: false,
+            },
         ]);
 
         // Resolve and solve all paths (replaces start() + initial_solve())
@@ -1047,8 +1074,16 @@ mod tests {
         // The solver should reject this path — no result should be returned.
         if let Some(solve_result) = results.get(&path_id) {
             // If a result IS found, verify that V4 hop outputs fit int128
-            let v4_output = solve_result.hop_outputs.get(1).copied().unwrap_or(U256::ZERO);
-            let v4_consumed = solve_result.consumed_inputs.get(1).copied().unwrap_or(U256::ZERO);
+            let v4_output = solve_result
+                .hop_outputs
+                .get(1)
+                .copied()
+                .unwrap_or(U256::ZERO);
+            let v4_consumed = solve_result
+                .consumed_inputs
+                .get(1)
+                .copied()
+                .unwrap_or(U256::ZERO);
             assert!(
                 v4_output <= INT128_MAX && v4_consumed <= INT128_MAX,
                 "V4 hop amounts must fit int128: output={v4_output}, consumed={v4_consumed}"
@@ -1088,26 +1123,24 @@ mod tests {
                     .unwrap_or(alloy::primitives::I256::ZERO),
             },
         );
-        let v3_key = engine.register_v3_pool(
-            &crate::bot_core::RegisterV3PoolParams {
-                address: Address::from([0x22u8; 20]),
-                token0: Address::from([0u8; 20]),
-                token1: Address::from([1u8; 20]),
-                fee: 3000,
-                tick_spacing: 60,
-                factory: Address::ZERO,
-                sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
-                liquidity: 1_000_000,
-                tick: 0,
-                tick_data,
-                update_block: 0,
-                coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
-            },
-        );
+        let v3_key = engine.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
+            address: Address::from([0x22u8; 20]),
+            token0: Address::from([0u8; 20]),
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data,
+            update_block: 0,
+            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
+        });
 
         // Register a V4 pool
-        let v4_key = engine.register_v4_pool(&
-            crate::bot_core::RegisterV4PoolParams {
+        let v4_key = engine
+            .register_v4_pool(&crate::bot_core::RegisterV4PoolParams {
                 pool_manager: Address::from([0x33u8; 20]),
                 pool_id: [0xabu8; 32],
                 pool_key: crate::bot_core::V4PoolKey {
@@ -1124,14 +1157,26 @@ mod tests {
                 tick_data: HashMap::new(),
                 update_block: 0,
                 coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
-            },
-        ).expect("V4 registration should succeed");
+            })
+            .expect("V4 registration should succeed");
 
         // Register a 3-hop path: V2 → V3 → V4
         let path_id = engine.register_path(vec![
-            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd, zero_for_one: true },
-            MixedPoolRef { hop_type: HopType::V3, pool_key: v3_key, zero_for_one: false },
-            MixedPoolRef { hop_type: HopType::V4, pool_key: v4_key, zero_for_one: true },
+            MixedPoolRef {
+                hop_type: HopType::V2,
+                pool_key: v2_fwd,
+                zero_for_one: true,
+            },
+            MixedPoolRef {
+                hop_type: HopType::V3,
+                pool_key: v3_key,
+                zero_for_one: false,
+            },
+            MixedPoolRef {
+                hop_type: HopType::V4,
+                pool_key: v4_key,
+                zero_for_one: true,
+            },
         ]);
 
         // Inspect the path
@@ -1149,9 +1194,15 @@ mod tests {
 
         let core = engine.core.lock();
         let v3_pool = core.get_v3_pool(v3_key);
-        assert_eq!(v3_pool.map(|p| p.address), Some(Address::from([0x22u8; 20])));
+        assert_eq!(
+            v3_pool.map(|p| p.address),
+            Some(Address::from([0x22u8; 20]))
+        );
         let v4_pool = core.get_v4_pool(v4_key);
-        assert_eq!(v4_pool.map(|p| p.pool_manager), Some(Address::from([0x33u8; 20])));
+        assert_eq!(
+            v4_pool.map(|p| p.pool_manager),
+            Some(Address::from([0x33u8; 20]))
+        );
         assert_eq!(v4_pool.map(|p| p.pool_id), Some([0xabu8; 32]));
         drop(core);
 
@@ -1168,16 +1219,22 @@ mod tests {
         // Helper to create minimal tick data with initialized ticks at -60 and +60
         let make_tick_data = || -> HashMap<i32, crate::bot_core::TickInfo> {
             let mut td = HashMap::new();
-            td.insert(-60, crate::bot_core::TickInfo {
-                liquidity_gross: alloy::primitives::U128::from(100),
-                liquidity_net: alloy::primitives::I256::try_from(100i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
-            });
-            td.insert(60, crate::bot_core::TickInfo {
-                liquidity_gross: alloy::primitives::U128::from(100),
-                liquidity_net: alloy::primitives::I256::try_from(-100i128)
-                    .unwrap_or(alloy::primitives::I256::ZERO),
-            });
+            td.insert(
+                -60,
+                crate::bot_core::TickInfo {
+                    liquidity_gross: alloy::primitives::U128::from(100),
+                    liquidity_net: alloy::primitives::I256::try_from(100i128)
+                        .unwrap_or(alloy::primitives::I256::ZERO),
+                },
+            );
+            td.insert(
+                60,
+                crate::bot_core::TickInfo {
+                    liquidity_gross: alloy::primitives::U128::from(100),
+                    liquidity_net: alloy::primitives::I256::try_from(-100i128)
+                        .unwrap_or(alloy::primitives::I256::ZERO),
+                },
+            );
             td
         };
 
@@ -1233,9 +1290,21 @@ mod tests {
 
         // Register 3-hop V3-V3-V3 path
         let path_id = engine.register_path(vec![
-            MixedPoolRef { hop_type: HopType::V3, pool_key: v3_key_a, zero_for_one: true },
-            MixedPoolRef { hop_type: HopType::V3, pool_key: v3_key_b, zero_for_one: false },
-            MixedPoolRef { hop_type: HopType::V3, pool_key: v3_key_c, zero_for_one: true },
+            MixedPoolRef {
+                hop_type: HopType::V3,
+                pool_key: v3_key_a,
+                zero_for_one: true,
+            },
+            MixedPoolRef {
+                hop_type: HopType::V3,
+                pool_key: v3_key_b,
+                zero_for_one: false,
+            },
+            MixedPoolRef {
+                hop_type: HopType::V3,
+                pool_key: v3_key_c,
+                zero_for_one: true,
+            },
         ]);
 
         assert_eq!(path_id, 1);
@@ -1277,16 +1346,22 @@ mod tests {
 
         // V3 pool (middle hop): at 1:1 price with tick boundaries
         let mut tick_data = HashMap::new();
-        tick_data.insert(-60, crate::bot_core::TickInfo {
-            liquidity_gross: alloy::primitives::U128::from(100),
-            liquidity_net: alloy::primitives::I256::try_from(100i128)
-                .unwrap_or(alloy::primitives::I256::ZERO),
-        });
-        tick_data.insert(60, crate::bot_core::TickInfo {
-            liquidity_gross: alloy::primitives::U128::from(100),
-            liquidity_net: alloy::primitives::I256::try_from(-100i128)
-                .unwrap_or(alloy::primitives::I256::ZERO),
-        });
+        tick_data.insert(
+            -60,
+            crate::bot_core::TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(100),
+                liquidity_net: alloy::primitives::I256::try_from(100i128)
+                    .unwrap_or(alloy::primitives::I256::ZERO),
+            },
+        );
+        tick_data.insert(
+            60,
+            crate::bot_core::TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(100),
+                liquidity_net: alloy::primitives::I256::try_from(-100i128)
+                    .unwrap_or(alloy::primitives::I256::ZERO),
+            },
+        );
         let v3_key = engine.register_v3_pool(&RegisterV3PoolParams {
             address: Address::from([0x22u8; 20]),
             token0: Address::ZERO,
@@ -1313,9 +1388,21 @@ mod tests {
 
         // Register 3-hop mixed path: V2 → V3 → V2
         let path_id = engine.register_path(vec![
-            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_a, zero_for_one: true },
-            MixedPoolRef { hop_type: HopType::V3, pool_key: v3_key, zero_for_one: false },
-            MixedPoolRef { hop_type: HopType::V2, pool_key: v2_fwd_b, zero_for_one: true },
+            MixedPoolRef {
+                hop_type: HopType::V2,
+                pool_key: v2_fwd_a,
+                zero_for_one: true,
+            },
+            MixedPoolRef {
+                hop_type: HopType::V3,
+                pool_key: v3_key,
+                zero_for_one: false,
+            },
+            MixedPoolRef {
+                hop_type: HopType::V2,
+                pool_key: v2_fwd_b,
+                zero_for_one: true,
+            },
         ]);
 
         let resolved = &engine.path_resolved[&path_id];
@@ -1347,25 +1434,23 @@ mod tests {
         // Two balanced V2 pools forming a cycle (price ≈ 1:1875).
         let pool_a = Address::from([0x11u8; 20]);
         let pool_b = Address::from([0x12u8; 20]);
-        let id_a = engine.register_v2_pool(
-            pool_a,
-            usdc(1_500_000),
-            weth(800),
-            GAMMA_03,
-            FEE_DENOM_03,
-        );
-        let id_b = engine.register_v2_pool(
-            pool_b,
-            weth(800),
-            usdc(1_500_000),
-            GAMMA_03,
-            FEE_DENOM_03,
-        );
+        let id_a =
+            engine.register_v2_pool(pool_a, usdc(1_500_000), weth(800), GAMMA_03, FEE_DENOM_03);
+        let id_b =
+            engine.register_v2_pool(pool_b, weth(800), usdc(1_500_000), GAMMA_03, FEE_DENOM_03);
 
         // Path: A (USDC→WETH) → B (WETH→USDC). Initially balanced → no profit.
         let path_id = engine.register_path(vec![
-            MixedPoolRef { hop_type: HopType::V2, pool_key: id_a, zero_for_one: true },
-            MixedPoolRef { hop_type: HopType::V2, pool_key: id_b, zero_for_one: true },
+            MixedPoolRef {
+                hop_type: HopType::V2,
+                pool_key: id_a,
+                zero_for_one: true,
+            },
+            MixedPoolRef {
+                hop_type: HopType::V2,
+                pool_key: id_b,
+                zero_for_one: true,
+            },
         ]);
 
         // Install a result channel to capture the diff batches.
@@ -1484,14 +1569,16 @@ mod tests {
         let swapped_sp = (reg_sp + U256::from(1u128)) << 90;
         let swapped_liq = 2_000_000u128;
         let swapped_tick = 60i32;
-        engine.core.lock().apply_v3_swap(
-            pool_addr, swapped_sp, swapped_liq, swapped_tick, 5, &[],
-        );
+        engine
+            .core
+            .lock()
+            .apply_v3_swap(pool_addr, swapped_sp, swapped_liq, swapped_tick, 5, &[]);
 
         // Mint at block 6: adds liquidity at [+60, +120].
-        engine.core.lock().apply_v3_liquidity_update(
-            pool_addr, 60, 120, 500_i128, 6,
-        );
+        engine
+            .core
+            .lock()
+            .apply_v3_liquidity_update(pool_addr, 60, 120, 500_i128, 6);
 
         {
             let core = engine.core.lock();
@@ -1499,7 +1586,11 @@ mod tests {
             assert_eq!(s.sqrt_price_x96, swapped_sp, "swap applied at block 5");
             assert_eq!(s.liquidity, swapped_liq);
             assert_eq!(s.tick, swapped_tick);
-            assert_eq!(s.tick_data.len(), reg_tick_count + 2, "mint added two ticks");
+            assert_eq!(
+                s.tick_data.len(),
+                reg_tick_count + 2,
+                "mint added two ticks"
+            );
             assert!(s.tick_data.contains_key(&60) && s.tick_data.contains_key(&120));
         }
 
@@ -1512,11 +1603,15 @@ mod tests {
         {
             let core = engine.core.lock();
             let s = core.get_v3_pool(pool_id).expect("v3 pool still registered");
-            assert_eq!(s.sqrt_price_x96, reg_sp, "swap rolled back to registration scalars");
+            assert_eq!(
+                s.sqrt_price_x96, reg_sp,
+                "swap rolled back to registration scalars"
+            );
             assert_eq!(s.liquidity, reg_liq);
             assert_eq!(s.tick, reg_tick);
             assert_eq!(
-                s.tick_data.len(), reg_tick_count,
+                s.tick_data.len(),
+                reg_tick_count,
                 "mint-initialized ticks removed on rollback"
             );
             assert!(!s.tick_data.contains_key(&60) && !s.tick_data.contains_key(&120));

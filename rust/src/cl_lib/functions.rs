@@ -66,8 +66,8 @@ pub fn to_int128(x: I256) -> Result<i128, ClMathError> {
     let bytes = x.to_be_bytes::<32>();
     // If any of the high 16 bytes differ from the sign bit, it's out of range
     let sign_byte = bytes[0];
-    let high_all_same = bytes[0..16].iter().all(|&b| b == sign_byte) &&
-        (sign_byte == 0x00 || sign_byte == 0xFF);
+    let high_all_same =
+        bytes[0..16].iter().all(|&b| b == sign_byte) && (sign_byte == 0x00 || sign_byte == 0xFF);
     if !high_all_same {
         return Err(ClMathError::SafeCastOverflow);
     }
@@ -115,10 +115,7 @@ mod tests {
 
     #[test]
     fn test_to_uint160_valid() {
-        assert_eq!(
-            to_uint160(U256::from(100u64)).unwrap(),
-            U256::from(100u64)
-        );
+        assert_eq!(to_uint160(U256::from(100u64)).unwrap(), U256::from(100u64));
     }
 
     #[test]

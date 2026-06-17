@@ -31,7 +31,9 @@ pub fn add_delta(x: u128, y: i128) -> Result<u128, ClMathError> {
         padded[16..32].copy_from_slice(&b);
         padded
     });
-    let result = x_signed.checked_add(y_i256).ok_or(ClMathError::SafeCastOverflow)?;
+    let result = x_signed
+        .checked_add(y_i256)
+        .ok_or(ClMathError::SafeCastOverflow)?;
     // Result must be in [0, u128::MAX]
     let max_u128_i256 = I256::from_raw(U256::from(u128::MAX));
     if result < I256::ZERO || result > max_u128_i256 {
@@ -39,7 +41,9 @@ pub fn add_delta(x: u128, y: i128) -> Result<u128, ClMathError> {
     }
     // Extract lower 128 bits as u128
     let result_bytes = result.to_be_bytes::<32>();
-    Ok(u128::from_be_bytes(result_bytes[16..32].try_into().unwrap_or([0u8; 16])))
+    Ok(u128::from_be_bytes(
+        result_bytes[16..32].try_into().unwrap_or([0u8; 16]),
+    ))
 }
 
 #[cfg(test)]

@@ -9,7 +9,9 @@
 //! slowdown.
 
 use alloy::primitives::aliases::U160;
-use pyo3::{exceptions::PyTypeError, exceptions::PyValueError, prelude::*, types::PyAny, PyTypeInfo};
+use pyo3::{
+    exceptions::PyTypeError, exceptions::PyValueError, prelude::*, types::PyAny, PyTypeInfo,
+};
 
 use crate::alloy_py;
 use crate::cl_lib::tick_math::{get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal};

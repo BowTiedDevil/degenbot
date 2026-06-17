@@ -8,9 +8,11 @@ use std::collections::{HashMap, HashSet};
 
 use alloy::primitives::{Address, I256, U256};
 
-use crate::optimizers::mobius_int::IntHopState;
-use crate::bot_core::state_history::{ReorgJournal, ScalarPriors, V2BlockDelta, V3BlockDelta, TickBefore, V3RestoreResult};
+use crate::bot_core::state_history::{
+    ReorgJournal, ScalarPriors, TickBefore, V2BlockDelta, V3BlockDelta, V3RestoreResult,
+};
 use crate::bot_core::v2_encoding::{encode_v2_swap, EncodedCall};
+use crate::optimizers::mobius_int::IntHopState;
 
 pub mod liquidity_verifier;
 pub mod py_bot;
@@ -18,6 +20,7 @@ pub mod py_pool;
 pub mod py_token;
 pub mod state_history;
 pub mod tick_bitmap;
+pub mod tick_map;
 pub mod v2_encoding;
 pub mod v3_mint_burn_decoder;
 pub mod v3_state;
@@ -25,16 +28,15 @@ pub mod v3_swap_decoder;
 pub mod v4_modify_liquidity_decoder;
 pub mod v4_state;
 pub mod v4_swap_decoder;
-pub mod tick_map;
 
 // Re-export the merged V3/V4 state types (ADR-003: Bot owns CL state).
 pub use v3_state::{
-    BufferedV3LiquidityUpdate, PoolTickCoverage, RegisterV3PoolParams, V3PoolState, V3SwapOutcome,
-    V3SwapUpdate, v3_simulate_swap,
+    v3_simulate_swap, BufferedV3LiquidityUpdate, PoolTickCoverage, RegisterV3PoolParams,
+    V3PoolState, V3SwapOutcome, V3SwapUpdate,
 };
 pub use v4_state::{
-    AMOUNT_MODIFYING_HOOK_MASK, BufferedV4LiquidityUpdate, RegisterV4PoolParams, V4PoolKey,
-    V4PoolState, V4SwapUpdate, V4_DYNAMIC_FEE_FLAG, v4_simulate_swap,
+    v4_simulate_swap, BufferedV4LiquidityUpdate, RegisterV4PoolParams, V4PoolKey, V4PoolState,
+    V4SwapUpdate, AMOUNT_MODIFYING_HOOK_MASK, V4_DYNAMIC_FEE_FLAG,
 };
 
 // Re-export the ADR-004 typed TickMap boundary trait (V3 + V4 impls both live
@@ -150,18 +152,16 @@ pub struct Bot {
     /// Dual-buffer for V3 liquidity (Mint/Burn) events awaiting pool
     /// registration (ADR-003: the accurate-state buffer lives on `Bot`, not
     /// the dissolved `V3BlockEngine`).
-    v3_buffer:
-        crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer<
-            Address,
-            BufferedV3LiquidityUpdate,
-        >,
+    v3_buffer: crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer<
+        Address,
+        BufferedV3LiquidityUpdate,
+    >,
     /// Dual-buffer for V4 `ModifyLiquidity` events awaiting pool registration.
     /// Keyed by `(pool_manager, pool_id)`.
-    v4_buffer:
-        crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer<
-            (Address, crate::bot_core::v4_swap_decoder::PoolId),
-            BufferedV4LiquidityUpdate,
-        >,
+    v4_buffer: crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer<
+        (Address, crate::bot_core::v4_swap_decoder::PoolId),
+        BufferedV4LiquidityUpdate,
+    >,
     /// V4 pool registry: `(pool_manager, pool_id)` → `pool_id` (single entry
     /// per pool — ADR-003 Option I: orientation derived at solve from
     /// `zero_for_one`, not stored as separate forward/reverse entries).
@@ -184,10 +184,8 @@ impl Bot {
             tokens: HashMap::new(),
             next_pool_id: 1,
             journal_depth,
-            v3_buffer:
-                crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer::new(),
-            v4_buffer:
-                crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer::new(),
+            v3_buffer: crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer::new(),
+            v4_buffer: crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer::new(),
             v4_pool_ids: HashMap::new(),
         }
     }
@@ -407,8 +405,7 @@ impl Bot {
         // Capture priors for any ticks being mutated by this event, so reorg
         // rollback can reverse-apply them. A tick that had no prior entry gets
         // `liquidity_gross_before: None` (on rollback, delete it).
-        let mut journaled_priors: Vec<(i32, TickBefore)> =
-            Vec::with_capacity(tick_priors.len());
+        let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(tick_priors.len());
         for &(tick_index, ref new_info) in tick_priors {
             let prior = state.tick_data.get(&tick_index).cloned();
             journaled_priors.push((
@@ -684,12 +681,7 @@ impl Bot {
     ///
     /// Returns 0 if the pool is not found or the amount is 0.
     #[must_use]
-    pub fn calculate_tokens_out(
-        &self,
-        pool_id: u64,
-        zero_for_one: bool,
-        amount_in: U256,
-    ) -> U256 {
+    pub fn calculate_tokens_out(&self, pool_id: u64, zero_for_one: bool, amount_in: U256) -> U256 {
         let Some(entry) = self.pools.get(&pool_id) else {
             return U256::ZERO;
         };
@@ -732,7 +724,11 @@ impl Bot {
                 let Some(outcome) = v3_simulate_swap(state, zero_for_one, spec) else {
                     return U256::ZERO;
                 };
-                if zero_for_one { outcome.amount1 } else { outcome.amount0 }
+                if zero_for_one {
+                    outcome.amount1
+                } else {
+                    outcome.amount0
+                }
             }
             // V4 concentrated-liquidity math. Same CL math as V3; sign
             // convention: V4 exact-input is `amountSpecified < 0` (negative),
@@ -748,7 +744,11 @@ impl Bot {
                 let Some(outcome) = v4_simulate_swap(state, zero_for_one, -spec) else {
                     return U256::ZERO;
                 };
-                if zero_for_one { outcome.amount1 } else { outcome.amount0 }
+                if zero_for_one {
+                    outcome.amount1
+                } else {
+                    outcome.amount0
+                }
             }
         }
     }
@@ -760,12 +760,7 @@ impl Bot {
     /// Returns 0 if the pool is not found, the amount is 0,
     /// or the output exceeds available reserves.
     #[must_use]
-    pub fn calculate_tokens_in(
-        &self,
-        pool_id: u64,
-        zero_for_one: bool,
-        amount_out: U256,
-    ) -> U256 {
+    pub fn calculate_tokens_in(&self, pool_id: u64, zero_for_one: bool, amount_out: U256) -> U256 {
         let Some(entry) = self.pools.get(&pool_id) else {
             return U256::ZERO;
         };
@@ -824,7 +819,11 @@ impl Bot {
                 let Some(outcome) = v3_simulate_swap(state, zero_for_one, -spec) else {
                     return U256::ZERO;
                 };
-                if zero_for_one { outcome.amount0 } else { outcome.amount1 }
+                if zero_for_one {
+                    outcome.amount0
+                } else {
+                    outcome.amount1
+                }
             }
             // V4: exact-output. V4 sign convention is opposite to V3: V4
             // exact-output uses `amountSpecified > 0` (positive). So the
@@ -840,7 +839,11 @@ impl Bot {
                 let Some(outcome) = v4_simulate_swap(state, zero_for_one, spec) else {
                     return U256::ZERO;
                 };
-                if zero_for_one { outcome.amount0 } else { outcome.amount1 }
+                if zero_for_one {
+                    outcome.amount0
+                } else {
+                    outcome.amount1
+                }
             }
         }
     }
@@ -1049,11 +1052,7 @@ impl Bot {
     /// # Panics
     ///
     /// Panics if no delta exists before the target block.
-    pub fn v3_restore_before_block(
-        &mut self,
-        pool_id: u64,
-        block: u64,
-    ) -> Option<V3RestoreResult> {
+    pub fn v3_restore_before_block(&mut self, pool_id: u64, block: u64) -> Option<V3RestoreResult> {
         let PoolEntry::V3(state) = self.pools.get_mut(&pool_id)? else {
             return None;
         };
@@ -1123,8 +1122,8 @@ impl Bot {
         let entry = self.pools.get(&pool_id)?;
         match entry {
             PoolEntry::V2(state) => {
-                let call = encode_v2_swap(state.address, zero_for_one, amount_out, recipient)
-                    .ok()?;
+                let call =
+                    encode_v2_swap(state.address, zero_for_one, amount_out, recipient).ok()?;
                 Some(call)
             }
             // V3 encoding is not yet implemented
@@ -1151,10 +1150,7 @@ impl Bot {
     ///
     /// ADR-003 hook filter inline: pools with amount-modifying hooks or dynamic
     /// fees are rejected. Returns `Err(String)` on rejection.
-    pub fn register_v4_pool(
-        &mut self,
-        params: &RegisterV4PoolParams,
-    ) -> Result<u64, String> {
+    pub fn register_v4_pool(&mut self, params: &RegisterV4PoolParams) -> Result<u64, String> {
         if (params.hook_flags & AMOUNT_MODIFYING_HOOK_MASK) != 0 {
             return Err(format!(
                 "V4 pool has amount-modifying hooks (flags=0x{:04X}, mask=0x{:04X}) — excluded from arbitrage",
@@ -1497,11 +1493,7 @@ impl Bot {
     }
 
     /// Restore V4 pool state prior to a target block (same `V3BlockDelta` shape).
-    pub fn v4_restore_before_block(
-        &mut self,
-        pool_id: u64,
-        block: u64,
-    ) -> Option<V3RestoreResult> {
+    pub fn v4_restore_before_block(&mut self, pool_id: u64, block: u64) -> Option<V3RestoreResult> {
         let PoolEntry::V4(state) = self.pools.get_mut(&pool_id)? else {
             return None;
         };

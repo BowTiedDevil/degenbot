@@ -19,10 +19,8 @@ use alloy::rpc::types::Log;
 
 /// Keccak256 of `Sync(uint112,uint112)`.
 pub const V2_SYNC_TOPIC: B256 = B256::new([
-    0x1c, 0x41, 0x1e, 0x9a, 0x96, 0xe0, 0x71, 0x24,
-    0x1c, 0x2f, 0x21, 0xf7, 0x72, 0x6b, 0x17, 0xae,
-    0x89, 0xe3, 0xca, 0xb4, 0xc7, 0x8b, 0xe5, 0x0e,
-    0x06, 0x2b, 0x03, 0xa9, 0xff, 0xfb, 0xba, 0xd1,
+    0x1c, 0x41, 0x1e, 0x9a, 0x96, 0xe0, 0x71, 0x24, 0x1c, 0x2f, 0x21, 0xf7, 0x72, 0x6b, 0x17, 0xae,
+    0x89, 0xe3, 0xca, 0xb4, 0xc7, 0x8b, 0xe5, 0x0e, 0x06, 0x2b, 0x03, 0xa9, 0xff, 0xfb, 0xba, 0xd1,
 ]);
 
 /// Decoded Sync event carrying absolute reserves.
@@ -59,14 +57,10 @@ pub fn decode_sync_log(log: &Log) -> Option<SyncEvent> {
     }
 
     // Decode reserve0 (bytes 0..32, left-padded uint112)
-    let reserve0 = U256::from_be_bytes::<32>(
-        data[..32].try_into().ok()?,
-    );
+    let reserve0 = U256::from_be_bytes::<32>(data[..32].try_into().ok()?);
 
     // Decode reserve1 (bytes 32..64, left-padded uint112)
-    let reserve1 = U256::from_be_bytes::<32>(
-        data[32..64].try_into().ok()?,
-    );
+    let reserve1 = U256::from_be_bytes::<32>(data[32..64].try_into().ok()?);
 
     Some(SyncEvent {
         pool_address: log.address(),
@@ -79,11 +73,7 @@ pub fn decode_sync_log(log: &Log) -> Option<SyncEvent> {
 mod tests {
     use super::*;
     use alloy::primitives::Bytes;
-    fn make_sync_log(
-        pool_address: Address,
-        reserve0: U256,
-        reserve1: U256,
-    ) -> Log {
+    fn make_sync_log(pool_address: Address, reserve0: U256, reserve1: U256) -> Log {
         let data = {
             // ABI encode uint112, uint112 (each left-padded to 32 bytes)
             let r0_bytes = reserve0.to_be_bytes::<32>();
@@ -223,11 +213,8 @@ mod tests {
         data[32..64].copy_from_slice(&r1);
         data.extend_from_slice(&[0xff; 32]); // extra data
 
-        let inner = alloy::primitives::Log::new_unchecked(
-            pool,
-            vec![V2_SYNC_TOPIC],
-            Bytes::from(data),
-        );
+        let inner =
+            alloy::primitives::Log::new_unchecked(pool, vec![V2_SYNC_TOPIC], Bytes::from(data));
         let log = Log {
             inner,
             block_hash: None,

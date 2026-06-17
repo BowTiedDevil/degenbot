@@ -16,7 +16,10 @@ use tokio::sync::mpsc;
 use crate::bot_core::{RegisterV3PoolParams, V3SwapUpdate};
 use crate::bot_core::{RegisterV4PoolParams, V4SwapUpdate};
 
-use super::{UniswapEngine, ResultBatch, EnginePhase, PoolTickCoverage, HopType, MixedPoolRef, BlockMetadata, SolvePathResult, V3SnapshotData, V4SnapshotData};
+use super::{
+    BlockMetadata, EnginePhase, HopType, MixedPoolRef, PoolTickCoverage, ResultBatch,
+    SolvePathResult, UniswapEngine, V3SnapshotData, V4SnapshotData,
+};
 
 /// Snapshot storage keyed by pool identifier (V3 address or V4 pool manager + pool ID).
 ///
@@ -46,11 +49,7 @@ impl<K: Eq + std::hash::Hash + Clone> SnapshotStore<K> {
         *self.data.lock() = Some(HashMap::new());
     }
 
-    fn insert(
-        &self,
-        key: K,
-        tick_data: HashMap<i32, crate::bot_core::TickInfo>,
-    ) -> PyResult<()> {
+    fn insert(&self, key: K, tick_data: HashMap<i32, crate::bot_core::TickInfo>) -> PyResult<()> {
         let mut guard = self.data.lock();
         let Some(ref mut map) = *guard else {
             let msg = "No snapshot stream in progress.";
@@ -210,7 +209,8 @@ struct PySubscribeState {
     /// First block number observed during subscribe
     first_block: u64,
     /// Live WS stream for the resume phase
-    combined_stream: futures_util::stream::BoxStream<'static, crate::optimizers::uniswap_engine_pump::WsEvent>,
+    combined_stream:
+        futures_util::stream::BoxStream<'static, crate::optimizers::uniswap_engine_pump::WsEvent>,
 }
 
 impl PyUniswapArbEngine {
@@ -241,7 +241,9 @@ impl PyUniswapArbEngine {
     }
 
     /// Parse tick priors from a Python list of 2-tuples.
-    fn parse_tick_priors(priors_list: &Bound<'_, PyList>) -> PyResult<Vec<(i32, crate::bot_core::TickInfo)>> {
+    fn parse_tick_priors(
+        priors_list: &Bound<'_, PyList>,
+    ) -> PyResult<Vec<(i32, crate::bot_core::TickInfo)>> {
         let mut tick_priors = Vec::new();
         for prior_item in priors_list.iter() {
             let prior_tuple = prior_item.cast::<pyo3::types::PyTuple>()?;
@@ -270,9 +272,7 @@ impl PyUniswapArbEngine {
     }
 
     /// Parse V3 Swap updates from a Python list of 5-tuples.
-    fn parse_v3_updates(
-        v3_swap_updates: &Bound<'_, PyList>,
-    ) -> PyResult<Vec<V3SwapUpdate>> {
+    fn parse_v3_updates(v3_swap_updates: &Bound<'_, PyList>) -> PyResult<Vec<V3SwapUpdate>> {
         let mut rust_v3: Vec<V3SwapUpdate> = Vec::with_capacity(v3_swap_updates.len());
         for item in v3_swap_updates.iter() {
             let tuple = item.cast::<pyo3::types::PyTuple>()?;
@@ -309,9 +309,7 @@ impl PyUniswapArbEngine {
     }
 
     /// Parse V4 Swap updates from a Python list of 6-tuples.
-    fn parse_v4_updates(
-        v4_swap_updates: &Bound<'_, PyList>,
-    ) -> PyResult<Vec<V4SwapUpdate>> {
+    fn parse_v4_updates(v4_swap_updates: &Bound<'_, PyList>) -> PyResult<Vec<V4SwapUpdate>> {
         let mut rust_v4: Vec<V4SwapUpdate> = Vec::with_capacity(v4_swap_updates.len());
         for item in v4_swap_updates.iter() {
             let tuple = item.cast::<pyo3::types::PyTuple>()?;
@@ -326,7 +324,9 @@ impl PyUniswapArbEngine {
             let pm_obj = tuple.get_item(0)?;
             let pm_str: String = pm_obj.extract()?;
             let pool_manager = pm_str.parse::<Address>().map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager address: {e}"))
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "Invalid pool_manager address: {e}"
+                ))
             })?;
 
             let pid_obj = tuple.get_item(1)?;
@@ -368,7 +368,8 @@ impl PyUniswapArbEngine {
 
     /// Set the engine phase (advancing only).
     fn set_phase(&self, phase: EnginePhase) {
-        self.phase.store(phase as u8, std::sync::atomic::Ordering::Relaxed);
+        self.phase
+            .store(phase as u8, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Deserialize a V3 binary snapshot into `V3SnapshotData`.
@@ -409,7 +410,8 @@ impl PyUniswapArbEngine {
                 let msg = "V3 snapshot truncated: expected tick_count";
                 return Err(pyo3::exceptions::PyValueError::new_err(msg));
             }
-            let tick_count = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
+            let tick_count =
+                u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
             offset += 4;
 
             let mut tick_data = HashMap::with_capacity(tick_count);
@@ -428,7 +430,8 @@ impl PyUniswapArbEngine {
                     return Err(pyo3::exceptions::PyValueError::new_err(msg));
                 }
                 let gross_lo = u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
-                let gross_hi = u64::from_le_bytes(data[offset + 8..offset + 16].try_into().unwrap());
+                let gross_hi =
+                    u64::from_le_bytes(data[offset + 8..offset + 16].try_into().unwrap());
                 let liquidity_gross = u128::from(gross_hi) << 64 | u128::from(gross_lo);
                 offset += 16;
 
@@ -492,7 +495,8 @@ impl PyUniswapArbEngine {
                 let msg = "V4 snapshot truncated: expected pool_id_count";
                 return Err(pyo3::exceptions::PyValueError::new_err(msg));
             }
-            let pool_id_count = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
+            let pool_id_count =
+                u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
             offset += 4;
 
             for _ in 0..pool_id_count {
@@ -509,7 +513,8 @@ impl PyUniswapArbEngine {
                     let msg = "V4 snapshot truncated: expected tick_count";
                     return Err(pyo3::exceptions::PyValueError::new_err(msg));
                 }
-                let tick_count = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
+                let tick_count =
+                    u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
                 offset += 4;
 
                 let mut tick_data = HashMap::with_capacity(tick_count);
@@ -519,7 +524,8 @@ impl PyUniswapArbEngine {
                         let msg = "V4 snapshot truncated: expected tick_index";
                         return Err(pyo3::exceptions::PyValueError::new_err(msg));
                     }
-                    let tick_index = i32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
+                    let tick_index =
+                        i32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
                     offset += 4;
 
                     // liquidity_gross (16 bytes LE, u128)
@@ -528,7 +534,8 @@ impl PyUniswapArbEngine {
                         return Err(pyo3::exceptions::PyValueError::new_err(msg));
                     }
                     let gross_lo = u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
-                    let gross_hi = u64::from_le_bytes(data[offset + 8..offset + 16].try_into().unwrap());
+                    let gross_hi =
+                        u64::from_le_bytes(data[offset + 8..offset + 16].try_into().unwrap());
                     let liquidity_gross = u128::from(gross_hi) << 64 | u128::from(gross_lo);
                     offset += 16;
 
@@ -538,7 +545,8 @@ impl PyUniswapArbEngine {
                         return Err(pyo3::exceptions::PyValueError::new_err(msg));
                     }
                     let net_lo = u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
-                    let net_hi = u64::from_le_bytes(data[offset + 8..offset + 16].try_into().unwrap());
+                    let net_hi =
+                        u64::from_le_bytes(data[offset + 8..offset + 16].try_into().unwrap());
                     let unsigned_net = u128::from(net_hi) << 64 | u128::from(net_lo);
                     // SAFETY: intentional bit-pattern reinterpretation of LE bytes as signed
                     #[allow(clippy::cast_possible_wrap)]
@@ -601,7 +609,8 @@ impl PyUniswapArbEngine {
     fn load_v3_snapshot(&self, data: Vec<u8>) -> PyResult<()> {
         let phase = self.current_phase();
         // Allow loading from Created (unit tests) or Subscribed/SnapshotLoaded (production)
-        phase.require_before(EnginePhase::Resumed, "load_v3_snapshot")
+        phase
+            .require_before(EnginePhase::Resumed, "load_v3_snapshot")
             .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
         if self.v3_snapshot.is_loaded() {
@@ -642,7 +651,8 @@ impl PyUniswapArbEngine {
     #[allow(clippy::needless_pass_by_value)]
     fn load_v4_snapshot(&self, data: Vec<u8>) -> PyResult<()> {
         let phase = self.current_phase();
-        phase.require_before(EnginePhase::Resumed, "load_v4_snapshot")
+        phase
+            .require_before(EnginePhase::Resumed, "load_v4_snapshot")
             .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
         if self.v4_snapshot.is_loaded() {
@@ -682,7 +692,8 @@ impl PyUniswapArbEngine {
     /// while a stream is in progress is a no-op.
     fn begin_v3_snapshot_stream(&self) -> PyResult<()> {
         let phase = self.current_phase();
-        phase.require_before(EnginePhase::Resumed, "begin_v3_snapshot_stream")
+        phase
+            .require_before(EnginePhase::Resumed, "begin_v3_snapshot_stream")
             .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
         if self.v3_snapshot.is_loaded() {
@@ -733,7 +744,8 @@ impl PyUniswapArbEngine {
     /// Begin streaming V4 snapshot data into the engine, one pool at a time.
     fn begin_v4_snapshot_stream(&self) -> PyResult<()> {
         let phase = self.current_phase();
-        phase.require_before(EnginePhase::Resumed, "begin_v4_snapshot_stream")
+        phase
+            .require_before(EnginePhase::Resumed, "begin_v4_snapshot_stream")
             .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
         if self.v4_snapshot.is_loaded() {
@@ -794,7 +806,8 @@ impl PyUniswapArbEngine {
     /// The Rust side iterates the `PyO3` dict and builds the internal `HashMap` directly.
     fn load_v3_snapshot_from_py(&self, py_data: &Bound<'_, pyo3::types::PyDict>) -> PyResult<()> {
         let phase = self.current_phase();
-        phase.require_before(EnginePhase::Resumed, "load_v3_snapshot_from_py")
+        phase
+            .require_before(EnginePhase::Resumed, "load_v3_snapshot_from_py")
             .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
         if self.v3_snapshot.is_loaded() {
@@ -809,9 +822,9 @@ impl PyUniswapArbEngine {
                 pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
             })?;
 
-            let tick_dict = py_tick_dict.cast::<pyo3::types::PyDict>().map_err(|_| {
-                pyo3::exceptions::PyTypeError::new_err("tick_data must be a dict")
-            })?;
+            let tick_dict = py_tick_dict
+                .cast::<pyo3::types::PyDict>()
+                .map_err(|_| pyo3::exceptions::PyTypeError::new_err("tick_data must be a dict"))?;
 
             let mut tick_data = HashMap::new();
             for (py_tick, py_values) in tick_dict.iter() {
@@ -836,7 +849,8 @@ impl PyUniswapArbEngine {
     /// and tick data maps `tick_index` (int) → (`liquidity_gross`, `liquidity_net`) tuple.
     fn load_v4_snapshot_from_py(&self, py_data: &Bound<'_, pyo3::types::PyDict>) -> PyResult<()> {
         let phase = self.current_phase();
-        phase.require_before(EnginePhase::Resumed, "load_v4_snapshot_from_py")
+        phase
+            .require_before(EnginePhase::Resumed, "load_v4_snapshot_from_py")
             .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
         if self.v4_snapshot.is_loaded() {
@@ -903,7 +917,10 @@ impl PyUniswapArbEngine {
         // ADR-003: V2 state lives in Bot. The engine delegates registration
         // to the core and returns the single `pool_id` (orientation is selected
         // at solve time via `zero_for_one`, not by a separate reverse id).
-        Ok(self.engine.lock().register_v2_pool(addr, r0, r1, gamma_numer, fee_denom))
+        Ok(self
+            .engine
+            .lock()
+            .register_v2_pool(addr, r0, r1, gamma_numer, fee_denom))
     }
 
     /// Register a V3 pool by contract address and initial state.
@@ -953,7 +970,11 @@ impl PyUniswapArbEngine {
         let is_tracked = coverage == PoolTickCoverage::Tracked;
 
         // Clone tick_data for snapshot verification before it's moved into register_pool.
-        let tick_data_for_snapshot_verify = if is_tracked { Some(rust_tick_data.clone()) } else { None };
+        let tick_data_for_snapshot_verify = if is_tracked {
+            Some(rust_tick_data.clone())
+        } else {
+            None
+        };
 
         let (key, backfill_verify_snapshot) = register_with_cl_buffers(
             &self.engine,
@@ -982,13 +1003,19 @@ impl PyUniswapArbEngine {
             |engine| engine.core.lock().apply_pump_buffer_v3(&addr),
         );
 
-        if is_tracked && self.verify_on_register.load(std::sync::atomic::Ordering::Relaxed) {
+        if is_tracked
+            && self
+                .verify_on_register
+                .load(std::sync::atomic::Ordering::Relaxed)
+        {
             let rpc_url = self.verify_rpc_url.lock().clone();
             let snapshot_block = *self.verify_snapshot_block.lock();
             let backfill_block = *self.verify_backfill_block.lock();
             let label = address.to_string();
 
-            let verify_snapshot = |provider: &crate::provider::AlloyProvider, block: u64| -> PyResult<()> {
+            let verify_snapshot = |provider: &crate::provider::AlloyProvider,
+                                   block: u64|
+             -> PyResult<()> {
                 let Some(ref td) = tick_data_for_snapshot_verify else {
                     return Ok(());
                 };
@@ -1007,7 +1034,9 @@ impl PyUniswapArbEngine {
                 })
             };
 
-            let verify_backfill = |provider: &crate::provider::AlloyProvider, block: u64| -> PyResult<()> {
+            let verify_backfill = |provider: &crate::provider::AlloyProvider,
+                                   block: u64|
+             -> PyResult<()> {
                 let Some(ref pool_snapshot) = backfill_verify_snapshot else {
                     return Ok(());
                 };
@@ -1098,7 +1127,11 @@ impl PyUniswapArbEngine {
         let is_tracked = coverage == PoolTickCoverage::Tracked;
 
         // Clone tick_data for snapshot verification before it's moved into register_pool.
-        let tick_data_for_snapshot_verify = if is_tracked { Some(rust_tick_data.clone()) } else { None };
+        let tick_data_for_snapshot_verify = if is_tracked {
+            Some(rust_tick_data.clone())
+        } else {
+            None
+        };
 
         let (key, backfill_verify_snapshot) = register_with_cl_buffers(
             &self.engine,
@@ -1138,14 +1171,20 @@ impl PyUniswapArbEngine {
 
         let key = key?;
 
-        if is_tracked && self.verify_on_register.load(std::sync::atomic::Ordering::Relaxed) {
+        if is_tracked
+            && self
+                .verify_on_register
+                .load(std::sync::atomic::Ordering::Relaxed)
+        {
             let rpc_url = self.verify_rpc_url.lock().clone();
             let state_view = *self.verify_state_view.lock();
             let snapshot_block = *self.verify_snapshot_block.lock();
             let backfill_block = *self.verify_backfill_block.lock();
             let label = pool_id_hex.to_string();
 
-            let verify_snapshot = |provider: &crate::provider::AlloyProvider, block: u64| -> PyResult<()> {
+            let verify_snapshot = |provider: &crate::provider::AlloyProvider,
+                                   block: u64|
+             -> PyResult<()> {
                 let (Some(sv), Some(ref td)) = (state_view, tick_data_for_snapshot_verify) else {
                     return Ok(());
                 };
@@ -1164,8 +1203,11 @@ impl PyUniswapArbEngine {
                 })
             };
 
-            let verify_backfill = |provider: &crate::provider::AlloyProvider, block: u64| -> PyResult<()> {
-                let (Some(sv), Some(ref pool_snapshot)) = (state_view, backfill_verify_snapshot) else {
+            let verify_backfill = |provider: &crate::provider::AlloyProvider,
+                                   block: u64|
+             -> PyResult<()> {
+                let (Some(sv), Some(ref pool_snapshot)) = (state_view, backfill_verify_snapshot)
+                else {
                     return Ok(());
                 };
                 let mut pool_map = HashMap::new();
@@ -1225,7 +1267,8 @@ impl PyUniswapArbEngine {
                 "V3" => HopType::V3,
                 "V4" => HopType::V4,
                 _ => {
-                    let msg = format!("Invalid hop_type: {hop_type_str}. Expected 'V2', 'V3', or 'V4'");
+                    let msg =
+                        format!("Invalid hop_type: {hop_type_str}. Expected 'V2', 'V3', or 'V4'");
                     return Err(pyo3::exceptions::PyValueError::new_err(msg));
                 }
             };
@@ -1272,7 +1315,8 @@ impl PyUniswapArbEngine {
                 "V3" => HopType::V3,
                 "V4" => HopType::V4,
                 _ => {
-                    let msg = format!("Invalid hop_type: {hop_type_str}. Expected 'V2', 'V3', or 'V4'");
+                    let msg =
+                        format!("Invalid hop_type: {hop_type_str}. Expected 'V2', 'V3', or 'V4'");
                     return Err(pyo3::exceptions::PyValueError::new_err(msg));
                 }
             };
@@ -1308,9 +1352,7 @@ impl PyUniswapArbEngine {
         let engine = Arc::clone(&self.engine);
         let shutdown = Arc::clone(&self.shutdown);
         let handle = crate::optimizers::uniswap_engine_pump::UniswapEnginePump::spawn(
-            rpc_url,
-            engine,
-            &shutdown,
+            rpc_url, engine, &shutdown,
         )
         .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
@@ -1334,13 +1376,11 @@ impl PyUniswapArbEngine {
     /// Raises `RuntimeError` if the pump is already started or subscribed.
     #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (rpc_url))]
-    fn subscribe(
-        &self,
-        rpc_url: String,
-    ) -> PyResult<u64> {
+    fn subscribe(&self, rpc_url: String) -> PyResult<u64> {
         // Phase check: must be Created
         let phase = self.current_phase();
-        phase.require(EnginePhase::Created, "subscribe")
+        phase
+            .require(EnginePhase::Created, "subscribe")
             .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
         // Ensure we're not already running
@@ -1361,9 +1401,7 @@ impl PyUniswapArbEngine {
         let subscribe_result = runtime
             .block_on(async {
                 crate::optimizers::uniswap_engine_pump::UniswapEnginePump::subscribe(
-                    &rpc_url,
-                    engine,
-                    shutdown,
+                    &rpc_url, engine, shutdown,
                 )
                 .await
             })
@@ -1404,21 +1442,31 @@ impl PyUniswapArbEngine {
     ///
     /// Returns the number of blocks backfilled (0 if snapshot is current).
     #[pyo3(signature = (rpc_url, snapshot_block, chunk_size=2000))]
-    fn backfill_from_snapshot(&self, rpc_url: &str, snapshot_block: u64, chunk_size: u64) -> PyResult<u64> {
+    fn backfill_from_snapshot(
+        &self,
+        rpc_url: &str,
+        snapshot_block: u64,
+        chunk_size: u64,
+    ) -> PyResult<u64> {
         // Phase check: must be at least SnapshotLoaded
         let phase = self.current_phase();
-        phase.require(EnginePhase::SnapshotLoaded, "backfill_from_snapshot")
+        phase
+            .require(EnginePhase::SnapshotLoaded, "backfill_from_snapshot")
             .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
         // Ensure no double-backfill
-        phase.require_before(EnginePhase::Backfilled, "backfill_from_snapshot")
+        phase
+            .require_before(EnginePhase::Backfilled, "backfill_from_snapshot")
             .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
         // Ensure subscribe() was called — we need the first WS block
         let first_ws_block = {
             let state_lock = self.subscribe_state.lock();
-            if let Some(s) = state_lock.as_ref() { s.first_block } else {
-                let msg = "Cannot backfill: subscribe() has not been called. Call subscribe() first.";
+            if let Some(s) = state_lock.as_ref() {
+                s.first_block
+            } else {
+                let msg =
+                    "Cannot backfill: subscribe() has not been called. Call subscribe() first.";
                 return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
             }
         };
@@ -1450,7 +1498,11 @@ impl PyUniswapArbEngine {
         let provider = runtime.block_on(async {
             crate::provider::AlloyProvider::new(rpc_url, 3)
                 .await
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to create provider: {e}")))
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "Failed to create provider: {e}"
+                    ))
+                })
         })?;
 
         let provider_arc = provider.provider_arc();
@@ -1467,10 +1519,11 @@ impl PyUniswapArbEngine {
             );
 
             let logs = runtime.block_on(async {
-                provider_arc.get_logs(&filter).await
-                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
-                        format!("eth_getLogs failed for blocks {chunk_start}-{chunk_end}: {e}")
+                provider_arc.get_logs(&filter).await.map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "eth_getLogs failed for blocks {chunk_start}-{chunk_end}: {e}"
                     ))
+                })
             })?;
 
             let chunk_log_count = logs.len();
@@ -1498,7 +1551,11 @@ impl PyUniswapArbEngine {
         // 1. snapshot_block: raw DB tick_data (before buffer) vs on-chain
         // 2. backfill block: engine state (after buffer) vs on-chain
         *self.verify_snapshot_block.lock() = Some(snapshot_block);
-        let backfill_block = self.engine.lock().last_processed_block().unwrap_or(to_block);
+        let backfill_block = self
+            .engine
+            .lock()
+            .last_processed_block()
+            .unwrap_or(to_block);
         *self.verify_backfill_block.lock() = Some(backfill_block);
 
         // Advance phase
@@ -1520,7 +1577,8 @@ impl PyUniswapArbEngine {
     fn resume(&self, _py: Python<'_>) -> PyResult<()> {
         // Phase check: must be at least SnapshotLoaded (can skip backfill)
         let phase = self.current_phase();
-        phase.require(EnginePhase::SnapshotLoaded, "resume")
+        phase
+            .require(EnginePhase::SnapshotLoaded, "resume")
             .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
         // No double-resume
@@ -1542,12 +1600,11 @@ impl PyUniswapArbEngine {
 
         // Spawn the resume task on the Tokio runtime
         let handle = crate::runtime::get_runtime().spawn(async move {
-            let inner_state =
-                crate::optimizers::uniswap_engine_pump::SubscribeState {
-                    first_block,
-                    first_timestamp: 0,
-                    combined_stream: Some(combined_stream),
-                };
+            let inner_state = crate::optimizers::uniswap_engine_pump::SubscribeState {
+                first_block,
+                first_timestamp: 0,
+                combined_stream: Some(combined_stream),
+            };
             pump.resume_from_subscribe(inner_state).await;
         });
 
@@ -1623,7 +1680,11 @@ impl PyUniswapArbEngine {
     /// Debug: return the engine's tick data for a V3 pool address as a Python dict.
     /// Maps `tick_index` (int) → (`liquidity_gross`: int, `liquidity_net`: int) tuple.
     /// Returns None if the pool is not registered.
-    fn debug_v3_tick_data<'py>(&self, py: Python<'py>, pool_address: &str) -> PyResult<Option<Bound<'py, pyo3::types::PyDict>>> {
+    fn debug_v3_tick_data<'py>(
+        &self,
+        py: Python<'py>,
+        pool_address: &str,
+    ) -> PyResult<Option<Bound<'py, pyo3::types::PyDict>>> {
         let addr = pool_address.parse::<Address>().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
@@ -1692,8 +1753,7 @@ impl PyUniswapArbEngine {
 
             match runtime.block_on(crate::provider::AlloyProvider::new(&rpc_url, 3)) {
                 Ok(provider) => {
-                    if let Err(e) =
-                        runtime.block_on(snapshot.fetch_onchain(&provider, state_view))
+                    if let Err(e) = runtime.block_on(snapshot.fetch_onchain(&provider, state_view))
                     {
                         eprintln!(
                             "[diagnostic_inspect_path] on-chain fetch failed for path {path_id}: {e}"
@@ -1763,17 +1823,22 @@ impl PyUniswapArbEngine {
         let runtime = crate::runtime::get_runtime();
 
         let provider = runtime.block_on(async {
-            crate::provider::AlloyProvider::new(&rpc_url, 3).await.map_err(|e| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "verify_liquidity_maps: failed to create provider: {e}"
-                ))
-            })
+            crate::provider::AlloyProvider::new(&rpc_url, 3)
+                .await
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "verify_liquidity_maps: failed to create provider: {e}"
+                    ))
+                })
         })?;
 
         // Verify V3 pools
         let v3_result = runtime.block_on(async {
             crate::bot_core::liquidity_verifier::verify_v3_pools(
-                &provider, tick_lens, &v3_pools, block_number,
+                &provider,
+                tick_lens,
+                &v3_pools,
+                block_number,
             )
             .await
         });
@@ -1786,7 +1851,10 @@ impl PyUniswapArbEngine {
         // Verify V4 pools
         let v4_result = runtime.block_on(async {
             crate::bot_core::liquidity_verifier::verify_v4_pools(
-                &provider, state_view, &v4_pools, block_number,
+                &provider,
+                state_view,
+                &v4_pools,
+                block_number,
             )
             .await
         });
@@ -1805,29 +1873,30 @@ impl PyUniswapArbEngine {
     /// Useful for verifying against a V3-specific snapshot block.
     #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (rpc_url, block_number))]
-    fn verify_v3_liquidity_maps(
-        &self,
-        rpc_url: String,
-        block_number: Option<u64>,
-    ) -> PyResult<()> {
+    fn verify_v3_liquidity_maps(&self, rpc_url: String, block_number: Option<u64>) -> PyResult<()> {
         let engine = self.engine.lock();
         let v3_pools = engine.core.lock().v3_pools_snapshot();
         drop(engine);
 
         let runtime = crate::runtime::get_runtime();
         let provider = runtime.block_on(async {
-            crate::provider::AlloyProvider::new(&rpc_url, 3).await.map_err(|e| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "verify_v3_liquidity_maps: failed to create provider: {e}"
-                ))
-            })
+            crate::provider::AlloyProvider::new(&rpc_url, 3)
+                .await
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "verify_v3_liquidity_maps: failed to create provider: {e}"
+                    ))
+                })
         })?;
 
         // TickLens address not used (V3 calls pool.ticks() directly)
         let tick_lens = Address::ZERO;
         let v3_result = runtime.block_on(async {
             crate::bot_core::liquidity_verifier::verify_v3_pools(
-                &provider, tick_lens, &v3_pools, block_number,
+                &provider,
+                tick_lens,
+                &v3_pools,
+                block_number,
             )
             .await
         });
@@ -1862,16 +1931,21 @@ impl PyUniswapArbEngine {
 
         let runtime = crate::runtime::get_runtime();
         let provider = runtime.block_on(async {
-            crate::provider::AlloyProvider::new(&rpc_url, 3).await.map_err(|e| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "verify_v4_liquidity_maps: failed to create provider: {e}"
-                ))
-            })
+            crate::provider::AlloyProvider::new(&rpc_url, 3)
+                .await
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "verify_v4_liquidity_maps: failed to create provider: {e}"
+                    ))
+                })
         })?;
 
         let v4_result = runtime.block_on(async {
             crate::bot_core::liquidity_verifier::verify_v4_pools(
-                &provider, state_view, &v4_pools, block_number,
+                &provider,
+                state_view,
+                &v4_pools,
+                block_number,
             )
             .await
         });
@@ -1932,11 +2006,13 @@ impl PyUniswapArbEngine {
                     ))
                 })?;
 
-            let v3_result =
-                crate::bot_core::liquidity_verifier::verify_v3_pools(
-                    &provider, tick_lens, &v3_pools, block_number,
-                )
-                .await;
+            let v3_result = crate::bot_core::liquidity_verifier::verify_v3_pools(
+                &provider,
+                tick_lens,
+                &v3_pools,
+                block_number,
+            )
+            .await;
 
             if let Err(mismatch) = v3_result {
                 return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
@@ -2010,11 +2086,13 @@ impl PyUniswapArbEngine {
                     ))
                 })?;
 
-            let v4_result =
-                crate::bot_core::liquidity_verifier::verify_v4_pools(
-                    &provider, state_view, &v4_pools, block_number,
-                )
-                .await;
+            let v4_result = crate::bot_core::liquidity_verifier::verify_v4_pools(
+                &provider,
+                state_view,
+                &v4_pools,
+                block_number,
+            )
+            .await;
 
             if let Err(mismatch) = v4_result {
                 return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
@@ -2041,7 +2119,8 @@ impl PyUniswapArbEngine {
     ///     enabled: Whether to enable verification on register.
     #[pyo3(signature = (enabled))]
     fn set_verify_on_register(&self, enabled: bool) {
-        self.verify_on_register.store(enabled, std::sync::atomic::Ordering::Relaxed);
+        self.verify_on_register
+            .store(enabled, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Set the HTTP RPC URL used for verification during registration.
@@ -2073,8 +2152,6 @@ impl PyUniswapArbEngine {
         let addr: Address = state_view_address.parse().unwrap_or(Address::ZERO);
         *self.verify_state_view.lock() = Some(addr);
     }
-
-
 
     /// Full-sync V3 pool `tick_data` from Python backfill.
     ///
@@ -2223,9 +2300,13 @@ impl PyUniswapArbEngine {
         let rust_v2 = Self::parse_v2_updates(v2_sync_updates)?;
         let rust_v3 = Self::parse_v3_updates(v3_swap_updates)?;
         let rust_v4 = Self::parse_v4_updates(v4_swap_updates)?;
-        self.engine
-            .lock()
-            .process_all_updates(&rust_v2, &rust_v3, &rust_v4, block_number, &BlockMetadata::default());
+        self.engine.lock().process_all_updates(
+            &rust_v2,
+            &rust_v3,
+            &rust_v4,
+            block_number,
+            &BlockMetadata::default(),
+        );
         Ok(())
     }
 
@@ -2279,7 +2360,11 @@ impl PyUniswapArbEngine {
                     let addr = state.map(|s| format!("{}", s.address));
                     // V2 fee is `gamma_numer`, orientation-selected (ADR-003).
                     let gamma_numer = state.map(|s| {
-                        if pool_ref.zero_for_one { s.fee_token0.0 } else { s.fee_token1.0 }
+                        if pool_ref.zero_for_one {
+                            s.fee_token0.0
+                        } else {
+                            s.fee_token1.0
+                        }
                     });
                     hops.push(HopInfo {
                         hop_type: "V2".to_string(),
@@ -2293,7 +2378,11 @@ impl PyUniswapArbEngine {
                 HopType::V3 => {
                     let pool = core.get_v3_pool(pool_ref.pool_key);
                     let (addr, fee, ts) = pool.map_or((None, None, None), |p| {
-                        (Some(format!("{}", p.address)), Some(u64::from(p.fee)), Some(p.tick_spacing))
+                        (
+                            Some(format!("{}", p.address)),
+                            Some(u64::from(p.fee)),
+                            Some(p.tick_spacing),
+                        )
                     });
                     hops.push(HopInfo {
                         hop_type: "V3".to_string(),
@@ -2307,7 +2396,12 @@ impl PyUniswapArbEngine {
                 HopType::V4 => {
                     let pool = core.get_v4_pool(pool_ref.pool_key);
                     let (pm, pid, fee, ts) = pool.map_or((None, None, None, None), |p| {
-                        (Some(format!("{}", p.pool_manager)), Some(format!("0x{}", alloy::hex::encode(p.pool_id))), Some(u64::from(p.pool_key.fee)), Some(p.pool_key.tick_spacing))
+                        (
+                            Some(format!("{}", p.pool_manager)),
+                            Some(format!("0x{}", alloy::hex::encode(p.pool_id))),
+                            Some(u64::from(p.pool_key.fee)),
+                            Some(p.pool_key.tick_spacing),
+                        )
                     });
                     hops.push(HopInfo {
                         hop_type: "V4".to_string(),
@@ -2384,7 +2478,8 @@ impl PyUniswapArbEngine {
             }
             let consumed_tuple = consumed_inputs_py.into_pyobject(py)?;
 
-            let result_tuple = (path_id_py, input_py, profit_py, hop_tuple, consumed_tuple).into_pyobject(py)?;
+            let result_tuple =
+                (path_id_py, input_py, profit_py, hop_tuple, consumed_tuple).into_pyobject(py)?;
             py_list.append(result_tuple)?;
         }
 
@@ -2432,7 +2527,11 @@ impl PyUniswapArbEngine {
         let Some(state) = core.get_v2_pool_state(pool_id) else {
             return Ok(None);
         };
-        Ok(Some((pool_id, state.reserve0.to_string(), state.reserve1.to_string())))
+        Ok(Some((
+            pool_id,
+            state.reserve0.to_string(),
+            state.reserve1.to_string(),
+        )))
     }
 
     /// Return self as an async iterator over result batches.
@@ -2465,9 +2564,7 @@ impl PyUniswapArbEngine {
 
             // Wait for the next batch
             let batch = rx.recv().await.ok_or_else(|| {
-                PyStopAsyncIteration::new_err(
-                    "Result channel closed — pump may have stopped.",
-                )
+                PyStopAsyncIteration::new_err("Result channel closed — pump may have stopped.")
             })?;
 
             // Put the receiver back

@@ -2,7 +2,10 @@
 
 use alloy::primitives::U256;
 
-use super::{UniswapEngine, HashSet, BlockMetadata, HopType, ResolvedHop, ResolvedMixedPath, SolvePathResult, INT128_MAX, HashMap, MixedPoolRef};
+use super::{
+    BlockMetadata, HashMap, HashSet, HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPath,
+    SolvePathResult, UniswapEngine, INT128_MAX,
+};
 
 impl UniswapEngine {
     /// Re-resolve and re-solve only paths that contain updated pools.
@@ -104,11 +107,16 @@ impl UniswapEngine {
     /// - V2-V3 / V3-V2 / V2-V4 / V4-V2: mixed integer-exact solver
     #[allow(clippy::unused_self)]
     pub(super) fn solve_path(&self, resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
-        let all_v2 = resolved.hops.iter().all(|h| matches!(h, ResolvedHop::V2 { .. }));
+        let all_v2 = resolved
+            .hops
+            .iter()
+            .all(|h| matches!(h, ResolvedHop::V2 { .. }));
         let all_cl = resolved.hops.iter().all(|h| h.as_int_sequence().is_some());
 
         let result = if all_v2 {
-            let int_hops: Vec<_> = resolved.hops.iter()
+            let int_hops: Vec<_> = resolved
+                .hops
+                .iter()
                 .filter_map(ResolvedHop::as_v2_state)
                 .cloned()
                 .collect();
@@ -116,10 +124,7 @@ impl UniswapEngine {
                 crate::optimizers::mobius_int_exact::exact_mobius_solve(&int_hops)
                     .ok()
                     .and_then(|r| {
-                        if r.is_profitable
-                            && !r.optimal_input.is_zero()
-                            && !r.profit.is_zero()
-                        {
+                        if r.is_profitable && !r.optimal_input.is_zero() && !r.profit.is_zero() {
                             // V2 constant-product pools: each hop's consumed input
                             // is the previous hop's output (hop_outputs[i-1]),
                             // with hop 0 consuming optimal_input.
@@ -143,12 +148,14 @@ impl UniswapEngine {
             }
         } else if all_cl {
             // V3-V3, V4-V4, V3-V4, V4-V3, V3-V3-V3, etc: all concentrated-liquidity
-            let int_sequences: Vec<_> = resolved.hops.iter()
+            let int_sequences: Vec<_> = resolved
+                .hops
+                .iter()
                 .filter_map(ResolvedHop::as_int_sequence)
                 .collect();
             if int_sequences.len() >= 2 {
-                crate::optimizers::mobius_v3_int::int_solve_cl_path(&int_sequences)
-                    .map(|(optimal_input, _profit, hop_outputs)| {
+                crate::optimizers::mobius_v3_int::int_solve_cl_path(&int_sequences).map(
+                    |(optimal_input, _profit, hop_outputs)| {
                         // consumed_inputs[0] = optimal_input (first hop always consumes
                         // its full input for single-range paths; no partial fill).
                         // consumed_inputs[i>0] = hop_outputs[i-1] (the previous hop's
@@ -159,7 +166,10 @@ impl UniswapEngine {
                         for i in 1..hop_outputs.len() {
                             consumed_inputs.push(hop_outputs[i - 1]);
                         }
-                        let profit = hop_outputs.last().copied().unwrap_or(U256::ZERO)
+                        let profit = hop_outputs
+                            .last()
+                            .copied()
+                            .unwrap_or(U256::ZERO)
                             .saturating_sub(consumed_inputs[0]);
                         SolvePathResult {
                             optimal_input,
@@ -167,7 +177,8 @@ impl UniswapEngine {
                             hop_outputs,
                             consumed_inputs,
                         }
-                    })
+                    },
+                )
             } else {
                 None
             }
@@ -224,28 +235,37 @@ impl UniswapEngine {
     /// the optimal input for each piece, validating with crossing-aware
     /// simulation. This eliminates false positives from single-range
     /// approximation when swaps exceed the current tick range capacity.
-    fn solve_mixed_path_int(
-        resolved: &ResolvedMixedPath,
-    ) -> Option<SolvePathResult> {
+    fn solve_mixed_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
         if resolved.hops.len() < 2 {
             return None;
         }
 
         // Check that this is actually a mixed path (both V2 and CL hops)
-        let has_v2 = resolved.hops.iter().any(|h| matches!(h, ResolvedHop::V2 { .. }));
+        let has_v2 = resolved
+            .hops
+            .iter()
+            .any(|h| matches!(h, ResolvedHop::V2 { .. }));
         let has_cl = resolved.hops.iter().any(|h| h.as_int_sequence().is_some());
         if !has_v2 || !has_cl {
             return None; // not a mixed path — should be handled by other dispatches
         }
 
         // Build hop_order and adapter arrays from the enum
-        let hop_order: Vec<bool> = resolved.hops.iter()
+        let hop_order: Vec<bool> = resolved
+            .hops
+            .iter()
             .map(|h| matches!(h, ResolvedHop::V2 { .. }))
             .collect();
-        let v2_hops: Vec<Option<crate::optimizers::mobius_int::IntHopState>> = resolved.hops.iter()
+        let v2_hops: Vec<Option<crate::optimizers::mobius_int::IntHopState>> = resolved
+            .hops
+            .iter()
             .map(|h| h.as_v2_state().cloned())
             .collect();
-        let int_v3_sequences: Vec<Option<crate::optimizers::mobius_v3_int::IntV3TickRangeSequence>> = resolved.hops.iter()
+        let int_v3_sequences: Vec<
+            Option<crate::optimizers::mobius_v3_int::IntV3TickRangeSequence>,
+        > = resolved
+            .hops
+            .iter()
             .map(|h| h.as_int_sequence().cloned())
             .collect();
 
@@ -302,22 +322,22 @@ impl UniswapEngine {
                     let Some(state) = core.get_v2_pool_state(pool_ref.pool_key) else {
                         return; // Missing pool → invalid
                     };
-                    let (reserve_in, reserve_out, gamma_numer, fee_denom) =
-                        if pool_ref.zero_for_one {
-                            (
-                                state.reserve0,
-                                state.reserve1,
-                                state.fee_token0.0,
-                                state.fee_token0.1,
-                            )
-                        } else {
-                            (
-                                state.reserve1,
-                                state.reserve0,
-                                state.fee_token1.0,
-                                state.fee_token1.1,
-                            )
-                        };
+                    let (reserve_in, reserve_out, gamma_numer, fee_denom) = if pool_ref.zero_for_one
+                    {
+                        (
+                            state.reserve0,
+                            state.reserve1,
+                            state.fee_token0.0,
+                            state.fee_token0.1,
+                        )
+                    } else {
+                        (
+                            state.reserve1,
+                            state.reserve0,
+                            state.fee_token1.0,
+                            state.fee_token1.1,
+                        )
+                    };
                     let hop_state = crate::optimizers::mobius_int::IntHopState::new(
                         reserve_in,
                         reserve_out,
@@ -333,7 +353,8 @@ impl UniswapEngine {
                         return; // Missing pool → invalid
                     };
 
-                    let Some(int_seq) = pool_state.build_int_v3_sequence(pool_ref.zero_for_one, 10) else {
+                    let Some(int_seq) = pool_state.build_int_v3_sequence(pool_ref.zero_for_one, 10)
+                    else {
                         return; // No integer sequence → invalid
                     };
 
@@ -345,7 +366,8 @@ impl UniswapEngine {
                         return; // Missing pool → invalid
                     };
 
-                    let Some(int_seq) = pool_state.build_int_v4_sequence(pool_ref.zero_for_one, 10) else {
+                    let Some(int_seq) = pool_state.build_int_v4_sequence(pool_ref.zero_for_one, 10)
+                    else {
                         return; // No integer sequence → invalid
                     };
 

@@ -66,7 +66,9 @@ impl From<ClMathError> for PyErr {
 impl From<TickMathError> for ClMathError {
     fn from(err: TickMathError) -> Self {
         match err {
-            TickMathError::InvalidTick(_) | TickMathError::SqrtRatioOutOfBounds { .. } => Self::InvalidPrice,
+            TickMathError::InvalidTick(_) | TickMathError::SqrtRatioOutOfBounds { .. } => {
+                Self::InvalidPrice
+            }
         }
     }
 }
@@ -251,7 +253,9 @@ impl From<ProviderError> for PyErr {
             | ProviderError::InvalidParams { .. }
             | ProviderError::InvalidAbi { .. }
             | ProviderError::EncodingError { .. }
-            | ProviderError::DecodingError { .. } => Self::new::<pyo3::exceptions::PyRuntimeError, _>(msg),
+            | ProviderError::DecodingError { .. } => {
+                Self::new::<pyo3::exceptions::PyRuntimeError, _>(msg)
+            }
         }
     }
 }

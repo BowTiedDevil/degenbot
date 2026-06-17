@@ -3,7 +3,7 @@
 use alloy::primitives::U256;
 use tokio::sync::mpsc;
 
-use super::{UniswapEngine, ResultBatch, BlockMetadata, SolvePathResult};
+use super::{BlockMetadata, ResultBatch, SolvePathResult, UniswapEngine};
 
 impl UniswapEngine {
     /// Set the sender for the result batch channel.
@@ -39,8 +39,9 @@ impl UniswapEngine {
         if let Some(path) = removed {
             // Remove from pool_to_paths reverse index
             for pool_ref in &path.pools {
-                if let Some(path_ids) =
-                    self.pool_to_paths.get_mut(&(pool_ref.hop_type, pool_ref.pool_key))
+                if let Some(path_ids) = self
+                    .pool_to_paths
+                    .get_mut(&(pool_ref.hop_type, pool_ref.pool_key))
                 {
                     path_ids.retain(|id| *id != path_id);
                 }
@@ -99,7 +100,12 @@ impl UniswapEngine {
         let expired: Vec<u64> = self
             .delivered
             .keys()
-            .filter(|id| !self.results.get(id).is_some_and(|r| r.profit > self.min_profit && r.profit < self.max_profit))
+            .filter(|id| {
+                !self
+                    .results
+                    .get(id)
+                    .is_some_and(|r| r.profit > self.min_profit && r.profit < self.max_profit)
+            })
             .copied()
             .collect();
 

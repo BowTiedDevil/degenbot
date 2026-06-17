@@ -11,8 +11,8 @@
 
 use alloy::primitives::{Address, U256};
 
-use crate::abi_types::AbiValue;
 use crate::abi_encoder::encode_rust;
+use crate::abi_types::AbiValue;
 use crate::errors::AbiDecodeError;
 
 /// The V2 swap function selector: keccak256("swap(uint256,uint256,address,bytes)")[:4]

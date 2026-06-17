@@ -448,8 +448,8 @@ impl Contract {
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use alloy::primitives::I256;
     use crate::runtime::get_runtime;
+    use alloy::primitives::I256;
 
     #[test]
     fn test_abi_type_parse() {
@@ -535,7 +535,10 @@ mod tests {
         // Signature with inputs: should have input_cache
         let sig = FunctionSignature::parse("transfer(address,uint256)").unwrap();
         assert!(sig.input_cache.is_some(), "input_cache should be built");
-        assert!(sig.output_cache.is_none(), "output_cache should be None for no outputs");
+        assert!(
+            sig.output_cache.is_none(),
+            "output_cache should be None for no outputs"
+        );
 
         // Signature with outputs: should have output_cache
         let sig = FunctionSignature::parse("balanceOf(address) returns (uint256)").unwrap();
@@ -544,7 +547,10 @@ mod tests {
 
         // Empty inputs: no input_cache
         let sig = FunctionSignature::parse("foo() returns (uint256)").unwrap();
-        assert!(sig.input_cache.is_none(), "input_cache should be None for empty inputs");
+        assert!(
+            sig.input_cache.is_none(),
+            "input_cache should be None for empty inputs"
+        );
         assert!(sig.output_cache.is_some());
     }
 
@@ -1093,7 +1099,10 @@ mod tests {
         let with_cache =
             encode_arguments_cached(&cached_types, &types, &args).expect("cached should encode");
 
-        assert_eq!(uncached, with_cache, "Cached and uncached encoding must match");
+        assert_eq!(
+            uncached, with_cache,
+            "Cached and uncached encoding must match"
+        );
     }
 
     #[test]
@@ -1108,7 +1117,10 @@ mod tests {
         let with_cache = decode_return_data_cached(&cached_types, &encoded, &types)
             .expect("cached should decode");
 
-        assert_eq!(uncached, with_cache, "Cached and uncached decoding must match");
+        assert_eq!(
+            uncached, with_cache,
+            "Cached and uncached decoding must match"
+        );
     }
 
     // =========================================================================
@@ -1119,14 +1131,11 @@ mod tests {
     fn test_contract_debug_impl() {
         let provider = Arc::new(
             get_runtime()
-                .block_on(async {
-                    AlloyProvider::new("http://localhost:8545", 1).await
-                })
+                .block_on(async { AlloyProvider::new("http://localhost:8545", 1).await })
                 .expect("should create provider"),
         );
-        let contract =
-            Contract::new("0x742d35Cc6634C0532925a3b8D4C9db96590d6B75", provider)
-                .expect("should create contract");
+        let contract = Contract::new("0x742d35Cc6634C0532925a3b8D4C9db96590d6B75", provider)
+            .expect("should create contract");
 
         let debug_str = format!("{contract:?}");
         assert!(
@@ -1139,14 +1148,11 @@ mod tests {
     fn test_contract_clone_shares_cache() {
         let provider = Arc::new(
             get_runtime()
-                .block_on(async {
-                    AlloyProvider::new("http://localhost:8545", 1).await
-                })
+                .block_on(async { AlloyProvider::new("http://localhost:8545", 1).await })
                 .expect("should create provider"),
         );
-        let contract =
-            Contract::new("0x742d35Cc6634C0532925a3b8D4C9db96590d6B75", provider)
-                .expect("should create contract");
+        let contract = Contract::new("0x742d35Cc6634C0532925a3b8D4C9db96590d6B75", provider)
+            .expect("should create contract");
 
         let cloned = contract.clone();
 

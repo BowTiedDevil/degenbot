@@ -59,7 +59,9 @@ fn extract_i256(obj: &Bound<'_, PyAny>) -> PyResult<I256> {
         let bytes_obj = obj.call_method("to_bytes", (32, "big"), Some(&kwargs))?;
         let bytes: &[u8] = bytes_obj.extract()?;
         if bytes.len() != 32 {
-            return Err(PyErr::new::<PyValueError, _>("to_bytes returned unexpected length"));
+            return Err(PyErr::new::<PyValueError, _>(
+                "to_bytes returned unexpected length",
+            ));
         }
         let mut arr = [0u8; 32];
         arr.copy_from_slice(bytes);
@@ -71,12 +73,13 @@ fn extract_i256(obj: &Bound<'_, PyAny>) -> PyResult<I256> {
 
 // extract_round_up not needed — we use Option<bool> directly in the signature
 
-
 /// Extract a Python int as i128 (for liquidity values).
 fn extract_i128(obj: &Bound<'_, PyAny>) -> PyResult<i128> {
     let i256 = extract_i256(obj)?;
     let bytes = i256.to_be_bytes::<32>();
-    Ok(i128::from_be_bytes(bytes[16..32].try_into().unwrap_or([0u8; 16])))
+    Ok(i128::from_be_bytes(
+        bytes[16..32].try_into().unwrap_or([0u8; 16]),
+    ))
 }
 // ─── BitMath ───────────────────────────────────────────────────────────
 
@@ -110,9 +113,17 @@ pub fn cl_least_significant_bit(x: &Bound<'_, PyAny>) -> PyResult<u8> {
 ///
 /// Returns `PyValueError` on division by zero or overflow.
 #[pyfunction(signature = (a, b, denominator))]
-pub fn cl_muldiv(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>, denominator: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+pub fn cl_muldiv(
+    a: &Bound<'_, PyAny>,
+    b: &Bound<'_, PyAny>,
+    denominator: &Bound<'_, PyAny>,
+) -> PyResult<PyObject> {
     let py = a.py();
-    let result = full_math::muldiv(extract_u256(a)?, extract_u256(b)?, extract_u256(denominator)?)?;
+    let result = full_math::muldiv(
+        extract_u256(a)?,
+        extract_u256(b)?,
+        extract_u256(denominator)?,
+    )?;
     u256_to_py_obj(py, result)
 }
 
@@ -122,9 +133,17 @@ pub fn cl_muldiv(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>, denominator: &Bound
 ///
 /// Returns `PyValueError` on division by zero or overflow.
 #[pyfunction(signature = (a, b, denominator))]
-pub fn cl_muldiv_rounding_up(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>, denominator: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+pub fn cl_muldiv_rounding_up(
+    a: &Bound<'_, PyAny>,
+    b: &Bound<'_, PyAny>,
+    denominator: &Bound<'_, PyAny>,
+) -> PyResult<PyObject> {
     let py = a.py();
-    let result = full_math::muldiv_rounding_up(extract_u256(a)?, extract_u256(b)?, extract_u256(denominator)?)?;
+    let result = full_math::muldiv_rounding_up(
+        extract_u256(a)?,
+        extract_u256(b)?,
+        extract_u256(denominator)?,
+    )?;
     u256_to_py_obj(py, result)
 }
 
@@ -148,9 +167,17 @@ pub fn cl_div_rounding_up(x: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResul
 ///
 /// Returns `PyValueError` if `denominator` is zero.
 #[pyfunction(signature = (a, b, denominator))]
-pub fn cl_simple_mul_div(a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>, denominator: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+pub fn cl_simple_mul_div(
+    a: &Bound<'_, PyAny>,
+    b: &Bound<'_, PyAny>,
+    denominator: &Bound<'_, PyAny>,
+) -> PyResult<PyObject> {
     let py = a.py();
-    let result = unsafe_math::simple_mul_div(extract_u256(a)?, extract_u256(b)?, extract_u256(denominator)?);
+    let result = unsafe_math::simple_mul_div(
+        extract_u256(a)?,
+        extract_u256(b)?,
+        extract_u256(denominator)?,
+    );
     u256_to_py_obj(py, result)
 }
 
@@ -174,7 +201,8 @@ pub fn cl_add_delta(x: &Bound<'_, PyAny>, y: &Bound<'_, PyAny>) -> PyResult<PyOb
     let y_i256 = extract_i256(y)?;
     let y_bytes = y_i256.to_be_bytes::<32>();
     let y_i128 = i128::from_be_bytes(y_bytes[16..32].try_into().unwrap_or([0u8; 16]));
-    let result = liquidity_math::add_delta(x_u128, y_i128).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    let result = liquidity_math::add_delta(x_u128, y_i128)
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
     Ok(pyo3::types::PyInt::new(py, result).into_any().unbind())
 }
 
@@ -351,12 +379,15 @@ pub fn cl_compute_swap_step_v3(
         extract_u256(fee_pips)?,
     )?;
 
-    let tuple = pyo3::types::PyTuple::new(py, [
-        u256_to_py_obj(py, result.sqrt_price_next)?,
-        u256_to_py_obj(py, result.amount_in)?,
-        u256_to_py_obj(py, result.amount_out)?,
-        u256_to_py_obj(py, result.fee_amount)?,
-    ])?;
+    let tuple = pyo3::types::PyTuple::new(
+        py,
+        [
+            u256_to_py_obj(py, result.sqrt_price_next)?,
+            u256_to_py_obj(py, result.amount_in)?,
+            u256_to_py_obj(py, result.amount_out)?,
+            u256_to_py_obj(py, result.fee_amount)?,
+        ],
+    )?;
     Ok(tuple.into_any().unbind())
 }
 
@@ -400,12 +431,15 @@ pub fn cl_compute_swap_step_v4(
         extract_u256(fee_pips)?,
     )?;
 
-    let tuple = pyo3::types::PyTuple::new(py, [
-        u256_to_py_obj(py, result.sqrt_price_next)?,
-        u256_to_py_obj(py, result.amount_in)?,
-        u256_to_py_obj(py, result.amount_out)?,
-        u256_to_py_obj(py, result.fee_amount)?,
-    ])?;
+    let tuple = pyo3::types::PyTuple::new(
+        py,
+        [
+            u256_to_py_obj(py, result.sqrt_price_next)?,
+            u256_to_py_obj(py, result.amount_in)?,
+            u256_to_py_obj(py, result.amount_out)?,
+            u256_to_py_obj(py, result.fee_amount)?,
+        ],
+    )?;
     Ok(tuple.into_any().unbind())
 }
 
@@ -451,8 +485,14 @@ pub fn add_cl_lib_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // SqrtPriceMath
     m.add_function(wrap_pyfunction!(cl_get_amount0_delta, m)?)?;
     m.add_function(wrap_pyfunction!(cl_get_amount1_delta, m)?)?;
-    m.add_function(wrap_pyfunction!(cl_get_next_sqrt_price_from_amount0_rounding_up, m)?)?;
-    m.add_function(wrap_pyfunction!(cl_get_next_sqrt_price_from_amount1_rounding_down, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        cl_get_next_sqrt_price_from_amount0_rounding_up,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        cl_get_next_sqrt_price_from_amount1_rounding_down,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(cl_get_next_sqrt_price_from_input, m)?)?;
     m.add_function(wrap_pyfunction!(cl_get_next_sqrt_price_from_output, m)?)?;
 
