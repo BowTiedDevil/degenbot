@@ -14,7 +14,7 @@ use pyo3::types::{PyDict, PyList};
 use tokio::sync::mpsc;
 
 use crate::bot_core::{RegisterV3PoolParams, V3SwapUpdate};
-use crate::bot_core::{RegisterV4PoolParams, V4SwapUpdate};
+use crate::bot_core::{RegisterV4PoolParams, V4StateSync, V4SwapUpdate};
 
 use super::{
     BlockMetadata, EnginePhase, HopType, MixedPoolRef, PoolTickCoverage, ResultBatch,
@@ -2273,11 +2273,13 @@ impl PyUniswapArbEngine {
             engine.core.lock().sync_v4_pool_state(
                 pool_manager,
                 pool_id,
-                sqrt_price,
-                liquidity,
-                tick,
-                rust_tick_data,
-                block_number,
+                V4StateSync {
+                    sqrt_price_x96: sqrt_price,
+                    liquidity,
+                    tick,
+                    tick_data: rust_tick_data,
+                    update_block: block_number,
+                },
             );
         }
         Ok(())
@@ -2325,7 +2327,6 @@ impl PyUniswapArbEngine {
     ///     - "`tick_spacing"`: int (V3/V4 only)
     ///   Returns None if the `path_id` is not found.
     #[pyo3(signature = (path_id))]
-    #[allow(clippy::items_after_statements)]
     fn inspect_path(&self, path_id: u64, py: Python<'_>) -> PyResult<Option<Py<PyDict>>> {
         // Phase 1: Collect pool refs from the path
         let pool_refs: Vec<MixedPoolRef> = {
@@ -2337,15 +2338,6 @@ impl PyUniswapArbEngine {
         };
 
         // Phase 2: Query sub-engines for pool details
-        struct HopInfo {
-            hop_type: String,
-            address: Option<String>,
-            pool_id: Option<String>,
-            zero_for_one: bool,
-            fee: Option<u64>,
-            tick_spacing: Option<i32>,
-        }
-
         let mut hops: Vec<HopInfo> = Vec::new();
         let engine = self.engine.lock();
         // ADR-003: V2 state lives in Bot. One core-lock window covers all
@@ -2424,22 +2416,7 @@ impl PyUniswapArbEngine {
 
         let hops_list = PyList::empty(py);
         for hop in &hops {
-            let hop_dict = PyDict::new(py);
-            hop_dict.set_item("type", hop.hop_type.as_str())?;
-            if let Some(ref a) = hop.address {
-                hop_dict.set_item("address", a)?;
-            }
-            if let Some(ref pid) = hop.pool_id {
-                hop_dict.set_item("pool_id", pid)?;
-            }
-            hop_dict.set_item("zero_for_one", hop.zero_for_one)?;
-            if let Some(f) = hop.fee {
-                hop_dict.set_item("fee", f)?;
-            }
-            if let Some(ts) = hop.tick_spacing {
-                hop_dict.set_item("tick_spacing", ts)?;
-            }
-            hops_list.append(hop_dict)?;
+            hops_list.append(hop_info_to_pydict(py, hop)?)?;
         }
         dict.set_item("hops", hops_list)?;
 
@@ -2680,4 +2657,36 @@ fn hex_string_to_pool_id(hex_str: &str) -> PyResult<crate::bot_core::v4_swap_dec
         })?;
     }
     Ok(pool_id)
+}
+
+/// One hop's view for [`PyUniswapArbEngine::inspect_path`], built from the
+/// engine's sub-states before being projected into a Python dict by
+/// [`hop_info_to_pydict`].
+struct HopInfo {
+    hop_type: String,
+    address: Option<String>,
+    pool_id: Option<String>,
+    zero_for_one: bool,
+    fee: Option<u64>,
+    tick_spacing: Option<i32>,
+}
+
+/// Build the Python dict describing a single hop for `inspect_path`.
+fn hop_info_to_pydict<'py>(py: Python<'py>, hop: &HopInfo) -> PyResult<Bound<'py, PyDict>> {
+    let hop_dict = PyDict::new(py);
+    hop_dict.set_item("type", hop.hop_type.as_str())?;
+    if let Some(ref a) = hop.address {
+        hop_dict.set_item("address", a)?;
+    }
+    if let Some(ref pid) = hop.pool_id {
+        hop_dict.set_item("pool_id", pid)?;
+    }
+    hop_dict.set_item("zero_for_one", hop.zero_for_one)?;
+    if let Some(f) = hop.fee {
+        hop_dict.set_item("fee", f)?;
+    }
+    if let Some(ts) = hop.tick_spacing {
+        hop_dict.set_item("tick_spacing", ts)?;
+    }
+    Ok(hop_dict)
 }

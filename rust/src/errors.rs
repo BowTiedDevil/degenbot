@@ -238,10 +238,8 @@ impl From<ProviderError> for PyErr {
             ProviderError::ConnectionFailed { .. } => {
                 Self::new::<pyo3::exceptions::PyConnectionError, _>(msg)
             }
-            ProviderError::SubscriptionNotSupported { .. } => {
-                Self::new::<pyo3::exceptions::PyRuntimeError, _>(msg)
-            }
-            ProviderError::RateLimited { .. }
+            ProviderError::SubscriptionNotSupported { .. }
+            | ProviderError::RateLimited { .. }
             | ProviderError::RpcError { .. }
             | ProviderError::SerializationError { .. }
             | ProviderError::InvalidResponse { .. }

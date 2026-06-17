@@ -70,7 +70,7 @@ impl UniswapEngine {
                     continue;
                 };
                 let mut resolved = ResolvedMixedPath::default();
-                self.resolve_path(&core, &path.pools, &mut resolved);
+                Self::resolve_path(&core, &path.pools, &mut resolved);
                 self.path_resolved.insert(path_id, resolved);
             }
         }
@@ -298,7 +298,6 @@ impl UniswapEngine {
     /// (ADR-003). V3/V4 hops still read the per-family block engines; their
     /// state migrates into `core` in Slices 2/3.
     pub(super) fn resolve_path(
-        &self,
         core: &crate::bot_core::Bot,
         pool_refs: &[MixedPoolRef],
         resolved: &mut ResolvedMixedPath,

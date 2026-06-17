@@ -31,7 +31,7 @@ impl UniswapEngine {
         let mut resolved = ResolvedMixedPath::default();
         if let Some(path) = self.path_pools.get(&path_id) {
             let core = self.core.lock();
-            self.resolve_path(&core, &path.pools, &mut resolved);
+            Self::resolve_path(&core, &path.pools, &mut resolved);
         }
         self.path_resolved.insert(path_id, resolved);
 
@@ -121,7 +121,7 @@ impl UniswapEngine {
             let core = self.core.lock();
             for (&path_id, path) in &self.path_pools {
                 let mut resolved = ResolvedMixedPath::default();
-                self.resolve_path(&core, &path.pools, &mut resolved);
+                Self::resolve_path(&core, &path.pools, &mut resolved);
                 self.path_resolved.insert(path_id, resolved);
             }
         }

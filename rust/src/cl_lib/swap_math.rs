@@ -63,6 +63,78 @@ pub fn get_sqrt_price_target(
     }
 }
 
+/// Exact-output half of `computeSwapStep`.
+///
+/// Both V3 and V4 share this path verbatim — their only mathematical
+/// differences live in the exact-input branch (the `amountSpecified` sign
+/// convention, the `fee_pips == MAX_SWAP_FEE` guard, and the can't-reach
+/// `amount_in` derivation). See the module docs for the divergence summary.
+///
+/// # Errors
+///
+/// Propagates [`ClMathError`] from the delta and price-math computations.
+fn compute_swap_step_exact_out(
+    zero_for_one: bool,
+    sqrt_price_current: U256,
+    sqrt_price_target: U256,
+    liquidity: i128,
+    amount_remaining_u256: U256,
+    fee_pips: U256,
+) -> Result<SwapStepResult, ClMathError> {
+    let amount_out = if zero_for_one {
+        get_amount1_delta(
+            sqrt_price_target,
+            sqrt_price_current,
+            liquidity,
+            Some(false),
+        )?
+    } else {
+        get_amount0_delta(
+            sqrt_price_current,
+            sqrt_price_target,
+            liquidity,
+            Some(false),
+        )?
+    };
+
+    if amount_remaining_u256 >= amount_out {
+        let sqrt_price_next = sqrt_price_target;
+        let amount_in = if zero_for_one {
+            get_amount0_delta(sqrt_price_next, sqrt_price_current, liquidity, Some(true))?
+        } else {
+            get_amount1_delta(sqrt_price_current, sqrt_price_next, liquidity, Some(true))?
+        };
+        let fee_amount = muldiv_rounding_up(amount_in, fee_pips, MAX_SWAP_FEE - fee_pips)?;
+        Ok(SwapStepResult {
+            sqrt_price_next,
+            amount_in,
+            amount_out,
+            fee_amount,
+        })
+    } else {
+        // Cap the output amount
+        let amount_out = amount_remaining_u256;
+        let sqrt_price_next = get_next_sqrt_price_from_output(
+            sqrt_price_current,
+            liquidity,
+            amount_out,
+            zero_for_one,
+        )?;
+        let amount_in = if zero_for_one {
+            get_amount0_delta(sqrt_price_next, sqrt_price_current, liquidity, Some(true))?
+        } else {
+            get_amount1_delta(sqrt_price_current, sqrt_price_next, liquidity, Some(true))?
+        };
+        let fee_amount = muldiv_rounding_up(amount_in, fee_pips, MAX_SWAP_FEE - fee_pips)?;
+        Ok(SwapStepResult {
+            sqrt_price_next,
+            amount_in,
+            amount_out,
+            fee_amount,
+        })
+    }
+}
+
 /// V3 `computeSwapStep`: positive `amount_remaining` = exact input.
 ///
 /// Returns the next sqrt price, input amount, output amount, and fee amount.
@@ -138,59 +210,14 @@ pub fn compute_swap_step_v3(
             })
         }
     } else {
-        // Exact out
-        let amount_out = if zero_for_one {
-            get_amount1_delta(
-                sqrt_price_target,
-                sqrt_price_current,
-                liquidity,
-                Some(false),
-            )?
-        } else {
-            get_amount0_delta(
-                sqrt_price_current,
-                sqrt_price_target,
-                liquidity,
-                Some(false),
-            )?
-        };
-
-        if amount_remaining_u256 >= amount_out {
-            let sqrt_price_next = sqrt_price_target;
-            let amount_in = if zero_for_one {
-                get_amount0_delta(sqrt_price_next, sqrt_price_current, liquidity, Some(true))?
-            } else {
-                get_amount1_delta(sqrt_price_current, sqrt_price_next, liquidity, Some(true))?
-            };
-            let fee_amount = muldiv_rounding_up(amount_in, fee_pips, MAX_SWAP_FEE - fee_pips)?;
-            Ok(SwapStepResult {
-                sqrt_price_next,
-                amount_in,
-                amount_out,
-                fee_amount,
-            })
-        } else {
-            // Cap the output amount
-            let amount_out = amount_remaining_u256;
-            let sqrt_price_next = get_next_sqrt_price_from_output(
-                sqrt_price_current,
-                liquidity,
-                amount_out,
-                zero_for_one,
-            )?;
-            let amount_in = if zero_for_one {
-                get_amount0_delta(sqrt_price_next, sqrt_price_current, liquidity, Some(true))?
-            } else {
-                get_amount1_delta(sqrt_price_current, sqrt_price_next, liquidity, Some(true))?
-            };
-            let fee_amount = muldiv_rounding_up(amount_in, fee_pips, MAX_SWAP_FEE - fee_pips)?;
-            Ok(SwapStepResult {
-                sqrt_price_next,
-                amount_in,
-                amount_out,
-                fee_amount,
-            })
-        }
+        compute_swap_step_exact_out(
+            zero_for_one,
+            sqrt_price_current,
+            sqrt_price_target,
+            liquidity,
+            amount_remaining_u256,
+            fee_pips,
+        )
     }
 }
 
@@ -268,59 +295,14 @@ pub fn compute_swap_step_v4(
             })
         }
     } else {
-        // Exact out
-        let amount_out = if zero_for_one {
-            get_amount1_delta(
-                sqrt_price_target,
-                sqrt_price_current,
-                liquidity,
-                Some(false),
-            )?
-        } else {
-            get_amount0_delta(
-                sqrt_price_current,
-                sqrt_price_target,
-                liquidity,
-                Some(false),
-            )?
-        };
-
-        if amount_remaining_u256 >= amount_out {
-            let sqrt_price_next = sqrt_price_target;
-            let amount_in = if zero_for_one {
-                get_amount0_delta(sqrt_price_next, sqrt_price_current, liquidity, Some(true))?
-            } else {
-                get_amount1_delta(sqrt_price_current, sqrt_price_next, liquidity, Some(true))?
-            };
-            let fee_amount = muldiv_rounding_up(amount_in, fee_pips, MAX_SWAP_FEE - fee_pips)?;
-            Ok(SwapStepResult {
-                sqrt_price_next,
-                amount_in,
-                amount_out,
-                fee_amount,
-            })
-        } else {
-            // Cap the output amount
-            let amount_out = amount_remaining_u256;
-            let sqrt_price_next = get_next_sqrt_price_from_output(
-                sqrt_price_current,
-                liquidity,
-                amount_out,
-                zero_for_one,
-            )?;
-            let amount_in = if zero_for_one {
-                get_amount0_delta(sqrt_price_next, sqrt_price_current, liquidity, Some(true))?
-            } else {
-                get_amount1_delta(sqrt_price_current, sqrt_price_next, liquidity, Some(true))?
-            };
-            let fee_amount = muldiv_rounding_up(amount_in, fee_pips, MAX_SWAP_FEE - fee_pips)?;
-            Ok(SwapStepResult {
-                sqrt_price_next,
-                amount_in,
-                amount_out,
-                fee_amount,
-            })
-        }
+        compute_swap_step_exact_out(
+            zero_for_one,
+            sqrt_price_current,
+            sqrt_price_target,
+            liquidity,
+            amount_remaining_u256,
+            fee_pips,
+        )
     }
 }
 

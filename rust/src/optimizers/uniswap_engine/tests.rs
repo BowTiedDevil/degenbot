@@ -1062,7 +1062,7 @@ mod tests {
             let core = engine.core.lock();
             for (&path_id, path) in &engine.path_pools {
                 let mut resolved = ResolvedMixedPath::default();
-                engine.resolve_path(&core, &path.pools, &mut resolved);
+                UniswapEngine::resolve_path(&core, &path.pools, &mut resolved);
                 engine.path_resolved.insert(path_id, resolved);
             }
         }

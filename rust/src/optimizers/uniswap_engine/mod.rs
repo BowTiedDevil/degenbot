@@ -480,6 +480,11 @@ impl UniswapEngine {
 
     /// Register a V4 pool by `(pool_manager, pool_id)` and initial state.
     /// Delegates to [`Bot::register_v4_pool`] (ADR-003).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the underlying [`Bot::register_v4_pool`] rejects the
+    /// pool (amount-modifying hooks, dynamic fee, or duplicate registration).
     pub fn register_v4_pool(
         &self,
         params: &crate::bot_core::RegisterV4PoolParams,
