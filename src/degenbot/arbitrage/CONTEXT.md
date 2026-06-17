@@ -29,7 +29,7 @@
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
 | **Pool Adapter** | A protocol object that translates a specific pool type into solver-compatible Hop State; pool `to_hop_state()` is the single source of truth; N-token pools accept `token_in`/`token_out` kwargs for pair selection | Adapter, bridge |
-| **Pool Cache Adapter** | A subscriber that auto-registers pools in the Rust solver cache on state updates; uses **CacheablePool** protocol methods | ArbPoolCacheAdapter, cache adapter |
+| **Pool Cache Adapter** *(removed)* | Formerly a subscriber that auto-registered pools in the Rust `RustPoolCache` mirror on state updates; deleted in ADR-003 Slice 4 (Option D — delete, not migrate). The legacy mirror was a second Rust backend alongside the production `BotCore`/`UniswapArbEngine` path | ArbPoolCacheAdapter, cache adapter |
 | **SwapEncoder** | The swap encoding layer: each `SwapAmounts` subclass self-encodes into an `EncodedCall`; the pipeline function `generate_payloads()` wires encoding → approval → composition | Calldata builder, payload encoder |
 | **EncodedCall** | A minimal EVM call fragment (`to`, `data`, `value`) ready for on-chain submission; produced by `SwapAmounts.encode()` | Payload, call tuple |
 | **ApprovalStrategy** | A pluggable protocol that injects ERC-20 approval calls before swap calls | Approval injection |
@@ -44,7 +44,7 @@
 - An **Arbitrage Path** wraps a sequence of pools with a **Solver** and subscribes to **Pool State Messages**
 - A **Swap Vector** describes the direction of a single hop within an **Arbitrage Path**
 - A **Pool Adapter** translates a **Pool** into a **Hop State** for a **Solver** (implemented by each pool's `to_hop_state()` method)
-- A **Pool Cache Adapter** subscribes to **Pool State Messages** and auto-registers both orientations in the Rust pool cache
+- A **Pool Cache Adapter** (removed in ADR-003 Slice 4) formerly subscribed to **Pool State Messages** and auto-registered both orientations in the legacy `RustPoolCache` mirror; that path is deleted
 - **Swap Amounts** self-encode into **EncodedCall**s; `generate_payloads()` wires encoding → **ApprovalStrategy** → **PayloadComposer**
 - **Swap Amounts** provide `input_amount()` / `output_amount()` for generic amount extraction; pool classes implement `build_swap_amount()` from the `ArbitragePathPool` protocol
 - A **V4PoolKey** is available to custom **PayloadComposers** for V4's unlock/swap callback dispatch
