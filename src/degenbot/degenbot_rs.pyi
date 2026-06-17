@@ -850,6 +850,7 @@ class PyBot:
         gamma_numer1: int,
         fee_denom1: int,
         factory: str,
+        update_block: int = 0,
     ) -> int: ...
     def update_v2_pool(
         self, address: str, reserve0: int, reserve1: int, block_number: int

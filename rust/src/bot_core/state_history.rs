@@ -29,21 +29,68 @@ pub trait BlockDelta {
 }
 
 // ---------------------------------------------------------------------------
+// Journal errors (landed-at semantics, ADR-005 slice 4)
+// ---------------------------------------------------------------------------
+
+/// Error from a reorg journal restore/discard operation.
+///
+/// Represents the two "past the registration" conditions that a landed-at
+/// journal surfaces as recoverable errors (mapped to Python `ValueError` by
+/// the `PyO3` layer, and to `NoPoolStateAvailable` by the pool companion):
+///
+/// - `NoStatePriorToBlock`: a restore asked for state before the registration
+///   (genesis) block, which no delta can represent.
+/// - `NoStateAtOrAfterBlock`: a discard asked to remove every known state, i.e.
+///   the target is past the newest delta.
+///
+/// These used to be `assert!` panics; surfaced as values so callers can map
+/// them to Python exceptions without catching a panic (ADR-005 slice 4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JournalError {
+    /// No pool state is known prior to the target block — the target is at or
+    /// before the registration (genesis) delta, or the journal is empty. Maps
+    /// to Python `NoPoolStateAvailable` (a `ValueError` subclass).
+    NoStatePriorToBlock { block: u64 },
+    /// `discard_before_block` would remove every known state — the target is
+    /// past the newest delta. Maps to Python `NoPoolStateAvailable`.
+    NoStateAtOrAfterBlock { block: u64 },
+}
+
+// ---------------------------------------------------------------------------
 // V2 delta types
 // ---------------------------------------------------------------------------
 
 /// Per-block delta for a V2 pool.
 ///
-/// Stores the reserve values **before** the update at this block.
-/// On reorg, these "before" values are restored into the current state.
+/// Carries the full transition at this block: the reserves **before** the
+/// update (the pre-transition snapshot, equal to the previous delta's `after`)
+/// and the reserves **after** the update (the *landed-at* state for this
+/// block — the value [`ReorgJournal::restore_before_block`] returns when it
+/// lands here).
+///
+/// The journal's first delta is the **genesis** delta, pushed at registration:
+/// its `before` == `after` == the registration reserves, at
+/// `block = update_block`. The genesis anchor is what makes "restore to the
+/// registration state" expressible — a `before`-only journal cannot represent
+/// the current state or the landed-at registration point (ADR-005 slice 4).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct V2BlockDelta {
     /// Block number of this delta.
     pub block: u64,
     /// Reserve of token0 *before* this block's update.
+    /// Redundant with the preceding delta's `reserve0_after`, retained for a
+    /// self-describing transition record.
     pub reserve0_before: alloy::primitives::U256,
     /// Reserve of token1 *before* this block's update.
+    /// Redundant with the preceding delta's `reserve1_after`, retained for a
+    /// self-describing transition record.
     pub reserve1_before: alloy::primitives::U256,
+    /// Reserve of token0 *after* this block's update — the landed-at state for
+    /// this block, returned by `restore_before_block` when it lands here.
+    pub reserve0_after: alloy::primitives::U256,
+    /// Reserve of token1 *after* this block's update — the landed-at state for
+    /// this block, returned by `restore_before_block` when it lands here.
+    pub reserve1_after: alloy::primitives::U256,
 }
 
 impl BlockDelta for V2BlockDelta {
@@ -224,88 +271,111 @@ impl<D: BlockDelta> ReorgJournal<D> {
 
     /// Discard deltas earlier than the given block.
     ///
-    /// These deltas are no longer rollback-reachable (the chain has
-    /// finalized past them). Frees memory.
+    /// These deltas are no longer rollback-reachable (the chain has finalized
+    /// past them). Frees memory. The genesis (registration) delta is NOT
+    /// special — it is discarded like any other when the target is past it,
+    /// as long as at least one delta remains.
     ///
-    /// # Panics
+    /// Landed-at semantics (ADR-005 slice 4):
+    /// - Earliest delta at/after the target → no-op (nothing to discard;
+    ///   supports a continuously-running bot calling `discard(latest - N)` on
+    ///   freshly-registered pools).
+    /// - Newest delta before the target → `Err(NoStateAtOrAfterBlock)` (would
+    ///   remove every known state). Was a `panic!` pre-slice-4.
+    /// - Otherwise → remove deltas with `block < target`.
     ///
-    /// Panics if all deltas are before the target block
-    /// (no delta is known at or after the block).
-    pub fn discard_before_block(&mut self, block: u64) {
+    /// # Errors
+    ///
+    /// Returns `Err(JournalError::NoStateAtOrAfterBlock)` if the target is
+    /// past the newest delta (would remove every known state).
+    pub fn discard_before_block(&mut self, block: u64) -> Result<(), JournalError> {
         if self.deltas.is_empty() {
-            return;
+            return Ok(());
         }
 
         let earliest_block = self.deltas[0].block();
         if earliest_block >= block {
-            return;
+            return Ok(());
         }
 
         let len = self.deltas.len();
         let newest_block = self.deltas[len - 1].block();
-        assert!(
-            newest_block >= block,
-            "No pool state known at or after block {block}"
-        );
+        if newest_block < block {
+            return Err(JournalError::NoStateAtOrAfterBlock { block });
+        }
 
         while self.deltas[0].block() < block {
             self.deltas.pop_front();
         }
+        Ok(())
     }
 }
 
 impl ReorgJournal<V2BlockDelta> {
-    /// Restore state prior to a target block by popping deltas at/after
-    /// the target block and returning the "before" values from the last
-    /// popped delta.
+    /// Restore to the state landed just **before** a target block.
     ///
-    /// The caller is responsible for applying the returned "before" values
-    /// to the current mutable state.
+    /// Landed-at semantics (ADR-005 slice 4): returns the `*_after` reserves
+    /// of the largest-block delta strictly less than `block`, and pops every
+    /// delta at/after `block` so the journal's new newest IS that landed-at
+    /// state. The caller writes the returned reserves into the current mutable
+    /// state.
     ///
-    /// Returns `(reserve0_before, reserve1_before, block)` from the last
-    /// popped delta, which represents the state just before the target block.
+    /// Cases:
+    /// - Newest delta is before the target → no-op: returns the newest delta's
+    ///   `*_after` (the current state). Pre-slice-4 this erroneously returned
+    ///   `*_before` (the pre-newest state).
+    /// - Target at/before the earliest (genesis) delta → `Err(NoStatePriorToBlock)`
+    ///   — rolling back past registration is a hard error, not a silent no-op.
+    /// - Otherwise → pop deltas at/after the target, return the new newest's
+    ///   `*_after` (guaranteed present since the earliest is below the target).
+    ///
+    /// # Errors
+    ///
+    /// - `NoStatePriorToBlock` if the journal is empty, or the target is at or
+    ///   before the registration (genesis) delta — no state exists before it.
     ///
     /// # Panics
     ///
-    /// Panics only if the journal is empty. A pool whose *first* Sync is at
-    /// the target block (a single delta at `block`) restores to that delta's
-    /// "before" values — the registration reserves — without panicking.
+    /// Never (replaces the pre-slice-4 `assert!` on the empty journal).
     pub fn restore_before_block(
         &mut self,
         block: u64,
-    ) -> (alloy::primitives::U256, alloy::primitives::U256, u64) {
-        assert!(
-            !self.deltas.is_empty(),
-            "No pool state known prior to block {block}"
-        );
+    ) -> Result<(alloy::primitives::U256, alloy::primitives::U256, u64), JournalError> {
+        if self.deltas.is_empty() {
+            return Err(JournalError::NoStatePriorToBlock { block });
+        }
 
         let len = self.deltas.len();
-        let newest_block = self.deltas[len - 1].block();
-        // If the newest delta is before the target, no rollback needed
+        let newest = &self.deltas[len - 1];
+        let newest_block = newest.block();
+
+        // No-op: newest is before the target → current state IS the landed-at
+        // state. Return `*_after` (the current state), NOT `*_before` (the
+        // pre-newest state — the pre-slice-4 bug).
         if newest_block < block {
-            let newest = &self.deltas[len - 1];
-            return (newest.reserve0_before, newest.reserve1_before, newest.block);
+            return Ok((newest.reserve0_after, newest.reserve1_after, newest_block));
         }
 
-        // Pop all deltas at or after the target block.
-        // The last one popped gives us the "before" values to restore. This
-        // includes the case where the pool's only delta IS at the target block
-        // (earliest == block): it is popped and its registration-time "before"
-        // values are returned. The emptiness guard prevents indexing an empty
-        // deque once all deltas have been popped.
-        let mut last_popped: Option<V2BlockDelta> = None;
+        // newest >= block: there's something to pop. If the earliest is at or
+        // after the target, no delta lands before it → rolling back past
+        // registration. Raise rather than silently returning registration.
+        let earliest_block = self.deltas[0].block();
+        if earliest_block >= block {
+            return Err(JournalError::NoStatePriorToBlock { block });
+        }
+
+        // Pop every delta at/after the target. Since earliest < block, the
+        // earliest survives and the deque stays non-empty.
         while !self.deltas.is_empty() && self.deltas[self.deltas.len() - 1].block() >= block {
-            last_popped = self.deltas.pop_back();
+            self.deltas.pop_back();
         }
 
-        // SAFETY: newest >= block (we skipped the early return), so at least
-        // one delta was popped. `Option<T>` is always `Some` here.
-        let Some(popped) = last_popped else {
-            unreachable!("newest >= block guarantees at least one pop");
-        };
-        // The last popped delta's "before" values ARE the state just before
-        // the target block (captured before that delta's update).
-        (popped.reserve0_before, popped.reserve1_before, popped.block)
+        let landed = self
+            .deltas
+            .back()
+            .expect("earliest < block guarantees a surviving delta");
+        let landed_block = landed.block();
+        Ok((landed.reserve0_after, landed.reserve1_after, landed_block))
     }
 }
 
@@ -406,168 +476,247 @@ mod tests {
     use super::*;
     use alloy::primitives::U256;
 
-    fn delta(block: u64, r0_before: u64, r1_before: u64) -> V2BlockDelta {
+    fn genesis(block: u64, r0: u64, r1: u64) -> V2BlockDelta {
+        // Registration delta: before == after == registration reserves.
+        V2BlockDelta {
+            block,
+            reserve0_before: U256::from(r0),
+            reserve1_before: U256::from(r1),
+            reserve0_after: U256::from(r0),
+            reserve1_after: U256::from(r1),
+        }
+    }
+
+    fn transition(
+        block: u64,
+        r0_before: u64,
+        r1_before: u64,
+        r0_after: u64,
+        r1_after: u64,
+    ) -> V2BlockDelta {
         V2BlockDelta {
             block,
             reserve0_before: U256::from(r0_before),
             reserve1_before: U256::from(r1_before),
+            reserve0_after: U256::from(r0_after),
+            reserve1_after: U256::from(r1_after),
         }
     }
+
+    // --- push_delta (unchanged semantics, anchors the *_after shape) ---
 
     #[test]
     fn push_delta_appends() {
         let mut j = ReorgJournal::<V2BlockDelta>::new(8);
-        assert!(j.push_delta(delta(1, 100, 200)));
+        assert!(j.push_delta(genesis(1, 100, 200)));
         assert_eq!(j.len(), 1);
     }
 
     #[test]
     fn push_delta_same_block_replaces() {
         let mut j = ReorgJournal::<V2BlockDelta>::new(8);
-        j.push_delta(delta(1, 100, 200));
-        assert!(j.push_delta(delta(1, 150, 250)));
+        j.push_delta(genesis(1, 100, 200));
+        // Same-block push replaces the newest delta wholesale.
+        assert!(j.push_delta(transition(1, 100, 200, 150, 250)));
         assert_eq!(j.len(), 1);
-        // The replacement should have the newer "before" values
-        assert_eq!(j.deltas[0].reserve0_before, U256::from(150));
+        // The replacement carries the new after-values.
+        assert_eq!(j.deltas[0].reserve0_after, U256::from(150));
+        assert_eq!(j.deltas[0].reserve1_after, U256::from(250));
     }
 
     #[test]
     fn push_delta_older_block_rejected() {
         let mut j = ReorgJournal::<V2BlockDelta>::new(8);
-        j.push_delta(delta(5, 100, 200));
-        assert!(!j.push_delta(delta(3, 50, 100)));
+        j.push_delta(genesis(5, 100, 200));
+        assert!(!j.push_delta(transition(3, 100, 200, 50, 100)));
         assert_eq!(j.len(), 1);
     }
 
     #[test]
     fn max_depth_evicts_oldest() {
         let mut j = ReorgJournal::<V2BlockDelta>::new(3);
-        j.push_delta(delta(1, 10, 20));
-        j.push_delta(delta(2, 20, 30));
-        j.push_delta(delta(3, 30, 40));
-        // At capacity — next push evicts block 1
-        j.push_delta(delta(4, 40, 50));
+        j.push_delta(genesis(1, 10, 20));
+        j.push_delta(transition(2, 10, 20, 20, 30));
+        j.push_delta(transition(3, 20, 30, 30, 40));
+        // At capacity — next push evicts the genesis (block 1).
+        j.push_delta(transition(4, 30, 40, 40, 50));
         assert_eq!(j.len(), 3);
-        // Oldest is now block 2
         assert_eq!(j.deltas[0].block, 2);
     }
 
-    #[test]
-    fn discard_before_block() {
-        let mut j = ReorgJournal::<V2BlockDelta>::new(8);
-        j.push_delta(delta(1, 10, 20));
-        j.push_delta(delta(2, 20, 30));
-        j.push_delta(delta(3, 30, 40));
-        j.push_delta(delta(5, 50, 60));
+    // --- discard_before_block (landed-at semantics, ADR-005 slice 4) ---
 
-        j.discard_before_block(3);
+    #[test]
+    fn discard_removes_deltas_before_target_keeping_rest() {
+        let mut j = ReorgJournal::<V2BlockDelta>::new(8);
+        j.push_delta(genesis(1, 10, 20));
+        j.push_delta(transition(2, 10, 20, 20, 30));
+        j.push_delta(transition(3, 20, 30, 30, 40));
+        j.push_delta(transition(5, 30, 40, 50, 60));
+
+        // Discard everything before block 3 (genesis + block-2).
+        j.discard_before_block(3).expect("target is within range");
         assert_eq!(j.len(), 2);
         assert_eq!(j.deltas[0].block, 3);
         assert_eq!(j.deltas[1].block, 5);
     }
 
     #[test]
-    fn discard_before_block_early_return_if_earliest_at_target() {
+    fn discard_noops_when_earliest_at_or_after_target() {
+        // A continuously-running bot calls discard(latest - N) every block;
+        // freshly-registered pools hit target <= genesis routinely. This MUST
+        // be a no-op, not an error, so continuous discard never crashes.
         let mut j = ReorgJournal::<V2BlockDelta>::new(8);
-        j.push_delta(delta(3, 30, 40));
-        j.push_delta(delta(5, 50, 60));
+        j.push_delta(genesis(3, 30, 40));
+        j.push_delta(transition(5, 30, 40, 50, 60));
 
-        // Earliest is already at target — no-op
-        j.discard_before_block(3);
+        // Earliest (block 3) is at the target — nothing to discard.
+        j.discard_before_block(3)
+            .expect("no-op when earliest >= target");
+        assert_eq!(j.len(), 2);
+
+        // Earliest (block 3) is after the target — still a no-op.
+        j.discard_before_block(2)
+            .expect("no-op when earliest > target");
         assert_eq!(j.len(), 2);
     }
 
     #[test]
-    #[should_panic(expected = "No pool state known at or after block 10")]
-    fn discard_before_block_panics_if_all_before() {
+    fn discard_errors_when_target_past_newest() {
+        // Would remove every known state. Was a panic pre-slice-4; now an
+        // error the PyO3 layer maps to ValueError.
         let mut j = ReorgJournal::<V2BlockDelta>::new(8);
-        j.push_delta(delta(1, 10, 20));
-        j.push_delta(delta(3, 30, 40));
+        j.push_delta(genesis(1, 10, 20));
+        j.push_delta(transition(3, 10, 20, 30, 40));
 
-        j.discard_before_block(10);
+        let err = j.discard_before_block(10).unwrap_err();
+        match err {
+            JournalError::NoStateAtOrAfterBlock { block } => assert_eq!(block, 10),
+            JournalError::NoStatePriorToBlock { .. } => panic!("expected NoStateAtOrAfterBlock"),
+        }
+        assert_eq!(j.len(), 2, "no mutation on error");
     }
 
     #[test]
-    fn restore_before_block_pops_and_returns_priors() {
-        // Simulate pool state evolution:
-        //   Block 1: reserves were (10, 20) before update → now (100, 200)
-        //   Block 3: reserves were (100, 200) before update → now (300, 400)
-        //   Block 5: reserves were (300, 400) before update → now (500, 600)
-        //   Block 7: reserves were (500, 600) before update → now (700, 800)
-        //
-        // Restoring before block 5 should pop deltas for 5 and 7,
-        // then return "before" values from the block-5 delta: (300, 400)
+    fn discard_noops_on_empty_journal() {
         let mut j = ReorgJournal::<V2BlockDelta>::new(8);
-        j.push_delta(delta(1, 10, 20));
-        j.push_delta(delta(3, 100, 200));
-        j.push_delta(delta(5, 300, 400));
-        j.push_delta(delta(7, 500, 600));
+        j.discard_before_block(5).expect("empty journal noops");
+        assert!(j.is_empty());
+    }
 
-        let (r0, r1, blk) = j.restore_before_block(5);
+    // --- restore_before_block (landed-at semantics, ADR-005 slice 4) ---
+
+    #[test]
+    fn restore_lands_at_largest_block_below_target() {
+        // The headline landed-at test. State evolution (after-values):
+        //   Genesis(1):       (10, 20)
+        //   Update(3, after): (300, 400)
+        //   Update(5, after): (500, 600)
+        //   Update(7, after): (700, 800)
+        // restore(5) lands at the largest block < 5, i.e. block 3, returning
+        // block-3's AFTER values (300, 400) — the state landed at block 3.
+        // Pre-slice-4 this returned block-5's BEFORE values (also (300,400))
+        // AND block=5 (the target, not the landed block).
+        let mut j = ReorgJournal::<V2BlockDelta>::new(8);
+        j.push_delta(genesis(1, 10, 20));
+        j.push_delta(transition(3, 10, 20, 300, 400));
+        j.push_delta(transition(5, 300, 400, 500, 600));
+        j.push_delta(transition(7, 500, 600, 700, 800));
+
+        let (r0, r1, blk) = j.restore_before_block(5).expect("target within range");
         assert_eq!(r0, U256::from(300));
         assert_eq!(r1, U256::from(400));
-        assert_eq!(blk, 5);
-        // Only deltas for blocks 1 and 3 remain
+        assert_eq!(blk, 3, "landed-at block is the largest block < target");
+        // Deltas at/after the target (5, 7) are popped; genesis + 3 remain.
         assert_eq!(j.len(), 2);
     }
 
     #[test]
-    fn restore_before_block_returns_priors_if_newest_before_target() {
+    fn restore_intermediate_lands_between_deltas() {
+        // Deltas at blocks 1, 3, 7. restore(7) lands at block 3
+        // (largest < 7), returning block-3's after values.
         let mut j = ReorgJournal::<V2BlockDelta>::new(8);
-        j.push_delta(delta(1, 10, 20));
-        j.push_delta(delta(3, 100, 200));
+        j.push_delta(genesis(1, 10, 20));
+        j.push_delta(transition(3, 10, 20, 300, 400));
+        j.push_delta(transition(7, 300, 400, 700, 800));
 
-        // Newest delta is at block 3, which is before target 10
-        let (r0, r1, blk) = j.restore_before_block(10);
+        let (r0, r1, blk) = j.restore_before_block(7).expect("target within range");
+        assert_eq!(r0, U256::from(300));
+        assert_eq!(r1, U256::from(400));
+        assert_eq!(blk, 3);
+        assert_eq!(j.len(), 2);
+    }
+
+    #[test]
+    fn restore_to_first_update_lands_at_genesis() {
+        // Rolling back the first update lands at the registration state
+        // (genesis), proving the genesis delta makes registration landable.
+        let mut j = ReorgJournal::<V2BlockDelta>::new(8);
+        j.push_delta(genesis(10, 1000, 2000));
+        j.push_delta(transition(20, 1000, 2000, 3000, 500));
+
+        // restore(20) lands at the largest block < 20, i.e. genesis (10),
+        // returning the registration reserves (1000, 2000) at block 10.
+        let (r0, r1, blk) = j.restore_before_block(20).expect("target within range");
+        assert_eq!(r0, U256::from(1000));
+        assert_eq!(r1, U256::from(2000));
+        assert_eq!(blk, 10, "lands at the genesis (registration) block");
+        // Genesis survives (it's below the target); the block-20 update popped.
+        assert_eq!(j.len(), 1);
+        assert_eq!(j.deltas[0].block, 10);
+    }
+
+    #[test]
+    fn restore_noop_returns_current_when_newest_below_target() {
+        // newest < target: no rollback, return the current (landed-at newest)
+        // state via AFTER. Pre-slice-4 this returned BEFORE (pre-newest state)
+        // — a silent wrong-answer footgun the after-values fix.
+        let mut j = ReorgJournal::<V2BlockDelta>::new(8);
+        j.push_delta(genesis(1, 10, 20));
+        j.push_delta(transition(3, 10, 20, 100, 200));
+
+        // Newest (3) is before target (10): no-op, return block-3 after (100,200).
+        let (r0, r1, blk) = j.restore_before_block(10).expect("no-op path");
         assert_eq!(r0, U256::from(100));
         assert_eq!(r1, U256::from(200));
         assert_eq!(blk, 3);
+        assert_eq!(j.len(), 2, "no-op: nothing popped");
     }
 
     #[test]
-    fn restore_before_block_at_earliest_returns_registration_state() {
-        // The realistic reorg case: a pool's first (and only) Sync is at the
-        // reorg target block. restore pops that delta and returns its "before"
-        // values (the registration reserves) without panicking — reorg
-        // rollback must reach the live hot path (ADR-003).
+    fn restore_errors_when_target_at_or_before_genesis() {
+        // Decision 3: rolling back past registration is a hard error, not a
+        // silent no-op. Target == genesis.block → no state before it exists.
         let mut j = ReorgJournal::<V2BlockDelta>::new(8);
-        // delta{1}.before = (10, 20) = registration reserves
-        j.push_delta(delta(1, 10, 20));
+        j.push_delta(genesis(5, 50, 60));
+        j.push_delta(transition(7, 50, 60, 70, 80));
 
-        let (r0, r1, blk) = j.restore_before_block(1);
-        assert_eq!(r0, U256::from(10));
-        assert_eq!(r1, U256::from(20));
-        assert_eq!(blk, 1);
-        assert!(
-            j.is_empty(),
-            "the only delta was popped back to registration"
-        );
+        // Target == genesis block (5): nothing lands before it.
+        let err = j.restore_before_block(5).unwrap_err();
+        match err {
+            JournalError::NoStatePriorToBlock { block } => assert_eq!(block, 5),
+            JournalError::NoStateAtOrAfterBlock { .. } => panic!("expected NoStatePriorToBlock"),
+        }
+        assert_eq!(j.len(), 2, "no mutation on error");
+
+        // Target before genesis (3): same — no state before it.
+        let err = j.restore_before_block(3).unwrap_err();
+        assert!(matches!(
+            err,
+            JournalError::NoStatePriorToBlock { block: 3 }
+        ));
     }
 
     #[test]
-    #[should_panic(expected = "No pool state known prior to block 5")]
-    fn restore_before_block_panics_if_empty() {
+    fn restore_errors_on_empty_journal() {
         let mut j = ReorgJournal::<V2BlockDelta>::new(8);
-        j.restore_before_block(5);
-    }
-
-    #[test]
-    fn restore_before_block_intermediate() {
-        // Restore to between existing deltas
-        let mut j = ReorgJournal::<V2BlockDelta>::new(8);
-        j.push_delta(delta(1, 10, 20));
-        j.push_delta(delta(3, 100, 200));
-        j.push_delta(delta(7, 300, 400));
-
-        // Restore before block 7: pops block 7 delta, returns its "before" values
-        let (r0, r1, blk) = j.restore_before_block(7);
-        assert_eq!(r0, U256::from(300));
-        assert_eq!(r1, U256::from(400));
-        assert_eq!(blk, 7);
-        assert_eq!(j.len(), 2);
+        let err = j.restore_before_block(5).unwrap_err();
+        assert!(matches!(
+            err,
+            JournalError::NoStatePriorToBlock { block: 5 }
+        ));
     }
 }
-
 // ---------------------------------------------------------------------------
 // V3 delta scalar_priors tests (ADR-004)
 // ---------------------------------------------------------------------------
@@ -707,9 +856,11 @@ mod proptests {
     use alloy::primitives::U256;
     use proptest::prelude::*;
 
-    /// A faithful model that tracks exactly the same state as the journal —
-    /// a bounded list subject to same-block replacement, discards, restores,
-    /// and `max_depth` eviction. No "windowed" approximation.
+    /// A faithful model that tracks exactly the same state as the journal — a
+    /// bounded list subject to same-block replacement, discards, restores, and
+    /// `max_depth` eviction. Mirrors the post-slice-4 landed-at semantics:
+    /// genesis + `*_after`, `restore` lands at the largest delta below target,
+    /// `discard` no-ops when earliest >= target and errors when newest < target.
     struct Model {
         deltas: Vec<V2BlockDelta>,
         max_depth: usize,
@@ -736,82 +887,102 @@ mod proptests {
                 }
             }
             self.deltas.push(delta);
-            // Enforce max_depth eviction (matching journal's pop-front)
+            // Enforce max_depth eviction (matching journal's pop-front).
             while self.deltas.len() > self.max_depth {
                 self.deltas.remove(0);
             }
             true
         }
 
-        /// Mirror the journal's `discard_before_block` semantics exactly.
-        /// Returns false if the operation would be skipped (empty, would-panic).
-        fn discard_before_block(&mut self, block: u64) -> bool {
+        /// Mirror the journal's `discard_before_block` landed-at semantics.
+        /// Returns `Ok(true)` if the journal call should proceed (and mutate),
+        /// `Ok(false)` if it's a no-op (earliest >= target), `Err(())` if it
+        /// would error (newest < target).
+        fn discard_before_block(&mut self, block: u64) -> Result<bool, ()> {
             if self.deltas.is_empty() {
-                return false;
+                return Ok(false); // no-op
             }
             let earliest = self.deltas[0].block;
             if earliest >= block {
-                // All deltas are at/after target — no-op
-                return true;
+                return Ok(false); // no-op
             }
             let len = self.deltas.len();
             let newest = self.deltas[len - 1].block;
             if newest < block {
-                // Would panic — all deltas are before target
-                return false;
+                return Err(()); // would remove all — error
             }
             self.deltas.retain(|d| d.block >= block);
-            true
+            Ok(true)
         }
 
-        /// Mirror the journal's `restore_before_block` semantics exactly.
-        /// Returns None if the operation would panic (empty journal).
+        /// Mirror the journal's `restore_before_block` landed-at semantics.
+        /// Returns `Some((r0, r1, blk))` on the Ok paths (no-op returns newest
+        /// after; rollback returns new-newest after), `None` if the journal
+        /// would error (empty, or target at/before genesis).
         fn restore_before_block(&mut self, block: u64) -> Option<(U256, U256, u64)> {
             if self.deltas.is_empty() {
                 return None;
             }
             let len = self.deltas.len();
-            let newest = self.deltas[len - 1].block;
-            if newest < block {
-                // No rollback needed — return newest's before values
-                let d = &self.deltas[len - 1];
-                return Some((d.reserve0_before, d.reserve1_before, d.block));
+            let newest = &self.deltas[len - 1];
+            let newest_block = newest.block;
+            if newest_block < block {
+                // No-op: return the current (landed-at newest) after-values.
+                return Some((newest.reserve0_after, newest.reserve1_after, newest_block));
             }
-            // Pop all at/after target, return last popped's before values.
-            // Includes the single-delta-at-target case (pops it, returns
-            // registration reserves) — mirrors the journal's emptiness-guarded
-            // loop.
-            let mut last_popped: Option<V2BlockDelta> = None;
+            // newest >= block: there's something to pop. Earliest at/after
+            // target → no state before it → error (None).
+            let earliest = self.deltas[0].block;
+            if earliest >= block {
+                return None;
+            }
+            // Pop all at/after target; the new newest is the landed-at state.
             while self.deltas.last().map(|d| d.block) >= Some(block) {
-                last_popped = self.deltas.pop();
+                self.deltas.pop();
             }
-            last_popped.map(|p| (p.reserve0_before, p.reserve1_before, p.block))
+            let landed = self
+                .deltas
+                .last()
+                .expect("earliest < block guarantees a survivor");
+            Some((landed.reserve0_after, landed.reserve1_after, landed.block))
         }
     }
 
     /// Operations that can be applied to a journal.
     #[derive(Clone, Debug)]
     enum Op {
-        /// Push a delta at the given block with the given "before" values.
+        /// Push a transition delta at `block`. `r0_before`/`r1_before` are the
+        /// pre-update reserves; `r0_after`/`r1_after` the landed-at reserves.
         Push {
             block: u64,
-            reserve0: u64,
-            reserve1: u64,
+            r0_before: u64,
+            r1_before: u64,
+            r0_after: u64,
+            r1_after: u64,
         },
         /// Discard deltas before the given block.
         DiscardBefore { block: u64 },
         /// Restore to before the given block. Only performed when the model
-        /// says it's valid (won't panic).
+        /// says it's valid (won't error).
         RestoreBefore { block: u64 },
     }
 
     fn op_strategy() -> impl Strategy<Value = Op> {
         prop_oneof![
-            (1u64..=100u64, 0u64..=1000u64, 0u64..=1000u64).prop_map(|(block, r0, r1)| Op::Push {
-                block,
-                reserve0: r0,
-                reserve1: r1
-            }),
+            (
+                1u64..=100u64,
+                0u64..=1000u64,
+                0u64..=1000u64,
+                0u64..=1000u64,
+                0u64..=1000u64
+            )
+                .prop_map(|(block, r0b, r1b, r0a, r1a)| Op::Push {
+                    block,
+                    r0_before: r0b,
+                    r1_before: r1b,
+                    r0_after: r0a,
+                    r1_after: r1a,
+                }),
             (1u64..=100u64).prop_map(|block| Op::DiscardBefore { block }),
             (1u64..=100u64).prop_map(|block| Op::RestoreBefore { block }),
         ]
@@ -830,11 +1001,13 @@ mod proptests {
 
             for op in &ops {
                 match op {
-                    Op::Push { block, reserve0, reserve1 } => {
+                    Op::Push { block, r0_before, r1_before, r0_after, r1_after } => {
                         let d = V2BlockDelta {
                             block: *block,
-                            reserve0_before: U256::from(*reserve0),
-                            reserve1_before: U256::from(*reserve1),
+                            reserve0_before: U256::from(*r0_before),
+                            reserve1_before: U256::from(*r1_before),
+                            reserve0_after: U256::from(*r0_after),
+                            reserve1_after: U256::from(*r1_after),
                         };
                         let journal_accepted = journal.push_delta(d.clone());
                         let model_accepted = model.push_delta(d);
@@ -843,33 +1016,41 @@ mod proptests {
                     }
 
                     Op::DiscardBefore { block } => {
-                        let model_ok = model.discard_before_block(*block);
-                        if !model_ok {
-                            // Would panic or is no-op — skip journal call
-                            continue;
+                        match model.discard_before_block(*block) {
+                            Ok(_) => {
+                                // Model says Ok (no-op or mutate); journal must also be Ok.
+                                journal.discard_before_block(*block)
+                                    .expect("journal discard must be Ok when model says Ok");
+                            }
+                            Err(()) => {
+                                // Model says error — journal must error too.
+                                assert!(journal.discard_before_block(*block).is_err(),
+                                    "journal discard must error when model says error");
+                            }
                         }
-                        journal.discard_before_block(*block);
                     }
 
                     Op::RestoreBefore { block } => {
-                        let model_result = model.restore_before_block(*block);
-                        if model_result.is_none() {
-                            // Would panic — skip
-                            continue;
+                        match model.restore_before_block(*block) {
+                            Some(expected) => {
+                                let got = journal.restore_before_block(*block)
+                                    .expect("journal restore must be Ok when model says Ok");
+                                assert_eq!(got.0, expected.0,
+                                    "restore reserve0 mismatch at block {block}");
+                                assert_eq!(got.1, expected.1,
+                                    "restore reserve1 mismatch at block {block}");
+                                assert_eq!(got.2, expected.2,
+                                    "restore block mismatch at block {block}");
+                            }
+                            None => {
+                                assert!(journal.restore_before_block(*block).is_err(),
+                                    "journal restore must error when model says error");
+                            }
                         }
-                        let journal_result = journal.restore_before_block(*block);
-
-                        let (mr0, mr1, mblk) = model_result.unwrap();
-                        assert_eq!(journal_result.0, mr0,
-                            "restore reserve0 mismatch at block {block}");
-                        assert_eq!(journal_result.1, mr1,
-                            "restore reserve1 mismatch at block {block}");
-                        assert_eq!(journal_result.2, mblk,
-                            "restore block mismatch at block {block}");
                     }
                 }
 
-                // After every operation: verify journal contents match model exactly
+                // After every operation: verify journal contents match model exactly.
                 assert_eq!(
                     journal.len(),
                     model.deltas.len(),
@@ -878,63 +1059,55 @@ mod proptests {
                     model.deltas.len(),
                 );
 
-                // Verify block ordering is strictly increasing
+                // Verify block ordering is strictly increasing.
                 let delta_blocks: Vec<u64> = model.deltas.iter().map(|d| d.block).collect();
                 for w in delta_blocks.windows(2) {
                     assert!(w[0] < w[1], "non-monotonic blocks: {} then {}", w[0], w[1]);
                 }
 
-                // Verify journal entries match model entries field-by-field
+                // Verify journal entries match model entries field-by-field.
                 for (i, expected) in model.deltas.iter().enumerate() {
-                    assert_eq!(
-                        journal.deltas[i].block,
-                        expected.block,
-                        "block mismatch at index {i}"
-                    );
-                    assert_eq!(
-                        journal.deltas[i].reserve0_before,
-                        expected.reserve0_before,
-                        "reserve0 mismatch at index {i}"
-                    );
-                    assert_eq!(
-                        journal.deltas[i].reserve1_before,
-                        expected.reserve1_before,
-                        "reserve1 mismatch at index {i}"
-                    );
+                    assert_eq!(journal.deltas[i].block, expected.block, "block mismatch at index {i}");
+                    assert_eq!(journal.deltas[i].reserve0_before, expected.reserve0_before, "reserve0_before mismatch at index {i}");
+                    assert_eq!(journal.deltas[i].reserve1_before, expected.reserve1_before, "reserve1_before mismatch at index {i}");
+                    assert_eq!(journal.deltas[i].reserve0_after, expected.reserve0_after, "reserve0_after mismatch at index {i}");
+                    assert_eq!(journal.deltas[i].reserve1_after, expected.reserve1_after, "reserve1_after mismatch at index {i}");
                 }
             }
         }
 
-        /// After a sequence of pushes, restoring to any block in the journal
-        /// always returns the correct "before" values that were originally
-        /// pushed for that block.
+        /// After a sequence of pushes (genesis + transitions), restoring to any
+        /// non-first delta's block lands at the PREVIOUS delta and returns its
+        /// landed-at (after) values + its block. Restoring to the first (genesis)
+        /// block errors (no state before registration).
         #[test]
-        fn restore_returns_correct_priors_for_any_block(
+        fn restore_lands_at_previous_delta_after_values(
             deltas in proptest::collection::vec(
                 (1u64..=50u64, 0u64..=1000u64, 0u64..=1000u64),
                 1..20,
             ),
         ) {
-            // Build a monotonic sequence of deltas (skip gaps, handle
-            // same-block by overwriting in a BTreeMap)
+            // Build a monotonic sequence of deltas with distinct before/after.
+            // First push is genesis; subsequent pushes are transitions whose
+            // after-values derive from their block (so they're trackable).
             let mut ordered: Vec<V2BlockDelta> = Vec::new();
-            for (block, r0, r1) in &deltas {
+            for (block, _r0, _r1) in &deltas {
                 if let Some(last) = ordered.last() {
-                    if *block < last.block {
-                        continue; // Skip out-of-order
-                    }
-                    if *block == last.block {
-                        // Same-block replace
-                        let len = ordered.len();
-                        ordered[len - 1].reserve0_before = U256::from(*r0);
-                        ordered[len - 1].reserve1_before = U256::from(*r1);
-                        continue;
+                    if *block <= last.block {
+                        continue; // skip non-monotonic (incl. same-block, which
+                                  // the journal replaces — keep it simple here)
                     }
                 }
+                let after0 = U256::from(*block) * U256::from(7u64);
+                let after1 = U256::from(*block) * U256::from(11u64);
+                let before0 = ordered.last().map_or(after0, |d| d.reserve0_after);
+                let before1 = ordered.last().map_or(after1, |d| d.reserve1_after);
                 ordered.push(V2BlockDelta {
                     block: *block,
-                    reserve0_before: U256::from(*r0),
-                    reserve1_before: U256::from(*r1),
+                    reserve0_before: before0,
+                    reserve1_before: before1,
+                    reserve0_after: after0,
+                    reserve1_after: after1,
                 });
             }
 
@@ -944,37 +1117,42 @@ mod proptests {
 
             let max_depth = 8;
             let mut journal = ReorgJournal::<V2BlockDelta>::new(max_depth);
-
-            // Push all deltas into the journal
             for d in &ordered {
                 journal.push_delta(d.clone());
             }
 
-            // For each block in the journal, verify restore returns
-            // the expected "before" values
-            let expected: Vec<&V2BlockDelta> = if ordered.len() > max_depth {
+            // Only deltas surviving max_depth eviction are in the journal.
+            let in_journal: Vec<&V2BlockDelta> = if ordered.len() > max_depth {
                 ordered.iter().skip(ordered.len() - max_depth).collect()
             } else {
                 ordered.iter().collect()
             };
 
-            // Pick a target block that's in the journal (not the first entry)
-            if expected.len() < 2 {
+            if in_journal.len() < 2 {
                 return Ok(());
             }
 
-            // Restore before each non-first entry's block
-            for entry in expected.iter().skip(1) {
-                let target_block = entry.block;
+            // For each non-first entry, restore(block) lands at the previous
+            // entry and returns its after-values + block.
+            for window in in_journal.windows(2) {
+                let prev = window[0];
+                let entry = window[1];
+                let target = entry.block;
 
-                // Clone the journal so each restore is independent
                 let mut j = journal.clone();
-                let (r0, r1, blk) = j.restore_before_block(target_block);
+                let (r0, r1, blk) = j.restore_before_block(target)
+                    .expect("restore must land at previous delta");
 
-                prop_assert_eq!(r0, entry.reserve0_before);
-                prop_assert_eq!(r1, entry.reserve1_before);
-                prop_assert_eq!(blk, target_block);
+                prop_assert_eq!(r0, prev.reserve0_after);
+                prop_assert_eq!(r1, prev.reserve1_after);
+                prop_assert_eq!(blk, prev.block);
             }
+
+            // Restoring to the journal's first (genesis) delta's block errors:
+            // no state exists before registration (decision 3).
+            let genesis_block = in_journal[0].block;
+            let mut j = journal.clone();
+            prop_assert!(j.restore_before_block(genesis_block).is_err());
         }
 
         /// The journal never exceeds max_depth entries.
@@ -990,7 +1168,7 @@ mod proptests {
             let mut current_block = 0u64;
 
             for (i, (block, r0, r1)) in deltas.iter().copied().enumerate() {
-                // Ensure monotonic progression
+                // Ensure monotonic progression.
                 let effective_block = if block <= current_block {
                     current_block
                 } else {
@@ -1002,6 +1180,8 @@ mod proptests {
                     block: effective_block,
                     reserve0_before: U256::from(r0),
                     reserve1_before: U256::from(r1),
+                    reserve0_after: U256::from(r0),
+                    reserve1_after: U256::from(r1),
                 });
 
                 prop_assert!(
@@ -1011,7 +1191,7 @@ mod proptests {
                     max_depth,
                 );
 
-                // Blocks are strictly increasing
+                // Blocks are strictly increasing.
                 let blocks: Vec<u64> = journal.deltas.iter().map(|d| d.block).collect();
                 for w in blocks.windows(2) {
                     prop_assert!(w[0] < w[1]);

@@ -16,6 +16,7 @@ use pyo3::prelude::*;
 
 use crate::bot_core::py_erc20_token::PyErc20Token;
 use crate::bot_core::py_liquidity_pool::PyLiquidityPool;
+use crate::bot_core::state_history::JournalError;
 use crate::bot_core::{Bot, RegisterV2PoolParams, RegisterV3PoolParams};
 
 /// Encode a byte slice as a lowercase hex string (no "0x" prefix).
@@ -57,7 +58,7 @@ impl PyBot {
     ///
     /// Returns the auto-assigned pool ID.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (address, token0, token1, reserve0, reserve1, gamma_numer0, fee_denom0, gamma_numer1, fee_denom1, factory))]
+    #[pyo3(signature = (address, token0, token1, reserve0, reserve1, gamma_numer0, fee_denom0, gamma_numer1, fee_denom1, factory, update_block=0))]
     fn register_v2_pool(
         &self,
         address: &str,
@@ -70,6 +71,7 @@ impl PyBot {
         gamma_numer1: u64,
         fee_denom1: u64,
         factory: &str,
+        update_block: u64,
     ) -> PyResult<u64> {
         let addr = parse_address(address)?;
         let t0 = parse_address(token0)?;
@@ -87,6 +89,7 @@ impl PyBot {
             fee_token0: (gamma_numer0, fee_denom0),
             fee_token1: (gamma_numer1, fee_denom1),
             factory: fac,
+            update_block,
         }))
     }
 
@@ -250,9 +253,16 @@ impl PyBot {
     }
 
     /// Discard V3 reorg journal deltas earlier than the given block.
+    /// Discard V3 reorg journal deltas earlier than the given block.
+    ///
+    /// No-op if the earliest delta is at/after the target; errors if the target
+    /// is past the newest delta. Raises `ValueError` on error (ADR-005 slice 4).
     #[pyo3(signature = (pool_id, block))]
-    fn v3_discard_before_block(&self, pool_id: u64, block: u64) {
-        self.core.write().v3_discard_before_block(pool_id, block);
+    fn v3_discard_before_block(&self, pool_id: u64, block: u64) -> PyResult<()> {
+        self.core
+            .write()
+            .v3_discard_before_block(pool_id, block)
+            .map_err(journal_err_to_py)
     }
 
     /// Restore V3 pool state prior to a target block.
@@ -384,25 +394,31 @@ impl PyBot {
 
     /// Discard V2 reorg journal deltas earlier than the given block.
     ///
-    /// No-op if the pool ID is not registered.
+    /// No-op if the earliest delta is at/after the target; errors if the
+    /// target is past the newest delta (would remove every known state).
     ///
     /// Raises:
-    ///     `ValueError`: If all deltas are before the target block.
+    ///     `ValueError`: If the target is past the newest delta.
     #[pyo3(signature = (pool_id, block))]
-    fn v2_discard_before_block(&self, pool_id: u64, block: u64) {
-        self.core.write().v2_discard_before_block(pool_id, block);
+    fn v2_discard_before_block(&self, pool_id: u64, block: u64) -> PyResult<()> {
+        self.core
+            .write()
+            .v2_discard_before_block(pool_id, block)
+            .map_err(journal_err_to_py)
     }
 
     /// Restore V2 pool state prior to a target block.
     ///
-    /// Pops reorg journal deltas at/after the target block and restores
-    /// "before" values into the current state.
+    /// Pops reorg journal deltas at/after the target block and restores the
+    /// landed-at state into the current fluid fields.
     ///
     /// Returns `(reserve0, reserve1, block)` as Python ints, or `None`
     /// if the pool ID is not registered.
     ///
     /// Raises:
-    ///     `ValueError`: If no delta exists before the target block.
+    ///     `ValueError`: If the target is at or before the registration block
+    ///         (no state exists before it) — rolling back past registration is
+    ///         a hard error, not a silent no-op (ADR-005 slice 4 decision 3).
     #[pyo3(signature = (pool_id, block))]
     fn v2_restore_before_block(
         &self,
@@ -415,7 +431,9 @@ impl PyBot {
             core.v2_restore_before_block(pool_id, block)
         };
         match result {
-            Some((r0, r1, blk)) => {
+            None => Ok(None),
+            Some(Err(e)) => Err(journal_err_to_py(e)),
+            Some(Ok((r0, r1, blk))) => {
                 let tuple = pyo3::types::PyTuple::new(
                     py,
                     [
@@ -426,7 +444,6 @@ impl PyBot {
                 )?;
                 Ok(Some(tuple.into_any().unbind()))
             }
-            None => Ok(None),
         }
     }
 }
@@ -438,4 +455,19 @@ impl PyBot {
 fn parse_address(s: &str) -> PyResult<Address> {
     s.parse()
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid address '{s}': {e}")))
+}
+
+/// Map a [`JournalError`] to a Python `ValueError` with the `NoPoolStateAvailable`
+///-shaped message the Python pool companion expects (and re-raises as
+/// `NoPoolStateAvailable`). ADR-005 slice 4 decision 2: reorg errors that used
+/// to panic must surface as `ValueError`.
+fn journal_err_to_py(e: JournalError) -> PyErr {
+    match e {
+        JournalError::NoStatePriorToBlock { block } => pyo3::exceptions::PyValueError::new_err(
+            format!("No pool state known prior to block {block}"),
+        ),
+        JournalError::NoStateAtOrAfterBlock { block } => pyo3::exceptions::PyValueError::new_err(
+            format!("No pool state known at or after block {block}"),
+        ),
+    }
 }
