@@ -1,25 +1,27 @@
-//! `PyToken` — thin Python handle over a token address key into `BotCore`.
+//! `PyToken` — thin Python handle over a token address key into `Bot`.
+//!
+//! Shares the same `Arc<RwLock<Bot>>` as the owning `PyBot` (Polars-style:
+//! one Rust-owned `Bot`, many thin Python handles).
 
 use std::sync::Arc;
 
 use alloy::primitives::Address;
 use pyo3::prelude::*;
 
-use crate::bot_core::BotCore;
+use crate::bot_core::Bot;
 
-/// A thin Python handle to a token registered in `BotCore`.
+/// A thin Python handle to a token registered in `Bot`.
 ///
-/// Does not own any state — all data lives in Rust inside `BotCore`.
-/// Property reads cross `PyO3` on every access.
+/// Does not own any state — all data lives in Rust inside `Bot`.
 #[pyclass(name = "Token", skip_from_py_object)]
 pub struct PyToken {
-    core: Arc<parking_lot::Mutex<BotCore>>,
+    core: Arc<parking_lot::RwLock<Bot>>,
     address: Address,
 }
 
 impl PyToken {
     /// Create a new thin token handle.
-    pub const fn new(core: Arc<parking_lot::Mutex<BotCore>>, address: Address) -> Self {
+    pub const fn new(core: Arc<parking_lot::RwLock<Bot>>, address: Address) -> Self {
         Self { core, address }
     }
 }
@@ -36,7 +38,7 @@ impl PyToken {
     /// Token decimals (e.g. 6 for USDC, 18 for WETH).
     #[getter]
     fn decimals(&self) -> PyResult<u8> {
-        let core = self.core.lock();
+        let core = self.core.read();
         let Some(entry) = core.token_entry(&self.address) else {
             return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
                 "token not registered: {}",
@@ -49,7 +51,7 @@ impl PyToken {
     /// Token symbol (e.g. "WETH", "USDC").
     #[getter]
     fn symbol(&self) -> PyResult<String> {
-        let core = self.core.lock();
+        let core = self.core.read();
         let Some(entry) = core.token_entry(&self.address) else {
             return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
                 "token not registered: {}",
@@ -62,7 +64,7 @@ impl PyToken {
     /// Token name (e.g. "Wrapped Ether").
     #[getter]
     fn name(&self) -> PyResult<String> {
-        let core = self.core.lock();
+        let core = self.core.read();
         let Some(entry) = core.token_entry(&self.address) else {
             return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
                 "token not registered: {}",

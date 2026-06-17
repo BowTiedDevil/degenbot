@@ -900,7 +900,7 @@ impl PyUniswapArbEngine {
         let r0 = crate::alloy_py::extract_python_u256(reserve0)?;
         let r1 = crate::alloy_py::extract_python_u256(reserve1)?;
 
-        // ADR-003: V2 state lives in BotCore. The engine delegates registration
+        // ADR-003: V2 state lives in Bot. The engine delegates registration
         // to the core and returns the single `pool_id` (orientation is selected
         // at solve time via `zero_for_one`, not by a separate reverse id).
         Ok(self.engine.lock().register_v2_pool(addr, r0, r1, gamma_numer, fee_denom))
@@ -2267,7 +2267,7 @@ impl PyUniswapArbEngine {
 
         let mut hops: Vec<HopInfo> = Vec::new();
         let engine = self.engine.lock();
-        // ADR-003: V2 state lives in BotCore. One core-lock window covers all
+        // ADR-003: V2 state lives in Bot. One core-lock window covers all
         // V2 lookups in this loop (engine-then-core ordering; V3/V4 state still
         // reads the per-family engines, which are disjoint fields).
         let core = engine.core.lock();
@@ -2416,7 +2416,7 @@ impl PyUniswapArbEngine {
     /// DIAG-a3f2: Dump V2 pool state for a given address.
     /// Returns (`pool_id`, `reserve0`, `reserve1`) or None.
     ///
-    /// ADR-003: V2 state lives in `BotCore` as a single entry per address
+    /// ADR-003: V2 state lives in `Bot` as a single entry per address
     /// (orientation is selected at solve time via `zero_for_one`, not by a
     /// separate reverse key). The former forward/reverse dual keys are gone.
     #[pyo3(signature = (address_hex))]

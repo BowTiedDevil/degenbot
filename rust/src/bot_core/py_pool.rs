@@ -1,10 +1,16 @@
-//! `PyPool` — thin Python handle over a `pool_id` key into `BotCore`.
+//! `PyPool` — thin Python handle over a `pool_id` key into `Bot`.
+//!
+//! Shares the same `Arc<RwLock<Bot>>` as the owning `PyBot` (Polars-style:
+//! one Rust-owned `Bot`, many thin Python handles).
+//!
+//! Owns no state — property reads and calculation calls cross `PyO3` on every
+//! access, locking the shared `Bot` for reading.
 
 use std::sync::Arc;
 
 use pyo3::prelude::*;
 
-use crate::bot_core::BotCore;
+use crate::bot_core::Bot;
 
 /// Encode a byte slice as a lowercase hex string (no "0x" prefix).
 fn bytes_to_hex(bytes: &[u8]) -> String {
@@ -17,19 +23,18 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
     s
 }
 
-/// A thin Python handle to a pool registered in `BotCore`.
+/// A thin Python handle to a pool registered in `Bot`.
 ///
-/// Does not own any state — all data lives in Rust inside `BotCore`.
-/// Property reads cross `PyO3` on every access.
+/// Does not own any state — all data lives in Rust inside `Bot`.
 #[pyclass(name = "Pool", skip_from_py_object)]
 pub struct PyPool {
-    core: Arc<parking_lot::Mutex<BotCore>>,
+    core: Arc<parking_lot::RwLock<Bot>>,
     pool_id: u64,
 }
 
 impl PyPool {
     /// Create a new thin pool handle.
-    pub const fn new(core: Arc<parking_lot::Mutex<BotCore>>, pool_id: u64) -> Self {
+    pub const fn new(core: Arc<parking_lot::RwLock<Bot>>, pool_id: u64) -> Self {
         Self { core, pool_id }
     }
 
@@ -59,7 +64,7 @@ impl PyPool {
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::alloy_py::extract_python_u256(amount_in)?;
         let result = {
-            let core = self.core.lock();
+            let core = self.core.read();
             core.calculate_tokens_out(self.pool_id, zero_for_one, amount)
         };
         let bound = crate::alloy_py::u256_to_py(py, &result)?;
@@ -76,7 +81,7 @@ impl PyPool {
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::alloy_py::extract_python_u256(amount_out)?;
         let result = {
-            let core = self.core.lock();
+            let core = self.core.read();
             core.calculate_tokens_in(self.pool_id, zero_for_one, amount)
         };
         let bound = crate::alloy_py::u256_to_py(py, &result)?;
@@ -102,7 +107,7 @@ impl PyPool {
         };
 
         let result = {
-            let core = self.core.lock();
+            let core = self.core.read();
             core.encode_swap(self.pool_id, zero_for_one, amount, recip)
         };
 

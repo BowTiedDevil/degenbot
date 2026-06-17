@@ -1143,7 +1143,7 @@ mod tests {
         assert!(matches!(path.pools[1].hop_type, HopType::V3));
         assert!(matches!(path.pools[2].hop_type, HopType::V4));
 
-        // Verify we can resolve pool addresses via BotCore (V2) / sub-engines (V3/V4)
+        // Verify we can resolve pool addresses via Bot (V2) / sub-engines (V3/V4)
         let v2_addr = engine.core.lock().pool_address(v2_fwd);
         assert_eq!(v2_addr, Some(Address::from([0x11u8; 20])));
 
@@ -1337,7 +1337,7 @@ mod tests {
         // targeting block 5 rolls back that Sync; the next solve finds no arb
         // and the previously-delivered result expires.
         // Why: ADR-003 reorg path — `removed`-flag detection feeds
-        // `engine.handle_reorg`, which restores BotCore state and emits an
+        // `engine.handle_reorg`, which restores Bot state and emits an
         // `expired` diff against `delivered`. This is the realistic case where
         // the pool's first Sync is at the reorg target block.
         use tokio::sync::mpsc;

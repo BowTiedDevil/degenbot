@@ -29,7 +29,7 @@
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
 | **Pool Adapter** | A protocol object that translates a specific pool type into solver-compatible Hop State; pool `to_hop_state()` is the single source of truth; N-token pools accept `token_in`/`token_out` kwargs for pair selection | Adapter, bridge |
-| **Pool Cache Adapter** *(removed)* | Formerly a subscriber that auto-registered pools in the Rust `RustPoolCache` mirror on state updates; deleted in ADR-003 Slice 4 (Option D — delete, not migrate). The legacy mirror was a second Rust backend alongside the production `BotCore`/`UniswapArbEngine` path | ArbPoolCacheAdapter, cache adapter |
+| **Pool Cache Adapter** *(removed)* | Formerly a subscriber that auto-registered pools in the Rust `RustPoolCache` mirror on state updates; deleted in ADR-003 Slice 4 (Option D — delete, not migrate). The legacy mirror was a second Rust backend alongside the production `Bot`/`UniswapArbEngine` path | ArbPoolCacheAdapter, cache adapter |
 | **SwapEncoder** | The swap encoding layer: each `SwapAmounts` subclass self-encodes into an `EncodedCall`; the pipeline function `generate_payloads()` wires encoding → approval → composition | Calldata builder, payload encoder |
 | **EncodedCall** | A minimal EVM call fragment (`to`, `data`, `value`) ready for on-chain submission; produced by `SwapAmounts.encode()` | Payload, call tuple |
 | **ApprovalStrategy** | A pluggable protocol that injects ERC-20 approval calls before swap calls | Approval injection |

@@ -20,7 +20,7 @@ impl UniswapEngine {
 
         if *topic == crate::optimizers::v2_sync_decoder::V2_SYNC_TOPIC {
             if let Some(event) = crate::optimizers::v2_sync_decoder::decode_sync_log(log) {
-                // ADR-003: V2 state lives in BotCore. apply under the core lock
+                // ADR-003: V2 state lives in Bot. apply under the core lock
                 // (nested inside the engine lock the pump already holds —
                 // engine-then-core ordering). The returned single pool_id marks
                 // every path using this pool in EITHER direction dirty.
@@ -35,7 +35,7 @@ impl UniswapEngine {
             }
         } else if *topic == crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC {
             if let Some(event) = crate::bot_core::v3_swap_decoder::decode_v3_swap_log(log) {
-                // ADR-003: V3 state lives in BotCore; apply under the core lock
+                // ADR-003: V3 state lives in Bot; apply under the core lock
                 // (nested inside the engine lock the pump already holds).
                 if let Some(pool_id) = self.core.lock().apply_v3_swap(
                     event.pool_address,
@@ -112,7 +112,7 @@ impl UniswapEngine {
     /// timer or block boundary logic.
     pub fn solve_dirty(&mut self, block_number: u64, metadata: &BlockMetadata) {
         // Expire stale buffered events in the V3/V4 buffers (ADR-003: both
-        // now live on BotCore).
+        // now live on Bot).
         self.core.lock().expire_v3_buffered(block_number);
         self.core.lock().expire_v4_buffered(block_number);
 
@@ -166,7 +166,7 @@ impl UniswapEngine {
     pub fn handle_reorg(&mut self, target_block: u64) {
         // 1. Restore all V2 pool state to before the target. V3/V4 state still
         //    lives on the per-family engines (Slices 2/3 migrate them + their
-        //    reorg handling into BotCore).
+        //    reorg handling into Bot).
         self.core.lock().restore_all_pools_before_block(target_block);
 
         // 2. Invalidate resolved hop states — they were derived from pre-restore
@@ -253,7 +253,7 @@ impl UniswapEngine {
         block_number: u64,
         metadata: &BlockMetadata,
     ) {
-        // Apply V2+V3 updates to BotCore and collect affected pool ids (ADR-003)
+        // Apply V2+V3 updates to Bot and collect affected pool ids (ADR-003)
         let mut v2_affected = HashSet::new();
         let mut v3_affected = HashSet::new();
         {

@@ -1,12 +1,12 @@
-"""Tests for BotCore — Rust-owned state with thin Python handles."""
+"""Tests for PyBot — Rust-owned state with thin Python handles."""
 
 from __future__ import annotations
 
-from degenbot.degenbot_rs import BotCore, Pool
+from degenbot.degenbot_rs import PyBot, Pool
 
 
-class TestBotCoreV2Pool:
-    """Test V2 pool registration, update, and calculation through BotCore."""
+class TestPyBotV2Pool:
+    """Test V2 pool registration, update, and calculation through PyBot."""
 
     POOL_ADDR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     TOKEN0_ADDR = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -14,7 +14,7 @@ class TestBotCoreV2Pool:
     FACTORY_ADDR = "0xdddddddddddddddddddddddddddddddddddddddd"
 
     def test_register_v2_pool(self):
-        core = BotCore()
+        core = PyBot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -32,7 +32,7 @@ class TestBotCoreV2Pool:
 
     def test_calculate_tokens_out(self):
         """Verify V2 constant product calculation matches Python reference."""
-        core = BotCore()
+        core = PyBot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -52,7 +52,7 @@ class TestBotCoreV2Pool:
 
     def test_calculate_tokens_out_reverse(self):
         """Verify reverse direction calculation."""
-        core = BotCore()
+        core = PyBot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -73,7 +73,7 @@ class TestBotCoreV2Pool:
 
     def test_update_v2_pool_changes_result(self):
         """Verify that updating reserves changes calculation results."""
-        core = BotCore()
+        core = PyBot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -105,7 +105,7 @@ class TestBotCoreV2Pool:
 
     def test_calculate_tokens_in(self):
         """Verify V2 exact-out calculation matches Python reference."""
-        core = BotCore()
+        core = PyBot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -130,7 +130,7 @@ class TestBotCoreV2Pool:
 
     def test_calculate_tokens_out_large_values(self):
         """Verify calculation with realistic on-chain amounts (uint256 scale)."""
-        core = BotCore()
+        core = PyBot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -155,7 +155,7 @@ class TestBotCoreV2Pool:
 
     def test_zero_amount_in_returns_zero(self):
         """Zero input should return zero output."""
-        core = BotCore()
+        core = PyBot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -174,21 +174,21 @@ class TestBotCoreV2Pool:
 
     def test_unknown_pool_id_returns_zero(self):
         """Unknown pool ID should return zero (not raise)."""
-        core = BotCore()
+        core = PyBot()
         result = core.calculate_tokens_out(999, zero_for_one=True, amount_in=100)
         assert result == 0
 
 
 class TestPoolHandle:
-    """Test the thin Pool handle over BotCore."""
+    """Test the thin Pool handle over PyBot."""
 
     POOL_ADDR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     TOKEN0_ADDR = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     TOKEN1_ADDR = "0xcccccccccccccccccccccccccccccccccccccccc"
     FACTORY_ADDR = "0xdddddddddddddddddddddddddddddddddddddddd"
 
-    def _make_core_with_pool(self) -> tuple[BotCore, int]:
-        core = BotCore()
+    def _make_core_with_pool(self) -> tuple[PyBot, int]:
+        core = PyBot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -212,11 +212,11 @@ class TestPoolHandle:
 
     def test_get_pool_unknown_returns_none(self):
         """get_pool() returns None for unknown pool ID."""
-        core = BotCore()
+        core = PyBot()
         assert core.get_pool(999) is None
 
     def test_pool_calculate_tokens_out(self):
-        """Pool handle delegates calculation to BotCore."""
+        """Pool handle delegates calculation to PyBot."""
         core, pool_id = self._make_core_with_pool()
         pool = core.get_pool(pool_id)
         assert pool is not None
@@ -226,7 +226,7 @@ class TestPoolHandle:
         assert result == 181
 
     def test_pool_calculate_tokens_in(self):
-        """Pool handle delegates exact-out calculation to BotCore."""
+        """Pool handle delegates exact-out calculation to PyBot."""
         core, pool_id = self._make_core_with_pool()
         pool = core.get_pool(pool_id)
         assert pool is not None
@@ -258,13 +258,13 @@ class TestPoolHandle:
 
 
 class TestTokenHandle:
-    """Test the thin Token handle over BotCore."""
+    """Test the thin Token handle over PyBot."""
 
     TOKEN_ADDR = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 
     def test_register_and_get_token(self):
         """Can register and retrieve a token handle."""
-        core = BotCore()
+        core = PyBot()
         token = core.register_token(
             address=self.TOKEN_ADDR,
             name="Wrapped Ether",
@@ -273,7 +273,7 @@ class TestTokenHandle:
             chain_id=1,
         )
         # ADR-003 Slice 5: register_token returns the PyToken handle; the
-        # getters read Rust-owned metadata back through BotCore's token map.
+        # getters read Rust-owned metadata back through PyBot's token map.
         assert token is not None
         assert token.address == self.TOKEN_ADDR  # alloy preserves checksum case
         assert token.symbol == "WETH"
@@ -287,12 +287,12 @@ class TestTokenHandle:
 
     def test_get_unknown_token_returns_none(self):
         """get_token() returns None for unregistered address."""
-        core = BotCore()
+        core = PyBot()
         assert core.get_token(self.TOKEN_ADDR) is None
 
 
 class TestV2SwapEncoding:
-    """Test V2 swap calldata encoding through BotCore."""
+    """Test V2 swap calldata encoding through PyBot."""
 
     POOL_ADDR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     TOKEN0_ADDR = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -300,8 +300,8 @@ class TestV2SwapEncoding:
     FACTORY_ADDR = "0xdddddddddddddddddddddddddddddddddddddddd"
     RECIPIENT = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
-    def _make_core_with_pool(self) -> tuple[BotCore, int]:
-        core = BotCore()
+    def _make_core_with_pool(self) -> tuple[PyBot, int]:
+        core = PyBot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -372,7 +372,7 @@ class TestV2SwapEncoding:
 
     def test_encode_swap_unknown_pool_returns_none(self):
         """encode_swap returns None for unknown pool ID."""
-        core = BotCore()
+        core = PyBot()
         result = core.encode_swap(999, zero_for_one=True, amount_out=100, recipient=self.RECIPIENT)
         assert result is None
 
@@ -401,15 +401,15 @@ class TestV2SwapEncoding:
 
 
 class TestV2ReorgJournal:
-    """Test V2 pool state history through BotCore."""
+    """Test V2 pool state history through PyBot."""
 
     POOL_ADDR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     TOKEN0_ADDR = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     TOKEN1_ADDR = "0xcccccccccccccccccccccccccccccccccccccccc"
     FACTORY_ADDR = "0xdddddddddddddddddddddddddddddddddddddddd"
 
-    def _make_core_with_pool(self) -> tuple[BotCore, int]:
-        core = BotCore()
+    def _make_core_with_pool(self) -> tuple[PyBot, int]:
+        core = PyBot()
         pool_id = core.register_v2_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -497,17 +497,17 @@ class TestV2ReorgJournal:
 
     def test_journal_len_unknown_pool_returns_zero(self):
         """v2_journal_len returns 0 for unknown pool ID."""
-        core = BotCore()
+        core = PyBot()
         assert core.v2_journal_len(999) == 0
 
     def test_restore_unknown_pool_returns_none(self):
         """v2_restore_before_block returns None for unknown pool ID."""
-        core = BotCore()
+        core = PyBot()
         assert core.v2_restore_before_block(999, 10) is None
 
 
 class TestV3PoolState:
-    """Test V3 pool registration, update, and reorg journal through BotCore."""
+    """Test V3 pool registration, update, and reorg journal through PyBot."""
 
     POOL_ADDR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     TOKEN0_ADDR = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -517,8 +517,8 @@ class TestV3PoolState:
     # sqrt(1.0) * 2^96 ≈ 79228162514264337593543950336
     SQRT_PRICE_X96 = 79228162514264337593543950336
 
-    def _make_core_with_v3_pool(self) -> tuple[BotCore, int]:
-        core = BotCore()
+    def _make_core_with_v3_pool(self) -> tuple[PyBot, int]:
+        core = PyBot()
         pool_id = core.register_v3_pool(
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
@@ -539,8 +539,8 @@ class TestV3PoolState:
         assert core.pool_count() == 1
 
     def test_register_v3_and_v2_coexist(self):
-        """V2 and V3 pools can coexist in the same BotCore."""
-        core = BotCore()
+        """V2 and V3 pools can coexist in the same PyBot."""
+        core = PyBot()
         v2_id = core.register_v2_pool(
             address="0x1111111111111111111111111111111111111111",
             token0=self.TOKEN0_ADDR,
@@ -635,12 +635,12 @@ class TestV3PoolState:
 
     def test_v3_journal_len_unknown_pool_returns_zero(self):
         """v3_journal_len returns 0 for unknown pool ID."""
-        core = BotCore()
+        core = PyBot()
         assert core.v3_journal_len(999) == 0
 
     def test_v3_restore_unknown_pool_returns_none(self):
         """v3_restore_before_block returns None for unknown pool ID."""
-        core = BotCore()
+        core = PyBot()
         assert core.v3_restore_before_block(999, 10) is None
 
     def test_v2_journal_methods_on_v3_pool_return_zero(self):
@@ -650,7 +650,7 @@ class TestV3PoolState:
 
     def test_v3_journal_methods_on_v2_pool_return_zero(self):
         """V3 journal methods correctly return 0/None for V2 pools."""
-        core = BotCore()
+        core = PyBot()
         pool_id = core.register_v2_pool(
             address="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             token0=self.TOKEN0_ADDR,

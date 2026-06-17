@@ -1,13 +1,21 @@
-//! `PyO3` wrappers for `BotCore` — thin Python handles over Rust-owned state.
+//! `PyO3` wrappers for `Bot` — thin Python handle over Rust-owned state.
+//!
+//! Polars-style middle layer:
+//! - Rust [`Bot`] (in [`crate::bot_core`]) is the pure-Rust state owner.
+//! - [`PyBot`] is the `PyO3` wrapper that holds an `Arc<parking_lot::RwLock<Bot>>`,
+//!   so multiple Python handles (`PyBot`, [`PyPool`], [`PyToken`]) can share one
+//!   Rust-owned `Bot` and read it concurrently while serialising writes.
+//! - The Python `Bot` session class owns a `PyBot` instance and delegates
+//!   Rust-owned state through it.
 
 use std::sync::Arc;
 
 use alloy::primitives::Address;
 use pyo3::prelude::*;
 
-use crate::bot_core::{BotCore, RegisterV2PoolParams, RegisterV3PoolParams};
 use crate::bot_core::py_pool::PyPool;
 use crate::bot_core::py_token::PyToken;
+use crate::bot_core::{Bot, RegisterV2PoolParams, RegisterV3PoolParams};
 
 /// Encode a byte slice as a lowercase hex string (no "0x" prefix).
 fn bytes_to_hex(bytes: &[u8]) -> String {
@@ -21,24 +29,26 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// PyBotCore — thin handle over Arc<BotCore>
+// PyBot — thin handle over Arc<RwLock<Bot>>
 // ---------------------------------------------------------------------------
 
 /// The single owner of all runtime state.
 ///
-/// Python constructs `BotCore`, registers pools/tokens, then reads results.
-/// All state lives in Rust; Python holds a thin handle.
-#[pyclass(name = "BotCore", skip_from_py_object)]
-pub struct PyBotCore {
-    core: Arc<parking_lot::Mutex<BotCore>>,
+/// Python constructs a `PyBot` (or receives a shared handle), registers
+/// pools/tokens, then reads results. All state lives in Rust; Python holds a
+/// thin handle. The wrapped `RwLock<Bot>` allows many concurrent readers
+/// (e.g. per-pool `PyPool` reads) while serialising mutation.
+#[pyclass(skip_from_py_object)]
+pub struct PyBot {
+    core: Arc<parking_lot::RwLock<Bot>>,
 }
 
 #[pymethods]
-impl PyBotCore {
+impl PyBot {
     #[new]
     fn new() -> Self {
         Self {
-            core: Arc::new(parking_lot::Mutex::new(BotCore::new())),
+            core: Arc::new(parking_lot::RwLock::new(Bot::new())),
         }
     }
 
@@ -67,7 +77,7 @@ impl PyBotCore {
         let r0 = crate::alloy_py::extract_python_u256(reserve0)?;
         let r1 = crate::alloy_py::extract_python_u256(reserve1)?;
 
-        Ok(self.core.lock().register_v2_pool(&RegisterV2PoolParams {
+        Ok(self.core.write().register_v2_pool(&RegisterV2PoolParams {
             address: addr,
             token0: t0,
             token1: t1,
@@ -92,7 +102,7 @@ impl PyBotCore {
         let r0 = crate::alloy_py::extract_python_u256(reserve0)?;
         let r1 = crate::alloy_py::extract_python_u256(reserve1)?;
 
-        self.core.lock().update_v2_pool(addr, r0, r1, block_number);
+        self.core.write().update_v2_pool(addr, r0, r1, block_number);
         Ok(())
     }
 
@@ -115,7 +125,7 @@ impl PyBotCore {
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::alloy_py::extract_python_u256(amount_in)?;
         let result = {
-            let core = self.core.lock();
+            let core = self.core.read();
             core.calculate_tokens_out(pool_id, zero_for_one, amount)
         };
         let bound = crate::alloy_py::u256_to_py(py, &result)?;
@@ -141,7 +151,7 @@ impl PyBotCore {
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::alloy_py::extract_python_u256(amount_out)?;
         let result = {
-            let core = self.core.lock();
+            let core = self.core.read();
             core.calculate_tokens_in(pool_id, zero_for_one, amount)
         };
         let bound = crate::alloy_py::u256_to_py(py, &result)?;
@@ -150,7 +160,7 @@ impl PyBotCore {
 
     /// Number of registered pools.
     fn pool_count(&self) -> usize {
-        self.core.lock().pool_count()
+        self.core.read().pool_count()
     }
 
     /// Get a thin Pool handle for the given pool ID.
@@ -161,8 +171,7 @@ impl PyBotCore {
     /// Returns:
     ///     A `Pool` handle, or `None` if the pool ID is not registered.
     fn get_pool(&self, pool_id: u64) -> Option<PyPool> {
-        let core = self.core.lock();
-        if core.has_pool(pool_id) {
+        if self.core.read().has_pool(pool_id) {
             Some(PyPool::new(Arc::clone(&self.core), pool_id))
         } else {
             None
@@ -194,7 +203,7 @@ impl PyBotCore {
         // liquidity is uint128 — extracted as U256 then narrowed.
         let liq = crate::alloy_py::extract_python_u256(liquidity)?.to::<u128>();
 
-        Ok(self.core.lock().register_v3_pool(&RegisterV3PoolParams {
+        Ok(self.core.write().register_v3_pool(&RegisterV3PoolParams {
             address: addr,
             token0: t0,
             token1: t1,
@@ -226,7 +235,9 @@ impl PyBotCore {
         let spx = crate::alloy_py::extract_python_u256(sqrt_price_x96)?;
         let liq = crate::alloy_py::extract_python_u256(liquidity)?.to::<u128>();
 
-        self.core.lock().update_v3_pool(addr, spx, liq, tick, block_number, vec![]);
+        self.core
+            .write()
+            .update_v3_pool(addr, spx, liq, tick, block_number, vec![]);
         Ok(())
     }
 
@@ -234,13 +245,13 @@ impl PyBotCore {
     ///
     /// Returns 0 if the pool ID is not registered or is not a V3 pool.
     fn v3_journal_len(&self, pool_id: u64) -> usize {
-        self.core.lock().v3_journal_len(pool_id)
+        self.core.read().v3_journal_len(pool_id)
     }
 
     /// Discard V3 reorg journal deltas earlier than the given block.
     #[pyo3(signature = (pool_id, block))]
     fn v3_discard_before_block(&self, pool_id: u64, block: u64) {
-        self.core.lock().v3_discard_before_block(pool_id, block);
+        self.core.write().v3_discard_before_block(pool_id, block);
     }
 
     /// Restore V3 pool state prior to a target block.
@@ -254,7 +265,10 @@ impl PyBotCore {
         pool_id: u64,
         block: u64,
     ) -> PyResult<Option<Py<PyAny>>> {
-        let result = self.core.lock().v3_restore_before_block(pool_id, block);
+        let result = {
+            let mut core = self.core.write();
+            core.v3_restore_before_block(pool_id, block)
+        };
         match result {
             Some(restore) => {
                 // `restore.scalar_priors` is always `Some` post-restore: the
@@ -301,9 +315,13 @@ impl PyBotCore {
         chain_id: u64,
     ) -> PyResult<PyToken> {
         let addr = parse_address(address)?;
-        self.core
-            .lock()
-            .register_token(addr, name.to_string(), symbol.to_string(), decimals, chain_id);
+        self.core.write().register_token(
+            addr,
+            name.to_string(),
+            symbol.to_string(),
+            decimals,
+            chain_id,
+        );
         Ok(PyToken::new(Arc::clone(&self.core), addr))
     }
 
@@ -316,8 +334,7 @@ impl PyBotCore {
     ///     A `Token` handle, or `None` if the address is not registered.
     fn get_token(&self, address: &str) -> PyResult<Option<PyToken>> {
         let addr = parse_address(address)?;
-        let core = self.core.lock();
-        if core.has_token(&addr) {
+        if self.core.read().has_token(&addr) {
             Ok(Some(PyToken::new(Arc::clone(&self.core), addr)))
         } else {
             Ok(None)
@@ -346,7 +363,7 @@ impl PyBotCore {
         let recip = parse_address(recipient)?;
 
         let result = {
-            let core = self.core.lock();
+            let core = self.core.read();
             core.encode_swap(pool_id, zero_for_one, amount, recip)
         };
 
@@ -361,7 +378,7 @@ impl PyBotCore {
     ///
     /// Returns 0 if the pool ID is not registered.
     fn v2_journal_len(&self, pool_id: u64) -> usize {
-        self.core.lock().v2_journal_len(pool_id)
+        self.core.read().v2_journal_len(pool_id)
     }
 
     /// Discard V2 reorg journal deltas earlier than the given block.
@@ -372,7 +389,7 @@ impl PyBotCore {
     ///     `ValueError`: If all deltas are before the target block.
     #[pyo3(signature = (pool_id, block))]
     fn v2_discard_before_block(&self, pool_id: u64, block: u64) {
-        self.core.lock().v2_discard_before_block(pool_id, block);
+        self.core.write().v2_discard_before_block(pool_id, block);
     }
 
     /// Restore V2 pool state prior to a target block.
@@ -392,7 +409,10 @@ impl PyBotCore {
         pool_id: u64,
         block: u64,
     ) -> PyResult<Option<Py<PyAny>>> {
-        let result = self.core.lock().v2_restore_before_block(pool_id, block);
+        let result = {
+            let mut core = self.core.write();
+            core.v2_restore_before_block(pool_id, block)
+        };
         match result {
             Some((r0, r1, blk)) => {
                 let tuple = pyo3::types::PyTuple::new(
@@ -415,7 +435,6 @@ impl PyBotCore {
 // ---------------------------------------------------------------------------
 
 fn parse_address(s: &str) -> PyResult<Address> {
-    s.parse().map_err(|e| {
-        pyo3::exceptions::PyValueError::new_err(format!("Invalid address '{s}': {e}"))
-    })
+    s.parse()
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid address '{s}': {e}")))
 }
