@@ -356,13 +356,10 @@ impl BotCore {
     /// Mirrors the dissolved `V3BlockEngine::apply_swap`: overlays `tick_priors`
     /// into `tick_data` (the live pump path passes `&[]` — swaps don't modify
     /// `tick_data`), sets the scalar fields, invalidates the tick-range cache,
-    /// and returns the affected `pool_id`. Returns `None` if the pool is not
-    /// registered (a no-op). I/O-free; the engine calls this under the core
-    /// lock inside the engine lock (engine-then-core ordering).
-    ///
-    /// Note: scalar reorg journaling for V3 swaps lands in S2b alongside the
-    /// `handle_reorg` V3 extension; this S2a step is a pure structural
-    /// relocation (behavior-identical to the former engine method).
+    /// journals the prior scalars (and any provided per-tick priors) for reorg
+    /// rollback, and returns the affected `pool_id`. Returns `None` if the pool
+    /// is not registered (a no-op). I/O-free; the engine calls this under the
+    /// core lock inside the engine lock (engine-then-core ordering).
     pub fn apply_v3_swap(
         &mut self,
         pool_address: Address,
@@ -378,10 +375,33 @@ impl BotCore {
             return None;
         };
 
-        // Apply tick priors overlay to tick_data (live path passes `&[]`).
-        for &(tick_index, ref prior) in tick_priors {
-            state.tick_data.insert(tick_index, prior.clone());
+        // Capture priors for any ticks being mutated by this event, so reorg
+        // rollback can reverse-apply them. A tick that had no prior entry gets
+        // `liquidity_gross_before: None` (on rollback, delete it).
+        let mut journaled_priors: Vec<(i32, TickBefore)> =
+            Vec::with_capacity(tick_priors.len());
+        for &(tick_index, ref new_info) in tick_priors {
+            let prior = state.tick_data.get(&tick_index).cloned();
+            journaled_priors.push((
+                tick_index,
+                TickBefore {
+                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
+                    liquidity_net_before: prior
+                        .as_ref()
+                        .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
+                },
+            ));
+            state.tick_data.insert(tick_index, new_info.clone());
         }
+
+        // Journal scalar priors (swap scalars change on every Swap).
+        state.journal.push_delta(V3BlockDelta {
+            block: block_number,
+            sqrt_price_x96_before: state.sqrt_price_x96,
+            liquidity_before: state.liquidity,
+            tick_before: state.tick,
+            tick_priors: journaled_priors,
+        });
 
         state.sqrt_price_x96 = sqrt_price_x96;
         state.liquidity = liquidity;
@@ -426,12 +446,42 @@ impl BotCore {
         let Some(PoolEntry::V3(state)) = self.pools.get_mut(&pool_id) else {
             return None;
         };
+
+        // Capture tick priors before mutation so reorg rollback can reverse-
+        // apply. A tick that had no prior entry (newly initialized by this
+        // Mint) gets `liquidity_gross_before: None` (on rollback, delete it).
+        let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
+        for &tick_idx in &[tick_lower, tick_upper] {
+            let prior = state.tick_data.get(&tick_idx).cloned();
+            journaled_priors.push((
+                tick_idx,
+                TickBefore {
+                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
+                    liquidity_net_before: prior
+                        .as_ref()
+                        .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
+                },
+            ));
+        }
+
         crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
             &mut state.tick_data,
             tick_lower,
             tick_upper,
             liquidity_delta,
         );
+
+        // Journal: Mint/Burn mutate tick_data only, NOT the active `liquidity`
+        // scalar (that changes only on Swap's tick-crossing). Record scalar
+        // priors unchanged and the two tick priors for reverse-apply.
+        state.journal.push_delta(V3BlockDelta {
+            block: block_number,
+            sqrt_price_x96_before: state.sqrt_price_x96,
+            liquidity_before: state.liquidity,
+            tick_before: state.tick,
+            tick_priors: journaled_priors,
+        });
+
         state.update_block = block_number;
         state.invalidate_tick_range_cache();
         Some(pool_id)
@@ -816,19 +866,40 @@ impl BotCore {
         let pool_ids: Vec<u64> = self.pools.keys().copied().collect();
         let mut restored = 0usize;
         for pool_id in pool_ids {
-            let Some(PoolEntry::V2(state)) = self.pools.get_mut(&pool_id) else {
-                continue; // V3 (and future V4) — handled in later slices
+            // Peek the per-pool journal depth without a mutable borrow. Only
+            // pools with a delta at/after the reorg target need rollback;
+            // untouched pools keep their current state (idempotent restore).
+            let needs_restore = match self.pools.get(&pool_id) {
+                Some(PoolEntry::V2(state)) => {
+                    state.journal.newest_block().is_some_and(|b| b >= target)
+                }
+                Some(PoolEntry::V3(state)) => {
+                    state.journal.newest_block().is_some_and(|b| b >= target)
+                }
+                None => false,
             };
-            // Only restore pools with a delta at/after the reorg target;
-            // untouched pools keep their current state.
-            if state.journal.newest_block().is_none_or(|b| b < target) {
+            if !needs_restore {
                 continue;
             }
-            let (r0, r1, blk) = state.journal.restore_before_block(target);
-            state.reserve0 = r0;
-            state.reserve1 = r1;
-            state.update_block = blk;
-            restored += 1;
+
+            let did_restore = match self.pools.get_mut(&pool_id) {
+                Some(PoolEntry::V2(state)) => {
+                    let (r0, r1, blk) = state.journal.restore_before_block(target);
+                    state.reserve0 = r0;
+                    state.reserve1 = r1;
+                    state.update_block = blk;
+                    true
+                }
+                Some(PoolEntry::V3(_)) => {
+                    // Reuse the existing V3 restore path: scalars + reverse-
+                    // applied tick priors + cache invalidation.
+                    self.v3_restore_before_block(pool_id, target).is_some()
+                }
+                None => false,
+            };
+            if did_restore {
+                restored += 1;
+            }
         }
         restored
     }
@@ -887,6 +958,7 @@ impl BotCore {
         state.liquidity = result.liquidity_before;
         state.tick = result.tick_before;
         state.update_block = result.block;
+        state.invalidate_tick_range_cache();
 
         // Reverse-apply tick priors
         for (tick_idx, tick_before) in &result.tick_priors {

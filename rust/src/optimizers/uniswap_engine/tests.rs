@@ -1432,4 +1432,95 @@ mod tests {
             batch.expired
         );
     }
+
+    #[test]
+    fn handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state() {
+        // What: a V3 pool gets a Swap (scalar state change at block 5) and a
+        // Mint (tick_data mutation at block 6). A reorg targeting block 5
+        // must roll both back: swap scalars return to registration values, and
+        // the Mint-initialized tick is removed from tick_data.
+        // Why: ADR-003 — V3 reorg rollback reaches the live hot path for the
+        // first time (S2b). apply_v3_swap journals scalars; the restore path
+        // pops them + reverse-applies tick priors.
+        use crate::bot_core::TickInfo;
+        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+        use alloy::primitives::{I256, U128};
+
+        let engine = UniswapEngine::new();
+        let pool_addr = Address::from([0x55u8; 20]);
+
+        // Register a V3 pool at tick 0, 1:1 price, one initialized tick at +60
+        // (so the post-Mint state at block 6 can show a *second* tick).
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            -60,
+            TickInfo {
+                liquidity_gross: U128::from(100),
+                liquidity_net: I256::try_from(100i128).unwrap(),
+            },
+        );
+        let pool_id = engine.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
+            address: pool_addr,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data,
+            update_block: 0,
+            coverage: PoolTickCoverage::Tracked,
+        });
+
+        // Capture the registration scalar state.
+        let reg_sp = U256::from(79_228_162_514_264_337_593_543_950_336_u128);
+        let reg_liq = 1_000_000u128;
+        let reg_tick = 0i32;
+        let reg_tick_count = 1usize;
+
+        // Swap at block 5: changes scalars only (tick_data untouched on the
+        // live path — swaps don't mutate tick_data per V3 spec).
+        let swapped_sp = (reg_sp + U256::from(1u128)) << 90;
+        let swapped_liq = 2_000_000u128;
+        let swapped_tick = 60i32;
+        engine.core.lock().apply_v3_swap(
+            pool_addr, swapped_sp, swapped_liq, swapped_tick, 5, &[],
+        );
+
+        // Mint at block 6: adds liquidity at [+60, +120].
+        engine.core.lock().apply_v3_liquidity_update(
+            pool_addr, 60, 120, 500_i128, 6,
+        );
+
+        {
+            let core = engine.core.lock();
+            let s = core.get_v3_pool(pool_id).expect("v3 pool registered");
+            assert_eq!(s.sqrt_price_x96, swapped_sp, "swap applied at block 5");
+            assert_eq!(s.liquidity, swapped_liq);
+            assert_eq!(s.tick, swapped_tick);
+            assert_eq!(s.tick_data.len(), reg_tick_count + 2, "mint added two ticks");
+            assert!(s.tick_data.contains_key(&60) && s.tick_data.contains_key(&120));
+        }
+
+        // Reorg back to block 5: rolls the block-6 Mint (removes ticks 60/120)
+        // AND the block-5 Swap (restores registration scalars). Restore is
+        // idempotent for pools untouched by the fork.
+        let restored = engine.core.lock().restore_all_pools_before_block(5);
+        assert_eq!(restored, 1, "the single registered V3 pool was rolled back");
+
+        {
+            let core = engine.core.lock();
+            let s = core.get_v3_pool(pool_id).expect("v3 pool still registered");
+            assert_eq!(s.sqrt_price_x96, reg_sp, "swap rolled back to registration scalars");
+            assert_eq!(s.liquidity, reg_liq);
+            assert_eq!(s.tick, reg_tick);
+            assert_eq!(
+                s.tick_data.len(), reg_tick_count,
+                "mint-initialized ticks removed on rollback"
+            );
+            assert!(!s.tick_data.contains_key(&60) && !s.tick_data.contains_key(&120));
+        }
+    }
 }

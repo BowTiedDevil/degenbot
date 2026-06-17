@@ -322,27 +322,51 @@ impl ReorgJournal<V3BlockDelta> {
             };
         }
 
-        // Pop all deltas at or after the target block. Includes the case where
-        // the pool's only delta IS at the target block (earliest == block); the
-        // emptiness guard prevents indexing an empty deque once all are popped.
-        let mut last_popped: Option<V3BlockDelta> = None;
+        // Pop all deltas at or after the target block, accumulating tick
+        // priors from EACH popped delta (in pop order: newest → oldest). V3
+        // deltas are PARTIAL — each carries priors only for the ticks it
+        // modified — so reverse-applying just the last popped's priors (the V2
+        // pattern, where each delta carries full state) would silently drop
+        // intervening deltas' tick mutations. Accumulate across all popped
+        // deltas and return the oldest popped delta's scalar priors (the state
+        // just before the target block).
+        //
+        // De-duplicate by tick index as we accumulate: if two popped deltas
+        // both modified the same tick, the oldest popped delta's prior wins
+        // (it is the "before" value of the earliest mutation in the rolled-
+        // back range). We pop newest→oldest, so a later-iterated (older) entry
+        // overrides an earlier-iterated (newer) one.
+        let mut accumulated_priors: std::collections::HashMap<i32, TickBefore> =
+            std::collections::HashMap::new();
+        let mut oldest_popped: Option<V3BlockDelta> = None;
         while !self.deltas.is_empty()
             && self.deltas[self.deltas.len() - 1].block() >= block
         {
-            last_popped = self.deltas.pop_back();
+            let popped = self.deltas.pop_back().expect("checked non-empty above");
+            for (tick_idx, tick_before) in &popped.tick_priors {
+            accumulated_priors.insert(*tick_idx, tick_before.clone());
+            }
+            oldest_popped = Some(popped);
         }
 
         // SAFETY: newest >= block (we skipped the early return), so at least
         // one delta was popped.
-        let Some(popped) = last_popped else {
+        let Some(popped) = oldest_popped else {
             unreachable!("newest >= block guarantees at least one pop");
         };
+
+        // accumulated_priors holds the tick-level "before" state across all
+        // rolled-back deltas. Preserve pop-order (newest→oldest, oldest wins)
+        // by reverse-iterating the accumulated map in insertion-overwrite
+        // order — HashMap has no stable order, so return them grouped; the
+        // caller applies each (`liquidity_gross_before: None` → remove tick).
+        let tick_priors = accumulated_priors.into_iter().collect::<Vec<_>>();
 
         V3RestoreResult {
             sqrt_price_x96_before: popped.sqrt_price_x96_before,
             liquidity_before: popped.liquidity_before,
             tick_before: popped.tick_before,
-            tick_priors: popped.tick_priors,
+            tick_priors,
             block: popped.block,
         }
     }
