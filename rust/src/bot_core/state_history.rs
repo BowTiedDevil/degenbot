@@ -56,10 +56,31 @@ impl BlockDelta for V2BlockDelta {
 // V3 delta types
 // ---------------------------------------------------------------------------
 
+/// "Before" values for the slot0 head scalars (`sqrt_price_x96`, `liquidity`, `tick`)
+/// captured at the moment a block's update was applied. Used for reorg rollback
+/// to restore the pre-update scalar state.
+///
+/// `Option<ScalarPriors>` in [`V3BlockDelta`] is `None` for tick-only events
+/// (Mint/Burn V3, `ModifyLiquidity` V4) — those don't change the slot0 head
+/// scalars, so the journal carries no scalar priors for them and
+/// `restore_before_block` skips the scalar write-back (the current scalars are
+/// already correct). See `docs/adr/ADR-004-cl-tickmap-typed-boundary.md` and the
+/// {Slot0 Head / Tick Bookkeeping Map} term in `rust/CONTEXT.md`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScalarPriors {
+    /// Sqrt price X96 *before* this block's update.
+    pub sqrt_price_x96_before: alloy::primitives::U256,
+    /// Active liquidity *before* this block's update.
+    pub liquidity_before: u128,
+    /// Current tick *before* this block's update.
+    pub tick_before: i32,
+}
+
 /// Per-block delta for a V3 pool.
 ///
-/// Stores scalar fields (`sqrt_price`, `liquidity`, `tick`) **before** this
-/// block's update, plus per-tick priors for any ticks that were modified.
+/// Stores scalar priors ([`Option<ScalarPriors>`]) **before** this block's
+/// update — `None` for tick-only events (Mint/Burn V3, `ModifyLiquidity` V4) —
+/// plus per-tick priors for any ticks that were modified.
 ///
 /// V3 tick modifications are typically 0–4 per block (at the crossing
 /// boundary ticks during swaps). Only modified ticks are stored — the
@@ -68,12 +89,10 @@ impl BlockDelta for V2BlockDelta {
 pub struct V3BlockDelta {
     /// Block number of this delta.
     pub block: u64,
-    /// Sqrt price X96 *before* this block's update.
-    pub sqrt_price_x96_before: alloy::primitives::U256,
-    /// Active liquidity *before* this block's update.
-    pub liquidity_before: u128,
-    /// Current tick *before* this block's update.
-    pub tick_before: i32,
+    /// Slot0 scalar priors (`sqrt_price_x96`, `liquidity`, `tick`) **before**
+    /// this block's update; `None` for tick-only events (the slot0 head wasn't
+    /// touched). See `docs/adr/ADR-004-cl-tickmap-typed-boundary.md`.
+    pub scalar_priors: Option<ScalarPriors>,
     /// Per-tick priors for ticks modified during this block.
     /// Each entry is `(tick_index, TickBefore)` storing the `liquidity_gross`
     /// and `liquidity_net` values **before** the modification.
@@ -102,19 +121,24 @@ pub struct TickBefore {
 
 /// Result of restoring a V3 journal to before a target block.
 ///
-/// Carries the scalar "before" values and per-tick priors that the
-/// caller must apply to the current mutable state.
+/// Carries the (optional) scalar "before" values and per-tick priors that the
+/// caller must apply to the current mutable state. `scalar_priors` is `None`
+/// when the rolled-back range contained only tick-only events — the caller
+/// should skip the scalar write-back in that case (the current scalars are
+/// already correct).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct V3RestoreResult {
-    /// Sqrt price X96 *before* the target block.
-    pub sqrt_price_x96_before: alloy::primitives::U256,
-    /// Active liquidity *before* the target block.
-    pub liquidity_before: u128,
-    /// Current tick *before* the target block.
-    pub tick_before: i32,
-    /// Per-tick priors from the last popped delta.
+    /// Slot0 scalar priors (`sqrt_price_x96`, `liquidity`, `tick`) **before**
+    /// the target block; `None` when the rolled-back range was tick-only
+    /// (caller skips the scalar write-back). When `Some`, taken from the
+    /// *newest* popped delta that had `Some` scalars — that delta's "before"
+    /// values are the scalar state just before the target block. See ADR-004.
+    pub scalar_priors: Option<ScalarPriors>,
+    /// Per-tick priors accumulated across all popped deltas (oldest wins on
+    /// duplicate tick indices — the earliest modification's pre-state is the
+    /// pre-target state for that tick).
     pub tick_priors: Vec<(i32, TickBefore)>,
-    /// Block number of the restored delta.
+    /// Block number of the oldest popped delta (the restore point).
     pub block: u64,
 }
 
@@ -314,9 +338,7 @@ impl ReorgJournal<V3BlockDelta> {
         if newest_block < block {
             let newest = &self.deltas[len - 1];
             return V3RestoreResult {
-                sqrt_price_x96_before: newest.sqrt_price_x96_before,
-                liquidity_before: newest.liquidity_before,
-                tick_before: newest.tick_before,
+                scalar_priors: newest.scalar_priors,
                 tick_priors: newest.tick_priors.clone(),
                 block: newest.block,
             };
@@ -338,20 +360,33 @@ impl ReorgJournal<V3BlockDelta> {
         // overrides an earlier-iterated (newer) one.
         let mut accumulated_priors: std::collections::HashMap<i32, TickBefore> =
             std::collections::HashMap::new();
-        let mut oldest_popped: Option<V3BlockDelta> = None;
+        let mut scalar_priors: Option<ScalarPriors> = None;
+        let mut oldest_popped_block: Option<u64> = None;
         while !self.deltas.is_empty()
             && self.deltas[self.deltas.len() - 1].block() >= block
         {
             let popped = self.deltas.pop_back().expect("checked non-empty above");
             for (tick_idx, tick_before) in &popped.tick_priors {
-            accumulated_priors.insert(*tick_idx, tick_before.clone());
+                accumulated_priors.insert(*tick_idx, tick_before.clone());
             }
-            oldest_popped = Some(popped);
+            // scalar_priors: newest-with-`Some` wins. We pop newest → oldest,
+            // so the first popped-with-`Some` is the newest-with-`Some`; that
+            // delta's "before" scalars ARE the scalar state just before the
+            // target block (scalars are sequential: each delta records its own
+            // pre-state, and the pre-state of the most recent scalar-changing
+            // event in the rolled-back range = the scalar state just before
+            // the target block). If no popped delta has `Some` (all-tick-only
+            // rollback), `scalar_priors` stays `None` — caller skips scalar
+            // write-back (current scalars already correct). See ADR-004.
+            if scalar_priors.is_none() {
+                scalar_priors = popped.scalar_priors;
+            }
+            oldest_popped_block = Some(popped.block);
         }
 
         // SAFETY: newest >= block (we skipped the early return), so at least
         // one delta was popped.
-        let Some(popped) = oldest_popped else {
+        let Some(oldest_block) = oldest_popped_block else {
             unreachable!("newest >= block guarantees at least one pop");
         };
 
@@ -363,11 +398,9 @@ impl ReorgJournal<V3BlockDelta> {
         let tick_priors = accumulated_priors.into_iter().collect::<Vec<_>>();
 
         V3RestoreResult {
-            sqrt_price_x96_before: popped.sqrt_price_x96_before,
-            liquidity_before: popped.liquidity_before,
-            tick_before: popped.tick_before,
+            scalar_priors,
             tick_priors,
-            block: popped.block,
+            block: oldest_block,
         }
     }
 }
@@ -533,6 +566,135 @@ mod tests {
         assert_eq!(r1, U256::from(400));
         assert_eq!(blk, 7);
         assert_eq!(j.len(), 2);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// V3 delta scalar_priors tests (ADR-004)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod v3_delta_priors_tests {
+    use super::*;
+    use alloy::primitives::{I256, U128, U256};
+
+    /// Helper: construct a `V3BlockDelta` with explicit `scalar_priors` + empty
+    /// `tick_priors`. Anchors the new `Option<ScalarPriors>` shape (ADR-004).
+    fn v3_delta(block: u64, scalar_priors: Option<ScalarPriors>) -> V3BlockDelta {
+        V3BlockDelta {
+            block,
+            scalar_priors,
+            tick_priors: vec![],
+        }
+    }
+
+    /// Helper: a `TickBefore` for a tick that did not exist before this block
+    /// (newly initialized by the Mint/`ModifyLiquidity` being rolled back).
+    fn newly_initialized_tick() -> TickBefore {
+        TickBefore {
+            liquidity_gross_before: None,
+            liquidity_net_before: I256::ZERO,
+        }
+    }
+
+    #[test]
+    fn tick_only_delta_has_none_scalar_priors() {
+        // What: V3BlockDelta permits `scalar_priors: None` (the ADR-004 tick-only
+        // event shape for Mint/Burn/`ModifyLiquidity` events).
+        // Why: anchors the new `Option<ScalarPriors>` shape; makes the
+        // structural change grep-able from this test.
+        let d = v3_delta(7, None);
+        assert!(
+            d.scalar_priors.is_none(),
+            "tick-only delta must have None scalar_priors"
+        );
+    }
+
+    #[test]
+    fn restore_returns_none_scalar_priors_when_all_rolled_back_events_are_tick_only() {
+        // What: a journal with ONLY tick-only deltas (all `scalar_priors: None`),
+        // restored to before the newest, returns
+        // `V3RestoreResult.scalar_priors: None`.
+        // Why: the caller (`v3_restore_before_block`) uses that `None` to skip
+        // the scalar write-back (current scalars already correct for tick-only
+        // rollbacks). Without this property, restore would write stale scalars.
+        let mut j = ReorgJournal::<V3BlockDelta>::new(8);
+        j.push_delta(v3_delta(1, None));
+        j.push_delta(v3_delta(5, None));
+
+        let result = j.restore_before_block(5);
+        assert!(
+            result.scalar_priors.is_none(),
+            "all-tick-only rollback must return None scalar_priors (caller skips scalar write-back)"
+        );
+        assert_eq!(
+            result.block, 5,
+            "the popped delta's block (block 5) is the restore point — only block 5 had block >= target (5)"
+        );
+    }
+
+    #[test]
+    fn restore_picks_newest_with_some_scalar_priors_across_tick_only_gap() {
+        // What: journal blocks 1 (Some, S0), 5 (None, tick-only), 10 (Some, S1).
+        // Restoring before block 7 pops blocks 10 and 5 and must return
+        // `scalar_priors: Some(S1)` — the pre-block-10 scalars, which equal
+        // the post-block-5 scalars (block 5 was tick-only) = the scalar state
+        // just before block 7.
+        //
+        // Why: pins the **newest-with-`Some`** rule for `scalar_priors`
+        // (scalars are sequential; the pre-state of the most recent
+        // scalar-changing event in the rolled-back range = the scalar state
+        // just before the target block). This is the INVERSE of the tick-priors
+        // "oldest wins" rule and a subtle correctness property invented by
+        // ADR-004's `Option<ScalarPriors>` refactor — a future maintainer who
+        // flips it to "oldest wins" would silently corrupt reorg rollback
+        // across mixed tick-only + scalar-changing events.
+        let s0 = ScalarPriors {
+            sqrt_price_x96_before: U256::from(100u64),
+            liquidity_before: 10,
+            tick_before: 0,
+        };
+        let s1 = ScalarPriors {
+            sqrt_price_x96_before: U256::from(200u64),
+            liquidity_before: 20,
+            tick_before: 5,
+        };
+
+        let mut j = ReorgJournal::<V3BlockDelta>::new(8);
+        j.push_delta(v3_delta(1, Some(s0)));
+        j.push_delta(v3_delta(5, None));
+        j.push_delta(v3_delta(10, Some(s1)));
+
+        let result = j.restore_before_block(7);
+        assert_eq!(
+            result.scalar_priors,
+            Some(s1),
+            "newest-with-Some (block 10's S1) must win across the tick-only gap at block 5"
+        );
+        assert_eq!(
+            result.block, 10,
+            "the popped delta's block (block 10) is the restore point — only block 10 had block >= target (7); block 5 is below the target and is NOT popped"
+        );
+    }
+
+    #[test]
+    fn restore_returns_none_when_newest_delta_is_tick_only_and_before_target() {
+        // What: a journal whose newest delta (single tick-only at block 5) is
+        // before the restore target (block 10). The early-return path
+        // propagates `scalar_priors: None` from the newest delta.
+        // Why: anchors the early-return path (the `newest_block < block` case)
+        // for the ADR-004 Option shape — ensures downstream callers see `None`
+        // rather than panicking or substituting zero for scalars.
+        let _ = (U128::ZERO, newly_initialized_tick()); // touch helpers to keep them live
+        let mut j = ReorgJournal::<V3BlockDelta>::new(8);
+        j.push_delta(v3_delta(5, None));
+
+        let result = j.restore_before_block(10);
+        assert!(
+            result.scalar_priors.is_none(),
+            "early-return path must propagate scalar_priors: None from the newest delta"
+        );
+        assert_eq!(result.block, 5);
     }
 }
 
