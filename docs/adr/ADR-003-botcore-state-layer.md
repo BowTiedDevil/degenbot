@@ -1,6 +1,6 @@
 # ADR-003: BotCore as the state layer, peer to UniswapEngine
 
-**Status: proposed.** Recorded during the BotCore/UniswapEngine separation-of-concerns grilling, June 2026. Supersedes the implicit arrangement where each block engine owns a private pool-state `HashMap` and `BotCore` sits unused.
+**Status: accepted.** Recorded during the BotCore/UniswapEngine separation-of-concerns grilling, June 2026. Implemented in full by Plan 100 (Slices 1–5): V2/V3/V4 state consolidated into `BotCore`; the `V2BlockEngine`/`V3BlockEngine`/`V4BlockEngine` are dissolved (single live pool-state owner; engine-then-core lock order); the legacy `RustPoolCache`/`ArbPoolCacheAdapter` mirror is deleted (Slice 4 Option D); `PyToken` is completed (Slice 5). Supersedes the implicit arrangement where each block engine owned a private pool-state `HashMap` and `BotCore` sat unused.
 
 ## Context
 
