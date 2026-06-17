@@ -1,5 +1,4 @@
-"""Tests for Phase 4: I/O-free UniswapV3Pool construction via Bot.
-"""
+"""Tests for Phase 4: I/O-free UniswapV3Pool construction via Bot."""
 
 import pathlib
 import pickle
@@ -11,6 +10,7 @@ from web3 import Web3
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
+from degenbot.degenbot_rs import PyBot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
@@ -19,6 +19,9 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (
     UniswapV3PoolExternalUpdate,
 )
+from tests.helpers.erc20_factory import make_erc20
+
+_PY_BOT = PyBot()
 
 
 def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
@@ -29,7 +32,8 @@ def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
 
 
 def _make_weth() -> Erc20Token:
-    return Erc20Token(
+    return make_erc20(
+        _PY_BOT,
         "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
         chain_id=1,
         name="Wrapped Ether",
@@ -39,7 +43,8 @@ def _make_weth() -> Erc20Token:
 
 
 def _make_usdc() -> Erc20Token:
-    return Erc20Token(
+    return make_erc20(
+        _PY_BOT,
         "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
         chain_id=1,
         name="USD Coin",

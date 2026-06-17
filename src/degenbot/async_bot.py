@@ -30,6 +30,7 @@ from degenbot.config import DegenbotConfig, _init_config
 from degenbot.connection.async_connection_manager import AsyncConnectionManager
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
+from degenbot.degenbot_rs import PyBot
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import TrackerAlreadyInitialized
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
@@ -61,6 +62,13 @@ class AsyncBot:
     def __init__(self, config: DegenbotConfig) -> None:
         """Initialize the instance."""
         self.config = config
+
+        # Polars-inspired three-layer architecture (ADR-005): a ``PyBot``
+        # PyO3 wrapper owns the Rust ``Bot`` state behind an ``RwLock``.
+        # Token (and, in later slices, pool) handles share the same Rust-owned
+        # ``Bot`` thread-safely.
+        self._py_bot = PyBot()
+
         self.connections = AsyncConnectionManager()
         self.db = DatabaseSessionManager(
             get_scoped_sqlite_session(database_path=config.database.path)
@@ -73,7 +81,7 @@ class AsyncBot:
         # Async builders own I/O orchestration; AsyncBot hands them its I/O dependencies.
         # AsyncErc20Builder is a leaf — constructed before AsyncBuilderContext.
         self._erc20_builder = AsyncErc20Builder(
-            default_chain_id=None, db=self.db, tokens=self.tokens
+            default_chain_id=None, db=self.db, tokens=self.tokens, py_bot=self._py_bot
         )
         ctx = AsyncBuilderContext(
             db=self.db,

@@ -12,6 +12,7 @@ from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.constants import ZERO_ADDRESS
+from degenbot.degenbot_rs import PyBot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
@@ -20,6 +21,9 @@ from degenbot.uniswap.v4_types import (
     UniswapV4PoolExternalUpdate,
     UniswapV4PoolKey,
 )
+from tests.helpers.erc20_factory import make_erc20
+
+_PY_BOT = PyBot()
 
 
 def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
@@ -31,7 +35,8 @@ def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
 
 def _make_native_eth() -> Erc20Token:
     """Create a token representing native ETH (address 0x0...0)."""
-    return Erc20Token(
+    return make_erc20(
+        _PY_BOT,
         ZERO_ADDRESS,
         chain_id=1,
         name="Ether",
@@ -41,7 +46,8 @@ def _make_native_eth() -> Erc20Token:
 
 
 def _make_usdc() -> Erc20Token:
-    return Erc20Token(
+    return make_erc20(
+        _PY_BOT,
         "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
         chain_id=1,
         name="USD Coin",

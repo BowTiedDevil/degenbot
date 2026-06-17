@@ -5,8 +5,11 @@ when testing pool logic. All on-chain data is injected via a CurveDataProvider.
 """
 
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
-from degenbot.erc20 import Erc20Token
+from degenbot.degenbot_rs import PyBot
 from tests.fakes.curve_data_provider import FakeCurveDataProvider
+from tests.helpers.erc20_factory import make_erc20
+
+_PY_BOT = PyBot()
 
 
 def test_curve_plain_pool_with_data_provider():
@@ -14,14 +17,16 @@ def test_curve_plain_pool_with_data_provider():
 
     NO MOCKS NEEDED - just pass a data_provider with fake on-chain data.
     """
-    dai = Erc20Token(
-        address="0x6B175474E89094C44Da98b954EedeAC495271d0F",
+    dai = make_erc20(
+        _PY_BOT,
+        "0x6B175474E89094C44Da98b954EedeAC495271d0F",
         name="DAI",
         symbol="DAI",
         decimals=18,
     )
-    usdc = Erc20Token(
-        address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    usdc = make_erc20(
+        _PY_BOT,
+        "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
         name="USD Coin",
         symbol="USDC",
         decimals=6,
@@ -60,14 +65,16 @@ def test_curve_lending_pool_with_data_provider():
 
     The data_provider bundles all on-chain data access behind a single seam.
     """
-    cdai = Erc20Token(
-        address="0x5d3a536E4D6DbD6114cc1Ead35777bAB948E3643",
+    cdai = make_erc20(
+        _PY_BOT,
+        "0x5d3a536E4D6DbD6114cc1Ead35777bAB948E3643",
         name="Compound DAI",
         symbol="cDAI",
         decimals=8,
     )
-    cusdc = Erc20Token(
-        address="0x39AA39c021dfbaE8faC545936693aC917d5E7563",
+    cusdc = make_erc20(
+        _PY_BOT,
+        "0x39AA39c021dfbaE8faC545936693aC917d5E7563",
         name="Compound USDC",
         symbol="cUSDC",
         decimals=8,
@@ -106,14 +113,16 @@ def test_curve_metapool_with_data_provider():
 
     Just configure the provider with a base_virtual_price value.
     """
-    rai = Erc20Token(
-        address="0x81ab848898b15A779B7cd0cB2cDd406c64EFc12c",
+    rai = make_erc20(
+        _PY_BOT,
+        "0x81ab848898b15A779B7cd0cB2cDd406c64EFc12c",
         name="Rai Reflex Index",
         symbol="RAI",
         decimals=18,
     )
-    threecrv = Erc20Token(
-        address="0x6c3F90f043a72FA612CbAC8115EEe7f52CdE6E49",
+    threecrv = make_erc20(
+        _PY_BOT,
+        "0x6c3F90f043a72FA612CbAC8115EEe7f52CdE6E49",
         name="Curve 3Pool Token",
         symbol="3Crv",
         decimals=18,
@@ -152,14 +161,16 @@ def test_curve_crypto_pool_with_data_provider():
     Crypto pools need the on-chain invariant D value, gamma, and price_scale.
     All provided through the single data_provider seam.
     """
-    wbtc = Erc20Token(
-        address="0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+    wbtc = make_erc20(
+        _PY_BOT,
+        "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
         name="Wrapped BTC",
         symbol="WBTC",
         decimals=8,
     )
-    weth = Erc20Token(
-        address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    weth = make_erc20(
+        _PY_BOT,
+        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
         name="Wrapped Ether",
         symbol="WETH",
         decimals=18,

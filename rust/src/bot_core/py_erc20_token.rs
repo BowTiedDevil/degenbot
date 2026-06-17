@@ -49,6 +49,19 @@ impl PyErc20Token {
         Ok(entry.decimals)
     }
 
+    /// Chain ID where this token is registered.
+    #[getter]
+    fn chain_id(&self) -> PyResult<u64> {
+        let core = self.core.read();
+        let Some(entry) = core.token_entry(&self.address) else {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "token not registered: {}",
+                self.address
+            )));
+        };
+        Ok(entry.chain_id)
+    }
+
     /// Token symbol (e.g. "WETH", "USDC").
     #[getter]
     fn symbol(&self) -> PyResult<String> {

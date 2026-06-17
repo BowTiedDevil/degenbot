@@ -5,6 +5,7 @@ import pytest
 from degenbot.anvil_fork import AnvilFork
 from degenbot.arbitrage._legacy import _UniswapTwoPoolCycleTesting
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.degenbot_rs import PyBot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.erc20.ether_placeholder import EtherPlaceholder
 from degenbot.exceptions.arbitrage import RateOfExchangeBelowMinimum
@@ -14,6 +15,9 @@ from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from tests.helpers.bot_factory import make_bot_with_provider
+from tests.helpers.erc20_factory import make_ether_placeholder
+
+_PY_BOT = PyBot()
 
 # Token addresses
 NATIVE_ADDRESS = get_checksum_address("0x0000000000000000000000000000000000000000")
@@ -55,7 +59,7 @@ def ether_placeholder(fork_mainnet_full: AnvilFork) -> Erc20Token:
         token_address=NATIVE_ADDRESS,
     )
     if token is None:
-        token = EtherPlaceholder(NATIVE_ADDRESS)
+        token = make_ether_placeholder(_PY_BOT, NATIVE_ADDRESS)
     return token
 
 

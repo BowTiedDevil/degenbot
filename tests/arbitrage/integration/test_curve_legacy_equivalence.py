@@ -17,18 +17,21 @@ from degenbot.arbitrage.optimizers.solidly_stable import (
     _simulate_mixed_path_int,
 )
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
-from degenbot.erc20 import Erc20Token
+from degenbot.degenbot_rs import PyBot
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.fakes.curve_data_provider import FakeCurveDataProvider
 from tests.fakes.tokens import FakeToken
+from tests.helpers.erc20_factory import make_erc20
+
+_PY_BOT = PyBot()
 
 ADDR_DAI = "0x6B175474E89094C44Da98b954EedeAC495271d0F"
 ADDR_USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 ADDR_WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 
 # Production Erc20Token instances for CurveStableswapPool
-DAI = Erc20Token(address=ADDR_DAI, name="DAI", symbol="DAI", decimals=18)
-USDC = Erc20Token(address=ADDR_USDC, name="USD Coin", symbol="USDC", decimals=6)
+DAI = make_erc20(_PY_BOT, address=ADDR_DAI, name="DAI", symbol="DAI", decimals=18)
+USDC = make_erc20(_PY_BOT, address=ADDR_USDC, name="USD Coin", symbol="USDC", decimals=6)
 
 STATE_BLOCK = 18_000_000
 

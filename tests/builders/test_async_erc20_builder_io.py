@@ -8,6 +8,7 @@ update cache.
 from __future__ import annotations
 
 import pathlib
+from typing import TYPE_CHECKING
 
 import eth_abi.abi
 import pytest
@@ -17,13 +18,20 @@ from degenbot.builders.async_erc20_builder import AsyncErc20Builder
 from degenbot.builders.pool_io import AsyncPoolIO
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.erc20.erc20 import Erc20Token
+from degenbot.degenbot_rs import PyBot
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.registry import TokenRegistry
+from tests.helpers.erc20_factory import make_erc20
+
+if TYPE_CHECKING:
+    from degenbot.erc20.erc20 import Erc20Token
+
+_PY_BOT = PyBot()
 
 
 def _make_weth() -> Erc20Token:
-    return Erc20Token(
+    return make_erc20(
+        _PY_BOT,
         "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
         chain_id=1,
         name="Wrapped Ether",
@@ -78,6 +86,7 @@ class TestAsyncErc20BuilderGetTokenBalance:
 
         builder = AsyncErc20Builder(
             default_chain_id=1,
+            py_bot=_PY_BOT,
             db=DatabaseSessionManager(get_scoped_sqlite_session(pathlib.Path(":memory:"))),
             tokens=TokenRegistry(),
         )
@@ -101,6 +110,7 @@ class TestAsyncErc20BuilderGetTokenBalance:
 
         builder = AsyncErc20Builder(
             default_chain_id=1,
+            py_bot=_PY_BOT,
             db=DatabaseSessionManager(get_scoped_sqlite_session(pathlib.Path(":memory:"))),
             tokens=TokenRegistry(),
         )
@@ -126,6 +136,7 @@ class TestAsyncErc20BuilderGetTokenBalance:
 
         builder = AsyncErc20Builder(
             default_chain_id=1,
+            py_bot=_PY_BOT,
             db=DatabaseSessionManager(get_scoped_sqlite_session(pathlib.Path(":memory:"))),
             tokens=TokenRegistry(),
         )
@@ -150,6 +161,7 @@ class TestAsyncErc20BuilderGetEtherBalance:
 
         builder = AsyncErc20Builder(
             default_chain_id=1,
+            py_bot=_PY_BOT,
             db=DatabaseSessionManager(get_scoped_sqlite_session(pathlib.Path(":memory:"))),
             tokens=TokenRegistry(),
         )
@@ -177,6 +189,7 @@ class TestAsyncErc20BuilderGetEtherBalance:
 
         builder = AsyncErc20Builder(
             default_chain_id=1,
+            py_bot=_PY_BOT,
             db=DatabaseSessionManager(get_scoped_sqlite_session(pathlib.Path(":memory:"))),
             tokens=TokenRegistry(),
         )
@@ -208,6 +221,7 @@ class TestAsyncErc20BuilderGetTokenApproval:
 
         builder = AsyncErc20Builder(
             default_chain_id=1,
+            py_bot=_PY_BOT,
             db=DatabaseSessionManager(get_scoped_sqlite_session(pathlib.Path(":memory:"))),
             tokens=TokenRegistry(),
         )
@@ -237,6 +251,7 @@ class TestAsyncErc20BuilderGetTokenApproval:
 
         builder = AsyncErc20Builder(
             default_chain_id=1,
+            py_bot=_PY_BOT,
             db=DatabaseSessionManager(get_scoped_sqlite_session(pathlib.Path(":memory:"))),
             tokens=TokenRegistry(),
         )
@@ -266,6 +281,7 @@ class TestAsyncErc20BuilderGetTokenTotalSupply:
 
         builder = AsyncErc20Builder(
             default_chain_id=1,
+            py_bot=_PY_BOT,
             db=DatabaseSessionManager(get_scoped_sqlite_session(pathlib.Path(":memory:"))),
             tokens=TokenRegistry(),
         )
@@ -286,6 +302,7 @@ class TestAsyncErc20BuilderGetTokenTotalSupply:
 
         builder = AsyncErc20Builder(
             default_chain_id=1,
+            py_bot=_PY_BOT,
             db=DatabaseSessionManager(get_scoped_sqlite_session(pathlib.Path(":memory:"))),
             tokens=TokenRegistry(),
         )

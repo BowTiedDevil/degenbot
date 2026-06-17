@@ -12,15 +12,17 @@ from web3.types import BlockIdentifier
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models import Erc20TokenTable
+from degenbot.degenbot_rs import PyErc20Token
 from degenbot.exceptions.infrastructure import NoPriceOracle
 from degenbot.provider import ProviderAdapter
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.types.abstract import AbstractErc20Token
-from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import BoundedCache
 
 if TYPE_CHECKING:
     from hexbytes import HexBytes
+
+    from degenbot.types.aliases import BlockNumber
 
 
 def get_token_from_database(
@@ -56,17 +58,19 @@ class Erc20Token(AbstractErc20Token):
 
     def __init__(
         self,
-        address: str,
+        py_token: PyErc20Token,
         *,
-        name: str,
-        symbol: str,
-        decimals: int,
-        chain_id: ChainId | None = None,
         oracle_address: str | None = None,
         state_cache_depth: int = 8,
     ) -> None:
-        """Initialize the instance."""
-        self.address = get_checksum_address(address)
+        """Initialize the Polars-style companion over a ``PyErc20Token`` handle (ADR-005).
+
+        Token metadata (address, name, symbol, decimals, chain_id) is owned by
+        the Rust ``Bot`` and read through the handle on every access — this
+        companion holds no metadata copy. Price oracle + balance/approval/
+        total-supply caches stay Python (I/O constructs that cannot move to Rust).
+        """
+        self._py_token = py_token
 
         self._state_cache_depth = state_cache_depth
         self._cached_approval: dict[tuple[int, ChecksumAddress, ChecksumAddress], int] = {}
@@ -75,15 +79,35 @@ class Erc20Token(AbstractErc20Token):
             max_items=state_cache_depth,
         )
 
-        self._chain_id = chain_id
-        self.name = name
-        self.symbol = symbol
-        self.decimals = decimals
         self._price_oracle = None
         if oracle_address:
             self._price_oracle = ChainlinkPriceContract(
                 address=oracle_address, chain_id=self.chain_id
             )
+
+    @property
+    def address(self) -> ChecksumAddress:
+        """Token contract address (EIP-55 checksum).
+
+        Rust holds the address bytes; ``get_checksum_address`` applies the
+        codebase-wide EIP-55 display convention.
+        """
+        return get_checksum_address(self._py_token.address)
+
+    @property
+    def name(self) -> str:
+        """Token name (read from Rust-owned ``TokenEntry``)."""
+        return self._py_token.name
+
+    @property
+    def symbol(self) -> str:
+        """Token symbol (read from Rust-owned ``TokenEntry``)."""
+        return self._py_token.symbol
+
+    @property
+    def decimals(self) -> int:
+        """Token decimals (read from Rust-owned ``TokenEntry``)."""
+        return self._py_token.decimals
 
     # -- Cache accessors (dictionary operations, no I/O) --
 
@@ -279,6 +303,34 @@ class Erc20Token(AbstractErc20Token):
         return self._price_oracle.price
 
     @property
-    def chain_id(self) -> int | None:
-        """Return chain id."""
-        return self._chain_id
+    def chain_id(self) -> int:
+        """Chain ID (read from Rust-owned ``TokenEntry``)."""
+        return self._py_token.chain_id
+
+    # -- Pickle support (TRANSIENT — removed by TODO-cddc72d1 / Slice 15) --
+    #
+    # Pools pickle their tokens (recursively) for the ProcessPoolExecutor
+    # multiprocessing path; the ``PyErc20Token`` handle wraps a Rust
+    # ``Arc<RwLock<Bot>>`` that is process-local and not picklable, so
+    # ``__getstate__`` drops it. An unpickled token is therefore a *detached
+    # snapshot* (no live Rust handle; metadata reads raise ``AttributeError``).
+    #
+    # This exists only because pool-pickle tests still reference it; slice 15
+    # retires Python-pickle multiprocessing entirely (replaced by Rust-side
+    # parallel solve fan-out over the shared ``Bot``) and deletes this method,
+    # ``PoolPickleMixin``, and the pickle tests together. Don't extend it; the
+    # detached-token pattern is verified to be inert in-repo because no
+    # ``concurrent.futures`` consumer ships in-tree.
+    def __getstate__(self) -> dict[str, object]:
+        """Return pickle state, dropping the non-picklable Rust handle.
+
+        An unpickled token is a detached snapshot (no ``_py_token``); metadata
+        reads raise ``AttributeError``. See the class-level pickle note above.
+
+        Returns:
+            The token's ``__dict__`` minus ``_py_token``.
+
+        """
+        state = self.__dict__.copy()
+        del state["_py_token"]
+        return state

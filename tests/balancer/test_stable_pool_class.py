@@ -11,6 +11,7 @@ ComposableStablePools:
 
 import json
 from fractions import Fraction
+from typing import TYPE_CHECKING
 
 import pytest
 from web3.exceptions import ContractLogicError
@@ -28,8 +29,14 @@ from degenbot.balancer.stable_pools import (
     BalancerV2StablePool,
 )
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.erc20 import Erc20Token
+from degenbot.degenbot_rs import PyBot
 from degenbot.exceptions.pool import StaleRateResult
+from tests.helpers.erc20_factory import make_erc20
+
+if TYPE_CHECKING:
+    from degenbot.erc20.erc20 import Erc20Token
+
+_PY_BOT = PyBot()
 
 # ---------- ABIs ----------
 
@@ -207,7 +214,7 @@ def _build_stable_pool(
             rate = ONE
 
         fresh_rates.append(rate)
-        erc20_tokens.append(Erc20Token(address=t, name=name, symbol=symbol, decimals=decimals))
+        erc20_tokens.append(make_erc20(_PY_BOT, t, name=name, symbol=symbol, decimals=decimals))
 
     # Fresh scaling factors = base_sf * rate // ONE (mulDown)
     fresh_scaling_factors = [

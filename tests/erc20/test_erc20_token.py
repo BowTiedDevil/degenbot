@@ -6,12 +6,15 @@ from degenbot.bot import Bot
 from degenbot.chainlink import ChainlinkPriceContract
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
+from degenbot.degenbot_rs import PyBot
 from degenbot.erc20.erc20 import Erc20Token
-from degenbot.erc20.ether_placeholder import EtherPlaceholder
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.infrastructure import NoPriceOracle
 from degenbot.provider import ProviderAdapter
 from tests.helpers.bot_factory import make_bot_with_provider
+from tests.helpers.erc20_factory import make_ether_placeholder
+
+_PY_BOT = PyBot()
 
 VITALIK_ADDRESS = get_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
@@ -142,7 +145,7 @@ def test_erc20token_without_price_feed(weth: Erc20Token):
 
 
 def test_ether_placeholder(fork_mainnet_full: AnvilFork):
-    ether = EtherPlaceholder(ZERO_ADDRESS)
+    ether = make_ether_placeholder(_PY_BOT, ZERO_ADDRESS)
 
     fake_balance = 69_420_000
     current_block = fork_mainnet_full.w3.eth.block_number

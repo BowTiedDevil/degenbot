@@ -1,5 +1,4 @@
-"""Tests for Phase 3: I/O-free UniswapV2Pool construction via Bot.
-"""
+"""Tests for Phase 3: I/O-free UniswapV2Pool construction via Bot."""
 
 import pathlib
 import pickle
@@ -12,11 +11,15 @@ from web3.exceptions import Web3Exception
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DatabaseSettings, DegenbotConfig
+from degenbot.degenbot_rs import PyBot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.uniswap.trackers import UniswapV2PoolTracker
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
+from tests.helpers.erc20_factory import make_erc20
+
+_PY_BOT = PyBot()
 
 
 def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
@@ -27,7 +30,8 @@ def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
 
 
 def _make_weth() -> Erc20Token:
-    return Erc20Token(
+    return make_erc20(
+        _PY_BOT,
         "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
         chain_id=1,
         name="Wrapped Ether",
@@ -37,7 +41,8 @@ def _make_weth() -> Erc20Token:
 
 
 def _make_usdc() -> Erc20Token:
-    return Erc20Token(
+    return make_erc20(
+        _PY_BOT,
         "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
         chain_id=1,
         name="USD Coin",
@@ -54,8 +59,7 @@ class TestV2PoolIOFreeConstructor:
     """UniswapV2Pool can be constructed with pre-fetched data only."""
 
     def test_io_free_constructor_basic(self) -> None:
-        """An I/O-free V2 pool can be constructed with tokens, factory, fees, and reserves.
-        """
+        """An I/O-free V2 pool can be constructed with tokens, factory, fees, and reserves."""
         weth = _make_weth()
         usdc = _make_usdc()
 
@@ -207,8 +211,12 @@ class TestBotBuildV2Pool:
         # Let's use a simpler approach: provide tokens directly via bot.tokens registry
 
         # Pre-register tokens so build_erc20token doesn't need RPC
-        weth = Erc20Token(weth_addr, chain_id=1, name="Wrapped Ether", symbol="WETH", decimals=18)
-        usdc = Erc20Token(usdc_addr, chain_id=1, name="USD Coin", symbol="USDC", decimals=6)
+        weth = make_erc20(
+            _PY_BOT, weth_addr, chain_id=1, name="Wrapped Ether", symbol="WETH", decimals=18
+        )
+        usdc = make_erc20(
+            _PY_BOT, usdc_addr, chain_id=1, name="USD Coin", symbol="USDC", decimals=6
+        )
         bot.tokens.add(token_address=weth_addr, chain_id=1, token=weth)
         bot.tokens.add(token_address=usdc_addr, chain_id=1, token=usdc)
 

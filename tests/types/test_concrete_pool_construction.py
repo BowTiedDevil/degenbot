@@ -10,6 +10,7 @@ from fractions import Fraction
 import pytest
 
 from degenbot.constants import ZERO_ADDRESS
+from degenbot.degenbot_rs import PyBot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.pancakeswap.pools import PancakeswapV2Pool, PancakeswapV3Pool
 from degenbot.sushiswap.pools import SushiswapV2Pool, SushiswapV3Pool
@@ -18,6 +19,9 @@ from degenbot.types.pool_type import PoolFamily
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+from tests.helpers.erc20_factory import make_erc20
+
+_PY_BOT = PyBot()
 
 # ---------------------------------------------------------------------------
 # Shared tokens (Ethereum mainnet)
@@ -25,7 +29,8 @@ from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
 
 def _make_weth() -> Erc20Token:
-    return Erc20Token(
+    return make_erc20(
+        _PY_BOT,
         "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
         chain_id=1,
         name="Wrapped Ether",
@@ -35,7 +40,8 @@ def _make_weth() -> Erc20Token:
 
 
 def _make_usdc() -> Erc20Token:
-    return Erc20Token(
+    return make_erc20(
+        _PY_BOT,
         "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
         chain_id=1,
         name="USD Coin",
@@ -45,7 +51,8 @@ def _make_usdc() -> Erc20Token:
 
 
 def _make_usdt() -> Erc20Token:
-    return Erc20Token(
+    return make_erc20(
+        _PY_BOT,
         "0xdAC17F958D2ee523a2206206994597C13D831ec7",
         chain_id=1,
         name="Tether USD",
@@ -55,7 +62,8 @@ def _make_usdt() -> Erc20Token:
 
 
 def _make_sushi() -> Erc20Token:
-    return Erc20Token(
+    return make_erc20(
+        _PY_BOT,
         "0x6B3595068778DD592e39A122f4f5a5cF09C90fE2",
         chain_id=1,
         name="SushiSwap",
@@ -65,7 +73,8 @@ def _make_sushi() -> Erc20Token:
 
 
 def _make_uni() -> Erc20Token:
-    return Erc20Token(
+    return make_erc20(
+        _PY_BOT,
         "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",
         chain_id=1,
         name="Uniswap",
@@ -75,7 +84,8 @@ def _make_uni() -> Erc20Token:
 
 
 def _make_dai() -> Erc20Token:
-    return Erc20Token(
+    return make_erc20(
+        _PY_BOT,
         "0x6B175474E89094C44Da98b954EedeAC495271d0F",
         chain_id=1,
         name="Dai Stablecoin",

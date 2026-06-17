@@ -100,7 +100,9 @@ class Bot:
 
         # Builders own I/O orchestration; Bot hands them its I/O dependencies.
         # Erc20Builder is a leaf — constructed before BuilderContext.
-        self._erc20_builder = Erc20Builder(default_chain_id=None, db=self.db, tokens=self.tokens)
+        self._erc20_builder = Erc20Builder(
+            default_chain_id=None, db=self.db, tokens=self.tokens, py_bot=self._py_bot
+        )
         ctx = BuilderContext(
             db=self.db,
             pools=self.pools,

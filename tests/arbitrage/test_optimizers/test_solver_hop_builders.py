@@ -12,10 +12,14 @@ from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.arbitrage.optimizers.hop_types import SolveInput
 from degenbot.arbitrage.optimizers.solver import ArbSolver, MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath
+from degenbot.degenbot_rs import PyBot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.arbitrage.integration.test_v3_only_legacy_equivalence import _make_profitable_v3_pair
 from tests.fakes.tokens import FakeToken
+from tests.helpers.erc20_factory import make_erc20
+
+_PY_BOT = PyBot()
 
 # ---------------------------------------------------------------------------
 # Fixtures — real pool objects constructed directly (no RPC)
@@ -24,7 +28,8 @@ from tests.fakes.tokens import FakeToken
 
 @pytest.fixture
 def usdc() -> Erc20Token:
-    return Erc20Token(
+    return make_erc20(
+        _PY_BOT,
         address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
         name="USD Coin",
         symbol="USDC",
@@ -34,7 +39,8 @@ def usdc() -> Erc20Token:
 
 @pytest.fixture
 def usdt() -> Erc20Token:
-    return Erc20Token(
+    return make_erc20(
+        _PY_BOT,
         address="0xdAC17F958D2ee523a2206206994597C13D831ec7",
         name="Tether USD",
         symbol="USDT",
@@ -74,13 +80,15 @@ class TestArbSolverParityWithLpCycle:
 
     def test_v2_v2_pair_parity(self):
         """ArbSolver should find profitable V2-V2 arbitrage."""
-        usdc = Erc20Token(
+        usdc = make_erc20(
+            _PY_BOT,
             address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             name="USD Coin",
             symbol="USDC",
             decimals=6,
         )
-        weth = Erc20Token(
+        weth = make_erc20(
+            _PY_BOT,
             address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
             name="Wrapped Ether",
             symbol="WETH",
@@ -139,13 +147,15 @@ class TestArbSolverParityWithLpCycle:
 
         v2_pool = UniswapV2Pool(
             address="0xAAAA1111222233334444555566667777888899a1",
-            token0=Erc20Token(
+            token0=make_erc20(
+                _PY_BOT,
                 address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
                 name="USD Coin",
                 symbol="USDC",
                 decimals=6,
             ),
-            token1=Erc20Token(
+            token1=make_erc20(
+                _PY_BOT,
                 address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
                 name="Wrapped Ether",
                 symbol="WETH",
@@ -228,15 +238,16 @@ class TestArbSolverParityWithLpCycle:
         assert manual_profit > 0
 
     def test_v2_v2_profit_verified_by_pool_walk(self):
-        """Walk through V2 pools manually to verify the solver's optimal input produces real profit.
-        """
-        usdc = Erc20Token(
+        """Walk V2 pools manually to verify the solver's optimal input yields real profit."""
+        usdc = make_erc20(
+            _PY_BOT,
             address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             name="USD Coin",
             symbol="USDC",
             decimals=6,
         )
-        weth = Erc20Token(
+        weth = make_erc20(
+            _PY_BOT,
             address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
             name="Wrapped Ether",
             symbol="WETH",
