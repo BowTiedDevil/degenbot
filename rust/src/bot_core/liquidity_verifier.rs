@@ -6,6 +6,15 @@
 //! verified here — it would always be stale. The map is only updated by
 //! Mint/Burn (V3) or `ModifyLiquidity` (V4) events, which is what we validate.
 //!
+//! This is the {Slot0 Head / Tick Bookkeeping Map} split (see `rust/CONTEXT.md`
+//! and ADR-004): the live variants (`verify_v3_pool` / `verify_v4_pool`) take
+//! `&V3PoolState` / `&V4PoolState` and recover the "don't read slot0" rule
+//! from this module doc; ADR-004 introduces a `TickMap` trait that narrows
+//! these to take `&impl TickMap`, carrying the rule in the type system. The
+//! snapshot-block variants (`verify_v3_liquidity_map` / `verify_v4_liquidity_map`)
+//! already take a typed `&HashMap<i32, TickInfo>` + `Address` + block — the
+//! typed-boundary precedent ADR-004 generalizes.
+//!
 //! - **V3**: `pool.tickBitmap(word)` discovers populated words,
 //!   `pool.ticks(tickIndex)` verifies per-tick data.
 //! - **V4**: `StateView.getTickBitmap(poolId, word)` discovers populated words,
@@ -18,7 +27,7 @@ use std::collections::HashMap;
 use alloy::dyn_abi::DynSolValue;
 use alloy::primitives::{Address, Bytes, I256, B256, U256};
 
-use crate::bot_core::{V3PoolState, V4PoolState};
+use crate::bot_core::{TickMap, V3PoolState, V4PoolState};
 use crate::provider::AlloyProvider;
 
 // ---------------------------------------------------------------------------
@@ -184,13 +193,20 @@ pub async fn verify_v3_pools<S: std::hash::BuildHasher>(
     Ok(())
 }
 
-async fn verify_v3_pool(
+async fn verify_v3_pool<T: TickMap + ?Sized>(
     provider: &AlloyProvider,
-    pool: &V3PoolState,
+    pool: &T,
     block_number: Option<u64>,
 ) -> Result<(), VerificationMismatch> {
-    let pool_addr = pool.address;
-    let tick_spacing = pool.tick_spacing;
+    // Read the tick bookkeeping map + immutable identification through the ADR-004
+    // `TickMap` trait — the slot0 head scalars (`sqrt_price_x96`, `liquidity`)
+    // are deliberately out of reach here. `active_tick()` is read-only (only
+    // seeds the ±2 bitmap-word scan around the current tick; NOT verified —
+    // would always be stale by the time the RPC round-trips). See ADR-004.
+    let pool_addr = pool.address();
+    let tick_spacing = pool.tick_spacing();
+    let active_tick = pool.active_tick();
+    let tick_data = pool.tick_data();
     let block_tag = match block_number {
         Some(b) => format!("block={b}"),
         None => "block=pending".to_string(),
@@ -199,12 +215,12 @@ async fn verify_v3_pool(
     // 1. Discover on-chain tick bitmap words
     // Scan words from our tick_data plus ±2 around the current tick
     let mut words_to_check: std::collections::HashSet<i16> = std::collections::HashSet::new();
-    for &tick_idx in pool.tick_data.keys() {
+    for &tick_idx in tick_data.keys() {
         let compressed = compress_tick(tick_idx, tick_spacing);
         let (word, _) = tick_bitmap_position(compressed);
         words_to_check.insert(word);
     }
-    let compressed_current = compress_tick(pool.tick, tick_spacing);
+    let compressed_current = compress_tick(active_tick, tick_spacing);
     let (current_word, _) = tick_bitmap_position(compressed_current);
     for w in (current_word - 2)..=(current_word + 2) {
         words_to_check.insert(w);
@@ -248,7 +264,7 @@ async fn verify_v3_pool(
     }
 
     // 2. Verify each tick in our tick_data by calling pool.ticks() directly
-    for (&tick_idx, our_info) in &pool.tick_data {
+    for (&tick_idx, our_info) in tick_data {
         let our_gross = our_info.liquidity_gross.to::<u128>();
         let our_net: i128 = our_info.liquidity_net.try_into().unwrap_or_default();
 
@@ -400,21 +416,29 @@ pub async fn verify_v4_pools<S: std::hash::BuildHasher>(
         seen_pool_ids.entry(pool.pool_id).or_insert(pool);
     }
 
-    for (_pool_id, pool) in seen_pool_ids {
-        verify_v4_pool(provider, state_view, pool, block_number).await?;
+    for (pool_id, pool) in seen_pool_ids {
+        verify_v4_pool(provider, state_view, pool_id, pool, block_number).await?;
     }
     Ok(())
 }
 
 #[allow(clippy::too_many_lines)]
-async fn verify_v4_pool(
+async fn verify_v4_pool<T: TickMap + ?Sized>(
     provider: &AlloyProvider,
     state_view: Address,
-    pool: &V4PoolState,
+    pool_id: [u8; 32],
+    pool: &T,
     block_number: Option<u64>,
 ) -> Result<(), VerificationMismatch> {
-    let pool_id_bytes = pool.pool_id;
-    let tick_spacing = pool.pool_key.tick_spacing;
+    // Read the tick bookkeeping map + immutable identification through the ADR-004
+    // `TickMap` trait — the slot0 head scalars are deliberately out of reach.
+    // `pool_id` and `state_view` stay as separate args (V4-specific RPC concerns
+    // that don't fit the trait; the V4 verifier calls `state_view`, not the pool
+    // address, for its RPC target — see ADR-004).
+    let pool_id_bytes = pool_id;
+    let tick_spacing = pool.tick_spacing();
+    let active_tick = pool.active_tick();
+    let tick_data = pool.tick_data();
     let block_tag = match block_number {
         Some(b) => format!("block={b}"),
         None => "block=pending".to_string(),
@@ -423,7 +447,7 @@ async fn verify_v4_pool(
 
     // 1. Discover on-chain populated bitmap words
     let mut words_to_check: std::collections::HashSet<i16> = std::collections::HashSet::new();
-    collect_bitmap_words(&pool.tick_data, pool.tick, tick_spacing, &mut words_to_check);
+    collect_bitmap_words(tick_data, active_tick, tick_spacing, &mut words_to_check);
 
     let mut on_chain_ticks: HashMap<i32, (u128, i128)> = HashMap::new();
 
@@ -467,7 +491,7 @@ async fn verify_v4_pool(
     }
 
     // 2. Compare every tick in our tick_data against on-chain
-    for (&tick_idx, our_info) in &pool.tick_data {
+    for (&tick_idx, our_info) in tick_data {
         let our_gross = our_info.liquidity_gross.to::<u128>();
         let our_net: i128 = our_info.liquidity_net.try_into().unwrap_or_default();
 
@@ -497,7 +521,7 @@ async fn verify_v4_pool(
 
     // 3. Check for on-chain ticks we're missing
     for (&tick_idx, &(on_chain_gross, on_chain_net)) in &on_chain_ticks {
-        if !pool.tick_data.contains_key(&tick_idx) {
+        if !tick_data.contains_key(&tick_idx) {
             return Err(VerificationMismatch {
                 message: format!(
                     "V4 pool 0x{pool_id_hex} {block_tag}: tick {tick_idx} exists on-chain (lg={on_chain_gross}, ln={on_chain_net}) but NOT in engine"

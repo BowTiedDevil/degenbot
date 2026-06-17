@@ -257,13 +257,23 @@ impl PyBotCore {
         let result = self.core.lock().v3_restore_before_block(pool_id, block);
         match result {
             Some(restore) => {
-                let liq_u128 = restore.liquidity_before;
+                // `restore.scalar_priors` is always `Some` post-restore: the
+                // core `v3_restore_before_block` populates it with the current
+                // state scalars when the rolled-back range was tick-only
+                // (None internally — the scalars were never changed by the
+                // rolled-back events, so the current scalars ARE the restored
+                // scalars). See ADR-004.
+                let p = restore
+                    .scalar_priors
+                    .as_ref()
+                    .expect("post-restore scalar_priors must be Some");
+                let liq_u128 = p.liquidity_before;
                 let tuple = pyo3::types::PyTuple::new(
                     py,
                     [
-                        crate::alloy_py::u256_to_py(py, &restore.sqrt_price_x96_before)?.unbind(),
+                        crate::alloy_py::u256_to_py(py, &p.sqrt_price_x96_before)?.unbind(),
                         liq_u128.into_pyobject(py)?.into_any().unbind(),
-                        restore.tick_before.into_pyobject(py)?.into_any().unbind(),
+                        p.tick_before.into_pyobject(py)?.into_any().unbind(),
                         restore.block.into_pyobject(py)?.into_any().unbind(),
                     ],
                 )?;

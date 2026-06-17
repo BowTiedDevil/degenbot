@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use alloy::primitives::{Address, I256, U256};
 
 use crate::optimizers::mobius_int::IntHopState;
-use crate::bot_core::state_history::{ReorgJournal, V2BlockDelta, V3BlockDelta, TickBefore, V3RestoreResult};
+use crate::bot_core::state_history::{ReorgJournal, ScalarPriors, V2BlockDelta, V3BlockDelta, TickBefore, V3RestoreResult};
 use crate::bot_core::v2_encoding::{encode_v2_swap, EncodedCall};
 
 pub mod liquidity_verifier;
@@ -25,6 +25,7 @@ pub mod v3_swap_decoder;
 pub mod v4_modify_liquidity_decoder;
 pub mod v4_state;
 pub mod v4_swap_decoder;
+pub mod tick_map;
 
 // Re-export the merged V3/V4 state types (ADR-003: BotCore owns CL state).
 pub use v3_state::{
@@ -35,6 +36,11 @@ pub use v4_state::{
     AMOUNT_MODIFYING_HOOK_MASK, BufferedV4LiquidityUpdate, RegisterV4PoolParams, V4PoolKey,
     V4PoolState, V4SwapUpdate, V4_DYNAMIC_FEE_FLAG, v4_simulate_swap,
 };
+
+// Re-export the ADR-004 typed TickMap boundary trait (V3 + V4 impls both live
+// in `tick_map.rs`). State structs stay flat; only verifier/apply views are
+// typed-narrowed.
+pub use tick_map::{TickMap, TickMapMut};
 
 // ---------------------------------------------------------------------------
 // Pool state types
@@ -359,9 +365,11 @@ impl BotCore {
         // Stash "before" values in the reorg journal before updating
         state.journal.push_delta(V3BlockDelta {
             block: block_number,
-            sqrt_price_x96_before: state.sqrt_price_x96,
-            liquidity_before: state.liquidity,
-            tick_before: state.tick,
+            scalar_priors: Some(ScalarPriors {
+                sqrt_price_x96_before: state.sqrt_price_x96,
+                liquidity_before: state.liquidity,
+                tick_before: state.tick,
+            }),
             tick_priors,
         });
 
@@ -418,9 +426,11 @@ impl BotCore {
         // Journal scalar priors (swap scalars change on every Swap).
         state.journal.push_delta(V3BlockDelta {
             block: block_number,
-            sqrt_price_x96_before: state.sqrt_price_x96,
-            liquidity_before: state.liquidity,
-            tick_before: state.tick,
+            scalar_priors: Some(ScalarPriors {
+                sqrt_price_x96_before: state.sqrt_price_x96,
+                liquidity_before: state.liquidity,
+                tick_before: state.tick,
+            }),
             tick_priors: journaled_priors,
         });
 
@@ -493,13 +503,12 @@ impl BotCore {
         );
 
         // Journal: Mint/Burn mutate tick_data only, NOT the active `liquidity`
-        // scalar (that changes only on Swap's tick-crossing). Record scalar
-        // priors unchanged and the two tick priors for reverse-apply.
+        // scalar — so the journal carries no scalar priors for this tick-only
+        // event (scalar_priors: None). Only the two tick priors are reverse-
+        // applied on rollback. See ADR-004.
         state.journal.push_delta(V3BlockDelta {
             block: block_number,
-            sqrt_price_x96_before: state.sqrt_price_x96,
-            liquidity_before: state.liquidity,
-            tick_before: state.tick,
+            scalar_priors: None,
             tick_priors: journaled_priors,
         });
 
@@ -1048,12 +1057,17 @@ impl BotCore {
         let PoolEntry::V3(state) = self.pools.get_mut(&pool_id)? else {
             return None;
         };
-        let result = state.journal.restore_before_block(block);
+        let mut result = state.journal.restore_before_block(block);
 
-        // Sync scalar fields
-        state.sqrt_price_x96 = result.sqrt_price_x96_before;
-        state.liquidity = result.liquidity_before;
-        state.tick = result.tick_before;
+        // Sync scalar fields if the rolled-back range had scalar changes.
+        // If scalar_priors is None (tick-only event(s) rolled back), the
+        // current slot0 scalars were never changed by the rolled-back events
+        // and are already correct — skip the write-back. See ADR-004.
+        if let Some(p) = &result.scalar_priors {
+            state.sqrt_price_x96 = p.sqrt_price_x96_before;
+            state.liquidity = p.liquidity_before;
+            state.tick = p.tick_before;
+        }
         state.update_block = result.block;
         state.invalidate_tick_range_cache();
 
@@ -1075,6 +1089,18 @@ impl BotCore {
                     state.tick_data.remove(tick_idx);
                 }
             }
+        }
+
+        // If scalar_priors was None (tick-only rollback), populate it with the
+        // current (post-restore) scalars so downstream consumers (e.g., the
+        // PyO3 `v3_restore_before_block` wrapper) always see Some — the
+        // current scalars ARE the restored scalars in this case. See ADR-004.
+        if result.scalar_priors.is_none() {
+            result.scalar_priors = Some(ScalarPriors {
+                sqrt_price_x96_before: state.sqrt_price_x96,
+                liquidity_before: state.liquidity,
+                tick_before: state.tick,
+            });
         }
 
         Some(result)
@@ -1186,9 +1212,11 @@ impl BotCore {
 
         state.journal.push_delta(V3BlockDelta {
             block: block_number,
-            sqrt_price_x96_before: state.sqrt_price_x96,
-            liquidity_before: state.liquidity,
-            tick_before: state.tick,
+            scalar_priors: Some(ScalarPriors {
+                sqrt_price_x96_before: state.sqrt_price_x96,
+                liquidity_before: state.liquidity,
+                tick_before: state.tick,
+            }),
             tick_priors: journaled_priors,
         });
 
@@ -1253,11 +1281,13 @@ impl BotCore {
             delta_i128,
         );
 
+        // Journal: V4 `ModifyLiquidity` mutates tick_data only, NOT the slot0
+        // scalars — so the journal carries no scalar priors for this tick-only
+        // event (scalar_priors: None). Only the two tick priors are reverse-
+        // applied on rollback. See ADR-004.
         state.journal.push_delta(V3BlockDelta {
             block: block_number,
-            sqrt_price_x96_before: state.sqrt_price_x96,
-            liquidity_before: state.liquidity,
-            tick_before: state.tick,
+            scalar_priors: None,
             tick_priors: journaled_priors,
         });
 
@@ -1475,11 +1505,17 @@ impl BotCore {
         let PoolEntry::V4(state) = self.pools.get_mut(&pool_id)? else {
             return None;
         };
-        let result = state.journal.restore_before_block(block);
+        let mut result = state.journal.restore_before_block(block);
 
-        state.sqrt_price_x96 = result.sqrt_price_x96_before;
-        state.liquidity = result.liquidity_before;
-        state.tick = result.tick_before;
+        // Sync scalar fields if the rolled-back range had scalar changes.
+        // If scalar_priors is None (tick-only event(s) rolled back), the
+        // current slot0 scalars were never changed by the rolled-back events
+        // and are already correct — skip the write-back. See ADR-004.
+        if let Some(p) = &result.scalar_priors {
+            state.sqrt_price_x96 = p.sqrt_price_x96_before;
+            state.liquidity = p.liquidity_before;
+            state.tick = p.tick_before;
+        }
         state.update_block = result.block;
         state.invalidate_tick_range_cache();
 
@@ -1498,6 +1534,18 @@ impl BotCore {
                     state.tick_data.remove(tick_idx);
                 }
             }
+        }
+
+        // If scalar_priors was None (tick-only rollback), populate it with the
+        // current (post-restore) scalars so downstream consumers always see
+        // Some — the current scalars ARE the restored scalars in this case.
+        // See ADR-004.
+        if result.scalar_priors.is_none() {
+            result.scalar_priors = Some(ScalarPriors {
+                sqrt_price_x96_before: state.sqrt_price_x96,
+                liquidity_before: state.liquidity,
+                tick_before: state.tick,
+            });
         }
 
         Some(result)
