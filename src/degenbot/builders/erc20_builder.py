@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
     from degenbot.builders.pool_io import PoolIO
     from degenbot.database.session_manager import DatabaseSessionManager
+    from degenbot.degenbot_rs import PyBot
     from degenbot.registry import TokenRegistry
     from degenbot.types.aliases import ChainId
 
@@ -47,11 +48,13 @@ class Erc20Builder:
         default_chain_id: ChainId | None = None,
         db: DatabaseSessionManager,
         tokens: TokenRegistry,
+        py_bot: PyBot,
     ) -> None:
         """Initialize the instance."""
         self._default_chain_id = default_chain_id
         self._db = db
         self._tokens = tokens
+        self._py_bot = py_bot
 
     def build(
         self,
@@ -80,7 +83,10 @@ class Erc20Builder:
 
         # Check for Ether placeholder
         if address in EtherPlaceholder.addresses:
-            token: Erc20Token = EtherPlaceholder(address, chain_id=chain_id)
+            py_token = self._py_bot.register_token(
+                address, "Ether Placeholder", "ETH", 18, chain_id
+            )
+            token: Erc20Token = EtherPlaceholder(py_token)
             self._tokens.add(token_address=token.address, chain_id=chain_id, token=token)
             if not silent:
                 logger.info(f"• {token.symbol} ({token.name})")
@@ -170,13 +176,8 @@ class Erc20Builder:
                     token_from_db.symbol = symbol
                     session.commit()
 
-        token = Erc20Token(
-            address=address,
-            chain_id=chain_id,
-            name=name,
-            symbol=symbol,
-            decimals=decimals,
-        )
+        py_token = self._py_bot.register_token(address, name, symbol, decimals, chain_id)
+        token = Erc20Token(py_token)
 
         # Register (no self-registration)
         self._tokens.add(token_address=token.address, chain_id=chain_id, token=token)

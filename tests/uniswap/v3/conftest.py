@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from degenbot.degenbot_rs import PyBot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider import OfflineProvider, ProviderAdapter
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
@@ -19,6 +20,9 @@ from tests.constants import (
     WBTC_ETH,
     WETH_ETH,
 )
+from tests.helpers.erc20_factory import make_erc20
+
+_PY_BOT = PyBot()
 
 # Path to recorded chain data
 CHAIN_DATA_PATH = Path(__file__).parent.parent.parent / "fixtures" / "chain_data"
@@ -68,8 +72,7 @@ def offline_adapter(offline_provider: OfflineProvider) -> ProviderAdapter:
 
 @pytest.fixture
 def offline_wbtc_weth_v3_pool(offline_adapter: ProviderAdapter) -> UniswapV3Pool:
-    """Provide WBTC-WETH V3 pool using offline provider with complete tick data.
-    """
+    """Provide WBTC-WETH V3 pool using offline provider with complete tick data."""
     # Load tick data from recorded file
     data_file = CHAIN_DATA_PATH / "1" / f"block_{UNISWAP_V3_WBTC_WETH_BLOCK}.json"
     liquidity_data = load_v3_liquidity_data(data_file, UNISWAP_V3_WBTC_WETH_POOL)
@@ -104,14 +107,16 @@ def offline_wbtc_weth_v3_pool(offline_adapter: ProviderAdapter) -> UniswapV3Pool
     }
 
     # Construct I/O-free tokens
-    wbtc = Erc20Token(
+    wbtc = make_erc20(
+        _PY_BOT,
         WBTC_ETH,
         name="Wrapped BTC",
         symbol="WBTC",
         decimals=8,
         chain_id=1,
     )
-    weth = Erc20Token(
+    weth = make_erc20(
+        _PY_BOT,
         WETH_ETH,
         name="Wrapped Ether",
         symbol="WETH",

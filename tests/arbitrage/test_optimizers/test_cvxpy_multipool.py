@@ -9,6 +9,7 @@ import hypothesis
 import hypothesis.strategies as st
 
 from degenbot.arbitrage._legacy import _UniswapMultiPoolCycleTesting
+from degenbot.degenbot_rs import PyBot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.arbitrage.generator.fixtures import FixtureFactory
@@ -16,6 +17,9 @@ from tests.arbitrage.generator.hypothesis_strategies import (
     liquidity_depth_strategy,
     seed_strategy,
 )
+from tests.helpers.erc20_factory import make_erc20
+
+_PY_BOT = PyBot()
 
 # ==============================================================================
 # Test Fixtures
@@ -24,7 +28,8 @@ from tests.arbitrage.generator.hypothesis_strategies import (
 
 def make_fake_token(address: str, symbol: str, decimals: int, chain_id: int = 1) -> Erc20Token:
     """Create a fake token for testing."""
-    return Erc20Token(
+    return make_erc20(
+        _PY_BOT,
         address,
         chain_id=chain_id,
         name=symbol,
@@ -246,8 +251,7 @@ class TestMultiPoolBounds:
     )
     @hypothesis.settings(deadline=None, max_examples=10)
     def test_3pool_respects_reserve_bounds(self, seed: int):
-        """Property: 3-pool optimization doesn't exceed available reserves.
-        """
+        """Property: 3-pool optimization doesn't exceed available reserves."""
         factory = FixtureFactory()
         fixture = factory.random_multi_pool_cycle(
             seed=seed,
@@ -270,8 +274,7 @@ class TestMultiPoolBounds:
     )
     @hypothesis.settings(deadline=None, max_examples=10)
     def test_4pool_positive_reserves(self, seed: int):
-        """Property: 4-pool generated fixtures have positive reserves.
-        """
+        """Property: 4-pool generated fixtures have positive reserves."""
         factory = FixtureFactory()
         fixture = factory.random_multi_pool_cycle(
             seed=seed,
@@ -296,8 +299,7 @@ class TestMultiPoolMixedTypes:
     )
     @hypothesis.settings(deadline=None, max_examples=10)
     def test_v2_v3_mixed_cycle(self, seed: int):
-        """Property: Mixed V2/V3 cycles can be generated.
-        """
+        """Property: Mixed V2/V3 cycles can be generated."""
         factory = FixtureFactory()
         fixture = factory.random_multi_pool_cycle(
             seed=seed,
@@ -318,8 +320,7 @@ class TestMultiPoolMixedTypes:
     )
     @hypothesis.settings(deadline=None, max_examples=10)
     def test_v4_cycle_generation(self, seed: int):
-        """Property: V4-only cycles can be generated.
-        """
+        """Property: V4-only cycles can be generated."""
         factory = FixtureFactory()
         fixture = factory.random_multi_pool_cycle(
             seed=seed,

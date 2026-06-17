@@ -13,11 +13,14 @@ import pytest
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
-from degenbot.erc20.erc20 import Erc20Token
+from degenbot.degenbot_rs import PyBot
 from degenbot.types.address_comparable import AddressComparable
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.fakes.tokens import FakeToken
+from tests.helpers.erc20_factory import make_erc20
+
+_PY_BOT = PyBot()
 
 # ── Addresses used across tests ──
 
@@ -42,7 +45,8 @@ class TestFakeTokenErc20Interoperability:
 
     def test_erc20_token_equals_fake_token_by_address(self) -> None:
         fake = FakeToken(USDC_ADDRESS, symbol="USDC", decimals=6)
-        erc20 = Erc20Token(
+        erc20 = make_erc20(
+            _PY_BOT,
             USDC_ADDRESS,
             name="USD Coin",
             symbol="USDC",
@@ -59,7 +63,8 @@ class TestFakeTokenErc20Interoperability:
 
     def test_hash_compatibility_erc20_token(self) -> None:
         fake = FakeToken(USDC_ADDRESS, symbol="USDC", decimals=6)
-        erc20 = Erc20Token(
+        erc20 = make_erc20(
+            _PY_BOT,
             USDC_ADDRESS,
             name="USD Coin",
             symbol="USDC",
@@ -71,7 +76,8 @@ class TestFakeTokenErc20Interoperability:
     def test_dict_key_interchangeability(self) -> None:
         """FakeToken and Erc20Token with the same address should map to the same dict key."""
         fake = FakeToken(USDC_ADDRESS, symbol="USDC", decimals=6)
-        erc20 = Erc20Token(
+        erc20 = make_erc20(
+            _PY_BOT,
             USDC_ADDRESS,
             name="USD Coin",
             symbol="USDC",
@@ -86,7 +92,8 @@ class TestFakeTokenErc20Interoperability:
 
     def test_set_membership(self) -> None:
         fake = FakeToken(USDC_ADDRESS, symbol="USDC", decimals=6)
-        erc20 = Erc20Token(
+        erc20 = make_erc20(
+            _PY_BOT,
             USDC_ADDRESS,
             name="USD Coin",
             symbol="USDC",

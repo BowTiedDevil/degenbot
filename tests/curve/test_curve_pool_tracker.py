@@ -12,9 +12,12 @@ from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.curve.trackers import CurveStableswapPoolTracker
-from degenbot.erc20 import Erc20Token
+from degenbot.degenbot_rs import PyBot
 from degenbot.provider import ProviderAdapter
 from tests.helpers.bot_factory import make_bot_with_provider
+from tests.helpers.erc20_factory import make_erc20
+
+_PY_BOT = PyBot()
 
 
 def test_curve_pool_tracker_exists() -> None:
@@ -35,14 +38,16 @@ def test_curve_pool_tracker_has_get_pool() -> None:
 def test_curve_pool_tracker_tracks_pools() -> None:
     """After getting a pool, it's tracked in the tracker's _tracked_pools."""
     tokens = (
-        Erc20Token(
-            address="0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        make_erc20(
+            _PY_BOT,
+            "0x6B175474E89094C44Da98b954EedeAC495271d0F",
             name="DAI",
             symbol="DAI",
             decimals=18,
         ),
-        Erc20Token(
-            address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        make_erc20(
+            _PY_BOT,
+            "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             name="USDC",
             symbol="USDC",
             decimals=6,
@@ -75,8 +80,9 @@ def test_curve_pool_tracker_tracks_pools() -> None:
 def test_curve_pool_tracker_returns_cached_pool() -> None:
     """Second call to get_pool returns the same tracked instance."""
     tokens = (
-        Erc20Token(
-            address="0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        make_erc20(
+            _PY_BOT,
+            "0x6B175474E89094C44Da98b954EedeAC495271d0F",
             name="DAI",
             symbol="DAI",
             decimals=18,

@@ -8,13 +8,16 @@ from pathlib import Path
 import pytest
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.erc20.erc20 import Erc20Token
+from degenbot.degenbot_rs import PyBot
 from degenbot.exceptions import DegenbotValueError
 from degenbot.provider import OfflineProvider, ProviderAdapter
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.fakes.pools import FakeUniswapV4Pool
+from tests.helpers.erc20_factory import make_erc20
+
+_PY_BOT = PyBot()
 
 CHAIN_DATA_PATH = Path(__file__).parent.parent / "fixtures" / "chain_data"
 UNISWAP_V2_WBTC_WETH_POOL = get_checksum_address("0xBb2b8038a1640196FbE3e38816F3e67Cba72D940")
@@ -30,14 +33,16 @@ def _get_offline_v2_pool() -> UniswapV2Pool:
     adapter = ProviderAdapter.from_offline(provider)
 
     factory_address = get_checksum_address("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
-    wbtc = Erc20Token(
+    wbtc = make_erc20(
+        _PY_BOT,
         get_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"),
         name="Wrapped BTC",
         symbol="WBTC",
         decimals=8,
         chain_id=1,
     )
-    weth = Erc20Token(
+    weth = make_erc20(
+        _PY_BOT,
         get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
         name="Wrapped Ether",
         symbol="WETH",
@@ -70,8 +75,7 @@ def _get_offline_v2_pool() -> UniswapV2Pool:
 
 
 def test_distinct_registry_instances():
-    """Constructing a new registry instance returns a distinct object.
-    """
+    """Constructing a new registry instance returns a distinct object."""
     pool_registry = PoolRegistry()
     token_registry = TokenRegistry()
 

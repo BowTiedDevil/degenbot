@@ -17,7 +17,10 @@ from degenbot.arbitrage.types import (
     UniswapV2PoolSwapAmounts,
     UniswapV3PoolSwapAmounts,
 )
-from degenbot.erc20 import Erc20Token
+from degenbot.degenbot_rs import PyBot
+from tests.helpers.erc20_factory import make_erc20
+
+_PY_BOT = PyBot()
 
 
 def test_v2_swap_amounts_encodes_swap_call() -> None:
@@ -190,8 +193,8 @@ def test_generate_payloads_with_custom_approval_strategy() -> None:
 def test_curve_swap_amounts_encodes_exchange_call() -> None:
     """CurveStableSwapPoolSwapAmounts.encode() produces an exchange() EncodedCall."""
     pool_address = ChecksumAddress(Web3.to_checksum_address("0x" + "ab" * 20))
-    token_in = Erc20Token(address="0x" + "11" * 20, name="TokenA", symbol="TKA", decimals=18)
-    token_out = Erc20Token(address="0x" + "22" * 20, name="TokenB", symbol="TKB", decimals=18)
+    token_in = make_erc20(_PY_BOT, "0x" + "11" * 20, name="TokenA", symbol="TKA", decimals=18)
+    token_out = make_erc20(_PY_BOT, "0x" + "22" * 20, name="TokenB", symbol="TKB", decimals=18)
 
     swap = CurveStableSwapPoolSwapAmounts(
         pool=pool_address,
@@ -228,8 +231,8 @@ def test_curve_swap_amounts_encodes_exchange_call() -> None:
 def test_curve_swap_amounts_encodes_exchange_underlying_call() -> None:
     """CurveStableSwapPoolSwapAmounts with underlying=True encodes exchange_underlying()."""
     pool_address = ChecksumAddress(Web3.to_checksum_address("0x" + "ab" * 20))
-    token_in = Erc20Token(address="0x" + "11" * 20, name="TokenA", symbol="TKA", decimals=18)
-    token_out = Erc20Token(address="0x" + "22" * 20, name="TokenB", symbol="TKB", decimals=18)
+    token_in = make_erc20(_PY_BOT, "0x" + "11" * 20, name="TokenA", symbol="TKA", decimals=18)
+    token_out = make_erc20(_PY_BOT, "0x" + "22" * 20, name="TokenB", symbol="TKB", decimals=18)
 
     swap = CurveStableSwapPoolSwapAmounts(
         pool=pool_address,
