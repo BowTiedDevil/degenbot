@@ -245,8 +245,9 @@ def test_arb_path_build_solve_input_runs_without_rustpoolcache():
     - Pump reads `log.removed` in the `WsEvent::Log` arm → `engine.handle_reorg(log_block)` (ADR-003 Option α).
     - Side fix: `compute_diff_and_send` now actually drops `expired` paths from `delivered` (was retaining stale profitable entries) and refreshes `updated` values — fulfills the `send_result_batch_advances_delivered_to_above_threshold` contract the old code coincidentally passed.
     - Tests: new `handle_reorg_rolls_back_v2_sync_and_expires_delivered_result` (captures the `expired` batch diff) + `restore_before_block_at_earliest_returns_registration_state`; proptest model updated. 482 Rust + 62 Python engine/bot_core green; clippy clean.
-[ ] Slice 2: V3 consolidation + LiquidityMap extraction + V3 single-pool calc
-[ ] Slice 3: V4 consolidation + orphan-solve reconciliation + V4 single-pool calc
+[x] Slice 2a: V3 state consolidation into BotCore (structural) — **done** (deferred `LiquidityMap` struct extraction to Slice 3; V3 follows S1's inline-`PoolEntry`+`apply_*` pattern; see details in commit body)
+[ ] Slice 2b: V3 single-pool calc (cl_lib) + V3 reorg (journal scalars in `apply_v3_swap`, Mint/Burn tick priors, extend `handle_reorg` to V3) — NEW behavior via TDD
+[ ] Slice 3: V4 consolidation + orphan-solve reconciliation + V4 single-pool calc. Extract `LiquidityMap` generic from V3+V4 duplication here.
 [ ] Slice 4: Legacy retirement (delete RustPoolCache + ArbPoolCacheAdapter + ArbSolver registered-path surface)
 [ ] Slice 5: PyToken completion + PyBotCore finalization
 [ ] Slice 6: Validate and clean up (lint, test-all, CONTEXT sync, ADR-003 status flip)

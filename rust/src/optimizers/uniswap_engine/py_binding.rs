@@ -13,7 +13,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use tokio::sync::mpsc;
 
-use crate::optimizers::v3_block_engine::{RegisterV3PoolParams, V3SwapUpdate};
+use crate::bot_core::{RegisterV3PoolParams, V3SwapUpdate};
 use crate::optimizers::v4_block_engine::{RegisterV4PoolParams, V4SwapUpdate};
 
 use super::{UniswapEngine, ResultBatch, EnginePhase, PoolTickCoverage, HopType, MixedPoolRef, BlockMetadata, SolvePathResult, V3SnapshotData, V4SnapshotData};
@@ -958,7 +958,7 @@ impl PyUniswapArbEngine {
         let (key, backfill_verify_snapshot) = register_with_cl_buffers(
             &self.engine,
             |engine| {
-                engine.v3_engine().register_pool(RegisterV3PoolParams {
+                engine.register_v3_pool(&RegisterV3PoolParams {
                     address: addr,
                     token0: t0,
                     token1: t1,
@@ -973,13 +973,13 @@ impl PyUniswapArbEngine {
                     coverage,
                 })
             },
-            |engine| engine.v3_engine().apply_backfill_buffer(&addr),
+            |engine| engine.core.lock().apply_backfill_buffer_v3(&addr),
             |engine, key| {
                 is_tracked
-                    .then(|| engine.v3_engine_ref().get_pool(*key).cloned())
+                    .then(|| engine.core.lock().get_v3_pool(*key).cloned())
                     .flatten()
             },
-            |engine| engine.v3_engine().apply_pump_buffer(&addr),
+            |engine| engine.core.lock().apply_pump_buffer_v3(&addr),
         );
 
         if is_tracked && self.verify_on_register.load(std::sync::atomic::Ordering::Relaxed) {
@@ -1617,7 +1617,7 @@ impl PyUniswapArbEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
         let engine = self.engine.lock();
-        let count = engine.v3_engine_ref().buffered_event_count(&addr);
+        let count = engine.core.lock().buffered_v3_event_count(&addr);
         Ok(count)
     }
 
@@ -1629,11 +1629,12 @@ impl PyUniswapArbEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
         let tick_data = {
-            let mut engine = self.engine.lock();
-            let Some(key) = engine.v3_engine().pool_key_for_address(&addr) else {
+            let engine = self.engine.lock();
+            let core = engine.core.lock();
+            let Some(key) = core.pool_id_by_address(&addr) else {
                 return Ok(None);
             };
-            let Some(pool) = engine.v3_engine().get_pool(key) else {
+            let Some(pool) = core.get_v3_pool(key) else {
                 return Ok(None);
             };
             pool.tick_data.clone()
@@ -1754,7 +1755,7 @@ impl PyUniswapArbEngine {
         })?;
 
         let mut engine = self.engine.lock();
-        let v3_pools = engine.v3_engine().pools_snapshot();
+        let v3_pools = engine.core.lock().v3_pools_snapshot();
         let v4_pools = engine.v4_engine().pools_snapshot();
         drop(engine); // Release lock before async I/O
 
@@ -1808,8 +1809,8 @@ impl PyUniswapArbEngine {
         rpc_url: String,
         block_number: Option<u64>,
     ) -> PyResult<()> {
-        let mut engine = self.engine.lock();
-        let v3_pools = engine.v3_engine().pools_snapshot();
+        let engine = self.engine.lock();
+        let v3_pools = engine.core.lock().v3_pools_snapshot();
         drop(engine);
 
         let runtime = crate::runtime::get_runtime();
@@ -1904,21 +1905,20 @@ impl PyUniswapArbEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}"))
         })?;
 
-        let mut engine = self.engine.lock();
-        let v3_key = engine.v3_engine().pool_key_for_address(&pool_addr);
-        let v3_pools = if let Some(key) = v3_key {
+        let v3_pools = {
+            let engine = self.engine.lock();
+            let core = engine.core.lock();
+            let Some(key) = core.pool_id_by_address(&pool_addr) else {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "V3 pool {address} not registered in engine"
+                )));
+            };
             let mut map = std::collections::HashMap::new();
-            if let Some(pool) = engine.v3_engine().get_pool(key) {
+            if let Some(pool) = core.get_v3_pool(key) {
                 map.insert(key, pool.clone());
             }
             map
-        } else {
-            drop(engine);
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "V3 pool {address} not registered in engine"
-            )));
         };
-        drop(engine);
 
         let tick_lens = Address::ZERO;
 
@@ -2087,7 +2087,8 @@ impl PyUniswapArbEngine {
         v3_sync_updates: &Bound<'_, PyList>,
         block_number: u64,
     ) -> PyResult<()> {
-        let mut engine = self.engine.lock();
+        let engine = self.engine.lock();
+        let mut core = engine.core.lock();
         for item in v3_sync_updates.iter() {
             let tuple = item.cast::<pyo3::types::PyTuple>()?;
             if tuple.len() != 5 {
@@ -2124,7 +2125,7 @@ impl PyUniswapArbEngine {
                 rust_tick_data.insert(tick_idx, make_tick_info(liquidity_gross, liquidity_net));
             }
 
-            engine.v3_engine().sync_pool_state(
+            core.sync_v3_pool_state(
                 addr,
                 sqrt_price,
                 liquidity,
@@ -2286,7 +2287,7 @@ impl PyUniswapArbEngine {
                     });
                 }
                 HopType::V3 => {
-                    let pool = engine.v3_engine.get_pool(pool_ref.pool_key);
+                    let pool = core.get_v3_pool(pool_ref.pool_key);
                     let (addr, fee, ts) = pool.map_or((None, None, None), |p| {
                         (Some(format!("{}", p.address)), Some(u64::from(p.fee)), Some(p.tick_spacing))
                     });
