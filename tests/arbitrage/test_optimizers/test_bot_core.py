@@ -265,15 +265,25 @@ class TestTokenHandle:
     def test_register_and_get_token(self):
         """Can register and retrieve a token handle."""
         core = BotCore()
-        core.register_token(
+        token = core.register_token(
             address=self.TOKEN_ADDR,
             name="Wrapped Ether",
             symbol="WETH",
             decimals=18,
             chain_id=1,
         )
-        token = core.get_token(self.TOKEN_ADDR)
+        # ADR-003 Slice 5: register_token returns the PyToken handle; the
+        # getters read Rust-owned metadata back through BotCore's token map.
         assert token is not None
+        assert token.address == self.TOKEN_ADDR  # alloy preserves checksum case
+        assert token.symbol == "WETH"
+        assert token.decimals == 18
+        assert token.name == "Wrapped Ether"
+
+        retrieved = core.get_token(self.TOKEN_ADDR)
+        assert retrieved is not None
+        assert retrieved.symbol == "WETH"
+        assert retrieved.decimals == 18
 
     def test_get_unknown_token_returns_none(self):
         """get_token() returns None for unregistered address."""

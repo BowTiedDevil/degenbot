@@ -271,5 +271,7 @@ def test_arb_path_build_solve_input_runs_without_rustpoolcache():
     - `degenbot_rs.pyi` legacy stubs removed (RustPoolCache/RustIntHopState/RustArbResult/RustArbSolver/RustHopState/RustV3TickRangeHop/RustV3TickRangeSequence/RustTickRangeCrossing/RustIntMobiusResult + their methods + the 3 module-level fns + `__all__` entries).
     - `tests/arbitrage/test_optimizers/test_pool_cache_adapter.py` deleted (tested deleted code).
     - 460 Rust + 345 Python optimizer tests + ruff + ty + clippy + markdownlint all green.
-[ ] Slice 5: PyToken completion + PyBotCore finalization
+[x] Slice 5: PyToken completion + PyBotCore finalization — **done**
+    - `PyToken` (the stub returning only `address`) completed with `decimals`/`symbol`/`name` getters that read Rust-owned `TokenEntry` metadata through `BotCore::token_entry(&Address) -> Option<&TokenEntry>` (T3 decision realized). `PyBotCore.register_token` now returns the `PyToken` handle (matching `register_v2_pool`/`register_v3_pool`/`register_v4_pool`); `PyBotCore.get_token` returns `Option<PyToken>` as before. `PyToken`'s `address` getter preserved (alloy's checksum case).
+    - Python `TestTokenHandle.test_register_and_get_token` extended to assert `PyToken.decimals`/`symbol`/`name`/`address` + `register_token` returning the handle. 460 Rust + 345 Python optimizer tests + clippy clean.
 [ ] Slice 6: Validate and clean up (lint, test-all, CONTEXT sync, ADR-003 status flip)

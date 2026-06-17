@@ -289,10 +289,12 @@ impl PyBotCore {
         symbol: &str,
         decimals: u8,
         chain_id: u64,
-    ) -> PyResult<()> {
+    ) -> PyResult<PyToken> {
         let addr = parse_address(address)?;
-        self.core.lock().register_token(addr, name.to_string(), symbol.to_string(), decimals, chain_id);
-        Ok(())
+        self.core
+            .lock()
+            .register_token(addr, name.to_string(), symbol.to_string(), decimals, chain_id);
+        Ok(PyToken::new(Arc::clone(&self.core), addr))
     }
 
     /// Get a thin Token handle for the given address.

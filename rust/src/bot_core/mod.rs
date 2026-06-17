@@ -880,6 +880,14 @@ impl BotCore {
         self.tokens.contains_key(address)
     }
 
+    /// Look up a registered token's metadata entry (address, name, symbol,
+    /// decimals, `chain_id`) by contract address. Used by `PyToken`'s getters
+    /// (ADR-003 T3: Rust owns token identity metadata).
+    #[must_use]
+    pub fn token_entry(&self, address: &Address) -> Option<&TokenEntry> {
+        self.tokens.get(address)
+    }
+
     /// Get the number of deltas in the reorg journal for a V2 pool.
     ///
     /// Returns 0 if the pool ID is not registered.
