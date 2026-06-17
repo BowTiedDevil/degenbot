@@ -107,15 +107,17 @@ class CamelotBuilder(V2BuilderBase):
         # Register the pool in the shared Rust Bot and wrap the handle with
         # the Python companion (ADR-005 slice 4). Camelot's fee is
         # (fee_tokenN_raw, fee_denominator) — split into numerator/denominator.
+        # ``gamma_numer`` is the retained POST-FEE fraction (Rust convention;
+        # ``fee_tokenN_raw`` is the FEE numerator — convert by subtraction).
         pool_id = self._py_bot.register_v2_pool(
             address=common.pool_address,
             token0=common.token0_address,
             token1=common.token1_address,
             reserve0=common.reserves0,
             reserve1=common.reserves1,
-            gamma_numer0=fee_token0_raw,
+            gamma_numer0=fee_denominator - fee_token0_raw,
             fee_denom0=fee_denominator,
-            gamma_numer1=fee_token1_raw,
+            gamma_numer1=fee_denominator - fee_token1_raw,
             fee_denom1=fee_denominator,
             factory=common.factory,
             update_block=common.state_block,

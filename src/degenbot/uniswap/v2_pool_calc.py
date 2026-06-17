@@ -26,6 +26,7 @@ from degenbot.uniswap.v2_functions import (
 )
 
 if TYPE_CHECKING:
+    from degenbot.degenbot_rs import PyLiquidityPool
     from degenbot.erc20 import Erc20Token
     from degenbot.uniswap.v2_types import UniswapV2PoolState
 
@@ -52,6 +53,10 @@ class UniswapV2PoolCalc:
     reserves_token1: int
     state: UniswapV2PoolState
     tokens: tuple[Erc20Token, Erc20Token]
+    # PyLiquidityPool handle (set by the concrete UniswapV2Pool companion
+    # in MRO — ADR-005 slice 4). Calc delegation (slice 5) routes the
+    # constant-product math through it on the non-override path.
+    _py_pool: PyLiquidityPool
 
     # These can be overridden by subclasses (e.g., PancakeSwap uses different fee)
     FEE: Fraction = Fraction(3, 1000)
@@ -112,33 +117,41 @@ class UniswapV2PoolCalc:
             raise InvalidSwapInputAmount
 
         if token_out == self._token1:
-            reserves_in = (
-                override_state.reserves_token0
-                if override_state is not None
-                else self.reserves_token0
-            )
-            reserves_out = (
-                override_state.reserves_token1
-                if override_state is not None
-                else self.reserves_token1
-            )
-            fee = self._fee_token0
+            zero_for_one = True
         elif token_out == self._token0:
-            reserves_in = (
-                override_state.reserves_token1
-                if override_state is not None
-                else self.reserves_token1
-            )
-            reserves_out = (
-                override_state.reserves_token0
-                if override_state is not None
-                else self.reserves_token0
-            )
-            fee = self._fee_token1
+            zero_for_one = False
         else:  # pragma: no cover
             raise DegenbotValueError(
                 message=f"Could not identify token_out: {token_out}! This pool holds: {self._token0} {self._token1}"  # noqa:E501
             )
+
+        if override_state is None:
+            # ADR-005 slice 5: delegate the constant-product math to the Rust
+            # pool handle. Rust reads reserves + fee under a single read guard
+            # (no separate Python state read beforehand — no pump-interleave risk).
+            # Rust returns 0 on overdraw (amount_out >= reserve_out); convert to
+            # the original Python contract's LiquidityPoolError.
+            result = self._py_pool.calculate_tokens_in(
+                zero_for_one=zero_for_one,
+                amount_out=token_out_quantity,
+            )
+            if result == 0:
+                raise LiquidityPoolError(
+                    message=f"Requested amount out ({token_out_quantity}) >= pool reserves"
+                )
+            return result
+
+        # Override path: Python constant-product calc against the override
+        # reserves. simulate_* relies on this for delta + final_state
+        # consistency (one local snapshot both reads).
+        if zero_for_one:
+            reserves_in = override_state.reserves_token0
+            reserves_out = override_state.reserves_token1
+            fee = self._fee_token0
+        else:
+            reserves_in = override_state.reserves_token1
+            reserves_out = override_state.reserves_token0
+            fee = self._fee_token1
 
         if token_out_quantity > reserves_out - 1:
             raise LiquidityPoolError(
@@ -172,33 +185,34 @@ class UniswapV2PoolCalc:
             raise InvalidSwapInputAmount
 
         if token_in == self._token0:
-            reserves_in = (
-                override_state.reserves_token0
-                if override_state is not None
-                else self.reserves_token0
-            )
-            reserves_out = (
-                override_state.reserves_token1
-                if override_state is not None
-                else self.reserves_token1
-            )
-            fee = self._fee_token0
+            zero_for_one = True
         elif token_in == self._token1:
-            reserves_in = (
-                override_state.reserves_token1
-                if override_state is not None
-                else self.reserves_token1
-            )
-            reserves_out = (
-                override_state.reserves_token0
-                if override_state is not None
-                else self.reserves_token0
-            )
-            fee = self._fee_token1
+            zero_for_one = False
         else:  # pragma: no cover
             raise DegenbotValueError(
                 message=f"Could not identify token_in: {token_in}! Pool holds: {self._token0} {self._token1}"  # noqa:E501
             )
+
+        if override_state is None:
+            # ADR-005 slice 5: delegate the constant-product math to the Rust
+            # pool handle. Rust reads reserves + fee under a single read guard
+            # (no separate Python state read beforehand — no pump-interleave).
+            return self._py_pool.calculate_tokens_out(
+                zero_for_one=zero_for_one,
+                amount_in=token_in_quantity,
+            )
+
+        # Override path: Python constant-product calc against the override
+        # reserves. simulate_* relies on this for delta + final_state
+        # consistency.
+        if zero_for_one:
+            reserves_in = override_state.reserves_token0
+            reserves_out = override_state.reserves_token1
+            fee = self._fee_token0
+        else:
+            reserves_in = override_state.reserves_token1
+            reserves_out = override_state.reserves_token0
+            fee = self._fee_token1
 
         return constant_product_calc_exact_in(
             amount_in=token_in_quantity,

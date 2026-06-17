@@ -28,17 +28,17 @@ ADDR_P2 = "0x00000000000000000000000000000000000000b2"
 
 @pytest.fixture
 def token_a():
-    return FakeToken("0xtokenA")
+    return FakeToken("0x1111111111111111111111111111111111111111")
 
 
 @pytest.fixture
 def token_b():
-    return FakeToken("0xtokenB")
+    return FakeToken("0x2222222222222222222222222222222222222222")
 
 
 @pytest.fixture
 def token_c():
-    return FakeToken("0xtokenC")
+    return FakeToken("0x3333333333333333333333333333333333333333")
 
 
 def _make_pool_with_swap(

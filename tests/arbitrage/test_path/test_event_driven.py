@@ -30,12 +30,12 @@ FEE_03 = Fraction(3, 1000)
 
 @pytest.fixture
 def token_a():
-    return FakeToken("0xtokenA")
+    return FakeToken("0x1111111111111111111111111111111111111111")
 
 
 @pytest.fixture
 def token_b():
-    return FakeToken("0xtokenB")
+    return FakeToken("0x2222222222222222222222222222222222222222")
 
 
 def _make_cyclic_path(token_a, token_b):
