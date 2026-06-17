@@ -50,7 +50,7 @@ type(scope): subject
 
 ### Scopes
 
-Optional but encouraged. Closed list: `curve`, `aave`, `v2`, `v3`, `v4`, `aerodrome`, `camelot`, `balancer`, `arbitrage`, `database`, `rust`, `sdk`. Omit scope for cross-cutting changes.
+Optional but encouraged. Closed list: `curve`, `aave`, `v2`, `v3`, `v4`, `aerodrome`, `camelot`, `balancer`, `arbitrage`, `builders`, `database`, `rust`, `python`, `sdk`. Omit scope for cross-cutting changes. Enforced in `.commitlintrc.yml` (the authoritative list — keep both in sync).
 
 ### Rules
 

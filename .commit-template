@@ -1,7 +1,7 @@
 # type(scope): description
 #
 # Types:  feat | fix | refactor | docs | lint | test | chore | remove
-# Scope:  curve | aave | v2 | v3 | v4 | aerodrome | camelot | balancer | arbitrage | database | rust | sdk (or omit)
+# Scope:  curve | aave | v2 | v3 | v4 | aerodrome | camelot | balancer | arbitrage | builders | database | rust | python | sdk (or omit)
 #
 # Subject: imperative mood, lowercase, no trailing period, ≤72 chars
 # Body:    optional, blank line above, wrap at 72 chars
