@@ -12,11 +12,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, I256, U160, U256};
 
 use crate::bot_core::state_history::{ReorgJournal, V3BlockDelta};
-use crate::bot_core::tick_bitmap::{compute_tick_ranges, V3TickRangeForSolver};
+use crate::bot_core::tick_bitmap::{compute_tick_ranges, gen_ticks, V3TickRangeForSolver};
 use crate::bot_core::TickInfo;
+use crate::cl_lib::swap_math::compute_swap_step_v3;
+use crate::cl_lib::tick_math::{
+    get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO, MIN_SQRT_RATIO,
+};
 use crate::optimizers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence};
 
 // ---------------------------------------------------------------------------
@@ -290,5 +294,341 @@ impl V3PoolState {
         }
 
         IntV3TickRangeSequence::new(int_ranges).ok()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// V3 single-pool swap simulation (ADR-003: "Pool's authority over its own math")
+// ---------------------------------------------------------------------------
+
+/// Result of a single-pool V3 swap simulation.
+///
+/// `amount0` is the token0 delta (positive = pool received token0, i.e. the
+/// swapper paid token0). `amount1` is the token1 delta. The sign convention
+/// matches Uniswap V3's `Swap` callback: for an exact-input swap,
+/// `zero_for_one` swaps pay token0 (`amount0 > 0`) and receive token1
+/// (`amount1 < 0`); both magnitudes are returned unsigned here.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct V3SwapOutcome {
+    /// Absolute token0 amount moved (input for zfo swaps, output for ofz).
+    pub amount0: U256,
+    /// Absolute token1 amount moved (output for zfo swaps, input for ofz).
+    pub amount1: U256,
+}
+
+/// Simulate a V3 exact-input or exact-output swap against a pool's state.
+///
+/// Port of `UniswapV3Pool._calculate_swap` / `degenbot.uniswap.concentrated.
+/// v3_simulator.calculate_swap`. Walks initialized ticks via [`gen_ticks`],
+/// runs [`compute_swap_step_v3`] per tick range, and crosses liquidity-net at
+/// initialized boundaries. Pure (no state mutation — reads `&V3PoolState`);
+/// the solve engine + the calc API both read by reference per ADR-003.
+///
+/// `amount_specified` uses the V3 sign convention: positive = exact input,
+/// negative = exact output. Returns `None` if the amount is zero, the swap
+/// cannot be computed (tick math / swap-step error, liquidity overflow), or
+/// the state is insufficient (sparse tick data with no walkable ticks).
+///
+/// See: `contract_reference/uniswap/V3/UniswapV3Factory.sol` (`SwapMath`,
+/// `TickBitmap`, `TickMath`).
+#[must_use]
+#[allow(unused_assignments)] // `tick` tracks the contract's post-step tick; kept faithful to the V3
+                              // `_calculate_swap` loop even though this pure simulator returns only amounts.
+#[allow(clippy::too_many_lines)] // faithful port of V3's `_calculate_swap`; splitting would obscure the loop.
+pub fn v3_simulate_swap(
+    state: &V3PoolState,
+    zero_for_one: bool,
+    amount_specified: I256,
+) -> Option<V3SwapOutcome> {
+    if amount_specified.is_zero() {
+        return None; // AS: zero amount (V3 reverts)
+    }
+    let exact_in = amount_specified.is_positive();
+
+    // V3 price-limit bounds. The swap cannot cross these regardless of amount.
+    let sqrt_price_limit = if zero_for_one {
+        U256::from(MIN_SQRT_RATIO) + U256::from(1u64) // 4295128740
+    } else {
+        U256::from(MAX_SQRT_RATIO) - U256::from(1u64)
+    };
+
+    let mut amount_specified_remaining = amount_specified;
+    let mut amount_calculated = I256::ZERO;
+    let mut sqrt_price_x96 = state.sqrt_price_x96;
+    let mut tick = state.tick;
+    let mut liquidity = i128::try_from(state.liquidity).ok()?;
+
+    let fee_pips = U256::from(state.fee);
+    let tick_spacing = state.tick_spacing;
+
+    // Walk initialized + word-boundary ticks in the swap direction. gen_ticks
+    // yields ticks in swap order (descending for zfo, ascending for ofz).
+    // Cap iterations to bound pathological loops; the V3 contract's loop also
+    // terminates at MIN/MAX_TICK.
+    let ticks = gen_ticks(
+        &state.tick_data,
+        tick,
+        tick_spacing,
+        zero_for_one, // less_than_or_equal matches swap direction
+        30_000,
+    )
+    .ok()?;
+
+    for tick_along_path in ticks {
+        if amount_specified_remaining.is_zero() || sqrt_price_x96 == sqrt_price_limit {
+            break;
+        }
+
+        let mut tick_next = tick_along_path.tick;
+        let initialized = tick_along_path.is_initialized;
+
+        // Clamp to the V3 tick bounds (mirrors `_calculate_swap`).
+        tick_next = if zero_for_one {
+            tick_next.max(-887_272)
+        } else {
+            tick_next.min(887_272)
+        };
+
+        let sqrt_price_next =
+            U256::from(get_sqrt_ratio_at_tick_internal(tick_next).ok()?);
+
+        // Target price: clamp to the swap price-limit if the next tick would
+        // cross it.
+        let sqrt_price_target = if (zero_for_one && sqrt_price_next < sqrt_price_limit)
+            || (!zero_for_one && sqrt_price_next > sqrt_price_limit)
+        {
+            sqrt_price_limit
+        } else {
+            sqrt_price_next
+        };
+
+        let sqrt_price_start = sqrt_price_x96;
+        let step = compute_swap_step_v3(
+            sqrt_price_x96,
+            sqrt_price_target,
+            liquidity,
+            amount_specified_remaining,
+            fee_pips,
+        )
+        .ok()?;
+
+        sqrt_price_x96 = step.sqrt_price_next;
+
+        if exact_in {
+            // Gross input consumed this step = amount_in + fee_amount.
+            let consumed =
+                I256::try_from(step.amount_in.saturating_add(step.fee_amount)).ok()?;
+            amount_specified_remaining =
+                amount_specified_remaining.checked_sub(consumed)?;
+            amount_calculated =
+                amount_calculated.checked_sub(I256::try_from(step.amount_out).ok()?)?;
+        } else {
+            amount_specified_remaining =
+                amount_specified_remaining.checked_add(I256::try_from(step.amount_out).ok()?)?;
+            let gross_input =
+                I256::try_from(step.amount_in.saturating_add(step.fee_amount)).ok()?;
+            amount_calculated = amount_calculated.checked_add(gross_input)?;
+        }
+
+        if sqrt_price_x96 == sqrt_price_next {
+            // Reached the next tick — cross it if initialized.
+            if initialized {
+                if let Some(info) = state.tick_data.get(&tick_next) {
+                    let liquidity_net_i256 = info.liquidity_net;
+                    // Crossing direction: zfo crosses from above (subtract net);
+                    // ofz crosses from below (add net). Matches V3's
+                    // `liquidity = liquidity - liquidityNet` (zfo) branch.
+                    let liquidity_net: i128 = i128::try_from(liquidity_net_i256).ok()?;
+                    let net = if zero_for_one {
+                        -liquidity_net
+                    } else {
+                        liquidity_net
+                    };
+                    liquidity = liquidity.checked_add(net)?;
+                    if liquidity < 0 {
+                        return None; // LO: invariant violated
+                    }
+                }
+            }
+            tick = if zero_for_one {
+                tick_next - 1
+            } else {
+                tick_next
+            };
+        } else if sqrt_price_x96 != sqrt_price_start {
+            // Price moved but didn't reach tick_next — recompute tick from price.
+            tick = get_tick_at_sqrt_ratio_internal(sqrt_price_x96.to::<U160>())
+                .ok()?
+                .as_i32();
+        }
+    }
+
+    // Derive amount0 / amount1 per the V3 Swap callback convention.
+    // input_consumed = amount_specified - amount_remaining (positive for
+    // both exact-in and exact-out).
+    let input_consumed = amount_specified.checked_sub(amount_specified_remaining)?;
+
+    let (amount0_signed, amount1_signed) = if zero_for_one == exact_in {
+        // zfo + exact_in  → pool receives token0 (input),  sends token1 (output)
+        // ofz + exact_out → pool sends token0 (output),  receives token1 (input)
+        (input_consumed, -amount_calculated)
+    } else {
+        (-amount_calculated, input_consumed)
+    };
+
+    Some(V3SwapOutcome {
+        amount0: amount0_signed.unsigned_abs(),
+        amount1: amount1_signed.unsigned_abs(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cl_lib::swap_math::compute_swap_step_v3;
+    use alloy::primitives::{I256, U128, U256};
+
+    /// Build a V3 pool at tick 0 (1:1 price, `sqrt_price` = 2^96), liquidity `liq`,
+    /// fee 0.3% (3000 pips), `tick_spacing` 60, with a single position spanning
+    /// [-60, +60] so the active range bounded by ±60 matches
+    /// `make_v3_hop_at_1to1`. The ticks -60 and +60 are initialized with the
+    /// position's `liquidity_net` (+L at lower, -L at upper) and matching gross.
+    fn pool_1to1_with_position(liq: u128) -> V3PoolState {
+        let sp_0 = U256::from(1u128) << 96;
+        let mut tick_data = HashMap::new();
+        // Position [-60, +60] with liquidity `liq`.
+        let liq_u128 = U256::from(liq).to::<U128>();
+        tick_data.insert(
+            -60,
+            TickInfo {
+                liquidity_gross: liq_u128,
+                liquidity_net: I256::try_from(i128::try_from(liq).unwrap()).unwrap(),
+            },
+        );
+        tick_data.insert(
+            60,
+            TickInfo {
+                liquidity_gross: liq_u128,
+                liquidity_net: I256::try_from(-i128::try_from(liq).unwrap()).unwrap(),
+            },
+        );
+        V3PoolState {
+            address: Address::ZERO,
+            token0: Address::ZERO,
+            token1: Address::ZERO,
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: sp_0,
+            liquidity: liq,
+            tick: 0,
+            update_block: 0,
+            tick_data,
+            coverage: PoolTickCoverage::Tracked,
+            journal: ReorgJournal::<V3BlockDelta>::new(8),
+            cached_tick_ranges: parking_lot::Mutex::new(super::TickRangeCache::default()),
+        }
+    }
+
+    #[test]
+    fn zfo_small_swap_matches_single_compute_swap_step() {
+        // What: a small zfo exact-input swap on a 1:1 V3 pool with a [-60,+60]
+        // position stays inside the range (no tick crossing), so the outcome
+        // must equal a single `compute_swap_step_v3` call with the same bounds.
+        // Why: pins the V3 simulator's first-step behavior against the already-
+        // tested swap-step primitive as the oracle (zero hand-computed math).
+        let liq = 10_000_000_000_000u128;
+        let state = pool_1to1_with_position(liq);
+        let amount_in = U256::from(1000u64);
+
+        let outcome = v3_simulate_swap(&state, true, I256::try_from(amount_in).unwrap())
+            .expect("small swap should produce an outcome");
+
+        // Oracle: the single-step target is tick -60's sqrt price (the range
+        // lower bound), which a small input does not reach. amount_remaining is
+        // the full positive input (V3 exact-in convention).
+        let sp_lower = U256::from(get_sqrt_ratio_at_tick_internal(-60).unwrap());
+        let step = compute_swap_step_v3(
+            state.sqrt_price_x96,
+            sp_lower,
+            i128::try_from(liq).unwrap(),
+            I256::try_from(amount_in).unwrap(),
+            U256::from(state.fee),
+        )
+        .unwrap();
+
+        assert_eq!(
+            outcome.amount1, step.amount_out,
+            "zfo exact-in: token1 output must equal the single swap-step amount_out"
+        );
+        assert_eq!(
+            outcome.amount0,
+            step.amount_in + step.fee_amount,
+            "zfo exact-in: token0 input consumed must equal amount_in + fee_amount"
+        );
+        assert!(
+            outcome.amount1 < amount_in,
+            "on a 1:1 pool with fees, output must be < input (got {} >= {})",
+            outcome.amount1,
+            amount_in
+        );
+    }
+
+    #[test]
+    fn ofz_small_swap_matches_single_compute_swap_step() {
+        // Mirrors the zfo test for the one_for_zero direction — oracle target
+        // is tick +60's sqrt price (the range upper bound).
+        let liq = 10_000_000_000_000u128;
+        let state = pool_1to1_with_position(liq);
+        let amount_in = U256::from(1000u64);
+
+        let outcome = v3_simulate_swap(&state, false, I256::try_from(amount_in).unwrap())
+            .expect("small ofz swap should produce an outcome");
+
+        let sp_upper = U256::from(get_sqrt_ratio_at_tick_internal(60).unwrap());
+        let step = compute_swap_step_v3(
+            state.sqrt_price_x96,
+            sp_upper,
+            i128::try_from(liq).unwrap(),
+            I256::try_from(amount_in).unwrap(),
+            U256::from(state.fee),
+        )
+        .unwrap();
+
+        assert_eq!(outcome.amount0, step.amount_out);
+        assert_eq!(outcome.amount1, step.amount_in + step.fee_amount);
+        assert!(outcome.amount0 < amount_in);
+    }
+
+    #[test]
+    fn zero_amount_returns_none() {
+        let state = pool_1to1_with_position(1_000_000u128);
+        let outcome = v3_simulate_swap(&state, true, I256::ZERO);
+        assert!(outcome.is_none(), "zero amount_specified should return None (AS)");
+    }
+
+    #[test]
+    fn output_scales_monotonically_with_input() {
+        // Larger exact-input swaps produce larger outputs (within the same
+        // tick range, pre-crossing).
+        let state = pool_1to1_with_position(10_000_000_000_000u128);
+        let small = v3_simulate_swap(
+            &state,
+            true,
+            I256::try_from(U256::from(100u64)).unwrap(),
+        )
+        .unwrap()
+        .amount1;
+        let large = v3_simulate_swap(
+            &state,
+            true,
+            I256::try_from(U256::from(10_000u64)).unwrap(),
+        )
+        .unwrap()
+        .amount1;
+        assert!(
+            large > small,
+            "larger input must produce larger output (small={small}, large={large})"
+        );
     }
 }

@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, I256, U256};
 
 use crate::optimizers::mobius_int::IntHopState;
 use crate::bot_core::state_history::{ReorgJournal, V2BlockDelta, V3BlockDelta, TickBefore, V3RestoreResult};
@@ -27,7 +27,8 @@ pub mod v4_swap_decoder;
 
 // Re-export the merged V3 state types (ADR-003: BotCore owns V3 state).
 pub use v3_state::{
-    BufferedV3LiquidityUpdate, PoolTickCoverage, RegisterV3PoolParams, V3PoolState, V3SwapUpdate,
+    BufferedV3LiquidityUpdate, PoolTickCoverage, RegisterV3PoolParams, V3PoolState, V3SwapOutcome,
+    V3SwapUpdate, v3_simulate_swap,
 };
 
 // ---------------------------------------------------------------------------
@@ -689,8 +690,21 @@ impl BotCore {
                 let hop = IntHopState::new(reserve_in, reserve_out, gamma_numer, fee_denom);
                 hop.swap(amount_in)
             }
-            // V3 concentrated-liquidity math is not yet implemented (Slice 7)
-            PoolEntry::V3(_) => U256::ZERO,
+            // V3 concentrated-liquidity math. Exact-input swap: amount_specified
+            // > 0 (V3 convention). Output is token1 for zfo, token0 for ofz
+            // (matches the V3 Swap callback: zfo pays token0, receives token1).
+            PoolEntry::V3(state) => {
+                if amount_in.is_zero() {
+                    return U256::ZERO;
+                }
+                let Some(spec) = I256::try_from(amount_in).ok() else {
+                    return U256::ZERO;
+                };
+                let Some(outcome) = v3_simulate_swap(state, zero_for_one, spec) else {
+                    return U256::ZERO;
+                };
+                if zero_for_one { outcome.amount1 } else { outcome.amount0 }
+            }
         }
     }
 
@@ -752,8 +766,21 @@ impl BotCore {
 
                 U256::from(1) + numerator / denominator
             }
-            // V3 concentrated-liquidity math is not yet implemented (Slice 7)
-            PoolEntry::V3(_) => U256::ZERO,
+            // V3 concentrated-liquidity math. Exact-output swap: amount_specified
+            // < 0 (V3 convention; magnitude = desired output). Input required is
+            // token0 for zfo, token1 for ofz (the callback receives the input).
+            PoolEntry::V3(state) => {
+                if amount_out.is_zero() {
+                    return U256::ZERO;
+                }
+                let Some(spec) = I256::try_from(amount_out).ok() else {
+                    return U256::ZERO;
+                };
+                let Some(outcome) = v3_simulate_swap(state, zero_for_one, -spec) else {
+                    return U256::ZERO;
+                };
+                if zero_for_one { outcome.amount0 } else { outcome.amount1 }
+            }
         }
     }
 
