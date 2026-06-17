@@ -46,13 +46,15 @@
 //!   L2MessageKind_NonmutatingCall  = 2
 //!   L2MessageKind_Batch            = 3
 //!   L2MessageKind_SignedTx         = 4    ← user-flow signed tx
-//!   ...
+//!   L2MessageKind_Heartbeat         = 5    ← deprecated/internal
+//!   L2MessageKind_SignedCompressedTx = 6   ← fail-closed unless explicitly decoded
 //! ```
 //!
 //! For `L2MessageKind_SignedTx` the remaining bytes are an EIP-2718
 //! `TxEnvelope` and `alloy_consensus::TxEnvelope::decode_2718` decodes
-//! it directly. We deliberately ignore other kinds in this pass — the
-//! signed-tx form is what carries the user calldata we want to react to.
+//! it directly. Internal/non-user L2 message kinds are ignored. A
+//! compressed signed-tx kind is surfaced as a distinct decode error so
+//! a future Brotli implementation cannot be mistaken for live coverage.
 //!
 //! # Latency posture
 //!
@@ -84,6 +86,18 @@ use crate::monitor::Message;
 // L2 message kinds (Nitro `arbstate/parse_l2.go`)
 // =============================================================================
 
+/// Canonical L1 incoming message type for an L2 message.
+const L1_MESSAGE_TYPE_L2_MESSAGE: u64 = 3;
+
+/// Unsigned user transaction. Internal/non-user flow for this analyzer.
+pub const L2_MSG_KIND_UNSIGNED_USER_TX: u8 = 0;
+
+/// L1-originated contract transaction. Internal/non-user flow here.
+pub const L2_MSG_KIND_CONTRACT_TX: u8 = 1;
+
+/// Nonmutating call. Internal/non-user flow here.
+pub const L2_MSG_KIND_NONMUTATING_CALL: u8 = 2;
+
 /// Single signed L2 transaction. Selector-extractable.
 pub const L2_MSG_KIND_SIGNED_TX: u8 = 4;
 
@@ -91,6 +105,12 @@ pub const L2_MSG_KIND_SIGNED_TX: u8 = 4;
 /// the sequencer for compression. The decoder walks the inner messages
 /// recursively (see [`decode_l2_signed_txs`]).
 pub const L2_MSG_KIND_BATCH: u8 = 3;
+
+/// Deprecated/internal heartbeat.
+pub const L2_MSG_KIND_HEARTBEAT: u8 = 5;
+
+/// Brotli-compressed signed transaction frame. Recognized but not decoded.
+pub const L2_MSG_KIND_SIGNED_COMPRESSED_TX: u8 = 6;
 
 /// Max batch nesting depth, matching Nitro's `parseL2Message` guard.
 const MAX_BATCH_DEPTH: u8 = 16;
@@ -339,15 +359,63 @@ pub enum DecodeError {
     BatchTooDeep,
     #[error("batch segment length {0} exceeds MaxL2MessageSize")]
     BatchSegmentTooLarge(u64),
+    #[error("incoming L1 message kind {0} is not L2Message kind {L1_MESSAGE_TYPE_L2_MESSAGE}")]
+    NonL2MessageKind(u64),
+    #[error("signed compressed L2 transaction frames are recognized but not decoded")]
+    SignedCompressedTxUnsupported,
+}
+
+fn has_l2_msg(message: &serde_json::Value) -> bool {
+    message
+        .as_object()
+        .map(|obj| obj.contains_key("l2Msg") || obj.contains_key("l2msg"))
+        .unwrap_or(false)
+}
+
+/// Return the nested Nitro `L1IncomingMessage` object. Live
+/// `BroadcastFeedMessage.message` values are `MessageWithMetadata`
+/// wrappers (`{ message: { header, l2Msg }, delayedMessagesRead }`),
+/// while older local fixtures pass the inner object directly.
+fn l1_incoming_message(message: &serde_json::Value) -> Result<&serde_json::Value, DecodeError> {
+    if has_l2_msg(message) {
+        return Ok(message);
+    }
+
+    let obj = message.as_object().ok_or(DecodeError::MissingL2Msg)?;
+    let nested = obj.get("message").ok_or(DecodeError::MissingL2Msg)?;
+    if has_l2_msg(nested) {
+        Ok(nested)
+    } else {
+        Err(DecodeError::MissingL2Msg)
+    }
+}
+
+fn assert_l1_message_kind(message: &serde_json::Value) -> Result<(), DecodeError> {
+    let Some(kind) = message
+        .get("header")
+        .and_then(|header| header.get("kind"))
+        .and_then(serde_json::Value::as_u64)
+    else {
+        return Ok(());
+    };
+
+    if kind == L1_MESSAGE_TYPE_L2_MESSAGE {
+        Ok(())
+    } else {
+        Err(DecodeError::NonL2MessageKind(kind))
+    }
 }
 
 /// Pull the inner `l2Msg` field out of a `BroadcastFeedMessage.message`
-/// JSON `Value`. We accept either the canonical Nitro tag (`l2Msg`)
-/// or the lowercase form (`l2msg`) since Go's `encoding/json` honours
-/// the struct tag when present and lowercases the field name otherwise
-/// — both forms have been seen in fixtures from different Nitro
-/// release branches.
+/// JSON `Value`. We accept the live Nitro wrapper shape plus the direct
+/// inner shape used by historical fixtures. We also accept either the
+/// canonical Nitro tag (`l2Msg`) or lowercase form (`l2msg`) since Go's
+/// `encoding/json` honours the struct tag when present and lowercases the
+/// field name otherwise — both forms have been seen in fixtures from
+/// different Nitro release branches.
 fn extract_l2_msg_b64(message: &serde_json::Value) -> Result<&str, DecodeError> {
+    let message = l1_incoming_message(message)?;
+    assert_l1_message_kind(message)?;
     let obj = message.as_object().ok_or(DecodeError::MissingL2Msg)?;
     let val = obj
         .get("l2Msg")
@@ -411,6 +479,11 @@ fn decode_l2_message_bytes(
                 rest = remaining;
             }
         }
+        L2_MSG_KIND_UNSIGNED_USER_TX
+        | L2_MSG_KIND_CONTRACT_TX
+        | L2_MSG_KIND_NONMUTATING_CALL
+        | L2_MSG_KIND_HEARTBEAT => Ok(()),
+        L2_MSG_KIND_SIGNED_COMPRESSED_TX => Err(DecodeError::SignedCompressedTxUnsupported),
         other => Err(DecodeError::UnsupportedKind(other)),
     }
 }
@@ -693,8 +766,9 @@ mod tests {
 
     fn wrap_l2_signed_tx(envelope: &TxEnvelope) -> serde_json::Value {
         // Build the same JSON shape `BroadcastFeedMessage.message`
-        // carries on the wire: the inner `message` (= L1IncomingMessage)
-        // has `header` + `l2Msg`. `l2Msg` = [L2MessageKind || EIP-2718].
+        // uses after the analyzer peels the live `MessageWithMetadata`
+        // wrapper: the inner `message` (= L1IncomingMessage) has `header`
+        // + `l2Msg`. `l2Msg` = [L2MessageKind || EIP-2718].
         let mut payload = Vec::with_capacity(256);
         payload.push(L2_MSG_KIND_SIGNED_TX);
         envelope.encode_2718(&mut payload);
@@ -702,6 +776,26 @@ mod tests {
         serde_json::json!({
             "header": { "kind": 3, "poster": "0x0000000000000000000000000000000000000000" },
             "l2Msg": b64,
+        })
+    }
+
+    fn wrap_message_with_metadata_l2_bytes(
+        bytes: &[u8],
+        l1_block_number: u64,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "message": {
+                "header": {
+                    "kind": L1_MESSAGE_TYPE_L2_MESSAGE,
+                    "sender": "0xa4b000000000000000000073657175656e636572",
+                    "blockNumber": l1_block_number,
+                    "timestamp": 1_700_000_000_u64,
+                    "requestId": null,
+                    "baseFeeL1": null
+                },
+                "l2Msg": STANDARD.encode(bytes)
+            },
+            "delayedMessagesRead": 354560_u64
         })
     }
 
@@ -891,6 +985,25 @@ mod tests {
         assert_eq!(decoded.len(), 1);
     }
 
+    #[test]
+    fn decode_l2_signed_txs_accepts_live_message_with_metadata_wrapper() {
+        let env = build_signed_eip1559(
+            42161,
+            TARGET,
+            vec![0x41, 0x4b, 0xf3, 0x89, 0x00, 0x01, 0x02, 0x03],
+            5_000_000_000,
+        );
+        let bytes = signed_tx_msg_bytes(&env);
+        let wrapper = wrap_message_with_metadata_l2_bytes(&bytes, 16_238_523);
+        let decoded = decode_l2_signed_txs(&wrapper).expect("decode ok");
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].to(), Some(TARGET));
+        assert_eq!(
+            decoded[0].input().as_ref(),
+            &[0x41, 0x4b, 0xf3, 0x89, 0x00, 0x01, 0x02, 0x03]
+        );
+    }
+
     // ----- decoder: batch walk ----------------------------------------------
 
     #[test]
@@ -974,6 +1087,49 @@ mod tests {
             Err(DecodeError::UnsupportedKind(99)) => {}
             other => panic!("expected UnsupportedKind(99), got {other:?}"),
         }
+    }
+
+    #[test]
+    fn decode_l2_signed_txs_ignores_internal_l2_message_kinds() {
+        for kind in [
+            L2_MSG_KIND_UNSIGNED_USER_TX,
+            L2_MSG_KIND_CONTRACT_TX,
+            L2_MSG_KIND_NONMUTATING_CALL,
+            L2_MSG_KIND_HEARTBEAT,
+        ] {
+            let wrapper = wrap_l2_bytes(&[kind, 0xde, 0xad, 0xbe, 0xef]);
+            let decoded = decode_l2_signed_txs(&wrapper).expect("decode ok");
+            assert!(
+                decoded.is_empty(),
+                "kind {kind} should not produce candidates"
+            );
+        }
+    }
+
+    #[test]
+    fn decode_l2_signed_txs_errors_on_signed_compressed_tx_kind() {
+        let wrapper = wrap_l2_bytes(&[L2_MSG_KIND_SIGNED_COMPRESSED_TX, 0xde, 0xad]);
+        assert!(matches!(
+            decode_l2_signed_txs(&wrapper),
+            Err(DecodeError::SignedCompressedTxUnsupported)
+        ));
+    }
+
+    #[test]
+    fn decode_l2_signed_txs_errors_on_non_l2_incoming_message_kind() {
+        let env = build_signed_eip1559(42161, TARGET, vec![0x41, 0x4b, 0xf3, 0x89], 1_000_000_000);
+        let bytes = signed_tx_msg_bytes(&env);
+        let wrapper = serde_json::json!({
+            "message": {
+                "header": { "kind": 12, "blockNumber": 16_238_523_u64 },
+                "l2Msg": STANDARD.encode(bytes)
+            },
+            "delayedMessagesRead": 354560_u64
+        });
+        assert!(matches!(
+            decode_l2_signed_txs(&wrapper),
+            Err(DecodeError::NonL2MessageKind(12))
+        ));
     }
 
     // ----- analyse_one: end-to-end synthetic --------------------------------
