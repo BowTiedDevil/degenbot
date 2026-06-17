@@ -16,8 +16,8 @@ use crate::optimizers::mobius_int::IntHopState;
 
 pub mod liquidity_verifier;
 pub mod py_bot;
-pub mod py_pool;
-pub mod py_token;
+pub mod py_erc20_token;
+pub mod py_liquidity_pool;
 pub mod state_history;
 pub mod tick_bitmap;
 pub mod tick_map;
@@ -891,7 +891,7 @@ impl Bot {
     }
 
     /// Look up a registered token's metadata entry (address, name, symbol,
-    /// decimals, `chain_id`) by contract address. Used by `PyToken`'s getters
+    /// decimals, `chain_id`) by contract address. Used by `PyErc20Token`'s getters
     /// (ADR-003 T3: Rust owns token identity metadata).
     #[must_use]
     pub fn token_entry(&self, address: &Address) -> Option<&TokenEntry> {
