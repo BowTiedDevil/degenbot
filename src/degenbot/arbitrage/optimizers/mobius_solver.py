@@ -3,6 +3,7 @@
 # Feature flags (kept local to avoid circular imports)
 import os
 import time
+from collections import OrderedDict
 from typing import Any, ClassVar, override
 
 from degenbot.arbitrage.optimizers._solver_utils import (
@@ -17,6 +18,8 @@ from degenbot.types.hop_types import BoundedProductHop, ConstantProductHop, Pool
 
 USE_MERGED_INT_REFINEMENT = bool(os.environ.get("DEGENBOT_MERGED_INT_REFINEMENT", "1"))
 USE_RAW_ARRAY_MARSHALLING = bool(os.environ.get("DEGENBOT_RAW_ARRAY_MARSHALLING", "1"))
+USE_RUST_ROUTE_CACHE = bool(os.environ.get("DEGENBOT_RUST_ROUTE_CACHE", "1"))
+RUST_ROUTE_CACHE_MAX = int(os.environ.get("DEGENBOT_RUST_ROUTE_CACHE_MAX", "1024"))
 
 
 class MobiusSolver(Solver):
@@ -41,6 +44,7 @@ class MobiusSolver(Solver):
 
     def __init__(self) -> None:
         self._rust_solver: Any = None
+        self._rust_route_cache: OrderedDict[tuple[Any, ...], Any] = OrderedDict()
         if _rs_mobius is not None:
             self._rust_solver = _rs_mobius.RustArbSolver()
 
@@ -48,11 +52,13 @@ class MobiusSolver(Solver):
         """Omit the non-pickleable Rust solver; it will be recreated on unpickle."""
         state = self.__dict__.copy()
         state["_rust_solver"] = None
+        state["_rust_route_cache"] = OrderedDict()
         return state
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Recreate the Rust solver after unpickling if Rust is available."""
         self.__dict__.update(state)
+        self._rust_route_cache = OrderedDict()
         if _rs_mobius is not None:
             self._rust_solver = _rs_mobius.RustArbSolver()
 
@@ -153,6 +159,12 @@ class MobiusSolver(Solver):
             float(solve_input.max_input) if solve_input.max_input is not None else None
         )
 
+        if USE_RUST_ROUTE_CACHE:
+            try:
+                return self._try_rust_solve_route(solve_input, start_ns, max_input_float)
+            except OptimizationError:
+                pass
+
         if USE_RAW_ARRAY_MARSHALLING:
             return self._try_rust_solve_raw(solve_input, start_ns, max_input_float)
 
@@ -184,6 +196,85 @@ class MobiusSolver(Solver):
         result = self._rust_solver.solve(rust_hops, None, max_input_float, 10)
 
         return self._process_rust_result(result, start_ns, solve_input)
+
+    def _try_rust_solve_route(
+        self, solve_input: SolveInput, start_ns: int, max_input_float: float | None
+    ) -> SolveResult:
+        route = self._get_rust_route(solve_input)
+
+        try:
+            result = route.solve(max_input_float, 10)
+        except (OverflowError, ValueError, TypeError) as e:
+            raise OptimizationError(
+                message=f"Rust route solve failed: {e}",
+                iterations=0,
+                method=SolverMethod.MOBIUS.name,
+            ) from e
+
+        return self._process_rust_result(result, start_ns, solve_input)
+
+    def _get_rust_route(self, solve_input: SolveInput) -> Any:
+        if _rs_mobius is None or not hasattr(_rs_mobius, "RustArbRoute"):
+            raise OptimizationError(
+                message="Rust route handle unavailable",
+                iterations=0,
+                method=SolverMethod.MOBIUS.name,
+            )
+
+        try:
+            cache_key = solve_input.hops
+            route = self._rust_route_cache.pop(cache_key)
+        except KeyError:
+            route = self._build_rust_route(solve_input)
+            if RUST_ROUTE_CACHE_MAX > 0:
+                while len(self._rust_route_cache) >= RUST_ROUTE_CACHE_MAX:
+                    self._rust_route_cache.popitem(last=False)
+                self._rust_route_cache[cache_key] = route
+            return route
+        except TypeError as e:
+            raise OptimizationError(
+                message=f"Rust route cache key failed: {e}",
+                iterations=0,
+                method=SolverMethod.MOBIUS.name,
+            ) from e
+
+        self._rust_route_cache[cache_key] = route
+        return route
+
+    def _build_rust_route(self, solve_input: SolveInput) -> Any:
+        rust_hops: list[Any] = []
+        for hop in solve_input.hops:
+            if isinstance(hop, ConstantProductHop | BoundedProductHop):
+                if USE_MERGED_INT_REFINEMENT:
+                    fee_numer = hop.fee.numerator
+                    fee_denom = hop.fee.denominator
+                    gamma_numer = fee_denom - fee_numer
+                    rust_hops.append(
+                        _rs_mobius.RustIntHopState(
+                            hop.reserve_in, hop.reserve_out, gamma_numer, fee_denom
+                        )
+                    )
+                else:
+                    rust_hops.append((
+                        float(hop.reserve_in),
+                        float(hop.reserve_out),
+                        float(hop.fee),
+                    ))
+            else:
+                raise OptimizationError(
+                    message=f"Unsupported hop type for Rust route: {type(hop).__name__}",
+                    iterations=0,
+                    method=SolverMethod.MOBIUS.name,
+                )
+
+        try:
+            return _rs_mobius.RustArbRoute(rust_hops)
+        except (OverflowError, ValueError, TypeError) as e:
+            raise OptimizationError(
+                message=f"Rust route construction failed: {e}",
+                iterations=0,
+                method=SolverMethod.MOBIUS.name,
+            ) from e
 
     def _try_rust_solve_raw(
         self, solve_input: SolveInput, start_ns: int, max_input_float: float | None

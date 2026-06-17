@@ -12,6 +12,7 @@ import pytest
 from degenbot.degenbot_rs import mobius as rs_mobius
 
 from degenbot.arbitrage.optimizers import Hop, SolveInput, SolverMethod
+from degenbot.arbitrage.optimizers.mobius_solver import MobiusSolver
 from degenbot.arbitrage.optimizers.solver import ArbSolver
 from degenbot.exceptions import OptimizationError
 
@@ -154,6 +155,47 @@ class TestRustMobiusRefineInt:
         )
         result = solver.solve(inp)
         assert result.profit > 0
+
+
+class TestRustArbRoute:
+    """Tests for the Rust-owned route handle."""
+
+    def test_route_matches_solver_raw_result(self):
+        """A RustArbRoute should solve the same path as RustArbSolver.solve_raw."""
+        int_hops_flat = [
+            1_000_000,
+            5_000_000,
+            997,
+            1000,
+            1_500_000,
+            3_000_000,
+            997,
+            1000,
+        ]
+        route = rs_mobius.RustArbRoute([
+            rs_mobius.RustIntHopState(1_000_000, 5_000_000, 997, 1000),
+            rs_mobius.RustIntHopState(1_500_000, 3_000_000, 997, 1000),
+        ])
+
+        route_result = route.solve()
+        raw_result = rs_mobius.RustArbSolver().solve_raw(int_hops_flat)
+
+        assert route_result.supported
+        assert route_result.success
+        assert int(route_result.optimal_input_int) == int(raw_result.optimal_input_int)
+        assert int(route_result.profit_int) == int(raw_result.profit_int)
+
+    def test_mobius_solver_reuses_rust_route(self):
+        """MobiusSolver should cache one Rust route for repeated identical input."""
+        solver = MobiusSolver()
+        solve_input = make_2hop_v2_input()
+
+        first = solver.solve(solve_input)
+        second = solver.solve(solve_input)
+
+        assert first.profit == second.profit
+        assert first.optimal_input == second.optimal_input
+        assert len(solver._rust_route_cache) == 1
 
 
 # ---------------------------------------------------------------------------

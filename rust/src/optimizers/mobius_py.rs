@@ -28,6 +28,7 @@ use crate::optimizers::mobius_batch::{mobius_batch_solve, mobius_batch_solve_vec
 use crate::optimizers::mobius_int::{
     mobius_refine_int, mobius_solve_with_refinement, u256_to_f64, IntHopState,
 };
+use crate::optimizers::mobius_route::{ArbRoute, RouteSolveResult};
 use crate::optimizers::mobius_v3::{
     estimate_v3_final_sqrt_price, solve_piecewise, solve_v3_candidates,
     solve_v3_tick_range_sequence, TickRangeCrossing, V3TickRangeHop, V3TickRangeSequence,
@@ -770,8 +771,6 @@ fn extract_tick_range_crossings(py_list: &Bound<'_, PyList>) -> PyResult<Vec<Tic
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SolveMethod {
     Mobius = 0,
-    PiecewiseMobius = 1,
-    V3V3 = 2,
     NotSupported = 255,
 }
 
@@ -858,6 +857,19 @@ impl PyArbResult {
     }
 }
 
+fn py_arb_result_from_route_result(result: RouteSolveResult) -> PyArbResult {
+    PyArbResult {
+        optimal_input: result.optimal_input,
+        profit: result.profit,
+        iterations: result.iterations,
+        success: result.success,
+        method: result.method as u8,
+        supported: result.supported,
+        optimal_input_int: result.optimal_input_int,
+        profit_int: result.profit_int,
+    }
+}
+
 /// Parse a Python list of hops into float HopState and optional IntHopState lists.
 ///
 /// Returns `(base_hops, int_hops, all_int, unsupported)`.
@@ -938,6 +950,79 @@ fn not_supported_result() -> PyArbResult {
         supported: false,
         optimal_input_int: None,
         profit_int: None,
+    }
+}
+
+/// Rust-owned arbitrage route for repeated solves.
+///
+/// This stores parsed hop and optional V3 sequence state on the Rust side.
+/// Python can reuse the handle across solve calls without reparsing hop lists
+/// or rebuilding Rust hop objects.
+#[pyclass(name = "RustArbRoute")]
+pub struct PyArbRoute {
+    inner: ArbRoute,
+}
+
+#[pymethods]
+impl PyArbRoute {
+    #[new]
+    #[pyo3(signature = (hops, v3_sequences=None))]
+    fn new(hops: &Bound<'_, PyList>, v3_sequences: Option<&Bound<'_, PyList>>) -> PyResult<Self> {
+        let (base_hops, mut int_hops, mut all_int, unsupported) = parse_hops(hops)?;
+        if unsupported {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Route contains unsupported hop types",
+            ));
+        }
+        if base_hops.len() < 2 {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Need at least 2 hops, got {}",
+                base_hops.len()
+            )));
+        }
+
+        let v3_seqs = if let Some(v3_list) = v3_sequences {
+            all_int = false;
+            int_hops.clear();
+            let (seqs, v3_unsupported) = parse_v3_sequences(v3_list)?;
+            if v3_unsupported {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Route contains unsupported V3 sequence data",
+                ));
+            }
+            seqs
+        } else {
+            Vec::new()
+        };
+
+        Ok(Self {
+            inner: ArbRoute::new(base_hops, int_hops, all_int, v3_seqs),
+        })
+    }
+
+    /// Solve this cached route.
+    #[pyo3(signature = (max_input=None, max_candidates=10))]
+    fn solve(&self, py: Python<'_>, max_input: Option<f64>, max_candidates: usize) -> PyArbResult {
+        let route = self.inner.clone();
+        py_arb_result_from_route_result(py.detach(|| route.solve(max_input, max_candidates)))
+    }
+
+    /// Number of hops in the route.
+    fn __len__(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Check if the route has at least one hop.
+    fn __bool__(&self) -> bool {
+        !self.inner.is_empty()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "RustArbRoute(hops={}, v3_sequences={})",
+            self.inner.len(),
+            self.inner.v3_sequence_count()
+        )
     }
 }
 
@@ -1022,42 +1107,10 @@ impl PyArbSolver {
             return Ok(not_supported_result());
         }
 
-        if v3_seqs.is_empty() {
-            return Ok(py.detach(|| solve_mobius(&base_hops, &int_hops, all_int, max_input)));
-        } else if v3_seqs.len() == 2 && base_hops.len() == 2 {
-            let seq0 = v3_seqs[0].1.clone();
-            let seq1 = v3_seqs[1].1.clone();
-            let (x_opt, profit, iters) =
-                py.detach(|| solve_v3_v3(&seq0, &seq1, max_input, max_candidates));
-            return Ok(PyArbResult {
-                optimal_input: x_opt,
-                profit,
-                iterations: iters,
-                success: x_opt > 0.0 && profit > 0.0,
-                method: SolveMethod::V3V3 as u8,
-                supported: true,
-                optimal_input_int: None,
-                profit_int: None,
-            });
-        } else if v3_seqs.len() == 1 {
-            let v3_idx = v3_seqs[0].0;
-            let seq = v3_seqs[0].1.clone();
-            let (x_opt, profit, iters) = py.detach(|| {
-                solve_v3_tick_range_sequence(&base_hops, v3_idx, &seq, max_candidates, max_input)
-            });
-            return Ok(PyArbResult {
-                optimal_input: x_opt,
-                profit,
-                iterations: iters,
-                success: x_opt > 0.0 && profit > 0.0,
-                method: SolveMethod::PiecewiseMobius as u8,
-                supported: true,
-                optimal_input_int: None,
-                profit_int: None,
-            });
-        }
-
-        Ok(not_supported_result())
+        let route = ArbRoute::new(base_hops, int_hops, all_int, v3_seqs);
+        Ok(py_arb_result_from_route_result(
+            py.detach(|| route.solve(max_input, max_candidates)),
+        ))
     }
 
     /// Solve with raw flat integer arrays, avoiding Python object construction.
@@ -1305,6 +1358,7 @@ pub fn add_mobius_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     submod.add_class::<PyMobiusResult>()?;
     submod.add_class::<PyMobiusOptimizer>()?;
     submod.add_class::<PyArbResult>()?;
+    submod.add_class::<PyArbRoute>()?;
     submod.add_class::<PyArbSolver>()?;
     submod.add_class::<PyPoolCache>()?;
 

@@ -11,6 +11,7 @@
 //! - [`mobius_int`] — Integer U512/U256 Möbius with EVM-exact simulation
 //! - [`mobius_v3`] — V3 tick range types, crossing computation, piecewise solve
 //! - [`mobius_v3_v3`] — V3-V3 arbitrage solver (two V3 hops)
+//! - [`mobius_route`] — Rust-owned route handles for repeated solves
 //! - [`mobius_batch`] — Batch solver (serial, vectorized, Rayon parallel)
 //! - [`mobius_py`] — `PyO3` Python bindings
 
@@ -22,6 +23,8 @@ pub mod mobius_batch;
 pub mod mobius_int;
 #[allow(clippy::doc_markdown)]
 pub mod mobius_py;
+#[allow(clippy::doc_markdown)]
+pub mod mobius_route;
 #[allow(clippy::doc_markdown)]
 pub mod mobius_v3;
 #[allow(clippy::doc_markdown)]
