@@ -1,4 +1,4 @@
-//! `PyPool` — thin Python handle over a `pool_id` key into `Bot`.
+//! `PyLiquidityPool` — thin Python handle over a `pool_id` key into `Bot`.
 //!
 //! Shares the same `Arc<parking_lot::RwLock<Bot>>` as the owning `PyBot` (one
 //! Rust-owned `Bot`, many thin Python handles). Part of the Polars-inspired
@@ -28,12 +28,12 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 ///
 /// Does not own any state — all data lives in Rust inside `Bot`.
 #[pyclass(skip_from_py_object)]
-pub struct PyPool {
+pub struct PyLiquidityPool {
     core: Arc<parking_lot::RwLock<Bot>>,
     pool_id: u64,
 }
 
-impl PyPool {
+impl PyLiquidityPool {
     /// Create a new thin pool handle.
     pub const fn new(core: Arc<parking_lot::RwLock<Bot>>, pool_id: u64) -> Self {
         Self { core, pool_id }
@@ -47,7 +47,7 @@ impl PyPool {
 }
 
 #[pymethods]
-impl PyPool {
+impl PyLiquidityPool {
     /// The pool ID this handle references.
     #[getter]
     #[allow(clippy::missing_const_for_fn)]

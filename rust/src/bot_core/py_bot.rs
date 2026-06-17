@@ -3,7 +3,7 @@
 //! Implements the Polars-inspired three-layer topology (ADR-005): Rust [`Bot`]
 //! core → `PyBot` `#[pyclass]` wrapper holding `Arc<parking_lot::RwLock<Bot>>`
 //! → Python `Bot` session that constructs `self._py_bot = PyBot()` in `__init__`.
-//! `PyPool`/`PyToken` clone the same `Arc` so many Python handles reference one
+//! `PyLiquidityPool`/`PyErc20Token` clone the same `Arc` so many Python handles reference one
 //! Rust-owned `Bot`; reads take a read guard, mutations a write guard.
 //!
 //! See: `docs/adr/ADR-005-polars-inspired-three-layer-architecture.md` (the
@@ -14,8 +14,8 @@ use std::sync::Arc;
 use alloy::primitives::Address;
 use pyo3::prelude::*;
 
-use crate::bot_core::py_pool::PyPool;
-use crate::bot_core::py_token::PyToken;
+use crate::bot_core::py_erc20_token::PyErc20Token;
+use crate::bot_core::py_liquidity_pool::PyLiquidityPool;
 use crate::bot_core::{Bot, RegisterV2PoolParams, RegisterV3PoolParams};
 
 /// Encode a byte slice as a lowercase hex string (no "0x" prefix).
@@ -38,7 +38,7 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 /// Python constructs a `PyBot` (or receives a shared handle), registers
 /// pools/tokens, then reads results. All state lives in Rust; Python holds a
 /// thin handle. The wrapped `RwLock<Bot>` allows many concurrent readers
-/// (e.g. per-pool `PyPool` reads) while serialising mutation.
+/// (e.g. per-pool `PyLiquidityPool` reads) while serialising mutation.
 #[pyclass(skip_from_py_object)]
 pub struct PyBot {
     core: Arc<parking_lot::RwLock<Bot>>,
@@ -164,16 +164,16 @@ impl PyBot {
         self.core.read().pool_count()
     }
 
-    /// Get a thin Pool handle for the given pool ID.
+    /// Get a thin `PyLiquidityPool` handle for the given pool ID.
     ///
     /// Args:
     ///     `pool_id`: The pool ID returned by `register_v2_pool`.
     ///
     /// Returns:
-    ///     A `Pool` handle, or `None` if the pool ID is not registered.
-    fn get_pool(&self, pool_id: u64) -> Option<PyPool> {
+    ///     A `PyLiquidityPool` handle, or `None` if the pool ID is not registered.
+    fn get_pool(&self, pool_id: u64) -> Option<PyLiquidityPool> {
         if self.core.read().has_pool(pool_id) {
-            Some(PyPool::new(Arc::clone(&self.core), pool_id))
+            Some(PyLiquidityPool::new(Arc::clone(&self.core), pool_id))
         } else {
             None
         }
@@ -314,7 +314,7 @@ impl PyBot {
         symbol: &str,
         decimals: u8,
         chain_id: u64,
-    ) -> PyResult<PyToken> {
+    ) -> PyResult<PyErc20Token> {
         let addr = parse_address(address)?;
         self.core.write().register_token(
             addr,
@@ -323,20 +323,20 @@ impl PyBot {
             decimals,
             chain_id,
         );
-        Ok(PyToken::new(Arc::clone(&self.core), addr))
+        Ok(PyErc20Token::new(Arc::clone(&self.core), addr))
     }
 
-    /// Get a thin Token handle for the given address.
+    /// Get a thin `PyErc20Token` handle for the given address.
     ///
     /// Args:
     ///     `address`: Token contract address (hex string).
     ///
     /// Returns:
-    ///     A `Token` handle, or `None` if the address is not registered.
-    fn get_token(&self, address: &str) -> PyResult<Option<PyToken>> {
+    ///     A `PyErc20Token` handle, or `None` if the address is not registered.
+    fn get_token(&self, address: &str) -> PyResult<Option<PyErc20Token>> {
         let addr = parse_address(address)?;
         if self.core.read().has_token(&addr) {
-            Ok(Some(PyToken::new(Arc::clone(&self.core), addr)))
+            Ok(Some(PyErc20Token::new(Arc::clone(&self.core), addr)))
         } else {
             Ok(None)
         }

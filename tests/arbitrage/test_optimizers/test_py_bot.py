@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from degenbot.degenbot_rs import PyBot, PyPool
+from degenbot.degenbot_rs import PyBot, PyLiquidityPool
 
 
 class TestPyBotV2Pool:
@@ -204,7 +204,7 @@ class TestPoolHandle:
         return core, pool_id
 
     def test_get_pool_returns_handle(self):
-        """get_pool() returns a Pool handle for a registered pool."""
+        """get_pool() returns a PyLiquidityPool handle for a registered pool."""
         core, pool_id = self._make_core_with_pool()
         pool = core.get_pool(pool_id)
         assert pool is not None
@@ -272,7 +272,7 @@ class TestTokenHandle:
             decimals=18,
             chain_id=1,
         )
-        # ADR-003 Slice 5: register_token returns the PyToken handle; the
+        # ADR-003 Slice 5: register_token returns the PyErc20Token handle; the
         # getters read Rust-owned metadata back through PyBot's token map.
         assert token is not None
         assert token.address == self.TOKEN_ADDR  # alloy preserves checksum case

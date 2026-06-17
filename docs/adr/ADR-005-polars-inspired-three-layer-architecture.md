@@ -1,6 +1,6 @@
 # ADR-005: Polars-Inspired Three-Layer Architecture
 
-**Status: accepted.** Implemented for the `Bot`/`PyBot`/`PyPool`/`PyToken` family
+**Status: accepted.** Implemented for the `Bot`/`PyBot`/`PyLiquidityPool`/`PyErc20Token` family
 (`BotCore`→`Bot`, `PyBotCore`→`PyBot` rename + `Mutex`→`RwLock` in the PyO3-handle tier).
 The `UniswapEngine` unification is deferred — see "Deferred".
 
@@ -42,7 +42,7 @@ state), realized across two Rust crates:
    rewrite.
 2. **PyO3 Wrapper** (`PyBot`, `#[pyclass]` in `py_bot.rs`) — holds
    `Arc<parking_lot::RwLock<Bot>>`. **The wrapper is the sharing mechanism.** Thin
-   stateful handles (`PyPool` carrying a `pool_id` key, `PyToken` carrying an `Address`
+   stateful handles (`PyLiquidityPool` carrying a `pool_id` key, `PyErc20Token` carrying an `Address`
    key) clone the *same* `Arc`, so N Python objects reference one Rust-owned `Bot`.
    Read methods take a read guard (`calculate_tokens_out`, `encode_swap`, getters,
    journal-length queries); write methods take a write guard (`register_*`, `update_*`,
@@ -88,7 +88,7 @@ construction/encoding parameter, not state. Both the Python `Pool` companion (vi
 `polars-python`'s `DataFrame` wrapper holds `RwLock<DataFrame>` over `polars-core`;
 slicing/cloning shares the underlying buffers via a custom `Arc` (`SharedStorage`), so
 many Python `DataFrame` views reference one Rust-owned buffer set. degenbot mirrors this
-exactly: `PyBot` holds `RwLock<Bot>`; `PyPool`/`PyToken` share via `Arc::clone`. The
+exactly: `PyBot` holds `RwLock<Bot>`; `PyLiquidityPool`/`PyErc20Token` share via `Arc::clone`. The
 difference is granularity — Polars shares large Arrow buffers; degenbot shares a single
 state struct and keys into it.
 
@@ -143,17 +143,17 @@ etc.), used as construction parameters (`LiquidityPool(addr, dex=UNISWAP_V2)` or
 named constructors `LiquidityPool.uniswap_v2(addr)`), not as subclasses. Public-API
 breakage is acceptable (0.x major refactor underway).
 
-**Precedent set by this ADR's first slice:** the `#[pyclass(name = "Pool")]` /
-`name = "Token"` overrides on `PyPool`/`PyToken` were dropped — they're now exposed
-keeping the `Py` prefix (temporarily still `PyPool`/`PyToken` until the full-Polars
-rename to `PyLiquidityPool`/`PyErc20Token` lands as the next slice). This is the
-template for every future wrapper in the family.
+**Precedent set by this ADR's slices.** The `#[pyclass(name = "Pool")]` /
+`name = "Token"` overrides (which exposed the original structs under the bare names
+`Pool`/`Token`) were dropped (slice 1), and the structs renamed to
+`PyLiquidityPool`/`PyErc20Token` (slice 2) — every wrapper now keeps the `Py` prefix
+unconditionally, with no `name=` override. This is the template for future wrappers.
 
 ## Considered options (rejected alternatives)
 
 - **Mutex everywhere (engine parity).** Keep `Arc<Mutex<Bot>>` on `PyBot` to match
   `UniswapEngine`. **Rejected**: the Python-facing access pattern is read-heavy
-  (per-pool calc reads, tick-data reads during solves, `PyPool`/`PyToken` property
+  (per-pool calc reads, tick-data reads during solves, `PyLiquidityPool`/`PyErc20Token` property
   reads); a single write mutex would serialize all of them. `RwLock` allows concurrent
   readers under Python 3.13+ free-threading. Cost — marginally larger guard, slightly
   slower writes — is justified by read dominance. (`UniswapEngine` retains `Mutex` today
@@ -166,7 +166,7 @@ template for every future wrapper in the family.
   clean separation the generic `rust/AGENTS.md` three-layer rule mandates ("if `pyo3`
   appears in a file that isn't `*_py.rs`, it's a code smell") — a Python class can't be
   `*_py.rs`.
-- **Handles re-resolve via a global registry.** `PyPool`/`PyToken` hold only a key and
+- **Handles re-resolve via a global registry.** `PyLiquidityPool`/`PyErc20Token` hold only a key and
   call a global `get_pool(id)` each access. **Rejected**: forces a lock + `HashMap`
   lookup per property read, and reintroduces a process-global singleton (the deprecated
   pattern root `AGENTS.md` warns against) as the state authority. Loses the O(1)
@@ -194,7 +194,7 @@ template for every future wrapper in the family.
 ## Consequences
 
 - **Multiple Python handles share one Rust-owned `Bot` thread-safely** — the goal. The
-  Python `Bot` can hand out `PyPool`/`PyToken` handles that stay live and consistent
+  Python `Bot` can hand out `PyLiquidityPool`/`PyErc20Token` handles that stay live and consistent
   with the session's state for their lifetime.
 - **The `RwLock` read/write split is now an invariant.** New stateful `#[pyclass]`
   wrappers in this tier must classify each method as read (`.read()`) or write
@@ -228,7 +228,7 @@ template for every future wrapper in the family.
   wrapper, read/write guard split).
 - **`docs/architecture/rust-owned-bot.md` §13** — topology description and code mapping.
 - **`rust/CONTEXT.md`** — glossary term {Polars-Inspired Three-Layer Architecture};
-  inline mentions in {Bot}/{PyBot}/{PyPool}/{PyToken} de-duplicated to point here.
+  inline mentions in {Bot}/{PyBot}/{PyLiquidityPool}/{PyErc20Token} de-duplicated to point here.
 - **Plan 079** ("Rust-Owned Bot Core") — first articulated the "Polars model" goal
   ("Python is the cockpit, Rust is the engine"). This ADR records the FFI-topology
   decision 079 implied but never specified, and **sharpens 079's framing**: the

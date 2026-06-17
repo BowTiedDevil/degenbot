@@ -794,7 +794,7 @@ class AsyncContract:
         block_number: int | None = None,
     ) -> Coroutine[Any, Any, list[list[str]]]: ...
 
-class PyToken:
+class PyErc20Token:
     """Thin PyO3 handle to a token registered in the Rust `Bot`.
 
     All metadata lives in Rust; reads cross PyO3 on every access. Not directly
@@ -810,7 +810,7 @@ class PyToken:
     @property
     def name(self) -> str: ...
 
-class PyPool:
+class PyLiquidityPool:
     """Thin PyO3 handle to a pool registered in the Rust `Bot`.
 
     Owns no state — calculation/encoding calls cross PyO3 on every access,
@@ -830,7 +830,7 @@ class PyBot:
     """PyO3 wrapper (exposed as `PyBot` in Python) holding `Arc<RwLock<Bot>>`.
 
     The Polars-style middle layer between the pure-Rust `Bot` and the Python
-    `Bot` session. The Python ``Bot.__init__`` constructs one; `Pool`/`Token`
+    `Bot` session. The Python ``Bot.__init__`` constructs one; `PyLiquidityPool`/`PyErc20Token`
     handles share the same `Arc`. Queries/calcs take a read guard on the
     shared `Bot`; mutations take a write guard.
     """
@@ -855,7 +855,7 @@ class PyBot:
     def calculate_tokens_out(self, pool_id: int, zero_for_one: bool, amount_in: int) -> int: ...
     def calculate_tokens_in(self, pool_id: int, zero_for_one: bool, amount_out: int) -> int: ...
     def pool_count(self) -> int: ...
-    def get_pool(self, pool_id: int) -> PyPool | None: ...
+    def get_pool(self, pool_id: int) -> PyLiquidityPool | None: ...
     def register_v3_pool(
         self,
         address: str,
@@ -883,8 +883,8 @@ class PyBot:
     ) -> tuple[int, int, int, int] | None: ...
     def register_token(
         self, address: str, name: str, symbol: str, decimals: int, chain_id: int
-    ) -> PyToken: ...
-    def get_token(self, address: str) -> PyToken | None: ...
+    ) -> PyErc20Token: ...
+    def get_token(self, address: str) -> PyErc20Token | None: ...
     def encode_swap(
         self, pool_id: int, zero_for_one: bool, amount_out: int, recipient: str
     ) -> tuple[str, str, int] | None: ...
@@ -921,8 +921,8 @@ __all__ = [
     "LogData",
     "LogFilter",
     "PyBot",
-    "PyPool",
-    "PyToken",
+    "PyErc20Token",
+    "PyLiquidityPool",
     "TransactionData",
     "TransactionReceiptData",
     "UniswapArbEngine",

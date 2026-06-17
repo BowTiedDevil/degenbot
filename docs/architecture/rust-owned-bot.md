@@ -595,14 +595,14 @@ Eliminates ~95%+ of simulation failures from scam/tax/honeypot tokens.
 How Python reaches that Rust-owned state across the FFI is canonicalized in **ADR-005: Polars-Inspired Three-Layer Architecture** — the stateful specialization of `rust/AGENTS.md`'s generic three-layer convention. The realized topology:
 
 - **Rust core** — `Bot`, pure Rust, zero `pyo3` imports.
-- **PyO3 wrapper** — `PyBot` (`#[pyclass]`) holds `Arc<parking_lot::RwLock<Bot>>` and *is* the sharing mechanism; `PyPool` (carrying a `pool_id` key) and `PyToken` (carrying an `Address` key) clone that `Arc` so N Python handles reference one Rust-owned `Bot`. Reads take a read guard; mutations take a write guard.
+- **PyO3 wrapper** — `PyBot` (`#[pyclass]`) holds `Arc<parking_lot::RwLock<Bot>>` and *is* the sharing mechanism; `PyLiquidityPool` (carrying a `pool_id` key) and `PyErc20Token` (carrying an `Address` key) clone that `Arc` so N Python handles reference one Rust-owned `Bot`. Reads take a read guard; mutations take a write guard.
 - **Python session** — `bot.py:Bot` constructs `self._py_bot = PyBot()` in `__init__` and delegates Rust-owned state through it.
 
 ```python
 class Bot:
     _py_bot: PyBot   # Arc<parking_lot::RwLock<Bot>>
 
-    # pools/tokens: PyPool/PyToken handles sharing the same Arc
+    # pools/tokens: PyLiquidityPool/PyErc20Token handles sharing the same Arc
     # PyO3 read  → Bot.pools[pool_id] under a read guard
     # PyO3 write → mutation under a write guard
 ```

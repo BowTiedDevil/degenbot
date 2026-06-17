@@ -1,4 +1,4 @@
-//! `PyToken` — thin Python handle over a token address key into `Bot`.
+//! `PyErc20Token` — thin Python handle over a token address key into `Bot`.
 //!
 //! Shares the same `Arc<parking_lot::RwLock<Bot>>` as the owning `PyBot` (one
 //! Rust-owned `Bot`, many thin Python handles). Part of the Polars-inspired
@@ -15,12 +15,12 @@ use crate::bot_core::Bot;
 ///
 /// Does not own any state — all data lives in Rust inside `Bot`.
 #[pyclass(skip_from_py_object)]
-pub struct PyToken {
+pub struct PyErc20Token {
     core: Arc<parking_lot::RwLock<Bot>>,
     address: Address,
 }
 
-impl PyToken {
+impl PyErc20Token {
     /// Create a new thin token handle.
     pub const fn new(core: Arc<parking_lot::RwLock<Bot>>, address: Address) -> Self {
         Self { core, address }
@@ -28,7 +28,7 @@ impl PyToken {
 }
 
 #[pymethods]
-impl PyToken {
+impl PyErc20Token {
     /// The token contract address (hex string).
     #[getter]
     fn address(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {

@@ -128,8 +128,8 @@ fn degenbot_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Bot — Rust-owned state
     m.add_class::<bot_core::py_bot::PyBot>()?;
-    m.add_class::<bot_core::py_pool::PyPool>()?;
-    m.add_class::<bot_core::py_token::PyToken>()?;
+    m.add_class::<bot_core::py_liquidity_pool::PyLiquidityPool>()?;
+    m.add_class::<bot_core::py_erc20_token::PyErc20Token>()?;
 
     // Async modules
     m.add_class::<async_provider::PyAsyncAlloyProvider>()?;
