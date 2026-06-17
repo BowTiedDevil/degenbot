@@ -62,7 +62,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
 
       - name: Cache Cargo
         uses: actions/cache@v5
@@ -75,6 +75,9 @@ jobs:
 
       - name: Install just
         uses: extractions/setup-just@v2
+
+      - name: Check formatting
+        run: just fmt-check
 
       - name: Run Clippy
         run: just lint-rust
@@ -126,6 +129,41 @@ jobs:
 
       - name: Build
         run: just build-rust-extension
+
+  python-lint:
+    name: Python Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install just
+        uses: extractions/setup-just@v4
+
+      - name: Build and install Rust extension
+        run: just dev
+
+      - name: Check formatting
+        run: just fmt-check-python
+
+      - name: Run Python linters
+        run: just lint-python
 
   python-test:
     name: Python Tests

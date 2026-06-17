@@ -1,4 +1,5 @@
 """SQLAlchemy model for ERC-20 token metadata."""
+
 from sqlalchemy import Index
 from sqlalchemy.orm import Mapped
 

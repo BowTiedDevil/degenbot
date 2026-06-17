@@ -1,4 +1,8 @@
-"""Uniswap V3 Tick: fee growth and liquidity tracking per tick."""
+"""Uniswap V3 Tick: fee growth and liquidity tracking per tick.
+
+See: contract_reference/uniswap/V3/UniswapV3Factory.sol (Tick library)
+"""
+
 from degenbot.calculations.evm_math import evm_divide
 from degenbot.constants import MAX_UINT128
 from degenbot.uniswap.v3_libraries.tick_math import MAX_TICK, MIN_TICK

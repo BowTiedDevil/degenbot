@@ -92,7 +92,7 @@ def calc_exact_in_stable(
         msg = "Invalid token_in identifier"
         raise DegenbotValueError(message=msg)
 
-    try:
+    try:  # noqa:PLW0717
         amount_in_after_fee = amount_in - amount_in * fee.numerator // fee.denominator
 
         xy = k_func(reserves0, reserves1, decimals0, decimals1)

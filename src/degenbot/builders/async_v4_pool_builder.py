@@ -199,9 +199,7 @@ class AsyncV4PoolBuilder:
             if pool_id_db is not None:
                 with contextlib.suppress(Exception), self._db() as session:
                     pool_with_data = session.scalar(
-                        select(UniswapV4PoolTable).where(
-                            UniswapV4PoolTable.id == pool_id_db
-                        )
+                        select(UniswapV4PoolTable).where(UniswapV4PoolTable.id == pool_id_db)
                     )
                     if pool_with_data is not None:
                         working_tick_bitmap, working_tick_data, db_snapshot_loaded = (

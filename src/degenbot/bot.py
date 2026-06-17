@@ -35,6 +35,7 @@ from degenbot.connection.connection_manager import ConnectionManager
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.database.operations import get_alembic_config, get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
+from degenbot.degenbot_rs import PyBot
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import TrackerAlreadyInitialized
 from degenbot.logging import logger
@@ -79,6 +80,15 @@ class Bot:
     def __init__(self, config: DegenbotConfig) -> None:
         """Initialize the instance."""
         self.config = config
+
+        # Polars-style middle layer: a ``PyBot`` PyO3 wrapper that owns the
+        # Rust ``Bot`` state behind an ``RwLock``. Multiple Python handles
+        # (this session, plus any ``Pool``/``Token`` handles it vends) share
+        # the same Rust-owned ``Bot`` thread-safely. Construction is cheap and
+        # side-effect-free (no I/O, no DB) — pool/token registration flows
+        # here in later slices.
+        self._py_bot = PyBot()
+
         self.connections = ConnectionManager()
         self.db = DatabaseSessionManager(
             get_scoped_sqlite_session(database_path=config.database.path)

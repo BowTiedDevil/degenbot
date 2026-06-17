@@ -1,4 +1,5 @@
 """SushiSwap V2/V3 pool implementations."""
+
 from typing import ClassVar
 
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool

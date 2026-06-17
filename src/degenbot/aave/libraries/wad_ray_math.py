@@ -1,4 +1,5 @@
 """Aave WadRayMath library for 18/27-decimal fixed-point arithmetic."""
+
 from enum import Enum
 
 from degenbot.constants import MAX_UINT256

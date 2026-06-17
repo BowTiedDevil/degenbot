@@ -1,4 +1,8 @@
-"""Uniswap V4 TickMath: conversions between tick and sqrt-price."""
+"""Uniswap V4 TickMath: conversions between tick and sqrt-price.
+
+See: contract_reference/uniswap/V4/PoolManager.sol (TickMath library)
+"""
+
 import functools
 
 from degenbot.calculations.evm_math import evm_divide

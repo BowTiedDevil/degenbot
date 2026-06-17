@@ -51,7 +51,7 @@ def detect_lending_tokens(
         checksummed_addr = get_checksum_address(token_addr)
 
         # Check if token is a cToken using isCToken()
-        try:
+        try:  # noqa:PLW0717
             is_ctoken_result = io.call_raw(
                 {
                     "to": checksummed_addr,
@@ -66,7 +66,7 @@ def detect_lending_tokens(
             if is_c:
                 is_lending = True
                 # cToken: get underlying token decimals via underlying() method
-                try:
+                try:  # noqa:PLW0717
                     underlying_result = io.call_raw(
                         {
                             "to": checksummed_addr,

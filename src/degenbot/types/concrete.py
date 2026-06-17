@@ -1,4 +1,5 @@
 """Concrete type definitions (state caches, publish/subscribe)."""
+
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable
 from typing import Any, Protocol, Self

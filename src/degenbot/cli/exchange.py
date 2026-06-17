@@ -1,4 +1,5 @@
 """CLI commands for exchange/pool lookups."""
+
 import click
 import eth_typing
 from sqlalchemy import select

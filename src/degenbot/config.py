@@ -1,4 +1,5 @@
 """Application configuration loaded from TOML files."""
+
 import tomllib
 from pathlib import Path
 from typing import Annotated

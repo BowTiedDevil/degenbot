@@ -1,4 +1,5 @@
 """Balancer V2 stable pool implementations (MetaStable, ComposableStable)."""
+
 from __future__ import annotations
 
 from threading import Lock

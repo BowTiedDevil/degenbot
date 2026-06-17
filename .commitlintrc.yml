@@ -22,6 +22,8 @@ rules:
     - never
 
   # ── Scope ─────────────────────────────────────────────────
+  # Keep this list in sync with AGENTS.md "### Scopes". AGENTS.md is the
+  # human-readable source of truth; this file is the linter authority.
   scope-enum:
     - 2
     - always
@@ -34,8 +36,10 @@ rules:
       - camelot
       - balancer
       - arbitrage
+      - builders   # pool/token construction layer (src/degenbot/builders/)
       - database
-      - rust
+      - rust       # Rust core; mirrors `python`
+      - python     # Python wrappers/linting; mirrors `rust`
       - sdk
 
   scope-case:
@@ -43,8 +47,11 @@ rules:
     - always
     - lower-case
 
+  # scope-empty: 0 = omit freely (no warning). AGENTS.md documents scope
+  # omission as the convention for cross-cutting changes; the previous
+  # level=1 warning was noise on the common legitimate case.
   scope-empty:
-    - 1
+    - 0
     - never
 
   # ── Subject ───────────────────────────────────────────────

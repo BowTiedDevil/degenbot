@@ -1,4 +1,5 @@
 """Balancer V2 swap amount types with Vault ABI encoding."""
+
 from __future__ import annotations
 
 import dataclasses

@@ -52,6 +52,23 @@
 
 `degenbot.aave` must never import from `degenbot.cli`. The dependency arrow points only downward: `cli/` → `aave/`.
 
+## Contract Reference
+
+Verified Solidity sources for Aave V3 are in `contract_reference/aave/`:
+
+| Directory | Files | Description |
+|-----------|-------|-------------|
+| `Pool/` | `rev_1.sol` – `rev_10.sol` | Main Pool contract — Supply, Borrow, Withdraw, Repay, Liquidation, FlashLoan |
+| `AToken/` | `rev_1.sol` – `rev_5.sol` | Interest-bearing collateral token |
+| `VariableDebtToken/` | `rev_1.sol`, `rev_3.sol` – `rev_5.sol` | Standard variable-rate debt token |
+| `GhoVariableDebtToken/` | `rev_1.sol` – `rev_6.sol` | GHO-specific variable-rate debt token with discount logic |
+| `GhoDiscountRateStrategy/` | `contract.sol` | GHO discount rate calculation |
+| `AaveOracle/` | `contract.sol` | Price oracle |
+| `stkAAVE/` | `rev_1.sol` – `rev_6.sol` | Staked AAVE (StakedTokenV3) |
+| `RewardsController/` | `rev_1.sol` | Rewards distribution |
+
+Revision files track deployed contract versions. When porting on-chain logic to Python, include a `See: contract_reference/aave/...` comment pointing to the exact file and revision.
+
 ## Cross-module rulings
 
 - **Pool vs Market vs Pool Contract** — "Market" is the canonical term for an Aave lending system; "Pool" is reserved for DEX contracts. See [CONTEXT-MAP.md](../../../CONTEXT-MAP.md) for the full ruling with examples.

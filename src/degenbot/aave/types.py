@@ -1,4 +1,5 @@
 """Aave-specific type definitions (rate mode, position enums)."""
+
 from enum import Enum, auto
 
 

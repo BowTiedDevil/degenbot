@@ -39,7 +39,7 @@ use std::sync::Arc;
 /// ```python
 /// await subscription.started()  # Raises on failure
 /// ```
-#[pyclass(name = "AlloySubscription")]
+#[pyclass(name = "AlloySubscription", skip_from_py_object)]
 pub struct PyAlloySubscription {
     /// The shared subscription handle.
     handle: Arc<SubscriptionHandle>,
@@ -125,10 +125,7 @@ impl PyAlloySubscription {
                         }
                         return Err(PyStopAsyncIteration::new_err("Subscription ended"));
                     }
-                    DrainResult::Disconnected {
-                        mut items,
-                        message,
-                    } => {
+                    DrainResult::Disconnected { mut items, message } => {
                         if let Some(first) = items.pop() {
                             if !items.is_empty() {
                                 local_batch.lock().extend(items);
@@ -216,13 +213,9 @@ impl PyAlloySubscription {
         let handle = Arc::clone(&self.handle);
 
         future_into_py(py, async move {
-            let mut rx = handle
-                .start_notify_rx
-                .lock()
-                .take()
-                .ok_or_else(|| {
-                    PyRuntimeError::new_err("Start notification channel already consumed")
-                })?;
+            let mut rx = handle.start_notify_rx.lock().take().ok_or_else(|| {
+                PyRuntimeError::new_err("Start notification channel already consumed")
+            })?;
 
             let _ = rx.recv().await;
 
@@ -267,10 +260,7 @@ impl PyAlloySubscription {
     /// Try to get an item immediately from the local batch or Rust buffer.
     /// Returns `Some(future)` if an item (or terminal state) is ready,
     /// `None` if no items are available and the slow path is needed.
-    fn try_fast_drain<'py>(
-        &mut self,
-        py: Python<'py>,
-    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+    fn try_fast_drain<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
         // Fast path: return from local batch
         let item = self.local_batch.lock().pop();
         if let Some(item) = item {
@@ -297,7 +287,8 @@ impl PyAlloySubscription {
                     let result: PyResult<Py<PyAny>> = Ok(first);
                     Ok(Some(future_into_py(py, async move { result })?))
                 } else {
-                    let result: PyResult<Py<PyAny>> = Err(PyStopAsyncIteration::new_err("Subscription ended"));
+                    let result: PyResult<Py<PyAny>> =
+                        Err(PyStopAsyncIteration::new_err("Subscription ended"));
                     Ok(Some(future_into_py(py, async move { result })?))
                 }
             }

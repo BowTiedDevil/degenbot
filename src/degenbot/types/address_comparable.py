@@ -1,4 +1,5 @@
 """AddressComparable: address wrapper with equality by checksum."""
+
 from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
 

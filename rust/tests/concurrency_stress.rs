@@ -24,8 +24,7 @@ fn test_attach_completes_under_gil_contention() {
     let holder = thread::spawn(|| {
         Python::attach(|py| {
             // Run a tight Python loop that holds the GIL continuously
-            py.run(c"for _ in range(10000): pass", None, None)
-                .unwrap();
+            py.run(c"for _ in range(10000): pass", None, None).unwrap();
         });
         GIL_HOLDER_DONE.store(true, std::sync::atomic::Ordering::Release);
     });

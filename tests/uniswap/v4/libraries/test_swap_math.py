@@ -2,6 +2,7 @@ import hypothesis
 import hypothesis.strategies
 
 from degenbot.constants import (
+    MAX_INT128,
     MAX_INT256,
     MAX_UINT128,
     MAX_UINT160,
@@ -276,6 +277,8 @@ def test_fuzz_compute_swap_step(
 ):
     hypothesis.assume(sqrt_price_raw > 0)
     hypothesis.assume(sqrt_price_target_raw > 0)
+    # Rust i128 limit: liquidity must fit in int128 for safe u128→i128 conversion
+    hypothesis.assume(liquidity <= MAX_INT128)
 
     if amount_remaining >= 0:
         hypothesis.assume(fee_pips < MAX_SWAP_FEE)

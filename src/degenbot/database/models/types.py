@@ -1,4 +1,5 @@
 """SQLAlchemy custom column types for database models."""
+
 from typing import Annotated
 
 from sqlalchemy import ForeignKey, String

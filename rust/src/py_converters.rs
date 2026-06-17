@@ -32,9 +32,9 @@ use std::sync::LazyLock;
 
 use crate::address_utils::address_to_checksum_string;
 use crate::hex_utils::decode_hex;
+use crate::provider::EthBlock;
 use crate::py_cache::create_hexbytes;
 use alloy::rpc::types::eth::Header as RpcHeader;
-use crate::provider::EthBlock;
 
 /// Field names that should be converted to `HexBytes`.
 /// These are commonly used field names for Ethereum hashes and data.
@@ -147,6 +147,7 @@ fn hex_to_checksum_address(hex_str: &str) -> PyResult<String> {
 ///
 /// This is the shared implementation used by both sync and async provider log conversion.
 /// Accesses raw bytes directly from Alloy types (no hex decode round-trip).
+#[allow(clippy::missing_errors_doc)]
 pub fn log_to_py_dict<'py>(py: Python<'py>, log: &Log) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
 
@@ -618,6 +619,7 @@ fn withdrawal_to_py_dict<'py>(
 /// Convert an RPC block header to a Python dict.
 ///
 /// Used by the subscription pump for `subscribe_blocks()` events.
+#[allow(clippy::missing_errors_doc)]
 pub fn header_to_py_dict<'py>(
     py: Python<'py>,
     header: &RpcHeader<ConsensusHeader>,
@@ -631,20 +633,14 @@ pub fn header_to_py_dict<'py>(
         dict.set_item(&key, val)?;
     }
 
-    set_opt_u256(
-        &dict,
-        "total_difficulty",
-        header.total_difficulty.as_ref(),
-    )?;
+    set_opt_u256(&dict, "total_difficulty", header.total_difficulty.as_ref())?;
     set_opt_u256(&dict, "size", header.size.as_ref())?;
 
     Ok(dict)
 }
 
-pub fn block_to_py_dict<'py>(
-    py: Python<'py>,
-    block: &EthBlock,
-) -> PyResult<Bound<'py, PyDict>> {
+#[allow(clippy::missing_errors_doc)]
+pub fn block_to_py_dict<'py>(py: Python<'py>, block: &EthBlock) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
 
     dict.set_item("hash", create_hexbytes(py, block.header.hash.as_ref())?)?;

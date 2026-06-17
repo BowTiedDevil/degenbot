@@ -1,4 +1,5 @@
 """Camelot contract ABI definitions and decoders."""
+
 import pydantic_core
 
 CAMELOT_POOL_ABI = pydantic_core.from_json(

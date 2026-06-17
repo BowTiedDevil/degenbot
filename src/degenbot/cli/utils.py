@@ -1,4 +1,5 @@
 """CLI utility helpers (formatting, output)."""
+
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING

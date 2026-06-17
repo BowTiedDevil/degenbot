@@ -1,4 +1,5 @@
 """Wrapped Ether placeholder for native ETH in pool reserves."""
+
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20 import Erc20Token

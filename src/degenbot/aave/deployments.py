@@ -1,4 +1,5 @@
 """Aave V3 deployment addresses and chain-specific configuration."""
+
 from dataclasses import dataclass
 
 import eth_typing

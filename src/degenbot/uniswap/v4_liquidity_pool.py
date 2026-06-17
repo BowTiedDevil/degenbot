@@ -1,4 +1,7 @@
-"""UniswapV4Pool: concentrated liquidity AMM with hook support."""
+"""UniswapV4Pool: concentrated liquidity AMM with hook support.
+
+See: contract_reference/uniswap/V4/PoolManager.sol (PoolManager, Pool, Hooks)
+"""
 
 import dataclasses
 from collections.abc import Callable
@@ -720,6 +723,19 @@ class UniswapV4Pool(
             raise DegenbotValueError(message="State does not have a block number.")
         return block
 
+    @property
+    def initial_state_block(self) -> int:
+        (
+            """Block number at which the pool's initial state was captured.
+
+        Returns:
+            The block number from construction (DB snapshot or RPC fetch).
+
+        """
+            ""
+        )
+        return self._initial_state_block
+
     def swap_is_viable(
         self,
         state: UniswapV4PoolState,
@@ -1072,7 +1088,7 @@ class UniswapV4Pool(
             return None
 
         initialized_ticks: list[int] = []
-        try:
+        try:  # noqa: PLW0717
             for tick, is_initialized in ticks_along_path:
                 clamped_tick = max(MIN_TICK, tick) if less_than_or_equal else min(MAX_TICK, tick)
                 if clamped_tick != tick:

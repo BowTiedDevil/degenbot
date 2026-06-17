@@ -139,7 +139,9 @@ impl AbiValue {
                 "true" | "1" => Ok(Self::Bool(true)),
                 "false" | "0" => Ok(Self::Bool(false)),
                 _ => Err(ContractError::InvalidAbi {
-                    message: format!("Invalid bool value '{arg}': expected 'true', 'false', '1', or '0'"),
+                    message: format!(
+                        "Invalid bool value '{arg}': expected 'true', 'false', '1', or '0'"
+                    ),
                 }),
             },
             AbiType::Uint(bits) => {
@@ -574,7 +576,11 @@ mod tests {
     fn test_bool_false_values() {
         for val in ["false", "False", "FALSE", "0"] {
             let result = AbiValue::from_str_arg(&AbiType::Bool, val).unwrap();
-            assert_eq!(result, AbiValue::Bool(false), "'{val}' should parse as false");
+            assert_eq!(
+                result,
+                AbiValue::Bool(false),
+                "'{val}' should parse as false"
+            );
         }
     }
 
@@ -613,11 +619,9 @@ mod tests {
     #[test]
     fn test_parse_json_array_unquoted_strings() {
         // Unquoted elements should work as before (for non-string types)
-        let result = AbiValue::from_str_arg(
-            &AbiType::Array(Box::new(AbiType::Uint(256))),
-            "[1, 2, 3]",
-        )
-        .expect("should parse unquoted uint array");
+        let result =
+            AbiValue::from_str_arg(&AbiType::Array(Box::new(AbiType::Uint(256))), "[1, 2, 3]")
+                .expect("should parse unquoted uint array");
         match result {
             AbiValue::Array(arr) => {
                 assert_eq!(arr.len(), 3);
@@ -630,11 +634,8 @@ mod tests {
     fn test_parse_json_array_single_quoted_string() {
         // Single quoted string element: ["hello"]
         let input = "[\"hello\"]";
-        let result = AbiValue::from_str_arg(
-            &AbiType::Array(Box::new(AbiType::String)),
-            input,
-        )
-        .expect("should parse single-element quoted string array");
+        let result = AbiValue::from_str_arg(&AbiType::Array(Box::new(AbiType::String)), input)
+            .expect("should parse single-element quoted string array");
         match result {
             AbiValue::Array(arr) => {
                 assert_eq!(arr.len(), 1);
@@ -648,11 +649,8 @@ mod tests {
     fn test_parse_json_array_escaped_quotes() {
         // String with escaped quotes inside: ["he\"llo"] → he"llo
         let input = "[\"he\\\"llo\"]";
-        let result = AbiValue::from_str_arg(
-            &AbiType::Array(Box::new(AbiType::String)),
-            input,
-        )
-        .expect("should parse string with escaped quotes");
+        let result = AbiValue::from_str_arg(&AbiType::Array(Box::new(AbiType::String)), input)
+            .expect("should parse string with escaped quotes");
         match result {
             AbiValue::Array(arr) => {
                 assert_eq!(arr.len(), 1);
@@ -665,10 +663,8 @@ mod tests {
     #[test]
     fn test_parse_json_array_unmatched_bracket_errors() {
         // Unmatched ']' without a matching '[' should error
-        let result = AbiValue::from_str_arg(
-            &AbiType::Array(Box::new(AbiType::Uint(256))),
-            "[foo]bar]",
-        );
+        let result =
+            AbiValue::from_str_arg(&AbiType::Array(Box::new(AbiType::Uint(256))), "[foo]bar]");
         assert!(
             result.is_err(),
             "Should reject unmatched ']' in array value"
@@ -680,10 +676,7 @@ mod tests {
         // String containing ] inside quotes should not be treated as array close
         // Input: ["hello]"]
         let input = "[\"hello]\"]";
-        let result = AbiValue::from_str_arg(
-            &AbiType::Array(Box::new(AbiType::String)),
-            input,
-        );
+        let result = AbiValue::from_str_arg(&AbiType::Array(Box::new(AbiType::String)), input);
         assert!(
             result.is_ok(),
             "String containing ] inside quotes should still parse: {result:?}"
@@ -719,7 +712,11 @@ mod tests {
 
 #[cfg(test)]
 mod proptests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::tuple_array_conversions)]
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::tuple_array_conversions
+    )]
 
     use super::*;
     use proptest::prelude::*;
@@ -732,14 +729,26 @@ mod proptests {
             // Near zero
             (any::<u64>()).prop_map(|lo| U256::from(lo)),
             // Near 2^255 - 1: set top limb to 0x7FFF_FFFF_FFFF_FFFF, random lower limbs
-            (any::<u64>(), any::<u64>(), any::<u64>())
-                .prop_map(|(b, c, d)| U256::from_limbs([0x7FFF_FFFF_FFFF_FFFF, b, c, d])),
+            (any::<u64>(), any::<u64>(), any::<u64>()).prop_map(|(b, c, d)| U256::from_limbs([
+                0x7FFF_FFFF_FFFF_FFFF,
+                b,
+                c,
+                d
+            ])),
             // Near 2^255: set top limb to 0x8000_0000_0000_0000, random lower limbs
-            (any::<u64>(), any::<u64>(), any::<u64>())
-                .prop_map(|(b, c, d)| U256::from_limbs([0x8000_0000_0000_0000, b, c, d])),
+            (any::<u64>(), any::<u64>(), any::<u64>()).prop_map(|(b, c, d)| U256::from_limbs([
+                0x8000_0000_0000_0000,
+                b,
+                c,
+                d
+            ])),
             // Near U256::MAX
-            (any::<u64>(), any::<u64>(), any::<u64>())
-                .prop_map(|(b, c, d)| U256::from_limbs([0xFFFF_FFFF_FFFF_FFFF, b, c, d])),
+            (any::<u64>(), any::<u64>(), any::<u64>()).prop_map(|(b, c, d)| U256::from_limbs([
+                0xFFFF_FFFF_FFFF_FFFF,
+                b,
+                c,
+                d
+            ])),
             // Fully random
             (any::<u64>(), any::<u64>(), any::<u64>(), any::<u64>())
                 .prop_map(|(a, b, c, d)| U256::from_limbs([a, b, c, d])),

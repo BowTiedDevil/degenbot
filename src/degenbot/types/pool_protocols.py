@@ -236,27 +236,6 @@ class StateManageablePool(Protocol):
 
 
 @runtime_checkable
-class CacheablePool(Protocol):
-    """A pool whose reserves and fee can be registered in the Rust solver cache.
-
-    Used by ArbPoolCacheAdapter. Replaces getattr-based introspection
-    with explicit methods.
-    """
-
-    def reserves_for_cache(self) -> tuple[int, int]:
-        """Return (reserve_token0, reserve_token1) for the Rust cache."""
-        ...
-
-    def fee_for_cache(self) -> Fraction:
-        """Return the pool fee as a Fraction for the Rust cache."""
-        ...
-
-    def subscribe(self, subscriber: Subscriber) -> None:
-        """Subscribe to pool state updates (provided by PublisherMixin)."""
-        ...
-
-
-@runtime_checkable
 class ArbitrageCapablePool(PoolSimulation, Protocol):
     """Interface for pools participating in arbitrage paths.
 

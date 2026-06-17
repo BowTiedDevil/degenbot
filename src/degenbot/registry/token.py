@@ -1,4 +1,5 @@
 """Token registry: address-keyed store of built ERC-20 instances."""
+
 from typing import TYPE_CHECKING
 
 from degenbot.registry.base import AddressRegistry

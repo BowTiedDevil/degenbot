@@ -47,7 +47,7 @@ def discover_coins(
     for i in range(max_coins):
         if coin_prototype is None:
             # Try uint256 first
-            try:
+            try:  # noqa:PLW0717
                 coin_addr = io.call_raw(
                     {
                         "to": pool_address,
@@ -68,7 +68,7 @@ def discover_coins(
 
             # Try int128 if uint256 failed
             if coin_prototype is None:
-                try:
+                try:  # noqa:PLW0717
                     coin_addr = io.call_raw(
                         {
                             "to": pool_address,
@@ -99,7 +99,7 @@ def discover_coins(
             # Use the known prototype (narrowed to str by the else branch)
             assert coin_prototype is not None
             assert balance_prototype is not None
-            try:
+            try:  # noqa:PLW0717
                 coin_addr = io.call_raw(
                     {
                         "to": pool_address,

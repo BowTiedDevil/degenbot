@@ -82,6 +82,7 @@ pub fn decode_rust(types: &[&str], data: &[u8]) -> Result<Vec<AbiValue>, AbiDeco
 ///
 /// Panics if `cached.decode()` returns a different number of values than
 /// the length check allows. This is a logic error and should never occur.
+#[allow(clippy::missing_errors_doc)]
 #[allow(clippy::missing_panics_doc)]
 pub fn decode_single_rust(abi_type: &str, data: &[u8]) -> Result<AbiValue, AbiDecodeError> {
     if abi_type.contains("fixed") || abi_type.contains("ufixed") {
@@ -217,8 +218,7 @@ fn decoded_values_to_py_list<'py>(
 /// Map `AbiDecodeError` to the appropriate Python exception.
 ///
 /// Fixed-point types map to `NotImplementedError`; all others map to `ValueError`.
-#[allow(clippy::needless_pass_by_value)]
-fn map_decode_error(e: AbiDecodeError) -> PyErr {
+fn map_decode_error(e: &AbiDecodeError) -> PyErr {
     if matches!(e, AbiDecodeError::FixedPointNotImplemented) {
         PyNotImplementedError::new_err(e.to_string())
     } else {
@@ -250,6 +250,7 @@ fn map_decode_error(e: AbiDecodeError) -> PyErr {
 /// - Parallel decoding without GIL contention
 /// - Pure Rust unit testing
 /// - Clean separation of concerns
+#[allow(clippy::missing_errors_doc)]
 #[pyfunction]
 #[pyo3(signature = (types, data, checksum = true))]
 pub fn decode(
@@ -265,7 +266,9 @@ pub fn decode(
         .collect::<Result<_, _>>()?;
     let type_refs: Vec<&str> = type_strings.iter().map(String::as_str).collect();
 
-    let values = py.detach(|| decode_rust(&type_refs, data)).map_err(map_decode_error)?;
+    let values = py
+        .detach(|| decode_rust(&type_refs, data))
+        .map_err(|e| map_decode_error(&e))?;
 
     let list = decoded_values_to_py_list(py, &values, checksum)?;
     Ok(list.into())
@@ -278,6 +281,7 @@ pub fn decode(
 /// # Architecture
 ///
 /// This PyO3-exposed function wraps `decode_single_rust` for consistent architecture.
+#[allow(clippy::missing_errors_doc)]
 #[pyfunction]
 #[pyo3(signature = (abi_type, data, checksum = true))]
 pub fn decode_single(
@@ -288,7 +292,7 @@ pub fn decode_single(
 ) -> PyResult<Py<PyAny>> {
     let value = py
         .detach(|| decode_single_rust(abi_type, data))
-        .map_err(map_decode_error)?;
+        .map_err(|e| map_decode_error(&e))?;
 
     let py_value = abi_value_to_python(&value, py, checksum)?;
     Ok(py_value.unbind())

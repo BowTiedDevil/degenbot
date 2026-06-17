@@ -1,4 +1,5 @@
 """Balancer V2 FixedPoint arithmetic helpers."""
+
 from degenbot.balancer.libraries import log_exp_math
 from degenbot.balancer.libraries.constants import FOUR, MAX_POW_RELATIVE_ERROR, ONE, TWO, PowVersion
 from degenbot.constants import MAX_UINT256

@@ -44,7 +44,7 @@ def detect_crypto_params(
     gamma: int | None = None
     offpeg_fee_multiplier: int | None = None
 
-    try:
+    try:  # noqa:PLW0717
         fee_gamma_result = io.call_raw(
             {
                 "to": pool_address,

@@ -8,6 +8,7 @@ import pytest
 from degenbot.async_bot import AsyncBot
 from degenbot.bot import Bot
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.degenbot_rs import PyBot
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.connection.async_connection_manager import AsyncConnectionManager
 from degenbot.connection.connection_manager import ConnectionManager
@@ -62,6 +63,27 @@ class TestBotInit:
         config = _make_test_config(tmp_path)
         bot = Bot(config)
         assert bot._trackers == {}
+
+
+class TestBotPyBotHandle:
+    """Bot constructs and owns a PyO3 PyBot handle (Polars-style middle layer).
+
+    The Python ``Bot`` session delegates Rust-owned state to an inner
+    ``PyBot`` wrapper holding an ``RwLock<Bot>``. This lets multiple Python
+    handles share a single Rust-owned ``Bot`` thread-safely.
+    """
+
+    def test_bot_constructs_py_bot(self, tmp_path: pathlib.Path) -> None:
+        config = _make_test_config(tmp_path)
+        bot = Bot(config)
+        assert isinstance(bot._py_bot, PyBot)
+
+    def test_each_bot_has_independent_py_bot(self, tmp_path: pathlib.Path) -> None:
+        bot1 = Bot(_make_test_config(tmp_path / "bot1"))
+        bot2 = Bot(_make_test_config(tmp_path / "bot2"))
+        assert isinstance(bot1._py_bot, PyBot)
+        assert isinstance(bot2._py_bot, PyBot)
+        assert bot1._py_bot is not bot2._py_bot
 
 
 class TestBotFromConfigFile:

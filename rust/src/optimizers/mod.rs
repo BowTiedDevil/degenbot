@@ -7,22 +7,18 @@
 //!
 //! # Modules
 //!
-//! - [`mobius`] — Core f64 Möbius recurrence, solve, and path simulation
-//! - [`mobius_int`] — Integer U512/U256 Möbius with EVM-exact simulation
-//! - [`mobius_v3`] — V3 tick range types, crossing computation, piecewise solve
-//! - [`mobius_v3_v3`] — V3-V3 arbitrage solver (two V3 hops)
-//! - [`mobius_batch`] — Batch solver (serial, vectorized, Rayon parallel) *(deprecated: no Python callers)*
-//! - [`mobius_py`] — `PyO3` Python bindings
+//! - [`mobius_int`] — U512/U256 integer-exact Möbius recurrence + simulation
+//! - [`mobius_int_exact`] — closed-form U512-native solver (`exact_mobius_solve`)
+//! - [`mobius_v3_int`] — integer V3 tick-range types, crossing, CL solvers
 
-#[allow(clippy::doc_markdown)]
-pub mod mobius;
-// mobius_batch: removed from Python bindings, no callers remaining
-// pub mod mobius_batch;
+pub mod affected_keys;
+pub mod liquidity_event_buffer;
 #[allow(clippy::doc_markdown)]
 pub mod mobius_int;
 #[allow(clippy::doc_markdown)]
-pub mod mobius_py;
+pub mod mobius_int_exact;
 #[allow(clippy::doc_markdown)]
-pub mod mobius_v3;
-#[allow(clippy::doc_markdown)]
-pub mod mobius_v3_v3;
+pub mod mobius_v3_int;
+pub mod uniswap_engine;
+pub mod uniswap_engine_pump;
+pub mod v2_sync_decoder;

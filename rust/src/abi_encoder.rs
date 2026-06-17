@@ -155,6 +155,7 @@ pub fn encode_for_types(types: &[AbiType], values: &[AbiValue]) -> Result<Vec<u8
 /// # Returns
 ///
 /// The ABI-encoded bytes.
+#[allow(clippy::missing_errors_doc)]
 #[pyfunction]
 pub fn encode_single<'py>(
     py: Python<'py>,
@@ -182,6 +183,7 @@ pub fn encode_single<'py>(
 /// # Returns
 ///
 /// The ABI-encoded bytes.
+#[allow(clippy::missing_errors_doc)]
 #[pyfunction]
 #[pyo3(signature = (types, values))]
 pub fn encode<'py>(

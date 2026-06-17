@@ -1,4 +1,8 @@
-"""Uniswap V3 TickMath: conversions between tick and sqrt-price."""
+"""Uniswap V3 TickMath: conversions between tick and sqrt-price.
+
+See: contract_reference/uniswap/V3/UniswapV3Factory.sol (TickMath library)
+"""
+
 import functools
 
 from degenbot.constants import MAX_UINT128, MAX_UINT256

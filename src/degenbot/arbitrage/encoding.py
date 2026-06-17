@@ -12,6 +12,24 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+# V4 BalanceDelta packing uses two int128 values. If amountSpecified
+# or swap output exceeds this range, V4's SafeCast.toInt128() reverts
+# with SafeCastOverflow (0x93dafdf1). Encoders should skip paths that
+# would overflow this range.
+INT128_MAX: int = (1 << 127) - 1
+INT128_MIN: int = -(1 << 127)
+
+
+def fits_int128(value: int) -> bool:
+    """Return True if value fits in a signed 128-bit integer.
+
+    Returns:
+        True if the value fits, False otherwise.
+
+    """
+    return INT128_MIN <= value <= INT128_MAX
+
+
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 

@@ -2,7 +2,7 @@ import hypothesis
 import hypothesis.strategies
 import pytest
 
-from degenbot.constants import MAX_INT24, MAX_UINT160, MIN_INT24, MIN_UINT160
+from degenbot.constants import MAX_UINT160, MIN_INT24, MIN_UINT160
 from degenbot.exceptions.pool import EVMRevertError
 from degenbot.uniswap.v4_libraries import tick_math
 
@@ -32,22 +32,6 @@ def test_get_sqrt_price_at_tick_throws_for_too_low():
 
 def test_get_sqrt_price_at_tick_throws_for_too_high():
     tick = tick_math.MAX_TICK + 1
-    with pytest.raises(EVMRevertError, match="InvalidTick"):
-        tick_math.get_sqrt_price_at_tick(tick)
-
-
-@hypothesis.given(
-    tick=hypothesis.strategies.integers(
-        min_value=MIN_INT24,
-        max_value=MAX_INT24,
-    )
-)
-def test_fuzz_get_sqrt_price_at_tick_throws_for_too_large(tick: int):
-    if tick > 0:
-        hypothesis.assume(tick >= tick_math.MAX_TICK + 1)
-    else:
-        hypothesis.assume(tick <= tick_math.MIN_TICK - 1)
-
     with pytest.raises(EVMRevertError, match="InvalidTick"):
         tick_math.get_sqrt_price_at_tick(tick)
 

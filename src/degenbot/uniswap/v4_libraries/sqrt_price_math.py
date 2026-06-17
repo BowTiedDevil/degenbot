@@ -1,13 +1,53 @@
-"""Uniswap V4 SqrtPriceMath: price movement with liquidity constraints."""
-import functools
+"""Uniswap V4 SqrtPriceMath: price movement with liquidity constraints.
 
-from degenbot.constants import MAX_UINT160, MAX_UINT256
+Rust-accelerated implementations used by default.
+
+See: contract_reference/uniswap/V4/PoolManager.sol
+(SqrtPriceMath library)
+"""
+
+import functools
+from collections.abc import Callable
+from typing import Any
+
+from degenbot.degenbot_rs import (
+    cl_get_amount0_delta as _rs_get_amount0_delta,
+)
+from degenbot.degenbot_rs import (
+    cl_get_amount1_delta as _rs_get_amount1_delta,
+)
+from degenbot.degenbot_rs import (
+    cl_get_next_sqrt_price_from_amount0_rounding_up as _rs_get_next_sqrt_price_from_amount0_rounding_up,  # noqa: E501
+)
+from degenbot.degenbot_rs import (
+    cl_get_next_sqrt_price_from_amount1_rounding_down as _rs_get_next_sqrt_price_from_amount1_rounding_down,  # noqa: E501
+)
+from degenbot.degenbot_rs import (
+    cl_get_next_sqrt_price_from_input as _rs_get_next_sqrt_price_from_input,
+)
+from degenbot.degenbot_rs import (
+    cl_get_next_sqrt_price_from_output as _rs_get_next_sqrt_price_from_output,
+)
 from degenbot.exceptions.pool import EVMRevertError
 from degenbot.uniswap.v4_libraries._config import V4_LIB_CACHE_SIZE
-from degenbot.uniswap.v4_libraries.fixed_point_96 import Q96, RESOLUTION
-from degenbot.uniswap.v4_libraries.full_math import muldiv, muldiv_rounding_up
-from degenbot.uniswap.v4_libraries.functions import mulmod
-from degenbot.uniswap.v4_libraries.unsafe_math import div_rounding_up
+
+
+def _rs(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrap a Rust function to convert ValueError/OverflowError → EVMRevertError.
+
+    Returns:
+        A wrapper function that re-raises as EVMRevertError.
+
+    """
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        try:
+            return fn(*args, **kwargs)
+        except (ValueError, OverflowError) as e:
+            raise EVMRevertError(error=str(e)) from e
+
+    return wrapper
 
 
 @functools.lru_cache(maxsize=V4_LIB_CACHE_SIZE)
@@ -20,45 +60,17 @@ def get_amount0_delta(
 ) -> int:
     """Get the amount0 delta between two prices.
 
-    Returns:
-        The amount of token0 for the given liquidity and price range.
+    Delegates to Rust implementation.
 
-    Raises:
-        EVMRevertError: If sqrt_price_a_x96 is zero.
+    Returns:
+        The amount of currency0 between two sqrt prices.
 
     """
-    if round_up is None:
-        return (
-            get_amount0_delta(
-                sqrt_price_a_x96=sqrt_price_a_x96,
-                sqrt_price_b_x96=sqrt_price_b_x96,
-                liquidity=-liquidity,
-                round_up=False,
-            )
-            if liquidity < 0
-            else -get_amount0_delta(
-                sqrt_price_a_x96=sqrt_price_a_x96,
-                sqrt_price_b_x96=sqrt_price_b_x96,
-                liquidity=liquidity,
-                round_up=True,
-            )
-        )
-
-    if sqrt_price_a_x96 > sqrt_price_b_x96:
-        sqrt_price_a_x96, sqrt_price_b_x96 = sqrt_price_b_x96, sqrt_price_a_x96
-
-    if sqrt_price_a_x96 == 0:
-        msg = "InvalidPrice"
-        raise EVMRevertError(msg)
-
-    numerator1 = liquidity << RESOLUTION
-    numerator2 = sqrt_price_b_x96 - sqrt_price_a_x96
-    return (
-        div_rounding_up(
-            muldiv_rounding_up(numerator1, numerator2, sqrt_price_b_x96), sqrt_price_a_x96
-        )
-        if round_up
-        else muldiv(numerator1, numerator2, sqrt_price_b_x96) // sqrt_price_a_x96
+    return _rs(_rs_get_amount0_delta)(
+        sqrt_price_a_x96,
+        sqrt_price_b_x96,
+        liquidity,
+        round_up,
     )
 
 
@@ -72,36 +84,17 @@ def get_amount1_delta(
 ) -> int:
     """Get the amount1 delta between two prices.
 
+    Delegates to Rust implementation.
+
     Returns:
-        The amount of token1 for the given liquidity and price range.
+        The amount of currency1 between two sqrt prices.
 
     """
-    if round_up is None:
-        return (
-            get_amount1_delta(
-                sqrt_price_a_x96=sqrt_price_a_x96,
-                sqrt_price_b_x96=sqrt_price_b_x96,
-                liquidity=-liquidity,
-                round_up=False,
-            )
-            if liquidity < 0
-            else -get_amount1_delta(
-                sqrt_price_a_x96=sqrt_price_a_x96,
-                sqrt_price_b_x96=sqrt_price_b_x96,
-                liquidity=liquidity,
-                round_up=True,
-            )
-        )
-
-    numerator = abs(sqrt_price_a_x96 - sqrt_price_b_x96)
-    denominator = Q96
-    # Equivalent to:
-    # ... amount1 = roundUp
-    #       ? FullMath.mulDivRoundingUp(liquidity, sqrtPriceBX96 - sqrtPriceAX96, FixedPoint96.Q96)
-    #       : FullMath.mulDiv(liquidity, sqrtPriceBX96 - sqrtPriceAX96, FixedPoint96.Q96);
-    # Cannot overflow because `type(uint128).max * type(uint160).max >> 96 < (1 << 192)`.
-    return muldiv(liquidity, numerator, denominator) + (
-        int(mulmod(liquidity, numerator, denominator) > 0) & round_up
+    return _rs(_rs_get_amount1_delta)(
+        sqrt_price_a_x96,
+        sqrt_price_b_x96,
+        liquidity,
+        round_up,
     )
 
 
@@ -115,56 +108,18 @@ def get_next_sqrt_price_from_amount0_rounding_up(
 ) -> int:
     """Get the next sqrt price given a delta of currency0.
 
-    Returns:
-        The next sqrt price as a Q64.96 fixed-point number.
+    Delegates to Rust implementation.
 
-    Raises:
-        EVMRevertError: If the price overflows uint160.
+    Returns:
+        The next sqrt price after applying a currency0 delta.
 
     """
-    # Short circuit amount == 0 because the result is otherwise not guaranteed to equal the input
-    # price
-    if amount == 0:
-        return sqrt_price_x96
-
-    numerator1 = liquidity << RESOLUTION
-    product = amount * sqrt_price_x96
-
-    # @dev the Solidity contract uses an unchecked math block to determine if overflow has occured.
-    # Python integer math cannot overflow, so check directly if the numerator exceeds the uint256
-    # upper bound
-    if add:
-        if product <= MAX_UINT256:  # product did not overflow
-            denominator = numerator1 + product
-            if denominator >= numerator1:
-                # always fits in 160 bits
-                return muldiv_rounding_up(
-                    a=numerator1,
-                    b=sqrt_price_x96,
-                    denominator=denominator,
-                )
-
-        # product overflowed
-        return div_rounding_up(
-            x=numerator1,
-            y=(numerator1 // sqrt_price_x96) + amount,
-        )
-
-    # equivalent: if (product / amount != sqrtPX96 || numerator1 <= product) revert PriceOverflow();
-    if product // amount != sqrt_price_x96 or numerator1 <= product:
-        msg = "PriceOverflow"
-        raise EVMRevertError(msg)
-
-    result = muldiv_rounding_up(
-        a=numerator1,
-        b=sqrt_price_x96,
-        denominator=numerator1 - product,
+    return _rs(_rs_get_next_sqrt_price_from_amount0_rounding_up)(
+        sqrt_price_x96,
+        liquidity,
+        amount,
+        add,
     )
-    if result > MAX_UINT160:
-        msg = "Safecast Overflowed: uint160"
-        raise EVMRevertError(msg)
-
-    return result
 
 
 @functools.lru_cache(maxsize=V4_LIB_CACHE_SIZE)
@@ -177,38 +132,18 @@ def get_next_sqrt_price_from_amount1_rounding_down(
 ) -> int:
     """Get the next sqrt price given a delta of currency1.
 
-    Returns:
-        The next sqrt price as a Q64.96 fixed-point number.
+    Delegates to Rust implementation.
 
-    Raises:
-        EVMRevertError: If the result overflows or there is insufficient liquidity.
+    Returns:
+        The next sqrt price after applying a currency1 delta.
 
     """
-    # if we're adding (subtracting), rounding down requires rounding the quotient down (up)
-    # in both cases, avoid a mulDiv for most inputs
-    if add:
-        quotient = (
-            (amount << RESOLUTION) // liquidity
-            if amount <= MAX_UINT160
-            else muldiv(amount, Q96, liquidity)
-        )
-        result = sqrt_price_x96 + quotient
-        if result > MAX_UINT160:
-            msg = "Result overflowed MAX_UINT160"
-            raise EVMRevertError(msg)
-        return result
-
-    quotient = (
-        div_rounding_up(amount << RESOLUTION, liquidity)
-        if amount <= MAX_UINT160
-        else muldiv_rounding_up(amount, Q96, liquidity)
+    return _rs(_rs_get_next_sqrt_price_from_amount1_rounding_down)(
+        sqrt_price_x96,
+        liquidity,
+        amount,
+        add,
     )
-
-    if sqrt_price_x96 <= quotient:
-        raise EVMRevertError(error="NotEnoughLiquidity")
-
-    # always fits 160 bits
-    return sqrt_price_x96 - quotient
 
 
 @functools.lru_cache(maxsize=V4_LIB_CACHE_SIZE)
@@ -219,35 +154,19 @@ def get_next_sqrt_price_from_input(
     amount_in: int,
     zero_for_one: bool,
 ) -> int:
-    """Get the next sqrt price given an input amount of currency0 or currency1.
+    """Get the next sqrt price given an input amount.
 
-    Rounds to ensure that the target price is not passed.
+    Delegates to Rust implementation.
 
     Returns:
-        The next sqrt price as a Q64.96 fixed-point number.
-
-    Raises:
-        EVMRevertError: If sqrt_price or liquidity is zero.
+        The next sqrt price given an input amount.
 
     """
-    if sqrt_price_x96 == 0 or liquidity == 0:
-        msg = "InvalidPriceOrLiquidity"
-        raise EVMRevertError(msg)
-
-    return (
-        get_next_sqrt_price_from_amount0_rounding_up(
-            sqrt_price_x96=sqrt_price_x96,
-            liquidity=liquidity,
-            amount=amount_in,
-            add=True,
-        )
-        if zero_for_one
-        else get_next_sqrt_price_from_amount1_rounding_down(
-            sqrt_price_x96=sqrt_price_x96,
-            liquidity=liquidity,
-            amount=amount_in,
-            add=True,
-        )
+    return _rs(_rs_get_next_sqrt_price_from_input)(
+        sqrt_price_x96,
+        liquidity,
+        amount_in,
+        zero_for_one,
     )
 
 
@@ -259,33 +178,17 @@ def get_next_sqrt_price_from_output(
     amount_out: int,
     zero_for_one: bool,
 ) -> int:
-    """Get the next sqrt price given an output amount of currency0 or currency1.
+    """Get the next sqrt price given an output amount.
 
-    Rounds to ensure that the target price is not passed.
+    Delegates to Rust implementation.
 
     Returns:
-        The next sqrt price as a Q64.96 fixed-point number.
-
-    Raises:
-        EVMRevertError: If sqrt_price or liquidity is zero.
+        The next sqrt price given an output amount.
 
     """
-    if sqrt_price_x96 == 0 or liquidity == 0:
-        msg = "InvalidPriceOrLiquidity"
-        raise EVMRevertError(msg)
-
-    return (
-        get_next_sqrt_price_from_amount1_rounding_down(
-            sqrt_price_x96=sqrt_price_x96,
-            liquidity=liquidity,
-            amount=amount_out,
-            add=False,
-        )
-        if zero_for_one
-        else get_next_sqrt_price_from_amount0_rounding_up(
-            sqrt_price_x96=sqrt_price_x96,
-            liquidity=liquidity,
-            amount=amount_out,
-            add=False,
-        )
+    return _rs(_rs_get_next_sqrt_price_from_output)(
+        sqrt_price_x96,
+        liquidity,
+        amount_out,
+        zero_for_one,
     )

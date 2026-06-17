@@ -1,4 +1,5 @@
 """CLI commands for pool state queries."""
+
 import itertools
 from collections import defaultdict
 from collections.abc import Callable

@@ -1,5 +1,8 @@
 # This module is adapted from the Uniswap V4 BitMath.sol library.
-"""Uniswap V4 BitMath: bit position and population count."""
+"""Uniswap V4 BitMath: bit position and population count.
+
+See: contract_reference/uniswap/V4/PoolManager.sol (BitMath library)
+"""
 # Reference: https://github.com/Uniswap/v4-core/blob/main/src/libraries/BitMath.sol
 
 
