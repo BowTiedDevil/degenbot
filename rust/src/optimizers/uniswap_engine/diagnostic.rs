@@ -641,7 +641,21 @@ impl UniswapEngine {
                         liquidity: format!("0x{:x}", state.liquidity),
                     }
                 }),
-                HopType::V4 => self.v4_engine.diagnostic_pool_state(pool_ref.pool_key),
+                HopType::V4 => core.get_v4_pool(pool_ref.pool_key).map(|state| {
+                    DiagnosticPoolState::V4 {
+                        pool_manager: fmt_addr(state.pool_manager),
+                        pool_id: format!("0x{}", alloy::hex::encode(state.pool_id)),
+                        currency0: state.pool_key.currency0.to_checksum(None),
+                        currency1: state.pool_key.currency1.to_checksum(None),
+                        fee: state.pool_key.fee,
+                        tick_spacing: state.pool_key.tick_spacing,
+                        hook_flags: 0,
+                        hooks: state.pool_key.hooks.to_checksum(None),
+                        sqrt_price_x96: fmt_u256(state.sqrt_price_x96),
+                        tick: state.tick,
+                        liquidity: format!("0x{:x}", state.liquidity),
+                    }
+                }),
             };
             let Some(engine_state) = engine_state else {
                 // Pool referenced by the path is missing from the sub-engine.
@@ -679,29 +693,8 @@ impl UniswapEngine {
 }
 
 // ---------------------------------------------------------------------------
-// Sub-engine accessors (V3 state now reads from BotCore — ADR-003)
+// Sub-engine accessors (V3/V4 state now reads from BotCore — ADR-003)
 // ---------------------------------------------------------------------------
-
-impl crate::optimizers::v4_block_engine::V4BlockEngine {
-    /// Return the diagnostic state for the pool identified by `pool_key`.
-    #[must_use]
-    pub fn diagnostic_pool_state(&self, pool_key: u64) -> Option<DiagnosticPoolState> {
-        let state = self.get_pool(pool_key)?;
-        Some(DiagnosticPoolState::V4 {
-            pool_manager: fmt_addr(state.pool_manager),
-            pool_id: format!("0x{}", alloy::hex::encode(state.pool_id)),
-            currency0: state.pool_key.currency0.to_checksum(None),
-            currency1: state.pool_key.currency1.to_checksum(None),
-            fee: state.pool_key.fee,
-            tick_spacing: state.pool_key.tick_spacing,
-            hook_flags: 0, // V4PoolState does not store hook_flags directly
-            hooks: state.pool_key.hooks.to_checksum(None),
-            sqrt_price_x96: fmt_u256(state.sqrt_price_x96),
-            tick: state.tick,
-            liquidity: format!("0x{:x}", state.liquidity),
-        })
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -713,7 +706,7 @@ mod tests {
         DiagnosticPathState, HopType, MixedPoolRef, PoolTickCoverage, UniswapEngine,
     };
     use crate::bot_core::RegisterV3PoolParams as V3Params;
-    use crate::optimizers::v4_block_engine::{RegisterV4PoolParams as V4Params, V4PoolKey};
+    use crate::bot_core::{RegisterV4PoolParams as V4Params, V4PoolKey};
 
     fn usdc(amount: u64) -> U256 {
         U256::from(amount) * U256::from(10u64).pow(U256::from(6))
@@ -773,8 +766,7 @@ mod tests {
             },
         );
         let v4_fwd = engine
-            .v4_engine()
-            .register_pool(V4Params {
+            .register_v4_pool(&V4Params {
                 pool_manager: Address::from([0x33u8; 20]),
                 pool_id: [0x44u8; 32],
                 pool_key: V4PoolKey {

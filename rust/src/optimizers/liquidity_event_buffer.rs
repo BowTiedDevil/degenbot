@@ -139,24 +139,28 @@ where
 
     /// Check whether the pump buffer contains events for a key.
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn pump_contains_key(&self, key: &K) -> bool {
         self.pump.contains_key(key)
     }
 
     /// Return the number of pump buffer events for a key.
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn pump_event_count(&self, key: &K) -> usize {
         self.pump.get(key).map_or(0, Vec::len)
     }
 
     /// Return the total number of keys in the pump buffer.
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn pump_key_count(&self) -> usize {
         self.pump.len()
     }
 
     /// Check whether the pump buffer is empty.
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn pump_is_empty(&self) -> bool {
         self.pump.is_empty()
     }

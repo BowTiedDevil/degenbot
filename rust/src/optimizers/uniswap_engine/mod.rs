@@ -10,7 +10,8 @@
 //!   `BotCore` is the single state owner; the engine is a consumer)
 //! - A [`BotCore`](crate::bot_core::BotCore) for V2+V3 pool state (ADR-003:
 //!   `BotCore` is the single state owner, peer to this engine)
-//! - A [`V4BlockEngine`] for V4 pool state (same CL math as V3, different settlement)
+//! - A [`BotCore`](crate::bot_core::BotCore) for all pool state (V2+V3+V4 —
+//!   ADR-003), the single Rust state owner peer to this engine
 //!
 //! V4 pools share identical concentrated-liquidity math with V3. The solver
 //! treats V3 and V4 hops identically — both produce `IntV3TickRangeSequence`.
@@ -41,7 +42,6 @@ use std::sync::Arc;
 use alloy::primitives::{Address, U256};
 
 use crate::bot_core::BotCore;
-use crate::optimizers::v4_block_engine::V4BlockEngine;
 
 // Sub-modules — each contains `impl UniswapEngine` or `impl PyUniswapArbEngine` blocks.
 #[allow(clippy::module_inception)]
@@ -327,13 +327,11 @@ pub struct ResultBatch {
 /// mutates V2 state through it. Lock ordering when nested is
 /// **engine-then-core** — no code path ever nests core-then-engine.
 pub struct UniswapEngine {
-    /// V2 + V3 pool state owner (ADR-003). The engine holds an
-    /// `Arc<Mutex<BotCore>>` and reads/writes V2+V3 state through it. Lock
-    /// ordering when nested is engine-then-core. V4 state still lives on the
-    /// per-family `V4BlockEngine` until Slice 3 migrates it.
+    /// V2 + V3 + V4 pool state owner (ADR-003). The engine holds an
+    /// `Arc<Mutex<BotCore>>` and reads/writes all pool state through it. Lock
+    /// ordering when nested is engine-then-core; no code path ever nests in
+    /// the opposite direction.
     core: Arc<parking_lot::Mutex<BotCore>>,
-    /// The V4 engine
-    v4_engine: V4BlockEngine,
     /// Registered path pool refs (immutable after registration).
     path_pools: HashMap<u64, MixedPath>,
     /// Resolved path states (mutated on each solve).
@@ -397,7 +395,6 @@ impl UniswapEngine {
     pub fn new() -> Self {
         Self {
             core: Arc::new(parking_lot::Mutex::new(BotCore::new())),
-            v4_engine: V4BlockEngine::new(),
             path_pools: HashMap::new(),
             path_resolved: HashMap::new(),
             pool_to_paths: HashMap::new(),
@@ -421,8 +418,13 @@ impl UniswapEngine {
     /// sub-engine (V3 buffer lives on `BotCore` — ADR-003).
     #[must_use] 
     pub fn new_with_buffer_max_age(event_buffer_max_age: Option<u64>) -> Self {
+        let core = Arc::new(parking_lot::Mutex::new(BotCore::new()));
+        if let Some(age) = event_buffer_max_age {
+            core.lock().set_v3_buffer_max_age(Some(age));
+            core.lock().set_v4_buffer_max_age(Some(age));
+        }
         Self {
-            v4_engine: V4BlockEngine::new_with_buffer_max_age(event_buffer_max_age),
+            core,
             ..Self::new()
         }
     }
@@ -470,5 +472,14 @@ impl UniswapEngine {
     #[must_use]
     pub fn register_v3_pool(&self, params: &crate::bot_core::RegisterV3PoolParams) -> u64 {
         self.core.lock().register_v3_pool(params)
+    }
+
+    /// Register a V4 pool by `(pool_manager, pool_id)` and initial state.
+    /// Delegates to [`BotCore::register_v4_pool`] (ADR-003).
+    pub fn register_v4_pool(
+        &self,
+        params: &crate::bot_core::RegisterV4PoolParams,
+    ) -> Result<u64, String> {
+        self.core.lock().register_v4_pool(params)
     }
 }

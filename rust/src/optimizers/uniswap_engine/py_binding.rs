@@ -14,7 +14,7 @@ use pyo3::types::{PyDict, PyList};
 use tokio::sync::mpsc;
 
 use crate::bot_core::{RegisterV3PoolParams, V3SwapUpdate};
-use crate::optimizers::v4_block_engine::{RegisterV4PoolParams, V4SwapUpdate};
+use crate::bot_core::{RegisterV4PoolParams, V4SwapUpdate};
 
 use super::{UniswapEngine, ResultBatch, EnginePhase, PoolTickCoverage, HopType, MixedPoolRef, BlockMetadata, SolvePathResult, V3SnapshotData, V4SnapshotData};
 
@@ -1104,11 +1104,10 @@ impl PyUniswapArbEngine {
             &self.engine,
             |engine| -> Result<u64, pyo3::PyErr> {
                 engine
-                    .v4_engine()
-                    .register_pool(RegisterV4PoolParams {
+                    .register_v4_pool(&RegisterV4PoolParams {
                         pool_manager: pm,
                         pool_id,
-                        pool_key: crate::optimizers::v4_block_engine::V4PoolKey {
+                        pool_key: crate::bot_core::V4PoolKey {
                             currency0: c0,
                             currency1: c1,
                             fee,
@@ -1125,16 +1124,16 @@ impl PyUniswapArbEngine {
                     })
                     .map_err(pyo3::exceptions::PyValueError::new_err)
             },
-            |engine| engine.v4_engine().apply_backfill_buffer(pm, pool_id),
+            |engine| engine.core.lock().apply_backfill_buffer_v4(pm, pool_id),
             |engine, key| {
                 let Ok(key) = key else {
                     return None;
                 };
                 is_tracked
-                    .then(|| engine.v4_engine_ref().get_pool(*key).cloned())
+                    .then(|| engine.core.lock().get_v4_pool(*key).cloned())
                     .flatten()
             },
-            |engine| engine.v4_engine().apply_pump_buffer(pm, pool_id),
+            |engine| engine.core.lock().apply_pump_buffer_v4(pm, pool_id),
         );
 
         let key = key?;
@@ -1754,9 +1753,11 @@ impl PyUniswapArbEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid state_view address: {e}"))
         })?;
 
-        let mut engine = self.engine.lock();
-        let v3_pools = engine.core.lock().v3_pools_snapshot();
-        let v4_pools = engine.v4_engine().pools_snapshot();
+        let engine = self.engine.lock();
+        let core = engine.core.lock();
+        let v3_pools = core.v3_pools_snapshot();
+        let v4_pools = core.v4_pools_snapshot();
+        drop(core);
         drop(engine); // Release lock before async I/O
 
         let runtime = crate::runtime::get_runtime();
@@ -1855,8 +1856,8 @@ impl PyUniswapArbEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid state_view address: {e}"))
         })?;
 
-        let mut engine = self.engine.lock();
-        let v4_pools = engine.v4_engine().pools_snapshot();
+        let engine = self.engine.lock();
+        let v4_pools = engine.core.lock().v4_pools_snapshot();
         drop(engine);
 
         let runtime = crate::runtime::get_runtime();
@@ -1969,32 +1970,35 @@ impl PyUniswapArbEngine {
 
         let pool_id = hex_string_to_pool_id(&pool_id_hex)?;
 
-        let mut engine = self.engine.lock();
-        let v4_keys = engine.v4_engine().pool_keys_for_id(Address::ZERO, &pool_id);
-        // V4 pools are registered with the actual pool_manager address, not ZERO.
-        // Fallback: scan all V4 pools for matching pool_id.
-        let v4_keys = v4_keys.or_else(|| {
-            let v4_snapshot = engine.v4_engine().pools_snapshot();
-            for (key, pool) in &v4_snapshot {
+        let engine = self.engine.lock();
+        let core = engine.core.lock();
+        // ADR-003: single V4 entry per `(pool_manager, pool_id)` — no dual
+        // forward/reverse keys. v4_pool_id_by_key returns Option<u64>.
+        let v4_key = core.v4_pool_id_by_key(Address::ZERO, &pool_id).or_else(|| {
+            // V4 pools are registered with the actual pool_manager address,
+            // not ZERO. Fallback: scan all V4 pools for matching pool_id.
+            for (key, pool) in core.v4_pools_snapshot() {
                 if pool.pool_id == pool_id {
-                    return Some((*key, *key + 1));
+                    return Some(key);
                 }
             }
             None
         });
 
-        let v4_pools = if let Some((fwd_key, _rev_key)) = v4_keys {
+        let v4_pools = if let Some(fwd_key) = v4_key {
             let mut map = std::collections::HashMap::new();
-            if let Some(pool) = engine.v4_engine().get_pool(fwd_key) {
+            if let Some(pool) = core.get_v4_pool(fwd_key) {
                 map.insert(fwd_key, pool.clone());
             }
             map
         } else {
+            drop(core);
             drop(engine);
             return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
                 "V4 pool {pool_id_hex} not registered in engine"
             )));
         };
+        drop(core);
         drop(engine);
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
@@ -2149,7 +2153,7 @@ impl PyUniswapArbEngine {
         v4_sync_updates: &Bound<'_, PyList>,
         block_number: u64,
     ) -> PyResult<()> {
-        let mut engine = self.engine.lock();
+        let engine = self.engine.lock();
         for item in v4_sync_updates.iter() {
             let tuple = item.cast::<pyo3::types::PyTuple>()?;
             if tuple.len() != 6 {
@@ -2189,7 +2193,7 @@ impl PyUniswapArbEngine {
                 rust_tick_data.insert(tick_idx, make_tick_info(liquidity_gross, liquidity_net));
             }
 
-            engine.v4_engine().sync_pool_state(
+            engine.core.lock().sync_v4_pool_state(
                 pool_manager,
                 pool_id,
                 sqrt_price,
@@ -2301,7 +2305,7 @@ impl PyUniswapArbEngine {
                     });
                 }
                 HopType::V4 => {
-                    let pool = engine.v4_engine.get_pool(pool_ref.pool_key);
+                    let pool = core.get_v4_pool(pool_ref.pool_key);
                     let (pm, pid, fee, ts) = pool.map_or((None, None, None, None), |p| {
                         (Some(format!("{}", p.pool_manager)), Some(format!("0x{}", alloy::hex::encode(p.pool_id))), Some(u64::from(p.pool_key.fee)), Some(p.pool_key.tick_spacing))
                     });

@@ -10,7 +10,7 @@ mod tests {
     };
     use crate::optimizers::uniswap_engine::ResolvedMixedPath;
     use crate::bot_core::RegisterV3PoolParams;
-    use crate::optimizers::v4_block_engine::RegisterV4PoolParams;
+    use crate::bot_core::RegisterV4PoolParams;
 
     fn usdc(amount: u64) -> U256 {
         U256::from(amount) * U256::from(10u64).pow(U256::from(6))
@@ -1005,10 +1005,10 @@ mod tests {
             .unwrap_or_default();
         let extreme_liquidity: u128 = 76_688_550_121_478_947_320_312_764_923_207_804;
 
-        let _ = engine.v4_engine().register_pool(RegisterV4PoolParams {
+        let _ = engine.register_v4_pool(&RegisterV4PoolParams {
             pool_manager: v4_pool_manager,
             pool_id: [0xffu8; 32],
-            pool_key: crate::optimizers::v4_block_engine::V4PoolKey {
+            pool_key: crate::bot_core::V4PoolKey {
                 currency0: Address::from([0x30u8; 20]),
                 currency1: Address::from([0x31u8; 20]),
                 fee: 10_000,
@@ -1106,11 +1106,11 @@ mod tests {
         );
 
         // Register a V4 pool
-        let v4_key = engine.v4_engine().register_pool(
-            crate::optimizers::v4_block_engine::RegisterV4PoolParams {
+        let v4_key = engine.register_v4_pool(&
+            crate::bot_core::RegisterV4PoolParams {
                 pool_manager: Address::from([0x33u8; 20]),
                 pool_id: [0xabu8; 32],
-                pool_key: crate::optimizers::v4_block_engine::V4PoolKey {
+                pool_key: crate::bot_core::V4PoolKey {
                     currency0: Address::from([0u8; 20]),
                     currency1: Address::from([1u8; 20]),
                     fee: 10000,
@@ -1150,11 +1150,10 @@ mod tests {
         let core = engine.core.lock();
         let v3_pool = core.get_v3_pool(v3_key);
         assert_eq!(v3_pool.map(|p| p.address), Some(Address::from([0x22u8; 20])));
-        drop(core);
-
-        let v4_pool = engine.v4_engine().get_pool(v4_key);
+        let v4_pool = core.get_v4_pool(v4_key);
         assert_eq!(v4_pool.map(|p| p.pool_manager), Some(Address::from([0x33u8; 20])));
         assert_eq!(v4_pool.map(|p| p.pool_id), Some([0xabu8; 32]));
+        drop(core);
 
         // Inspect non-existent path
         assert!(!engine.path_pools.contains_key(&99999));
