@@ -742,6 +742,7 @@ class PiecewiseMobiusSolver(Solver):
             solve_time_ns=0,  # Will be set by caller
         )
 
+
 # ---------------------------------------------------------------------------
 # Solidly Stable Solver (Newton's method for x³y + xy³ ≥ k)
 # ---------------------------------------------------------------------------
