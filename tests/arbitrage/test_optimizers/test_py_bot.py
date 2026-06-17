@@ -259,6 +259,141 @@ class TestPoolHandle:
         assert result_after == 47
 
 
+class TestPoolHandleState:
+    """PyLiquidityPool state read getters + per-handle mutations (ADR-005 slice 4 step 2)."""
+
+    POOL_ADDR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    TOKEN0_ADDR = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    TOKEN1_ADDR = "0xcccccccccccccccccccccccccccccccccccccccc"
+    FACTORY_ADDR = "0xdddddddddddddddddddddddddddddddddddddddd"
+
+    def _make_core_with_pool(self) -> tuple[PyBot, int]:
+        core = PyBot()
+        pool_id = core.register_v2_pool(
+            address=self.POOL_ADDR,
+            token0=self.TOKEN0_ADDR,
+            token1=self.TOKEN1_ADDR,
+            reserve0=1000,
+            reserve1=2000,
+            gamma_numer0=997,
+            fee_denom0=1000,
+            gamma_numer1=997,
+            fee_denom1=1000,
+            factory=self.FACTORY_ADDR,
+        )
+        return core, pool_id
+
+    def test_pool_reads_genesis_reserves_and_block(self):
+        """The handle reads the registration state (genesis) directly."""
+        core, pool_id = self._make_core_with_pool()
+        pool = core.get_pool(pool_id)
+        assert pool is not None
+        assert pool.reserve0 == 1000
+        assert pool.reserve1 == 2000
+        assert pool.update_block == 0  # update_block defaults to 0 at registration
+
+    def test_pool_sync_reserves_updates_state(self):
+        """sync_reserves journals + lands the new state on the handle."""
+        core, pool_id = self._make_core_with_pool()
+        pool = core.get_pool(pool_id)
+        assert pool is not None
+        assert pool.journal_len() == 1  # genesis
+
+        pool.sync_reserves(reserve0=2000, reserve1=1000, block_number=10)
+        assert pool.reserve0 == 2000
+        assert pool.reserve1 == 1000
+        assert pool.update_block == 10
+        assert pool.journal_len() == 2  # genesis + block-10 transition
+
+    def test_pool_handle_sync_is_equivalent_to_pybot_update(self):
+        """sync_reserves and PyBot.update_v2_pool land the same state."""
+        core, pool_id = self._make_core_with_pool()
+        pool = core.get_pool(pool_id)
+        assert pool is not None
+        pool.sync_reserves(reserve0=2000, reserve1=1000, block_number=10)
+
+        core2 = PyBot()
+        pool_id2 = core2.register_v2_pool(
+            address=self.POOL_ADDR,
+            token0=self.TOKEN0_ADDR,
+            token1=self.TOKEN1_ADDR,
+            reserve0=1000,
+            reserve1=2000,
+            gamma_numer0=997,
+            fee_denom0=1000,
+            gamma_numer1=997,
+            fee_denom1=1000,
+            factory=self.FACTORY_ADDR,
+        )
+        core2.update_v2_pool(self.POOL_ADDR, 2000, 1000, 10)
+        pool2 = core2.get_pool(pool_id2)
+        assert pool2 is not None
+        assert (pool.reserve0, pool.reserve1, pool.update_block) == (
+            pool2.reserve0,
+            pool2.reserve1,
+            pool2.update_block,
+        )
+
+    def test_pool_restore_lands_at_previous_block(self):
+        """Handle.restore_before_block lands at the largest block below target."""
+        core, pool_id = self._make_core_with_pool()
+        pool = core.get_pool(pool_id)
+        assert pool is not None
+        # Genesis@0 (1000,2000); block-10 after (2000,1000); block-20 after (3000,500).
+        pool.sync_reserves(2000, 1000, 10)
+        pool.sync_reserves(3000, 500, 20)
+
+        result = pool.restore_before_block(20)
+        assert result is not None
+        r0, r1, block = result
+        assert (r0, r1) == (2000, 1000)
+        assert block == 10
+        # State landed at block 10.
+        assert (pool.reserve0, pool.reserve1, pool.update_block) == (2000, 1000, 10)
+
+    def test_pool_restore_noop_when_target_after_newest(self):
+        """Handle.restore_before_block(N>newest) no-ops, returning current."""
+        core, pool_id = self._make_core_with_pool()
+        pool = core.get_pool(pool_id)
+        assert pool is not None
+        pool.sync_reserves(2000, 1000, 10)
+
+        result = pool.restore_before_block(100)
+        assert result is not None
+        r0, r1, block = result
+        assert (r0, r1, block) == (2000, 1000, 10)
+
+    def test_pool_restore_past_registration_raises(self):
+        """Handle.restore at/before genesis raises ValueError (decision 3)."""
+        core, pool_id = self._make_core_with_pool()
+        pool = core.get_pool(pool_id)
+        assert pool is not None
+        with pytest.raises(ValueError, match="No pool state known prior to block 0"):
+            pool.restore_before_block(0)
+
+    def test_pool_discard_past_newest_raises(self):
+        """Handle.discard past newest raises ValueError (decision 2)."""
+        core, pool_id = self._make_core_with_pool()
+        pool = core.get_pool(pool_id)
+        assert pool is not None
+        pool.sync_reserves(2000, 1000, 10)
+        with pytest.raises(ValueError, match="No pool state known at or after block 100"):
+            pool.discard_before_block(100)
+
+    def test_pool_discard_keeps_rest(self):
+        """Handle.discard removes deltas below target, keeping the rest."""
+        core, pool_id = self._make_core_with_pool()
+        pool = core.get_pool(pool_id)
+        assert pool is not None
+        pool.sync_reserves(2000, 1000, 10)
+        pool.sync_reserves(3000, 500, 20)
+        pool.sync_reserves(4000, 250, 30)
+        assert pool.journal_len() == 4  # genesis + 10 + 20 + 30
+
+        pool.discard_before_block(20)  # drops genesis@0 + block-10
+        assert pool.journal_len() == 2  # 20 + 30 remain
+
+
 class TestTokenHandle:
     """Test the thin Token handle over PyBot."""
 

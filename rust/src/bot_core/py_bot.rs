@@ -460,8 +460,8 @@ fn parse_address(s: &str) -> PyResult<Address> {
 /// Map a [`JournalError`] to a Python `ValueError` with the `NoPoolStateAvailable`
 ///-shaped message the Python pool companion expects (and re-raises as
 /// `NoPoolStateAvailable`). ADR-005 slice 4 decision 2: reorg errors that used
-/// to panic must surface as `ValueError`.
-fn journal_err_to_py(e: JournalError) -> PyErr {
+/// to panic must surface as `ValueError`. Shared by `PyBot` and `PyLiquidityPool`.
+pub(crate) fn journal_err_to_py(e: JournalError) -> PyErr {
     match e {
         JournalError::NoStatePriorToBlock { block } => pyo3::exceptions::PyValueError::new_err(
             format!("No pool state known prior to block {block}"),

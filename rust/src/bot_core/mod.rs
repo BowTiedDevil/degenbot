@@ -346,6 +346,33 @@ impl Bot {
         let _ = self.apply_v2_sync(pool_address, reserve0, reserve1, block_number);
     }
 
+    /// Apply a V2 `Sync` by `pool_id` — the `PyLiquidityPool.sync_reserves`
+    /// backing. Returns the affected `pool_id`, or `None` if not registered /
+    /// not a V2 pool (no-op). Journals the prior reserves then lands the new.
+    #[must_use]
+    pub fn apply_v2_sync_by_pool_id(
+        &mut self,
+        pool_id: u64,
+        reserve0: U256,
+        reserve1: U256,
+        block_number: u64,
+    ) -> Option<u64> {
+        let Some(PoolEntry::V2(state)) = self.pools.get_mut(&pool_id) else {
+            return None;
+        };
+        state.journal.push_delta(V2BlockDelta {
+            block: block_number,
+            reserve0_before: state.reserve0,
+            reserve1_before: state.reserve1,
+            reserve0_after: reserve0,
+            reserve1_after: reserve1,
+        });
+        state.reserve0 = reserve0;
+        state.reserve1 = reserve1;
+        state.update_block = block_number;
+        Some(pool_id)
+    }
+
     /// Read a registered V2 pool's state by `pool_id`.
     ///
     /// The solve engine reads state by reference through this accessor
