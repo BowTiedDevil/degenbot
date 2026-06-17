@@ -246,7 +246,13 @@ def test_arb_path_build_solve_input_runs_without_rustpoolcache():
     - Side fix: `compute_diff_and_send` now actually drops `expired` paths from `delivered` (was retaining stale profitable entries) and refreshes `updated` values — fulfills the `send_result_batch_advances_delivered_to_above_threshold` contract the old code coincidentally passed.
     - Tests: new `handle_reorg_rolls_back_v2_sync_and_expires_delivered_result` (captures the `expired` batch diff) + `restore_before_block_at_earliest_returns_registration_state`; proptest model updated. 482 Rust + 62 Python engine/bot_core green; clippy clean.
 [x] Slice 2a: V3 state consolidation into BotCore (structural) — **done** (deferred `LiquidityMap` struct extraction to Slice 3; V3 follows S1's inline-`PoolEntry`+`apply_*` pattern; see details in commit body)
-[ ] Slice 2b: V3 single-pool calc (cl_lib) + V3 reorg (journal scalars in `apply_v3_swap`, Mint/Burn tick priors, extend `handle_reorg` to V3) — NEW behavior via TDD
+[x] Slice 2b (part 1): V3 reorg rollback on the live path — **done**
+    - `apply_v3_swap` now journals scalar priors (sqrt_price, liquidity, tick) + any per-tick priors before mutating (was non-journaling in S2a).
+    - `apply_v3_liquidity_update` (Mint/Burn) journals the two affected ticks' priors (tick_lower, tick_upper) — `liquidity_gross_before: None` for newly-initialized ticks so rollback deletes them. Scalar `liquidity` is NOT journaled by Mint/Burn (V3's active `liquidity` changes only on Swap's tick-crossing).
+    - Bug fix in `ReorgJournal::<V3BlockDelta>::restore_before_block`: previously returned only the *last-popped* delta's `tick_priors` (the V2 full-state pattern), silently dropping intervening deltas' tick mutations when rolling back across multiple blocks. Now accumulates tick priors across ALL popped deltas (newest→oldest, oldest wins on duplicate tick idx) and returns the oldest-popped delta's scalar priors. Surfaces now that V3 journaling is on the live path (was latent before S2b).
+    - `restore_all_pools_before_block` extended to V3 (dispatches V2 vs V3 by `PoolEntry` variant); `v3_restore_before_block` now also invalidates the tick-range cache on restore.
+    - Test: `handle_reorg_rolls_back_v3_swap_and_mint_to_prior_state` (Swap at block 5 + Mint at block 6 → reorg to 5 removes Mint-initialized ticks AND restores Swap scalars). 483 Rust + 352 Python + clippy clean.
+[ ] Slice 2b (part 2): V3 single-pool calc (`calculate_tokens_out`/`in` over full `V3PoolState` — tick walk via `gen_ticks` + `compute_swap_step_v3` loop + liquidity-net crossing, delegating to `cl_lib::swap_math`) — NEW behavior via TDD
 [ ] Slice 3: V4 consolidation + orphan-solve reconciliation + V4 single-pool calc. Extract `LiquidityMap` generic from V3+V4 duplication here.
 [ ] Slice 4: Legacy retirement (delete RustPoolCache + ArbPoolCacheAdapter + ArbSolver registered-path surface)
 [ ] Slice 5: PyToken completion + PyBotCore finalization
