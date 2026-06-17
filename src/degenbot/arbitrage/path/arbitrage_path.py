@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from weakref import WeakSet
 
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult
+from degenbot.arbitrage.optimizers.solver import ArbSolver
 from degenbot.arbitrage.path.types import PathValidationError, SwapVector
 from degenbot.arbitrage.types import (
     AbstractSwapAmounts,
@@ -30,8 +31,6 @@ def _solve_in_subprocess(solve_input: SolveInput) -> SolveResult:
         The solve result.
 
     """
-    from degenbot.arbitrage.optimizers.solver import ArbSolver  # noqa: PLC0415
-
     solver = ArbSolver()
     return solver.solve(solve_input)
 
@@ -292,8 +291,8 @@ class ArbitragePath(PublisherMixin):
         Each subprocess has its own GIL, so Python-side preamble (cache lookups,
         dispatch logic) and Rust computation run without inter-process contention.
         A module-level ``_solve_in_subprocess`` function is submitted instead of a bound
-        method so that the ArbSolver (which contains an unpickleable RustPoolCache) is
-        never serialized. A fresh ArbSolver is constructed inside the subprocess — this
+        method so that the ArbSolver (no longer a RustPoolCache carrier under ADR-003 Slice 4)
+        is never serialized. A fresh ArbSolver is constructed inside the subprocess — this
         is cheap since the cache starts empty and the compute cost dominates.
 
         **ThreadPoolExecutor** (GIL-safe but not parallel for short calls):

@@ -120,9 +120,6 @@ fn degenbot_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Contract module
     contract_py::add_contract_module(m)?;
 
-    // Möbius optimizer module
-    optimizers::mobius_py::add_mobius_module(m)?;
-
     // Uniswap mixed V2/V3/V4 engine
     m.add_class::<optimizers::uniswap_engine::PyUniswapArbEngine>()?;
 
