@@ -1,4 +1,5 @@
 """Uniswap V4 pool snapshot and subscription handler."""
+
 import asyncio
 import pathlib
 from collections import defaultdict
@@ -17,7 +18,7 @@ from web3.types import LogReceipt
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.base import ExchangeTable
-from degenbot.database.models.pools import UniswapV4PoolTable
+from degenbot.database.models.pools import PoolManagerTable, UniswapV4PoolTable
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.exceptions.pool import UnknownPoolId
@@ -199,7 +200,7 @@ class DatabaseSnapshot:
 
     def get_liquidity_map(
         self,
-        pool_manager: ChecksumAddress,  # noqa: ARG002
+        pool_manager: ChecksumAddress,
         pool_id: bytes | str,
     ) -> LiquidityMap | None:
         """Return liquidity map.
@@ -209,8 +210,11 @@ class DatabaseSnapshot:
 
         """
         pool_in_db = self.session.scalar(
-            select(UniswapV4PoolTable).where(
-                UniswapV4PoolTable.pool_hash == HexBytes(pool_id).to_0x_hex()
+            select(UniswapV4PoolTable)
+            .join(UniswapV4PoolTable.manager)
+            .where(
+                UniswapV4PoolTable.pool_hash == HexBytes(pool_id).to_0x_hex(),
+                PoolManagerTable.address == pool_manager,
             )
         )
         if pool_in_db is None:
@@ -229,6 +233,44 @@ class DatabaseSnapshot:
                 for liquidity_position in pool_in_db.liquidity_positions
             },
         )
+
+    def get_all_liquidity_maps(
+        self,
+    ) -> dict[tuple[ChecksumAddress, str], dict[int, tuple[int, int]]]:
+        """Return all V4 tick data as plain dicts using a single raw SQL query.
+
+        Returns {(pm_address, pool_id_hex): {tick_index: (liquidity_gross, liquidity_net)}}
+        with no Pydantic model overhead.
+
+        Returns:
+            A dict mapping (pm_address, pool_id) tuples to tick data dicts.
+
+        """
+        from sqlalchemy import text as sa_text  # noqa: PLC0415
+
+        rows = self.session.execute(
+            sa_text(
+                """
+                SELECT pm.address, v4.pool_hash, lp.tick, lp.liquidity_gross, lp.liquidity_net
+                FROM pool_managers pm
+                JOIN managed_pools mp ON mp.manager_id = pm.id
+                JOIN uniswap_v4_pools v4 ON v4.managed_pool_id = mp.id
+                JOIN managed_pool_liquidity_positions lp ON lp.managed_pool_id = mp.id
+                WHERE pm.chain = :chain_id AND mp.kind = 'uniswap_v4'
+                ORDER BY pm.address, v4.pool_hash, lp.tick
+                """
+            ),
+            {"chain_id": self.chain_id},
+        ).all()
+
+        result: dict[tuple[ChecksumAddress, str], dict[int, tuple[int, int]]] = {}
+        for pm_address, pool_hash, tick, liquidity_gross, liquidity_net in rows:
+            pm_addr = get_checksum_address(pm_address)
+            key = (pm_addr, pool_hash)
+            if key not in result:
+                result[key] = {}
+            result[key][int(tick)] = (int(liquidity_gross), int(liquidity_net))
+        return result
 
     def get_newest_block(self) -> BlockNumber | None:
         """Return newest block.

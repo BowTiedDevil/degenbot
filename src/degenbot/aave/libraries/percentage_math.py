@@ -1,4 +1,5 @@
 """Aave PercentageMath library ported from Solidity."""
+
 from degenbot.constants import MAX_UINT256
 from degenbot.exceptions.pool import EVMRevertError
 

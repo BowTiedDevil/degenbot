@@ -1,4 +1,5 @@
 """Arbitrage-specific exceptions (solver, encoding, incompatible invariant)."""
+
 from fractions import Fraction
 from typing import Any
 
@@ -111,4 +112,8 @@ class OptimizationError(ArbitrageError):
 
         """
         # Pickling support for multiprocessing
-        return self.__class__, (self.message,), {"iterations": self.iterations, "method": self.method}
+        return (
+            self.__class__,
+            (self.message,),
+            {"iterations": self.iterations, "method": self.method},
+        )

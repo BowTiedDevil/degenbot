@@ -28,8 +28,26 @@ Domain terms for Uniswap V2, V3, and V4 liquidity pools and pool trackers.
 | **Swap Vector** | See [Swap Vector](../arbitrage/CONTEXT.md) in the arbitrage context | Swap direction |
 | **Exact Input** | A swap calculation mode where the input amount is fixed and output is calculated | Exact in |
 | **Exact Output** | A swap calculation mode where the output amount is fixed and required input is calculated | Exact out |
+| **amountSpecified** | The swap amount parameter in V3/V4 `swap()`: sign convention differs between V3 (positive = exact input, negative = exact output) and V4 (negative = exact input, positive = exact output). Verified in `v3_simulator.py:93` — `exact_input = amount_specified > 0` | swap amount, specified amount |
 | **StateCache** | See [StateCache](../types/CONTEXT.md) in the types context | Pool state cache |
 | **ConcentratedLiquidityStateManager** | A manager class for V3/V4 that composes with `StateCache` internally, exposing CL-specific convenience properties (`liquidity`, `sqrt_price_x96`, `tick`, etc.) | State manager |
+| **V4BlockEngine** | A pure-Rust engine that owns V4 pool state, tick-range construction, and solver dispatch for V4 pools behind PoolManager; mirrors `V3BlockEngine` but identifies pools by `(pool_manager, pool_id)` instead of contract address; reuses `IntV3TickRangeSequence` (same CL math as V3) | V4 engine, V4 block processor |
+| **V4SwapEvent** | A decoded V4 Swap event (`Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)`) from PoolManager, carrying pool_id, amounts, sqrtPriceX96, liquidity, tick, and fee | V4 swap log |
+| **AMOUNT_MODIFYING_HOOK_MASK** | `0xCC` — bitmask for the 4 V4 hook flags that can modify swap amounts (`BEFORE_SWAP` 0x80, `AFTER_SWAP` 0x40, `BEFORE_SWAP_RETURNS_DELTA` 0x08, `AFTER_SWAP_RETURNS_DELTA` 0x04); pools with any of these flags are rejected in Python before `register_v4_pool` — the Rust engine is permissive | hook filter mask |
+| **V4_DYNAMIC_FEE_FLAG** | `0x100000` — the fee value indicating a V4 pool has dynamic (swap-dependent) fees; pools with this flag are rejected in Python before `register_v4_pool` | dynamic fee flag |
+| **unlockCallback** | The V4 callback fired by `PoolManager.unlock()` inside which all V4 swap/settle/take operations execute; the executor's `unlockCallback` handler resumes payload delivery from the queue | V4 unlock callback |
+
+## Contract Reference
+
+Verified Solidity sources for all Uniswap versions are in `contract_reference/uniswap/`:
+
+| File | Contents |
+|------|----------|
+| `V2/UniswapV2Factory.sol` | Full V2 core: Factory, Pair, ERC20, SafeMath, Math, UQ112x112 |
+| `V3/UniswapV3Factory.sol` | Full V3 core: Factory, Pool, Oracle, Tick, TickBitmap, SqrtPriceMath, SwapMath, TickMath, FullMath, Position, etc. |
+| `V4/PoolManager.sol` | Full V4 core: PoolManager, Pool, Hooks, TickBitmap, SqrtPriceMath, SwapMath, TickMath, ProtocolFeeLibrary, LPFeeLibrary, ERC6909, etc. |
+
+Each file is a single concatenated bundle of all core contracts and libraries. When porting on-chain logic to Python, include a `See: contract_reference/uniswap/...` comment pointing to the exact source.
 
 ## Relationships
 
@@ -80,6 +98,14 @@ V4 pools don't have contract addresses. They have **Pool IDs** (32-byte keccak25
 
 - ✅ "The V4 pool ID is 0xabcd..."
 - ❌ "The V4 pool address is 0xabcd..."
+
+### 6. V3 vs V4 amountSpecified sign convention
+
+V3 and V4 use **opposite** sign conventions for `amountSpecified`. In V3: positive (> 0) = exact INPUT, negative (< 0) = exact OUTPUT. In V4, the convention is reversed: negative = exact INPUT, positive = exact OUTPUT. This is verified in `v3_simulator.py:93` — `exact_input = amount_specified > 0`. When building swap calldata for V3 arbitrage, always use positive `amountSpecified` for exact-input mode.
+
+- ✅ "V3 exact-input swap with `amountSpecified = 1000000` (positive)"
+- ✅ "V4 exact-input swap with `amountSpecified = -1000000` (negative)"
+- ❌ "Exact input uses negative amountSpecified" (wrong for V3, correct for V4 — always qualify which version)
 
 ## Example dialogue
 

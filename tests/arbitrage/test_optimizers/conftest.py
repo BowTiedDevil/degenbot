@@ -2,7 +2,6 @@ from fractions import Fraction
 
 from scipy.optimize import minimize_scalar
 
-import degenbot.degenbot_rs as rs_mobius
 from degenbot.arbitrage.optimizers._mobius_math import MobiusFloatHop, V3TickRangeHop, simulate_path
 from degenbot.arbitrage.optimizers.solver import SolveInput
 from degenbot.types.hop_types import ConstantProductHop
@@ -50,26 +49,6 @@ def brent_solve_hops(
     x_opt = result.x
     output = simulate_path(x_opt, hops)
     return x_opt, output - x_opt, getattr(result, "nit", 0)
-
-
-def make_rust_v3_hop(
-    liquidity: float,
-    sqrt_price: float,
-    sqrt_lower: float,
-    sqrt_upper: float,
-    fee: float,
-    *,
-    zero_for_one: bool,
-) -> rs_mobius.RustV3TickRangeHop:
-    """Create a Rust V3TickRangeHop."""
-    return rs_mobius.RustV3TickRangeHop(
-        liquidity=liquidity,
-        sqrt_price_current=sqrt_price,
-        sqrt_price_lower=sqrt_lower,
-        sqrt_price_upper=sqrt_upper,
-        fee=fee,
-        zero_for_one=zero_for_one,
-    )
 
 
 def make_2hop_v2_input(

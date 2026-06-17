@@ -1,4 +1,5 @@
 """CLI commands for database inspection."""
+
 import click
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory

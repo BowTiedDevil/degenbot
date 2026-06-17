@@ -1,4 +1,5 @@
 """Abstract liquidity pool protocol definition."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

@@ -1,4 +1,9 @@
-"""Uniswap V2 constant-product swap math."""
+"""Uniswap V2 constant-product swap math.
+
+See: contract_reference/uniswap/V2/UniswapV2Factory.sol
+(UniswapV2Pair, UniswapV2Factory, Math, UQ112x112)
+"""
+
 import itertools
 from collections.abc import Iterable
 from fractions import Fraction

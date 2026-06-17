@@ -1471,11 +1471,25 @@ Additional documentation is available in the [`docs/`](docs/) directory:
 
 - **[Architecture](docs/architecture/)**: High-level architectural patterns
   - [I/O-Free Pool Architecture](docs/architecture/io-free-pools.md) — The CurveDataProvider seam for decoupled I/O
+  - [Rust-Owned Backrun Bot](docs/architecture/rust-owned-bot.md) — V2/V3/V4 arbitrage engine, dual-subscription pump, integer-exact Möbius solver, executor contract, and Python orchestration layer
   - [Semantic Matching](docs/architecture/semantic-matching.md) — Event processing patterns for Aave
 - **[Aave V3](docs/aave/)**: Comprehensive control flow diagrams and amount transformations for Aave operations
 - **[Arbitrage](docs/arbitrage/)**: Multi-pool cycle testing documentation
 - **[CLI](docs/cli/)**: Detailed CLI command reference
 - **[Configuration](docs/config.md)**: Configuration options
+
+### Contract Reference
+
+Verified Solidity source code for all supported protocols is in [`contract_reference/`](contract_reference/README.md):
+
+| Protocol | Path | Contents |
+|----------|------|----------|
+| Uniswap V2 | `contract_reference/uniswap/V2/` | Factory, Pair, ERC20, SafeMath, Math, UQ112x112 |
+| Uniswap V3 | `contract_reference/uniswap/V3/` | Factory, Pool, Oracle, Tick, TickBitmap, SqrtPriceMath, SwapMath, TickMath, FullMath, Position, etc. |
+| Uniswap V4 | `contract_reference/uniswap/V4/` | PoolManager, Pool, Hooks, TickBitmap, SqrtPriceMath, SwapMath, ProtocolFeeLibrary, LPFeeLibrary, ERC6909, etc. |
+| Aave V3 | `contract_reference/aave/` | Pool (10 revisions), AToken (5 revisions), VariableDebtToken, GhoVariableDebtToken (6 revisions), GhoDiscountRateStrategy, AaveOracle, stkAAVE, RewardsController |
+
+These are the ground truth for matching on-chain behavior in Python. See [`contract_reference/README.md`](contract_reference/README.md) for the full index.
 
 ### Domain Context Files
 
@@ -1491,7 +1505,7 @@ Each module has a `CONTEXT.md` defining domain terminology:
 - [Connection](src/degenbot/connection/CONTEXT.md) — Provider management, RPC routing
 - [Chainlink](src/degenbot/chainlink/CONTEXT.md) — price feeds, aggregators, round data
 - [Builders](src/degenbot/builders/CONTEXT.md) — pool builders, PoolIO seam, BuilderContext, `@staticmethod` `update()` on PoolBuilder/AsyncPoolBuilder protocols (type-enforced I/O separation)
-- [Context Map](CONTEXT-MAP.md) — Cross-module relationships and ambiguity rulings
+- [Context Map](CONTEXT-MAP.md) — Cross-module relationships, ambiguity rulings, and module index (including contract reference index)
 
 ## Contributing
 

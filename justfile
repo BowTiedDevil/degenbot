@@ -9,6 +9,9 @@ default:
 
 # Run Rust tests
 test-rust:
+    #!/usr/bin/env bash
+    python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+    export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     cargo test --manifest-path rust/Cargo.toml
 
 # Run wrapped Rust Python tests
@@ -17,7 +20,11 @@ test-rust-python:
 
 # Run Rust linter (clippy)
 lint-rust:
-    cargo clippy --all-targets --all-features --manifest-path rust/Cargo.toml -- -D warnings
+    cargo clippy --all-targets --all-features --fix --allow-dirty --manifest-path rust/Cargo.toml -- --deny warnings
+
+# Check Rust formatting (read-only; fails on drift). Run `just format` to fix.
+fmt-check:
+    cargo fmt --manifest-path rust/Cargo.toml -- --check
 
 # Build Rust release library (links Python - for testing only)
 build-rust-debug:
@@ -59,8 +66,12 @@ lint-python:
     uv run ruff check src/
     uv run ty check --no-progress src/
 
+# Check Python formatting (read-only; fails on drift). Run `just format` to fix.
+fmt-check-python:
+    uv run ruff format --check src/
+
 # Run all linters (Rust + Python + Markdown)
-lint: lint-rust lint-python lint-markdown    
+lint: fmt-check fmt-check-python lint-rust lint-python lint-markdown
 
 # Format all code
 format: 
@@ -77,7 +88,7 @@ update-deps:
 # ========== CI/CD ==========
 
 # Simulate CI Rust checks
-ci-rust: lint-rust test-rust
+ci-rust: fmt-check lint-rust test-rust
     cargo build --release --features extension-module --manifest-path rust/Cargo.toml
 
 # Simulate full CI pipeline
@@ -92,6 +103,16 @@ setup-git-hooks:
     @echo "✓ Git hooks and commit template configured."
 
 # ========== Documentation ==========
+
+# Render a Mermaid diagram (Markdown or .mmd) to PNG.
+# Example: just mermaid-png docs/architecture/rust-solver-engine.md
+mermaid-png input output='':
+    scripts/mermaid-export {{input}} {{output}} -f png
+
+# Render a Mermaid diagram (Markdown or .mmd) to SVG.
+# Example: just mermaid-svg docs/architecture/rust-solver-engine.md
+mermaid-svg input output='':
+    scripts/mermaid-export {{input}} {{output}} -f svg
 
 # Build documentation
 docs:

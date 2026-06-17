@@ -1,4 +1,5 @@
 """Uniswap-specific type definitions (fee tiers, pool identities)."""
+
 import dataclasses
 
 from degenbot.erc20 import Erc20Token

@@ -12,8 +12,8 @@ use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
 use alloy::rpc::types::eth::{Block, Header as RpcHeader, Transaction};
-use alloy::rpc::types::{Filter, Log};
 use alloy::rpc::types::TransactionRequest;
+use alloy::rpc::types::{Filter, Log};
 use alloy::transports::ipc::IpcConnect;
 use alloy::transports::layers::ThrottleLayer;
 use alloy::transports::ws::WsConnect;
@@ -52,11 +52,11 @@ pub type EthBlock = Block<Transaction<TxEnvelope>, RpcHeader<ConsensusHeader>>;
 /// or conditional block-id handling, write the `retry_with_backoff` call manually.
 macro_rules! rpc_call {
     ($self:expr, $context:literal, $expr:expr) => {
-        $self.retry_with_backoff(|| async {
-            $expr.await
-                .map_err(|e| e.into_provider_error($context))
-        })
-        .await
+        $self
+            .retry_with_backoff(|| async {
+                $expr.await.map_err(|e| e.into_provider_error($context))
+            })
+            .await
     };
 }
 
@@ -339,12 +339,7 @@ impl AlloyProvider {
         requests_per_second: u32,
         burst: NonZeroU32,
     ) -> ProviderResult<Self> {
-        Self::build_provider(
-            rpc_url,
-            max_retries,
-            Some((requests_per_second, burst)),
-        )
-        .await
+        Self::build_provider(rpc_url, max_retries, Some((requests_per_second, burst))).await
     }
 
     /// Internal constructor shared by `new` and `with_rate_limit`.
@@ -420,7 +415,11 @@ impl AlloyProvider {
     ///
     /// Returns `ProviderError::RpcError` if the RPC call fails.
     pub async fn get_block_number(&self) -> ProviderResult<u64> {
-        rpc_call!(self, "Failed to get block number", self.inner.get_block_number())
+        rpc_call!(
+            self,
+            "Failed to get block number",
+            self.inner.get_block_number()
+        )
     }
 
     /// Get chain ID.
@@ -885,12 +884,7 @@ impl LogFetcher {
 
         // Resolve the filter once and share it across chunk tasks via Arc.
         // All string→typed parsing happens here, not per-chunk.
-        let base_filter = Arc::new(LogFilter::new(
-            from_block,
-            to_block,
-            addresses,
-            topics,
-        )?);
+        let base_filter = Arc::new(LogFilter::new(from_block, to_block, addresses, topics)?);
 
         // Build list of chunk ranges
         let mut chunks = Vec::new();
@@ -942,11 +936,9 @@ impl LogFetcher {
         all_logs.sort_by(|a, b| {
             let a_block = a.block_number.unwrap_or(0);
             let b_block = b.block_number.unwrap_or(0);
-            a_block.cmp(&b_block).then_with(|| {
-                a.log_index
-                    .unwrap_or(0)
-                    .cmp(&b.log_index.unwrap_or(0))
-            })
+            a_block
+                .cmp(&b_block)
+                .then_with(|| a.log_index.unwrap_or(0).cmp(&b.log_index.unwrap_or(0)))
         });
 
         Ok(all_logs)
@@ -965,10 +957,11 @@ mod tests {
         let filter = LogFilter::new(
             100,
             200,
-            Some(vec!["0x1234567890abcdef1234567890abcdef12345678".to_string()]),
+            Some(vec![
+                "0x1234567890abcdef1234567890abcdef12345678".to_string()
+            ]),
             Some(vec![vec![
-                "0x0000000000000000000000000000000000000000000000000000000000000001"
-                    .to_string(),
+                "0x0000000000000000000000000000000000000000000000000000000000000001".to_string(),
             ]]),
         )
         .expect("valid log filter should be created");
@@ -995,8 +988,7 @@ mod tests {
     #[test]
     fn test_log_filter_equal_range() {
         // from_block == to_block is valid (single-block query)
-        let filter =
-            LogFilter::new(42, 42, None, None).expect("equal range should be valid");
+        let filter = LogFilter::new(42, 42, None, None).expect("equal range should be valid");
         assert_eq!(filter.from_block(), Some(42));
         assert_eq!(filter.to_block(), Some(42));
     }
@@ -1011,12 +1003,7 @@ mod tests {
     #[test]
     fn test_log_filter_invalid_address_eager() {
         // Invalid addresses are now caught at construction time
-        let result = LogFilter::new(
-            100,
-            200,
-            Some(vec!["not_an_address".to_string()]),
-            None,
-        );
+        let result = LogFilter::new(100, 200, Some(vec!["not_an_address".to_string()]), None);
         assert!(result.is_err());
         match result {
             Err(ProviderError::InvalidAddress { address, .. }) => {
@@ -1029,12 +1016,7 @@ mod tests {
     #[test]
     fn test_log_filter_invalid_topic_eager() {
         // Invalid topics are now caught at construction time
-        let result = LogFilter::new(
-            100,
-            200,
-            None,
-            Some(vec![vec!["not_a_topic".to_string()]]),
-        );
+        let result = LogFilter::new(100, 200, None, Some(vec![vec!["not_a_topic".to_string()]]));
         assert!(result.is_err());
         match result {
             Err(ProviderError::InvalidTopic { topic, .. }) => {
@@ -1119,11 +1101,15 @@ mod tests {
             200,
             None,
             Some(vec![
-                vec!["0x0000000000000000000000000000000000000000000000000000000000000001"
-                    .to_string()],
+                vec![
+                    "0x0000000000000000000000000000000000000000000000000000000000000001"
+                        .to_string(),
+                ],
                 vec![], // should be skipped
-                vec!["0x0000000000000000000000000000000000000000000000000000000000000003"
-                    .to_string()],
+                vec![
+                    "0x0000000000000000000000000000000000000000000000000000000000000003"
+                        .to_string(),
+                ],
             ]),
         )
         .expect("valid filter");
@@ -1151,10 +1137,7 @@ mod tests {
         let mut delay = INITIAL_RETRY_DELAY_MS;
         let mut delays = vec![delay];
         for _ in 0..20 {
-            delay = std::cmp::min(
-                delay.saturating_mul(BACKOFF_MULTIPLIER),
-                MAX_RETRY_DELAY_MS,
-            );
+            delay = std::cmp::min(delay.saturating_mul(BACKOFF_MULTIPLIER), MAX_RETRY_DELAY_MS);
             delays.push(delay);
         }
 
@@ -1212,12 +1195,10 @@ mod tests {
             message: "test".to_string()
         }
         .is_retryable());
-        assert!(
-            ProviderError::ConnectionFailed {
-                message: "test".to_string()
-            }
-            .is_retryable()
-        );
+        assert!(ProviderError::ConnectionFailed {
+            message: "test".to_string()
+        }
+        .is_retryable());
 
         // Non-retryable errors
         let non_retryable = [
@@ -1442,11 +1423,9 @@ mod tests {
         sorted.sort_by(|a, b| {
             let a_block = a.block_number.unwrap_or(0);
             let b_block = b.block_number.unwrap_or(0);
-            a_block.cmp(&b_block).then_with(|| {
-                a.log_index
-                    .unwrap_or(0)
-                    .cmp(&b.log_index.unwrap_or(0))
-            })
+            a_block
+                .cmp(&b_block)
+                .then_with(|| a.log_index.unwrap_or(0).cmp(&b.log_index.unwrap_or(0)))
         });
 
         // Expected order: block_number=None(0,0), 99(99,0), 100(100,0), 100(100,2)

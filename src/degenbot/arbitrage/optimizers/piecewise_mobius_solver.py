@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import TYPE_CHECKING, Any, override
+from typing import TYPE_CHECKING, override
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -25,18 +25,6 @@ from degenbot.arbitrage.optimizers._mobius_math import simulate_path as _mobius_
 from degenbot.arbitrage.optimizers._solver_utils import _infer_zero_for_one
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult, SolverMethod
 from degenbot.arbitrage.optimizers.mobius_solver import MobiusSolver
-from degenbot.degenbot_rs import (
-    RustArbSolver as _RustArbSolver,
-)
-from degenbot.degenbot_rs import (
-    RustHopState as _RustHopState,
-)
-from degenbot.degenbot_rs import (
-    RustV3TickRangeHop as _RustV3TickRangeHop,
-)
-from degenbot.degenbot_rs import (
-    RustV3TickRangeSequence as _RustV3TickRangeSequence,
-)
 from degenbot.exceptions import OptimizationError
 from degenbot.logging import logger
 from degenbot.types.hop_types import (
@@ -100,31 +88,7 @@ class PiecewiseMobiusSolver(Solver):
 
     def __init__(self) -> None:
         """Initialize the instance."""
-        self._rust_solver = _RustArbSolver()
         self._mobius_solver: MobiusSolver | None = None
-        self._rust_hop_cache: dict[int, list[Any]] = {}
-        self._rust_sequence_cache: dict[
-            tuple[tuple[int, ...], int, bool], _RustV3TickRangeSequence
-        ] = {}
-
-    def __getstate__(self) -> dict[str, Any]:
-        """Omit the non-pickleable Rust optimizer and solver caches.
-
-        Returns:
-            The computed value.
-
-        """
-        state = self.__dict__.copy()
-        state["_rust_solver"] = None
-        state["_mobius_solver"] = None
-        state["_rust_hop_cache"] = {}
-        state["_rust_sequence_cache"] = {}
-        return state
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """Recreate the Rust optimizer after unpickling."""
-        self.__dict__.update(state)
-        self._rust_solver = _RustArbSolver()
 
     @override
     def supports(self, solve_input: SolveInput) -> bool:
@@ -184,15 +148,6 @@ class PiecewiseMobiusSolver(Solver):
                 method=SolverMethod.PIECEWISE_MOBIUS.name,
             )
 
-        # V3-V3 fast path: 2-hop path with both V3 multi-range
-        if solve_input.num_hops == self.MIN_HOPS:
-            try:
-                v3_v3_result = self._try_rust_v3_v3(solve_input, start_ns)
-                if v3_v3_result is not None:
-                    return v3_v3_result
-            except OptimizationError:
-                pass  # Fall through to next attempt
-
         # Find V3 hop (combines supports, has_multi_range, find_v3_hop_index)
         v3_result = self._find_v3_hop_index(solve_input)
 
@@ -200,17 +155,7 @@ class PiecewiseMobiusSolver(Solver):
             # No multi-range V3 found - try single-range fallback
             return self._try_single_range_fallback(solve_input)
 
-        v3_hop_index, v3_hop = v3_result
-
-        # Multi-range V3: try Rust first with caching
-        try:
-            rust_result = self._try_rust_multi_range(solve_input, v3_hop_index, v3_hop, start_ns)
-            if rust_result is not None:
-                return rust_result
-        except OptimizationError:
-            pass  # Fall through to Python implementation
-
-        # Fall back to Python implementation
+        # Python piecewise-Möbius implementation (Rust f64 fast path removed)
         return self._solve_multi_range(solve_input, start_ns)
 
     def _try_single_range_fallback(self, solve_input: SolveInput) -> SolveResult:
@@ -795,195 +740,6 @@ class PiecewiseMobiusSolver(Solver):
             iterations=n_points + 10,  # Total evaluations
             method=SolverMethod.PIECEWISE_MOBIUS,
             solve_time_ns=0,  # Will be set by caller
-        )
-
-    def _get_cached_rust_hops(self, solve_input: SolveInput) -> list[Any]:
-        cache_key = hash(
-            tuple(
-                (hop.reserve_in, hop.reserve_out, float(hop.fee))
-                for hop in solve_input.hops
-                if isinstance(hop, ConstantProductHop | BoundedProductHop)
-            )
-        )
-
-        if cache_key not in self._rust_hop_cache:
-            rust_hops = [
-                _RustHopState(
-                    float(hop.reserve_in),
-                    float(hop.reserve_out),
-                    float(hop.fee),
-                )
-                for hop in solve_input.hops
-                if isinstance(hop, (ConstantProductHop, BoundedProductHop))
-            ]
-            self._rust_hop_cache[cache_key] = rust_hops
-
-        return self._rust_hop_cache[cache_key]
-
-    def _get_cached_rust_sequence(
-        self,
-        v3_hop: BoundedProductHop,
-    ) -> _RustV3TickRangeSequence:
-        if v3_hop.tick_ranges is None:
-            raise OptimizationError(
-                message="Cannot build Rust sequence: hop missing tick_ranges",
-                iterations=0,
-                method=SolverMethod.PIECEWISE_MOBIUS.name,
-            )
-        zero_for_one = _infer_zero_for_one(v3_hop)
-
-        # Create cache key from hop identity + tick data
-        # Use id() for object identity since V3TickRangeInfo is immutable
-        range_ids = tuple(id(r) for r in v3_hop.tick_ranges)
-        cache_key = (range_ids, v3_hop.current_range_index, zero_for_one)
-
-        if cache_key not in self._rust_sequence_cache:
-            rust_ranges = []
-            for i, range_info in enumerate(v3_hop.tick_ranges):
-                # Determine current sqrt price for this range
-                if i == v3_hop.current_range_index:
-                    sqrt_p_current = float(v3_hop.sqrt_price) / Q96
-                elif i < v3_hop.current_range_index:
-                    sqrt_p_current = float(range_info.sqrt_price_upper) / Q96
-                else:
-                    sqrt_p_current = float(range_info.sqrt_price_lower) / Q96
-
-                rust_ranges.append(
-                    _RustV3TickRangeHop(
-                        liquidity=float(range_info.liquidity),
-                        sqrt_price_current=sqrt_p_current,
-                        sqrt_price_lower=float(range_info.sqrt_price_lower) / Q96,
-                        sqrt_price_upper=float(range_info.sqrt_price_upper) / Q96,
-                        fee=float(v3_hop.fee),
-                        zero_for_one=zero_for_one,
-                    )
-                )
-
-            self._rust_sequence_cache[cache_key] = _RustV3TickRangeSequence(rust_ranges)
-
-        return self._rust_sequence_cache[cache_key]
-
-    def _try_rust_v3_v3(
-        self,
-        solve_input: SolveInput,
-        start_ns: int,
-    ) -> SolveResult:
-        """Try V3-V3 Rust solver for 2-hop paths where both hops are V3.
-
-        Raises OptimizationError on failure.
-
-        Returns:
-            The computed value.
-
-        Raises:
-            OptimizationError: If the operation fails.
-
-        """
-        # Check both hops are V3 with tick range data
-        v3_hops: list[BoundedProductHop] = []
-        for hop in solve_input.hops:
-            if hop.invariant == PoolInvariant.BOUNDED_PRODUCT and isinstance(
-                hop, BoundedProductHop
-            ):
-                if hop.tick_ranges is None:
-                    raise OptimizationError(
-                        message="V3-V3 hop missing tick_ranges (sparse or V4 pool)",
-                        iterations=0,
-                        method=SolverMethod.PIECEWISE_MOBIUS.name,
-                    )
-                v3_hops.append(hop)
-            else:
-                raise OptimizationError(
-                    message="Non-V3 hop in V3-V3 path",
-                    iterations=0,
-                    method=SolverMethod.PIECEWISE_MOBIUS.name,
-                )
-
-        if len(v3_hops) != self.MIN_HOPS:
-            raise OptimizationError(
-                message="Need exactly 2 V3 hops",
-                iterations=0,
-                method=SolverMethod.PIECEWISE_MOBIUS.name,
-            )
-
-        # Get cached Rust sequences for both hops
-        rust_seq1 = self._get_cached_rust_sequence(v3_hops[0])
-        rust_seq2 = self._get_cached_rust_sequence(v3_hops[1])
-
-        max_input_float = (
-            float(solve_input.max_input) if solve_input.max_input is not None else None
-        )
-
-        result = self._rust_solver.solve(
-            self._get_cached_rust_hops(solve_input),
-            v3_sequences=[(0, rust_seq1), (1, rust_seq2)],
-            max_input=max_input_float,
-            max_candidates=10,
-        )
-
-        if result.success:
-            elapsed_ns = time.perf_counter_ns() - start_ns
-            return SolveResult(
-                optimal_input=int(result.optimal_input),
-                profit=int(result.profit),
-                iterations=result.iterations,
-                method=SolverMethod.PIECEWISE_MOBIUS,
-                solve_time_ns=elapsed_ns,
-            )
-        raise OptimizationError(
-            message="V3-V3 Rust solve failed",
-            iterations=result.iterations if hasattr(result, "iterations") else 0,
-            method=SolverMethod.PIECEWISE_MOBIUS.name,
-        )
-
-    def _try_rust_multi_range(
-        self,
-        solve_input: SolveInput,
-        v3_hop_index: int,
-        v3_hop: BoundedProductHop,
-        start_ns: int,
-    ) -> SolveResult:
-        """Try to solve multi-range V3 using Rust's full sequence solver.
-
-        Uses cached Rust objects to minimize Python-Rust marshalling overhead.
-        Raises OptimizationError on failure.
-
-        Returns:
-            The computed value.
-
-        Raises:
-            OptimizationError: If the operation fails.
-
-        """
-        # Get cached Rust objects
-        rust_hops = self._get_cached_rust_hops(solve_input)
-        rust_sequence = self._get_cached_rust_sequence(v3_hop)
-
-        # Call Rust full sequence solver
-        max_input_float = (
-            float(solve_input.max_input) if solve_input.max_input is not None else None
-        )
-
-        result = self._rust_solver.solve(
-            rust_hops,
-            v3_sequences=[(v3_hop_index, rust_sequence)],
-            max_input=max_input_float,
-            max_candidates=3,
-        )
-
-        if result.success:
-            elapsed_ns = time.perf_counter_ns() - start_ns
-            return SolveResult(
-                optimal_input=int(result.optimal_input),
-                profit=int(result.profit),
-                iterations=result.iterations,
-                method=SolverMethod.PIECEWISE_MOBIUS,
-                solve_time_ns=elapsed_ns,
-            )
-        raise OptimizationError(
-            message="Rust V3 sequence solve failed",
-            iterations=result.iterations if hasattr(result, "iterations") else 0,
-            method=SolverMethod.PIECEWISE_MOBIUS.name,
         )
 
 

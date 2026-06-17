@@ -1,4 +1,5 @@
 """Balancer-specific data types and enums (pool state, rate provider)."""
+
 import dataclasses
 
 from degenbot.types.abstract import AbstractPoolState

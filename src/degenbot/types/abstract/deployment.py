@@ -1,4 +1,5 @@
 """Abstract deployment type with chain ID and address."""
+
 from dataclasses import dataclass
 
 from degenbot.types.aliases import ChainId

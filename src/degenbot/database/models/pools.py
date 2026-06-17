@@ -1,4 +1,5 @@
 """SQLAlchemy model for pool state and deployment data."""
+
 from sqlalchemy import ForeignKey, Index
 from sqlalchemy.orm import Mapped, declared_attr, mapped_column, relationship
 

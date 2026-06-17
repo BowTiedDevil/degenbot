@@ -159,9 +159,11 @@ pub fn abi_value_from_python(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult
         if int_val >= 0 {
             return Ok(AbiValue::Uint(U256::from(int_val.cast_unsigned()), 256));
         }
-        return Ok(AbiValue::Int(I256::try_from(int_val).map_err(|_| {
-            PyValueError::new_err("Integer conversion failed")
-        })?, 256));
+        return Ok(AbiValue::Int(
+            I256::try_from(int_val)
+                .map_err(|_| PyValueError::new_err("Integer conversion failed"))?,
+            256,
+        ));
     }
 
     // For larger integers, try to extract via Python's to_bytes method

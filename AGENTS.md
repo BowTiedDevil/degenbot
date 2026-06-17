@@ -50,7 +50,7 @@ type(scope): subject
 
 ### Scopes
 
-Optional but encouraged. Closed list: `curve`, `aave`, `v2`, `v3`, `v4`, `aerodrome`, `camelot`, `balancer`, `arbitrage`, `database`, `rust`, `sdk`. Omit scope for cross-cutting changes.
+Optional but encouraged. Closed list: `curve`, `aave`, `v2`, `v3`, `v4`, `aerodrome`, `camelot`, `balancer`, `arbitrage`, `builders`, `database`, `rust`, `python`, `sdk`. Omit scope for cross-cutting changes. Enforced in `.commitlintrc.yml` (the authoritative list — keep both in sync).
 
 ### Rules
 
@@ -148,6 +148,30 @@ Three `runtime_checkable` protocols replace removed ABCs:
 - `StableswapPool` — 1 property (tokens)
 
 Use `hasattr()` structural checks for class-level dispatch (not `issubclass()` — Python's `runtime_checkable` protocols with `@property` raise `TypeError` on `issubclass()`).
+
+### V4 Hook Filtering
+
+V4 pools with amount-modifying hooks are rejected in Python before calling `register_v4_pool()`. The Rust engine is permissive — it trusts the caller. The `AMOUNT_MODIFYING_HOOK_MASK = 0xCC` covers 4 hook flags:
+
+| Hook Flag | Bit | Effect |
+|-----------|-----|--------|
+| `BEFORE_SWAP` | 1<<7 | Hook can modify swap parameters before execution |
+| `AFTER_SWAP` | 1<<6 | Hook can modify swap results after execution |
+| `BEFORE_SWAP_RETURNS_DELTA` | 1<<3 | Hook returns custom swap delta |
+| `AFTER_SWAP_RETURNS_DELTA` | 1<<2 | Hook returns custom swap delta |
+
+If `(hook_flags & 0xCC) != 0`, the pool is excluded — it violates the solver's assumption that V3 CL math applies exactly. V4 pools with dynamic fees (`fee == 0x100000`) are also excluded. Both checks are performed in Python before `register_v4_pool` is called.
+
+### V4 amountSpecified Sign Convention
+
+V3 and V4 use **opposite** sign conventions for `amountSpecified`:
+
+| Mode | V3 | V4 |
+|------|----|----|
+| Exact INPUT | `amountSpecified > 0` | `amountSpecified < 0` |
+| Exact OUTPUT | `amountSpecified < 0` | `amountSpecified > 0` |
+
+For arbitrage (always exact-input mode): V3 encoding uses **positive** values, V4 encoding uses **negative** values. This is verified in `v3_simulator.py:93` — `exact_input = amount_specified > 0`.
 
 ### Calculations Module
 
@@ -252,6 +276,51 @@ Each `SwapAmounts` subclass (V2, V3, Curve, V4, Balancer) has an `encode(recipie
 
 Library callers extend this by implementing custom `ApprovalStrategy` and `PayloadComposer` for their specific smart contracts. V4 encoding requires a custom `PayloadComposer` since V4 uses an unlock/swap callback pattern. The `V4PoolKey` dataclass is available on `UniswapV4PoolSwapAmounts.pool_key` for V4 dispatch. See `src/degenbot/arbitrage/CONTEXT.md` for full terminology.
 
+### Command Stream Encoding (cmd_executor)
+
+The `encode_cmd_stream()` function in `eth_backrun_helpers.py` builds the `execute(bytes)` calldata for the cmd_executor contract. It dispatches to type-specific encoders based on the hop composition:
+
+| Path type | Encoder | Approach |
+|-----------|---------|----------|
+| All V2 (N≥2) | `_encode_cmd_v2_n_hop` | V2_SWAP_COMPACT flash + chained V2_SWAP_CALC |
+| V2+V3 | `_encode_cmd_v2_v3` / `_encode_cmd_v3_v2` | Hybrid callback + auto-pay |
+| V2+V4 | `_encode_cmd_v2_v4` / `_encode_cmd_v4_v2` | V4 unlock wrapping V2 callback |
+| V3+V3 | `_encode_cmd_v3_v3` | Nested V3 callbacks with auto-pay |
+| V3+V4 | `_encode_cmd_v3_v4` / `_encode_cmd_v4_v3` | V4 unlock + V3 callback |
+| V4+V4 | `_encode_cmd_v4_v4` | V4 batch with dynamic amounts |
+| 3-hop mixed | `_encode_cmd_3_hop` | Dispatches to 27 permutations |
+
+**Address table index hygiene**: The `AddressTable` deduplicates by checksummed address. In list comprehensions that build index lists (e.g., `pool_indices`), the iteration variable **must** match the attribute accessor. A mismatch (e.g., `for h in hops` but `hop.pool_address`) silently references an outer-scope variable from a prior loop's final iteration — all addresses resolve to the same deduplicated index. This produces a command stream that calls the wrong pool for every hop, reverting with `V2_SWAP_CALC: no excess balance` or similar errors. Symptom: 100% simulation failure for a path type with zero sub-calls in `debug_traceCall`.
+
+### Tstore Executor V4 Architecture
+
+The `tstore_executor.vy` contract handles V2/V3/V4 arbitrage via a hybrid approach:
+
+- **V4 swaps** execute directly via `extcall` in `unlockCallback` to capture `BalanceDelta` return values
+- **V2/V3 operations** use the generic payload queue with `raw_call` delivery
+- **Settlement** is automatic — all nonzero V4 currency deltas are settled after swaps and payloads
+
+The `unlockCallback` has 4 phases:
+
+| Phase | Purpose | Key Logic |
+|-------|---------|-----------|
+| **Phase 0** | Pre-settle | For V3→V4/V2→V4: calls `settle()` to credit forward ERC-20 to `t_v4_deltas` before V4 swap consumes them. Skips duplicate settlements when the same input currency appears across multiple V4 swaps |
+| **Phase 1** | V4 swaps | Executes V4 swaps, tallies ALL currency deltas in `t_v4_deltas` (not just ETH/WETH). Handles `dynamic_amount` flag for V4-V4 paths |
+| **Phase 2** | Queued payloads | Delivers remaining queued payloads (take/transfer for V4→V3/V4→V2). Zeros intermediate ERC-20 deltas if payloads were delivered |
+| **Phase 3** | Auto-settle | Settles all nonzero deltas: native ETH, WETH, and intermediate ERC-20s. Uses `_v4_settle_currency` internal helper, which zeros the delta after settling to prevent double-settlement when the same ERC-20 appears in multiple pool keys |
+
+**V2 callback difference**: Unlike V3 (which auto-pays WETH), the V2 `uniswapV2Call`/`hook`/`pancakeCall` callbacks directly resume payload delivery via `_deliver_remaining_payloads()` — no intermediate wrapper. V2 pair WETH payment must be an explicit payload in the queue. This is verified by the V4→V2 and V2→V4 contract tests.
+
+**V3 auto-pay pattern**: The V3 callback computes `owed_token`/`owed_amount` first (determining which token the pool is owed and how much), then performs a single WETH transfer only if `owed_token == WETH_ADDR`. This unified pattern replaced the previous per-branch `staticcall`+`extcall` pair, ensuring auto-pay never fires for non-WETH debts. Encoders must NOT include separate WETH transfer payloads for auto-paid V3 pools.
+
+**`NATIVE_ADDRESS` constant**: `constant(address) = empty(address)` — used throughout the contract to identify native ETH, replacing inline `native: address = empty(address)` locals. Named constant is clearer and avoids stack variable overhead.
+
+**`_decode_swap_delta` unified helper**: Replaces the former `_decode_swap_delta_amount0`/`_decode_swap_delta_amount1` pair with a single parameterized function `_decode_swap_delta(swap_delta, byte_offset)`, eliminating code duplication.
+
+**int128 overflow guard**: V4's `BalanceDelta` uses `int128` per component. The `fits_int128()` function in `degenbot.arbitrage.encoding` allows encoders to skip paths where amounts would overflow (`SafeCastOverflow` revert). All 5 V4 encoder functions check this before constructing swap params.
+
+**V4→V2 amount_out encoding**: V2's `swap(amount0Out, amount1Out, ...)` specifies what V2 SENDS to the recipient. For USDC→WETH@V2, `amount_out` must be `weth_out` (the WETH output), NOT `forward_out` (the USDC input). Previous code passed `forward_out` — caused `INSUFFICIENT_LIQUIDITY` on mainnet.
+
 ## Agent skills
 
 ### Issue tracker
@@ -311,6 +380,56 @@ The original `interface.py` no longer exists — all callers have been updated t
 
 ## Solidity
 
+### Contract Testing
+
+An isolated Ape + Foundry test suite under `contracts/tests/` verifies the executor's V4 settlement logic using fake contracts (no mainnet fork). 27 tests across 8 files covering V2/V3-only paths, V4-hybrid paths, callback variant selectors, settlement branches, three-hop paths, and encoding regressions.
+
+Run from `contracts/tests/`:
+```bash
+uv run --with eth-ape --with ape-vyper --with ape-foundry ape test -v -n0
+```
+
+Always use `-n0` — Foundry's local EVM is single-process; parallel workers cause flakes. See `contracts/tests/README.md` for fake contract docs and test patterns.
+
+**Key patterns**:
+- V2 callback has NO auto-pay (unlike V3) — WETH transfer to V2 pair must be explicit payload
+- V4→V2/V3 forward tokens: `take()` from PM inside `unlockCallback` Phase 2, then transfer to V2/V3
+- V2/V3→V4: sync BEFORE transfer to PM (records zero balance), then Phase 0 settle() credits the delta before V4 swap
+- V4→V2 `amount_out` must be WETH output (`weth_out`), NOT forward token input (`forward_out`) — the V2 `swap()` specifies what V2 SENDS
+
+### int128 Overflow Guard
+
+V4's `BalanceDelta` packs two int128 values. If `amountSpecified` exceeds ±2^127, V4 reverts with `SafeCastOverflow`. All V4 encoder functions guard against this:
+
+```python
+from degenbot.arbitrage.encoding import fits_int128
+
+if not fits_int128(-optimal_input):
+    return None  # Skip — would overflow
+```
+
+### V3 amountSpecified Sign Convention
+
+V3 and V4 use **opposite** sign conventions for `amountSpecified`:
+
+| | exact INPUT | exact OUTPUT |
+|---|---|---|
+| **V3** | `amountSpecified > 0` | `amountSpecified < 0` |
+| **V4** | `amountSpecified < 0` | `amountSpecified > 0` |
+
+This is verified in `v3_simulator.py:93` — `exact_input = amount_specified > 0`. When building V3 swap calldata for arbitrage (always exact-input mode), use **positive** values.
+
+### Contract Reference Sources
+
+Verified Solidity sources are in `contract_reference/` (see [`contract_reference/README.md`](contract_reference/README.md) for the full index). When porting on-chain logic to Python, include a `See: contract_reference/...` comment pointing to the exact source file and line range.
+
+| Protocol | Path |
+|----------|------|
+| Uniswap V2 | `contract_reference/uniswap/V2/UniswapV2Factory.sol` |
+| Uniswap V3 | `contract_reference/uniswap/V3/UniswapV3Factory.sol` |
+| Uniswap V4 | `contract_reference/uniswap/V4/PoolManager.sol` |
+| Aave V3 | `contract_reference/aave/` (revision-based: `Pool/rev_N.sol`, `AToken/rev_N.sol`, etc.) |
+
 ### Arithmetic wrapping behavior
 - Solidity arithmetic silently wraps for versions < 0.8.0, e.g. `uint8(255) + 1 == 0`
 - Solidity arithmetic is checked by default for versions 0.8.0+, e.g. `uint8(255) + 1` will revert
@@ -346,3 +465,37 @@ The Rust extension (`rust/`) provides PyO3-wrapped ABI encoding/decoding, subscr
 ### Subscription Buffer
 
 `SubscriptionHandle` uses a double-buffer pattern with `drain_raw()` (pure Rust, no GIL) for GIL-free accumulation. The Python-facing `drain_buffer()` wraps it with `Python::attach()`.
+
+### V3 Block Engine: Mint/Burn Event Handling
+
+`V3BlockEngine.process_block()` decodes Swap, Mint, and Burn events from raw Alloy logs. The `update_tick_liquidity()` helper (shared in `rust/src/bot_core/tick_bitmap.rs`) matches Solidity's `Tick.update()`: both lower and upper tick receive `liquidity_gross += delta`, while `liquidity_net += delta` for the lower tick and `liquidity_net -= delta` for the upper tick (controlled by `is_lower_tick` parameter). Ticks with zero `liquidity_gross` after the update are removed (de-initialized). Mint/Burn decoders live in `rust/src/bot_core/v3_mint_burn_decoder.rs`. This replaces the previous O(n) full-tick-data dump from Python on every event (Plan 080 F4, completed).
+
+### V4 Block Engine: ModifyLiquidity Event Handling
+
+`V4BlockEngine.process_block()` decodes Swap and ModifyLiquidity events from raw Alloy logs. V4's `ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)` replaces V3's separate Mint and Burn — a signed `liquidityDelta` handles both directions. Both V3 and V4 engines delegate tick mutations to the shared `update_tick_liquidity()` and `apply_liquidity_to_tick_range()` helpers in `rust/src/bot_core/tick_bitmap.rs`. Decoder lives in `rust/src/bot_core/v4_modify_liquidity_decoder.rs`. V4 pools are keyed by `(pool_manager, pool_id)` instead of contract address.
+
+### Rust Engine Pumps
+
+Three individual pumps and one unified pump drive the Rust engines:
+- **`V2EnginePump`** — fetches Sync logs for registered V2 pool addresses (standalone, per-block `eth_getLogs`)
+- **`V3EnginePump`** — fetches Swap/Mint/Burn logs for registered V3 pool addresses (standalone, per-block `eth_getLogs`)
+- **`V4EnginePump`** — fetches Swap/ModifyLiquidity logs for PoolManager addresses (standalone, per-block `eth_getLogs`)
+- **`UniswapEnginePump`** — dual WS subscription (`newHeads` + unfiltered `logs`), processes each log eagerly via `apply_log` (immediate state update) with solves coalesced at the top of the pump loop. Rust-side filtering by topic + registered address. Block boundaries detected by `log.block_number > current_block` (primary) or `header.number > current_block` (empty-block fallback). Headers provide metadata (timestamp, fees) and trigger empty-block batches. 60s timeout with no activity → `eth_getLogs` for the missing range. Solver results flow to Python via an **unbounded `mpsc` channel** as incremental `ResultBatch` diffs (`fresh`/`updated`/`expired`/`removed` lists) — every diff is delivered, no silent drops. Spawned by `PyUniswapArbEngine.start(rpc_url)`. Individual V2/V3/V4 pumps are kept as alternative entry points for testing or single-protocol deployments.
+
+All pumps follow the same pattern: WS `newHeads` subscription → log processing → `engine.process_block()`. No Python dependency. The bot's `main()` calls `engine.start(rpc_url)` after `freeze()` + `initial_solve()`; Python subscribes to `newHeads` only for fee/nonce updates and result dispatch.
+
+### Snapshot Backfill
+
+Before the Rust pump takes over state updates, the bot must bridge the gap between the last DB snapshot and the current block. This is handled by `backfill_from_snapshot()`, a PyO3 method on `PyUniswapArbEngine` called after `subscribe()` and before `resume()`.
+
+**Startup sequence**: `subscribe(rpc_url)` → `fetch_snapshot_events()` → `backfill_from_snapshot(rpc_url, snapshot_block)` → `resume()` → `build_paths()`
+
+`subscribe()` opens WS subscriptions (newHeads + unfiltered logs) and waits for the first *complete* block — one where both a header and at least one log for the same block number have been received. This guarantees the logs subscription didn't miss the start of the block (which could happen if the subscription was opened mid-block). The block number W is returned as the backfill boundary. **No events are buffered during subscribe** — the backfill is the sole authority for blocks S+1..W-1, and the pump (resume phase) is the sole authority for W onward. This eliminates overlap between the two sources.
+
+`backfill_from_snapshot()` creates an HTTP provider, fetches Swap/Mint/Burn/ModifyLiquidity events in paginated chunks from `snapshot_block + 1` to `first_ws_block - 1` via `eth_getLogs`, and applies them to the V3/V4 engines via `process_backfill_logs()`. The `-1` avoids overlap with WS events that the pump will process from block W onward. For unregistered pools (all of them at this point), Mint/Burn/ModifyLiquidity events are buffered in `backfill_event_buffer` (never expired). WS pump events for unregistered pools are buffered separately in `pump_event_buffer` (expired normally). During `register_pool()`, buffers are applied in two staged steps — `apply_backfill_buffer()` then `apply_pump_buffer()` — so the caller can snapshot state at deterministic points for race-free verification.
+
+When `register_pool()` is called later (during `build_paths`), it creates the pool entry with DB snapshot tick_data. The caller (`uniswap_engine.rs`) then sequences `apply_backfill_buffer()` and `apply_pump_buffer()` under the engine lock — bringing the engine state current without Python-side event fetching. If `verify_on_register` is enabled, deterministic state snapshots are captured at two points: (1) raw tick_data before any buffer (verified against on-chain at snapshot block), and (2) post-backfill state after `apply_backfill_buffer()` (verified against on-chain at backfill block). Verification RPC calls happen outside the lock. On mismatch, `RuntimeError` causes immediate shutdown.
+
+The Python `fetch_snapshot_events()` function loads snapshots from the DB only (no `fetch_new_events()` calls). The Rust engine handles all event backfill autonomously.
+
+After backfill and registration, the Rust pump owns all state updates. Python's role in the hot loop is reduced to reading results and submitting transactions.

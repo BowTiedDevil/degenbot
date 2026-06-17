@@ -1,4 +1,5 @@
 """Erc20Token: on-chain token with metadata, balance, and approval tracking."""
+
 from typing import TYPE_CHECKING, cast
 
 import eth_abi.abi

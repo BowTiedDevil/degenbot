@@ -1,14 +1,8 @@
-"""Uniswap V3 UnsafeMath: rounding-up division."""
+"""Uniswap V3 UnsafeMath: rounding-up division.
 
+Rust-accelerated implementation used by default.
 
-def div_rounding_up(x: int, y: int) -> int:
-    """Perform an x//y floored division, rounding up any remainder.
+See: contract_reference/uniswap/V3/UniswapV3Factory.sol (UnsafeMath library)
+"""
 
-    Returns:
-        The ceiling of x/y as an integer.
-
-    ref: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/UnsafeMath.sol
-
-    """
-    # x and y are uint256 values, so negative value floor division workarounds are unnecessary
-    return (0 if y == 0 else x // y) + ((0 if y == 0 else x % y) > 0)
+from degenbot.degenbot_rs import cl_div_rounding_up as div_rounding_up  # noqa: F401

@@ -1,4 +1,5 @@
 """Uniswap pool and factory trackers for event-driven updates."""
+
 from __future__ import annotations
 
 import contextlib
@@ -303,6 +304,32 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
     def unload_snapshot(self) -> None:
         """Drop the snapshot reference so it can be garbage-collected."""
         self._snapshot = None
+
+    @property
+    def snapshot(self) -> UniswapV3LiquiditySnapshot | None:
+        """Return the snapshot, if loaded."""
+        return self._snapshot
+
+    def backfill_snapshot(self, current_block: int) -> None:  # noqa: ARG002
+        """Apply pending snapshot updates to all tracked V3 pools and return engine updates.
+
+        Call this after `fetch_new_events` / `fetch_new_events_async` has populated
+        the snapshot's pending_updates. For each tracked pool:
+        1. Apply pending Mint/Burn updates to the Python pool's tick_data
+        2. Collect the updated tick_data for pushing to the Rust engine
+
+        Returns the V3 updates list suitable for `engine.process_logs()`.
+
+        This is the one-time bridge between Python's snapshot state and the Rust
+        engine's tick_data. After this call and one final `process_logs`, the
+        Rust pump takes over state updates.
+        """
+        if self._snapshot is None:
+            return
+
+        for pool_address, pool in self._tracked_pools.items():
+            for liquidity_update in self._snapshot.pending_updates(pool_address):
+                pool.update_liquidity_map(liquidity_update)
 
 
 class UniswapV3PoolTracker(AbstractUniswapV3PoolTracker[UniswapV3Pool], pool_factory=UniswapV3Pool):

@@ -223,9 +223,7 @@ class PoolTypeRegistry:
         if self._kind_index.get(removed.kind) is not None:
             # Rebuild the kind index entry from remaining entries with the
             # same kind, or drop it if none remain.
-            same_kind = [
-                e for e in self._entries.values() if e.kind == removed.kind
-            ]
+            same_kind = [e for e in self._entries.values() if e.kind == removed.kind]
             if same_kind:
                 last = same_kind[-1]
                 self._kind_index[removed.kind] = PoolTypeDescriptor(

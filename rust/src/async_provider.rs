@@ -27,7 +27,7 @@ use pyo3_async_runtimes::tokio::future_into_py;
 use std::sync::Arc;
 
 /// Python wrapper for async provider operations.
-#[pyclass(name = "AsyncAlloyProvider")]
+#[pyclass(name = "AsyncAlloyProvider", skip_from_py_object)]
 pub struct PyAsyncAlloyProvider {
     provider: Arc<AlloyProvider>,
     max_blocks_per_request: u64,
@@ -231,10 +231,7 @@ impl PyAsyncAlloyProvider {
         let provider = Arc::clone(&self.provider);
 
         future_into_py(py, async move {
-            provider
-                .get_gas_price()
-                .await
-                .map_err(Into::<PyErr>::into)
+            provider.get_gas_price().await.map_err(Into::<PyErr>::into)
         })
     }
 
@@ -411,9 +408,7 @@ impl PyAsyncAlloyProvider {
                 .await
                 .map_err(Into::<PyErr>::into)?;
 
-            Python::attach(|py| {
-                json_to_py_with_hexbytes(py, result).map(Bound::unbind)
-            })
+            Python::attach(|py| json_to_py_with_hexbytes(py, result).map(Bound::unbind))
         })
     }
 

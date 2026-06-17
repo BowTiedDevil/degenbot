@@ -9,6 +9,10 @@ This repo has a `CONTEXT-MAP.md` at the root pointing to per-module `CONTEXT.md`
 ```
 /
 ├── CONTEXT-MAP.md                     ← module index + cross-cutting content
+├── contract_reference/                ← verified Solidity sources (Uniswap V2/V3/V4, Aave V3)
+│   ├── README.md                      ← index of all contract files and their contents
+│   ├── uniswap/                       ← V2, V3, V4 core contracts (concatenated bundles)
+│   └── aave/                          ← Aave V3 contracts organized by type and revision
 ├── docs/
 │   ├── adr/                           ← system-wide decisions (e.g., ADR-001 I/O-free pools)
 │   └── agents/
@@ -32,6 +36,7 @@ This repo has a `CONTEXT-MAP.md` at the root pointing to per-module `CONTEXT.md`
 1. **`CONTEXT-MAP.md`** at the repo root — read it first for the module index and cross-cutting content.
 2. **Per-module `CONTEXT.md`** — read each one relevant to the area you're about to work in. The map's bullet summaries help you identify which module(s) to read.
 3. **`docs/adr/`** — read ADRs that touch the area you're about to work in. If per-context ADR directories appear under `src/<module>/docs/adr/`, check those too.
+4. **`contract_reference/README.md`** — when porting or debugging on-chain math, read the relevant Solidity source from `contract_reference/` and cross-reference it against the Python implementation. Each protocol module's `CONTEXT.md` links to its contract sources.
 
 If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The producer skill (`/grill-with-docs`) creates them lazily when terms or decisions actually get resolved.
 

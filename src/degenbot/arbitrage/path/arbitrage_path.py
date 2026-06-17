@@ -1,4 +1,5 @@
 """ArbitragePath: multi-hop swap vector with solver integration."""
+
 from __future__ import annotations
 
 import asyncio
@@ -7,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from weakref import WeakSet
 
 from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult
+from degenbot.arbitrage.optimizers.solver import ArbSolver
 from degenbot.arbitrage.path.types import PathValidationError, SwapVector
 from degenbot.arbitrage.types import (
     AbstractSwapAmounts,
@@ -24,20 +26,28 @@ def _solve_in_subprocess(solve_input: SolveInput) -> SolveResult:
     This is a module-level function so it can be pickled and sent to a ProcessPoolExecutor.
     A fresh ArbSolver is constructed per-call, which is cheap since the RustPoolCache
     is empty and the solve itself is CPU-bound.
-    """
-    from degenbot.arbitrage.optimizers.solver import ArbSolver
 
+    Returns:
+        The solve result.
+
+    """
     solver = ArbSolver()
     return solver.solve(solve_input)
 
 
 def _tokens_equivalent(a: Erc20Token, b: Erc20Token) -> bool:
-    """Return True if two tokens are equivalent, treating EtherPlaceholder and WETH as the same.
+    (
+        """Return True if two tokens are equivalent, treating EtherPlaceholder and WETH as the same.
 
     On chains where native ETH exists, V4 pools use EtherPlaceholder while V3 pools
     use the wrapped native ERC20 (WETH). For arbitrage path validation, these are
     economically equivalent.
+
+    Returns:
+        True if the tokens are equivalent, False otherwise.
     """
+        ""
+    )
     if a == b:
         return True
 
@@ -45,7 +55,6 @@ def _tokens_equivalent(a: Erc20Token, b: Erc20Token) -> bool:
     a_is_ether = isinstance(a, EtherPlaceholder)
     b_is_ether = isinstance(b, EtherPlaceholder)
     if a_is_ether != b_is_ether:
-        ether_token = a if a_is_ether else b
         wrapped_token = b if a_is_ether else a
         chain_id = wrapped_token.chain_id
         if chain_id is not None:
@@ -56,22 +65,19 @@ def _tokens_equivalent(a: Erc20Token, b: Erc20Token) -> bool:
     return False
 
 
-from degenbot.types.concrete import (
+from degenbot.types.concrete import (  # noqa: E402
     AbstractPublisherMessage,
     PoolStateMessage,
     Publisher,
     PublisherMixin,
     Subscriber,
 )
-from degenbot.types.hop_types import HopType
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-    from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
     from eth_typing import ChecksumAddress
 
-    from degenbot.erc20 import Erc20Token
     from degenbot.types.abstract import AbstractPoolState
     from degenbot.types.hop_types import HopType
     from degenbot.types.pool_protocols import ArbitragePathPool
@@ -285,8 +291,8 @@ class ArbitragePath(PublisherMixin):
         Each subprocess has its own GIL, so Python-side preamble (cache lookups,
         dispatch logic) and Rust computation run without inter-process contention.
         A module-level ``_solve_in_subprocess`` function is submitted instead of a bound
-        method so that the ArbSolver (which contains an unpickleable RustPoolCache) is
-        never serialized. A fresh ArbSolver is constructed inside the subprocess — this
+        method so that the ArbSolver (no longer a RustPoolCache carrier under ADR-003 Slice 4)
+        is never serialized. A fresh ArbSolver is constructed inside the subprocess — this
         is cheap since the cache starts empty and the compute cost dominates.
 
         **ThreadPoolExecutor** (GIL-safe but not parallel for short calls):

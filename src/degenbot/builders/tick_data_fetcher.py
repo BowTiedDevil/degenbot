@@ -1,4 +1,5 @@
 """Tick data fetching and bitmap loading for V3/V4 pools."""
+
 from __future__ import annotations
 
 import dataclasses

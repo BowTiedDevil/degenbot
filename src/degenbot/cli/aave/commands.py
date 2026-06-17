@@ -1,4 +1,5 @@
 """CLI commands for Aave position analysis."""
+
 import sys
 from typing import TYPE_CHECKING, cast
 

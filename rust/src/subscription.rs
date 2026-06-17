@@ -380,16 +380,13 @@ fn convert_item(py: Python<'_>, item: RawSubItem) -> PyResult<Option<Py<PyAny>>>
         RawSubItem::PendingTxHash(hash) => {
             let hex_str = hash.to_string();
             Ok(Some(
-                pyo3::types::PyString::new(py, &hex_str)
-                    .into_any()
-                    .unbind(),
+                pyo3::types::PyString::new(py, &hex_str).into_any().unbind(),
             ))
         }
         RawSubItem::FullPendingTx(json_guard) => {
-            let json_val = json_guard
-                .lock()
-                .take()
-                .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Transaction data already consumed"))?;
+            let json_val = json_guard.lock().take().ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err("Transaction data already consumed")
+            })?;
             let obj = crate::py_converters::json_to_py_with_hexbytes(py, json_val)?;
             Ok(Some(obj.unbind()))
         }

@@ -20,6 +20,318 @@ from degenbot.types.rpc_types import (
 # ABI encoding / decoding
 # ------------------------------------------------------------------
 
+# ------------------------------------------------------------------
+# Concentrated-liquidity math (cl_*)
+# ------------------------------------------------------------------
+
+def cl_most_significant_bit(x: int) -> int:
+    """Find the index of the most significant bit set in x.
+
+    Args:
+        x: A non-negative integer
+
+    Returns:
+        The index (0-255) of the highest set bit
+
+    Raises:
+        ValueError: If x is zero
+
+    """
+
+def cl_least_significant_bit(x: int) -> int:
+    """Find the index of the least significant bit set in x.
+
+    Args:
+        x: A non-negative integer
+
+    Returns:
+        The index (0-255) of the lowest set bit
+
+    Raises:
+        ValueError: If x is zero
+
+    """
+
+def cl_muldiv(a: int, b: int, denominator: int) -> int:
+    """Compute floor(a * b / denominator) with full 512-bit precision.
+
+    Args:
+        a: First multiplicand
+        b: Second multiplicand
+        denominator: Divisor
+
+    Returns:
+        The floored result as a Python int
+
+    Raises:
+        ValueError: On division by zero or overflow
+
+    """
+
+def cl_muldiv_rounding_up(a: int, b: int, denominator: int) -> int:
+    """Compute ceil(a * b / denominator) with full 512-bit precision.
+
+    Args:
+        a: First multiplicand
+        b: Second multiplicand
+        denominator: Divisor
+
+    Returns:
+        The ceiling result as a Python int
+
+    Raises:
+        ValueError: On division by zero or overflow
+
+    """
+
+def cl_div_rounding_up(x: int, y: int) -> int:
+    """Compute ceil(x / y) without overflow checking.
+
+    Args:
+        x: Dividend
+        y: Divisor
+
+    Returns:
+        The ceiling result as a Python int
+
+    Raises:
+        ValueError: If y is zero
+
+    """
+
+def cl_simple_mul_div(a: int, b: int, denominator: int) -> int:
+    """Compute (a * b) / denominator without overflow checking.
+
+    Args:
+        a: First multiplicand
+        b: Second multiplicand
+        denominator: Divisor
+
+    Returns:
+        The result as a Python int
+
+    Raises:
+        ValueError: If denominator is zero
+
+    """
+
+def cl_add_delta(x: int, y: int) -> int:
+    """Add a signed delta y to x, checking that the result fits in uint128.
+
+    Args:
+        x: Base value (must fit in uint128)
+        y: Signed delta (must fit in int128)
+
+    Returns:
+        The result as a Python int
+
+    Raises:
+        ValueError: If the result overflows or inputs are out of range
+
+    """
+
+def cl_get_amount0_delta(
+    sqrt_price_a: int,
+    sqrt_price_b: int,
+    liquidity: int,
+    round_up: bool | None = None,
+) -> int:
+    """Get the amount0 delta between two prices for a given liquidity.
+
+    Args:
+        sqrt_price_a: First sqrt price (X96)
+        sqrt_price_b: Second sqrt price (X96)
+        liquidity: Liquidity value
+        round_up: Whether to round up
+
+    Returns:
+        The token0 amount delta as a Python int
+
+    Raises:
+        ValueError: On invalid input (zero price, overflow, etc.)
+
+    """
+
+def cl_get_amount1_delta(
+    sqrt_price_a: int,
+    sqrt_price_b: int,
+    liquidity: int,
+    round_up: bool | None = None,
+) -> int:
+    """Get the amount1 delta between two prices for a given liquidity.
+
+    Args:
+        sqrt_price_a: First sqrt price (X96)
+        sqrt_price_b: Second sqrt price (X96)
+        liquidity: Liquidity value
+        round_up: Whether to round up
+
+    Returns:
+        The token1 amount delta as a Python int
+
+    Raises:
+        ValueError: On invalid input (negative liquidity, overflow, etc.)
+
+    """
+
+def cl_get_next_sqrt_price_from_amount0_rounding_up(
+    sqrt_price_x96: int,
+    liquidity: int,
+    amount: int,
+    add: bool,
+) -> int:
+    """Get the next sqrt price given a delta of token0, rounding up.
+
+    Args:
+        sqrt_price_x96: Current sqrt price (X96)
+        liquidity: Liquidity value
+        amount: Token0 amount
+        add: Whether to add (True) or remove (False)
+
+    Returns:
+        The next sqrt price (X96) as a Python int
+
+    Raises:
+        ValueError: On overflow or insufficient liquidity
+
+    """
+
+def cl_get_next_sqrt_price_from_amount1_rounding_down(
+    sqrt_price_x96: int,
+    liquidity: int,
+    amount: int,
+    add: bool,
+) -> int:
+    """Get the next sqrt price given a delta of token1, rounding down.
+
+    Args:
+        sqrt_price_x96: Current sqrt price (X96)
+        liquidity: Liquidity value
+        amount: Token1 amount
+        add: Whether to add (True) or remove (False)
+
+    Returns:
+        The next sqrt price (X96) as a Python int
+
+    Raises:
+        ValueError: On overflow or insufficient liquidity
+
+    """
+
+def cl_get_next_sqrt_price_from_input(
+    sqrt_price_x96: int,
+    liquidity: int,
+    amount_in: int,
+    zero_for_one: bool,
+) -> int:
+    """Get the next sqrt price given an input amount.
+
+    Args:
+        sqrt_price_x96: Current sqrt price (X96)
+        liquidity: Liquidity value
+        amount_in: Input amount
+        zero_for_one: Direction flag
+
+    Returns:
+        The next sqrt price (X96) as a Python int
+
+    Raises:
+        ValueError: On invalid price/liquidity or overflow
+
+    """
+
+def cl_get_next_sqrt_price_from_output(
+    sqrt_price_x96: int,
+    liquidity: int,
+    amount_out: int,
+    zero_for_one: bool,
+) -> int:
+    """Get the next sqrt price given an output amount.
+
+    Args:
+        sqrt_price_x96: Current sqrt price (X96)
+        liquidity: Liquidity value
+        amount_out: Output amount
+        zero_for_one: Direction flag
+
+    Returns:
+        The next sqrt price (X96) as a Python int
+
+    Raises:
+        ValueError: On invalid price/liquidity or overflow
+
+    """
+
+def cl_compute_swap_step_v3(
+    sqrt_price_current: int,
+    sqrt_price_target: int,
+    liquidity: int,
+    amount_remaining: int,
+    fee_pips: int,
+) -> tuple[int, int, int, int]:
+    """Compute a V3-style swap step.
+
+    Args:
+        sqrt_price_current: Current sqrt price (X96)
+        sqrt_price_target: Target sqrt price (X96)
+        liquidity: Liquidity value
+        amount_remaining: Remaining amount (signed)
+        fee_pips: Fee in pips
+
+    Returns:
+        Tuple of (sqrt_price_next, amount_in, amount_out, fee_amount)
+
+    Raises:
+        ValueError: On invalid input, overflow, or if liquidity exceeds int128
+
+    """
+
+def cl_compute_swap_step_v4(
+    sqrt_price_current: int,
+    sqrt_price_target: int,
+    liquidity: int,
+    amount_remaining: int,
+    fee_pips: int,
+) -> tuple[int, int, int, int]:
+    """Compute a V4-style swap step.
+
+    Args:
+        sqrt_price_current: Current sqrt price (X96)
+        sqrt_price_target: Target sqrt price (X96)
+        liquidity: Liquidity value
+        amount_remaining: Remaining amount (signed)
+        fee_pips: Fee in pips
+
+    Returns:
+        Tuple of (sqrt_price_next, amount_in, amount_out, fee_amount)
+
+    Raises:
+        ValueError: On invalid input, overflow, or if liquidity exceeds int128
+
+    """
+
+def cl_max_usable_tick(tick_spacing: int) -> int:
+    """Compute the maximum usable tick for a given tick spacing.
+
+    Args:
+        tick_spacing: The tick spacing value
+
+    Returns:
+        The maximum usable tick as an int
+
+    """
+
+def cl_min_usable_tick(tick_spacing: int) -> int:
+    """Compute the minimum usable tick for a given tick spacing.
+
+    Args:
+        tick_spacing: The tick spacing value
+
+    Returns:
+        The minimum usable tick as an int
+
+    """
+
 def get_sqrt_ratio_at_tick(tick: int) -> int:
     """Convert a tick value to its corresponding sqrt price (X96 format).
 
@@ -158,7 +470,6 @@ def decode_single(
     data: bytes,
     checksum: bool = True,
 ) -> str | bool | int | bytes: ...
-
 def encode(
     types: list[str],
     values: list[str | bool | int | bytes],
@@ -483,172 +794,122 @@ class AsyncContract:
         block_number: int | None = None,
     ) -> Coroutine[Any, Any, list[list[str]]]: ...
 
-# ------------------------------------------------------------------
-# Möbius optimizer types
-# ------------------------------------------------------------------
+class Token:
+    """Thin PyO3 handle to a token registered in the Rust `Bot`.
 
-class RustHopState:
-    """Pool hop state with reserves and fee for float-based Möbius solving."""
-
-    def __init__(self, reserve_in: float, reserve_out: float, fee: float) -> None: ...
-    @property
-    def reserve_in(self) -> float: ...
-    @property
-    def reserve_out(self) -> float: ...
-    @property
-    def fee(self) -> float: ...
-
-class RustV3TickRangeHop:
-    """Uniswap V3 tick range state for piecewise Möbius solving."""
-
-    def __init__(
-        self,
-        liquidity: float,
-        sqrt_price_current: float,
-        sqrt_price_lower: float,
-        sqrt_price_upper: float,
-        fee: float,
-        zero_for_one: bool,
-    ) -> None: ...
-    @property
-    def liquidity(self) -> float: ...
-    @property
-    def sqrt_price_current(self) -> float: ...
-    @property
-    def sqrt_price_lower(self) -> float: ...
-    @property
-    def sqrt_price_upper(self) -> float: ...
-    @property
-    def fee(self) -> float: ...
-    @property
-    def zero_for_one(self) -> bool: ...
-    def alpha(self) -> float: ...
-    def beta(self) -> float: ...
-    def to_hop_state(self) -> RustHopState: ...
-    def contains_sqrt_price(self, sqrt_price: float) -> bool: ...
-    def max_gross_input_in_range(self) -> float: ...
-
-class RustV3TickRangeSequence:
-    """Sequence of adjacent V3 tick ranges for multi-range solving."""
-
-    def __init__(self, ranges: list[RustV3TickRangeHop]) -> None: ...
-    def __len__(self) -> int: ...
-    def __getitem__(self, idx: int) -> RustV3TickRangeHop: ...
-    def compute_crossing(self, k: int) -> RustTickRangeCrossing: ...
-
-class RustTickRangeCrossing:
-    """Tick range crossing data for piecewise Möbius calculation."""
-
-    def __init__(
-        self,
-        crossing_gross_input: float,
-        crossing_output: float,
-        ending_range: RustV3TickRangeHop,
-    ) -> None: ...
-    @property
-    def crossing_gross_input(self) -> float: ...
-    @property
-    def crossing_output(self) -> float: ...
-    @property
-    def ending_range(self) -> RustV3TickRangeHop: ...
-
-class RustArbResult:
-    """Result from unified arbitrage solver (RustArbSolver)."""
+    All metadata lives in Rust; reads cross PyO3 on every access. Not directly
+    constructible — obtain one via `PyBot.register_token` / `PyBot.get_token`.
+    """
 
     @property
-    def optimal_input(self) -> float: ...
+    def address(self) -> str: ...
     @property
-    def profit(self) -> float: ...
+    def decimals(self) -> int: ...
     @property
-    def optimal_input_int(self) -> int | None: ...
+    def symbol(self) -> str: ...
     @property
-    def profit_int(self) -> int | None: ...
-    @property
-    def iterations(self) -> int: ...
-    @property
-    def success(self) -> bool: ...
-    @property
-    def supported(self) -> bool: ...
-    @property
-    def method(self) -> int: ...
+    def name(self) -> str: ...
 
-class RustArbSolver:
-    """Unified arbitrage solver with automatic method selection."""
+class Pool:
+    """Thin PyO3 handle to a pool registered in the Rust `Bot`.
+
+    Owns no state — calculation/encoding calls cross PyO3 on every access,
+    reading the shared Rust-owned `Bot` under a read guard. Not directly
+    constructible — obtain one via `PyBot.get_pool`.
+    """
+
+    @property
+    def pool_id(self) -> int: ...
+    def calculate_tokens_out(self, zero_for_one: bool, amount_in: int) -> int: ...
+    def calculate_tokens_in(self, zero_for_one: bool, amount_out: int) -> int: ...
+    def encode_swap(
+        self, zero_for_one: bool, amount_out: int, recipient: str
+    ) -> tuple[str, str, int] | None: ...
+
+class PyBot:
+    """PyO3 wrapper (exposed as `PyBot` in Python) holding `Arc<RwLock<Bot>>`.
+
+    The Polars-style middle layer between the pure-Rust `Bot` and the Python
+    `Bot` session. The Python ``Bot.__init__`` constructs one; `Pool`/`Token`
+    handles share the same `Arc`. Queries/calcs take a read guard on the
+    shared `Bot`; mutations take a write guard.
+    """
 
     def __init__(self) -> None: ...
-    def solve(
+    def register_v2_pool(
         self,
-        hops: list[RustHopState | RustIntHopState | tuple[float, float, float]],
-        v3_sequences: list[tuple[int, RustV3TickRangeSequence]] | None = None,
-        max_input: float | None = None,
-        max_candidates: int = 10,
-    ) -> RustArbResult: ...
-    def solve_raw(
+        address: str,
+        token0: str,
+        token1: str,
+        reserve0: int,
+        reserve1: int,
+        gamma_numer0: int,
+        fee_denom0: int,
+        gamma_numer1: int,
+        fee_denom1: int,
+        factory: str,
+    ) -> int: ...
+    def update_v2_pool(
+        self, address: str, reserve0: int, reserve1: int, block_number: int
+    ) -> None: ...
+    def calculate_tokens_out(self, pool_id: int, zero_for_one: bool, amount_in: int) -> int: ...
+    def calculate_tokens_in(self, pool_id: int, zero_for_one: bool, amount_out: int) -> int: ...
+    def pool_count(self) -> int: ...
+    def get_pool(self, pool_id: int) -> Pool | None: ...
+    def register_v3_pool(
         self,
-        int_hops_flat: list[int],
-        max_input: float | None = None,
-    ) -> RustArbResult: ...
+        address: str,
+        token0: str,
+        token1: str,
+        fee: int,
+        tick_spacing: int,
+        factory: str,
+        sqrt_price_x96: int,
+        liquidity: int,
+        tick: int,
+    ) -> int: ...
+    def update_v3_pool(
+        self,
+        address: str,
+        sqrt_price_x96: int,
+        liquidity: int,
+        tick: int,
+        block_number: int,
+    ) -> None: ...
+    def v3_journal_len(self, pool_id: int) -> int: ...
+    def v3_discard_before_block(self, pool_id: int, block: int) -> None: ...
+    def v3_restore_before_block(
+        self, pool_id: int, block: int
+    ) -> tuple[int, int, int, int] | None: ...
+    def register_token(
+        self, address: str, name: str, symbol: str, decimals: int, chain_id: int
+    ) -> Token: ...
+    def get_token(self, address: str) -> Token | None: ...
+    def encode_swap(
+        self, pool_id: int, zero_for_one: bool, amount_out: int, recipient: str
+    ) -> tuple[str, str, int] | None: ...
+    def v2_journal_len(self, pool_id: int) -> int: ...
+    def v2_discard_before_block(self, pool_id: int, block: int) -> None: ...
+    def v2_restore_before_block(self, pool_id: int, block: int) -> tuple[int, int, int] | None: ...
 
-class RustPoolCache:
-    """Cached pool state storage for fast solve-by-ID operations."""
+class UniswapArbEngine:
+    """Rust-side engine for Uniswap arbitrage path solving."""
 
     def __init__(self) -> None: ...
-    def insert(
-        self,
-        pool_id: int,
-        reserve_in: int,
-        reserve_out: int,
-        gamma_numer: int,
-        fee_denom: int,
+    def load_v3_snapshot_from_py(self, py_data: dict[str, dict[int, tuple[int, int]]]) -> None: ...
+    def begin_v3_snapshot_stream(self) -> None: ...
+    def insert_v3_pool_snapshot(
+        self, pool_address: str, tick_data: dict[int, tuple[int, int]]
     ) -> None: ...
-    def remove(self, pool_id: int) -> bool: ...
-    def solve(self, path: list[int], max_input: float | None = None) -> RustArbResult: ...
-    def contains(self, pool_id: int) -> bool: ...
-    def __len__(self) -> int: ...
-    def __bool__(self) -> bool: ...
-
-class RustIntHopState:
-    """Integer-based hop state for EVM-exact Möbius solving."""
-
-    def __init__(
-        self,
-        reserve_in: int,
-        reserve_out: int,
-        gamma_numer: int,
-        fee_denom: int,
+    def finish_v3_snapshot(self) -> None: ...
+    def load_v4_snapshot_from_py(
+        self, py_data: dict[str, dict[str, dict[int, tuple[int, int]]]]
     ) -> None: ...
-    @property
-    def reserve_in(self) -> int: ...
-    @property
-    def reserve_out(self) -> int: ...
-    @property
-    def gamma_numer(self) -> int: ...
-    @property
-    def fee_numer(self) -> int: ...
-    @property
-    def fee_denom(self) -> int: ...
-
-class RustIntMobiusResult:
-    """Result from integer Möbius solver."""
-
-    @property
-    def optimal_input(self) -> int: ...
-    @property
-    def profit(self) -> int: ...
-    @property
-    def iterations(self) -> int: ...
-    @property
-    def success(self) -> bool: ...
-
-def py_int_mobius_solve(
-    hops: list[RustIntHopState],
-) -> RustIntMobiusResult: ...
-def py_int_simulate_path(x: int, hops: list[RustIntHopState]) -> int: ...
-def py_mobius_refine_int(
-    x_approx: float,
-    hops: list[RustIntHopState],
-    max_input: float | None = None,
-) -> RustIntMobiusResult: ...
+    def begin_v4_snapshot_stream(self) -> None: ...
+    def insert_v4_pool_snapshot(
+        self, pool_manager: str, pool_id_hex: str, tick_data: dict[int, tuple[int, int]]
+    ) -> None: ...
+    def finish_v4_snapshot(self) -> None: ...
 
 __all__ = [
     "AlloyProvider",
@@ -659,16 +920,29 @@ __all__ = [
     "Contract",
     "LogData",
     "LogFilter",
-    "RustArbResult",
-    "RustArbSolver",
-    "RustHopState",
-    "RustIntMobiusResult",
-    "RustPoolCache",
-    "RustTickRangeCrossing",
-    "RustV3TickRangeHop",
-    "RustV3TickRangeSequence",
+    "Pool",
+    "PyBot",
+    "Token",
     "TransactionData",
     "TransactionReceiptData",
+    "UniswapArbEngine",
+    "cl_add_delta",
+    "cl_compute_swap_step_v3",
+    "cl_compute_swap_step_v4",
+    "cl_div_rounding_up",
+    "cl_get_amount0_delta",
+    "cl_get_amount1_delta",
+    "cl_get_next_sqrt_price_from_amount0_rounding_up",
+    "cl_get_next_sqrt_price_from_amount1_rounding_down",
+    "cl_get_next_sqrt_price_from_input",
+    "cl_get_next_sqrt_price_from_output",
+    "cl_least_significant_bit",
+    "cl_max_usable_tick",
+    "cl_min_usable_tick",
+    "cl_most_significant_bit",
+    "cl_muldiv",
+    "cl_muldiv_rounding_up",
+    "cl_simple_mul_div",
     "decode",
     "decode_return_data",
     "decode_single",
@@ -678,8 +952,5 @@ __all__ = [
     "get_function_selector",
     "get_sqrt_ratio_at_tick",
     "get_tick_at_sqrt_ratio",
-    "py_int_mobius_solve",
-    "py_int_simulate_path",
-    "py_mobius_refine_int",
     "to_checksum_address",
 ]

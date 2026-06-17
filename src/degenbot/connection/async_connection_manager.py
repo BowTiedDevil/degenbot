@@ -1,4 +1,5 @@
 """Async Web3 provider connection manager."""
+
 from json import JSONDecodeError
 from typing import TYPE_CHECKING, cast
 

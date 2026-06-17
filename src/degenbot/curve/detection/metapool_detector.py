@@ -49,7 +49,7 @@ def detect_metapool(
 
     """
     for registry_address in registry_addresses:
-        try:
+        try:  # noqa:PLW0717
             is_meta_result = io.call_raw(
                 {
                     "to": registry_address,

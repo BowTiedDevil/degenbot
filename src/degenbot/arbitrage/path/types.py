@@ -1,4 +1,5 @@
 """Types for arbitrage path construction and solver input."""
+
 from dataclasses import dataclass
 
 from degenbot.erc20 import Erc20Token

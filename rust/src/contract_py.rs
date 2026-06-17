@@ -11,7 +11,7 @@ use pyo3::types::{PyBool, PyBytes, PyList};
 use std::sync::Arc;
 
 /// Python wrapper for a Contract.
-#[pyclass(name = "Contract")]
+#[pyclass(name = "Contract", skip_from_py_object)]
 pub struct PyContract {
     contract: Contract,
 }
@@ -293,6 +293,7 @@ fn abi_value_to_python<'py>(
 }
 
 /// Add contract module to Python module.
+#[allow(clippy::missing_errors_doc)]
 pub fn add_contract_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyContract>()?;
     m.add_function(wrap_pyfunction!(encode_function_call, m)?)?;

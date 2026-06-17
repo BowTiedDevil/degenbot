@@ -1,4 +1,5 @@
 """Alembic migration environment configuration."""
+
 import logging.config
 import os
 
