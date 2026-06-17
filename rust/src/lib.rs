@@ -123,13 +123,7 @@ fn degenbot_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Möbius optimizer module
     optimizers::mobius_py::add_mobius_module(m)?;
 
-    // V2 block engine (PoC)
-    m.add_class::<optimizers::v2_block_engine::PyV2ArbEngine>()?;
-
-    // V3 block engine
-    m.add_class::<optimizers::v3_block_engine::PyV3ArbEngine>()?;
-
-    // Uniswap mixed V2/V3 engine
+    // Uniswap mixed V2/V3/V4 engine
     m.add_class::<optimizers::uniswap_engine::PyUniswapArbEngine>()?;
 
     // BotCore — Rust-owned state

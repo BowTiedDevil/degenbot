@@ -327,7 +327,6 @@ impl UniswapEngine {
 
         if v3_touched {
             self.v3_engine.expire_buffered_events(block_number);
-            self.v3_engine.rebuild_and_solve(block_number);
         }
         if v4_touched {
             self.v4_engine.expire_buffered_events(block_number);

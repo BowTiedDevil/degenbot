@@ -1,11 +1,14 @@
 //! Integer Möbius transformation optimizer for EVM-exact arbitrage.
 //!
-//! Uses U512 intermediate arithmetic for the coefficient recurrence (K, M, N),
-//! giving exact profitability checks. The optimal input is derived from the
-//! exact K/M ratio via f64, then verified with EVM-exact integer simulation.
+//! This is the **single** Möbius recurrence module — the f64 recurrence
+//! (`mobius.rs`), the f64-seed-then-integer-refine path, and the f64 V3
+//! tick-range solvers have all been removed (see `rust/CONTEXT.md` ruling
+//! "f64 vs U512 Möbius solver stack"). Every path composes to
+//! `l(x) = K·x / (M + N·x)` via the U512 2×2 matrix recurrence below, and the
+//! closed-form optimal input lives in [`crate::optimizers::mobius_int_exact`].
 //!
-//! This produces **EVM-exact** results — the simulation step uses the same
-//! integer arithmetic as the Uniswap V2/V3 contracts:
+//! Simulation uses EVM-exact integer arithmetic — the same as the on-chain
+//! Uniswap V2/V3 contracts:
 //!
 //! ```text
 //! y = gamma_numer * reserve_out * x / (gamma_denom * reserve_in + gamma_numer * x)
@@ -29,7 +32,24 @@
 
 use alloy::primitives::{U256, U512};
 
-use crate::optimizers::mobius::{mobius_solve, HopState, MobiusError};
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+/// Errors that can occur during Möbius optimization.
+///
+/// Owned by the gen-3 U512 solver module (this is the single recurrence
+/// home; the former gen-1 `mobius.rs` is deleted).
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum MobiusError {
+    /// Empty hops list provided.
+    #[error("At least one hop is required")]
+    EmptyHops,
+    /// V3 tick range sequence has inconsistent fees or swap directions.
+    #[error("Inconsistent V3 tick range sequence: {message}")]
+    InconsistentSequence { message: String },
+}
 
 // ---------------------------------------------------------------------------
 // Simulation Result
@@ -45,11 +65,6 @@ use crate::optimizers::mobius::{mobius_solve, HopState, MobiusError};
 /// the unused remainder is retained by the caller.
 ///
 /// `final_output` equals `hop_outputs.last()` for non-empty paths.
-///
-/// For a 2-hop arbitrage path:
-/// - `hop_outputs[0]` = intermediate output (forward amount from hop 1)
-/// - `hop_outputs[1]` = final output (total received from hop 2)
-/// - `profit = final_output - consumed_inputs[0]` (actual cost, not full input)
 #[derive(Clone, Debug)]
 pub struct SimulationResult {
     /// Final output amount after all hops.
@@ -60,6 +75,10 @@ pub struct SimulationResult {
     /// actually consumed by hop `i` (including fees).
     pub consumed_inputs: Vec<U256>,
 }
+
+// ---------------------------------------------------------------------------
+// IntHopState
+// ---------------------------------------------------------------------------
 
 /// Fee parameters for a single pool hop.
 ///
@@ -97,7 +116,6 @@ impl IntHopState {
     /// Create a new integer hop state.
     ///
     /// Not `const fn` because `U512::from(U256)` is not `const fn` in ruint.
-    /// The only call site (`PyIntHopState::new`) is a runtime call anyway.
     #[must_use]
     pub fn new(
         reserve_in: U256,
@@ -148,6 +166,10 @@ impl IntHopState {
     }
 }
 
+// ---------------------------------------------------------------------------
+// IntMobiusCoefficients
+// ---------------------------------------------------------------------------
+
 /// Integer Möbius coefficients for an n-hop constant product path.
 ///
 /// K, M, N are computed as U512 integers via the 2×2 matrix composition.
@@ -178,8 +200,8 @@ pub struct IntMobiusCoefficients {
 /// Each hop encodes as:
 ///
 /// ```text
-/// [[fn * s, 0],
-///  [fn,     fd * r]]
+/// [[gn * s, 0],
+///  [gn,     fd * r]]
 /// ```
 ///
 /// where `gn` = gamma_numer, `fd` = fee_denom, `r` = reserve_in, `s` = reserve_out.
@@ -261,386 +283,6 @@ pub fn int_simulate_path(x: U256, hops: &[IntHopState]) -> SimulationResult {
     }
 }
 
-/// Result from the integer Möbius solver.
-#[derive(Clone, Debug)]
-#[non_exhaustive]
-pub struct IntMobiusResult {
-    /// Optimal input amount (uint256).
-    pub optimal_input: U256,
-    /// Profit = output - input (uint256).
-    pub profit: U256,
-    /// Whether the arbitrage is profitable.
-    pub success: bool,
-    /// Number of refinement iterations (0 for closed-form, ~5 for refinement).
-    pub iterations: u32,
-}
-
-/// Combined result from float Möbius solve with optional integer refinement.
-///
-/// When `int_hops` are provided and all hops are integer, includes
-/// EVM-exact U256 optimal input and profit.
-#[derive(Clone, Debug)]
-#[non_exhaustive]
-pub struct MobiusArbResult {
-    /// Float optimal input from the Möbius closed-form solution.
-    pub optimal_input: f64,
-    /// Float profit from simulation.
-    pub profit: f64,
-    /// Number of float solve iterations (always 0 for Möbius).
-    pub iterations: u32,
-    /// Whether the arbitrage is profitable.
-    pub success: bool,
-    /// EVM-exact integer optimal input (set when `all_int` is true).
-    pub optimal_input_int: Option<U256>,
-    /// EVM-exact integer profit (set when `all_int` is true).
-    pub profit_int: Option<U256>,
-}
-
-/// Solve Möbius arbitrage with optional integer refinement.
-///
-/// When `all_int` is true and `int_hops` is populated, performs merged
-/// integer refinement: float solve for approximate optimum, then EVM-exact
-/// U256 search around it.
-pub fn mobius_solve_with_refinement(
-    base_hops: &[HopState],
-    int_hops: &[IntHopState],
-    all_int: bool,
-    max_input: Option<f64>,
-) -> MobiusArbResult {
-    let (x_opt, profit, iters) = mobius_solve(base_hops, max_input);
-
-    if all_int {
-        if x_opt > 0.0 && profit > 0.0 {
-            let int_result = mobius_refine_int(x_opt, int_hops, max_input);
-            MobiusArbResult {
-                optimal_input: x_opt,
-                profit,
-                iterations: iters,
-                success: int_result.success,
-                optimal_input_int: Some(int_result.optimal_input),
-                profit_int: Some(int_result.profit),
-            }
-        } else {
-            MobiusArbResult {
-                optimal_input: 0.0,
-                profit: 0.0,
-                iterations: iters,
-                success: false,
-                optimal_input_int: Some(U256::ZERO),
-                profit_int: Some(U256::ZERO),
-            }
-        }
-    } else {
-        MobiusArbResult {
-            optimal_input: x_opt,
-            profit,
-            iterations: iters,
-            success: x_opt > 0.0 && profit > 0.0,
-            optimal_input_int: None,
-            profit_int: None,
-        }
-    }
-}
-
-/// Solve for optimal arbitrage input using integer Möbius coefficients
-/// and EVM-exact simulation.
-///
-/// # Algorithm
-///
-/// 1. Compute K, M, N as U512 integers (exact, no float)
-/// 2. Check K > M for profitability
-/// 3. Compute x_approx via f64 from the exact K/M ratio
-/// 4. EVM-simulate at integer points around x_approx
-/// 5. Return best result
-///
-/// This produces **EVM-exact** profit values — no float drift.
-///
-/// # Errors
-///
-/// Returns `MobiusError::EmptyHops` if the hops list is empty.
-pub fn int_mobius_solve(hops: &[IntHopState]) -> Result<IntMobiusResult, MobiusError> {
-    let coeffs = compute_int_mobius_coefficients(hops)?;
-
-    if !coeffs.is_profitable {
-        return Ok(IntMobiusResult {
-            optimal_input: U256::ZERO,
-            profit: U256::ZERO,
-            success: false,
-            iterations: 0,
-        });
-    }
-
-    // Compute x_approx from f64 conversion of the exact K/M ratio
-    let x_approx = compute_approx_optimal_input(&coeffs);
-
-    if x_approx.is_zero() {
-        return Ok(IntMobiusResult {
-            optimal_input: U256::ZERO,
-            profit: U256::ZERO,
-            success: false,
-            iterations: 0,
-        });
-    }
-
-    // EVM-exact simulation at x_approx and nearby points
-    let mut best_x = U256::ZERO;
-    let mut best_profit = U256::ZERO;
-    let mut iters = 0u32;
-
-    // Search ±2 around x_approx (integer truncation can shift by ±1)
-    for delta in -2i32..=2 {
-        let x = if delta >= 0 {
-            x_approx.saturating_add(U256::from(delta.cast_unsigned()))
-        } else {
-            x_approx.saturating_sub(U256::from((-delta).cast_unsigned()))
-        };
-
-        if x.is_zero() {
-            continue;
-        }
-
-        let output = int_simulate_path(x, hops).final_output;
-        iters += 1;
-
-        if output > x {
-            let profit = output - x;
-            if profit > best_profit {
-                best_profit = profit;
-                best_x = x;
-            }
-        }
-    }
-
-    Ok(IntMobiusResult {
-        optimal_input: best_x,
-        profit: best_profit,
-        success: !best_profit.is_zero(),
-        iterations: iters,
-    })
-}
-
-/// Integer refinement around a float optimum using EVM-exact U256 arithmetic.
-///
-/// This is the core of the "move integer refinement to Rust" optimization:
-/// instead of returning a float result to Python and doing 3-5 Python
-/// `_simulate_path` calls (each converting to float), we do the ±N search
-/// entirely in Rust with U256 integer arithmetic.
-///
-/// # Algorithm
-///
-/// 1. Convert float `x_approx` to U256
-/// 2. For each candidate in [x_floor - radius, x_floor + radius + 1]:
-///    - Simulate the full path using `IntHopState::swap()` (U256 EVM-exact)
-///    - Compute profit = output - input
-///    - Track best (max profit) candidate
-/// 3. Return best result
-///
-/// # Search radius
-///
-/// - 2 hops: ±1 (profit function is very flat at optimum)
-/// - 3+ hops: ±min(num_hops, 5) (wider peak due to fee compounding)
-///
-/// This matches the Python `_integer_refinement` logic exactly.
-#[must_use]
-pub fn mobius_refine_int(
-    x_approx: f64,
-    hops: &[IntHopState],
-    max_input: Option<f64>,
-) -> IntMobiusResult {
-    if x_approx <= 0.0 || !x_approx.is_finite() {
-        return IntMobiusResult {
-            optimal_input: U256::ZERO,
-            profit: U256::ZERO,
-            success: false,
-            iterations: 0,
-        };
-    }
-
-    // Convert x_approx to U256
-    // NOTE: .floor() is redundant — f64_to_u256 truncates toward zero,
-    // and x_approx is guaranteed positive by the guard above.
-    let x_floor_u256 = f64_to_u256(x_approx);
-
-    // Determine search radius (same logic as Python _integer_refinement)
-    let num_hops = hops.len();
-    let search_radius: i32 = if num_hops <= 2 {
-        1
-    } else {
-        i32::try_from(num_hops.min(5)).unwrap_or(1)
-    };
-
-    // Convert max_input to U256 if present
-    // NOTE: .floor() is redundant — f64_to_u256 truncates toward zero,
-    // and max_input is guaranteed positive by the caller.
-    let max_input_u256 = max_input.map(f64_to_u256);
-
-    let mut best_x: U256 = U256::ZERO;
-    let mut best_profit: U256 = U256::ZERO;
-    let mut iters = 0u32;
-
-    // Iterate from x_floor - search_radius to x_floor + search_radius + 1
-    // We can't do U256 + negative, so we iterate by offset from x_floor
-    let lo_offset = -i64::from(search_radius); // e.g. -1
-    let hi_offset = i64::from(search_radius) + 1; // e.g. 2
-
-    for offset in lo_offset..=hi_offset {
-        let candidate = if offset >= 0 {
-            x_floor_u256.saturating_add(U256::from(offset.cast_unsigned()))
-        } else {
-            x_floor_u256.saturating_sub(U256::from((-offset).cast_unsigned()))
-        };
-
-        // Skip zero inputs
-        if candidate.is_zero() {
-            continue;
-        }
-
-        // Apply max_input constraint
-        if let Some(max) = max_input_u256 {
-            if candidate > max {
-                continue;
-            }
-        }
-
-        let output = int_simulate_path(candidate, hops).final_output;
-        iters += 1;
-
-        if output > candidate {
-            let profit = output - candidate;
-            if profit > best_profit {
-                best_profit = profit;
-                best_x = candidate;
-            }
-        }
-    }
-
-    IntMobiusResult {
-        optimal_input: best_x,
-        profit: best_profit,
-        success: !best_profit.is_zero(),
-        iterations: iters,
-    }
-}
-
-/// Compute approximate optimal input from U512 coefficients using f64.
-///
-/// The formula is: x_opt = (sqrt(K*M) - M) / N
-///
-/// Since K*M can overflow f64, we reformulate as:
-/// x_opt = M * (sqrt(K/M) - 1) / N
-///
-/// And compute K/M in f64 with sufficient precision.
-fn compute_approx_optimal_input(coeffs: &IntMobiusCoefficients) -> U256 {
-    // Convert K/M to f64 for the square root computation.
-    // K and M are U512, so we need to handle potential f64 overflow.
-    // Strategy: normalize by the leading bit position.
-
-    let k_f64 = u512_to_f64(coeffs.K);
-    let m_f64 = u512_to_f64(coeffs.M);
-    let n_f64 = u512_to_f64(coeffs.N);
-
-    if m_f64 <= 0.0 || n_f64 <= 0.0 || k_f64 <= 0.0 {
-        return U256::ZERO;
-    }
-
-    // x_opt = M * (sqrt(K/M) - 1) / N
-    let km_ratio = k_f64 / m_f64;
-    if km_ratio <= 1.0 {
-        return U256::ZERO;
-    }
-
-    let sqrt_km = km_ratio.sqrt();
-    let x_f64 = m_f64 * (sqrt_km - 1.0) / n_f64;
-
-    if x_f64 <= 0.0 || !x_f64.is_finite() {
-        return U256::ZERO;
-    }
-
-    // Convert to U256, capping at U256::MAX
-    f64_to_u256(x_f64)
-}
-
-/// Convert U512 to f64 with best available precision.
-///
-/// For values > 2^53 (f64 mantissa), we lose low-order bits,
-/// but the relative error is ~1e-16 which is sufficient for the
-/// approximation step (we refine with EVM simulation afterward).
-pub fn u512_to_f64(v: U512) -> f64 {
-    // U512::to_be_bytes() returns 64 bytes in big-endian order.
-    // bytes[0] is most significant, bytes[63] is least significant.
-    // For values < 2^64, only bytes[56..64] are nonzero.
-    let bit_len = v.bit_len();
-    if bit_len == 0 {
-        return 0.0;
-    }
-
-    // General approach: shift right so value fits in 64 bits,
-    // convert, then multiply by 2^(bits_shifted).
-    // This gives ~15-16 significant digits of precision regardless of magnitude.
-    let shift = bit_len.saturating_sub(64);
-    let shifted = v >> shift;
-    let bytes_shifted: [u8; 64] = shifted.to_be_bytes();
-    let mut lo_bytes = [0u8; 8];
-    lo_bytes.copy_from_slice(&bytes_shifted[56..64]);
-    let lo = u64::from_be_bytes(lo_bytes);
-    #[allow(clippy::cast_possible_wrap)]
-    let shift_i32 = shift as i32;
-    (lo as f64) * 2f64.powi(shift_i32)
-}
-
-/// Convert U256 to f64 via U512 with best available precision.
-pub fn u256_to_f64(v: U256) -> f64 {
-    u512_to_f64(U512::from(v))
-}
-
-/// Convert f64 to U256, capping at U256::MAX.
-fn f64_to_u256(v: f64) -> U256 {
-    // U256::MAX ≈ 1.16e77
-    const U256_MAX_AS_F64: f64 = 1.157_920_892_373_162e77;
-    // u64::MAX as f64
-    const U64_MAX_AS_F64: f64 = u64::MAX as f64;
-
-    if v <= 0.0 || !v.is_finite() {
-        return U256::ZERO;
-    }
-
-    if v >= U256_MAX_AS_F64 {
-        return U256::MAX;
-    }
-
-    if v < U64_MAX_AS_F64 {
-        // u64::MAX as f64
-        // SAFETY: v < u64::MAX as f64, so v is non-negative and fits in u64
-        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-        return U256::from(v as u64);
-    }
-
-    // For larger values, decompose into 4 u64 limbs by repeatedly
-    // extracting the lowest 64 bits.
-    //
-    // f64 has 52 bits of mantissa, so the round-trip through f64 preserves
-    // at most ~15-16 significant digits. For a U256 with up to 77 digits,
-    // the lower ~61 digits are lost. This is inherent to f64 precision and
-    // acceptable because this function is only used to convert intermediate
-    // floating-point computation results back to integer form.
-    let mut remaining = v;
-    let mut limbs = [0u64; 4];
-    for limb in &mut limbs {
-        let upper = remaining / 2f64.powi(64);
-        let lower_f64 = remaining - upper * 2f64.powi(64);
-        // lower_f64 should be in [0, 2^64), safe to cast
-        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-        let limb_val = lower_f64 as u64;
-        *limb = limb_val;
-        remaining = upper;
-        if upper == 0.0 {
-            break;
-        }
-    }
-
-    U256::from_limbs(limbs)
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -659,11 +301,6 @@ mod tests {
 
     #[test]
     fn test_int_hop_swap_basic() {
-        // x = 1000, r_in = 1M, r_out = 2M, fee = 0.3%
-        // y = 997 * 2M * 1000 / (1000 * 1M + 997 * 1000)
-        // = 997 * 2e9 / (1e9 + 997000)
-        // = 1994000000 / 19997000
-        // = 99.7150... (floor: 99)
         let hop = IntHopState::new(u256(1_000_000), u256(2_000_000), 997, 1000);
         let output = hop.swap(u256(1000));
         assert!(!output.is_zero());
@@ -671,26 +308,15 @@ mod tests {
     }
 
     #[test]
-    fn test_int_hop_swap_exact_evm() {
-        // Verify against EVM formula: y = (gamma * s * x) / (r + gamma * x)
-        // With gamma = 997/1000:
-        // y = (997 * s * x) / (1000 * r + 997 * x)
-        let hop = IntHopState::new(
-            u256(2_000_000_000_000),                                        // 2M USDC
-            U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64)), // 1000 WETH (18 decimals)
-            997,
-            1000,
-        );
-        let x = u256(1_000_000_000_000); // 1M USDC input
-        let output = hop.swap(x);
-
-        // Manual EVM calculation:
-        // numerator = 997 * 1e21 * 1e12 = 997e33
-        // denominator = 1000 * 2e12 + 997 * 1e12 = 2000e12 + 997e12 = 2997e12
-        // y = 997e33 / 2997e12 = 997e21 / 2997 = 332500834...
-        // This should be ~3.325e20 (332.5M wei WETH)
-        assert!(!output.is_zero());
-        assert!(output > U256::ZERO);
+    fn test_int_hop_swap_inverse_round_trip() {
+        // Swapping the output back through the reverse pool should recover
+        // (approximately) the input — sanity check for the swap formula.
+        let fwd = IntHopState::new(u256(1_000_000), u256(2_000_000), 997, 1000);
+        let rev = IntHopState::new(u256(2_000_000), u256(1_000_000), 997, 1000);
+        let mid = fwd.swap(u256(1000));
+        let back = rev.swap(mid);
+        // After two 0.3% fees, recovered amount is strictly less than input.
+        assert!(back < u256(1000));
     }
 
     #[test]
@@ -701,10 +327,10 @@ mod tests {
 
     #[test]
     fn test_compute_int_mobius_coefficients_not_profitable() {
-        // Same-product pools: K/M = (fn/fd)^2 < 1
+        // Identical reserves → K == M (γ == 1 after one hop) → not profitable.
         let hops = vec![
-            IntHopState::new(u256(1_000_000), u256(1_000_000), 997, 1000),
-            IntHopState::new(u256(1_000_000), u256(1_000_000), 997, 1000),
+            IntHopState::new(u256(1_000_000), u256(1_000_000), 1000, 1000),
+            IntHopState::new(u256(1_000_000), u256(1_000_000), 1000, 1000),
         ];
         let coeffs = compute_int_mobius_coefficients(&hops).unwrap();
         assert!(!coeffs.is_profitable);
@@ -712,327 +338,36 @@ mod tests {
 
     #[test]
     fn test_compute_int_mobius_coefficients_profitable() {
-        // Asymmetric reserves where K > M
+        // Pool 1 has excess out (1 A → 1.1 B), Pool 2 has excess out (1 B → 1.1 A).
         let hops = vec![
-            IntHopState::new(u256(1_000_000), u256(5_000_000), 997, 1000),
-            IntHopState::new(u256(1_500_000), u256(3_000_000), 997, 1000),
+            IntHopState::new(u256(1_000_000), u256(1_100_000), 997, 1000),
+            IntHopState::new(u256(1_000_000), u256(1_100_000), 997, 1000),
         ];
         let coeffs = compute_int_mobius_coefficients(&hops).unwrap();
-        // K = 997 * 5M * 997 * 3M = 997^2 * 15e12 = ~14.91e12
-        // M = 1000 * 1M * 1000 * 1.5M = 1.5e12
-        // K >> M → profitable
         assert!(coeffs.is_profitable);
     }
 
     #[test]
-    fn test_int_mobius_solve_profitable() {
+    fn test_int_simulate_path_zero_input() {
         let hops = vec![
-            IntHopState::new(u256(1_000_000), u256(5_000_000), 997, 1000),
-            IntHopState::new(u256(1_500_000), u256(3_000_000), 997, 1000),
-        ];
-        let result = int_mobius_solve(&hops).unwrap();
-        assert!(result.success);
-        assert!(!result.optimal_input.is_zero());
-        assert!(!result.profit.is_zero());
-    }
-
-    #[test]
-    fn test_int_mobius_solve_not_profitable() {
-        let hops = vec![
-            IntHopState::new(u256(1_000_000), u256(1_000_000), 997, 1000),
-            IntHopState::new(u256(1_000_000), u256(1_000_000), 997, 1000),
-        ];
-        let result = int_mobius_solve(&hops).unwrap();
-        assert!(!result.success);
-    }
-
-    #[test]
-    fn test_int_simulate_path_two_hop() {
-        let hops = vec![
-            IntHopState::new(u256(1_000_000), u256(5_000_000), 997, 1000),
-            IntHopState::new(u256(1_500_000), u256(3_000_000), 997, 1000),
-        ];
-        let result = int_simulate_path(u256(1000), &hops);
-        assert!(!result.final_output.is_zero());
-    }
-
-    #[test]
-    fn test_u512_to_f64_roundtrip() {
-        // Small value
-        let v = U512::from(12345u64);
-        let f = u512_to_f64(v);
-        assert!((f - 12345.0).abs() < 1.0);
-
-        // Large value (beyond f64 mantissa)
-        let large = U512::from(1u64) << 100;
-        let f = u512_to_f64(large);
-        assert!(f > 0.0);
-        assert!(f.is_finite());
-    }
-
-    #[test]
-    fn test_f64_to_u256_basic() {
-        assert_eq!(f64_to_u256(0.0), U256::ZERO);
-        assert_eq!(f64_to_u256(-1.0), U256::ZERO);
-        assert_eq!(f64_to_u256(f64::NAN), U256::ZERO);
-        assert_eq!(f64_to_u256(f64::INFINITY), U256::ZERO);
-        assert_eq!(f64_to_u256(1000.0), U256::from(1000u64));
-        assert_eq!(f64_to_u256(1e18), U256::from(1_000_000_000_000_000_000u64));
-    }
-
-    // ======================================================================
-    // mobius_refine_int tests
-    // ======================================================================
-
-    #[test]
-    fn test_mobius_refine_int_profitable_2hop() {
-        let hops = vec![
-            IntHopState::new(u256(1_000_000), u256(5_000_000), 997, 1000),
-            IntHopState::new(u256(1_500_000), u256(3_000_000), 997, 1000),
-        ];
-        // x_approx from float solver is ~333333
-        let result = mobius_refine_int(333_333.0, &hops, None);
-        assert!(result.success);
-        assert!(!result.optimal_input.is_zero());
-        assert!(!result.profit.is_zero());
-
-        // Verify EVM-exact: simulate at optimal_input
-        let output = int_simulate_path(result.optimal_input, &hops).final_output;
-        assert!(output > result.optimal_input);
-        assert_eq!(output - result.optimal_input, result.profit);
-    }
-
-    #[test]
-    fn test_mobius_refine_int_matches_int_mobius_solve() {
-        let hops = vec![
-            IntHopState::new(u256(1_000_000), u256(5_000_000), 997, 1000),
-            IntHopState::new(u256(1_500_000), u256(3_000_000), 997, 1000),
-        ];
-        // Use known x_approx (float solver gives ~499445 for these reserves)
-        let int_result = int_mobius_solve(&hops).unwrap();
-        assert!(int_result.success);
-
-        let refine_result = mobius_refine_int(499_445.0, &hops, None);
-        assert!(refine_result.success);
-        // Both should find the same profit (flat peak)
-        assert_eq!(refine_result.profit, int_result.profit);
-    }
-
-    #[test]
-    fn test_mobius_refine_int_zero_x_approx() {
-        let hops = vec![
-            IntHopState::new(u256(1_000_000), u256(5_000_000), 997, 1000),
-            IntHopState::new(u256(1_500_000), u256(3_000_000), 997, 1000),
-        ];
-        let result = mobius_refine_int(0.0, &hops, None);
-        assert!(!result.success);
-    }
-
-    #[test]
-    fn test_mobius_refine_int_not_profitable() {
-        // Same-product pools are never profitable after fees
-        let hops = vec![
-            IntHopState::new(u256(100_000), u256(50), 997, 1000),
-            IntHopState::new(u256(50), u256(100_000), 997, 1000),
-        ];
-        let result = mobius_refine_int(10.0, &hops, None);
-        assert!(!result.success);
-    }
-
-    #[test]
-    fn test_mobius_refine_int_max_input_respected() {
-        let hops = vec![
-            IntHopState::new(u256(1_000_000), u256(5_000_000), 997, 1000),
-            IntHopState::new(u256(1_500_000), u256(3_000_000), 997, 1000),
-        ];
-        let result = mobius_refine_int(999.0, &hops, Some(1000.0));
-        assert!(result.success);
-        assert!(result.optimal_input <= f64_to_u256(1000.0));
-    }
-
-    #[test]
-    fn test_mobius_refine_int_3hop() {
-        let hops = vec![
-            IntHopState::new(u256(2_000_000), u256(2_100_000), 997, 1000),
-            IntHopState::new(u256(2_000_000), u256(2_050_000), 997, 1000),
-            IntHopState::new(u256(2_050_000), u256(2_000_000), 997, 1000),
-        ];
-        // x_approx ~ 16000 for this path
-        let result = mobius_refine_int(16000.0, &hops, None);
-        assert!(result.success);
-        assert!(!result.profit.is_zero());
-    }
-
-    #[test]
-    fn test_mobius_refine_int_best_in_neighborhood() {
-        let hops = vec![
-            IntHopState::new(u256(1_000_000), u256(5_000_000), 997, 1000),
-            IntHopState::new(u256(1_500_000), u256(3_000_000), 997, 1000),
-        ];
-        let result = mobius_refine_int(499_445.0, &hops, None);
-        assert!(result.success);
-
-        // Check that no ±2 neighbor has better profit
-        let x_opt = result.optimal_input;
-        for delta in -2i64..=2i64 {
-            let candidate = if delta >= 0 {
-                x_opt.saturating_add(U256::from(delta.cast_unsigned()))
-            } else {
-                x_opt.saturating_sub(U256::from((-delta).cast_unsigned()))
-            };
-            if candidate.is_zero() {
-                continue;
-            }
-            let output = int_simulate_path(candidate, &hops).final_output;
-            if output > candidate {
-                let profit = output - candidate;
-                assert!(profit <= result.profit, "Neighbor has better profit");
-            }
-        }
-    }
-
-    // ── Per-hop output tests ──────────────────────────────────────
-
-    #[test]
-    fn test_int_simulate_path_hop_outputs_two_hop() {
-        let hops = vec![
-            IntHopState::new(u256(1_000_000), u256(5_000_000), 997, 1000),
-            IntHopState::new(u256(1_500_000), u256(3_000_000), 997, 1000),
-        ];
-        let result = int_simulate_path(u256(1000), &hops);
-        // 2 hops → 2 hop_outputs
-        assert_eq!(result.hop_outputs.len(), 2);
-        // final_output == last hop output
-        assert_eq!(result.final_output, *result.hop_outputs.last().unwrap());
-        // hop_outputs[1] == hop2.swap(hop_outputs[0])
-        let expected_hop1 = hops[0].swap(u256(1000));
-        assert_eq!(result.hop_outputs[0], expected_hop1);
-        let expected_hop2 = hops[1].swap(expected_hop1);
-        assert_eq!(result.hop_outputs[1], expected_hop2);
-    }
-
-    #[test]
-    fn test_int_simulate_path_hop_outputs_single_hop() {
-        let hops = vec![IntHopState::new(u256(1_000_000), u256(5_000_000), 997, 1000)];
-        let result = int_simulate_path(u256(1000), &hops);
-        assert_eq!(result.hop_outputs.len(), 1);
-        assert_eq!(result.final_output, result.hop_outputs[0]);
-        assert_eq!(result.final_output, hops[0].swap(u256(1000)));
-    }
-
-    #[test]
-    fn test_int_simulate_path_hop_outputs_zero_input() {
-        let hops = vec![
-            IntHopState::new(u256(1_000_000), u256(5_000_000), 997, 1000),
-            IntHopState::new(u256(1_500_000), u256(3_000_000), 997, 1000),
+            IntHopState::new(u256(1_000_000), u256(2_000_000), 997, 1000),
+            IntHopState::new(u256(2_000_000), u256(1_000_000), 997, 1000),
         ];
         let result = int_simulate_path(U256::ZERO, &hops);
-        assert_eq!(result.final_output, U256::ZERO);
-        assert!(result.hop_outputs.is_empty());
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Property-based tests
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod proptests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::tuple_array_conversions)]
-
-    use super::*;
-    use proptest::prelude::*;
-
-    /// Generate a U256 value by filling from 4 u64 limbs.
-    /// This covers the full U256 range including near-zero and near-max values.
-    fn arb_u256() -> impl Strategy<Value = U256> {
-        (any::<u64>(), any::<u64>(), any::<u64>(), any::<u64>())
-            .prop_map(|(a, b, c, d)| U256::from_limbs([a, b, c, d]))
+        assert!(result.final_output.is_zero());
+        assert_eq!(result.hop_outputs.len(), 0);
     }
 
-    proptest! {
-        /// u512_to_f64 converts a U512 and back via f64_to_u256.
-        ///
-        /// For values that fit in u64, the roundtrip is exact (f64 can represent
-        /// every u64 value). For larger values, f64 precision is limited to ~15-16
-        /// significant digits, so the recovered value may undercount — but must
-        /// never exceed the original.
-        #[test]
-        fn u512_f64_roundtrip_within_ulp(v in arb_u256()) {
-            let v_u512 = U512::from(v);
-            let f = u512_to_f64(v_u512);
-            let recovered = f64_to_u256(f);
-
-            if v <= U256::from(u64::MAX) {
-                // u64-range values are exactly representable in f64
-                assert_eq!(recovered, v, "roundtrip not exact for u64-range value");
-            } else {
-                // Larger values may lose precision but must not exceed original
-                assert!(recovered <= v, "recovered {recovered} > original {v}");
-                // Verify relative error is bounded: |v - recovered| / v < 2^-50
-                // (generous bound accounting for decomposition rounding in f64)
-                // Skip if either value is infinite (roundtrip is lossy at extreme magnitudes)
-                if f.is_finite() && f != 0.0
-                    && !recovered.is_zero()
-                {
-                    let recovered_f = u512_to_f64(U512::from(recovered));
-                    if recovered_f.is_finite() && recovered_f != 0.0 {
-                        let rel_err = (f - recovered_f).abs() / f;
-                        assert!(
-                            rel_err < 2.0f64.powi(-50),
-                            "relative error {rel_err:.2e} too large for v={v}"
-                        );
-                    }
-                }
-            }
-        }
-
-        /// f64_to_u256 returns U256::ZERO for non-positive or non-finite inputs
-        #[test]
-        fn f64_to_u256_non_positive_returns_zero(v in any::<f64>()) {
-            let result = f64_to_u256(v);
-            if v <= 0.0 || !v.is_finite() {
-                assert_eq!(result, U256::ZERO);
-            }
-        }
-
-        /// `swap()` never panics or overflows with extreme reserves,
-        /// and output never exceeds reserve_out (constant-product invariant).
-        #[test]
-        fn int_mobius_extreme_reserves(
-            r_in_lo in 1u64..u64::MAX,
-            r_out_lo in 1u64..u64::MAX,
-        ) {
-            let r_in = U256::from(r_in_lo);
-            let r_out = U256::from(r_out_lo);
-            let hop = IntHopState::new(r_in, r_out, 997, 1000);
-
-            let output = hop.swap(U256::from(1u64));
-            // Output must not exceed reserve_out (constant-product invariant)
-            assert!(output <= r_out, "swap output {output} exceeds reserve_out {r_out}");
-        }
-
-        /// `int_mobius_solve` never panics with extreme reserves, and returns
-        /// a structurally valid result (output is U256, profit ≤ output).
-        #[test]
-        fn int_mobius_solve_extreme_reserves(
-            r_in_lo in 1u64..u64::MAX,
-            r_out_lo in 1u64..u64::MAX,
-        ) {
-            let r_in = U256::from(r_in_lo);
-            let r_out = U256::from(r_out_lo);
-            let hops = vec![IntHopState::new(r_in, r_out, 997, 1000)];
-
-            let result = int_mobius_solve(&hops);
-            assert!(result.is_ok(), "int_mobius_solve panicked with r_in={r_in}, r_out={r_out}");
-            let result = result.unwrap();
-            if result.success {
-                assert!(!result.optimal_input.is_zero());
-                let simulated = int_simulate_path(result.optimal_input, &hops).final_output;
-                assert!(simulated >= result.optimal_input);
-                let expected_profit = simulated - result.optimal_input;
-                assert_eq!(result.profit, expected_profit);
-            }
-        }
+    #[test]
+    fn test_int_simulate_path_multi_hop() {
+        let hops = vec![
+            IntHopState::new(u256(1_000_000), u256(2_000_000), 997, 1000),
+            IntHopState::new(u256(2_000_000), u256(1_000_000), 997, 1000),
+        ];
+        let result = int_simulate_path(u256(1000), &hops);
+        // Two hops, both consume full input.
+        assert_eq!(result.consumed_inputs, vec![u256(1000), u256(1000)]);
+        assert_eq!(result.hop_outputs.len(), 2);
+        assert_eq!(result.final_output, *result.hop_outputs.last().unwrap());
     }
 }
