@@ -6,7 +6,8 @@
 //! # Design
 //!
 //! The engine composes:
-//! - A [`V2BlockEngine`] for V2 pool state and constant-product solving
+//! - A [`BotCore`] for V2 pool state and constant-product solving (ADR-003:
+//!   `BotCore` is the single state owner; the engine is a consumer)
 //! - A [`V3BlockEngine`] for V3 pool state, tick ranges, and piecewise V3 solving
 //! - A [`V4BlockEngine`] for V4 pool state (same CL math as V3, different settlement)
 //!
@@ -34,10 +35,11 @@
 //! | [`tests`] | Unit tests |
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use alloy::primitives::{Address, U256};
 
-use crate::optimizers::v2_block_engine::V2BlockEngine;
+use crate::bot_core::BotCore;
 use crate::optimizers::v3_block_engine::V3BlockEngine;
 use crate::optimizers::v4_block_engine::V4BlockEngine;
 
@@ -325,9 +327,15 @@ pub struct ResultBatch {
 
 /// The unified Uniswap engine — owns V2, V3, and V4 pool state and solves
 /// mixed arbitrage paths.
+///
+/// V2 pool state lives in [`BotCore`] (ADR-003: the single Rust state owner,
+/// peer to this engine). The engine holds an `Arc<Mutex<BotCore>>` and reads /
+/// mutates V2 state through it. Lock ordering when nested is
+/// **engine-then-core** — no code path ever nests core-then-engine.
 pub struct UniswapEngine {
-    /// The V2 engine
-    v2_engine: V2BlockEngine,
+    /// V2 pool state owner (ADR-003). V3/V4 state still lives on the
+    /// per-family block engines until Slices 2/3 migrate them.
+    core: Arc<parking_lot::Mutex<BotCore>>,
     /// The V3 engine
     v3_engine: V3BlockEngine,
     /// The V4 engine
@@ -394,7 +402,7 @@ impl UniswapEngine {
     #[must_use] 
     pub fn new() -> Self {
         Self {
-            v2_engine: V2BlockEngine::new(),
+            core: Arc::new(parking_lot::Mutex::new(BotCore::new())),
             v3_engine: V3BlockEngine::new(),
             v4_engine: V4BlockEngine::new(),
             path_pools: HashMap::new(),
@@ -424,5 +432,39 @@ impl UniswapEngine {
             v4_engine: V4BlockEngine::new_with_buffer_max_age(event_buffer_max_age),
             ..Self::new()
         }
+    }
+
+    /// Register a V2 pool by contract address and initial reserves.
+    ///
+    /// Delegates to [`BotCore::register_v2_pool`] (ADR-003: V2 state lives in
+    /// the core). The single fee `(gamma_numer, fee_denom)` is applied
+    /// symmetrically to both swap directions — V2-fork asymmetric fees are a
+    /// future concern. Token0/token1/factory default to zero (the V2 *solve*
+    /// path computes on reserves + fee only; identity is an encoding-layer
+    /// concern).
+    ///
+    /// Returns the assigned `pool_id`. Paths reference this single id and
+    /// select orientation via `zero_for_one` (ADR-003 "Swap Orientation":
+    /// single `PoolEntry` per address, orientation derived at solve).
+    #[must_use]
+    pub fn register_v2_pool(
+        &self,
+        address: Address,
+        reserve0: U256,
+        reserve1: U256,
+        gamma_numer: u64,
+        fee_denom: u64,
+    ) -> u64 {
+        let params = crate::bot_core::RegisterV2PoolParams {
+            address,
+            token0: Address::ZERO,
+            token1: Address::ZERO,
+            reserve0,
+            reserve1,
+            fee_token0: (gamma_numer, fee_denom),
+            fee_token1: (gamma_numer, fee_denom),
+            factory: Address::ZERO,
+        };
+        self.core.lock().register_v2_pool(&params)
     }
 }

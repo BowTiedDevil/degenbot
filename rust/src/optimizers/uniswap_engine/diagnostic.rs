@@ -596,6 +596,11 @@ impl UniswapEngine {
 
         let mut snapshot = DiagnosticPathState::new(path_id, solve_block);
 
+        // ADR-003: V2 state lives in BotCore. One core-lock window covers all
+        // V2 lookups in this loop; V3/V4 state still reads the per-family
+        // block engines (disjoint fields, immutable borrows coexist).
+        let core = self.core.lock();
+
         let type_tags: Vec<&str> = path
             .pools
             .iter()
@@ -609,7 +614,21 @@ impl UniswapEngine {
 
         for (position, pool_ref) in path.pools.iter().enumerate() {
             let engine_state = match pool_ref.hop_type {
-                HopType::V2 => self.v2_engine.diagnostic_pool_state(pool_ref.pool_key),
+                HopType::V2 => core.get_v2_pool_state(pool_ref.pool_key).map(|state| {
+                    let (reserve_in, reserve_out, gamma_numer, fee_denom) =
+                        if pool_ref.zero_for_one {
+                            (state.reserve0, state.reserve1, state.fee_token0.0, state.fee_token0.1)
+                        } else {
+                            (state.reserve1, state.reserve0, state.fee_token1.0, state.fee_token1.1)
+                        };
+                    DiagnosticPoolState::V2 {
+                        address: fmt_addr(state.address),
+                        reserve_in: fmt_u256(reserve_in),
+                        reserve_out: fmt_u256(reserve_out),
+                        fee_denom: format!("0x{fee_denom:x}"),
+                        gamma_numer: format!("0x{gamma_numer:x}"),
+                    }
+                }),
                 HopType::V3 => self.v3_engine.diagnostic_pool_state(pool_ref.pool_key),
                 HopType::V4 => self.v4_engine.diagnostic_pool_state(pool_ref.pool_key),
             };
@@ -651,31 +670,6 @@ impl UniswapEngine {
 // ---------------------------------------------------------------------------
 // Sub-engine accessors
 // ---------------------------------------------------------------------------
-
-impl crate::optimizers::v2_block_engine::V2BlockEngine {
-    /// Return the diagnostic state for the oriented pool identified by
-    /// `pool_key`.
-    #[must_use]
-    pub fn diagnostic_pool_state(&self, pool_key: u64) -> Option<DiagnosticPoolState> {
-        let state = self.get_pool(pool_key)?;
-        let address = self.pool_address_for_key(pool_key)?;
-        Some(DiagnosticPoolState::V2 {
-            address: fmt_addr(address),
-            reserve_in: fmt_u256(state.reserve_in),
-            reserve_out: fmt_u256(state.reserve_out),
-            fee_denom: format!("0x{:x}", state.fee_denom),
-            gamma_numer: format!("0x{:x}", state.gamma_numer),
-        })
-    }
-
-    /// Find the contract address associated with a forward or reverse pool key.
-    fn pool_address_for_key(&self, pool_key: u64) -> Option<Address> {
-        self.pool_addresses()
-            .iter()
-            .find(|(_, (fwd, rev))| *fwd == pool_key || *rev == pool_key)
-            .map(|(addr, _)| *addr)
-    }
-}
 
 impl crate::optimizers::v3_block_engine::V3BlockEngine {
     /// Return the diagnostic state for the pool identified by `pool_key`.
@@ -742,7 +736,7 @@ mod tests {
         let mut engine = UniswapEngine::new();
 
         // V2 pool
-        let v2_fwd = engine.v2_engine().register_pool(
+        let v2_fwd = engine.register_v2_pool(
             Address::from([0x11u8; 20]),
             usdc(1_500_000),
             weth(800),

@@ -900,7 +900,10 @@ impl PyUniswapArbEngine {
         let r0 = crate::alloy_py::extract_python_u256(reserve0)?;
         let r1 = crate::alloy_py::extract_python_u256(reserve1)?;
 
-        Ok(self.engine.lock().v2_engine().register_pool(addr, r0, r1, gamma_numer, fee_denom))
+        // ADR-003: V2 state lives in BotCore. The engine delegates registration
+        // to the core and returns the single `pool_id` (orientation is selected
+        // at solve time via `zero_for_one`, not by a separate reverse id).
+        Ok(self.engine.lock().register_v2_pool(addr, r0, r1, gamma_numer, fee_denom))
     }
 
     /// Register a V3 pool by contract address and initial state.
@@ -2258,17 +2261,21 @@ impl PyUniswapArbEngine {
         }
 
         let mut hops: Vec<HopInfo> = Vec::new();
-        let mut engine = self.engine.lock();
+        let engine = self.engine.lock();
+        // ADR-003: V2 state lives in BotCore. One core-lock window covers all
+        // V2 lookups in this loop (engine-then-core ordering; V3/V4 state still
+        // reads the per-family engines, which are disjoint fields).
+        let core = engine.core.lock();
 
         for pool_ref in &pool_refs {
             match pool_ref.hop_type {
                 HopType::V2 => {
-                    let v2 = engine.v2_engine();
-                    let addr = v2.pool_addresses()
-                        .iter()
-                        .find(|(_, &(fwd, _))| fwd == pool_ref.pool_key)
-                        .map(|(a, _)| format!("{a}"));
-                    let gamma_numer = v2.get_pool(pool_ref.pool_key).map(|p| p.gamma_numer);
+                    let state = core.get_v2_pool_state(pool_ref.pool_key);
+                    let addr = state.map(|s| format!("{}", s.address));
+                    // V2 fee is `gamma_numer`, orientation-selected (ADR-003).
+                    let gamma_numer = state.map(|s| {
+                        if pool_ref.zero_for_one { s.fee_token0.0 } else { s.fee_token1.0 }
+                    });
                     hops.push(HopInfo {
                         hop_type: "V2".to_string(),
                         address: addr,
@@ -2279,8 +2286,7 @@ impl PyUniswapArbEngine {
                     });
                 }
                 HopType::V3 => {
-                    let v3 = engine.v3_engine();
-                    let pool = v3.get_pool(pool_ref.pool_key);
+                    let pool = engine.v3_engine.get_pool(pool_ref.pool_key);
                     let (addr, fee, ts) = pool.map_or((None, None, None), |p| {
                         (Some(format!("{}", p.address)), Some(u64::from(p.fee)), Some(p.tick_spacing))
                     });
@@ -2294,8 +2300,7 @@ impl PyUniswapArbEngine {
                     });
                 }
                 HopType::V4 => {
-                    let v4 = engine.v4_engine();
-                    let pool = v4.get_pool(pool_ref.pool_key);
+                    let pool = engine.v4_engine.get_pool(pool_ref.pool_key);
                     let (pm, pid, fee, ts) = pool.map_or((None, None, None, None), |p| {
                         (Some(format!("{}", p.pool_manager)), Some(format!("0x{}", alloy::hex::encode(p.pool_id))), Some(u64::from(p.pool_key.fee)), Some(p.pool_key.tick_spacing))
                     });
@@ -2311,6 +2316,7 @@ impl PyUniswapArbEngine {
             }
         }
 
+        drop(core);
         drop(engine);
 
         // Phase 3: Build the Python dict
@@ -2403,23 +2409,25 @@ impl PyUniswapArbEngine {
     }
 
     /// DIAG-a3f2: Dump V2 pool state for a given address.
-    /// Returns (`forward_key`, `reverse_key`, `fwd_reserve_in`, `fwd_reserve_out`, `rev_reserve_in`, `rev_reserve_out`) or None.
+    /// Returns (`pool_id`, `reserve0`, `reserve1`) or None.
+    ///
+    /// ADR-003: V2 state lives in `BotCore` as a single entry per address
+    /// (orientation is selected at solve time via `zero_for_one`, not by a
+    /// separate reverse key). The former forward/reverse dual keys are gone.
     #[pyo3(signature = (address_hex))]
-    #[allow(clippy::type_complexity)]
-    fn diag_v2_pool(&self, address_hex: &str) -> PyResult<Option<(u64, u64, String, String, String, String)>> {
+    fn diag_v2_pool(&self, address_hex: &str) -> PyResult<Option<(u64, String, String)>> {
         let addr: Address = address_hex.parse().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}"))
         })?;
-        let mut engine = self.engine.lock();
-        let v2 = engine.v2_engine();
-        let Some(&(fwd, rev)) = v2.pool_addresses().get(&addr) else {
+        let engine = self.engine.lock();
+        let core = engine.core.lock();
+        let Some(pool_id) = core.pool_id_by_address(&addr) else {
             return Ok(None);
         };
-        let fwd_state = v2.get_pool(fwd);
-        let rev_state = v2.get_pool(rev);
-        let (fr_in, fr_out) = fwd_state.map_or(("?".to_string(), "?".to_string()), |s| (s.reserve_in.to_string(), s.reserve_out.to_string()));
-        let (rr_in, rr_out) = rev_state.map_or(("?".to_string(), "?".to_string()), |s| (s.reserve_in.to_string(), s.reserve_out.to_string()));
-        Ok(Some((fwd, rev, fr_in, fr_out, rr_in, rr_out)))
+        let Some(state) = core.get_v2_pool_state(pool_id) else {
+            return Ok(None);
+        };
+        Ok(Some((pool_id, state.reserve0.to_string(), state.reserve1.to_string())))
     }
 
     /// Return self as an async iterator over result batches.
