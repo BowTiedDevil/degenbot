@@ -9,7 +9,8 @@ use std::collections::{HashMap, HashSet};
 use alloy::primitives::{Address, I256, U256};
 
 use crate::bot_core::state_history::{
-    ReorgJournal, ScalarPriors, TickBefore, V2BlockDelta, V3BlockDelta, V3RestoreResult,
+    JournalError, ReorgJournal, ScalarPriors, TickBefore, V2BlockDelta, V3BlockDelta,
+    V3RestoreResult,
 };
 use crate::bot_core::v2_encoding::{encode_v2_swap, EncodedCall};
 use crate::optimizers::mobius_int::IntHopState;
@@ -95,6 +96,11 @@ pub struct RegisterV2PoolParams {
     pub fee_token0: (u64, u64),
     pub fee_token1: (u64, u64),
     pub factory: Address,
+    /// Block number of the registration state — seeds the genesis reorg
+    /// journal delta (ADR-005 slice 4). The landed-at journal must anchor the
+    /// registration state at a real block so `restore_before_block` can land
+    /// on it; pre-slice-4 the journal was empty until the first Sync.
+    pub update_block: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -216,9 +222,22 @@ impl Bot {
             fee_token0,
             fee_token1,
             factory,
+            update_block,
         } = *params;
 
-        let journal = ReorgJournal::<V2BlockDelta>::new(self.journal_depth);
+        // Seed the reorg journal with a genesis delta (ADR-005 slice 4): the
+        // registration reserves at `update_block`. A `before`-only journal
+        // cannot express "land at registration" or "current state"; the
+        // genesis anchor (before == after == registration reserves) is what
+        // makes `restore_before_block` land on it.
+        let mut journal = ReorgJournal::<V2BlockDelta>::new(self.journal_depth);
+        journal.push_delta(V2BlockDelta {
+            block: update_block,
+            reserve0_before: reserve0,
+            reserve1_before: reserve1,
+            reserve0_after: reserve0,
+            reserve1_after: reserve1,
+        });
 
         self.pools.insert(
             pool_id,
@@ -231,7 +250,7 @@ impl Bot {
                 factory,
                 reserve0,
                 reserve1,
-                update_block: 0,
+                update_block,
                 journal,
             }),
         );
@@ -289,11 +308,15 @@ impl Bot {
             return None;
         };
 
-        // Stash "before" values in the reorg journal before updating
+        // Push a transition delta: before = pre-update reserves (the current
+        // state), after = post-update reserves (the landed-at state for this
+        // block). The genesis delta pushed at registration is the floor.
         state.journal.push_delta(V2BlockDelta {
             block: block_number,
             reserve0_before: state.reserve0,
             reserve1_before: state.reserve1,
+            reserve0_after: reserve0,
+            reserve1_after: reserve1,
         });
 
         state.reserve0 = reserve0;
@@ -911,43 +934,52 @@ impl Bot {
 
     /// Discard V2 reorg journal deltas earlier than the given block.
     ///
-    /// No-op if the pool ID is not registered.
+    /// No-op if the earliest delta is at/after the target (nothing to discard
+    /// — supports a continuously-running bot calling `discard(latest - N)` on
+    /// fresh pools). The genesis delta is discarded like any other when the
+    /// target is past it, as long as at least one delta remains.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if all deltas are before the target block.
-    pub fn v2_discard_before_block(&mut self, pool_id: u64, block: u64) {
+    /// Returns `Err(JournalError::NoStateAtOrAfterBlock)` if the target is past
+    /// the newest delta (would remove every known state). The `PyO3` layer maps
+    /// this to `ValueError`.
+    pub fn v2_discard_before_block(
+        &mut self,
+        pool_id: u64,
+        block: u64,
+    ) -> Result<(), JournalError> {
         let Some(PoolEntry::V2(state)) = self.pools.get_mut(&pool_id) else {
-            return;
+            return Ok(());
         };
-        state.journal.discard_before_block(block);
+        state.journal.discard_before_block(block)
     }
 
     /// Restore V2 pool state prior to a target block.
     ///
-    /// Pops reorg journal deltas at/after the target block and restores
-    /// "before" values into the current state.
+    /// Pops reorg journal deltas at/after the target block and restores the
+    /// landed-at state (the `*_after` of the largest delta below the target)
+    /// into the current mutable fields.
     ///
-    /// Returns `(reserve0, reserve1, block)` of the restored state, or `None`
-    /// if the pool ID is not registered.
-    ///
-    /// # Panics
-    ///
-    /// Panics if no delta exists before the target block.
+    /// Returns `Some(Ok((reserve0, reserve1, block)))` on success, `Some(Err)`
+    /// if the pool exists but the target is at/before registration (no state
+    /// before it — decision 3), or `None` if the pool ID is not registered.
     pub fn v2_restore_before_block(
         &mut self,
         pool_id: u64,
         block: u64,
-    ) -> Option<(U256, U256, u64)> {
+    ) -> Option<Result<(U256, U256, u64), JournalError>> {
         let PoolEntry::V2(state) = self.pools.get_mut(&pool_id)? else {
             return None;
         };
-        let (r0, r1, blk) = state.journal.restore_before_block(block);
-        // Sync the pool's current reserves with the restored "before" values
+        let (r0, r1, blk) = match state.journal.restore_before_block(block) {
+            Ok(v) => v,
+            Err(e) => return Some(Err(e)),
+        };
         state.reserve0 = r0;
         state.reserve1 = r1;
         state.update_block = blk;
-        Some((r0, r1, blk))
+        Some(Ok((r0, r1, blk)))
     }
 
     /// Restore **every** registered V2 pool's state to just before `target`.
@@ -986,11 +1018,19 @@ impl Bot {
 
             let did_restore = match self.pools.get_mut(&pool_id) {
                 Some(PoolEntry::V2(state)) => {
-                    let (r0, r1, blk) = state.journal.restore_before_block(target);
-                    state.reserve0 = r0;
-                    state.reserve1 = r1;
-                    state.update_block = blk;
-                    true
+                    // Landed-at restore: on Ok, apply the landed-at state; on
+                    // Err (target at/before registration) skip the pool
+                    // (idempotent — a reorg doesn't touch pools that didn't
+                    // exist before the fork target).
+                    match state.journal.restore_before_block(target) {
+                        Ok((r0, r1, blk)) => {
+                            state.reserve0 = r0;
+                            state.reserve1 = r1;
+                            state.update_block = blk;
+                            true
+                        }
+                        Err(_) => false,
+                    }
                 }
                 Some(PoolEntry::V3(_)) => {
                     // Reuse the existing V3 restore path: scalars + reverse-
@@ -1026,16 +1066,22 @@ impl Bot {
 
     /// Discard V3 reorg journal deltas earlier than the given block.
     ///
-    /// No-op if the pool ID is not registered or is not a V3 pool.
+    /// No-op if the earliest delta is at/after the target, or the pool is not
+    /// registered / not a V3 pool.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if all deltas are before the target block.
-    pub fn v3_discard_before_block(&mut self, pool_id: u64, block: u64) {
+    /// Returns `Err(JournalError::NoStateAtOrAfterBlock)` if the target is past
+    /// the newest delta. The `PyO3` layer maps this to `ValueError`.
+    pub fn v3_discard_before_block(
+        &mut self,
+        pool_id: u64,
+        block: u64,
+    ) -> Result<(), JournalError> {
         let Some(PoolEntry::V3(state)) = self.pools.get_mut(&pool_id) else {
-            return;
+            return Ok(());
         };
-        state.journal.discard_before_block(block);
+        state.journal.discard_before_block(block)
     }
 
     /// Restore V3 pool state prior to a target block.
@@ -1486,11 +1532,20 @@ impl Bot {
     }
 
     /// Discard V4 reorg journal deltas earlier than the given block.
-    pub fn v4_discard_before_block(&mut self, pool_id: u64, block: u64) {
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(JournalError::NoStateAtOrAfterBlock)` if the target is past
+    /// the newest delta. The `PyO3` layer maps this to `ValueError`.
+    pub fn v4_discard_before_block(
+        &mut self,
+        pool_id: u64,
+        block: u64,
+    ) -> Result<(), JournalError> {
         let Some(PoolEntry::V4(state)) = self.pools.get_mut(&pool_id) else {
-            return;
+            return Ok(());
         };
-        state.journal.discard_before_block(block);
+        state.journal.discard_before_block(block)
     }
 
     /// Restore V4 pool state prior to a target block (same `V3BlockDelta` shape).
@@ -1610,6 +1665,7 @@ mod tests {
             fee_token0: FEE_03,
             fee_token1: FEE_03,
             factory: make_factory(),
+            update_block: 0,
         }
     }
 
@@ -1681,6 +1737,7 @@ mod tests {
             fee_token0: FEE_03,
             fee_token1: FEE_03,
             factory: make_factory(),
+            update_block: 0,
         };
         let pool_id = core.register_v2_pool(&params);
 

@@ -463,6 +463,7 @@ impl UniswapEngine {
             fee_token0: (gamma_numer, fee_denom),
             fee_token1: (gamma_numer, fee_denom),
             factory: Address::ZERO,
+            update_block: 0,
         };
         self.core.lock().register_v2_pool(&params)
     }

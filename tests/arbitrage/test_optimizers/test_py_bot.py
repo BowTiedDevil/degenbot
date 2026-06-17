@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from degenbot.degenbot_rs import PyBot, PyLiquidityPool
 
 
@@ -424,76 +426,116 @@ class TestV2ReorgJournal:
         )
         return core, pool_id
 
-    def test_initial_journal_is_empty(self):
-        """Pool starts with 0 journal entries (current state IS the state)."""
+    def test_initial_journal_has_genesis_delta(self):
+        """Registration seeds a genesis delta at the update block (len 1)."""
         core, pool_id = self._make_core_with_pool()
-        assert core.v2_journal_len(pool_id) == 0
+        # update_block defaults to 0 — the genesis delta lands there.
+        assert core.v2_journal_len(pool_id) == 1
 
     def test_update_appends_to_journal(self):
-        """Each update pushes a new delta."""
+        """Each update pushes a new transition delta after the genesis."""
         core, pool_id = self._make_core_with_pool()
-        assert core.v2_journal_len(pool_id) == 0
+        assert core.v2_journal_len(pool_id) == 1  # genesis
 
         core.update_v2_pool(self.POOL_ADDR, 2000, 1000, 10)
-        assert core.v2_journal_len(pool_id) == 1
+        assert core.v2_journal_len(pool_id) == 2  # genesis + block-10
 
         core.update_v2_pool(self.POOL_ADDR, 3000, 500, 20)
-        assert core.v2_journal_len(pool_id) == 2
-
-    def test_same_block_replaces_current(self):
-        """Updating at the same block replaces the current delta."""
-        core, pool_id = self._make_core_with_pool()
-        core.update_v2_pool(self.POOL_ADDR, 2000, 1000, 10)
-        assert core.v2_journal_len(pool_id) == 1
-
-        # Same-block update replaces
-        core.update_v2_pool(self.POOL_ADDR, 2500, 750, 10)
-        assert core.v2_journal_len(pool_id) == 1  # Still 1, not 2
-
-    def test_discard_before_block(self):
-        """discard_before_block removes old states."""
-        core, pool_id = self._make_core_with_pool()
-        core.update_v2_pool(self.POOL_ADDR, 2000, 1000, 10)
-        core.update_v2_pool(self.POOL_ADDR, 3000, 500, 20)
-        core.update_v2_pool(self.POOL_ADDR, 4000, 250, 30)
         assert core.v2_journal_len(pool_id) == 3
 
-        core.v2_discard_before_block(pool_id, 20)
-        assert core.v2_journal_len(pool_id) == 2  # blocks 20 and 30 remain
-
-    def test_restore_before_block(self):
-        """restore_before_block pops deltas at/after target and returns before values."""
+    def test_same_block_replaces_current(self):
+        """Updating at the same block replaces the newest delta wholesale."""
         core, pool_id = self._make_core_with_pool()
-        # Initial: (1000, 2000)
         core.update_v2_pool(self.POOL_ADDR, 2000, 1000, 10)
-        # After block 10: current=(2000, 1000), journal has block-10 delta (before=1000,2000)
-        core.update_v2_pool(self.POOL_ADDR, 3000, 500, 20)
-        # After block 20: current=(3000, 500), journal has block-20 delta (before=2000,1000)
-        core.update_v2_pool(self.POOL_ADDR, 4000, 250, 30)
-        # After block 30: current=(4000, 250), journal has block-30 delta (before=3000,500)
+        assert core.v2_journal_len(pool_id) == 2  # genesis + block-10
 
-        # Restore before block 20: pops deltas at/after block 20,
-        # returns before-values from block-20 delta: (2000, 1000)
+        # Same-block update replaces the block-10 delta (genesis survives).
+        core.update_v2_pool(self.POOL_ADDR, 2500, 750, 10)
+        assert core.v2_journal_len(pool_id) == 2  # still 2 (genesis + block-10)
+
+    def test_discard_before_block(self):
+        """discard_before_block removes deltas below target, keeping the rest."""
+        core, pool_id = self._make_core_with_pool()
+        core.update_v2_pool(self.POOL_ADDR, 2000, 1000, 10)
+        core.update_v2_pool(self.POOL_ADDR, 3000, 500, 20)
+        core.update_v2_pool(self.POOL_ADDR, 4000, 250, 30)
+        # genesis@0, 10, 20, 30 → four deltas
+        assert core.v2_journal_len(pool_id) == 4
+
+        # Discard < 20 → drops genesis@0 and block-10, keeps 20 and 30.
+        core.v2_discard_before_block(pool_id, 20)
+        assert core.v2_journal_len(pool_id) == 2
+
+    def test_restore_before_block_lands_at_previous_block(self):
+        """restore(N) lands at the largest block < N, returning that state."""
+        core, pool_id = self._make_core_with_pool()
+        # Genesis@0 (after 1000,2000); block-10 after (2000,1000);
+        # block-20 after (3000,500); block-30 after (4000,250).
+        core.update_v2_pool(self.POOL_ADDR, 2000, 1000, 10)
+        core.update_v2_pool(self.POOL_ADDR, 3000, 500, 20)
+        core.update_v2_pool(self.POOL_ADDR, 4000, 250, 30)
+
+        # Restore before block 20: lands at block 10, returns its landed-at
+        # (after) state (2000, 1000) at block 10 — NOT the block-20 delta's
+        # before-values at block 20 (the pre-slice-4 behavior).
         result = core.v2_restore_before_block(pool_id, 20)
         assert result is not None
         r0, r1, block = result
         assert r0 == 2000
         assert r1 == 1000
-        assert block == 20
+        assert block == 10
 
     def test_restore_syncs_current_reserves(self):
-        """Restoring state also updates the pool's current reserves."""
+        """Restoring lands the current reserves at the landed-at state."""
         core, pool_id = self._make_core_with_pool()
         core.update_v2_pool(self.POOL_ADDR, 2000, 1000, 10)
         core.update_v2_pool(self.POOL_ADDR, 3000, 500, 20)
 
-        # Restore before block 20
+        # Restore before block 20 → lands at block 10 → reserves (2000, 1000).
         core.v2_restore_before_block(pool_id, 20)
 
-        # Calculations should now use restored reserves (2000, 1000)
-        # Python: constant_product_calc_exact_in(100, 2000, 1000, 3/1000) = 47
+        # constant_product_calc_exact_in(100, 2000, 1000, 3/1000) = 47
         result = core.calculate_tokens_out(pool_id, zero_for_one=True, amount_in=100)
         assert result == 47
+
+    def test_restore_noop_returns_current_when_target_after_newest(self):
+        """restore(N>newest) no-ops and returns the current landed-at state.
+
+        Pre-slice-4 this returned the pre-newest BEFORE values (a silent
+        wrong-answer footgun); the landed-at journal returns AFTER (current).
+        """
+        core, pool_id = self._make_core_with_pool()
+        # Genesis@0 (1000,2000); block-10 after (2000,1000). Newest = 10.
+        core.update_v2_pool(self.POOL_ADDR, 2000, 1000, 10)
+
+        # Target (100) is after the newest (10) → no-op, returns current.
+        result = core.v2_restore_before_block(pool_id, 100)
+        assert result is not None
+        r0, r1, block = result
+        assert (r0, r1) == (2000, 1000)
+        assert block == 10
+
+    def test_restore_past_registration_raises(self):
+        """restore at/before the genesis block raises ValueError (decision 3).
+
+        Rolling back past registration is a hard error, not a silent no-op.
+        """
+        core, pool_id = self._make_core_with_pool()
+        # Genesis is at block 0 (update_block default). Restoring to 0 →
+        # no state before registration exists.
+        with pytest.raises(ValueError, match="No pool state known prior to block 0"):
+            core.v2_restore_before_block(pool_id, 0)
+
+    def test_discard_past_newest_raises(self):
+        """discard past the newest delta raises ValueError (decision 2).
+
+        Would remove every known state — was a panic pre-slice-4.
+        """
+        core, pool_id = self._make_core_with_pool()
+        core.update_v2_pool(self.POOL_ADDR, 2000, 1000, 10)
+        # Newest is block 10; discarding before 100 would drop everything.
+        with pytest.raises(ValueError, match="No pool state known at or after block 100"):
+            core.v2_discard_before_block(pool_id, 100)
 
     def test_journal_len_unknown_pool_returns_zero(self):
         """v2_journal_len returns 0 for unknown pool ID."""
