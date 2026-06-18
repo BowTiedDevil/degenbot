@@ -686,7 +686,7 @@ impl UniswapEngine {
         // ADR-003: V2 state lives in Bot. One core-lock window covers all
         // V2 lookups in this loop; V3/V4 state still reads the per-family
         // block engines (disjoint fields, immutable borrows coexist).
-        let core = self.core.lock();
+        let core = self.core.read();
 
         let type_tags: Vec<&str> = path
             .pools

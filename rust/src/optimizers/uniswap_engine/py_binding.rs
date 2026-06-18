@@ -13,6 +13,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use tokio::sync::mpsc;
 
+use crate::bot_core::py_bot::PyBot;
 use crate::bot_core::{RegisterV3PoolParams, V3SwapUpdate};
 use crate::bot_core::{RegisterV4PoolParams, V4StateSync, V4SwapUpdate};
 
@@ -567,9 +568,18 @@ impl PyUniswapArbEngine {
 #[pymethods]
 impl PyUniswapArbEngine {
     #[new]
-    fn new() -> Self {
+    #[pyo3(signature = (py_bot=None))]
+    fn new(py: Python<'_>, py_bot: Option<Py<PyBot>>) -> Self {
         let (result_tx, result_rx) = mpsc::unbounded_channel();
-        let mut engine = UniswapEngine::new();
+        // ADR-006 D1: if a `PyBot` is supplied, adopt its shared
+        // `Arc<RwLock<Bot>>` so the engine reads/writes the SAME core that
+        // `PyBot`/`PyLiquidityPool`/`PyErc20Token` share — dissolving the
+        // dual-`Bot` split (the `rust-owned-bot.md` §17 stale-state root cause).
+        // Without one, allocate a standalone core (no-pyo3 / legacy path).
+        let mut engine = match py_bot {
+            Some(py_bot) => UniswapEngine::with_core(py_bot.borrow(py).core_arc()),
+            None => UniswapEngine::new(),
+        };
         engine.set_result_channel(result_tx);
         Self {
             engine: Arc::new(parking_lot::Mutex::new(engine)),
@@ -994,13 +1004,13 @@ impl PyUniswapArbEngine {
                     coverage,
                 })
             },
-            |engine| engine.core.lock().apply_backfill_buffer_v3(&addr),
+            |engine| engine.core.write().apply_backfill_buffer_v3(&addr),
             |engine, key| {
                 is_tracked
-                    .then(|| engine.core.lock().get_v3_pool(*key).cloned())
+                    .then(|| engine.core.read().get_v3_pool(*key).cloned())
                     .flatten()
             },
-            |engine| engine.core.lock().apply_pump_buffer_v3(&addr),
+            |engine| engine.core.write().apply_pump_buffer_v3(&addr),
         );
 
         if is_tracked
@@ -1157,16 +1167,16 @@ impl PyUniswapArbEngine {
                     })
                     .map_err(pyo3::exceptions::PyValueError::new_err)
             },
-            |engine| engine.core.lock().apply_backfill_buffer_v4(pm, pool_id),
+            |engine| engine.core.write().apply_backfill_buffer_v4(pm, pool_id),
             |engine, key| {
                 let Ok(key) = key else {
                     return None;
                 };
                 is_tracked
-                    .then(|| engine.core.lock().get_v4_pool(*key).cloned())
+                    .then(|| engine.core.read().get_v4_pool(*key).cloned())
                     .flatten()
             },
-            |engine| engine.core.lock().apply_pump_buffer_v4(pm, pool_id),
+            |engine| engine.core.write().apply_pump_buffer_v4(pm, pool_id),
         );
 
         let key = key?;
@@ -1673,7 +1683,7 @@ impl PyUniswapArbEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
         let engine = self.engine.lock();
-        let count = engine.core.lock().buffered_v3_event_count(&addr);
+        let count = engine.core.read().buffered_v3_event_count(&addr);
         Ok(count)
     }
 
@@ -1690,7 +1700,7 @@ impl PyUniswapArbEngine {
         })?;
         let tick_data = {
             let engine = self.engine.lock();
-            let core = engine.core.lock();
+            let core = engine.core.read();
             let Some(key) = core.pool_id_by_address(&addr) else {
                 return Ok(None);
             };
@@ -1814,7 +1824,7 @@ impl PyUniswapArbEngine {
         })?;
 
         let engine = self.engine.lock();
-        let core = engine.core.lock();
+        let core = engine.core.read();
         let v3_pools = core.v3_pools_snapshot();
         let v4_pools = core.v4_pools_snapshot();
         drop(core);
@@ -1875,7 +1885,7 @@ impl PyUniswapArbEngine {
     #[pyo3(signature = (rpc_url, block_number))]
     fn verify_v3_liquidity_maps(&self, rpc_url: String, block_number: Option<u64>) -> PyResult<()> {
         let engine = self.engine.lock();
-        let v3_pools = engine.core.lock().v3_pools_snapshot();
+        let v3_pools = engine.core.read().v3_pools_snapshot();
         drop(engine);
 
         let runtime = crate::runtime::get_runtime();
@@ -1926,7 +1936,7 @@ impl PyUniswapArbEngine {
         })?;
 
         let engine = self.engine.lock();
-        let v4_pools = engine.core.lock().v4_pools_snapshot();
+        let v4_pools = engine.core.read().v4_pools_snapshot();
         drop(engine);
 
         let runtime = crate::runtime::get_runtime();
@@ -1982,7 +1992,7 @@ impl PyUniswapArbEngine {
 
         let v3_pools = {
             let engine = self.engine.lock();
-            let core = engine.core.lock();
+            let core = engine.core.read();
             let Some(key) = core.pool_id_by_address(&pool_addr) else {
                 return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
                     "V3 pool {address} not registered in engine"
@@ -2047,7 +2057,7 @@ impl PyUniswapArbEngine {
         let pool_id = hex_string_to_pool_id(&pool_id_hex)?;
 
         let engine = self.engine.lock();
-        let core = engine.core.lock();
+        let core = engine.core.read();
         // ADR-003: single V4 entry per `(pool_manager, pool_id)` — no dual
         // forward/reverse keys. v4_pool_id_by_key returns Option<u64>.
         let v4_key = core.v4_pool_id_by_key(Address::ZERO, &pool_id).or_else(|| {
@@ -2169,7 +2179,7 @@ impl PyUniswapArbEngine {
         block_number: u64,
     ) -> PyResult<()> {
         let engine = self.engine.lock();
-        let mut core = engine.core.lock();
+        let mut core = engine.core.write();
         for item in v3_sync_updates.iter() {
             let tuple = item.cast::<pyo3::types::PyTuple>()?;
             if tuple.len() != 5 {
@@ -2270,7 +2280,7 @@ impl PyUniswapArbEngine {
                 rust_tick_data.insert(tick_idx, make_tick_info(liquidity_gross, liquidity_net));
             }
 
-            engine.core.lock().sync_v4_pool_state(
+            engine.core.write().sync_v4_pool_state(
                 pool_manager,
                 pool_id,
                 V4StateSync {
@@ -2343,7 +2353,7 @@ impl PyUniswapArbEngine {
         // ADR-003: V2 state lives in Bot. One core-lock window covers all
         // V2 lookups in this loop (engine-then-core ordering; V3/V4 state still
         // reads the per-family engines, which are disjoint fields).
-        let core = engine.core.lock();
+        let core = engine.core.read();
 
         for pool_ref in &pool_refs {
             match pool_ref.hop_type {
@@ -2497,7 +2507,7 @@ impl PyUniswapArbEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}"))
         })?;
         let engine = self.engine.lock();
-        let core = engine.core.lock();
+        let core = engine.core.read();
         let Some(pool_id) = core.pool_id_by_address(&addr) else {
             return Ok(None);
         };

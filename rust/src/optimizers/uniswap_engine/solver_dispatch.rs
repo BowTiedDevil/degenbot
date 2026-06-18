@@ -64,7 +64,7 @@ impl UniswapEngine {
         // those into Bot too. The guard drops before `solve_path` runs,
         // which is pure `&self`.
         {
-            let core = self.core.lock();
+            let core = self.core.read();
             for &path_id in &affected_path_ids {
                 let Some(path) = self.path_pools.get(&path_id) else {
                     continue;

@@ -1059,7 +1059,7 @@ mod tests {
 
         // Resolve and solve all paths (replaces start() + initial_solve())
         {
-            let core = engine.core.lock();
+            let core = engine.core.read();
             for (&path_id, path) in &engine.path_pools {
                 let mut resolved = ResolvedMixedPath::default();
                 UniswapEngine::resolve_path(&core, &path.pools, &mut resolved);
@@ -1189,10 +1189,10 @@ mod tests {
         assert!(matches!(path.pools[2].hop_type, HopType::V4));
 
         // Verify we can resolve pool addresses via Bot (V2) / sub-engines (V3/V4)
-        let v2_addr = engine.core.lock().pool_address(v2_fwd);
+        let v2_addr = engine.core.read().pool_address(v2_fwd);
         assert_eq!(v2_addr, Some(Address::from([0x11u8; 20])));
 
-        let core = engine.core.lock();
+        let core = engine.core.read();
         let v3_pool = core.get_v3_pool(v3_key);
         assert_eq!(
             v3_pool.map(|p| p.address),
@@ -1571,17 +1571,17 @@ mod tests {
         let swapped_tick = 60i32;
         engine
             .core
-            .lock()
+            .write()
             .apply_v3_swap(pool_addr, swapped_sp, swapped_liq, swapped_tick, 5, &[]);
 
         // Mint at block 6: adds liquidity at [+60, +120].
         engine
             .core
-            .lock()
+            .write()
             .apply_v3_liquidity_update(pool_addr, 60, 120, 500_i128, 6);
 
         {
-            let core = engine.core.lock();
+            let core = engine.core.read();
             let s = core.get_v3_pool(pool_id).expect("v3 pool registered");
             assert_eq!(s.sqrt_price_x96, swapped_sp, "swap applied at block 5");
             assert_eq!(s.liquidity, swapped_liq);
@@ -1597,11 +1597,11 @@ mod tests {
         // Reorg back to block 5: rolls the block-6 Mint (removes ticks 60/120)
         // AND the block-5 Swap (restores registration scalars). Restore is
         // idempotent for pools untouched by the fork.
-        let restored = engine.core.lock().restore_all_pools_before_block(5);
+        let restored = engine.core.write().restore_all_pools_before_block(5);
         assert_eq!(restored, 1, "the single registered V3 pool was rolled back");
 
         {
-            let core = engine.core.lock();
+            let core = engine.core.read();
             let s = core.get_v3_pool(pool_id).expect("v3 pool still registered");
             assert_eq!(
                 s.sqrt_price_x96, reg_sp,
@@ -1616,5 +1616,42 @@ mod tests {
             );
             assert!(!s.tick_data.contains_key(&60) && !s.tick_data.contains_key(&120));
         }
+    }
+
+    /// ADR-006 Slice 1 (D1): `UniswapEngine::with_core` adopts an externally
+    /// allocated `Arc<RwLock<Bot>>` so one shared `Bot` is read by both the
+    /// engine and the `PyBot`/handle tree — dissolving the dual-`Bot` split
+    /// (pump mutates Bot B; handles read Bot A). If the engine held its own
+    /// `Bot`, `v2_pool_count()` would return 0 for a pool registered only in
+    /// the shared core.
+    #[test]
+    fn with_core_adopts_shared_bot_state() {
+        use crate::bot_core::{Bot, RegisterV2PoolParams};
+        use std::sync::Arc;
+
+        // Build a shared core with one V2 pool registered directly into `Bot`.
+        let core = Arc::new(parking_lot::RwLock::new(Bot::new()));
+        let params = RegisterV2PoolParams {
+            address: Address::from([0x11u8; 20]),
+            token0: Address::from([0x01u8; 20]),
+            token1: Address::from([0x02u8; 20]),
+            reserve0: U256::from(1000),
+            reserve1: U256::from(2000),
+            fee_token0: (997, 1000),
+            fee_token1: (997, 1000),
+            factory: Address::from([0x33u8; 20]),
+            update_block: 0,
+        };
+        let _pool_id = core.write().register_v2_pool(&params);
+
+        // Engine adopts the SAME `Arc<RwLock<Bot>>` — NOT its own `Bot`.
+        let engine = UniswapEngine::with_core(Arc::clone(&core));
+
+        // If the engine held a separate `Bot`, this would be 0; shared => 1.
+        assert_eq!(
+            engine.v2_pool_count(),
+            1,
+            "engine must read the shared Bot's pools via with_core"
+        );
     }
 }

@@ -45,6 +45,19 @@ pub struct PyBot {
     core: Arc<parking_lot::RwLock<Bot>>,
 }
 
+/// Crate-internal Rust surface on `PyBot` (not Python-visible).
+impl PyBot {
+    /// Hand out a clone of the shared `Arc<RwLock<Bot>>` so a sibling
+    /// Rust-owned consumer (notably `UniswapEngine::with_core` — ADR-006 D1)
+    /// can read/write the SAME core that `PyBot`/`PyLiquidityPool`/
+    /// `PyErc20Token` share. This is the seam that dissolves the dual-`Bot`
+    /// split (pump in `Bot` B, handles in `Bot` A — `rust-owned-bot.md` §17).
+    #[must_use]
+    pub(crate) fn core_arc(&self) -> Arc<parking_lot::RwLock<Bot>> {
+        Arc::clone(&self.core)
+    }
+}
+
 #[pymethods]
 impl PyBot {
     #[new]

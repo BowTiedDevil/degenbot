@@ -327,15 +327,17 @@ pub struct ResultBatch {
 /// mixed arbitrage paths.
 ///
 /// V2 pool state lives in [`Bot`] (ADR-003: the single Rust state owner,
-/// peer to this engine). The engine holds an `Arc<Mutex<Bot>>` and reads /
-/// mutates V2 state through it. Lock ordering when nested is
+/// peer to this engine). The engine holds the shared `Arc<RwLock<Bot>>`
+/// (ADR-006 D1+D2 — `RwLock` on the core, shared with [`PyBot`] via
+/// [`UniswapEngine::with_core`]; `new()` standalone sugar allocates its own)
+/// and reads/writes pool state through it. Lock ordering when nested is
 /// **engine-then-core** — no code path ever nests core-then-engine.
 pub struct UniswapEngine {
-    /// V2 + V3 + V4 pool state owner (ADR-003). The engine holds an
-    /// `Arc<Mutex<Bot>>` and reads/writes all pool state through it. Lock
-    /// ordering when nested is engine-then-core; no code path ever nests in
-    /// the opposite direction.
-    core: Arc<parking_lot::Mutex<Bot>>,
+    /// V2 + V3 + V4 pool state owner (ADR-003). The shared
+    /// `Arc<RwLock<Bot>>` (ADR-006 D1+D2): read methods take a read guard,
+    /// mutations a write guard. Lock ordering when nested is
+    /// engine-then-core; no code path ever nests in the opposite direction.
+    core: Arc<parking_lot::RwLock<Bot>>,
     /// Registered path pool refs (immutable after registration).
     path_pools: HashMap<u64, MixedPath>,
     /// Resolved path states (mutated on each solve).
@@ -394,11 +396,26 @@ pub struct UniswapEngine {
 }
 
 impl UniswapEngine {
-    /// Create a new engine.
+    /// Create a new engine with its **own** standalone `Bot` (standard
+    /// allocation). ADR-006 D1: prefer [`UniswapEngine::with_core`] on the live
+    /// path so the engine shares one `Arc<RwLock<Bot>>` with `PyBot`/handles;
+    /// this no-arg ctor is the standalone-Rust / no-`pyo3`-test convenience.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_core(Arc::new(parking_lot::RwLock::new(Bot::new())))
+    }
+
+    /// Adopt an existing shared `Arc<RwLock<Bot>>` (ADR-006 D1+D2). The
+    /// engine reads/writes pool state through the *same* core that
+    /// `PyBot`/`PyLiquidityPool`/`PyErc20Token` share — dissolving the
+    /// dual-`Bot` split the §17 stale-state caveat documented. Lock order
+    /// remains engine-then-core; the engine's `Mutex<UniswapEngine>` engine
+    /// state is still engine-local (ADR-006 D2 — engine keeps its own lock
+    /// for path/solver state; only the core lock type/flavor changes).
+    #[must_use]
+    pub fn with_core(core: Arc<parking_lot::RwLock<Bot>>) -> Self {
         Self {
-            core: Arc::new(parking_lot::Mutex::new(Bot::new())),
+            core,
             path_pools: HashMap::new(),
             path_resolved: HashMap::new(),
             pool_to_paths: HashMap::new(),
@@ -422,10 +439,10 @@ impl UniswapEngine {
     /// sub-engine (V3 buffer lives on `Bot` — ADR-003).
     #[must_use]
     pub fn new_with_buffer_max_age(event_buffer_max_age: Option<u64>) -> Self {
-        let core = Arc::new(parking_lot::Mutex::new(Bot::new()));
+        let core = Arc::new(parking_lot::RwLock::new(Bot::new()));
         if let Some(age) = event_buffer_max_age {
-            core.lock().set_v3_buffer_max_age(Some(age));
-            core.lock().set_v4_buffer_max_age(Some(age));
+            core.write().set_v3_buffer_max_age(Some(age));
+            core.write().set_v4_buffer_max_age(Some(age));
         }
         Self {
             core,
@@ -465,7 +482,7 @@ impl UniswapEngine {
             factory: Address::ZERO,
             update_block: 0,
         };
-        self.core.lock().register_v2_pool(&params)
+        self.core.write().register_v2_pool(&params)
     }
 
     /// Register a V3 pool by contract address and initial state.
@@ -476,7 +493,7 @@ impl UniswapEngine {
     /// caller can snapshot state at deterministic points for verification.
     #[must_use]
     pub fn register_v3_pool(&self, params: &crate::bot_core::RegisterV3PoolParams) -> u64 {
-        self.core.lock().register_v3_pool(params)
+        self.core.write().register_v3_pool(params)
     }
 
     /// Register a V4 pool by `(pool_manager, pool_id)` and initial state.
@@ -490,6 +507,6 @@ impl UniswapEngine {
         &self,
         params: &crate::bot_core::RegisterV4PoolParams,
     ) -> Result<u64, String> {
-        self.core.lock().register_v4_pool(params)
+        self.core.write().register_v4_pool(params)
     }
 }
