@@ -334,13 +334,20 @@ mod tests {
     fn variant_str_round_trips_for_all_variants() {
         for v in DexVariant::ALL {
             let s = v.as_str();
-            assert_eq!(DexVariant::from_kebab(s), Some(v), "round-trip failed for {s}");
+            assert_eq!(
+                DexVariant::from_kebab(s),
+                Some(v),
+                "round-trip failed for {s}"
+            );
         }
     }
 
     #[test]
     fn variant_from_str_is_case_insensitive() {
-        assert_eq!(DexVariant::from_kebab("UNISWAP-V2"), Some(DexVariant::UniswapV2));
+        assert_eq!(
+            DexVariant::from_kebab("UNISWAP-V2"),
+            Some(DexVariant::UniswapV2)
+        );
         assert_eq!(
             DexVariant::from_kebab("Camelot-V2-Stable"),
             Some(DexVariant::CamelotV2Stable)
@@ -433,7 +440,10 @@ mod tests {
         assert_eq!(ident.fee_token1, (9975, 10_000));
         // Pancake's RESERVES_STRUCT_TYPES override = 3-tuple.
         assert_eq!(ident.reserves_abi, ReservesAbi::PancakeswapStyle);
-        assert_eq!(ident.reserves_abi.as_types(), &["uint112", "uint112", "uint32"]);
+        assert_eq!(
+            ident.reserves_abi.as_types(),
+            &["uint112", "uint112", "uint32"]
+        );
     }
 
     // ---- SWAPBASED_V2 — Base chain 8453 ----------------------------------

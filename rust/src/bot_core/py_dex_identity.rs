@@ -56,7 +56,12 @@ impl PyDexIdentity {
             init_hash: format!("{:#x}", ident.init_hash),
             fee_token0: ident.fee_token0,
             fee_token1: ident.fee_token1,
-            reserves_abi: ident.reserves_abi.as_types().iter().map(|s| (*s).to_string()).collect(),
+            reserves_abi: ident
+                .reserves_abi
+                .as_types()
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
             variant: ident.variant.as_str().to_string(),
         }
     }
@@ -90,8 +95,8 @@ impl PyDexIdentity {
                 [a, b] if [a.as_str(), b.as_str()] == ["uint112", "uint112"] => {
                     ReservesAbi::Standard
                 }
-                [a, b, c] if [a.as_str(), b.as_str(), c.as_str()]
-                    == ["uint112", "uint112", "uint32"] =>
+                [a, b, c]
+                    if [a.as_str(), b.as_str(), c.as_str()] == ["uint112", "uint112", "uint32"] =>
                 {
                     ReservesAbi::PancakeswapStyle
                 }
@@ -146,7 +151,14 @@ impl PyDexIdentity {
         variant: &str,
         reserves_abi: Option<Vec<String>>,
     ) -> PyResult<Self> {
-        Self::build(factory, init_hash, fee_token0, fee_token1, variant, reserves_abi)
+        Self::build(
+            factory,
+            init_hash,
+            fee_token0,
+            fee_token1,
+            variant,
+            reserves_abi,
+        )
     }
 
     /// Factory contract address (EIP-55 checksummed hex).
