@@ -2,12 +2,14 @@
 
 from degenbot.degenbot_rs import dex_identity
 from degenbot.registry.pool_type import pool_type_registry
+from degenbot.uniswap.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 from . import (
     abi as abi,
 )  # excluded from __all__ so it doesn't bubble back up to the top level package namespace
-from .pools import PancakeswapV2Pool, PancakeswapV3Pool
-from .trackers import PancakeswapV2PoolTracker, PancakeswapV3PoolTracker
+from .pools import PancakeswapV3Pool
+from .trackers import PancakeswapV3PoolTracker
 
 
 def _register_pancakeswap_deployments() -> None:
@@ -44,11 +46,12 @@ def _register_pancakeswap_deployments() -> None:
     assert pancakeswap_v2_identity is not None, "pancakeswap-v2 preset must resolve"
     for chain_id, factory, init_hash, deployer in v2_deployments:
         pool_type_registry.register(
-            PancakeswapV2Pool,
+            LiquidityPool,
             chain_id=chain_id,
             factory_address=factory,
             pool_init_hash=init_hash,
             deployer=deployer,
+            variant="pancakeswap",
             dex_identity=pancakeswap_v2_identity,
         )
 
@@ -65,8 +68,7 @@ def _register_pancakeswap_deployments() -> None:
 _register_pancakeswap_deployments()
 
 __all__ = (
-    "PancakeswapV2Pool",
-    "PancakeswapV2PoolTracker",
     "PancakeswapV3Pool",
     "PancakeswapV3PoolTracker",
+    "UniswapV3Pool",
 )

@@ -34,6 +34,12 @@ from .version import __version__
 
 # isort: split
 
+from . import (
+    camelot as camelot,
+)
+from . import (
+    swapbased as swapbased,
+)
 from .aerodrome import (
     AerodromeV2Pool,
     AerodromeV2PoolState,
@@ -53,7 +59,6 @@ from .arbitrage import (
     V4PoolKey,
     generate_payloads,
 )
-from .camelot import CamelotLiquidityPool
 from .chainlink import ChainlinkPriceContract
 from .curve import (
     CurveStableswapPool,
@@ -64,8 +69,6 @@ from .curve import (
 from .erc20 import Erc20Token, EtherPlaceholder
 from .logging import logger
 from .pancakeswap import (
-    PancakeswapV2Pool,
-    PancakeswapV2PoolTracker,
     PancakeswapV3Pool,
     PancakeswapV3PoolTracker,
 )
@@ -77,12 +80,9 @@ from .registry import (
     pool_type_registry,
 )
 from .sushiswap import (
-    SushiswapV2Pool,
-    SushiswapV2PoolTracker,
     SushiswapV3Pool,
     SushiswapV3PoolTracker,
 )
-from .swapbased import SwapbasedV2Pool, SwapbasedV2PoolTracker
 from .uniswap import (
     LiquidityPool,
     UniswapV2PoolExternalUpdate,
@@ -119,7 +119,6 @@ __all__ = (
     "AsyncBot",
     "AsyncConnectionManager",
     "Bot",
-    "CamelotLiquidityPool",
     "ChainlinkPriceContract",
     "ConnectionManager",
     "CurveStableSwapPoolStateUpdated",
@@ -133,19 +132,13 @@ __all__ = (
     "LiquidityPool",
     "ManagedPoolRegistry",
     "NoApprovals",
-    "PancakeswapV2Pool",
-    "PancakeswapV2PoolTracker",
     "PancakeswapV3Pool",
     "PancakeswapV3PoolTracker",
     "PayloadComposer",
     "PoolRegistry",
     "PoolTypeRegistry",
-    "SushiswapV2Pool",
-    "SushiswapV2PoolTracker",
     "SushiswapV3Pool",
     "SushiswapV3PoolTracker",
-    "SwapbasedV2Pool",
-    "SwapbasedV2PoolTracker",
     "TokenRegistry",
     "UniswapV2PoolExternalUpdate",
     "UniswapV2PoolSimulationResult",

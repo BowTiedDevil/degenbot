@@ -6,7 +6,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions.pool import PoolNotAssociated, TrackerAlreadyInitialized, TrackerError
 from degenbot.pancakeswap.trackers import PancakeswapV3PoolTracker
 from degenbot.provider import ProviderAdapter
-from degenbot.sushiswap.trackers import SushiswapV2PoolTracker, SushiswapV3PoolTracker
+from degenbot.sushiswap.trackers import SushiswapV3PoolTracker
 from degenbot.uniswap.deployments import (
     UniswapFactoryDeployment,
     UniswapV3ExchangeDeployment,
@@ -128,7 +128,7 @@ def test_create_mainnet_trackers(fork_mainnet_full: AnvilFork):
         factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS,
         bot=bot,
     )
-    sushiswap_v2_pool_tracker = SushiswapV2PoolTracker(
+    sushiswap_v2_pool_tracker = UniswapV2PoolTracker(
         factory_address=MAINNET_SUSHISWAP_V2_FACTORY_ADDRESS,
         bot=bot,
     )

@@ -1,19 +1,15 @@
-"""PancakeSwap V2/V3 pool implementations."""
+"""PancakeSwap V2/V3 pool implementations.
 
-from fractions import Fraction
+ADR-005 slice 7 step 4b: ``PancakeswapV2Pool`` (a hollow subclass carrying
+only a ``variant`` ClassVar + V2 fee/ABI constants, both superseded by the
+``pancakeswap-v2`` DexIdentity preset) is deleted — the canonical
+``LiquidityPool`` is registered for the PancakeSwap V2 factory (see
+``pancakeswap/__init__.py``). ``PancakeswapV3Pool`` is retained.
+"""
+
 from typing import ClassVar
 
-from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-
-
-class PancakeswapV2Pool(LiquidityPool):
-    """PancakeswapV2Pool class."""
-
-    variant: ClassVar[str | None] = "pancakeswap"
-
-    FEE = Fraction(25, 10000)
-    RESERVES_STRUCT_TYPES = ("uint112", "uint112", "uint32")
 
 
 class PancakeswapV3Pool(UniswapV3Pool):

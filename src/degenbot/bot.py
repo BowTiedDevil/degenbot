@@ -13,7 +13,6 @@ from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import BalancerV2StablePool
 from degenbot.builders.aerodrome_v2_builder import AerodromeV2Builder
 from degenbot.builders.balancer_builder import BalancerBuilder
-from degenbot.builders.camelot_builder import CamelotBuilder
 from degenbot.builders.context import BuilderContext
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.builders.erc20_builder import Erc20Builder
@@ -28,7 +27,6 @@ from degenbot.builders.type_resolution import (
 from degenbot.builders.v2_pool_builder import V2PoolBuilder
 from degenbot.builders.v3_pool_builder import V3PoolBuilder
 from degenbot.builders.v4_pool_builder import V4PoolBuilder
-from degenbot.camelot.pools import CamelotLiquidityPool
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DegenbotConfig, _init_config
 from degenbot.connection.connection_manager import ConnectionManager
@@ -114,7 +112,6 @@ class Bot:
         )
         self._v2_builder = V2PoolBuilder(ctx)
         self._aerodrome_v2_builder = AerodromeV2Builder(ctx)
-        self._camelot_builder = CamelotBuilder(ctx)
         self._v3_builder = V3PoolBuilder(ctx)
         self._v4_builder = V4PoolBuilder(ctx)
         self._curve_builder = CurvePoolBuilder(ctx)
@@ -131,11 +128,11 @@ class Bot:
         self.register_builder(UniswapV4Pool, self._v4_builder)
         self.register_builder(CurveStableswapPool, self._curve_builder)
         self.register_builder(AerodromeV2Pool, self._aerodrome_v2_builder)
-        self.register_builder(CamelotLiquidityPool, self._camelot_builder)
         self.register_builder(BalancerV2Pool, self._balancer_builder)
         self.register_builder(BalancerV2StablePool, self._balancer_builder)
-        # SushiswapV2Pool, PancakeSwapV2Pool, SwapbasedV2Pool, etc. inherit
-        # LiquidityPool so they are handled by the V2 builder via MRO fallback
+        # All V2-family DEXes (Uniswap/Sushi/Pancake/Swapbased/Camelot) now
+        # register the canonical ``LiquidityPool`` for their factories
+        # (ADR-005 slice 7 step 4b) — the single V2 builder handles them.
 
         # Check database migration version
         self._check_database_version()
@@ -585,8 +582,8 @@ class Bot:
         """Select the appropriate builder for the pool type.
 
         Uses the builder registry (dict lookup on type(pool)) first, then
-        falls back to isinstance checks for subclasses not explicitly registered
-        (e.g. SushiswapV2Pool inherits from LiquidityPool).
+        falls back to isinstance checks for subclasses not explicitly
+        registered.
 
         Returns:
             The computed value.
@@ -600,8 +597,8 @@ class Bot:
         if builder is not None:
             return builder
 
-        # Slow path: subclass match (e.g. SushiswapV2Pool is subclass of LiquidityPool)
-        # Walk the MRO looking for a registered builder
+        # Slow path: subclass match (e.g. AerodromeV2Pool subclasses LiquidityPool).
+        # Walk the MRO looking for a registered builder.
         for base in type(pool).__mro__:
             builder = self._builders.get(base)
             if builder is not None:

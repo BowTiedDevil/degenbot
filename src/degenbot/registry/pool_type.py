@@ -148,6 +148,7 @@ class PoolTypeRegistry:
         pool_init_hash: str | None = None,
         deployer: str | None = None,
         family: PoolFamily | None = None,
+        variant: str | None = None,
         dex_identity: PyDexIdentity | None = None,
     ) -> None:
         """Register a pool class for a specific (chain_id, factory) deployment.
@@ -166,6 +167,14 @@ class PoolTypeRegistry:
                 shape misleads ``_derive_family`` (e.g. BalancerV2Pool has
                 ``tokens`` but not ``fee_token0``, so it would derive as
                 STABLESWAP instead of WEIGHTED).
+            variant: Override the auto-derived variant
+                (``getattr(pool_class, "variant", None)``). Needed for the
+                ADR-005 slice 7 step 4b collapse: when the hollow DEX
+                subclasses (SushiswapV2Pool, etc.) are deleted, the canonical
+                ``LiquidityPool`` (variant=None) is registered for each DEX
+                factory WITH ``variant="sushiswap"`` to preserve the DB
+                ``kind`` (``"sushiswap_v2"``) — keeps existing DB rows
+                resolvable while collapsing the class hierarchy.
             dex_identity: The canonical DexIdentity preset for this DEX (ADR-005
                 slice 7 step 3). Carries the variant tag, reserves ABI shape,
                 canonical-chain factory/init-hash, + default fees. Optional —
@@ -185,7 +194,7 @@ class PoolTypeRegistry:
             raise ValueError(msg)
 
         family = family if family is not None else _derive_family(pool_class)
-        variant = getattr(pool_class, "variant", None)
+        variant = variant if variant is not None else getattr(pool_class, "variant", None)
         kind = derive_kind(family, variant)
 
         self._entries[key] = _RegistryEntry(
