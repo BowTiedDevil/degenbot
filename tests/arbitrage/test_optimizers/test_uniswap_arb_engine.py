@@ -130,8 +130,8 @@ class TestUniswapArbEngineRegistration:
             tick=0,
         )
         path_id = engine.register_path([
-            ("V2", v2_id, True),
-            ("V3", v3_key, False),
+            (v2_id, True),
+            (v3_key, False),
         ])
         assert path_id == 1
 
@@ -172,8 +172,8 @@ class TestRegisterAndSolvePath:
         )
 
         path_id = engine.register_and_solve_path([
-            ("V2", v2_a, True),
-            ("V2", v2_b, True),
+            (v2_a, True),
+            (v2_b, True),
         ])
         assert path_id == 1
 
@@ -206,8 +206,8 @@ class TestRegisterAndSolvePath:
         )
 
         path_id = engine.register_and_solve_path([
-            ("V2", v2_a, True),
-            ("V2", v2_b, True),
+            (v2_a, True),
+            (v2_b, True),
         ])
 
         engine.process_logs(
@@ -242,8 +242,8 @@ class TestRegisterAndSolvePath:
         )
 
         engine.register_path([
-            ("V2", v2_a, True),
-            ("V2", v2_b, True),
+            (v2_a, True),
+            (v2_b, True),
         ])
         engine.solve_all_paths(block_number=1)
 
@@ -255,8 +255,8 @@ class TestRegisterAndSolvePath:
             fee_denom=1000,
         )
         path_id_2 = engine.register_and_solve_path([
-            ("V2", v2_a, True),
-            ("V2", v2_c, True),
+            (v2_a, True),
+            (v2_c, True),
         ])
 
         results, _block = engine.latest_results()
@@ -310,8 +310,8 @@ class TestUniswapArbEngineProcessLogs:
         )
 
         engine.register_path([
-            ("V2", v2_a, True),
-            ("V2", v2_b, True),
+            (v2_a, True),
+            (v2_b, True),
         ])
 
         engine.solve_all_paths(block_number=1)
@@ -347,8 +347,8 @@ class TestUniswapArbEngineProcessLogs:
         )
 
         engine.register_path([
-            ("V2", v2_id, True),
-            ("V3", v3_key, False),
+            (v2_id, True),
+            (v3_key, False),
         ])
 
         engine.process_logs(
@@ -382,8 +382,8 @@ class TestUniswapArbEngineProcessLogs:
         )
 
         engine.register_path([
-            ("V2", v2_a, True),
-            ("V2", v2_b, True),
+            (v2_a, True),
+            (v2_b, True),
         ])
 
         engine.solve_all_paths(block_number=1)
@@ -552,8 +552,8 @@ class TestUniswapArbEngineV4:
         )
 
         path_id = engine.register_path([
-            ("V4", v4_a, True),
-            ("V4", v4_b, False),
+            (v4_a, True),
+            (v4_b, False),
         ])
         assert path_id == 1
         assert engine.path_count() == 1
@@ -590,8 +590,8 @@ class TestUniswapArbEngineV4:
         )
 
         path_id = engine.register_path([
-            ("V4", v4_key, True),
-            ("V2", v2_id, False),
+            (v4_key, True),
+            (v2_id, False),
         ])
         assert path_id == 1
 
@@ -636,8 +636,8 @@ class TestUniswapArbEngineV4:
         )
 
         path_id = engine.register_path([
-            ("V4", v4_key, True),
-            ("V3", v3_key, False),
+            (v4_key, True),
+            (v3_key, False),
         ])
         assert path_id == 1
 

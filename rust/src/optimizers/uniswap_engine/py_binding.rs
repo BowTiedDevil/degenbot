@@ -18,7 +18,7 @@ use crate::bot_core::{RegisterV3PoolParams, V3SwapUpdate};
 use crate::bot_core::{RegisterV4PoolParams, V4StateSync, V4SwapUpdate};
 
 use super::{
-    BlockMetadata, EnginePhase, HopType, MixedPoolRef, PoolTickCoverage, ResultBatch,
+    BlockMetadata, EnginePhase, HopType, MixedPoolRef, PoolHop, PoolTickCoverage, ResultBatch,
     SolvePathResult, UniswapEngine, V3SnapshotData, V4SnapshotData,
 };
 
@@ -908,7 +908,8 @@ impl PyUniswapArbEngine {
     }
 
     /// Register a V2 pool by contract address and initial reserves.
-    /// Returns the forward `pool_id`. The reverse `pool_id` is `forward_id + 1`.
+    /// Returns the assigned `pool_id` (orientation is selected at solve time
+    /// via `zero_for_one`; there is no separate reverse id — ADR-006 D3).
     #[pyo3(signature = (address, reserve0, reserve1, gamma_numer, fee_denom))]
     fn register_v2_pool(
         &self,
@@ -924,13 +925,23 @@ impl PyUniswapArbEngine {
         let r0 = crate::alloy_py::extract_python_u256(reserve0)?;
         let r1 = crate::alloy_py::extract_python_u256(reserve1)?;
 
-        // ADR-003: V2 state lives in Bot. The engine delegates registration
-        // to the core and returns the single `pool_id` (orientation is selected
-        // at solve time via `zero_for_one`, not by a separate reverse id).
-        Ok(self
-            .engine
-            .lock()
-            .register_v2_pool(addr, r0, r1, gamma_numer, fee_denom))
+        // ADR-006 D3: pool construction is a `Bot` concern only. The engine
+        // registers into its associated `Bot` (`core`) — for a standalone
+        // engine that's its own `Bot`; for a `py_bot=`-constructed engine
+        // it's the shared `PyBot` core (so the caller must NOT also register
+        // the same pool via `PyBot`, or `Bot::register_v2_pool` panics).
+        let params = crate::bot_core::RegisterV2PoolParams {
+            address: addr,
+            token0: Address::ZERO,
+            token1: Address::ZERO,
+            reserve0: r0,
+            reserve1: r1,
+            fee_token0: (gamma_numer, fee_denom),
+            fee_token1: (gamma_numer, fee_denom),
+            factory: Address::ZERO,
+            update_block: 0,
+        };
+        Ok(self.engine.lock().core.write().register_v2_pool(&params))
     }
 
     /// Register a V3 pool by contract address and initial state.
@@ -989,7 +1000,7 @@ impl PyUniswapArbEngine {
         let (key, backfill_verify_snapshot) = register_with_cl_buffers(
             &self.engine,
             |engine| {
-                engine.register_v3_pool(&RegisterV3PoolParams {
+                engine.core.write().register_v3_pool(&RegisterV3PoolParams {
                     address: addr,
                     token0: t0,
                     token1: t1,
@@ -1147,6 +1158,8 @@ impl PyUniswapArbEngine {
             &self.engine,
             |engine| -> Result<u64, pyo3::PyErr> {
                 engine
+                    .core
+                    .write()
                     .register_v4_pool(&RegisterV4PoolParams {
                         pool_manager: pm,
                         pool_id,
@@ -1258,44 +1271,33 @@ impl PyUniswapArbEngine {
     /// `hop_type_str` is "V2" or "V3".
     #[pyo3(signature = (pool_refs))]
     fn register_path(&self, pool_refs: &Bound<'_, PyList>) -> PyResult<u64> {
-        let mut rust_refs = Vec::with_capacity(pool_refs.len());
+        let mut hops = Vec::with_capacity(pool_refs.len());
         for item in pool_refs.iter() {
             let tuple = item.cast::<pyo3::types::PyTuple>()?;
-            if tuple.len() != 3 {
+            if tuple.len() != 2 {
                 let msg = format!(
-                    "Expected 3-tuple (hop_type, pool_key, zero_for_one), got {} elements",
+                    "Expected 2-tuple (pool_id, zero_for_one), got {} elements",
                     tuple.len()
                 );
                 return Err(pyo3::exceptions::PyValueError::new_err(msg));
             }
-            let hop_type_str: String = tuple.get_item(0)?.extract()?;
-            let pool_key: u64 = tuple.get_item(1)?.extract()?;
-            let zero_for_one: bool = tuple.get_item(2)?.extract()?;
-
-            let hop_type = match hop_type_str.as_str() {
-                "V2" => HopType::V2,
-                "V3" => HopType::V3,
-                "V4" => HopType::V4,
-                _ => {
-                    let msg =
-                        format!("Invalid hop_type: {hop_type_str}. Expected 'V2', 'V3', or 'V4'");
-                    return Err(pyo3::exceptions::PyValueError::new_err(msg));
-                }
-            };
-
-            rust_refs.push(MixedPoolRef {
-                hop_type,
-                pool_key,
+            let pool_id: u64 = tuple.get_item(0)?.extract()?;
+            let zero_for_one: bool = tuple.get_item(1)?.extract()?;
+            hops.push(PoolHop {
+                pool_id,
                 zero_for_one,
             });
         }
 
-        if rust_refs.len() < 2 {
-            let msg = format!("Need at least 2 pool refs, got {}", rust_refs.len());
+        if hops.len() < 2 {
+            let msg = format!("Need at least 2 pool refs, got {}", hops.len());
             return Err(pyo3::exceptions::PyValueError::new_err(msg));
         }
 
-        Ok(self.engine.lock().register_path(rust_refs))
+        self.engine
+            .lock()
+            .register_path(hops)
+            .map_err(pyo3::exceptions::PyValueError::new_err)
     }
 
     /// Register a mixed arbitrage path and eagerly solve it.
@@ -1306,44 +1308,33 @@ impl PyUniswapArbEngine {
     /// so that new paths are immediately available to `latest_results()`.
     #[pyo3(signature = (pool_refs))]
     fn register_and_solve_path(&self, pool_refs: &Bound<'_, PyList>) -> PyResult<u64> {
-        let mut rust_refs = Vec::with_capacity(pool_refs.len());
+        let mut hops = Vec::with_capacity(pool_refs.len());
         for item in pool_refs.iter() {
             let tuple = item.cast::<pyo3::types::PyTuple>()?;
-            if tuple.len() != 3 {
+            if tuple.len() != 2 {
                 let msg = format!(
-                    "Expected 3-tuple (hop_type, pool_key, zero_for_one), got {} elements",
+                    "Expected 2-tuple (pool_id, zero_for_one), got {} elements",
                     tuple.len()
                 );
                 return Err(pyo3::exceptions::PyValueError::new_err(msg));
             }
-            let hop_type_str: String = tuple.get_item(0)?.extract()?;
-            let pool_key: u64 = tuple.get_item(1)?.extract()?;
-            let zero_for_one: bool = tuple.get_item(2)?.extract()?;
-
-            let hop_type = match hop_type_str.as_str() {
-                "V2" => HopType::V2,
-                "V3" => HopType::V3,
-                "V4" => HopType::V4,
-                _ => {
-                    let msg =
-                        format!("Invalid hop_type: {hop_type_str}. Expected 'V2', 'V3', or 'V4'");
-                    return Err(pyo3::exceptions::PyValueError::new_err(msg));
-                }
-            };
-
-            rust_refs.push(MixedPoolRef {
-                hop_type,
-                pool_key,
+            let pool_id: u64 = tuple.get_item(0)?.extract()?;
+            let zero_for_one: bool = tuple.get_item(1)?.extract()?;
+            hops.push(PoolHop {
+                pool_id,
                 zero_for_one,
             });
         }
 
-        if rust_refs.len() < 2 {
-            let msg = format!("Need at least 2 pool refs, got {}", rust_refs.len());
+        if hops.len() < 2 {
+            let msg = format!("Need at least 2 pool refs, got {}", hops.len());
             return Err(pyo3::exceptions::PyValueError::new_err(msg));
         }
 
-        Ok(self.engine.lock().register_and_solve_path(rust_refs))
+        self.engine
+            .lock()
+            .register_and_solve_path(hops)
+            .map_err(pyo3::exceptions::PyValueError::new_err)
     }
 
     /// Start the engine. Freezes registration and spawns the unified pump.

@@ -561,15 +561,6 @@ class PathSuppression:
         self._last_retry_block.pop(path_id, None)
 
 
-def _hop_type_str(hop: HopInfo) -> str:
-    """Return the Rust HopType string for a HopInfo variant."""
-    if isinstance(hop, V2HopInfo):
-        return "V2"
-    if isinstance(hop, V3HopInfo):
-        return "V3"
-    return "V4"
-
-
 def _hop_display_addr(hop: HopInfo) -> str:
     """Return a short display address for logging."""
     if isinstance(hop, V2HopInfo):
@@ -742,18 +733,19 @@ class EngineRegistry:
         engine_hops = []
         for hop in hops:
             if isinstance(hop, V2HopInfo):
-                fwd_key = self._v2_keys.get(hop.pool_address)
-                key = fwd_key if hop.zfo else fwd_key + 1
+                key = self._v2_keys.get(hop.pool_address)
             elif isinstance(hop, V4HopInfo):
-                fwd_key = self._v4_keys.get(hop.pool_id_hex)
-                key = fwd_key if hop.zfo else fwd_key + 1
+                key = self._v4_keys.get(hop.pool_id_hex)
             else:
                 key = self._v3_keys.get(hop.pool_address)
             if key is None:
                 msg = f"Pool not registered: {hop}"
                 raise ValueError(msg)
-            pool_type = _hop_type_str(hop)
-            engine_hops.append((pool_type, key, hop.zfo))
+            # ADR-006 D3: register_path takes (pool_id, zero_for_one) — the
+            # engine derives the family from the Bot. One pool_id per pool;
+            # orientation is zero_for_one (the old `fwd_key + 1` reverse-id
+            # hack is gone — Bot is 1-id-per-pool post-ADR-003).
+            engine_hops.append((key, hop.zfo))
 
         path_id = self.engine.register_and_solve_path(engine_hops)
         self.paths[path_id] = PathInfo(hops=hops)

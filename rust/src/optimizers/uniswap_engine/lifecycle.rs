@@ -1,18 +1,66 @@
 //! Path registration, buffer management, and engine accessors.
 
 use super::{
-    Address, HashMap, MixedPath, MixedPoolRef, ResolvedMixedPath, SolvePathResult, UniswapEngine,
+    Address, HashMap, HopType, MixedPath, MixedPoolRef, PoolHop, ResolvedMixedPath,
+    SolvePathResult, UniswapEngine,
 };
+use crate::bot_core::Bot;
 
 impl UniswapEngine {
+    /// Derive a hop's family from the `Bot`'s `PoolEntry` variant.
+    ///
+    /// Returns `None` if `pool_id` isn't registered in `core` — the caller
+    /// (`register_path`) rejects such hops with a clear error (ADR-006 D3:
+    /// the engine never constructs pools, so it learns each hop's family
+    /// from the `Bot` that owns it).
+    fn derive_hop_type(core: &Bot, pool_id: u64) -> Option<HopType> {
+        if core.get_v2_pool_state(pool_id).is_some() {
+            Some(HopType::V2)
+        } else if core.get_v3_pool(pool_id).is_some() {
+            Some(HopType::V3)
+        } else if core.get_v4_pool(pool_id).is_some() {
+            Some(HopType::V4)
+        } else {
+            None
+        }
+    }
+
     /// Register a mixed path and return its ID.
     ///
-    /// The path is resolved immediately. If all pool states are available,
-    /// the path is marked valid and will be solved on the next
-    /// `rebuild_and_solve_affected` or `solve_all_paths` call.
-    pub fn register_path(&mut self, pool_refs: Vec<MixedPoolRef>) -> u64 {
+    /// Each hop's family is derived from the associated `Bot`'s `PoolEntry`
+    /// variant; a `pool_id` not registered in the `Bot` is rejected with a
+    /// clear error (ADR-006 D3). The path is resolved immediately. If all
+    /// pool states are available, the path is marked valid and will be
+    /// solved on the next `rebuild_and_solve_affected` or `solve_all_paths`
+    /// call.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if any `pool_id` is not registered in the associated
+    /// `Bot`.
+    pub fn register_path(&mut self, hops: Vec<PoolHop>) -> Result<u64, String> {
         let path_id = self.next_path_id;
         self.next_path_id += 1;
+
+        // Resolve each hop's family from the Bot + validate the pool_id
+        // exists there. The engine never constructs pools (ADR-006 D3), so
+        // hop_type is derived, not caller-supplied.
+        let core = self.core.read();
+        let mut pool_refs = Vec::with_capacity(hops.len());
+        for hop in hops {
+            let Some(hop_type) = Self::derive_hop_type(&core, hop.pool_id) else {
+                return Err(format!(
+                    "register_path: pool_id {} is not registered in the associated Bot",
+                    hop.pool_id
+                ));
+            };
+            pool_refs.push(MixedPoolRef {
+                hop_type,
+                pool_key: hop.pool_id,
+                zero_for_one: hop.zero_for_one,
+            });
+        }
+        drop(core);
 
         // Build the reverse index entries
         for pool_ref in &pool_refs {
@@ -35,7 +83,7 @@ impl UniswapEngine {
         }
         self.path_resolved.insert(path_id, resolved);
 
-        path_id
+        Ok(path_id)
     }
 
     /// Register a path and eagerly solve it.
@@ -44,8 +92,13 @@ impl UniswapEngine {
     /// appends the result to `self.results`. The `pending_new_paths`
     /// set tracks the path so the next `rebuild_and_solve_affected`
     /// merge doesn't discard it.
-    pub fn register_and_solve_path(&mut self, pool_refs: Vec<MixedPoolRef>) -> u64 {
-        let path_id = self.register_path(pool_refs);
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if any `pool_id` is not registered in the associated
+    /// `Bot` (see [`register_path`](Self::register_path)).
+    pub fn register_and_solve_path(&mut self, hops: Vec<PoolHop>) -> Result<u64, String> {
+        let path_id = self.register_path(hops)?;
 
         // Eagerly solve the newly registered path
         if let Some(resolved) = self.path_resolved.get(&path_id) {
@@ -59,7 +112,7 @@ impl UniswapEngine {
             }
         }
 
-        path_id
+        Ok(path_id)
     }
 
     /// Set the maximum age for buffered events in the V3/V4 buffers
