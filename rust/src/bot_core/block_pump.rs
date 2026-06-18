@@ -1,72 +1,36 @@
-//! Uniswap Engine Pump — unified async task that drives the `UniswapEngine`.
+//! `BlockPump` — `Bot`'s WS transport + drain loop (ADR-006 D4).
 //!
-//! A single pump that subscribes to both block headers and log events via WS,
-//! buffers incoming logs against each block, and routes them to the appropriate
-//! sub-engine via `UniswapEngine::process_block()`.
+//! Generalized from the `BlockPump`: holds `Arc<Bot>` +
+//! `Arc<dyn DrainSink>` instead of `Arc<Mutex<UniswapEngine>>`. Per WS log,
+//! the pump calls `bot.dispatch_log(log)` (slice 4: decode → apply to
+//! `BotState` → notify the `EngineSubscriber`, which dirties the engine). At
+//! block boundaries / drain ticks / reorg the pump drives the `DrainSink`
+//! (`on_drain` / `on_send` / `finalize_block` / `on_reorg`).
+//!
+//! `apply_log` is gone — ALL log application routes through `Bot::dispatch_log`,
+//! so `process_block` / `process_block_and_send` decompose in the pump into
+//! `dispatch_log`-per-log + `on_drain` (the D4 goal).
+//!
+//! The pump's **mechanics stay unchanged** from the `BlockPump` era: dual
+//! `newHeads` + `logs` subscription, Rust-side topic+address filtering, block-
+//! boundary detection, 50ms send-result debounce, gap/timeout `eth_getLogs`
+//! backfill. Only the owner (`Bot`, via the wiring layer) + the per-block
+//! dispatch targets changed.
 //!
 //! # Two-Phase Lifecycle
 //!
-//! The pump operates in two phases:
-//!
 //! 1. **Subscribe phase** (`subscribe()`): Opens WS subscriptions (newHeads +
-//!    unfiltered logs) and observes until the first *complete* block — a block
-//!    N where both the header and at least one log for N have arrived. This
-//!    guarantees that the logs subscription did not miss the start of the block.
-//!    Block N is returned as the backfill boundary W. No events are buffered
-//!    during subscribe — the backfill is the sole authority for blocks S+1..W-1,
-//!    and the pump (resume phase) is the sole authority for W onward.
+//!    unfiltered logs) and observes until the first *complete* block — both the
+//!    header and a log for block N. N is returned as the backfill boundary W.
+//!    No events are buffered during subscribe — backfill is the sole authority
+//!    for blocks S+1..W-1; the pump (resume) is sole authority for W onward.
 //!
-//! 2. **Resume phase** (`resume()`): Begins normal processing — logs are
-//!    buffered and processed atomically on block boundaries. The pump uses
-//!    the first observed block from subscribe as its starting point.
+//! 2. **Resume phase** (`resume()`): Begins normal processing — logs applied
+//!    eagerly, solved + sent on block boundaries / debounce.
 //!
 //! **Critical ordering**: Python must run backfill AFTER `subscribe()` returns
-//! but BEFORE calling `resume()`. This ensures:
-//! - The backfill target is known (block W from `subscribe()`)
-//! - No blocks are missed (subscribe was active during backfill)
-//! - No overlap (subscribe discards all events; backfill is authoritative)
-//!
-//! # Architecture
-//!
-//! ```text
-//! WS subscription: newHeads + logs (unfiltered)
-//!     |
-//!     +-- Subscribe phase: observe until header + log for same block
-//!     |   (no buffering; backfill is sole authority for S+1..W-1)
-//!     |
-//!     +-- Resume phase: logs arrive in real-time, applied eagerly
-//!     |
-//!     +-- Each WS log:
-//!          +-- engine.apply_log() -- update pool state immediately
-//!          +-- engine.solve_dirty() -- resolve + solve affected paths
-//!          +-- Reset debounce timer
-//!          |
-//!          +-- Debounce timer fires (50ms after last log):
-//!               engine.send_result_batch() -- one dispatch per burst
-//!
-//!     New block header:
-//!          +-- engine.send_result_batch() -- flush any unsent results
-//!          +-- Advance current_block
-//!          |
-//!          +-- If no logs were received for this block:
-//!               engine.process_block_and_send() -- empty batch for Python
-//!
-//!     Backfill trigger 2: 60s timeout with nothing received on either subscription
-//!          -> `eth_getLogs` from last_processed_block+1 to latest
-//! ```
-//!
-//! # Why dual subscriptions instead of `eth_getLogs` every block?
-//!
-//! Push-based log delivery eliminates the per-block RPC round-trip (~50-100ms).
-//! Events are processed as they arrive, not after a poll delay. Two backfill
-//! triggers cover the gap scenarios:
-//! - **60s timeout**: connection is likely dead -> backfill the missing range
-//! - **Empty block**: no logs arrived -> `eth_getLogs` verifies whether the block
-//!   was truly empty or events were silently dropped
-//!
-//! The unfiltered logs subscription avoids provider-specific filter quirks
-//! (address limits, topic truncation, AND/OR semantics). All filtering happens
-//! in Rust after receipt.
+//! but BEFORE `resume()`. The `DrainSink`'s `last_processed_block()` is the
+//! backfill-start boundary.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -84,7 +48,7 @@ use crate::bot_core::v3_mint_burn_decoder::{V3_BURN_TOPIC, V3_MINT_TOPIC};
 use crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC;
 use crate::bot_core::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC;
 use crate::bot_core::v4_swap_decoder::V4_SWAP_TOPIC;
-use crate::optimizers::uniswap_engine::{BlockMetadata, UniswapEngine};
+use crate::bot_core::{drain_sink::DrainSink, BlockMetadata, Bot};
 use crate::optimizers::v2_sync_decoder::V2_SYNC_TOPIC;
 use crate::provider::AlloyProvider;
 use crate::runtime::get_runtime;
@@ -135,15 +99,19 @@ pub enum WsEvent {
     Log(Log),
 }
 
-/// The unified pump that drives the `UniswapEngine`.
+/// The unified pump that drives `Bot`'s drain sink.
 ///
 /// Supports a two-phase lifecycle:
 /// 1. `subscribe()` — opens WS connections, observes until first complete
 ///    block (header + log for same block), returns that block number
 /// 2. `resume()` — begins normal processing on block boundaries
-pub struct UniswapEnginePump {
-    /// Shared engine state
-    engine: Arc<parking_lot::Mutex<UniswapEngine>>,
+pub(crate) struct BlockPump {
+    /// The per-chain orchestrator — owns `BotState` + the `LogDispatcher`. Per
+    /// WS log, the pump calls `bot.dispatch_log(log)`. ADR-006 D4.
+    bot: Arc<Bot>,
+    /// The drain sink (placeholder: `EngineDrainSink` pass-through). Slice 6
+    /// swaps it for `SolveCoordinator`; slice 7 adds reorg coordination.
+    sink: Arc<dyn DrainSink>,
     /// The Alloy provider (created from the RPC URL)
     provider: Arc<AlloyProvider>,
     /// Shutdown flag — set by `stop()`
@@ -165,7 +133,7 @@ pub struct SubscribeState {
     pub combined_stream: Option<stream::BoxStream<'static, WsEvent>>,
 }
 
-impl UniswapEnginePump {
+impl BlockPump {
     /// Subscribe phase: open WS connections and observe until first complete block.
     ///
     /// Returns a `SubscribeState` containing the first observed block number
@@ -178,14 +146,15 @@ impl UniswapEnginePump {
     /// both a newHeads notification and a log for the same block arrive,
     /// confirming the logs subscription is live and caught up.
     #[allow(clippy::missing_errors_doc)]
-    pub async fn subscribe(
+    pub(crate) async fn subscribe(
         rpc_url: &str,
-        engine: Arc<parking_lot::Mutex<UniswapEngine>>,
+        bot: Arc<Bot>,
+        sink: Arc<dyn DrainSink>,
         shutdown: Arc<AtomicBool>,
     ) -> Result<(Self, SubscribeState), String> {
         let provider = AlloyProvider::new(rpc_url, 3)
             .await
-            .map_err(|e| format!("UniswapEnginePump: failed to create provider: {e}"))?;
+            .map_err(|e| format!("BlockPump: failed to create provider: {e}"))?;
 
         let provider_arc = provider.provider_arc();
 
@@ -193,7 +162,7 @@ impl UniswapEnginePump {
         let block_stream = provider_arc
             .subscribe_blocks()
             .await
-            .map_err(|e| format!("UniswapEnginePump: failed to subscribe to blocks: {e}"))?
+            .map_err(|e| format!("BlockPump: failed to subscribe to blocks: {e}"))?
             .into_stream();
 
         // Subscribe to logs — unfiltered. All filtering happens in Rust.
@@ -201,13 +170,14 @@ impl UniswapEnginePump {
         let log_stream = provider_arc
             .subscribe_logs(&log_filter)
             .await
-            .map_err(|e| format!("UniswapEnginePump: failed to subscribe to logs: {e}"))?
+            .map_err(|e| format!("BlockPump: failed to subscribe to logs: {e}"))?
             .into_stream();
 
         let combined = stream_select(block_stream, log_stream).boxed();
 
         let pump = Self {
-            engine,
+            bot,
+            sink,
             provider: Arc::new(provider),
             shutdown,
         };
@@ -223,13 +193,13 @@ impl UniswapEnginePump {
         let block_stream2 = provider_arc
             .subscribe_blocks()
             .await
-            .map_err(|e| format!("UniswapEnginePump: failed to re-subscribe to blocks: {e}"))?
+            .map_err(|e| format!("BlockPump: failed to re-subscribe to blocks: {e}"))?
             .into_stream();
 
         let log_stream2 = provider_arc
             .subscribe_logs(&log_filter)
             .await
-            .map_err(|e| format!("UniswapEnginePump: failed to re-subscribe to logs: {e}"))?
+            .map_err(|e| format!("BlockPump: failed to re-subscribe to logs: {e}"))?
             .into_stream();
 
         let combined2 = stream_select(block_stream2, log_stream2).boxed();
@@ -247,36 +217,36 @@ impl UniswapEnginePump {
     ///
     /// Equivalent to calling `subscribe()` then `resume()` immediately.
     /// Provided for backward compatibility with existing callers.
-    #[allow(clippy::missing_errors_doc)]
-    pub fn spawn(
+    #[allow(clippy::missing_errors_doc, clippy::unnecessary_wraps)]
+    pub(crate) fn spawn(
         rpc_url: String,
-        engine: Arc<parking_lot::Mutex<UniswapEngine>>,
+        bot: Arc<Bot>,
+        sink: Arc<dyn DrainSink>,
         shutdown: &Arc<AtomicBool>,
     ) -> Result<tokio::task::JoinHandle<()>, String> {
         let runtime = get_runtime();
 
         let shutdown_clone = Arc::clone(shutdown);
         let handle = runtime.spawn(async move {
-            let mut pump = match Self::subscribe(&rpc_url, engine, shutdown_clone).await {
+            let mut pump = match Self::subscribe(&rpc_url, bot, sink, shutdown_clone).await {
                 Ok((pump, state)) => {
-                    // Send the first block as an empty batch so Python learns about it
-                    {
-                        let mut engine = pump.engine.lock();
-                        engine.process_block(
-                            &[],
-                            state.first_block,
-                            &BlockMetadata {
-                                timestamp: state.first_timestamp,
-                                base_fee_per_gas: None,
-                                gas_used: 0,
-                                gas_limit: 0,
-                            },
-                        );
-                    }
+                    // Send the first block as an empty batch so Python learns about it.
+                    // `process_block(&[], block, metadata)` decomposed: no logs to
+                    // dispatch + an `on_drain` (solve_dirty on the empty engine is
+                    // a no-op, but keeps the sink's last-processed-block coherent).
+                    pump.sink.on_drain(
+                        state.first_block,
+                        &BlockMetadata {
+                            timestamp: state.first_timestamp,
+                            base_fee_per_gas: None,
+                            gas_used: 0,
+                            gas_limit: 0,
+                        },
+                    );
                     pump
                 }
                 Err(e) => {
-                    log::error!("UniswapEnginePump: subscribe failed: {e}");
+                    log::error!("BlockPump: subscribe failed: {e}");
                     return;
                 }
             };
@@ -288,7 +258,7 @@ impl UniswapEnginePump {
             let block_stream = match provider_arc.subscribe_blocks().await {
                 Ok(s) => s.into_stream(),
                 Err(e) => {
-                    log::error!("UniswapEnginePump: failed to subscribe to blocks: {e}");
+                    log::error!("BlockPump: failed to subscribe to blocks: {e}");
                     return;
                 }
             };
@@ -297,7 +267,7 @@ impl UniswapEnginePump {
             let log_stream = match provider_arc.subscribe_logs(&log_filter).await {
                 Ok(s) => s.into_stream(),
                 Err(e) => {
-                    log::error!("UniswapEnginePump: failed to subscribe to logs: {e}");
+                    log::error!("BlockPump: failed to subscribe to logs: {e}");
                     return;
                 }
             };
@@ -341,7 +311,7 @@ impl UniswapEnginePump {
 
         loop {
             if self.shutdown.load(Ordering::Relaxed) {
-                log::info!("UniswapEnginePump: shutting down during subscribe phase");
+                log::info!("BlockPump: shutting down during subscribe phase");
                 return (0, 0);
             }
 
@@ -352,20 +322,16 @@ impl UniswapEnginePump {
                     // Timeout during subscribe — try to get current block via RPC.
                     // This is a degraded path: we don't have confirmation that
                     // both subscriptions are live, but it's better than hanging.
-                    log::warn!(
-                        "UniswapEnginePump: timeout during subscribe, fetching current block"
-                    );
+                    log::warn!("BlockPump: timeout during subscribe, fetching current block");
                     match self.provider.provider_arc().get_block_number().await {
                         Ok(block) => {
                             log::info!(
-                                "UniswapEnginePump: subscribe observed block {block} via RPC (degraded — no log confirmation)"
+                                "BlockPump: subscribe observed block {block} via RPC (degraded — no log confirmation)"
                             );
                             return (block, 0);
                         }
                         Err(e) => {
-                            log::error!(
-                                "UniswapEnginePump: can't get block number during subscribe: {e}"
-                            );
+                            log::error!("BlockPump: can't get block number during subscribe: {e}");
                         }
                     }
                 }
@@ -382,9 +348,7 @@ impl UniswapEnginePump {
                             // New header for a later block. If we already saw
                             // a log for the previous header's block, we're done.
                             if saw_log_for_header_block {
-                                log::info!(
-                                    "UniswapEnginePump: subscribe observed complete block {fb}"
-                                );
+                                log::info!("BlockPump: subscribe observed complete block {fb}");
                                 return (fb, first_timestamp);
                             }
                             // Previous block had no logs from our subscription.
@@ -407,7 +371,7 @@ impl UniswapEnginePump {
                     if let Some(fb) = first_block {
                         if log_confirms_header_block(log.block_number, fb) {
                             log::info!(
-                                "UniswapEnginePump: subscribe observed complete block {fb} (header + log)"
+                                "BlockPump: subscribe observed complete block {fb} (header + log)"
                             );
                             return (fb, first_timestamp);
                         }
@@ -416,7 +380,7 @@ impl UniswapEnginePump {
                 }
 
                 Ok(None) => {
-                    log::warn!("UniswapEnginePump: subscription streams ended during subscribe");
+                    log::warn!("BlockPump: subscription streams ended during subscribe");
                     return (first_block.unwrap_or(0), first_timestamp);
                 }
             }
@@ -466,16 +430,13 @@ impl UniswapEnginePump {
         let relevant_topic_set: HashSet<B256> = RELEVANT_TOPICS.into_iter().collect();
 
         // Read the last block processed by Python backfill.
-        let mut current_block: u64 = {
-            let engine = self.engine.lock();
-            engine.last_processed_block().unwrap_or(0)
-        };
+        let mut current_block: u64 = self.sink.last_processed_block().unwrap_or(0);
 
         if current_block == 0 && first_observed_block > 0 {
             current_block = first_observed_block;
-            log::info!("UniswapEnginePump: cold start from block {first_observed_block}");
+            log::info!("BlockPump: cold start from block {first_observed_block}");
         } else {
-            log::info!("UniswapEnginePump: starting from block {current_block} (Python backfill)");
+            log::info!("BlockPump: starting from block {current_block} (Python backfill)");
         }
 
         // Track the last block we've solved for. Used to detect block
@@ -504,9 +465,8 @@ impl UniswapEnginePump {
             // Note: solving is decoupled from sending — the pump controls
             // when result batches are dispatched to Python.
             {
-                let mut engine = self.engine.lock();
-                if engine.has_dirty_paths() {
-                    engine.solve_dirty(current_block, &current_metadata);
+                if self.sink.has_dirty_paths() {
+                    self.sink.on_drain(current_block, &current_metadata);
                     last_solved_block = current_block;
                 }
             }
@@ -515,13 +475,12 @@ impl UniswapEnginePump {
             // accumulated results to Python (one dispatch per log burst).
             if debounce_active && tokio::time::Instant::now() >= debounce {
                 debounce_active = false;
-                let mut engine = self.engine.lock();
-                engine.send_result_batch(&current_metadata);
+                self.sink.on_send(&current_metadata);
             }
 
             // Check shutdown
             if self.shutdown.load(Ordering::Relaxed) {
-                log::info!("UniswapEnginePump: shutting down");
+                log::info!("BlockPump: shutting down");
                 return;
             }
 
@@ -547,8 +506,7 @@ impl UniswapEnginePump {
                         // iteration will handle it.
                         if tokio::time::Instant::now() >= debounce {
                             debounce_active = false;
-                            let mut engine = self.engine.lock();
-                            engine.send_result_batch(&current_metadata);
+                            self.sink.on_send(&current_metadata);
                         }
                         // else: debounce timer hasn't quite expired yet.
                         // Loop back — the next iteration will pick it up.
@@ -587,7 +545,7 @@ impl UniswapEnginePump {
                             // Gap between backfill and this header — backfill it
                             if number > current_block + 1 {
                                 log::info!(
-                                    "UniswapEnginePump: gap from block {} to {} — backfilling",
+                                    "BlockPump: gap from block {} to {} — backfilling",
                                     current_block + 1,
                                     number,
                                 );
@@ -616,7 +574,7 @@ impl UniswapEnginePump {
                         // Check for gap and backfill if needed
                         if number > current_block + 1 {
                             log::info!(
-                                "UniswapEnginePump: gap from block {} to {} — backfilling",
+                                "BlockPump: gap from block {} to {} — backfilling",
                                 current_block + 1,
                                 number,
                             );
@@ -629,9 +587,11 @@ impl UniswapEnginePump {
 
                         // For empty blocks (no logs arrived), send an
                         // empty batch so Python sees the block boundary.
+                        // `process_block_and_send(&[], block, metadata)` decomposed:
+                        // empty logs (no dispatch) + on_drain + on_send.
                         if !has_logs_this_block {
-                            let mut engine = self.engine.lock();
-                            engine.process_block_and_send(&[], current_block, &current_metadata);
+                            self.sink.on_drain(current_block, &current_metadata);
+                            self.sink.on_send(&current_metadata);
                         }
 
                         has_logs_this_block = false;
@@ -660,8 +620,7 @@ impl UniswapEnginePump {
                         // and the debounce-bounded `send_result_batch` emits
                         // `expired` diffs against `delivered` so Python sees
                         // the forked paths vanish.
-                        let mut engine = self.engine.lock();
-                        engine.handle_reorg(log_block);
+                        self.sink.on_reorg(log_block);
                         // Cancel any pending debounce: results accumulated
                         // from pre-reorg state are invalid.
                         debounce_active = false;
@@ -683,9 +642,11 @@ impl UniswapEnginePump {
                         current_block = log_block;
                     }
 
-                    // Apply the log immediately to engine state (no solve yet)
-                    let mut engine = self.engine.lock();
-                    engine.apply_log(&log, current_block);
+                    // Apply the log immediately to engine state (no solve yet).
+                    // ADR-006 D4: routes through `Bot::dispatch_log` (decode →
+                    // apply to BotState → notify EngineSubscriber → dirty the
+                    // engine) — NOT `engine.apply_log`.
+                    self.bot.dispatch_log(&log);
 
                     has_logs_this_block = true;
 
@@ -695,7 +656,7 @@ impl UniswapEnginePump {
                 }
 
                 Ok(None) => {
-                    log::warn!("UniswapEnginePump: both subscription streams ended");
+                    log::warn!("BlockPump: both subscription streams ended");
                     return;
                 }
             }
@@ -705,12 +666,12 @@ impl UniswapEnginePump {
     /// Finalize the current block: solve any dirty paths and send the result
     /// batch to Python, carrying the caller's real `current_metadata`.
     ///
-    /// Delegates to [`UniswapEngine::finalize_block`] (see that method for the
-    /// guard semantics and the rationale for threading real metadata rather
-    /// than `BlockMetadata::default()`). Kept here as a thin wrapper so the
-    /// pump owns the `last_solved_block` / `has_logs_this_block` bookkeeping
-    /// locals; all engine-state mutation happens under the single
-    /// `self.engine.lock()` inside `finalize_block`.
+    /// Delegates to the `DrainSink`'s `finalize_block` (the
+    /// `EngineDrainSink` pass-through forwards to `UniswapEngine::finalize_block`).
+    /// Kept here as a thin wrapper so the pump owns the `last_solved_block` /
+    /// `has_logs_this_block` bookkeeping locals; all engine-state mutation happens
+    /// inside the sink under its lock. ADR-006 D4: the pump no longer holds the
+    /// engine `Mutex` directly.
     fn finalize_if_dirty(
         &self,
         block: u64,
@@ -718,8 +679,7 @@ impl UniswapEnginePump {
         last_solved_block: &mut u64,
         has_logs_this_block: &mut bool,
     ) {
-        self.engine
-            .lock()
+        self.sink
             .finalize_block(block, metadata, last_solved_block, has_logs_this_block);
     }
 
@@ -731,13 +691,11 @@ impl UniswapEnginePump {
         last_solved_block: &mut u64,
         has_logs_this_block: &mut bool,
     ) {
-        log::warn!(
-            "UniswapEnginePump: no activity for {BACKFILL_TIMEOUT_SECS}s — attempting backfill"
-        );
+        log::warn!("BlockPump: no activity for {BACKFILL_TIMEOUT_SECS}s — attempting backfill");
         let latest_block = match self.provider.provider_arc().get_block_number().await {
             Ok(n) => n,
             Err(e) => {
-                log::error!("UniswapEnginePump: backfill failed — can't get block number: {e}");
+                log::error!("BlockPump: backfill failed — can't get block number: {e}");
                 return;
             }
         };
@@ -766,13 +724,13 @@ impl UniswapEnginePump {
             return;
         }
 
-        log::info!("UniswapEnginePump: backfilling blocks {from_block} to {to_block}");
+        log::info!("BlockPump: backfilling blocks {from_block} to {to_block}");
 
         let filter = build_backfill_filter(from_block, to_block);
         let logs = match self.provider.provider_arc().get_logs(&filter).await {
             Ok(logs) => logs,
             Err(e) => {
-                log::error!("UniswapEnginePump: backfill eth_getLogs failed: {e}");
+                log::error!("BlockPump: backfill eth_getLogs failed: {e}");
                 return;
             }
         };
@@ -792,32 +750,35 @@ impl UniswapEnginePump {
         let mut any_processed = false;
         for block in from_block..=to_block {
             if self.shutdown.load(Ordering::Relaxed) {
-                log::info!("UniswapEnginePump: shutting down during backfill");
+                log::info!("BlockPump: shutting down during backfill");
                 return;
             }
 
             let block_logs = logs_by_block.remove(&block).unwrap_or_default();
             if !block_logs.is_empty() {
-                // process_block calls apply_log per log, which filters by topic
-                // internally — no need for filter_relevant_logs here.
-                //
-                // NOTE: empty metadata here is fine — `process_block` solves
-                // but does NOT send a batch. Accumulated results piggyback
-                // onto the next debounce `send_result_batch(&current_metadata)`
+                // ADR-006 D4: `process_block(logs, block, metadata)` decomposed —
+                // each log routes through `Bot::dispatch_log` (decode → apply to
+                // BotState → notify EngineSubscriber → dirty the engine), then a
+                // single `on_drain` solves. NOTE: empty metadata here is fine —
+                // `on_drain` solves but does NOT send; accumulated results
+                // piggyback onto the next debounce `on_send(&current_metadata)`
                 // in `run_with_stream`, which carries real metadata (and the
                 // newer block's `results_block`).
-                self.engine
-                    .lock()
-                    .process_block(&block_logs, block, &BlockMetadata::default());
+                for log in &block_logs {
+                    self.bot.dispatch_log(log);
+                }
+                self.sink.on_drain(block, &BlockMetadata::default());
                 any_processed = true;
             }
             *last_processed_block = block;
         }
 
         if any_processed {
-            log::info!("UniswapEnginePump: backfill complete for blocks {from_block}–{to_block}");
+            log::info!("BlockPump: backfill complete for blocks {from_block}–{to_block}");
         } else {
-            log::info!("UniswapEnginePump: backfill found no relevant events in blocks {from_block}–{to_block}");
+            log::info!(
+                "BlockPump: backfill found no relevant events in blocks {from_block}–{to_block}"
+            );
         }
     }
 }

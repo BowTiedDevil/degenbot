@@ -46,6 +46,7 @@ use crate::bot_core::BotState;
 // Sub-modules — each contains `impl UniswapEngine` or `impl PyUniswapArbEngine` blocks.
 #[allow(clippy::module_inception)]
 mod diagnostic;
+mod engine_drain_sink;
 mod engine_subscriber;
 mod event_routing;
 mod lifecycle;
@@ -303,21 +304,10 @@ pub struct SolvePathResult {
     pub consumed_inputs: Vec<U256>,
 }
 
-/// Block metadata included in each `ResultBatch`.
-///
-/// Passed from the pump's WS block header into `process_block()`,
-/// then forwarded to Python via the result batch channel.
-#[derive(Clone, Debug, Default)]
-pub struct BlockMetadata {
-    /// Block timestamp
-    pub timestamp: u64,
-    /// Base fee per gas (None for pre-EIP-1559 blocks)
-    pub base_fee_per_gas: Option<u64>,
-    /// Gas used in this block
-    pub gas_used: u64,
-    /// Gas limit of this block
-    pub gas_limit: u64,
-}
+// `BlockMetadata` lives in `bot_core` (general block data); re-exported here so
+// engine code + external references (`crate::optimizers::uniswap_engine::BlockMetadata`)
+// keep working (ADR-006 D4).
+pub use crate::bot_core::BlockMetadata;
 
 /// Incremental result batch pushed to Python via the result channel.
 ///

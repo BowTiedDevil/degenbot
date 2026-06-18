@@ -20,5 +20,4 @@ pub mod mobius_int_exact;
 #[allow(clippy::doc_markdown)]
 pub mod mobius_v3_int;
 pub mod uniswap_engine;
-pub mod uniswap_engine_pump;
 pub mod v2_sync_decoder;

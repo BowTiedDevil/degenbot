@@ -16,7 +16,9 @@ use crate::bot_core::state_history::{
 use crate::bot_core::v2_encoding::{encode_v2_swap, EncodedCall};
 use crate::optimizers::mobius_int::IntHopState;
 
+pub mod block_pump;
 pub mod dex_identity;
+pub mod drain_sink;
 pub mod liquidity_verifier;
 pub mod log_dispatcher;
 pub mod py_bot;
@@ -1718,6 +1720,24 @@ pub(crate) struct Bot {
     dispatcher: log_dispatcher::LogDispatcher,
 }
 
+/// Block metadata included in each `ResultBatch`.
+///
+/// Passed from the pump's WS block header into the drain tick, then forwarded
+/// to Python via the result batch channel. Lives in `bot_core` (general block
+/// data) so the `BlockPump` + `DrainSink` seams stay in `bot_core` without a
+/// reverse dependency on `optimizers` (ADR-006 D4).
+#[derive(Clone, Debug, Default)]
+pub struct BlockMetadata {
+    /// Block timestamp
+    pub timestamp: u64,
+    /// Base fee per gas (None for pre-EIP-1559 blocks)
+    pub base_fee_per_gas: Option<u64>,
+    /// Gas used in this block
+    pub gas_used: u64,
+    /// Gas limit of this block
+    pub gas_limit: u64,
+}
+
 impl Bot {
     /// Construct a new orchestrator for `chain_id` over a fresh `BotState`.
     ///
@@ -1728,6 +1748,23 @@ impl Bot {
         Self {
             chain_id,
             state: Arc::new(parking_lot::RwLock::new(BotState::new())),
+            dispatcher: log_dispatcher::LogDispatcher::with_uniswap_decoders(),
+        }
+    }
+
+    /// Construct a `Bot` that **adopts** an existing shared `BotState` core + a
+    /// fresh `LogDispatcher` (ADR-006 D4). Used so a `Bot` + a `UniswapEngine`
+    /// (and a sibling `PyBot`) all read/write the SAME `BotState` — the engine
+    /// gets the core via `UniswapEngine::with_core`, `BlockPump`'s `Bot`
+    /// shares it, and `dispatch_log` writes flow through to the engine's reads.
+    ///
+    /// `chain_id` is 0 on the standalone/no-pyo3 path; `PyBot` passes the real
+    /// id once `bot.py` is a single-chain facade (slice 8).
+    #[must_use]
+    pub(crate) fn with_core(core: Arc<parking_lot::RwLock<BotState>>) -> Self {
+        Self {
+            chain_id: 0,
+            state: core,
             dispatcher: log_dispatcher::LogDispatcher::with_uniswap_decoders(),
         }
     }
