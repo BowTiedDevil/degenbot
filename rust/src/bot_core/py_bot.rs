@@ -34,17 +34,18 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 // PyBot — owns the Bot orchestrator; hands out shared BotState Arcs
 // ---------------------------------------------------------------------------
 
-/// The Python handle to the per-chain `Bot` orchestrator (ADR-006 D4).
+/// Python handle to the per-chain `Bot` orchestrator (ADR-006 D4).
 ///
 /// Python constructs a `PyBot` (or receives a shared handle), registers
-/// pools/tokens, then reads results. `PyBot` owns a [`Bot`] outright and hands
+/// pools/tokens, then reads results. `PyBot` owns a [`Bot`] via `Arc` and hands
 /// out clones of its shared `Arc<RwLock<BotState>>` (`state_arc`) so
 /// `PyLiquidityPool` / `PyErc20Token` / `UniswapEngine` all reach ONE
-/// Rust-owned `BotState` (N handles → one state — the Polars three-layer
-/// invariant, preserved).
+/// Rust-owned `BotState`; `BlockPump` clones the same `Arc<Bot>` so its
+/// `dispatch_log` writes flow through to the engine's reads (N handles → one
+/// state — the Polars three-layer invariant, preserved + generalized by D4).
 #[pyclass(skip_from_py_object)]
 pub struct PyBot {
-    bot: Bot,
+    bot: Arc<Bot>,
 }
 
 /// Crate-internal Rust surface on `PyBot` (not Python-visible).
@@ -55,9 +56,17 @@ impl PyBot {
     /// `PyErc20Token` share. This is the seam that dissolves the dual-state
     /// split (pump in `BotState` B, handles in `BotState` A —
     /// `rust-owned-bot.md` §17).
-    #[must_use]
+    #[allow(dead_code)]
     pub(crate) fn core_arc(&self) -> Arc<parking_lot::RwLock<BotState>> {
         self.bot.state_arc()
+    }
+
+    /// Hand out a clone of the shared `Arc<Bot>` so `BlockPump` (and other
+    /// sibling consumers) drive the SAME `Bot`'s `dispatch_log` + state that
+    /// `PyBot` owns (ADR-006 D4: pump lifecycle relocation onto `Bot`).
+    #[must_use]
+    pub(crate) fn bot_arc(&self) -> Arc<Bot> {
+        Arc::clone(&self.bot)
     }
 }
 
@@ -68,7 +77,10 @@ impl PyBot {
         // chain_id = 0 placeholder until ADR-006 slice 8 makes `bot.py` a
         // single-chain facade (Python has no single chain_id at PyBot
         // construction today). The standalone-Rust path passes the real id.
-        Self { bot: Bot::new(0) }
+        // `Arc<Bot>` so `BlockPump` clones the same orchestrator (ADR-006 D4).
+        Self {
+            bot: Arc::new(Bot::new(0)),
+        }
     }
 
     /// Register a V2 pool by contract address.

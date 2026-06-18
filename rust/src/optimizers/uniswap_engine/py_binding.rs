@@ -13,9 +13,13 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use tokio::sync::mpsc;
 
+use crate::bot_core::block_pump::{BlockPump, WsEvent};
 use crate::bot_core::py_bot::PyBot;
-use crate::bot_core::{RegisterV3PoolParams, V3SwapUpdate};
+use crate::bot_core::{drain_sink::DrainSink, Bot, RegisterV3PoolParams, V3SwapUpdate};
 use crate::bot_core::{RegisterV4PoolParams, V4StateSync, V4SwapUpdate};
+
+use super::engine_drain_sink::EngineDrainSink;
+use super::engine_subscriber::EngineSubscriber;
 
 use super::{
     BlockMetadata, EnginePhase, HopType, MixedPoolRef, PoolHop, PoolTickCoverage, ResultBatch,
@@ -155,6 +159,10 @@ where
 pub struct PyUniswapArbEngine {
     /// Shared engine state
     engine: Arc<parking_lot::Mutex<UniswapEngine>>,
+    /// The per-chain `Bot` orchestrator (ADR-006 D4). `BlockPump` clones this
+    /// `Arc` so its `dispatch_log` writes flow through to the engine's reads
+    /// (the engine shares the same `BotState` core via `with_core`).
+    bot: Arc<Bot>,
     /// Shutdown flag for the pump
     shutdown: Arc<std::sync::atomic::AtomicBool>,
     /// Handle for the pump task (None until `start()` is called)
@@ -205,13 +213,12 @@ pub struct PyUniswapArbEngine {
 /// Stores the pump and subscribe results between `subscribe()` and `resume()`
 /// calls so that `resume()` can re-use the same pump instance.
 struct PySubscribeState {
-    /// The pump instance (holds engine, provider, shutdown, and `block_tx`)
-    pump: crate::optimizers::uniswap_engine_pump::UniswapEnginePump,
+    /// The pump instance (holds `Arc<Bot>` + `Arc<dyn DrainSink>`, provider, shutdown)
+    pump: BlockPump,
     /// First block number observed during subscribe
     first_block: u64,
     /// Live WS stream for the resume phase
-    combined_stream:
-        futures_util::stream::BoxStream<'static, crate::optimizers::uniswap_engine_pump::WsEvent>,
+    combined_stream: futures_util::stream::BoxStream<'static, WsEvent>,
 }
 
 impl PyUniswapArbEngine {
@@ -571,18 +578,26 @@ impl PyUniswapArbEngine {
     #[pyo3(signature = (py_bot=None))]
     fn new(py: Python<'_>, py_bot: Option<Py<PyBot>>) -> Self {
         let (result_tx, result_rx) = mpsc::unbounded_channel();
-        // ADR-006 D1: if a `PyBot` is supplied, adopt its shared
+        // ADR-006 D1+D4: if a `PyBot` is supplied, adopt its shared
         // `Arc<RwLock<BotState>>` so the engine reads/writes the SAME core that
-        // `PyBot`/`PyLiquidityPool`/`PyErc20Token` share — dissolving the
-        // dual-`BotState` split (the `rust-owned-bot.md` §17 stale-state root cause).
-        // Without one, allocate a standalone core (no-pyo3 / legacy path).
-        let mut engine = match py_bot {
-            Some(py_bot) => UniswapEngine::with_core(py_bot.borrow(py).core_arc()),
-            None => UniswapEngine::new(),
+        // `PyBot`/`PyLiquidityPool`/`PyErc20Token` share — and clone its `Arc<Bot>`
+        // so `BlockPump`'s `dispatch_log` writes flow through to the engine's
+        // reads (dissolving the dual-`BotState` split —
+        // `rust-owned-bot.md` §17 stale-state root cause). Without one, allocate
+        // a standalone core + wrap it in a fresh `Bot` (no-pyo3 / legacy path).
+        let (engine, bot) = if let Some(py_bot) = py_bot {
+            let bot = py_bot.borrow(py).bot_arc();
+            (UniswapEngine::with_core(bot.state_arc()), bot)
+        } else {
+            let core = Arc::new(parking_lot::RwLock::new(crate::bot_core::BotState::new()));
+            let bot = Arc::new(Bot::with_core(Arc::clone(&core)));
+            (UniswapEngine::with_core(core), bot)
         };
+        let mut engine = engine;
         engine.set_result_channel(result_tx);
         Self {
             engine: Arc::new(parking_lot::Mutex::new(engine)),
+            bot,
             shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pump_handle: parking_lot::Mutex::new(None),
             subscribe_state: parking_lot::Mutex::new(None),
@@ -1294,10 +1309,24 @@ impl PyUniswapArbEngine {
             return Err(pyo3::exceptions::PyValueError::new_err(msg));
         }
 
-        self.engine
+        let pool_ids: Vec<u64> = hops.iter().map(|h| h.pool_id).collect();
+        let path_id = self
+            .engine
             .lock()
             .register_path(hops)
-            .map_err(pyo3::exceptions::PyValueError::new_err)
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        // ADR-006 D4: subscribe the engine to each pool_id's state updates so
+        // `Bot::dispatch_log` (driven by BlockPump) dirties the engine via the
+        // `EngineSubscriber` adapter. Without this, dispatched logs apply to
+        // `BotState` but never mark paths dirty → no solves (the live chain was
+        // severed when `apply_log` was replaced by `dispatch_log` in slice 5).
+        // Duplicate pool_ids across paths are harmless (`insert_dirty` is
+        // idempotent via `HashSet`).
+        let subscriber = EngineSubscriber::weak_handle(&self.engine);
+        for pool_id in pool_ids {
+            self.bot.attach_engine(pool_id, subscriber.clone());
+        }
+        Ok(path_id)
     }
 
     /// Register a mixed arbitrage path and eagerly solve it.
@@ -1331,10 +1360,18 @@ impl PyUniswapArbEngine {
             return Err(pyo3::exceptions::PyValueError::new_err(msg));
         }
 
-        self.engine
+        let pool_ids: Vec<u64> = hops.iter().map(|h| h.pool_id).collect();
+        let path_id = self
+            .engine
             .lock()
             .register_and_solve_path(hops)
-            .map_err(pyo3::exceptions::PyValueError::new_err)
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        // ADR-006 D4: subscribe the engine to each pool_id (see `register_path`).
+        let subscriber = EngineSubscriber::weak_handle(&self.engine);
+        for pool_id in pool_ids {
+            self.bot.attach_engine(pool_id, subscriber.clone());
+        }
+        Ok(path_id)
     }
 
     /// Start the engine. Freezes registration and spawns the unified pump.
@@ -1349,13 +1386,15 @@ impl PyUniswapArbEngine {
     #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (rpc_url))]
     fn start(&self, rpc_url: String) -> PyResult<()> {
-        // Spawn the unified pump
-        let engine = Arc::clone(&self.engine);
+        // ADR-006 D4: the pump holds `Arc<Bot>` + `Arc<dyn DrainSink>` — not the
+        // engine. `EngineDrainSink` is the placeholder pass-through (slice 6
+        // swaps for `SolveCoordinator`). The bot shares the engine's core, so
+        // `dispatch_log` writes flow through.
+        let bot = Arc::clone(&self.bot);
+        let sink: Arc<dyn DrainSink> = EngineDrainSink::arc_handle(&self.engine);
         let shutdown = Arc::clone(&self.shutdown);
-        let handle = crate::optimizers::uniswap_engine_pump::UniswapEnginePump::spawn(
-            rpc_url, engine, &shutdown,
-        )
-        .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+        let handle = BlockPump::spawn(rpc_url, bot, sink, &shutdown)
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
         *self.pump_handle.lock() = Some(handle);
 
@@ -1394,18 +1433,14 @@ impl PyUniswapArbEngine {
             return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
         }
 
-        let engine = Arc::clone(&self.engine);
+        let bot = Arc::clone(&self.bot);
+        let sink: Arc<dyn DrainSink> = EngineDrainSink::arc_handle(&self.engine);
         let shutdown = Arc::clone(&self.shutdown);
 
         // Run the subscribe phase synchronously (blocks Python until first block observed)
         let runtime = crate::runtime::get_runtime();
         let subscribe_result = runtime
-            .block_on(async {
-                crate::optimizers::uniswap_engine_pump::UniswapEnginePump::subscribe(
-                    &rpc_url, engine, shutdown,
-                )
-                .await
-            })
+            .block_on(async { BlockPump::subscribe(&rpc_url, bot, sink, shutdown).await })
             .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
         let (pump, state) = subscribe_result;
@@ -1514,10 +1549,7 @@ impl PyUniswapArbEngine {
         while chunk_start <= to_block {
             let chunk_end = (chunk_start + chunk_size - 1).min(to_block);
 
-            let filter = crate::optimizers::uniswap_engine_pump::build_backfill_filter(
-                chunk_start,
-                chunk_end,
-            );
+            let filter = crate::bot_core::block_pump::build_backfill_filter(chunk_start, chunk_end);
 
             let logs = runtime.block_on(async {
                 provider_arc.get_logs(&filter).await.map_err(|e| {
@@ -1601,7 +1633,7 @@ impl PyUniswapArbEngine {
 
         // Spawn the resume task on the Tokio runtime
         let handle = crate::runtime::get_runtime().spawn(async move {
-            let inner_state = crate::optimizers::uniswap_engine_pump::SubscribeState {
+            let inner_state = crate::bot_core::block_pump::SubscribeState {
                 first_block,
                 first_timestamp: 0,
                 combined_stream: Some(combined_stream),
