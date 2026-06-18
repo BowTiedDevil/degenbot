@@ -9,11 +9,9 @@ deployment data in uniswap/deployments.py.
 import pytest
 
 from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
-from degenbot.camelot.pools import CamelotLiquidityPool
-from degenbot.pancakeswap.pools import PancakeswapV2Pool, PancakeswapV3Pool
+from degenbot.pancakeswap.pools import PancakeswapV3Pool
 from degenbot.registry.pool_type import PoolTypeRegistry
-from degenbot.sushiswap.pools import SushiswapV2Pool, SushiswapV3Pool
-from degenbot.swapbased.pools import SwapbasedV2Pool
+from degenbot.sushiswap.pools import SushiswapV3Pool
 from degenbot.types.pool_type import PoolFamily
 from degenbot.uniswap.deployments import (
     ArbitrumCamelotV2,
@@ -86,7 +84,7 @@ REGISTRATIONS: dict[tuple[int, str], tuple[type, object, str | None, str]] = {
         "uniswap_v3",
     ),
     (1, _factory(EthereumMainnetSushiswapV2)): (
-        SushiswapV2Pool,
+        LiquidityPool,
         EthereumMainnetSushiswapV2,
         "sushiswap",
         "sushiswap_v2",
@@ -98,7 +96,7 @@ REGISTRATIONS: dict[tuple[int, str], tuple[type, object, str | None, str]] = {
         "sushiswap_v3",
     ),
     (1, _factory(EthereumMainnetPancakeswapV2)): (
-        PancakeswapV2Pool,
+        LiquidityPool,
         EthereumMainnetPancakeswapV2,
         "pancakeswap",
         "pancakeswap_v2",
@@ -112,7 +110,7 @@ REGISTRATIONS: dict[tuple[int, str], tuple[type, object, str | None, str]] = {
     (8453, _factory(BaseUniswapV2)): (LiquidityPool, BaseUniswapV2, None, "uniswap_v2"),
     (8453, _factory(BaseUniswapV3)): (UniswapV3Pool, BaseUniswapV3, None, "uniswap_v3"),
     (8453, _factory(BaseSushiswapV2)): (
-        SushiswapV2Pool,
+        LiquidityPool,
         BaseSushiswapV2,
         "sushiswap",
         "sushiswap_v2",
@@ -124,7 +122,7 @@ REGISTRATIONS: dict[tuple[int, str], tuple[type, object, str | None, str]] = {
         "sushiswap_v3",
     ),
     (8453, _factory(BasePancakeswapV2)): (
-        PancakeswapV2Pool,
+        LiquidityPool,
         BasePancakeswapV2,
         "pancakeswap",
         "pancakeswap_v2",
@@ -148,14 +146,14 @@ REGISTRATIONS: dict[tuple[int, str], tuple[type, object, str | None, str]] = {
         "aerodrome_v2",
     ),
     (8453, _factory(BaseSwapbasedV2)): (
-        SwapbasedV2Pool,
+        LiquidityPool,
         BaseSwapbasedV2,
         "swapbased",
         "swapbased_v2",
     ),
     (42161, _factory(ArbitrumUniswapV3)): (UniswapV3Pool, ArbitrumUniswapV3, None, "uniswap_v3"),
     (42161, _factory(ArbitrumSushiswapV2)): (
-        SushiswapV2Pool,
+        LiquidityPool,
         ArbitrumSushiswapV2,
         "sushiswap",
         "sushiswap_v2",
@@ -167,7 +165,7 @@ REGISTRATIONS: dict[tuple[int, str], tuple[type, object, str | None, str]] = {
         "sushiswap_v3",
     ),
     (42161, _factory(ArbitrumCamelotV2)): (
-        CamelotLiquidityPool,
+        LiquidityPool,
         ArbitrumCamelotV2,
         "camelot",
         "camelot_v2",
@@ -185,13 +183,14 @@ class TestFullRegistration:
         reg.set_default_v2_class(LiquidityPool)
         reg.set_default_v3_class(UniswapV3Pool)
 
-        for (chain_id, factory), (pool_class, deployment, _, _) in REGISTRATIONS.items():
+        for (chain_id, factory), (pool_class, deployment, variant, _) in REGISTRATIONS.items():
             reg.register(
                 pool_class,
                 chain_id=chain_id,
                 factory_address=factory,
                 pool_init_hash=_init_hash(deployment),
                 deployer=_deployer(deployment),
+                variant=variant,
             )
         return reg
 

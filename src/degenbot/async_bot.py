@@ -24,7 +24,6 @@ from degenbot.builders.type_resolution import (
 from degenbot.builders.type_resolution import (
     resolve_pool_type_async as _resolve_pool_type_async_impl,
 )
-from degenbot.camelot.pools import CamelotLiquidityPool
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DegenbotConfig, _init_config
 from degenbot.connection.async_connection_manager import AsyncConnectionManager
@@ -101,7 +100,10 @@ class AsyncBot:
         self._register_builder(UniswapV3Pool, self._v3_builder)
         self._register_builder(UniswapV4Pool, self._v4_builder)
         self._register_builder(AerodromeV2Pool, self._v2_builder)
-        self._register_builder(CamelotLiquidityPool, self._v2_builder)
+
+        # All V2-family DEXes (Uniswap/Sushi/Pancake/Swapbased/Camelot)
+        # register the canonical LiquidityPool for their factories (ADR-005
+        # slice 7 step 4b) — the single V2 builder handles them all.
 
     @classmethod
     def from_config_file(cls) -> AsyncBot:

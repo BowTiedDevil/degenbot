@@ -7,12 +7,10 @@ import pytest
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.balancer.pools import BalancerV2Pool
-from degenbot.camelot.pools import CamelotLiquidityPool
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
-from degenbot.pancakeswap.pools import PancakeswapV2Pool, PancakeswapV3Pool
+from degenbot.pancakeswap.pools import PancakeswapV3Pool
 from degenbot.registry.pool_type import _derive_family
-from degenbot.sushiswap.pools import SushiswapV2Pool, SushiswapV3Pool
-from degenbot.swapbased.pools import SwapbasedV2Pool
+from degenbot.sushiswap.pools import SushiswapV3Pool
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.pool_type import PoolFamily
 from degenbot.uniswap.liquidity_pool import LiquidityPool
@@ -67,30 +65,23 @@ class TestConcretePoolsSatisfyProtocols:
         assert hasattr(AerodromeV2Pool, "reserves_token0")
         assert hasattr(AerodromeV2Pool, "reserves_token1")
 
-    def test_camelot_pool_satisfies_constant_product(self):
-        assert issubclass(CamelotLiquidityPool, AbstractLiquidityPool)
-        assert hasattr(CamelotLiquidityPool, "fee_token0")
-        assert hasattr(CamelotLiquidityPool, "fee_token1")
-
-    def test_pancakeswap_v2_pool_satisfies_constant_product(self):
-        assert issubclass(PancakeswapV2Pool, AbstractLiquidityPool)
-        assert hasattr(PancakeswapV2Pool, "fee_token0")
+    def test_liquidity_pool_satisfies_constant_product(self):
+        # ADR-005 slice 7 step 4b: the hollow V2 DEX subclasses (Sushi/Pancake/
+        # Swapbased/Camelot) collapsed into the canonical LiquidityPool — it's
+        # the single V2-family concrete class, so one shape test covers them all.
+        assert issubclass(LiquidityPool, AbstractLiquidityPool)
+        assert hasattr(LiquidityPool, "fee_token0")
+        assert hasattr(LiquidityPool, "fee_token1")
+        assert hasattr(LiquidityPool, "reserves_token0")
+        assert hasattr(LiquidityPool, "reserves_token1")
 
     def test_pancakeswap_v3_pool_satisfies_concentrated_liquidity(self):
         assert issubclass(PancakeswapV3Pool, AbstractLiquidityPool)
         assert hasattr(PancakeswapV3Pool, "sqrt_price_x96")
 
-    def test_sushiswap_v2_pool_satisfies_constant_product(self):
-        assert issubclass(SushiswapV2Pool, AbstractLiquidityPool)
-        assert hasattr(SushiswapV2Pool, "fee_token0")
-
     def test_sushiswap_v3_pool_satisfies_concentrated_liquidity(self):
         assert issubclass(SushiswapV3Pool, AbstractLiquidityPool)
         assert hasattr(SushiswapV3Pool, "sqrt_price_x96")
-
-    def test_swapbased_v2_pool_satisfies_constant_product(self):
-        assert issubclass(SwapbasedV2Pool, AbstractLiquidityPool)
-        assert hasattr(SwapbasedV2Pool, "fee_token0")
 
     def test_curve_pool_satisfies_base_abc(self):
         assert issubclass(CurveStableswapPool, AbstractLiquidityPool)
@@ -118,4 +109,5 @@ class TestPoolFamilyDerivation:
         assert _derive_family(CurveStableswapPool) == PoolFamily.STABLESWAP
 
     def test_camelot_is_constant_product(self):
-        assert _derive_family(CamelotLiquidityPool) == PoolFamily.CONSTANT_PRODUCT
+        # Camelot collapsed into LiquidityPool (slice 7 step 4b).
+        assert _derive_family(LiquidityPool) == PoolFamily.CONSTANT_PRODUCT

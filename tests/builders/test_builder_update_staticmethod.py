@@ -23,7 +23,6 @@ from degenbot.builders.async_v2_pool_builder import AsyncV2PoolBuilder
 from degenbot.builders.async_v3_pool_builder import AsyncV3PoolBuilder
 from degenbot.builders.async_v4_pool_builder import AsyncV4PoolBuilder
 from degenbot.builders.balancer_builder import BalancerBuilder
-from degenbot.builders.camelot_builder import CamelotBuilder
 from degenbot.builders.context import BuilderContext
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.builders.pool_io import AsyncPoolIO, SyncPoolIO
@@ -86,7 +85,6 @@ class TestUpdateIsStaticMethod:
         [
             V2PoolBuilder,
             AerodromeV2Builder,
-            CamelotBuilder,
             V3PoolBuilder,
             V4PoolBuilder,
             CurvePoolBuilder,
@@ -164,17 +162,13 @@ class FakeSyncProvider:
     def __init__(self, responses: dict[str, bytes]) -> None:
         self._responses = responses
 
-    def make_request(
-        self, method: str, params: list
-    ) -> HexBytes:
+    def make_request(self, method: str, params: list) -> HexBytes:
         if method == "eth_getCode":
             return HexBytes(b"\x60\x00")
         msg = f"Unexpected method: {method}"
         raise ValueError(msg)
 
-    def call(
-        self, *, to: str, data: bytes, block: int | None = None
-    ) -> HexBytes:
+    def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
         selector = data[:4].hex()
         if selector in self._responses:
             return HexBytes(self._responses[selector])
@@ -191,9 +185,7 @@ class FakeAsyncProvider:
     def __init__(self, responses: dict[str, bytes]) -> None:
         self._responses = responses
 
-    async def call(
-        self, *, to: str, data: bytes, block: int | None = None
-    ) -> HexBytes:
+    async def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
         selector = data[:4].hex()
         if selector in self._responses:
             return HexBytes(self._responses[selector])
