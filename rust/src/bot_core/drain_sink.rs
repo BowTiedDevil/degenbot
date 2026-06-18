@@ -10,11 +10,14 @@
 //! - `finalize_block` solves+advances at a genuine block boundary.
 //! - `on_reorg` restores state before the forked block.
 //!
-//! **Placeholder status (slice 5):** the only live impl is
-//! [`EngineDrainSink`](crate::optimizers::uniswap_engine::engine_drain_sink),
-//! a faithful pass-through to `UniswapEngine` so the bot keeps solving while
-//! `SolveCoordinator`/`ReorgCoordinator` land in slices 6 + 7. Slice 6 swaps
-//! `EngineDrainSink` for `SolveCoordinator`; slice 7 adds reorg coordination.
+//! **Status (slice 6):** the live impl is
+//! [`SolveCoordinator`](crate::bot_core::solve_coordinator::SolveCoordinator),
+//! which fans drain-tick / send / finalize / reorg calls to every attached
+//! [`Engine`](crate::bot_core::engine::Engine) under a `drain_lock` and
+//! exposes a drain-consistent `last_processed_block` (Python polls block
+//! until an in-flight drain completes — no Rust/Python race). The slice-5a
+//! `EngineDrainSink` placeholder was deleted. `ReorgCoordinator` (slice 7)
+//! adds optimistic per-event `restore_before_block`.
 //!
 //! **Lock order (D2):** `bot.dispatch_log` acquires the `BotState` write guard,
 //! applies, RELEASES, then notifies the engine subscriber (engine `Mutex`

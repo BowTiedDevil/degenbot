@@ -109,8 +109,8 @@ pub(crate) struct BlockPump {
     /// The per-chain orchestrator — owns `BotState` + the `LogDispatcher`. Per
     /// WS log, the pump calls `bot.dispatch_log(log)`. ADR-006 D4.
     bot: Arc<Bot>,
-    /// The drain sink (placeholder: `EngineDrainSink` pass-through). Slice 6
-    /// swaps it for `SolveCoordinator`; slice 7 adds reorg coordination.
+    /// The drain sink (slice 6: `SolveCoordinator` fanning to every
+    /// attached `Engine` under a `drain_lock`; slice 7 adds reorg coordination).
     sink: Arc<dyn DrainSink>,
     /// The Alloy provider (created from the RPC URL)
     provider: Arc<AlloyProvider>,
@@ -666,12 +666,12 @@ impl BlockPump {
     /// Finalize the current block: solve any dirty paths and send the result
     /// batch to Python, carrying the caller's real `current_metadata`.
     ///
-    /// Delegates to the `DrainSink`'s `finalize_block` (the
-    /// `EngineDrainSink` pass-through forwards to `UniswapEngine::finalize_block`).
-    /// Kept here as a thin wrapper so the pump owns the `last_solved_block` /
-    /// `has_logs_this_block` bookkeeping locals; all engine-state mutation happens
-    /// inside the sink under its lock. ADR-006 D4: the pump no longer holds the
-    /// engine `Mutex` directly.
+    /// Delegates to the `DrainSink`'s `finalize_block` (the slice-6
+    /// `SolveCoordinator` fans to every attached `Engine`). Kept here as a thin
+    /// wrapper so the pump owns the `last_solved_block` / `has_logs_this_block`
+    /// bookkeeping locals; all engine-state mutation happens inside the sink
+    /// under its lock. ADR-006 D4: the pump no longer holds the engine `Mutex`
+    /// directly.
     fn finalize_if_dirty(
         &self,
         block: u64,
