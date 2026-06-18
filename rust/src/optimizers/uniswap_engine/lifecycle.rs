@@ -4,16 +4,16 @@ use super::{
     Address, HashMap, HopType, MixedPath, MixedPoolRef, PoolHop, ResolvedMixedPath,
     SolvePathResult, UniswapEngine,
 };
-use crate::bot_core::Bot;
+use crate::bot_core::BotState;
 
 impl UniswapEngine {
-    /// Derive a hop's family from the `Bot`'s `PoolEntry` variant.
+    /// Derive a hop's family from the `BotState`'s `PoolEntry` variant.
     ///
     /// Returns `None` if `pool_id` isn't registered in `core` — the caller
     /// (`register_path`) rejects such hops with a clear error (ADR-006 D3:
     /// the engine never constructs pools, so it learns each hop's family
-    /// from the `Bot` that owns it).
-    fn derive_hop_type(core: &Bot, pool_id: u64) -> Option<HopType> {
+    /// from the `BotState` that owns it).
+    fn derive_hop_type(core: &BotState, pool_id: u64) -> Option<HopType> {
         if core.get_v2_pool_state(pool_id).is_some() {
             Some(HopType::V2)
         } else if core.get_v3_pool(pool_id).is_some() {
@@ -27,8 +27,8 @@ impl UniswapEngine {
 
     /// Register a mixed path and return its ID.
     ///
-    /// Each hop's family is derived from the associated `Bot`'s `PoolEntry`
-    /// variant; a `pool_id` not registered in the `Bot` is rejected with a
+    /// Each hop's family is derived from the associated `BotState`'s `PoolEntry`
+    /// variant; a `pool_id` not registered in the `BotState` is rejected with a
     /// clear error (ADR-006 D3). The path is resolved immediately. If all
     /// pool states are available, the path is marked valid and will be
     /// solved on the next `rebuild_and_solve_affected` or `solve_all_paths`
@@ -37,12 +37,12 @@ impl UniswapEngine {
     /// # Errors
     ///
     /// Returns `Err` if any `pool_id` is not registered in the associated
-    /// `Bot`.
+    /// `BotState`.
     pub fn register_path(&mut self, hops: Vec<PoolHop>) -> Result<u64, String> {
         let path_id = self.next_path_id;
         self.next_path_id += 1;
 
-        // Resolve each hop's family from the Bot + validate the pool_id
+        // Resolve each hop's family from the BotState + validate the pool_id
         // exists there. The engine never constructs pools (ADR-006 D3), so
         // hop_type is derived, not caller-supplied.
         let core = self.core.read();
@@ -50,7 +50,7 @@ impl UniswapEngine {
         for hop in hops {
             let Some(hop_type) = Self::derive_hop_type(&core, hop.pool_id) else {
                 return Err(format!(
-                    "register_path: pool_id {} is not registered in the associated Bot",
+                    "register_path: pool_id {} is not registered in the associated BotState",
                     hop.pool_id
                 ));
             };
@@ -75,7 +75,7 @@ impl UniswapEngine {
             .insert(path_id, MixedPath { pools: pool_refs });
 
         // Resolve the path immediately (no solve yet). V2 state is read from
-        // Bot under the core lock (ADR-003).
+        // BotState under the core lock (ADR-003).
         let mut resolved = ResolvedMixedPath::default();
         if let Some(path) = self.path_pools.get(&path_id) {
             let core = self.core.read();
@@ -96,7 +96,7 @@ impl UniswapEngine {
     /// # Errors
     ///
     /// Returns `Err` if any `pool_id` is not registered in the associated
-    /// `Bot` (see [`register_path`](Self::register_path)).
+    /// `BotState` (see [`register_path`](Self::register_path)).
     pub fn register_and_solve_path(&mut self, hops: Vec<PoolHop>) -> Result<u64, String> {
         let path_id = self.register_path(hops)?;
 
@@ -116,13 +116,13 @@ impl UniswapEngine {
     }
 
     /// Set the maximum age for buffered events in the V3/V4 buffers
-    /// (ADR-003: both live on `Bot`).
+    /// (ADR-003: both live on `BotState`).
     pub fn set_event_buffer_max_age(&mut self, max_age: Option<u64>) {
         self.core.write().set_v3_buffer_max_age(max_age);
         self.core.write().set_v4_buffer_max_age(max_age);
     }
 
-    /// Flush all buffered events in the V3/V4 buffers on `Bot` (ADR-003).
+    /// Flush all buffered events in the V3/V4 buffers on `BotState` (ADR-003).
     pub fn flush_event_buffer(&mut self) {
         self.core.write().flush_v3_buffer();
         self.core.write().flush_v4_buffer();
@@ -189,19 +189,19 @@ impl UniswapEngine {
         // pump owns dispatch via `send_result_batch`.
     }
 
-    /// Number of registered V2 pools (state lives in `Bot` under ADR-003).
+    /// Number of registered V2 pools (state lives in `BotState` under ADR-003).
     #[must_use]
     pub fn v2_pool_count(&self) -> usize {
         self.core.read().v2_pool_count()
     }
 
-    /// Number of registered V3 pools (state lives in `Bot` under ADR-003).
+    /// Number of registered V3 pools (state lives in `BotState` under ADR-003).
     #[must_use]
     pub fn v3_pool_count(&self) -> usize {
         self.core.read().v3_pool_count()
     }
 
-    /// Number of registered V4 pools (state lives in `Bot` under ADR-003).
+    /// Number of registered V4 pools (state lives in `BotState` under ADR-003).
     #[must_use]
     pub fn v4_pool_count(&self) -> usize {
         self.core.read().v4_pool_count()

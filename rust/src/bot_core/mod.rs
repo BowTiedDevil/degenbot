@@ -1,10 +1,11 @@
-//! `Bot` — the single owner of all runtime state.
+//! `BotState` — the single owner of all runtime state.
 //!
 //! All pool data, token metadata, calculation methods, and swap encoding
 //! live here. Python objects are thin `PyO3` handles carrying keys into
-//! `Bot`'s `HashMaps`.
+//! `BotState`'s `HashMaps`.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use alloy::primitives::{Address, I256, U256};
 
@@ -32,7 +33,7 @@ pub mod v4_modify_liquidity_decoder;
 pub mod v4_state;
 pub mod v4_swap_decoder;
 
-// Re-export the merged V3/V4 state types (ADR-003: Bot owns CL state).
+// Re-export the merged V3/V4 state types (ADR-003: BotState owns CL state).
 pub use v3_state::{
     v3_simulate_swap, BufferedV3LiquidityUpdate, PoolTickCoverage, RegisterV3PoolParams,
     V3PoolState, V3SwapOutcome, V3SwapUpdate,
@@ -138,14 +139,19 @@ pub struct TokenEntry {
 }
 
 // ---------------------------------------------------------------------------
-// Bot
+// BotState
 // ---------------------------------------------------------------------------
 
 /// The single owner of all runtime state.
 ///
 /// All pool data, token metadata, engines, and encoded results live here.
 /// Python holds `PyBot` — an `Arc` pointing here.
-pub struct Bot {
+///
+/// ADR-006 D4: `BotState` is the pure-data submodule (no I/O) behind the
+/// thin `Bot` orchestrator facade. `pub(crate)` — callers cross the
+/// orchestrator seam; `BotState` is a private deep module with its own test
+/// seam.
+pub(crate) struct BotState {
     /// Pool registry: `pool_id` → `PoolEntry`.
     pools: HashMap<u64, PoolEntry>,
     /// Pool contract address → `pool_id`.
@@ -158,7 +164,7 @@ pub struct Bot {
     /// by default (ADR-003). Applied uniformly to V2/V3/V4.
     journal_depth: usize,
     /// Dual-buffer for V3 liquidity (Mint/Burn) events awaiting pool
-    /// registration (ADR-003: the accurate-state buffer lives on `Bot`, not
+    /// registration (ADR-003: the accurate-state buffer lives on `BotState`, not
     /// the dissolved `V3BlockEngine`).
     v3_buffer: crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer<
         Address,
@@ -176,14 +182,14 @@ pub struct Bot {
     v4_pool_ids: HashMap<(Address, crate::bot_core::v4_swap_decoder::PoolId), u64>,
 }
 
-impl Bot {
-    /// Create a new, empty `Bot` with the default 32-block reorg journal.
+impl BotState {
+    /// Create a new, empty `BotState` with the default 32-block reorg journal.
     #[must_use]
     pub fn new() -> Self {
         Self::with_journal_depth(32)
     }
 
-    /// Create a new, empty `Bot` with a custom reorg journal depth.
+    /// Create a new, empty `BotState` with a custom reorg journal depth.
     #[must_use]
     pub fn with_journal_depth(journal_depth: usize) -> Self {
         Self {
@@ -1220,6 +1226,7 @@ impl Bot {
 
     /// Get the pool address for a given pool ID.
     #[must_use]
+    #[allow(dead_code)]
     pub fn pool_address(&self, pool_id: u64) -> Option<Address> {
         match self.pools.get(&pool_id)? {
             PoolEntry::V2(state) => Some(state.address),
@@ -1567,6 +1574,7 @@ impl Bot {
 
     /// Get the number of deltas in the reorg journal for a V4 pool.
     #[must_use]
+    #[allow(dead_code)]
     pub fn v4_journal_len(&self, pool_id: u64) -> usize {
         match self.pools.get(&pool_id) {
             Some(PoolEntry::V4(state)) => state.journal.len(),
@@ -1580,6 +1588,7 @@ impl Bot {
     ///
     /// Returns `Err(JournalError::NoStateAtOrAfterBlock)` if the target is past
     /// the newest delta. The `PyO3` layer maps this to `ValueError`.
+    #[allow(dead_code)]
     pub fn v4_discard_before_block(
         &mut self,
         pool_id: u64,
@@ -1673,9 +1682,71 @@ impl Bot {
     }
 }
 
-impl Default for Bot {
+impl Default for BotState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bot — thin orchestrator facade (ADR-006 D4)
+// ---------------------------------------------------------------------------
+
+/// The per-chain orchestrator: a thin facade over a shared
+/// [`BotState`] (the pure-data registries/swap math/reorg journal) plus the
+/// `chain_id` (ADR-006 D1) and, in later slices, the cohesive helpers
+/// (`LogDispatcher` / `BlockPump` / `SolveCoordinator` / `ReorgCoordinator`) and a
+/// `Vec<Box<dyn EventSink>>` of attached engines.
+///
+/// `PyBot` owns a `Bot` outright (not behind a lock) and hands out clones of
+/// [`Bot::state_arc`] so `PyLiquidityPool` / `PyErc20Token` / `UniswapEngine`
+/// all reach ONE Rust-owned `BotState` (N handles → one state — the Polars
+/// three-layer invariant, preserved). The standalone-Rust path (D4) runs the
+/// whole bot through this facade without Python.
+pub(crate) struct Bot {
+    /// The chain this bot orchestrates (ADR-006 D1+D5: one `Bot` per chain).
+    /// Read by the standalone-Rust path; `PyBot` wires 0 until slice 8.
+    #[allow(dead_code)]
+    chain_id: u64,
+    /// The shared pure-data state. Handles clone this `Arc`.
+    state: Arc<parking_lot::RwLock<BotState>>,
+}
+
+impl Bot {
+    /// Construct a new orchestrator for `chain_id` over a fresh `BotState`.
+    ///
+    /// `PyBot` wires `chain_id = 0` until ADR-006 slice 8 makes `bot.py` a
+    /// single-chain facade; the standalone-Rust path passes the real id.
+    #[must_use]
+    pub fn new(chain_id: u64) -> Self {
+        Self {
+            chain_id,
+            state: Arc::new(parking_lot::RwLock::new(BotState::new())),
+        }
+    }
+
+    /// The chain this bot orchestrates. Used by the standalone-Rust path;
+    /// `PyBot` does not expose it until ADR-006 slice 8.
+    #[must_use]
+    #[allow(dead_code)]
+    pub const fn chain_id(&self) -> u64 {
+        self.chain_id
+    }
+
+    /// Hand out a clone of the shared `Arc<RwLock<BotState>>` so a sibling
+    /// consumer (`PyLiquidityPool` / `PyErc20Token` / `UniswapEngine`) reaches
+    /// the SAME state this orchestrator owns. This is the Polars three-layer
+    /// sharing seam (ADR-005, revised by ADR-006 D4).
+    #[must_use]
+    pub fn state_arc(&self) -> Arc<parking_lot::RwLock<BotState>> {
+        Arc::clone(&self.state)
+    }
+
+    /// Start the block pump. Placeholder — the `BlockPump` wiring lands in
+    /// ADR-006 slice 5; until then this panics to make the unwired state loud.
+    #[allow(dead_code)]
+    pub fn start(&self) {
+        unimplemented!("BlockPump wiring lands in ADR-006 slice 5");
     }
 }
 
@@ -1714,7 +1785,7 @@ mod tests {
 
     #[test]
     fn register_v2_pool_and_calculate_tokens_out() {
-        let mut core = Bot::new();
+        let mut core = BotState::new();
         let pool_id = core.register_v2_pool(&make_params(U256::from(1000), U256::from(2000)));
 
         // Python reference: constant_product_calc_exact_in(100, 1000, 2000, 3/1000) = 181
@@ -1724,7 +1795,7 @@ mod tests {
 
     #[test]
     fn calculate_tokens_out_reverse_direction() {
-        let mut core = Bot::new();
+        let mut core = BotState::new();
         let pool_id = core.register_v2_pool(&make_params(U256::from(2000), U256::from(1000)));
 
         // Python reference: constant_product_calc_exact_in(100, 1000, 2000, 3/1000) = 181
@@ -1734,7 +1805,7 @@ mod tests {
 
     #[test]
     fn update_v2_pool_changes_calculation_result() {
-        let mut core = Bot::new();
+        let mut core = BotState::new();
         let pool_id = core.register_v2_pool(&make_params(U256::from(1000), U256::from(2000)));
 
         // Before update: swap 100 token0 → 181 token1
@@ -1751,7 +1822,7 @@ mod tests {
 
     #[test]
     fn calculate_tokens_in_for_v2_pool() {
-        let mut core = Bot::new();
+        let mut core = BotState::new();
         let pool_id = core.register_v2_pool(&make_params(U256::from(1000), U256::from(2000)));
 
         // Python: constant_product_calc_exact_out(50, 1000, 2000, 3/1000) = 26
@@ -1765,7 +1836,7 @@ mod tests {
 
     #[test]
     fn calculate_tokens_out_realistic_amounts() {
-        let mut core = Bot::new();
+        let mut core = BotState::new();
 
         // Realistic: 1.5M USDC / 800 WETH, 0.3% fee
         let reserve0 = U256::from(1_500_000_000_000u64); // 1.5M USDC (6dp)
@@ -1789,5 +1860,45 @@ mod tests {
         let amount_in = U256::from(1_000_000_000u64); // 1000 USDC (6dp)
         let amount_out = core.calculate_tokens_out(pool_id, true, amount_in);
         assert_eq!(amount_out, U256::from(531_380_142_665_175_213_u64));
+    }
+
+    /// ADR-006 slice 3 (D4): `BotState` is a thin orchestrator facade over a
+    /// `pub(crate) BotState` (the renamed pure-data struct). It holds the
+    /// `chain_id` (D1, deferred from slice 1) and a shared
+    /// `Arc<RwLock<BotState>>` it hands out via `state_arc()` so `PyBot`,
+    /// `PyLiquidityPool`, `PyErc20Token`, and the engine all reach ONE
+    /// Rust-owned state (N handles → one `BotState`).
+    #[test]
+    fn bot_facade_holds_chain_id_and_shares_bot_state() {
+        // The orchestrator carries the chain id (D1).
+        let bot = super::Bot::new(5);
+        assert_eq!(bot.chain_id(), 5);
+
+        // `state_arc()` hands out the shared `Arc<RwLock<BotState>>`.
+        let state = bot.state_arc();
+
+        // A pool registered through the shared state is visible to a SECOND
+        // clone of the same Arc — proving N handles reach one Rust-owned
+        // state (the Polars three-layer invariant, preserved).
+        let params = RegisterV2PoolParams {
+            address: Address::from([0x11u8; 20]),
+            token0: Address::from([0x01u8; 20]),
+            token1: Address::from([0x02u8; 20]),
+            reserve0: U256::from(1000),
+            reserve1: U256::from(2000),
+            fee_token0: (997, 1000),
+            fee_token1: (997, 1000),
+            factory: Address::from([0x33u8; 20]),
+            update_block: 0,
+        };
+        state.write().register_v2_pool(&params);
+
+        let state2 = bot.state_arc();
+        assert_eq!(
+            state2.read().pool_count(),
+            1,
+            "state_arc() must share one BotState"
+        );
+        assert!(state2.read().has_pool(1));
     }
 }

@@ -572,9 +572,9 @@ impl PyUniswapArbEngine {
     fn new(py: Python<'_>, py_bot: Option<Py<PyBot>>) -> Self {
         let (result_tx, result_rx) = mpsc::unbounded_channel();
         // ADR-006 D1: if a `PyBot` is supplied, adopt its shared
-        // `Arc<RwLock<Bot>>` so the engine reads/writes the SAME core that
+        // `Arc<RwLock<BotState>>` so the engine reads/writes the SAME core that
         // `PyBot`/`PyLiquidityPool`/`PyErc20Token` share — dissolving the
-        // dual-`Bot` split (the `rust-owned-bot.md` §17 stale-state root cause).
+        // dual-`BotState` split (the `rust-owned-bot.md` §17 stale-state root cause).
         // Without one, allocate a standalone core (no-pyo3 / legacy path).
         let mut engine = match py_bot {
             Some(py_bot) => UniswapEngine::with_core(py_bot.borrow(py).core_arc()),
@@ -925,11 +925,11 @@ impl PyUniswapArbEngine {
         let r0 = crate::alloy_py::extract_python_u256(reserve0)?;
         let r1 = crate::alloy_py::extract_python_u256(reserve1)?;
 
-        // ADR-006 D3: pool construction is a `Bot` concern only. The engine
-        // registers into its associated `Bot` (`core`) — for a standalone
-        // engine that's its own `Bot`; for a `py_bot=`-constructed engine
+        // ADR-006 D3: pool construction is a `BotState` concern only. The engine
+        // registers into its associated `BotState` (`core`) — for a standalone
+        // engine that's its own `BotState`; for a `py_bot=`-constructed engine
         // it's the shared `PyBot` core (so the caller must NOT also register
-        // the same pool via `PyBot`, or `Bot::register_v2_pool` panics).
+        // the same pool via `PyBot`, or `BotState::register_v2_pool` panics).
         let params = crate::bot_core::RegisterV2PoolParams {
             address: addr,
             token0: Address::ZERO,
@@ -2341,7 +2341,7 @@ impl PyUniswapArbEngine {
         // Phase 2: Query sub-engines for pool details
         let mut hops: Vec<HopInfo> = Vec::new();
         let engine = self.engine.lock();
-        // ADR-003: V2 state lives in Bot. One core-lock window covers all
+        // ADR-003: V2 state lives in BotState. One core-lock window covers all
         // V2 lookups in this loop (engine-then-core ordering; V3/V4 state still
         // reads the per-family engines, which are disjoint fields).
         let core = engine.core.read();
@@ -2489,7 +2489,7 @@ impl PyUniswapArbEngine {
     /// DIAG-a3f2: Dump V2 pool state for a given address.
     /// Returns (`pool_id`, `reserve0`, `reserve1`) or None.
     ///
-    /// ADR-003: V2 state lives in `Bot` as a single entry per address
+    /// ADR-003: V2 state lives in `BotState` as a single entry per address
     /// (orientation is selected at solve time via `zero_for_one`, not by a
     /// separate reverse key). The former forward/reverse dual keys are gone.
     #[pyo3(signature = (address_hex))]

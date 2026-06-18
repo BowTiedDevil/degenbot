@@ -1,4 +1,4 @@
-//! V4 concentrated-liquidity pool state — the single Bot-owned home for
+//! V4 concentrated-liquidity pool state — the single BotState-owned home for
 //! V4 pool data (ADR-003). Supersedes the engine-side `V4PoolState` that lived
 //! in `optimizers/v4_block_engine.rs`; that engine's path/solve subsystem is
 //! deleted as orphan dead code (the unified `UniswapEngine` already handles V4
@@ -87,7 +87,7 @@ impl LiquidityEvent for BufferedV4LiquidityUpdate {
 // Registration params + swap update type
 // ---------------------------------------------------------------------------
 
-/// Parameters for registering a V4 pool with `Bot`.
+/// Parameters for registering a V4 pool with `BotState`.
 #[derive(Clone, Debug)]
 pub struct RegisterV4PoolParams {
     pub pool_manager: Address,
@@ -106,7 +106,7 @@ pub struct RegisterV4PoolParams {
     pub coverage: PoolTickCoverage,
 }
 
-/// Full V4 state overwrite applied by [`crate::bot_core::Bot::sync_v4_pool_state`].
+/// Full V4 state overwrite applied by [`crate::bot_core::BotState::sync_v4_pool_state`].
 ///
 /// Groups the five mutable state fields so `sync_v4_pool_state` stays under
 /// clippy's argument limit — the pool is identified separately by
@@ -147,7 +147,7 @@ struct TickRangeCache {
     ofz: Option<Arc<[V3TickRangeForSolver]>>,
 }
 
-/// V4 concentrated-liquidity pool state owned by [`crate::bot_core::Bot`].
+/// V4 concentrated-liquidity pool state owned by [`crate::bot_core::BotState`].
 /// Carries authoritative mutable state plus a per-pool reorg journal (same
 /// `V3BlockDelta` shape — V4 `ModifyLiquidity` carries a signed liquidity
 /// delta, but the journal records the same scalar + per-tick priors as V3).
@@ -326,7 +326,7 @@ impl V4PoolState {
 ///
 /// `amount_specified` uses the V4 sign convention supplied by the caller:
 /// negative = exact input, positive = exact output (opposite to V3). The
-/// `Bot` `calculate_tokens_*` callers flip before calling so this stays
+/// `BotState` `calculate_tokens_*` callers flip before calling so this stays
 /// a pure V4 port.
 #[must_use]
 #[allow(clippy::too_many_lines)] // faithful port of V3/V4's `_calculate_swap`; mirroring `v3_simulate_swap`.

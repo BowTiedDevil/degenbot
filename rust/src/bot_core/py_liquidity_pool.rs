@@ -1,18 +1,18 @@
-//! `PyLiquidityPool` — thin Python handle over a `pool_id` key into `Bot`.
+//! `PyLiquidityPool` — thin Python handle over a `pool_id` key into `BotState`.
 //!
-//! Shares the same `Arc<parking_lot::RwLock<Bot>>` as the owning `PyBot` (one
-//! Rust-owned `Bot`, many thin Python handles). Part of the Polars-inspired
+//! Shares the same `Arc<parking_lot::RwLock<BotState>>` as the owning `PyBot` (one
+//! Rust-owned `BotState`, many thin Python handles). Part of the Polars-inspired
 //! three-layer topology — see `docs/adr/ADR-005-polars-inspired-three-layer-architecture.md`.
 //!
 //! Owns no state — property reads and calculation calls cross `PyO3` on every
-//! access, locking the shared `Bot` for reading.
+//! access, locking the shared `BotState` for reading.
 
 use std::sync::Arc;
 
 use pyo3::prelude::*;
 
 use crate::bot_core::py_bot::journal_err_to_py;
-use crate::bot_core::Bot;
+use crate::bot_core::BotState;
 
 /// Encode a byte slice as a lowercase hex string (no "0x" prefix).
 fn bytes_to_hex(bytes: &[u8]) -> String {
@@ -25,18 +25,18 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
     s
 }
 
-/// A thin Python handle to a pool registered in `Bot`.
+/// A thin Python handle to a pool registered in `BotState`.
 ///
-/// Does not own any state — all data lives in Rust inside `Bot`.
+/// Does not own any state — all data lives in Rust inside `BotState`.
 #[pyclass(skip_from_py_object)]
 pub struct PyLiquidityPool {
-    core: Arc<parking_lot::RwLock<Bot>>,
+    core: Arc<parking_lot::RwLock<BotState>>,
     pool_id: u64,
 }
 
 impl PyLiquidityPool {
     /// Create a new thin pool handle.
-    pub const fn new(core: Arc<parking_lot::RwLock<Bot>>, pool_id: u64) -> Self {
+    pub(crate) const fn new(core: Arc<parking_lot::RwLock<BotState>>, pool_id: u64) -> Self {
         Self { core, pool_id }
     }
 
@@ -121,7 +121,7 @@ impl PyLiquidityPool {
     }
 
     // --- State read getters (ADR-005 slice 4 step 2) ---
-    // These read the shared `Bot` under a read guard. Immutable identity
+    // These read the shared `BotState` under a read guard. Immutable identity
     // (token0/token1/factory/fees/address) stays on the Python companion —
     // only mutable state + the reorg journal delegate to Rust.
 

@@ -6,11 +6,11 @@
 //! # Design
 //!
 //! The engine composes:
-//! - A [`Bot`] for V2 pool state and constant-product solving (ADR-003:
-//!   `Bot` is the single state owner; the engine is a consumer)
-//! - A [`Bot`](crate::bot_core::Bot) for V2+V3 pool state (ADR-003:
-//!   `Bot` is the single state owner, peer to this engine)
-//! - A [`Bot`](crate::bot_core::Bot) for all pool state (V2+V3+V4 —
+//! - A [`BotState`] for V2 pool state and constant-product solving (ADR-003:
+//!   `BotState` is the single state owner; the engine is a consumer)
+//! - A [`BotState`](crate::bot_core::BotState) for V2+V3 pool state (ADR-003:
+//!   `BotState` is the single state owner, peer to this engine)
+//! - A [`BotState`](crate::bot_core::BotState) for all pool state (V2+V3+V4 —
 //!   ADR-003), the single Rust state owner peer to this engine
 //!
 //! V4 pools share identical concentrated-liquidity math with V3. The solver
@@ -41,7 +41,7 @@ use std::sync::Arc;
 
 use alloy::primitives::{Address, U256};
 
-use crate::bot_core::Bot;
+use crate::bot_core::BotState;
 
 // Sub-modules — each contains `impl UniswapEngine` or `impl PyUniswapArbEngine` blocks.
 #[allow(clippy::module_inception)]
@@ -171,9 +171,9 @@ impl HopType {
 /// A pool reference in a mixed path.
 ///
 /// Internal representation: `hop_type` is derived from the associated
-/// `Bot`'s `PoolEntry` variant at `register_path` time (ADR-006 D3 — the
+/// `BotState`'s `PoolEntry` variant at `register_path` time (ADR-006 D3 — the
 /// engine never constructs pools, so it learns each hop's family from the
-/// `Bot` that owns it). The public intake is [`PoolHop`].
+/// `BotState` that owns it). The public intake is [`PoolHop`].
 #[derive(Clone, Debug)]
 pub struct MixedPoolRef {
     /// Which engine owns this hop
@@ -186,15 +186,15 @@ pub struct MixedPoolRef {
 
 /// A single hop in a path submitted to [`UniswapEngine::register_path`].
 ///
-/// The caller supplies the `Bot`-owned `pool_id` (obtained from
-/// `PyBot::register_v*_pool` / `Bot::register_v*_pool`) and the swap
+/// The caller supplies the `BotState`-owned `pool_id` (obtained from
+/// `PyBot::register_v*_pool` / `BotState::register_v*_pool`) and the swap
 /// direction; the engine derives the pool family (`hop_type`) from the
-/// `Bot`'s `PoolEntry` and rejects any `pool_id` not registered there
+/// `BotState`'s `PoolEntry` and rejects any `pool_id` not registered there
 /// (ADR-006 D3). One `pool_id` per pool; orientation is selected via
 /// `zero_for_one` (no forward/reverse id duplication).
 #[derive(Clone, Copy, Debug)]
 pub struct PoolHop {
-    /// The `Bot`-owned pool id this hop references.
+    /// The `BotState`-owned pool id this hop references.
     pub pool_id: u64,
     /// Swap direction: token0→token1 when `true`.
     pub zero_for_one: bool,
@@ -347,18 +347,18 @@ pub struct ResultBatch {
 /// The unified Uniswap engine — owns V2, V3, and V4 pool state and solves
 /// mixed arbitrage paths.
 ///
-/// V2 pool state lives in [`Bot`] (ADR-003: the single Rust state owner,
-/// peer to this engine). The engine holds the shared `Arc<RwLock<Bot>>`
+/// V2 pool state lives in [`BotState`] (ADR-003: the single Rust state owner,
+/// peer to this engine). The engine holds the shared `Arc<RwLock<BotState>>`
 /// (ADR-006 D1+D2 — `RwLock` on the core, shared with [`PyBot`] via
 /// [`UniswapEngine::with_core`]; `new()` standalone sugar allocates its own)
 /// and reads/writes pool state through it. Lock ordering when nested is
 /// **engine-then-core** — no code path ever nests core-then-engine.
 pub struct UniswapEngine {
     /// V2 + V3 + V4 pool state owner (ADR-003). The shared
-    /// `Arc<RwLock<Bot>>` (ADR-006 D1+D2): read methods take a read guard,
+    /// `Arc<RwLock<BotState>>` (ADR-006 D1+D2): read methods take a read guard,
     /// mutations a write guard. Lock ordering when nested is
     /// engine-then-core; no code path ever nests in the opposite direction.
-    core: Arc<parking_lot::RwLock<Bot>>,
+    core: Arc<parking_lot::RwLock<BotState>>,
     /// Registered path pool refs (immutable after registration).
     path_pools: HashMap<u64, MixedPath>,
     /// Resolved path states (mutated on each solve).
@@ -417,24 +417,24 @@ pub struct UniswapEngine {
 }
 
 impl UniswapEngine {
-    /// Create a new engine with its **own** standalone `Bot` (standard
+    /// Create a new engine with its **own** standalone `BotState` (standard
     /// allocation). ADR-006 D1: prefer [`UniswapEngine::with_core`] on the live
-    /// path so the engine shares one `Arc<RwLock<Bot>>` with `PyBot`/handles;
+    /// path so the engine shares one `Arc<RwLock<BotState>>` with `PyBot`/handles;
     /// this no-arg ctor is the standalone-Rust / no-`pyo3`-test convenience.
     #[must_use]
     pub fn new() -> Self {
-        Self::with_core(Arc::new(parking_lot::RwLock::new(Bot::new())))
+        Self::with_core(Arc::new(parking_lot::RwLock::new(BotState::new())))
     }
 
-    /// Adopt an existing shared `Arc<RwLock<Bot>>` (ADR-006 D1+D2). The
+    /// Adopt an existing shared `Arc<RwLock<BotState>>` (ADR-006 D1+D2). The
     /// engine reads/writes pool state through the *same* core that
     /// `PyBot`/`PyLiquidityPool`/`PyErc20Token` share — dissolving the
-    /// dual-`Bot` split the §17 stale-state caveat documented. Lock order
+    /// dual-`BotState` split the §17 stale-state caveat documented. Lock order
     /// remains engine-then-core; the engine's `Mutex<UniswapEngine>` engine
     /// state is still engine-local (ADR-006 D2 — engine keeps its own lock
     /// for path/solver state; only the core lock type/flavor changes).
     #[must_use]
-    pub fn with_core(core: Arc<parking_lot::RwLock<Bot>>) -> Self {
+    pub(crate) fn with_core(core: Arc<parking_lot::RwLock<BotState>>) -> Self {
         Self {
             core,
             path_pools: HashMap::new(),
@@ -457,10 +457,10 @@ impl UniswapEngine {
     }
 
     /// Create a new engine with a custom event buffer max age for the V4
-    /// sub-engine (V3 buffer lives on `Bot` — ADR-003).
+    /// sub-engine (V3 buffer lives on `BotState` — ADR-003).
     #[must_use]
     pub fn new_with_buffer_max_age(event_buffer_max_age: Option<u64>) -> Self {
-        let core = Arc::new(parking_lot::RwLock::new(Bot::new()));
+        let core = Arc::new(parking_lot::RwLock::new(BotState::new()));
         if let Some(age) = event_buffer_max_age {
             core.write().set_v3_buffer_max_age(Some(age));
             core.write().set_v4_buffer_max_age(Some(age));
@@ -475,14 +475,14 @@ impl UniswapEngine {
 /// Test-only registration helpers (ADR-006 D3).
 ///
 /// Production code never registers pools via the engine — pool construction
-/// is a `Bot` concern, and the engine discovers pools at `register_path`
-/// time by resolving `pool_id`s against the associated `Bot`. These helpers
-/// exist so no-pyo3 tests can seed the engine's `Bot` (its `core`) with the
+/// is a `BotState` concern, and the engine discovers pools at `register_path`
+/// time by resolving `pool_id`s against the associated `BotState`. These helpers
+/// exist so no-pyo3 tests can seed the engine's `BotState` (its `core`) with the
 /// same ergonomics the old production `register_v*_pool` methods had; they
-/// delegate straight to `Bot::register_*`.
+/// delegate straight to `BotState::register_*`.
 #[cfg(test)]
 impl UniswapEngine {
-    /// Register a V2 pool into the engine's `Bot` and return its `pool_id`.
+    /// Register a V2 pool into the engine's `BotState` and return its `pool_id`.
     #[must_use]
     pub fn register_v2_pool(
         &self,
@@ -506,17 +506,17 @@ impl UniswapEngine {
         self.core.write().register_v2_pool(&params)
     }
 
-    /// Register a V3 pool into the engine's `Bot` and return its `pool_id`.
+    /// Register a V3 pool into the engine's `BotState` and return its `pool_id`.
     #[must_use]
     pub fn register_v3_pool(&self, params: &crate::bot_core::RegisterV3PoolParams) -> u64 {
         self.core.write().register_v3_pool(params)
     }
 
-    /// Register a V4 pool into the engine's `Bot` and return its `pool_id`.
+    /// Register a V4 pool into the engine's `BotState` and return its `pool_id`.
     ///
     /// # Errors
     ///
-    /// Returns `Err` if `Bot::register_v4_pool` rejects the pool
+    /// Returns `Err` if `BotState::register_v4_pool` rejects the pool
     /// (amount-modifying hooks, dynamic fee, or duplicate registration).
     pub fn register_v4_pool(
         &self,

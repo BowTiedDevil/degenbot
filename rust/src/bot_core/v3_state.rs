@@ -1,7 +1,7 @@
-//! V3 concentrated-liquidity pool state — the single Bot-owned home for
+//! V3 concentrated-liquidity pool state — the single BotState-owned home for
 //! V3 pool data (ADR-003). Supersedes the engine-side `V3PoolState` that lived
 //! in `optimizers/v3_block_engine.rs`; that engine is dissolved and V3 state
-//! is owned by [`crate::bot_core::Bot`], peer to `UniswapEngine`.
+//! is owned by [`crate::bot_core::BotState`], peer to `UniswapEngine`.
 //!
 //! This struct carries both the authoritative mutable state (`sqrt_price_x96`,
 //! `liquidity`, `tick`, `tick_data`), the snapshot-coverage flag, the lazy
@@ -73,7 +73,7 @@ impl crate::optimizers::liquidity_event_buffer::LiquidityEvent for BufferedV3Liq
 // Registration params
 // ---------------------------------------------------------------------------
 
-/// Parameters for registering a V3 pool with `Bot`.
+/// Parameters for registering a V3 pool with `BotState`.
 ///
 /// Bundles all fields to satisfy `clippy::too_many_arguments`.
 #[derive(Clone, Debug)]
@@ -116,7 +116,7 @@ struct TickRangeCache {
     ofz: Option<Arc<[V3TickRangeForSolver]>>,
 }
 
-/// V3 concentrated-liquidity pool state owned by [`crate::bot_core::Bot`].
+/// V3 concentrated-liquidity pool state owned by [`crate::bot_core::BotState`].
 ///
 /// Carries authoritative mutable state plus a per-pool reorg journal. Swap
 /// calculations read current mutable fields directly (never touch the journal);
