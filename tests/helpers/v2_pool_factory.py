@@ -18,7 +18,7 @@ from fractions import Fraction
 from typing import TYPE_CHECKING
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.degenbot_rs import PyBot, PyLiquidityPool
+from degenbot.degenbot_rs import PyBot, PyDexIdentity, PyLiquidityPool
 from degenbot.erc20 import Erc20Token
 from degenbot.uniswap.liquidity_pool import LiquidityPool
 
@@ -43,9 +43,9 @@ def make_v2_pool(
     *,
     token0: Erc20Token,
     token1: Erc20Token,
-    factory: str,
-    fee_token0: Fraction,
-    fee_token1: Fraction,
+    factory: str | None = None,
+    fee_token0: Fraction | None = None,
+    fee_token1: Fraction | None = None,
     reserves_token0: int,
     reserves_token1: int,
     chain_id: ChainId | None = None,
@@ -53,6 +53,7 @@ def make_v2_pool(
     init_hash: str | None = None,
     state_block: int = 0,
     pool_class: type[LiquidityPool] = LiquidityPool,
+    dex: PyDexIdentity | None = None,
 ) -> LiquidityPool:
     """Construct an I/O-free V2-style pool companion over a fresh ``PyLiquidityPool`` handle.
 
@@ -69,12 +70,51 @@ def make_v2_pool(
 
     ``pool_class`` defaults to ``LiquidityPool``; subclasses like
     ``SushiswapV2Pool`` inherit the companion ``__init__``.
+
+    ``dex`` (ADR-005 slice 7 step 3): the canonical DexIdentity preset. When
+    provided, fills in ``factory``/``fee_token0``/``fee_token1``/``init_hash``
+    from the preset when those explicit params are ``None``. Also threaded
+    through to ``LiquidityPool(dex=...)``. Explicit params always take
+    precedence (non-breaking for callers that pass everything explicitly).
     """
     address = get_checksum_address(address)
     resolved_chain_id = chain_id if chain_id is not None else token0.chain_id
 
-    gamma_numer0, fee_denom0 = _gamma_complement(fee_token0)
-    gamma_numer1, fee_denom1 = _gamma_complement(fee_token1)
+    # Fill in None params from the dex preset (explicit > dex precedence).
+    # ``dex.fee_tokenN`` is the RETAINED post-fee fraction ``(gamma_numer,
+    # fee_denom)`` (Rust convention); convert to the FEE ``Fraction`` for the
+    # companion. For Rust registration, ``gamma_numer`` is read directly from
+    # the preset (no conversion — it's already the retained fraction).
+    if dex is not None:
+        if factory is None:
+            factory = dex.factory
+        if init_hash is None:
+            init_hash = dex.init_hash
+        if fee_token0 is None:
+            gamma0, denom0 = dex.fee_token0
+            fee_token0 = Fraction(denom0 - gamma0, denom0)
+        if fee_token1 is None:
+            gamma1, denom1 = dex.fee_token1
+            fee_token1 = Fraction(denom1 - gamma1, denom1)
+
+    if factory is None:
+        msg = "factory must be provided explicitly or resolvable from dex"
+        raise ValueError(msg)
+    assert fee_token0 is not None
+    assert fee_token1 is not None
+
+    # Compute the Rust registration params (gamma_numer = retained fraction).
+    # When dex provided the fees, ``dex.fee_tokenN`` is already
+    # ``(gamma_numer, fee_denom)`` — read directly. When explicit fees were
+    # given (FEE Fraction), convert via subtraction.
+    if dex is not None and fee_token0 == Fraction(
+        dex.fee_token0[1] - dex.fee_token0[0], dex.fee_token0[1]
+    ):
+        gamma_numer0, fee_denom0 = dex.fee_token0
+        gamma_numer1, fee_denom1 = dex.fee_token1
+    else:
+        gamma_numer0, fee_denom0 = _gamma_complement(fee_token0)
+        gamma_numer1, fee_denom1 = _gamma_complement(fee_token1)
 
     py_bot = PyBot()
     pool_id = py_bot.register_v2_pool(
@@ -96,11 +136,12 @@ def make_v2_pool(
     return pool_class(
         py_pool,
         address=address,
+        token0=token0,
+        token1=token1,
+        dex=dex,
         chain_id=resolved_chain_id,
         deployer_address=deployer_address,
         init_hash=init_hash,
-        token0=token0,
-        token1=token1,
         factory=factory,
         fee_token0=fee_token0,
         fee_token1=fee_token1,

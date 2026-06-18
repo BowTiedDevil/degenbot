@@ -1,5 +1,6 @@
 """SushiSwap V2/V3 pool type registration and exports."""
 
+from degenbot.degenbot_rs import dex_identity
 from degenbot.registry.pool_type import pool_type_registry
 
 from . import (
@@ -54,6 +55,8 @@ def _register_sushiswap_deployments() -> None:
         ),
     ]
 
+    sushiswap_v2_identity = dex_identity("sushiswap-v2")
+    assert sushiswap_v2_identity is not None, "sushiswap-v2 preset must resolve"
     for chain_id, factory, init_hash, deployer in v2_deployments:
         pool_type_registry.register(
             SushiswapV2Pool,
@@ -61,6 +64,7 @@ def _register_sushiswap_deployments() -> None:
             factory_address=factory,
             pool_init_hash=init_hash,
             deployer=deployer,
+            dex_identity=sushiswap_v2_identity,
         )
 
     for chain_id, factory, init_hash, deployer in v3_deployments:

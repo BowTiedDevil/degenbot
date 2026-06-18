@@ -9,7 +9,7 @@ from eth_typing import ChecksumAddress
 
 from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.degenbot_rs import PyLiquidityPool
+from degenbot.degenbot_rs import PyDexIdentity, PyLiquidityPool
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import (
@@ -73,14 +73,15 @@ class LiquidityPool(
         py_pool: PyLiquidityPool,
         *,
         address: ChecksumAddress | str,
+        token0: Erc20Token,
+        token1: Erc20Token,
+        dex: PyDexIdentity | None = None,
         chain_id: ChainId | None = None,
         deployer_address: str | None = None,
         init_hash: str | None = None,
-        token0: Erc20Token,
-        token1: Erc20Token,
-        factory: str,
-        fee_token0: Fraction,
-        fee_token1: Fraction,
+        factory: str | None = None,
+        fee_token0: Fraction | None = None,
+        fee_token1: Fraction | None = None,
     ) -> None:
         """I/O-free companion over a ``PyLiquidityPool`` handle (ADR-005).
 
@@ -91,10 +92,49 @@ class LiquidityPool(
         factory, fees) stays Python-side this slice — calc (slice 5) and
         identity (later) follow.
 
+        ``dex`` (ADR-005 slice 7 step 3) carries the canonical DexIdentity
+        preset: the variant tag, reserves ABI shape, canonical-chain
+        factory/init-hash, + default fees. When ``dex`` is provided AND the
+        explicit ``factory``/``init_hash``/``deployer_address``/``fee_token0``/
+        ``fee_token1`` params are ``None``, the preset fills them in. Explicit
+        params always take precedence — so existing callers (which pass all
+        explicit params) are unaffected.
+
         Construct via ``Bot.build_pool()`` (which registers in Rust and
         hands the handle here); tests use ``make_v2_pool``.
+
+        Raises:
+            DegenbotValueError: If ``factory`` is not provided explicitly
+                AND not resolvable from ``dex``.
+
         """
         self._py_pool = py_pool
+        self.dex = dex
+
+        # Fill in None params from the dex preset, if provided (explicit > dex
+        # > class-default precedence). ``dex.fee_tokenN`` is the RETAINED
+        # post-fee fraction ``(gamma_numer, fee_denom)`` (Rust convention); the
+        # Python companion stores the FEE ``Fraction`` (e.g. ``Fraction(3, 1000)``
+        # for 0.3%), so the conversion is ``Fraction(denom - gamma, denom)``.
+        if dex is not None:
+            if factory is None:
+                factory = dex.factory
+            if init_hash is None:
+                init_hash = dex.init_hash
+            if deployer_address is None:
+                deployer_address = dex.deployer
+            if fee_token0 is None:
+                gamma0, denom0 = dex.fee_token0
+                fee_token0 = Fraction(denom0 - gamma0, denom0)
+            if fee_token1 is None:
+                gamma1, denom1 = dex.fee_token1
+                fee_token1 = Fraction(denom1 - gamma1, denom1)
+
+        if factory is None:
+            msg = "factory must be provided explicitly or resolvable from dex"
+            raise DegenbotValueError(message=msg)
+        assert fee_token0 is not None
+        assert fee_token1 is not None
 
         self.address = get_checksum_address(address)
         self._chain_id = chain_id if chain_id is not None else token0.chain_id
@@ -104,7 +144,8 @@ class LiquidityPool(
         self._fee_token0 = fee_token0
         self._fee_token1 = fee_token1
 
-        # Derive deployer/init_hash from constructor args or class defaults.
+        # Derive deployer/init_hash from constructor args, the dex preset, or
+        # class defaults (in that precedence order).
         self.init_hash = (
             init_hash if init_hash is not None else self.UNISWAP_V2_MAINNET_POOL_INIT_HASH
         )
