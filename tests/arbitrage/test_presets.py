@@ -1,5 +1,4 @@
-"""Unit tests for presets module.
-"""
+"""Unit tests for presets module."""
 
 import json
 from pathlib import Path

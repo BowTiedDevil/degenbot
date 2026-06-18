@@ -5,7 +5,6 @@ before the warm-up solve, and that re-solving with enforce_dpp=True
 and updated parameters produces correct results.
 """
 
-
 import cvxpy
 import numpy as np
 from cvxpy.atoms.geo_mean import geo_mean
@@ -66,12 +65,8 @@ class TestTwoPoolDPPCompliance:
         )
 
         # Update k values (computed from the parameter's current value)
-        pool_hi_k.save_value(
-            geo_mean(compressed_reserves[0]).value
-        )
-        pool_lo_k.save_value(
-            geo_mean(compressed_reserves[1]).value
-        )
+        pool_hi_k.save_value(geo_mean(compressed_reserves[0]).value)
+        pool_lo_k.save_value(geo_mean(compressed_reserves[1]).value)
 
         # Update fees
         fee_multiplier.save_value(
@@ -115,12 +110,8 @@ class TestTwoPoolDPPCompliance:
                 dtype=np.float64,
             )
         )
-        pool_hi_k.save_value(
-            geo_mean(compressed_reserves[0]).value
-        )
-        pool_lo_k.save_value(
-            geo_mean(compressed_reserves[1]).value
-        )
+        pool_hi_k.save_value(geo_mean(compressed_reserves[0]).value)
+        pool_lo_k.save_value(geo_mean(compressed_reserves[1]).value)
         fee_multiplier.save_value(
             np.array(
                 ((1 - fee, 1 - fee), (1 - fee, 1 - fee)),

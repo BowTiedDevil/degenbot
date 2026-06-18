@@ -495,9 +495,7 @@ class TestV2CalcDelegation:
         spy = _DelegateSpy(pool._py_pool)
         pool._py_pool = spy
 
-        result = pool.calculate_tokens_out_from_tokens_in(
-            token_in=weth, token_in_quantity=10**18
-        )
+        result = pool.calculate_tokens_out_from_tokens_in(token_in=weth, token_in_quantity=10**18)
 
         # token0 in → zero_for_one=True
         assert spy.calc_out_calls == [(True, 10**18)]
@@ -511,9 +509,7 @@ class TestV2CalcDelegation:
         spy = _DelegateSpy(pool._py_pool)
         pool._py_pool = spy
 
-        result = pool.calculate_tokens_out_from_tokens_in(
-            token_in=usdc, token_in_quantity=10**6
-        )
+        result = pool.calculate_tokens_out_from_tokens_in(token_in=usdc, token_in_quantity=10**6)
 
         assert spy.calc_out_calls == [(False, 10**6)]
         assert result > 0
@@ -554,9 +550,7 @@ class TestV2CalcDelegation:
         spy = _DelegateSpy(pool._py_pool)
         pool._py_pool = spy
 
-        result = pool.calculate_tokens_in_from_tokens_out(
-            token_out_quantity=10**6, token_out=usdc
-        )
+        result = pool.calculate_tokens_in_from_tokens_out(token_out_quantity=10**6, token_out=usdc)
 
         # token1 out (received by user) → t0 in → zero_for_one=True
         assert spy.calc_in_calls == [(True, 10**6)]
@@ -570,9 +564,7 @@ class TestV2CalcDelegation:
         spy = _DelegateSpy(pool._py_pool)
         pool._py_pool = spy
 
-        result = pool.calculate_tokens_in_from_tokens_out(
-            token_out_quantity=10**18, token_out=weth
-        )
+        result = pool.calculate_tokens_in_from_tokens_out(token_out_quantity=10**18, token_out=weth)
 
         assert spy.calc_in_calls == [(False, 10**18)]
         assert result > 0

@@ -129,9 +129,7 @@ def _new_arbitrage_path(
     token_in_quantity = solve_result.optimal_input
     swap_amounts: list[Any] = []
     for pool, sv in zip(pools, path.swap_vectors, strict=True):
-        token_out_quantity = _calculate_tokens_out_via_pool(
-            pool, sv.token_in, token_in_quantity
-        )
+        token_out_quantity = _calculate_tokens_out_via_pool(pool, sv.token_in, token_in_quantity)
         swap_amounts.append(
             pool.build_swap_amount(sv.zero_for_one, token_in_quantity, token_out_quantity)
         )

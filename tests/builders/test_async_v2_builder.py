@@ -37,9 +37,7 @@ class FakeAsyncProvider:
     def __init__(self, responses: dict[str, bytes]) -> None:
         self._responses = responses
 
-    async def call(
-        self, *, to: str, data: bytes, block: int | None = None
-    ) -> HexBytes:
+    async def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
         selector = data[:4].hex()
         if selector in self._responses:
             return HexBytes(self._responses[selector])

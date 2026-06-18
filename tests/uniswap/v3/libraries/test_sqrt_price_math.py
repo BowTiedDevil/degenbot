@@ -34,8 +34,7 @@ def expand_to_18_decimals(x: int):
 
 
 def encode_price_sqrt(reserve1: int, reserve0: int) -> int:
-    """Returns the sqrt price as a Q64.96 value
-    """
+    """Returns the sqrt price as a Q64.96 value"""
     return int((Decimal(reserve1) / Decimal(reserve0)).sqrt() * Decimal(2**96))
 
 

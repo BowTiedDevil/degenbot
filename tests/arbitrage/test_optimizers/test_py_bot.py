@@ -137,7 +137,7 @@ class TestPyBotV2Pool:
             address=self.POOL_ADDR,
             token0=self.TOKEN0_ADDR,
             token1=self.TOKEN1_ADDR,
-            reserve0=1_500_000_000_000,       # 1.5M USDC (6dp)
+            reserve0=1_500_000_000_000,  # 1.5M USDC (6dp)
             reserve1=800_000_000_000_000_000_000,  # 800 WETH (18dp)
             gamma_numer0=997,
             fee_denom0=1000,
@@ -489,7 +489,9 @@ class TestV2SwapEncoding:
     def test_encode_swap_zero_for_one(self):
         """Encode a token0→token1 swap (amount1Out nonzero)."""
         core, pool_id = self._make_core_with_pool()
-        result = core.encode_swap(pool_id, zero_for_one=True, amount_out=181, recipient=self.RECIPIENT)
+        result = core.encode_swap(
+            pool_id, zero_for_one=True, amount_out=181, recipient=self.RECIPIENT
+        )
         assert result is not None
         to_hex, calldata_hex, value = result
 
@@ -506,7 +508,9 @@ class TestV2SwapEncoding:
         from web3 import Web3
 
         core, pool_id = self._make_core_with_pool()
-        result = core.encode_swap(pool_id, zero_for_one=True, amount_out=181, recipient=self.RECIPIENT)
+        result = core.encode_swap(
+            pool_id, zero_for_one=True, amount_out=181, recipient=self.RECIPIENT
+        )
         assert result is not None
         _, calldata_hex, _ = result
 
@@ -526,7 +530,9 @@ class TestV2SwapEncoding:
         from web3 import Web3
 
         core, pool_id = self._make_core_with_pool()
-        result = core.encode_swap(pool_id, zero_for_one=False, amount_out=181, recipient=self.RECIPIENT)
+        result = core.encode_swap(
+            pool_id, zero_for_one=False, amount_out=181, recipient=self.RECIPIENT
+        )
         assert result is not None
         _, calldata_hex, _ = result
 
@@ -899,8 +905,7 @@ class TestDexIdentityPresets:
         assert ident.factory == "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
         assert ident.deployer == ident.factory  # Uniswap V2 uses factory as deployer
         assert (
-            ident.init_hash
-            == "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
+            ident.init_hash == "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
         )
         # Fraction(3, 1000) fee → RETAINED fraction (997, 1000). Slice-5 convention.
         assert ident.fee_token0 == (997, 1000)
@@ -915,8 +920,7 @@ class TestDexIdentityPresets:
         assert ident is not None
         assert ident.factory == "0x1097053Fd2ea711dad45caCcc45EfF7548fCB362"
         assert (
-            ident.init_hash
-            == "0x57224589c67f3f30a6b0d7a1b54cf3153ab84563bc609ef41dfb34f8b2974d2d"
+            ident.init_hash == "0x57224589c67f3f30a6b0d7a1b54cf3153ab84563bc609ef41dfb34f8b2974d2d"
         )
         # Fraction(25, 10000) fee → RETAINED fraction (10000-25, 10000) = (9975, 10000).
         assert ident.fee_token0 == (9975, 10000)
@@ -932,8 +936,7 @@ class TestDexIdentityPresets:
         assert ident is not None
         assert ident.factory == "0x6EcCab422D763aC031210895C81787E87B43A652"
         assert (
-            ident.init_hash
-            == "0xa856464ae65f7619087bc369daaf7e387dae1e5af69cfa7935850ebf754b04c1"
+            ident.init_hash == "0xa856464ae65f7619087bc369daaf7e387dae1e5af69cfa7935850ebf754b04c1"
         )
         # token0FeePercent=300 over FEE_DENOMINATOR=100000 → 0.3% → gamma (99700, 100000).
         assert ident.fee_token0 == (99700, 100000)
@@ -1008,8 +1011,10 @@ class TestDexIdentityPresets:
 
         ident = dex_identity("uniswap-v2")
         assert ident is not None
-        assert repr(ident) == 'PyDexIdentity(variant="uniswap-v2", factory=0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f)'
-
+        assert (
+            repr(ident)
+            == 'PyDexIdentity(variant="uniswap-v2", factory=0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f)'
+        )
 
     def test_pyconstructor_builds_custom_identity(self) -> None:
         """The PyDexIdentity #[new] constructor builds a custom identity view."""

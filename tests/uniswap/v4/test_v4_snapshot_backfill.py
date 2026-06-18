@@ -5,7 +5,6 @@ applied to V4 pools and the resulting tick_data can be serialized for the
 Rust engine's process_block call.
 """
 
-
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v4_types import UniswapV4PoolLiquidityMappingUpdate
 
@@ -43,8 +42,7 @@ def test_v4_backfill_tick_data_collection():
     # This is the serialization format used in the V4 backfill wiring
     # (same pattern as V3 backfill)
     tick_priors = [
-        (idx, (info.liquidity_gross, info.liquidity_net))
-        for idx, info in tick_data.items()
+        (idx, (info.liquidity_gross, info.liquidity_net)) for idx, info in tick_data.items()
     ]
 
     # Verify the shape matches what the Rust engine expects:

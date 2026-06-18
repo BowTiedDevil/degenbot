@@ -19,8 +19,7 @@ if TYPE_CHECKING:
 
 
 def _load_contract_artifact(artifact_path: pathlib.Path) -> dict:
-    """Load a compiled contract artifact (ABI + bytecode).
-    """
+    """Load a compiled contract artifact (ABI + bytecode)."""
     with pathlib.Path(artifact_path).open(encoding="utf-8") as f:
         return json.load(f)
 
@@ -137,20 +136,17 @@ def token_math_wrappers(
 
 @pytest.fixture(scope="module")
 def token_math_wrapper_rev1(token_math_wrappers) -> "Contract":
-    """Get the Rev 1 wrapper contract (half-up rounding).
-    """
+    """Get the Rev 1 wrapper contract (half-up rounding)."""
     return token_math_wrappers[1]
 
 
 @pytest.fixture(scope="module")
 def token_math_wrapper_rev4(token_math_wrappers) -> "Contract":
-    """Get the Rev 4 wrapper contract (floor/ceil rounding).
-    """
+    """Get the Rev 4 wrapper contract (floor/ceil rounding)."""
     return token_math_wrappers[4]
 
 
 @pytest.fixture(scope="module")
 def token_math_wrapper_rev9(token_math_wrappers) -> "Contract":
-    """Get the Rev 9 wrapper contract (floor/ceil rounding, same as Rev4).
-    """
+    """Get the Rev 9 wrapper contract (floor/ceil rounding, same as Rev4)."""
     return token_math_wrappers[9]

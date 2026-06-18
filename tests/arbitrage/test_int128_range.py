@@ -8,7 +8,6 @@ The fits_int128() helper and INT128_MAX/INT128_MIN constants allow
 encoders to skip paths that would overflow before submitting them on-chain.
 """
 
-
 from degenbot.arbitrage.encoding import INT128_MAX, INT128_MIN, fits_int128
 
 

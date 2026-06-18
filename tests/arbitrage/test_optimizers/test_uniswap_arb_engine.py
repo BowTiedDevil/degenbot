@@ -57,9 +57,11 @@ class TestUniswapArbEngineRegistration:
 
     def test_register_v3_pool_returns_key(self):
         engine = UniswapArbEngine()
-        engine.load_v3_snapshot_from_py(_make_v3_snapshot({
-            V3_POOL: {-60: (200, -100), 60: (300, 150)},
-        }))
+        engine.load_v3_snapshot_from_py(
+            _make_v3_snapshot({
+                V3_POOL: {-60: (200, -100), 60: (300, 150)},
+            })
+        )
         key = engine.register_v3_pool(
             address=V3_POOL,
             token0="0x" + "00" * 20,
@@ -83,9 +85,11 @@ class TestUniswapArbEngineRegistration:
             gamma_numer=997,
             fee_denom=1000,
         )
-        engine.load_v3_snapshot_from_py(_make_v3_snapshot({
-            V3_POOL: {-60: (200, -100), 60: (300, 150)},
-        }))
+        engine.load_v3_snapshot_from_py(
+            _make_v3_snapshot({
+                V3_POOL: {-60: (200, -100), 60: (300, 150)},
+            })
+        )
         v3_key = engine.register_v3_pool(
             address=V3_POOL,
             token0="0x" + "00" * 20,
@@ -109,9 +113,11 @@ class TestUniswapArbEngineRegistration:
             gamma_numer=997,
             fee_denom=1000,
         )
-        engine.load_v3_snapshot_from_py(_make_v3_snapshot({
-            V3_POOL: {-60: (200, -100), 60: (300, 150)},
-        }))
+        engine.load_v3_snapshot_from_py(
+            _make_v3_snapshot({
+                V3_POOL: {-60: (200, -100), 60: (300, 150)},
+            })
+        )
         v3_key = engine.register_v3_pool(
             address=V3_POOL,
             token0="0x" + "00" * 20,
@@ -123,12 +129,10 @@ class TestUniswapArbEngineRegistration:
             liquidity=1_000_000,
             tick=0,
         )
-        path_id = engine.register_path(
-            [
-                ("V2", v2_id, True),
-                ("V3", v3_key, False),
-            ]
-        )
+        path_id = engine.register_path([
+            ("V2", v2_id, True),
+            ("V3", v3_key, False),
+        ])
         assert path_id == 1
 
 
@@ -167,12 +171,10 @@ class TestRegisterAndSolvePath:
             fee_denom=1000,
         )
 
-        path_id = engine.register_and_solve_path(
-            [
-                ("V2", v2_a, True),
-                ("V2", v2_b, True),
-            ]
-        )
+        path_id = engine.register_and_solve_path([
+            ("V2", v2_a, True),
+            ("V2", v2_b, True),
+        ])
         assert path_id == 1
 
         results, _block = engine.latest_results()
@@ -203,12 +205,10 @@ class TestRegisterAndSolvePath:
             fee_denom=1000,
         )
 
-        path_id = engine.register_and_solve_path(
-            [
-                ("V2", v2_a, True),
-                ("V2", v2_b, True),
-            ]
-        )
+        path_id = engine.register_and_solve_path([
+            ("V2", v2_a, True),
+            ("V2", v2_b, True),
+        ])
 
         engine.process_logs(
             v2_sync_updates=[],
@@ -241,12 +241,10 @@ class TestRegisterAndSolvePath:
             fee_denom=1000,
         )
 
-        engine.register_path(
-            [
-                ("V2", v2_a, True),
-                ("V2", v2_b, True),
-            ]
-        )
+        engine.register_path([
+            ("V2", v2_a, True),
+            ("V2", v2_b, True),
+        ])
         engine.solve_all_paths(block_number=1)
 
         v2_c = engine.register_v2_pool(
@@ -256,12 +254,10 @@ class TestRegisterAndSolvePath:
             gamma_numer=997,
             fee_denom=1000,
         )
-        path_id_2 = engine.register_and_solve_path(
-            [
-                ("V2", v2_a, True),
-                ("V2", v2_c, True),
-            ]
-        )
+        path_id_2 = engine.register_and_solve_path([
+            ("V2", v2_a, True),
+            ("V2", v2_c, True),
+        ])
 
         results, _block = engine.latest_results()
         found = [r for r in results if r[0] == path_id_2]
@@ -313,12 +309,10 @@ class TestUniswapArbEngineProcessLogs:
             fee_denom=1000,
         )
 
-        engine.register_path(
-            [
-                ("V2", v2_a, True),
-                ("V2", v2_b, True),
-            ]
-        )
+        engine.register_path([
+            ("V2", v2_a, True),
+            ("V2", v2_b, True),
+        ])
 
         engine.solve_all_paths(block_number=1)
         results, block = engine.latest_results()
@@ -335,9 +329,11 @@ class TestUniswapArbEngineProcessLogs:
             fee_denom=1000,
         )
 
-        engine.load_v3_snapshot_from_py(_make_v3_snapshot({
-            V3_POOL: {-60: (200, -100), 60: (300, 150)},
-        }))
+        engine.load_v3_snapshot_from_py(
+            _make_v3_snapshot({
+                V3_POOL: {-60: (200, -100), 60: (300, 150)},
+            })
+        )
         v3_key = engine.register_v3_pool(
             address=V3_POOL,
             token0="0x" + "00" * 20,
@@ -350,12 +346,10 @@ class TestUniswapArbEngineProcessLogs:
             tick=0,
         )
 
-        engine.register_path(
-            [
-                ("V2", v2_id, True),
-                ("V3", v3_key, False),
-            ]
-        )
+        engine.register_path([
+            ("V2", v2_id, True),
+            ("V3", v3_key, False),
+        ])
 
         engine.process_logs(
             v2_sync_updates=[
@@ -387,12 +381,10 @@ class TestUniswapArbEngineProcessLogs:
             fee_denom=1000,
         )
 
-        engine.register_path(
-            [
-                ("V2", v2_a, True),
-                ("V2", v2_b, True),
-            ]
-        )
+        engine.register_path([
+            ("V2", v2_a, True),
+            ("V2", v2_b, True),
+        ])
 
         engine.solve_all_paths(block_number=1)
 
@@ -413,9 +405,11 @@ class TestUniswapArbEngineV4:
     def test_register_v4_pool_returns_key(self):
         engine = UniswapArbEngine()
         pool_id = _make_pool_id(1)
-        engine.load_v4_snapshot_from_py(_make_v4_snapshot({
-            V4_PM: {pool_id: {-60: (200, -100), 60: (300, 150)}},
-        }))
+        engine.load_v4_snapshot_from_py(
+            _make_v4_snapshot({
+                V4_PM: {pool_id: {-60: (200, -100), 60: (300, 150)}},
+            })
+        )
         key = engine.register_v4_pool(
             pool_manager=V4_PM,
             pool_id_hex=pool_id,
@@ -436,9 +430,11 @@ class TestUniswapArbEngineV4:
         engine = UniswapArbEngine()
         pool_id_10 = _make_pool_id(10)
         pool_id_11 = _make_pool_id(11)
-        engine.load_v4_snapshot_from_py(_make_v4_snapshot({
-            V4_PM: {pool_id_10: {}, pool_id_11: {}},
-        }))
+        engine.load_v4_snapshot_from_py(
+            _make_v4_snapshot({
+                V4_PM: {pool_id_10: {}, pool_id_11: {}},
+            })
+        )
 
         with pytest.raises(ValueError, match="amount-modifying hooks"):
             engine.register_v4_pool(
@@ -472,9 +468,11 @@ class TestUniswapArbEngineV4:
         """Pools with dynamic fees (0x100000) should be rejected."""
         engine = UniswapArbEngine()
         pool_id = _make_pool_id(12)
-        engine.load_v4_snapshot_from_py(_make_v4_snapshot({
-            V4_PM: {pool_id: {}},
-        }))
+        engine.load_v4_snapshot_from_py(
+            _make_v4_snapshot({
+                V4_PM: {pool_id: {}},
+            })
+        )
 
         with pytest.raises(ValueError, match="dynamic fee"):
             engine.register_v4_pool(
@@ -494,9 +492,11 @@ class TestUniswapArbEngineV4:
         """Pools with only non-amount hooks (e.g. BEFORE_DONATE) should be accepted."""
         engine = UniswapArbEngine()
         pool_id = _make_pool_id(13)
-        engine.load_v4_snapshot_from_py(_make_v4_snapshot({
-            V4_PM: {pool_id: {-60: (200, -100), 60: (300, 150)}},
-        }))
+        engine.load_v4_snapshot_from_py(
+            _make_v4_snapshot({
+                V4_PM: {pool_id: {-60: (200, -100), 60: (300, 150)}},
+            })
+        )
         key = engine.register_v4_pool(
             pool_manager=V4_PM,
             pool_id_hex=pool_id,
@@ -516,12 +516,14 @@ class TestUniswapArbEngineV4:
         engine = UniswapArbEngine()
         pool_id_1 = _make_pool_id(1)
         pool_id_2 = _make_pool_id(2)
-        engine.load_v4_snapshot_from_py(_make_v4_snapshot({
-            V4_PM: {
-                pool_id_1: {-60: (500, -200), 60: (800, 300)},
-                pool_id_2: {-60: (600, -250), 60: (900, 350)},
-            },
-        }))
+        engine.load_v4_snapshot_from_py(
+            _make_v4_snapshot({
+                V4_PM: {
+                    pool_id_1: {-60: (500, -200), 60: (800, 300)},
+                    pool_id_2: {-60: (600, -250), 60: (900, 350)},
+                },
+            })
+        )
 
         v4_a = engine.register_v4_pool(
             pool_manager=V4_PM,
@@ -549,12 +551,10 @@ class TestUniswapArbEngineV4:
             tick=0,
         )
 
-        path_id = engine.register_path(
-            [
-                ("V4", v4_a, True),
-                ("V4", v4_b, False),
-            ]
-        )
+        path_id = engine.register_path([
+            ("V4", v4_a, True),
+            ("V4", v4_b, False),
+        ])
         assert path_id == 1
         assert engine.path_count() == 1
 
@@ -562,9 +562,11 @@ class TestUniswapArbEngineV4:
         """V4-V2 mixed path should register and resolve."""
         engine = UniswapArbEngine()
         pool_id = _make_pool_id(1)
-        engine.load_v4_snapshot_from_py(_make_v4_snapshot({
-            V4_PM: {pool_id: {-60: (200, -100), 60: (300, 150)}},
-        }))
+        engine.load_v4_snapshot_from_py(
+            _make_v4_snapshot({
+                V4_PM: {pool_id: {-60: (200, -100), 60: (300, 150)}},
+            })
+        )
 
         v4_key = engine.register_v4_pool(
             pool_manager=V4_PM,
@@ -587,24 +589,26 @@ class TestUniswapArbEngineV4:
             fee_denom=1000,
         )
 
-        path_id = engine.register_path(
-            [
-                ("V4", v4_key, True),
-                ("V2", v2_id, False),
-            ]
-        )
+        path_id = engine.register_path([
+            ("V4", v4_key, True),
+            ("V2", v2_id, False),
+        ])
         assert path_id == 1
 
     def test_v4_v3_mixed_path_registers(self):
         """V4-V3 mixed path should register and resolve (both CL, same solver)."""
         engine = UniswapArbEngine()
         pool_id = _make_pool_id(1)
-        engine.load_v3_snapshot_from_py(_make_v3_snapshot({
-            V3_POOL: {-60: (200, -100), 60: (300, 150)},
-        }))
-        engine.load_v4_snapshot_from_py(_make_v4_snapshot({
-            V4_PM: {pool_id: {-60: (200, -100), 60: (300, 150)}},
-        }))
+        engine.load_v3_snapshot_from_py(
+            _make_v3_snapshot({
+                V3_POOL: {-60: (200, -100), 60: (300, 150)},
+            })
+        )
+        engine.load_v4_snapshot_from_py(
+            _make_v4_snapshot({
+                V4_PM: {pool_id: {-60: (200, -100), 60: (300, 150)}},
+            })
+        )
 
         v4_key = engine.register_v4_pool(
             pool_manager=V4_PM,
@@ -631,12 +635,10 @@ class TestUniswapArbEngineV4:
             tick=0,
         )
 
-        path_id = engine.register_path(
-            [
-                ("V4", v4_key, True),
-                ("V3", v3_key, False),
-            ]
-        )
+        path_id = engine.register_path([
+            ("V4", v4_key, True),
+            ("V3", v3_key, False),
+        ])
         assert path_id == 1
 
 
@@ -659,6 +661,7 @@ class TestSubscribeResume:
         """Calling subscribe() twice without resume() should raise."""
         engine = UniswapArbEngine()
         import inspect
+
         sig = inspect.signature(engine.subscribe)
         params = list(sig.parameters.keys())
         assert "rpc_url" in params

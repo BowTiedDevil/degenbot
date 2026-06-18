@@ -68,8 +68,7 @@ class TestInterestAccrualHandler:
         assert result.event_type == ScaledTokenEventType.COLLATERAL_INTEREST_MINT
 
     def test_debt_mint_sets_scaled_amount_to_zero(self, handler: InterestAccrualHandler) -> None:
-        """Interest accrual for debt mint sets scaled_amount=0.
-        """
+        """Interest accrual for debt mint sets scaled_amount=0."""
         scaled_event = _create_mock_scaled_event(
             event_type=ScaledTokenEventType.DEBT_MINT,
             amount=500,
@@ -89,8 +88,7 @@ class TestInterestAccrualHandler:
     def test_gho_debt_mint_sets_scaled_amount_to_zero(
         self, handler: InterestAccrualHandler
     ) -> None:
-        """Interest accrual for GHO debt mint sets scaled_amount=0.
-        """
+        """Interest accrual for GHO debt mint sets scaled_amount=0."""
         scaled_event = _create_mock_scaled_event(
             event_type=ScaledTokenEventType.GHO_DEBT_MINT,
             amount=250,

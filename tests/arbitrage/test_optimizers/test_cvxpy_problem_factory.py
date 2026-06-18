@@ -56,9 +56,7 @@ class TestBuild2PoolCVXPYProblem:
 
         assert problem.status in cvxpy.settings.SOLUTION_PRESENT
         # Same reserves → no profit after fees
-        assert problem.value < 1e-8, (
-            f"Expected no profit for identical pools, got {problem.value}"
-        )
+        assert problem.value < 1e-8, f"Expected no profit for identical pools, got {problem.value}"
 
     def test_equal_decimals_profitable(self):
         """Same-decimal pools with price gap should find profit.

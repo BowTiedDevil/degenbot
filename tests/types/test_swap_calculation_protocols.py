@@ -1,5 +1,4 @@
-"""Tests verifying swap calculation protocol declarations and normalization.
-"""
+"""Tests verifying swap calculation protocol declarations and normalization."""
 
 import inspect
 
