@@ -131,17 +131,25 @@ token pair, fee, factory) and resolves the variant internally. The standalone-Ru
 `pl.DataFrame` precedent: users construct `DataFrame`, never `ChunkedArray<T>`.
 
 **Stance B — collapsed DEX companions.** Under stance B, the hollow DEX-class
-hierarchy (`SushiswapV2Pool`, `PancakeswapV2Pool`, `SwapbasedV2Pool` — all of which
-add only a `variant` ClassVar + static fee constants, verified during grilling)
+hierarchy (`SushiswapV2Pool`, `PancakeswapV2Pool`, `SwapbasedV2Pool`, `CamelotLiquidityPool`
+— all of which added only a `variant` ClassVar + static fee constants, verified during grilling)
 collapses into the generalized `LiquidityPool` companion, with DEX identity carried as
 `DexIdentity` data (stance II — identity is deployment data, not behavior) and DEX
-*behavioral* divergence carried as strategy mixins (only `CamelotPoolCalc`'s
-stable-swap branch and `AerodromeV2Pool`'s log decoder are genuine behavior, neither
-of which earns a class hierarchy — both are already mixin/decoder-shaped). DEX presets
-live in `degenbot-core` as `pub` values (`UNISWAP_V2`, `SUSHISWAP_V2`, `CAMELOT_V2`,
-etc.), used as construction parameters (`LiquidityPool(addr, dex=UNISWAP_V2)` or
-named constructors `LiquidityPool.uniswap_v2(addr)`), not as subclasses. Public-API
-breakage is acceptable (0.x major refactor underway).
+*behavioral* divergence carried as strategy on the base class (Camelot's solidly-stable
+calc + the stable `to_hop_state` branch were folded into `LiquidityPool` directly in
+slice 7 step 4a; Aerodrome V2's stable path + log decoder remain a separate subclass
++ builder, deferred per TODO-e30504ed — neither earns its own class hierarchy).
+DEX presets live in `degenbot-core` as `pub` values (`UNISWAP_V2`, `SUSHISWAP_V2`,
+`CAMELOT_V2`, etc.), resolvable via `dex_identity(variant)` + passed as the `dex=`
+construction parameter. `Bot.build_pool` returns `LiquidityPool` for every V2-family
+DEX; the per-factory registration carries `variant="<dex>"` (preserving the DB `kind`)
+and the canonical preset. Public-API breakage is accepted (0.x major refactor).
+
+> **Status: implemented in slice 7** (steps 1–4). The hollow subclasses are deleted;
+`pool_type_registry.register(..., variant=, dex_identity=)` is the resolution seam.
+See `docs/migration-guides/dex-subclass-collapse.md` for the migration. A pre-existing
+`get_y_camelot` arity bug in the (dead-code) stable `to_hop_state` branch surfaced
+during the fold — tracked in TODO-7ea2e7d9.
 
 **Precedent set by this ADR's slices.** The `#[pyclass(name = "Pool")]` /
 `name = "Token"` overrides (which exposed the original structs under the bare names

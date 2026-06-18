@@ -187,28 +187,31 @@ When `build_pool` is called, type resolution proceeds in order: (1) pool registr
 Pools receive state updates via `external_update()` — a pure-logic method that validates the update and transitions pool state. The builder handles all I/O (fetching reserves, slot0, etc. from RPC), constructs an `ExternalUpdate` message, and pushes it to the pool:
 
 <!-- invisible-code-block: python
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.degenbot_rs import PyBot
+_PY_BOT = PyBot()
+from tests.helpers.erc20_factory import make_erc20
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 from degenbot.erc20.erc20 import Erc20Token
+from tests.helpers.v2_pool_factory import make_v2_pool
 from fractions import Fraction
 
-_wbtc = Erc20Token(
+_wbtc = make_erc20(_PY_BOT,
     address='0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
     name='Wrapped BTC',
     symbol='WBTC',
     decimals=8,
     chain_id=1,
 )
-_weth = Erc20Token(
+_weth = make_erc20(_PY_BOT,
     address='0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
     name='Wrapped Ether',
     symbol='WETH',
     decimals=18,
     chain_id=1,
 )
-pool = UniswapV2Pool(
-    address='0xBb2b8038a1640196FbE3e38816F3e67Cba72D940',
-    chain_id=1,
+pool = make_v2_pool(
+    '0xBb2b8038a1640196FbE3e38816F3e67Cba72D940',
     token0=_wbtc,
     token1=_weth,
     factory='0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f',
@@ -216,6 +219,7 @@ pool = UniswapV2Pool(
     fee_token1=Fraction(3, 1000),
     reserves_token0=10732489743,
     reserves_token1=2056834999904002274711,
+    chain_id=1,
 )
 block_number = 100
 reserves0 = 10732455184
@@ -330,28 +334,31 @@ pool = bot.build_pool("0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
 V2 pools use the constant-product invariant (x·y=k) with directional fees:
 
 <!-- invisible-code-block: python
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.degenbot_rs import PyBot
+_PY_BOT = PyBot()
+from tests.helpers.erc20_factory import make_erc20
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 from degenbot.erc20.erc20 import Erc20Token
+from tests.helpers.v2_pool_factory import make_v2_pool
 from fractions import Fraction
 
-_wbtc = Erc20Token(
+_wbtc = make_erc20(_PY_BOT,
     address='0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
     name='Wrapped BTC',
     symbol='WBTC',
     decimals=8,
     chain_id=1,
 )
-_weth = Erc20Token(
+_weth = make_erc20(_PY_BOT,
     address='0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
     name='Wrapped Ether',
     symbol='WETH',
     decimals=18,
     chain_id=1,
 )
-lp = UniswapV2Pool(
-    address='0xBb2b8038a1640196FbE3e38816F3e67Cba72D940',
-    chain_id=1,
+lp = make_v2_pool(
+    '0xBb2b8038a1640196FbE3e38816F3e67Cba72D940',
     token0=_wbtc,
     token1=_weth,
     factory='0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f',
@@ -359,6 +366,7 @@ lp = UniswapV2Pool(
     fee_token1=Fraction(3, 1000),
     reserves_token0=10732489743,
     reserves_token1=2056834999904002274711,
+    chain_id=1,
 )
 -->
 
@@ -404,20 +412,23 @@ assert lp.reserves_token1 == 2056841643098872755548
 V3 pools use concentrated liquidity with tick-based positions. The V3 pool uses a **sparse tick data fetcher** for on-demand liquidity loading:
 
 <!-- invisible-code-block: python
+from degenbot.degenbot_rs import PyBot
+_PY_BOT = PyBot()
+from tests.helpers.erc20_factory import make_erc20
 import json
 from pathlib import Path
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 
-_wbtc = Erc20Token(
+_wbtc = make_erc20(_PY_BOT,
     address='0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
     name='Wrapped BTC',
     symbol='WBTC',
     decimals=8,
     chain_id=1,
 )
-_weth = Erc20Token(
+_weth = make_erc20(_PY_BOT,
     address='0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
     name='Wrapped Ether',
     symbol='WETH',
@@ -474,17 +485,20 @@ assert 0 in lp.tick_data
 V4 uses a singleton pool manager with hooks. Pools are identified by `pool_id` instead of address:
 
 <!-- invisible-code-block: python
+from degenbot.degenbot_rs import PyBot
+_PY_BOT = PyBot()
+from tests.helpers.erc20_factory import make_erc20
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool, UniswapV4PoolKey
 from degenbot.erc20.erc20 import Erc20Token
 
-_eth = Erc20Token(
+_eth = make_erc20(_PY_BOT,
     address='0x0000000000000000000000000000000000000000',
     name='Ether',
     symbol='ETH',
     decimals=18,
     chain_id=8453,
 )
-_usdc = Erc20Token(
+_usdc = make_erc20(_PY_BOT,
     address='0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     name='USD Coin',
     symbol='USDC',
@@ -638,31 +652,34 @@ Users wanting fine-grained control over **all** client options may pass them thr
 Curve pools follow the I/O-free architecture with a single `CurveDataProvider` seam. The Bot handles metapool detection, lending token identification, and data provider injection:
 
 <!-- invisible-code-block: python
+from degenbot.degenbot_rs import PyBot
+_PY_BOT = PyBot()
+from tests.helpers.erc20_factory import make_erc20
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.erc20.erc20 import Erc20Token
 
-_dai = Erc20Token(
+_dai = make_erc20(_PY_BOT,
     address='0x6B175474E89094C44Da98b954EedeAC495271d0F',
     name='Dai Stablecoin',
     symbol='DAI',
     decimals=18,
     chain_id=1,
 )
-_usdc = Erc20Token(
+_usdc = make_erc20(_PY_BOT,
     address='0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
     name='USD Coin',
     symbol='USDC',
     decimals=6,
     chain_id=1,
 )
-_usdt = Erc20Token(
+_usdt = make_erc20(_PY_BOT,
     address='0xdAC17F958D2ee523a2206206994597C13D831ec7',
     name='Tether USD',
     symbol='USDT',
     decimals=6,
     chain_id=1,
 )
-_3crv = Erc20Token(
+_3crv = make_erc20(_PY_BOT,
     address='0x6c3F90f043a72FA6529E0151d6e9a6e37df9E3e5',
     name='Curve 3Pool Token',
     symbol='3Crv',
@@ -827,31 +844,34 @@ from degenbot.exceptions.pool import StaleRateResult
 Calculate optimal arbitrage amounts for a cyclic sequence of pools using `ArbitragePath`, the replacement for the deprecated `UniswapLpCycle`: the replacement for the deprecated `UniswapLpCycle`:
 
 <!-- invisible-code-block: python
+from degenbot.degenbot_rs import PyBot
+_PY_BOT = PyBot()
+from tests.helpers.erc20_factory import make_erc20
 import json
 from pathlib import Path
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+from tests.helpers.v2_pool_factory import make_v2_pool
 from fractions import Fraction
 
-_wbtc = Erc20Token(
+_wbtc = make_erc20(_PY_BOT,
     address='0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
     name='Wrapped BTC',
     symbol='WBTC',
     decimals=8,
     chain_id=1,
 )
-_weth = Erc20Token(
+_weth = make_erc20(_PY_BOT,
     address='0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
     name='Wrapped Ether',
     symbol='WETH',
     decimals=18,
     chain_id=1,
 )
-v2_pool = UniswapV2Pool(
-    address='0xBb2b8038a1640196FbE3e38816F3e67Cba72D940',
-    chain_id=1,
+v2_pool = make_v2_pool(
+    '0xBb2b8038a1640196FbE3e38816F3e67Cba72D940',
     token0=_wbtc,
     token1=_weth,
     factory='0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f',
@@ -859,6 +879,7 @@ v2_pool = UniswapV2Pool(
     fee_token1=Fraction(3, 1000),
     reserves_token0=10732489743,
     reserves_token1=2056834999904002274711,
+    chain_id=1,
 )
 _data_file = Path('tests/fixtures/chain_data/1/block_24947230.json')
 with _data_file.open() as _f:
