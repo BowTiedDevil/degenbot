@@ -107,7 +107,29 @@ impl UniswapEngine {
         }
     }
 
-    /// Solve all paths affected by logs applied since the last `solve_dirty`
+    /// Mark `pool_id` dirty, classifying it into the V2/V3/V4 dirty set by
+    /// consulting the shared `BotState`'s `PoolEntry` variant (ADR-006 D4).
+    ///
+    /// This is the subscriber-facing entry point: the `EngineSubscriber`
+    /// adapter calls this from `on_pool_state_updated` (after the `BotState`
+    /// write guard is released), taking only the engine `Mutex`. If `pool_id`
+    /// isn't registered in `core`, the call is a no-op (the event was for a
+    /// pool no path references).
+    pub(crate) fn insert_dirty(&mut self, pool_id: u64) {
+        let core = self.core.read();
+        if core.get_v2_pool_state(pool_id).is_some() {
+            drop(core);
+            self.dirty_v2.insert(pool_id);
+        } else if core.get_v3_pool(pool_id).is_some() {
+            drop(core);
+            self.dirty_v3.insert(pool_id);
+        } else if core.get_v4_pool(pool_id).is_some() {
+            drop(core);
+            self.dirty_v4.insert(pool_id);
+        }
+        // Unregistered pool_id → no-op (no path references it).
+    }
+
     /// call, but do NOT send a result batch to Python.
     ///
     /// The pump calls this eagerly after each WS log to keep engine state
