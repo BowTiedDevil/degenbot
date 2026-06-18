@@ -169,6 +169,11 @@ impl HopType {
 }
 
 /// A pool reference in a mixed path.
+///
+/// Internal representation: `hop_type` is derived from the associated
+/// `Bot`'s `PoolEntry` variant at `register_path` time (ADR-006 D3 — the
+/// engine never constructs pools, so it learns each hop's family from the
+/// `Bot` that owns it). The public intake is [`PoolHop`].
 #[derive(Clone, Debug)]
 pub struct MixedPoolRef {
     /// Which engine owns this hop
@@ -176,6 +181,22 @@ pub struct MixedPoolRef {
     /// For V2: `pool_id` in V2 engine. For V3: `pool_idx` in V3 engine.
     pub pool_key: u64,
     /// Direction (V2: implied by `pool_id` orientation; V3: explicit)
+    pub zero_for_one: bool,
+}
+
+/// A single hop in a path submitted to [`UniswapEngine::register_path`].
+///
+/// The caller supplies the `Bot`-owned `pool_id` (obtained from
+/// `PyBot::register_v*_pool` / `Bot::register_v*_pool`) and the swap
+/// direction; the engine derives the pool family (`hop_type`) from the
+/// `Bot`'s `PoolEntry` and rejects any `pool_id` not registered there
+/// (ADR-006 D3). One `pool_id` per pool; orientation is selected via
+/// `zero_for_one` (no forward/reverse id duplication).
+#[derive(Clone, Copy, Debug)]
+pub struct PoolHop {
+    /// The `Bot`-owned pool id this hop references.
+    pub pool_id: u64,
+    /// Swap direction: token0→token1 when `true`.
     pub zero_for_one: bool,
 }
 
@@ -449,19 +470,19 @@ impl UniswapEngine {
             ..Self::new()
         }
     }
+}
 
-    /// Register a V2 pool by contract address and initial reserves.
-    ///
-    /// Delegates to [`Bot::register_v2_pool`] (ADR-003: V2 state lives in
-    /// the core). The single fee `(gamma_numer, fee_denom)` is applied
-    /// symmetrically to both swap directions — V2-fork asymmetric fees are a
-    /// future concern. Token0/token1/factory default to zero (the V2 *solve*
-    /// path computes on reserves + fee only; identity is an encoding-layer
-    /// concern).
-    ///
-    /// Returns the assigned `pool_id`. Paths reference this single id and
-    /// select orientation via `zero_for_one` (ADR-003 "Swap Orientation":
-    /// single `PoolEntry` per address, orientation derived at solve).
+/// Test-only registration helpers (ADR-006 D3).
+///
+/// Production code never registers pools via the engine — pool construction
+/// is a `Bot` concern, and the engine discovers pools at `register_path`
+/// time by resolving `pool_id`s against the associated `Bot`. These helpers
+/// exist so no-pyo3 tests can seed the engine's `Bot` (its `core`) with the
+/// same ergonomics the old production `register_v*_pool` methods had; they
+/// delegate straight to `Bot::register_*`.
+#[cfg(test)]
+impl UniswapEngine {
+    /// Register a V2 pool into the engine's `Bot` and return its `pool_id`.
     #[must_use]
     pub fn register_v2_pool(
         &self,
@@ -485,24 +506,18 @@ impl UniswapEngine {
         self.core.write().register_v2_pool(&params)
     }
 
-    /// Register a V3 pool by contract address and initial state.
-    ///
-    /// Delegates to [`Bot::register_v3_pool`] (ADR-003: V3 state lives in
-    /// the core). The buffer is applied separately via the staged-drain
-    /// sequence (`apply_backfill_buffer_v3` → `apply_pump_buffer_v3`) so the
-    /// caller can snapshot state at deterministic points for verification.
+    /// Register a V3 pool into the engine's `Bot` and return its `pool_id`.
     #[must_use]
     pub fn register_v3_pool(&self, params: &crate::bot_core::RegisterV3PoolParams) -> u64 {
         self.core.write().register_v3_pool(params)
     }
 
-    /// Register a V4 pool by `(pool_manager, pool_id)` and initial state.
-    /// Delegates to [`Bot::register_v4_pool`] (ADR-003).
+    /// Register a V4 pool into the engine's `Bot` and return its `pool_id`.
     ///
     /// # Errors
     ///
-    /// Returns `Err` if the underlying [`Bot::register_v4_pool`] rejects the
-    /// pool (amount-modifying hooks, dynamic fee, or duplicate registration).
+    /// Returns `Err` if `Bot::register_v4_pool` rejects the pool
+    /// (amount-modifying hooks, dynamic fee, or duplicate registration).
     pub fn register_v4_pool(
         &self,
         params: &crate::bot_core::RegisterV4PoolParams,

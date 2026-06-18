@@ -813,7 +813,7 @@ mod tests {
     use crate::bot_core::RegisterV3PoolParams as V3Params;
     use crate::bot_core::{RegisterV4PoolParams as V4Params, V4PoolKey};
     use crate::optimizers::uniswap_engine::{
-        DiagnosticPathState, HopType, MixedPoolRef, PoolTickCoverage, UniswapEngine,
+        DiagnosticPathState, PoolHop, PoolTickCoverage, UniswapEngine,
     };
 
     fn usdc(amount: u64) -> U256 {
@@ -895,23 +895,22 @@ mod tests {
             .expect("V4 registration failed");
 
         // Mixed V2 -> V3 -> V4 path
-        let path_id = engine.register_path(vec![
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd,
-                zero_for_one: true,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V3,
-                pool_key: v3_key,
-                zero_for_one: false,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V4,
-                pool_key: v4_fwd,
-                zero_for_one: true,
-            },
-        ]);
+        let path_id = engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v2_fwd,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v3_key,
+                    zero_for_one: false,
+                },
+                PoolHop {
+                    pool_id: v4_fwd,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
 
         let snapshot = engine
             .diagnostic_path_state(path_id)

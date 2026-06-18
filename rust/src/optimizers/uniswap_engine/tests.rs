@@ -9,7 +9,7 @@ mod tests {
     use crate::bot_core::RegisterV4PoolParams;
     use crate::optimizers::uniswap_engine::ResolvedMixedPath;
     use crate::optimizers::uniswap_engine::{
-        BlockMetadata, HopType, MixedPoolRef, ResolvedHop, UniswapEngine, INT128_MAX,
+        BlockMetadata, HopType, PoolHop, ResolvedHop, UniswapEngine, INT128_MAX,
     };
 
     fn usdc(amount: u64) -> U256 {
@@ -74,18 +74,18 @@ mod tests {
         assert_eq!(engine.v3_pool_count(), 1);
 
         // Register a mixed V2→V3 path
-        let path_id = engine.register_path(vec![
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd,
-                zero_for_one: true,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V3,
-                pool_key: v3_key,
-                zero_for_one: false,
-            },
-        ]);
+        let path_id = engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v2_fwd,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v3_key,
+                    zero_for_one: false,
+                },
+            ])
+            .unwrap();
 
         assert_eq!(path_id, 1);
         assert_eq!(engine.path_count(), 1);
@@ -112,18 +112,18 @@ mod tests {
             engine.register_v2_pool(v2_addr1, weth(800), usdc(1_600_000), GAMMA_03, FEE_DENOM_03);
 
         // Register a pure V2 path
-        engine.register_path(vec![
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd,
-                zero_for_one: true,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd1,
-                zero_for_one: true,
-            },
-        ]);
+        engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v2_fwd,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v2_fwd1,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
 
         // Process with no logs — should not panic
         engine.process_block(&[], 1, &BlockMetadata::default());
@@ -181,18 +181,18 @@ mod tests {
         });
 
         // Mixed V2→V3 path
-        let path_id = engine.register_path(vec![
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd,
-                zero_for_one: true,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V3,
-                pool_key: v3_key,
-                zero_for_one: false,
-            },
-        ]);
+        let path_id = engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v2_fwd,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v3_key,
+                    zero_for_one: false,
+                },
+            ])
+            .unwrap();
 
         let resolved = &engine.path_resolved[&path_id];
         assert!(resolved.valid);
@@ -220,22 +220,23 @@ mod tests {
             coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
         });
 
-        // Reference a non-existent V2 pool
-        let path_id = engine.register_path(vec![
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: 999, // Non-existent
+        // Reference a non-existent V2 pool — ADR-006 D3: register_path
+        // rejects a pool_id not present in the Bot rather than silently
+        // producing an unresolved/invalid path.
+        let result = engine.register_path(vec![
+            PoolHop {
+                pool_id: 999, // Non-existent
                 zero_for_one: true,
             },
-            MixedPoolRef {
-                hop_type: HopType::V3,
-                pool_key: v3_key,
+            PoolHop {
+                pool_id: v3_key,
                 zero_for_one: false,
             },
         ]);
-
-        let resolved = &engine.path_resolved[&path_id];
-        assert!(!resolved.valid);
+        assert!(
+            result.is_err(),
+            "register_path must reject a pool_id not registered in the Bot"
+        );
     }
 
     #[test]
@@ -252,18 +253,18 @@ mod tests {
             engine.register_v2_pool(v2_addr1, weth(800), usdc(1_600_000), GAMMA_03, FEE_DENOM_03);
 
         // Register V2-only path
-        engine.register_path(vec![
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd,
-                zero_for_one: true,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd1,
-                zero_for_one: true,
-            },
-        ]);
+        engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v2_fwd,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v2_fwd1,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
 
         // Process updates
         engine.process_updates(
@@ -291,31 +292,31 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        engine.register_path(vec![
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd,
-                zero_for_one: true,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd2,
-                zero_for_one: true,
-            },
-        ]);
+        engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v2_fwd,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v2_fwd2,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
         // Registration is always-on; this should not panic
-        engine.register_path(vec![
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd,
-                zero_for_one: true,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd2,
-                zero_for_one: true,
-            },
-        ]);
+        engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v2_fwd,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v2_fwd2,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
     }
 
     #[test]
@@ -341,18 +342,18 @@ mod tests {
         );
 
         // register_and_solve_path should eagerly solve and append to results
-        let path_id = engine.register_and_solve_path(vec![
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd_a,
-                zero_for_one: true,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd_b,
-                zero_for_one: true,
-            },
-        ]);
+        let path_id = engine
+            .register_and_solve_path(vec![
+                PoolHop {
+                    pool_id: v2_fwd_a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v2_fwd_b,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
 
         // Should be tracked as pending so rebuild_and_solve_affected can merge
         assert!(engine.pending_new_paths.contains(&path_id));
@@ -393,18 +394,18 @@ mod tests {
         );
 
         // Register path eagerly
-        let path_id = engine.register_and_solve_path(vec![
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd_a,
-                zero_for_one: true,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd_b,
-                zero_for_one: true,
-            },
-        ]);
+        let path_id = engine
+            .register_and_solve_path(vec![
+                PoolHop {
+                    pool_id: v2_fwd_a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v2_fwd_b,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
 
         // Process an empty block (no affected pools) — rebuild_and_solve_affected
         // should still include the pending path and not drop it
@@ -458,18 +459,18 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        let path_id = engine.register_path(vec![
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd_a,
-                zero_for_one: true,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd_b,
-                zero_for_one: true,
-            },
-        ]);
+        let path_id = engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v2_fwd_a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v2_fwd_b,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
 
         engine.solve_all_paths(1);
 
@@ -522,18 +523,18 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        let path_id = engine.register_and_solve_path(vec![
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd_a,
-                zero_for_one: true,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd_b,
-                zero_for_one: true,
-            },
-        ]);
+        let path_id = engine
+            .register_and_solve_path(vec![
+                PoolHop {
+                    pool_id: v2_fwd_a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v2_fwd_b,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
 
         // Eagerly solved → path is in `results` and above-threshold.
         let (results_before, _) = engine.latest_results();
@@ -597,18 +598,18 @@ mod tests {
             GAMMA_03,
             FEE_DENOM_03,
         );
-        let path_id = engine.register_and_solve_path(vec![
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd_a,
-                zero_for_one: true,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd_b,
-                zero_for_one: true,
-            },
-        ]);
+        let path_id = engine
+            .register_and_solve_path(vec![
+                PoolHop {
+                    pool_id: v2_fwd_a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v2_fwd_b,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
 
         // Mark a pool dirty so `has_dirty_paths()` is true (mirrors a WS log
         // having arrived). The eagerly-solved result is already in `results`.
@@ -682,18 +683,18 @@ mod tests {
         );
 
         // V2→V2 path: USDC → WETH (pool A) → USDC (pool B)
-        engine.register_path(vec![
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd_a, // reserve0=USDC, reserve1=WETH
-                zero_for_one: true,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd_b, // reserve0=WETH, reserve1=USDC
-                zero_for_one: true,
-            },
-        ]);
+        engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v2_fwd_a, // reserve0=USDC, reserve1=WETH
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v2_fwd_b, // reserve0=WETH, reserve1=USDC
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
 
         // Solve
         let results = engine.solve_all();
@@ -781,18 +782,18 @@ mod tests {
         });
 
         // V3→V3 path: pool A (zfo) → pool B (ofz)
-        engine.register_path(vec![
-            MixedPoolRef {
-                hop_type: HopType::V3,
-                pool_key: v3_key_a,
-                zero_for_one: true,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V3,
-                pool_key: v3_key_b,
-                zero_for_one: false,
-            },
-        ]);
+        engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v3_key_a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v3_key_b,
+                    zero_for_one: false,
+                },
+            ])
+            .unwrap();
 
         let results = engine.solve_all();
         // V3-V3 arb depends on the exact price divergence — the important thing
@@ -846,18 +847,18 @@ mod tests {
         });
 
         // Mixed V2→V3 path
-        engine.register_path(vec![
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd,
-                zero_for_one: true,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V3,
-                pool_key: v3_key,
-                zero_for_one: false,
-            },
-        ]);
+        engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v2_fwd,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v3_key,
+                    zero_for_one: false,
+                },
+            ])
+            .unwrap();
 
         // Even if no profit found (depends on exact numbers),
         // solve_all should run without panicking
@@ -910,18 +911,18 @@ mod tests {
             engine.register_v2_pool(v2_addr, usdc(1_500_000), weth(800), GAMMA_03, FEE_DENOM_03);
 
         // V3→V2 path
-        let path_id = engine.register_path(vec![
-            MixedPoolRef {
-                hop_type: HopType::V3,
-                pool_key: v3_key,
-                zero_for_one: true,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd,
-                zero_for_one: false,
-            },
-        ]);
+        let path_id = engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v3_key,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v2_fwd,
+                    zero_for_one: false,
+                },
+            ])
+            .unwrap();
 
         let resolved = &engine.path_resolved[&path_id];
         assert!(resolved.valid);
@@ -956,18 +957,18 @@ mod tests {
         );
 
         // V2→V2 path
-        engine.register_path(vec![
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd_a,
-                zero_for_one: true,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd_b,
-                zero_for_one: true,
-            },
-        ]);
+        engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v2_fwd_a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v2_fwd_b,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
 
         // Initial solve
         let results_before = engine.solve_all();
@@ -1001,7 +1002,7 @@ mod tests {
         let v3_factory = Address::from([0x21u8; 20]);
         let sp_0 = U256::from(1u128) << 96;
 
-        let _ = engine.register_v3_pool(&RegisterV3PoolParams {
+        let v3_id = engine.register_v3_pool(&RegisterV3PoolParams {
             address: v3_addr,
             token0: Address::from([0x30u8; 20]),
             token1: Address::from([0x31u8; 20]),
@@ -1024,38 +1025,39 @@ mod tests {
             crate::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-886_983).unwrap_or_default();
         let extreme_liquidity: u128 = 76_688_550_121_478_947_320_312_764_923_207_804;
 
-        let _ = engine.register_v4_pool(&RegisterV4PoolParams {
-            pool_manager: v4_pool_manager,
-            pool_id: [0xffu8; 32],
-            pool_key: crate::bot_core::V4PoolKey {
-                currency0: Address::from([0x30u8; 20]),
-                currency1: Address::from([0x31u8; 20]),
-                fee: 10_000,
-                tick_spacing: 200,
-                hooks: Address::ZERO,
-            },
-            hook_flags: 0,
-            sqrt_price_x96: U256::from(sp_extreme),
-            liquidity: extreme_liquidity,
-            tick: -886_983,
-            tick_data: std::collections::HashMap::new(),
-            update_block: 0,
-            coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
-        });
-
+        let v4_id = engine
+            .register_v4_pool(&RegisterV4PoolParams {
+                pool_manager: v4_pool_manager,
+                pool_id: [0xffu8; 32],
+                pool_key: crate::bot_core::V4PoolKey {
+                    currency0: Address::from([0x30u8; 20]),
+                    currency1: Address::from([0x31u8; 20]),
+                    fee: 10_000,
+                    tick_spacing: 200,
+                    hooks: Address::ZERO,
+                },
+                hook_flags: 0,
+                sqrt_price_x96: U256::from(sp_extreme),
+                liquidity: extreme_liquidity,
+                tick: -886_983,
+                tick_data: std::collections::HashMap::new(),
+                update_block: 0,
+                coverage: crate::optimizers::uniswap_engine::PoolTickCoverage::Tracked,
+            })
+            .expect("V4 registration failed");
         // Register path: V3 (zfo) → V4 (ofz, which will produce huge token0 output)
-        let path_id = engine.register_path(vec![
-            MixedPoolRef {
-                hop_type: HopType::V3,
-                pool_key: 0,
-                zero_for_one: true,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V4,
-                pool_key: 0,
-                zero_for_one: false,
-            },
-        ]);
+        let path_id = engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v3_id,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v4_id,
+                    zero_for_one: false,
+                },
+            ])
+            .unwrap();
 
         // Resolve and solve all paths (replaces start() + initial_solve())
         {
@@ -1161,23 +1163,22 @@ mod tests {
             .expect("V4 registration should succeed");
 
         // Register a 3-hop path: V2 → V3 → V4
-        let path_id = engine.register_path(vec![
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd,
-                zero_for_one: true,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V3,
-                pool_key: v3_key,
-                zero_for_one: false,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V4,
-                pool_key: v4_key,
-                zero_for_one: true,
-            },
-        ]);
+        let path_id = engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v2_fwd,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v3_key,
+                    zero_for_one: false,
+                },
+                PoolHop {
+                    pool_id: v4_key,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
 
         // Inspect the path
         let path = engine.path_pools.get(&path_id).expect("path should exist");
@@ -1289,23 +1290,22 @@ mod tests {
         assert_eq!(engine.v3_pool_count(), 3);
 
         // Register 3-hop V3-V3-V3 path
-        let path_id = engine.register_path(vec![
-            MixedPoolRef {
-                hop_type: HopType::V3,
-                pool_key: v3_key_a,
-                zero_for_one: true,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V3,
-                pool_key: v3_key_b,
-                zero_for_one: false,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V3,
-                pool_key: v3_key_c,
-                zero_for_one: true,
-            },
-        ]);
+        let path_id = engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v3_key_a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v3_key_b,
+                    zero_for_one: false,
+                },
+                PoolHop {
+                    pool_id: v3_key_c,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
 
         assert_eq!(path_id, 1);
         assert_eq!(engine.path_count(), 1);
@@ -1387,23 +1387,22 @@ mod tests {
         );
 
         // Register 3-hop mixed path: V2 → V3 → V2
-        let path_id = engine.register_path(vec![
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd_a,
-                zero_for_one: true,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V3,
-                pool_key: v3_key,
-                zero_for_one: false,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: v2_fwd_b,
-                zero_for_one: true,
-            },
-        ]);
+        let path_id = engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v2_fwd_a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v3_key,
+                    zero_for_one: false,
+                },
+                PoolHop {
+                    pool_id: v2_fwd_b,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
 
         let resolved = &engine.path_resolved[&path_id];
         assert!(resolved.valid, "3-hop V2-V3-V2 path should be valid");
@@ -1440,18 +1439,18 @@ mod tests {
             engine.register_v2_pool(pool_b, weth(800), usdc(1_500_000), GAMMA_03, FEE_DENOM_03);
 
         // Path: A (USDC→WETH) → B (WETH→USDC). Initially balanced → no profit.
-        let path_id = engine.register_path(vec![
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: id_a,
-                zero_for_one: true,
-            },
-            MixedPoolRef {
-                hop_type: HopType::V2,
-                pool_key: id_b,
-                zero_for_one: true,
-            },
-        ]);
+        let path_id = engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: id_a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: id_b,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
 
         // Install a result channel to capture the diff batches.
         let (tx, mut rx) = mpsc::unbounded_channel();
@@ -1652,6 +1651,55 @@ mod tests {
             engine.v2_pool_count(),
             1,
             "engine must read the shared Bot's pools via with_core"
+        );
+    }
+
+    /// ADR-006 slice 2 (D3): the engine no longer constructs pools — it
+    /// resolves `pool_id`s against the shared `Bot` at `register_path`
+    /// time. A path hop referencing a `pool_id` that isn't registered in
+    /// the associated `Bot` must be rejected with a clear error (rather
+    /// than silently producing an unresolved/invalid path).
+    #[test]
+    fn register_path_rejects_pool_id_not_in_bot() {
+        use crate::bot_core::{Bot, RegisterV2PoolParams};
+        use std::sync::Arc;
+
+        let core = Arc::new(parking_lot::RwLock::new(Bot::new()));
+        // Register one real V2 pool so the engine has *some* valid id.
+        let real_pool_id = core.write().register_v2_pool(&RegisterV2PoolParams {
+            address: Address::from([0x11u8; 20]),
+            token0: Address::from([0x01u8; 20]),
+            token1: Address::from([0x02u8; 20]),
+            reserve0: U256::from(1000),
+            reserve1: U256::from(2000),
+            fee_token0: (997, 1000),
+            fee_token1: (997, 1000),
+            factory: Address::from([0x33u8; 20]),
+            update_block: 0,
+        });
+
+        let mut engine = UniswapEngine::with_core(Arc::clone(&core));
+
+        // Bogus pool_id (never registered) — must Err.
+        let bogus_id = real_pool_id + 1_000;
+        let result = engine.register_path(vec![
+            crate::optimizers::uniswap_engine::PoolHop {
+                pool_id: real_pool_id,
+                zero_for_one: true,
+            },
+            crate::optimizers::uniswap_engine::PoolHop {
+                pool_id: bogus_id,
+                zero_for_one: false,
+            },
+        ]);
+        assert!(
+            result.is_err(),
+            "register_path must reject a pool_id not present in the Bot"
+        );
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains(&bogus_id.to_string()),
+            "error must name the missing pool_id={bogus_id}, got: {msg}"
         );
     }
 }
