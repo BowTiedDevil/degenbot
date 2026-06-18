@@ -18,12 +18,13 @@
 //! COPY of the preset fields (addresses as checksummed hex strings, fees as
 //! Python int tuples, init hash as a hex digest) — built once at lookup time.
 
+use std::str::FromStr;
 use std::sync::OnceLock;
 
 use pyo3::prelude::*;
 
-use crate::address_utils::address_to_checksum_string;
-use crate::bot_core::dex_identity::DexIdentity;
+use crate::address_utils::{address_to_checksum_string, parse_address};
+use crate::bot_core::dex_identity::{DexIdentity, DexVariant, ReservesAbi};
 
 /// Frozen Python view over a `DexIdentity` preset (ADR-005 slice 6).
 ///
@@ -59,10 +60,95 @@ impl PyDexIdentity {
             variant: ident.variant.as_str().to_string(),
         }
     }
+
+    /// Construct a custom `DexIdentity` view from explicit Python args.
+    ///
+    /// Intended for tests + ad-hoc identities (production should resolve
+    /// presets via `dex_identity` or the `pool_type_registry`). Mirrors Polars'
+    /// builder pattern for codec options — presets are the canonical source,
+    /// but custom identities are constructable when needed.
+    fn build(
+        factory: &str,
+        init_hash: &str,
+        fee_token0: (u64, u64),
+        fee_token1: (u64, u64),
+        variant: &str,
+        reserves_abi: Option<Vec<String>>,
+    ) -> PyResult<Self> {
+        let factory_addr = parse_address(factory)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let init_hash_b256 = alloy::primitives::B256::from_str(init_hash)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let variant_enum = DexVariant::from_kebab(variant).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!("unknown variant: {variant}"))
+        })?;
+        // `match` consumes `reserves_abi` (moves the Option); the inner Vec is
+        // scoped to the arm that resolves `ReservesAbi` without escaping.
+        let reserves_abi_enum = match reserves_abi {
+            None => ReservesAbi::Standard,
+            Some(v) => match v.as_slice() {
+                [a, b] if [a.as_str(), b.as_str()] == ["uint112", "uint112"] => {
+                    ReservesAbi::Standard
+                }
+                [a, b, c] if [a.as_str(), b.as_str(), c.as_str()]
+                    == ["uint112", "uint112", "uint32"] =>
+                {
+                    ReservesAbi::PancakeswapStyle
+                }
+                other => {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "unknown reserves_abi shape: {other:?}"
+                    )));
+                }
+            },
+        };
+        let ident = DexIdentity {
+            factory: factory_addr,
+            deployer: factory_addr,
+            init_hash: init_hash_b256,
+            fee_token0,
+            fee_token1,
+            reserves_abi: reserves_abi_enum,
+            variant: variant_enum,
+        };
+        Ok(Self::from_core(&ident))
+    }
 }
 
 #[pymethods]
 impl PyDexIdentity {
+    /// Construct a custom `DexIdentity` view from explicit Python args.
+    ///
+    /// Mirrors Polars' builder pattern for codec options — presets are the
+    /// canonical source (resolve via `dex_identity`), but custom identities
+    /// are constructable for tests / ad-hoc deployments.
+    ///
+    /// # Examples
+    ///
+    /// ```python
+    /// from degenbot_rs import PyDexIdentity
+    /// ident = PyDexIdentity(
+    ///     factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+    ///     init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
+    ///     fee_token0=(997, 1000),
+    ///     fee_token1=(997, 1000),
+    ///     variant="uniswap-v2",
+    /// )
+    /// ```
+    #[new]
+    #[pyo3(signature = (factory, init_hash, fee_token0, fee_token1, variant, reserves_abi=None))]
+    #[allow(clippy::needless_pass_by_value)] // pyo3 extracts Python list → Option<Vec<String>>
+    fn new(
+        factory: &str,
+        init_hash: &str,
+        fee_token0: (u64, u64),
+        fee_token1: (u64, u64),
+        variant: &str,
+        reserves_abi: Option<Vec<String>>,
+    ) -> PyResult<Self> {
+        Self::build(factory, init_hash, fee_token0, fee_token1, variant, reserves_abi)
+    }
+
     /// Factory contract address (EIP-55 checksummed hex).
     #[getter]
     fn factory(&self) -> &str {
