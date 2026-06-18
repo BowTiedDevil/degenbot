@@ -131,6 +131,9 @@ fn degenbot_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<bot_core::py_liquidity_pool::PyLiquidityPool>()?;
     m.add_class::<bot_core::py_erc20_token::PyErc20Token>()?;
 
+    // DEX identity presets (ADR-005 slice 6)
+    bot_core::py_dex_identity::add_dex_identity(m)?;
+
     // Async modules
     m.add_class::<async_provider::PyAsyncAlloyProvider>()?;
     m.add_class::<async_contract::PyAsyncContract>()?;
