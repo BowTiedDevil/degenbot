@@ -11,8 +11,7 @@
     "slice-15"
   ],
   "status": "open",
-  "created_at": "2026-06-17T20:37:47.254Z",
-  "assigned_to_session": "019ed8af-4f02-7e42-8bab-a8df31e260a5"
+  "created_at": "2026-06-17T20:37:47.254Z"
 }
 
 **Slice 15 of the Polars three-layer migration (ADR-005).** Master: `TODO-7e24d695`.
