@@ -8,6 +8,8 @@ from weakref import WeakSet
 from eth_typing import ChecksumAddress
 
 from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
+from degenbot.calculations.camelot import get_y_camelot, k_camelot
+from degenbot.calculations.solidly_stable import calc_exact_in_stable
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.degenbot_rs import PyDexIdentity, PyLiquidityPool
 from degenbot.erc20 import Erc20Token
@@ -19,7 +21,7 @@ from degenbot.exceptions.pool import (
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin, Subscriber
-from degenbot.types.hop_types import ConstantProductHop, HopType
+from degenbot.types.hop_types import ConstantProductHop, HopType, SolidlyStableHop
 from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.log_decoders import V2_SYNC_TOPIC, decode_v2_sync
@@ -43,6 +45,14 @@ class LiquidityPool(
     """A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant."""
 
     variant: ClassVar[str | None] = None
+
+    # Camelot solidly-stable strategy (ADR-005 slice 7 step 4a fold). Default
+    # False for all non-Camelot V2 pools — the stable calc + SolidlyStableHop
+    # branch only fire when a builder flips this (Camelot stable pools).
+    # ``fee_denominator`` carries Camelot's integer fee scaling (used by the
+    # stable math); None for non-Camelot V2 (volatile calc ignores it).
+    stable_swap: bool = False
+    fee_denominator: int | None = None
 
     LOG_HANDLERS: ClassVar[dict[str, Any]] = {
         V2_SYNC_TOPIC: decode_v2_sync,
@@ -558,6 +568,107 @@ class LiquidityPool(
             final_state=result.final_state,
         )
 
+    def calculate_tokens_out_from_tokens_in(
+        self,
+        token_in: Erc20Token,
+        token_in_quantity: int,
+        override_state: UniswapV2PoolState | None = None,
+    ) -> int:
+        """Calculate the expected token OUTPUT for a target INPUT at current reserves.
+
+        Strategy dispatch (ADR-005 slice 7 step 4a fold): Camelot stable pools
+        (``stable_swap=True``) use the solidly-stable invariant with Camelot's
+        k/get_y; all other V2 pools fall through to ``super()`` — the
+        ``UniswapV2PoolCalc`` Rust-delegation path (slice 5) is unperturbed for
+        the volatile majority.
+
+        Returns:
+            The expected output token amount.
+
+        """
+        if self.stable_swap:
+            return self._calculate_tokens_out_from_tokens_in_stable_swap(
+                token_in=token_in,
+                token_in_quantity=token_in_quantity,
+                override_state=override_state,
+            )
+        return super().calculate_tokens_out_from_tokens_in(
+            token_in=token_in,
+            token_in_quantity=token_in_quantity,
+            override_state=override_state,
+        )
+
+    def _calculate_tokens_out_from_tokens_in_stable_swap(
+        self,
+        token_in: Erc20Token,
+        token_in_quantity: int,
+        override_state: UniswapV2PoolState | None = None,
+    ) -> int:
+        """Camelot solidly-stable swap calculation (folded from CamelotPoolCalc).
+
+        Uses Camelot's own k + get_y functions (``k_camelot``/``get_y_camelot``)
+        instead of the standard Solidly ones. ``fee_denominator`` scales the
+        integer fee numerator; ``fee_tokenN`` is the FEE ``Fraction``.
+
+        Returns:
+            The computed integer value.
+
+        """
+        if override_state is not None:  # pragma: no cover
+            pass
+
+        # ``stable_swap=True`` (set by the builder) implies the builder also
+        # set ``fee_denominator`` (Camelot's integer fee scale). Narrow for
+        # the typed math below.
+        assert self.fee_denominator is not None
+        fee_denominator = self.fee_denominator
+
+        precision_multiplier_token0: int = 10**self.token0.decimals
+        precision_multiplier_token1: int = 10**self.token1.decimals
+
+        fee_percent = fee_denominator * (
+            self.fee_token0 if token_in == self.token0 else self.fee_token1
+        )
+
+        reserves_token0 = (
+            override_state.reserves_token0 if override_state is not None else self.reserves_token0
+        )
+        reserves_token1 = (
+            override_state.reserves_token1 if override_state is not None else self.reserves_token1
+        )
+
+        # Remove fee from amount received
+        token_in_quantity -= token_in_quantity * fee_percent // fee_denominator
+        xy = k_camelot(
+            balance_0=reserves_token0,
+            balance_1=reserves_token1,
+            decimals_0=precision_multiplier_token0,
+            decimals_1=precision_multiplier_token1,
+        )
+        reserves_token0 = reserves_token0 * 10**18 // precision_multiplier_token0
+        reserves_token1 = reserves_token1 * 10**18 // precision_multiplier_token1
+        reserve_a, reserve_b = (
+            (reserves_token0, reserves_token1)
+            if token_in == self.token0
+            else (reserves_token1, reserves_token0)
+        )
+        token_in_quantity = (
+            token_in_quantity * 10**18 // precision_multiplier_token0
+            if token_in == self.token0
+            else token_in_quantity * 10**18 // precision_multiplier_token1
+        )
+        y = reserve_b - get_y_camelot(token_in_quantity + reserve_a, xy, reserve_b)
+
+        return (
+            y
+            * (
+                precision_multiplier_token1
+                if token_in == self.token0
+                else precision_multiplier_token0
+            )
+            // 10**18
+        )
+
     def to_hop_state(
         self,
         *,
@@ -569,23 +680,65 @@ class LiquidityPool(
         """Convert to hop state.
 
         Returns:
-            A ConstantProductHop for the solver.
+            A ``SolidlyStableHop`` for Camelot stable pools (``stable_swap``),
+            else a ``ConstantProductHop`` carrying the directional
+            ``fee_out`` (Camelot allows asymmetric fees per direction).
 
         """
         # token_in/token_out unused — 2-token pools determine pair from zero_for_one.
         # Callers should ensure these match pool.token0/pool.token1 if provided.
         state = state_override if state_override is not None else self.state
-        fee = self.extract_fee(zero_for_one=zero_for_one)
+        fee_in = self.extract_fee(zero_for_one=zero_for_one)
         if zero_for_one:
             reserve_in = state.reserves_token0
             reserve_out = state.reserves_token1
+            decimals_in = self.token0.decimals
+            decimals_out = self.token1.decimals
         else:
             reserve_in = state.reserves_token1
             reserve_out = state.reserves_token0
+            decimals_in = self.token1.decimals
+            decimals_out = self.token0.decimals
+
+        if self.stable_swap:
+
+            def _camelot_stable_swap_fn(
+                amount_in: int,
+                /,
+                _reserves0: int = state.reserves_token0,
+                _reserves1: int = state.reserves_token1,
+                _decimals0: int = 10**self.token0.decimals,
+                _decimals1: int = 10**self.token1.decimals,
+                _fee: Fraction = fee_in,
+                _token_in: int = 0 if zero_for_one else 1,
+            ) -> int:
+                return calc_exact_in_stable(
+                    amount_in=amount_in,
+                    token_in=_token_in,
+                    reserves0=_reserves0,
+                    reserves1=_reserves1,
+                    decimals0=_decimals0,
+                    decimals1=_decimals1,
+                    fee=_fee,
+                    k_func=k_camelot,
+                    get_y_func=get_y_camelot,  # ty:ignore[invalid-argument-type]
+                )
+
+            return SolidlyStableHop(
+                reserve_in=reserve_in,
+                reserve_out=reserve_out,
+                fee=fee_in,
+                decimals_in=decimals_in,
+                decimals_out=decimals_out,
+                swap_fn=_camelot_stable_swap_fn,
+            )
+
+        fee_out = self.fee_token1 if zero_for_one else self.fee_token0
         return ConstantProductHop(
             reserve_in=reserve_in,
             reserve_out=reserve_out,
-            fee=fee,
+            fee=fee_in,
+            fee_out=fee_out,
         )
 
     def build_swap_amount(
