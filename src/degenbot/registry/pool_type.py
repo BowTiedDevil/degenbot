@@ -16,6 +16,7 @@ from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor, derive_kind
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
 
+    from degenbot.degenbot_rs import PyDexIdentity
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
     from degenbot.types.pool_protocols import ConcentratedLiquidityPool, ConstantProductPool
@@ -147,6 +148,7 @@ class PoolTypeRegistry:
         pool_init_hash: str | None = None,
         deployer: str | None = None,
         family: PoolFamily | None = None,
+        dex_identity: PyDexIdentity | None = None,
     ) -> None:
         """Register a pool class for a specific (chain_id, factory) deployment.
 
@@ -164,6 +166,11 @@ class PoolTypeRegistry:
                 shape misleads ``_derive_family`` (e.g. BalancerV2Pool has
                 ``tokens`` but not ``fee_token0``, so it would derive as
                 STABLESWAP instead of WEIGHTED).
+            dex_identity: The canonical DexIdentity preset for this DEX (ADR-005
+                slice 7 step 3). Carries the variant tag, reserves ABI shape,
+                canonical-chain factory/init-hash, + default fees. Optional —
+                Aerodrome V2 (deferred, TODO-e30504ed) + non-V2 families omit
+                it. Resolvable via ``get_v2_identity()``.
 
 
         Raises:
@@ -191,6 +198,7 @@ class PoolTypeRegistry:
                 deployer=deployer if deployer is not None else factory_address,
                 pool_init_hash=pool_init_hash,
             ),
+            dex_identity=dex_identity,
         )
 
         # Update reverse index: kind → descriptor. When multiple deployments
@@ -319,6 +327,22 @@ class PoolTypeRegistry:
             factory=entry.deployment.factory_address,
         )
 
+    def get_v2_identity(self, chain_id: ChainId, factory_address: str) -> PyDexIdentity | None:
+        """Get the DexIdentity preset for (chain_id, factory), or None.
+
+        Returns None if no registration exists OR if the registration was made
+        without a ``dex_identity`` (e.g. Aerodrome V2 — deferred per
+        TODO-e30504ed).
+
+        Returns:
+            The DexIdentity preset, or None if not found / not set.
+
+        """
+        entry = self._entries.get((chain_id, factory_address))
+        if entry is None:
+            return None
+        return entry.dex_identity
+
     def get_deployment(self, chain_id: ChainId, factory_address: str) -> PoolDeploymentData | None:
         """Get the deployment data for (chain_id, factory).
 
@@ -369,6 +393,7 @@ class _RegistryEntry:
     variant: str | None
     kind: str
     deployment: PoolDeploymentData
+    dex_identity: PyDexIdentity | None = None
 
     @property
     def descriptor(self) -> PoolTypeDescriptor:

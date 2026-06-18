@@ -80,6 +80,12 @@ class V2PoolBuilder(V2BuilderBase):
             msg = f"No V2 pool class registered for chain {chain_id}, factory {common.factory}"
             raise ValueError(msg)
 
+        # Resolve the canonical DexIdentity preset (ADR-005 slice 7 step 3) —
+        # carries the variant tag, reserves ABI shape, + default fees. Passed
+        # to the companion as metadata; explicit factory/fees (from on-chain
+        # fetches) still take precedence in the companion constructor.
+        dex = pool_type_registry.get_v2_identity(chain_id, common.factory)
+
         # Register the pool in the shared Rust Bot and wrap the handle with
         # the Python companion (ADR-005 slice 4). The builder's update_block is
         # the fetched state block; reserves are the genesis delta's after-values.
@@ -105,9 +111,10 @@ class V2PoolBuilder(V2BuilderBase):
         pool = pool_class(
             py_pool,
             address=common.pool_address,
-            chain_id=common.chain_id,
             token0=token0,
             token1=token1,
+            dex=dex,
+            chain_id=common.chain_id,
             factory=common.factory,
             fee_token0=common.fee_token0,
             fee_token1=common.fee_token1,
