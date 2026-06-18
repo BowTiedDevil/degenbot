@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## Planning
+
+Use `ergo` for all feature planning. Discover usage with `ergo --help` and `ergo quickstart`.
+
 ## Refactoring & Feature Development
 
 Use Red/Green TDD while refactoring and implementing new features.
@@ -16,7 +20,7 @@ Uses `just` (see justfile) and `uv` as the package runner. Key commands:
 - `just test-rust` - Run Rust tests
 - `just lint-rust` - Run Rust linter (clippy)
 
-**Important**: The Rust extension is automatically rebuilt on import by maturin. Do NOT manually rebuild the extension, recreate the virtual environment, or reinstall the package after making Rust code changes — just run the tests and the import will trigger a rebuild.
+**Important**: The Rust extension is automatically rebuilt on import by maturin. Do NOT manually rebuild the extension, recreate the virtual environment, or reinstall the package after making Rust code changes. Any `uv run ...` command will trigger a rebuild if needed.
 
 ### Combined
 - `just test-all` - Run all tests (Rust + Python)
@@ -112,7 +116,7 @@ raise ValueError(msg)
 - Add docstring to complex tests describing "what" and "why"
 - Create a test double with `Fake` prefix instead of mocking
 
-## Refactoring
+## Backwards Compatibility
 - Unless directed otherwise, design standalone features without a backwards compatibility layer.
 
 ## Pool Class Architecture
