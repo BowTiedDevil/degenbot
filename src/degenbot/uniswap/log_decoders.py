@@ -34,7 +34,7 @@ from degenbot.uniswap.v4_types import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+    from degenbot.uniswap.liquidity_pool import LiquidityPool
     from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
     from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
@@ -102,7 +102,7 @@ def get_topic_bytes(log: dict, index: int) -> bytes:
 # ---- V2 Decoders ----
 
 
-def decode_v2_sync(log: dict) -> Callable[[UniswapV2Pool], None]:
+def decode_v2_sync(log: dict) -> Callable[[LiquidityPool], None]:
     """Decode a V2 Sync event and return a closure that applies the update.
 
     Sync(uint112,uint112) — data is tightly packed reserve0, reserve1.
@@ -123,7 +123,7 @@ def decode_v2_sync(log: dict) -> Callable[[UniswapV2Pool], None]:
         reserves_token1=reserve1,
     )
 
-    def apply(pool: UniswapV2Pool) -> None:
+    def apply(pool: LiquidityPool) -> None:
         pool.external_update(update)
 
     return apply

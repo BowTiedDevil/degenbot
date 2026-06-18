@@ -69,7 +69,7 @@ This mirrors the Python `UniswapLpCycle` pattern: it iterates `self.swap_pools`,
 
 **Consequence for calc placement (Q8):**
 
-- `BotCore::calculate_tokens_out` / `calculate_tokens_in` and `PyPool`'s thin-handle versions **stay on `BotCore`** — they are the per-pool swap math over state, the Rust-core analogue of `UniswapV2Pool.calculate_tokens_out_from_tokens_in`. The legacy `RustPoolCache` mirror (retired under Option D, above) was the only *other* place single-pool calc previously lived; its deletion makes `BotCore` the single home.
+- `BotCore::calculate_tokens_out` / `calculate_tokens_in` and `PyPool`'s thin-handle versions **stay on `BotCore`** — they are the per-pool swap math over state, the Rust-core analogue of `LiquidityPool.calculate_tokens_out_from_tokens_in`. The legacy `RustPoolCache` mirror (retired under Option D, above) was the only *other* place single-pool calc previously lived; its deletion makes `BotCore` the single home.
 - The V3 stub (`calculate_tokens_out` returning `U256::ZERO`, "Slice 7 not implemented") **needs implementation** — V3/V4 single-pool CL swap math is required for the future-state single-pool-query consumer pattern ("If I swap 100 USDC into this V3 pool, how much WETH do I get out?").
 - `BotCore::encode_swap` **stays on `BotCore`** — per-pool swap calldata encoding (V2 today; V3/V4 pending); reads immutables the pool already owns. The production-path command-stream encoding (`encode_cmd_stream` in `eth_backrun_helpers.py`) stays Python-side — a different layer composing per-pool calldata into an executor payload, not single-pool encoding.
 

@@ -11,14 +11,13 @@ import hypothesis.strategies as st
 from degenbot.arbitrage._legacy import _UniswapMultiPoolCycleTesting
 from degenbot.degenbot_rs import PyBot
 from degenbot.erc20.erc20 import Erc20Token
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.arbitrage.generator.fixtures import FixtureFactory
 from tests.arbitrage.generator.hypothesis_strategies import (
     liquidity_depth_strategy,
     seed_strategy,
 )
-from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.v2_pool_factory import make_v2_pool
 
 _PY_BOT = PyBot()
 

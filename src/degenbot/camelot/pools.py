@@ -10,7 +10,7 @@ from degenbot.calculations.solidly_stable import calc_exact_in_stable
 from degenbot.camelot.v2_pool_calc import CamelotPoolCalc
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.types.hop_types import ConstantProductHop, HopType, SolidlyStableHop
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 
 if TYPE_CHECKING:
     from degenbot.degenbot_rs import PyLiquidityPool
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from degenbot.uniswap.v2_types import UniswapV2PoolState
 
 
-class CamelotLiquidityPool(CamelotPoolCalc, UniswapV2Pool):
+class CamelotLiquidityPool(CamelotPoolCalc, LiquidityPool):
     """CamelotLiquidityPool class."""
 
     variant: ClassVar[str | None] = "camelot"

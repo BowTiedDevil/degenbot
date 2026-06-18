@@ -11,7 +11,7 @@ from eth_typing import ChecksumAddress
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.registry.pool_type import pool_type_registry
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 
 
 def _generate_random_address() -> ChecksumAddress:
@@ -78,7 +78,7 @@ def test_custom_exchange_registration() -> None:
     custom_factory = get_checksum_address(_generate_random_address())
 
     pool_type_registry.register(
-        UniswapV2Pool,
+        LiquidityPool,
         chain_id=custom_chain,
         factory_address=custom_factory,
         pool_init_hash="0x0420",
@@ -92,7 +92,7 @@ def test_custom_exchange_registration() -> None:
     # Duplicate registration should raise
     with pytest.raises(ValueError, match="already registered"):
         pool_type_registry.register(
-            UniswapV2Pool,
+            LiquidityPool,
             chain_id=custom_chain,
             factory_address=custom_factory,
             pool_init_hash="0x0420",

@@ -18,11 +18,10 @@ from degenbot.arbitrage.optimizers.solidly_stable import (
 )
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.degenbot_rs import PyBot
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.fakes.curve_data_provider import FakeCurveDataProvider
 from tests.fakes.tokens import FakeToken
-from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.v2_pool_factory import make_v2_pool
 
 _PY_BOT = PyBot()
 

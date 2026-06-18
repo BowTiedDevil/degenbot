@@ -13,13 +13,13 @@ from degenbot.registry.pool_type import pool_type_registry
 from degenbot.sushiswap.pools import SushiswapV2Pool, SushiswapV3Pool
 from degenbot.swapbased.pools import SwapbasedV2Pool
 from degenbot.uniswap.deployments import BaseAerodromeV2
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 # (Expected (chain_id, factory) → (pool_class, expected_variant, expected_kind)
 SINGLETON_REGISTRATIONS: dict[tuple[int, str], tuple[type, str | None, str]] = {
     # Ethereum Mainnet
-    (1, "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"): (UniswapV2Pool, None, "uniswap_v2"),
+    (1, "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"): (LiquidityPool, None, "uniswap_v2"),
     (1, "0x1F98431c8aD98523631AE4a59f267346ea31F984"): (UniswapV3Pool, None, "uniswap_v3"),
     (1, "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"): (
         SushiswapV2Pool,
@@ -42,7 +42,7 @@ SINGLETON_REGISTRATIONS: dict[tuple[int, str], tuple[type, str | None, str]] = {
         "pancakeswap_v3",
     ),
     # Base
-    (8453, "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6"): (UniswapV2Pool, None, "uniswap_v2"),
+    (8453, "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6"): (LiquidityPool, None, "uniswap_v2"),
     (8453, "0x33128a8fC17869897dcE68Ed026d694621f6FDfD"): (UniswapV3Pool, None, "uniswap_v3"),
     (8453, "0x71524B4f93c58fcbF659783284E38825f0622859"): (
         SushiswapV2Pool,
@@ -179,8 +179,8 @@ class TestPoolTypeRegistrySingleton:
         assert len(pool_type_registry.registrations) == len(SINGLETON_REGISTRATIONS)
 
     def test_default_v2_class(self) -> None:
-        """UniswapV2Pool is set as the default V2 class."""
-        assert pool_type_registry.get_v2_class(999, "0x" + "0" * 40) is UniswapV2Pool
+        """LiquidityPool is set as the default V2 class."""
+        assert pool_type_registry.get_v2_class(999, "0x" + "0" * 40) is LiquidityPool
 
     def test_default_v3_class(self) -> None:
         """UniswapV3Pool is set as the default V3 class."""

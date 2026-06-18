@@ -14,7 +14,7 @@ from degenbot.pancakeswap.pools import PancakeswapV2Pool, PancakeswapV3Pool
 from degenbot.registry.pool_type import PoolTypeRegistry
 from degenbot.sushiswap.pools import SushiswapV2Pool, SushiswapV3Pool
 from degenbot.types.pool_type import PoolFamily
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 # --- Auto-derivation of kind from variant + invariant ---
@@ -27,7 +27,7 @@ class TestKindDerivation:
         """No variant → 'uniswap_v2' for CONSTANT_PRODUCT."""
         registry = PoolTypeRegistry()
         registry.register(
-            UniswapV2Pool,
+            LiquidityPool,
             chain_id=1,
             factory_address="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
             pool_init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
@@ -134,7 +134,7 @@ class TestInvariantDerivation:
         assert desc.family == PoolFamily.CONCENTRATED_LIQUIDITY
 
     def test_camelot_is_constant_product(self) -> None:
-        """CamelotLiquidityPool extends UniswapV2Pool → CONSTANT_PRODUCT."""
+        """CamelotLiquidityPool extends LiquidityPool → CONSTANT_PRODUCT."""
         registry = PoolTypeRegistry()
         registry.register(
             CamelotLiquidityPool,
@@ -156,7 +156,7 @@ class TestVariantFromClassAttribute:
     """Test that the variant is read from the class's `variant` attribute."""
 
     def test_canonical_pool_has_none_variant(self) -> None:
-        assert UniswapV2Pool.variant is None
+        assert LiquidityPool.variant is None
         assert UniswapV3Pool.variant is None
 
     def test_sushiswap_variant(self) -> None:
@@ -297,10 +297,10 @@ class TestPoolTypeRegistryDefaults:
 
     def test_set_default_and_get_class(self) -> None:
         registry = PoolTypeRegistry()
-        registry.set_default_v2_class(UniswapV2Pool)
+        registry.set_default_v2_class(LiquidityPool)
         registry.set_default_v3_class(UniswapV3Pool)
 
-        assert registry.get_v2_class(chain_id=1, factory_address="0x" + "0" * 40) is UniswapV2Pool
+        assert registry.get_v2_class(chain_id=1, factory_address="0x" + "0" * 40) is LiquidityPool
         assert registry.get_v3_class(chain_id=1, factory_address="0x" + "0" * 40) is UniswapV3Pool
 
     def test_no_default_returns_none(self) -> None:
@@ -380,10 +380,10 @@ class TestKindReverseLookup:
     def test_lookup_all_kinds(self) -> None:
         """Every built-in kind string should be resolvable via reverse lookup."""
         registry = PoolTypeRegistry()
-        registry.set_default_v2_class(UniswapV2Pool)
+        registry.set_default_v2_class(LiquidityPool)
         registry.set_default_v3_class(UniswapV3Pool)
         registry.register(
-            UniswapV2Pool,
+            LiquidityPool,
             chain_id=1,
             factory_address="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
             pool_init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",

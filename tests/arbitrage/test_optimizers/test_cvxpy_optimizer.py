@@ -23,12 +23,11 @@ from cvxpy.atoms.affine.sum import sum as cvxpy_sum
 from cvxpy.atoms.geo_mean import geo_mean
 
 from degenbot.anvil_fork import AnvilFork
-from tests.helpers.v2_pool_factory import make_v2_pool
 from degenbot.arbitrage._legacy import _UniswapMultiPoolCycleTesting
 from degenbot.bot import Bot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider import ProviderAdapter
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from tests.arbitrage.generator.fixtures import FixtureFactory
 from tests.arbitrage.generator.hypothesis_strategies import (
     liquidity_depth_strategy,
@@ -37,6 +36,7 @@ from tests.arbitrage.generator.hypothesis_strategies import (
     seed_strategy,
 )
 from tests.helpers.bot_factory import make_bot_with_provider
+from tests.helpers.v2_pool_factory import make_v2_pool
 
 # ==============================================================================
 # Test Fixtures (Migrated from test_cvxpy.py)
@@ -93,7 +93,7 @@ def xxx_base_token(fork_base_full: AnvilFork, bot_base_full: Bot) -> Erc20Token:
 
 
 @pytest.fixture
-def wbtc_pool_a(wbtc_token, weth_token) -> UniswapV2Pool:
+def wbtc_pool_a(wbtc_token, weth_token) -> LiquidityPool:
     return make_v2_pool(
         address="0xBb2b8038a1640196FbE3e38816F3e67Cba72D940",
         token0=wbtc_token,
@@ -108,7 +108,7 @@ def wbtc_pool_a(wbtc_token, weth_token) -> UniswapV2Pool:
 
 
 @pytest.fixture
-def wbtc_pool_b(wbtc_token, weth_token) -> UniswapV2Pool:
+def wbtc_pool_b(wbtc_token, weth_token) -> LiquidityPool:
     return make_v2_pool(
         address="0xBb2b8038a1640196FbE3e38816F3e67Cba72D941",
         token0=wbtc_token,
@@ -123,7 +123,7 @@ def wbtc_pool_b(wbtc_token, weth_token) -> UniswapV2Pool:
 
 
 @pytest.fixture
-def test_pool_base_a(xxx_base_token, weth_base_token) -> UniswapV2Pool:
+def test_pool_base_a(xxx_base_token, weth_base_token) -> LiquidityPool:
     return make_v2_pool(
         address="0x214356Cc4aAb907244A791CA9735292860490D5A",
         token0=weth_base_token,
@@ -138,7 +138,7 @@ def test_pool_base_a(xxx_base_token, weth_base_token) -> UniswapV2Pool:
 
 
 @pytest.fixture
-def test_pool_base_b(xxx_base_token, weth_base_token) -> UniswapV2Pool:
+def test_pool_base_b(xxx_base_token, weth_base_token) -> LiquidityPool:
     return make_v2_pool(
         address="0x404E927b203375779a6aBD52A2049cE0ADf6609B",
         token0=weth_base_token,
@@ -162,8 +162,8 @@ class TestCVXPY2PoolKnownValues:
 
     def test_2pool_uniswap_v2_decimal_corrected(
         self,
-        wbtc_pool_a: UniswapV2Pool,
-        wbtc_pool_b: UniswapV2Pool,
+        wbtc_pool_a: LiquidityPool,
+        wbtc_pool_b: LiquidityPool,
         weth_token: Erc20Token,
     ):
         """Regression test: WBTC/WETH 2-pool arbitrage with single compression."""
@@ -317,8 +317,8 @@ class TestCVXPY2PoolKnownValues:
 
     def test_2pool_uniswap_v2_double_decimal_corrected(
         self,
-        wbtc_pool_a: UniswapV2Pool,
-        wbtc_pool_b: UniswapV2Pool,
+        wbtc_pool_a: LiquidityPool,
+        wbtc_pool_b: LiquidityPool,
         weth_token: Erc20Token,
     ):
         """Regression test: WBTC/WETH 2-pool arbitrage with double compression."""
@@ -789,8 +789,8 @@ class TestBaseChainCVXPY:
 
     def test_base_2pool(
         self,
-        test_pool_base_a: UniswapV2Pool,
-        test_pool_base_b: UniswapV2Pool,
+        test_pool_base_a: LiquidityPool,
+        test_pool_base_b: LiquidityPool,
         weth_base_token: Erc20Token,
     ):
         """2-pool arbitrage on Base chain."""

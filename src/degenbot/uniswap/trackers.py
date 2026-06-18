@@ -15,8 +15,8 @@ from degenbot.exceptions.pool import (
 from degenbot.logging import logger
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types.abstract import AbstractPoolTracker
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v2_functions import generate_v2_pool_address
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_functions import generate_v3_pool_address
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 
 
-class AbstractUniswapV2PoolTracker[Pool: UniswapV2Pool](AbstractPoolTracker[Pool]):
+class AbstractUniswapV2PoolTracker[Pool: LiquidityPool](AbstractPoolTracker[Pool]):
     """AbstractUniswapV2PoolTracker class."""
 
     def __init__(
@@ -55,7 +55,7 @@ class AbstractUniswapV2PoolTracker[Pool: UniswapV2Pool](AbstractPoolTracker[Pool
         else:
             if pool_init_hash is None:  # pragma: no branch
                 logger.info("Pool init hash is unknown. Using Uniswap V3 mainnet default.")
-                pool_init_hash = UniswapV2Pool.UNISWAP_V2_MAINNET_POOL_INIT_HASH
+                pool_init_hash = LiquidityPool.UNISWAP_V2_MAINNET_POOL_INIT_HASH
             deployer_address = (
                 get_checksum_address(deployer_address)
                 if deployer_address is not None
@@ -131,7 +131,7 @@ class AbstractUniswapV2PoolTracker[Pool: UniswapV2Pool](AbstractPoolTracker[Pool
             return new_pool
 
 
-class UniswapV2PoolTracker(AbstractUniswapV2PoolTracker[UniswapV2Pool], pool_factory=UniswapV2Pool):
+class UniswapV2PoolTracker(AbstractUniswapV2PoolTracker[LiquidityPool], pool_factory=LiquidityPool):
     """A class that generates and tracks concrete instances of a Uniswap V2.
 
     liquidity pool helper or one of its child classes.
@@ -161,7 +161,7 @@ class UniswapV2PoolTracker(AbstractUniswapV2PoolTracker[UniswapV2Pool], pool_fac
         token_addresses: tuple[str, str],
         *,
         silent: bool = False,
-    ) -> UniswapV2Pool:
+    ) -> LiquidityPool:
         """Get a pool by its token addresses.
 
         Returns:

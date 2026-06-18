@@ -18,7 +18,7 @@ from degenbot.arbitrage.types import (
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions.arbitrage import ArbitrageError, OptimizationError
 from degenbot.provider import ProviderAdapter
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate, UniswapV2PoolState
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (
@@ -45,7 +45,7 @@ def weth_token(fork_mainnet_full: AnvilFork) -> Erc20Token:
 
 
 @pytest.fixture
-def wbtc_weth_v2_lp(fork_mainnet_full: AnvilFork) -> UniswapV2Pool:
+def wbtc_weth_v2_lp(fork_mainnet_full: AnvilFork) -> LiquidityPool:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
     pool = bot.build_pool(WBTC_WETH_V2_POOL_ADDRESS)
     pool.external_update(
@@ -76,7 +76,7 @@ class TestV2V3MixedEquivalence:
 
     def test_baseline_calculation_matches(
         self,
-        wbtc_weth_v2_lp: UniswapV2Pool,
+        wbtc_weth_v2_lp: LiquidityPool,
         wbtc_weth_v3_lp: UniswapV3Pool,
         weth_token: Erc20Token,
     ):
@@ -136,7 +136,7 @@ class TestV2V3MixedEquivalence:
     )
     def test_state_override_equivalence(
         self,
-        wbtc_weth_v2_lp: UniswapV2Pool,
+        wbtc_weth_v2_lp: LiquidityPool,
         wbtc_weth_v3_lp: UniswapV3Pool,
         weth_token: Erc20Token,
     ):
@@ -206,7 +206,7 @@ class TestEdgeCases:
 
     def test_unprofitable_path_rejection_parity(
         self,
-        wbtc_weth_v2_lp: UniswapV2Pool,
+        wbtc_weth_v2_lp: LiquidityPool,
         wbtc_weth_v3_lp: UniswapV3Pool,
         weth_token: Erc20Token,
     ):

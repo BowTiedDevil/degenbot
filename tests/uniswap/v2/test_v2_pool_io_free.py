@@ -1,4 +1,4 @@
-"""Tests for Phase 3: I/O-free UniswapV2Pool construction via Bot."""
+"""Tests for Phase 3: I/O-free LiquidityPool construction via Bot."""
 
 import pathlib
 import pickle
@@ -17,12 +17,12 @@ from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import InvalidSwapInputAmount, LiquidityPoolError
 from degenbot.provider.call_helpers import encode_function_calldata
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.trackers import UniswapV2PoolTracker
 from degenbot.uniswap.v2_functions import (
     constant_product_calc_exact_in,
     constant_product_calc_exact_out,
 )
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate, UniswapV2PoolState
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
@@ -64,7 +64,7 @@ UNISWAP_V2_FACTORY = "0x5C69bEe701ef814E44274f655e7632cB715C14B6"
 
 
 class TestV2PoolIOFreeConstructor:
-    """UniswapV2Pool can be constructed with pre-fetched data only."""
+    """LiquidityPool can be constructed with pre-fetched data only."""
 
     def test_io_free_constructor_basic(self) -> None:
         """An I/O-free V2 pool can be constructed with tokens, factory, fees, and reserves."""
@@ -297,7 +297,7 @@ class TestBotBuildV2Pool:
             chain_id=1,
         )
 
-        assert isinstance(pool, UniswapV2Pool)
+        assert isinstance(pool, LiquidityPool)
         assert pool.address == get_checksum_address(WETH_USDC_V2_POOL)
         assert pool.token0.address == get_checksum_address(weth_addr)
         assert pool.token1.address == get_checksum_address(usdc_addr)
@@ -419,7 +419,7 @@ class TestV2PoolTrackerWithBot:
 
         # Call get_pool — should call bot.build_pool internally
         pool = manager.get_pool(WETH_USDC_V2_POOL)
-        assert isinstance(pool, UniswapV2Pool)
+        assert isinstance(pool, LiquidityPool)
         assert pool.address == get_checksum_address(WETH_USDC_V2_POOL)
         assert pool.token0.address == get_checksum_address(weth_addr)
         assert pool.token1.address == get_checksum_address(usdc_addr)
@@ -437,7 +437,7 @@ class _DelegateSpy:
     """Wraps a ``PyLiquidityPool`` to record ``calculate_tokens_out/in`` calls.
 
     ADR-005 slice 5 delegation-test for the V2 constant-product calc path:
-    ``UniswapV2Pool.calculate_tokens_out_from_tokens_in`` (no override) routes
+    ``LiquidityPool.calculate_tokens_out_from_tokens_in`` (no override) routes
     through ``PyLiquidityPool.calculate_tokens_out``. Pass-through for all other
     handle methods via ``__getattr__``.
     """
@@ -472,7 +472,7 @@ class TestV2CalcDelegation:
     """
 
     @staticmethod
-    def _make_pool() -> UniswapV2Pool:
+    def _make_pool() -> LiquidityPool:
         weth = _make_weth()
         usdc = _make_usdc()
         return make_v2_pool(

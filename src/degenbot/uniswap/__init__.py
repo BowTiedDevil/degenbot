@@ -5,8 +5,8 @@ from degenbot.registry.pool_type import pool_type_registry
 from . import (
     abi as abi,
 )  # excluded from __all__ so it doesn't bubble back up to the top level package namespace
+from .liquidity_pool import LiquidityPool
 from .trackers import UniswapV2PoolTracker, UniswapV3PoolTracker
-from .v2_liquidity_pool import UniswapV2Pool
 from .v2_types import (
     UniswapV2PoolExternalUpdate,
     UniswapV2PoolSimulationResult,
@@ -25,9 +25,9 @@ from .v4_liquidity_pool import UniswapV4Pool
 from .v4_snapshot import UniswapV4LiquiditySnapshot
 from .v4_types import UniswapV4PoolExternalUpdate, UniswapV4PoolState, UniswapV4PoolStateUpdated
 
-# Register default pool classes — UniswapV2Pool and UniswapV3Pool serve as the
+# Register default pool classes — LiquidityPool and UniswapV3Pool serve as the
 # fallback when no factory-specific registration exists.
-pool_type_registry.set_default_v2_class(UniswapV2Pool)
+pool_type_registry.set_default_v2_class(LiquidityPool)
 pool_type_registry.set_default_v3_class(UniswapV3Pool)
 
 
@@ -71,7 +71,7 @@ def _register_uniswap_deployments() -> None:
 
     for chain_id, factory, init_hash, deployer in v2_deployments:
         pool_type_registry.register(
-            UniswapV2Pool,
+            LiquidityPool,
             chain_id=chain_id,
             factory_address=factory,
             pool_init_hash=init_hash,
@@ -91,7 +91,7 @@ def _register_uniswap_deployments() -> None:
 _register_uniswap_deployments()
 
 __all__ = (
-    "UniswapV2Pool",
+    "LiquidityPool",
     "UniswapV2PoolExternalUpdate",
     "UniswapV2PoolSimulationResult",
     "UniswapV2PoolState",

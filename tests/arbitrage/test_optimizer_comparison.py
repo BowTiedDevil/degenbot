@@ -1,6 +1,6 @@
 """Compare SciPy minimize_scalar methods using the simple_v2_arb_profitable fixture.
 
-Uses production UniswapV2Pool for swap calculations instead of MockV2Pool.
+Uses production LiquidityPool for swap calculations instead of MockV2Pool.
 """
 
 import time
@@ -12,11 +12,11 @@ from eth_typing import ChecksumAddress
 from scipy.optimize import minimize_scalar
 
 from degenbot.exceptions import DegenbotError
-from tests.helpers.v2_pool_factory import make_v2_pool
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from tests.arbitrage.generator import FixtureFactory
 from tests.fakes.tokens import FakeToken
+from tests.helpers.v2_pool_factory import make_v2_pool
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -32,8 +32,8 @@ WETH_ADDRESS: ChecksumAddress = ChecksumAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD
 
 def build_pools_from_fixture(
     fixture,
-) -> tuple[UniswapV2Pool, UniswapV2Pool, FakeToken]:
-    """Build UniswapV2Pool objects from a V2 arbitrage fixture.
+) -> tuple[LiquidityPool, LiquidityPool, FakeToken]:
+    """Build LiquidityPool objects from a V2 arbitrage fixture.
 
     Uses the proper fee from the fixture generation.
     """
@@ -90,13 +90,13 @@ class TestOptimizerMethodComparison:
         return factory.simple_v2_arb_profitable()
 
     @pytest.fixture
-    def mock_pools(self, v2_fixture) -> tuple[UniswapV2Pool, UniswapV2Pool, FakeToken]:
+    def mock_pools(self, v2_fixture) -> tuple[LiquidityPool, LiquidityPool, FakeToken]:
         """Build production V2 pools from the fixture."""
         return build_pools_from_fixture(v2_fixture)
 
     @pytest.fixture
     def profit_function(self, mock_pools) -> "Callable[[float], float]":
-        """Create a profit function using UniswapV2Pool.calculate_tokens_out_from_tokens_in().
+        """Create a profit function using LiquidityPool.calculate_tokens_out_from_tokens_in().
 
         Returns negative profit (since minimize_scalar finds minima).
         """
@@ -338,7 +338,7 @@ class TestOptimizerMethodComparison:
 
     def test_optimal_input_is_profitable(self, mock_pools) -> None:
         """Verify that the optimal input found produces positive arbitrage profit.
-        Uses UniswapV2Pool.calculate_tokens_out_from_tokens_in() for swap calculations.
+        Uses LiquidityPool.calculate_tokens_out_from_tokens_in() for swap calculations.
         """
         pool_a, pool_b, usdc = mock_pools
 

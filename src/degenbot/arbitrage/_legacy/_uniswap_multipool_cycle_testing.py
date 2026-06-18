@@ -31,7 +31,7 @@ from degenbot.erc20.erc20 import Erc20Token
 from degenbot.exceptions.arbitrage import ArbitrageError, NoSolverSolution, Unprofitable
 from degenbot.exceptions.pool import EVMRevertError, LiquidityPoolError
 from degenbot.logging import logger
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 
 
@@ -413,7 +413,7 @@ class _UniswapMultiPoolCycleTesting(_UniswapLpCycle):
                         except (EVMRevertError, LiquidityPoolError) as e:
                             raise ArbitrageError from e
 
-                    case UniswapV2Pool(), UniswapV2PoolState():
+                    case LiquidityPool(), UniswapV2PoolState():
                         try:
                             amount_out = pool.calculate_tokens_out_from_tokens_in(
                                 token_in=token_in,
@@ -459,7 +459,7 @@ class _UniswapMultiPoolCycleTesting(_UniswapLpCycle):
             )
 
         if all(
-            pool for pool in self.swap_pools if isinstance(pool, (AerodromeV2Pool, UniswapV2Pool))
+            pool for pool in self.swap_pools if isinstance(pool, (AerodromeV2Pool, LiquidityPool))
         ):
             return v2_only_calc(
                 pools=self.swap_pools,
@@ -836,29 +836,29 @@ class _UniswapMultiPoolCycleTesting(_UniswapLpCycle):
 
         match self.swap_pools:
             case (
-                AerodromeV2Pool() | UniswapV2Pool(),
-                AerodromeV2Pool() | UniswapV2Pool(),
+                AerodromeV2Pool() | LiquidityPool(),
+                AerodromeV2Pool() | LiquidityPool(),
             ):
                 return _generate_v2_v2_payloads()
             case (
-                AerodromeV2Pool() | UniswapV2Pool(),
-                AerodromeV2Pool() | UniswapV2Pool(),
-                AerodromeV2Pool() | UniswapV2Pool(),
+                AerodromeV2Pool() | LiquidityPool(),
+                AerodromeV2Pool() | LiquidityPool(),
+                AerodromeV2Pool() | LiquidityPool(),
             ):
                 return _generate_v2_v2_v2_payloads()
             case (
-                AerodromeV2Pool() | UniswapV2Pool(),
-                AerodromeV2Pool() | UniswapV2Pool(),
-                AerodromeV2Pool() | UniswapV2Pool(),
-                AerodromeV2Pool() | UniswapV2Pool(),
+                AerodromeV2Pool() | LiquidityPool(),
+                AerodromeV2Pool() | LiquidityPool(),
+                AerodromeV2Pool() | LiquidityPool(),
+                AerodromeV2Pool() | LiquidityPool(),
             ):
                 return _generate_v2_v2_v2_v2_payloads()
             case (
-                AerodromeV2Pool() | UniswapV2Pool(),
-                AerodromeV2Pool() | UniswapV2Pool(),
-                AerodromeV2Pool() | UniswapV2Pool(),
-                AerodromeV2Pool() | UniswapV2Pool(),
-                AerodromeV2Pool() | UniswapV2Pool(),
+                AerodromeV2Pool() | LiquidityPool(),
+                AerodromeV2Pool() | LiquidityPool(),
+                AerodromeV2Pool() | LiquidityPool(),
+                AerodromeV2Pool() | LiquidityPool(),
+                AerodromeV2Pool() | LiquidityPool(),
             ):
                 return _generate_v2_v2_v2_v2_v2_payloads()
             case _:

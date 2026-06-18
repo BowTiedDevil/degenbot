@@ -8,12 +8,11 @@ produce:
 """
 
 import eth_abi.abi
-import pytest
 from web3 import Web3
 
 from degenbot.arbitrage.types import (
-    V4PoolKey,
     UniswapV4PoolSwapAmounts,
+    V4PoolKey,
 )
 
 # ── Constants ──────────────────────────────────────────────────

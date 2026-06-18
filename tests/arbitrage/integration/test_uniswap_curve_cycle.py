@@ -19,7 +19,7 @@ from degenbot.exceptions.base import DegenbotValueError
 from degenbot.provider import ProviderAdapter
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_libraries.tick_bitmap import position
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
@@ -43,7 +43,7 @@ UNISWAP_V3_WETH_USDT_ADDRESS = "0x4e68Ccd3E89f51C3074ca5072bbAC773960dFa36"
 FAKE_ADDRESS = "0x6942000000000000000000000000000000000000"
 
 
-def _build_v2_pool(fork: AnvilFork, address: str) -> UniswapV2Pool:
+def _build_v2_pool(fork: AnvilFork, address: str) -> LiquidityPool:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork.w3))
     return bot.build_pool(address)
 

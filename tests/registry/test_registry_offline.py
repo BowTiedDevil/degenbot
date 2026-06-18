@@ -13,10 +13,10 @@ from degenbot.exceptions import DegenbotValueError
 from degenbot.provider import OfflineProvider, ProviderAdapter
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from tests.fakes.pools import FakeUniswapV4Pool
-from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.v2_pool_factory import make_v2_pool
 
 _PY_BOT = PyBot()
 
@@ -27,7 +27,7 @@ UNISWAP_V2_FACTORY_POOL_INIT_HASH = (
 )
 
 
-def _get_offline_v2_pool() -> UniswapV2Pool:
+def _get_offline_v2_pool() -> LiquidityPool:
     """Construct a V2 pool using offline data."""
     data_file = CHAIN_DATA_PATH / "1" / "block_24945920.json"
     provider = OfflineProvider.from_json_file(data_file)
@@ -68,8 +68,8 @@ def _get_offline_v2_pool() -> UniswapV2Pool:
         token0=wbtc,
         token1=weth,
         factory=factory_address,
-        fee_token0=UniswapV2Pool.FEE,
-        fee_token1=UniswapV2Pool.FEE,
+        fee_token0=LiquidityPool.FEE,
+        fee_token1=LiquidityPool.FEE,
         reserves_token0=reserves0,
         reserves_token1=reserves1,
     )

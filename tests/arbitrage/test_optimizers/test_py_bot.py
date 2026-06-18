@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from degenbot.degenbot_rs import PyBot, PyLiquidityPool
+from degenbot.degenbot_rs import PyBot
 
 
 class TestPyBotV2Pool:

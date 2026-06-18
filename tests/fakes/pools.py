@@ -6,7 +6,7 @@ Minimal protocol-fakes for testing:
 - FakeUniswapV4Pool: minimal V4 pool for registry tests
 
 These fake pools are test spies, not mock math engines. For pool math testing,
-use production pool classes (UniswapV2Pool, UniswapV3Pool, etc.) constructed
+use production pool classes (LiquidityPool, UniswapV3Pool, etc.) constructed
 with FakeToken arguments.
 """
 

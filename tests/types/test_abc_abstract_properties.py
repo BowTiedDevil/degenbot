@@ -15,7 +15,7 @@ from degenbot.sushiswap.pools import SushiswapV2Pool, SushiswapV3Pool
 from degenbot.swapbased.pools import SwapbasedV2Pool
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.pool_type import PoolFamily
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
@@ -38,12 +38,12 @@ class TestConcretePoolsSatisfyProtocols:
     """
 
     def test_v2_pool_satisfies_constant_product(self):
-        assert issubclass(UniswapV2Pool, AbstractLiquidityPool)
+        assert issubclass(LiquidityPool, AbstractLiquidityPool)
         # Structural check: V2Pool has fee_token0, fee_token1, reserves
-        assert hasattr(UniswapV2Pool, "fee_token0")
-        assert hasattr(UniswapV2Pool, "fee_token1")
-        assert hasattr(UniswapV2Pool, "reserves_token0")
-        assert hasattr(UniswapV2Pool, "reserves_token1")
+        assert hasattr(LiquidityPool, "fee_token0")
+        assert hasattr(LiquidityPool, "fee_token1")
+        assert hasattr(LiquidityPool, "reserves_token0")
+        assert hasattr(LiquidityPool, "reserves_token1")
 
     def test_v3_pool_satisfies_concentrated_liquidity(self):
         assert issubclass(UniswapV3Pool, AbstractLiquidityPool)
@@ -103,7 +103,7 @@ class TestPoolFamilyDerivation:
     """Verify that _derive_family correctly identifies pool families via structural checks."""
 
     def test_v2_is_constant_product(self):
-        assert _derive_family(UniswapV2Pool) == PoolFamily.CONSTANT_PRODUCT
+        assert _derive_family(LiquidityPool) == PoolFamily.CONSTANT_PRODUCT
 
     def test_v3_is_concentrated_liquidity(self):
         assert _derive_family(UniswapV3Pool) == PoolFamily.CONCENTRATED_LIQUIDITY

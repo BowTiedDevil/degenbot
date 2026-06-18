@@ -20,8 +20,8 @@ from degenbot.exceptions.pool import (
 from degenbot.logging import logger
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types.abstract.pool_tracker import AbstractPoolTracker
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.trackers import AbstractUniswapV3PoolTracker
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
@@ -127,7 +127,7 @@ class AerodromeV2PoolTracker(
         else:
             if pool_init_hash is None:  # pragma: no branch
                 logger.info("Pool init hash is unknown. Using Uniswap V3 mainnet default.")
-                pool_init_hash = UniswapV2Pool.UNISWAP_V2_MAINNET_POOL_INIT_HASH
+                pool_init_hash = LiquidityPool.UNISWAP_V2_MAINNET_POOL_INIT_HASH
             deployer_address = (
                 get_checksum_address(deployer_address)
                 if deployer_address is not None

@@ -9,7 +9,6 @@ from typing import Any
 import pytest
 
 from degenbot.arbitrage.optimizers.hop_types import SolverMethod
-from tests.helpers.v2_pool_factory import make_v2_pool
 from degenbot.arbitrage.optimizers.solver import MobiusSolver, NewtonSolver
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.arbitrage.path.types import SwapVector
@@ -19,10 +18,11 @@ from degenbot.arbitrage.types import (
     UniswapV3PoolSwapAmounts,
 )
 from degenbot.exceptions.arbitrage import OptimizationError
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v2_functions import constant_product_calc_exact_in
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from tests.fakes.tokens import FakeToken
+from tests.helpers.v2_pool_factory import make_v2_pool
 
 # ---------------------------------------------------------------------------
 # Helpers: manual calculation that mirrors what legacy UniswapLpCycle does
@@ -46,7 +46,7 @@ def _v2_exact_out(
 
 def _simulate_v2_path(
     amount_in: int,
-    pools: Sequence[UniswapV2Pool],
+    pools: Sequence[LiquidityPool],
     vectors: Sequence[SwapVector],
 ) -> int:
     """Simulate a swap through a sequence of V2 pools (legacy behavior)."""
@@ -65,7 +65,7 @@ def _simulate_v2_path(
 
 def _legacy_arb_profit(
     amount_in: int,
-    pools: Sequence[UniswapV2Pool],
+    pools: Sequence[LiquidityPool],
     vectors: Sequence[SwapVector],
 ) -> int:
     """Compute profit the way UniswapLpCycle._arb_profit does."""
@@ -73,7 +73,7 @@ def _legacy_arb_profit(
 
 
 def _calculate_tokens_out_via_pool(
-    pool: UniswapV2Pool,
+    pool: LiquidityPool,
     token_in: FakeToken,
     token_in_quantity: int,
     state_override: UniswapV2PoolState | None = None,
@@ -186,7 +186,7 @@ def t2() -> FakeToken:
 
 
 @pytest.fixture
-def v2_pool_0(t0: FakeToken, t1: FakeToken) -> UniswapV2Pool:
+def v2_pool_0(t0: FakeToken, t1: FakeToken) -> LiquidityPool:
     """Pool 0: t0 -> t1."""
     return make_v2_pool(
         address=ADDR_POOL0,  # type: ignore[arg-type]
@@ -202,7 +202,7 @@ def v2_pool_0(t0: FakeToken, t1: FakeToken) -> UniswapV2Pool:
 
 
 @pytest.fixture
-def v2_pool_1(t1: FakeToken, t2: FakeToken) -> UniswapV2Pool:
+def v2_pool_1(t1: FakeToken, t2: FakeToken) -> LiquidityPool:
     """Pool 1: t1 -> t2."""
     return make_v2_pool(
         address=ADDR_POOL1,  # type: ignore[arg-type]
@@ -218,7 +218,7 @@ def v2_pool_1(t1: FakeToken, t2: FakeToken) -> UniswapV2Pool:
 
 
 @pytest.fixture
-def v2_pool_2(t2: FakeToken, t0: FakeToken) -> UniswapV2Pool:
+def v2_pool_2(t2: FakeToken, t0: FakeToken) -> LiquidityPool:
     """Pool 2: t2 -> t0 (closes the cycle)."""
     return make_v2_pool(
         address=ADDR_POOL2,  # type: ignore[arg-type]
@@ -235,10 +235,10 @@ def v2_pool_2(t2: FakeToken, t0: FakeToken) -> UniswapV2Pool:
 
 @pytest.fixture
 def v2_v2_v2_pools(
-    v2_pool_0: UniswapV2Pool,
-    v2_pool_1: UniswapV2Pool,
-    v2_pool_2: UniswapV2Pool,
-) -> tuple[UniswapV2Pool, UniswapV2Pool, UniswapV2Pool]:
+    v2_pool_0: LiquidityPool,
+    v2_pool_1: LiquidityPool,
+    v2_pool_2: LiquidityPool,
+) -> tuple[LiquidityPool, LiquidityPool, LiquidityPool]:
     """3-hop V2 cycle: t0 -> t1 -> t2 -> t0."""
     return (v2_pool_0, v2_pool_1, v2_pool_2)
 

@@ -3,11 +3,11 @@
 from fractions import Fraction
 from typing import ClassVar
 
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 
-class PancakeswapV2Pool(UniswapV2Pool):
+class PancakeswapV2Pool(LiquidityPool):
     """PancakeswapV2Pool class."""
 
     variant: ClassVar[str | None] = "pancakeswap"

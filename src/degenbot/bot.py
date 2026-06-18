@@ -40,7 +40,7 @@ from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import TrackerAlreadyInitialized
 from degenbot.logging import logger
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from degenbot.version import __version__
@@ -126,7 +126,7 @@ class Bot:
 
         # Async adapters for subscriptions, keyed by chain_id
         self._async_adapters: dict[ChainId, AsyncProviderAdapter] = {}
-        self.register_builder(UniswapV2Pool, self._v2_builder)
+        self.register_builder(LiquidityPool, self._v2_builder)
         self.register_builder(UniswapV3Pool, self._v3_builder)
         self.register_builder(UniswapV4Pool, self._v4_builder)
         self.register_builder(CurveStableswapPool, self._curve_builder)
@@ -135,7 +135,7 @@ class Bot:
         self.register_builder(BalancerV2Pool, self._balancer_builder)
         self.register_builder(BalancerV2StablePool, self._balancer_builder)
         # SushiswapV2Pool, PancakeSwapV2Pool, SwapbasedV2Pool, etc. inherit
-        # UniswapV2Pool so they are handled by the V2 builder via MRO fallback
+        # LiquidityPool so they are handled by the V2 builder via MRO fallback
 
         # Check database migration version
         self._check_database_version()
@@ -225,7 +225,7 @@ class Bot:
         instead of isinstance chains to find the right builder.
 
         Args:
-            pool_class: The concrete pool class (e.g. UniswapV2Pool, AerodromeV2Pool).
+            pool_class: The concrete pool class (e.g. LiquidityPool, AerodromeV2Pool).
             builder: The builder instance that handles construction and updates
                 for this pool type.
 
@@ -586,7 +586,7 @@ class Bot:
 
         Uses the builder registry (dict lookup on type(pool)) first, then
         falls back to isinstance checks for subclasses not explicitly registered
-        (e.g. SushiswapV2Pool inherits from UniswapV2Pool).
+        (e.g. SushiswapV2Pool inherits from LiquidityPool).
 
         Returns:
             The computed value.
@@ -600,7 +600,7 @@ class Bot:
         if builder is not None:
             return builder
 
-        # Slow path: subclass match (e.g. SushiswapV2Pool is subclass of UniswapV2Pool)
+        # Slow path: subclass match (e.g. SushiswapV2Pool is subclass of LiquidityPool)
         # Walk the MRO looking for a registered builder
         for base in type(pool).__mro__:
             builder = self._builders.get(base)

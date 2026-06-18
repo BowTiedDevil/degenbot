@@ -84,7 +84,7 @@ from .sushiswap import (
 )
 from .swapbased import SwapbasedV2Pool, SwapbasedV2PoolTracker
 from .uniswap import (
-    UniswapV2Pool,
+    LiquidityPool,
     UniswapV2PoolExternalUpdate,
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
@@ -130,6 +130,7 @@ __all__ = (
     "Erc20Token",
     "EtherPlaceholder",
     "FlatComposer",
+    "LiquidityPool",
     "ManagedPoolRegistry",
     "NoApprovals",
     "PancakeswapV2Pool",
@@ -146,7 +147,6 @@ __all__ = (
     "SwapbasedV2Pool",
     "SwapbasedV2PoolTracker",
     "TokenRegistry",
-    "UniswapV2Pool",
     "UniswapV2PoolExternalUpdate",
     "UniswapV2PoolSimulationResult",
     "UniswapV2PoolState",

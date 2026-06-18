@@ -16,11 +16,11 @@ from degenbot.pancakeswap.pools import PancakeswapV2Pool, PancakeswapV3Pool
 from degenbot.sushiswap.pools import SushiswapV2Pool, SushiswapV3Pool
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.pool_type import PoolFamily
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
-from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.v2_pool_factory import make_v2_pool
 
 _PY_BOT = PyBot()
 
@@ -114,7 +114,7 @@ V4_POOL_MANAGER = "0x000000000004444c5dc75cB358380D2e3dE08A90"
 # ---------------------------------------------------------------------------
 
 
-def _make_uniswap_v2_pool() -> UniswapV2Pool:
+def _make_uniswap_v2_pool() -> LiquidityPool:
     weth = _make_weth()
     usdc = _make_usdc()
 
@@ -254,7 +254,7 @@ def _make_uniswap_v4_pool() -> UniswapV4Pool:
 # ---------------------------------------------------------------------------
 
 MAINNET_POOLS: list[tuple[callable, type, PoolFamily]] = [
-    (_make_uniswap_v2_pool, UniswapV2Pool, PoolFamily.CONSTANT_PRODUCT),
+    (_make_uniswap_v2_pool, LiquidityPool, PoolFamily.CONSTANT_PRODUCT),
     (_make_sushiswap_v2_pool, SushiswapV2Pool, PoolFamily.CONSTANT_PRODUCT),
     (_make_pancakeswap_v2_pool, PancakeswapV2Pool, PoolFamily.CONSTANT_PRODUCT),
     (_make_uniswap_v3_pool, UniswapV3Pool, PoolFamily.CONCENTRATED_LIQUIDITY),
@@ -396,10 +396,10 @@ class TestInheritance:
     """Variant pools inherit from the correct base class."""
 
     def test_sushiswap_v2_inherits_uniswap_v2(self):
-        assert issubclass(SushiswapV2Pool, UniswapV2Pool)
+        assert issubclass(SushiswapV2Pool, LiquidityPool)
 
     def test_pancakeswap_v2_inherits_uniswap_v2(self):
-        assert issubclass(PancakeswapV2Pool, UniswapV2Pool)
+        assert issubclass(PancakeswapV2Pool, LiquidityPool)
 
     def test_sushiswap_v3_inherits_uniswap_v3(self):
         assert issubclass(SushiswapV3Pool, UniswapV3Pool)
@@ -409,7 +409,7 @@ class TestInheritance:
 
     def test_all_inherit_abstract_liquidity_pool(self):
         for cls in [
-            UniswapV2Pool,
+            LiquidityPool,
             SushiswapV2Pool,
             PancakeswapV2Pool,
             UniswapV3Pool,

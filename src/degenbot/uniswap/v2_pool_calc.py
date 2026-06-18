@@ -53,7 +53,7 @@ class UniswapV2PoolCalc:
     reserves_token1: int
     state: UniswapV2PoolState
     tokens: tuple[Erc20Token, Erc20Token]
-    # PyLiquidityPool handle (set by the concrete UniswapV2Pool companion
+    # PyLiquidityPool handle (set by the concrete LiquidityPool companion
     # in MRO — ADR-005 slice 4). Calc delegation (slice 5) routes the
     # constant-product math through it on the non-override path.
     _py_pool: PyLiquidityPool
