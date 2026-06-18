@@ -875,3 +875,137 @@ class TestV3PoolState:
         )
         assert core.v3_journal_len(pool_id) == 0
         assert core.v3_restore_before_block(pool_id, 10) is None
+
+
+class TestDexIdentityPresets:
+    """ADR-005 slice 6 — DEX identity presets exposed via the Rust extension.
+
+    The Python seam (`dex_identity(variant)` → `PyDexIdentity`) exposes the
+    Rust-core `DexIdentity` preset registry so a slice-7 Python builder can
+    resolve a DEX's canonical-chain deployment data (factory, deployer, init
+    hash, default fees, reserve ABI shape) without a Python-side preset table.
+    The field values MUST match the Python ClassVars they supersede — these
+    tests cross-check the seam's output against the verified source values
+    (the same values the Rust unit tests assert, re-verified through the FFI).
+    """
+
+    def test_uniswap_v2_preset(self) -> None:
+        """UniswapV2 (Ethereum mainnet) — UNISWAP_V2_MAINNET_POOL_INIT_HASH + 3/1000 fee."""
+        from degenbot.degenbot_rs import dex_identity
+
+        ident = dex_identity("uniswap-v2")
+        assert ident is not None
+        assert ident.variant == "uniswap-v2"
+        assert ident.factory == "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+        assert ident.deployer == ident.factory  # Uniswap V2 uses factory as deployer
+        assert (
+            ident.init_hash
+            == "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
+        )
+        # Fraction(3, 1000) fee → RETAINED fraction (997, 1000). Slice-5 convention.
+        assert ident.fee_token0 == (997, 1000)
+        assert ident.fee_token1 == (997, 1000)
+        assert ident.reserves_abi == ["uint112", "uint112"]
+
+    def test_pancakeswap_v2_preset_uses_pancakeswap_reserves_struct_and_fee(self) -> None:
+        """PancakeSwap — FEE=Fraction(25,10000) → gamma (9975, 10000) + 3-tuple reserves."""
+        from degenbot.degenbot_rs import dex_identity
+
+        ident = dex_identity("pancakeswap-v2")
+        assert ident is not None
+        assert ident.factory == "0x1097053Fd2ea711dad45caCcc45EfF7548fCB362"
+        assert (
+            ident.init_hash
+            == "0x57224589c67f3f30a6b0d7a1b54cf3153ab84563bc609ef41dfb34f8b2974d2d"
+        )
+        # Fraction(25, 10000) fee → RETAINED fraction (10000-25, 10000) = (9975, 10000).
+        assert ident.fee_token0 == (9975, 10000)
+        assert ident.fee_token1 == (9975, 10000)
+        # Pancake's RESERVES_STRUCT_TYPES override = 3-tuple (uint32 blockTimestampLast).
+        assert ident.reserves_abi == ["uint112", "uint112", "uint32"]
+
+    def test_camelot_v2_volatile_preset_matches_init_hash_classvar(self) -> None:
+        """Camelot (Arbitrum) — CAMELOT_ARBITRUM_POOL_INIT_HASH + 0.3% default volatile fee."""
+        from degenbot.degenbot_rs import dex_identity
+
+        ident = dex_identity("camelot-v2-volatile")
+        assert ident is not None
+        assert ident.factory == "0x6EcCab422D763aC031210895C81787E87B43A652"
+        assert (
+            ident.init_hash
+            == "0xa856464ae65f7619087bc369daaf7e387dae1e5af69cfa7935850ebf754b04c1"
+        )
+        # token0FeePercent=300 over FEE_DENOMINATOR=100000 → 0.3% → gamma (99700, 100000).
+        assert ident.fee_token0 == (99700, 100000)
+        assert ident.fee_token1 == (99700, 100000)
+
+    def test_aerodrome_v2_volatile_fee_denominator_is_10000(self) -> None:
+        """Aerodrome — FEE_DENOMINATOR=10000 (acceptance criterion from the slice spec)."""
+        from degenbot.degenbot_rs import dex_identity
+
+        ident = dex_identity("aerodrome-v2-volatile")
+        assert ident is not None
+        assert ident.factory == "0x420DD381b31aEf6683db6B902084cB0FFECe40Da"
+        # aerodrome/pools.py FEE_DENOMINATOR=10000 (the denominator component).
+        assert ident.fee_token0[1] == 10000
+        assert ident.fee_token1[1] == 10000
+        assert ident.variant == "aerodrome-v2-volatile"
+
+    def test_lookup_is_case_insensitive(self) -> None:
+        from degenbot.degenbot_rs import dex_identity
+
+        lower = dex_identity("uniswap-v2")
+        upper = dex_identity("UNISWAP-V2")
+        mixed = dex_identity("Uniswap-V2")
+        assert lower is not None and upper is not None and mixed is not None
+        assert lower.factory == upper.factory == mixed.factory
+
+    def test_unknown_variant_returns_none(self) -> None:
+        """An unrecognized variant returns None — not a PanicException."""
+        from degenbot.degenbot_rs import dex_identity
+
+        assert dex_identity("curve") is None
+        assert dex_identity("") is None
+        assert dex_identity("uniswap") is None  # missing -v2 suffix
+
+    def test_all_eight_variants_resolvable(self) -> None:
+        """Every preset variant in the slice spec resolves through the seam."""
+        from degenbot.degenbot_rs import dex_identity
+
+        for variant in [
+            "uniswap-v2",
+            "sushiswap-v2",
+            "pancakeswap-v2",
+            "swapbased-v2",
+            "camelot-v2-volatile",
+            "camelot-v2-stable",
+            "aerodrome-v2-volatile",
+            "aerodrome-v2-stable",
+        ]:
+            ident = dex_identity(variant)
+            assert ident is not None, f"preset missing for {variant}"
+            assert ident.variant == variant
+            # Every preset's deployer currently equals its factory (verified:
+            # all V2 v2_deployments entries use deployer=None → "use factory").
+            assert ident.deployer == ident.factory, f"deployer mismatch for {variant}"
+            # init_hash is a 0x-prefixed 64-hex string (or zero for Aerodrome,
+            # whose "different address generation" leaves it empty in Python too).
+            assert ident.init_hash.startswith("0x")
+            assert len(ident.init_hash) == 66
+
+    def test_view_is_frozen(self) -> None:
+        """The PyDexIdentity view is read-only (frozen pyclass)."""
+        from degenbot.degenbot_rs import PyDexIdentity, dex_identity
+
+        ident = dex_identity("uniswap-v2")
+        assert ident is not None
+        assert isinstance(ident, PyDexIdentity)
+        with pytest.raises(AttributeError):
+            ident.factory = "0x0"  # type: ignore[misc]
+
+    def test_repr(self) -> None:
+        from degenbot.degenbot_rs import dex_identity
+
+        ident = dex_identity("uniswap-v2")
+        assert ident is not None
+        assert repr(ident) == 'PyDexIdentity(variant="uniswap-v2", factory=0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f)'

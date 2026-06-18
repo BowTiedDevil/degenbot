@@ -812,6 +812,35 @@ class PyErc20Token:
     @property
     def chain_id(self) -> int: ...
 
+class PyDexIdentity:
+    """Frozen Python view over a `DexIdentity` preset (ADR-005 slice 6).
+
+    Read-only deployment identity (factory, deployer, init hash, default fees,
+    reserve ABI shape, variant string). Not directly constructible — obtain via
+    `dex_identity(variant)`.
+    """
+
+    @property
+    def factory(self) -> str: ...
+    @property
+    def deployer(self) -> str: ...
+    @property
+    def init_hash(self) -> str: ...
+    @property
+    def fee_token0(self) -> tuple[int, int]: ...
+    @property
+    def fee_token1(self) -> tuple[int, int]: ...
+    @property
+    def reserves_abi(self) -> list[str]: ...
+    @property
+    def variant(self) -> str: ...
+
+def dex_identity(variant: str) -> PyDexIdentity | None:
+    """Look up a DEX deployment-identity preset by kebab-case variant string.
+
+    Case-insensitive. Returns `None` for an unrecognized variant.
+    """
+
 class PyLiquidityPool:
     """Thin PyO3 handle to a pool registered in the Rust `Bot`.
 
@@ -960,6 +989,7 @@ __all__ = [
     "decode",
     "decode_return_data",
     "decode_single",
+    "dex_identity",
     "encode",
     "encode_function_call",
     "encode_single",

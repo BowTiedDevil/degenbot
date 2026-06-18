@@ -16,7 +16,9 @@ use crate::bot_core::v2_encoding::{encode_v2_swap, EncodedCall};
 use crate::optimizers::mobius_int::IntHopState;
 
 pub mod liquidity_verifier;
+pub mod dex_identity;
 pub mod py_bot;
+pub mod py_dex_identity;
 pub mod py_erc20_token;
 pub mod py_liquidity_pool;
 pub mod state_history;
