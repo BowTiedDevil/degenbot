@@ -7,6 +7,7 @@ import pytest
 from degenbot.builders.context import BuilderContext
 from degenbot.builders.erc20_builder import Erc20Builder
 from degenbot.database.session_manager import DatabaseSessionManager
+from degenbot.degenbot_rs import PyBot
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 
 
@@ -22,6 +23,7 @@ def _make_ctx(**overrides) -> BuilderContext:
         "pools": fake_pools,
         "tokens": fake_tokens,
         "erc20_builder": fake_erc20,
+        "py_bot": PyBot(),
         "default_chain_id": 1,
         "managed_pools": None,
     }
@@ -38,6 +40,7 @@ class TestBuilderContextConstruction:
         assert ctx.pools is not None
         assert ctx.tokens is not None
         assert ctx.erc20_builder is not None
+        assert isinstance(ctx.py_bot, PyBot)
         assert ctx.default_chain_id == 1
         assert ctx.managed_pools is None
 
@@ -59,13 +62,14 @@ class TestBuilderContextConstruction:
 
     def test_field_count(self) -> None:
         fields = dataclasses.fields(BuilderContext)
-        assert len(fields) == 6
+        assert len(fields) == 7
         field_names = {f.name for f in fields}
         assert field_names == {
             "db",
             "pools",
             "tokens",
             "erc20_builder",
+            "py_bot",
             "default_chain_id",
             "managed_pools",
         }
