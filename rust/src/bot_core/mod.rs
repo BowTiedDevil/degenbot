@@ -18,6 +18,7 @@ use crate::optimizers::mobius_int::IntHopState;
 
 pub mod dex_identity;
 pub mod liquidity_verifier;
+pub mod log_dispatcher;
 pub mod py_bot;
 pub mod py_dex_identity;
 pub mod py_erc20_token;
@@ -1710,6 +1711,11 @@ pub(crate) struct Bot {
     chain_id: u64,
     /// The shared pure-data state. Handles clone this `Arc`.
     state: Arc<parking_lot::RwLock<BotState>>,
+    /// The per-`Bot` event bus (ADR-006 D4). The pump (slice 5) drives
+    /// [`dispatch_log`](Self::dispatch_log) per WS log; engine subscriber
+    /// adapters attach via [`attach_engine`](Self::attach_engine).
+    #[allow(dead_code)]
+    dispatcher: log_dispatcher::LogDispatcher,
 }
 
 impl Bot {
@@ -1722,6 +1728,7 @@ impl Bot {
         Self {
             chain_id,
             state: Arc::new(parking_lot::RwLock::new(BotState::new())),
+            dispatcher: log_dispatcher::LogDispatcher::with_uniswap_decoders(),
         }
     }
 
@@ -1740,6 +1747,26 @@ impl Bot {
     #[must_use]
     pub fn state_arc(&self) -> Arc<parking_lot::RwLock<BotState>> {
         Arc::clone(&self.state)
+    }
+
+    /// Drive one WS log through the event bus (ADR-006 D4). Decode via a
+    /// registered decoder, apply to `BotState` under a write guard, release,
+    /// then notify subscribers. The pump (slice 5) calls this per log.
+    #[allow(dead_code)]
+    pub(crate) fn dispatch_log(&self, log: &alloy::rpc::types::Log) {
+        self.dispatcher.dispatch(log, &self.state);
+    }
+
+    /// Subscribe `engine` to updates for `pool_id` (ADR-006 D4). `Bot` calls
+    /// this when an engine registers a path touching `pool_id`. `engine` is a
+    /// `Weak` so a de-registered engine is silently skipped (no leak).
+    #[allow(dead_code)]
+    pub(crate) fn attach_engine(
+        &self,
+        pool_id: u64,
+        engine: std::sync::Weak<dyn log_dispatcher::PoolStateSubscriber>,
+    ) {
+        self.dispatcher.subscribe(pool_id, engine);
     }
 
     /// Start the block pump. Placeholder — the `BlockPump` wiring lands in

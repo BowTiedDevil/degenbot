@@ -46,6 +46,7 @@ use crate::bot_core::BotState;
 // Sub-modules — each contains `impl UniswapEngine` or `impl PyUniswapArbEngine` blocks.
 #[allow(clippy::module_inception)]
 mod diagnostic;
+mod engine_subscriber;
 mod event_routing;
 mod lifecycle;
 mod py_binding;
@@ -523,5 +524,21 @@ impl UniswapEngine {
         params: &crate::bot_core::RegisterV4PoolParams,
     ) -> Result<u64, String> {
         self.core.write().register_v4_pool(params)
+    }
+}
+
+#[cfg(test)]
+impl UniswapEngine {
+    /// Test-only: are the V2 dirty sets empty? (ADR-006 slice 4 adapter tests.)
+    pub(crate) fn dirty_v2_is_empty(&self) -> bool {
+        self.dirty_v2.is_empty()
+    }
+    /// Test-only: are the V3 dirty sets empty?
+    pub(crate) fn dirty_v3_is_empty(&self) -> bool {
+        self.dirty_v3.is_empty()
+    }
+    /// Test-only: are the V4 dirty sets empty?
+    pub(crate) fn dirty_v4_is_empty(&self) -> bool {
+        self.dirty_v4.is_empty()
     }
 }
