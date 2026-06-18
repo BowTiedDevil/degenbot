@@ -18,20 +18,17 @@ UNISWAP_V3_FACTORY = get_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea3
 
 @pytest.fixture
 def ethereum_mainnet_alloy_provider(fork_mainnet_full: AnvilFork) -> AlloyProvider:
-    """Create an AlloyProvider from the mainnet fork.
-    """
+    """Create an AlloyProvider from the mainnet fork."""
     return AlloyProvider(fork_mainnet_full.http_url)
 
 
 class TestHexBytesConversion:
-    """Test that appropriate fields are converted to HexBytes or checksummed strings.
-    """
+    """Test that appropriate fields are converted to HexBytes or checksummed strings."""
 
     def test_get_logs_returns_checksummed_address(
         self, ethereum_mainnet_alloy_provider: AlloyProvider
     ):
-        """Test that get_logs returns checksummed address strings for the address field.
-        """
+        """Test that get_logs returns checksummed address strings for the address field."""
         # Fetch a known log from the Uniswap V3 factory
         logs = ethereum_mainnet_alloy_provider.get_logs(
             from_block=12_369_621,
@@ -52,8 +49,7 @@ class TestHexBytesConversion:
     def test_get_logs_returns_hexbytes_for_hash_fields(
         self, ethereum_mainnet_alloy_provider: AlloyProvider
     ):
-        """Test that get_logs returns HexBytes for topics, blockHash, and transactionHash.
-        """
+        """Test that get_logs returns HexBytes for topics, blockHash, and transactionHash."""
         logs = ethereum_mainnet_alloy_provider.get_logs(
             from_block=12_369_621,
             to_block=12_369_621,
@@ -78,8 +74,7 @@ class TestHexBytesConversion:
     def test_get_logs_returns_int_for_numeric_fields(
         self, ethereum_mainnet_alloy_provider: AlloyProvider
     ):
-        """Test that get_logs returns int for numeric fields.
-        """
+        """Test that get_logs returns int for numeric fields."""
         logs = ethereum_mainnet_alloy_provider.get_logs(
             from_block=12_369_621,
             to_block=12_369_621,
@@ -96,8 +91,7 @@ class TestHexBytesConversion:
         assert isinstance(log["logIndex"], int)
 
     def test_eth_call_returns_hexbytes(self, ethereum_mainnet_alloy_provider: AlloyProvider):
-        """Test that call returns HexBytes (for eth_abi compatibility).
-        """
+        """Test that call returns HexBytes (for eth_abi compatibility)."""
         # Call balanceOf for WETH
         # balanceOf selector: 0x70a08231
         result = ethereum_mainnet_alloy_provider.call(
@@ -113,8 +107,7 @@ class TestHexBytesConversion:
     def test_get_block_returns_checksummed_address_for_miner(
         self, ethereum_mainnet_alloy_provider: AlloyProvider
     ):
-        """Test that get_block returns checksummed address string for miner field.
-        """
+        """Test that get_block returns checksummed address string for miner field."""
         block = ethereum_mainnet_alloy_provider.get_block(12_369_621)
 
         assert block is not None
@@ -128,8 +121,7 @@ class TestHexBytesConversion:
     def test_get_block_returns_hexbytes_for_hash_fields(
         self, ethereum_mainnet_alloy_provider: AlloyProvider
     ):
-        """Test that get_block returns HexBytes for hash fields.
-        """
+        """Test that get_block returns HexBytes for hash fields."""
         block = ethereum_mainnet_alloy_provider.get_block(12_369_621)
 
         assert block is not None
@@ -144,8 +136,7 @@ class TestHexBytesConversion:
     def test_get_block_returns_int_for_numeric_fields(
         self, ethereum_mainnet_alloy_provider: AlloyProvider
     ):
-        """Test that get_block returns int for numeric fields.
-        """
+        """Test that get_block returns int for numeric fields."""
         block = ethereum_mainnet_alloy_provider.get_block(12_369_621)
 
         assert block is not None
@@ -157,8 +148,7 @@ class TestHexBytesConversion:
         assert isinstance(block["gas_limit"], int)
 
     def test_get_code_returns_hexbytes(self, ethereum_mainnet_alloy_provider: AlloyProvider):
-        """Test that get_code returns HexBytes (for eth_abi compatibility).
-        """
+        """Test that get_code returns HexBytes (for eth_abi compatibility)."""
         # Get code for WETH contract
         code = ethereum_mainnet_alloy_provider.get_code(WETH_ADDRESS)
 
@@ -168,8 +158,7 @@ class TestHexBytesConversion:
     def test_transaction_has_checksummed_addresses(
         self, ethereum_mainnet_alloy_provider: AlloyProvider
     ):
-        """Test that transactions have checksummed address strings for from/to fields.
-        """
+        """Test that transactions have checksummed address strings for from/to fields."""
         block = ethereum_mainnet_alloy_provider.get_block(12_369_621)
 
         assert block is not None
@@ -190,12 +179,10 @@ class TestHexBytesConversion:
 
 
 class TestAddressBehavior:
-    """Test address string behavior.
-    """
+    """Test address string behavior."""
 
     def test_address_is_checksummed(self, ethereum_mainnet_alloy_provider: AlloyProvider):
-        """Test that addresses are returned as checksummed strings.
-        """
+        """Test that addresses are returned as checksummed strings."""
         logs = ethereum_mainnet_alloy_provider.get_logs(
             from_block=12_369_621,
             to_block=12_369_621,
@@ -216,8 +203,7 @@ class TestAddressBehavior:
         assert address.startswith("0x")
 
     def test_hexbytes_has_hex_method(self, ethereum_mainnet_alloy_provider: AlloyProvider):
-        """Test that HexBytes has hex() method that returns hex string.
-        """
+        """Test that HexBytes has hex() method that returns hex string."""
         logs = ethereum_mainnet_alloy_provider.get_logs(
             from_block=12_369_621,
             to_block=12_369_621,

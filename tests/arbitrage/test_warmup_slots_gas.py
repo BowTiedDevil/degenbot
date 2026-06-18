@@ -57,8 +57,7 @@ FORK_URL = os.environ.get(
 )
 
 # Skip entire module if no RPC URL
-pytestmark = pytest.mark.skipif(
-    not FORK_URL, reason="No Ethereum RPC URL configured")
+pytestmark = pytest.mark.skipif(not FORK_URL, reason="No Ethereum RPC URL configured")
 
 
 # ── Helpers ──
@@ -67,7 +66,9 @@ pytestmark = pytest.mark.skipif(
 def _load_runtime_bytecode() -> bytes:
     """Load the cmd_executor runtime bytecode from the contracts directory."""
     bytecode_path = (
-        pathlib.Path(__file__).parent.parent.parent / "contracts" / "cmd_executor_runtime_bytecode.txt"
+        pathlib.Path(__file__).parent.parent.parent
+        / "contracts"
+        / "cmd_executor_runtime_bytecode.txt"
     )
     if not bytecode_path.exists():
         pytest.skip("cmd_executor_runtime_bytecode.txt not found")
@@ -270,8 +271,7 @@ def test_weth_slot_matches_existing_code(fork: AnvilFork, w3: Web3):
     # Cross-check with the existing backrun script's approach
     existing_slot = int.from_bytes(
         Web3.keccak(
-            bytes.fromhex(EXECUTOR_ADDRESS[2:].lower().rjust(64, "0"))
-            + (3).to_bytes(32, "big")
+            bytes.fromhex(EXECUTOR_ADDRESS[2:].lower().rjust(64, "0")) + (3).to_bytes(32, "big")
         ),
         "big",
     )
@@ -409,9 +409,7 @@ def test_pm_erc6909_slot_at_base_slot_4():
     slot_at_1 = _nested_mapping_slot(1, executor_int, weth_id)
     slot_at_4 = _nested_mapping_slot(4, executor_int, weth_id)
 
-    assert slot_at_1 != slot_at_4, (
-        "Slot 1 and slot 4 should produce different positions"
-    )
+    assert slot_at_1 != slot_at_4, "Slot 1 and slot 4 should produce different positions"
 
     print(f"\n  balanceOf at slot 1 (WRONG): 0x{slot_at_1:064x}")
     print(f"  balanceOf at slot 4 (CORRECT): 0x{slot_at_4:064x}")

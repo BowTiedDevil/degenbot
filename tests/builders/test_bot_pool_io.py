@@ -30,6 +30,4 @@ class TestBotPassesPoolIO:
             request=request,
         )
 
-        builder.build.assert_called_once_with(
-            address, chain_id=1, io=io, request=request
-        )
+        builder.build.assert_called_once_with(address, chain_id=1, io=io, request=request)

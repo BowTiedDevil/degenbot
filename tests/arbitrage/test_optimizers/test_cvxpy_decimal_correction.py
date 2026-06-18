@@ -149,8 +149,7 @@ class TestDecimalCompressionProperties:
         reserves0: int,
         reserves1: int,
     ):
-        """Property: When decimals are equal, single and double compression give same results.
-        """
+        """Property: When decimals are equal, single and double compression give same results."""
         # Use same decimals for both tokens
         decimals0 = decimals
         decimals1 = decimals

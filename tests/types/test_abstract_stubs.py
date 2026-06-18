@@ -1,5 +1,4 @@
-"""Tests verifying that empty abstract stubs have been deepened.
-"""
+"""Tests verifying that empty abstract stubs have been deepened."""
 
 import dataclasses
 

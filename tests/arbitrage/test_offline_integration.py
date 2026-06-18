@@ -246,8 +246,7 @@ class TestDirectionDetection:
             fee_token1=Fraction(3, 1000),
             reserves_token0=16_000_000_000,
             reserves_token1=2_500 * 10**18,
-        state_block=1,
-
+            state_block=1,
         )
 
         # Pool B: 15000 WBTC / 2500 WETH (WETH more expensive)
@@ -260,8 +259,7 @@ class TestDirectionDetection:
             fee_token1=Fraction(3, 1000),
             reserves_token0=15_000_000_000,
             reserves_token1=2_500 * 10**18,
-        state_block=1,
-
+            state_block=1,
         )
 
         # Pool A has higher ROE → buy WETH in pool A, sell in pool B
@@ -292,8 +290,7 @@ class TestDirectionDetection:
             fee_token1=Fraction(3, 1000),
             reserves_token0=16_000_000_000,
             reserves_token1=2_500 * 10**18,
-        state_block=1,
-
+            state_block=1,
         )
         pool_b = make_v2_pool(
             address="0x0000000000000000000000000000000000000002",
@@ -304,8 +301,7 @@ class TestDirectionDetection:
             fee_token1=Fraction(3, 1000),
             reserves_token0=15_000_000_000,
             reserves_token1=2_500 * 10**18,
-        state_block=1,
-
+            state_block=1,
         )
 
         # Reverse order: pool B first (lower ROE for WETH)
@@ -338,8 +334,7 @@ class TestDirectionDetection:
             fee_token1=Fraction(3, 1000),
             reserves_token0=16231137593 + 10 * 10**8,  # 10 extra WBTC
             reserves_token1=2571336301536722443178,
-        state_block=1,
-
+            state_block=1,
         )
 
         arb = UniswapLpCycle(
@@ -370,8 +365,7 @@ class TestDirectionDetection:
             fee_token1=Fraction(3, 1000),
             reserves_token0=16_000_000_000,
             reserves_token1=2_500 * 10**18,
-        state_block=1,
-
+            state_block=1,
         )
         # Pool B: 15000 WBTC / 2500 WETH (WETH more expensive here)
         pool_b = make_v2_pool(
@@ -383,8 +377,7 @@ class TestDirectionDetection:
             fee_token1=Fraction(3, 1000),
             reserves_token0=15_000_000_000,
             reserves_token1=2_500 * 10**18,
-        state_block=1,
-
+            state_block=1,
         )
 
         # Create cycle in profitable direction: buy WETH in pool A, sell in pool B
@@ -435,8 +428,7 @@ class TestV2V2Arbitrage:
             fee_token1=Fraction(3, 1000),
             reserves_token0=2_000_000_000_000,  # 2M USDC (6 dec)
             reserves_token1=1_000 * 10**18,  # 1000 WETH (18 dec)
-        state_block=1,
-
+            state_block=1,
         )
         pool_b = make_v2_pool(
             address="0x0000000000000000000000000000000000000002",
@@ -447,8 +439,7 @@ class TestV2V2Arbitrage:
             fee_token1=Fraction(3, 1000),
             reserves_token0=2_040_000_000_000,  # 2.04M USDC
             reserves_token1=1_000 * 10**18,  # 1000 WETH
-        state_block=1,
-
+            state_block=1,
         )
 
         arb = UniswapLpCycle(
@@ -479,8 +470,7 @@ class TestV2V2Arbitrage:
             fee_token1=Fraction(3, 1000),
             reserves_token0=2_000_000_000_000,  # 2M USDC
             reserves_token1=1_000 * 10**18,  # 1000 WETH
-        state_block=1,
-
+            state_block=1,
         )
         pool_b = make_v2_pool(
             address="0x0000000000000000000000000000000000000002",
@@ -491,8 +481,7 @@ class TestV2V2Arbitrage:
             fee_token1=Fraction(3, 1000),
             reserves_token0=2_040_000_000_000,  # 2.04M USDC (WETH cheaper here)
             reserves_token1=1_000 * 10**18,
-        state_block=1,
-
+            state_block=1,
         )
 
         arb = UniswapLpCycle(
@@ -533,8 +522,7 @@ class TestV2V2Arbitrage:
             fee_token1=Fraction(3, 1000),
             reserves_token0=2_000_000_000_000,
             reserves_token1=1_000 * 10**18,
-        state_block=1,
-
+            state_block=1,
         )
         pool_b = make_v2_pool(
             address="0x0000000000000000000000000000000000000002",
@@ -545,8 +533,7 @@ class TestV2V2Arbitrage:
             fee_token1=Fraction(3, 1000),
             reserves_token0=2_040_000_000_000,
             reserves_token1=1_000 * 10**18,
-        state_block=1,
-
+            state_block=1,
         )
 
         # Direction 1: Pool A first (profitable)
@@ -698,8 +685,7 @@ class TestEdgeCases:
             fee_token1=Fraction(3, 1000),
             reserves_token0=0,
             reserves_token1=0,
-        state_block=1,
-
+            state_block=1,
         )
 
         # Zero-reserve pool should not be viable
@@ -712,8 +698,7 @@ class TestEdgeCases:
             fee_token1=Fraction(3, 1000),
             reserves_token0=15_000_000_000,
             reserves_token1=2_500 * 10**18,
-        state_block=1,
-
+            state_block=1,
         )
 
         # Creating a cycle with a zero-reserve pool should raise during viability check
@@ -771,8 +756,7 @@ class TestV2PoolAccuracy:
             fee_token1=Fraction(3, 1000),
             reserves_token0=2_000_000_000,  # 2000 USDC
             reserves_token1=10**18,  # 1 WETH
-        state_block=1,
-
+            state_block=1,
         )
 
         amount_in = 1_000_000_000
@@ -806,8 +790,7 @@ class TestV2PoolAccuracy:
             fee_token1=Fraction(3, 1000),
             reserves_token0=2_000_000_000,
             reserves_token1=10**18,
-        state_block=1,
-
+            state_block=1,
         )
 
         # Sell 0.5 WETH for USDC
@@ -842,8 +825,7 @@ class TestV2PoolAccuracy:
             fee_token1=Fraction(3, 1000),
             reserves_token0=2_000_000_000,
             reserves_token1=10**18,
-        state_block=1,
-
+            state_block=1,
         )
 
         # Exchange rate for WETH (token1) = reserve1 / reserve0

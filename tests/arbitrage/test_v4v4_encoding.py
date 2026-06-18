@@ -144,25 +144,33 @@ class TestV4V4DynamicAmount:
         # Encode as V4SwapPayload ABI tuples
         # (PoolKey, SwapParams, dynamic_amount)
         specified_abi = (
-            (specified_swap.pool_key.currency0,
-             specified_swap.pool_key.currency1,
-             specified_swap.pool_key.fee,
-             specified_swap.pool_key.tick_spacing,
-             specified_swap.pool_key.hooks),
-            (specified_swap.zero_for_one,
-             -specified_swap.amount_specified,  # V4: negative for exact-input
-             specified_swap.sqrt_price_limit_x96),
+            (
+                specified_swap.pool_key.currency0,
+                specified_swap.pool_key.currency1,
+                specified_swap.pool_key.fee,
+                specified_swap.pool_key.tick_spacing,
+                specified_swap.pool_key.hooks,
+            ),
+            (
+                specified_swap.zero_for_one,
+                -specified_swap.amount_specified,  # V4: negative for exact-input
+                specified_swap.sqrt_price_limit_x96,
+            ),
             False,  # dynamic_amount=False for kickstart
         )
         dynamic_abi = (
-            (dynamic_swap.pool_key.currency0,
-             dynamic_swap.pool_key.currency1,
-             dynamic_swap.pool_key.fee,
-             dynamic_swap.pool_key.tick_spacing,
-             dynamic_swap.pool_key.hooks),
-            (dynamic_swap.zero_for_one,
-             -dynamic_swap.amount_specified,
-             dynamic_swap.sqrt_price_limit_x96),
+            (
+                dynamic_swap.pool_key.currency0,
+                dynamic_swap.pool_key.currency1,
+                dynamic_swap.pool_key.fee,
+                dynamic_swap.pool_key.tick_spacing,
+                dynamic_swap.pool_key.hooks,
+            ),
+            (
+                dynamic_swap.zero_for_one,
+                -dynamic_swap.amount_specified,
+                dynamic_swap.sqrt_price_limit_x96,
+            ),
             True,  # dynamic_amount=True for subsequent swaps
         )
 
@@ -219,7 +227,17 @@ class TestV4V4DynamicAmount:
         # First swap: kickstart (dynamic_amount=False)
         first_swap = (c0, c1, 3000, 60, ZERO_ADDRESS, zfo_a, -optimal_input, 4295128740, False)
         # Second swap: dynamic (dynamic_amount=True, amount_specified=0)
-        second_swap = (c0, c1, 500, 10, ZERO_ADDRESS, zfo_b, 0, 1461446703485210103287273052203988822378723970341, True)
+        second_swap = (
+            c0,
+            c1,
+            500,
+            10,
+            ZERO_ADDRESS,
+            zfo_b,
+            0,
+            1461446703485210103287273052203988822378723970341,
+            True,
+        )
 
         v4_swaps = [first_swap, second_swap]
 
@@ -235,7 +253,9 @@ class TestV4V4DynamicAmount:
 
         # Verify first swap: dynamic_amount=False, amount_specified is negative
         assert v4_swaps_abi[0][2] is False  # dynamic_amount = False
-        assert v4_swaps_abi[0][1][1] == -optimal_input  # amount_specified is negative (V4 exact-input)
+        assert (
+            v4_swaps_abi[0][1][1] == -optimal_input
+        )  # amount_specified is negative (V4 exact-input)
 
         # Verify second swap: dynamic_amount=True, amount_specified=0
         assert v4_swaps_abi[1][2] is True  # dynamic_amount = True

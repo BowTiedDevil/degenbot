@@ -144,8 +144,7 @@ class TestOptimizerMethodComparison:
         self,
         profit_function: "Callable[[float], float]",
     ) -> None:
-        """Test that both Brent (with bracket) and Bounded methods find same optimum.
-        """
+        """Test that both Brent (with bracket) and Bounded methods find same optimum."""
         # Brent: use bracket (initial search interval: a, b, c where f(b) < f(a), f(c))
         result_brent = minimize_scalar(
             profit_function,
@@ -179,8 +178,7 @@ class TestOptimizerMethodComparison:
         self,
         profit_function: "Callable[[float], float]",
     ) -> None:
-        """Test that both Golden (with bracket) and Bounded methods find same optimum.
-        """
+        """Test that both Golden (with bracket) and Bounded methods find same optimum."""
         # Golden: use bracket (like Brent but simpler algorithm)
         result_golden = minimize_scalar(
             profit_function,
@@ -267,8 +265,7 @@ class TestOptimizerMethodComparison:
         self,
         profit_function: "Callable[[float], float]",
     ) -> None:
-        """Test that Brent uses fewer function evaluations than Golden.
-        """
+        """Test that Brent uses fewer function evaluations than Golden."""
         bracket = (1.0, 1_000_000.0, 100_000_000_000.0)
 
         result_brent = minimize_scalar(
@@ -292,8 +289,7 @@ class TestOptimizerMethodComparison:
         self,
         profit_function: "Callable[[float], float]",
     ) -> None:
-        """Test that Brent, Golden, and Bounded achieve similar profit accuracy.
-        """
+        """Test that Brent, Golden, and Bounded achieve similar profit accuracy."""
         bracket = (1.0, 1_000_000.0, 100_000_000_000.0)
         bounds = (1.0, 1_000_000_000_000.0)
 

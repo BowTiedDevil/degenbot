@@ -373,8 +373,7 @@ def test_reorg(
     wbtc_weth_v3_lp_at_historical_block: UniswapV3Pool,
     fork_mainnet_archive: AnvilFork,
 ) -> None:
-    """Provide some updates, then simulate a reorg back to the starting state
-    """
+    """Provide some updates, then simulate a reorg back to the starting state"""
     # Manipulate the cache depth so additional states beyond the default can be tracked
     old_cache = wbtc_weth_v3_lp_at_historical_block._state_cache
     new_cache = StateCache(max_depth=100)

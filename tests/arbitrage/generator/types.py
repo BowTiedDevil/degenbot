@@ -1,5 +1,4 @@
-"""Configuration types for synthetic pool state generation.
-"""
+"""Configuration types for synthetic pool state generation."""
 
 from dataclasses import dataclass
 from fractions import Fraction

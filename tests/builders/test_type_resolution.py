@@ -154,9 +154,7 @@ class TestFetchFactoryFromChain:
         provider.set_response(
             to="0xPool",
             data=factory_data.hex(),
-            response=HexBytes(
-                eth_abi.abi.encode(types=["address"], args=[factory_address])
-            ),
+            response=HexBytes(eth_abi.abi.encode(types=["address"], args=[factory_address])),
         )
         io = SyncPoolIO(provider)
         result = fetch_factory_from_chain(
@@ -189,9 +187,7 @@ class TestFetchFactoryFromChainAsync:
         provider.set_response(
             to="0xPool",
             data=factory_data.hex(),
-            response=HexBytes(
-                eth_abi.abi.encode(types=["address"], args=[factory_address])
-            ),
+            response=HexBytes(eth_abi.abi.encode(types=["address"], args=[factory_address])),
         )
         io = AsyncPoolIO(provider)
         result = await fetch_factory_from_chain_async(
@@ -339,9 +335,7 @@ class TestResolvePoolType:
         provider.set_response(
             to="0xPool",
             data=factory_data.hex(),
-            response=HexBytes(
-                eth_abi.abi.encode(types=["address"], args=[factory_address])
-            ),
+            response=HexBytes(eth_abi.abi.encode(types=["address"], args=[factory_address])),
         )
         slot0_data = encode_function_calldata("slot0()", None)
         provider.set_response(
@@ -393,9 +387,7 @@ class TestResolvePoolTypeAsync:
         provider.set_response(
             to="0xPool",
             data=factory_data.hex(),
-            response=HexBytes(
-                eth_abi.abi.encode(types=["address"], args=[factory_address])
-            ),
+            response=HexBytes(eth_abi.abi.encode(types=["address"], args=[factory_address])),
         )
         slot0_data = encode_function_calldata("slot0()", None)
         provider.set_response(

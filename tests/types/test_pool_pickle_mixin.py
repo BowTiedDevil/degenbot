@@ -1,5 +1,4 @@
-"""Tests verifying PoolPickleMixin provides pickle serialization for pool objects.
-"""
+"""Tests verifying PoolPickleMixin provides pickle serialization for pool objects."""
 
 import pickle
 from threading import Lock

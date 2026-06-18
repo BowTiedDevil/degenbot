@@ -394,8 +394,7 @@ class FixtureFactory:
         )
 
     def simple_v3_arb_same_tick_spacing(self) -> ArbitrageCycleFixture:
-        """Two V3 pools at same tick spacing, different prices.
-        """
+        """Two V3 pools at same tick spacing, different prices."""
         pool_a_address: ChecksumAddress = cast(
             "ChecksumAddress", "0x0000000000000000000000000000000000000005"
         )
@@ -422,8 +421,7 @@ class FixtureFactory:
         )
 
     def simple_v3_arb_cross_fee_tier(self) -> ArbitrageCycleFixture:
-        """V3 pools at different fee tiers.
-        """
+        """V3 pools at different fee tiers."""
         pool_a_address: ChecksumAddress = cast(
             "ChecksumAddress", "0x0000000000000000000000000000000000000007"
         )
@@ -452,8 +450,7 @@ class FixtureFactory:
         )
 
     def simple_mixed_v2_v3(self) -> ArbitrageCycleFixture:
-        """V2 vs V3 arbitrage.
-        """
+        """V2 vs V3 arbitrage."""
         v2_pool_address: ChecksumAddress = cast(
             "ChecksumAddress", "0x0000000000000000000000000000000000000009"
         )
@@ -482,8 +479,7 @@ class FixtureFactory:
         )
 
     def simple_v4_arb(self) -> ArbitrageCycleFixture:
-        """Two V4 pools with price difference.
-        """
+        """Two V4 pools with price difference."""
         pool_manager_address: ChecksumAddress = cast(
             "ChecksumAddress", "0x0000000000000000000000000000000000000FFF"
         )

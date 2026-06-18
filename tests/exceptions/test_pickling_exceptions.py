@@ -27,8 +27,7 @@ def test_no_solver_solution_pickling() -> None:
 
 
 def test_no_solver_solution_default_message_pickling() -> None:
-    """Test that NoSolverSolution exception with default message can be pickled and unpickled.
-    """
+    """Test that NoSolverSolution exception with default message can be pickled and unpickled."""
     # Create an instance with the default message
     original_exception = NoSolverSolution()
 

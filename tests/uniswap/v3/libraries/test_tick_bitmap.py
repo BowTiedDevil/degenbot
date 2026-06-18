@@ -80,8 +80,7 @@ def is_initialized(tick_bitmap: dict[int, BitmapAtWord], tick: int) -> bool:
 
 
 def empty_full_bitmap(spacing: int = 1) -> dict[int, BitmapAtWord]:
-    """Generate a empty tick bitmap, maximum size, with the given tick spacing
-    """
+    """Generate a empty tick bitmap, maximum size, with the given tick spacing"""
     tick_bitmap: dict[int, BitmapAtWord] = {}
 
     empty_bitmap_at_word = BitmapAtWord(bitmap=0)
@@ -93,8 +92,7 @@ def empty_full_bitmap(spacing: int = 1) -> dict[int, BitmapAtWord]:
 
 
 def empty_sparse_bitmap() -> dict[int, Any]:
-    """Generate a sparse, empty tick bitmap
-    """
+    """Generate a sparse, empty tick bitmap"""
     return {}
 
 

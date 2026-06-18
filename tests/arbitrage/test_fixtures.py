@@ -1,5 +1,4 @@
-"""Unit tests for arbitrage fixtures.
-"""
+"""Unit tests for arbitrage fixtures."""
 
 import json
 import tempfile
