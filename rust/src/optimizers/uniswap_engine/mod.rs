@@ -46,7 +46,7 @@ use crate::bot_core::BotState;
 // Sub-modules — each contains `impl UniswapEngine` or `impl PyUniswapArbEngine` blocks.
 #[allow(clippy::module_inception)]
 mod diagnostic;
-mod engine_drain_sink;
+mod engine_handle;
 mod engine_subscriber;
 mod event_routing;
 mod lifecycle;

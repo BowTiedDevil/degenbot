@@ -15,10 +15,11 @@ use tokio::sync::mpsc;
 
 use crate::bot_core::block_pump::{BlockPump, WsEvent};
 use crate::bot_core::py_bot::PyBot;
+use crate::bot_core::solve_coordinator::SolveCoordinator;
 use crate::bot_core::{drain_sink::DrainSink, Bot, RegisterV3PoolParams, V3SwapUpdate};
 use crate::bot_core::{RegisterV4PoolParams, V4StateSync, V4SwapUpdate};
 
-use super::engine_drain_sink::EngineDrainSink;
+use super::engine_handle::EngineHandle;
 use super::engine_subscriber::EngineSubscriber;
 
 use super::{
@@ -159,6 +160,15 @@ where
 pub struct PyUniswapArbEngine {
     /// Shared engine state
     engine: Arc<parking_lot::Mutex<UniswapEngine>>,
+    /// The drain-point solve coordinator (ADR-006 D4, slice 6). Holds the
+    /// engine as `Arc<dyn Engine>` (via `EngineHandle`) and fans drain-tick /
+    /// send / finalize / reorg calls to it under a `drain_lock`. `start` and
+    /// `subscribe` pass this to `BlockPump` as `Arc<dyn DrainSink>`, replacing
+    /// slice 5a's `EngineDrainSink` placeholder. Python polls of
+    /// `last_processed_block` route through the coordinator (not the raw
+    /// engine) so they block until in-flight drains complete and return a
+    /// drain-consistent "good" block.
+    coordinator: Arc<SolveCoordinator>,
     /// The per-chain `Bot` orchestrator (ADR-006 D4). `BlockPump` clones this
     /// `Arc` so its `dispatch_log` writes flow through to the engine's reads
     /// (the engine shares the same `BotState` core via `with_core`).
@@ -595,8 +605,19 @@ impl PyUniswapArbEngine {
         };
         let mut engine = engine;
         engine.set_result_channel(result_tx);
+        let engine = Arc::new(parking_lot::Mutex::new(engine));
+        // ADR-006 slice 6: wrap the shared engine in `EngineHandle` (an
+        // `Arc<dyn Engine>` view) and build the coordinator. The coordinator
+        // replaces slice 5a's `EngineDrainSink` pass-through; it fans drain-tick
+        // calls to the engine under a `drain_lock` and exposes a
+        // drain-consistent `last_processed_block` (Python polls block until
+        // any in-flight drain completes — no Rust/Python race).
+        let coordinator = Arc::new(SolveCoordinator::new(vec![EngineHandle::arc_dyn(
+            Arc::clone(&engine),
+        )]));
         Self {
-            engine: Arc::new(parking_lot::Mutex::new(engine)),
+            engine,
+            coordinator,
             bot,
             shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pump_handle: parking_lot::Mutex::new(None),
@@ -1386,12 +1407,16 @@ impl PyUniswapArbEngine {
     #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (rpc_url))]
     fn start(&self, rpc_url: String) -> PyResult<()> {
-        // ADR-006 D4: the pump holds `Arc<Bot>` + `Arc<dyn DrainSink>` — not the
-        // engine. `EngineDrainSink` is the placeholder pass-through (slice 6
-        // swaps for `SolveCoordinator`). The bot shares the engine's core, so
-        // `dispatch_log` writes flow through.
+        // ADR-006 D4 (slice 6): the pump holds `Arc<Bot>` +
+        // `Arc<dyn DrainSink>` — not the engine. The sink is now the real
+        // `SolveCoordinator` (replacing slice 5a's `EngineDrainSink`
+        // placeholder): it fans drain-tick / send / finalize / reorg calls to
+        // the engine under a `drain_lock`. `start` asserts the engine's cursor
+        // is consistent (precondition 2; today single-engine so trivially
+        // agreed) before the pump's WS phase begins.
+        self.coordinator.start();
         let bot = Arc::clone(&self.bot);
-        let sink: Arc<dyn DrainSink> = EngineDrainSink::arc_handle(&self.engine);
+        let sink: Arc<dyn DrainSink> = self.coordinator.clone();
         let shutdown = Arc::clone(&self.shutdown);
         let handle = BlockPump::spawn(rpc_url, bot, sink, &shutdown)
             .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
@@ -1434,7 +1459,7 @@ impl PyUniswapArbEngine {
         }
 
         let bot = Arc::clone(&self.bot);
-        let sink: Arc<dyn DrainSink> = EngineDrainSink::arc_handle(&self.engine);
+        let sink: Arc<dyn DrainSink> = self.coordinator.clone();
         let shutdown = Arc::clone(&self.shutdown);
 
         // Run the subscribe phase synchronously (blocks Python until first block observed)
@@ -1631,6 +1656,16 @@ impl PyUniswapArbEngine {
         let first_block = state.first_block;
         let combined_stream = state.combined_stream;
 
+        // ADR-006 slice 6 precondition: all engines are registered before the
+        // pump's WS phase begins (precondition 1) and all engines' snapshot
+        // backfill has completed to a consistent cursor (precondition 2).
+        // `resume()` is the last gate before WS, so assert + seed the
+        // coordinator's `last_drained_block` here. `start()` panics on cursor
+        // divergence — a wiring bug. For the single-engine case today this is
+        // trivially satisfied; for the multi-engine case the precondition is
+        // documented and enforced.
+        self.coordinator.start();
+
         // Spawn the resume task on the Tokio runtime
         let handle = crate::runtime::get_runtime().spawn(async move {
             let inner_state = crate::bot_core::block_pump::SubscribeState {
@@ -1649,10 +1684,17 @@ impl PyUniswapArbEngine {
         Ok(())
     }
 
-    /// Last block number processed by `process_block` or `process_logs`.
-    /// Returns `None` if no block has been processed yet.
+    /// Last block number processed by the pump's drain phase. Routes through
+    /// the `SolveCoordinator` (ADR-006 slice 6), not the raw engine: the
+    /// coordinator takes its `drain_lock` and returns a drain-consistent
+    /// "good" block the whole system has fully drained to — **blocking** any
+    /// Python poll until an in-flight drain completes (no Rust/Python race over
+    /// a mid-drain cursor read).
+    ///
+    /// Returns `None` if no block has been processed yet (before the first
+    /// `on_drain` / before `start`).
     fn last_processed_block(&self) -> Option<u64> {
-        self.engine.lock().last_processed_block()
+        self.coordinator.last_processed_block()
     }
 
     /// Set the last processed block manually after Python backfill.
