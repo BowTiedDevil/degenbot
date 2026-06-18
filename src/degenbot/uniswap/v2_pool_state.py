@@ -6,7 +6,7 @@ No calculation logic — calculations live in UniswapV2PoolCalc.
 This mixin is designed to be composed with:
 - UniswapV2PoolCalc (calculation methods)
 - AbstractLiquidityPool (address, name, simulate_swap)
-- PublisherMixin, PoolPickleMixin (infrastructure)
+- PublisherMixin (infrastructure)
 
 Pools with different state shapes (e.g., Aerodrome's unidirectional fee
 and stable flag) define their own state mixin instead of using this one.

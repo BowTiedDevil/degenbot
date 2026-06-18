@@ -1,5 +1,4 @@
 import itertools
-import pickle
 from typing import TYPE_CHECKING, cast
 
 import eth_abi.abi
@@ -167,15 +166,6 @@ def test_tripool(
     _test_calculations(lp=tripool, w3=fork_mainnet_full.w3)
 
 
-def test_pickle_tripool(tripool: CurveStableswapPool):
-    pickle.dumps(tripool)
-
-
-@pytest.mark.parametrize(
-    "fork_mainnet_archive",
-    [18849426],
-    indirect=True,
-)
 def test_pool_state_at_different_blocks(fork_mainnet_archive: AnvilFork):
     # Build the pool at a known historical block
     block_number = fork_mainnet_archive.w3.eth.block_number

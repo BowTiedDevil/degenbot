@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from fractions import Fraction
 from threading import Lock
-from typing import Any, ClassVar
+from typing import ClassVar
 from weakref import WeakSet
 
 from eth_typing import ChecksumAddress
@@ -35,7 +35,6 @@ from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import BalancerWeightedHop, HopType
-from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
 
 _MAX_TWO_TOKEN_COUNT = 2
@@ -66,21 +65,12 @@ def detect_pow_version(bytecode: str) -> PowVersion:
     return PowVersion.V1
 
 
-class BalancerV2Pool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
+class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
     """BalancerV2Pool class."""
 
     variant: ClassVar[str | None] = "balancer_weighted"
     type PoolState = BalancerV2PoolState
     FEE_DENOMINATOR = 1 * 10**18
-
-    _pickle_drops: ClassVar[frozenset[str]] = frozenset({
-        "_state_lock",
-        "_subscribers",
-    })
-    _pickle_reconstructs: ClassVar[dict[str, Any]] = {
-        "_state_lock": Lock,
-        "_subscribers": WeakSet,
-    }
 
     def __init__(
         self,

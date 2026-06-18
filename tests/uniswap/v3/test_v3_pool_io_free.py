@@ -1,7 +1,6 @@
 """Tests for Phase 4: I/O-free UniswapV3Pool construction via Bot."""
 
 import pathlib
-import pickle
 from unittest.mock import MagicMock
 
 import eth_abi.abi
@@ -167,33 +166,6 @@ class TestV3PoolIOFreeConstructor:
         assert updated is True
         assert pool.tick == -75900
         assert pool.liquidity == 9999999999
-
-    def test_io_free_pool_pickle(self) -> None:
-        """I/O-free pools can be pickled and unpickled."""
-        weth = _make_weth()
-        usdc = _make_usdc()
-
-        pool = UniswapV3Pool(
-            address=USDC_WETH_V3_POOL,
-            chain_id=1,
-            token0=weth,
-            token1=usdc,
-            factory=UNISWAP_V3_FACTORY,
-            fee=V3_FEE,
-            tick_spacing=V3_TICK_SPACING,
-            sqrt_price_x96=2198666895605149686863,
-            tick=-76020,
-            liquidity=1234567890,
-            state_block=18_000_000,
-        )
-
-        pickled = pickle.dumps(pool)
-        unpickled = pickle.loads(pickled)
-
-        assert unpickled.address == pool.address
-        assert unpickled.sqrt_price_x96 == pool.sqrt_price_x96
-        assert unpickled.tick == pool.tick
-        assert unpickled.liquidity == pool.liquidity
 
 
 class TestBotBuildV3Pool:

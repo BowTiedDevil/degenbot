@@ -78,23 +78,6 @@ class StateCache[T: CacheableState]:
         with self._lock:
             yield
 
-    def __getstate__(self) -> dict[str, object]:
-        """Return the pickled state.
-
-        Returns:
-            The computed value.
-
-        """
-        # Lock is not picklable; drop it and reconstruct on load
-        state = self.__dict__.copy()
-        state.pop("_lock", None)
-        return state
-
-    def __setstate__(self, state: dict[str, object]) -> None:
-        """Restore from pickled state."""
-        self.__dict__.update(state)
-        self._lock = Lock()
-
     def __len__(self) -> int:
         """Return the length.
 

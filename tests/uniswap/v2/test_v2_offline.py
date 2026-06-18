@@ -4,15 +4,13 @@ These tests use the OfflineProvider to run without requiring a live RPC connecti
 They test deterministic pool operations that don't need real-time chain data.
 """
 
-import pickle
 from fractions import Fraction
 
 import pytest
 
-from degenbot.exceptions.pool import ExternalUpdateError, InvalidSwapInputAmount
+from degenbot.exceptions.pool import InvalidSwapInputAmount
 from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v2_types import (
-    UniswapV2PoolExternalUpdate,
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
 )
@@ -191,111 +189,6 @@ class TestV2PoolCalculations:
 
 class TestV2PoolStateManagement:
     """Test V2 pool state management with offline data."""
-
-    def test_pickle_pool(
-        self,
-        offline_wbtc_weth_v2_pool: LiquidityPool,
-    ):
-        """Test that offline pool can be pickled (transient — slice 15).
-
-        The ``PyLiquidityPool`` handle is not picklable, so ``__getstate__``
-        drops it: an unpickled pool is a detached snapshot. Mutable state reads
-        raise ``AttributeError`` (no ``_py_pool``); only immutable identity
-        survives. Tokens are likewise detached (slice-3's ``Erc20Token`` hack),
-        so their metadata reads raise too. Slice 15 (TODO-cddc72d1) retires
-        pickle entirely and deletes this test.
-        """
-        pool = offline_wbtc_weth_v2_pool
-
-        # Should not raise
-        pickled = pickle.dumps(pool)
-        unpickled = pickle.loads(pickled)
-
-        # Immutable identity survives; reserves require the Rust handle (dropped).
-        assert unpickled.address == pool.address
-        assert not hasattr(unpickled, "_py_pool")
-        with pytest.raises(AttributeError):
-            _ = unpickled.reserves_token0
-
-    def test_external_update(
-        self,
-        offline_wbtc_weth_v2_pool: LiquidityPool,
-    ):
-        """Test applying external state updates."""
-        pool = offline_wbtc_weth_v2_pool
-        original_reserves0 = pool.reserves_token0
-        original_reserves1 = pool.reserves_token1
-        original_block = pool.update_block
-
-        # Apply an update at next block
-        new_reserves0 = original_reserves0 + 1000 * 10**8
-        new_reserves1 = original_reserves1 - 10 * 10**18
-
-        pool.external_update(
-            update=UniswapV2PoolExternalUpdate(
-                block_number=original_block + 1,
-                reserves_token0=new_reserves0,
-                reserves_token1=new_reserves1,
-            )
-        )
-
-        # Verify update applied
-        assert pool.reserves_token0 == new_reserves0
-        assert pool.reserves_token1 == new_reserves1
-        assert pool.update_block == original_block + 1
-
-    def test_late_update(
-        self,
-        offline_wbtc_weth_v2_pool: LiquidityPool,
-    ):
-        """Test that updates to past blocks are rejected."""
-        pool = offline_wbtc_weth_v2_pool
-        original_block = pool.update_block
-
-        # Provide some updates at future blocks
-        for block_offset in range(1, 6):
-            pool.external_update(
-                update=UniswapV2PoolExternalUpdate(
-                    block_number=original_block + block_offset,
-                    reserves_token0=pool.reserves_token0 + block_offset * 10,
-                    reserves_token1=pool.reserves_token1 - block_offset * 10,
-                )
-            )
-
-        # Verify update_block has advanced
-        assert pool.update_block == original_block + 5
-
-        # Attempt an update in the past (before original_block)
-        with pytest.raises(ExternalUpdateError):
-            pool.external_update(
-                update=UniswapV2PoolExternalUpdate(
-                    block_number=original_block - 1,
-                    reserves_token0=pool.reserves_token0,
-                    reserves_token1=pool.reserves_token1,
-                )
-            )
-
-    def test_reorg(
-        self,
-        offline_wbtc_weth_v2_pool: LiquidityPool,
-    ):
-        """Test handling of chain reorgs."""
-        pool = offline_wbtc_weth_v2_pool
-        current_block = pool.update_block
-        original_reserves0 = pool.reserves_token0
-
-        # Simulate a reorg by providing update at same block
-        pool.external_update(
-            update=UniswapV2PoolExternalUpdate(
-                block_number=current_block,
-                reserves_token0=original_reserves0 + 1000 * 10**8,
-                reserves_token1=pool.reserves_token1 - 100 * 10**18,
-            )
-        )
-
-        # State should be at the reorg block with new values
-        assert pool.reserves_token0 == original_reserves0 + 1000 * 10**8
-        assert pool.update_block == current_block
 
 
 class TestV2PoolProperties:

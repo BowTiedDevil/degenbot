@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pickle
-
 import pytest
 
 from degenbot.curve.per_block_cache import PerBlockCache
@@ -199,30 +197,3 @@ class TestVirtualPriceExpiryLogic:
 
         result = cache.get_cached_virtual_price(100)
         assert result == 10**18 + 42
-
-
-class TestPickleSupport:
-    """PerBlockCache pickles with _data_provider dropped and restored as None."""
-
-    def test_pickle_round_trip_drops_provider(self) -> None:
-        """Pickled PerBlockCache drops provider; cached data survives."""
-        fake = FakeCurveDataProvider(d=10**18)
-        cache = _make_cache(data_provider=fake)
-        cache.get_cached_contract_d(100)
-
-        data = pickle.dumps(cache)
-        restored = pickle.loads(data)
-
-        assert restored._data_provider is None
-        assert restored._cache_contract_D[100] == 10**18
-
-    def test_pickle_restored_cache_miss_raises(self) -> None:
-        """A restored cache has no provider, so new misses raise MissingCurveData."""
-        fake = FakeCurveDataProvider(d=10**18)
-        cache = _make_cache(data_provider=fake)
-        cache.get_cached_contract_d(100)
-
-        restored = pickle.loads(pickle.dumps(cache))
-        assert restored.get_cached_contract_d(100) == 10**18
-        with pytest.raises(MissingCurveData):
-            restored.get_cached_contract_d(200)

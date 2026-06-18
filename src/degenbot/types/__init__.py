@@ -13,7 +13,6 @@ from .hop_types import (
     SolidlyStableHop,
     V3TickRangeInfo,
 )
-from .pool_pickle import PoolPickleMixin
 from .pool_protocols import (
     ArbitrageCapablePool,
     ArbitragePathPool,
@@ -39,7 +38,6 @@ __all__ = (
     "KeyedDefaultDict",
     "MultiTokenSwapCalculation",
     "PoolInvariant",
-    "PoolPickleMixin",
     "PoolSimulation",
     "ReverseSimulatablePool",
     "SimulationResult",

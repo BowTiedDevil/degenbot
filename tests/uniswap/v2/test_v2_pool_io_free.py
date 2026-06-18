@@ -1,7 +1,6 @@
 """Tests for Phase 3: I/O-free LiquidityPool construction via Bot."""
 
 import pathlib
-import pickle
 from fractions import Fraction
 from unittest.mock import MagicMock
 
@@ -151,40 +150,6 @@ class TestV2PoolIOFreeConstructor:
 
         assert pool.fee_token0 == Fraction(3, 1000)
         assert pool.fee_token1 == Fraction(2, 1000)
-
-    def test_io_free_pool_pickle(self) -> None:
-        """I/O-free pools pickle their immutable identity (transient — slice 15).
-
-        The ``PyLiquidityPool`` handle is not picklable, so ``__getstate__``
-        drops it: an unpickled pool is a detached snapshot. Mutable state
-        reads (reserves/update_block) raise ``AttributeError`` on a detached
-        pool (no ``_py_pool``); only immutable identity survives the round-trip.
-        Slice 15 (TODO-cddc72d1) retires pickle entirely and deletes this test.
-        """
-        weth = _make_weth()
-        usdc = _make_usdc()
-
-        pool = make_v2_pool(
-            address=WETH_USDC_V2_POOL,
-            chain_id=1,
-            token0=weth,
-            token1=usdc,
-            factory=UNISWAP_V2_FACTORY,
-            fee_token0=Fraction(3, 1000),
-            fee_token1=Fraction(3, 1000),
-            reserves_token0=1000 * 10**18,
-            reserves_token1=2_000_000 * 10**6,
-            state_block=18_000_000,
-        )
-
-        pickled = pickle.dumps(pool)
-        unpickled = pickle.loads(pickled)
-
-        # Immutable identity survives; reserves require the Rust handle (dropped).
-        assert unpickled.address == pool.address
-        assert not hasattr(unpickled, "_py_pool")
-        with pytest.raises(AttributeError):
-            _ = unpickled.reserves_token0
 
 
 class TestBotBuildV2Pool:

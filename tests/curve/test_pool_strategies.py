@@ -1,7 +1,5 @@
 """Tests for Curve pool strategy resolution."""
 
-import pickle
-
 import pytest
 
 from degenbot.curve._pool_strategies import resolve_pool_strategies
@@ -160,16 +158,6 @@ class TestPoolStrategiesDataclass:
         s1 = PoolStrategies(swap_style=SwapStyle.CRYPTO)
         s2 = PoolStrategies(swap_style=SwapStyle.STANDARD)
         assert s1 != s2
-
-    def test_picklable(self):
-
-        s = PoolStrategies(
-            d_variant=DVariant.VARIANT_ALPHA,
-            swap_style=SwapStyle.RATE_ADJUSTED,
-            lending_rate_style=LendingRateStyle.CTOKEN,
-        )
-        roundtripped = pickle.loads(pickle.dumps(s))
-        assert roundtripped == s
 
     def test_calculators_always_set(self):
         """PoolStrategies auto-constructs calculators from enum values."""

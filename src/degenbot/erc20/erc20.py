@@ -306,31 +306,3 @@ class Erc20Token(AbstractErc20Token):
     def chain_id(self) -> int:
         """Chain ID (read from Rust-owned ``TokenEntry``)."""
         return self._py_token.chain_id
-
-    # -- Pickle support (TRANSIENT — removed by TODO-cddc72d1 / Slice 15) --
-    #
-    # Pools pickle their tokens (recursively) for the ProcessPoolExecutor
-    # multiprocessing path; the ``PyErc20Token`` handle wraps a Rust
-    # ``Arc<RwLock<Bot>>`` that is process-local and not picklable, so
-    # ``__getstate__`` drops it. An unpickled token is therefore a *detached
-    # snapshot* (no live Rust handle; metadata reads raise ``AttributeError``).
-    #
-    # This exists only because pool-pickle tests still reference it; slice 15
-    # retires Python-pickle multiprocessing entirely (replaced by Rust-side
-    # parallel solve fan-out over the shared ``Bot``) and deletes this method,
-    # ``PoolPickleMixin``, and the pickle tests together. Don't extend it; the
-    # detached-token pattern is verified to be inert in-repo because no
-    # ``concurrent.futures`` consumer ships in-tree.
-    def __getstate__(self) -> dict[str, object]:
-        """Return pickle state, dropping the non-picklable Rust handle.
-
-        An unpickled token is a detached snapshot (no ``_py_token``); metadata
-        reads raise ``AttributeError``. See the class-level pickle note above.
-
-        Returns:
-            The token's ``__dict__`` minus ``_py_token``.
-
-        """
-        state = self.__dict__.copy()
-        del state["_py_token"]
-        return state

@@ -9,7 +9,6 @@ eliminating the need for side-effect mirrors or call-ordering contracts.
 """
 
 import contextlib
-from typing import Any
 
 from eth_typing import ChecksumAddress
 
@@ -281,21 +280,3 @@ class PerBlockCache:
 
         self._cache_virtual_price[block_number] = base_virtual_price
         return base_virtual_price
-
-    # ── Pickle support ──
-
-    def __getstate__(self) -> dict[str, Any]:
-        """Drop unpickleable _data_provider before pickling.
-
-        Returns:
-            State dict with _data_provider set to None.
-
-        """
-        state = self.__dict__.copy()
-        state["_data_provider"] = None  # can't pickle closures
-        return state
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """Restore state after unpickling (provider remains None)."""
-        self.__dict__.update(state)
-        # _data_provider already set to None by __getstate__

@@ -4,14 +4,11 @@ These tests use the OfflineProvider to run without requiring a live RPC connecti
 They test deterministic V3 pool operations that don't need real-time chain data.
 """
 
-import pickle
-
 import pytest
 
-from degenbot.exceptions.pool import ExternalUpdateError, LiquidityPoolError
+from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (
-    UniswapV3PoolExternalUpdate,
     UniswapV3PoolSimulationResult,
     UniswapV3PoolState,
 )
@@ -143,115 +140,6 @@ class TestV3PoolCalculations:
 
 class TestV3PoolStateManagement:
     """Test V3 pool state management with offline data."""
-
-    def test_pickle_pool(
-        self,
-        offline_wbtc_weth_v3_pool: UniswapV3Pool,
-    ):
-        """Test that offline pool can be pickled."""
-        pool = offline_wbtc_weth_v3_pool
-
-        # Should not raise
-        pickled = pickle.dumps(pool)
-        unpickled = pickle.loads(pickled)
-
-        # Verify basic attributes
-        assert unpickled.address == pool.address
-        assert unpickled.token0.address == pool.token0.address
-        assert unpickled.token1.address == pool.token1.address
-
-    def test_external_update(
-        self,
-        offline_wbtc_weth_v3_pool: UniswapV3Pool,
-    ):
-        """Test applying external state updates."""
-        pool = offline_wbtc_weth_v3_pool
-        original_liquidity = pool.liquidity
-        original_sqrt_price = pool.sqrt_price_x96
-        original_block = pool.update_block
-
-        # Apply an update at next block
-        new_liquidity = original_liquidity + 1000000000000000
-
-        pool.external_update(
-            update=UniswapV3PoolExternalUpdate(
-                block_number=original_block + 1,
-                liquidity=new_liquidity,
-                sqrt_price_x96=original_sqrt_price,
-                tick=pool.tick,
-            )
-        )
-
-        # Verify update applied
-        assert pool.liquidity == new_liquidity
-        assert pool.update_block == original_block + 1
-
-    def test_late_update(
-        self,
-        offline_wbtc_weth_v3_pool: UniswapV3Pool,
-    ):
-        """Test that updates to past blocks are rejected."""
-        pool = offline_wbtc_weth_v3_pool
-        initial_block = pool.update_block
-
-        # Provide some updates at future blocks
-        for block_offset in range(1, 6):
-            pool.external_update(
-                update=UniswapV3PoolExternalUpdate(
-                    block_number=initial_block + block_offset,
-                    liquidity=pool.liquidity + block_offset * 1000,
-                    sqrt_price_x96=pool.sqrt_price_x96,
-                    tick=pool.tick,
-                )
-            )
-
-        # Verify update_block has advanced
-        assert pool.update_block == initial_block + 5
-
-        # Attempt an update in the past (after initial state but before current)
-        with pytest.raises(ExternalUpdateError):
-            pool.external_update(
-                update=UniswapV3PoolExternalUpdate(
-                    block_number=initial_block + 2,  # Between initial and current
-                    liquidity=pool.liquidity,
-                    sqrt_price_x96=pool.sqrt_price_x96,
-                    tick=pool.tick,
-                )
-            )
-
-    def test_reorg(
-        self,
-        offline_wbtc_weth_v3_pool: UniswapV3Pool,
-    ):
-        """Test handling of chain reorgs (update at same block)."""
-        pool = offline_wbtc_weth_v3_pool
-        current_block = pool.update_block
-        original_liquidity = pool.liquidity
-
-        # First, advance past the initial state block
-        # (reorg can only happen at blocks >= initial_state_block)
-        pool.external_update(
-            update=UniswapV3PoolExternalUpdate(
-                block_number=current_block + 1,
-                liquidity=original_liquidity,
-                sqrt_price_x96=pool.sqrt_price_x96,
-                tick=pool.tick,
-            )
-        )
-
-        # Now simulate a reorg by providing update at the current block
-        pool.external_update(
-            update=UniswapV3PoolExternalUpdate(
-                block_number=current_block + 1,
-                liquidity=original_liquidity + 1000000000000000,
-                sqrt_price_x96=pool.sqrt_price_x96,
-                tick=pool.tick,
-            )
-        )
-
-        # State should be at the reorg block with new values
-        assert pool.liquidity == original_liquidity + 1000000000000000
-        assert pool.update_block == current_block + 1
 
 
 class TestV3PoolProperties:

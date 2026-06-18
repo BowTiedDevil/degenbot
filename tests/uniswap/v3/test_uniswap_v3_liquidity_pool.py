@@ -1,5 +1,4 @@
 import pathlib
-import pickle
 from typing import Any
 
 import hypothesis
@@ -471,10 +470,6 @@ def test_discard_after_last_update(wbtc_weth_v3_lp_at_historical_block: UniswapV
         NoPoolStateAvailable, match=f"No pool state known prior to block {lp.update_block + 1}"
     ):
         wbtc_weth_v3_lp_at_historical_block.discard_states_before_block(lp.update_block + 1)
-
-
-def test_pickle_pool(wbtc_weth_v3_lp_at_historical_block: UniswapV3Pool):
-    pickle.dumps(wbtc_weth_v3_lp_at_historical_block)
 
 
 def test_tick_bitmap_equality() -> None:
