@@ -1009,3 +1009,47 @@ class TestDexIdentityPresets:
         ident = dex_identity("uniswap-v2")
         assert ident is not None
         assert repr(ident) == 'PyDexIdentity(variant="uniswap-v2", factory=0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f)'
+
+
+    def test_pyconstructor_builds_custom_identity(self) -> None:
+        """The PyDexIdentity #[new] constructor builds a custom identity view."""
+        from degenbot.degenbot_rs import PyDexIdentity
+
+        ident = PyDexIdentity(
+            factory="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+            init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
+            fee_token0=(997, 1000),
+            fee_token1=(997, 1000),
+            variant="uniswap-v2",
+        )
+        assert ident.factory == "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+        assert ident.deployer == ident.factory  # default: deployer = factory
+        assert ident.variant == "uniswap-v2"
+        assert ident.fee_token0 == (997, 1000)
+        # No reserves_abi kwarg → Standard shape (2-tuple).
+        assert ident.reserves_abi == ["uint112", "uint112"]
+
+    def test_pyconstructor_pancakeswap_reserves_abi_and_unknown_variant(self) -> None:
+        """PancakeStyle 3-tuple + unknown-variant ValueError paths."""
+        from degenbot.degenbot_rs import PyDexIdentity
+
+        ident = PyDexIdentity(
+            factory="0x1097053Fd2ea711dad45caCcc45EfF7548fCB362",
+            init_hash="0x" + "ab" * 32,
+            fee_token0=(9975, 10000),
+            fee_token1=(9975, 10000),
+            variant="pancakeswap-v2",
+            reserves_abi=["uint112", "uint112", "uint32"],
+        )
+        assert ident.reserves_abi == ["uint112", "uint112", "uint32"]
+        assert ident.variant == "pancakeswap-v2"
+
+        # Unknown variant → ValueError (no PanicException).
+        with pytest.raises(ValueError):
+            PyDexIdentity(
+                factory="0x" + "aa" * 20,
+                init_hash="0x" + "00" * 32,
+                fee_token0=(1, 2),
+                fee_token1=(1, 2),
+                variant="nonexistent-dex",
+            )

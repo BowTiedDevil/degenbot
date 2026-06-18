@@ -816,10 +816,20 @@ class PyDexIdentity:
     """Frozen Python view over a `DexIdentity` preset (ADR-005 slice 6).
 
     Read-only deployment identity (factory, deployer, init hash, default fees,
-    reserve ABI shape, variant string). Not directly constructible — obtain via
-    `dex_identity(variant)`.
+    reserve ABI shape, variant string). Constructable via `PyDexIdentity(...)`
+    for custom identities (tests / ad-hoc deployments) or resolved via
+    `dex_identity(variant)` for canonical presets.
     """
 
+    def __init__(
+        self,
+        factory: str,
+        init_hash: str,
+        fee_token0: tuple[int, int],
+        fee_token1: tuple[int, int],
+        variant: str,
+        reserves_abi: list[str] | None = None,
+    ) -> None: ...
     @property
     def factory(self) -> str: ...
     @property
