@@ -683,7 +683,7 @@ impl UniswapEngine {
 
         let mut snapshot = DiagnosticPathState::new(path_id, solve_block);
 
-        // ADR-003: V2 state lives in Bot. One core-lock window covers all
+        // ADR-003: V2 state lives in BotState. One core-lock window covers all
         // V2 lookups in this loop; V3/V4 state still reads the per-family
         // block engines (disjoint fields, immutable borrows coexist).
         let core = self.core.read();
@@ -736,13 +736,13 @@ impl UniswapEngine {
     }
 }
 
-/// Build the per-hop [`DiagnosticPoolState`] from a locked [`Bot`] snapshot.
+/// Build the per-hop [`DiagnosticPoolState`] from a locked [`BotState`] snapshot.
 ///
 /// Returns `None` when the pool referenced by `pool_ref` is absent from the
 /// sub-engine — the caller records a "missing pool" placeholder in that case
 /// so the rest of the hops remain visible.
 fn build_engine_pool_state(
-    core: &crate::bot_core::Bot,
+    core: &crate::bot_core::BotState,
     pool_ref: &MixedPoolRef,
 ) -> Option<DiagnosticPoolState> {
     match pool_ref.hop_type {
@@ -801,7 +801,7 @@ fn build_engine_pool_state(
 }
 
 // ---------------------------------------------------------------------------
-// Sub-engine accessors (V3/V4 state now reads from Bot — ADR-003)
+// Sub-engine accessors (V3/V4 state now reads from BotState — ADR-003)
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

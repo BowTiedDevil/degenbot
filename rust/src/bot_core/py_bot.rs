@@ -1,10 +1,10 @@
-//! `PyO3` wrappers for `Bot` — thin Python handle over Rust-owned state.
+//! `PyO3` wrappers for `BotState` — thin Python handle over Rust-owned state.
 //!
-//! Implements the Polars-inspired three-layer topology (ADR-005): Rust [`Bot`]
-//! core → `PyBot` `#[pyclass]` wrapper holding `Arc<parking_lot::RwLock<Bot>>`
-//! → Python `Bot` session that constructs `self._py_bot = PyBot()` in `__init__`.
+//! Implements the Polars-inspired three-layer topology (ADR-005): Rust [`BotState`]
+//! core → `PyBot` `#[pyclass]` wrapper holding `Arc<parking_lot::RwLock<BotState>>`
+//! → Python `BotState` session that constructs `self._py_bot = PyBot()` in `__init__`.
 //! `PyLiquidityPool`/`PyErc20Token` clone the same `Arc` so many Python handles reference one
-//! Rust-owned `Bot`; reads take a read guard, mutations a write guard.
+//! Rust-owned `BotState`; reads take a read guard, mutations a write guard.
 //!
 //! See: `docs/adr/ADR-005-polars-inspired-three-layer-architecture.md` (the
 //! decision, rejected alternatives, and the deferred `UniswapEngine` unification).
@@ -17,7 +17,7 @@ use pyo3::prelude::*;
 use crate::bot_core::py_erc20_token::PyErc20Token;
 use crate::bot_core::py_liquidity_pool::PyLiquidityPool;
 use crate::bot_core::state_history::JournalError;
-use crate::bot_core::{Bot, RegisterV2PoolParams, RegisterV3PoolParams};
+use crate::bot_core::{Bot, BotState, RegisterV2PoolParams, RegisterV3PoolParams};
 
 /// Encode a byte slice as a lowercase hex string (no "0x" prefix).
 fn bytes_to_hex(bytes: &[u8]) -> String {
@@ -31,30 +31,33 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// PyBot — thin handle over Arc<RwLock<Bot>>
+// PyBot — owns the Bot orchestrator; hands out shared BotState Arcs
 // ---------------------------------------------------------------------------
 
-/// The single owner of all runtime state.
+/// The Python handle to the per-chain `Bot` orchestrator (ADR-006 D4).
 ///
 /// Python constructs a `PyBot` (or receives a shared handle), registers
-/// pools/tokens, then reads results. All state lives in Rust; Python holds a
-/// thin handle. The wrapped `RwLock<Bot>` allows many concurrent readers
-/// (e.g. per-pool `PyLiquidityPool` reads) while serialising mutation.
+/// pools/tokens, then reads results. `PyBot` owns a [`Bot`] outright and hands
+/// out clones of its shared `Arc<RwLock<BotState>>` (`state_arc`) so
+/// `PyLiquidityPool` / `PyErc20Token` / `UniswapEngine` all reach ONE
+/// Rust-owned `BotState` (N handles → one state — the Polars three-layer
+/// invariant, preserved).
 #[pyclass(skip_from_py_object)]
 pub struct PyBot {
-    core: Arc<parking_lot::RwLock<Bot>>,
+    bot: Bot,
 }
 
 /// Crate-internal Rust surface on `PyBot` (not Python-visible).
 impl PyBot {
-    /// Hand out a clone of the shared `Arc<RwLock<Bot>>` so a sibling
+    /// Hand out a clone of the shared `Arc<RwLock<BotState>>` so a sibling
     /// Rust-owned consumer (notably `UniswapEngine::with_core` — ADR-006 D1)
-    /// can read/write the SAME core that `PyBot`/`PyLiquidityPool`/
-    /// `PyErc20Token` share. This is the seam that dissolves the dual-`Bot`
-    /// split (pump in `Bot` B, handles in `Bot` A — `rust-owned-bot.md` §17).
+    /// can read/write the SAME state that `PyBot`/`PyLiquidityPool`/
+    /// `PyErc20Token` share. This is the seam that dissolves the dual-state
+    /// split (pump in `BotState` B, handles in `BotState` A —
+    /// `rust-owned-bot.md` §17).
     #[must_use]
-    pub(crate) fn core_arc(&self) -> Arc<parking_lot::RwLock<Bot>> {
-        Arc::clone(&self.core)
+    pub(crate) fn core_arc(&self) -> Arc<parking_lot::RwLock<BotState>> {
+        self.bot.state_arc()
     }
 }
 
@@ -62,9 +65,10 @@ impl PyBot {
 impl PyBot {
     #[new]
     fn new() -> Self {
-        Self {
-            core: Arc::new(parking_lot::RwLock::new(Bot::new())),
-        }
+        // chain_id = 0 placeholder until ADR-006 slice 8 makes `bot.py` a
+        // single-chain facade (Python has no single chain_id at PyBot
+        // construction today). The standalone-Rust path passes the real id.
+        Self { bot: Bot::new(0) }
     }
 
     /// Register a V2 pool by contract address.
@@ -93,17 +97,21 @@ impl PyBot {
         let r0 = crate::alloy_py::extract_python_u256(reserve0)?;
         let r1 = crate::alloy_py::extract_python_u256(reserve1)?;
 
-        Ok(self.core.write().register_v2_pool(&RegisterV2PoolParams {
-            address: addr,
-            token0: t0,
-            token1: t1,
-            reserve0: r0,
-            reserve1: r1,
-            fee_token0: (gamma_numer0, fee_denom0),
-            fee_token1: (gamma_numer1, fee_denom1),
-            factory: fac,
-            update_block,
-        }))
+        Ok(self
+            .bot
+            .state_arc()
+            .write()
+            .register_v2_pool(&RegisterV2PoolParams {
+                address: addr,
+                token0: t0,
+                token1: t1,
+                reserve0: r0,
+                reserve1: r1,
+                fee_token0: (gamma_numer0, fee_denom0),
+                fee_token1: (gamma_numer1, fee_denom1),
+                factory: fac,
+                update_block,
+            }))
     }
 
     /// Update a V2 pool's reserves from a Sync event.
@@ -119,7 +127,10 @@ impl PyBot {
         let r0 = crate::alloy_py::extract_python_u256(reserve0)?;
         let r1 = crate::alloy_py::extract_python_u256(reserve1)?;
 
-        self.core.write().update_v2_pool(addr, r0, r1, block_number);
+        self.bot
+            .state_arc()
+            .write()
+            .update_v2_pool(addr, r0, r1, block_number);
         Ok(())
     }
 
@@ -142,7 +153,8 @@ impl PyBot {
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::alloy_py::extract_python_u256(amount_in)?;
         let result = {
-            let core = self.core.read();
+            let state = self.bot.state_arc();
+            let core = state.read();
             core.calculate_tokens_out(pool_id, zero_for_one, amount)
         };
         let bound = crate::alloy_py::u256_to_py(py, &result)?;
@@ -168,7 +180,8 @@ impl PyBot {
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::alloy_py::extract_python_u256(amount_out)?;
         let result = {
-            let core = self.core.read();
+            let state = self.bot.state_arc();
+            let core = state.read();
             core.calculate_tokens_in(pool_id, zero_for_one, amount)
         };
         let bound = crate::alloy_py::u256_to_py(py, &result)?;
@@ -177,7 +190,7 @@ impl PyBot {
 
     /// Number of registered pools.
     fn pool_count(&self) -> usize {
-        self.core.read().pool_count()
+        self.bot.state_arc().read().pool_count()
     }
 
     /// Get a thin `PyLiquidityPool` handle for the given pool ID.
@@ -188,8 +201,8 @@ impl PyBot {
     /// Returns:
     ///     A `PyLiquidityPool` handle, or `None` if the pool ID is not registered.
     fn get_pool(&self, pool_id: u64) -> Option<PyLiquidityPool> {
-        if self.core.read().has_pool(pool_id) {
-            Some(PyLiquidityPool::new(Arc::clone(&self.core), pool_id))
+        if self.bot.state_arc().read().has_pool(pool_id) {
+            Some(PyLiquidityPool::new(self.bot.state_arc(), pool_id))
         } else {
             None
         }
@@ -220,20 +233,24 @@ impl PyBot {
         // liquidity is uint128 — extracted as U256 then narrowed.
         let liq = crate::alloy_py::extract_python_u256(liquidity)?.to::<u128>();
 
-        Ok(self.core.write().register_v3_pool(&RegisterV3PoolParams {
-            address: addr,
-            token0: t0,
-            token1: t1,
-            fee,
-            tick_spacing,
-            factory: fac,
-            sqrt_price_x96: spx,
-            liquidity: liq,
-            tick,
-            tick_data: std::collections::HashMap::new(),
-            update_block: 0,
-            coverage: crate::bot_core::PoolTickCoverage::Sparse,
-        }))
+        Ok(self
+            .bot
+            .state_arc()
+            .write()
+            .register_v3_pool(&RegisterV3PoolParams {
+                address: addr,
+                token0: t0,
+                token1: t1,
+                fee,
+                tick_spacing,
+                factory: fac,
+                sqrt_price_x96: spx,
+                liquidity: liq,
+                tick,
+                tick_data: std::collections::HashMap::new(),
+                update_block: 0,
+                coverage: crate::bot_core::PoolTickCoverage::Sparse,
+            }))
     }
 
     /// Update a V3 pool's state from a Swap event.
@@ -252,7 +269,8 @@ impl PyBot {
         let spx = crate::alloy_py::extract_python_u256(sqrt_price_x96)?;
         let liq = crate::alloy_py::extract_python_u256(liquidity)?.to::<u128>();
 
-        self.core
+        self.bot
+            .state_arc()
             .write()
             .update_v3_pool(addr, spx, liq, tick, block_number, vec![]);
         Ok(())
@@ -262,7 +280,7 @@ impl PyBot {
     ///
     /// Returns 0 if the pool ID is not registered or is not a V3 pool.
     fn v3_journal_len(&self, pool_id: u64) -> usize {
-        self.core.read().v3_journal_len(pool_id)
+        self.bot.state_arc().read().v3_journal_len(pool_id)
     }
 
     /// Discard V3 reorg journal deltas earlier than the given block.
@@ -272,7 +290,8 @@ impl PyBot {
     /// is past the newest delta. Raises `ValueError` on error (ADR-005 slice 4).
     #[pyo3(signature = (pool_id, block))]
     fn v3_discard_before_block(&self, pool_id: u64, block: u64) -> PyResult<()> {
-        self.core
+        self.bot
+            .state_arc()
             .write()
             .v3_discard_before_block(pool_id, block)
             .map_err(journal_err_to_py)
@@ -290,7 +309,8 @@ impl PyBot {
         block: u64,
     ) -> PyResult<Option<Py<PyAny>>> {
         let result = {
-            let mut core = self.core.write();
+            let state = self.bot.state_arc();
+            let mut core = state.write();
             core.v3_restore_before_block(pool_id, block)
         };
         match result {
@@ -339,14 +359,14 @@ impl PyBot {
         chain_id: u64,
     ) -> PyResult<PyErc20Token> {
         let addr = parse_address(address)?;
-        self.core.write().register_token(
+        self.bot.state_arc().write().register_token(
             addr,
             name.to_string(),
             symbol.to_string(),
             decimals,
             chain_id,
         );
-        Ok(PyErc20Token::new(Arc::clone(&self.core), addr))
+        Ok(PyErc20Token::new(self.bot.state_arc(), addr))
     }
 
     /// Get a thin `PyErc20Token` handle for the given address.
@@ -358,8 +378,8 @@ impl PyBot {
     ///     A `PyErc20Token` handle, or `None` if the address is not registered.
     fn get_token(&self, address: &str) -> PyResult<Option<PyErc20Token>> {
         let addr = parse_address(address)?;
-        if self.core.read().has_token(&addr) {
-            Ok(Some(PyErc20Token::new(Arc::clone(&self.core), addr)))
+        if self.bot.state_arc().read().has_token(&addr) {
+            Ok(Some(PyErc20Token::new(self.bot.state_arc(), addr)))
         } else {
             Ok(None)
         }
@@ -387,7 +407,8 @@ impl PyBot {
         let recip = parse_address(recipient)?;
 
         let result = {
-            let core = self.core.read();
+            let state = self.bot.state_arc();
+            let core = state.read();
             core.encode_swap(pool_id, zero_for_one, amount, recip)
         };
 
@@ -402,7 +423,7 @@ impl PyBot {
     ///
     /// Returns 0 if the pool ID is not registered.
     fn v2_journal_len(&self, pool_id: u64) -> usize {
-        self.core.read().v2_journal_len(pool_id)
+        self.bot.state_arc().read().v2_journal_len(pool_id)
     }
 
     /// Discard V2 reorg journal deltas earlier than the given block.
@@ -414,7 +435,8 @@ impl PyBot {
     ///     `ValueError`: If the target is past the newest delta.
     #[pyo3(signature = (pool_id, block))]
     fn v2_discard_before_block(&self, pool_id: u64, block: u64) -> PyResult<()> {
-        self.core
+        self.bot
+            .state_arc()
             .write()
             .v2_discard_before_block(pool_id, block)
             .map_err(journal_err_to_py)
@@ -440,7 +462,8 @@ impl PyBot {
         block: u64,
     ) -> PyResult<Option<Py<PyAny>>> {
         let result = {
-            let mut core = self.core.write();
+            let state = self.bot.state_arc();
+            let mut core = state.write();
             core.v2_restore_before_block(pool_id, block)
         };
         match result {

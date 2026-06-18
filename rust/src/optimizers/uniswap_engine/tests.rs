@@ -221,7 +221,7 @@ mod tests {
         });
 
         // Reference a non-existent V2 pool — ADR-006 D3: register_path
-        // rejects a pool_id not present in the Bot rather than silently
+        // rejects a pool_id not present in the BotState rather than silently
         // producing an unresolved/invalid path.
         let result = engine.register_path(vec![
             PoolHop {
@@ -235,7 +235,7 @@ mod tests {
         ]);
         assert!(
             result.is_err(),
-            "register_path must reject a pool_id not registered in the Bot"
+            "register_path must reject a pool_id not registered in the BotState"
         );
     }
 
@@ -1189,7 +1189,7 @@ mod tests {
         assert!(matches!(path.pools[1].hop_type, HopType::V3));
         assert!(matches!(path.pools[2].hop_type, HopType::V4));
 
-        // Verify we can resolve pool addresses via Bot (V2) / sub-engines (V3/V4)
+        // Verify we can resolve pool addresses via BotState (V2) / sub-engines (V3/V4)
         let v2_addr = engine.core.read().pool_address(v2_fwd);
         assert_eq!(v2_addr, Some(Address::from([0x11u8; 20])));
 
@@ -1423,7 +1423,7 @@ mod tests {
         // targeting block 5 rolls back that Sync; the next solve finds no arb
         // and the previously-delivered result expires.
         // Why: ADR-003 reorg path — `removed`-flag detection feeds
-        // `engine.handle_reorg`, which restores Bot state and emits an
+        // `engine.handle_reorg`, which restores BotState state and emits an
         // `expired` diff against `delivered`. This is the realistic case where
         // the pool's first Sync is at the reorg target block.
         use tokio::sync::mpsc;
@@ -1618,18 +1618,18 @@ mod tests {
     }
 
     /// ADR-006 Slice 1 (D1): `UniswapEngine::with_core` adopts an externally
-    /// allocated `Arc<RwLock<Bot>>` so one shared `Bot` is read by both the
-    /// engine and the `PyBot`/handle tree — dissolving the dual-`Bot` split
-    /// (pump mutates Bot B; handles read Bot A). If the engine held its own
-    /// `Bot`, `v2_pool_count()` would return 0 for a pool registered only in
+    /// allocated `Arc<RwLock<BotState>>` so one shared `BotState` is read by both the
+    /// engine and the `PyBot`/handle tree — dissolving the dual-`BotState` split
+    /// (pump mutates `BotState` B; handles read `BotState` A). If the engine held its own
+    /// `BotState`, `v2_pool_count()` would return 0 for a pool registered only in
     /// the shared core.
     #[test]
     fn with_core_adopts_shared_bot_state() {
-        use crate::bot_core::{Bot, RegisterV2PoolParams};
+        use crate::bot_core::{BotState, RegisterV2PoolParams};
         use std::sync::Arc;
 
-        // Build a shared core with one V2 pool registered directly into `Bot`.
-        let core = Arc::new(parking_lot::RwLock::new(Bot::new()));
+        // Build a shared core with one V2 pool registered directly into `BotState`.
+        let core = Arc::new(parking_lot::RwLock::new(BotState::new()));
         let params = RegisterV2PoolParams {
             address: Address::from([0x11u8; 20]),
             token0: Address::from([0x01u8; 20]),
@@ -1643,28 +1643,28 @@ mod tests {
         };
         let _pool_id = core.write().register_v2_pool(&params);
 
-        // Engine adopts the SAME `Arc<RwLock<Bot>>` — NOT its own `Bot`.
+        // Engine adopts the SAME `Arc<RwLock<BotState>>` — NOT its own `BotState`.
         let engine = UniswapEngine::with_core(Arc::clone(&core));
 
-        // If the engine held a separate `Bot`, this would be 0; shared => 1.
+        // If the engine held a separate `BotState`, this would be 0; shared => 1.
         assert_eq!(
             engine.v2_pool_count(),
             1,
-            "engine must read the shared Bot's pools via with_core"
+            "engine must read the shared BotState's pools via with_core"
         );
     }
 
     /// ADR-006 slice 2 (D3): the engine no longer constructs pools — it
-    /// resolves `pool_id`s against the shared `Bot` at `register_path`
+    /// resolves `pool_id`s against the shared `BotState` at `register_path`
     /// time. A path hop referencing a `pool_id` that isn't registered in
-    /// the associated `Bot` must be rejected with a clear error (rather
+    /// the associated `BotState` must be rejected with a clear error (rather
     /// than silently producing an unresolved/invalid path).
     #[test]
     fn register_path_rejects_pool_id_not_in_bot() {
-        use crate::bot_core::{Bot, RegisterV2PoolParams};
+        use crate::bot_core::{BotState, RegisterV2PoolParams};
         use std::sync::Arc;
 
-        let core = Arc::new(parking_lot::RwLock::new(Bot::new()));
+        let core = Arc::new(parking_lot::RwLock::new(BotState::new()));
         // Register one real V2 pool so the engine has *some* valid id.
         let real_pool_id = core.write().register_v2_pool(&RegisterV2PoolParams {
             address: Address::from([0x11u8; 20]),
@@ -1694,7 +1694,7 @@ mod tests {
         ]);
         assert!(
             result.is_err(),
-            "register_path must reject a pool_id not present in the Bot"
+            "register_path must reject a pool_id not present in the BotState"
         );
         let msg = result.unwrap_err();
         assert!(

@@ -1,7 +1,7 @@
-//! `PyErc20Token` — thin Python handle over a token address key into `Bot`.
+//! `PyErc20Token` — thin Python handle over a token address key into `BotState`.
 //!
-//! Shares the same `Arc<parking_lot::RwLock<Bot>>` as the owning `PyBot` (one
-//! Rust-owned `Bot`, many thin Python handles). Part of the Polars-inspired
+//! Shares the same `Arc<parking_lot::RwLock<BotState>>` as the owning `PyBot` (one
+//! Rust-owned `BotState`, many thin Python handles). Part of the Polars-inspired
 //! three-layer topology — see `docs/adr/ADR-005-polars-inspired-three-layer-architecture.md`.
 
 use std::sync::Arc;
@@ -9,20 +9,20 @@ use std::sync::Arc;
 use alloy::primitives::Address;
 use pyo3::prelude::*;
 
-use crate::bot_core::Bot;
+use crate::bot_core::BotState;
 
-/// A thin Python handle to a token registered in `Bot`.
+/// A thin Python handle to a token registered in `BotState`.
 ///
-/// Does not own any state — all data lives in Rust inside `Bot`.
+/// Does not own any state — all data lives in Rust inside `BotState`.
 #[pyclass(skip_from_py_object)]
 pub struct PyErc20Token {
-    core: Arc<parking_lot::RwLock<Bot>>,
+    core: Arc<parking_lot::RwLock<BotState>>,
     address: Address,
 }
 
 impl PyErc20Token {
     /// Create a new thin token handle.
-    pub const fn new(core: Arc<parking_lot::RwLock<Bot>>, address: Address) -> Self {
+    pub(crate) const fn new(core: Arc<parking_lot::RwLock<BotState>>, address: Address) -> Self {
         Self { core, address }
     }
 }
