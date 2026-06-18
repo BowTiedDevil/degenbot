@@ -28,9 +28,11 @@ from .github_reference_catalog import (
 from .institutional_solver_intelligence import (
     AdaptationCandidate,
     InstitutionalAction,
+    InstitutionalBatchEvaluation,
     InstitutionalSolverDecision,
     InstitutionalSolverIntelligence,
     InstitutionalSolverResponsibilities,
+    PolicyCorrectionBatch,
     PolicyCorrectionProposal,
     PolicyObservation,
 )
@@ -60,6 +62,7 @@ __all__ = (
     "GithubReferenceRepo",
     "GithubReferenceRisk",
     "InstitutionalAction",
+    "InstitutionalBatchEvaluation",
     "InstitutionalSolverDecision",
     "InstitutionalSolverIntelligence",
     "InstitutionalSolverResponsibilities",
@@ -68,6 +71,7 @@ __all__ = (
     "PocStage",
     "PocStatus",
     "PolicyCorrectionProposal",
+    "PolicyCorrectionBatch",
     "PolicyObservation",
     "atomic_flash_target",
     "executable_pocs",
