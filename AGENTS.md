@@ -125,11 +125,19 @@ PoolClass -> PublisherMixin -> PoolPickleMixin -> StateMixin -> CalcMixin -> Abs
 
 ### State and Calc Mixins
 
+> **ADR-005 slice 7 (done):** the hollow V2 DEX subclasses (`SushiswapV2Pool`,
+> `PancakeswapV2Pool`, `SwapbasedV2Pool`, `CamelotLiquidityPool`) are deleted. The
+> canonical `LiquidityPool` is registered for every V2-family DEX factory, keyed
+> on a `DexIdentity` preset + a `variant=` registration override (preserves the
+> DB `kind`). Camelot's solidly-stable calc + stable `to_hop_state` branch were
+> folded into `LiquidityPool` (the `CamelotPoolCalc` mixin is deleted). Aerodrome
+> V2 is deferred (its own subclass + builder, TODO-e30504ed). See
+> `docs/migration-guides/dex-subclass-collapse.md`.
+
 | Pool | State Mixin | Calc Mixin | Notes |
 |------|-------------|------------|-------|
-| LiquidityPool | `V2PoolState` | `UniswapV2PoolCalc` | Base V2. Uses `StateCache[UniswapV2PoolState]` |
-| AerodromeV2Pool | `AerodromeV2PoolState` | `AerodromeV2PoolCalc` | Uses `StateCache[AerodromeV2PoolState]`. `if self._stable` eliminated |
-| CamelotLiquidityPool | (inherits V2) | `CamelotPoolCalc` | Inherits V2's `StateCache`. `if self.stable_swap` eliminated |
+| LiquidityPool | `V2PoolState` | `UniswapV2PoolCalc` | Base V2 (all V2-family DEXes — Uniswap/Sushi/Pancake/Swapbased/Camelot). Uses `StateCache[UniswapV2PoolState]`. Camelot's solidly-stable strategy (`stable_swap` flag → `_calculate_tokens_out_from_tokens_in_stable_swap` + `SolidlyStableHop`) folded in (slice 7 step 4a) |
+| AerodromeV2Pool | `AerodromeV2PoolState` | `AerodromeV2PoolCalc` | Uses `StateCache[AerodromeV2PoolState]`. `if self._stable` eliminated. Deferred from the slice-7 collapse (TODO-e30504ed) |
 | UniswapV3Pool | `V3PoolState` | `UniswapV3PoolCalc` | Base V3. Uses `ConcentratedLiquidityStateManager` which composes `StateCache` |
 | UniswapV4Pool | `V4PoolState` | `UniswapV4PoolCalc` | Same manager pattern as V3. V4-specific swap calc stays in pool |
 | CurveStableswapPool | `StableswapPoolState` | `DyCalculator` seam | Curve uses `BoundedCache` (dict-based) for per-block on-chain data, not `StateCache`. Per-block cache fields are owned by `PerBlockCache` (in `curve/per_block_cache.py`) accessed via `self._cache.get_cached_*()`; mirror-free design — `get_cached_virtual_price()` resolves its own dependencies inline. Calculators in `curve/calculators/`; pure math in `calculations/stableswap.py` |
@@ -229,7 +237,7 @@ All pool builders accept a `BuilderContext` (frozen dataclass in `src/degenbot/b
 
 Sync pool builders for each pool family inherit a base class with shared `@staticmethod` helpers for pure-logic operations (decode, DB extract, snapshot loading). Async builders call the same static methods without inheriting — mirroring the `AsyncV2PoolBuilder` pattern.
 
-- **`V2BuilderBase`** — helpers: `decode_immutable_data`, `extract_db_values`, `resolve_deployer_and_init_hash` (`V2PoolBuilder`, `AerodromeV2Builder`, `CamelotBuilder` inherit)
+- **`V2BuilderBase`** — helpers: `decode_immutable_data`, `extract_db_values`, `resolve_deployer_and_init_hash` (`V2PoolBuilder` inherits; `AerodromeV2Builder` inherits). ADR-005 slice 7 step 4b folded the deleted `CamelotBuilder`'s 4 on-chain fetches (`stableSwap()`/`FEE_DENOMINATOR()`/`token0FeePercent()`/`token1FeePercent()`) + the stable-preset switch into `V2PoolBuilder.build` as a branch keyed on `dex.variant.startswith("camelot-v2")` (helper `_fetch_camelot_state` + `CamelotStateFetch` dataclass).
 - **`V3BuilderBase`** — helpers: `decode_immutable_data`, `decode_slot0`, `extract_db_values`, `load_tick_snapshot`, `resolve_tick_data_args`; frozen dataclasses `V3ImmutableData`, `V3Slot0Data`, `V3DbValues` (`V3PoolBuilder` inherits; `AsyncV3PoolBuilder` calls static methods)
 - **`V4BuilderBase`** — helpers: `decode_slot0`, `extract_db_values`, `load_tick_snapshot`, `resolve_tick_data_args`; frozen dataclasses `V4Slot0Data`, `V4DbValues` (`V4PoolBuilder` inherits; `AsyncV4PoolBuilder` calls static methods)
 - **`BalancerBuilderBase`** — helpers: `decode_pool_id`, `decode_vault_tokens`, `detect_bpt_index`, `resolve_invariant_version`, `_fetch_pool_id`, `_fetch_vault_tokens`, `_fetch_swap_fee`, `_fetch_weights`, `_fetch_amp`, `_fetch_rate_providers`, `_fetch_rates`, `_detect_pool_type`; frozen dataclasses `DecodedPoolId`, `VaultTokensResult`, `_BalancerPoolType` enum (`BalancerBuilder` inherits; future `AsyncBalancerBuilder` calls static methods)

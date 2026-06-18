@@ -135,7 +135,7 @@ The following were previously module-level singletons; they are now classes inst
 
 - ✅ "Create a `ConnectionManager` instance and pass it to Bot"
 - ✅ "Bot's `connections` attribute is a `ConnectionManager`"
-- ✅ "The `pool_type_registry` maps SushiSwap's factory to `SushiswapV2Pool`"
+- ✅ "The `pool_type_registry` maps SushiSwap's factory to a `LiquidityPool` registration carrying the `sushiswap-v2` `DexIdentity` preset + `variant="sushiswap"` (post slice-7 collapse — the per-DEX `SushiswapV2Pool` subclass is deleted)"
 - ❌ "Import the connection_manager" (the module-level singleton no longer exists)
 
 ## Example dialogue
