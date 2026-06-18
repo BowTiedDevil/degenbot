@@ -30,7 +30,7 @@ from degenbot.builders.type_resolution import (
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
@@ -51,7 +51,7 @@ class TestPoolClassForDescriptor:
             factory=None,
         )
         result = pool_class_for_descriptor(descriptor, chain_id=CHAIN_ID)
-        assert result is UniswapV2Pool
+        assert result is LiquidityPool
 
     def test_concentrated_liquidity_returns_v3_class(self) -> None:
         descriptor = PoolTypeDescriptor(
@@ -84,7 +84,7 @@ class TestPoolClassForDescriptor:
             factory=factory,  # type: ignore[arg-type]
         )
         result = pool_class_for_descriptor(descriptor, chain_id=CHAIN_ID)
-        assert issubclass(result, UniswapV2Pool)
+        assert issubclass(result, LiquidityPool)
 
 
 class FakeSyncProvider:

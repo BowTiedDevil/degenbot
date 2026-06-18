@@ -2,10 +2,10 @@
 
 from typing import ClassVar
 
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 
 
-class SwapbasedV2Pool(UniswapV2Pool):
+class SwapbasedV2Pool(LiquidityPool):
     """SwapbasedV2Pool class."""
 
     variant: ClassVar[str | None] = "swapbased"

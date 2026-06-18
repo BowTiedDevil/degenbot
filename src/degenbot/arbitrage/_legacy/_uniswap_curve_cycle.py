@@ -47,14 +47,14 @@ from degenbot.types.concrete import (
     TextMessage,
 )
 from degenbot.uniswap.types import UniswapPoolSwapVector
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import UniswapV3PoolState
 
 type CurveOrUniswapPoolState = UniswapV2PoolState | UniswapV3PoolState | CurveStableswapPoolState
-type CurveOrUniswapPool = UniswapV2Pool | UniswapV3Pool | CurveStableswapPool
+type CurveOrUniswapPool = LiquidityPool | UniswapV3Pool | CurveStableswapPool
 type CurveOrUniswapSwapAmount = (
     CurveStableSwapPoolSwapAmounts | UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts
 )
@@ -105,7 +105,7 @@ class _UniswapCurveCycle(PublisherMixin):
         swap_vectors: list[CurveStableSwapPoolVector | UniswapPoolSwapVector] = []
         for i, pool in enumerate(self.swap_pools):
             match pool:
-                case UniswapV2Pool() | UniswapV3Pool():
+                case LiquidityPool() | UniswapV3Pool():
                     if i == 0:
                         match self.input_token:
                             case pool.token0:
@@ -221,7 +221,7 @@ class _UniswapCurveCycle(PublisherMixin):
 
             try:
                 match pool, pool_state_override, swap_vector:
-                    case UniswapV2Pool(), UniswapV2PoolState() | None, UniswapPoolSwapVector():
+                    case LiquidityPool(), UniswapV2PoolState() | None, UniswapPoolSwapVector():
                         working_token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                             token_in=swap_vector.token_in,
                             token_in_quantity=working_token_in_quantity,
@@ -373,7 +373,7 @@ class _UniswapCurveCycle(PublisherMixin):
             pool_state = state_overrides.get(pool.address) or pool.state
 
             match pool, pool_state, vector:
-                case UniswapV2Pool(), UniswapV2PoolState(), UniswapPoolSwapVector():
+                case LiquidityPool(), UniswapV2PoolState(), UniswapPoolSwapVector():
                     if pool_state.reserves_token0 == 0 or pool_state.reserves_token1 == 0:
                         raise NoLiquidity(message=f"V2 pool {pool.address} has no liquidity")
                     if pool_state.reserves_token1 == 1 and vector.zero_for_one:
@@ -477,7 +477,7 @@ class _UniswapCurveCycle(PublisherMixin):
 
                 try:
                     match pool, pool_override:
-                        case UniswapV2Pool(), UniswapV2PoolState() | None:
+                        case LiquidityPool(), UniswapV2PoolState() | None:
                             token_out_quantity = pool.calculate_tokens_out_from_tokens_in(
                                 token_in=swap_vector.token_in,
                                 token_in_quantity=token_in_quantity
@@ -707,7 +707,7 @@ class _UniswapCurveCycle(PublisherMixin):
                 next_pool = None
 
             match next_pool:
-                case UniswapV2Pool():
+                case LiquidityPool():
                     # V2 pools require a pre-swap transfer, so the contract does not have to
                     # perform intermediate custody and the swap can send the tokens directly to the
                     # next pool
@@ -723,7 +723,7 @@ class _UniswapCurveCycle(PublisherMixin):
                     raise DegenbotValueError(message=f"Unknown pool type {next_pool}")
 
             match i, swap_pool, amounts:
-                case 0, UniswapV2Pool() as first_pool, _:
+                case 0, LiquidityPool() as first_pool, _:
                     # Special case: If first pool is type V2, input token must be transferred prior
                     # to the swap
                     logger.debug(
@@ -746,7 +746,7 @@ class _UniswapCurveCycle(PublisherMixin):
                         ),
                         msg_value,
                     ))
-                case _, UniswapV2Pool(), UniswapV2PoolSwapAmounts():
+                case _, LiquidityPool(), UniswapV2PoolSwapAmounts():
                     if amounts.amounts_out[0] == 0:
                         token_in = swap_pool.token0
                         token_out = swap_pool.token1
@@ -890,7 +890,7 @@ class _UniswapCurveCycle(PublisherMixin):
                             ),
                             msg_value,
                         ))
-                    if isinstance(next_pool, UniswapV2Pool):
+                    if isinstance(next_pool, LiquidityPool):
                         logger.debug(
                             f"PAYLOAD: transferring {amounts.min_amount_out} {amounts.token_out} to V2 pool {next_pool}"
                         )

@@ -37,15 +37,10 @@ import pathlib
 import pytest
 from web3 import Web3
 
-from degenbot.anvil_fork import AnvilFork
 from contracts.cmd_stream import (
-    AddressTable,
     compute_simulation_warmup_slots,
-    enc_erc20_transfer,
-    enc_v4_mint_compact,
-    enc_v4_settle,
-    enc_v4_sync,
 )
+from degenbot.anvil_fork import AnvilFork
 
 # ── Constants ──
 
@@ -77,8 +72,7 @@ def _load_runtime_bytecode() -> bytes:
     if not bytecode_path.exists():
         pytest.skip("cmd_executor_runtime_bytecode.txt not found")
     hex_str = bytecode_path.read_text().strip()
-    if hex_str.startswith("0x"):
-        hex_str = hex_str[2:]
+    hex_str = hex_str.removeprefix("0x")
     return bytes.fromhex(hex_str)
 
 
@@ -143,7 +137,7 @@ def _reset_per_test(fork: AnvilFork):
     fork.set_code(EXECUTOR_ADDRESS, runtime_bytecode)
     fork.set_balance(EXECUTOR_ADDRESS, 10 * 10**18)
     fork.set_balance(EXECUTOR_OWNER, 10 * 10**18)
-    yield
+    return
 
 
 # ── Tests ──
@@ -182,7 +176,7 @@ def test_slot_positions_verified_after_initialize(fork: AnvilFork, w3: Web3):
 
     # Call initialize()
     receipt = _call_initialize(w3)
-    assert receipt["status"] == 1, f"initialize() reverted"
+    assert receipt["status"] == 1, "initialize() reverted"
 
     # Read slots AFTER initialize
     erc6909_weth_after = int.from_bytes(
@@ -198,7 +192,7 @@ def test_slot_positions_verified_after_initialize(fork: AnvilFork, w3: Web3):
         "big",
     )
 
-    print(f"\n  Slot verification:")
+    print("\n  Slot verification:")
     print(f"    ERC6909 WETH:  {erc6909_weth_before} → {erc6909_weth_after}")
     print(f"    ERC6909 Native: → {erc6909_native_after}")
     print(f"    WETH balance:  → {weth_balance_after}")
@@ -215,7 +209,7 @@ def test_slot_positions_verified_after_initialize(fork: AnvilFork, w3: Web3):
     # WETH ERC20 balance should be 0 (deposited 1, sent 1 to PM)
     assert weth_balance_after == 0
 
-    print(f"  ✅ All slot positions verified")
+    print("  ✅ All slot positions verified")
 
     fork.return_to_snapshot(snapshot)
 
@@ -248,12 +242,12 @@ def test_initialize_gas_cold_sstore(fork: AnvilFork, w3: Web3):
 
     print(f"\n  Gas (cold slots):  {gas_cold:,}")
     print(f"  ERC6909 WETH slot confirmed: {slot_val}")
-    print(f"  ✅ initialize() writes to the computed ERC6909 slot position")
+    print("  ✅ initialize() writes to the computed ERC6909 slot position")
     print()
-    print(f"  Gas savings from warmup slots (via eth_simulateV1 stateDiff):")
-    print(f"    Per cold SSTORE (0→1 → already-1): ~22,100 gas")
-    print(f"    Slots warmed: 2-3 (WETH balanceOf, ERC6909 WETH, ERC6909 native)")
-    print(f"    Total expected savings: ~48,000–66,000 gas")
+    print("  Gas savings from warmup slots (via eth_simulateV1 stateDiff):")
+    print("    Per cold SSTORE (0→1 → already-1): ~22,100 gas")
+    print("    Slots warmed: 2-3 (WETH balanceOf, ERC6909 WETH, ERC6909 native)")
+    print("    Total expected savings: ~48,000–66,000 gas")
 
     assert slot_val == 1
 
@@ -287,7 +281,7 @@ def test_weth_slot_matches_existing_code(fork: AnvilFork, w3: Web3):
         f"but existing backrun script uses slot {existing_slot}"
     )
 
-    print(f"\n  ✅ WETH balanceOf slot matches existing eth_backrun code")
+    print("\n  ✅ WETH balanceOf slot matches existing eth_backrun code")
 
 
 def test_simulate_v1_gas_comparison(fork: AnvilFork):
@@ -303,7 +297,6 @@ def test_simulate_v1_gas_comparison(fork: AnvilFork):
 
     Note: Requires the RPC node to support eth_simulateV1 (EIP-7931).
     """
-    from eth_abi import encode as abi_encode
 
     # eth_simulateV1 requires HTTP (not IPC) — create a raw HTTP provider
     # from the Anvil fork's HTTP URL.
@@ -369,7 +362,7 @@ def test_simulate_v1_gas_comparison(fork: AnvilFork):
         call_result = raw["result"][0]["calls"][0]
         status = int(call_result["status"], 16)
         if status != 1:
-            pytest.fail(f"initialize() reverted in simulation")
+            pytest.fail("initialize() reverted in simulation")
 
         return int(call_result["gasUsed"], 16)
 
@@ -422,4 +415,4 @@ def test_pm_erc6909_slot_at_base_slot_4():
 
     print(f"\n  balanceOf at slot 1 (WRONG): 0x{slot_at_1:064x}")
     print(f"  balanceOf at slot 4 (CORRECT): 0x{slot_at_4:064x}")
-    print(f"  ✅ Using slot 4 for PoolManager ERC6909 balanceOf")
+    print("  ✅ Using slot 4 for PoolManager ERC6909 balanceOf")

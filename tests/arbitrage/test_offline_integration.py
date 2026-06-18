@@ -26,11 +26,10 @@ from fractions import Fraction
 import pytest
 
 from degenbot.arbitrage._legacy import _UniswapLpCycle as UniswapLpCycle
-from tests.helpers.v2_pool_factory import make_v2_pool
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions.arbitrage import ArbitrageError, RateOfExchangeBelowMinimum
 from degenbot.exceptions.base import DegenbotValueError
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v2_types import (
     UniswapV2PoolExternalUpdate,
     UniswapV2PoolState,
@@ -39,6 +38,7 @@ from degenbot.uniswap.v2_types import (
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.fakes.subscribers import FakeSubscriber
 from tests.fakes.tokens import FakeToken
+from tests.helpers.v2_pool_factory import make_v2_pool
 
 # ==============================================================================
 # Token and Pool Constants
@@ -77,7 +77,7 @@ def ether_placeholder() -> FakeToken:
 
 
 @pytest.fixture
-def wbtc_weth_v2_lp(wbtc: FakeToken, weth: FakeToken) -> UniswapV2Pool:
+def wbtc_weth_v2_lp(wbtc: FakeToken, weth: FakeToken) -> LiquidityPool:
     """V2 WBTC/WETH pool matching the integration test fixture."""
     return make_v2_pool(
         address=WBTC_WETH_V2_POOL_ADDRESS,
@@ -118,7 +118,7 @@ class TestConstruction:
 
     def test_create_cycle_with_either_token_input(
         self,
-        wbtc_weth_v2_lp: UniswapV2Pool,
+        wbtc_weth_v2_lp: LiquidityPool,
         wbtc_weth_v3_lp: UniswapV3Pool,
         weth: FakeToken,
         wbtc: FakeToken,
@@ -147,7 +147,7 @@ class TestConstruction:
 
     def test_create_two_pool_cycle_with_pools_in_any_order(
         self,
-        wbtc_weth_v2_lp: UniswapV2Pool,
+        wbtc_weth_v2_lp: LiquidityPool,
         wbtc_weth_v3_lp: UniswapV3Pool,
         weth: FakeToken,
     ):
@@ -177,7 +177,7 @@ class TestConstruction:
 
     def test_no_max_input_defaults(
         self,
-        wbtc_weth_v2_lp: UniswapV2Pool,
+        wbtc_weth_v2_lp: LiquidityPool,
         wbtc_weth_v3_lp: UniswapV3Pool,
         weth: FakeToken,
     ):
@@ -191,7 +191,7 @@ class TestConstruction:
 
     def test_zero_max_input_raises(
         self,
-        wbtc_weth_v2_lp: UniswapV2Pool,
+        wbtc_weth_v2_lp: LiquidityPool,
         wbtc_weth_v3_lp: UniswapV3Pool,
         weth: FakeToken,
     ):
@@ -206,7 +206,7 @@ class TestConstruction:
 
     def test_duplicate_pools_rejected(
         self,
-        wbtc_weth_v2_lp: UniswapV2Pool,
+        wbtc_weth_v2_lp: LiquidityPool,
         weth: FakeToken,
     ):
         """Duplicate pools in swap_pools are rejected."""
@@ -320,7 +320,7 @@ class TestDirectionDetection:
 
     def test_v2_state_override_creates_profitable_opportunity(
         self,
-        wbtc_weth_v2_lp: UniswapV2Pool,
+        wbtc_weth_v2_lp: LiquidityPool,
         wbtc: FakeToken,
         weth: FakeToken,
     ):
@@ -580,7 +580,7 @@ class TestSubscriptions:
 
     def test_arbitrage_helper_subscriptions(
         self,
-        wbtc_weth_v2_lp: UniswapV2Pool,
+        wbtc_weth_v2_lp: LiquidityPool,
         wbtc_weth_v3_lp: UniswapV3Pool,
         weth: FakeToken,
     ):
@@ -600,7 +600,7 @@ class TestSubscriptions:
 
     def test_pool_helper_unsubscriptions(
         self,
-        wbtc_weth_v2_lp: UniswapV2Pool,
+        wbtc_weth_v2_lp: LiquidityPool,
         wbtc_weth_v3_lp: UniswapV3Pool,
         weth: FakeToken,
     ):
@@ -626,7 +626,7 @@ class TestSubscriptions:
 
     def test_pool_state_update_notifies_subscribers(
         self,
-        wbtc_weth_v2_lp: UniswapV2Pool,
+        wbtc_weth_v2_lp: LiquidityPool,
     ):
         """Pool state updates notify subscribers.
 
@@ -662,7 +662,7 @@ class TestEdgeCases:
 
     def test_pickle_cycle(
         self,
-        wbtc_weth_v2_lp: UniswapV2Pool,
+        wbtc_weth_v2_lp: LiquidityPool,
         wbtc_weth_v3_lp: UniswapV3Pool,
         weth: FakeToken,
     ):
@@ -750,9 +750,9 @@ class TestEdgeCases:
 
 
 class TestV2PoolAccuracy:
-    """Verify UniswapV2Pool calculations match the Uniswap V2 constant product formula.
+    """Verify LiquidityPool calculations match the Uniswap V2 constant product formula.
 
-    Since UniswapV2Pool inherits from UniswapV2Pool, its calculation methods
+    Since LiquidityPool inherits from LiquidityPool, its calculation methods
     should produce identical results to the real pool class.
     """
 
@@ -761,7 +761,7 @@ class TestV2PoolAccuracy:
         usdc: FakeToken,
         weth: FakeToken,
     ):
-        """UniswapV2Pool swap calculation matches manual V2 formula."""
+        """LiquidityPool swap calculation matches manual V2 formula."""
         pool = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             token0=usdc,
@@ -796,7 +796,7 @@ class TestV2PoolAccuracy:
         usdc: FakeToken,
         weth: FakeToken,
     ):
-        """UniswapV2Pool reverse swap (WETH for USDC) matches manual formula."""
+        """LiquidityPool reverse swap (WETH for USDC) matches manual formula."""
         pool = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             token0=usdc,
@@ -832,7 +832,7 @@ class TestV2PoolAccuracy:
         usdc: FakeToken,
         weth: FakeToken,
     ):
-        """UniswapV2Pool exchange rate matches manual calculation."""
+        """LiquidityPool exchange rate matches manual calculation."""
         pool = make_v2_pool(
             address="0x0000000000000000000000000000000000000001",
             token0=usdc,

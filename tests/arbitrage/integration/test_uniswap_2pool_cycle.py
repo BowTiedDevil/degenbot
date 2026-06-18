@@ -11,7 +11,7 @@ from degenbot.erc20.ether_placeholder import EtherPlaceholder
 from degenbot.exceptions.arbitrage import RateOfExchangeBelowMinimum
 from degenbot.provider import ProviderAdapter
 from degenbot.registry import TokenRegistry
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from tests.helpers.bot_factory import make_bot_with_provider
@@ -64,7 +64,7 @@ def ether_placeholder(fork_mainnet_full: AnvilFork) -> Erc20Token:
 
 
 @pytest.fixture
-def wbtc_weth_v2_lp(fork_mainnet_full: AnvilFork) -> UniswapV2Pool:
+def wbtc_weth_v2_lp(fork_mainnet_full: AnvilFork) -> LiquidityPool:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
     return bot.build_pool(WBTC_WETH_V2_POOL_ADDRESS)
 
@@ -91,7 +91,7 @@ def wbtc_ether_v4_lp(fork_mainnet_full: AnvilFork) -> UniswapV4Pool:
 @pytest.fixture
 def arb_v4_v2(
     wbtc_ether_v4_lp: UniswapV3Pool,
-    wbtc_weth_v2_lp: UniswapV2Pool,
+    wbtc_weth_v2_lp: LiquidityPool,
     ether_placeholder: EtherPlaceholder,
 ):
     return _UniswapTwoPoolCycleTesting(
@@ -107,7 +107,7 @@ def arb_v4_v2(
 
 @pytest.fixture
 def arb_v2_v4(
-    wbtc_weth_v2_lp: UniswapV2Pool,
+    wbtc_weth_v2_lp: LiquidityPool,
     wbtc_ether_v4_lp: UniswapV3Pool,
     weth: Erc20Token,
 ):
@@ -123,7 +123,7 @@ def arb_v2_v4(
 
 
 def test_create_arb_with_either_token_input_or_pools_in_any_order(
-    wbtc_weth_v2_lp: UniswapV2Pool,
+    wbtc_weth_v2_lp: LiquidityPool,
     wbtc_ether_v4_lp: UniswapV4Pool,
     ether_placeholder: Erc20Token,
     weth: Erc20Token,
@@ -185,7 +185,7 @@ def test_v2_v4_calculation(
     arb = arb_v2_v4
     v2_pool, v4_pool = arb.swap_pools
 
-    assert isinstance(v2_pool, UniswapV2Pool)
+    assert isinstance(v2_pool, LiquidityPool)
     assert isinstance(v4_pool, UniswapV4Pool)
 
     # Manipulate the V2 reserves by donating WBTC to create an opportunity:
@@ -213,7 +213,7 @@ def test_v2_v4_calculation_rejects_unprofitable_opportunity(arb_v2_v4: _UniswapT
     arb = arb_v2_v4
 
     v2_pool, _ = arb.swap_pools
-    assert isinstance(v2_pool, UniswapV2Pool)
+    assert isinstance(v2_pool, LiquidityPool)
 
     # Manipulate the V2 reserves by donating 100 WETH, which creates a V2 ROE > V4 ROE opportunity
     assert v2_pool.token1 == WETH_ADDRESS
@@ -237,7 +237,7 @@ def test_v4_v2_calculation(
     arb = arb_v4_v2
     v4_pool, v2_pool = arb.swap_pools
 
-    assert isinstance(v2_pool, UniswapV2Pool)
+    assert isinstance(v2_pool, LiquidityPool)
     assert isinstance(v4_pool, UniswapV4Pool)
 
     # Manipulate the V2 reserves by donating WETH to create an opportunity:
@@ -266,7 +266,7 @@ def test_v4_v2_calculation_rejects_unprofitable_opportunity(arb_v4_v2: _UniswapT
 
     _, v2_pool = arb.swap_pools
 
-    assert isinstance(v2_pool, UniswapV2Pool)
+    assert isinstance(v2_pool, LiquidityPool)
 
     # Manipulate the V2 reserves by donating WBTC, which creates a V4 ROE > V2 ROE opportunity
     assert v2_pool.token0 == WBTC_ADDRESS

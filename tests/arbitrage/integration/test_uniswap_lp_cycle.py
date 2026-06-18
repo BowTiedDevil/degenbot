@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING
 import pytest
 
 from degenbot.anvil_fork import AnvilFork
-from tests.helpers.v2_pool_factory import make_v2_pool
 from degenbot.arbitrage._legacy import _UniswapLpCycle as UniswapLpCycle
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.erc20.erc20 import Erc20Token
@@ -24,7 +23,7 @@ from degenbot.exceptions.arbitrage import (
 )
 from degenbot.provider import ProviderAdapter
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v2_types import (
     UniswapV2PoolExternalUpdate,
     UniswapV2PoolState,
@@ -38,6 +37,7 @@ from degenbot.uniswap.v3_types import (
 )
 from tests.fakes.subscribers import FakeSubscriber
 from tests.helpers.bot_factory import make_bot_with_provider
+from tests.helpers.v2_pool_factory import make_v2_pool
 
 if TYPE_CHECKING:
     from degenbot.arbitrage._legacy._uniswap_lp_cycle import Pool, PoolState
@@ -69,7 +69,7 @@ def weth_token(_bot) -> Erc20Token:
 @pytest.fixture
 def wbtc_weth_v2_lp(
     _bot,
-) -> UniswapV2Pool:
+) -> LiquidityPool:
     pool = _bot.build_pool(WBTC_WETH_V2_POOL_ADDRESS)
     pool.external_update(
         UniswapV2PoolExternalUpdate(
@@ -124,7 +124,7 @@ def wbtc_weth_v3_lp(_bot) -> UniswapV3Pool:
 
 @pytest.fixture
 def wbtc_weth_arb(
-    wbtc_weth_v2_lp: UniswapV2Pool,
+    wbtc_weth_v2_lp: LiquidityPool,
     wbtc_weth_v3_lp: UniswapV3Pool,
     weth_token: Erc20Token,
 ):
@@ -137,7 +137,7 @@ def wbtc_weth_arb(
 
 
 def test_create_with_either_token_input(
-    wbtc_weth_v2_lp: UniswapV2Pool,
+    wbtc_weth_v2_lp: LiquidityPool,
     wbtc_weth_v3_lp: UniswapV3Pool,
     weth_token: Erc20Token,
     wbtc_token: Erc20Token,
@@ -158,7 +158,7 @@ def test_create_with_either_token_input(
 
 def test_arbitrage_with_overrides(
     wbtc_weth_arb: UniswapLpCycle,
-    wbtc_weth_v2_lp: UniswapV2Pool,
+    wbtc_weth_v2_lp: LiquidityPool,
     wbtc_weth_v3_lp: UniswapV3Pool,
     weth_token: Erc20Token,
     wbtc_token: Erc20Token,
@@ -425,7 +425,7 @@ def test_pre_calc_check(weth_token: Erc20Token, wbtc_token: Erc20Token):
 
 
 def test_bad_pool_in_constructor(
-    wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: UniswapV3Pool, weth_token: Erc20Token
+    wbtc_weth_v2_lp: LiquidityPool, wbtc_weth_v3_lp: UniswapV3Pool, weth_token: Erc20Token
 ):
     with pytest.raises(
         DegenbotValueError, match=f"Incompatible pool type \\({type(None)}\\) provided."
@@ -439,7 +439,7 @@ def test_bad_pool_in_constructor(
 
 
 def test_no_max_input(
-    wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: UniswapV3Pool, weth_token: Erc20Token
+    wbtc_weth_v2_lp: LiquidityPool, wbtc_weth_v3_lp: UniswapV3Pool, weth_token: Erc20Token
 ):
     arb = UniswapLpCycle(
         id="test_arb",
@@ -450,7 +450,7 @@ def test_no_max_input(
 
 
 def test_zero_max_input(
-    wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: UniswapV3Pool, weth_token: Erc20Token
+    wbtc_weth_v2_lp: LiquidityPool, wbtc_weth_v3_lp: UniswapV3Pool, weth_token: Erc20Token
 ):
     with pytest.raises(DegenbotValueError, match=r"Maximum input must be positive."):
         UniswapLpCycle(
@@ -462,7 +462,7 @@ def test_zero_max_input(
 
 
 def test_arbitrage_helper_subscriptions(
-    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: UniswapV3Pool
+    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v2_lp: LiquidityPool, wbtc_weth_v3_lp: UniswapV3Pool
 ):
     assert wbtc_weth_arb in wbtc_weth_v2_lp._subscribers
     assert wbtc_weth_arb in wbtc_weth_v3_lp._subscribers
@@ -503,7 +503,7 @@ def test_arbitrage_helper_subscriptions(
 
 
 def test_pool_helper_unsubscriptions(
-    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v2_lp: UniswapV2Pool, wbtc_weth_v3_lp: UniswapV3Pool
+    wbtc_weth_arb: UniswapLpCycle, wbtc_weth_v2_lp: LiquidityPool, wbtc_weth_v3_lp: UniswapV3Pool
 ):
     assert wbtc_weth_arb in wbtc_weth_v2_lp._subscribers
     assert wbtc_weth_arb in wbtc_weth_v3_lp._subscribers

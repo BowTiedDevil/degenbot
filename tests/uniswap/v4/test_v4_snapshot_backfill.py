@@ -5,7 +5,6 @@ applied to V4 pools and the resulting tick_data can be serialized for the
 Rust engine's process_block call.
 """
 
-import dataclasses
 
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
 from degenbot.uniswap.v4_types import UniswapV4PoolLiquidityMappingUpdate

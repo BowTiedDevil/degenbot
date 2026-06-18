@@ -29,7 +29,7 @@ A Registry is a simple lookup table. A Pool Tracker (e.g., `UniswapV2PoolTracker
 
 **Ruling: Bot-owned registries hold *instances*. The Pool Type Registry holds *class mappings + deployment data*.**
 
-- ✅ "The **Pool Registry** contains the UniswapV2Pool instance for 0xBb2b…"
+- ✅ "The **Pool Registry** contains the LiquidityPool instance for 0xBb2b…"
 - ✅ "The **Pool Type Registry** maps SushiSwap's factory to the SushiswapV2Pool class"
 - ❌ "The Pool Registry maps the factory to the class" (that's the **Pool Type Registry**)
 

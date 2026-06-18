@@ -205,7 +205,7 @@ class V2PoolBuilder:
     def build(self, pool_address, *, chain_id, ...):
         provider = self._connections.get_provider(chain_id)  # Builder handles I/O
         ...
-        pool = UniswapV2Pool(
+        pool = LiquidityPool(
             address=pool_address,
             token0=token0, token1=token1,
             reserves_token0=reserves0, reserves_token1=reserves1,

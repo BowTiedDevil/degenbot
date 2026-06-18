@@ -18,7 +18,7 @@ from degenbot.constants import ZERO_ADDRESS
 from degenbot.degenbot_rs import PyBot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider.call_helpers import encode_function_calldata
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from tests.helpers.erc20_factory import make_erc20
@@ -178,7 +178,7 @@ class TestAsyncBotBuildPoolV2:
 
         pool = await bot.build_pool(USDC_WETH_V2_POOL, chain_id=1)
 
-        assert isinstance(pool, UniswapV2Pool)
+        assert isinstance(pool, LiquidityPool)
         assert pool.address == get_checksum_address(USDC_WETH_V2_POOL)
 
 

@@ -30,7 +30,7 @@ class PoolInvariant(Enum):
 class ConstantProductHop:
     """A constant-product (x*y=k) pool hop.
 
-    For V2 pools: UniswapV2Pool, AerodromeV2Pool (volatile), CamelotLiquidityPool.
+    For V2 pools: LiquidityPool, AerodromeV2Pool (volatile), CamelotLiquidityPool.
     Supports asymmetric fees via fee_out (Camelot has different fees per direction).
     """
 

@@ -1,10 +1,10 @@
 from fractions import Fraction
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
-from tests.helpers.v2_pool_factory import make_v2_pool
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.fakes.tokens import FakeToken
+from tests.helpers.v2_pool_factory import make_v2_pool
 
 
 def _make_token(address: str, decimals: int = 18) -> FakeToken:
@@ -18,7 +18,7 @@ def _make_v2_pool(
     reserve1: int = 2 * 10**18,
     fee: Fraction = Fraction(3, 1000),
     address: str = "0x0000000000000000000000000000000000000001",
-) -> UniswapV2Pool:
+) -> LiquidityPool:
     return make_v2_pool(
         address=address,  # type: ignore[arg-type]
         token0=token0,  # type: ignore[arg-type]

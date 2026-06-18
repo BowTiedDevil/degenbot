@@ -17,8 +17,8 @@ from hexbytes import HexBytes
 from degenbot.contract.addresses import create2_address
 
 if TYPE_CHECKING:
+    from degenbot.uniswap.liquidity_pool import LiquidityPool
     from degenbot.uniswap.trackers import UniswapV2PoolTracker
-    from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 
 def generate_v2_pool_address(
@@ -56,21 +56,21 @@ def generate_v2_pool_address(
 def get_v2_pools_from_token_path(
     tx_path: Iterable[ChecksumAddress | str],
     pool_tracker: "UniswapV2PoolTracker",
-) -> list["UniswapV2Pool"]:
+) -> list["LiquidityPool"]:
     """Return v2 pools from token path.
 
     Returns:
         A list of V2 pool instances for each consecutive token pair.
 
     """
-    result: list[UniswapV2Pool] = []
+    result: list[LiquidityPool] = []
     for token_addresses in itertools.pairwise(tx_path):
         pool = pool_tracker.get_pool_from_tokens(
             token_addresses=token_addresses,
             silent=True,
         )
         if TYPE_CHECKING:
-            assert isinstance(pool, UniswapV2Pool)
+            assert isinstance(pool, LiquidityPool)
         result.append(pool)
     return result
 

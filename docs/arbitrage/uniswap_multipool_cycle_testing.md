@@ -15,7 +15,7 @@ related_files:
   - ../../src/degenbot/arbitrage/_legacy/_uniswap_curve_cycle.py
   - ../../src/degenbot/arbitrage/path/arbitrage_path.py
   - ../../src/degenbot/arbitrage/types.py
-  - ../../src/degenbot/uniswap/v2_liquidity_pool.py
+  - ../../src/degenbot/uniswap/liquidity_pool.py
   - ../../src/degenbot/aerodrome/pools.py
 complexity: complex
 ---
@@ -255,7 +255,7 @@ for i in reversed(range(len(pools))):
 - [`uniswap_2pool_cycle_testing.py`](../../src/degenbot/arbitrage/uniswap_2pool_cycle_testing.py) - Two-pool variant with simpler optimization
 - [`uniswap_curve_cycle.py`](../../src/degenbot/arbitrage/uniswap_curve_cycle.py) - Curve pool variant with different constraints
 - [`types.py`](../../src/degenbot/arbitrage/types.py) - `ArbitrageCalculationResult`, `UniswapV2PoolSwapAmounts`
-- [`v2_liquidity_pool.py`](../../src/degenbot/uniswap/v2_liquidity_pool.py) - `UniswapV2Pool` implementation
+- [`liquidity_pool.py`](../../src/degenbot/uniswap/liquidity_pool.py) - `LiquidityPool` implementation
 - [`pools.py`](../../src/degenbot/aerodrome/pools.py) - `AerodromeV2Pool` implementation
 
 ## External References

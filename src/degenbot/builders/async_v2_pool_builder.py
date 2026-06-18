@@ -16,7 +16,7 @@ from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.registry.pool_type import pool_type_registry
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 
 if TYPE_CHECKING:
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 class AsyncV2PoolBuilder:
     """Async counterpart of V2PoolBuilder.
 
-    Builds UniswapV2Pool instances using AsyncPoolIO for I/O.
+    Builds LiquidityPool instances using AsyncPoolIO for I/O.
     Shares pure decode/resolve logic with V2BuilderBase via static methods.
     """
 
@@ -122,7 +122,7 @@ class AsyncV2PoolBuilder:
         deployer, resolved_init_hash = V2BuilderBase.resolve_deployer_and_init_hash(
             chain_id=chain_id,
             factory=factory,
-            default_init_hash=UniswapV2Pool.UNISWAP_V2_MAINNET_POOL_INIT_HASH,
+            default_init_hash=LiquidityPool.UNISWAP_V2_MAINNET_POOL_INIT_HASH,
         )
 
         return V2CommonData(
@@ -229,7 +229,7 @@ class AsyncV2PoolBuilder:
 
         """
         assert io is not None, "io must be provided for update()"
-        if not isinstance(pool, UniswapV2Pool):
+        if not isinstance(pool, LiquidityPool):
             msg = f"AsyncV2PoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)
 

@@ -12,7 +12,7 @@ from degenbot.degenbot_rs import PyBot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider import OfflineProvider, ProviderAdapter
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from tests.constants import (
     UNISWAP_V2_FACTORY_ETH,
     UNISWAP_V2_WBTC_WETH_POOL,
@@ -49,19 +49,19 @@ def offline_adapter(offline_provider: OfflineProvider) -> ProviderAdapter:
 
 
 @pytest.fixture
-def offline_wbtc(offline_wbtc_weth_v2_pool: UniswapV2Pool) -> Erc20Token:
+def offline_wbtc(offline_wbtc_weth_v2_pool: LiquidityPool) -> Erc20Token:
     """Get WBTC token from the offline pool."""
     return offline_wbtc_weth_v2_pool.token0
 
 
 @pytest.fixture
-def offline_weth(offline_wbtc_weth_v2_pool: UniswapV2Pool) -> Erc20Token:
+def offline_weth(offline_wbtc_weth_v2_pool: LiquidityPool) -> Erc20Token:
     """Get WETH token from the offline pool."""
     return offline_wbtc_weth_v2_pool.token1
 
 
 @pytest.fixture
-def offline_wbtc_weth_v2_pool(offline_adapter: ProviderAdapter) -> UniswapV2Pool:
+def offline_wbtc_weth_v2_pool(offline_adapter: ProviderAdapter) -> LiquidityPool:
     """Provide WBTC-WETH V2 pool using offline provider."""
     # Construct I/O-free tokens
     wbtc = make_erc20(
@@ -101,8 +101,8 @@ def offline_wbtc_weth_v2_pool(offline_adapter: ProviderAdapter) -> UniswapV2Pool
         token0=wbtc,
         token1=weth,
         factory=UNISWAP_V2_FACTORY_ETH,
-        fee_token0=UniswapV2Pool.FEE,
-        fee_token1=UniswapV2Pool.FEE,
+        fee_token0=LiquidityPool.FEE,
+        fee_token1=LiquidityPool.FEE,
         reserves_token0=reserves0,
         reserves_token1=reserves1,
     )

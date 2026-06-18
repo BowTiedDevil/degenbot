@@ -1,7 +1,7 @@
 """Factory helpers for I/O-free V2 pool construction in tests.
 
 Mirrors ``tests/helpers/erc20_factory.py`` (slice 3): every direct
-``UniswapV2Pool(...)`` / V2-subclass construction in the test suite routes
+``LiquidityPool(...)`` / V2-subclass construction in the test suite routes
 through ``make_v2_pool`` so the ``PyLiquidityPool`` handle is wired through
 ``Bot::register_v2_pool`` → ``get_pool`` → companion, matching the
 ``Bot.build_pool()`` flow.
@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.degenbot_rs import PyBot, PyLiquidityPool
 from degenbot.erc20 import Erc20Token
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 
 if TYPE_CHECKING:
     from degenbot.types.aliases import ChainId
@@ -52,8 +52,8 @@ def make_v2_pool(
     deployer_address: str | None = None,
     init_hash: str | None = None,
     state_block: int = 0,
-    pool_class: type[UniswapV2Pool] = UniswapV2Pool,
-) -> UniswapV2Pool:
+    pool_class: type[LiquidityPool] = LiquidityPool,
+) -> LiquidityPool:
     """Construct an I/O-free V2-style pool companion over a fresh ``PyLiquidityPool`` handle.
 
     Each call creates its own short-lived ``PyBot`` (the returned handle holds
@@ -67,7 +67,7 @@ def make_v2_pool(
     ``Bot.build_pool()`` is the production path (registers in the session's
     shared ``_py_bot``); this helper is the test-only equivalent.
 
-    ``pool_class`` defaults to ``UniswapV2Pool``; subclasses like
+    ``pool_class`` defaults to ``LiquidityPool``; subclasses like
     ``SushiswapV2Pool`` inherit the companion ``__init__``.
     """
     address = get_checksum_address(address)

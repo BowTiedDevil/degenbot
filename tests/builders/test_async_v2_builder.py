@@ -21,7 +21,7 @@ from degenbot.database.models.pools import UniswapFeeMixin
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.erc20 import Erc20Token
 from degenbot.registry import PoolRegistry, TokenRegistry
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 
 # --- Fake async provider ---
 
@@ -122,11 +122,11 @@ class TestV2BuilderBaseDecodeHelpers:
 
 
 class TestAsyncV2PoolBuilder:
-    """AsyncV2PoolBuilder builds a UniswapV2Pool using AsyncPoolIO."""
+    """AsyncV2PoolBuilder builds a LiquidityPool using AsyncPoolIO."""
 
     @pytest.mark.asyncio
     async def test_async_v2_builder_builds_pool(self) -> None:
-        """AsyncV2PoolBuilder.build() produces a UniswapV2Pool using async I/O."""
+        """AsyncV2PoolBuilder.build() produces a LiquidityPool using async I/O."""
         provider = FakeAsyncProvider(_v2_common_responses())
         io = AsyncPoolIO(provider)
 
@@ -160,6 +160,6 @@ class TestAsyncV2PoolBuilder:
             io=io,
             request=BuildPoolRequest(silent=True),
         )
-        assert isinstance(pool, UniswapV2Pool)
+        assert isinstance(pool, LiquidityPool)
         assert pool.reserves_token0 == 1000
         assert pool.reserves_token1 == 2000

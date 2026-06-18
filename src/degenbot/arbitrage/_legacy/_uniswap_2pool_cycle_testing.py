@@ -50,7 +50,7 @@ from degenbot.exceptions.pool import (
     PossibleInaccurateResult,
 )
 from degenbot.logging import logger
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -226,7 +226,7 @@ def _build_convex_problem(num_pools: int) -> Problem:
     return problem
 
 
-type Pool = UniswapV2Pool | UniswapV3Pool | UniswapV4Pool | AerodromeV2Pool | AerodromeV3Pool
+type Pool = LiquidityPool | UniswapV3Pool | UniswapV4Pool | AerodromeV2Pool | AerodromeV3Pool
 type PoolState = UniswapV2PoolState | UniswapV3PoolState | UniswapV4PoolState | AerodromeV2PoolState
 type SwapAmount = UniswapV2PoolSwapAmounts | UniswapV3PoolSwapAmounts | UniswapV4PoolSwapAmounts
 type PoolId = bytes | HexStr
@@ -421,7 +421,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
         def _arb_profit_high_roe_v4_low_roe_v2(
             *,
             v4_pool: UniswapV4Pool,
-            v2_pool: AerodromeV2Pool | UniswapV2Pool,
+            v2_pool: AerodromeV2Pool | LiquidityPool,
             forward_token: Erc20Token,
             forward_token_amount: float,
             v4_pool_state_override: UniswapV4PoolState | None = None,
@@ -454,7 +454,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
             calc_start = time.perf_counter()
             match v2_pool, v2_pool_state_override:
-                case UniswapV2Pool(), UniswapV2PoolState() | None:
+                case LiquidityPool(), UniswapV2PoolState() | None:
                     weth_in = v2_pool.calculate_tokens_in_from_tokens_out(
                         token_out=forward_token,
                         token_out_quantity=forward_token_quantity,
@@ -542,7 +542,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
         def _arb_profit_high_roe_v3_low_roe_v2(
             *,
             v3_pool: UniswapV3Pool,
-            v2_pool: AerodromeV2Pool | UniswapV2Pool,
+            v2_pool: AerodromeV2Pool | LiquidityPool,
             forward_token: Erc20Token,
             forward_token_amount: float,
             v3_pool_state_override: UniswapV3PoolState | None = None,
@@ -575,7 +575,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
             calc_start = time.perf_counter()
             match v2_pool, v2_pool_state_override:
-                case UniswapV2Pool(), UniswapV2PoolState() | None:
+                case LiquidityPool(), UniswapV2PoolState() | None:
                     weth_in = v2_pool.calculate_tokens_in_from_tokens_out(
                         token_out=forward_token,
                         token_out_quantity=forward_token_quantity,
@@ -610,7 +610,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
         def _arb_profit_high_roe_v2_low_roe_v4(
             *,
             v4_pool: UniswapV4Pool,
-            v2_pool: AerodromeV2Pool | UniswapV2Pool,
+            v2_pool: AerodromeV2Pool | LiquidityPool,
             forward_token: Erc20Token,
             forward_token_amount: float,
             v4_pool_state_override: UniswapV4PoolState | None = None,
@@ -631,7 +631,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
             calc_out_start = time.perf_counter()
             match v2_pool, v2_pool_state_override:
-                case UniswapV2Pool(), UniswapV2PoolState() | None:
+                case LiquidityPool(), UniswapV2PoolState() | None:
                     weth_out = v2_pool.calculate_tokens_out_from_tokens_in(
                         token_in=forward_token,
                         token_in_quantity=forward_token_quantity,
@@ -678,7 +678,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
         def _arb_profit_high_roe_v2_low_roe_v3(
             *,
             v3_pool: UniswapV3Pool,
-            v2_pool: AerodromeV2Pool | UniswapV2Pool,
+            v2_pool: AerodromeV2Pool | LiquidityPool,
             forward_token: Erc20Token,
             forward_token_amount: float,
             v3_pool_state_override: UniswapV3PoolState | None = None,
@@ -699,7 +699,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
             calc_out_start = time.perf_counter()
             match v2_pool, v2_pool_state_override:
-                case UniswapV2Pool(), UniswapV2PoolState() | None:
+                case LiquidityPool(), UniswapV2PoolState() | None:
                     weth_out = v2_pool.calculate_tokens_out_from_tokens_in(
                         token_in=forward_token,
                         token_in_quantity=forward_token_quantity,
@@ -1259,7 +1259,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
         def _calculate_v4_v2(
             v4_pool: UniswapV4Pool,
-            v2_pool: AerodromeV2Pool | UniswapV2Pool,
+            v2_pool: AerodromeV2Pool | LiquidityPool,
             forward_token: Erc20Token,
             v4_pool_state_override: UniswapV4PoolState | None = None,
             v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
@@ -1383,7 +1383,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                         token_in_quantity=forward_token_amount,
                         override_state=v2_pool_state_override,
                     )
-                case UniswapV2Pool(), UniswapV2PoolState() | None:
+                case LiquidityPool(), UniswapV2PoolState() | None:
                     weth_out = v2_pool.calculate_tokens_out_from_tokens_in(
                         token_in=forward_token,
                         token_in_quantity=forward_token_amount,
@@ -1803,7 +1803,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             )
 
         def _calculate_v2_v3(
-            v2_pool: AerodromeV2Pool | UniswapV2Pool,
+            v2_pool: AerodromeV2Pool | LiquidityPool,
             v3_pool: UniswapV3Pool,
             forward_token: Erc20Token,
             v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
@@ -1911,7 +1911,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
             try:
                 match v2_pool, v2_pool_state_override:
-                    case UniswapV2Pool(), UniswapV2PoolState() | None:
+                    case LiquidityPool(), UniswapV2PoolState() | None:
                         weth_in = v2_pool.calculate_tokens_in_from_tokens_out(
                             token_out=forward_token,
                             token_out_quantity=forward_token_amount,
@@ -1983,7 +1983,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             )
 
         def _calculate_v2_v4(
-            v2_pool: AerodromeV2Pool | UniswapV2Pool,
+            v2_pool: AerodromeV2Pool | LiquidityPool,
             v4_pool: UniswapV4Pool,
             forward_token: Erc20Token,
             v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
@@ -2108,7 +2108,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                         token_out_quantity=forward_token_amount,
                         override_state=v2_pool_state_override,
                     )
-                case UniswapV2Pool(), UniswapV2PoolState() | None:
+                case LiquidityPool(), UniswapV2PoolState() | None:
                     weth_in = v2_pool.calculate_tokens_in_from_tokens_out(
                         token_out=forward_token,
                         token_out_quantity=forward_token_amount,
@@ -2172,7 +2172,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
 
         def _calculate_v3_v2(
             v3_pool: UniswapV3Pool,
-            v2_pool: AerodromeV2Pool | UniswapV2Pool,
+            v2_pool: AerodromeV2Pool | LiquidityPool,
             forward_token: Erc20Token,
             v3_pool_state_override: UniswapV3PoolState | None = None,
             v2_pool_state_override: AerodromeV2PoolState | UniswapV2PoolState | None = None,
@@ -2272,7 +2272,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                 assert pool_hi_zero_for_one != pool_lo_zero_for_one
 
                 match v2_pool, v2_pool_state_override:
-                    case UniswapV2Pool(), UniswapV2PoolState() | None:
+                    case LiquidityPool(), UniswapV2PoolState() | None:
                         weth_out = v2_pool.calculate_tokens_out_from_tokens_in(
                             token_in=forward_token,
                             token_in_quantity=forward_token_amount,
@@ -2347,8 +2347,8 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             )
 
         def _calculate_v2_v2(
-            v2_pool_hi: AerodromeV2Pool | UniswapV2Pool,
-            v2_pool_lo: AerodromeV2Pool | UniswapV2Pool,
+            v2_pool_hi: AerodromeV2Pool | LiquidityPool,
+            v2_pool_lo: AerodromeV2Pool | LiquidityPool,
             forward_token: Erc20Token,
             v2_pool_hi_state_override: UniswapV2PoolState | AerodromeV2PoolState | None = None,
             v2_pool_lo_state_override: UniswapV2PoolState | AerodromeV2PoolState | None = None,
@@ -2579,7 +2579,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                 # - profit = WETH_out - WETH_in
 
                 match v2_pool_hi, v2_pool_hi_state_override:
-                    case UniswapV2Pool(), UniswapV2PoolState() | None:
+                    case LiquidityPool(), UniswapV2PoolState() | None:
                         weth_out = v2_pool_hi.calculate_tokens_out_from_tokens_in(
                             token_in=forward_token,
                             token_in_quantity=uncompressed_forward_token_amount,
@@ -2603,7 +2603,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                 assert pool_hi_zero_for_one != pool_lo_zero_for_one
 
                 match v2_pool_lo, v2_pool_lo_state_override:
-                    case UniswapV2Pool(), UniswapV2PoolState() | None:
+                    case LiquidityPool(), UniswapV2PoolState() | None:
                         weth_in = v2_pool_lo.calculate_tokens_in_from_tokens_out(
                             token_out=forward_token,
                             token_out_quantity=uncompressed_forward_token_amount,
@@ -2842,14 +2842,14 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                 )
                 | (
                     UniswapV4Pool() as v4_pool,
-                    UniswapV2Pool() as v2_pool,
+                    LiquidityPool() as v2_pool,
                 )
                 | (
                     AerodromeV2Pool() as v2_pool,
                     UniswapV4Pool() as v4_pool,
                 )
                 | (
-                    UniswapV2Pool() as v2_pool,
+                    LiquidityPool() as v2_pool,
                     UniswapV4Pool() as v4_pool,
                 )
             ):
@@ -2891,7 +2891,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                             token=v2_input_token,
                             override_state=v2_pool_state,
                         )
-                    case UniswapV2Pool(), UniswapV2PoolState() | None:
+                    case LiquidityPool(), UniswapV2PoolState() | None:
                         if TYPE_CHECKING:
                             assert isinstance(v2_pool_state, (UniswapV2PoolState, type(None)))
                         rate_of_exchange_v2 = v2_pool.get_absolute_exchange_rate(
@@ -2927,7 +2927,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                     )
 
                 if (
-                    isinstance(self.swap_pools[-1], (AerodromeV2Pool, UniswapV2Pool))
+                    isinstance(self.swap_pools[-1], (AerodromeV2Pool, LiquidityPool))
                     and rate_of_exchange_v2 > rate_of_exchange_v4
                 ):
                     return _calculate_v4_v2(
@@ -2946,7 +2946,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                     UniswapV3Pool() as v3_pool,
                 )
                 | (
-                    UniswapV2Pool() as v2_pool,
+                    LiquidityPool() as v2_pool,
                     UniswapV3Pool() as v3_pool,
                 )
                 | (
@@ -2955,7 +2955,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                 )
                 | (
                     UniswapV3Pool() as v3_pool,
-                    UniswapV2Pool() as v2_pool,
+                    LiquidityPool() as v2_pool,
                 )
             ):
                 v2_pool_state = state_overrides.get(v2_pool)
@@ -2967,7 +2967,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                     assert isinstance(v3_pool_state, (UniswapV3PoolState, type(None)))
 
                 match v2_pool, v2_pool_state:
-                    case UniswapV2Pool(), (UniswapV2PoolState() | None):
+                    case LiquidityPool(), (UniswapV2PoolState() | None):
                         rate_of_exchange_v2 = v2_pool.get_absolute_exchange_rate(
                             token=self.input_token,
                             override_state=v2_pool_state,
@@ -3006,14 +3006,14 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                 )
 
             case (
-                (UniswapV2Pool() | AerodromeV2Pool()) as v2_pool_a,
-                (UniswapV2Pool() | AerodromeV2Pool()) as v2_pool_b,
+                (LiquidityPool() | AerodromeV2Pool()) as v2_pool_a,
+                (LiquidityPool() | AerodromeV2Pool()) as v2_pool_b,
             ):
                 v2_pool_a_state = state_overrides.get(v2_pool_a)
                 v2_pool_b_state = state_overrides.get(v2_pool_b)
 
                 match v2_pool_a:
-                    case UniswapV2Pool():
+                    case LiquidityPool():
                         if TYPE_CHECKING:
                             assert isinstance(v2_pool_a_state, (UniswapV2PoolState, type(None)))
                         rate_of_exchange_a = v2_pool_a.get_absolute_exchange_rate(
@@ -3031,7 +3031,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                         raise TypeError
 
                 match v2_pool_b:
-                    case UniswapV2Pool():
+                    case LiquidityPool():
                         if TYPE_CHECKING:
                             assert isinstance(v2_pool_b_state, (UniswapV2PoolState, type(None)))
                         rate_of_exchange_b = v2_pool_b.get_absolute_exchange_rate(
@@ -3078,7 +3078,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                             assert pool_hi_zero_for_one != pool_lo_zero_for_one
 
                             match v2_pool_b, v2_pool_b_state:
-                                case UniswapV2Pool(), UniswapV2PoolState() | None:
+                                case LiquidityPool(), UniswapV2PoolState() | None:
                                     weth_out = v2_pool_b.calculate_tokens_out_from_tokens_in(
                                         token_in=forward_token,
                                         token_in_quantity=forward_token_amt,
@@ -3097,7 +3097,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                                 raise ArbitrageError(message="Zero amount swap")
 
                             match v2_pool_a, v2_pool_a_state:
-                                case UniswapV2Pool(), UniswapV2PoolState() | None:
+                                case LiquidityPool(), UniswapV2PoolState() | None:
                                     weth_in = v2_pool_a.calculate_tokens_in_from_tokens_out(
                                         token_out=forward_token,
                                         token_out_quantity=forward_token_amt,
@@ -3252,11 +3252,11 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             v2_pool = next(
                 pool
                 for pool in self.swap_pools
-                if isinstance(pool, (AerodromeV2Pool, UniswapV2Pool))
+                if isinstance(pool, (AerodromeV2Pool, LiquidityPool))
             )
             v4_pool = next(pool for pool in self.swap_pools if isinstance(pool, UniswapV4Pool))
 
-            assert isinstance(v2_pool, (AerodromeV2Pool, UniswapV2Pool))
+            assert isinstance(v2_pool, (AerodromeV2Pool, LiquidityPool))
             assert isinstance(v4_pool, UniswapV4Pool)
 
             v2_swap_amounts = next(
@@ -3422,11 +3422,11 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             v2_pool = next(
                 pool
                 for pool in self.swap_pools
-                if isinstance(pool, (AerodromeV2Pool, UniswapV2Pool))
+                if isinstance(pool, (AerodromeV2Pool, LiquidityPool))
             )
             v3_pool = next(pool for pool in self.swap_pools if isinstance(pool, UniswapV3Pool))
 
-            assert isinstance(v2_pool, (AerodromeV2Pool, UniswapV2Pool))
+            assert isinstance(v2_pool, (AerodromeV2Pool, LiquidityPool))
             assert isinstance(v3_pool, UniswapV3Pool)
 
             v2_swap_amounts = next(
@@ -3571,8 +3571,8 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
                 pool_lo = self.swap_pools[1]
 
             if TYPE_CHECKING:
-                assert isinstance(pool_hi, UniswapV2Pool)
-                assert isinstance(pool_lo, UniswapV2Pool)
+                assert isinstance(pool_hi, LiquidityPool)
+                assert isinstance(pool_lo, LiquidityPool)
 
             return (
                 (
@@ -3638,24 +3638,24 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             case UniswapV3Pool(), UniswapV3Pool():
                 return _generate_v3_v3_payloads()
             case (
-                AerodromeV2Pool() | UniswapV2Pool(),
+                AerodromeV2Pool() | LiquidityPool(),
                 UniswapV3Pool(),
             ) | (
                 UniswapV3Pool(),
-                AerodromeV2Pool() | UniswapV2Pool(),
+                AerodromeV2Pool() | LiquidityPool(),
             ):
                 return _generate_v3_v2_payloads()
             case (
-                AerodromeV2Pool() | UniswapV2Pool(),
-                AerodromeV2Pool() | UniswapV2Pool(),
+                AerodromeV2Pool() | LiquidityPool(),
+                AerodromeV2Pool() | LiquidityPool(),
             ):
                 return _generate_v2_v2_payloads()
             case (
-                AerodromeV2Pool() | UniswapV2Pool(),
+                AerodromeV2Pool() | LiquidityPool(),
                 UniswapV4Pool(),
             ) | (
                 UniswapV4Pool(),
-                AerodromeV2Pool() | UniswapV2Pool(),
+                AerodromeV2Pool() | LiquidityPool(),
             ):
                 return _generate_v4_v2_payloads()
             case (

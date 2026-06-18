@@ -24,7 +24,7 @@ from degenbot.camelot.pools import CamelotLiquidityPool
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.erc20 import Erc20Token
 from degenbot.registry import PoolRegistry, TokenRegistry
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 
 
 class _MockProviderError(Exception):
@@ -229,7 +229,7 @@ class TestCamelotBuilderConstruction:
         builder = _make_camelot_builder(provider)
         pool = builder.build(self.POOL_ADDRESS, io=io, request=BuildPoolRequest(silent=True))
         assert isinstance(pool, CamelotLiquidityPool)
-        assert isinstance(pool, UniswapV2Pool)
+        assert isinstance(pool, LiquidityPool)
 
     def test_build_camelot_fetches_camelot_specific_state(self) -> None:
         """build() should fetch stableSwap, FEE_DENOMINATOR, and fee percents."""

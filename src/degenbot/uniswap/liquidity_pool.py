@@ -1,4 +1,4 @@
-"""UniswapV2Pool: constant-product AMM with reserve tracking."""
+"""LiquidityPool: constant-product AMM with reserve tracking."""
 
 import dataclasses
 from fractions import Fraction
@@ -37,7 +37,7 @@ from degenbot.uniswap.v2_types import (
 )
 
 
-class UniswapV2Pool(
+class LiquidityPool(
     PublisherMixin, PoolPickleMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool
 ):
     """A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant."""

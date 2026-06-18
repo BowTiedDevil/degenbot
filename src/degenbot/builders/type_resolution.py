@@ -37,7 +37,7 @@ from degenbot.exceptions.base import DegenbotValueError
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types.pool_type import PoolFamily, PoolTypeDescriptor, derive_kind
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
@@ -77,7 +77,7 @@ def pool_class_for_descriptor(
         case PoolFamily.CONSTANT_PRODUCT:
             return cast(
                 "type[AbstractLiquidityPool]",
-                pool_type_registry.get_v2_class(chain_id, pool_type.factory or "") or UniswapV2Pool,
+                pool_type_registry.get_v2_class(chain_id, pool_type.factory or "") or LiquidityPool,
             )
         case PoolFamily.CONCENTRATED_LIQUIDITY:
             return cast(

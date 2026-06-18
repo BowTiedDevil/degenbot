@@ -15,14 +15,14 @@ from fractions import Fraction
 import pytest
 
 from degenbot.arbitrage.optimizers.solver import BrentSolver, MobiusSolver
-from tests.helpers.v2_pool_factory import make_v2_pool
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.exceptions.arbitrage import OptimizationError
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.fakes.tokens import FakeToken
+from tests.helpers.v2_pool_factory import make_v2_pool
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -74,7 +74,7 @@ def t2() -> FakeToken:
 @pytest.fixture
 def v2_v2_v2_pools(
     t0: FakeToken, t1: FakeToken, t2: FakeToken
-) -> tuple[UniswapV2Pool, UniswapV2Pool, UniswapV2Pool]:
+) -> tuple[LiquidityPool, LiquidityPool, LiquidityPool]:
     """3-hop V2 cycle: t0 -> t1 -> t2 -> t0.
 
     Same reserve ratios as verify_legacy_equivalence.py, known profitable.

@@ -92,7 +92,7 @@ class PoolTypeRegistry:
     1. Subclass a pool shape protocol (``ConstantProductPool``,
        ``ConcentratedLiquidityPool``, or ``StableswapPool``). This is
        typically done by inheriting from an existing pool class that
-       already satisfies the protocol (e.g., ``UniswapV2Pool``).
+       already satisfies the protocol (e.g., ``LiquidityPool``).
 
     2. Add a ``variant: ClassVar[str | None] = "your_dex_name"`` class
        attribute. Use the bare DEX name without a ``_v2``/``_v3`` suffix
@@ -110,10 +110,10 @@ class PoolTypeRegistry:
     Example::
 
         from degenbot.registry import pool_type_registry
-        from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
+        from degenbot.uniswap.liquidity_pool import LiquidityPool
 
 
-        class MyCustomPool(UniswapV2Pool):
+        class MyCustomPool(LiquidityPool):
             variant: ClassVar[str | None] = "my_dex"
 
 
