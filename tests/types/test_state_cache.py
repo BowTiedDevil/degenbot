@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pickle
 import threading
 from dataclasses import dataclass
 
@@ -190,29 +189,6 @@ class TestStateCacheRestore:
 
 
 # --- Pickle support ---
-
-
-class TestStateCachePickle:
-    def test_pickle_round_trip(self) -> None:
-        cache: StateCache[FakeState] = StateCache(max_depth=8)
-        cache.append(FakeState(block=1, value=10), block=1)
-        cache.append(FakeState(block=2, value=20), block=2)
-        data = pickle.dumps(cache)
-        cache2: StateCache[FakeState] = pickle.loads(data)
-        assert len(cache2) == 2
-        assert cache2.current.value == 20
-
-    def test_pickle_reconstructs_lock(self) -> None:
-        cache: StateCache[FakeState] = StateCache(max_depth=8)
-        cache.append(FakeState(block=1, value=10), block=1)
-        data = pickle.dumps(cache)
-        cache2: StateCache[FakeState] = pickle.loads(data)
-        # Lock should be functional (no exception on append)
-        cache2.append(FakeState(block=2, value=20), block=2)
-        assert cache2.current.value == 20
-
-
-# --- Thread safety ---
 
 
 class TestStateCacheThreadSafety:

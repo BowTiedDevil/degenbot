@@ -1,7 +1,6 @@
 """Tests for Phase 5: I/O-free UniswapV4Pool construction via Bot."""
 
 import pathlib
-import pickle
 from unittest.mock import MagicMock
 
 import eth_abi.abi
@@ -176,36 +175,6 @@ class TestV4PoolIOFreeConstructor:
         assert pool.external_update(update) is True
         assert pool.tick == -76010
         assert pool.liquidity == 1234567999
-
-    def test_io_free_pickle(self) -> None:
-        """I/O-free pool can be pickled and unpickled."""
-        native_eth = _make_native_eth()
-        usdc = _make_usdc()
-
-        pool = UniswapV4Pool(
-            pool_id=V4_POOL_ID,
-            pool_manager_address=V4_POOL_MANAGER,
-            token0=native_eth,
-            token1=usdc,
-            fee=V4_FEE,
-            tick_spacing=V4_TICK_SPACING,
-            hook_address=V4_HOOKS,
-            sqrt_price_x96=2198666895605149686863,
-            tick=-76020,
-            liquidity=1234567890,
-            protocol_fee_zero_for_one=0,
-            protocol_fee_one_for_zero=0,
-            lp_fee=500000,
-            state_block=18_000_000,
-        )
-
-        data = pickle.dumps(pool)
-        unpickled = pickle.loads(data)
-        assert unpickled.pool_id == pool.pool_id
-        assert unpickled.tick == pool.tick
-        assert unpickled.liquidity == pool.liquidity
-        assert unpickled.fee == pool.fee
-        assert unpickled.tick_spacing == pool.tick_spacing
 
     def test_io_free_pool_key_and_hooks(self) -> None:
         """I/O-free pool correctly sets pool_key, hook_address, and active_hooks."""

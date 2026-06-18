@@ -22,7 +22,6 @@ from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import ConstantProductHop, HopType, SolidlyStableHop
-from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.log_decoders import V2_SYNC_TOPIC, decode_v2_sync
 from degenbot.uniswap.types import UniswapPoolSwapVector
@@ -39,9 +38,7 @@ from degenbot.uniswap.v2_types import (
 )
 
 
-class LiquidityPool(
-    PublisherMixin, PoolPickleMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool
-):
+class LiquidityPool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
     """A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant."""
 
     variant: ClassVar[str | None] = None
@@ -63,20 +60,6 @@ class LiquidityPool(
     UNISWAP_V2_MAINNET_POOL_INIT_HASH = (
         "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
     )
-
-    # Pickle (TRANSIENT — removed by TODO-cddc72d1 / Slice 15): drop the
-    # non-picklable Rust handle (``_py_pool`` wraps an ``Arc<RwLock<Bot>>``)
-    # and the weakref subscriber set. Unpickled pools are detached snapshots
-    # (no live Rust handle; state reads raise ``AttributeError``). Slice 15
-    # retires Python-pickle multiprocessing entirely (replaced by Rust-side
-    # parallel solve fan-out) and deletes ``PoolPickleMixin`` + these tests.
-    _pickle_drops: ClassVar[frozenset[str]] = frozenset({
-        "_subscribers",
-        "_py_pool",
-    })
-    _pickle_reconstructs: ClassVar[dict[str, Any]] = {
-        "_subscribers": WeakSet,
-    }
 
     def __init__(
         self,

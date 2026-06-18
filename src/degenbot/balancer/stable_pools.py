@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from threading import Lock
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, ClassVar, Protocol, runtime_checkable
 from weakref import WeakSet
 
 from degenbot.balancer.libraries.constants import ONE
@@ -20,7 +20,6 @@ from degenbot.exceptions.pool import StaleRateResult
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import BalancerStableHop, HopType, PoolInvariant
-from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
 
 from .types import (
@@ -84,7 +83,7 @@ class _StaticRateProvider:
         return self._rates
 
 
-class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPool):
+class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
     """Balancer V2 Stable Pool (MetaStablePool or ComposableStablePool).
 
     Supports token-to-token swaps using StableMath. For ComposableStablePools,
@@ -119,17 +118,6 @@ class BalancerV2StablePool(PublisherMixin, PoolPickleMixin, AbstractLiquidityPoo
 
     type PoolState = BalancerV2PoolState
     FEE_DENOMINATOR = 1 * 10**18
-
-    _pickle_drops: ClassVar[frozenset[str]] = frozenset({
-        "_state_lock",
-        "_subscribers",
-        "_rate_provider",
-    })
-    _pickle_reconstructs: ClassVar[dict[str, Any]] = {
-        "_state_lock": Lock,
-        "_subscribers": WeakSet,
-        "_rate_provider": lambda: None,
-    }
 
     def __init__(
         self,

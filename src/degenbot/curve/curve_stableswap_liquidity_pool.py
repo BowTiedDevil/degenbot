@@ -49,13 +49,11 @@ from degenbot.types.concrete import (
     Subscriber,
 )
 from degenbot.types.hop_types import CurveStableswapHop, HopType, PoolInvariant
-from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
 
 
 class CurveStableswapPool(
     PublisherMixin,
-    PoolPickleMixin,
     StableswapPoolState,
     AbstractLiquidityPool,
 ):
@@ -65,17 +63,6 @@ class CurveStableswapPool(
     _state_cache: BoundedCache[BlockNumber, PoolState]
 
     LOG_HANDLERS: ClassVar[dict[str, Any]] = {}  # Curve stays on polling
-
-    _pickle_drops: ClassVar[frozenset[str]] = frozenset({
-        "_state_lock",
-        "_subscribers",
-        "_data_provider",  # can't pickle closures
-    })
-    _pickle_reconstructs: ClassVar[dict[str, Any]] = {
-        "_state_lock": Lock,
-        "_subscribers": WeakSet,
-        "_data_provider": lambda: None,
-    }
 
     # Constants from contract
     # ref: https://github.com/curvefi/curve-contract/blob/master/contracts/pool-templates/base/SwapTemplateBase.vy
@@ -1087,9 +1074,8 @@ class CurveStableswapPool(
         For 2-token pools, zero_for_one maps to token[0] -> token[1] direction.
         For N-token pools, pass token_in/token_out to select the pair.
 
-        NOTE: swap_fn is not pickleable for ProcessPoolExecutor. For
-        multiprocessing, use constant-product approximation or build
-        hop states in the subprocess from pool IDs.
+        NOTE: swap_fn is not pickleable. Build hop states in the
+        subprocess from pool IDs for parallel solve fan-out.
 
         Returns:
             The computed value.

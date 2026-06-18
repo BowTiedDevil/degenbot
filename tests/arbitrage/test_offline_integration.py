@@ -20,7 +20,6 @@ NOT covered (requires real pool math or on-chain execution):
 - ProcessPoolExecutor async calculations → keep as fork test
 """
 
-import pickle
 from fractions import Fraction
 
 import pytest
@@ -646,26 +645,6 @@ class TestSubscriptions:
 
 class TestEdgeCases:
     """Edge case tests from the integration suite."""
-
-    def test_pickle_cycle(
-        self,
-        wbtc_weth_v2_lp: LiquidityPool,
-        wbtc_weth_v3_lp: UniswapV3Pool,
-        weth: FakeToken,
-    ):
-        """Arbitrage cycle can be pickled.
-
-        Mirrors test_pickle_arb from test_uniswap_curve_cycle.py.
-        """
-        arb = UniswapLpCycle(
-            id="test_arb",
-            input_token=weth,
-            swap_pools=[wbtc_weth_v2_lp, wbtc_weth_v3_lp],
-            max_input=100 * 10**18,
-        )
-        data = pickle.dumps(arb)
-        restored = pickle.loads(data)
-        assert restored.id == "test_arb"
 
     def test_v2_pool_zero_reserves_not_viable(
         self,

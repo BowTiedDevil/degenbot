@@ -10,7 +10,6 @@ pytest.skip(
     allow_module_level=True,
 )
 
-import pickle
 from fractions import Fraction
 from typing import TYPE_CHECKING
 
@@ -99,10 +98,6 @@ def wbtc(bot_mainnet_full: Bot) -> Erc20Token:
 @pytest.fixture
 def weth(bot_mainnet_full: Bot) -> Erc20Token:
     return bot_mainnet_full.build_erc20token(WETH_CONTRACT_ADDRESS)
-
-
-def test_pickle_uniswap_v2_pool(ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool):
-    pickle.dumps(ethereum_uniswap_v2_wbtc_weth_liquiditypool)
 
 
 def test_price_is_inverse_of_exchange_rate(
@@ -264,15 +259,6 @@ def test_dunder_methods(
     ) is False
 
 
-def test_pickle_pool(ethereum_uniswap_v2_wbtc_weth_liquiditypool: LiquidityPool):
-    pickle.dumps(ethereum_uniswap_v2_wbtc_weth_liquiditypool)
-
-
-@pytest.mark.parametrize(
-    "fork_mainnet_archive",
-    [17_600_000],
-    indirect=True,
-)
 def test_calculate_tokens_out_from_ratio_out(fork_mainnet_archive: AnvilFork):
     bot = _make_bot(fork_mainnet_archive)
 

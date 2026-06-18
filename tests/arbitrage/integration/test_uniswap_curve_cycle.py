@@ -1,9 +1,4 @@
-import asyncio
-import concurrent.futures
 import contextlib
-import multiprocessing
-import pickle
-import time
 
 import eth_abi.abi
 import pytest
@@ -188,21 +183,6 @@ def test_create_arb(
             bot=curve_arb_bot,
             max_input=10 * 10**18,
         )
-
-
-def test_pickle_arb(fork_mainnet_full: AnvilFork, weth: Erc20Token, curve_arb_bot: Bot):
-    uniswap_v2_weth_dai_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_DAI_ADDRESS)
-    curve_tripool = _build_curve_pool(fork_mainnet_full, CURVE_TRIPOOL_ADDRESS, curve_arb_bot)
-    uniswap_v2_weth_usdc_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_USDC_ADDRESS)
-
-    arb = UniswapCurveCycle(
-        input_token=weth,
-        swap_pools=[uniswap_v2_weth_dai_lp, curve_tripool, uniswap_v2_weth_usdc_lp],
-        id="test",
-        bot=curve_arb_bot,
-        max_input=10 * 10**18,
-    )
-    pickle.dumps(arb)
 
 
 def test_arb_calculation(fork_mainnet_full: AnvilFork, weth: Erc20Token, curve_arb_bot: Bot):
@@ -481,104 +461,6 @@ def test_arb_payload_encoding(fork_mainnet_full: AnvilFork, weth: Erc20Token, cu
             swap_amount=calc_result.input_amount,
             pool_swap_amounts=calc_result.swap_amounts,
         )
-
-
-async def test_process_pool_calculation(
-    fork_mainnet_full: AnvilFork, weth: Erc20Token, curve_arb_bot: Bot
-) -> None:
-    start = time.perf_counter()
-
-    curve_tripool = _build_curve_pool(fork_mainnet_full, CURVE_TRIPOOL_ADDRESS, curve_arb_bot)
-    uniswap_v2_weth_dai_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_DAI_ADDRESS)
-    uniswap_v2_weth_usdc_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_USDC_ADDRESS)
-    uniswap_v2_weth_usdt_lp = _build_v2_pool(fork_mainnet_full, UNISWAP_V2_WETH_USDT_ADDRESS)
-
-    # Reserves taken from block 19050173
-    # ---
-    #
-    # DAI-USDC-USDT (CurveStable, 0.01%)
-    #     • Token 0: DAI - Reserves: 42217927126053167268106015
-    #     • Token 1: USDC - Reserves: 41857454785332
-    #     • Token 2: USDT - Reserves: 116155337005450
-    # DAI-WETH (V2, 0.30%)
-    #     • Token 0: DAI - Reserves: 6504210380280092514247627
-    #     • Token 1: WETH - Reserves: 2641882268814772168174
-    # USDC-WETH (V2, 0.30%)
-    #     • Token 0: USDC - Reserves: 51264330493455
-    #     • Token 1: WETH - Reserves: 20822226989581225186276
-    # WETH-USDT (V2, 0.30%)
-    #     • Token 0: WETH - Reserves: 33451964234532476269546
-    #     • Token 1: USDT - Reserves: 82374477120833
-
-    # set up overrides for a profitable arbitrage condition
-    v2_weth_dai_state_override = UniswapV2PoolState(
-        address=uniswap_v2_weth_dai_lp.address,
-        reserves_token0=7154631418308101780013056,  # DAI <----- overridden, added 10% to DAI supply
-        reserves_token1=2641882268814772168174,  # WETH
-        block=None,
-    )
-    v2_weth_usdc_lp_state_override = UniswapV2PoolState(
-        address=uniswap_v2_weth_usdc_lp.address,
-        reserves_token0=51264330493455,  # USDC
-        reserves_token1=20822226989581225186276,  # WETH
-        block=None,
-    )
-    v2_weth_usdt_lp_state_override = UniswapV2PoolState(
-        address=uniswap_v2_weth_usdt_lp.address,
-        reserves_token0=33451964234532476269546,  # WETH
-        reserves_token1=82374477120833,  # USDT
-        block=None,
-    )
-
-    overrides = {
-        uniswap_v2_weth_dai_lp.address: v2_weth_dai_state_override,
-        uniswap_v2_weth_usdc_lp.address: v2_weth_usdc_lp_state_override,
-        uniswap_v2_weth_usdt_lp.address: v2_weth_usdt_lp_state_override,
-    }
-
-    with concurrent.futures.ProcessPoolExecutor(
-        mp_context=multiprocessing.get_context("spawn"),
-    ) as executor:
-        for swap_pools in [
-            (uniswap_v2_weth_dai_lp, curve_tripool, uniswap_v2_weth_usdc_lp),
-            (uniswap_v2_weth_dai_lp, curve_tripool, uniswap_v2_weth_usdt_lp),
-        ]:
-            arb = UniswapCurveCycle(
-                input_token=weth,
-                swap_pools=swap_pools,
-                id="test",
-                bot=curve_arb_bot,
-                max_input=10 * 10**18,
-            )
-
-            future = await arb.calculate_with_pool(executor=executor, state_overrides=overrides)
-            result = await future
-            assert result
-
-            with contextlib.suppress(ArbitrageError):
-                future = await arb.calculate_with_pool(executor=executor)
-                result = await future
-                assert result
-
-            # Saturate the process pool executor with multiple calculations.
-            # Should reveal cases of excessive latency.
-            num_futures = 64
-            calculation_futures = [
-                await arb.calculate_with_pool(
-                    executor=executor,
-                    state_overrides=overrides,
-                )
-                for _ in range(num_futures)
-            ]
-
-            assert len(calculation_futures) == num_futures
-            for i, task in enumerate(asyncio.as_completed(calculation_futures)):
-                await task
-                print(
-                    f"Completed process_pool calc #{i}, {time.perf_counter() - start:.2f}s "
-                    f"since start"
-                )
-            print(f"Completed {num_futures} calculations in {time.perf_counter() - start:.1f}s")
 
 
 def test_bad_pool_in_constructor(

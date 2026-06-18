@@ -1,5 +1,4 @@
 import pathlib
-import pickle
 from typing import Any
 
 import pydantic_core
@@ -70,15 +69,6 @@ def test_aerodrome_v2_address_generator():
         )
         == AERODROME_V3_TBTC_USDBC_POOL_ADDRESS
     )
-
-
-def test_pickle_pool(
-    fork_base_full: AnvilFork,
-):
-
-    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
-    lp = bot.build_aerodrome_v2_pool(AERODROME_V3_TBTC_USDBC_POOL_ADDRESS)
-    pickle.dumps(lp)
 
 
 def test_bot_update_state(fork_base_full: AnvilFork):

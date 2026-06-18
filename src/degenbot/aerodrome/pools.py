@@ -30,7 +30,6 @@ from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import ConstantProductHop, HopType, SolidlyStableHop
-from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
 from degenbot.types.state_cache import StateCache
 from degenbot.uniswap.log_decoders import V2_SYNC_TOPIC, get_block_number, get_log_data_bytes
@@ -76,7 +75,6 @@ def _decode_aerodrome_v2_sync(log: dict) -> Any:  # noqa: ANN401
 
 class AerodromeV2Pool(
     PublisherMixin,
-    PoolPickleMixin,
     AerodromeV2PoolStateMixin,
     AerodromeV2PoolCalc,
     AbstractLiquidityPool,
@@ -92,13 +90,6 @@ class AerodromeV2Pool(
     type PoolState = AerodromeV2PoolState
 
     FEE_DENOMINATOR = 10_000
-
-    _pickle_drops: ClassVar[frozenset[str]] = frozenset({
-        "_subscribers",
-    })
-    _pickle_reconstructs: ClassVar[dict[str, Any]] = {
-        "_subscribers": WeakSet,
-    }
 
     def __init__(
         self,

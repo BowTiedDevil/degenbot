@@ -30,7 +30,6 @@ from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import BoundedProductHop, HopType, V3TickRangeInfo
-from degenbot.types.pool_pickle import PoolPickleMixin
 from degenbot.types.pool_protocols import SimulationResult
 from degenbot.types.state_cache import StateCache
 from degenbot.uniswap.concentrated.liquidity_map import LiquidityMapSnapshot, MissingLiquidityData
@@ -143,7 +142,6 @@ class Hooks(Enum):
 
 class UniswapV4Pool(
     PublisherMixin,
-    PoolPickleMixin,
     V4PoolState,
     UniswapV4PoolCalc,
     AbstractLiquidityPool,
@@ -167,14 +165,6 @@ class UniswapV4Pool(
         "uint128",  # liquidityGross
         "int128",  # liquidityNet
     )
-
-    _pickle_drops: ClassVar[frozenset[str]] = frozenset({
-        "_subscribers",
-        "_tick_data_fetcher",
-    })
-    _pickle_reconstructs: ClassVar[dict[str, Any]] = {
-        "_subscribers": WeakSet,
-    }
 
     def __init__(
         self,

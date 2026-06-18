@@ -11,49 +11,97 @@
     "slice-15"
   ],
   "status": "open",
-  "created_at": "2026-06-17T20:37:47.254Z"
+  "created_at": "2026-06-17T20:37:47.254Z",
+  "assigned_to_session": "019ed8af-4f02-7e42-8bab-a8df31e260a5"
 }
 
 **Slice 15 of the Polars three-layer migration (ADR-005).** Master: `TODO-7e24d695`.
 
-## Why this slice exists
+## Status
 
-Pickle support (`PoolPickleMixin`, `StateCache`/`PerBlockCache` `__getstate__`, `Erc20Token.__getstate__`) exists solely to feed Python's `concurrent.futures`/`ProcessPoolExecutor` multiprocessing. **Verified zero in-repo consumers**: no `concurrent.futures`/`ProcessPoolExecutor`/`pickle.dumps(loads)` callsites in `src/` or `examples/`; the sole `ProcessPoolExecutor` mention is a docstring warning (`curve_stableswap_liquidity_pool.py:1090`). Once state + calc live in the Rust `Bot` (slices 3-9), path-solve fan-out goes cross-core in Rust (`tokio::spawn` / `rayon` over the shared `Arc<RwLock<Bot>>`) with no pickle cost. So the whole Python-pickle multiprocessing capability is disposable.
+**15a (pickle machinery + test removal) — DONE.** Landed ahead of slices 4–9 to
+clear the `PyDexIdentity`-unpicklable failures (ADR-005 slice 6 moved
+`DexIdentity` to a Rust `#[pyclass]`, which broke `pickle.dumps()` on every
+pool holding one). Committed as `remove(arbitrage): retire Python-pickle
+multiprocessing machinery + tests`.
 
-## Goal
+**15b (Rust-side parallel solve fan-out) — DEFERRED.** Pairs with the unified
+engine (ADR-006 slice 1, the shared `Arc<RwLock<Bot>>`). Not started.
 
-Retire Python-pickle multiprocessing and replace it with Rust-side parallel solve fan-out, deleting the now-dead pickle machinery + tests.
+## What 15a removed
 
-## Rust-side parallel solve fan-out (the replacement)
+- Deleted `src/degenbot/types/pool_pickle.py` (`PoolPickleMixin`).
+- Stripped `PoolPickleMixin` from bases + removed `_pickle_drops` /
+  `_pickle_reconstructs` on: `LiquidityPool`, `UniswapV3Pool`,
+  `UniswapV4Pool`, `AerodromeV2Pool`, `BalancerV2Pool`,
+  `BalancerV2StablePool`, `CurveStableswapPool`.
+- Removed `Erc20Token.__getstate__`, `StateCache.__getstate__/__setstate__`,
+  `PerBlockCache.__getstate__/__setstate__`.
+- Removed `PoolPickleMixin` from `types/__init__.py` (`__all__` + import).
+- Deleted / pruned pickle-round-trip tests across 15 test files (whole-file:
+  `tests/types/test_pool_pickle_mixin.py`; pruned: `test_state_cache.py`,
+  `test_cache.py`, the three `test_*_pool_io_free.py`, `test_per_block_cache.py`,
+  `test_pool_strategies.py`, `test_curve_stableswap_pool.py`,
+  `test_aerodrome_pools.py`, `test_offline_integration.py`,
+  `test_v2_offline.py`, `test_v3_offline.py`,
+  `test_uniswap_v2_liquidity_pool.py`, `test_uniswap_v3_liquidity_pool.py`).
+- Removed the 2 failing legacy tests (`test_uniswap_curve_cycle.py::
+  test_pickle_arb` + `test_process_pool_calculation`) and the 2 already-skipped
+  legacy tests in `test_uniswap_lp_cycle.py` (skip→delete).
+- Updated docstrings: Curve `swap_fn` note, `v2_pool_state.py` mixin list.
 
-- The solver (`exact_mobius_solve` / `int_solve_cl_path` / `exact_solve_mixed_path_n`) and the pump already run in Rust; the engine reads `Bot` state by reference (ADR-003).
-- Parallelize `solve_dirty`'s affected-path solves across cores: `rayon::par_iter` (or `tokio::spawn`-per-batch) over the affected path set, writing results back under the existing result-channel discipline.
-- Naturally pairs with Slice 10 (`UniswapEngine` lock unification → one shared `Arc<RwLock<Bot>>` to fan out over). Not a hard dependency — fan-out works on the engine's own `Bot` today; unification just makes it the canonical one.
+## Audit deviations from the original plan (intentional, recorded)
 
-## Remove the dead pickle machinery (per the user ruling: "remove the pickle tests as a slice of that effort")
+1. **`tests/exceptions/test_pickling_exceptions.py` KEPT.** The plan said delete
+   it; audit shows exception pickling is still LIVE — `ArbitragePath.
+   calculate_with_pool(ProcessPoolExecutor)` (retained in 15a) raises solver
+   exceptions (`NoSolverSolution`, `OptimizationError`, …) across the process
+   boundary, which requires exceptions to be picklable. Removing it would
+   regress the retained multiprocessing path. Delete it in 15b when
+   `calculate_with_pool` is itself retired.
 
-- Delete `src/degenbot/types/pool_pickle.py` + `PoolPickleMixin` from every pool class's bases (V2/V3/V4/Aerodrome/Camelot/Curve/Balancer) + its `_pickle_drops`/`_pickle_reconstructs` declarations.
-- Delete `Erc20Token.__getstate__` (Slice 3's transient hack) and any per-pool `__getstate__` hacks slices 4-9 add (each pool-family slice will carry one until this slice lands — that churn is expected + this slice cleans it all).
-- Audit `StateCache`/`PerBlockCache` `__getstate__`/`__setstate__`: if purely in service of pool-pickle, delete; if any is used for non-multiprocessing snapshot persistence, keep (DB snapshots load via Rust custom deserializers, NOT Python pickle — so expect full removal).
-- Delete the pickle tests: `tests/exceptions/test_pickling_exceptions.py`, `tests/types/test_pool_pickle_mixin.py`, `tests/uniswap/v2/test_v2_pool_io_free.py::test_io_free_pool_pickle`, `tests/uniswap/v3/test_v3_pool_io_free.py::test_io_free_pool_pickle`, `tests/uniswap/v4/test_v4_pool_io_free.py` pickle cases, `tests/curve/test_per_block_cache.py`/`test_pool_strategies.py`/`test_curve_stableswap_pool.py` pickle cases, `tests/aerodrome/test_aerodrome_pools.py` pickle cases, `tests/types/test_state_cache.py`, `tests/test_cache.py` — audit each: remove multiprocessing-bound ones; keep only genuinely-non-multiprocessing ones (expect near-total removal).
-- Update `curve_stableswap_liquidity_pool.py:1090` `ProcessPoolExecutor` docstring → point at the Rust-side fan-out.
+2. **`ArbitragePath.calculate_with_pool(ProcessPoolExecutor)` KEPT.** The plan's
+   `rg 'concurrent.futures|ProcessPoolExecutor' src/` empty acceptance line is a
+   15b concern, not 15a. `calculate_with_pool` is live API; it does NOT pickle
+   pools (submits module-level `_solve_in_subprocess` + fresh `ArbSolver()`),
+   so it does not depend on the removed pool-pickle machinery. Verified by
+   `tests/arbitrage/integration/test_calculate_with_pool.py` (6 passed).
 
-## Sequencing note
+3. **Legacy cycle `__getstate__` (`_uniswap_curve_cycle.py`,
+   `_uniswap_lp_cycle.py`) LEFT.** Dead code on deprecated `_legacy/` modules
+   slated for full removal (AGENTS.md `remove` type). Out of 15a scope; removing
+   it is part of legacy-cycle retirement.
 
-The **pickle-test/mixin removal sub-step is independent** and could be pulled EARLY (even now) to avoid the recurring `__getstate__`-hack churn in slices 4-9. The **Rust parallel solve fan-out** prefers Slice 10 (unified engine) for a clean single-`Bot` fan-out. If the user wants to avoid per-slice hacks during 4-9, split this slice: (15a) removal (now), (15b) Rust fan-out (after 10). Bundled here by default per the user's "remove the pickle tests as a slice of that effort" ruling.
+4. **Provider `__getstate__`/`__setstate__` (`sync_adapter.py`,
+   `async_adapter.py`) LEFT.** Not pool-pickle machinery; the plan did not list
+   it. Possibly dead now but out of 15a scope.
 
-## Dependencies
+## Audit that made removal safe
 
-- Test/mixin-removal: none (delete dead code).
-- Rust parallel solve fan-out: pairs with Slice 10; solver + engine already in Rust so not strictly blocked.
+- No `copy.deepcopy` / `copy.copy` of pool/cache/token objects anywhere in
+  `src/` or `tests/` (all `.copy()` calls are on dicts/lists) — so removing
+  `__getstate__`/`__setstate__` breaks no deepcopy path.
+- No non-pickle callers of `__getstate__`/`__setstate__` in `src/` (only
+  comments + the deleted pickle tests).
 
-## Consistency at boundary
+## Verification
 
-No in-repo code breaks (no pickle consumer). Pool-pickle tests gone (not skipped — removed). `concurrent.futures` consumers (if any external) break — documented API break (0.x). Rust fan-out verified by engine stress tests (path-solve throughput under contention, no deadlock).
+- `ruff check src/` + `ruff format --check src/` + `ty check src/` all green.
+- `cargo fmt --check` + `clippy --deny warnings` green.
+- Offline Python suites green (551 tests across types/curve/cache/offline/
+  io_free/exceptions/rust-wrapped/path).
+- Net lint delta vs baseline: ruff 607→606, ty 1704→1696 (zero new errors).
 
-## Acceptance
+## 15b (deferred) — Rust-side parallel solve fan-out
 
-- `cargo`/`ruff`/`ty` green; engine path-solve tests pass with the Rust parallel fan-out; no deadlock regressions under stress.
-- `rg 'PoolPickleMixin|pickle\.dumps|concurrent\.futures|ProcessPoolExecutor' src/` empty (modulo documentation references now pointing at the Rust fan-out).
-- `tests/` contains no pickle-round-trip tests (modulo any kept-after-audit).
-- The Curve docstring updated.
+- Parallelize `solve_dirty`'s affected-path solves: `rayon::par_iter` (or
+  `tokio::spawn`-per-batch) over the affected path set, writing results back
+  under the existing result-channel discipline.
+- Pairs with ADR-006 slice 1 (unified engine → one shared
+  `Arc<RwLock<Bot>>` to fan out over).
+- At that point: retire `ArbitragePath.calculate_with_pool` + the legacy
+  `calculate_with_pool` + the provider `__getstate__` + the exception-pickling
+  tests + the legacy cycle `__getstate__`.
+- Acceptance: `rg 'PoolPickleMixin|pickle\.dumps|concurrent\.futures|
+  ProcessPoolExecutor' src/` empty (modulo docs); engine path-solve tests pass
+  with the Rust parallel fan-out; no deadlock regressions under stress.
