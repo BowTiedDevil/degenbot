@@ -23,71 +23,195 @@ use crate::bot_core::{RegisterV4PoolParams, V4StateSync, V4SwapUpdate};
 use super::engine_handle::EngineHandle;
 use super::engine_subscriber::EngineSubscriber;
 
-use super::snapshot_verify::{register_with_cl_buffers, SnapshotStore};
+use super::snapshot_verify::{
+    register_with_cl_buffers, run_cl_verification, SnapshotStore, VerifyError, VerifyRpc,
+};
 use super::{
     BlockMetadata, EnginePhase, HopType, MixedPoolRef, PoolHop, PoolTickCoverage, ResultBatch,
     SolvePathResult, UniswapEngine, V3SnapshotData, V4SnapshotData,
 };
 
 /// [`Result<(), VerifyError>`] → `PyRuntimeError` seam for the extracted
-/// snapshot/verify module (ADR-006 slice 5b).
-fn map_verify_err(res: Result<(), super::snapshot_verify::VerifyError>) -> PyResult<()> {
+/// snapshot/verify module (ADR-006 slice 5b + slice-5 candidate-2).
+fn map_verify_err(res: Result<(), VerifyError>) -> PyResult<()> {
     res.map_err(|e| match e {
-        super::snapshot_verify::VerifyError::NoSnapshotStream => {
+        VerifyError::NoSnapshotStream => {
             pyo3::exceptions::PyRuntimeError::new_err("No snapshot stream in progress.")
+        }
+        VerifyError::Snapshot(msg) | VerifyError::Provider(msg) => {
+            pyo3::exceptions::PyRuntimeError::new_err(msg)
         }
     })
 }
 
-/// Lazily create or reuse a cached verification provider.
+/// Lazily create or reuse a cached verification provider (ADR-006 slice-5
+/// candidate-2: the `AlloyProvider` I/O seam stays in `py_binding.rs`; the pure
+/// orchestrator in `snapshot_verify.rs` reaches it through the `VerifyRpc`
+/// trait this is part of).
 fn verification_provider(
     rpc_url: &str,
     verify_provider: &parking_lot::Mutex<Option<crate::provider::AlloyProvider>>,
     label: &str,
-) -> PyResult<crate::provider::AlloyProvider> {
+) -> Result<crate::provider::AlloyProvider, VerifyError> {
     let mut cached = verify_provider.lock();
     if cached.is_none() {
         let runtime = crate::runtime::get_runtime();
         match runtime.block_on(crate::provider::AlloyProvider::new(rpc_url, 3)) {
             Ok(provider) => *cached = Some(provider),
             Err(e) => {
-                let msg = format!("verify: {label}: failed to create provider: {e}");
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
+                return Err(VerifyError::Provider(format!(
+                    "verify: {label}: failed to create provider: {e}"
+                )));
             }
         }
     }
     Ok(cached.as_ref().unwrap().clone())
 }
 
-/// Run the two-phase CL verification (snapshot block + backfill block) if both
-/// blocks are configured.
-fn run_cl_verification<F1, F2>(
-    rpc_url: Option<String>,
-    verify_provider: &parking_lot::Mutex<Option<crate::provider::AlloyProvider>>,
-    snapshot_block: Option<u64>,
-    backfill_block: Option<u64>,
-    label: &str,
-    verify_snapshot: F1,
-    verify_backfill: F2,
-) -> PyResult<()>
-where
-    F1: FnOnce(&crate::provider::AlloyProvider, u64) -> PyResult<()>,
-    F2: FnOnce(&crate::provider::AlloyProvider, u64) -> PyResult<()>,
-{
-    let Some(rpc_url) = rpc_url else {
-        return Ok(());
-    };
+/// The single concrete [`VerifyRpc`] impl (ADR-006 slice-5 candidate-2).
+///
+/// Holds borrows of the engine's verify plumbing (`rpc_url` + cached
+/// `AlloyProvider`); each method checks configuration, lazily ensures the
+/// provider, `block_on`s the underlying async verifier, and maps a
+/// `VerificationMismatch` into a [`VerifyError::Snapshot`] whose message
+/// carries the phase + pool label (mirroring the legacy closure bodies verbatim,
+/// so the `RuntimeError` text is byte-for-byte unchanged).
+///
+/// This is a transient, borrowed impl — constructed per `register_v3_pool` /
+/// `register_v4_pool` call; lifetime-tied to the `PyUniswapArbEngine` it borrows.
+struct EngineVerifyRpc<'a> {
+    rpc_url: &'a parking_lot::Mutex<Option<String>>,
+    provider: &'a parking_lot::Mutex<Option<crate::provider::AlloyProvider>>,
+}
 
-    let provider = verification_provider(&rpc_url, verify_provider, label)?;
-
-    if let Some(block) = snapshot_block {
-        verify_snapshot(&provider, block)?;
-    }
-    if let Some(block) = backfill_block {
-        verify_backfill(&provider, block)?;
+impl EngineVerifyRpc<'_> {
+    /// Resolve the configured `rpc_url` once per call; `None` → the orchestrator's
+    /// `enabled()` gate returns false and no provider is built.
+    fn rpc_url(&self) -> Option<String> {
+        self.rpc_url.lock().clone()
     }
 
-    Ok(())
+    /// Ensure the cached provider for `label` exists, returning a clone. The
+    /// first method call on a fresh orchestrator constructs it; subsequent calls
+    /// reuse the cache. Mapped to [`VerifyError::Provider`].
+    fn provider(&self, label: &str) -> Result<crate::provider::AlloyProvider, VerifyError> {
+        let Some(rpc_url) = self.rpc_url() else {
+            // Orchestrator gates on `enabled()`; reaching here is unreachable,
+            // but stay no-op rather than constructing a provider with no URL.
+            return Err(VerifyError::Provider(
+                "verify: no rpc_url configured".to_string(),
+            ));
+        };
+        verification_provider(&rpc_url, self.provider, label)
+    }
+}
+
+impl VerifyRpc for EngineVerifyRpc<'_> {
+    fn enabled(&self) -> bool {
+        self.rpc_url().is_some()
+    }
+
+    fn verify_v3_snapshot(
+        &self,
+        pool_address: Address,
+        tick_data: &HashMap<i32, crate::bot_core::TickInfo>,
+        block: u64,
+    ) -> Result<(), VerifyError> {
+        let provider = self.provider(&pool_address.to_string())?;
+        let runtime = crate::runtime::get_runtime();
+        let addr_str = pool_address.to_string();
+        runtime.block_on(async {
+            crate::bot_core::liquidity_verifier::verify_v3_liquidity_map(
+                &provider,
+                pool_address,
+                tick_data,
+                block,
+            )
+            .await
+            .map_err(|mismatch| {
+                VerifyError::Snapshot(format!(
+                    "V3 pool {addr_str} at snapshot block {block}: tick data mismatch: {mismatch}"
+                ))
+            })
+        })
+    }
+
+    fn verify_v3_backfill(
+        &self,
+        pools: &HashMap<u64, crate::bot_core::V3PoolState>,
+        block: u64,
+    ) -> Result<(), VerifyError> {
+        // Reuse the first pool's address (or zero) as the provider-construction
+        // label — the legacy closure used the registered pool's address; the
+        // registry key here is the pool_id (u64), so fall back to a stable label.
+        let label = pools
+            .values()
+            .next().map_or_else(|| "V3 backfill".to_string(), |p| p.address.to_string());
+        let provider = self.provider(&label)?;
+        let runtime = crate::runtime::get_runtime();
+        runtime.block_on(async {
+            crate::bot_core::liquidity_verifier::verify_v3_pools(
+                &provider,
+                Address::ZERO,
+                pools,
+                Some(block),
+            )
+            .await
+            .map_err(|mismatch| {
+                VerifyError::Snapshot(format!(
+                    "V3 pool {label} at backfill block {block}: tick data mismatch: {mismatch}"
+                ))
+            })
+        })
+    }
+
+    fn verify_v4_snapshot(
+        &self,
+        state_view: Address,
+        pool_id: [u8; 32],
+        tick_data: &HashMap<i32, crate::bot_core::TickInfo>,
+        block: u64,
+    ) -> Result<(), VerifyError> {
+        let pool_id_hex = format!("0x{}", alloy::hex::encode(pool_id));
+        let provider = self.provider(&pool_id_hex)?;
+        let runtime = crate::runtime::get_runtime();
+        runtime.block_on(async {
+            crate::bot_core::liquidity_verifier::verify_v4_liquidity_map(
+                &provider, state_view, pool_id, tick_data, block,
+            )
+            .await
+            .map_err(|mismatch| {
+                VerifyError::Snapshot(format!(
+                    "V4 pool {pool_id_hex} at snapshot block {block}: tick data mismatch: {mismatch}"
+                ))
+            })
+        })
+    }
+
+    fn verify_v4_backfill(
+        &self,
+        state_view: Address,
+        pools: &HashMap<u64, crate::bot_core::V4PoolState>,
+        block: u64,
+    ) -> Result<(), VerifyError> {
+        // Label with the first pool's id hex (deduplicated by pool_id inside the verifier).
+        let pool_id_hex = pools
+            .values()
+            .next().map_or_else(|| "V4 backfill".to_string(), |p| format!("0x{}", alloy::hex::encode(p.pool_id)));
+        let provider = self.provider(&pool_id_hex)?;
+        let runtime = crate::runtime::get_runtime();
+        runtime.block_on(async {
+            crate::bot_core::liquidity_verifier::verify_v4_pools(
+                &provider, state_view, pools, Some(block),
+            )
+            .await
+            .map_err(|mismatch| {
+                VerifyError::Snapshot(format!(
+                    "V4 pool {pool_id_hex} at backfill block {block}: tick data mismatch: {mismatch}"
+                ))
+            })
+        })
+    }
 }
 
 /// Python-facing mixed V2/V3 arbitrage engine.
@@ -1015,65 +1139,42 @@ impl PyUniswapArbEngine {
                 .verify_on_register
                 .load(std::sync::atomic::Ordering::Relaxed)
         {
-            let rpc_url = self.verify_rpc_url.lock().clone();
             let snapshot_block = *self.verify_snapshot_block.lock();
             let backfill_block = *self.verify_backfill_block.lock();
-            let label = address.to_string();
 
-            let verify_snapshot = |provider: &crate::provider::AlloyProvider,
-                                   block: u64|
-             -> PyResult<()> {
-                let Some(ref td) = tick_data_for_snapshot_verify else {
-                    return Ok(());
-                };
-                let runtime = crate::runtime::get_runtime();
-                let addr_str = address.to_string();
-                runtime.block_on(async {
-                    crate::bot_core::liquidity_verifier::verify_v3_liquidity_map(
-                        provider, addr, td, block,
-                    )
-                    .await
-                    .map_err(|mismatch| {
-                        pyo3::exceptions::PyRuntimeError::new_err(format!(
-                            "V3 pool {addr_str} at snapshot block {block}: tick data mismatch: {mismatch}"
-                        ))
-                    })
-                })
+            // ADR-006 slice-5 candidate-2: the verify closures shrink to
+            // delegate to the `VerifyRpc` trait (the `AlloyProvider` I/O +
+            // `block_on` + error-formatting live inside the `EngineVerifyRpc`
+            // impl). The pure orchestrator `run_cl_verification` drives the
+            // two phases in order without touching pyo3/tokio at this layer.
+            let rpc = EngineVerifyRpc {
+                rpc_url: &self.verify_rpc_url,
+                provider: &self.verify_provider,
             };
-
-            let verify_backfill = |provider: &crate::provider::AlloyProvider,
-                                   block: u64|
-             -> PyResult<()> {
-                let Some(ref pool_snapshot) = backfill_verify_snapshot else {
-                    return Ok(());
+            let verify_snapshot =
+                |rpc: &EngineVerifyRpc<'_>, block: u64| -> Result<(), VerifyError> {
+                    let Some(ref td) = tick_data_for_snapshot_verify else {
+                        return Ok(());
+                    };
+                    rpc.verify_v3_snapshot(addr, td, block)
                 };
-                let mut pool_map = HashMap::new();
-                pool_map.insert(key, pool_snapshot.clone());
+            let verify_backfill =
+                |rpc: &EngineVerifyRpc<'_>, block: u64| -> Result<(), VerifyError> {
+                    let Some(ref pool_snapshot) = backfill_verify_snapshot else {
+                        return Ok(());
+                    };
+                    let mut pool_map = HashMap::new();
+                    pool_map.insert(key, pool_snapshot.clone());
+                    rpc.verify_v3_backfill(&pool_map, block)
+                };
 
-                let runtime = crate::runtime::get_runtime();
-                let addr_str = address.to_string();
-                runtime.block_on(async {
-                    crate::bot_core::liquidity_verifier::verify_v3_pools(
-                        provider, Address::ZERO, &pool_map, Some(block),
-                    )
-                    .await
-                    .map_err(|mismatch| {
-                        pyo3::exceptions::PyRuntimeError::new_err(format!(
-                            "V3 pool {addr_str} at backfill block {block}: tick data mismatch: {mismatch}"
-                        ))
-                    })
-                })
-            };
-
-            run_cl_verification(
-                rpc_url,
-                &self.verify_provider,
+            map_verify_err(run_cl_verification(
+                &rpc,
                 snapshot_block,
                 backfill_block,
-                &label,
                 verify_snapshot,
                 verify_backfill,
-            )?;
+            ))?;
         }
 
         Ok(key)
@@ -1185,67 +1286,43 @@ impl PyUniswapArbEngine {
                 .verify_on_register
                 .load(std::sync::atomic::Ordering::Relaxed)
         {
-            let rpc_url = self.verify_rpc_url.lock().clone();
             let state_view = *self.verify_state_view.lock();
             let snapshot_block = *self.verify_snapshot_block.lock();
             let backfill_block = *self.verify_backfill_block.lock();
-            let label = pool_id_hex.to_string();
 
-            let verify_snapshot = |provider: &crate::provider::AlloyProvider,
+            // ADR-006 slice-5 candidate-2: verify closures shrink to delegate
+            // to the `VerifyRpc` trait (same shape as the V3 register path).
+            let rpc = EngineVerifyRpc {
+                rpc_url: &self.verify_rpc_url,
+                provider: &self.verify_provider,
+            };
+            let verify_snapshot = |rpc: &EngineVerifyRpc<'_>,
                                    block: u64|
-             -> PyResult<()> {
+             -> Result<(), VerifyError> {
                 let (Some(sv), Some(ref td)) = (state_view, tick_data_for_snapshot_verify) else {
                     return Ok(());
                 };
-                let runtime = crate::runtime::get_runtime();
-                let pool_id_str = pool_id_hex.to_string();
-                runtime.block_on(async {
-                    crate::bot_core::liquidity_verifier::verify_v4_liquidity_map(
-                        provider, sv, pool_id, td, block,
-                    )
-                    .await
-                    .map_err(|mismatch| {
-                        pyo3::exceptions::PyRuntimeError::new_err(format!(
-                            "V4 pool {pool_id_str} at snapshot block {block}: tick data mismatch: {mismatch}"
-                        ))
-                    })
-                })
+                rpc.verify_v4_snapshot(sv, pool_id, td, block)
             };
-
-            let verify_backfill = |provider: &crate::provider::AlloyProvider,
+            let verify_backfill = |rpc: &EngineVerifyRpc<'_>,
                                    block: u64|
-             -> PyResult<()> {
+             -> Result<(), VerifyError> {
                 let (Some(sv), Some(ref pool_snapshot)) = (state_view, backfill_verify_snapshot)
                 else {
                     return Ok(());
                 };
                 let mut pool_map = HashMap::new();
                 pool_map.insert(key, pool_snapshot.clone());
-
-                let runtime = crate::runtime::get_runtime();
-                let pool_id_str = pool_id_hex.to_string();
-                runtime.block_on(async {
-                    crate::bot_core::liquidity_verifier::verify_v4_pools(
-                        provider, sv, &pool_map, Some(block),
-                    )
-                    .await
-                    .map_err(|mismatch| {
-                        pyo3::exceptions::PyRuntimeError::new_err(format!(
-                            "V4 pool {pool_id_str} at backfill block {block}: tick data mismatch: {mismatch}"
-                        ))
-                    })
-                })
+                rpc.verify_v4_backfill(sv, &pool_map, block)
             };
 
-            run_cl_verification(
-                rpc_url,
-                &self.verify_provider,
+            map_verify_err(run_cl_verification(
+                &rpc,
                 snapshot_block,
                 backfill_block,
-                &label,
                 verify_snapshot,
                 verify_backfill,
-            )?;
+            ))?;
         }
 
         Ok(key)
