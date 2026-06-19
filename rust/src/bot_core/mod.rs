@@ -671,6 +671,13 @@ impl BotState {
     /// [`apply_pump_buffer_v3`](Self::apply_pump_buffer_v3). No-op if there are
     /// none. The post-call state is at the backfill boundary (a deterministic
     /// point suitable for verification cloning).
+    ///
+    /// Each buffered Mint/Burn pushes a tick-only `V3BlockDelta` (carrying the
+    /// boundary-tick priors) and advances `state.update_block` — mirroring the
+    /// live-path [`apply_v3_liquidity_update_by_pool_id`]. Pre-fix these
+    /// appliers mutated `tick_data` only, so the buffered events were invisible
+    /// to `restore_before_block` and `update_block` stayed frozen at the
+    /// registration block.
     pub fn apply_backfill_buffer_v3(&mut self, address: &Address) {
         let Some(&key) = self.pool_addresses.get(address) else {
             return;
@@ -680,12 +687,36 @@ impl BotState {
         };
         for update in buffered {
             if let Some(PoolEntry::V3(state)) = self.pools.get_mut(&key) {
+                // Capture boundary-tick priors before mutation so reorg
+                // rollback can reverse-apply. A tick absent before this update
+                // (newly initialized) gets `liquidity_gross_before: None`
+                // (deleted on rollback). Mint/Burn don't touch slot0 scalars
+                // → `scalar_priors: None`.
+                let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
+                for &tick_idx in &[update.tick_lower, update.tick_upper] {
+                    let prior = state.tick_data.get(&tick_idx).cloned();
+                    journaled_priors.push((
+                        tick_idx,
+                        TickBefore {
+                            liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
+                            liquidity_net_before: prior
+                                .as_ref()
+                                .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
+                        },
+                    ));
+                }
                 crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
                     &mut state.tick_data,
                     update.tick_lower,
                     update.tick_upper,
                     update.liquidity_delta,
                 );
+                state.journal.push_delta(V3BlockDelta {
+                    block: update.block_number,
+                    scalar_priors: None,
+                    tick_priors: journaled_priors,
+                });
+                state.update_block = update.block_number;
                 state.invalidate_tick_range_cache();
             }
         }
@@ -693,6 +724,9 @@ impl BotState {
 
     /// Apply all buffered **pump** V3 events for a pool address.
     /// Call this during registration, after [`apply_backfill_buffer_v3`].
+    ///
+    /// Same journal + `update_block` contract as
+    /// [`apply_backfill_buffer_v3`] — see its docs.
     pub fn apply_pump_buffer_v3(&mut self, address: &Address) {
         let Some(&key) = self.pool_addresses.get(address) else {
             return;
@@ -702,12 +736,31 @@ impl BotState {
         };
         for update in buffered {
             if let Some(PoolEntry::V3(state)) = self.pools.get_mut(&key) {
+                let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
+                for &tick_idx in &[update.tick_lower, update.tick_upper] {
+                    let prior = state.tick_data.get(&tick_idx).cloned();
+                    journaled_priors.push((
+                        tick_idx,
+                        TickBefore {
+                            liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
+                            liquidity_net_before: prior
+                                .as_ref()
+                                .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
+                        },
+                    ));
+                }
                 crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
                     &mut state.tick_data,
                     update.tick_lower,
                     update.tick_upper,
                     update.liquidity_delta,
                 );
+                state.journal.push_delta(V3BlockDelta {
+                    block: update.block_number,
+                    scalar_priors: None,
+                    tick_priors: journaled_priors,
+                });
+                state.update_block = update.block_number;
                 state.invalidate_tick_range_cache();
             }
         }
@@ -1546,6 +1599,11 @@ impl BotState {
     }
 
     /// Apply all buffered **backfill** V4 `ModifyLiquidity` events for a pool.
+    ///
+    /// Same journal + `update_block` contract as the V3 buffer appliers
+    /// ([`apply_backfill_buffer_v3`]) — each event pushes a tick-only
+    /// `V3BlockDelta` (V4 shares the V3 journal shape) and advances
+    /// `state.update_block`. Pre-fix these mutated `tick_data` only.
     pub fn apply_backfill_buffer_v4(
         &mut self,
         pool_manager: Address,
@@ -1563,18 +1621,40 @@ impl BotState {
                 continue;
             };
             if let Ok(delta_i128) = i128::try_from(update.liquidity_delta) {
+                let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
+                for &tick_idx in &[update.tick_lower, update.tick_upper] {
+                    let prior = state.tick_data.get(&tick_idx).cloned();
+                    journaled_priors.push((
+                        tick_idx,
+                        TickBefore {
+                            liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
+                            liquidity_net_before: prior
+                                .as_ref()
+                                .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
+                        },
+                    ));
+                }
                 crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
                     &mut state.tick_data,
                     update.tick_lower,
                     update.tick_upper,
                     delta_i128,
                 );
+                state.journal.push_delta(V3BlockDelta {
+                    block: update.block_number,
+                    scalar_priors: None,
+                    tick_priors: journaled_priors,
+                });
+                state.update_block = update.block_number;
                 state.invalidate_tick_range_cache();
             }
         }
     }
 
     /// Apply all buffered **pump** V4 `ModifyLiquidity` events for a pool.
+    ///
+    /// Same journal + `update_block` contract as
+    /// [`apply_backfill_buffer_v4`] — see its docs.
     pub fn apply_pump_buffer_v4(
         &mut self,
         pool_manager: Address,
@@ -1592,12 +1672,31 @@ impl BotState {
                 continue;
             };
             if let Ok(delta_i128) = i128::try_from(update.liquidity_delta) {
+                let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
+                for &tick_idx in &[update.tick_lower, update.tick_upper] {
+                    let prior = state.tick_data.get(&tick_idx).cloned();
+                    journaled_priors.push((
+                        tick_idx,
+                        TickBefore {
+                            liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
+                            liquidity_net_before: prior
+                                .as_ref()
+                                .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
+                        },
+                    ));
+                }
                 crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
                     &mut state.tick_data,
                     update.tick_lower,
                     update.tick_upper,
                     delta_i128,
                 );
+                state.journal.push_delta(V3BlockDelta {
+                    block: update.block_number,
+                    scalar_priors: None,
+                    tick_priors: journaled_priors,
+                });
+                state.update_block = update.block_number;
                 state.invalidate_tick_range_cache();
             }
         }
@@ -2220,6 +2319,236 @@ mod tests {
             state.journal.len(),
             1,
             "no deltas popped on the no-op path (only the block-10 swap delta; V3 registration pushes no genesis)"
+        );
+    }
+
+    // --- HO3GWT: buffer appliers push journal deltas + advance update_block ---
+
+    /// Register a V3 pool with tick 60 pre-initialized (gross/net 100) and
+    /// tick 120 absent, so a buffered Mint at [60,120] bumps 60 → 600 and
+    /// newly initializes 120. Helper does NOT create the `BotState` — the
+    /// caller must buffer events on the SAME core before calling this.
+    fn register_v3_on_core(core: &mut BotState, pool_addr: Address, update_block: u64) -> u64 {
+        use crate::bot_core::{RegisterV3PoolParams, TickInfo};
+        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+        use alloy::primitives::{I256, U128};
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            60,
+            TickInfo {
+                liquidity_gross: U128::from(100),
+                liquidity_net: I256::try_from(100i128).unwrap(),
+            },
+        );
+        core.register_v3_pool(&RegisterV3PoolParams {
+            address: pool_addr,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data,
+            update_block,
+            coverage: PoolTickCoverage::Sparse,
+        })
+    }
+
+    /// Regression (HO3GWT, V3 backfill buffer): a Mint buffered during the
+    /// backfill phase, then applied at registration via
+    /// `apply_backfill_buffer_v3`, must (1) push a tick-only journal delta,
+    /// (2) advance `state.update_block` to the event's block, and (3) be
+    /// reversible by `restore_before_block` (roll the tick state back to the
+    /// pre-buffer registration snapshot).
+    ///
+    /// Pre-fix `apply_backfill_buffer_v3` called `apply_liquidity_to_tick_range`
+    /// and `invalidate_tick_range_cache()` and stopped — no journal, no
+    /// `update_block` bump. A reorg landing inside the buffered range
+    /// couldn't reverse the buffered events, and `v3_snapshot`/diagnostics
+    /// reported a stale last-update block.
+    #[test]
+    fn apply_backfill_buffer_v3_journals_and_advances_update_block() {
+        let pool_addr = Address::from([0x88u8; 20]);
+        let block_b = 5u64;
+
+        // 1. Pre-registration: buffer a backfill Mint at [60, 120], block B=5.
+        let mut core = BotState::new();
+        core.buffer_backfill_v3_liquidity_update(pool_addr, 60, 120, 500_i128, block_b);
+
+        // 2. Register on the SAME core (tick 60 gross=100, tick 120 absent).
+        let pool_id = register_v3_on_core(&mut core, pool_addr, 0);
+
+        // 3. Apply the backfill buffer (the registration-staged application).
+        core.apply_backfill_buffer_v3(&pool_addr);
+
+        {
+            let s = core.get_v3_pool(pool_id).expect("registered");
+            assert_eq!(
+                s.update_block, block_b,
+                "update_block must advance to the buffered event's block (pre-fix: stays at registration block 0)"
+            );
+            assert_eq!(
+                s.journal.len(),
+                1,
+                "buffered Mint must push one tick-only journal delta (pre-fix: 0)"
+            );
+            let t60 = s.tick_data.get(&60).expect("tick 60 present");
+            assert_eq!(t60.liquidity_gross, alloy::primitives::U128::from(600));
+            assert_eq!(
+                t60.liquidity_net,
+                alloy::primitives::I256::try_from(600i128).unwrap()
+            );
+            let t120 = s.tick_data.get(&120).expect("tick 120 newly initialized");
+            assert_eq!(t120.liquidity_gross, alloy::primitives::U128::from(500));
+            assert_eq!(
+                t120.liquidity_net,
+                alloy::primitives::I256::try_from(-500i128).unwrap(),
+                "upper tick net -= delta (V3/`apply_liquidity_to_tick_range` convention)"
+            );
+        }
+
+        // 4. Restore before block B → rolls back the buffered Mint to the
+        //    registration snapshot.
+        core.v3_restore_before_block(pool_id, block_b);
+        let s = core.get_v3_pool(pool_id).expect("registered");
+        let t60 = s.tick_data.get(&60).expect("tick 60 still present");
+        assert_eq!(
+            t60.liquidity_gross,
+            alloy::primitives::U128::from(100),
+            "tick 60 reverts to registration snapshot (gross 100) on rollback"
+        );
+        assert_eq!(
+            t60.liquidity_net,
+            alloy::primitives::I256::try_from(100i128).unwrap()
+        );
+        assert!(
+            !s.tick_data.contains_key(&120),
+            "newly-initialized tick 120 removed on rollback"
+        );
+    }
+
+    /// Regression (HO3GWT, V3 pump buffer): same invariants as the backfill
+    /// path, but the event is buffered via the WS-pump path (`apply_v3_
+    /// liquidity_update` while unregistered routes to the pump buffer) and
+    /// applied via `apply_pump_buffer_v3`.
+    #[test]
+    fn apply_pump_buffer_v3_journals_and_advances_update_block() {
+        let pool_addr = Address::from([0x99u8; 20]);
+        let block_b = 7u64;
+
+        // 1. Pre-registration: pump the Mint (unregistered → pump buffer).
+        let mut core = BotState::new();
+        core.apply_v3_liquidity_update(pool_addr, 60, 120, 500_i128, block_b);
+
+        // 2. Register on the SAME core + 3. apply pump buffer.
+        let pool_id = register_v3_on_core(&mut core, pool_addr, 0);
+        core.apply_pump_buffer_v3(&pool_addr);
+
+        {
+            let s = core.get_v3_pool(pool_id).expect("registered");
+            assert_eq!(s.update_block, block_b, "update_block advances to pump-buffer event block");
+            assert_eq!(s.journal.len(), 1, "pump-buffer Mint pushes one journal delta");
+            assert_eq!(
+                s.tick_data.get(&60).expect("t60").liquidity_gross,
+                alloy::primitives::U128::from(600)
+            );
+            assert!(s.tick_data.contains_key(&120));
+        }
+
+        core.v3_restore_before_block(pool_id, block_b);
+        let s = core.get_v3_pool(pool_id).expect("registered");
+        assert_eq!(
+            s.tick_data.get(&60).expect("t60").liquidity_gross,
+            alloy::primitives::U128::from(100),
+            "pump-buffer Mint rolls back to registration snapshot"
+        );
+        assert!(
+            !s.tick_data.contains_key(&120),
+            "newly-initialized tick 120 removed on pump-buffer rollback"
+        );
+    }
+
+    /// Regression (HO3GWT, V4 backfill buffer): mirror of the V3 backfill
+    /// test for `apply_backfill_buffer_v4` — a `ModifyLiquidity` buffered
+    /// during backfill must journal + advance `update_block` + be reversible
+    /// via `v4_restore_before_block`.
+    #[test]
+    fn apply_backfill_buffer_v4_journals_and_advances_update_block() {
+        use crate::bot_core::{RegisterV4PoolParams, TickInfo, V4PoolKey};
+        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+        use alloy::primitives::{I256, U128};
+
+        let pool_manager = Address::from([0x44u8; 20]);
+        let pool_id_bytes: crate::bot_core::v4_swap_decoder::PoolId = [0xeeu8; 32];
+        let block_b = 9u64;
+
+        // 1. Pre-registration: buffer a backfill ModifyLiquidity at [60,120].
+        let mut core = BotState::new();
+        core.buffer_backfill_v4_liquidity_update(
+            pool_manager,
+            pool_id_bytes,
+            60,
+            120,
+            I256::try_from(500i128).unwrap(),
+            block_b,
+        );
+
+        // 2. Register (tick 60 gross=100, tick 120 absent, update_block=0).
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            60,
+            TickInfo {
+                liquidity_gross: U128::from(100),
+                liquidity_net: I256::try_from(100i128).unwrap(),
+            },
+        );
+        let pool_id = core.register_v4_pool(&RegisterV4PoolParams {
+            pool_manager,
+            pool_id: pool_id_bytes,
+            pool_key: V4PoolKey {
+                currency0: Address::ZERO,
+                currency1: Address::from([1u8; 20]),
+                fee: 10_000,
+                tick_spacing: 60,
+                hooks: Address::ZERO,
+            },
+            hook_flags: 0,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data,
+            update_block: 0,
+            coverage: PoolTickCoverage::Sparse,
+        })
+        .expect("V4 pool registers");
+
+        // 3. Apply the backfill buffer.
+        core.apply_backfill_buffer_v4(pool_manager, pool_id_bytes);
+
+        {
+            let s = core.get_v4_pool(pool_id).expect("registered");
+            assert_eq!(s.update_block, block_b, "V4 update_block advances to buffered event block");
+            assert_eq!(s.journal.len(), 1, "V4 buffered ModifyLiquidity pushes one journal delta");
+            assert_eq!(
+                s.tick_data.get(&60).expect("t60").liquidity_gross,
+                U128::from(600)
+            );
+            assert!(s.tick_data.contains_key(&120));
+        }
+
+        // 4. Restore before block B → rolls back the ModifyLiquidity.
+        core.v4_restore_before_block(pool_id, block_b);
+        let s = core.get_v4_pool(pool_id).expect("registered");
+        assert_eq!(
+            s.tick_data.get(&60).expect("t60").liquidity_gross,
+            U128::from(100),
+            "V4 tick 60 reverts to registration snapshot on rollback"
+        );
+        assert!(
+            !s.tick_data.contains_key(&120),
+            "V4 newly-initialized tick 120 removed on rollback"
         );
     }
 }
