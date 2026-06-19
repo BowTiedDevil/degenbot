@@ -44,18 +44,20 @@ import pathlib
 import time
 import traceback
 from collections import deque
+from collections.abc import Sequence
 from typing import Any
 
 import dotenv
 import eth_abi.abi
 import eth_account
 import web3
-from eth_backrun_helpers import (
+from examples.eth_backrun_helpers import (
     HopInfo,
     PathInfo,
     V2HopInfo,
     V3HopInfo,
     V4HopInfo,
+    build_hops_from_pools,
     encode_cmd_stream,
     v4_input_is_native,
 )
@@ -626,11 +628,18 @@ class EngineRegistry:
     the pool_manager address at registration time.
     """
 
-    def __init__(self, py_bot: PyBot) -> None:
+    def __init__(
+        self,
+        py_bot: PyBot | None = None,
+        *,
+        engine: UniswapArbEngine | None = None,
+    ) -> None:
         # ADR-006 D1+D4: the engine adopts this PyBot's shared BotState, so
         # the engine reads/writes the SAME core that V2 PyLiquidityPool handles
         # share — no dual-BotState split (rust-owned-bot.md §17 closure).
-        self.engine = UniswapArbEngine(py_bot=py_bot)
+        # `engine` is a testability seam: when omitted, the production engine is
+        # constructed against `py_bot`'s shared BotState.
+        self.engine = engine if engine is not None else UniswapArbEngine(py_bot=py_bot)
         self._v2_keys: dict[str, int] = {}  # address → pool_id (shared BotState)
         self._v3_keys: dict[str, int] = {}
         # V4 pools keyed by pool_id hex — for event routing from PoolManager logs
@@ -752,28 +761,34 @@ class EngineRegistry:
     def knows_v4_pool(self, pool_id_hex: str) -> bool:
         return pool_id_hex in self._v4_keys
 
-    def register_path(self, hops: list[HopInfo]) -> int:
-        """Register a path from a list of HopInfo objects.
+    def register_path(
+        self,
+        pools_and_zfos: Sequence[tuple[LiquidityPool | UniswapV3Pool | UniswapV4Pool, bool]],
+    ) -> int:
+        """Register a path from concrete pool objects + per-hop directions.
 
-        Uses register_and_solve_path for eager solving so the path
-        is immediately included in the next result batch.
+        HopInfo is built via build_hops_from_pools from pool attributes; each
+        pool's engine key is resolved from this registry's key maps. Uses
+        register_and_solve_path for eager solving so the path is immediately
+        included in the next result batch.
         """
-        engine_hops = []
-        for hop in hops:
-            if isinstance(hop, V2HopInfo):
-                key = self._v2_keys.get(hop.pool_address)
-            elif isinstance(hop, V4HopInfo):
-                key = self._v4_keys.get(hop.pool_id_hex)
-            else:
-                key = self._v3_keys.get(hop.pool_address)
+        hops = build_hops_from_pools(pools_and_zfos)
+        engine_hops: list[tuple[int, bool]] = []
+        for pool, zfo in pools_and_zfos:
+            if isinstance(pool, UniswapV4Pool):
+                key = self._v4_keys.get(pool.pool_id.to_0x_hex())
+            elif isinstance(pool, LiquidityPool):
+                key = self._v2_keys.get(pool.address)
+            else:  # V3
+                key = self._v3_keys.get(pool.address)
             if key is None:
-                msg = f"Pool not registered: {hop}"
+                msg = f"Pool not registered: {pool}"
                 raise ValueError(msg)
             # ADR-006 D3: register_path takes (pool_id, zero_for_one) — the
             # engine derives the family from the Bot. One pool_id per pool;
             # orientation is zero_for_one (the old `fwd_key + 1` reverse-id
             # hack is gone — Bot is 1-id-per-pool post-ADR-003).
-            engine_hops.append((key, hop.zfo))
+            engine_hops.append((key, zfo))
 
         path_id = self.engine.register_and_solve_path(engine_hops)
         self.paths[path_id] = PathInfo(hops=hops)
@@ -1068,50 +1083,7 @@ async def build_paths(
         registered_path_sigs.add(path_sig)
 
         try:  # noqa:PLW0717
-            hops = []
-            for p, pt, zfo in zip(pools, pool_type_strs, zfo_list, strict=True):
-                if pt == "V2":
-                    hops.append(
-                        V2HopInfo(
-                            pool_address=p.address,
-                            token0_address=p.token0.address,
-                            token1_address=p.token1.address,
-                            # Directional V2 fee as bips of 10000. The
-                            # on-chain pair applies its own fee; this value is
-                            # encoded into the command stream for the executor's
-                            # auto-pay accounting (see contracts/cmd_stream.py
-                            # enc_v2_swap_*). Select the fee matching the swap
-                            # direction: zfo=True sells token0 (fee_token0),
-                            # zfo=False sells token1 (fee_token1).
-                            fee=int((p.fee_token0 if zfo else p.fee_token1) * 10000),
-                            zfo=zfo,
-                        )
-                    )
-                elif pt == "V3":
-                    hops.append(
-                        V3HopInfo(
-                            pool_address=p.address,
-                            token0_address=p.token0.address,
-                            token1_address=p.token1.address,
-                            fee=p.fee,
-                            zfo=zfo,
-                        )
-                    )
-                else:  # V4
-                    pool_id_hex = p.pool_id.to_0x_hex()
-                    hops.append(
-                        V4HopInfo(
-                            pool_manager_address=p.address,
-                            pool_id_hex=pool_id_hex,
-                            currency0_address=p.token0.address,
-                            currency1_address=p.token1.address,
-                            fee=p.fee,
-                            tick_spacing=p.tick_spacing,
-                            hook_address=p.hook_address,
-                            zfo=zfo,
-                        )
-                    )
-            engine_registry.register_path(hops)
+            engine_registry.register_path(list(zip(pools, zfo_list, strict=True)))
         except Exception as exc:
             register_fail_count += 1
             if register_fail_count <= 5:
