@@ -82,10 +82,6 @@ impl Engine for EngineHandle {
             .finalize_block(block, metadata, last_solved_block, has_logs_this_block);
     }
 
-    fn handle_reorg(&self, block: u64) {
-        self.engine.lock().handle_reorg(block);
-    }
-
     fn last_processed_block(&self) -> Option<u64> {
         self.engine.lock().last_processed_block()
     }
@@ -117,7 +113,6 @@ mod tests {
         let mut last_solved = 0u64;
         let mut has_logs = false;
         handle.finalize_block(1, &metadata, &mut last_solved, &mut has_logs);
-        handle.handle_reorg(1);
 
         assert!(!handle.has_dirty_paths());
     }

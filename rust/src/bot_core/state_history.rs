@@ -245,6 +245,20 @@ impl<D: BlockDelta> ReorgJournal<D> {
         self.deltas.back().map(BlockDelta::block)
     }
 
+    /// The block number of the earliest (genesis) surviving delta, or `None`
+    /// if the journal is empty.
+    ///
+    /// ADR-006 slice 7: `ReorgCoordinator` checks `earliest_block() < block`
+    /// (plus `newest_block().is_some()`) before calling `restore_before_block`
+    /// for a V3/V4 pool — the V3/V4 journal `restore_before_block` panics on an
+    /// empty journal, and the V2 path returns `Err(NoStatePriorToBlock)` when
+    /// `block <= earliest`. The pre-check unifies the too-deep detection across
+    /// all families so the pump shuts down gracefully instead of panicking.
+    #[must_use]
+    pub fn earliest_block(&self) -> Option<u64> {
+        self.deltas.front().map(BlockDelta::block)
+    }
+
     /// Append a new delta to the journal.
     ///
     /// If the delta's block matches the newest delta's block,

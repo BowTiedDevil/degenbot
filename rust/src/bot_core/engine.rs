@@ -54,11 +54,6 @@ pub(crate) trait Engine: Send + Sync {
         has_logs_this_block: &mut bool,
     );
 
-    /// A WS log arrived with `removed: true` — restore state to just before
-    /// `block` (slice 7 adds optimistic per-event `restore_before_block`;
-    /// today this is the bulk `handle_reorg` path).
-    fn handle_reorg(&self, block: u64);
-
     /// The last block this engine solved. Used by `SolveCoordinator::start`
     /// to assert precondition 2 (cursors agree across engines before start).
     /// In steady state, callers should prefer the coordinator's

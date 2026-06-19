@@ -154,16 +154,6 @@ impl DrainSink for SolveCoordinator {
         state.last_drained_block = Some(block);
     }
 
-    fn on_reorg(&self, block: u64) {
-        let _guard = self.drain_lock.lock().expect("drain_lock poisoned");
-        for engine in &self.engines {
-            engine.handle_reorg(block);
-        }
-        // Note: reorg restores; we do NOT advance `last_drained_block` here
-        // (reorg coordination lands in slice 7). Left as-is for now —
-        // `on_reorg` is the bulk `handle_reorg` path until slice 7.
-    }
-
     fn last_processed_block(&self) -> Option<u64> {
         // Block until any in-flight drain completes, then return the "good"
         // drained block. Python polls paying this latency is the explicit
@@ -186,7 +176,6 @@ mod tests {
         solve_dirty_calls: StdMutex<u32>,
         send_result_batch_calls: StdMutex<u32>,
         finalize_block_calls: StdMutex<u32>,
-        handle_reorg_calls: StdMutex<u32>,
         has_dirty_paths_calls: StdMutex<u32>,
         dirty: StdMutex<bool>,
         cursor: StdMutex<Option<u64>>,
@@ -198,7 +187,6 @@ mod tests {
                 solve_dirty_calls: StdMutex::new(0),
                 send_result_batch_calls: StdMutex::new(0),
                 finalize_block_calls: StdMutex::new(0),
-                handle_reorg_calls: StdMutex::new(0),
                 has_dirty_paths_calls: StdMutex::new(0),
                 dirty: StdMutex::new(false),
                 cursor: StdMutex::new(None),
@@ -234,9 +222,6 @@ mod tests {
             _has_logs_this_block: &mut bool,
         ) {
             *self.finalize_block_calls.lock().unwrap() += 1;
-        }
-        fn handle_reorg(&self, _block: u64) {
-            *self.handle_reorg_calls.lock().unwrap() += 1;
         }
         fn last_processed_block(&self) -> Option<u64> {
             *self.cursor.lock().unwrap()
