@@ -348,3 +348,60 @@ class TestSharedStateTopologyV3:
         assert handle.sqrt_price_x96 == V3_SQRT_PRICE
         assert handle.liquidity == V3_LIQUIDITY
         assert handle.tick == V3_TICK
+
+    def test_v3_handle_apply_liquidity_update_inits_ticks(self) -> None:
+        """A V3 Mint via ``apply_liquidity_update`` initializes tick entries.
+
+        The handle mutates ``BotState.tick_data`` (pool_id-keyed) — the same
+        state the engine solver's ``compute_tick_ranges`` reads. Brackets the
+        current tick with a lower/upper tick pair to set up a bounded liquidity
+        range.
+        """
+        core = PyBot()
+        pool_id = core.register_v3_pool(
+            address=V3_POOL_A,
+            token0=TOKEN0,
+            token1=TOKEN1,
+            fee=V3_FEE,
+            tick_spacing=V3_TICK_SPACING,
+            factory=FACTORY,
+            sqrt_price_x96=V3_SQRT_PRICE,
+            liquidity=V3_LIQUIDITY,
+            tick=V3_TICK,
+        )
+        handle = core.get_pool(pool_id)
+        assert handle is not None
+
+        tick_lower = V3_TICK - V3_TICK_SPACING
+        tick_upper = V3_TICK + V3_TICK_SPACING
+        delta = 10_000
+        applied = handle.apply_liquidity_update(
+            tick_lower=tick_lower,
+            tick_upper=tick_upper,
+            liquidity_delta=delta,
+            block_number=3,
+        )
+        assert applied, "apply_liquidity_update should succeed on a registered V3 pool"
+
+        # Applies to a non-V3 pool (V2) silently return False — don't corrupt.
+        v2_pool_id = core.register_v2_pool(
+            address=V2_POOL_B,
+            token0=TOKEN0,
+            token1=TOKEN1,
+            reserve0=1_500_000 * USDC,
+            reserve1=800 * WETH,
+            gamma_numer0=997,
+            fee_denom0=1000,
+            gamma_numer1=997,
+            fee_denom1=1000,
+            factory=FACTORY,
+        )
+        v2_handle = core.get_pool(v2_pool_id)
+        assert v2_handle is not None
+        bad = v2_handle.apply_liquidity_update(
+            tick_lower=tick_lower,
+            tick_upper=tick_upper,
+            liquidity_delta=delta,
+            block_number=4,
+        )
+        assert bad is False

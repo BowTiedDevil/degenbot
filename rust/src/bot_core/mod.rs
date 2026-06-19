@@ -564,6 +564,28 @@ impl BotState {
             );
             return None;
         };
+        self.apply_v3_liquidity_update_by_pool_id(
+            pool_id,
+            tick_lower,
+            tick_upper,
+            liquidity_delta,
+            block_number,
+        )
+    }
+
+    /// V3 liquidity update keyed by the handle's `pool_id` (plan-101 slice 8a).
+    ///
+    /// Skips address resolution — the `PyLiquidityPool` handle holds the
+    /// canonical `pool_id`, so this is the one-lock, one-lookup path. Registered
+    /// pools only (no buffering — the handle's pool is necessarily registered).
+    pub fn apply_v3_liquidity_update_by_pool_id(
+        &mut self,
+        pool_id: u64,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: i128,
+        block_number: u64,
+    ) -> Option<u64> {
 
         let Some(PoolEntry::V3(state)) = self.pools.get_mut(&pool_id) else {
             return None;
