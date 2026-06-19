@@ -878,6 +878,8 @@ async def build_paths(
     token_filter_count = 0
     engine_reject_count = 0
     dup_count = 0
+    direction_fail_count = 0
+    register_fail_count = 0
     v4_pool_count = 0
     v4_hook_rejected = 0
     v4_dynamic_fee_rejected = 0
@@ -1048,6 +1050,7 @@ async def build_paths(
         # V4 pools use the same token0/token1 model as V3 for direction resolution
         zfo_list = resolve_directions(pools, weth.address)
         if zfo_list is None:
+            direction_fail_count += 1
             continue
 
         # Skip duplicate paths (same pools, same directions)
@@ -1076,7 +1079,14 @@ async def build_paths(
                             pool_address=p.address,
                             token0_address=p.token0.address,
                             token1_address=p.token1.address,
-                            fee=int(p.fee_for_cache() * 10000),
+                            # Directional V2 fee as bips of 10000. The
+                            # on-chain pair applies its own fee; this value is
+                            # encoded into the command stream for the executor's
+                            # auto-pay accounting (see contracts/cmd_stream.py
+                            # enc_v2_swap_*). Select the fee matching the swap
+                            # direction: zfo=True sells token0 (fee_token0),
+                            # zfo=False sells token1 (fee_token1).
+                            fee=int((p.fee_token0 if zfo else p.fee_token1) * 10000),
                             zfo=zfo,
                         )
                     )
@@ -1111,7 +1121,11 @@ async def build_paths(
                     )
             engine_registry.register_path(hops)
         except Exception as exc:
-            bot_logger.debug(f"Path registration failed: {exc}")
+            register_fail_count += 1
+            if register_fail_count <= 5:
+                bot_logger.warning(
+                    f"Path registration failed: {type(exc).__name__}: {exc}"
+                )
             continue
 
         path_count += 1
@@ -1129,7 +1143,9 @@ async def build_paths(
         f"{engine_reject_count} engine-rejected "
         f"(hooks={v4_hook_rejected}, dynamic_fee={v4_dynamic_fee_rejected}, "
         f"v4_other={v4_other_value_error}, other_exc={other_exc_count}), "
-        f"{dup_count} duplicates"
+        f"{dup_count} duplicates, "
+        f"{direction_fail_count} direction-failed, "
+        f"{register_fail_count} register-failed"
     )
     bot_logger.info(
         f"[build_paths] Summary: {path_count} paths in "

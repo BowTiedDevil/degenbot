@@ -636,6 +636,14 @@ def find_paths(
                 f"(id {start_token_id}) -> {end_token} (id {end_token_id})"
             )
 
+            # A permutation filter implies an exact hop depth: don't yield
+            # shorter cycles that merely prefix-match the first N depths
+            # (e.g. a 3-depth V3-V3-V2 filter must not leak 2-hop V3-V3).
+            effective_min_depth = (
+                min_depth if pool_type_per_depth is None
+                else max(min_depth, len(pool_type_per_depth))
+            )
+
             logger.debug(f"Performing generic {max_depth}-pool path search")
 
             yield from _dfs(
@@ -645,7 +653,7 @@ def find_paths(
                 include_reverse=(direction == direction.FORWARD_AND_REVERSE),
                 session=session,
                 graph=graph,
-                min_depth=min_depth,
+                min_depth=effective_min_depth,
                 max_depth=max_depth,
                 pool_type_per_depth=pool_type_per_depth,
                 node_valid_depths=node_valid_depths,
@@ -769,6 +777,14 @@ async def find_paths_async(
                 f"(id {start_token_id}) -> {end_token} (id {end_token_id})"
             )
 
+            # A permutation filter implies an exact hop depth: don't yield
+            # shorter cycles that merely prefix-match the first N depths
+            # (e.g. a 3-depth V3-V3-V2 filter must not leak 2-hop V3-V3).
+            effective_min_depth = (
+                min_depth if pool_type_per_depth is None
+                else max(min_depth, len(pool_type_per_depth))
+            )
+
             logger.debug(f"Performing generic {max_depth}-pool path search")
 
             async for path in _dfs_async(
@@ -778,7 +794,7 @@ async def find_paths_async(
                 include_reverse=(direction == direction.FORWARD_AND_REVERSE),
                 session=session,
                 graph=graph,
-                min_depth=min_depth,
+                min_depth=effective_min_depth,
                 max_depth=max_depth,
                 pool_type_per_depth=pool_type_per_depth,
                 node_valid_depths=node_valid_depths,
