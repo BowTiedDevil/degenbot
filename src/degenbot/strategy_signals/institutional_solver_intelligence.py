@@ -10,15 +10,17 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from hashlib import sha256
 from pathlib import Path
 from time import time_ns
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from degenbot.exceptions.base import DegenbotValueError
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 class InstitutionalSolverDecision(StrEnum):
@@ -184,7 +186,7 @@ class InstitutionalSolverIntelligence:
         min_profit_bps: int = 20,
         max_policy_drift_score: int = 40,
         policy_id: str = "adaptive_control_loop_v1",
-        snapshot_db_path: str | Path = "/tmp/institutional_solver_intelligence.sqlite3",
+        snapshot_db_path: str | Path = "/tmp/institutional_solver_intelligence.sqlite3",  # noqa: S108
     ) -> None:
         self._max_drawdown_bps = max_drawdown_bps
         self._min_confidence_bps = min_confidence_bps
@@ -301,7 +303,8 @@ class InstitutionalSolverIntelligence:
 
         candidate_seq = tuple(candidates)
         if not candidate_seq:
-            raise DegenbotValueError("batch must contain at least one candidate")
+            msg = "batch must contain at least one candidate"
+            raise DegenbotValueError(msg)
 
         actions = tuple(self.evaluate(candidate) for candidate in candidate_seq)
         counts = self._count_decisions(actions)
@@ -332,20 +335,23 @@ class InstitutionalSolverIntelligence:
 
         candidate_map = {candidate.candidate_id: candidate for candidate in tuple(candidates)}
         if not candidate_map:
-            raise DegenbotValueError("candidates batch must not be empty")
+            msg = "candidates batch must not be empty"
+            raise DegenbotValueError(msg)
 
         proposals: list[PolicyCorrectionProposal] = []
         for observation in tuple(observations):
             candidate = candidate_map.get(observation.candidate_id)
             if candidate is None:
-                raise DegenbotValueError(
+                msg = (
                     f"observation {observation.observation_id} references unknown candidate "
                     f"{observation.candidate_id!r}"
                 )
+                raise DegenbotValueError(msg)
             proposals.append(self.propose_policy_correction(candidate, observation))
 
         if not proposals:
-            raise DegenbotValueError("observations batch must not be empty")
+            msg = "observations batch must not be empty"
+            raise DegenbotValueError(msg)
 
         proposal_tuple = tuple(proposals)
         counts = self._count_decisions(action.decision for action in proposal_tuple)

@@ -35,6 +35,7 @@ from .institutional_solver_intelligence import (
     PolicyCorrectionBatch,
     PolicyCorrectionProposal,
     PolicyObservation,
+    PolicySnapshot,
 )
 from .jaredbot_poc_catalog import (
     JAREDBOT_POCS,
@@ -70,9 +71,10 @@ __all__ = (
     "PatternOperationalMode",
     "PocStage",
     "PocStatus",
-    "PolicyCorrectionProposal",
     "PolicyCorrectionBatch",
+    "PolicyCorrectionProposal",
     "PolicyObservation",
+    "PolicySnapshot",
     "atomic_flash_target",
     "executable_pocs",
     "github_reference_repo",
