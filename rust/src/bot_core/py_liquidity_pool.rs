@@ -481,4 +481,95 @@ impl PyLiquidityPool {
             }
         }
     }
+
+    /// Snapshot of the V3/V4 `tick_data` `HashMap` as a Python dict.
+    ///
+    /// Returns `{tick: (liquidity_gross, liquidity_net, block)}` — the Python
+    /// companion's `tick_data` property lifts each row into an immutable
+    /// `LiquidityAtTick(liquidity_net, liquidity_gross, block)`. Rust's
+    /// `TickInfo` stores only `liquidity_gross` and `liquidity_net` (no per-tick
+    /// block); the block returned is the pool's `update_block`.
+    ///
+    /// Returns an empty dict if this `pool_id` is not registered as a V3/V4
+    /// pool (defensive — non-V3 callers shouldn't crash).
+    #[pyo3(signature = ())]
+    fn tick_data_snapshot(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let rows: Vec<(i32, (u128, i128, u64))> = {
+            let core = self.core.read();
+            let Some(s) = core.get_v3_pool(self.pool_id) else {
+                return Ok(pyo3::types::PyDict::new(py).into_any().unbind());
+            };
+            s.tick_data
+                .iter()
+                .map(|(tick, info)| {
+                    let net: i128 = i128::try_from(info.liquidity_net).unwrap_or(0);
+                    let gross: u128 = info.liquidity_gross.to::<u128>();
+                    (*tick, (gross, net, s.update_block))
+                })
+                .collect()
+        };
+        let dict = pyo3::types::PyDict::new(py);
+        for (tick, (gross, net, block)) in rows {
+            let row = pyo3::types::PyTuple::new(
+                py,
+                [
+                    gross.into_pyobject(py)?.into_any().unbind(),
+                    net.into_pyobject(py)?.into_any().unbind(),
+                    block.into_pyobject(py)?.into_any().unbind(),
+                ],
+            )?;
+            dict.set_item(tick, row)?;
+        }
+        Ok(dict.into_any().unbind())
+    }
+
+    /// Snapshot of the V3/V4 tick bitmap, synthesized from `tick_data` keys.
+    ///
+    /// Rust's `V3PoolState` doesn't store a separate bitmap — the bitmap is
+    /// derivable from `tick_data` keys (initialized ticks). Returns
+    /// `{word_pos: (bitmap_int, block)}` where `word_pos = (tick //
+    /// tick_spacing) >> 8` and the bit set is `(tick // tick_spacing) % 256`.
+    /// Matches Solidity `TickBitmap.position(tick / tickSpacing)`.
+    ///
+    /// Returns an empty dict for non-V3/V4 `pool_ids`.
+    #[pyo3(signature = ())]
+    fn tick_bitmap_snapshot(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        // Collect (word_pos, bit_pos, block) per initialized tick under one read
+        // guard, then build the output dict without holding the lock.
+        let rows: Vec<(i32, i32, u64)> = {
+            let core = self.core.read();
+            let Some(s) = core.get_v3_pool(self.pool_id) else {
+                return Ok(pyo3::types::PyDict::new(py).into_any().unbind());
+            };
+            let spacing = s.tick_spacing.max(1);
+            s.tick_data
+                .keys()
+                .map(|&tick| {
+                    let compressed = tick / spacing;
+                    (compressed >> 8, compressed.rem_euclid(256), s.update_block)
+                })
+                .collect()
+        };
+        // Fold bits into per-word (bitmap_int, block) accumulators.
+        let mut words: std::collections::BTreeMap<i32, (u128, u64)> =
+            std::collections::BTreeMap::new();
+        for (word_pos, bit_pos, block) in rows {
+            words
+                .entry(word_pos)
+                .and_modify(|(bits, _)| *bits |= 1u128 << bit_pos)
+                .or_insert((1u128 << bit_pos, block));
+        }
+        let dict = pyo3::types::PyDict::new(py);
+        for (word_pos, (bits, block)) in words {
+            let tuple = pyo3::types::PyTuple::new(
+                py,
+                [
+                    bits.into_pyobject(py)?.into_any().unbind(),
+                    block.into_pyobject(py)?.into_any().unbind(),
+                ],
+            )?;
+            dict.set_item(word_pos, tuple)?;
+        }
+        Ok(dict.into_any().unbind())
+    }
 }
