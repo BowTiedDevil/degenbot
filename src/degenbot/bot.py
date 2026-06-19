@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
@@ -303,6 +303,55 @@ class Bot:
         # 2. Drop the pool and token registries (Rust owns canonical state)
         self.pools._reset()  # noqa: SLF001
         self.tokens.reset()
+
+    def close(self) -> None:
+        """Release all Python handles owned by this Bot session.
+
+        End-of-life teardown that composes :meth:`release_python_state` and
+        adds the connection teardown the Bot was previously missing: the
+        provider connection is closed, the scoped DB session is removed,
+        and the ``PyBot`` / provider references are dropped. Idempotent —
+        safe to call directly and again from a ``with`` block's ``__exit__``.
+
+        The Rust ``PyBot`` is reference-counted; closing this Python wrapper
+        only drops *this* Bot's ref. A running engine that took its own ref
+        (via ``EngineRegistry(bot=bot)`` → ``UniswapArbEngine(py_bot=...)``)
+        is unaffected.
+
+        For the *mid-lifecycle* "drop redundant Python caches while the Bot
+        keeps running" handshake, call :meth:`release_python_state` directly;
+        ``close()`` is for end-of-life.
+        """
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
+
+        # 1. Drop tracker caches/snapshots + pool/token registries (idempotent)
+        self.release_python_state()
+
+        # 2. Remove the scoped DB session (returns the thread-local session)
+        self.db.remove()
+
+        # 3. Close the provider connection if it exposes close()
+        if hasattr(self._provider, "close"):
+            self._provider.close()  # type: ignore[call-non-callable]
+
+        # 4. Drop our own references (engine keeps its own PyBot ref)
+        self._py_bot = None  # type: ignore[assignment]
+        self._provider = None  # type: ignore[assignment]
+
+    def __enter__(self) -> Self:
+        """Enter the context manager.
+
+        Returns:
+            This Bot, so callers can bind it: ``with Bot(...) as bot:``.
+
+        """
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        """Exit the context manager; release all Python handles. Never suppresses."""
+        self.close()
 
     def register_builder(
         self,
