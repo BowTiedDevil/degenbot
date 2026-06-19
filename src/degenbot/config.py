@@ -41,6 +41,11 @@ class DegenbotConfig(BaseSettings):
         ChainId,
         WebsocketUrl,
     ] = {}
+    # The chain this Bot session targets (ADR-006 D5 — one Bot per chain).
+    # `None` on a freshly-initialized config (no RPCs configured yet); a
+    # `Bot` refuses to construct without it + enforces the connected RPC's
+    # `eth_chainId` matches it (fail-fast on a misconfigured endpoint).
+    default_chain_id: ChainId | None = None
 
     @field_validator("rpc", mode="after")
     def validate_paths(
