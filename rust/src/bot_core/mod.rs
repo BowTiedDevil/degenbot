@@ -2122,4 +2122,104 @@ mod tests {
         );
         assert!(state2.read().has_pool(1));
     }
+
+    // --- V3 restore no-op (reorg on an unrelated pool) ---
+
+    fn register_v3(core: &mut BotState, update_block: u64) -> u64 {
+        core.register_v3_pool(&RegisterV3PoolParams {
+            address: make_pool_addr(),
+            token0: make_token0(),
+            token1: make_token1(),
+            fee: 3_000,
+            tick_spacing: 60,
+            factory: make_factory(),
+            sqrt_price_x96: U256::from(1u64) << 96,
+            liquidity: 0,
+            tick: 0,
+            tick_data: HashMap::new(),
+            update_block,
+            coverage: PoolTickCoverage::Sparse,
+        })
+    }
+
+    /// Regression (WZWKKU): `v3_restore_before_block(B)` with `B` strictly past
+    /// the journal's newest delta must leave the pool's current state
+    /// UNTOUCHED. This is the per-pool path `dispatch_reorg_log` hits for a
+    /// `removed: true` log on an unrelated pool — totally normal reorg traffic.
+    ///
+    /// Pre-fix the journal returned the newest delta's own `scalar_priors` and
+    /// `tick_priors` (the PRE-newest state) and `v3_restore_before_block`
+    /// reverse-applied them, silently rolling back the newest delta's swap and
+    /// deleting its freshly-initialized ticks. The engine then re-solved off
+    /// the corrupted scalars + `tick_data`.
+    #[test]
+    fn v3_restore_before_block_past_newest_leaves_state_untouched() {
+        let mut core = BotState::new();
+        let pool_id = register_v3(&mut core, 5);
+
+        // Forward Swap at block 10 moves scalars + initializes tick 100.
+        let new_sqrt = U256::from(2u64) << 96;
+        core.apply_v3_swap_by_pool_id(
+            pool_id,
+            new_sqrt,
+            1_000,
+            100,
+            10,
+            &[(
+                100,
+                TickInfo {
+                    liquidity_gross: alloy::primitives::U128::from(500),
+                    liquidity_net: alloy::primitives::I256::try_from(500i64).unwrap(),
+                },
+            )],
+        );
+
+        // Snapshot the landed-at (post-block-10) state.
+        let landed_sqrt;
+        let landed_liq;
+        let landed_tick;
+        let landed_update_block;
+        let tick_present;
+        {
+            let Some(PoolEntry::V3(state)) = core.pools.get(&pool_id) else {
+                panic!("pool missing");
+            };
+            landed_sqrt = state.sqrt_price_x96;
+            landed_liq = state.liquidity;
+            landed_tick = state.tick;
+            landed_update_block = state.update_block;
+            tick_present = state.tick_data.contains_key(&100);
+        }
+        assert_eq!(landed_sqrt, new_sqrt);
+        assert_eq!(landed_liq, 1_000);
+        assert_eq!(landed_tick, 100);
+        assert_eq!(landed_update_block, 10);
+        assert!(tick_present, "block-10 swap initialized tick 100");
+
+        // Reorg: a removed log arrives for an unrelated pool whose newest
+        // journal delta (block 10) is BELOW the reorg target (block 12).
+        // `has_state_prior_to` returns true (earliest 5 < 12), so the coordinator
+        // proceeds to `restore_pool_before_block` → `v3_restore_before_block`.
+        assert!(core.has_state_prior_to(pool_id, 12));
+        let result = core.v3_restore_before_block(pool_id, 12);
+        assert!(result.is_some(), "restore returns Some even on the no-op path");
+
+        // The landed-at state must survive unchanged.
+        let Some(PoolEntry::V3(state)) = core.pools.get(&pool_id) else {
+            panic!("pool missing post-restore");
+        };
+        assert_eq!(state.sqrt_price_x96, landed_sqrt, "scalars must not roll back");
+        assert_eq!(state.liquidity, landed_liq);
+        assert_eq!(state.tick, landed_tick);
+        assert_eq!(state.update_block, landed_update_block);
+        assert!(
+            state.tick_data.contains_key(&100),
+            "tick 100 must survive — pre-fix it was deleted via the newest delta's tick_priors"
+        );
+        assert_eq!(
+            state.journal.len(),
+            1,
+            "no deltas popped on the no-op path (only the block-10 swap delta; V3 registration pushes no genesis)"
+        );
+    }
 }

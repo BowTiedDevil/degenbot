@@ -399,7 +399,17 @@ impl ReorgJournal<V3BlockDelta> {
     ///
     /// The caller is responsible for:
     /// 1. Writing the returned scalar "before" values into current state
+    ///    (skipped when `scalar_priors` is `None`)
     /// 2. Reverse-applying the tick priors to the current tick data map
+    ///    (skipped when `tick_priors` is empty)
+    ///
+    /// **No-op branch** (newest delta's block strictly before the target):
+    /// returns `scalar_priors: None` + empty `tick_priors` + the newest
+    /// block — the caller applies nothing and the current landed-at state
+    /// survives. This mirrors the V2 path's `*_after` return (line 317-323).
+    /// Returning the newest delta's own `scalar_priors`/`tick_priors` here
+    /// would describe the PRE-newest state and cause the caller to silently
+    /// roll back a delta that landed before the reorg target (the pre-fix bug).
     ///
     /// Returns `V3RestoreResult` carrying the scalar before-values,
     /// per-tick priors, and the block number.
@@ -416,13 +426,23 @@ impl ReorgJournal<V3BlockDelta> {
 
         let len = self.deltas.len();
         let newest_block = self.deltas[len - 1].block();
-        // If the newest delta is before the target, no rollback needed
+        // No-op: the newest delta landed strictly before the target → the
+        // current state IS the landed-at state, nothing to roll back. Return
+        // `scalar_priors: None` + empty `tick_priors` so the caller
+        // (`v3_restore_before_block`) skips both the scalar write-back and the
+        // tick reverse-apply, leaving the current mutable state untouched.
+        //
+        // Pre-fix this returned `newest.scalar_priors` / `newest.tick_priors` —
+        // the PRE-newest-delta state — and the caller reverse-applied them,
+        // silently rolling back a delta that landed BEFORE the reorg target.
+        // Mirrors the V2 bug fixed at line 317-323 (which returns the newest
+        // delta's `*_after` i.e. the current state). For V3/v4 the journal holds
+        // no "after" snapshot, so the no-op is expressed as "nothing to apply".
         if newest_block < block {
-            let newest = &self.deltas[len - 1];
             return V3RestoreResult {
-                scalar_priors: newest.scalar_priors,
-                tick_priors: newest.tick_priors.clone(),
-                block: newest.block,
+                scalar_priors: None,
+                tick_priors: Vec::new(),
+                block: newest_block,
             };
         }
 
@@ -842,11 +862,14 @@ mod v3_delta_priors_tests {
     #[test]
     fn restore_returns_none_when_newest_delta_is_tick_only_and_before_target() {
         // What: a journal whose newest delta (single tick-only at block 5) is
-        // before the restore target (block 10). The early-return path
-        // propagates `scalar_priors: None` from the newest delta.
-        // Why: anchors the early-return path (the `newest_block < block` case)
-        // for the ADR-004 Option shape — ensures downstream callers see `None`
-        // rather than panicking or substituting zero for scalars.
+        // before the restore target (block 10). The no-op branch returns
+        // `scalar_priors: None`.
+        // Why: anchors the no-op branch (the `newest_block < block` case) for
+        // the ADR-004 Option shape — ensures downstream callers see `None`
+        // rather than panicking or substituting zero for scalars. The newest
+        // delta is tick-only here so `None` holds either way; the
+        // `restore_noop_when_newest_before_target_returns_no_priors` test
+        // covers the case where the newest delta DOES carry scalars.
         let _ = (U128::ZERO, newly_initialized_tick()); // touch helpers to keep them live
         let mut j = ReorgJournal::<V3BlockDelta>::new(8);
         j.push_delta(v3_delta(5, None));
@@ -857,6 +880,85 @@ mod v3_delta_priors_tests {
             "early-return path must propagate scalar_priors: None from the newest delta"
         );
         assert_eq!(result.block, 5);
+    }
+
+    /// Helper: construct a `V3BlockDelta` with explicit scalars AND a tick
+    /// prior, so the no-op regression tests below can prove the newest delta's
+    /// priors are NOT propagated (the pre-slice-7 bug).
+    fn v3_delta_with_tick(block: u64, scalars: ScalarPriors, tick_idx: i32) -> V3BlockDelta {
+        V3BlockDelta {
+            block,
+            scalar_priors: Some(scalars),
+            tick_priors: vec![(tick_idx, newly_initialized_tick())],
+        }
+    }
+
+    /// Regression: a journal whose single delta (block 10) carries real scalar
+    /// and tick priors. `restore_before_block(12)` (target past the newest)
+    /// must be a TRUE no-op — return `scalar_priors: None` and empty
+    /// `tick_priors` so the caller (`v3_restore_before_block`) writes nothing
+    /// back and leaves the current (landed-at) state untouched.
+    ///
+    /// Pre-fix the no-op branch returned `newest.scalar_priors` and
+    /// `newest.tick_priors` (the PRE-newest-delta state) and the caller
+    /// reverse-applied them, silently rolling back a delta that landed BEFORE
+    /// the reorg target. Mirrors the V2 bug fixed at line 317-323.
+    #[test]
+    fn restore_noop_when_newest_before_target_returns_no_priors() {
+        let s1 = ScalarPriors {
+            sqrt_price_x96_before: U256::from(200u64),
+            liquidity_before: 20,
+            tick_before: 5,
+        };
+        let mut j = ReorgJournal::<V3BlockDelta>::new(8);
+        j.push_delta(v3_delta_with_tick(10, s1, 7));
+        assert_eq!(j.len(), 1);
+
+        let result = j.restore_before_block(12);
+
+        assert!(
+            result.scalar_priors.is_none(),
+            "no-op restore must NOT propagate the newest delta's scalar priors — they describe pre-newest state, not the current landed-at state"
+        );
+        assert!(
+            result.tick_priors.is_empty(),
+            "no-op restore must NOT propagate the newest delta's tick priors — reverse-applying them would roll back a delta that landed before the target"
+        );
+        assert_eq!(result.block, 10, "no-op: block is the newest delta's block");
+        assert_eq!(j.len(), 1, "no-op: nothing popped");
+    }
+
+    /// Regression (multi-delta): deltas at blocks 5, 8, 12. Restoring before
+    /// block 15 (past the newest) is a no-op — returns `None`/empty, not the
+    /// pre-block-12 state. The current (post-block-12) state must survive.
+    #[test]
+    fn restore_noop_with_multi_delta_journal_below_target() {
+        let s0 = ScalarPriors {
+            sqrt_price_x96_before: U256::from(100u64),
+            liquidity_before: 10,
+            tick_before: 0,
+        };
+        let s1 = ScalarPriors {
+            sqrt_price_x96_before: U256::from(200u64),
+            liquidity_before: 20,
+            tick_before: 5,
+        };
+        let s2 = ScalarPriors {
+            sqrt_price_x96_before: U256::from(300u64),
+            liquidity_before: 30,
+            tick_before: 9,
+        };
+        let mut j = ReorgJournal::<V3BlockDelta>::new(8);
+        j.push_delta(v3_delta(5, Some(s0)));
+        j.push_delta(v3_delta(8, Some(s1)));
+        j.push_delta(v3_delta_with_tick(12, s2, 7));
+
+        let result = j.restore_before_block(15);
+
+        assert!(result.scalar_priors.is_none(), "multi-delta no-op must return None");
+        assert!(result.tick_priors.is_empty(), "multi-delta no-op must return empty tick priors");
+        assert_eq!(result.block, 12, "no-op: block is the newest delta's block");
+        assert_eq!(j.len(), 3, "no-op: nothing popped");
     }
 }
 
