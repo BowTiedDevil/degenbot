@@ -11,6 +11,10 @@ from hexbytes import HexBytes
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import BalancerV2StablePool
+from degenbot.bot_lifecycle import close as _close_handles
+from degenbot.bot_lifecycle import (
+    release_python_state as _release_python_state,
+)
 from degenbot.builders.aerodrome_v2_builder import AerodromeV2Builder
 from degenbot.builders.balancer_builder import BalancerBuilder
 from degenbot.builders.context import BuilderContext
@@ -291,18 +295,7 @@ class Bot:
         snapshot (e.g. ``UniswapV3StateTB``) have ``unload_snapshot()``
         called to release the snapshot reference.
         """
-        # 1. Drop tracker caches and snapshots (prevent them pinning pool objects)
-        for tracker in self._trackers.values():
-            if hasattr(tracker, "_tracked_pools"):
-                tracker._tracked_pools.clear()  # noqa: SLF001
-            if hasattr(tracker, "_untracked_pools"):
-                tracker._untracked_pools.clear()  # noqa: SLF001
-            if hasattr(tracker, "unload_snapshot"):
-                tracker.unload_snapshot()
-
-        # 2. Drop the pool and token registries (Rust owns canonical state)
-        self.pools._reset()  # noqa: SLF001
-        self.tokens.reset()
+        _release_python_state(self)
 
     def close(self) -> None:
         """Release all Python handles owned by this Bot session.
@@ -322,23 +315,7 @@ class Bot:
         keeps running" handshake, call :meth:`release_python_state` directly;
         ``close()`` is for end-of-life.
         """
-        if getattr(self, "_closed", False):
-            return
-        self._closed = True
-
-        # 1. Drop tracker caches/snapshots + pool/token registries (idempotent)
-        self.release_python_state()
-
-        # 2. Remove the scoped DB session (returns the thread-local session)
-        self.db.remove()
-
-        # 3. Close the provider connection if it exposes close()
-        if hasattr(self._provider, "close"):
-            self._provider.close()  # type: ignore[call-non-callable]
-
-        # 4. Drop our own references (engine keeps its own PyBot ref)
-        self._py_bot = None  # type: ignore[assignment]
-        self._provider = None  # type: ignore[assignment]
+        _close_handles(self)
 
     def __enter__(self) -> Self:
         """Enter the context manager.

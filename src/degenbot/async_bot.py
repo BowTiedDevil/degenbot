@@ -7,11 +7,15 @@ objects as Bot.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 from hexbytes import HexBytes
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
+from degenbot.bot_lifecycle import close as _close_handles
+from degenbot.bot_lifecycle import (
+    release_python_state as _release_python_state,
+)
 from degenbot.builders.async_context import AsyncBuilderContext
 from degenbot.builders.async_erc20_builder import AsyncErc20Builder
 from degenbot.builders.async_v2_pool_builder import AsyncV2PoolBuilder
@@ -234,6 +238,55 @@ class AsyncBot:
             return manager
 
         return manager_cls(*args, **kwargs)
+
+    # ------------------------------------------------------------------
+    # Lifecycle: Python-handle teardown (shared with Bot via bot_lifecycle)
+    # ------------------------------------------------------------------
+
+    def release_python_state(self) -> None:
+        """Drop Python-side pool/token/tracker caches once Rust owns canonical state.
+
+        Mid-lifecycle handshake mirroring :meth:`Bot.release_python_state`.
+        See :func:`degenbot.bot_lifecycle.release_python_state` for details.
+        """
+        _release_python_state(self)
+
+    def aclose(self) -> None:
+        """Release all Python handles owned by this AsyncBot session.
+
+        End-of-life teardown mirroring :meth:`Bot.close` (release python state,
+        remove the scoped DB session, close the provider, drop refs). The async
+        provider's ``close()`` is synchronous, so ``aclose`` is itself
+        synchronous — async-ness is only required at the ``__aexit__`` boundary.
+        Idempotent via the ``_closed`` flag.
+        """
+        _close_handles(self)
+
+    def __enter__(self) -> Self:
+        """Enter the (sync) context manager.
+
+        Returns:
+            This AsyncBot, so callers can bind it: ``with AsyncBot(...) as bot:``.
+
+        """
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        """Exit the (sync) context manager; release all Python handles. Never suppresses."""
+        self.aclose()
+
+    async def __aenter__(self) -> Self:
+        """Enter the async context manager.
+
+        Returns:
+            This AsyncBot: ``async with AsyncBot.from_provider(...) as bot:``.
+
+        """
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        """Exit the async context manager; release all Python handles. Never suppresses."""
+        self.aclose()
 
     # ------------------------------------------------------------------
     # ERC-20 token factory
