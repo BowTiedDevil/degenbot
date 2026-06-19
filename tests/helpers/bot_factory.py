@@ -7,26 +7,21 @@ from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.provider import ProviderAdapter
 
 
-def make_bot_for_fork(chain_id: int, database_path: str = ":memory:") -> Bot:
-    """Create a Bot with a minimal config suitable for fork tests.
+def make_bot_with_provider(
+    provider: ProviderAdapter,
+    chain_id: int | None = None,
+    database_path: str = ":memory:",
+) -> Bot:
+    """Create a single-chain Bot around the given provider (ADR-006 D5).
 
-    Does NOT register any provider — the caller must do that afterwards.
+    The chain identity derives from ``provider.chain_id`` (or an explicit
+    ``chain_id`` override) and is set on the config; ``Bot.__init__`` then
+    enforces the provider's ``eth_chainId`` matches it.
     """
+    resolved_chain_id = chain_id if chain_id is not None else provider.chain_id
     config = DegenbotConfig(
         database=DatabaseSettings(path=Path(database_path)),
         rpc={},
+        default_chain_id=resolved_chain_id,
     )
-    return Bot(config=config)
-
-
-def make_bot_with_provider(provider: ProviderAdapter, chain_id: int | None = None) -> Bot:
-    """Create a Bot, register the given provider, and return it.
-
-    If chain_id is not given, it will be read from provider.chain_id after registration.
-    """
-    bot = make_bot_for_fork(chain_id=chain_id or 1)
-    bot.connections.register_provider(provider)
-    # Set the default chain so self.connections.default_chain_id works
-    resolved_chain_id = chain_id or provider.chain_id
-    bot.connections.set_default_chain(resolved_chain_id)
-    return bot
+    return Bot(config=config, provider=provider)

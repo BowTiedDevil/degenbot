@@ -85,7 +85,6 @@ class CurveStableswapPoolTracker(
         try:
             new_pool = self._bot.build_pool(
                 pool_address,
-                chain_id=self._chain_id,
                 silent=silent,
             )
         except Exception as exc:

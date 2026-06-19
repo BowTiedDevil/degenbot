@@ -240,7 +240,6 @@ class TestBotBuildV3Pool:
 
         pool = bot.build_pool(
             USDC_WETH_V3_POOL,
-            chain_id=1,
         )
 
         assert isinstance(pool, UniswapV3Pool)
@@ -277,7 +276,6 @@ class TestV3PoolTrackerWithBot:
         manager = bot.add_tracker(
             UniswapV3PoolTracker,
             factory_address=factory,
-            chain_id=1,
         )
 
         assert manager._bot is bot

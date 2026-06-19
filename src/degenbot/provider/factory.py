@@ -22,7 +22,8 @@ from ujson import loads as ujson_loads
 from web3 import HTTPProvider, IPCProvider, JSONBaseProvider, LegacyWebSocketProvider, Web3
 
 from degenbot.config import CONFIG_FILE, DegenbotConfig, _init_config
-from degenbot.degenbot_rs import AlloyProvider
+from degenbot.degenbot_rs import AlloyProvider, AsyncAlloyProvider
+from degenbot.provider.async_adapter import AsyncProviderAdapter
 from degenbot.provider.sync_adapter import ProviderAdapter
 
 if TYPE_CHECKING:
@@ -118,3 +119,42 @@ def get_provider_from_config(
         w3.provider.decode_rpc_response = _fast_decode_rpc_response  # ty:ignore[invalid-assignment]
 
     return ProviderAdapter.from_web3(w3)
+
+
+async def get_async_provider_from_config(
+    *,
+    chain_id: int,
+    config: DegenbotConfig | None = None,
+) -> AsyncProviderAdapter:
+    """Build an :class:`AsyncProviderAdapter` for ``chain_id`` from the config's RPC entry.
+
+    Async counterpart of :func:`get_provider_from_config`. Constructs an async
+    Alloy provider from the configured endpoint, then **enforces** the
+    connected RPC's ``eth_chainId`` equals ``chain_id`` via an awaited
+    ``get_chain_id()`` (async providers cannot read it synchronously) —
+    raises :class:`ValueError` on mismatch (fail-fast, ADR-006 D5).
+
+    Returns:
+        An AsyncProviderAdapter wrapping a Rust AsyncAlloyProvider.
+
+    Raises:
+        ValueError: If no RPC is configured for ``chain_id``, or the connected
+            RPC's chain ID does not match ``chain_id``.
+
+    """
+    if config is None:
+        config = _init_config()
+    endpoint = config.rpc.get(chain_id)
+    if endpoint is None:
+        msg = f"Chain ID {chain_id} does not have an RPC defined in config file {CONFIG_FILE}"
+        raise ValueError(msg)
+    alloy = await AsyncAlloyProvider.create(str(endpoint))
+    adapter = AsyncProviderAdapter.from_alloy(alloy)
+    actual = await adapter.get_chain_id()
+    if actual != chain_id:
+        msg = (
+            f"The chain ID ({actual}) at endpoint {endpoint} does not match "
+            f"the configured chain ID ({chain_id})."
+        )
+        raise ValueError(msg)
+    return adapter

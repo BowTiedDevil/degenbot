@@ -2,7 +2,6 @@ import contextlib
 
 import eth_abi.abi
 import pytest
-from eth_typing import ChainId
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.arbitrage._legacy import _UniswapCurveCycle as UniswapCurveCycle
@@ -126,13 +125,13 @@ def curve_arb_bot(fork_mainnet_full: AnvilFork):
 @pytest.fixture
 def weth(fork_mainnet_full: AnvilFork) -> Erc20Token:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
-    return bot.build_erc20token(WETH_ADDRESS, chain_id=ChainId.ETH)
+    return bot.build_erc20token(WETH_ADDRESS)
 
 
 @pytest.fixture
 def dai(fork_mainnet_full: AnvilFork) -> Erc20Token:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
-    return bot.build_erc20token(DAI_ADDRESS, chain_id=ChainId.ETH)
+    return bot.build_erc20token(DAI_ADDRESS)
 
 
 def test_create_arb(
