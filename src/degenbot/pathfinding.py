@@ -699,7 +699,12 @@ async def find_paths_async(
     """
     start = time.perf_counter()
 
-    with db() as session:
+    # NOTE: A ``with`` block wrapping a ``yield`` in an async generator does not
+    # guarantee prompt cleanup if the consumer abandons iteration early (see
+    # ruff ASYNC119). Manage the session lifetime explicitly with try/finally so
+    # ``aclose()``/garbage collection always releases the session.
+    session = db()
+    try:
         allowed_token_ids: set[TokenId] | None = None
         if allowed_intermediate_tokens is not None:
             allowed_token_ids = set(
@@ -784,3 +789,5 @@ async def find_paths_async(
                 f"Completed structured generic search (max depth {max_depth}) "
                 f"at +{time.perf_counter() - start:.1f}s"
             )
+    finally:
+        session.close()
