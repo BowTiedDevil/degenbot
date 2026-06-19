@@ -656,6 +656,55 @@ class EngineRegistry:
         # NOTE: These Python dicts (_v2_keys, _v3_keys, _v4_keys) are plain
         # dicts — NOT thread-safe. All access is on the single asyncio event loop.
 
+    def start(
+        self,
+        node_http: str,
+        node_ws: str,
+        *,
+        v3_snapshot: UniswapV3LiquiditySnapshot | None = None,
+        v4_snapshot: UniswapV4LiquiditySnapshot | None = None,
+        verify_state_view: str | None = None,
+        verify_on_register: bool = True,
+    ) -> int:
+        """Run the pre-pump startup ritual and stop BEFORE resume().
+
+        Sequences: subscribe(ws) → stream snapshots → backfill → verify config.
+        Stops at EnginePhase::Backfilled so the caller can attach its result
+        consumer before batches begin to flow (`resume()` is the single gate
+        after which the pump emits one ResultBatch per block into the
+        fire-and-forget channel — attaching the consumer after resume risks
+        unbounded backlog and stale-batch dispatch).
+
+        `snapshot_block` is derived internally from min(snap.newest_block)
+        across the supplied snapshots — the caller never passes a block.
+        Snapshots are a first-class degenbot feature, so the registry owns this
+        coupling rather than exposing it.
+
+        Returns the backfill target (first observed WS block) from subscribe.
+        """
+        backfill_target = self.engine.subscribe(node_ws)
+
+        # Stream snapshots and backfill the snapshot→WS gap. Zero batches are
+        # emitted here — the pump isn't running until resume().
+        snapshots = [s for s in (v3_snapshot, v4_snapshot) if s is not None]
+        if snapshots:
+            if v3_snapshot is not None:
+                stream_v3_snapshot_to_engine(v3_snapshot, self.engine)
+            if v4_snapshot is not None:
+                stream_v4_snapshot_to_engine(v4_snapshot, self.engine)
+            snapshot_block = min(s.newest_block for s in snapshots)
+            self.engine.backfill_from_snapshot(node_http, snapshot_block)
+
+        # Verify config (consumer-safe: nothing emits yet).
+        self.engine.set_verify_rpc_url(node_http)
+        if verify_state_view is not None:
+            self.engine.set_verify_state_view(verify_state_view)
+        self.engine.set_verify_on_register(verify_on_register)
+
+        # Intentionally NOT calling resume() — the caller attaches its
+        # consumer next, then calls resume() as the single batch-flow gate.
+        return backfill_target
+
     def register_v2_pool(self, pool: LiquidityPool) -> int:
         if pool.address in self._v2_keys:
             return self._v2_keys[pool.address]

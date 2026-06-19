@@ -54,6 +54,7 @@ def make_v2_pool(
     state_block: int = 0,
     pool_class: type[LiquidityPool] = LiquidityPool,
     dex: PyDexIdentity | None = None,
+    py_bot: PyBot | None = None,
 ) -> LiquidityPool:
     """Construct an I/O-free V2-style pool companion over a fresh ``PyLiquidityPool`` handle.
 
@@ -116,7 +117,7 @@ def make_v2_pool(
         gamma_numer0, fee_denom0 = _gamma_complement(fee_token0)
         gamma_numer1, fee_denom1 = _gamma_complement(fee_token1)
 
-    py_bot = PyBot()
+    py_bot = py_bot if py_bot is not None else PyBot()
     pool_id = py_bot.register_v2_pool(
         address=address,
         token0=token0.address,
