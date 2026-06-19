@@ -1,36 +1,16 @@
 """Sync Web3 provider connection manager."""
 
-from json import JSONDecodeError
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import tenacity
-from ujson import loads as ujson_loads
-from web3.types import RPCResponse
 
 from degenbot.exceptions import DegenbotValueError
 from degenbot.provider import ProviderAdapter
+from degenbot.provider.factory import _fast_decode_rpc_response
 from degenbot.types.aliases import ChainId
 
 if TYPE_CHECKING:
     from web3 import JSONBaseProvider
-
-
-def _fast_decode_rpc_response(raw_response: bytes) -> RPCResponse:
-    """Decode the JSON-RPC response using ujson.
-
-    Returns:
-        The computed value.
-
-    Raises:
-        JSONDecodeError: See function documentation.
-
-    """
-    try:
-        return cast("RPCResponse", ujson_loads(raw_response))
-    except ValueError:
-        # Re-raise as a dummy JSONDecodeError so web3py's exception handling works as intended.
-        msg = "JSON failure"
-        raise JSONDecodeError(msg, "[]", 0) from None
 
 
 class ConnectionManager:
