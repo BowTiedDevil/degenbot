@@ -310,7 +310,7 @@ Mirror of 8c. The example's `register_v4_pool` Python `AMOUNT_MODIFYING_HOOK_MAS
 
 Numbered vertical slices. Each slice leaves the test suite green.
 
-### Slice 8a: Rust `PyLiquidityPool` V3 surface + `PyBot.register_v3_pool` return-handle
+### Slice 8a: Rust `PyLiquidityPool` V3 surface + `PyBot.register_v3_pool` return-handle [DONE]
 
 1. Add V3 family of pymethods to `PyLiquidityPool` (getters, `snapshot_v3`,
    `apply_swap`, `apply_liquidity_update`, `update_tick_data`, journal ops,
@@ -481,7 +481,7 @@ without the duplicate V3/V4 state load.
 
 ## Status
 
-[ ] Slice 8a: Rust `PyLiquidityPool` V3 surface + `PyBot.register_v3_pool` return-handle
+[x] Slice 8a: Rust `PyLiquidityPool` V3 surface + `PyBot.register_v3_pool` return-handle
 [ ] Slice 8b: Python `UniswapV3Pool` rewrite over `PyLiquidityPool`
 [ ] Slice 8c: V3 builder routes through PyBot + example drops double registration
 [ ] Slice 9a: Rust V4 surface + hook/dynamic-fee filtering in `BotState::register_v4_pool`
