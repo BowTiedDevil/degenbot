@@ -6,7 +6,7 @@ use alloy::rpc::types::Log;
 use crate::bot_core::V3SwapUpdate;
 use crate::bot_core::V4SwapUpdate;
 
-use super::{BlockMetadata, HashSet, HopType, UniswapEngine};
+use super::{BlockMetadata, HashSet, UniswapEngine};
 
 impl UniswapEngine {
     /// Route a single WS log to the appropriate sub-engine.
@@ -167,48 +167,6 @@ impl UniswapEngine {
     #[must_use]
     pub fn has_dirty_paths(&self) -> bool {
         !self.dirty_v2.is_empty() || !self.dirty_v3.is_empty() || !self.dirty_v4.is_empty()
-    }
-
-    /// Handle a reorg detected by the pump (ADR-003 Option α).
-    ///
-    /// Restores every registered pool's state to just before `target_block`,
-    /// then invalidates all resolved path states and marks every pool used by
-    /// a registered path dirty — so the next `solve_dirty` re-derives and
-    /// re-solves from the post-restore state, and `compute_diff_and_send`
-    /// naturally emits `expired`/`updated` diffs against `delivered`.
-    ///
-    /// The pump calls this under the engine lock when a WS log arrives with
-    /// `removed: true`. Lock ordering: engine (held by caller) → core (acquired
-    /// inside `restore_all_pools_before_block`) — never the reverse.
-    ///
-    /// Idempotent: pools untouched by the fork are no-ops.
-    pub fn handle_reorg(&mut self, target_block: u64) {
-        // 1. Restore all V2 pool state to before the target. V3/V4 state still
-        //    lives on the per-family engines (Slices 2/3 migrate them + their
-        //    reorg handling into BotState).
-        self.core
-            .write()
-            .restore_all_pools_before_block(target_block);
-
-        // 2. Invalidate resolved hop states — they were derived from pre-restore
-        //    pool state. Clearing forces `solve_dirty`'s re-derive to rebuild.
-        self.path_resolved.clear();
-
-        // 3. Mark every pool referenced by any registered path dirty so all
-        //    paths re-solve (a reorg may have touched any of them).
-        for &(hop_type, pool_key) in self.pool_to_paths.keys() {
-            match hop_type {
-                HopType::V2 => {
-                    self.dirty_v2.insert(pool_key);
-                }
-                HopType::V3 => {
-                    self.dirty_v3.insert(pool_key);
-                }
-                HopType::V4 => {
-                    self.dirty_v4.insert(pool_key);
-                }
-            }
-        }
     }
 
     /// Process a block: apply all logs then solve affected paths.

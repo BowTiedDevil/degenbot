@@ -26,6 +26,7 @@ pub mod py_bot;
 pub mod py_dex_identity;
 pub mod py_erc20_token;
 pub mod py_liquidity_pool;
+pub mod reorg_coordinator;
 pub mod solve_coordinator;
 pub mod state_history;
 pub mod tick_bitmap;
@@ -1038,15 +1039,16 @@ impl BotState {
 
     /// Restore **every** registered V2 pool's state to just before `target`.
     ///
-    /// The pump-driven reorg path (ADR-003 Option α): on detecting a fork via
-    /// a `removed: true` WS log, the engine calls this under the core lock to
-    /// roll every affected pool back, so the next `solve_dirty` re-derives from
-    /// consistent post-restore state.
+    /// Bulk restore helper. ADR-006 slice 7 replaced the engine-level
+    /// `handle_reorg` (which called this) with per-event
+    /// `ReorgCoordinator::dispatch_reorg_log` (per-pool `restore_before_block`).
+    /// This bulk helper survives as a `BotState` API (used by tests + available
+    /// for ad-hoc bulk rollback); the engine no longer calls it on the hot path.
     ///
     /// Pools with no journal delta at/after `target` are left as-is (idempotent
     /// — a reorg touches only a subset of pools). Returns the count of pools
-    /// that were rolled back. V4 restore lands in S3 (delegates to
-    /// `v4_restore_before_block`, same `V3BlockDelta` shape).
+    /// that were rolled back.
+    #[allow(dead_code)]
     pub fn restore_all_pools_before_block(&mut self, target: u64) -> usize {
         let pool_ids: Vec<u64> = self.pools.keys().copied().collect();
         let mut restored = 0usize;
@@ -1143,6 +1145,76 @@ impl BotState {
     /// Pops reorg journal deltas at/after the target block, restores
     /// scalar "before" values into the current state, and reverse-applies
     /// tick priors to the current `tick_data` map.
+    ///
+    /// Restore `pool_id`'s state to just before `block` (ADR-006 slice 7).
+    ///
+    /// Single-pool dispatch: routes V2→`v2_restore_before_block`,
+    /// V3→`v3_restore_before_block`, V4→`v4_restore_before_block`. Writes the
+    /// journal's landed-at state into the current mutable fields, releases, then
+    /// `ReorgCoordinator` notifies subscribers. Pools whose newest delta is
+    /// already before `block` are no-ops (idempotent restore).
+    ///
+    /// **Pre-check [`has_state_prior_to`](Self::has_state_prior_to) first** —
+    /// the V3/V4 `restore_before_block` panics on an empty journal; the
+    /// pre-check avoids that and returns `Err` uniformly so the pump shuts down
+    /// gracefully on a too-deep reorg.
+    #[allow(dead_code)]
+    pub fn restore_pool_before_block(&mut self, pool_id: u64, block: u64) {
+        // V2 returns Result; ignore the Err here (too-deep was pre-checked).
+        // V3/V4 return Option (None for unregistered / non-matching family).
+        match self.pools.get_mut(&pool_id) {
+            Some(PoolEntry::V2(_)) => {
+                let _ = self.v2_restore_before_block(pool_id, block);
+            }
+            Some(PoolEntry::V3(_)) => {
+                let _ = self.v3_restore_before_block(pool_id, block);
+            }
+            Some(PoolEntry::V4(_)) => {
+                let _ = self.v4_restore_before_block(pool_id, block);
+            }
+            None => {}
+        }
+    }
+
+    /// Does `pool_id`'s journal have state at or before `block`? (ADR-006
+    /// slice 7.) `ReorgCoordinator`'s too-deep check: `false` → the reorg
+    /// target is at or below the journal's earliest surviving delta → return
+    /// `Err(NoStatePriorToBlock)` + graceful pump shutdown (immutable pool whose
+    /// newest delta < `block` still returns `true` — that's an idempotent
+    /// no-op restore, not a too-deep failure).
+    #[must_use]
+    #[allow(dead_code)]
+    pub fn has_state_prior_to(&self, pool_id: u64, block: u64) -> bool {
+        let Some((journal_earliest, _journal_newest)) = self.pool_journal_bounds(pool_id) else {
+            // Pool not registered → no journal → the reorg can't restore it.
+            // Treat as "has state" (no-op) so the caller proceeds to the normal
+            // pool-not-found no-op path rather than a fail-stop.
+            return true;
+        };
+        // Empty journal has no state before any block. Otherwise there is
+        // state before `block` iff the earliest delta is strictly before it
+        // (the genesis delta itself has no "before" — its before == after).
+        journal_earliest.is_some_and(|earliest| earliest < block)
+    }
+
+    /// `(earliest, newest)` block bounds of `pool_id`'s journal, or `None` if
+    /// the pool isn't registered.
+    #[must_use]
+    fn pool_journal_bounds(&self, pool_id: u64) -> Option<(Option<u64>, Option<u64>)> {
+        match self.pools.get(&pool_id)? {
+            PoolEntry::V2(state) => {
+                Some((state.journal.earliest_block(), state.journal.newest_block()))
+            }
+            PoolEntry::V3(state) => {
+                Some((state.journal.earliest_block(), state.journal.newest_block()))
+            }
+            PoolEntry::V4(state) => {
+                Some((state.journal.earliest_block(), state.journal.newest_block()))
+            }
+        }
+    }
+
+    /// Restore V4 pool state prior to a target block (`V3RestoreResult` shape).
     ///
     /// Returns `V3RestoreResult` with the before-values, or `None`
     /// if the pool ID is not registered or is not a V3 pool.
@@ -1794,6 +1866,51 @@ impl Bot {
     #[allow(dead_code)]
     pub(crate) fn dispatch_log(&self, log: &alloy::rpc::types::Log) {
         self.dispatcher.dispatch(log, &self.state);
+    }
+
+    /// Decode `log` into a [`DecodedPoolEvent`] without applying (ADR-006 slice 7).
+    /// `ReorgCoordinator` uses this on `removed: true` logs to identify the
+    /// target pool before restoring it from the journal.
+    #[allow(dead_code)]
+    pub(crate) fn try_decode_log(
+        &self,
+        log: &alloy::rpc::types::Log,
+    ) -> Option<log_dispatcher::DecodedPoolEvent> {
+        self.dispatcher.try_decode_log(log)
+    }
+
+    /// Resolve a decoded event's `pool_id` against `BotState` (ADR-006 slice 7).
+    /// V2/V3 by address, V4 by `(pool_manager, pool_id)` key.
+    #[allow(dead_code)]
+    pub(crate) fn resolve_pool_id(&self, event: &log_dispatcher::DecodedPoolEvent) -> Option<u64> {
+        event.resolve_pool_id(&self.state.read())
+    }
+
+    /// Restore `pool_id`'s state to just before `block` (ADR-006 slice 7).
+    /// Writes the journal's landed-at state into the current mutable fields.
+    /// Pre-check [`has_state_prior_to`](Self::has_state_prior_to) first — the
+    /// V3/V4 journal `restore_before_block` panics on an empty journal.
+    #[allow(dead_code)]
+    pub(crate) fn restore_pool_before_block(&self, pool_id: u64, block: u64) {
+        self.state.write().restore_pool_before_block(pool_id, block);
+    }
+
+    /// Does `pool_id`'s journal have state at or before `block`? (ADR-006
+    /// slice 7.) `false` → a too-deep reorg; `ReorgCoordinator` returns
+    /// `Err(NoStatePriorToBlock)` and the pump shuts down gracefully.
+    #[must_use]
+    #[allow(dead_code)]
+    pub(crate) fn has_state_prior_to(&self, pool_id: u64, block: u64) -> bool {
+        self.state.read().has_state_prior_to(pool_id, block)
+    }
+
+    /// Notify every live subscriber of `pool_id` (ADR-006 slice 7).
+    /// `ReorgCoordinator` calls this after a per-pool restore — the same
+    /// notify path `dispatch_log` uses, so the engine dirties + re-solves at
+    /// the next drain tick with no distinct reorg path.
+    #[allow(dead_code)]
+    pub(crate) fn notify_pool_state_updated(&self, pool_id: u64) {
+        self.dispatcher.notify(pool_id);
     }
 
     /// Subscribe `engine` to updates for `pool_id` (ADR-006 D4). `Bot` calls

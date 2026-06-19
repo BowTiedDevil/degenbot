@@ -5,7 +5,7 @@
 //! the pump calls `bot.dispatch_log(log)` (slice 4: decode → apply to
 //! `BotState` → notify the `EngineSubscriber`, which dirties the engine). At
 //! block boundaries / drain ticks / reorg the pump drives the `DrainSink`
-//! (`on_drain` / `on_send` / `finalize_block` / `on_reorg`).
+//! (`on_drain` / `on_send` / `finalize_block`).
 //!
 //! `apply_log` is gone — ALL log application routes through `Bot::dispatch_log`,
 //! so `process_block` / `process_block_and_send` decompose in the pump into
@@ -107,14 +107,20 @@ pub enum WsEvent {
 /// 2. `resume()` — begins normal processing on block boundaries
 pub(crate) struct BlockPump {
     /// The per-chain orchestrator — owns `BotState` + the `LogDispatcher`. Per
-    /// WS log, the pump calls `bot.dispatch_log(log)`. ADR-006 D4.
+    /// WS log, the pump calls `bot.dispatch_log(log)` (forward) or
+    /// `reorg_coordinator.dispatch_reorg_log(log)` (`removed: true`).
+    /// ADR-006 D4 + slice 7.
     bot: Arc<Bot>,
     /// The drain sink (slice 6: `SolveCoordinator` fanning to every
-    /// attached `Engine` under a `drain_lock`; slice 7 adds reorg coordination).
+    /// attached `Engine` under a `drain_lock`).
     sink: Arc<dyn DrainSink>,
+    /// The per-event reorg coordinator (slice 7). Owned by the pump (not
+    /// routed through the `DrainSink` — reorg is a `Bot` concern, parallel
+    /// to `dispatch_log`).
+    reorg_coordinator: Arc<crate::bot_core::reorg_coordinator::ReorgCoordinator>,
     /// The Alloy provider (created from the RPC URL)
     provider: Arc<AlloyProvider>,
-    /// Shutdown flag — set by `stop()`
+    /// Shutdown flag — set by `stop()` or by a too-deep reorg (graceful exit)
     shutdown: Arc<AtomicBool>,
 }
 
@@ -150,6 +156,7 @@ impl BlockPump {
         rpc_url: &str,
         bot: Arc<Bot>,
         sink: Arc<dyn DrainSink>,
+        reorg_coordinator: Arc<crate::bot_core::reorg_coordinator::ReorgCoordinator>,
         shutdown: Arc<AtomicBool>,
     ) -> Result<(Self, SubscribeState), String> {
         let provider = AlloyProvider::new(rpc_url, 3)
@@ -178,6 +185,7 @@ impl BlockPump {
         let pump = Self {
             bot,
             sink,
+            reorg_coordinator,
             provider: Arc::new(provider),
             shutdown,
         };
@@ -222,34 +230,37 @@ impl BlockPump {
         rpc_url: String,
         bot: Arc<Bot>,
         sink: Arc<dyn DrainSink>,
+        reorg_coordinator: Arc<crate::bot_core::reorg_coordinator::ReorgCoordinator>,
         shutdown: &Arc<AtomicBool>,
     ) -> Result<tokio::task::JoinHandle<()>, String> {
         let runtime = get_runtime();
 
         let shutdown_clone = Arc::clone(shutdown);
         let handle = runtime.spawn(async move {
-            let mut pump = match Self::subscribe(&rpc_url, bot, sink, shutdown_clone).await {
-                Ok((pump, state)) => {
-                    // Send the first block as an empty batch so Python learns about it.
-                    // `process_block(&[], block, metadata)` decomposed: no logs to
-                    // dispatch + an `on_drain` (solve_dirty on the empty engine is
-                    // a no-op, but keeps the sink's last-processed-block coherent).
-                    pump.sink.on_drain(
-                        state.first_block,
-                        &BlockMetadata {
-                            timestamp: state.first_timestamp,
-                            base_fee_per_gas: None,
-                            gas_used: 0,
-                            gas_limit: 0,
-                        },
-                    );
-                    pump
-                }
-                Err(e) => {
-                    log::error!("BlockPump: subscribe failed: {e}");
-                    return;
-                }
-            };
+            let mut pump =
+                match Self::subscribe(&rpc_url, bot, sink, reorg_coordinator, shutdown_clone).await
+                {
+                    Ok((pump, state)) => {
+                        // Send the first block as an empty batch so Python learns about it.
+                        // `process_block(&[], block, metadata)` decomposed: no logs to
+                        // dispatch + an `on_drain` (solve_dirty on the empty engine is
+                        // a no-op, but keeps the sink's last-processed-block coherent).
+                        pump.sink.on_drain(
+                            state.first_block,
+                            &BlockMetadata {
+                                timestamp: state.first_timestamp,
+                                base_fee_per_gas: None,
+                                gas_used: 0,
+                                gas_limit: 0,
+                            },
+                        );
+                        pump
+                    }
+                    Err(e) => {
+                        log::error!("BlockPump: subscribe failed: {e}");
+                        return;
+                    }
+                };
 
             // Build a SubscribeState from the subscribe results
             // In the legacy path, we re-subscribe to get a fresh stream
@@ -610,17 +621,31 @@ impl BlockPump {
                     let log_block = log.block_number.unwrap_or(current_block);
 
                     if log.removed {
-                        // Reorg signal (ADR-003 Option α): this log was
-                        // orphaned by a fork at `log_block`. Restore engine
-                        // state to just before that block rather than applying
-                        // it forward. Idempotent — repeated removed logs for
-                        // the same block no-op once the block's deltas are
-                        // popped. The next loop iteration's `solve_dirty`
-                        // re-derives affected paths from the restored state,
-                        // and the debounce-bounded `send_result_batch` emits
-                        // `expired` diffs against `delivered` so Python sees
-                        // the forked paths vanish.
-                        self.sink.on_reorg(log_block);
+                        // Reorg signal (ADR-006 slice 7): this log was
+                        // orphaned by a fork at `log_block`. Restore the
+                        // TARGETED pool's state to just before `log_block` via
+                        // `ReorgCoordinator` (per-event, per-pool — replaces
+                        // the bulk `engine.handle_reorg`). The removed log's
+                        // content is unused; its block + pool identity drive
+                        // `ReorgJournal::restore_before_block` (idempotent +
+                        // order-insensitive). The restore fires the SAME
+                        // `on_pool_state_updated(P)` notify as a forward
+                        // update → the engine dirties P + re-solves at the
+                        // next drain tick; the debounce-bounded
+                        // `send_result_batch` emits `expired`/`updated` diffs
+                        // against `delivered` so Python sees the forked paths
+                        // vanish or change.
+                        //
+                        // A too-deep reorg (target at/below the journal's
+                        // earliest delta) returns `Err(NoStatePriorToBlock)`:
+                        // graceful shutdown, NOT panic. The bot cannot safely
+                        // continue with stale state, so set the shutdown flag
+                        // + return; Python observes the pump task exiting.
+                        if let Err(err) = self.reorg_coordinator.dispatch_reorg_log(&log) {
+                            log::error!("BlockPump: too-deep reorg — shutting down. {err:?}");
+                            self.shutdown.store(true, Ordering::Relaxed);
+                            return;
+                        }
                         // Cancel any pending debounce: results accumulated
                         // from pre-reorg state are invalid.
                         debounce_active = false;

@@ -15,6 +15,7 @@ use tokio::sync::mpsc;
 
 use crate::bot_core::block_pump::{BlockPump, WsEvent};
 use crate::bot_core::py_bot::PyBot;
+use crate::bot_core::reorg_coordinator::ReorgCoordinator;
 use crate::bot_core::solve_coordinator::SolveCoordinator;
 use crate::bot_core::{drain_sink::DrainSink, Bot, RegisterV3PoolParams, V3SwapUpdate};
 use crate::bot_core::{RegisterV4PoolParams, V4StateSync, V4SwapUpdate};
@@ -169,6 +170,11 @@ pub struct PyUniswapArbEngine {
     /// engine) so they block until in-flight drains complete and return a
     /// drain-consistent "good" block.
     coordinator: Arc<SolveCoordinator>,
+    /// The per-event reorg coordinator (ADR-006 slice 7). Owned by the engine
+    /// wrapper; passed to `BlockPump` so its `removed: true` branch routes to
+    /// `dispatch_reorg_log` (per-pool restore + notify) instead of the deleted
+    /// bulk `engine.handle_reorg`.
+    reorg_coordinator: Arc<ReorgCoordinator>,
     /// The per-chain `Bot` orchestrator (ADR-006 D4). `BlockPump` clones this
     /// `Arc` so its `dispatch_log` writes flow through to the engine's reads
     /// (the engine shares the same `BotState` core via `with_core`).
@@ -615,9 +621,15 @@ impl PyUniswapArbEngine {
         let coordinator = Arc::new(SolveCoordinator::new(vec![EngineHandle::arc_dyn(
             Arc::clone(&engine),
         )]));
+        // ADR-006 slice 7: the per-event reorg coordinator. Holds `Arc<Bot>`;
+        // `dispatch_reorg_log` decodes a `removed: true` log, restores the
+        // targeted pool via `BotState::restore_before_block`, then notifies
+        // subscribers (the same path as forward `dispatch_log`).
+        let reorg_coordinator = Arc::new(ReorgCoordinator::new(Arc::clone(&bot)));
         Self {
             engine,
             coordinator,
+            reorg_coordinator,
             bot,
             shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pump_handle: parking_lot::Mutex::new(None),
@@ -1417,8 +1429,9 @@ impl PyUniswapArbEngine {
         self.coordinator.start();
         let bot = Arc::clone(&self.bot);
         let sink: Arc<dyn DrainSink> = self.coordinator.clone();
+        let reorg_coordinator = Arc::clone(&self.reorg_coordinator);
         let shutdown = Arc::clone(&self.shutdown);
-        let handle = BlockPump::spawn(rpc_url, bot, sink, &shutdown)
+        let handle = BlockPump::spawn(rpc_url, bot, sink, reorg_coordinator, &shutdown)
             .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
         *self.pump_handle.lock() = Some(handle);
@@ -1460,12 +1473,15 @@ impl PyUniswapArbEngine {
 
         let bot = Arc::clone(&self.bot);
         let sink: Arc<dyn DrainSink> = self.coordinator.clone();
+        let reorg_coordinator = Arc::clone(&self.reorg_coordinator);
         let shutdown = Arc::clone(&self.shutdown);
 
         // Run the subscribe phase synchronously (blocks Python until first block observed)
         let runtime = crate::runtime::get_runtime();
         let subscribe_result = runtime
-            .block_on(async { BlockPump::subscribe(&rpc_url, bot, sink, shutdown).await })
+            .block_on(async {
+                BlockPump::subscribe(&rpc_url, bot, sink, reorg_coordinator, shutdown).await
+            })
             .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
         let (pump, state) = subscribe_result;

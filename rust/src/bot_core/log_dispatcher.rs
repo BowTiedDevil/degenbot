@@ -95,6 +95,41 @@ pub(crate) enum DecodedPoolEvent {
 }
 
 impl DecodedPoolEvent {
+    /// The block number carried by this event's source log.
+    #[allow(dead_code)]
+    pub(crate) fn block_number(&self) -> u64 {
+        match self {
+            Self::V2Sync { block_number, .. }
+            | Self::V3Swap { block_number, .. }
+            | Self::V3Liquidity { block_number, .. }
+            | Self::V4Swap { block_number, .. }
+            | Self::V4Liquidity { block_number, .. } => *block_number,
+        }
+    }
+
+    /// Resolve the `pool_id` this event targets WITHOUT applying it forward.
+    /// `ReorgCoordinator` uses this to identify which pool a `removed: true`
+    /// log is about (the removed event's content is unused — only its block
+    /// + pool identity matter; the journal's stored "before" values are truth).
+    #[allow(dead_code)]
+    pub(crate) fn resolve_pool_id(&self, bot_state: &BotState) -> Option<u64> {
+        match self {
+            Self::V2Sync { pool_address, .. }
+            | Self::V3Swap { pool_address, .. }
+            | Self::V3Liquidity { pool_address, .. } => bot_state.pool_id_by_address(pool_address),
+            Self::V4Swap {
+                pool_manager,
+                pool_id,
+                ..
+            }
+            | Self::V4Liquidity {
+                pool_manager,
+                pool_id,
+                ..
+            } => bot_state.v4_pool_id_by_key(*pool_manager, pool_id),
+        }
+    }
+
     /// Apply this event to `bot_state`, returning the affected `pool_id` (or
     /// `None` if the pool isn't registered / the event is a no-op).
     #[allow(dead_code)]
@@ -344,9 +379,21 @@ impl LogDispatcher {
         self.notify(pool_id);
     }
 
-    /// Notify every live subscriber of `pool_id` (skipping dropped `Weak`s).
+    /// Decode `log` into a [`DecodedPoolEvent`] via the decoder registry, or
+    /// `None` if no decoder recognizes it. Used by `dispatch` (forward) and
+    /// `ReorgCoordinator::dispatch_reorg_log` (removed) — both decode the pool
+    /// identity; only the forward path `apply`s.
     #[allow(dead_code)]
-    fn notify(&self, pool_id: u64) {
+    pub(crate) fn try_decode_log(&self, log: &Log) -> Option<DecodedPoolEvent> {
+        self.decoders.iter().find_map(|d| d.try_decode(log))
+    }
+
+    /// Notify every live subscriber of `pool_id` (skipping dropped `Weak`s).
+    /// `ReorgCoordinator` calls this after a per-pool `restore_before_block` —
+    /// the SAME notify path forward `dispatch` uses, so the engine dirties +
+    /// re-solves at the next drain tick with no distinct reorg path.
+    #[allow(dead_code)]
+    pub(crate) fn notify(&self, pool_id: u64) {
         let Some(subs) = self.subscribers.lock().get(&pool_id).cloned() else {
             return;
         };

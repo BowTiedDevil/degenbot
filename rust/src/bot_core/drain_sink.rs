@@ -8,16 +8,13 @@
 //! - `on_drain` solves the dirty paths the subscriber accumulated.
 //! - `on_send` flushes a debounced result batch to Python.
 //! - `finalize_block` solves+advances at a genuine block boundary.
-//! - `on_reorg` restores state before the forked block.
 //!
-//! **Status (slice 6):** the live impl is
-//! [`SolveCoordinator`](crate::bot_core::solve_coordinator::SolveCoordinator),
-//! which fans drain-tick / send / finalize / reorg calls to every attached
-//! [`Engine`](crate::bot_core::engine::Engine) under a `drain_lock` and
-//! exposes a drain-consistent `last_processed_block` (Python polls block
-//! until an in-flight drain completes — no Rust/Python race). The slice-5a
-//! `EngineDrainSink` placeholder was deleted. `ReorgCoordinator` (slice 7)
-//! adds optimistic per-event `restore_before_block`.
+//! `on_reorg` was REMOVED in slice 7 — reorg no longer flows through the
+//! sink. The pump's `removed: true` branch routes to
+//! `ReorgCoordinator::dispatch_reorg_log` (per-event, per-pool restore +
+//! notify), parallel to `Bot::dispatch_log`; solving happens at the next
+//! drain tick via the normal subscriber→`on_drain` path. See
+//! [`crate::bot_core::reorg_coordinator`].
 //!
 //! **Lock order (D2):** `bot.dispatch_log` acquires the `BotState` write guard,
 //! applies, RELEASES, then notifies the engine subscriber (engine `Mutex`
@@ -57,10 +54,6 @@ pub(crate) trait DrainSink: Send + Sync {
         last_solved_block: &mut u64,
         has_logs_this_block: &mut bool,
     );
-
-    /// A WS log arrived with `removed: true` — restore state to just before
-    /// `block` (the orphaned block's predecessor). Idempotent.
-    fn on_reorg(&self, block: u64);
 
     /// The last block the sink processed — the backfill-start boundary used by
     /// `Bot::start` / the pump's subscribe phase.

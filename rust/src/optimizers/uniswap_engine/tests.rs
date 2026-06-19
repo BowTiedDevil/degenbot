@@ -1422,10 +1422,12 @@ mod tests {
         // creates a mispricing (arb appears, delivered to Python). A reorg
         // targeting block 5 rolls back that Sync; the next solve finds no arb
         // and the previously-delivered result expires.
-        // Why: ADR-003 reorg path — `removed`-flag detection feeds
-        // `engine.handle_reorg`, which restores BotState state and emits an
-        // `expired` diff against `delivered`. This is the realistic case where
-        // the pool's first Sync is at the reorg target block.
+        // Why: ADR-006 slice 7 — a `removed: true` log drives
+        // `ReorgCoordinator::dispatch_reorg_log` (per-pool restore + notify →
+        // engine dirties → re-solve), which restores BotState state and emits
+        // an `expired` diff against `delivered`. This test exercises the
+        // engine-level outcome (re-solve expires the delivered result) by
+        // inlining the restore + re-dirty the bulk path used to do in one call.
         use tokio::sync::mpsc;
 
         let mut engine = UniswapEngine::new();
@@ -1489,8 +1491,25 @@ mod tests {
         // receive is the reorg batch.
         while rx.try_recv().is_ok() {}
 
-        // Reorg: roll back block 5 (the Sync that created the arb).
-        engine.handle_reorg(5);
+        // Reorg: roll back block 5 (the Sync that created the arb). Inline the
+        // restore+re-dirty — `engine.handle_reorg` is deleted in slice 7
+        // (replaced by per-event `ReorgCoordinator::dispatch_reorg_log`);
+        // this test verifies the engine-level outcome holds under the restore.
+        engine.core.write().restore_all_pools_before_block(5);
+        engine.path_resolved.clear();
+        for &(hop_type, pool_key) in engine.pool_to_paths.keys() {
+            match hop_type {
+                HopType::V2 => {
+                    engine.dirty_v2.insert(pool_key);
+                }
+                HopType::V3 => {
+                    engine.dirty_v3.insert(pool_key);
+                }
+                HopType::V4 => {
+                    engine.dirty_v4.insert(pool_key);
+                }
+            }
+        }
         engine.solve_dirty(5, &BlockMetadata::default());
         engine.send_result_batch(&BlockMetadata::default());
 
