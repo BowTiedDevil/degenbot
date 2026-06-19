@@ -1738,7 +1738,7 @@ mod tests {
     fn process_backfill_logs_stamps_per_log_block_number() {
         use crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC;
         use crate::optimizers::uniswap_engine::PoolTickCoverage;
-        use alloy::primitives::{B256, Bytes};
+        use alloy::primitives::{Bytes, B256};
         use alloy::rpc::types::Log;
 
         /// Build a V3 Swap log carrying post-swap scalars, at `block_number`.

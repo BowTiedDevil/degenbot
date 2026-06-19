@@ -955,8 +955,14 @@ mod v3_delta_priors_tests {
 
         let result = j.restore_before_block(15);
 
-        assert!(result.scalar_priors.is_none(), "multi-delta no-op must return None");
-        assert!(result.tick_priors.is_empty(), "multi-delta no-op must return empty tick priors");
+        assert!(
+            result.scalar_priors.is_none(),
+            "multi-delta no-op must return None"
+        );
+        assert!(
+            result.tick_priors.is_empty(),
+            "multi-delta no-op must return empty tick priors"
+        );
         assert_eq!(result.block, 12, "no-op: block is the newest delta's block");
         assert_eq!(j.len(), 3, "no-op: nothing popped");
     }

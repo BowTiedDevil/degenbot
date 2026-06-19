@@ -340,10 +340,14 @@ impl PyLiquidityPool {
     ) -> PyResult<()> {
         let spx = crate::alloy_py::extract_python_u256(sqrt_price_x96)?;
         let liq = crate::alloy_py::extract_python_u256(liquidity)?.to::<u128>();
-        let _ = self
-            .core
-            .write()
-            .apply_v3_swap_by_pool_id(self.pool_id, spx, liq, tick, block_number, &[]);
+        let _ = self.core.write().apply_v3_swap_by_pool_id(
+            self.pool_id,
+            spx,
+            liq,
+            tick,
+            block_number,
+            &[],
+        );
         Ok(())
     }
 
@@ -373,20 +377,15 @@ impl PyLiquidityPool {
         let delta = alloy::primitives::I256::from_raw(delta_i256)
             .try_into()
             .map_err(|_| {
-                pyo3::exceptions::PyOverflowError::new_err(
-                    "liquidity_delta does not fit in i128",
-                )
+                pyo3::exceptions::PyOverflowError::new_err("liquidity_delta does not fit in i128")
             })?;
-        let applied = self
-            .core
-            .write()
-            .apply_v3_liquidity_update_by_pool_id(
-                self.pool_id,
-                tick_lower,
-                tick_upper,
-                delta,
-                block_number,
-            );
+        let applied = self.core.write().apply_v3_liquidity_update_by_pool_id(
+            self.pool_id,
+            tick_lower,
+            tick_upper,
+            delta,
+            block_number,
+        );
         Ok(applied.is_some())
     }
 
@@ -404,12 +403,7 @@ impl PyLiquidityPool {
             let Some(s) = core.get_v3_pool(self.pool_id) else {
                 return Ok(None);
             };
-            (
-                s.sqrt_price_x96,
-                s.liquidity,
-                s.tick,
-                s.update_block,
-            )
+            (s.sqrt_price_x96, s.liquidity, s.tick, s.update_block)
         };
         let tuple = pyo3::types::PyTuple::new(
             py,

@@ -475,7 +475,14 @@ impl BotState {
         tick_priors: &[(i32, TickInfo)],
     ) -> Option<u64> {
         let &pool_id = self.pool_addresses.get(&pool_address)?;
-        self.apply_v3_swap_by_pool_id(pool_id, sqrt_price_x96, liquidity, tick, block_number, tick_priors)
+        self.apply_v3_swap_by_pool_id(
+            pool_id,
+            sqrt_price_x96,
+            liquidity,
+            tick,
+            block_number,
+            tick_priors,
+        )
     }
 
     /// Apply a V3 Swap event keyed by the handle's `pool_id` (plan-101 slice 8a).
@@ -586,7 +593,6 @@ impl BotState {
         liquidity_delta: i128,
         block_number: u64,
     ) -> Option<u64> {
-
         let Some(PoolEntry::V3(state)) = self.pools.get_mut(&pool_id) else {
             return None;
         };
@@ -2301,13 +2307,19 @@ mod tests {
         // proceeds to `restore_pool_before_block` → `v3_restore_before_block`.
         assert!(core.has_state_prior_to(pool_id, 12));
         let result = core.v3_restore_before_block(pool_id, 12);
-        assert!(result.is_some(), "restore returns Some even on the no-op path");
+        assert!(
+            result.is_some(),
+            "restore returns Some even on the no-op path"
+        );
 
         // The landed-at state must survive unchanged.
         let Some(PoolEntry::V3(state)) = core.pools.get(&pool_id) else {
             panic!("pool missing post-restore");
         };
-        assert_eq!(state.sqrt_price_x96, landed_sqrt, "scalars must not roll back");
+        assert_eq!(
+            state.sqrt_price_x96, landed_sqrt,
+            "scalars must not roll back"
+        );
         assert_eq!(state.liquidity, landed_liq);
         assert_eq!(state.tick, landed_tick);
         assert_eq!(state.update_block, landed_update_block);
@@ -2448,8 +2460,15 @@ mod tests {
 
         {
             let s = core.get_v3_pool(pool_id).expect("registered");
-            assert_eq!(s.update_block, block_b, "update_block advances to pump-buffer event block");
-            assert_eq!(s.journal.len(), 1, "pump-buffer Mint pushes one journal delta");
+            assert_eq!(
+                s.update_block, block_b,
+                "update_block advances to pump-buffer event block"
+            );
+            assert_eq!(
+                s.journal.len(),
+                1,
+                "pump-buffer Mint pushes one journal delta"
+            );
             assert_eq!(
                 s.tick_data.get(&60).expect("t60").liquidity_gross,
                 alloy::primitives::U128::from(600)
@@ -2504,33 +2523,41 @@ mod tests {
                 liquidity_net: I256::try_from(100i128).unwrap(),
             },
         );
-        let pool_id = core.register_v4_pool(&RegisterV4PoolParams {
-            pool_manager,
-            pool_id: pool_id_bytes,
-            pool_key: V4PoolKey {
-                currency0: Address::ZERO,
-                currency1: Address::from([1u8; 20]),
-                fee: 10_000,
-                tick_spacing: 60,
-                hooks: Address::ZERO,
-            },
-            hook_flags: 0,
-            sqrt_price_x96: U256::from(1u128) << 96,
-            liquidity: 1_000_000,
-            tick: 0,
-            tick_data,
-            update_block: 0,
-            coverage: PoolTickCoverage::Sparse,
-        })
-        .expect("V4 pool registers");
+        let pool_id = core
+            .register_v4_pool(&RegisterV4PoolParams {
+                pool_manager,
+                pool_id: pool_id_bytes,
+                pool_key: V4PoolKey {
+                    currency0: Address::ZERO,
+                    currency1: Address::from([1u8; 20]),
+                    fee: 10_000,
+                    tick_spacing: 60,
+                    hooks: Address::ZERO,
+                },
+                hook_flags: 0,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data,
+                update_block: 0,
+                coverage: PoolTickCoverage::Sparse,
+            })
+            .expect("V4 pool registers");
 
         // 3. Apply the backfill buffer.
         core.apply_backfill_buffer_v4(pool_manager, pool_id_bytes);
 
         {
             let s = core.get_v4_pool(pool_id).expect("registered");
-            assert_eq!(s.update_block, block_b, "V4 update_block advances to buffered event block");
-            assert_eq!(s.journal.len(), 1, "V4 buffered ModifyLiquidity pushes one journal delta");
+            assert_eq!(
+                s.update_block, block_b,
+                "V4 update_block advances to buffered event block"
+            );
+            assert_eq!(
+                s.journal.len(),
+                1,
+                "V4 buffered ModifyLiquidity pushes one journal delta"
+            );
             assert_eq!(
                 s.tick_data.get(&60).expect("t60").liquidity_gross,
                 U128::from(600)

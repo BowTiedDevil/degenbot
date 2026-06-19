@@ -146,7 +146,8 @@ impl VerifyRpc for EngineVerifyRpc<'_> {
         // registry key here is the pool_id (u64), so fall back to a stable label.
         let label = pools
             .values()
-            .next().map_or_else(|| "V3 backfill".to_string(), |p| p.address.to_string());
+            .next()
+            .map_or_else(|| "V3 backfill".to_string(), |p| p.address.to_string());
         let provider = self.provider(&label)?;
         let runtime = crate::runtime::get_runtime();
         runtime.block_on(async {
@@ -195,9 +196,10 @@ impl VerifyRpc for EngineVerifyRpc<'_> {
         block: u64,
     ) -> Result<(), VerifyError> {
         // Label with the first pool's id hex (deduplicated by pool_id inside the verifier).
-        let pool_id_hex = pools
-            .values()
-            .next().map_or_else(|| "V4 backfill".to_string(), |p| format!("0x{}", alloy::hex::encode(p.pool_id)));
+        let pool_id_hex = pools.values().next().map_or_else(
+            || "V4 backfill".to_string(),
+            |p| format!("0x{}", alloy::hex::encode(p.pool_id)),
+        );
         let provider = self.provider(&pool_id_hex)?;
         let runtime = crate::runtime::get_runtime();
         runtime.block_on(async {
