@@ -13,16 +13,38 @@ re-exports it for backward compatibility.
 from __future__ import annotations
 
 import os
+from json import JSONDecodeError
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from pydantic import HttpUrl, WebsocketUrl
+from ujson import loads as ujson_loads
 from web3 import HTTPProvider, IPCProvider, JSONBaseProvider, LegacyWebSocketProvider, Web3
 
 from degenbot.config import CONFIG_FILE, DegenbotConfig, _init_config
-from degenbot.connection.connection_manager import _fast_decode_rpc_response
 from degenbot.degenbot_rs import AlloyProvider
-from degenbot.provider import ProviderAdapter
+from degenbot.provider.sync_adapter import ProviderAdapter
+
+if TYPE_CHECKING:
+    from web3.types import RPCResponse
+
+
+def _fast_decode_rpc_response(raw_response: bytes) -> RPCResponse:
+    """Decode the JSON-RPC response using ujson.
+
+    Returns:
+        The decoded RPC response.
+
+    Raises:
+        JSONDecodeError: If the response is not valid JSON.
+
+    """
+    try:
+        return cast("RPCResponse", ujson_loads(raw_response))
+    except ValueError:
+        # Re-raise as a dummy JSONDecodeError so web3py's exception handling works as intended.
+        msg = "JSON failure"
+        raise JSONDecodeError(msg, "[]", 0) from None
 
 
 def _get_use_alloy_from_env() -> bool:
