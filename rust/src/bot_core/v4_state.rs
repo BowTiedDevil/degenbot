@@ -339,7 +339,12 @@ pub fn v4_simulate_swap(
     if amount_specified.is_zero() {
         return None; // AS: zero amount (V3 reverts)
     }
-    let exact_in = amount_specified.is_positive();
+    // V4 sign convention: `amount_specified < 0` = exact INPUT, `> 0` = exact OUTPUT
+    // (opposite to V3). Matches Solidity V4 `Pool.sol:295`
+    // `bool exactInput = params.amountSpecified < 0;` and `compute_swap_step_v4`'s
+    // internal `amount_remaining < I256::ZERO` check. Verified against the
+    // integer-exact oracle suite in `cl_lib::swap_math::tests`.
+    let exact_in = amount_specified.is_negative();
     let sqrt_price_limit = if zero_for_one {
         U256::from(MIN_SQRT_RATIO) + U256::from(1u64) // 4295128740
     } else {
@@ -393,17 +398,24 @@ pub fn v4_simulate_swap(
 
         sqrt_price_x96 = step.sqrt_price_next;
 
+        // V4 accounting — matches Uniswap V4 `Pool.sol::swap()` (lines 371-381):
+        //   exactInput  (amountSpecified < 0): remaining += (amountIn + feeAmount); calculated += amountOut
+        //   exactOutput (amountSpecified > 0): remaining -= amountOut;              calculated -= (amountIn + feeAmount)
+        // The earlier code had both the flag polarity inverted (is_positive vs
+        // V4's is_negative) AND the quantities swapped between remaining/
+        // calculated — they partially cancelled, producing a ~1-wei over-count
+        // instead of total breakage. See `contract_reference/uniswap/V4/PoolManager.sol`.
         if exact_in {
             let consumed = I256::try_from(step.amount_in.saturating_add(step.fee_amount)).ok()?;
-            amount_specified_remaining = amount_specified_remaining.checked_sub(consumed)?;
+            amount_specified_remaining = amount_specified_remaining.checked_add(consumed)?;
             amount_calculated =
-                amount_calculated.checked_sub(I256::try_from(step.amount_out).ok()?)?;
+                amount_calculated.checked_add(I256::try_from(step.amount_out).ok()?)?;
         } else {
             amount_specified_remaining =
-                amount_specified_remaining.checked_add(I256::try_from(step.amount_out).ok()?)?;
+                amount_specified_remaining.checked_sub(I256::try_from(step.amount_out).ok()?)?;
             let gross_input =
                 I256::try_from(step.amount_in.saturating_add(step.fee_amount)).ok()?;
-            amount_calculated = amount_calculated.checked_add(gross_input)?;
+            amount_calculated = amount_calculated.checked_sub(gross_input)?;
         }
 
         if sqrt_price_x96 == sqrt_price_next {
@@ -436,10 +448,13 @@ pub fn v4_simulate_swap(
 
     let input_consumed = amount_specified.checked_sub(amount_specified_remaining)?;
 
+    // Solidity V4 `Pool.swap()` final delta assembly:
+    //   if (zeroForOne != (amountSpecified < 0)) { (amount0, amount1) = (calculated,   consumed) }
+    //   else                                    { (amount0, amount1) = (consumed, calculated) }
     let (amount0_signed, amount1_signed) = if zero_for_one == exact_in {
-        (input_consumed, -amount_calculated)
+        (input_consumed, amount_calculated)
     } else {
-        (-amount_calculated, input_consumed)
+        (amount_calculated, input_consumed)
     };
 
     Some(V3SwapOutcome {
