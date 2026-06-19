@@ -7,6 +7,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from collections.abc import Sequence
+from typing import Any
+
 from contracts.cmd_stream import SENTINEL_NATIVE, SENTINEL_PM, SENTINEL_SELF, SENTINEL_WETH
 from contracts.cmd_stream import (
     AddressTable,
@@ -33,7 +36,9 @@ from contracts.cmd_stream import (
 )
 from degenbot.arbitrage.encoding import fits_int128
 from degenbot.logging import logger as bot_logger
-from degenbot.uniswap.v4_liquidity_pool import NATIVE_CURRENCY_ADDRESS
+from degenbot.uniswap.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from degenbot.uniswap.v4_liquidity_pool import NATIVE_CURRENCY_ADDRESS, UniswapV4Pool
 
 
 @dataclasses.dataclass(frozen=True)
@@ -85,6 +90,62 @@ class PathInfo:
             elif isinstance(h, V4HopInfo):
                 type_names.append("V4")
         return "-".join(type_names)
+
+
+# ──────────────────────────────────────────────────────────────────
+# Path construction
+# ──────────────────────────────────────────────────────────────────
+
+
+def build_hops_from_pools(
+    pools_and_zfos: Sequence[tuple[Any, bool]],
+) -> list[HopInfo]:
+    """Build HopInfo objects from concrete pool objects + directions.
+
+    Replaces caller-side per-hop dict construction by reading attributes
+    directly off the pool objects. The V2 hop's directional fee is derived
+    from ``fee_token0`` (``zfo=True``) / ``fee_token1`` (``zfo=False``),
+    scaled to bips-of-10000.
+    """
+    hops: list[HopInfo] = []
+    for pool, zfo in pools_and_zfos:
+        if isinstance(pool, LiquidityPool):
+            hops.append(
+                V2HopInfo(
+                    pool_address=pool.address,
+                    token0_address=pool.token0.address,
+                    token1_address=pool.token1.address,
+                    fee=int((pool.fee_token0 if zfo else pool.fee_token1) * 10000),
+                    zfo=zfo,
+                )
+            )
+        elif isinstance(pool, UniswapV3Pool):
+            hops.append(
+                V3HopInfo(
+                    pool_address=pool.address,
+                    token0_address=pool.token0.address,
+                    token1_address=pool.token1.address,
+                    fee=pool.fee,
+                    zfo=zfo,
+                )
+            )
+        elif isinstance(pool, UniswapV4Pool):
+            hops.append(
+                V4HopInfo(
+                    pool_manager_address=pool.address,
+                    pool_id_hex=pool.pool_id.to_0x_hex(),
+                    currency0_address=pool.token0.address,
+                    currency1_address=pool.token1.address,
+                    fee=pool.fee,
+                    tick_spacing=pool.tick_spacing,
+                    hook_address=pool.hook_address,
+                    zfo=zfo,
+                )
+            )
+        else:
+            msg = f"Unsupported pool type: {type(pool).__name__}"
+            raise TypeError(msg)
+    return hops
 
 
 # ──────────────────────────────────────────────────────────────────
