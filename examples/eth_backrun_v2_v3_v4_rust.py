@@ -2443,8 +2443,6 @@ async def main() -> None:
     # state via RPC after releasing the lock. This eliminates the timing race
     # that existed when Python called verify_v3_pool/verify_v4_pool async.
     state_view_address = EthereumMainnetUniswapV4.state_view.address
-    engine_registry.engine.set_verify_rpc_url(node_http)
-    engine_registry.engine.set_verify_state_view(state_view_address)
 
     latest_block = await async_w3.eth.get_block("latest")
     current_block = latest_block["number"]
@@ -2467,85 +2465,45 @@ async def main() -> None:
     # the async for loop serializes dispatch naturally)
     path_suppression = PathSuppression()  # Suppress paths that consistently fail simulation
 
-    # ── Verify at snapshot block (pre-backfill) ──────────────────
-    # Compare the Rust engine's in-memory tick data against on-chain state
-    # at the DB snapshot block. This catches stale data that was already
-    # wrong at snapshot time.
+    # ── Pre-pump startup: subscribe → stream snapshots → backfill → verify config
+    # ────────────────────────────────────────────────────────
+    # `start()` runs the entire pre-resume ritual and stops at Backfilled,
+    # BEFORE resume(). Zero result batches emit during this window (the pump
+    # isn't running), so the consumer can be attached in the gap between
+    # start() returning and resume() — closing the stale-backlog window that
+    # existed when the consumer was attached after resume().
+    # snapshot_block is derived internally by start() from min(snap.newest_block).
+    v3_snapshot, v4_snapshot, v3_snap_block, v4_snap_block = get_snapshots(bot)
 
-    # We need the snapshot blocks BEFORE backfill runs, so extract them first.
-    # get_snapshots returns (v3_snapshot, v4_snapshot, v3_snapshot_block, v4_snapshot_block).
-
-    # ── Subscribe to WS (immediately, before path loading) ────────
-    # Open WS subscriptions now so events start buffering.
-    # subscribe() returns the first observed block number — this is
-    # our backfill target. The subscribe phase waits until both a
-    # newHeads notification and a log for the same block arrive,
-    # confirming the logs subscription is live. No events are buffered.
-    bot_logger.info("[startup] Subscribing to WS...")
-    backfill_target = engine_registry.engine.subscribe(node_ws)
-    bot_logger.info(f"[startup] WS subscribe complete — first observed block: {backfill_target}")
+    bot_logger.info("[startup] Subscribing to WS + streaming snapshots + backfill...")
+    backfill_target = engine_registry.start(
+        node_http,
+        node_ws,
+        v3_snapshot=v3_snapshot,
+        v4_snapshot=v4_snapshot,
+        verify_state_view=state_view_address,
+        verify_on_register=True,
+    )
+    bot_logger.info(f"[startup] Pre-pump startup complete — first observed block: {backfill_target}")
 
     # Use backfill_target instead of an RPC call if it's ahead
     if backfill_target > current_block:
         current_block = backfill_target
         bot_logger.info(f"[startup] Updated current_block to subscribe target: {current_block}")
 
-    # ── Load snapshots ───────────────────────────────────────────
-    # Load V3 and V4 snapshots from DB, then transfer to the Rust engine
-    # via binary serialization. No Python-side event fetching —
-    # the Rust engine backfills via backfill_from_snapshot().
-    v3_snapshot, v4_snapshot, v3_snap_block, v4_snap_block = get_snapshots(bot)
-
-    # Load snapshots into the Rust engine via streaming (transitions to SnapshotLoaded phase).
-    # The engine auto-lookup tick data at registration time.
-    # Streaming avoids building the full snapshot dict in memory.
-
-    if v3_snapshot is not None:
-        stream_v3_snapshot_to_engine(v3_snapshot, engine_registry.engine)
-        bot_logger.info("[startup] V3 snapshot loaded into engine")
-    if v4_snapshot is not None:
-        stream_v4_snapshot_to_engine(v4_snapshot, engine_registry.engine)
-        bot_logger.info("[startup] V4 snapshot loaded into engine")
-
-    # ── Backfill snapshot gap ────────────────────────────────────
-    # Fetch Mint/Burn/ModifyLiquidity events from the snapshot block
-    # to the first WS block via eth_getLogs, applying them to the
-    # Rust engines. This ensures the engine's tick state and event
-    # buffer are current before pool registration begins.
-    bot_logger.info("[startup] Running Rust backfill from snapshot to WS block...")
-    snapshot_block = min(b for b in (v3_snap_block, v4_snap_block) if b is not None)
-    backfilled = engine_registry.engine.backfill_from_snapshot(node_http, snapshot_block)
-    bot_logger.info(f"[startup] Backfill complete: {backfilled} blocks")
-
-    # Verify at the SNAPSHOT block, not the backfill boundary.
-    # At the snapshot block, the engine's tick data matches the DB exactly
-    # (zero events applied yet). This validates that snapshot loading
-    # produced correct data. Using the post-backfill block would cause
-    # false failures: the WS pump applies ModifyLiquidity events beyond
-    # the backfill boundary, bringing the engine state ahead of the
-    # comparison block. Buffer/backfill application bugs are caught by
-    # downstream simulation failures, not by this verification.
-    bot_logger.info(f"[startup] Snapshot block: {snapshot_block}")
-
     # The verification blocks are captured automatically by the Rust engine
-    # during backfill_from_snapshot():
+    # during backfill_from_snapshot() (run inside start()):
     # - verify_snapshot_block: set to snapshot_block (confirms DB tick data)
     # - verify_backfill_block: set to last_processed_block after backfill
     #   (confirms event decoding + buffer application)
     # No Python-side configuration needed — the engine knows these boundaries.
-    engine_registry.engine.set_verify_on_register(True)
 
-    # ── Resume the Rust pump ─────────────────────────────────────
-    # The pump was subscribed earlier (WS live, events buffered).
-    # Now that backfill is complete, resume normal processing.
-    engine_registry.engine.resume()
-    bot_logger.info(f"[startup] Rust pump resumed (WS={node_ws}, backfill complete)")
-
-    # ── Rolling start: consume results while building paths ─────────
-    # Start the result consumer as a background task BEFORE build_paths,
-    # so eagerly-solved paths are dispatched during path loading instead
-    # of waiting until all paths are registered. Both coroutines yield
-    # at await points, so asyncio interleaves them naturally.
+    # ── Rolling start: attach consumer BEFORE resume ────────────
+    # The result channel emits one batch per block, always, with no
+    # backpressure. Attaching the consumer before resume() closes the
+    # stale-backlog window that existed when the consumer was attached AFTER
+    # resume (batches accumulated without bound and drained as stale state).
+    # Both coroutines yield at await points, so asyncio interleaves them.
     result_consumer_task = asyncio.create_task(
         consume_result_batches(
             engine_registry=engine_registry,
@@ -2564,6 +2522,13 @@ async def main() -> None:
         ),
         name="result-consumer",
     )
+
+    # ── Resume the Rust pump ─────────────────────────────────────
+    # The pump was subscribed earlier (WS live, events buffered). Now that
+    # backfill is complete and the consumer is attached, resume normal
+    # processing — this is the single gate after which result batches flow.
+    engine_registry.engine.resume()
+    bot_logger.info(f"[startup] Rust pump resumed (WS={node_ws}, backfill complete)")
 
     bot_logger.info(
         "[startup] Starting path loading (rolling start — consuming results concurrently)..."
