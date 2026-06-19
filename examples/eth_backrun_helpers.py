@@ -7,7 +7,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from contracts.cmd_stream import SENTINEL_NATIVE, SENTINEL_PM, SENTINEL_SELF, SENTINEL_WETH
@@ -35,6 +35,8 @@ from contracts.cmd_stream import (
     enc_weth_withdraw,
 )
 from degenbot.arbitrage.encoding import fits_int128
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
 from degenbot.logging import logger as bot_logger
 from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -90,6 +92,186 @@ class PathInfo:
             elif isinstance(h, V4HopInfo):
                 type_names.append("V4")
         return "-".join(type_names)
+
+
+# ──────────────────────────────────────────────────────────────────
+# Backrun configuration
+# ──────────────────────────────────────────────────────────────────
+
+# Default dispatch tunables — match the example's current operational values
+# (eth_backrun_v2_v3_v4_rust.py module-top constants) so the BackrunSession
+# bridge (slice 5b) is behavior-preserving. Canonical home for the defaults
+# is the config object; the example's constants are its current deployment.
+_MIN_PROFIT_NET = 1
+_FEE_HISTORY_WINDOW = 10
+_FEE_PERCENTILES = (10, 50)
+_TARGET_PROFIT_RATIO = 1.25
+_BLOCKS_BEFORE_NONCE_EXPIRES = 5
+_MAX_SIMULATE_CONCURRENT = 50
+_AGE_DECAY_CONSTANT = 0.25
+_MIN_PRIORITY_FEE_PERCENTILE = 10
+_MAX_PRIORITY_FEE_PERCENTILE = 50
+_PATH_SUPPRESS_THRESHOLD = 10
+_PATH_SUPPRESS_RETRY_INTERVAL = 100
+# Ethereum mainnet default allowed intermediate tokens — mirrors the example's
+# ETH_MAINNET_ALLOWED_TOKENS set.
+_ALLOWED_INTERMEDIATE_TOKENS = frozenset({
+    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",  # USDC
+    "0xdAC17F958D2ee523a2206206994597C13D831ec7",  # USDT
+    "0x6B175474E89094C44Da98b954EedeAC495271d0F",  # DAI
+    "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",  # WBTC
+    "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",  # UNI
+    "0x514910771AF9Ca656af840dff83E8264EcF986CA",  # LINK
+    "0x6B3595068778DD592e39A122f4f5a5cF09C90fE2",  # SUSHI
+    "0xD533a949740bb3306d119CC777fa900bA034cd52",  # CRV
+    "0xc00e94Cb662C3520282E6f5717214004A7f26888",  # COMP
+    "0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e",  # YFI
+    "0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0",  # MATIC/POL
+})
+# Default executor deployment constants — mirror the example's env defaults.
+_DEFAULT_EXECUTOR_ADDRESS = "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5"
+_DEFAULT_INJECTED_ADDRESS = "0x0D6d4c3cF3BD3b769De1821f2BE0d7d99913E4F1"
+_DEFAULT_EXECUTOR_OWNER = "0x9C56a29c7231974c269E24F9FB3c29203039089E"
+
+
+def _checksum_or_empty(addr: str | None) -> str:
+    """Checksum an address, returning "" for empty input (mirrors main()'s get_checksum_address)."""
+    if not addr:
+        return ""
+    return get_checksum_address(addr)
+
+
+@dataclasses.dataclass(frozen=True)
+class BackrunConfig:
+    """Unified backrun configuration — one object for the ~20 tunables `main()` reads.
+
+    Replaces the three scattered config sources (a ``mainnet.env`` dotenv
+    dict, module-top constants, and CLI args) with a single frozen value object.
+    Construct via :meth:`from_env`; the bridge onto ``main()`` lives in the
+    ``BackrunSession`` orchestration slice. Live defaults (zero-address
+    operator + dummy key in dry-run, localhost nodes) reproduce ``main()``'s
+    current behavior exactly — no new defaults invented.
+    """
+
+    # Operator identity
+    operator_address: str
+    operator_private_key: str
+    # Node endpoints
+    node_http: str
+    node_ws: str
+    # Executor contract + code-injection
+    executor_address: str
+    executor_owner: str
+    inject_executor_code: bool
+    injected_address: str
+    # Dispatch tunables
+    min_profit_net: int
+    fee_history_window: int
+    fee_percentiles: tuple[int, ...]
+    target_profit_ratio: float
+    blocks_before_nonce_expires: int
+    max_simulate_concurrent: int
+    age_decay_constant: float
+    min_priority_fee_percentile: int
+    max_priority_fee_percentile: int
+    path_suppress_threshold: int
+    path_suppress_retry_interval: int
+    # Path discovery
+    allowed_intermediate_tokens: frozenset[str]
+    permutation_filter: frozenset[str] | None
+    # Run mode
+    dry_run: bool
+
+    @classmethod
+    def from_env(
+        cls,
+        env: Mapping[str, str | None],
+        *,
+        live: bool,
+        permutation: str | None,
+    ) -> "BackrunConfig":
+        """Build a BackrunConfig from a dotenv-style env mapping + CLI flags.
+
+        Reproduces ``main()``'s env-parsing + defaulting exactly:
+        - operator: live mode requires both OPERATOR_ADDRESS/PRIVATE_KEY
+          (raises ValueError); dry-run defaults to ZERO_ADDRESS + a 0x00..00 key.
+        - nodes: missing host/port default to localhost:8545/8546.
+        - executor: zero address is a fatal ``ValueError`` (a factory cannot
+          return early like ``main()``'s ``return``).
+        - inject code: when ``INJECT_EXECUTOR_CODE=="1"``, the executor address
+          is overridden to ``INJECTED_EXECUTOR_ADDRESS``.
+        - permutation: a CLI string becomes a singleton frozenset; ``None`` stays ``None``.
+        """
+        # ── Operator ──
+        operator_address_raw = env.get("OPERATOR_ADDRESS") or ""
+        operator_private_key = env.get("OPERATOR_PRIVATE_KEY") or ""
+        operator_address = _checksum_or_empty(operator_address_raw) if operator_address_raw else ""
+        if not live:
+            # dry-run: allow missing operator → zero-address + dummy key
+            if not operator_address:
+                operator_address = _ZERO_ADDRESS
+            if not operator_private_key:
+                operator_private_key = "0x" + "0" * 64
+        else:
+            msg = (
+                "OPERATOR_ADDRESS and OPERATOR_PRIVATE_KEY must be set in mainnet.env for live mode"
+            )
+            if not operator_address or not operator_private_key:
+                raise ValueError(msg)
+
+        # ── Node URLs (host:port composition lifted verbatim from main()) ──
+        node_http = (
+            f"{env.get('NODE_HOST_HTTP') or 'http://localhost'}:"
+            f"{env.get('NODE_PORT_HTTP') or '8545'}"
+        )
+        node_ws = (
+            f"{env.get('NODE_HOST_WEBSOCKET') or 'ws://localhost'}:"
+            f"{env.get('NODE_PORT_WEBSOCKET') or '8546'}"
+        )
+
+        # ── Executor ──
+        executor_address = _checksum_or_empty(
+            env.get("EXECUTOR_CONTRACT_ADDRESS") or _DEFAULT_EXECUTOR_ADDRESS
+        )
+        if executor_address == _ZERO_ADDRESS:
+            msg = "EXECUTOR_CONTRACT_ADDRESS is the zero address"
+            raise ValueError(msg)
+
+        inject_executor_code = (env.get("INJECT_EXECUTOR_CODE") or "1") == "1"
+        injected_address = _checksum_or_empty(
+            env.get("INJECTED_EXECUTOR_ADDRESS") or _DEFAULT_INJECTED_ADDRESS
+        )
+        executor_owner = _checksum_or_empty(
+            env.get("EXECUTOR_OWNER_ADDRESS") or _DEFAULT_EXECUTOR_OWNER
+        )
+        # main() behavior: when INJECT_EXECUTOR_CODE, override executor with injected
+        if inject_executor_code:
+            executor_address = injected_address
+
+        return cls(
+            operator_address=operator_address,
+            operator_private_key=operator_private_key,
+            node_http=node_http,
+            node_ws=node_ws,
+            executor_address=executor_address,
+            executor_owner=executor_owner,
+            inject_executor_code=inject_executor_code,
+            injected_address=injected_address,
+            min_profit_net=_MIN_PROFIT_NET,
+            fee_history_window=_FEE_HISTORY_WINDOW,
+            fee_percentiles=_FEE_PERCENTILES,
+            target_profit_ratio=_TARGET_PROFIT_RATIO,
+            blocks_before_nonce_expires=_BLOCKS_BEFORE_NONCE_EXPIRES,
+            max_simulate_concurrent=_MAX_SIMULATE_CONCURRENT,
+            age_decay_constant=_AGE_DECAY_CONSTANT,
+            min_priority_fee_percentile=_MIN_PRIORITY_FEE_PERCENTILE,
+            max_priority_fee_percentile=_MAX_PRIORITY_FEE_PERCENTILE,
+            path_suppress_threshold=_PATH_SUPPRESS_THRESHOLD,
+            path_suppress_retry_interval=_PATH_SUPPRESS_RETRY_INTERVAL,
+            allowed_intermediate_tokens=_ALLOWED_INTERMEDIATE_TOKENS,
+            permutation_filter=(frozenset({permutation}) if permutation is not None else None),
+            dry_run=not live,
+        )
 
 
 # ──────────────────────────────────────────────────────────────────
