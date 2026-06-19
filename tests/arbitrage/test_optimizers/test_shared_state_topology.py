@@ -262,3 +262,89 @@ class TestSharedStateTopologyV3:
         assert handle.liquidity == new_liq
         assert handle.tick == new_tick
         assert handle.update_block == 5
+
+    def test_v3_handle_snapshot_is_atomic_under_one_read(self) -> None:
+        """``snapshot_v3()`` returns spl/liquidity/tick/block atomically.
+
+        The Python companion's ``state`` property builds a ``UniswapV3PoolState``
+        from one snapshot tuple — all four fields are coherent (read under one
+        ``BotState`` guard). Matches the V2 ``snapshot()`` atomicity contract.
+        """
+        core = PyBot()
+        pool_id = core.register_v3_pool(
+            address=V3_POOL_A,
+            token0=TOKEN0,
+            token1=TOKEN1,
+            fee=V3_FEE,
+            tick_spacing=V3_TICK_SPACING,
+            factory=FACTORY,
+            sqrt_price_x96=V3_SQRT_PRICE,
+            liquidity=V3_LIQUIDITY,
+            tick=V3_TICK,
+        )
+        handle = core.get_pool(pool_id)
+        assert handle is not None
+
+        snap = handle.snapshot_v3()
+        assert snap is not None
+        spx, liq, tick, block = snap
+        assert spx == V3_SQRT_PRICE
+        assert liq == V3_LIQUIDITY
+        assert tick == V3_TICK
+        assert block == 0
+
+    def test_v3_handle_snapshot_returns_none_for_v2_pool(self) -> None:
+        """snapshot_v3() returns None on non-V3/V4 pools (no false data)."""
+        core = PyBot()
+        v2_pool_id = core.register_v2_pool(
+            address=V2_POOL_A,
+            token0=TOKEN0,
+            token1=TOKEN1,
+            reserve0=1_500_000 * USDC,
+            reserve1=800 * WETH,
+            gamma_numer0=997,
+            fee_denom0=1000,
+            gamma_numer1=997,
+            fee_denom1=1000,
+            factory=FACTORY,
+        )
+        v2_handle = core.get_pool(v2_pool_id)
+        assert v2_handle is not None
+        assert v2_handle.snapshot_v3() is None
+
+    def test_v3_handle_restore_before_block_round_trips_journal(self) -> None:
+        """apply_swap journals priors; restore_before_block rolls back.
+
+        Mirrors the V2 ``restore_before_block`` contract — the journal lands
+        one delta per V3 swap (scalar priors), and restoring to a block before
+        the swap reverts the scalars in-place. The reader immediately sees the
+        rolled-back values.
+        """
+        core = PyBot()
+        pool_id = core.register_v3_pool(
+            address=V3_POOL_A,
+            token0=TOKEN0,
+            token1=TOKEN1,
+            fee=V3_FEE,
+            tick_spacing=V3_TICK_SPACING,
+            factory=FACTORY,
+            sqrt_price_x96=V3_SQRT_PRICE,
+            liquidity=V3_LIQUIDITY,
+            tick=V3_TICK,
+        )
+        handle = core.get_pool(pool_id)
+        assert handle is not None
+
+        handle.apply_swap(
+            sqrt_price_x96=V3_SQRT_PRICE + 1,
+            liquidity=V3_LIQUIDITY + 100,
+            tick=V3_TICK + 1,
+            block_number=10,
+        )
+
+        # Restore to block 5 → in-place revert of the swap scalars.
+        handle.restore_v3_before_block(5)
+
+        assert handle.sqrt_price_x96 == V3_SQRT_PRICE
+        assert handle.liquidity == V3_LIQUIDITY
+        assert handle.tick == V3_TICK

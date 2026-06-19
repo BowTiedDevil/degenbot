@@ -346,4 +346,96 @@ impl PyLiquidityPool {
             .apply_v3_swap_by_pool_id(self.pool_id, spx, liq, tick, block_number, &[]);
         Ok(())
     }
+
+    /// Atomic V3/V4 scalar snapshot: `(sqrt_price_x96, liquidity, tick, block)`.
+    ///
+    /// All four fields are read under ONE read guard (the same atomicity
+    /// contract as V2 `snapshot()`). The Python companion's `state` property
+    /// builds a `UniswapV3PoolState` from this single tuple — no torn reads.
+    ///
+    /// Returns `None` if this `pool_id` is not registered as a V3/V4 pool.
+    #[pyo3(signature = ())]
+    fn snapshot_v3(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        let snap = {
+            let core = self.core.read();
+            let Some(s) = core.get_v3_pool(self.pool_id) else {
+                return Ok(None);
+            };
+            (
+                s.sqrt_price_x96,
+                s.liquidity,
+                s.tick,
+                s.update_block,
+            )
+        };
+        let tuple = pyo3::types::PyTuple::new(
+            py,
+            [
+                crate::alloy_py::u256_to_py(py, &snap.0)?.unbind(),
+                snap.1.into_pyobject(py)?.into_any().unbind(),
+                snap.2.into_pyobject(py)?.into_any().unbind(),
+                snap.3.into_pyobject(py)?.into_any().unbind(),
+            ],
+        )?;
+        Ok(Some(tuple.into_any().unbind()))
+    }
+
+    /// Discard V3/V4 reorg journal deltas earlier than `block`.
+    ///
+    /// No-op if the earliest delta is at/after the target; errors if the
+    /// target is past the newest delta. Silent no-op when this `pool_id` is not
+    /// a registered V3/V4 pool (so a Python companion built for V3 doesn't
+    /// touch V2/V4 journal state).
+    ///
+    /// Raises:
+    ///     `ValueError`: If the target is past the newest delta.
+    #[pyo3(signature = (block))]
+    fn discard_v3_before_block(&self, block: u64) -> PyResult<()> {
+        let mut core = self.core.write();
+        // Only apply when this handle points at a V3/V4 pool — otherwise
+        // silently no-op (avoids corrupting a V2's journal from a V3-shaped
+        // companion).
+        if core.get_v3_pool(self.pool_id).is_none() {
+            return Ok(());
+        }
+        core.v3_discard_before_block(self.pool_id, block)
+            .map_err(journal_err_to_py)
+    }
+
+    /// Restore a V3/V4 pool to the landed-at state just before `block`.
+    ///
+    /// Returns `(sqrt_price_x96, liquidity, tick, block)` as Python ints, or
+    /// `None` if this `pool_id` is not registered as a V3/V4 pool.
+    ///
+    /// Raises:
+    ///     `ValueError`: If `block` is at or before the registration block.
+    #[pyo3(signature = (block))]
+    fn restore_v3_before_block(&self, py: Python<'_>, block: u64) -> PyResult<Option<Py<PyAny>>> {
+        let result = {
+            let mut core = self.core.write();
+            if core.get_v3_pool(self.pool_id).is_none() {
+                return Ok(None);
+            }
+            core.v3_restore_before_block(self.pool_id, block)
+        };
+        match result {
+            None => Ok(None),
+            Some(restore) => {
+                let p = restore
+                    .scalar_priors
+                    .as_ref()
+                    .expect("post-restore scalar_priors must be Some");
+                let tuple = pyo3::types::PyTuple::new(
+                    py,
+                    [
+                        crate::alloy_py::u256_to_py(py, &p.sqrt_price_x96_before)?.unbind(),
+                        p.liquidity_before.into_pyobject(py)?.into_any().unbind(),
+                        p.tick_before.into_pyobject(py)?.into_any().unbind(),
+                        restore.block.into_pyobject(py)?.into_any().unbind(),
+                    ],
+                )?;
+                Ok(Some(tuple.into_any().unbind()))
+            }
+        }
+    }
 }
