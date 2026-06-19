@@ -1,6 +1,6 @@
 # ADR-006: Bot as the per-chain orchestrator (unified state, RPC ownership, Engine-as-EventSink)
 
-**Status: accepted (decisions recorded; implementation pending).** Recorded during the
+**Status: implemented (all 11 slices landed; ADR-006 acceptance verified).** Recorded during the
 unify-the-two-Bots grilling, June 2026. Revises the "Rust Core" enumeration in
 ADR-005 and resolves ADR-005's deferred "UniswapEngine lock unification" item, and
 supersedes the ADR-003 arrangement where the engine held its own `Arc<Mutex<Bot>>`.
