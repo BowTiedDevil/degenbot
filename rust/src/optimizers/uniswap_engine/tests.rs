@@ -1721,4 +1721,154 @@ mod tests {
             "error must name the missing pool_id={bogus_id}, got: {msg}"
         );
     }
+
+    /// Regression (3ECKWX): `process_backfill_logs` must stamp each applied log
+    /// with the log's OWN `block_number`, not the chunk-level `chunk_end`. Two
+    /// V3 Swap logs at distinct blocks B1=10, B2=20 inside one backfill chunk
+    /// (`chunk_end=2000`) must land as TWO separate journal deltas at blocks 10
+    /// and 20 — not collapse into one delta stamped at 2000.
+    ///
+    /// Pre-fix every log in the chunk was journaled at `chunk_end`, so
+    /// `push_delta`'s same-block replacement collapsed the whole chunk into a
+    /// single delta at block 2000. A reorg landing mid-chunk (e.g. targeting
+    /// block 15) then couldn't restore a per-block landed-at state, and buffer
+    /// expiry timestamps were off-block.
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn process_backfill_logs_stamps_per_log_block_number() {
+        use crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC;
+        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+        use alloy::primitives::{B256, Bytes};
+        use alloy::rpc::types::Log;
+
+        /// Build a V3 Swap log carrying post-swap scalars, at `block_number`.
+        /// data = abi.encode(int256 amount0, int256 amount1, uint160 sqrtPriceX96,
+        /// uint128 liquidity, int24 tick) = 5 × 32 bytes.
+        fn v3_swap_log(
+            pool_address: Address,
+            sqrt_price_x96: U256,
+            liquidity: u128,
+            tick: i32,
+            block_number: u64,
+        ) -> Log {
+            let mut data = Vec::with_capacity(160);
+            // amount0 (int256) — unused by routing, zero-padded.
+            data.extend_from_slice(&[0u8; 32]);
+            // amount1 (int256) — unused by routing, zero-padded.
+            data.extend_from_slice(&[0u8; 32]);
+            // sqrtPriceX96 (uint160) — left-padded into 32 bytes.
+            let sp_be = sqrt_price_x96.to_be_bytes::<32>();
+            data.extend_from_slice(&sp_be);
+            // liquidity (uint128) — left-padded into 32 bytes (bytes 16..32).
+            let mut liq_word = [0u8; 32];
+            liq_word[16..32].copy_from_slice(&liquidity.to_be_bytes());
+            data.extend_from_slice(&liq_word);
+            // tick (int24) — sign-extended into 32 bytes; last 4 bytes hold i32.
+            let mut tick_word = [0u8; 32];
+            tick_word[28..32].copy_from_slice(&tick.to_be_bytes());
+            data.extend_from_slice(&tick_word);
+
+            let inner = alloy::primitives::Log::new_unchecked(
+                pool_address,
+                vec![
+                    V3_SWAP_TOPIC,
+                    B256::left_padding_from(&[0xaau8; 20]), // sender (indexed)
+                    B256::left_padding_from(&[0xbbu8; 20]), // recipient (indexed)
+                ],
+                Bytes::from(data),
+            );
+            Log {
+                inner,
+                block_hash: None,
+                block_number: Some(block_number),
+                block_timestamp: None,
+                transaction_hash: None,
+                transaction_index: None,
+                log_index: None,
+                removed: false,
+            }
+        }
+
+        let mut engine = UniswapEngine::new();
+        let pool_addr = Address::from([0x77u8; 20]);
+        let base_sp = U256::from(79_228_162_514_264_337_593_543_950_336_u128); // ~1.0 price
+
+        let pool_id = engine.register_v3_pool(&RegisterV3PoolParams {
+            address: pool_addr,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: base_sp,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: HashMap::new(),
+            update_block: 0,
+            coverage: PoolTickCoverage::Tracked,
+        });
+
+        // Two swaps at distinct blocks inside one backfill chunk.
+        let b1 = 10u64;
+        let b2 = 20u64;
+        let chunk_end = 2000u64; // much larger than b1/b2 — exaggerates the bug
+        let sp_b1 = base_sp + U256::from(1u64);
+        let sp_b2 = base_sp + U256::from(2u64);
+        let logs = vec![
+            v3_swap_log(pool_addr, sp_b1, 1_100_000, 1, b1),
+            v3_swap_log(pool_addr, sp_b2, 1_200_000, 2, b2),
+        ];
+
+        engine.process_backfill_logs(&logs, chunk_end);
+
+        let core = engine.core.read();
+        let s = core.get_v3_pool(pool_id).expect("v3 pool registered");
+        // Two distinct-block swaps must produce two journal deltas — NOT one
+        // collapsed delta stamped at chunk_end.
+        assert_eq!(
+            s.journal.len(),
+            2,
+            "per-log block stamping must keep B1 and B2 as separate deltas (pre-fix: collapsed to 1 at chunk_end={chunk_end})"
+        );
+        assert_eq!(
+            s.journal.earliest_block(),
+            Some(b1),
+            "earliest delta must be stamped at the log's real block {b1}, not chunk_end={chunk_end}"
+        );
+        assert_eq!(
+            s.journal.newest_block(),
+            Some(b2),
+            "newest delta must be stamped at the log's real block {b2}, not chunk_end={chunk_end}"
+        );
+        // The current mutable state reflects the B2 swap (the newest).
+        assert_eq!(s.sqrt_price_x96, sp_b2);
+        assert_eq!(s.liquidity, 1_200_000);
+        assert_eq!(s.tick, 2);
+        assert_eq!(s.update_block, b2);
+
+        // Restorability: restore before B2 must land at the post-B1 state,
+        // proving B1 was journaled at its real block (under the bug it would
+        // land on pre-B1, since the single collapsed delta at chunk_end >= B2
+        // pops the whole chunk).
+        drop(core);
+        let restored = engine
+            .core
+            .write()
+            .v3_restore_before_block(pool_id, b2)
+            .expect("restore returns Some");
+        let _ = restored;
+        let core = engine.core.read();
+        let s = core.get_v3_pool(pool_id).expect("v3 pool registered");
+        assert_eq!(
+            s.sqrt_price_x96, sp_b1,
+            "restore before B2={b2} lands at post-B1 scalars (per-log stamping)"
+        );
+        assert_eq!(s.liquidity, 1_100_000);
+        assert_eq!(s.tick, 1);
+        // `update_block` follows V3RestoreResult's existing "restore point =
+        // oldest popped block" convention (the block we rolled back to the
+        // pre-state of), intentionally not the landed-at block — out of scope
+        // for 3ECKWX (per-log stamping); the scalar assertions above are the
+        // restorability proof.
+    }
 }

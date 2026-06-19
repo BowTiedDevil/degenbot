@@ -350,7 +350,15 @@ impl UniswapEngine {
     /// applied immediately. Swap updates are applied directly.
     /// After all logs are processed, expired buffers are purged and
     /// the sub-engines rebuild their solve states.
-    pub fn process_backfill_logs(&mut self, logs: &[Log], block_number: u64) {
+    ///
+    /// `chunk_end` is the chunk boundary (the highest block in this paginated
+    /// `eth_getLogs` batch) — used as the buffer-expiry cutoff and to advance
+    /// `last_processed_block`. Each applied log is stamped with ITS OWN
+    /// `block_number` (decoded from the RPC log), NOT `chunk_end`. Pre-fix
+    /// every log in the chunk was journaled at `chunk_end`, so same-block
+    /// replacement collapsed the whole chunk into one journal delta and a
+    /// mid-chunk reorg couldn't restore a per-block landed-at state.
+    pub fn process_backfill_logs(&mut self, logs: &[Log], chunk_end: u64) {
         use crate::bot_core::v3_mint_burn_decoder::{decode_v3_burn_log, decode_v3_mint_log};
         use crate::bot_core::v3_swap_decoder::decode_v3_swap_log;
         use crate::bot_core::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log;
@@ -360,6 +368,11 @@ impl UniswapEngine {
         let mut v4_touched = false;
 
         for log in logs {
+            // Stamp this log with its own block number. A backfill log should
+            // always carry `block_number`; fall back to `chunk_end` only for a
+            // malformed log so apply never sees block 0.
+            let log_block = log.block_number.unwrap_or(chunk_end);
+
             let Some(topic0) = log.topic0() else {
                 continue;
             };
@@ -371,7 +384,7 @@ impl UniswapEngine {
                         event.sqrt_price_x96,
                         event.liquidity.to::<u128>(),
                         event.tick,
-                        block_number,
+                        log_block,
                         &[],
                     );
                     v3_touched = true;
@@ -383,7 +396,7 @@ impl UniswapEngine {
                         event.tick_lower,
                         event.tick_upper,
                         event.amount.cast_signed(),
-                        block_number,
+                        log_block,
                     );
                     v3_touched = true;
                 }
@@ -394,7 +407,7 @@ impl UniswapEngine {
                         event.tick_lower,
                         event.tick_upper,
                         -(event.amount.cast_signed()),
-                        block_number,
+                        log_block,
                     );
                     v3_touched = true;
                 }
@@ -409,7 +422,7 @@ impl UniswapEngine {
                             tick: event.tick,
                             tick_priors: vec![],
                         },
-                        block_number,
+                        log_block,
                     );
                     v4_touched = true;
                 }
@@ -423,7 +436,7 @@ impl UniswapEngine {
                         event.tick_lower,
                         event.tick_upper,
                         event.liquidity_delta,
-                        block_number,
+                        log_block,
                     );
                     v4_touched = true;
                 }
@@ -431,10 +444,10 @@ impl UniswapEngine {
         }
 
         if v3_touched {
-            self.core.write().expire_v3_buffered(block_number);
+            self.core.write().expire_v3_buffered(chunk_end);
         }
         if v4_touched {
-            self.core.write().expire_v4_buffered(block_number);
+            self.core.write().expire_v4_buffered(chunk_end);
             // NOTE: the orphan `rebuild_and_solve` that previously solved
             // V4-engine-local paths here is removed (ADR-003 S3). The
             // unified engine re-derives affected paths on the next
@@ -443,6 +456,6 @@ impl UniswapEngine {
             // handles V4 paths via `HopType::V4`).
         }
 
-        self.last_processed_block = Some(block_number);
+        self.last_processed_block = Some(chunk_end);
     }
 }
