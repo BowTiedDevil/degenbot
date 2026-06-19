@@ -277,6 +277,33 @@ class Bot:
         self._trackers[key] = manager
         return manager
 
+    def release_python_state(self) -> None:
+        """Drop Python-side pool/token/tracker caches once Rust owns canonical state.
+
+        After the Rust engine has taken ownership of all pool state (snapshots
+        streamed, pools registered, backfill complete), the Python-side
+        tracker caches, snapshots, and pool/token registries are redundant —
+        the hot loop only needs the engine and the async web3 handle. This
+        drops them so they stop pinning pool objects in memory.
+
+        Idempotent; safe to call once, at the end of the startup handshake
+        (after ``build_paths`` completes). Concrete trackers that carry a
+        snapshot (e.g. ``UniswapV3StateTB``) have ``unload_snapshot()``
+        called to release the snapshot reference.
+        """
+        # 1. Drop tracker caches and snapshots (prevent them pinning pool objects)
+        for tracker in self._trackers.values():
+            if hasattr(tracker, "_tracked_pools"):
+                tracker._tracked_pools.clear()  # noqa: SLF001
+            if hasattr(tracker, "_untracked_pools"):
+                tracker._untracked_pools.clear()  # noqa: SLF001
+            if hasattr(tracker, "unload_snapshot"):
+                tracker.unload_snapshot()
+
+        # 2. Drop the pool and token registries (Rust owns canonical state)
+        self.pools._reset()  # noqa: SLF001
+        self.tokens.reset()
+
     def register_builder(
         self,
         pool_class: type[AbstractLiquidityPool],

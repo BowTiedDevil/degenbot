@@ -2620,23 +2620,15 @@ async def main() -> None:
     bot_logger.info("[startup] Path loading complete — trimming redundant Python state")
 
     # ── Trim redundant Python state — Rust engine owns all pool state ──
-    # 1. Drop tracker caches and snapshots (prevent them from pinning pool objects)
-    for tracker in bot._trackers.values():
-        if hasattr(tracker, "_tracked_pools"):
-            tracker._tracked_pools.clear()
-        if hasattr(tracker, "_untracked_pools"):
-            tracker._untracked_pools.clear()
-        if hasattr(tracker, "unload_snapshot"):
-            tracker.unload_snapshot()
+    # Drop Python-side tracker caches/snapshots and the pool/token registries
+    # so they stop pinning pool objects in memory. The hot loop keeps only
+    # engine_registry, async_w3, and scalars.
+    bot.release_python_state()
 
-    # 2. Drop the bot's pool and token registries (Rust owns canonical state)
-    bot.pools._reset()
-    bot.tokens.reset()
-
-    # 3. Drop snapshot wrappers (already streamed to Rust)
+    # Drop snapshot wrappers (already streamed to Rust)
     del v3_snapshot, v4_snapshot
 
-    # 4. Drop the bot session entirely and force full collection
+    # Drop the bot session entirely and force full collection
     #    The hot loop only needs engine_registry, async_w3, and scalars.
     del bot
     gc.collect()
