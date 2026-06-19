@@ -23,82 +23,20 @@ use crate::bot_core::{RegisterV4PoolParams, V4StateSync, V4SwapUpdate};
 use super::engine_handle::EngineHandle;
 use super::engine_subscriber::EngineSubscriber;
 
+use super::snapshot_verify::{register_with_cl_buffers, SnapshotStore};
 use super::{
     BlockMetadata, EnginePhase, HopType, MixedPoolRef, PoolHop, PoolTickCoverage, ResultBatch,
     SolvePathResult, UniswapEngine, V3SnapshotData, V4SnapshotData,
 };
 
-/// Snapshot storage keyed by pool identifier (V3 address or V4 pool manager + pool ID).
-///
-/// Holds a one-way transfer of tick data: `load()` replaces the store, and
-/// `take()` removes a single pool's data at registration time. Streaming loads
-/// begin with `begin_load()` and are populated via `insert()`.
-struct SnapshotStore<K: Eq + std::hash::Hash> {
-    data: parking_lot::Mutex<Option<HashMap<K, HashMap<i32, crate::bot_core::TickInfo>>>>,
-}
-
-impl<K: Eq + std::hash::Hash + Clone> SnapshotStore<K> {
-    fn new() -> Self {
-        Self {
-            data: parking_lot::Mutex::new(None),
+/// [`Result<(), VerifyError>`] → `PyRuntimeError` seam for the extracted
+/// snapshot/verify module (ADR-006 slice 5b).
+fn map_verify_err(res: Result<(), super::snapshot_verify::VerifyError>) -> PyResult<()> {
+    res.map_err(|e| match e {
+        super::snapshot_verify::VerifyError::NoSnapshotStream => {
+            pyo3::exceptions::PyRuntimeError::new_err("No snapshot stream in progress.")
         }
-    }
-
-    fn is_loaded(&self) -> bool {
-        self.data.lock().is_some()
-    }
-
-    fn load(&self, data: HashMap<K, HashMap<i32, crate::bot_core::TickInfo>>) {
-        *self.data.lock() = Some(data);
-    }
-
-    fn begin_load(&self) {
-        *self.data.lock() = Some(HashMap::new());
-    }
-
-    fn insert(&self, key: K, tick_data: HashMap<i32, crate::bot_core::TickInfo>) -> PyResult<()> {
-        let mut guard = self.data.lock();
-        let Some(ref mut map) = *guard else {
-            let msg = "No snapshot stream in progress.";
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
-        };
-        map.insert(key, tick_data);
-        Ok(())
-    }
-
-    /// Remove a single pool's tick data from the store.
-    ///
-    /// Returns `Tracked` coverage if the key existed, otherwise `Sparse`.
-    fn take(&self, key: &K) -> (HashMap<i32, crate::bot_core::TickInfo>, PoolTickCoverage) {
-        let mut guard = self.data.lock();
-        if let Some(ref mut map) = *guard {
-            if let Some(tick_data) = map.remove(key) {
-                return (tick_data, PoolTickCoverage::Tracked);
-            }
-        }
-        (HashMap::new(), PoolTickCoverage::Sparse)
-    }
-
-    fn clear(&self) {
-        *self.data.lock() = None;
-    }
-}
-
-/// Helper that registers a CL pool, applies backfill/pump buffers, and captures
-/// a backfill-boundary snapshot while the engine lock is held.
-fn register_with_cl_buffers<Key, BackfillSnapshot>(
-    engine: &Arc<parking_lot::Mutex<UniswapEngine>>,
-    register: impl FnOnce(&mut UniswapEngine) -> Key,
-    apply_backfill: impl FnOnce(&mut UniswapEngine),
-    take_backfill_snapshot: impl FnOnce(&UniswapEngine, &Key) -> Option<BackfillSnapshot>,
-    apply_pump: impl FnOnce(&mut UniswapEngine),
-) -> (Key, Option<BackfillSnapshot>) {
-    let mut engine = engine.lock();
-    let key = register(&mut engine);
-    apply_backfill(&mut engine);
-    let backfill_snapshot = take_backfill_snapshot(&engine, &key);
-    apply_pump(&mut engine);
-    (key, backfill_snapshot)
+    })
 }
 
 /// Lazily create or reuse a cached verification provider.
@@ -783,7 +721,7 @@ impl PyUniswapArbEngine {
             rust_tick_data.insert(tick_index, make_tick_info(values.0, values.1));
         }
 
-        self.v3_snapshot.insert(addr, rust_tick_data)
+        map_verify_err(self.v3_snapshot.insert(addr, rust_tick_data))
     }
 
     /// Finalize the V3 snapshot stream and transition to `SnapshotLoaded` phase.
@@ -839,7 +777,7 @@ impl PyUniswapArbEngine {
             rust_tick_data.insert(tick_index, make_tick_info(values.0, values.1));
         }
 
-        self.v4_snapshot.insert((pm_addr, pool_id), rust_tick_data)
+        map_verify_err(self.v4_snapshot.insert((pm_addr, pool_id), rust_tick_data))
     }
 
     /// Finalize the V4 snapshot stream and transition to `SnapshotLoaded` phase.

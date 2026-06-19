@@ -52,6 +52,7 @@ mod event_routing;
 mod lifecycle;
 mod py_binding;
 mod result_channel;
+mod snapshot_verify;
 mod solver_dispatch;
 #[cfg(test)]
 mod tests;
