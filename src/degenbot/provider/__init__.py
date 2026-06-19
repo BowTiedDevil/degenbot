@@ -37,7 +37,10 @@ from hexbytes import HexBytes
 from degenbot.degenbot_rs import AlloyProvider as RustAlloyProvider
 from degenbot.degenbot_rs import AsyncAlloyProvider
 from degenbot.provider.async_adapter import AsyncProviderAdapter
-from degenbot.provider.factory import get_provider_from_config
+from degenbot.provider.factory import (
+    get_async_provider_from_config,
+    get_provider_from_config,
+)
 from degenbot.provider.offline_provider import (
     BlockNotRecordedError,
     OfflineDataMissing,
@@ -485,5 +488,6 @@ __all__ = [
     "ProviderAdapter",
     "ProviderBackend",
     "Subscription",
+    "get_async_provider_from_config",
     "get_provider_from_config",
 ]

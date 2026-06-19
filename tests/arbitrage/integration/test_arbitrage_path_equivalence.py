@@ -5,7 +5,6 @@ path types.
 """
 
 import pytest
-from eth_typing import ChainId
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.arbitrage._legacy import _UniswapLpCycle as UniswapLpCycle
@@ -35,13 +34,13 @@ WBTC_WETH_V3_POOL_ADDRESS = "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
 @pytest.fixture
 def wbtc_token(fork_mainnet_full: AnvilFork) -> Erc20Token:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
-    return bot.build_erc20token(WBTC_ADDRESS, chain_id=ChainId.ETH)
+    return bot.build_erc20token(WBTC_ADDRESS)
 
 
 @pytest.fixture
 def weth_token(fork_mainnet_full: AnvilFork) -> Erc20Token:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
-    return bot.build_erc20token(WETH_ADDRESS, chain_id=ChainId.ETH)
+    return bot.build_erc20token(WETH_ADDRESS)
 
 
 @pytest.fixture

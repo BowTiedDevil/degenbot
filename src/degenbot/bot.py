@@ -37,6 +37,11 @@ from degenbot.degenbot_rs import PyBot
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import TrackerAlreadyInitialized
 from degenbot.logging import logger
+from degenbot.provider import AsyncAlloyProvider
+from degenbot.provider.async_adapter import AsyncProviderAdapter
+from degenbot.provider.factory import get_provider_from_config
+from degenbot.provider.subscription import Subscription  # noqa: TC001
+from degenbot.provider.sync_adapter import ProviderAdapter  # noqa: TC001
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -54,10 +59,6 @@ if TYPE_CHECKING:
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.abstract.pool_tracker import AbstractPoolTracker
 
-from degenbot.provider import AsyncAlloyProvider
-from degenbot.provider.async_adapter import AsyncProviderAdapter
-from degenbot.provider.subscription import Subscription  # noqa: TC001
-from degenbot.provider.sync_adapter import ProviderAdapter  # noqa: TC001
 from degenbot.types.aliases import ChainId  # noqa: TC001
 
 
@@ -75,31 +76,85 @@ class Bot:
     - **Session** — the lifetime scope for the entire run
     """
 
-    def __init__(self, config: DegenbotConfig) -> None:
-        """Initialize the instance."""
+    def __init__(
+        self,
+        config: DegenbotConfig,
+        *,
+        provider: ProviderAdapter | None = None,
+    ) -> None:
+        """Initialize the single-chain Bot session.
+
+        One Bot per chain (ADR-006 D5). The chain identity comes from
+        ``config.default_chain_id``. Three construction modes:
+
+        - ``provider`` given (injection seam): enforce `provider.chain_id` ==
+          ``config.default_chain_id`` (fail-fast), use it directly. This is the
+          forward path used by ``from_config_file`` and fork tests.
+        - ``provider`` omitted, ``config.default_chain_id`` set: build one from
+          ``config.rpc[default_chain_id]`` via :func:`get_provider_from_config`,
+          which itself enforces the match.
+        - ``provider`` omitted, ``config.default_chain_id`` ``None``: a
+          **transitional legacy shim** (TODO-c2a1, ADR-006 slice 8b) keeps a
+          ``ConnectionManager`` alive so the RPC-backed fork-test suite can
+          call the legacy ``bot.connections.register_provider`` /
+          ``set_default_chain`` flow. `chain_id`/`provider` then resolve through
+          the manager. This shim is slated for deletion once the fork tests
+          migrate to the injected-provider construction.
+
+        Raises:
+            DegenbotValueError: If ``provider`` is injected but
+                ``config.default_chain_id`` is ``None``, or the provider's
+                ``chain_id`` mismatches the configured chain.
+
+        """
         self.config = config
+
+        self._explicit_provider: ProviderAdapter | None = None
+        self._explicit_chain_id: ChainId | None = config.default_chain_id
+        # Legacy shim: None in the forward (explicit/factory) modes.
+        self.connections: ConnectionManager | None = None
+
+        if provider is not None:
+            # Explicit injection — enforce chain_id == config.default_chain_id.
+            if self._explicit_chain_id is None:
+                msg = (
+                    "Bot requires a default_chain_id in the config when a provider "
+                    "is injected. Set `default_chain_id` in your config file."
+                )
+                raise DegenbotValueError(message=msg)
+            self._enforce_provider_chain(provider, self._explicit_chain_id)
+            self._explicit_provider = provider
+        elif self._explicit_chain_id is not None:
+            # Build from config — the factory enforces the chain match itself.
+            self._explicit_provider = get_provider_from_config(
+                chain_id=self._explicit_chain_id, config=config
+            )
+        else:
+            # Legacy shim path: defer provider/chain resolution to the
+            # ConnectionManager (TODO-c2a1 — remove in slice 8b).
+            self.connections = ConnectionManager()
 
         # Polars-inspired three-layer architecture (ADR-005): a ``PyBot``
         # PyO3 wrapper owns the Rust ``Bot`` state behind an ``RwLock``.
         # Multiple Python handles (this session, plus any ``Pool``/``Token``
         # handles it vends) share the same Rust-owned ``Bot`` thread-safely.
-        # Construction is cheap and side-effect-free (no I/O, no DB) —
-        # pool/token registration flows here in later slices.
         self._py_bot = PyBot()
 
-        self.connections = ConnectionManager()
         self.db = DatabaseSessionManager(
             get_scoped_sqlite_session(database_path=config.database.path)
         )
         self.pools = PoolRegistry()
         self.tokens = TokenRegistry()
         self.managed_pools = ManagedPoolRegistry()
-        self._trackers: dict[tuple[ChainId, str], AbstractPoolTracker[Any]] = {}
+        self._trackers: dict[str, AbstractPoolTracker[Any]] = {}
 
         # Builders own I/O orchestration; Bot hands them its I/O dependencies.
         # Erc20Builder is a leaf — constructed before BuilderContext.
         self._erc20_builder = Erc20Builder(
-            default_chain_id=None, db=self.db, tokens=self.tokens, py_bot=self._py_bot
+            default_chain_id=self._explicit_chain_id,
+            db=self.db,
+            tokens=self.tokens,
+            py_bot=self._py_bot,
         )
         ctx = BuilderContext(
             db=self.db,
@@ -107,7 +162,7 @@ class Bot:
             tokens=self.tokens,
             erc20_builder=self._erc20_builder,
             py_bot=self._py_bot,
-            default_chain_id=None,
+            default_chain_id=self._explicit_chain_id,
             managed_pools=self.managed_pools,
         )
         self._v2_builder = V2PoolBuilder(ctx)
@@ -121,8 +176,8 @@ class Bot:
         # Used by update() for O(1) dict lookup instead of isinstance chain
         self._builders: dict[type, PoolBuilder] = {}
 
-        # Async adapters for subscriptions, keyed by chain_id
-        self._async_adapters: dict[ChainId, AsyncProviderAdapter] = {}
+        # Async adapter for subscriptions (single chain; created on demand)
+        self._async_adapter: AsyncProviderAdapter | None = None
         self.register_builder(LiquidityPool, self._v2_builder)
         self.register_builder(UniswapV3Pool, self._v3_builder)
         self.register_builder(UniswapV4Pool, self._v4_builder)
@@ -137,10 +192,51 @@ class Bot:
         # Check database migration version
         self._check_database_version()
 
+    @staticmethod
+    def _enforce_provider_chain(provider: ProviderAdapter, expected: ChainId) -> None:
+        """Raise if the provider's chain_id doesn't match ``expected``.
+
+        Fail-fast on a misconfigured endpoint: if the RPC reports a different
+        ``eth_chainId`` than the one declared in the config, the Bot cannot
+        safely continue (pools/tokens would be built against the wrong chain).
+
+        Raises:
+            DegenbotValueError: If the provider's ``chain_id`` != ``expected``.
+
+        """
+        actual = provider.chain_id
+        if actual != expected:
+            msg = (
+                f"Provider chain_id ({actual}) does not match the configured "
+                f"default_chain_id ({expected}). Refusing to start a Bot "
+                f"against the wrong chain."
+            )
+            raise DegenbotValueError(message=msg)
+
     @property
     def chain_id(self) -> ChainId:
-        """Return the default chain ID from the connection manager."""
+        """The single chain this Bot targets (ADR-006 D5).
+
+        Resolves through the legacy ``ConnectionManager`` in shim mode
+        (TODO-c2a1 — remove in slice 8b).
+        """
+        if self._explicit_chain_id is not None:
+            return self._explicit_chain_id
+        # Legacy shim: read from the ConnectionManager set by `set_default_chain`.
+        assert self.connections is not None  # shim mode is the only other path
         return self.connections.default_chain_id
+
+    @property
+    def provider(self) -> ProviderAdapter:
+        """The single RPC provider for this Bot's chain.
+
+        Resolves through the legacy ``ConnectionManager`` in shim mode.
+        """
+        if self._explicit_provider is not None:
+            return self._explicit_provider
+        # Legacy shim: fetch from the ConnectionManager.
+        assert self.connections is not None  # shim mode is the only other path
+        return self.connections.get_provider(self.chain_id)
 
     def _check_database_version(self) -> None:
         """Warn if the database schema is out of date."""
@@ -169,6 +265,10 @@ class Bot:
     def from_config_file(cls) -> Bot:
         """From config file.
 
+        Builds a single-chain Bot from the config's ``default_chain_id``
+        (ADR-006 D5). The provider is constructed from ``config.rpc`` and its
+        ``eth_chainId`` is enforced to match.
+
         Returns:
             An instance wrapping the given config_file.
 
@@ -180,7 +280,6 @@ class Bot:
         manager_cls: type[M],
         *,
         factory_address: str,
-        chain_id: ChainId | None = None,
         **kwargs: Any,
     ) -> M:
         """Create a pool manager within this bot's session.
@@ -193,9 +292,8 @@ class Bot:
 
         """
         factory_address = get_checksum_address(factory_address)
-        chain_id = chain_id or self.connections.default_chain_id
 
-        key = (chain_id, factory_address)
+        key = factory_address
         if key in self._trackers:
             raise TrackerAlreadyInitialized(
                 message="A manager has already been initialized for this address. "
@@ -204,7 +302,7 @@ class Bot:
 
         manager = manager_cls(
             factory_address=factory_address,
-            chain_id=chain_id,
+            chain_id=self.chain_id,
             bot=self,
             **kwargs,
         )
@@ -233,7 +331,6 @@ class Bot:
         self,
         address: str,
         *,
-        chain_id: ChainId | None = None,
         silent: bool = False,
     ) -> Erc20Token:
         """Fetch token metadata from DB/RPC and construct an I/O-free Erc20Token.
@@ -242,24 +339,22 @@ class Bot:
             The computed value.
 
         """
-        resolved_chain_id = chain_id or self.connections.default_chain_id
-        io = SyncPoolIO(self.connections.get_provider(resolved_chain_id))
-        return self._erc20_builder.build(address, chain_id=resolved_chain_id, silent=silent, io=io)
+        io = SyncPoolIO(self.provider)
+        return self._erc20_builder.build(address, chain_id=self.chain_id, silent=silent, io=io)
 
-    def get_token(self, address: str, *, chain_id: ChainId | None = None) -> Erc20Token:
+    def get_token(self, address: str) -> Erc20Token:
         """Get or create a token. Bot handles DB lookup, RPC calls, and registration.
 
         Returns:
             The computed value.
 
         """
-        return self.build_erc20token(address, chain_id=chain_id)
+        return self.build_erc20token(address)
 
     def build_pool(
         self,
         address: str,
         *,
-        chain_id: ChainId | None = None,
         state_block: int | None = None,
         silent: bool = False,
         tick_bitmap: dict[int, Any] | None = None,
@@ -278,9 +373,8 @@ class Bot:
 
         """
         address = get_checksum_address(address)
-        chain_id = chain_id or self.connections.default_chain_id
-        provider = self.connections.get_provider(chain_id)
-        io = SyncPoolIO(provider)
+        chain_id = self.chain_id
+        io = SyncPoolIO(self.provider)
 
         request = BuildPoolRequest(
             silent=silent,
@@ -354,7 +448,6 @@ class Bot:
         address: str,
         pool_id: str | bytes,
         *,
-        chain_id: ChainId | None = None,
         state_block: int | None = None,
         silent: bool = False,
         state_cache_depth: int = 8,
@@ -381,7 +474,7 @@ class Bot:
 
         """
         address = get_checksum_address(address)
-        chain_id = chain_id or self.connections.default_chain_id
+        chain_id = self.chain_id
 
         # Check managed pool registry — return existing pool if already built
         pool_id_bytes = HexBytes(pool_id)
@@ -395,8 +488,7 @@ class Bot:
                 assert isinstance(existing, UniswapV4Pool)
             return existing
 
-        provider = self.connections.get_provider(chain_id)
-        io = SyncPoolIO(provider)
+        io = SyncPoolIO(self.provider)
 
         request = BuildManagedPoolRequest(
             pool_id=pool_id,
@@ -432,8 +524,7 @@ class Bot:
             The computed integer value.
 
         """
-        assert token.chain_id is not None
-        io = SyncPoolIO(self.connections.get_provider(token.chain_id))
+        io = SyncPoolIO(self.provider)
         return self._erc20_builder.get_token_balance(
             token, address, block_identifier=block_identifier, io=io
         )
@@ -451,8 +542,7 @@ class Bot:
             The computed integer value.
 
         """
-        assert token.chain_id is not None
-        io = SyncPoolIO(self.connections.get_provider(token.chain_id))
+        io = SyncPoolIO(self.provider)
         return self._erc20_builder.get_token_approval(
             token, owner, spender, block_identifier=block_identifier, io=io
         )
@@ -468,15 +558,13 @@ class Bot:
             The computed integer value.
 
         """
-        assert token.chain_id is not None
-        io = SyncPoolIO(self.connections.get_provider(token.chain_id))
+        io = SyncPoolIO(self.provider)
         return self._erc20_builder.get_token_total_supply(
             token, block_identifier=block_identifier, io=io
         )
 
     def get_ether_balance(
         self,
-        chain_id: ChainId,
         address: str,
         block_identifier: BlockIdentifier | None = None,
     ) -> int:
@@ -486,64 +574,56 @@ class Bot:
             The computed integer value.
 
         """
-        io = SyncPoolIO(self.connections.get_provider(chain_id))
+        io = SyncPoolIO(self.provider)
         return self._erc20_builder.get_ether_balance(
-            chain_id, address, block_identifier=block_identifier, io=io
+            self.chain_id, address, block_identifier=block_identifier, io=io
         )
 
-    def get_provider(self, *, chain_id: ChainId) -> ProviderAdapter:
-        """Return provider.
+    def get_provider(self) -> ProviderAdapter:
+        """Return this Bot's single provider.
 
         Returns:
             The computed value.
 
         """
-        return self.connections.get_provider(chain_id)
+        return self.provider
 
-    async def start_listening(
-        self,
-        chain_id: ChainId | None = None,
-    ) -> tuple[Subscription, Subscription]:
-        """Start WS subscriptions for newHeads and unfiltered logs.
+    async def start_listening(self) -> tuple[Subscription, Subscription]:
+        """Start WS subscriptions for newHeads and unfiltered logs on this Bot's chain.
 
-        Creates an AsyncProviderAdapter from the configured WS URI for
-        the given chain, subscribes to new block headers and unfiltered
-        log events (``eth_subscribe("logs", {})``), and returns both
-        subscriptions as a tuple ``(heads_sub, logs_sub)``.
-
-        The adapter is cached — calling again for the same chain_id
-        returns the existing adapter's subscriptions.
-
-        Args:
-            chain_id: Chain to subscribe on. Defaults to the default chain.
+        Single chain (ADR-006 D5): no ``chain_id`` argument. Creates an
+        AsyncProviderAdapter from the configured WS URI for this Bot's chain,
+        subscribes to new block headers and unfiltered log events
+        (``eth_subscribe("logs", {})``), and returns both subscriptions as a
+        tuple ``(heads_sub, logs_sub)``. The adapter is cached on the Bot.
 
         Returns:
             Tuple of ``(heads_subscription, logs_subscription)``.
 
         Raises:
-            DegenbotValueError: If no WS URI is configured for the chain.
+            DegenbotValueError: If no WS URI is configured for this chain.
 
         """
-        chain_id = chain_id or self.connections.default_chain_id
-
         # Reuse existing adapter if already created
-        existing = self._async_adapters.get(chain_id)
-        if existing is not None:
-            heads = await existing.subscribe_blocks()
-            logs = await existing.subscribe_logs()
+        if self._async_adapter is not None:
+            heads = await self._async_adapter.subscribe_blocks()
+            logs = await self._async_adapter.subscribe_logs()
             return heads, logs
 
         # Look up WS URI from config
-        ws_uri = self.config.ws.get(chain_id)
+        ws_uri = self.config.ws.get(self.chain_id)
         if ws_uri is None:
-            msg = f"No WS URI configured for chain {chain_id}. Add [ws.{chain_id}] to config."
+            msg = (
+                f"No WS URI configured for chain {self.chain_id}. "
+                f"Add [ws.{self.chain_id}] to config."
+            )
             raise DegenbotValueError(message=msg)
 
         # Create async alloy provider from WS URI
         alloy = await AsyncAlloyProvider.create(str(ws_uri))
         adapter = AsyncProviderAdapter.from_alloy(alloy)
 
-        self._async_adapters[chain_id] = adapter
+        self._async_adapter = adapter
 
         heads = await adapter.subscribe_blocks()
         logs = await adapter.subscribe_logs()
@@ -571,8 +651,7 @@ class Bot:
             if block_number is not None and not isinstance(block_number, int)
             else block_number
         )
-        provider = self.connections.get_provider(pool.chain_id)  # ty: ignore
-        io = SyncPoolIO(provider)
+        io = SyncPoolIO(self.provider)
         return builder.update(pool, block_number=resolved_block_number, io=io)
 
     def _builder_for_pool(

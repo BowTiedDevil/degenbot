@@ -47,7 +47,7 @@ def test_bad_address(bot: Bot):
 def test_caches(bot: Bot, wbtc: Erc20Token):
     # Test cache setters and getters
     fake_balance = 69_420_000
-    current_block = bot.connections.get_provider(wbtc.chain_id).get_block_number()
+    current_block = bot.provider.get_block_number()
 
     # Test balance cache
     wbtc.set_cached_balance(VITALIK_ADDRESS, current_block, fake_balance)

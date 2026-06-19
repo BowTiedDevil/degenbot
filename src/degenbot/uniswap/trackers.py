@@ -46,7 +46,7 @@ class AbstractUniswapV2PoolTracker[Pool: LiquidityPool](AbstractPoolTracker[Pool
         self._bot = bot
 
         if chain_id is None:
-            chain_id = bot.connections.default_chain_id
+            chain_id = bot.chain_id
 
         deployment = pool_type_registry.get_deployment(chain_id, factory_address)
         if deployment is not None:
@@ -115,7 +115,6 @@ class AbstractUniswapV2PoolTracker[Pool: LiquidityPool](AbstractPoolTracker[Pool
         try:
             new_pool = self._bot.build_pool(
                 pool_address,
-                chain_id=self.chain_id,
                 silent=silent,
             )
         except LiquidityPoolError as exc:
@@ -206,7 +205,7 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
         self._bot = bot
 
         if chain_id is None:
-            chain_id = bot.connections.default_chain_id
+            chain_id = bot.chain_id
 
         factory_address = get_checksum_address(factory_address)
 
@@ -283,7 +282,6 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
         try:
             new_pool = self._bot.build_pool(
                 pool_address,
-                chain_id=self.chain_id,
                 silent=silent,
                 tick_bitmap=self._snapshot.tick_bitmap(pool_address) if self._snapshot else None,
                 tick_data=self._snapshot.tick_data(pool_address) if self._snapshot else None,

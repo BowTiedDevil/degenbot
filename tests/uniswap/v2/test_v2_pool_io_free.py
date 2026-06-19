@@ -259,7 +259,6 @@ class TestBotBuildV2Pool:
 
         pool = bot.build_pool(
             WETH_USDC_V2_POOL,
-            chain_id=1,
         )
 
         assert isinstance(pool, LiquidityPool)
@@ -293,7 +292,6 @@ class TestV2PoolTrackerWithBot:
         manager = bot.add_tracker(
             UniswapV2PoolTracker,
             factory_address=factory,
-            chain_id=1,
         )
 
         # The tracker's bot reference should be set
@@ -379,7 +377,6 @@ class TestV2PoolTrackerWithBot:
         manager = bot.add_tracker(
             UniswapV2PoolTracker,
             factory_address=factory_addr,
-            chain_id=1,
         )
 
         # Call get_pool — should call bot.build_pool internally

@@ -143,7 +143,6 @@ class TestBotBuildErc20Token:
 
         token = bot.build_erc20token(
             "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-            chain_id=1,
         )
         assert isinstance(token, Erc20Token)
         assert token.chain_id == 1

@@ -300,7 +300,6 @@ class TestBotBuildV4Pool:
             V4_POOL_MANAGER,
             V4_POOL_ID,
             state_view_address=V4_STATE_VIEW,
-            chain_id=1,
             fee=V4_FEE,
             tick_spacing=V4_TICK_SPACING,
             hook_address=V4_HOOKS,

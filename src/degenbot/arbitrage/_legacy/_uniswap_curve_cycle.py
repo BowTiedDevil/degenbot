@@ -328,7 +328,7 @@ class _UniswapCurveCycle(PublisherMixin):
         if self._bot is None:
             msg = "A Bot instance is required for token approval lookups"
             raise ValueError(msg)
-        provider = self._bot.connections.get_provider(token.chain_id)
+        provider = self._bot.provider
         (approval,) = eth_abi.abi.decode(
             types=["uint256"],
             data=provider.call(
@@ -631,7 +631,7 @@ class _UniswapCurveCycle(PublisherMixin):
         if self._bot is None:
             msg = "A Bot instance is required for async calculations"
             raise ValueError(msg)
-        block_number = self._bot.connections.get_provider(curve_pool.chain_id).get_block_number()
+        block_number = self._bot.provider.get_block_number()
 
         # Some Curve pools utilize on-chain lookups in their calc, so do a simple pre-calc to
         # cache those values for a given block since the pool will be disconnected once sent

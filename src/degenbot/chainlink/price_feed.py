@@ -55,8 +55,7 @@ class ChainlinkPriceContract:
             if self._bot is None:
                 msg = "ChainlinkPriceContract requires a `bot` to fetch decimals"
                 raise ValueError(msg)
-            chain_id = self._chain_id or self._bot.connections.default_chain_id
-            provider = self._bot.connections.get_provider(chain_id)
+            provider = self._bot.provider
             (decimals,) = eth_abi.abi.decode(
                 types=["uint8"],
                 data=provider.call_raw(
@@ -77,8 +76,7 @@ class ChainlinkPriceContract:
         if self._bot is None:
             msg = "ChainlinkPriceContract requires a `bot` to fetch price"
             raise ValueError(msg)
-        chain_id = self._chain_id or self._bot.connections.default_chain_id
-        provider = self._bot.connections.get_provider(chain_id)
+        provider = self._bot.provider
         round_data = provider.call_raw(
             {"to": self.address, "data": Web3.keccak(text="latestRoundData()")[:4]},
         )

@@ -4,7 +4,7 @@ Updated for Plan 048, Slice 4: AsyncBot delegates to async builders via build_po
 
 import asyncio
 import pathlib
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import eth_abi.abi
 import pytest
@@ -30,14 +30,21 @@ def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
     return DegenbotConfig(
         database=DatabaseSettings(path=tmp_path / "test.db"),
         rpc={1: "https://eth.llamarpc.com/"},
+        default_chain_id=1,
     )
+
+
+def _fake_async_provider(chain_id: int = 1) -> MagicMock:
+    """A fake async provider exposing ``get_chain_id`` (awaits, no network)."""
+    p = MagicMock()
+    p.get_chain_id = AsyncMock(return_value=chain_id)
+    return p
 
 
 def _make_weth() -> Erc20Token:
     return make_erc20(
         _PY_BOT,
         "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-        chain_id=1,
         name="Wrapped Ether",
         symbol="WETH",
         decimals=18,
@@ -48,7 +55,6 @@ def _make_usdc() -> Erc20Token:
     return make_erc20(
         _PY_BOT,
         "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-        chain_id=1,
         name="USD Coin",
         symbol="USDC",
         decimals=6,
@@ -66,17 +72,18 @@ USDC_WETH_V3_POOL = "0x8ad599c3A0ff1De082011EFDDc58f1908eb6e6D8"
 class TestAsyncBotInit:
     """AsyncBot can be constructed with a config."""
 
-    def test_init(self, tmp_path: pathlib.Path) -> None:
+    @pytest.mark.asyncio
+    async def test_init(self, tmp_path: pathlib.Path) -> None:
         config = _make_test_config(tmp_path)
-        bot = AsyncBot(config)
+        bot = await AsyncBot.from_provider(config, provider=_fake_async_provider(1))
         assert bot.config is config
         assert bot.pools is not None
         assert bot.tokens is not None
         assert bot.managed_pools is not None
 
-    def test_from_config_file(self) -> None:
-        # from_config_file() requires a real config file, just verify it exists
-        assert hasattr(AsyncBot, "from_config_file")
+    def test_from_config_file_async_exists(self) -> None:
+        assert hasattr(AsyncBot, "from_config_file_async")
+        assert hasattr(AsyncBot, "from_provider")
 
 
 class TestAsyncBotBuildErc20Token:
@@ -86,14 +93,11 @@ class TestAsyncBotBuildErc20Token:
     async def test_build_erc20token(self, tmp_path: pathlib.Path) -> None:
 
         config = _make_test_config(tmp_path)
-        bot = AsyncBot(config)
-
         provider = AsyncMock()
         provider.get_chain_id.return_value = 1
         provider.is_connected.return_value = True
         provider.get_block_number.return_value = 18_000_000
-        await bot.connections.register_provider(provider)
-        bot.connections.set_default_chain(1)
+        bot = await AsyncBot.from_provider(config, provider=provider)
 
         # Mock async RPC responses
         name_calldata = encode_function_calldata("name()", None)
@@ -116,7 +120,7 @@ class TestAsyncBotBuildErc20Token:
 
         provider.call = AsyncMock(side_effect=mock_call)
 
-        token = await bot.build_erc20token(WETH_ADDR, chain_id=1)
+        token = await bot.build_erc20token(WETH_ADDR)
 
         assert isinstance(token, Erc20Token)
         assert token.address == get_checksum_address(WETH_ADDR)
@@ -125,7 +129,7 @@ class TestAsyncBotBuildErc20Token:
         assert token.decimals == 18
 
         # Token should be in bot's token registry
-        assert bot.tokens.get(token_address=WETH_ADDR, chain_id=1) is token
+        assert bot.tokens.get(chain_id=1, token_address=WETH_ADDR) is token
 
 
 class TestAsyncBotBuildPoolV2:
@@ -135,20 +139,17 @@ class TestAsyncBotBuildPoolV2:
     async def test_build_pool_v2(self, tmp_path: pathlib.Path) -> None:
 
         config = _make_test_config(tmp_path)
-        bot = AsyncBot(config)
-
         provider = AsyncMock()
         provider.get_chain_id.return_value = 1
         provider.is_connected.return_value = True
         provider.get_block_number.return_value = 18_000_000
-        await bot.connections.register_provider(provider)
-        bot.connections.set_default_chain(1)
+        bot = await AsyncBot.from_provider(config, provider=provider)
 
         # Pre-register tokens so async ERC20 builder doesn't need chain calls
         weth = _make_weth()
         usdc = _make_usdc()
-        bot.tokens.add(token_address=WETH_ADDR, chain_id=1, token=weth)
-        bot.tokens.add(token_address=USDC_ADDR, chain_id=1, token=usdc)
+        bot.tokens.add(chain_id=1, token_address=WETH_ADDR, token=weth)
+        bot.tokens.add(chain_id=1, token_address=USDC_ADDR, token=usdc)
 
         # V2 factory is already registered in pool_type_registry at import time
 
@@ -176,7 +177,7 @@ class TestAsyncBotBuildPoolV2:
 
         provider.call = AsyncMock(side_effect=mock_call)
 
-        pool = await bot.build_pool(USDC_WETH_V2_POOL, chain_id=1)
+        pool = await bot.build_pool(USDC_WETH_V2_POOL)
 
         assert isinstance(pool, LiquidityPool)
         assert pool.address == get_checksum_address(USDC_WETH_V2_POOL)
@@ -189,20 +190,17 @@ class TestAsyncBotBuildPoolV3:
     async def test_build_pool_v3(self, tmp_path: pathlib.Path) -> None:
 
         config = _make_test_config(tmp_path)
-        bot = AsyncBot(config)
-
         provider = AsyncMock()
         provider.get_chain_id.return_value = 1
         provider.is_connected.return_value = True
         provider.get_block_number.return_value = 18_000_000
-        await bot.connections.register_provider(provider)
-        bot.connections.set_default_chain(1)
+        bot = await AsyncBot.from_provider(config, provider=provider)
 
         # Pre-register tokens
         weth = _make_weth()
         usdc = _make_usdc()
-        bot.tokens.add(token_address=WETH_ADDR, chain_id=1, token=weth)
-        bot.tokens.add(token_address=USDC_ADDR, chain_id=1, token=usdc)
+        bot.tokens.add(chain_id=1, token_address=WETH_ADDR, token=weth)
+        bot.tokens.add(chain_id=1, token_address=USDC_ADDR, token=usdc)
 
         # V3 factory is already registered in pool_type_registry at import time
 
@@ -250,7 +248,7 @@ class TestAsyncBotBuildPoolV3:
 
         provider.call = AsyncMock(side_effect=mock_call)
 
-        pool = await bot.build_pool(USDC_WETH_V3_POOL, chain_id=1)
+        pool = await bot.build_pool(USDC_WETH_V3_POOL)
 
         assert isinstance(pool, UniswapV3Pool)
         assert pool.address == get_checksum_address(USDC_WETH_V3_POOL)
@@ -274,7 +272,6 @@ class TestAsyncBotBuildPoolV4:
         native_eth = make_erc20(
             _PY_BOT,
             ZERO_ADDRESS,
-            chain_id=1,
             name="Ether",
             symbol="ETH",
             decimals=18,
@@ -282,17 +279,14 @@ class TestAsyncBotBuildPoolV4:
         usdc = _make_usdc()
 
         config = _make_test_config(tmp_path)
-        bot = AsyncBot(config)
-
         provider = AsyncMock()
         provider.get_chain_id.return_value = 1
         provider.is_connected.return_value = True
         provider.get_block_number.return_value = 18_000_000
-        await bot.connections.register_provider(provider)
-        bot.connections.set_default_chain(1)
+        bot = await AsyncBot.from_provider(config, provider=provider)
 
-        bot.tokens.add(token_address=ZERO_ADDRESS, chain_id=1, token=native_eth)
-        bot.tokens.add(token_address=USDC_ADDR, chain_id=1, token=usdc)
+        bot.tokens.add(chain_id=1, token_address=ZERO_ADDRESS, token=native_eth)
+        bot.tokens.add(chain_id=1, token_address=USDC_ADDR, token=usdc)
 
         sqrt_price = 2198666895605149686863
         tick = -76020
@@ -330,7 +324,6 @@ class TestAsyncBotBuildPoolV4:
         pool = await bot.build_managed_pool(
             v4_pool_manager,
             v4_pool_id,
-            chain_id=1,
             state_view_address=v4_state_view,
             fee=v4_fee,
             tick_spacing=v4_tick_spacing,
@@ -348,17 +341,14 @@ class TestAsyncBotIOMethods:
     @pytest.mark.asyncio
     async def test_get_token_balance(self, tmp_path: pathlib.Path) -> None:
         config = _make_test_config(tmp_path)
-        bot = AsyncBot(config)
-
         provider = AsyncMock()
         provider.get_chain_id.return_value = 1
         provider.is_connected.return_value = True
         provider.get_block_number.return_value = 18_000_000
-        await bot.connections.register_provider(provider)
-        bot.connections.set_default_chain(1)
+        bot = await AsyncBot.from_provider(config, provider=provider)
 
         weth = _make_weth()
-        bot.tokens.add(token_address=WETH_ADDR, chain_id=1, token=weth)
+        bot.tokens.add(chain_id=1, token_address=WETH_ADDR, token=weth)
 
         # Mock balanceOf response
         holder_address = "0x1234567890123456789012345678901234567890"
@@ -377,24 +367,20 @@ class TestAsyncBotIOMethods:
         balance = await bot.get_token_balance(
             token_address=WETH_ADDR,
             holder_address=holder_address,
-            chain_id=1,
         )
         assert balance == 1000000000
 
     @pytest.mark.asyncio
     async def test_get_token_approval(self, tmp_path: pathlib.Path) -> None:
         config = _make_test_config(tmp_path)
-        bot = AsyncBot(config)
-
         provider = AsyncMock()
         provider.get_chain_id.return_value = 1
         provider.is_connected.return_value = True
         provider.get_block_number.return_value = 18_000_000
-        await bot.connections.register_provider(provider)
-        bot.connections.set_default_chain(1)
+        bot = await AsyncBot.from_provider(config, provider=provider)
 
         weth = _make_weth()
-        bot.tokens.add(token_address=WETH_ADDR, chain_id=1, token=weth)
+        bot.tokens.add(chain_id=1, token_address=WETH_ADDR, token=weth)
 
         # Mock allowance response
         owner_address = "0x1234567890123456789012345678901234567890"
@@ -417,24 +403,20 @@ class TestAsyncBotIOMethods:
             token_address=WETH_ADDR,
             owner=owner_address,
             spender=spender_address,
-            chain_id=1,
         )
         assert approval == 500000000
 
     @pytest.mark.asyncio
     async def test_get_token_total_supply(self, tmp_path: pathlib.Path) -> None:
         config = _make_test_config(tmp_path)
-        bot = AsyncBot(config)
-
         provider = AsyncMock()
         provider.get_chain_id.return_value = 1
         provider.is_connected.return_value = True
         provider.get_block_number.return_value = 18_000_000
-        await bot.connections.register_provider(provider)
-        bot.connections.set_default_chain(1)
+        bot = await AsyncBot.from_provider(config, provider=provider)
 
         weth = _make_weth()
-        bot.tokens.add(token_address=WETH_ADDR, chain_id=1, token=weth)
+        bot.tokens.add(chain_id=1, token_address=WETH_ADDR, token=weth)
 
         # Mock totalSupply response
         total_supply_calldata = encode_function_calldata("totalSupply()", None)
@@ -451,6 +433,5 @@ class TestAsyncBotIOMethods:
 
         total_supply = await bot.get_token_total_supply(
             token_address=WETH_ADDR,
-            chain_id=1,
         )
         assert total_supply == 10**27
