@@ -19,6 +19,51 @@ use crate::bot_core::py_liquidity_pool::PyLiquidityPool;
 use crate::bot_core::state_history::JournalError;
 use crate::bot_core::{Bot, BotState, RegisterV2PoolParams, RegisterV3PoolParams};
 
+/// Build an `alloy::rpc::types::Log` from the WS-log shape Python tests pass —
+/// `(address, topics, data, block_number)` reconstructed into the same
+/// `alloy::rpc::types::Log` the `BlockPump` feeds `Bot::dispatch_log`. Hex
+/// strings accept an optional `0x` prefix. This is the marshalling seam for
+/// the Python-facing `dispatch_log` (ADR-006, deferred §17 closure): it lets
+/// an offline test drive the full pump→dispatch→notify→solve loop without a
+/// live WS node, reusing the existing pure-logic dispatcher untouched.
+fn build_rpc_log(
+    address: &str,
+    topics: Vec<String>,
+    data: &str,
+    block_number: u64,
+) -> PyResult<alloy::rpc::types::Log> {
+    let addr: Address = address.parse().map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!("Invalid address '{address}': {e}"))
+    })?;
+    let mut topic_hashes = Vec::with_capacity(topics.len());
+    for t in topics {
+        let stripped = t.strip_prefix("0x").unwrap_or(&t);
+        let b: alloy::primitives::B256 = stripped.parse().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid topic '{t}': {e}"))
+        })?;
+        topic_hashes.push(b);
+    }
+    let data_stripped = data.strip_prefix("0x").unwrap_or(data);
+    let data_bytes = alloy::hex::decode(data_stripped).map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!("Invalid data hex '{data}': {e}"))
+    })?;
+    let inner = alloy::primitives::Log::new_unchecked(
+        addr,
+        topic_hashes,
+        alloy::primitives::Bytes::from(data_bytes),
+    );
+    Ok(alloy::rpc::types::Log {
+        inner,
+        block_hash: None,
+        block_number: Some(block_number),
+        block_timestamp: None,
+        transaction_hash: None,
+        transaction_index: None,
+        log_index: None,
+        removed: false,
+    })
+}
+
 /// Encode a byte slice as a lowercase hex string (no "0x" prefix).
 fn bytes_to_hex(bytes: &[u8]) -> String {
     const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
@@ -203,6 +248,38 @@ impl PyBot {
     /// Number of registered pools.
     fn pool_count(&self) -> usize {
         self.bot.state_arc().read().pool_count()
+    }
+
+    /// Drive a raw WS log through the event bus (ADR-006 D4).
+    ///
+    /// This is the Python-facing mirror of the `BlockPump`'s per-log call to
+    /// `Bot::dispatch_log`: decode via the registered `LogDecoder`s, apply the
+    /// decoded event to the shared `BotState` under a write guard, release it,
+    /// then notify every attached `PoolStateSubscriber` (the engine adapter) so
+    /// the affected `pool_id` is dirtied for the next `solve_all_paths`.
+    ///
+    /// Reconstructs an `alloy::rpc::types::Log` from the WS-log shape Python
+    /// passes — `(address, topics, data, block_number)` — so an offline test
+    /// can drive the full pump→dispatch→notify→solve loop without a live node.
+    /// No-op if no decoder recognizes the log or the pool isn't registered.
+    ///
+    /// Args:
+    ///     `address`: Emitter contract address (hex string, `0x` optional).
+    ///     `topics`: Log topics (hex strings, `0x` optional). `topics[0]` is
+    ///         the event signature hash the decoders match against.
+    ///     `data`: ABI-encoded log data (hex string, `0x` optional).
+    ///     `block_number`: Block number the synthetic log belongs to.
+    #[pyo3(signature = (address, topics, data, block_number=0))]
+    fn dispatch_log(
+        &self,
+        address: &str,
+        topics: Vec<String>,
+        data: &str,
+        block_number: u64,
+    ) -> PyResult<()> {
+        let log = build_rpc_log(address, topics, data, block_number)?;
+        self.bot.dispatch_log(&log);
+        Ok(())
     }
 
     /// Get a thin `PyLiquidityPool` handle for the given pool ID.
