@@ -70,7 +70,7 @@ from contracts.cmd_stream import (
     compute_simulation_warmup_slots,
     pack_expected_balance,
 )
-from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, get_checksum_address
+from degenbot import Bot, LiquidityPool, UniswapV3Pool, get_checksum_address
 from degenbot.arbitrage.encoding import fits_int128
 from degenbot.calculations.evm_math import next_base_fee
 from degenbot.config import DatabaseSettings, DegenbotConfig
@@ -587,8 +587,22 @@ def _make_backrun_config(node_http: str) -> DegenbotConfig:
     The chain identity is Ethereum mainnet (1); the RPC is the caller's
     ``node_http`` (an env-derived endpoint, not the config.toml ``rpc`` entry).
     The Bot enforces the connected RPC's ``eth_chainId`` matches at construction.
+
+    The database path is read from the existing user config at
+    ``~/.config/degenbot/config.toml`` (so locally-configured DB paths are
+    honored) and falls back to the default path if no config exists.
     """
-    from pathlib import Path
+    from degenbot.config import CONFIG_FILE, load_config_from_file
+
+    if CONFIG_FILE.exists():
+        base = load_config_from_file(CONFIG_FILE)
+        # Override the RPC with the env-derived endpoint while keeping
+        # the database path (and any other settings) from the config file.
+        return DegenbotConfig(
+            database=base.database,
+            rpc={1: node_http},
+            default_chain_id=1,
+        )
 
     return DegenbotConfig(
         database=DatabaseSettings(path=Path("~/.config/degenbot/degenbot.db").expanduser()),
@@ -625,7 +639,7 @@ class EngineRegistry:
         # NOTE: These Python dicts (_v2_keys, _v3_keys, _v4_keys) are plain
         # dicts — NOT thread-safe. All access is on the single asyncio event loop.
 
-    def register_v2_pool(self, pool: UniswapV2Pool) -> int:
+    def register_v2_pool(self, pool: LiquidityPool) -> int:
         if pool.address in self._v2_keys:
             return self._v2_keys[pool.address]
         # ADR-006 slice 9: with the engine sharing the bot's BotState, the V2
@@ -772,7 +786,7 @@ class EngineRegistry:
 
 
 def resolve_directions(
-    pools: list[UniswapV2Pool | UniswapV3Pool | UniswapV4Pool],
+    pools: list[LiquidityPool | UniswapV3Pool | UniswapV4Pool],
     input_token_address: str,
 ) -> list[bool] | None:
     """Determine zero_for_one for each hop so the cycle closes.
@@ -913,7 +927,7 @@ async def build_paths(
                 pool_type_strs.append("")
 
         # Build pools through appropriate constructors
-        pools: list[UniswapV2Pool | UniswapV3Pool | UniswapV4Pool] = []
+        pools: list[LiquidityPool | UniswapV3Pool | UniswapV4Pool] = []
         skip = False
         for step, pt in zip(steps, pool_type_strs, strict=True):
             if pt == "V2":
