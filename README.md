@@ -65,25 +65,22 @@ The `Bot` class is the central session object for all degenbot operations. It ma
 
 <!-- invisible-code-block: python
 import degenbot
-import web3
 from degenbot.config import DegenbotConfig
-from degenbot.provider import ProviderAdapter
 -->
 
 ```python
 # Initialize Bot from config file or explicit settings
 bot = degenbot.Bot(
     config=DegenbotConfig(
+        default_chain_id=1,
         rpc={1: "http://node:8545"},
         database={"path": "~/.config/degenbot/degenbot.db"},
     )
 )
 
-# Register an RPC provider
-w3 = web3.Web3(web3.HTTPProvider("http://node:8545"))
-provider = ProviderAdapter.from_web3(w3)
-bot.connections.register_provider(provider)
-bot.connections.set_default_chain(1)
+# Bot constructs the RPC provider from config and enforces its
+# eth_chainId matches default_chain_id (fail-fast). No manual provider
+# registration is needed.
 ```
 
 ```
@@ -137,17 +134,20 @@ Degenbot pools follow an **I/O-free architecture** where on-chain data is fetche
 
 ```python
 import degenbot
-import web3
 from degenbot.config import DegenbotConfig
-from degenbot.provider import ProviderAdapter
 
 # Bot manages connections, registries, and provides factory methods
 bot = degenbot.Bot(
-    config=DegenbotConfig(rpc={1: "http://node:8545"}, database={"path": ":memory:"})
+    config=DegenbotConfig(
+        default_chain_id=1,
+        rpc={1: "http://node:8545"},
+        database={"path": ":memory:"},
+    )
 )
-w3 = web3.Web3(web3.HTTPProvider("http://node:8545"))
-bot.connections.register_provider(ProviderAdapter.from_web3(w3))
-bot.connections.set_default_chain(1)
+# The RPC provider is built from config; eth_chainId is enforced to equal
+# default_chain_id at construction.
+bot.provider  # ProviderAdapter for chain 1
+bot.chain_id  # 1
 ```
 
 ```python
@@ -178,7 +178,7 @@ Builders are internal to Bot and not exposed publicly. All pool/token creation g
 |-----------|--------|----------|
 | Uniswap V2 | `bot.build_pool(address)` | Standard AMM, Camelot, other forks |
 | Uniswap V3 | `bot.build_pool(address)` | Full tick data, range orders |
-| Uniswap V4 | `bot.build_pool(address, pool_id=...)` | Singleton architecture with hooks |
+| Uniswap V4 | `bot.build_managed_pool(address, pool_id=...)` | Singleton architecture with hooks |
 | Curve V1 | `bot.build_pool(address)` | StableSwap, metapools, lending pools |
 
 When `build_pool` is called, type resolution proceeds in order: (1) pool registry for existing pools, (2) database `kind` column, (3) pool type registry mapping `(chain_id, factory_address) → pool class`, (4) on-chain probing via `slot0()`, `getReserves()`, or `coins()`.
@@ -279,17 +279,16 @@ All pool and token creation should flow through the `Bot` class for proper regis
 
 ```python
 import degenbot
-import web3
 from degenbot.config import DegenbotConfig
-from degenbot.provider import ProviderAdapter
 
 # Initialize Bot (handles config, connections, registries)
 bot = degenbot.Bot(
-    config=DegenbotConfig(rpc={1: "http://node:8545"}, database={"path": ":memory:"})
+    config=DegenbotConfig(
+        default_chain_id=1,
+        rpc={1: "http://node:8545"},
+        database={"path": ":memory:"},
+    )
 )
-w3 = web3.Web3(web3.HTTPProvider("http://node:8545"))
-bot.connections.register_provider(ProviderAdapter.from_web3(w3))
-bot.connections.set_default_chain(1)
 ```
 
 ```python
@@ -1044,23 +1043,20 @@ The `Bot` class is the primary entry point for degenbot usage. Access factories,
 
 ```python
 import degenbot
-import web3
 from degenbot.config import DegenbotConfig
-from degenbot.provider import ProviderAdapter
 
 # With explicit config
 bot = degenbot.Bot(
     config=DegenbotConfig(
+        default_chain_id=1,
         rpc={
             1: "http://node:8545",
         },
         database={"path": "~/.config/degenbot/degenbot.db"},
     )
 )
-# Register an RPC provider for chain ID 1
-w3 = web3.Web3(web3.HTTPProvider("http://node:8545"))
-bot.connections.register_provider(ProviderAdapter.from_web3(w3))
-bot.connections.set_default_chain(1)
+# The RPC provider is built from the config and its eth_chainId is enforced
+# to equal default_chain_id at construction — no manual registration needed.
 ```
 
 ### Universal Pool Builder
@@ -1069,7 +1065,6 @@ bot.connections.set_default_chain(1)
 # Universal builder — auto-resolves pool type from DB, registry, or on-chain probing
 pool = bot.build_pool(
     "0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8",
-    chain_id=1,
     state_block=18900000,  # Optional, defaults to current block
 )
 ```
@@ -1077,11 +1072,10 @@ pool = bot.build_pool(
 <!-- skip: start "requires Base chain RPC node" -->
 
 ```python
-# For V4 pools, pass pool_id for V4-specific dispatch
-pool = bot.build_pool(
-    "0x...",
+# For V4 pools, use build_managed_pool with the PoolManager address + pool_id
+pool = bot.build_managed_pool(
+    "0x...",  # PoolManager address
     pool_id="0x...",
-    pool_manager_address="0x...",
 )
 ```
 
@@ -1093,20 +1087,17 @@ pool = bot.build_pool(
 # V2 pool (auto-detected from factory)
 pool = bot.build_pool(
     "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc",
-    chain_id=1,
     state_block=18900000,  # Optional, defaults to current block
 )
 
 # V3 pool (auto-detected from factory)
 pool = bot.build_pool(
     "0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8",
-    chain_id=1,
 )
 
 # Curve pool (auto-detected from on-chain probing)
 pool = bot.build_pool(
     "0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7",
-    chain_id=1,
 )
 ```
 
@@ -1114,9 +1105,9 @@ pool = bot.build_pool(
 
 ```python
 # V4 pool (singleton architecture with pool_id)
-pool = bot.build_pool(
+pool = bot.build_managed_pool(
+    "0x...",  # PoolManager address
     pool_id="0x...",
-    pool_manager_address="0x...",
     state_view_address="0x...",
     tokens=["0x...", "0x..."],
     fee=500,
@@ -1150,17 +1141,17 @@ approval = bot.get_token_approval(token, owner="0xd8dA6BF26964aF9D7eEd9e03E53415
 total_supply = bot.get_token_total_supply(token)
 
 # Get native ETH balance
-eth_balance = bot.get_ether_balance(chain_id=1, address="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+eth_balance = bot.get_ether_balance(address="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 ```
 
 ### Accessing Bot Components
 
 ```python
-# Connection management
-provider = bot.connections.get_provider(chain_id=1)
+# RPC provider (built from config; chain_id enforced at construction)
+provider = bot.provider
 
 # Registries (check if already created)
-existing_pool = bot.pools.get(pool_address="0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8", chain_id=1)
+existing_pool = bot.pools.get(chain_id=1, pool_address="0x8ad599c3A0ff1De082011EFDDc58f1908EB6e6D8")
 existing_token = bot.tokens.get(token_address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", chain_id=1)
 
 # Database session
@@ -1290,6 +1281,11 @@ DEGENBOT_DEBUG=1 python my_script.py
 Degenbot uses a TOML configuration file located at `~/.config/degenbot/config.toml`:
 
 ```toml
+# The chain this Bot session targets (required). One Bot per chain — see ADR-006.
+# Must match a chain ID key in [rpc]; the connected RPC's eth_chainId is
+# enforced to match at construction (fail-fast)
+default_chain_id = 1
+
 [rpc]
 # Chain ID to RPC endpoint mapping
 1 = "https://eth-mainnet.example.com"
@@ -1299,6 +1295,10 @@ Degenbot uses a TOML configuration file located at `~/.config/degenbot/config.to
 # SQLite database path (optional, defaults to platform-specific location)
 path = "/path/to/degenbot.db"
 ```
+
+`default_chain_id` (required) selects the single chain this `Bot` targets — a
+`Bot` refuses to construct without it, and the connected RPC's `eth_chainId`
+is enforced to match it at construction.
 
 ## Rust Extension
 
