@@ -89,7 +89,7 @@ from degenbot.database.models.pools import (  # noqa:F401
     UniswapV4PoolTable,
     UniswapV4PoolTableBase,
 )
-from degenbot.degenbot_rs import PyBot, UniswapArbEngine  # type: ignore[attr-defined]
+from degenbot.degenbot_rs import UniswapArbEngine  # type: ignore[attr-defined]
 from degenbot.logging import logger as bot_logger
 from degenbot.pathfinding import find_paths_async
 from degenbot.provider.sync_adapter import ProviderAdapter
@@ -630,16 +630,24 @@ class EngineRegistry:
 
     def __init__(
         self,
-        py_bot: PyBot | None = None,
+        bot: Bot | None = None,
         *,
         engine: UniswapArbEngine | None = None,
     ) -> None:
-        # ADR-006 D1+D4: the engine adopts this PyBot's shared BotState, so
-        # the engine reads/writes the SAME core that V2 PyLiquidityPool handles
-        # share — no dual-BotState split (rust-owned-bot.md §17 closure).
+        # ADR-006 D1+D4: the engine adopts the Bot's shared BotState, so the
+        # engine reads/writes the SAME core that V2 PyLiquidityPool handles
+        # share — no dual-BotState split (rust-owned-bot.md §17 closure). The
+        # registry takes the Bot directly (Python-side expression of ADR-006 D4:
+        # Bot owns the engine; the user drives Bot) — never `bot._py_bot`.
         # `engine` is a testability seam: when omitted, the production engine is
-        # constructed against `py_bot`'s shared BotState.
-        self.engine = engine if engine is not None else UniswapArbEngine(py_bot=py_bot)
+        # constructed against the bot's shared BotState.
+        if engine is not None:
+            self.engine = engine
+        elif bot is None:
+            msg = "EngineRegistry requires either `engine` (test path) or `bot` (production)."
+            raise ValueError(msg)
+        else:
+            self.engine = UniswapArbEngine(py_bot=bot._py_bot)
         self._v2_keys: dict[str, int] = {}  # address → pool_id (shared BotState)
         self._v3_keys: dict[str, int] = {}
         # V4 pools keyed by pool_id hex — for event routing from PoolManager logs
@@ -2378,7 +2386,7 @@ async def main() -> None:
     # ADR-006 slice 9: the engine adopts the bot's shared BotState — one
     # state, no dual-registration (V2 pools already live in BotState via
     # bot.build_pool; the engine reads them through the shared core).
-    engine_registry = EngineRegistry(py_bot=bot._py_bot)
+    engine_registry = EngineRegistry(bot=bot)
 
     # Configure engine-internal verification: when a pool is registered from
     # snapshot data (apply_buffer=True), the engine snapshots its tick data
