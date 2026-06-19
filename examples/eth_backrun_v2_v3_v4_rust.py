@@ -562,6 +562,108 @@ class PathSuppression:
         self._last_retry_block.pop(path_id, None)
 
 
+@dataclasses.dataclass
+class Dispatcher:
+    """Coordination state for the dispatch loop.
+
+    Bundles the seven mutable containers `main()` previously declared as
+    exploded locals and threaded through `consume_result_batches`,
+    `dispatch_profitable_results`, and `monitor_pending_transaction`. The
+    containers are mutable and mutated in place by the methods; the
+    dataclass binding itself is never rebound. `PathSuppression` is composed
+    (and delegated) so all dispatch coordination lives behind one object.
+    """
+
+    pending_nonces: set[int] = dataclasses.field(default_factory=set)
+    pending_pools: set[int] = dataclasses.field(default_factory=set)
+    active_tasks: set[asyncio.Task] = dataclasses.field(default_factory=set)
+    current_block_ref: list[int] = dataclasses.field(default_factory=lambda: [0])
+    block_times: deque[tuple[int, int]] = dataclasses.field(
+        default_factory=lambda: deque(maxlen=60)
+    )
+    block_priority_fees: dict[int, dict[int, int]] = dataclasses.field(default_factory=dict)
+    path_suppression: PathSuppression = dataclasses.field(default_factory=PathSuppression)
+
+    def __post_init__(self) -> None:
+        # `current_block_ref` is a single-element mutable list so monitor tasks
+        # can read the current block by reference across the consumer/monitor
+        # boundary without a lock.
+        if len(self.current_block_ref) == 0:
+            self.current_block_ref.append(0)
+
+    @classmethod
+    def for_block(cls, current_block: int) -> "Dispatcher":
+        """Construct a fresh Dispatcher seeded at `current_block`."""
+        return cls(current_block_ref=[current_block])
+
+    # ── nonce coordination ────────────────────────────────────────
+    def claim_nonce(self, start: int) -> int:
+        """Return the first int >= `start` not already pending, and reserve it."""
+        nonce = next(n for n in itertools.count(start) if n not in self.pending_nonces)
+        self.pending_nonces.add(nonce)
+        return nonce
+
+    def release_nonce(self, nonce: int) -> None:
+        """Release a nonce back to the free pool (tx confirmed or voided)."""
+        self.pending_nonces.discard(nonce)
+
+    # ── pool mutual exclusion ────────────────────────────────────
+    def reserve_pools(self, path_pools: set[int]) -> None:
+        """Mark Rust pool keys as locked by an in-flight tx."""
+        self.pending_pools.update(path_pools)
+
+    def release_pools(self, pools: set[int]) -> None:
+        """Release Rust pool keys when a tx confirms or expires."""
+        self.pending_pools.difference_update(pools)
+
+    def is_path_blocked(self, path_pools: set[int], committed_pools: set[int]) -> bool:
+        """True iff any path pool is already locked (pending) or committed this batch."""
+        return bool(path_pools & (self.pending_pools | committed_pools))
+
+    def release_tx(self, tx: "SubmittedTx") -> None:
+        """Release both the nonce and pools held by a completed/expired tx."""
+        self.release_nonce(tx.nonce)
+        self.release_pools(set(tx.pools))
+
+    # ── task tracking ─────────────────────────────────────────────
+    def track_task(self, task: asyncio.Task) -> None:
+        """Register an in-flight task; auto-discard on completion."""
+        self.active_tasks.add(task)
+        task.add_done_callback(self.active_tasks.discard)
+
+    # ── block / fee recording ─────────────────────────────────────
+    @property
+    def current_block(self) -> int:
+        return self.current_block_ref[0]
+
+    def advance_block(self, block: int) -> None:
+        """Update the current block (read by monitor tasks by reference)."""
+        self.current_block_ref[0] = block
+
+    def record_block_time(self, block: int, timestamp: int) -> None:
+        self.block_times.append((block, timestamp))
+
+    def record_priority_fees(self, block: int, fees: dict[int, int]) -> None:
+        """Record per-block percentile fees, pruning to FEE_HISTORY_WINDOW."""
+        self.block_priority_fees[block] = fees
+        if len(self.block_priority_fees) > FEE_HISTORY_WINDOW:
+            self.block_priority_fees.pop(min(self.block_priority_fees))
+
+    def latest_priority_fees(self) -> dict[int, int]:
+        """Return the most-recently recorded per-block percentile fees."""
+        return self.block_priority_fees[max(self.block_priority_fees)]
+
+    # ── PathSuppression delegation ────────────────────────────────
+    def record_success(self, path_id: int) -> None:
+        self.path_suppression.record_success(path_id)
+
+    def record_failure(self, path_id: int) -> None:
+        self.path_suppression.record_failure(path_id)
+
+    def is_suppressed(self, path_id: int, current_block: int) -> bool:
+        return self.path_suppression.is_suppressed(path_id, current_block)
+
+
 def _hop_display_addr(hop: HopInfo) -> str:
     """Return a short display address for logging."""
     if isinstance(hop, V2HopInfo):
@@ -1144,9 +1246,7 @@ async def build_paths(
         except Exception as exc:
             register_fail_count += 1
             if register_fail_count <= 5:
-                bot_logger.warning(
-                    f"Path registration failed: {type(exc).__name__}: {exc}"
-                )
+                bot_logger.warning(f"Path registration failed: {type(exc).__name__}: {exc}")
             continue
 
         path_count += 1
@@ -1282,9 +1382,7 @@ class SubmittedTx:
 async def monitor_pending_transaction(
     tx: SubmittedTx,
     async_w3: AsyncWeb3,
-    pending_nonces: set[int],
-    pending_pools: set[int],  # Rust pool keys
-    current_block_ref: list[int],  # mutable [block_number] so we can read current
+    dispatcher: Dispatcher,
 ) -> None:
     """Monitor a submitted transaction until it confirms or expires.
 
@@ -1297,17 +1395,15 @@ async def monitor_pending_transaction(
         try:
             await async_w3.eth.get_transaction_receipt(tx.tx_hash)
         except TransactionNotFound:
-            blocks_waited = current_block_ref[0] - tx.submission_block
+            blocks_waited = dispatcher.current_block - tx.submission_block
             if blocks_waited > BLOCKS_BEFORE_NONCE_EXPIRES:
-                pending_nonces.discard(tx.nonce)
-                pending_pools.difference_update(tx.pools)
+                dispatcher.release_tx(tx)
                 bot_logger.info(
                     f"Voided expired nonce {tx.nonce} ({blocks_waited} blocks without inclusion)"
                 )
                 return
         else:
-            pending_nonces.discard(tx.nonce)
-            pending_pools.difference_update(tx.pools)
+            dispatcher.release_tx(tx)
             bot_logger.info(f"Confirmed tx {tx.tx_hash.to_0x_hex()} nonce={tx.nonce}")
             return
 
@@ -1324,13 +1420,8 @@ async def dispatch_profitable_results(
     base_fee_next: int,
     current_block: int,
     operator_nonce: int,
-    pending_nonces: set[int],
-    pending_pools: set[int],
-    active_tasks: set[asyncio.Task],
-    current_block_ref: list[int],
+    dispatcher: Dispatcher,
     dry_run: bool,
-    block_priority_fees: dict[int, dict[int, int]],
-    path_suppression: PathSuppression,
 ) -> None:
     """Encode, simulate, and submit profitable results from the Rust engine.
 
@@ -1451,9 +1542,7 @@ async def dispatch_profitable_results(
                 path_id,
             )
         except Exception as exc:
-            bot_logger.debug(
-                f"[state-dump] engine dump failed for path={path_id}: {exc}"
-            )
+            bot_logger.debug(f"[state-dump] engine dump failed for path={path_id}: {exc}")
             return
 
         snapshot["failed_calldata"] = calldata
@@ -1491,7 +1580,7 @@ async def dispatch_profitable_results(
         path_pools = {
             h.pool_id_hex if isinstance(h, V4HopInfo) else h.pool_address for h in path_info.hops
         }
-        if path_pools & (pending_pools | committed_pools):
+        if dispatcher.is_path_blocked(path_pools, committed_pools):
             bot_logger.debug(f"[dispatch] skip path={path_id}: pools pending or committed")
             return None
 
@@ -1573,7 +1662,9 @@ async def dispatch_profitable_results(
                     elif isinstance(_h, V3HopInfo):
                         _part += f" t0={_h.token0_address} t1={_h.token1_address} fee={_h.fee}"
                     elif isinstance(_h, V4HopInfo):
-                        _part += f" c0={_h.currency0_address} c1={_h.currency1_address} fee={_h.fee}"
+                        _part += (
+                            f" c0={_h.currency0_address} c1={_h.currency1_address} fee={_h.fee}"
+                        )
                     _part += ")"
                     _hop_parts.append(_part)
                 _amounts_str = ",".join(str(a) for a in hop_outputs)
@@ -1693,7 +1784,12 @@ async def dispatch_profitable_results(
                         _error_data = _error_obj["data"]
                     except (KeyError, TypeError, IndexError):
                         _error_data = None
-                    if _error_data and isinstance(_error_data, str) and _error_data.startswith("0x") and len(_error_data) > 2:
+                    if (
+                        _error_data
+                        and isinstance(_error_data, str)
+                        and _error_data.startswith("0x")
+                        and len(_error_data) > 2
+                    ):
                         revert_data = bytes.fromhex(_error_data[2:])
                     else:
                         try:
@@ -1834,10 +1930,7 @@ async def dispatch_profitable_results(
                 # ── Diagnostic: on-chain state for sim-fail paths ──
                 # Only check once per block+type to avoid log spam
                 _trace_key = (current_block, path_info.path_type)
-                if (
-                    failed_call is not None
-                    and _trace_key not in _traced_reverts_local
-                ):
+                if failed_call is not None and _trace_key not in _traced_reverts_local:
                     # On-chain state at 'pending' — matches what the
                     # simulation sees. hex(current_block) would give state
                     # after block N-1, which differs when current-block txs
@@ -1875,7 +1968,11 @@ async def dispatch_profitable_results(
                                     Web3.to_checksum_address(pool_addr),
                                     "pending",
                                 )
-                                if not _code or _code == b"\x00" or (isinstance(_code, str) and _code in ("0x", "0x00")):
+                                if (
+                                    not _code
+                                    or _code == b"\x00"
+                                    or (isinstance(_code, str) and _code in ("0x", "0x00"))
+                                ):
                                     bot_logger.info(
                                         f"[v3-state] path={path_id} hop[{hi}] "
                                         f"pool={pool_addr} NO CODE at block {current_block}"
@@ -1905,7 +2002,11 @@ async def dispatch_profitable_results(
                                 tick = int.from_bytes(slot0_data[32:64], "big")
                                 if tick >= 2**255:
                                     tick -= 2**256  # signed int24
-                                liq = int.from_bytes(liq_data[0:32], "big") if len(liq_data) >= 32 else 0
+                                liq = (
+                                    int.from_bytes(liq_data[0:32], "big")
+                                    if len(liq_data) >= 32
+                                    else 0
+                                )
                                 bot_logger.info(
                                     f"[v3-state] path={path_id} hop[{hi}] "
                                     f"pool={pool_addr} "
@@ -1992,7 +2093,7 @@ async def dispatch_profitable_results(
             base_fee_next=base_fee_next,
             solve_block=solve_block,
             current_block=current_block,
-            block_priority_fees=block_priority_fees,
+            block_priority_fees=dispatcher.block_priority_fees,
         )
 
         gas_fee = gas_used * (base_fee_next + priority_fee)
@@ -2008,7 +2109,7 @@ async def dispatch_profitable_results(
     results = [
         (pid, inp, pft, ho, ci, sb)
         for pid, inp, pft, ho, ci, sb in results
-        if not path_suppression.is_suppressed(pid, current_block)
+        if not dispatcher.is_suppressed(pid, current_block)
     ]
     suppressed_count = pre_filter_count - len(results)
     if suppressed_count > 0:
@@ -2086,13 +2187,13 @@ async def dispatch_profitable_results(
     failed_count = len(candidates) - len(succeeded_path_ids)
     if failed_count > 0:
         bot_logger.debug(
-            f"[suppress] {failed_count}/{len(candidates)} candidates failed, {path_suppression.total_suppressed} total suppressed"
+            f"[suppress] {failed_count}/{len(candidates)} candidates failed, {dispatcher.path_suppression.total_suppressed} total suppressed"
         )
     for pid, _inp, _pft, _ho, _ci, _sb in candidates:
         if pid in succeeded_path_ids:
-            path_suppression.record_success(pid)
+            dispatcher.record_success(pid)
         else:
-            path_suppression.record_failure(pid)
+            dispatcher.record_failure(pid)
 
     # Sort both categories by net profit descending
     gas_profitable.sort(key=operator.itemgetter(2), reverse=True)
@@ -2146,7 +2247,7 @@ async def dispatch_profitable_results(
         path_pools = {
             h.pool_id_hex if isinstance(h, V4HopInfo) else h.pool_address for h in path_info.hops
         }
-        if path_pools & (pending_pools | committed_pools):
+        if dispatcher.is_path_blocked(path_pools, committed_pools):
             bot_logger.debug(f"[dispatch] skip path={path_id}: pools claimed after sim")
             continue
 
@@ -2157,7 +2258,7 @@ async def dispatch_profitable_results(
             base_fee_next=base_fee_next,
             solve_block=0,  # Already passed staleness check; no age decay at submission
             current_block=current_block,
-            block_priority_fees=block_priority_fees,
+            block_priority_fees=dispatcher.block_priority_fees,
         )
         net_profit = gross_profit - gas_used * (base_fee_next + priority_fee)
 
@@ -2183,7 +2284,7 @@ async def dispatch_profitable_results(
             continue
 
         # Submit
-        nonce = next(n for n in itertools.count(operator_nonce) if n not in pending_nonces)
+        nonce = dispatcher.claim_nonce(operator_nonce)
         tx_params["nonce"] = nonce
         tx_params["maxPriorityFeePerGas"] = priority_fee
         tx_params["maxFeePerGas"] = int(1.5 * base_fee_next) + priority_fee
@@ -2208,8 +2309,7 @@ async def dispatch_profitable_results(
             continue
 
         bot_logger.info(f"Submitted path {path_id} hash={tx_hash.to_0x_hex()} nonce={nonce}")
-        pending_nonces.add(nonce)
-        pending_pools.update(path_pools)
+        dispatcher.reserve_pools(path_pools)
         committed_pools.update(path_pools)
 
         # Spawn monitor task to release nonce + pools on confirmation/expiry
@@ -2222,13 +2322,10 @@ async def dispatch_profitable_results(
                     submission_block=current_block,
                 ),
                 async_w3=async_w3,
-                pending_nonces=pending_nonces,
-                pending_pools=pending_pools,
-                current_block_ref=current_block_ref,
+                dispatcher=dispatcher,
             )
         )
-        active_tasks.add(task)
-        task.add_done_callback(active_tasks.discard)
+        dispatcher.track_task(task)
 
 
 async def consume_result_batches(
@@ -2237,14 +2334,8 @@ async def consume_result_batches(
     executor_address: str,
     operator_address: str,
     operator_private_key: str,
-    pending_nonces: set[int],
-    pending_pools: set[int],
-    active_tasks: set[asyncio.Task],
-    current_block_ref: list[int],
+    dispatcher: Dispatcher,
     dry_run: bool,
-    block_times: deque[tuple[int, int]],
-    block_priority_fees: dict[int, dict[int, int]],
-    path_suppression: PathSuppression,
 ) -> None:
     """Consume result batches from the Rust engine and dispatch profitable ones.
 
@@ -2276,21 +2367,22 @@ async def consume_result_batches(
             )
             reward = fee_history.get("reward", [[]])
             if reward and reward[-1]:
-                block_priority_fees[block_number] = dict(
-                    zip(
-                        FEE_PERCENTILES,
-                        reward[-1],
-                        strict=True,
-                    )
+                dispatcher.record_priority_fees(
+                    block_number,
+                    dict(
+                        zip(
+                            FEE_PERCENTILES,
+                            reward[-1],
+                            strict=True,
+                        )
+                    ),
                 )
-                if len(block_priority_fees) > FEE_HISTORY_WINDOW:
-                    block_priority_fees.pop(min(block_priority_fees))
         except Web3Exception:
             pass
 
-        block_times.append((block_number, block_timestamp))
-        if len(block_times) >= 2:
-            oldest_bn, _oldest_ts = block_times[0]
+        dispatcher.record_block_time(block_number, block_timestamp)
+        if len(dispatcher.block_times) >= 2:
+            oldest_bn, _oldest_ts = dispatcher.block_times[0]
             if block_number != oldest_bn:
                 latency = time.time() - block_timestamp
                 bot_logger.info(
@@ -2298,7 +2390,7 @@ async def consume_result_batches(
                     f"[{base_fee / 10**9:.5f}/{base_fee_next / 10**9:.5f}]"
                 )
 
-        current_block_ref[0] = block_number
+        dispatcher.advance_block(block_number)
 
         # Build results list from fresh + updated entries in the batch
         results: list[tuple[int, int, int, tuple[int, ...], tuple[int, ...], int]] = []
@@ -2329,7 +2421,7 @@ async def consume_result_batches(
 
         # Removed: de-registered, permanently gone
         for path_id in batch["removed"]:
-            path_suppression.discard(int(path_id))
+            dispatcher.path_suppression.discard(int(path_id))
 
         if results:
             await dispatch_profitable_results(
@@ -2342,13 +2434,8 @@ async def consume_result_batches(
                 base_fee_next=base_fee_next,
                 current_block=block_number,
                 operator_nonce=operator_nonce,
-                pending_nonces=pending_nonces,
-                pending_pools=pending_pools,
-                active_tasks=active_tasks,
-                current_block_ref=current_block_ref,
+                dispatcher=dispatcher,
                 dry_run=dry_run,
-                block_priority_fees=block_priority_fees,
-                path_suppression=path_suppression,
             )
 
 
@@ -2455,15 +2542,10 @@ async def main() -> None:
 
     # ── Subscribe to WS (immediately, before path loading) ────────
     _chain_id = 1
-    pending_nonces: set[int] = set()
-    pending_pools: set[int] = set()
-    active_tasks: set[asyncio.Task] = set()
-    current_block_ref: list[int] = [current_block]  # mutable for monitor tasks
-    block_times: deque[tuple[int, int]] = deque(maxlen=60)
-    block_priority_fees: dict[int, dict[int, int]] = {}
-    # (dispatch_lock and last_engine_log no longer needed —
-    # the async for loop serializes dispatch naturally)
-    path_suppression = PathSuppression()  # Suppress paths that consistently fail simulation
+    # Coordination state for the dispatch loop: nonce tracking, pool mutual
+    # exclusion, in-flight tasks, current-block ref, block times, and
+    # per-block priority fees + path suppression — all behind one object.
+    dispatcher = Dispatcher.for_block(current_block)
 
     # ── Pre-pump startup: subscribe → stream snapshots → backfill → verify config
     # ────────────────────────────────────────────────────────
@@ -2484,7 +2566,9 @@ async def main() -> None:
         verify_state_view=state_view_address,
         verify_on_register=True,
     )
-    bot_logger.info(f"[startup] Pre-pump startup complete — first observed block: {backfill_target}")
+    bot_logger.info(
+        f"[startup] Pre-pump startup complete — first observed block: {backfill_target}"
+    )
 
     # Use backfill_target instead of an RPC call if it's ahead
     if backfill_target > current_block:
@@ -2511,14 +2595,8 @@ async def main() -> None:
             executor_address=executor_address,
             operator_address=operator_address,
             operator_private_key=operator_private_key,
-            pending_nonces=pending_nonces,
-            pending_pools=pending_pools,
-            active_tasks=active_tasks,
-            current_block_ref=current_block_ref,
+            dispatcher=dispatcher,
             dry_run=dry_run,
-            block_times=block_times,
-            block_priority_fees=block_priority_fees,
-            path_suppression=path_suppression,
         ),
         name="result-consumer",
     )
