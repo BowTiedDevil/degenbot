@@ -30,6 +30,17 @@ FACTORY = "0x" + "ff" * 20
 # Keccak256 of `Sync(uint112,uint112)` — the V2 Sync event signature.
 V2_SYNC_TOPIC = "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1"
 
+# ─── V3 topology round-trip fixtures (plan-101 slice 8a) ────────────────
+# A V3 pool whose sqrt_price ~ 1 USDC per WETH-wei-fractal priced at ~2000.
+# Tick −76020 corresponds to ~2000 USDC per WETH on a 0.3% (fee=3000) V3 pool.
+V3_POOL_A = "0x" + "33" * 20
+V3_POOL_B = "0x" + "44" * 20
+V3_FEE = 3000
+V3_TICK_SPACING = 60
+V3_SQRT_PRICE = 2_198_666_895_605_149_686_863  # ~2000 USDC per WETH
+V3_TICK = -76020
+V3_LIQUIDITY = 1_234_567_890
+
 
 def _v2_sync_log_data(reserve0: int, reserve1: int) -> str:
     """ABI-encode `Sync(uint112, uint112)` data: two 32-byte left-padded slots."""
@@ -165,3 +176,89 @@ class TestSharedStateTopology:
             "dispatch_log → engine re-solve did not read the live shared state "
             "(§17 regression on the pump path!)"
         )
+
+
+class TestSharedStateTopologyV3:
+    """UniswapV3Pool over PyLiquidityPool — V3-specific §17 closure (plan-101 slice 8a).
+
+    Mirrors the V2 topology tests but for the V3 family: a pool registered via
+    ``PyBot.register_v3_pool`` is read through a ``PyLiquidityPool`` handle the
+    engine shares — the V3 scalar state (sqrt_price_x96/liquidity/tick/update_block)
+    lives in ``BotState``, not a Python-side ``ConcentratedLiquidityStateManager``.
+    """
+
+    def test_v3_handle_reads_registered_scalars(self) -> None:
+        """A V3 pool registered on the shared PyBot is read back via a PyLiquidityPool handle.
+
+        The handle's V3 getters (``sqrt_price_x96``/``liquidity``/``tick``/
+        ``update_block``/``fee``/``tick_spacing``) read the authoritative
+        ``BotState`` scalars set at registration — structural mirror of V2's
+        ``reserve0``/``reserve1`` getters.
+        """
+        core = PyBot()
+        pool_id = core.register_v3_pool(
+            address=V3_POOL_A,
+            token0=TOKEN0,
+            token1=TOKEN1,
+            fee=V3_FEE,
+            tick_spacing=V3_TICK_SPACING,
+            factory=FACTORY,
+            sqrt_price_x96=V3_SQRT_PRICE,
+            liquidity=V3_LIQUIDITY,
+            tick=V3_TICK,
+        )
+
+        # The handle is family-agnostic — get_pool returns a PyLiquidityPool
+        # for a V3 pool_id the same way it does for V2.
+        handle = core.get_pool(pool_id)
+        assert handle is not None
+        assert handle.pool_id == pool_id
+
+        # V3 scalar getters read the shared BotState — not a Python-side state mgr.
+        assert handle.sqrt_price_x96 == V3_SQRT_PRICE
+        assert handle.liquidity == V3_LIQUIDITY
+        assert handle.tick == V3_TICK
+        assert handle.update_block == 0  # register_v3_pool hardcodes update_block=0 today
+        assert handle.fee == V3_FEE
+        assert handle.tick_spacing == V3_TICK_SPACING
+
+    def test_v3_handle_apply_swap_is_visible_to_handle_reads(self) -> None:
+        """A V3 ``apply_swap`` write through the handle is immediately readable.
+
+        This is the deepest assertion of slice 8a: a write through
+        ``PyLiquidityPool.apply_swap`` lands on the shared ``BotState`` and the
+        next getter read sees the new scalars — the V3 family of the V2
+        ``sync_reserves → reserve0`` visibility contract.
+        """
+        core = PyBot()
+        pool_id = core.register_v3_pool(
+            address=V3_POOL_A,
+            token0=TOKEN0,
+            token1=TOKEN1,
+            fee=V3_FEE,
+            tick_spacing=V3_TICK_SPACING,
+            factory=FACTORY,
+            sqrt_price_x96=V3_SQRT_PRICE,
+            liquidity=V3_LIQUIDITY,
+            tick=V3_TICK,
+        )
+        handle = core.get_pool(pool_id)
+        assert handle is not None
+
+        new_spx = V3_SQRT_PRICE + 1
+        new_liq = V3_LIQUIDITY + 100
+        new_tick = V3_TICK + 1
+
+        handle.apply_swap(
+            sqrt_price_x96=new_spx,
+            liquidity=new_liq,
+            tick=new_tick,
+            block_number=5,
+        )
+
+        # All four written fields are immediately visible — proving the handle
+        # reads the same shared BotState the mutation wrote to.
+        assert handle.sqrt_price_x96 == new_spx
+        assert handle.liquidity == new_liq
+        assert handle.tick == new_tick
+        assert handle.update_block == 5

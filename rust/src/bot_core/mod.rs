@@ -475,7 +475,23 @@ impl BotState {
         tick_priors: &[(i32, TickInfo)],
     ) -> Option<u64> {
         let &pool_id = self.pool_addresses.get(&pool_address)?;
+        self.apply_v3_swap_by_pool_id(pool_id, sqrt_price_x96, liquidity, tick, block_number, tick_priors)
+    }
 
+    /// Apply a V3 Swap event keyed by the handle's `pool_id` (plan-101 slice 8a).
+    ///
+    /// Same semantics as [`apply_v3_swap`] but skips address resolution —
+    /// the `PyLiquidityPool` handle already holds the canonical `pool_id`, so
+    /// this is the one-lock, one-lookup path the handle uses.
+    pub fn apply_v3_swap_by_pool_id(
+        &mut self,
+        pool_id: u64,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        block_number: u64,
+        tick_priors: &[(i32, TickInfo)],
+    ) -> Option<u64> {
         let Some(PoolEntry::V3(state)) = self.pools.get_mut(&pool_id) else {
             return None;
         };

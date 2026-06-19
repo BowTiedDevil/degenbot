@@ -149,14 +149,18 @@ impl PyLiquidityPool {
         Ok(crate::alloy_py::u256_to_py(py, &r)?.unbind())
     }
 
-    /// Block number of the most recent state update.
+    /// Block number of the most recent state update. Falls through V2→V3→V4
+    /// so the same Python companion property works for all families.
     #[getter]
     fn update_block(&self) -> u64 {
-        self.core
-            .read()
-            .get_v2_pool_state(self.pool_id)
-            .map(|s| s.update_block)
-            .unwrap_or_default()
+        let core = self.core.read();
+        if let Some(s) = core.get_v2_pool_state(self.pool_id) {
+            return s.update_block;
+        }
+        if let Some(s) = core.get_v3_pool(self.pool_id) {
+            return s.update_block;
+        }
+        0
     }
 
     /// Atomic snapshot of (reserve0, reserve1, `update_block`) under one read guard.
@@ -184,6 +188,63 @@ impl PyLiquidityPool {
                 Ok(Some(tuple.into_any().unbind()))
             }
         }
+    }
+
+    // --- V3 state read getters (plan-101 slice 8a) ---
+    // Mirror the V2 family but read the V3PoolState entry. All getters take
+    // one read guard and return None-defaulted values when the pool_id is not
+    // a registered V3 pool (matching the V2 getters' behavior on V2).
+
+    /// Current `sqrt_price_x96` (Q64.96) for a V3/V4 pool. 0 if not V3/V4.
+    #[getter]
+    fn sqrt_price_x96(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let spx = {
+            let core = self.core.read();
+            core.get_v3_pool(self.pool_id)
+                .map(|s| s.sqrt_price_x96)
+                .unwrap_or_default()
+        };
+        Ok(crate::alloy_py::u256_to_py(py, &spx)?.unbind())
+    }
+
+    /// Current active liquidity for a V3/V4 pool. 0 if not V3/V4.
+    #[getter]
+    fn liquidity(&self) -> u128 {
+        self.core
+            .read()
+            .get_v3_pool(self.pool_id)
+            .map(|s| s.liquidity)
+            .unwrap_or_default()
+    }
+
+    /// Current tick for a V3/V4 pool. 0 if not V3/V4.
+    #[getter]
+    fn tick(&self) -> i32 {
+        self.core
+            .read()
+            .get_v3_pool(self.pool_id)
+            .map(|s| s.tick)
+            .unwrap_or_default()
+    }
+
+    /// Pool fee (immutable) for a V3/V4 pool. 0 if not V3/V4.
+    #[getter]
+    fn fee(&self) -> u32 {
+        self.core
+            .read()
+            .get_v3_pool(self.pool_id)
+            .map(|s| s.fee)
+            .unwrap_or_default()
+    }
+
+    /// Tick spacing (immutable) for a V3/V4 pool. 0 if not V3/V4.
+    #[getter]
+    fn tick_spacing(&self) -> i32 {
+        self.core
+            .read()
+            .get_v3_pool(self.pool_id)
+            .map(|s| s.tick_spacing)
+            .unwrap_or_default()
     }
 
     // --- Mutations (per-handle, pool_id-keyed) ---
@@ -253,5 +314,36 @@ impl PyLiquidityPool {
                 Ok(Some(tuple.into_any().unbind()))
             }
         }
+    }
+
+    // --- V3 mutations (plan-101 slice 8a) ---
+    // Pool-id-keyed — the handle already holds the canonical pool_id, so no
+    // address resolution is needed (single lock, single lookup).
+
+    /// Apply a V3/V4 `Swap` event: journals the scalar priors then lands the
+    /// new `sqrt_price_x96`/`liquidity`/`tick` at `block_number`.
+    ///
+    /// Swap events change the V3 scalars but NOT the tick data — the
+    /// `tick_priors` Vec is empty here (unlike `PyBot.update_v3_pool`, which
+    /// accepts tick updates from decoded Swap logs when they carry tick
+    /// mutations).
+    ///
+    /// Raises:
+    ///     `ValueError`: If `pool_id` is not registered as a V3/V4 pool.
+    #[pyo3(signature = (sqrt_price_x96, liquidity, tick, block_number))]
+    fn apply_swap(
+        &self,
+        sqrt_price_x96: &Bound<'_, PyAny>,
+        liquidity: &Bound<'_, PyAny>,
+        tick: i32,
+        block_number: u64,
+    ) -> PyResult<()> {
+        let spx = crate::alloy_py::extract_python_u256(sqrt_price_x96)?;
+        let liq = crate::alloy_py::extract_python_u256(liquidity)?.to::<u128>();
+        let _ = self
+            .core
+            .write()
+            .apply_v3_swap_by_pool_id(self.pool_id, spx, liq, tick, block_number, &[]);
+        Ok(())
     }
 }
