@@ -38,7 +38,6 @@ from degenbot.uniswap.v4_liquidity_pool import NATIVE_CURRENCY_ADDRESS
 
 @dataclasses.dataclass(frozen=True)
 class V2HopInfo:
-    pool_key: int
     pool_address: str
     token0_address: str
     token1_address: str
@@ -48,7 +47,6 @@ class V2HopInfo:
 
 @dataclasses.dataclass(frozen=True)
 class V3HopInfo:
-    pool_key: int
     pool_address: str
     token0_address: str
     token1_address: str
@@ -58,7 +56,6 @@ class V3HopInfo:
 
 @dataclasses.dataclass(frozen=True)
 class V4HopInfo:
-    pool_key: int
     pool_manager_address: str
     pool_id_hex: str
     currency0_address: str
