@@ -234,3 +234,7 @@
 {"type":"state","ts":"2026-06-19T02:04:52.826185368Z","data":{"id":"6RMMQZ","state":"done","ts":"2026-06-19T02:04:52.826185368Z"}}
 {"type":"claim","ts":"2026-06-19T02:20:53.97254016Z","data":{"id":"4DZM5Q","agent_id":"sonnet@myhost","ts":"2026-06-19T02:20:53.97254016Z"}}
 {"type":"state","ts":"2026-06-19T02:20:53.97254016Z","data":{"id":"4DZM5Q","state":"doing","ts":"2026-06-19T02:20:53.97254016Z"}}
+{"type":"result","ts":"2026-06-19T02:39:47.507002174Z","data":{"task_id":"4DZM5Q","summary":"src/degenbot/bot.py","path":"src/degenbot/bot.py","sha256_at_attach":"d1292db32cce2f1142d193585ea4eed8c0e7c72ebc8e846da80432d7e73cc518","mtime_at_attach":"2026-06-19T02:37:11.497207047Z","git_commit_at_attach":"6e145d063e79c77795c3ca25adda303d7b6d6de7","ts":"2026-06-19T02:39:47.507002174Z"}}
+{"type":"state","ts":"2026-06-19T02:39:47.508713947Z","data":{"id":"4DZM5Q","state":"done","ts":"2026-06-19T02:39:47.508713947Z"}}
+{"type":"claim","ts":"2026-06-19T03:11:44.803996539Z","data":{"id":"56AJHG","agent_id":"sonnet@myhost","ts":"2026-06-19T03:11:44.803996539Z"}}
+{"type":"state","ts":"2026-06-19T03:11:44.803996539Z","data":{"id":"56AJHG","state":"doing","ts":"2026-06-19T03:11:44.803996539Z"}}

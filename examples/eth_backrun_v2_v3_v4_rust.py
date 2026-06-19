@@ -65,14 +65,15 @@ from web3 import AsyncWeb3, Web3
 from web3.exceptions import TransactionNotFound, Web3Exception
 from web3.types import BlockStateCallV1, SimulateV1Payload, StateOverrideParams, TxParams
 
-from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, get_checksum_address
 from contracts.cmd_stream import (
     _mapping_slot,
     compute_simulation_warmup_slots,
     pack_expected_balance,
 )
+from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, get_checksum_address
 from degenbot.arbitrage.encoding import fits_int128
 from degenbot.calculations.evm_math import next_base_fee
+from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
 from degenbot.database.models.pools import (  # noqa:F401
     PancakeswapV2PoolTable,
@@ -86,7 +87,7 @@ from degenbot.database.models.pools import (  # noqa:F401
     UniswapV4PoolTable,
     UniswapV4PoolTableBase,
 )
-from degenbot.degenbot_rs import UniswapArbEngine  # type: ignore[attr-defined]
+from degenbot.degenbot_rs import PyBot, UniswapArbEngine  # type: ignore[attr-defined]
 from degenbot.logging import logger as bot_logger
 from degenbot.pathfinding import find_paths_async
 from degenbot.provider.sync_adapter import ProviderAdapter
@@ -250,8 +251,7 @@ def _pool_types_from_filter(perms: set[str] | None) -> list[type]:
     # Only include types for versions mentioned in the filter
     versions_needed: set[str] = set()
     for perm in perms:
-        for part in perm.split("-"):
-            versions_needed.add(part)
+        versions_needed.update(perm.split("-"))
 
     types = set()
     for version in versions_needed:
@@ -426,7 +426,6 @@ def build_simulation_state_overrides(
     When inject_code=False:
       - Only funds the executor owner with ETH for gas
     """
-
     overrides: dict[ChecksumAddress, StateOverrideParams] = {}
 
     # Fund executor owner with ETH for gas
@@ -582,6 +581,22 @@ def _hop_token_summary(hops: tuple[HopInfo, ...]) -> str:
     return " ".join(parts)
 
 
+def _make_backrun_config(node_http: str) -> DegenbotConfig:
+    """Build a single-chain DegenbotConfig for the backrun session (ADR-006 D5).
+
+    The chain identity is Ethereum mainnet (1); the RPC is the caller's
+    ``node_http`` (an env-derived endpoint, not the config.toml ``rpc`` entry).
+    The Bot enforces the connected RPC's ``eth_chainId`` matches at construction.
+    """
+    from pathlib import Path
+
+    return DegenbotConfig(
+        database=DatabaseSettings(path=Path("~/.config/degenbot/degenbot.db").expanduser()),
+        rpc={1: node_http},
+        default_chain_id=1,
+    )
+
+
 class EngineRegistry:
     """Thin wrapper over the Rust UniswapArbEngine.
 
@@ -597,12 +612,15 @@ class EngineRegistry:
     the pool_manager address at registration time.
     """
 
-    def __init__(self) -> None:
-        self.engine = UniswapArbEngine()
-        self._v2_keys: dict[str, int] = {}  # address → key
+    def __init__(self, py_bot: PyBot) -> None:
+        # ADR-006 D1+D4: the engine adopts this PyBot's shared BotState, so
+        # the engine reads/writes the SAME core that V2 PyLiquidityPool handles
+        # share — no dual-BotState split (rust-owned-bot.md §17 closure).
+        self.engine = UniswapArbEngine(py_bot=py_bot)
+        self._v2_keys: dict[str, int] = {}  # address → pool_id (shared BotState)
         self._v3_keys: dict[str, int] = {}
         # V4 pools keyed by pool_id hex — for event routing from PoolManager logs
-        self._v4_keys: dict[str, int] = {}  # pool_id_hex → key
+        self._v4_keys: dict[str, int] = {}  # pool_id_hex → pool_id
         self.paths: dict[int, PathInfo] = {}
         # NOTE: These Python dicts (_v2_keys, _v3_keys, _v4_keys) are plain
         # dicts — NOT thread-safe. All access is on the single asyncio event loop.
@@ -610,25 +628,21 @@ class EngineRegistry:
     def register_v2_pool(self, pool: UniswapV2Pool) -> int:
         if pool.address in self._v2_keys:
             return self._v2_keys[pool.address]
-        # Note: Only _fee_token0 is used. _fee_token1 is ignored.
-        # Safe for Uniswap V2 and Sushiswap V2 (symmetric 0.3% fees on mainnet).
-        # If asymmetric-fee V2 variants are added, this will silently use the
-        # wrong fee for one direction. Full fix requires extending the Rust V2
-        # engine's register_pool to accept two fee pairs (Plan 079 scope). See F3.
+        # ADR-006 slice 9: with the engine sharing the bot's BotState, the V2
+        # pool is ALREADY registered there by `bot.build_pool` (the V2 builder
+        # calls `py_bot.register_v2_pool` + hands back the PyLiquidityPool
+        # handle). Re-registering via `engine.register_v2_pool` would panic on
+        # the duplicate address. Cache the shared pool_id for path-building;
+        # orient via zero_for_one at register_path time (no `fwd_key + 1` hack).
+        key = pool._py_pool.pool_id
+        # Note: _fee_token0/_fee_token1 asymmetry warning retained for
+        # diagnostics — the engine reads fees from the shared BotState now, so
+        # no engine.register_v2_pool call carries a fee here.
         if pool._fee_token0 != pool._fee_token1:
             bot_logger.warning(
                 f"Asymmetric V2 fees detected for {pool.address} "
-                f"(fee_token0={pool._fee_token0}, fee_token1={pool._fee_token1}). "
-                f"Engine will use fee_token0 for both directions."
+                f"(fee_token0={pool._fee_token0}, fee_token1={pool._fee_token1})."
             )
-        fee = pool._fee_token0
-        key = self.engine.register_v2_pool(
-            address=pool.address,
-            reserve0=pool.reserves_token0,
-            reserve1=pool.reserves_token1,
-            gamma_numer=fee.denominator - fee.numerator,
-            fee_denom=fee.denominator,
-        )
         self._v2_keys[pool.address] = key
         return key
 
@@ -868,7 +882,7 @@ async def build_paths(
         )
     bot_logger.info(f"[build_paths] Pool types: {[t.__name__ for t in pool_types]}")
     async for path_steps in find_paths_async(  # noqa:PLR1702
-        chain_id=bot.connections.default_chain_id,
+        chain_id=bot.chain_id,
         start_tokens=[
             WETH_ADDRESS,
             NATIVE_CURRENCY_ADDRESS,  # V4 allows Ether-paired pools
@@ -1395,7 +1409,7 @@ async def dispatch_profitable_results(
         snapshot["revert_info"] = revert_info
         snapshot["path_type"] = path_type
 
-        timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        timestamp = datetime.datetime.now(datetime.UTC).isoformat()
         dump_file = STATE_DUMP_DIR / f"{timestamp}.jsonl"
         await asyncio.to_thread(_write_jsonl, dump_file, snapshot)
         bot_logger.debug(f"[state-dump] wrote {dump_file} for path={path_id}")
@@ -2347,20 +2361,26 @@ async def main() -> None:
             f"(owner={EXECUTOR_OWNER})"
         )
 
-    # ── Bot session ──────────────────────────────────────────────
-    bot = Bot.from_config_file()
+    # ── Bot session ─────────────────────────────────────────────
+    # ADR-006 slice 8b: Bot is single-chain — construct with the node_http
+    # provider directly (chain identity from config.default_chain_id; the
+    # factory enforces the connected RPC's eth_chainId matches).
+    config_obj = _make_backrun_config(node_http)
     sync_w3 = web3.Web3(web3.HTTPProvider(node_http))
     sync_w3.middleware_onion.clear()
-    bot.connections.register_provider(ProviderAdapter.from_web3(sync_w3))
-    bot.connections.set_default_chain(1)
+    bot = Bot(config_obj, provider=ProviderAdapter.from_web3(sync_w3))
+    assert bot.chain_id == 1
     bot_logger.info("Bot session initialized")
 
-    # ── Async web3 ───────────────────────────────────────────────
+    # ── Async web3 ──────────────────────────────────────────────
     async_w3 = AsyncWeb3(web3.AsyncHTTPProvider(node_http))
     async_w3.middleware_onion.clear()
 
-    # ── Build engine + paths ─────────────────────────────────────
-    engine_registry = EngineRegistry()
+    # ── Build engine + paths ────────────────────────────────────
+    # ADR-006 slice 9: the engine adopts the bot's shared BotState — one
+    # state, no dual-registration (V2 pools already live in BotState via
+    # bot.build_pool; the engine reads them through the shared core).
+    engine_registry = EngineRegistry(py_bot=bot._py_bot)
 
     # Configure engine-internal verification: when a pool is registered from
     # snapshot data (apply_buffer=True), the engine snapshots its tick data

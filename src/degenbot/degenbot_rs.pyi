@@ -946,9 +946,16 @@ class PyBot:
     def v2_restore_before_block(self, pool_id: int, block: int) -> tuple[int, int, int] | None: ...
 
 class UniswapArbEngine:
-    """Rust-side engine for Uniswap arbitrage path solving."""
+    """Rust-side engine for Uniswap arbitrage path solving.
 
-    def __init__(self) -> None: ...
+    ADR-006 D1+D4: ``py_bot`` adopts a shared ``PyBot``'s ``BotState`` so the
+    engine reads/writes the SAME core that ``PyBot``/``PyLiquidityPool``/
+    ``PyErc20Token`` share — dissolving the dual-``BotState`` split (the
+    ``rust-owned-bot.md`` §17 stale-state root cause). Omitted → a standalone
+    core + fresh ``Bot`` (legacy / no-pyo3 path).
+    """
+
+    def __init__(self, py_bot: PyBot | None = None) -> None: ...
     def load_v3_snapshot_from_py(self, py_data: dict[str, dict[int, tuple[int, int]]]) -> None: ...
     def begin_v3_snapshot_stream(self) -> None: ...
     def insert_v3_pool_snapshot(
