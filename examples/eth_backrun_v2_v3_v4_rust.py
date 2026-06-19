@@ -1071,11 +1071,8 @@ async def build_paths(
             hops = []
             for p, pt, zfo in zip(pools, pool_type_strs, zfo_list, strict=True):
                 if pt == "V2":
-                    fwd_key = engine_registry._v2_keys[p.address]
-                    key = fwd_key if zfo else fwd_key + 1
                     hops.append(
                         V2HopInfo(
-                            pool_key=key,
                             pool_address=p.address,
                             token0_address=p.token0.address,
                             token1_address=p.token1.address,
@@ -1091,10 +1088,8 @@ async def build_paths(
                         )
                     )
                 elif pt == "V3":
-                    key = engine_registry._v3_keys[p.address]
                     hops.append(
                         V3HopInfo(
-                            pool_key=key,
                             pool_address=p.address,
                             token0_address=p.token0.address,
                             token1_address=p.token1.address,
@@ -1104,11 +1099,8 @@ async def build_paths(
                     )
                 else:  # V4
                     pool_id_hex = p.pool_id.to_0x_hex()
-                    fwd_key = engine_registry._v4_keys[pool_id_hex]
-                    key = fwd_key if zfo else fwd_key + 1
                     hops.append(
                         V4HopInfo(
-                            pool_key=key,
                             pool_manager_address=p.address,
                             pool_id_hex=pool_id_hex,
                             currency0_address=p.token0.address,
@@ -1467,7 +1459,9 @@ async def dispatch_profitable_results(
             return None
 
         # Slice 4: Mutual exclusivity with pending + committed pools \u2500\u2500
-        path_pools = {h.pool_key for h in path_info.hops}
+        path_pools = {
+            h.pool_id_hex if isinstance(h, V4HopInfo) else h.pool_address for h in path_info.hops
+        }
         if path_pools & (pending_pools | committed_pools):
             bot_logger.debug(f"[dispatch] skip path={path_id}: pools pending or committed")
             return None
@@ -2081,19 +2075,19 @@ async def dispatch_profitable_results(
         for i, h in enumerate(path_info.hops):
             if isinstance(h, V2HopInfo):
                 hop_details.append(
-                    f"  hop[{i}] V2 pool_key={h.pool_key} addr={h.pool_address} "
+                    f"  hop[{i}] V2 addr={h.pool_address} "
                     f"t0={h.token0_address} t1={h.token1_address} "
                     f"fee={h.fee} zfo={h.zfo}"
                 )
             elif isinstance(h, V3HopInfo):
                 hop_details.append(
-                    f"  hop[{i}] V3 pool_key={h.pool_key} addr={h.pool_address} "
+                    f"  hop[{i}] V3 addr={h.pool_address} "
                     f"t0={h.token0_address} t1={h.token1_address} "
                     f"fee={h.fee} zfo={h.zfo}"
                 )
             elif isinstance(h, V4HopInfo):
                 hop_details.append(
-                    f"  hop[{i}] V4 pool_key={h.pool_key} pm={h.pool_manager_address} "
+                    f"  hop[{i}] V4 pm={h.pool_manager_address} "
                     f"pid={h.pool_id_hex} "
                     f"c0={h.currency0_address} c1={h.currency1_address} "
                     f"fee={h.fee} ts={h.tick_spacing} zfo={h.zfo}"
@@ -2120,7 +2114,9 @@ async def dispatch_profitable_results(
     # ── Submit gas-profitable with mutual exclusivity (Slice 4) ────
     for path_id, gross_profit, net_profit, gas_used, tx_params, path_info in gas_profitable:
         # ── Slice 4: mutual exclusivity ──
-        path_pools = {h.pool_key for h in path_info.hops}
+        path_pools = {
+            h.pool_id_hex if isinstance(h, V4HopInfo) else h.pool_address for h in path_info.hops
+        }
         if path_pools & (pending_pools | committed_pools):
             bot_logger.debug(f"[dispatch] skip path={path_id}: pools claimed after sim")
             continue

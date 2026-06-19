@@ -61,7 +61,6 @@ def test_v2_v2_v4_final_v4_swap_is_dynamic_and_settled() -> None:
     synced+settled before that dynamic swap.
     """
     ha = V2HopInfo(
-        pool_key=1,
         pool_address=V2A,
         token0_address=COMP,
         token1_address=WETH,
@@ -69,7 +68,6 @@ def test_v2_v2_v4_final_v4_swap_is_dynamic_and_settled() -> None:
         zfo=False,
     )
     hb = V2HopInfo(
-        pool_key=2,
         pool_address=V2B,
         token0_address=USDC,
         token1_address=COMP,
@@ -77,7 +75,6 @@ def test_v2_v2_v4_final_v4_swap_is_dynamic_and_settled() -> None:
         zfo=False,
     )
     hc = V4HopInfo(
-        pool_key=3,
         pool_manager_address=POOL_MANAGER,
         pool_id_hex="0x" + "00" * 32,
         currency0_address=USDC,
@@ -145,7 +142,6 @@ def test_v2_v2_v2_uses_calc_not_direct_for_intermediate_hops() -> None:
     derives the correct output from actual reserves.
     """
     ha = V2HopInfo(
-        pool_key=1,
         pool_address=V2A,
         token0_address=COMP,
         token1_address=WETH,
@@ -153,7 +149,6 @@ def test_v2_v2_v2_uses_calc_not_direct_for_intermediate_hops() -> None:
         zfo=False,
     )
     hb = V2HopInfo(
-        pool_key=2,
         pool_address=V2B,
         token0_address=USDC,
         token1_address=COMP,
@@ -161,7 +156,6 @@ def test_v2_v2_v2_uses_calc_not_direct_for_intermediate_hops() -> None:
         zfo=False,
     )
     hc = V2HopInfo(
-        pool_key=3,
         pool_address="0x4444444444444444444444444444444444444444",
         token0_address=USDC,
         token1_address=WETH,
@@ -193,7 +187,6 @@ def test_v2_v2_v3_uses_calc_not_direct_for_v2_hops() -> None:
     static V2_SWAP_DIRECT amounts.
     """
     ha = V2HopInfo(
-        pool_key=1,
         pool_address=V2A,
         token0_address=COMP,
         token1_address=WETH,
@@ -201,7 +194,6 @@ def test_v2_v2_v3_uses_calc_not_direct_for_v2_hops() -> None:
         zfo=False,
     )
     hb = V2HopInfo(
-        pool_key=2,
         pool_address=V2B,
         token0_address=USDC,
         token1_address=COMP,
@@ -209,7 +201,6 @@ def test_v2_v2_v3_uses_calc_not_direct_for_v2_hops() -> None:
         zfo=False,
     )
     hc = V3HopInfo(
-        pool_key=3,
         pool_address="0x4444444444444444444444444444444444444444",
         token0_address=USDC,
         token1_address=WETH,
