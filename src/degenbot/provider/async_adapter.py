@@ -13,6 +13,7 @@ from web3 import AsyncWeb3
 
 from degenbot.degenbot_rs import AlloyProvider
 from degenbot.exceptions import SubscriptionNotSupported
+from degenbot.provider.alloy_errors import alloy_revert_error, is_alloy_revert
 from degenbot.provider.subscription import Subscription
 
 if TYPE_CHECKING:
@@ -216,7 +217,12 @@ class _AsyncAlloyAdapter:
         )  # ty:ignore[invalid-return-type]
 
     async def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes:
-        return await self._alloy.call(to, data, block_number=block)
+        try:
+            return await self._alloy.call(to, data, block_number=block)
+        except RuntimeError as exc:
+            if is_alloy_revert(exc):
+                raise alloy_revert_error(exc, to=to) from exc
+            raise
 
     async def get_code(self, address: str, block: int | None = None) -> HexBytes:
         return await self._alloy.get_code(address, block)
