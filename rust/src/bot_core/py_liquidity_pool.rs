@@ -347,6 +347,49 @@ impl PyLiquidityPool {
         Ok(())
     }
 
+    /// Apply a V3 Mint/Burn event (liquidity update) via the handle.
+    ///
+    /// Initializes (or removes) tick entries at `tick_lower`/`tick_upper`,
+    /// journals the priors for reorg rollback, invalidates the tick-range
+    /// cache. Does NOT change the V3 scalars (`sqrt_price_x96`/`liquidity`/
+    /// `tick`) — Mint/Burn is a tick-only event per ADR-004. The active
+    /// `liquidity` scalar adjustments (when `current_tick` is in range) are
+    /// applied by the engine's own path; this handle method is the raw
+    /// `tick_data` mutation.
+    ///
+    /// Returns `True` if the update applied to a registered V3 pool, `False`
+    /// if this `pool_id` is not a V3 pool (silent no-op — don't corrupt a V2
+    /// pool).
+    #[pyo3(signature = (tick_lower, tick_upper, liquidity_delta, block_number))]
+    fn apply_liquidity_update(
+        &self,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: &Bound<'_, PyAny>,
+        block_number: u64,
+    ) -> PyResult<bool> {
+        // liquidity_delta is i128 — accept Python int, narrow from i256.
+        let delta_i256 = crate::alloy_py::extract_python_u256(liquidity_delta)?;
+        let delta = alloy::primitives::I256::from_raw(delta_i256)
+            .try_into()
+            .map_err(|_| {
+                pyo3::exceptions::PyOverflowError::new_err(
+                    "liquidity_delta does not fit in i128",
+                )
+            })?;
+        let applied = self
+            .core
+            .write()
+            .apply_v3_liquidity_update_by_pool_id(
+                self.pool_id,
+                tick_lower,
+                tick_upper,
+                delta,
+                block_number,
+            );
+        Ok(applied.is_some())
+    }
+
     /// Atomic V3/V4 scalar snapshot: `(sqrt_price_x96, liquidity, tick, block)`.
     ///
     /// All four fields are read under ONE read guard (the same atomicity
