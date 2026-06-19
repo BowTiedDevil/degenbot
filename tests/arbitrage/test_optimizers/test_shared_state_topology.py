@@ -405,3 +405,103 @@ class TestSharedStateTopologyV3:
             block_number=4,
         )
         assert bad is False
+
+    def test_v3_handle_tick_data_snapshot_returns_dict(self) -> None:
+        """tick_data_snapshot() returns {tick: (gross, net, block)} dict.
+
+        The Python companion's ``tick_data`` property builds the immutable
+        ``LiquidityAtTick(liquidity_net, liquidity_gross, block)`` per tick from
+        this Rust-side snapshot — the structured mirror of V2 ``reserve0``/
+        ``reserve1`` scalar reads, lifted to the tick_data HashMap.
+        """
+        core = PyBot()
+        pool_id = core.register_v3_pool(
+            address=V3_POOL_A,
+            token0=TOKEN0,
+            token1=TOKEN1,
+            fee=V3_FEE,
+            tick_spacing=V3_TICK_SPACING,
+            factory=FACTORY,
+            sqrt_price_x96=V3_SQRT_PRICE,
+            liquidity=V3_LIQUIDITY,
+            tick=V3_TICK,
+        )
+        handle = core.get_pool(pool_id)
+        assert handle is not None
+
+        # Empty at registration.
+        assert handle.tick_data_snapshot() == {}
+
+        # Apply a liquidity update — two ticks gain gross/net entries.
+        tick_lower = V3_TICK - V3_TICK_SPACING
+        tick_upper = V3_TICK + V3_TICK_SPACING
+        delta = 7_500
+        handle.apply_liquidity_update(
+            tick_lower=tick_lower,
+            tick_upper=tick_upper,
+            liquidity_delta=delta,
+            block_number=7,
+        )
+
+        snap = handle.tick_data_snapshot()
+        assert set(snap.keys()) == {tick_lower, tick_upper}
+        gross_lower, net_lower, block_lower = snap[tick_lower]
+        gross_upper, net_upper, _block_upper = snap[tick_upper]
+        assert gross_lower == delta
+        assert gross_upper == delta
+        # net: lower tick +delta, upper tick -delta (Solidity Tick.update).
+        assert net_lower == delta
+        assert net_upper == -delta
+        assert block_lower == 7
+
+    def test_v3_handle_tick_bitmap_snapshot_pairs_with_tick_data(self) -> None:
+        """tick_bitmap_snapshot() mirrors tick_data keys per word.
+
+        Rust's V3PoolState doesn't store a separate tick bitmap — the bitmap is
+        derivable from tick_data keys (which ticks are initialized). The handle
+        returns a `{word_position: (bitmap_int, block)}` dict whose bitmap int
+        has a bit set for each tick (within the 256-tick word) initialized at
+        that word. Uninitialized words are absent.
+        """
+        core = PyBot()
+        pool_id = core.register_v3_pool(
+            address=V3_POOL_A,
+            token0=TOKEN0,
+            token1=TOKEN1,
+            fee=V3_FEE,
+            tick_spacing=V3_TICK_SPACING,
+            factory=FACTORY,
+            sqrt_price_x96=V3_SQRT_PRICE,
+            liquidity=V3_LIQUIDITY,
+            tick=V3_TICK,
+        )
+        handle = core.get_pool(pool_id)
+        assert handle is not None
+
+        assert handle.tick_bitmap_snapshot() == {}
+
+        tick_lower = V3_TICK - V3_TICK_SPACING
+        tick_upper = V3_TICK + V3_TICK_SPACING
+        handle.apply_liquidity_update(
+            tick_lower=tick_lower,
+            tick_upper=tick_upper,
+            liquidity_delta=10_000,
+            block_number=7,
+        )
+
+        bitmap = handle.tick_bitmap_snapshot()
+        from degenbot.uniswap.v3_libraries.tick_bitmap import position as _position
+        from degenbot.calculations.evm_math import evm_divide
+
+        word_lower, bit_lower = _position(evm_divide(tick_lower, V3_TICK_SPACING))
+        word_upper, bit_upper = _position(evm_divide(tick_upper, V3_TICK_SPACING))
+        assert word_lower != word_upper or bit_lower != bit_upper
+        assert word_lower in bitmap, "tick_lower word missing"
+        assert word_upper in bitmap, "tick_upper word missing"
+        gross_lower_word_bits, _block = bitmap[word_lower]
+        gross_upper_word_bits, _block = bitmap[word_upper]
+        assert gross_lower_word_bits & (1 << bit_lower), "lower bit not set"
+        assert gross_upper_word_bits & (1 << bit_upper), "upper bit not set"
+        if word_lower == word_upper:
+            expected_bits = (1 << bit_lower) | (1 << bit_upper)
+            assert gross_lower_word_bits == expected_bits
