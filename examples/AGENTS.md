@@ -156,9 +156,4 @@ To create such a test:
 3. Compute `zfo` dynamically: `zfo = (pool.token0() == selling_token_address)`
 4. Use the same encoding as the production path (e.g., Approach 2 for V2-V2-V2)
 
-V3 and V4 use **opposite** sign conventions for `amountSpecified`:
-
-| Mode | V3 | V4 |
-|------|----|----|
-| Exact INPUT | `amountSpecified > 0` | `amountSpecified < 0` |
-| Exact OUTPUT | `amountSpecified < 0` | `amountSpecified > 0` |
+V3 and V4 use **opposite** sign conventions for `amountSpecified` (V3 exact-input = positive, V4 exact-input = negative). See [`contracts/README.md` § "V3 vs V4 amountSpecified Sign Convention"](../contracts/README.md).
