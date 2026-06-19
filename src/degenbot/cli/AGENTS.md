@@ -60,33 +60,18 @@ The enrichment layer handles both systems independently:
 
 **Processor mapping (by token revision):**
 ```python
-# TokenProcessorFactory.COLLATERAL_PROCESSORS
-{
-    1: CollateralV1Processor,  # HalfUpRoundingMath
-    2: CollateralV1Processor,  # Same as rev 1
-    3: CollateralV3Processor,  # HalfUpRoundingMath
-    4: CollateralV4Processor,  # ExplicitRoundingMath
-    5: CollateralV5Processor,  # ExplicitRoundingMath
-}
-
-# TokenProcessorFactory.DEBT_PROCESSORS
-{
-    1: DebtV1Processor,
-    2: DebtV1Processor,  # Same as rev 1
-    3: DebtV3Processor,
-    4: DebtV4Processor,
-    5: DebtV5Processor,
-}
-
-# TokenProcessorFactory.GHO_DEBT_PROCESSORS
-{
-    1: GhoV1Processor,  # No discount
-    2: GhoV2Processor,  # Discount support
-    3: GhoV2Processor,  # Same as rev 2
-    4: GhoV4Processor,  # Discount deprecated
-    5: GhoV5Processor,  # Explicit rounding
-    6: GhoV5Processor,  # Same as rev 5
-}
+# TokenProcessorFactory does NOT expose per-revision processor dicts.
+# It builds a single Unified*Processor per token type, parameterized by
+# rounding (and, for GHO, discount) strategies looked up from revision to
+# strategy maps in processors/strategies.py:
+#   COLLATERAL_STRATEGIES[revision]   -> rounding          # aToken, revs 1-5
+#   DEBT_STRATEGIES[revision]         -> rounding          # vToken, revs 1-5
+#   GHO_STRATEGIES[revision]          -> rounding          # GHO vToken, revs 1-6
+#   GHO_DISCOUNT_STRATEGIES[revision] -> discount          # GHO vToken, revs 1-6
+# Rounding: HalfUp (revs 1-3); Explicit floor/ceil (revs 4+).
+# get_collateral_processor(rev) / get_debt_processor(rev) / get_gho_debt_processor(rev)
+# look up the strategy(ies) and construct UnifiedCollateralProcessor /
+# UnifiedDebtProcessor / UnifiedGhoProcessor respectively.
 ```
 
 **TokenMath mapping (by pool version):**
@@ -107,7 +92,7 @@ The enrichment layer handles both systems independently:
 # Use get_token_math_for_token_revision(revision) to map token revision → pool version
 ```
 
-**Key Point:** Token revision determines both the processor and rounding math. Pool and token revisions typically move together but are technically independent. Use `TokenProcessorFactory` to get the correct processor and `TokenMathFactory` for math operations.
+**Key Point:** Token revision selects the rounding strategy (HalfUp revs 1-3, Explicit rev 4+); pool revision determines whether amounts are pre-scaled (pool rev 9+). Pool and token revisions typically move together but are technically independent. Use `TokenProcessorFactory` to get the processor (which carries the rounding strategy) and `TokenMathFactory` for the math implementation.
 
 ---
 
@@ -129,14 +114,13 @@ The Aave module uses a layered architecture:
    - `ExplicitRoundingMath` - Pool revs 4+ (floor/ceil rounding)
    - Factory pattern via `TokenMathFactory.get_token_math_for_token_revision(revision)`
 
-3. **Processors** (`processors/`)
-   - Stateless revision-specific processors for mint/burn events
-   - `CollateralV1Processor`, `CollateralV3Processor`, etc. - aToken processors
-   - `DebtV1Processor`, `DebtV3Processor`, etc. - Standard vToken processors
-   - `GhoV1Processor`, `GhoV2Processor`, etc. - GHO processors with discount handling
-   - Created via `TokenProcessorFactory`
+3. **Processors** (`processors/`) — stateless unified processors parameterized by rounding/discount strategies
+   - `UnifiedCollateralProcessor` - aToken (collateral) mint/burn
+   - `UnifiedDebtProcessor` - standard (non-GHO) vToken mint/burn
+   - `UnifiedGhoProcessor` - GHO vToken with discount handling
+   - Built by `TokenProcessorFactory` from strategy maps in `strategies.py`
 
-4. **Enrichment** (`enrichment.py` + `calculator.py`)
+4. **Enrichment** (`enrichment/` package + `calculator.py`)
    - `ScaledEventEnricher` - Main entry point for event enrichment
    - `ScaledAmountCalculator` - Uses TokenMath via calculator
 
@@ -157,13 +141,6 @@ user_index = result.new_index
 - Processors use **TokenMath** for Token-level rounding
 - **PoolMath** handles Pool-level operations (MINT_TO_TREASURY)
 - **GhoMath** handles GHO discount calculations (used by GHO processors)
-
-**Files:**
-- `src/degenbot/aave/libraries/wad_ray_math.py` - Primitives
-- `src/degenbot/aave/libraries/token_math.py` - Token calculations
-- `src/degenbot/aave/libraries/pool_math.py` - Pool calculations
-- `src/degenbot/aave/libraries/gho_math.py` - GHO calculations
-- `src/degenbot/aave/processors/` - Revision-specific processors
 
 ---
 
@@ -209,18 +186,18 @@ user_index = result.new_index
 
 **Processing Pipeline:**
 
-1. **Event Fetching** (`aave/event_fetchers.py`)
+1. **Event Fetching** (`cli/aave/event_fetchers.py`)
    - Fetches logs from RPC
    - Categorizes events (Pool events, ScaledToken events, ERC20 transfers)
    - Groups by transaction
 
-2. **Operation Parsing** (`aave/operations_parser.py` — in CLI layer)
+2. **Operation Parsing** (`cli/aave/operations_parser.py`)
    - Parses events into logical operations
    - Matches scaled token events to pool events
    - Determines operation types (SUPPLY, WITHDRAW, BORROW, REPAY, etc.)
    - Uses domain types (`ScaledTokenEvent`, `Operation`) from `aave/operations.py`
 
-3. **Enrichment** (`aave/enrichment.py`)
+3. **Enrichment** (`aave/enrichment/` package)
    - Calculates scaled amounts using ScaledAmountCalculator
    - Handles version-specific rounding via TokenMathFactory
    - Creates validated event objects
@@ -261,7 +238,7 @@ user_index = result.new_index
 **Aave Module** (`src/degenbot/aave/`):
 - `operations.py` - Domain data types (`ScaledTokenEvent`, `Operation`, `TransactionOperations`, `TransactionValidationError`). No DB/Session/Provider dependencies.
 - `types.py` - `TokenType` enum (`A_TOKEN`, `V_TOKEN`, `GHO_DISCOUNT`)
-- `enrichment.py` - Amount calculation and validation
+- `enrichment/` - Amount calculation and validation (package; `ScaledEventEnricher` entry point in `enrichment/core.py`)
 - `extraction.py` - Raw amount extraction from pool events
 - `calculator.py` - ScaledAmountCalculator using TokenMath
 - `models.py` - Enriched event type definitions
@@ -270,7 +247,6 @@ user_index = result.new_index
 - `deployments.py` - Aave deployment configuration
 - `liquidation_patterns.py` - Liquidation event pattern recognition
 - `pattern_types.py` - Pattern type definitions
-- `position_analysis.py` - Position analysis logic
 
 **Boundary invariant:** `degenbot.aave` must never import from `degenbot.cli`. The dependency arrow points only downward: `cli/` → `aave/`.
 
@@ -281,12 +257,7 @@ user_index = result.new_index
 - `gho_math.py` - GHO-specific discount calculations
 - `percentage_math.py` - Percentage math operations
 
-**Processors** (`src/degenbot/aave/processors/`):
-- `base.py` - Protocol definitions and result dataclasses
-- `factory.py` - TokenProcessorFactory for creating processors by revision
-- `collateral/v1.py`, `v3.py`, `v4.py`, `v5.py` - aToken processors
-- `debt/v1.py`, `v3.py`, `v4.py`, `v5.py` - Standard vToken processors
-- `debt/gho/v1.py`, `v2.py`, `v4.py`, `v5.py` - GHO discount processors
+**Processors** (`src/degenbot/aave/processors/`) — unified, strategy-parameterized: `base.py` (protocol definitions `CollateralTokenProcessor`/`DebtTokenProcessor`/`GhoDebtTokenProcessor` + result dataclasses), `processor.py` (unified implementations `UnifiedCollateralProcessor`/`UnifiedDebtProcessor`/`UnifiedGhoProcessor`), `strategies.py` (revision to rounding/discount strategy maps: `COLLATERAL_STRATEGIES`/`DEBT_STRATEGIES`/`GHO_STRATEGIES`/`GHO_DISCOUNT_STRATEGIES`), `factory.py` (`TokenProcessorFactory`). There are **no** per-revision processor files — per-revision behavior lives in the strategy enums, not separate `CollateralV1Processor`/`V3`/`V4`/`V5` etc.
 
 **Contract References**:
 - `contract_reference/aave/` - Contract source code for different revisions
@@ -366,30 +337,15 @@ These diagrams help identify:
 
 ### Processor Architecture
 
-**Lesson:** Revision-specific processors provide clean, stateless event processing that mirrors contract behavior.
+**Lesson:** Processors provide clean, stateless event processing that mirrors contract behavior, with revision-specific differences captured as strategy selections rather than separate classes.
 
-**Context:** The refactoring moved from monolithic calculation logic in `calculator.py` to revision-specific processors. Each processor handles mint/burn events for a specific token revision, matching the on-chain contract behavior exactly.
+**Context:** The refactoring moved from monolithic calculation logic in `calculator.py` to unified, strategy-parameterized processors. A single `Unified*Processor` per token type handles mint/burn events for all revisions; the revision selects the rounding (and, for GHO, discount) strategy injected at construction, so on-chain behavior is matched exactly without per-revision processor classes.
 
-**Processor Types:**
+**Processor taxonomy** (protocols in `base.py`, unified implementations in `processor.py`):
 
-1. **CollateralTokenProcessor** (`processors/collateral/`)
-   - Handles aToken (collateral) mint/burn events
-   - Revisions 1-5 supported
-   - V1: Half-up rounding, standard interest accrual
-   - V3: Pre-calculation for interest-exceeds-withdrawal cases
-   - V4+: Explicit floor/ceil rounding
-
-2. **DebtTokenProcessor** (`processors/debt/`)
-   - Handles standard vToken mint/burn events (non-GHO)
-   - Revisions 1-5 supported
-   - Similar progression as collateral processors
-
-3. **GhoDebtTokenProcessor** (`processors/debt/gho/`)
-   - Handles GHO variable debt tokens with discount mechanism
-   - Revisions 1-6 supported
-   - V1: No discount support
-   - V2+: Full discount accrual on mint/burn
-   - V4+: Discount deprecated, uses explicit rounding
+1. **CollateralTokenProcessor** - aToken (collateral) mint/burn. Revisions 1-5. Rounding: HalfUp (revs 1-3), then Explicit floor/ceil (rev 4+). The interest-exceeds-withdrawal pre-calculation lives in `UnifiedCollateralProcessor` keyed on the rounding strategy, not in a separate revision file.
+2. **DebtTokenProcessor** - standard (non-GHO) vToken mint/burn. Revisions 1-5. Same rounding progression as collateral.
+3. **GhoDebtTokenProcessor** - GHO variable debt with discount (a separate rounding strategy + a discount strategy). Revisions 1-6: V1 has no discount; V2+ accrues discount on mint/burn; V4+ deprecates discount and uses explicit rounding.
 
 **Processor Factory:**
 
@@ -435,7 +391,7 @@ class GhoScaledTokenMintResult:
 
 **Key Benefits:**
 
-1. **Exact contract matching** - Each processor revision mirrors the on-chain contract
+1. **Exact contract matching** - Strategy selection (rounding/discount) mirrors the on-chain contract behavior for each revision range
 2. **Stateless design** - Processors don't modify state, making them testable and composable
 3. **Type safety** - Protocol definitions ensure consistent interfaces
 4. **Clear separation** - GHO discount logic isolated from standard debt logic
@@ -485,7 +441,7 @@ class ScaledTokenEventType(Enum):
 
 **Enrichment Handling:**
 ```python
-# In enrichment.py - ERC20 transfers don't need index-based calculation
+# In the enrichment package - ERC20 transfers don't need index-based calculation
 elif scaled_event.event_type == ScaledTokenEventType.ERC20_COLLATERAL_TRANSFER:
     raw_amount = scaled_event.amount
     scaled_amount = scaled_event.amount  # 1:1 mapping

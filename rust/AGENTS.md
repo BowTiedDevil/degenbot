@@ -6,33 +6,20 @@
 
 Every Rust-accelerated feature follows three layers with strict separation of concerns:
 
-```
-┌─────────────────────────────────────┐
-│  Python Module (degenbot/foo.py)    │
-│  - Public API, docstrings, types    │
-│  - Imports from degenbot_rs         │
-│  - Python-level convenience methods │
-├─────────────────────────────────────┤
-│  PyO3 Bindings (foo_py.rs)          │
-│  - #[pyclass], #[pyfunction] only   │
-│  - Arg extraction → GIL release     │
-│  - Result wrapping → Python objects │
-├─────────────────────────────────────┤
-│  Rust Core (foo.rs)                 │
-│  - Zero PyO3 imports                │
-│  - Idiomatic Rust, Result<T, E>     │
-│  - Independently testable           │
-└─────────────────────────────────────┘
-```
+**Layer 1 — Python Module** (`degenbot/foo.py`)
+- The user-facing API: public API, docstrings, types.
+- Imports from `degenbot_rs`; adds Python-idiomatic convenience methods (rich `__repr__`, `Fraction`-based prices, database lookups, publisher/subscriber).
+- Knows nothing about Rust internals.
 
-1. **Python convenience layer** - The user-facing API. Imports from `degenbot_rs` and adds Python-idiomatic methods (rich `__repr__`, `Fraction`-based prices, database lookups, publisher/subscriber). This layer knows nothing about Rust internals.
+**Layer 2 — PyO3 Bindings** (`foo_py.rs`)
+- `#[pyclass]` / `#[pyfunction]` only, in `*_py.rs` files and `#[pyfunction]` entry points.
+- Converts between Rust and Python types: argument extraction → GIL release → core call → result wrapping.
+- Contains **no business logic**.
 
-2. **Thin PyO3 wrappers** - Functions in `*_py.rs` files and `#[pyfunction]` entry points that convert between Rust and Python types. These contain **no business logic** — only argument extraction, GIL release, core function calls, and result wrapping.
-
-3. **Pure Rust core** - Functions with `_internal` suffix or `pub fn name_rust()` that have zero Python dependencies. These are in files without `_py` suffix. They enable:
-   - Unit testing without Python
-   - Parallel processing without GIL
-   - Reuse in non-Python Rust code
+**Layer 3 — Rust Core** (`foo.rs`)
+- Zero `pyo3` imports; idiomatic Rust using `Result<T, E>`.
+- Pure functions named with an `_internal` suffix or `pub fn name_rust()`, in files without a `_py` suffix.
+- Independently testable: unit tests without Python, parallel processing without the GIL, reusable in non-Python Rust code.
 
 **Stateful specialization (ADR-005).** When the Rust core holds long-lived *mutable* state that many Python objects must reference, the three layers gain a sharing topology: a `#[pyclass]` wrapper holding `Arc<parking_lot::RwLock<Core>>`, thin handles (`PyLiquidityPool`/`PyErc20Token`) cloning that `Arc`, and the Python session owning the wrapper. This is the `Bot`/`PyBot`/`PyLiquidityPool`/`PyErc20Token` family — see ADR-005 (Polars-Inspired Three-Layer Architecture). The `*_py.rs`-only rule above still holds; the wrapper adds the shared-core pattern, not `pyo3` business logic.
 
@@ -64,7 +51,15 @@ pub fn decode(py: Python<'_>, types: Vec<String>, data: &[u8]) -> PyResult<Py<Py
 | `tick_math_py.rs` | `PyO3` wrappers for tick math (`get_sqrt_ratio_at_tick`, `get_tick_at_sqrt_ratio`, `extract_u160`) |
 | `hex_utils.rs` | Pure-Rust hex encoding/decoding (`decode_hex`, `encode_hex`) — no `PyO3` dependency |
 | `py_converters.rs` | Python object converters for RPC types: `log_to_py_dict`, `block_to_py_dict`, `json_to_py_with_hexbytes`; field-aware `HexBytes`/address/int detection; block/transaction/log dict builders. All functions require the GIL (documented as accepted cost) |
-| `address_utils.rs` | EIP-55 checksummed addresses |
+| `address_utils.rs` | EIP-55 checksummed addresses (pure Rust core) |
+| `address_utils_py.rs` | `PyO3` wrappers for address utilities |
+| `bot_core/` | The Rust-owned backrun engine + Bot FFI family. `engine.rs` (`UniswapEngine` composing V2/V3/V4 block state), `block_pump.rs`, `log_dispatcher.rs`, `solve_coordinator.rs`, `reorg_coordinator.rs`, `state_history.rs`, `liquidity_verifier.rs`, `tick_bitmap.rs`/`tick_map.rs` (shared `update_tick_liquidity`/`apply_liquidity_to_tick_range`), `v2_encoding.rs`, `v2_sync_decoder.rs`, `v3_*` (`state.rs`/`swap_decoder.rs`/`mint_burn_decoder.rs`), `v4_*` (`state.rs`/`swap_decoder.rs`/`modify_liquidity_decoder.rs`), `py_bot.rs`/`py_liquidity_pool.rs`/`py_erc20_token.rs`/`py_dex_identity.rs` (ADR-005 Polars-style three-layer shared-core wrappers), `dex_identity.rs`, `drain_sink.rs`. Documented in [`docs/architecture/rust-owned-bot.md`](../docs/architecture/rust-owned-bot.md) and [`rust/CONTEXT.md`](CONTEXT.md) |
+| `optimizers/` | Möbius solvers: `mobius_int_exact.rs`, `mobius_v3_int.rs`, `mobius_int.rs`, plus `affected_keys.rs`/`liquidity_event_buffer.rs` and the `uniswap_engine/` sub-module. See [`docs/architecture/rust-owned-bot.md`](../docs/architecture/rust-owned-bot.md) §5 |
+| `cl_lib/` | Uniswap V3 core math ports (portable, no `pyo3`): `bit_math`, `full_math`, `sqrt_price_math`, `tick_math`, `liquidity_math`, `swap_math`, `unsafe_math`, `functions` |
+| `cl_lib_py.rs` | `PyO3` wrappers exposing `cl_lib` math to Python |
+| `subscription.rs` | WS subscription core (double-buffer `SubscriptionHandle`, `drain_raw`) |
+| `subscription_py.rs` | `PyO3` bindings for subscriptions |
+| `json_converters.rs` | JSON RPC response converters feeding `py_converters` |
 | `provider.rs` | Ethereum RPC provider (sync, Alloy-based), retry logic, `LogFetcher`, `EthBlock` type alias, `rpc_call!` macro, `IntoProviderError` trait, eager `LogFilter` validation |
 | `async_provider.rs` | Async provider wrapper for Python via `pyo3-async-runtimes` |
 | `contract.rs` | Smart contract interface with `FunctionSignature` parsing |
