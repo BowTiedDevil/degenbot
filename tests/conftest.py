@@ -8,8 +8,8 @@ from _pytest.nodes import Item
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.bot import Bot
-from degenbot.connection import ProviderAdapter
 from degenbot.logging import logger
+from degenbot.provider import ProviderAdapter
 from tests.helpers.bot_factory import make_bot_with_provider
 
 env_file = dotenv.find_dotenv("tests.env")

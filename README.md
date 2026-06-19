@@ -161,7 +161,8 @@ approval = bot.get_token_approval(token, owner="0xd8dA6BF26964aF9D7eEd9e03E53415
 ```
 
 **Bot properties:**
-- `bot.connections` - ConnectionManager for RPC providers
+- `bot.chain_id` - the configured chain ID for this single-chain session
+- `bot.provider` - ProviderAdapter for the chain (chain_id enforced at construction)
 - `bot.pools` - PoolRegistry for created pools
 - `bot.tokens` - TokenRegistry for created tokens
 - `bot.managed_pools` - ManagedPoolRegistry for V4 pools

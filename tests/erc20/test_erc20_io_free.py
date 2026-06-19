@@ -19,6 +19,7 @@ def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
     return DegenbotConfig(
         database=DatabaseSettings(path=tmp_path / "test.db"),
         rpc={1: "https://eth.llamarpc.com/"},
+        default_chain_id=1,
     )
 
 
@@ -116,11 +117,10 @@ class TestBotBuildErc20Token:
     def test_build_token_from_chain(self, tmp_path: pathlib.Path) -> None:
         config = _make_test_config(tmp_path)
         create_new_sqlite_database(config.database.path)
-        bot = Bot(config)
-
         # Mock the provider to return token metadata
         provider = MagicMock()
         provider.chain_id = 1
+        bot = Bot(config, provider=provider)
         provider.is_connected.return_value = True
         provider.get_code.return_value = b"\x01"  # contract exists
 
@@ -138,8 +138,6 @@ class TestBotBuildErc20Token:
             return eth_abi.abi.encode(types=types, args=args)
 
         provider.call.side_effect = mock_call
-        bot.connections.register_provider(provider)
-        bot.connections.set_default_chain(1)
 
         token = bot.build_erc20token(
             "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
@@ -185,13 +183,12 @@ class TestBotTokenIOMethods:
         config = DegenbotConfig(
             database=DatabaseSettings(path=tmp_path / "test-bot-io"),
             rpc={1: "https://eth.llamarpc.com/"},
+            default_chain_id=1,
         )
-        bot = Bot(config)
         provider = MagicMock()
         provider.chain_id = 1
+        bot = Bot(config, provider=provider)
         provider.is_connected.return_value = True
-        bot.connections.register_provider(provider)
-        bot.connections.set_default_chain(1)
 
         balance = bot.get_token_balance(token, holder, block_identifier=100)
         assert balance == 10**18
@@ -212,19 +209,17 @@ class TestBotTokenIOMethods:
         config = DegenbotConfig(
             database=DatabaseSettings(path=tmp_path / "test-bot-io2"),
             rpc={1: "https://eth.llamarpc.com/"},
+            default_chain_id=1,
         )
-        bot = Bot(config)
         provider = MagicMock()
         provider.chain_id = 1
+        bot = Bot(config, provider=provider)
         provider.is_connected.return_value = True
         provider.get_block_number.return_value = 200
 
         # Mock provider.call to return a balance
         encoded_balance = eth_abi.abi.encode(types=["uint256"], args=[5 * 10**18])
         provider.call.return_value = encoded_balance
-
-        bot.connections.register_provider(provider)
-        bot.connections.set_default_chain(1)
 
         balance = bot.get_token_balance(token, holder)
         assert balance == 5 * 10**18
@@ -247,13 +242,12 @@ class TestBotTokenIOMethods:
         config = DegenbotConfig(
             database=DatabaseSettings(path=tmp_path / "test-bot-io3"),
             rpc={1: "https://eth.llamarpc.com/"},
+            default_chain_id=1,
         )
-        bot = Bot(config)
         provider = MagicMock()
         provider.chain_id = 1
+        bot = Bot(config, provider=provider)
         provider.is_connected.return_value = True
-        bot.connections.register_provider(provider)
-        bot.connections.set_default_chain(1)
 
         approval = bot.get_token_approval(token, owner, spender, block_identifier=100)
         assert approval == 500
@@ -273,13 +267,12 @@ class TestBotTokenIOMethods:
         config = DegenbotConfig(
             database=DatabaseSettings(path=tmp_path / "test-bot-io4"),
             rpc={1: "https://eth.llamarpc.com/"},
+            default_chain_id=1,
         )
-        bot = Bot(config)
         provider = MagicMock()
         provider.chain_id = 1
+        bot = Bot(config, provider=provider)
         provider.is_connected.return_value = True
-        bot.connections.register_provider(provider)
-        bot.connections.set_default_chain(1)
 
         supply = bot.get_token_total_supply(token, block_identifier=100)
         assert supply == 10**27

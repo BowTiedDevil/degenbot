@@ -126,17 +126,18 @@ A **Token** is just the ERC-20 contract (address, symbol, decimals) — no lendi
 **Ruling: All former module-level singletons have been removed. Always refer to class instances owned by Bot.**
 
 The following were previously module-level singletons; they are now classes instantiated and owned by Bot:
-- `ConnectionManager` / `AsyncConnectionManager` — formerly `connection_manager` / `async_connection_manager`
 - `PoolRegistry` / `TokenRegistry` / `ManagedPoolRegistry` — formerly `pool_registry` / `token_registry` / `managed_pool_registry`
 - `DatabaseSessionManager` — formerly `db_session`
 - `Config` — formerly `config` (LazyConfig proxy)
 
+The former `ConnectionManager` / `AsyncConnectionManager` (and the swallowed multi-chain `bot.connections` indirection) were deleted in ADR-006 slice 8b — one Bot per chain now owns a single `ProviderAdapter` (`bot.provider`), with the chain identity in `config.default_chain_id` and enforced at construction.
+
 **Exception:** The `PoolTypeRegistry` (`pool_type_registry`) is a module-level singleton. This is intentional: the (chain ID, factory address) → class + identity + deployment data mapping is global knowledge that does not vary between Bot instances.
 
-- ✅ "Create a `ConnectionManager` instance and pass it to Bot"
-- ✅ "Bot's `connections` attribute is a `ConnectionManager`"
+- ✅ "Create a `PoolRegistry`/`TokenRegistry` owned by Bot"
+- ✅ "Bot's single chain comes from `config.default_chain_id`; `bot.provider` is the `ProviderAdapter`"
 - ✅ "The `pool_type_registry` maps SushiSwap's factory to a `LiquidityPool` registration carrying the `sushiswap-v2` `DexIdentity` preset + `variant="sushiswap"` (post slice-7 collapse — the per-DEX `SushiswapV2Pool` subclass is deleted)"
-- ❌ "Import the connection_manager" (the module-level singleton no longer exists)
+- ❌ "Import the connection_manager" (deleted in ADR-006 slice 8b — `bot.connections` no longer exists)
 
 ## Example dialogue
 

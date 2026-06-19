@@ -118,7 +118,7 @@ class AerodromeV2PoolTracker(
         self._bot = bot
 
         if chain_id is None:
-            chain_id = bot.connections.default_chain_id
+            chain_id = bot.chain_id
 
         deployment = pool_type_registry.get_deployment(chain_id, factory_address)
         if deployment is not None:

@@ -23,7 +23,7 @@ WEB3_ETH_METHODS: dict[str, dict[str, Any]] = {
     # Core blockchain queries
     "chain_id": {
         "web3_usage": "w3.eth.chain_id (property)",
-        "locations": ["connection_manager.py", "cli/utils.py"],
+        "locations": ["provider/factory.py", "cli/utils.py"],
         "alloy_equivalent": "chain_id (property)",
         "implemented": True,
     },
@@ -135,7 +135,7 @@ WEB3_INSTANCE_METHODS: dict[str, dict[str, Any]] = {
     },
     "middleware_onion": {
         "web3_usage": "w3.middleware_onion.clear() / .inject()",
-        "locations": ["connection_manager.py", "anvil_fork.py", "cli/utils.py"],
+        "locations": ["provider/factory.py", "anvil_fork.py", "cli/utils.py"],
         "alloy_equivalent": "None",
         "implemented": False,
         "note": "AlloyProvider does not support middleware. Not applicable for its use case.",

@@ -36,7 +36,7 @@ class CurveStableswapPoolTracker(
     ) -> None:
         """Initialize the instance."""
         self._bot = bot
-        self._chain_id = chain_id or bot.connections.default_chain_id
+        self._chain_id = chain_id or bot.chain_id
         self._tracked_pools: dict[ChecksumAddress, CurveStableswapPool] = {}
         self._untracked_pools: set[ChecksumAddress] = set()
         self._lock = Lock()

@@ -3,9 +3,7 @@
 One Bot per chain — the chain identity lives in the config object. ``Bot``
 reads it at construction and enforces the connected RPC's ``eth_chainId``
 matches it. These tests cover the config-field mechanics offline; the
-RPC-enforcement behavior is exercised by the fork-backed ``ConnectionManager``
-tests in ``test_config.py`` (until the manager is retired in a later slice-8
-increment) and the provider factory's own chain-mismatch raise.
+RPC-enforcement behavior is exercised by the fork-backed `get_provider_from_config`
 """
 
 from pathlib import Path

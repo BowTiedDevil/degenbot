@@ -65,7 +65,7 @@ def test_curve_pool_tracker_tracks_pools() -> None:
     bot = MagicMock()
     bot.build_pool.return_value = pool
     bot.pools.get.return_value = None
-    bot.connections.default_chain_id = 1
+    bot.chain_id = 1
 
     tracker = CurveStableswapPoolTracker(
         bot=bot,
@@ -100,7 +100,7 @@ def test_curve_pool_tracker_returns_cached_pool() -> None:
     bot = MagicMock()
     bot.build_pool.return_value = pool
     bot.pools.get.return_value = None
-    bot.connections.default_chain_id = 1
+    bot.chain_id = 1
 
     tracker = CurveStableswapPoolTracker(bot=bot, chain_id=1)
     first = tracker.get_pool("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")

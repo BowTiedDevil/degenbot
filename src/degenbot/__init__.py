@@ -18,10 +18,6 @@ from .abi_adapter import encode as abi_encode
 from .async_bot import AsyncBot
 from .bot import Bot
 from .checksum_cache import get_checksum_address
-from .connection import (
-    AsyncConnectionManager,
-    ConnectionManager,
-)
 from .degenbot_rs import (
     decode_return_data,
     encode_function_call,
@@ -117,10 +113,8 @@ __all__ = (
     "ApprovalStrategy",
     "ArbitrageCalculationResult",
     "AsyncBot",
-    "AsyncConnectionManager",
     "Bot",
     "ChainlinkPriceContract",
-    "ConnectionManager",
     "CurveStableSwapPoolStateUpdated",
     "CurveStableswapPool",
     "CurveStableswapPoolSimulationResult",
