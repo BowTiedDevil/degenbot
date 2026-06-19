@@ -33,6 +33,7 @@ def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
     return DegenbotConfig(
         database=DatabaseSettings(path=tmp_path / "test.db"),
         rpc={1: "https://eth.llamarpc.com/"},
+        default_chain_id=1,
     )
 
 
@@ -162,12 +163,11 @@ class TestBotBuildV2Pool:
         factory_addr = "0x5C69bEe701ef814E44274f655e7632cB715C14B6"
 
         config = _make_test_config(tmp_path)
-        bot = Bot(config)
-
         provider = MagicMock()
         provider.chain_id = 1
         provider.is_connected.return_value = True
         provider.get_block_number.return_value = 18_000_000
+        bot = Bot(config, provider=provider)
 
         # Mock RPC responses for immutable values and reserves
         def mock_call(*, to, data, block=None):
@@ -201,9 +201,6 @@ class TestBotBuildV2Pool:
         )
         bot.tokens.add(token_address=weth_addr, chain_id=1, token=weth)
         bot.tokens.add(token_address=usdc_addr, chain_id=1, token=usdc)
-
-        bot.connections.register_provider(provider)
-        bot.connections.set_default_chain(1)
 
         # Mock the raw_call / provider responses for:
         # 1. factory() call
@@ -279,14 +276,11 @@ class TestV2PoolTrackerWithBot:
     def test_tracker_uses_bot_build_pool(self, tmp_path: pathlib.Path) -> None:
         """When a manager has a bot, get_pool delegates to bot.build_pool."""
         config = _make_test_config(tmp_path)
-        bot = Bot(config)
-
         provider = MagicMock()
         provider.chain_id = 1
         provider.is_connected.return_value = True
         provider.get_block_number.return_value = 18_000_000
-        bot.connections.register_provider(provider)
-        bot.connections.set_default_chain(1)
+        bot = Bot(config, provider=provider)
 
         factory = "0x5C69bEe701ef814E44274f655e7632cB715C14B6"
         manager = bot.add_tracker(
@@ -329,14 +323,11 @@ class TestV2PoolTrackerWithBot:
         factory_addr = "0x5C69bEe701ef814E44274f655e7632cB715C14B6"
 
         config = _make_test_config(tmp_path)
-        bot = Bot(config)
-
         provider = MagicMock()
         provider.chain_id = 1
         provider.is_connected.return_value = True
         provider.get_block_number.return_value = 18_000_000
-        bot.connections.register_provider(provider)
-        bot.connections.set_default_chain(1)
+        bot = Bot(config, provider=provider)
 
         # Pre-register tokens so build_erc20token doesn't need RPC
         weth = _make_weth()

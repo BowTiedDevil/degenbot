@@ -27,6 +27,7 @@ def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
     return DegenbotConfig(
         database=DatabaseSettings(path=tmp_path / "test.db"),
         rpc={1: "https://eth.llamarpc.com/"},
+        default_chain_id=1,
     )
 
 
@@ -178,14 +179,11 @@ class TestBotBuildV3Pool:
         factory_addr = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
 
         config = _make_test_config(tmp_path)
-        bot = Bot(config)
-
         provider = MagicMock()
         provider.chain_id = 1
         provider.is_connected.return_value = True
         provider.get_block_number.return_value = 18_000_000
-        bot.connections.register_provider(provider)
-        bot.connections.set_default_chain(1)
+        bot = Bot(config, provider=provider)
 
         # Pre-register tokens
         weth = _make_weth()
@@ -263,14 +261,11 @@ class TestV3PoolTrackerWithBot:
     def test_tracker_uses_bot_pools_registry(self, tmp_path: pathlib.Path) -> None:
         """When a manager has a bot, get_pool checks bot.pools first."""
         config = _make_test_config(tmp_path)
-        bot = Bot(config)
-
         provider = MagicMock()
         provider.chain_id = 1
         provider.is_connected.return_value = True
         provider.get_block_number.return_value = 18_000_000
-        bot.connections.register_provider(provider)
-        bot.connections.set_default_chain(1)
+        bot = Bot(config, provider=provider)
 
         factory = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
         manager = bot.add_tracker(

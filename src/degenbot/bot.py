@@ -29,7 +29,6 @@ from degenbot.builders.v3_pool_builder import V3PoolBuilder
 from degenbot.builders.v4_pool_builder import V4PoolBuilder
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import DegenbotConfig, _init_config
-from degenbot.connection.connection_manager import ConnectionManager
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.database.operations import get_alembic_config, get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
@@ -85,54 +84,38 @@ class Bot:
         """Initialize the single-chain Bot session.
 
         One Bot per chain (ADR-006 D5). The chain identity comes from
-        ``config.default_chain_id``. Three construction modes:
+        ``config.default_chain_id`` — a ``Bot`` refuses to construct without
+        it. Two construction modes:
 
-        - ``provider`` given (injection seam): enforce `provider.chain_id` ==
-          ``config.default_chain_id`` (fail-fast), use it directly. This is the
-          forward path used by ``from_config_file`` and fork tests.
-        - ``provider`` omitted, ``config.default_chain_id`` set: build one from
-          ``config.rpc[default_chain_id]`` via :func:`get_provider_from_config`,
-          which itself enforces the match.
-        - ``provider`` omitted, ``config.default_chain_id`` ``None``: a
-          **transitional legacy shim** (TODO-c2a1, ADR-006 slice 8b) keeps a
-          ``ConnectionManager`` alive so the RPC-backed fork-test suite can
-          call the legacy ``bot.connections.register_provider`` /
-          ``set_default_chain`` flow. `chain_id`/`provider` then resolve through
-          the manager. This shim is slated for deletion once the fork tests
-          migrate to the injected-provider construction.
+        - ``provider`` given (injection seam — for fork tests or a caller-built
+          Web3/Alloy backend): enforce `provider.chain_id` ==
+          ``config.default_chain_id`` (fail-fast), use it directly.
+        - ``provider`` omitted: build one from ``config.rpc[default_chain_id]``
+          via :func:`get_provider_from_config`, which itself enforces the match.
 
         Raises:
-            DegenbotValueError: If ``provider`` is injected but
-                ``config.default_chain_id`` is ``None``, or the provider's
-                ``chain_id`` mismatches the configured chain.
+            DegenbotValueError: If ``config.default_chain_id`` is ``None``, or
+                an injected provider's ``chain_id`` mismatches the configured
+                chain.
 
         """
         self.config = config
 
-        self._explicit_provider: ProviderAdapter | None = None
-        self._explicit_chain_id: ChainId | None = config.default_chain_id
-        # Legacy shim: None in the forward (explicit/factory) modes.
-        self.connections: ConnectionManager | None = None
+        if config.default_chain_id is None:
+            msg = (
+                "Bot requires a default_chain_id in the config. Set "
+                "`default_chain_id` in your config file or pass a config with it set."
+            )
+            raise DegenbotValueError(message=msg)
+        self._chain_id: ChainId = config.default_chain_id
 
         if provider is not None:
             # Explicit injection — enforce chain_id == config.default_chain_id.
-            if self._explicit_chain_id is None:
-                msg = (
-                    "Bot requires a default_chain_id in the config when a provider "
-                    "is injected. Set `default_chain_id` in your config file."
-                )
-                raise DegenbotValueError(message=msg)
-            self._enforce_provider_chain(provider, self._explicit_chain_id)
-            self._explicit_provider = provider
-        elif self._explicit_chain_id is not None:
-            # Build from config — the factory enforces the chain match itself.
-            self._explicit_provider = get_provider_from_config(
-                chain_id=self._explicit_chain_id, config=config
-            )
+            self._enforce_provider_chain(provider, self._chain_id)
+            self._provider = provider
         else:
-            # Legacy shim path: defer provider/chain resolution to the
-            # ConnectionManager (TODO-c2a1 — remove in slice 8b).
-            self.connections = ConnectionManager()
+            # Build from config — the factory enforces the chain match itself.
+            self._provider = get_provider_from_config(chain_id=self._chain_id, config=config)
 
         # Polars-inspired three-layer architecture (ADR-005): a ``PyBot``
         # PyO3 wrapper owns the Rust ``Bot`` state behind an ``RwLock``.
@@ -151,7 +134,7 @@ class Bot:
         # Builders own I/O orchestration; Bot hands them its I/O dependencies.
         # Erc20Builder is a leaf — constructed before BuilderContext.
         self._erc20_builder = Erc20Builder(
-            default_chain_id=self._explicit_chain_id,
+            default_chain_id=self._chain_id,
             db=self.db,
             tokens=self.tokens,
             py_bot=self._py_bot,
@@ -162,7 +145,7 @@ class Bot:
             tokens=self.tokens,
             erc20_builder=self._erc20_builder,
             py_bot=self._py_bot,
-            default_chain_id=self._explicit_chain_id,
+            default_chain_id=self._chain_id,
             managed_pools=self.managed_pools,
         )
         self._v2_builder = V2PoolBuilder(ctx)
@@ -215,28 +198,13 @@ class Bot:
 
     @property
     def chain_id(self) -> ChainId:
-        """The single chain this Bot targets (ADR-006 D5).
-
-        Resolves through the legacy ``ConnectionManager`` in shim mode
-        (TODO-c2a1 — remove in slice 8b).
-        """
-        if self._explicit_chain_id is not None:
-            return self._explicit_chain_id
-        # Legacy shim: read from the ConnectionManager set by `set_default_chain`.
-        assert self.connections is not None  # shim mode is the only other path
-        return self.connections.default_chain_id
+        """The single chain this Bot targets (ADR-006 D5)."""
+        return self._chain_id
 
     @property
     def provider(self) -> ProviderAdapter:
-        """The single RPC provider for this Bot's chain.
-
-        Resolves through the legacy ``ConnectionManager`` in shim mode.
-        """
-        if self._explicit_provider is not None:
-            return self._explicit_provider
-        # Legacy shim: fetch from the ConnectionManager.
-        assert self.connections is not None  # shim mode is the only other path
-        return self.connections.get_provider(self.chain_id)
+        """The single RPC provider for this Bot's chain."""
+        return self._provider
 
     def _check_database_version(self) -> None:
         """Warn if the database schema is out of date."""

@@ -29,6 +29,7 @@ def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
     return DegenbotConfig(
         database=DatabaseSettings(path=tmp_path / "test.db"),
         rpc={1: "https://eth.llamarpc.com/"},
+        default_chain_id=1,
     )
 
 
@@ -242,14 +243,11 @@ class TestBotBuildV4Pool:
     def test_build_pool_with_mock_provider(self, tmp_path: pathlib.Path) -> None:
         """build_pool fetches immutable + mutable values and constructs an I/O-free pool."""
         config = _make_test_config(tmp_path)
-        bot = Bot(config)
-
         provider = MagicMock()
         provider.chain_id = 1
         provider.is_connected.return_value = True
         provider.get_block_number.return_value = 18_000_000
-        bot.connections.register_provider(provider)
-        bot.connections.set_default_chain(1)
+        bot = Bot(config, provider=provider)
 
         # Pre-register tokens
         native_eth = _make_native_eth()
