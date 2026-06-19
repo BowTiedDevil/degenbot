@@ -11,6 +11,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from web3.exceptions import ContractLogicError, Web3Exception
 
 from degenbot.provider.async_adapter import _AsyncAlloyAdapter, _AsyncWeb3Adapter
 from degenbot.provider.sync_adapter import (
@@ -257,6 +258,57 @@ class TestAlloyAdapter:
         adapter.close()
         alloy.close.assert_called_once()
 
+    @pytest.mark.parametrize(
+        "message",
+        [
+            # Anvil ExecutionError (Solidity >=0.8 Error(string))
+            "Provider error: RPC error: 3 - eth_call failed: "
+            "server returned an error response: error code 3: execution reverted",
+            # Geth / Infura / Alchemy phrasing
+            "Provider error: RPC error: -32000 - eth_call failed: execution reverted",
+            # Older Vyper / generic revert
+            "Provider error: RPC error: -32000 - eth_call failed: Reverted",
+        ],
+    )
+    def test_call_translates_revert_to_contract_logic_error(self, message: str) -> None:
+        """An alloy eth_call revert must raise ContractLogicError.
+
+        The web3 backend raises ContractLogicError (a Web3Exception subclass)
+        on execution reverts. Probing code throughout the codebase (type
+        resolution, Curve detection, Aave analysis) catches Web3Exception to
+        mean "this method is not implemented by the contract." The alloy
+        backend must mirror that contract so probes behave identically.
+        """
+        alloy = self._make_alloy()
+        alloy.call.side_effect = RuntimeError(message)
+        adapter = _AlloyAdapter(alloy)
+        with pytest.raises(ContractLogicError):
+            adapter.call(to=WETH_ADDRESS, data=b"\x01")
+
+    def test_call_translated_revert_is_web3_exception(self) -> None:
+        alloy = self._make_alloy()
+        alloy.call.side_effect = RuntimeError("Provider error: ... execution reverted")
+        adapter = _AlloyAdapter(alloy)
+        with pytest.raises(Web3Exception):
+            adapter.call(to=WETH_ADDRESS, data=b"\x01")
+
+    def test_call_propagates_non_revert_runtime_error(self) -> None:
+        """A genuine (non-revert) RPC failure must not be swallowed as a revert."""
+        alloy = self._make_alloy()
+        alloy.call.side_effect = RuntimeError(
+            "Provider error: RPC error: -32000 - eth_call failed: node is syncing"
+        )
+        adapter = _AlloyAdapter(alloy)
+        with pytest.raises(RuntimeError, match="node is syncing"):
+            adapter.call(to=WETH_ADDRESS, data=b"\x01")
+
+    def test_call_raw_translates_revert_to_contract_logic_error(self) -> None:
+        alloy = self._make_alloy()
+        alloy.call.side_effect = RuntimeError("Provider error: ... execution reverted")
+        adapter = _AlloyAdapter(alloy)
+        with pytest.raises(ContractLogicError):
+            adapter.call_raw({"to": WETH_ADDRESS, "data": b"\x01"})
+
 
 class TestOfflineAdapter:
     """Test _OfflineAdapter delegates correctly to OfflineProvider."""
@@ -373,6 +425,31 @@ class TestAsyncAlloyAdapter:
         adapter = _AsyncAlloyAdapter(self._make_async_alloy())
         with pytest.raises(NotImplementedError, match="get_transaction_count not implemented"):
             await adapter.get_transaction_count(WETH_ADDRESS, 18_000_000)
+
+    @pytest.mark.asyncio
+    async def test_call_translates_revert_to_contract_logic_error(self) -> None:
+        """Async alloy eth_call reverts must raise ContractLogicError (parity
+        with the sync adapter and the web3 backend)."""
+        alloy = self._make_async_alloy()
+        alloy.call = _raise_fn(
+            RuntimeError(
+                "Provider error: RPC error: 3 - eth_call failed: "
+                "error code 3: execution reverted"
+            )
+        )
+        adapter = _AsyncAlloyAdapter(alloy)
+        with pytest.raises(ContractLogicError):
+            await adapter.call(to=WETH_ADDRESS, data=b"\x01")
+
+    @pytest.mark.asyncio
+    async def test_call_propagates_non_revert_runtime_error(self) -> None:
+        alloy = self._make_async_alloy()
+        alloy.call = _raise_fn(
+            RuntimeError("Provider error: ... node is syncing")
+        )
+        adapter = _AsyncAlloyAdapter(alloy)
+        with pytest.raises(RuntimeError, match="node is syncing"):
+            await adapter.call(to=WETH_ADDRESS, data=b"\x01")
 
     def test_is_connected_always_true(self) -> None:
         adapter = _AsyncAlloyAdapter(self._make_async_alloy())
