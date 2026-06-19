@@ -27,6 +27,14 @@ TOKEN0 = "0x" + "aa" * 20
 TOKEN1 = "0x" + "bb" * 20
 FACTORY = "0x" + "ff" * 20
 
+# Keccak256 of `Sync(uint112,uint112)` — the V2 Sync event signature.
+V2_SYNC_TOPIC = "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1"
+
+
+def _v2_sync_log_data(reserve0: int, reserve1: int) -> str:
+    """ABI-encode `Sync(uint112, uint112)` data: two 32-byte left-padded slots."""
+    return "0x" + (reserve0.to_bytes(32, "big") + reserve1.to_bytes(32, "big")).hex()
+
 
 def _register_balanced_v2_pair(core: PyBot) -> tuple[int, int]:
     """Register two balanced V2 pools (A: USDC→WETH, B: WETH→USDC) at ~1:1875.
@@ -107,4 +115,53 @@ class TestSharedStateTopology:
         profit_after = results_2[0][2]
         assert profit_after != profit_before, (
             "engine re-solve did NOT read the live shared state (§17 regression!)"
+        )
+
+    def test_dispatch_log_drives_full_pump_to_solve_loop(self) -> None:
+        """A synthetic WS Sync log via `PyBot.dispatch_log` reaches the engine.
+
+        This is the *full* §17 closure: not just that a `PyLiquidityPool` write
+        is visible to the engine (the prior test), but that the WS pump's own
+        path — `dispatch_log` → `LogDispatcher` decode/apply → notify
+        `EngineSubscriber` → engine dirties the pool → `solve_all_paths`
+        re-solves — reads the post-Sync shared state. `sync_reserves` short-
+        circuits straight to the core; `dispatch_log` exercises the pump's
+        decoder/notify wiring, proving the hot loop (not just the eager entry)
+        reads live state.
+        """
+        core = PyBot()
+        pool_id_a, pool_id_b = _register_balanced_v2_pair(core)
+        engine = UniswapArbEngine(py_bot=core)
+        engine.register_and_solve_path([(pool_id_a, True), (pool_id_b, True)])
+
+        engine.solve_all_paths(1)
+        results_1, _ = engine.latest_results()
+        profit_before = results_1[0][2]
+        assert profit_before > 0, "the initial mispricing should be profitable"
+
+        # Drive a synthetic V2 Sync log through the pump path: decode →
+        # apply to BotState → notify the attached EngineSubscriber. This is
+        # exactly what BlockPump calls per WS log (ADR-006 D4, slice 5).
+        core.dispatch_log(
+            address=V2_POOL_A,
+            topics=[V2_SYNC_TOPIC],
+            data=_v2_sync_log_data(1_000_000 * USDC, 800 * WETH),
+            block_number=2,
+        )
+
+        # Confirm the synthetic log mutated the shared state via the decoder —
+        # the pool handle reads the dispatched reserves, not the registered ones.
+        pool_handle = core.get_pool(pool_id_a)
+        assert pool_handle is not None
+        assert pool_handle.reserve0 == 1_000_000 * USDC, (
+            "dispatch_log did not route through the LogDispatcher to BotState"
+        )
+
+        # Engine re-solve reads the dispatched state → different profit.
+        engine.solve_all_paths(2)
+        results_2, _ = engine.latest_results()
+        profit_after = results_2[0][2]
+        assert profit_after != profit_before, (
+            "dispatch_log → engine re-solve did not read the live shared state "
+            "(§17 regression on the pump path!)"
         )
