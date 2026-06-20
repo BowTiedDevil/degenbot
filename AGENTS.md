@@ -136,7 +136,7 @@ The codebase uses layered documentation. This file holds operational guidance on
   - `dex-subclass-collapse.md` — hollow V2 DEX subclasses (`SushiswapV2Pool`, `PancakeswapV2Pool`, `SwapbasedV2Pool`, `CamelotLiquidityPool`) deleted; canonical `LiquidityPool` registered per V2-family factory
   - `legacy-cycles-to-arbitrage-path.md` — legacy cycle classes → `ArbitragePath` + `ArbSolver`; `cvxpy` now an optional `[legacy-cycles]` extra
 - **[`rust/AGENTS.md`](rust/AGENTS.md)** — Rust extension three-layer pattern, module organization, coding standards, GIL release protocol, Python↔Rust type-conversion protocol
-- **[`contracts/README.md`](contracts/README.md)** — on-chain V2/V3/V4 arbitrage executor (`cmd_executor` / `tstore_executor`), command set, callbacks, V4 4-phase settlement, V3 auto-pay, bytecode recompilation, V3 vs V4 `amountSpecified` sign convention
+- **[`contracts/README.md`](contracts/README.md)** — on-chain V2/V3/V4 arbitrage executor (`cmd_executor`), command set, callbacks, bytecode recompilation, V3 vs V4 `amountSpecified` sign convention
 - **[`contract_reference/README.md`](contract_reference/README.md)** — verified Solidity sources (Uniswap V2/V3/V4, Aave V3); ground truth for integer-exact Python ports
 - **[`docs/aave/`](docs/aave/) + [`src/degenbot/aave/CONTEXT.md`](src/degenbot/aave/CONTEXT.md)** — Aave V3 processing flows, math-library layers, revision-specific processors
 - **Other `AGENTS.md` files** — [`rust/AGENTS.md`](rust/AGENTS.md), [`src/degenbot/cli/AGENTS.md`](src/degenbot/cli/AGENTS.md) (Aave CLI), [`examples/AGENTS.md`](examples/AGENTS.md) (executor contracts), [`docs/aave/AGENTS.md`](docs/aave/AGENTS.md) (Aave docs nav)
@@ -165,7 +165,7 @@ Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 
 ### Domain docs
 
-Multi-context — `CONTEXT-MAP.md` at root pointing to per-module `CONTEXT.md` files. See `docs/agents/domain.md`.
+Multi-context — `CONTEXT-MAP.md` at root pointing to per-module `CONTEXT.md` files. See `docs/agents/domain.md` and `docs/agents/context-map-maintenance.md` (status tags, brace-dialect ban, ADR-not-vocabulary for history).
 
 ## Architecture Plans
 

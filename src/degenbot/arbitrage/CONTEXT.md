@@ -43,8 +43,7 @@
 | **ApprovalStrategy** | A pluggable protocol that injects ERC-20 approval calls before swap calls | Approval injection |
 | **PayloadComposer** | A pluggable protocol that composes a list of `EncodedCall`s into the format a target contract expects | Call composition, multicall wrapper |
 | **V4PoolKey** | See [V4PoolKey](../types/CONTEXT.md) in the types context; used by custom **PayloadComposers** for V4 dispatch | Pool key, V4 key |
-| **Dynamic Amount** | A V4 swap where `amountSpecified=0` and `dynamic_amount=True`; the contract derives the actual amount from `t_v4_deltas` instead of using a pre-computed value. Used for the second swap in V4-V4 paths where the intermediate delta must cancel exactly | Auto-amount, derived amount |
-| **V4 Delta Ledger** | `t_v4_deltas: transient(HashMap[address, int128])` in the tstore executor — tracks ALL currency deltas (not just ETH/WETH) across V4 swaps. Enables correct settlement of intermediate ERC-20 tokens | Delta map, delta tracker |
+| **Dynamic Amount** | A V4 swap where `amountSpecified=0` and `dynamic_amount=True`; the contract derives the actual amount from the on-chain delta ledger instead of using a pre-computed value. Used for the second swap in V4-V4 paths where the intermediate delta must cancel exactly | Auto-amount, derived amount |
 
 ## Relationships
 
@@ -57,10 +56,13 @@
 - **Swap Amounts** provide `input_amount()` / `output_amount()` for generic amount extraction; pool classes implement `build_swap_amount()` from the `ArbitragePathPool` protocol
 - A **V4PoolKey** is available to custom **PayloadComposers** for V4's unlock/swap callback dispatch
 - The **Engine Registry** is the single canonical startup orchestrator: it sequences `subscribe` → snapshot stream → `backfill_from_snapshot` → verify config, halting before `resume()` so the consumer attaches safely. **Pool Admission** (hooked/dynamic-fee V4 refusal) is enforced in the Rust core, not as a Python pre-check; rejections surface as `HookedPoolRejectedError` / `DynamicFeePoolRejectedError` for type-safe classification
-- A **Dynamic Amount** is a V4 swap where the contract derives `amountSpecified` from the **V4 Delta Ledger** instead of a pre-computed value; ensures intermediate deltas cancel exactly in V4-V4 paths
-- The **V4 Delta Ledger** (`t_v4_deltas`) tracks all currency deltas across V4 swaps; replaces the former two-accumulator pattern (`ether_delta`/`weth_delta`) to properly handle intermediate ERC-20 tokens
-- **int128 overflow guard** (`fits_int128()`) prevents V4 `SafeCastOverflow` reverts by skipping paths where `amountSpecified` exceeds ±2^127; checked by all 5 V4 encoder functions
-- **Address table index hygiene**: `AddressTable` deduplicates by checksummed address. When building index lists in list comprehensions (e.g., `pool_indices = [at.add(hop.pool_address) for h in hops]`), a mismatch between the iteration variable (`h`) and the attribute accessor (`hop.`) silently references an outer-scope variable bound to the last prior-loop iteration — all addresses resolve to the same deduplicated index, producing a command stream that calls the wrong pool. The encoding function `encode_cmd_stream()` dispatches to `_encode_cmd_v2_n_hop()` for pure-V2 paths (Approach 2: V2_SWAP_COMPACT flash + chained V2_SWAP_CALC)
+- **Address table index hygiene**: `AddressTable` deduplicates by checksummed address — see **Encoding footguns** below for the V2 N-hop iteration-variable bug
+
+## Encoding footguns
+
+- **int128 overflow guard** — `fits_int128()` (`degenbot.arbitrage.encoding`) skips V4 paths where `amountSpecified` exceeds ±2^127, preventing V4 `SafeCastOverflow` reverts. Checked by all 5 V4 encoder functions. See: `tests/arbitrage/test_int128_range.py`.
+- **V4→V2 amount_out** — V2 `swap(amount0Out, amount1Out, ...)` names what V2 SENDS; for USDC→WETH@V2 the `amount_out` is `weth_out`, not `forward_out`. See: `TestV4ToV2WrongAmountOut`.
+- **V2 N-hop encoding** — `_encode_cmd_v2_n_hop` (`eth_backrun_helpers.py`) uses V2_SWAP_COMPACT flash + chained V2_SWAP_CALC. Fixed bug: a list comprehension `for h in hops` referenced `hop.pool_address` from outer scope instead of `h.pool_address`, so all pools resolved to the last hop's deduplicated index → the executor called the wrong pool for every V2_SWAP_CALC; symptom was 100% V2-V2-V2 simulation failure with `V2_SWAP_CALC: no excess balance`.
 
 ## Resolved ambiguities
 

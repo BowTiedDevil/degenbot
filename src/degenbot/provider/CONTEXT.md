@@ -51,7 +51,7 @@ _Avoid_: (private — avoid referencing outside this module)
 - `protocols.py` imports nothing from `degenbot.provider.*` — no cycle possible
 - `sync_adapter.py` and `async_adapter.py` import from `protocols.py` only
 - `__init__.py` re-exports `ProviderAdapter`, `AsyncProviderAdapter`, `ProviderBackend`, `AsyncProviderBackend` from the three focused modules
-- **Connection Managers** store `ChainId → ProviderAdapter`/`AsyncProviderAdapter` mappings
+- **Bot** owns one `ProviderAdapter` per chain (post-ADR-006); see CONTEXT-MAP.md ambiguity #4
 
 ## Resolved Ambiguities
 

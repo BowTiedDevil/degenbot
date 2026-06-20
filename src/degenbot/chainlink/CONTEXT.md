@@ -26,4 +26,4 @@
 
 ### Bot dependency for RPC access
 
-`ChainlinkPriceContract` takes `bot: Bot | None` and calls `self._bot.connections.get_provider(chain_id)` directly in its `decimals` and `price` properties. This bypasses the I/O-free architecture used by pool classes (which receive all data through builders and `external_update()`). A future refactoring should replace the `bot` parameter with a `ProviderAdapter` or `PoolIO` parameter, making the class testable without a live `Bot` instance.
+`ChainlinkPriceContract` takes `bot: Bot | None` and reads `self._bot.provider` directly in its `decimals` and `price` properties. This bypasses the I/O-free architecture used by pool classes (which receive all data through builders and `external_update()`). A future refactoring should replace the `bot` parameter with a `ProviderAdapter` or `PoolIO` parameter, making the class testable without a live `Bot` instance.
