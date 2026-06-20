@@ -340,7 +340,13 @@ impl PyLiquidityPool {
     ) -> PyResult<()> {
         let spx = crate::alloy_py::extract_python_u256(sqrt_price_x96)?;
         let liq = crate::alloy_py::extract_python_u256(liquidity)?.to::<u128>();
-        let _ = self.core.write().apply_v3_swap_by_pool_id(
+        // RAJ3PP: family-dispatching apply. Routes V4 pools to the V4 apply
+        // path (previously this called `apply_v3_swap_by_pool_id`
+        // unconditionally, which no-op'd on `PoolEntry::V4` and silently
+        // dropped every Python-side V4 update). The dispatcher is one write
+        // guard + two O(1) lookups; the single Python `apply_swap` API is
+        // preserved.
+        let _ = self.core.write().apply_swap_by_pool_id(
             self.pool_id,
             spx,
             liq,
@@ -379,7 +385,7 @@ impl PyLiquidityPool {
             .map_err(|_| {
                 pyo3::exceptions::PyOverflowError::new_err("liquidity_delta does not fit in i128")
             })?;
-        let applied = self.core.write().apply_v3_liquidity_update_by_pool_id(
+        let applied = self.core.write().apply_liquidity_update_by_pool_id(
             self.pool_id,
             tick_lower,
             tick_upper,
