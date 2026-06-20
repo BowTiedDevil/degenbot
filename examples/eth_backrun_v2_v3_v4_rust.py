@@ -52,17 +52,6 @@ import dotenv
 import eth_abi.abi
 import eth_account
 import web3
-from examples.eth_backrun_helpers import (
-    BackrunConfig,
-    HopInfo,
-    PathInfo,
-    V2HopInfo,
-    V3HopInfo,
-    V4HopInfo,
-    build_hops_from_pools,
-    encode_cmd_stream,
-    v4_input_is_native,
-)
 from eth_typing import ChainId, ChecksumAddress
 from hexbytes import HexBytes
 from web3 import AsyncWeb3, Web3
@@ -91,7 +80,11 @@ from degenbot.database.models.pools import (  # noqa:F401
     UniswapV4PoolTable,
     UniswapV4PoolTableBase,
 )
-from degenbot.degenbot_rs import UniswapArbEngine  # type: ignore[attr-defined]
+from degenbot.degenbot_rs import (  # type: ignore[attr-defined]
+    UniswapArbEngine,
+    VerificationMismatchError,
+    VerificationRpcError,
+)
 from degenbot.logging import logger as bot_logger
 from degenbot.pathfinding import find_paths_async
 from degenbot.provider.sync_adapter import ProviderAdapter
@@ -106,6 +99,17 @@ from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 from degenbot.uniswap.v4_liquidity_pool import NATIVE_CURRENCY_ADDRESS, UniswapV4Pool
 from degenbot.uniswap.v4_snapshot import DatabaseSnapshot as V4DatabaseSnapshot
 from degenbot.uniswap.v4_snapshot import UniswapV4LiquiditySnapshot
+from examples.eth_backrun_helpers import (
+    BackrunConfig,
+    HopInfo,
+    PathInfo,
+    V2HopInfo,
+    V3HopInfo,
+    V4HopInfo,
+    build_hops_from_pools,
+    encode_cmd_stream,
+    v4_input_is_native,
+)
 
 # ──────────────────────────────────────────────────────────────────
 # Configuration
@@ -1409,15 +1413,32 @@ async def build_paths(
                     bot_logger.info(f"[build_paths] V4 ValueError (other): {exc}")
             engine_reject_count += 1
             continue
+        except VerificationMismatchError as exc:
+            # Verification mismatch — on-chain tick state does not match the
+            # engine state. This is fatal: trade on stale data = lose money.
+            # Crash loudly (TODO-53b7453b / 7SSOJX: was previously detected by
+            # string-matching "tick data mismatch"; now classified by type).
+            bot_logger.critical(f"[build_paths] VERIFICATION FAILURE — shutting down: {exc}")
+            raise
+        except VerificationRpcError as exc:
+            # Verification could not be performed (provider construction /
+            # transport failure during verify_on_register). Previously this
+            # category was SILENTLY SKIPPED (string lacked "tick data
+            # mismatch") — masking RPC overload against a local node and
+            # letting the bot continue with un-verified tick data. An
+            # unverifiable pool is not safe to operate on either → crash loudly
+            # here too. (Bounded retry-with-backoff for transient per-call RPC
+            # blips is tracked as a follow-up; provider-construction failure is
+            # not transient, so abort is the correct default.)
+            bot_logger.critical(f"[build_paths] VERIFICATION RPC FAILURE — shutting down: {exc}")
+            raise
         except RuntimeError as exc:
-            # Verification failure — tick data mismatch. This is fatal.
-            # The engine's verify_on_register flag causes RuntimeError to be
-            # raised when on-chain tick state doesn't match the engine state.
-            exc_str = str(exc)
-            if "tick data mismatch" in exc_str:
-                bot_logger.critical(f"[build_paths] VERIFICATION FAILURE — shutting down: {exc}")
-                raise
-            # Other RuntimeErrors (e.g. phase violations) — skip path
+            # Other RuntimeErrors (e.g. phase violations) — NOT a
+            # verification failure category; skip this path and continue.
+            # Narrowed deliberately: `VerificationMismatchError` and
+            # `VerificationRpcError` (both subclass RuntimeError) are caught
+            # above, so this arm only fires for genuinely non-verification
+            # runtime errors.
             engine_reject_count += 1
             other_exc_count += 1
             bot_logger.info(

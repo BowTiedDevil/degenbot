@@ -126,6 +126,18 @@ fn degenbot_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Uniswap mixed V2/V3/V4 engine
     m.add_class::<optimizers::uniswap_engine::PyUniswapArbEngine>()?;
 
+    // Typed verification exceptions (TODO-53b7453b): distinct
+    // `RuntimeError` subclasses so `build_paths` can classify verification
+    // failures by type instead of fragile string matching.
+    m.add(
+        "VerificationMismatchError",
+        m.py().get_type::<optimizers::uniswap_engine::VerificationMismatchError>(),
+    )?;
+    m.add(
+        "VerificationRpcError",
+        m.py().get_type::<optimizers::uniswap_engine::VerificationRpcError>(),
+    )?;
+
     // Bot — Rust-owned state
     m.add_class::<bot_core::py_bot::PyBot>()?;
     m.add_class::<bot_core::py_liquidity_pool::PyLiquidityPool>()?;

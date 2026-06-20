@@ -60,7 +60,7 @@ mod tests;
 pub use diagnostic::{DiagnosticHop, DiagnosticPathState, DiagnosticPoolState};
 
 // Re-export public types from this module.
-pub use py_binding::PyUniswapArbEngine;
+pub use py_binding::{PyUniswapArbEngine, VerificationMismatchError, VerificationRpcError};
 
 // ---------------------------------------------------------------------------
 // Constants
