@@ -140,6 +140,21 @@ fn degenbot_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
             .get_type::<optimizers::uniswap_engine::VerificationRpcError>(),
     )?;
 
+    // Typed V4 pool-admission exceptions (Plan 102, slice 2): distinct
+    // `ValueError` subclasses so `build_paths` can classify pool rejections
+    // by type instead of fragile string matching. Mirror of the verification
+    // pattern above.
+    m.add(
+        "HookedPoolRejectedError",
+        m.py()
+            .get_type::<optimizers::uniswap_engine::HookedPoolRejectedError>(),
+    )?;
+    m.add(
+        "DynamicFeePoolRejectedError",
+        m.py()
+            .get_type::<optimizers::uniswap_engine::DynamicFeePoolRejectedError>(),
+    )?;
+
     // Bot — Rust-owned state
     m.add_class::<bot_core::py_bot::PyBot>()?;
     m.add_class::<bot_core::py_liquidity_pool::PyLiquidityPool>()?;

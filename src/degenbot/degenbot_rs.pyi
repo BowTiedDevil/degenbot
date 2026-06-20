@@ -998,6 +998,29 @@ class VerificationRpcError(RuntimeError):
     can choose retry/backoff vs abort. Subclasses ``RuntimeError``.
     """
 
+class HookedPoolRejectedError(ValueError):
+    """A V4 pool with an amount-modifying hook was rejected at registration.
+
+    Raised by the Rust seam (`RegisterV4PoolError::HookedPool`) when
+    ``register_v4_pool`` sees ``hook_flags & 0xCC != 0``. The solver's V3-CL
+    math assumes no hook intervention, so a hooked pool would produce phantom
+    profits — admission is a *correctness floor* (enforced in the Rust core
+    so a standalone Rust consumer is protected, per ADR-005). Subclasses
+    ``ValueError`` so broad ``except ValueError`` handlers (which skip one
+    rejected pool at a time) keep working; classify by ``isinstance``.
+    """
+
+class DynamicFeePoolRejectedError(ValueError):
+    """A V4 pool with a dynamic fee was rejected at registration.
+
+    Raised by the Rust seam (`RegisterV4PoolError::DynamicFee`) when
+    ``register_v4_pool`` sees ``fee == 0x100000``. The solver assumes a fixed
+    fee, so a dynamic-fee pool cannot be priced. Like
+    :class:`HookedPoolRejectedError`, a correctness floor enforced in the
+    Rust core (ADR-005) and surfaced as a typed ``ValueError`` subclass so
+    ``build_paths`` classifies by type, not string matching.
+    """
+
 __all__ = [
     "AlloyProvider",
     "AlloySubscription",
@@ -1005,6 +1028,8 @@ __all__ = [
     "AsyncContract",
     "BlockData",
     "Contract",
+    "DynamicFeePoolRejectedError",
+    "HookedPoolRejectedError",
     "LogData",
     "LogFilter",
     "PyBot",

@@ -60,7 +60,10 @@ mod tests;
 pub use diagnostic::{DiagnosticHop, DiagnosticPathState, DiagnosticPoolState};
 
 // Re-export public types from this module.
-pub use py_binding::{PyUniswapArbEngine, VerificationMismatchError, VerificationRpcError};
+pub use py_binding::{
+    DynamicFeePoolRejectedError, HookedPoolRejectedError, PyUniswapArbEngine,
+    VerificationMismatchError, VerificationRpcError,
+};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -513,7 +516,7 @@ impl UniswapEngine {
     pub fn register_v4_pool(
         &self,
         params: &crate::bot_core::RegisterV4PoolParams,
-    ) -> Result<u64, String> {
+    ) -> Result<u64, crate::bot_core::RegisterV4PoolError> {
         self.core.write().register_v4_pool(params)
     }
 }

@@ -95,8 +95,9 @@ pub struct RegisterV4PoolParams {
     pub pool_key: V4PoolKey,
     /// Pre-decoded hook flags bitmask. Pools with amount-modifying hooks
     /// (`hook_flags & 0xCC != 0`) or dynamic fees (`fee == 0x100000`) are
-    /// rejected at registration (ADR-003 retains the V4 hook filter — the
-    /// Rust engine is permissive, Python rejects before calling).
+    /// rejected at registration — enforced by the Rust core
+    /// (`BotState::register_v4_pool`) as a correctness floor, surfacing as
+    /// `HookedPoolRejectedError` / `DynamicFeePoolRejectedError` at the seam.
     pub hook_flags: u16,
     pub sqrt_price_x96: U256,
     pub liquidity: u128,
@@ -104,6 +105,29 @@ pub struct RegisterV4PoolParams {
     pub tick_data: HashMap<i32, TickInfo>,
     pub update_block: u64,
     pub coverage: PoolTickCoverage,
+}
+
+/// Typed rejection from [`crate::bot_core::BotState::register_v4_pool`].
+///
+/// Pool admission is a *correctness floor*: the solver's V3-CL math assumes
+/// no hook intervention, and a fixed fee. Per ADR-005 the standalone-core
+/// target means a Rust consumer (no Python) must be protected, so the refusal
+/// lives in the Rust core and surfaces at the `PyO3` seam as typed Python
+/// exceptions (subclassing `ValueError` — a recoverable, per-candidate
+/// decision) so Python classifies by type, not string matching.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RegisterV4PoolError {
+    /// Pool carries an amount-modifying hook (`hook_flags & 0xCC != 0`).
+    HookedPool { hook_flags: u16 },
+    /// Pool uses a dynamic fee (`fee == 0x100000`).
+    DynamicFee { fee: u32 },
+    /// A pool with the same `(pool_manager, pool_id)` is already registered —
+    /// a wiring/programming error, distinct from the two admission
+    /// categories. Surfaces as a plain `PyValueError`.
+    AlreadyRegistered {
+        pool_manager: Address,
+        pool_id: PoolId,
+    },
 }
 
 /// Full V4 state overwrite applied by [`crate::bot_core::BotState::sync_v4_pool_state`].

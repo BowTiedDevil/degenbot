@@ -68,6 +68,62 @@ create_exception!(
     "An RPC/transport error during on-chain verification (e.g. provider construction failed)."
 );
 
+// V4 pool-admission refusals (Plan 102, slice 2). The Rust core refuses
+// amount-modifying-hook and dynamic-fee pools as a *correctness floor*
+// (the solver's V3-CL math assumes no hook intervention + a fixed fee).
+// Per ADR-005 that floor must protect a standalone Rust consumer, so the
+// refusal lives in `BotState::register_v4_pool` and surfaces here as typed
+// exceptions. Both subclass `PyValueError` so existing broad
+// `except ValueError` handlers (which skip rejected pools one path at a
+// time) keep working — Python now classifies by type, not string matching,
+// mirroring the TODO-53b7453b verification pattern.
+create_exception!(
+    degenbot_rs,
+    HookedPoolRejectedError,
+    pyo3::exceptions::PyValueError,
+    "A V4 pool with an amount-modifying hook was rejected at registration: the solver's CL math assumes no hook intervention."
+);
+create_exception!(
+    degenbot_rs,
+    DynamicFeePoolRejectedError,
+    pyo3::exceptions::PyValueError,
+    "A V4 pool with a dynamic fee was rejected at registration: the solver assumes a fixed fee."
+);
+
+/// Map a [`RegisterV4PoolError`] to a typed Python exception (Plan 102).
+///
+/// - `HookedPool` → [`HookedPoolRejectedError`]
+/// - `DynamicFee` → [`DynamicFeePoolRejectedError`]
+/// - `AlreadyRegistered` → `PyValueError` (a wiring/programming error, not an
+///   admission category)
+///
+/// The message text is byte-for-byte unchanged from the legacy `Err(String)`
+/// formatting so `build_paths`'s classification (now `isinstance`, was
+/// substring) matches the same diagnostics.
+#[allow(clippy::needless_pass_by_value)]
+fn map_register_v4_err(err: crate::bot_core::RegisterV4PoolError) -> pyo3::PyErr {
+    match err {
+        crate::bot_core::RegisterV4PoolError::HookedPool { hook_flags } => {
+            HookedPoolRejectedError::new_err(format!(
+                "V4 pool has amount-modifying hooks (flags=0x{hook_flags:04X}, mask=0x{:04X}) — excluded from arbitrage",
+                crate::bot_core::AMOUNT_MODIFYING_HOOK_MASK
+            ))
+        }
+        crate::bot_core::RegisterV4PoolError::DynamicFee { fee } => {
+            DynamicFeePoolRejectedError::new_err(format!(
+                "V4 pool has dynamic fee (fee=0x{fee:06X}) — excluded from arbitrage"
+            ))
+        }
+        crate::bot_core::RegisterV4PoolError::AlreadyRegistered {
+            pool_manager,
+            pool_id,
+        } => pyo3::exceptions::PyValueError::new_err(format!(
+            "V4 pool already registered: pool_manager={pool_manager}, pool_id=0x{}",
+            alloy::hex::encode(pool_id),
+        )),
+    }
+}
+
 /// [`Result<(), VerifyError>`] → typed Python exception seam for the extracted
 /// snapshot/verify module (ADR-006 slice 5b + slice-5 candidate-2).
 ///
@@ -1309,7 +1365,7 @@ impl PyUniswapArbEngine {
                         update_block: block,
                         coverage,
                     })
-                    .map_err(pyo3::exceptions::PyValueError::new_err)
+                    .map_err(map_register_v4_err)
             },
             |engine| engine.core.write().apply_backfill_buffer_v4(pm, pool_id),
             |engine, key| {

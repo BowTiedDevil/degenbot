@@ -44,6 +44,7 @@ pub use v3_state::{
     v3_simulate_swap, BufferedV3LiquidityUpdate, PoolTickCoverage, RegisterV3PoolParams,
     V3PoolState, V3SwapOutcome, V3SwapUpdate,
 };
+pub use v4_state::RegisterV4PoolError;
 pub use v4_state::{
     v4_simulate_swap, BufferedV4LiquidityUpdate, RegisterV4PoolParams, V4PoolKey, V4PoolState,
     V4StateSync, V4SwapUpdate, AMOUNT_MODIFYING_HOOK_MASK, V4_DYNAMIC_FEE_FLAG,
@@ -1419,33 +1420,34 @@ impl BotState {
     /// Register a V4 pool by `(pool_manager, pool_id)`.
     ///
     /// ADR-003 hook filter inline: pools with amount-modifying hooks or dynamic
-    /// fees are rejected. Returns `Err(String)` on rejection.
+    /// fees are rejected. Returns `Err(RegisterV4PoolError)` on rejection.
     ///
     /// # Errors
     ///
     /// Returns `Err` if the pool has amount-modifying hooks
     /// (`hook_flags & 0xCC != 0`), uses a dynamic fee (`fee == 0x100000`),
     /// or a pool with the same `(pool_manager, pool_id)` is already registered.
-    pub fn register_v4_pool(&mut self, params: &RegisterV4PoolParams) -> Result<u64, String> {
+    pub fn register_v4_pool(
+        &mut self,
+        params: &RegisterV4PoolParams,
+    ) -> Result<u64, RegisterV4PoolError> {
         if (params.hook_flags & AMOUNT_MODIFYING_HOOK_MASK) != 0 {
-            return Err(format!(
-                "V4 pool has amount-modifying hooks (flags=0x{:04X}, mask=0x{:04X}) — excluded from arbitrage",
-                params.hook_flags, AMOUNT_MODIFYING_HOOK_MASK
-            ));
+            return Err(RegisterV4PoolError::HookedPool {
+                hook_flags: params.hook_flags,
+            });
         }
         if params.pool_key.fee == V4_DYNAMIC_FEE_FLAG {
-            return Err(format!(
-                "V4 pool has dynamic fee (fee=0x{V4_DYNAMIC_FEE_FLAG:06X}) — excluded from arbitrage"
-            ));
+            return Err(RegisterV4PoolError::DynamicFee {
+                fee: params.pool_key.fee,
+            });
         }
 
         let key = (params.pool_manager, params.pool_id);
         if self.v4_pool_ids.contains_key(&key) {
-            return Err(format!(
-                "V4 pool already registered: pool_manager={}, pool_id=0x{}",
-                params.pool_manager,
-                alloy::hex::encode(params.pool_id),
-            ));
+            return Err(RegisterV4PoolError::AlreadyRegistered {
+                pool_manager: params.pool_manager,
+                pool_id: params.pool_id,
+            });
         }
 
         let pool_id = self.next_pool_id;
@@ -2579,6 +2581,125 @@ mod tests {
         assert!(
             !s.tick_data.contains_key(&120),
             "V4 newly-initialized tick 120 removed on rollback"
+        );
+    }
+
+    /// Plan 102, slice 2: `BotState::register_v4_pool` returns a typed
+    /// `RegisterV4PoolError` (not a flat `String`) for each admission
+    /// category, so the `PyO3` seam can surface distinct Python exception
+    /// types. Pins the three variants the seam maps to
+    /// `HookedPoolRejectedError` / `DynamicFeePoolRejectedError` / plain
+    /// `PyValueError` respectively.
+    #[test]
+    fn register_v4_pool_rejects_amount_modifying_hook_with_typed_error() {
+        use crate::bot_core::{RegisterV4PoolError, RegisterV4PoolParams, V4PoolKey};
+        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+        use std::collections::HashMap;
+
+        let mut core = BotState::new();
+        let err = core
+            .register_v4_pool(&RegisterV4PoolParams {
+                pool_manager: Address::from([0x44u8; 20]),
+                pool_id: [0xeeu8; 32],
+                pool_key: V4PoolKey {
+                    currency0: Address::ZERO,
+                    currency1: Address::from([1u8; 20]),
+                    fee: 500,
+                    tick_spacing: 10,
+                    hooks: Address::ZERO,
+                },
+                // BEFORE_SWAP (0x80) — amount-modifying.
+                hook_flags: 0x80,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                coverage: PoolTickCoverage::Sparse,
+            })
+            .expect_err("hooked pool must be rejected");
+        assert_eq!(
+            err,
+            RegisterV4PoolError::HookedPool { hook_flags: 0x80 },
+            "amount-modifying-hook refusal returns the typed HookedPool variant"
+        );
+    }
+
+    #[test]
+    fn register_v4_pool_rejects_dynamic_fee_with_typed_error() {
+        use crate::bot_core::{RegisterV4PoolError, RegisterV4PoolParams, V4PoolKey};
+        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+        use std::collections::HashMap;
+
+        let mut core = BotState::new();
+        let err = core
+            .register_v4_pool(&RegisterV4PoolParams {
+                pool_manager: Address::from([0x44u8; 20]),
+                pool_id: [0xeeu8; 32],
+                pool_key: V4PoolKey {
+                    currency0: Address::ZERO,
+                    currency1: Address::from([1u8; 20]),
+                    fee: crate::bot_core::V4_DYNAMIC_FEE_FLAG,
+                    tick_spacing: 10,
+                    hooks: Address::ZERO,
+                },
+                hook_flags: 0,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                coverage: PoolTickCoverage::Sparse,
+            })
+            .expect_err("dynamic-fee pool must be rejected");
+        assert_eq!(
+            err,
+            RegisterV4PoolError::DynamicFee {
+                fee: crate::bot_core::V4_DYNAMIC_FEE_FLAG,
+            },
+            "dynamic-fee refusal returns the typed DynamicFee variant"
+        );
+    }
+
+    #[test]
+    fn register_v4_pool_rejects_duplicate_with_already_registered_variant() {
+        use crate::bot_core::{RegisterV4PoolError, RegisterV4PoolParams, V4PoolKey};
+        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+        use std::collections::HashMap;
+
+        let pool_manager = Address::from([0x44u8; 20]);
+        let pool_id_bytes: crate::bot_core::v4_swap_decoder::PoolId = [0xeeu8; 32];
+        let mut core = BotState::new();
+        let params = RegisterV4PoolParams {
+            pool_manager,
+            pool_id: pool_id_bytes,
+            pool_key: V4PoolKey {
+                currency0: Address::ZERO,
+                currency1: Address::from([1u8; 20]),
+                fee: 500,
+                tick_spacing: 10,
+                hooks: Address::ZERO,
+            },
+            hook_flags: 0,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: HashMap::new(),
+            update_block: 0,
+            coverage: PoolTickCoverage::Sparse,
+        };
+        core.register_v4_pool(&params)
+            .expect("first registration ok");
+        let err = core
+            .register_v4_pool(&params)
+            .expect_err("duplicate registration must be rejected");
+        assert_eq!(
+            err,
+            RegisterV4PoolError::AlreadyRegistered {
+                pool_manager,
+                pool_id: pool_id_bytes,
+            },
+            "duplicate-registration refusal returns the typed AlreadyRegistered variant"
         );
     }
 }
