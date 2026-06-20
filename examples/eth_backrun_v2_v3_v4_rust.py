@@ -35,6 +35,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 import asyncio
+import contextlib
 import dataclasses
 import gc
 import itertools
@@ -52,6 +53,7 @@ import eth_abi.abi
 import eth_account
 import web3
 from examples.eth_backrun_helpers import (
+    BackrunConfig,
     HopInfo,
     PathInfo,
     V2HopInfo,
@@ -1002,6 +1004,221 @@ def resolve_directions(
         return None
 
     return zfo_list
+
+
+class BackrunSession:
+    """Orchestrator that collapses the backrun startup ritual behind one facade.
+
+    Owns the config + the three actors (``bot``, ``engine_registry``, ``async_w3``)
+    + the ``Dispatcher`` + scalar block state, and is the ONE place that
+    enforces the phase ordering the engine's state machine requires:
+
+        start():  subscribe → stream snapshots → backfill → verify config
+                  (``EngineRegistry.start``, stops at Backfilled, pre-resume)
+        run():    attach consumer → ``resume()`` → ``build_paths`` →
+                  ``bot.release_python_state()`` → drop bot → main loop
+
+    Usage (production)::
+
+        cfg = BackrunConfig.from_env(
+            dotenv_values("examples/mainnet.env"), live=not dry_run, permutation=args.permutation
+        )
+        async with BackrunSession(cfg) as session:
+            await session.run()
+
+    The early release inside ``run()`` (drop the bot before the main loop) is
+    preserved: the hot loop keeps only ``engine_registry`` + ``async_w3`` +
+    dispatcher — the Python pool/token caches are scaffolding once the Rust
+    engine owns canonical state.
+
+    Testability seams (mirrors ``EngineRegistry``'s ``engine=`` seam): ``bot``,
+    ``engine_registry``, ``async_w3``, ``snapshots``, ``path_builder``, and
+    ``consumer`` are injectable. When injected, ``start()``/``run()``
+    orchestrate the fakes and the phase ordering is verifiable offline; when
+    ``None`` (production), the actors are built from ``cfg`` and the real
+    module functions are called.
+    """
+
+    def __init__(
+        self,
+        cfg: BackrunConfig,
+        *,
+        bot: Bot | None = None,
+        engine_registry: EngineRegistry | None = None,
+        async_w3: AsyncWeb3 | None = None,
+        snapshots: tuple[Any, Any, Any, Any] | None = None,
+        path_builder: Any = None,
+        consumer: Any = None,
+    ) -> None:
+        self.cfg = cfg
+        self._injected_bot = bot
+        self._injected_engine_registry = engine_registry
+        self._injected_async_w3 = async_w3
+        self._injected_snapshots = snapshots
+        self._path_builder = path_builder
+        self._consumer = consumer
+        # Resolved in start():
+        self.bot: Bot | None = None
+        self.engine_registry: EngineRegistry | None = None
+        self.async_w3: AsyncWeb3 | None = None
+        self.dispatcher: Dispatcher | None = None
+        self.v3_snapshot: Any = None
+        self.v4_snapshot: Any = None
+        self.current_block: int = 0
+        self._started = False
+        # Created in run():
+        self._result_consumer_task: asyncio.Task | None = None
+
+    # ── Phase A: pre-resume startup ─────────────────────────────────
+    async def start(self) -> "BackrunSession":
+        """Build the actors, fetch block state, load snapshots, run ``engine_registry.start()``.
+
+        Stops at ``Backfilled`` — BEFORE ``resume()``. Zero result batches
+        emit during this window (the pump isn't running), so ``run()`` can
+        attach the consumer in the gap before ``resume()`` without a stale-backlog
+        window. Idempotent guard via ``_started``.
+        """
+        if self._started:
+            return self
+        self._started = True
+
+        cfg = self.cfg
+
+        # ── Build the three actors (injected or from cfg) ──
+        self.bot = self._injected_bot or self._build_bot(cfg)
+        self.async_w3 = self._injected_async_w3 or self._build_async_w3(cfg)
+        self.engine_registry = self._injected_engine_registry or EngineRegistry(bot=self.bot)
+
+        # ── Fetch current block (for the dispatcher + backfill comparison) ──
+        # Note: main()'s start-phase base_fee_next/operator_nonce fetches were
+        # dead state (recomputed per-batch inside consume_result_batches) — dropped.
+        latest_block = await self.async_w3.eth.get_block("latest")
+        self.current_block = latest_block["number"]
+
+        # ── Coordination state ──
+        self.dispatcher = Dispatcher.for_block(self.current_block)
+
+        # ── Snapshots (injected or from the DB via get_snapshots) ──
+        if self._injected_snapshots is not None:
+            v3_snap, v4_snap, _v3_blk, _v4_blk = self._injected_snapshots
+        else:
+            v3_snap, v4_snap, _v3_blk, _v4_blk = get_snapshots(self.bot)
+        self.v3_snapshot = v3_snap
+        self.v4_snapshot = v4_snap
+
+        # ── Engine pre-resume ritual (subscribe → stream → backfill → verify) ──
+        backfill_target = self.engine_registry.start(
+            cfg.node_http,
+            cfg.node_ws,
+            v3_snapshot=v3_snap,
+            v4_snapshot=v4_snap,
+            verify_state_view=EthereumMainnetUniswapV4.state_view.address,
+            verify_on_register=True,
+        )
+        if backfill_target > self.current_block:
+            self.current_block = backfill_target
+            self.dispatcher.advance_block(backfill_target)
+
+        return self
+
+    # ── Phase B: the rolling-start main loop ──────────────────────────
+    async def run(self) -> None:
+        """Attach the consumer, resume the pump, build paths, release, then run the main loop.
+
+        Ordering (the invariant this session enforces):
+        1. create the consumer task (BEFORE resume — closes the stale-backlog window)
+        2. ``engine_registry.engine.resume()`` (the single gate after which batches flow)
+        3. ``await build_paths(...)`` (rolling start: eager solves dispatch as fresh blocks roll in)
+        4. ``bot.release_python_state()`` + drop the bot (hot loop keeps only engine + async_w3)
+        5. ``await result_consumer_task`` (the main loop, indefinite)
+        """
+        assert self._started, "BackrunSession.start() must be awaited before run()"
+        assert self.engine_registry is not None
+        assert self.async_w3 is not None
+        assert self.bot is not None
+        assert self.dispatcher is not None
+
+        cfg = self.cfg
+        consumer = self._consumer or consume_result_batches
+
+        # 1. Attach the consumer BEFORE resume (consumer-safety invariant).
+        self._result_consumer_task = asyncio.create_task(
+            consumer(
+                engine_registry=self.engine_registry,
+                async_w3=self.async_w3,
+                executor_address=cfg.executor_address,
+                operator_address=cfg.operator_address,
+                operator_private_key=cfg.operator_private_key,
+                dispatcher=self.dispatcher,
+                dry_run=cfg.dry_run,
+            ),
+            name="result-consumer",
+        )
+
+        # 2. Resume the pump — the single gate after which result batches flow.
+        self.engine_registry.engine.resume()
+
+        # 3. Build paths with the pump live (rolling start).
+        path_builder = self._path_builder or build_paths
+        await path_builder(
+            bot=self.bot,
+            engine_registry=self.engine_registry,
+            v3_snapshot=self.v3_snapshot,
+            v4_snapshot=self.v4_snapshot,
+        )
+
+        # 4. Trim redundant Python state — Rust engine owns canonical pool state.
+        self.bot.release_python_state()
+        self.v3_snapshot = None
+        self.v4_snapshot = None
+        self.bot = None  # drop the only Python ref; engine keeps its own PyBot ref
+        gc.collect()
+        self._injected_bot = None  # release the injected ref too
+
+        bot_logger.info(
+            f"[startup] State trimmed — "
+            f"{self.engine_registry.engine.v2_pool_count()} V2, "
+            f"{self.engine_registry.engine.v3_pool_count()} V3, "
+            f"{self.engine_registry.engine.v4_pool_count()} V4 pools retained in "
+            f"Rust engine; {self.engine_registry.engine.path_count()} paths registered. "
+            f"Entering main loop."
+        )
+
+        # 5. Main loop — runs until the consumer task ends.
+        assert self._result_consumer_task is not None
+        await self._result_consumer_task
+
+    # ── Actor builders (production path — only used when not injected) ──
+    @staticmethod
+    def _build_bot(cfg: BackrunConfig) -> Bot:
+        config_obj = _make_backrun_config(cfg.node_http)
+        sync_w3 = web3.Web3(web3.HTTPProvider(cfg.node_http))
+        sync_w3.middleware_onion.clear()
+        return Bot(config_obj, provider=ProviderAdapter.from_web3(sync_w3))
+
+    @staticmethod
+    def _build_async_w3(cfg: BackrunConfig) -> AsyncWeb3:
+        w3 = AsyncWeb3(web3.AsyncHTTPProvider(cfg.node_http))
+        w3.middleware_onion.clear()
+        return w3
+
+    # ── Async context manager ────────────────────────────────────────
+    async def __aenter__(self) -> "BackrunSession":
+        await self.start()
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        """Best-effort cleanup; never suppresses.
+
+        If ``run()`` raised before awaiting the consumer task, cancel it so the
+        hanging background task doesn't outlive the session. The bot is already
+        released (or never built) — nothing to close there.
+        """
+        task = self._result_consumer_task
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
 
 
 async def build_paths(
@@ -2465,183 +2682,24 @@ async def main() -> None:
     if not dry_run:
         bot_logger.info("\n*** LIVE MODE — BOT WILL SUBMIT REAL TRANSACTIONS! ***\n")
 
-    config: dict[str, Any] = dotenv.dotenv_values("examples/mainnet.env")
-
-    # Operator: must come from env
-    operator_address = get_checksum_address(config.get("OPERATOR_ADDRESS", ""))
-    operator_private_key = config.get("OPERATOR_PRIVATE_KEY", "")
-    if not dry_run and (not operator_address or not operator_private_key):
-        bot_logger.error("OPERATOR_ADDRESS and OPERATOR_PRIVATE_KEY must be set in mainnet.env")
-        return
-    if not operator_address:
-        operator_address = ZERO_ADDRESS
-    if not operator_private_key:
-        operator_private_key = "0x" + "0" * 64
-
-    # Node URLs
-    node_http = (
-        f"{config.get('NODE_HOST_HTTP', 'http://localhost')}:{config.get('NODE_PORT_HTTP', '8545')}"
-    )
-    node_ws = f"{config.get('NODE_HOST_WEBSOCKET', 'ws://localhost')}:{config.get('NODE_PORT_WEBSOCKET', '8546')}"
-
-    # Executor: hardcoded with env override
-    executor_address = get_checksum_address(
-        config.get("EXECUTOR_CONTRACT_ADDRESS", EXECUTOR_ADDRESS)
-    )
-    if executor_address == get_checksum_address("0x" + "0" * 40):
-        bot_logger.error("EXECUTOR_CONTRACT_ADDRESS is the zero address")
+    env = dotenv.dotenv_values("examples/mainnet.env")
+    try:
+        cfg = BackrunConfig.from_env(env, live=not dry_run, permutation=args.permutation)
+    except ValueError as exc:
+        bot_logger.error(str(exc))
         return
 
-    # ── Code injection: override executor address with injected one ──
-    # When INJECT_EXECUTOR_CODE=True, we use a fresh address with the new
-    # executor's runtime bytecode injected via eth_simulateV1 stateOverrides.
-    # This avoids needing to deploy the contract first.
-    if INJECT_EXECUTOR_CODE:
-        executor_address = INJECTED_EXECUTOR_ADDRESS
-        bot_logger.info(
-            f"[inject] Code injection ENABLED — executor at {executor_address} "
-            f"(owner={EXECUTOR_OWNER})"
-        )
-
-    # ── Bot session ─────────────────────────────────────────────
-    # ADR-006 slice 8b: Bot is single-chain — construct with the node_http
-    # provider directly (chain identity from config.default_chain_id; the
-    # factory enforces the connected RPC's eth_chainId matches).
-    config_obj = _make_backrun_config(node_http)
-    sync_w3 = web3.Web3(web3.HTTPProvider(node_http))
-    sync_w3.middleware_onion.clear()
-    bot = Bot(config_obj, provider=ProviderAdapter.from_web3(sync_w3))
-    assert bot.chain_id == 1
-    bot_logger.info("Bot session initialized")
-
-    # ── Async web3 ──────────────────────────────────────────────
-    async_w3 = AsyncWeb3(web3.AsyncHTTPProvider(node_http))
-    async_w3.middleware_onion.clear()
-
-    # ── Build engine + paths ────────────────────────────────────
-    # ADR-006 slice 9: the engine adopts the bot's shared BotState — one
-    # state, no dual-registration (V2 pools already live in BotState via
-    # bot.build_pool; the engine reads them through the shared core).
-    engine_registry = EngineRegistry(bot=bot)
-
-    # Configure engine-internal verification: when a pool is registered from
-    # snapshot data (apply_buffer=True), the engine snapshots its tick data
-    # while the lock is held (pump cannot race) and verifies against on-chain
-    # state via RPC after releasing the lock. This eliminates the timing race
-    # that existed when Python called verify_v3_pool/verify_v4_pool async.
-    state_view_address = EthereumMainnetUniswapV4.state_view.address
-
-    latest_block = await async_w3.eth.get_block("latest")
-    current_block = latest_block["number"]
-    base_fee_next = next_base_fee(
-        parent_base_fee=latest_block["baseFeePerGas"],
-        parent_gas_used=latest_block["gasUsed"],
-        parent_gas_limit=latest_block["gasLimit"],
-    )
-    operator_nonce = await async_w3.eth.get_transaction_count(operator_address)
-
-    # ── Subscribe to WS (immediately, before path loading) ────────
-    _chain_id = 1
-    # Coordination state for the dispatch loop: nonce tracking, pool mutual
-    # exclusion, in-flight tasks, current-block ref, block times, and
-    # per-block priority fees + path suppression — all behind one object.
-    dispatcher = Dispatcher.for_block(current_block)
-
-    # ── Pre-pump startup: subscribe → stream snapshots → backfill → verify config
-    # ────────────────────────────────────────────────────────
-    # `start()` runs the entire pre-resume ritual and stops at Backfilled,
-    # BEFORE resume(). Zero result batches emit during this window (the pump
-    # isn't running), so the consumer can be attached in the gap between
-    # start() returning and resume() — closing the stale-backlog window that
-    # existed when the consumer was attached after resume().
-    # snapshot_block is derived internally by start() from min(snap.newest_block).
-    v3_snapshot, v4_snapshot, v3_snap_block, v4_snap_block = get_snapshots(bot)
-
-    bot_logger.info("[startup] Subscribing to WS + streaming snapshots + backfill...")
-    backfill_target = engine_registry.start(
-        node_http,
-        node_ws,
-        v3_snapshot=v3_snapshot,
-        v4_snapshot=v4_snapshot,
-        verify_state_view=state_view_address,
-        verify_on_register=True,
-    )
-    bot_logger.info(
-        f"[startup] Pre-pump startup complete — first observed block: {backfill_target}"
-    )
-
-    # Use backfill_target instead of an RPC call if it's ahead
-    if backfill_target > current_block:
-        current_block = backfill_target
-        bot_logger.info(f"[startup] Updated current_block to subscribe target: {current_block}")
-
-    # The verification blocks are captured automatically by the Rust engine
-    # during backfill_from_snapshot() (run inside start()):
-    # - verify_snapshot_block: set to snapshot_block (confirms DB tick data)
-    # - verify_backfill_block: set to last_processed_block after backfill
-    #   (confirms event decoding + buffer application)
-    # No Python-side configuration needed — the engine knows these boundaries.
-
-    # ── Rolling start: attach consumer BEFORE resume ────────────
-    # The result channel emits one batch per block, always, with no
-    # backpressure. Attaching the consumer before resume() closes the
-    # stale-backlog window that existed when the consumer was attached AFTER
-    # resume (batches accumulated without bound and drained as stale state).
-    # Both coroutines yield at await points, so asyncio interleaves them.
-    result_consumer_task = asyncio.create_task(
-        consume_result_batches(
-            engine_registry=engine_registry,
-            async_w3=async_w3,
-            executor_address=executor_address,
-            operator_address=operator_address,
-            operator_private_key=operator_private_key,
-            dispatcher=dispatcher,
-            dry_run=dry_run,
-        ),
-        name="result-consumer",
-    )
-
-    # ── Resume the Rust pump ─────────────────────────────────────
-    # The pump was subscribed earlier (WS live, events buffered). Now that
-    # backfill is complete and the consumer is attached, resume normal
-    # processing — this is the single gate after which result batches flow.
-    engine_registry.engine.resume()
-    bot_logger.info(f"[startup] Rust pump resumed (WS={node_ws}, backfill complete)")
-
-    bot_logger.info(
-        "[startup] Starting path loading (rolling start — consuming results concurrently)..."
-    )
-    await build_paths(
-        bot=bot,
-        engine_registry=engine_registry,
-        v3_snapshot=v3_snapshot,
-        v4_snapshot=v4_snapshot,
-    )
-    bot_logger.info("[startup] Path loading complete — trimming redundant Python state")
-
-    # ── Trim redundant Python state — Rust engine owns all pool state ──
-    # Drop Python-side tracker caches/snapshots and the pool/token registries
-    # so they stop pinning pool objects in memory. The hot loop keeps only
-    # engine_registry, async_w3, and scalars.
-    bot.release_python_state()
-
-    # Drop snapshot wrappers (already streamed to Rust)
-    del v3_snapshot, v4_snapshot
-
-    # Drop the bot session entirely and force full collection
-    #    The hot loop only needs engine_registry, async_w3, and scalars.
-    del bot
-    gc.collect()
-
-    bot_logger.info(
-        f"[startup] State trimmed — {engine_registry.engine.v2_pool_count()} V2, "
-        f"{engine_registry.engine.v3_pool_count()} V3, "
-        f"{engine_registry.engine.v4_pool_count()} V4 pools retained in Rust engine; "
-        f"{engine_registry.engine.path_count()} paths registered. Entering main loop."
-    )
-
-    # The result consumer task runs indefinitely.
-    await result_consumer_task
+    # BackrunSession owns the full startup handshake and enforces the phase
+    # ordering the Rust pump's state machine requires:
+    #   start():  subscribe → stream snapshots → backfill → verify config
+    #             (EngineRegistry.start, stops BEFORE resume)
+    #   run():    attach consumer → resume → build_paths → release_python_state
+    #             → drop bot → await result consumer (the main loop)
+    # The early release inside run() preserves the hot-loop memory profile:
+    # the loop keeps only engine_registry + async_w3 + dispatcher once the
+    # Rust engine owns canonical pool state.
+    async with BackrunSession(cfg) as session:
+        await session.run()
 
 
 if __name__ == "__main__":
