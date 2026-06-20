@@ -13,9 +13,14 @@ impl UniswapEngine {
 
     /// Set the profit thresholds for the result batch channel.
     ///
-    /// Only paths with `profit > min_profit` and `profit < max_profit`
+    /// Only paths with `profit > min_profit` and `profit <= max_profit`
     /// appear in batch `fresh` / `updated` entries. Paths outside
     /// this range are excluded from `delivered` and batches.
+    ///
+    /// The max bound is inclusive so that `max_profit = U256::MAX` (the
+    /// default) opens the cap fully —profits can exceed `u64::MAX` for
+    /// 18-decimal tokens with large reserves, and the V4 `int128` overflow
+    /// guard allows up to `2^127-1`. The min bound remains strict (`>`).
     pub const fn set_profit_thresholds(&mut self, min_profit: U256, max_profit: U256) {
         self.min_profit = min_profit;
         self.max_profit = max_profit;
@@ -82,7 +87,7 @@ impl UniswapEngine {
         let fresh: Vec<(u64, SolvePathResult)> = self
             .results
             .iter()
-            .filter(|(_, r)| r.profit > self.min_profit && r.profit < self.max_profit)
+            .filter(|(_, r)| r.profit > self.min_profit && r.profit <= self.max_profit)
             .filter(|(id, _)| !self.delivered.contains_key(id))
             .map(|(&id, r)| (id, r.clone()))
             .collect();
@@ -91,7 +96,7 @@ impl UniswapEngine {
         let updated: Vec<(u64, SolvePathResult)> = self
             .results
             .iter()
-            .filter(|(_, r)| r.profit > self.min_profit && r.profit < self.max_profit)
+            .filter(|(_, r)| r.profit > self.min_profit && r.profit <= self.max_profit)
             .filter(|(id, new)| matches!(self.delivered.get(id), Some(old) if old != *new))
             .map(|(&id, r)| (id, r.clone()))
             .collect();
@@ -104,7 +109,7 @@ impl UniswapEngine {
                 !self
                     .results
                     .get(id)
-                    .is_some_and(|r| r.profit > self.min_profit && r.profit < self.max_profit)
+                    .is_some_and(|r| r.profit > self.min_profit && r.profit <= self.max_profit)
             })
             .copied()
             .collect();
@@ -123,10 +128,10 @@ impl UniswapEngine {
         self.delivered.retain(|id, _| {
             self.results
                 .get(id)
-                .is_some_and(|r| r.profit > self.min_profit && r.profit < self.max_profit)
+                .is_some_and(|r| r.profit > self.min_profit && r.profit <= self.max_profit)
         });
         for (&id, r) in &self.results {
-            if r.profit > self.min_profit && r.profit < self.max_profit {
+            if r.profit > self.min_profit && r.profit <= self.max_profit {
                 self.delivered.insert(id, r.clone());
             }
         }
