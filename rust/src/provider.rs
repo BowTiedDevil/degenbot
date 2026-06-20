@@ -825,6 +825,21 @@ impl AlloyProvider {
     }
 }
 
+#[cfg(test)]
+impl AlloyProvider {
+    /// Test-only constructor wrapping a pre-built provider (e.g. a mock
+    /// transport). Used by `BlockPump` tests that drive `run_with_stream`
+    /// from a deterministic synthetic `WsEvent` stream without a live RPC.
+    #[must_use]
+    pub(crate) fn from_provider(inner: Arc<dyn Provider<Ethereum>>) -> Self {
+        Self {
+            inner,
+            rpc_url: String::from("test"),
+            max_attempts: DEFAULT_MAX_RETRIES,
+        }
+    }
+}
+
 /// Log fetcher with fixed chunk sizing.
 pub struct LogFetcher {
     provider: Arc<AlloyProvider>,
