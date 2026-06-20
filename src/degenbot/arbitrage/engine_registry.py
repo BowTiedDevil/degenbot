@@ -26,6 +26,7 @@ from degenbot.uniswap.snapshot_binary import (
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
 from .hop_info import PathInfo, build_hops_from_pools
+from .policy import NoOpPathPredicate, PathCompositionPredicate
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -57,6 +58,7 @@ class EngineRegistry:
         bot: Bot | None = None,
         *,
         engine: UniswapArbEngine | None = None,
+        path_predicate: PathCompositionPredicate | None = None,
     ) -> None:
         # ADR-006 D1+D4: the engine adopts the Bot's shared BotState, so the
         # engine reads/writes the SAME core that V2 PyLiquidityPool handles
@@ -77,6 +79,13 @@ class EngineRegistry:
         # V4 pools keyed by pool_id hex — for event routing from PoolManager logs
         self._v4_keys: dict[str, int] = {}  # pool_id_hex → pool_id
         self.paths: dict[int, PathInfo] = {}
+        # ADR-006 D4 + D7KMQO: a pluggable path-composition predicate enforces
+        # deployment policy (token denylist/allowlist, hop-count bounds,
+        # min-liquidity, duplicate-pool guard) BEFORE hop building + engine
+        # dispatch. Distinct from the Rust core's pool-admission floor
+        # (HookedPoolRejectedError / DynamicFeePoolRejectedError). Default:
+        # NoOpPathPredicate (accept all).
+        self.path_predicate: PathCompositionPredicate = path_predicate or NoOpPathPredicate()
         # NOTE: These Python dicts (_v2_keys, _v3_keys, _v4_keys) are plain
         # dicts — NOT thread-safe. All access is on the single asyncio event loop.
 
@@ -268,7 +277,18 @@ class EngineRegistry:
             ValueError: If any pool in the path has not been registered with
                 this registry.
 
+        A path-composition policy rejection (when a predicate is injected)
+        surfaces as a typed ``PathRejectedError`` subtype (e.g.
+        ``TokenDenylistedError``, ``HopCountExceededError``,
+        ``DuplicatePoolError``) BEFORE hop building + engine dispatch —
+        distinct from the Rust core's pool-admission floor
+        (``HookedPoolRejectedError`` / ``DynamicFeePoolRejectedError``).
+
         """
+        # D7KMQO: enforce deployment policy before any work. A rejection
+        # raises a PathRejectedError subtype and never reaches the engine —
+        # mirrors how V4 admission (HookedPoolRejectedError) is typed.
+        self.path_predicate.evaluate(pools_and_zfos)
         hops = build_hops_from_pools(pools_and_zfos)
         engine_hops: list[tuple[int, bool]] = []
         for pool, zfo in pools_and_zfos:
