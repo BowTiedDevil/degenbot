@@ -640,7 +640,8 @@ def find_paths(
             # shorter cycles that merely prefix-match the first N depths
             # (e.g. a 3-depth V3-V3-V2 filter must not leak 2-hop V3-V3).
             effective_min_depth = (
-                min_depth if pool_type_per_depth is None
+                min_depth
+                if pool_type_per_depth is None
                 else max(min_depth, len(pool_type_per_depth))
             )
 
@@ -781,7 +782,8 @@ async def find_paths_async(
             # shorter cycles that merely prefix-match the first N depths
             # (e.g. a 3-depth V3-V3-V2 filter must not leak 2-hop V3-V3).
             effective_min_depth = (
-                min_depth if pool_type_per_depth is None
+                min_depth
+                if pool_type_per_depth is None
                 else max(min_depth, len(pool_type_per_depth))
             )
 

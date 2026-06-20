@@ -1112,36 +1112,31 @@ mod tests {
     /// hit on the no-timeout / no-gap test paths) and whose sink is a
     /// `FakeDrainSink` that records metadata calls. Returns the pump + the
     /// sink handle (for inspection). Offline + deterministic.
-    fn pump_for_test(
-        last_processed: Option<u64>,
-    ) -> (
-        BlockPump,
-        Arc<FakeDrainSink>,
-    ) {
+    fn pump_for_test(last_processed: Option<u64>) -> (BlockPump, Arc<FakeDrainSink>) {
         use alloy::network::Ethereum as NetEth;
         use alloy::providers::{Provider, ProviderBuilder};
         // `alloy_transport::mock::{Asserter, MockTransport}` — unfeatured (no
         // `mock` feature flag needed under `alloy = { features = ["full"] }`).
         // The asserter's queue is never drained because the test paths avoid
         // provider calls (no 60s timeout, no block gaps).
-        use alloy::transports::mock::{Asserter, MockTransport};
         use alloy::rpc::client::ClientBuilder;
+        use alloy::transports::mock::{Asserter, MockTransport};
 
         let asserter = Asserter::new();
-        let client =
-            ClientBuilder::default().transport(MockTransport::new(asserter), true);
+        let client = ClientBuilder::default().transport(MockTransport::new(asserter), true);
         // `.erased()` yields a `DynProvider<Ethereum>` (implements
         // `Provider<Ethereum>`), matching `AlloyProvider::from_provider`'s
         // `Arc<dyn Provider<Ethereum>>` parameter — same shape as the live
         // `build_provider` path.
         let dyn_provider = ProviderBuilder::new().connect_client(client).erased();
-        let provider =
-            Arc::new(AlloyProvider::from_provider(Arc::new(dyn_provider) as Arc<dyn alloy::providers::Provider<NetEth>>));
+        let provider = Arc::new(AlloyProvider::from_provider(
+            Arc::new(dyn_provider) as Arc<dyn alloy::providers::Provider<NetEth>>
+        ));
 
         let bot = Arc::new(Bot::new(1));
-        let reorg = Arc::new(
-            crate::bot_core::reorg_coordinator::ReorgCoordinator::new(Arc::clone(&bot)),
-        );
+        let reorg = Arc::new(crate::bot_core::reorg_coordinator::ReorgCoordinator::new(
+            Arc::clone(&bot),
+        ));
         let shutdown = Arc::new(AtomicBool::new(false));
         let sink = Arc::new(FakeDrainSink::new(last_processed));
         let pump = BlockPump::for_test(bot, sink.clone(), reorg, provider, shutdown);
@@ -1207,7 +1202,13 @@ mod tests {
         );
         let (block, metadata) = &finalized[0];
         assert_eq!(*block, 101, "first finalize is for block 101");
-        assert_eq!(*metadata, meta_101, "block 101's batch must carry 101's metadata, not 102's");
-        assert_ne!(*metadata, meta_102, "block 101's batch must NOT carry 102's metadata");
+        assert_eq!(
+            *metadata, meta_101,
+            "block 101's batch must carry 101's metadata, not 102's"
+        );
+        assert_ne!(
+            *metadata, meta_102,
+            "block 101's batch must NOT carry 102's metadata"
+        );
     }
 }
