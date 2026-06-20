@@ -15,7 +15,8 @@ Every hot-path operation — event decoding, pool state mutation, tick-range con
 │                          Startup (Python)                           │
 │  Bot.from_config_file → build_paths_async → register_pool/path     │
 │  → backfill_snapshots → engine.freeze → engine.initial_solve       │
-│  → engine.start(rpc_url)                                            │
+│  → engine.subscribe(rpc_url) → backfill_from_snapshot              │
+│  → engine.resume_from_subscribe()                                  │
 └─────────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
@@ -320,7 +321,7 @@ Python's `main()` follows this exact order:
 3. `engine.freeze()` — lock registration
 4. `engine.initial_solve()` — solve all paths from current state
 5. `backfill_snapshots()` — V3: fetch Mint/Burn events from snapshot block to current; V4: fetch ModifyLiquidity events. Push updated tick_data to Rust engine one final time.
-6. `engine.start(node_ws)` — spawn the Rust pump
+6. `engine.subscribe(node_ws)` → `backfill_from_snapshot()` → `resume_from_subscribe()` — open WS, close the snapshot→WS gap, then begin normal pump processing (the canonical two-phase flow; see `EngineRegistry.start()`)
 7. **Main loop**: `wait_for_block → latest_results → dispatch_profitable_results`
 
 The backfill closes the gap between the DB snapshot and the first pump block. After backfill, Rust owns all state updates — Python never pushes pool state again.

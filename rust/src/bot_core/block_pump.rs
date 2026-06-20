@@ -25,12 +25,12 @@
 //!    No events are buffered during subscribe — backfill is the sole authority
 //!    for blocks S+1..W-1; the pump (resume) is sole authority for W onward.
 //!
-//! 2. **Resume phase** (`resume()`): Begins normal processing — logs applied
-//!    eagerly, solved + sent on block boundaries / debounce.
+//! 2. **Resume phase** (`resume_from_subscribe()`): Begins normal processing —
+//!    logs applied eagerly, solved + sent on block boundaries / debounce.
 //!
 //! **Critical ordering**: Python must run backfill AFTER `subscribe()` returns
-//! but BEFORE `resume()`. The `DrainSink`'s `last_processed_block()` is the
-//! backfill-start boundary.
+//! but BEFORE `resume_from_subscribe()`. The `DrainSink`'s
+//! `last_processed_block()` is the backfill-start boundary.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -51,7 +51,6 @@ use crate::bot_core::v4_swap_decoder::V4_SWAP_TOPIC;
 use crate::bot_core::{drain_sink::DrainSink, BlockMetadata, Bot};
 use crate::optimizers::v2_sync_decoder::V2_SYNC_TOPIC;
 use crate::provider::AlloyProvider;
-use crate::runtime::get_runtime;
 
 /// How long to wait with no activity before assuming the connection is dead.
 const BACKFILL_TIMEOUT_SECS: u64 = 60;
@@ -221,73 +220,6 @@ impl BlockPump {
         Ok((pump, subscribe_state))
     }
 
-    /// Legacy entry point: subscribe + immediate resume.
-    ///
-    /// Equivalent to calling `subscribe()` then `resume()` immediately.
-    /// Provided for backward compatibility with existing callers.
-    ///
-    /// 5DM6JJ: previously this discarded the `subscribe()` result's
-    /// `first_block` + `combined_stream` (hard-coding `first_block: 0` and
-    /// re-subscribing a THIRD time for the resume stream). That (a) threw
-    /// away the subscribe-phase anchor and (b) opened a gap window between
-    /// the subscribe-phase subscription and the third subscription. Now we
-    /// reuse the `state` returned by `subscribe()` — `subscribe()` itself
-    /// already re-subscribes once internally to produce a clean resume
-    /// stream — passing the real `first_block` so the cold-start anchor in
-    /// `run_with_stream` (`current_block == 0 && first_observed_block > 0`)
-    /// is the defensive fallback, with `on_drain(first_block)` as the
-    /// primary anchor (mirrors `SolveCoordinator::on_drain` setting
-    /// `last_drained_block`).
-    #[allow(clippy::missing_errors_doc, clippy::unnecessary_wraps)]
-    pub(crate) fn spawn(
-        rpc_url: String,
-        bot: Arc<Bot>,
-        sink: Arc<dyn DrainSink>,
-        reorg_coordinator: Arc<crate::bot_core::reorg_coordinator::ReorgCoordinator>,
-        shutdown: &Arc<AtomicBool>,
-    ) -> Result<tokio::task::JoinHandle<()>, String> {
-        let runtime = get_runtime();
-
-        let shutdown_clone = Arc::clone(shutdown);
-        let handle = runtime.spawn(async move {
-            let (mut pump, state) =
-                match Self::subscribe(&rpc_url, bot, sink, reorg_coordinator, shutdown_clone).await
-                {
-                    Ok((pump, state)) => (pump, state),
-                    Err(e) => {
-                        log::error!("BlockPump: subscribe failed: {e}");
-                        return;
-                    }
-                };
-
-            // Send the first block as an empty batch so Python learns about
-            // it + anchors the drain cursor (`last_processed_block` → W,
-            // mirroring `SolveCoordinator::on_drain`). `process_block(&[],
-            // block, metadata)` decomposed: no logs to dispatch + an
-            // `on_drain` (solve_dirty on the empty engine is a no-op, but
-            // keeps the sink's last-processed-block coherent).
-            pump.sink.on_drain(
-                state.first_block,
-                &BlockMetadata {
-                    timestamp: state.first_timestamp,
-                    base_fee_per_gas: None,
-                    gas_used: 0,
-                    gas_limit: 0,
-                },
-            );
-
-            // Reuse the subscribe-phase `first_block` + the
-            // subscribe-prepared resume stream (`subscribe()` already
-            // re-subscribed once internally to produce a clean resume
-            // stream — a third re-subscribe here would open a gap window +
-            // discard the anchor). `resume()` passes `state.first_block`
-            // as `first_observed_block` (NOT the legacy hard-coded 0).
-            pump.resume(state).await;
-        });
-
-        Ok(handle)
-    }
-
     /// Subscribe phase: observe WS subscriptions until the first complete block.
     ///
     /// A "complete" block is one where both a `newHeads` notification and at
@@ -387,19 +319,6 @@ impl BlockPump {
                 }
             }
         }
-    }
-
-    /// Resume phase: begin normal pump processing.
-    ///
-    /// Takes ownership of the `SubscribeState` (containing the first observed
-    /// block number and the live WS stream) and starts processing blocks.
-    async fn resume(&mut self, subscribe_state: SubscribeState) {
-        let combined = subscribe_state
-            .combined_stream
-            .expect("resume() called without WS stream — did you call subscribe() first?");
-
-        self.run_with_stream(combined, subscribe_state.first_block)
-            .await;
     }
 
     /// Resume phase using the pump's own watch channel.
@@ -1081,8 +1000,8 @@ mod tests {
         fn on_drain(&self, block: u64, metadata: &BlockMetadata) {
             // Faithful to `SolveCoordinator::on_drain`: record + advance the
             // drain cursor so `last_processed_block()` reflects the drained
-            // block (the anchoring `spawn` relies on — see
-            // `legacy_spawn_anchors_current_block_to_subscribe_block`).
+            // block (the anchoring `resume` relies on — see
+            // `resume_anchors_to_subscribe_block`).
             self.drained.lock().unwrap().push((block, *metadata));
             self.last_processed.store(block, Ordering::Relaxed);
         }
@@ -1267,27 +1186,35 @@ mod tests {
         // block is W with meta_w (in-order, anchored).
         let finalized = sink.finalized.lock().unwrap().clone();
         assert!(!finalized.is_empty(), "header w+1 should finalize block w");
-        assert_eq!(finalized[0].0, w, "first finalize is for the anchored block w");
+        assert_eq!(
+            finalized[0].0, w,
+            "first finalize is for the anchored block w"
+        );
         assert_eq!(
             finalized[0].1, meta_w,
             "block w's batch carries w's metadata (in-order, anchored)"
         );
     }
 
-    /// 5DM6JJ contract: the legacy `spawn` flow's `on_drain(first_block)`
-    /// anchors `current_block` to the subscribe block W (mimics
+    /// Resume-anchor contract: `on_drain(first_block)` anchors
+    /// `current_block` to the subscribe block W (mimics
     /// `SolveCoordinator::on_drain` setting `last_drained_block`). With
     /// `first_observed_block = W` (the real subscribe block, NOT the legacy
     /// hard-coded `0`) the pump processes W+1, W+2 in order — the
     /// "applies logs in block order against DB-snapshot-seeded engine state"
     /// invariant — with no out-of-order jump from 0.
+    ///
+    /// Previously named `legacy_spawn_processes_blocks_in_order_…` and framed
+    /// around the deleted `BlockPump::spawn` one-shot; the invariant it
+    /// actually pins is `resume`/`run_with_stream`'s anchoring, which survives
+    /// the Slice 1 deletion of `spawn` (Plan 102).
     #[tokio::test]
-    async fn legacy_spawn_processes_blocks_in_order_anchored_at_subscribe_block() {
-        // Mimic spawn's flow: start with no prior cursor, then `on_drain(W)`
-        // (the empty-batch send spawn issues before resume) anchors
-        // `last_processed_block` to W — exactly as the real
-        // `SolveCoordinator` does. Then resume with first_observed=W (the
-        // real subscribe block, post-fix).
+    async fn resume_anchors_to_subscribe_block() {
+        // Mimic resume's first step: start with no prior cursor, then
+        // `on_drain(W)` (the drain Python issues after `subscribe` returns,
+        // before `resume`) anchors `last_processed_block` to W — exactly as
+        // the real `SolveCoordinator` does. Then resume with first_observed=W
+        // (the real subscribe block, post-fix).
         let (mut pump, sink) = pump_for_test(None);
         let w = 21_500_000u64;
         let meta_w = BlockMetadata {
@@ -1308,7 +1235,7 @@ mod tests {
             gas_used: 14,
             gas_limit: 15,
         };
-        // The empty-batch send spawn performs before resume:
+        // The drain issued before resume anchors the cursor to W:
         pump.sink.on_drain(w, &meta_w);
         assert_eq!(
             pump.sink.last_processed_block(),
@@ -1342,7 +1269,10 @@ mod tests {
         // metadata). This proves the anchor held: we advanced W→W+1→W+2 in
         // order, never jumping from 0.
         let finalized = sink.finalized.lock().unwrap().clone();
-        assert!(!finalized.is_empty(), "header w+2 should finalize block w+1");
+        assert!(
+            !finalized.is_empty(),
+            "header w+2 should finalize block w+1"
+        );
         assert_eq!(finalized[0].0, w + 1, "first finalize is for block w+1");
         assert_eq!(
             finalized[0].1, meta_w1,
