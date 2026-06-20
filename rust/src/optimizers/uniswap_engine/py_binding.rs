@@ -10,6 +10,8 @@ use std::sync::Arc;
 use alloy::primitives::{Address, U256};
 use pyo3::exceptions::PyStopAsyncIteration;
 use pyo3::prelude::*;
+#[allow(unused_imports)]
+use pyo3::create_exception;
 use pyo3::types::{PyDict, PyList};
 use tokio::sync::mpsc;
 
@@ -31,16 +33,56 @@ use super::{
     SolvePathResult, UniswapEngine, V3SnapshotData, V4SnapshotData,
 };
 
-/// [`Result<(), VerifyError>`] → `PyRuntimeError` seam for the extracted
+// Distinct Python exception types for the two verification failure
+// categories (TODO-53b7453b / 7SSOJX). Both subclass `RuntimeError` so existing
+// `except RuntimeError` handlers keep catching them, but they let callers
+// classify by *type* instead of fragile string matching on "tick data
+// mismatch". `build_paths` previously swallowed any `RuntimeError` lacking
+// that substring — masking RPC/transport errors that should also surface
+// loudly (an unverifiable pool is no safer to operate on than a mismatched
+// one).
+//
+// - `VerificationMismatchError`: the engine's tick data does NOT match
+//   on-chain. Fatal — the bot must shut down rather than trade on stale data.
+// - `VerificationRpcError`: the verification RPC could not be performed
+//   (provider construction failure, etc.). Also not safe to silently skip;
+//   surfaced as a distinct type so the caller can choose retry/backoff vs
+//   abort without re-introducing the swallowing bug.
+//
+// NOTE: per-call RPC transport failures inside `liquidity_verifier` are
+// currently folded into `VerifyError::Snapshot` (hence
+// `VerificationMismatchError`) — see follow-up task for separating those into
+// a dedicated `VerifyError::Rpc` variant. The distinction here covers the
+// `VerifyError::Provider` (provider-construction) category the seam already
+// knows about.
+create_exception!(
+    degenbot_rs,
+    VerificationMismatchError,
+    pyo3::exceptions::PyRuntimeError,
+    "A verification mismatch: the engine's tick data does not match on-chain state."
+);
+create_exception!(
+    degenbot_rs,
+    VerificationRpcError,
+    pyo3::exceptions::PyRuntimeError,
+    "An RPC/transport error during on-chain verification (e.g. provider construction failed)."
+);
+
+/// [`Result<(), VerifyError>`] → typed Python exception seam for the extracted
 /// snapshot/verify module (ADR-006 slice 5b + slice-5 candidate-2).
+///
+/// Distinguishes the two failure categories by *type* (TODO-53b7453b):
+/// - `Snapshot` → [`VerificationMismatchError`] (genuine mismatch — fatal)
+/// - `Provider` → [`VerificationRpcError`] (transport/provider-construction)
+/// - `NoSnapshotStream` → `PyRuntimeError` (programmer error: no snapshot
+///   stream in progress — distinct from verification failure categories)
 fn map_verify_err(res: Result<(), VerifyError>) -> PyResult<()> {
     res.map_err(|e| match e {
         VerifyError::NoSnapshotStream => {
             pyo3::exceptions::PyRuntimeError::new_err("No snapshot stream in progress.")
         }
-        VerifyError::Snapshot(msg) | VerifyError::Provider(msg) => {
-            pyo3::exceptions::PyRuntimeError::new_err(msg)
-        }
+        VerifyError::Snapshot(msg) => VerificationMismatchError::new_err(msg),
+        VerifyError::Provider(msg) => VerificationRpcError::new_err(msg),
     })
 }
 

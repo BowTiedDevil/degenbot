@@ -978,6 +978,28 @@ class UniswapArbEngine:
     ) -> None: ...
     def finish_v4_snapshot(self) -> None: ...
 
+
+class VerificationMismatchError(RuntimeError):
+    """On-chain verification mismatch: engine tick data != on-chain state.
+
+    Raised by the Rust seam (`VerifyError::Snapshot`) when
+    ``verify_on_register`` finds the engine's tick data does not match
+    on-chain. Fatal at the bot level — do not trade on stale tick data.
+    Subclasses ``RuntimeError`` so broad ``except RuntimeError`` handlers
+    still catch it; classify by ``isinstance`` for the fatal path.
+    """
+
+
+class VerificationRpcError(RuntimeError):
+    """RPC/transport failure during on-chain verification (provider
+    construction failure, etc.).
+
+    Raised by the Rust seam (`VerifyError::Provider`). The bot could not
+    reach the node to verify — also not safe to silently skip (an unverifiable
+    pool is no safer than a mismatched one), but a distinct type so the caller
+    can choose retry/backoff vs abort. Subclasses ``RuntimeError``.
+    """
+
 __all__ = [
     "AlloyProvider",
     "AlloySubscription",
@@ -993,6 +1015,8 @@ __all__ = [
     "TransactionData",
     "TransactionReceiptData",
     "UniswapArbEngine",
+    "VerificationMismatchError",
+    "VerificationRpcError",
     "cl_add_delta",
     "cl_compute_swap_step_v3",
     "cl_compute_swap_step_v4",
