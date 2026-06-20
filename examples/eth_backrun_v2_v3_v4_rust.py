@@ -81,6 +81,8 @@ from degenbot.database.models.pools import (  # noqa:F401
     UniswapV4PoolTableBase,
 )
 from degenbot.degenbot_rs import (  # type: ignore[attr-defined]
+    DynamicFeePoolRejectedError,
+    HookedPoolRejectedError,
     UniswapArbEngine,
     VerificationMismatchError,
     VerificationRpcError,
@@ -314,16 +316,10 @@ PANCAKESWAP_V3_MAINNET_FACTORY = "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865"
 # V4 PoolManager on Ethereum mainnet
 UNISWAP_V4_POOL_MANAGER_ADDRESS = get_checksum_address("0x000000000004444c5dc75cB358380D2e3De08A90")
 
-# V4 hook filtering: exclude pools with amount-modifying hooks.
-# Mask 0xCC covers BEFORE_SWAP(0x80), AFTER_SWAP(0x40),
-# BEFORE_SWAP_RETURNS_DELTA(0x08), AFTER_SWAP_RETURNS_DELTA(0x04).
-# Pools with any of these flags can modify swap amounts, violating
-# the solver's assumption that V3 math applies exactly.
-AMOUNT_MODIFYING_HOOK_MASK = 0xCC
-
-# V4 dynamic fee flag — pools with fee == 0x100000 have dynamic fees.
-# The solver requires a fixed fee for accurate profit calculation.
-V4_DYNAMIC_FEE_FLAG = 0x100000
+# V4 pool admission (amount-modifying hooks / dynamic fees) is enforced by
+# the Rust core (BotState::register_v4_pool) as a correctness floor, surfaced
+# as typed HookedPoolRejectedError / DynamicFeePoolRejectedError — no
+# Python-side pre-check.
 
 # V3 sqrt price limits
 MIN_SQRT_RATIO = 4295128739
@@ -875,33 +871,20 @@ class EngineRegistry:
         the streamed snapshot (loaded via stream_v4_snapshot_to_engine).
         The engine applies buffered events on top of stale snapshot data.
 
-        Performs hook filtering at registration:
-        - Pools with amount-modifying hooks (mask 0xCC) are rejected
-        - Pools with dynamic fees (fee == 0x100000) are rejected
-
-        These pools violate the solver's assumption that V3 CL math
-        applies exactly, so they would produce phantom profits.
-
+        Pool admission (amount-modifying hooks / dynamic fees) is enforced
+        by the Rust core as a *correctness floor* — the solver's V3-CL math
+        assumes no hook intervention + a fixed fee. A rejection surfaces as a
+        typed ``HookedPoolRejectedError`` / ``DynamicFeePoolRejectedError``
+        (both subclass ``ValueError``); ``build_paths`` classifies by type.
         """
         pool_id_hex = pool.pool_id.to_0x_hex()
 
         if pool_id_hex in self._v4_keys:
             return self._v4_keys[pool_id_hex]
 
-        # Hook filtering: reject pools with amount-modifying hooks
-        # V4 hook flags are stored in the bottom 12 bits of the hook address
+        # V4 hook flags live in the bottom 12 bits of the hook address
+        # (passed to the engine, which enforces the admission floor itself).
         hook_flags = int(pool.hook_address, 16) & 0xFFF
-        if hook_flags & AMOUNT_MODIFYING_HOOK_MASK != 0:
-            msg = (
-                f"V4 pool {pool} has amount-modifying hooks "
-                f"(hook_address={pool.hook_address}, flags=0x{hook_flags:04x})"
-            )
-            raise ValueError(msg)
-
-        # Dynamic fee filtering: reject pools with dynamic fees
-        if pool.fee == V4_DYNAMIC_FEE_FLAG:
-            msg = f"V4 pool {pool} has dynamic fees (fee=0x{pool.fee:x})"
-            raise ValueError(msg)
 
         key = self.engine.register_v4_pool(
             pool_manager=pool.address,
@@ -1235,8 +1218,9 @@ async def build_paths(
     """Discover V2/V3/V4 arb paths, build Python pools, register with Rust engine.
 
     V4 pools are discovered via find_paths_async and built through
-    bot.build_managed_pool(). Hook filtering rejects pools with amount-modifying
-    hooks (mask 0xCC) and dynamic fees (fee == 0x100000) at registration time.
+    bot.build_managed_pool(). V4 pool admission (amount-modifying hooks /
+    dynamic fees) is enforced by the Rust core at registration time, surfacing
+    as typed HookedPoolRejectedError / DynamicFeePoolRejectedError.
 
     Tick data for V3/V4 engine registration is resolved automatically from
     the stored binary snapshots (already streamed via
@@ -1400,17 +1384,26 @@ async def build_paths(
                 elif pt == "V4":
                     v4_pool_count += 1
                     engine_registry.register_v4_pool(pool)
+        except HookedPoolRejectedError:
+            # Amount-modifying hook — admission refusal (correctness floor,
+            # enforced by the Rust core). Expected when scanning many V4
+            # pools; skip this path and continue. Classified by type per
+            # Plan 102 (replaces the former string-match on
+            # "amount-modifying hooks").
+            v4_hook_rejected += 1
+            engine_reject_count += 1
+            continue
+        except DynamicFeePoolRejectedError:
+            # Dynamic fee — admission refusal (correctness floor). Skip path.
+            v4_dynamic_fee_rejected += 1
+            engine_reject_count += 1
+            continue
         except ValueError as exc:
-            # Hook filtering / dynamic fee rejection — expected, skip path
-            exc_str = str(exc)
-            if "amount-modifying hooks" in exc_str:
-                v4_hook_rejected += 1
-            elif "dynamic fees" in exc_str:
-                v4_dynamic_fee_rejected += 1
-            else:
-                v4_other_value_error += 1
-                if v4_other_value_error <= 5:
-                    bot_logger.info(f"[build_paths] V4 ValueError (other): {exc}")
+            # Other V4 ValueError (e.g. already-registered, bad address) —
+            # NOT an admission category; log + skip.
+            v4_other_value_error += 1
+            if v4_other_value_error <= 5:
+                bot_logger.info(f"[build_paths] V4 ValueError (other): {exc}")
             engine_reject_count += 1
             continue
         except VerificationMismatchError as exc:
