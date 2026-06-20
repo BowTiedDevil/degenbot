@@ -67,6 +67,78 @@ pub enum PoolEntry {
     V4(V4PoolState),
 }
 
+/// Read-only surface shared by [`V3PoolState`] and [`V4PoolState`] — the
+/// fields the per-handle `PyLiquidityPool` reader API presents uniformly
+/// across the V3/V4 concentrated-liquidity families (J63J3N).
+///
+/// Both variants store the same mutable scalars (`sqrt_price_x96`/
+/// `liquidity`/`tick`/`update_block`) and an identical `tick_data:
+/// HashMap<i32, TickInfo>`; V4 additionally nests `fee`/`tick_spacing`
+/// inside `pool_key`, which the impl projects out. The trait lets
+/// [`BotState::get_v3_or_v4_pool`] return one borrowed view covering both
+/// families without cloning — the reader twin of the RAJ3PP apply dispatchers.
+///
+/// V2 is intentionally excluded (different state shape — reserves, not
+/// scalars); a V2 `pool_id` yields `None` from the accessor, matching the
+/// prior V3-only contract.
+pub trait V3FamilyPool {
+    fn sqrt_price_x96(&self) -> U256;
+    fn liquidity(&self) -> u128;
+    fn tick(&self) -> i32;
+    fn update_block(&self) -> u64;
+    fn fee(&self) -> u32;
+    fn tick_spacing(&self) -> i32;
+    fn tick_data(&self) -> &HashMap<i32, TickInfo>;
+}
+
+impl V3FamilyPool for V3PoolState {
+    fn sqrt_price_x96(&self) -> U256 {
+        self.sqrt_price_x96
+    }
+    fn liquidity(&self) -> u128 {
+        self.liquidity
+    }
+    fn tick(&self) -> i32 {
+        self.tick
+    }
+    fn update_block(&self) -> u64 {
+        self.update_block
+    }
+    fn fee(&self) -> u32 {
+        self.fee
+    }
+    fn tick_spacing(&self) -> i32 {
+        self.tick_spacing
+    }
+    fn tick_data(&self) -> &HashMap<i32, TickInfo> {
+        &self.tick_data
+    }
+}
+
+impl V3FamilyPool for V4PoolState {
+    fn sqrt_price_x96(&self) -> U256 {
+        self.sqrt_price_x96
+    }
+    fn liquidity(&self) -> u128 {
+        self.liquidity
+    }
+    fn tick(&self) -> i32 {
+        self.tick
+    }
+    fn update_block(&self) -> u64 {
+        self.update_block
+    }
+    fn fee(&self) -> u32 {
+        self.pool_key.fee
+    }
+    fn tick_spacing(&self) -> i32 {
+        self.pool_key.tick_spacing
+    }
+    fn tick_data(&self) -> &HashMap<i32, TickInfo> {
+        &self.tick_data
+    }
+}
+
 /// State for a Uniswap V2-style constant-product pool.
 #[derive(Clone, Debug)]
 pub struct V2PoolState {
@@ -822,6 +894,30 @@ impl BotState {
                 PoolEntry::V2(_) | PoolEntry::V4(_) => None,
             })
             .collect()
+    }
+
+    /// Family-dispatching reader for the V3/V4 concentrated-liquidity
+    /// families (J63J3N). Returns a trait view over the shared read-only
+    /// surface — the mutable scalars (`sqrt_price_x96`/`liquidity`/`tick`/
+    /// `update_block`), the immutable fee/tick-spacing, and `tick_data`.
+    ///
+    /// This is the reader twin of the RAJ3PP apply dispatchers: the prior
+    /// per-handle Python readers (`PyLiquidityPool.snapshot_v3`,
+    /// `tick_data_snapshot`, the scalar getters, the restore/discard guards)
+    /// went through `get_v3_pool`, which matches `PoolEntry::V3` only and
+    /// returns `None` for `PoolEntry::V4` — silently yielding `None`/empty/0
+    /// for every V4 read. Routing them through this accessor makes the
+    /// docstrings' "V3/V4 pool" wording honest.
+    ///
+    /// Returns `None` for V2 or unregistered (the V3-only contract) — V2 has
+    /// a different state shape and is read via the dedicated V2 getters.
+    #[must_use]
+    pub fn get_v3_or_v4_pool(&self, pool_id: u64) -> Option<&dyn V3FamilyPool> {
+        match self.pools.get(&pool_id)? {
+            PoolEntry::V3(state) => Some(state),
+            PoolEntry::V4(state) => Some(state),
+            PoolEntry::V2(_) => None,
+        }
     }
 
     /// Full-sync a V3 pool's `tick_data` from an external source (e.g. Python
@@ -2009,6 +2105,26 @@ impl BotState {
         state.journal.discard_before_block(block)
     }
 
+    /// Family-dispatching journal discard (J63J3N): routes V4 pools to
+    /// `v4_discard_before_block`, V3 (and V2/unregistered) to
+    /// `v3_discard_before_block`. The per-handle Python
+    /// `PyLiquidityPool.discard_v3_before_block` previously gated on a
+    /// `get_v3_pool(...).is_none()` V3 probe that returned `None` for V4 and
+    /// no-op'd — so V4 reorg journals were never trimmed via the handle path.
+    /// The `matches!` probe is a Copy discriminant (immutable borrow ends
+    /// before the `&mut self` call).
+    pub fn discard_v3_or_v4_before_block(
+        &mut self,
+        pool_id: u64,
+        block: u64,
+    ) -> Result<(), JournalError> {
+        if matches!(self.pools.get(&pool_id), Some(PoolEntry::V4(_))) {
+            self.v4_discard_before_block(pool_id, block)
+        } else {
+            self.v3_discard_before_block(pool_id, block)
+        }
+    }
+
     /// Restore V4 pool state prior to a target block (same `V3BlockDelta` shape).
     pub fn v4_restore_before_block(&mut self, pool_id: u64, block: u64) -> Option<V3RestoreResult> {
         let PoolEntry::V4(state) = self.pools.get_mut(&pool_id)? else {
@@ -2058,6 +2174,26 @@ impl BotState {
         }
 
         Some(result)
+    }
+
+    /// Family-dispatching journal restore (J63J3N): routes V4 pools to
+    /// `v4_restore_before_block`, V3 (and V2/unregistered) to
+    /// `v3_restore_before_block`. The per-handle
+    /// `PyLiquidityPool.restore_v3_before_block` previously gated on a
+    /// `get_v3_pool(...).is_none()` V3 probe that returned `None` for V4 — so
+    /// V4 reorg rollback via the handle path silently no-op'd, returning
+    /// `None` (not the rolled-back scalars). Mirrors the RAJ3PP
+    /// `apply_liquidity_update_by_pool_id` dispatch shape.
+    pub fn restore_v3_or_v4_before_block(
+        &mut self,
+        pool_id: u64,
+        block: u64,
+    ) -> Option<V3RestoreResult> {
+        if matches!(self.pools.get(&pool_id), Some(PoolEntry::V4(_))) {
+            self.v4_restore_before_block(pool_id, block)
+        } else {
+            self.v3_restore_before_block(pool_id, block)
+        }
     }
 
     /// Register a token.
@@ -3065,5 +3201,179 @@ mod tests {
         );
         assert_eq!(s_b.journal.len(), s_a.journal.len());
         assert_eq!(s_b.update_block, s_a.update_block);
+    }
+
+    /// Regression (J63J3N, scalar read half): `PyLiquidityPool.snapshot_v3`
+    /// and the per-field scalar getters all routed through `get_v3_pool`,
+    /// which returns `None` for `PoolEntry::V4` — silently dropping V4 reads
+    /// (the read-side twin of the RAJ3PP write-side bug). The fix is the
+    /// family-dispatching `BotState::get_v3_or_v4_pool` accessor returning a
+    /// `&dyn V3FamilyPool`. This pins both halves of the AC: a V4 pool
+    /// returns a non-`None` scalar view, and the scalars match a direct
+    /// `apply_v4_swap` on the same inputs.
+    #[test]
+    fn get_v3_or_v4_pool_reads_v4_scalars_matching_apply_v4_swap() {
+        use crate::bot_core::{RegisterV4PoolParams, V4PoolKey, V4SwapUpdate};
+        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+
+        let pool_manager = Address::from([0x88u8; 20]);
+        let pool_id_bytes: crate::bot_core::v4_swap_decoder::PoolId = [0x99u8; 32];
+        let block_b = 11u64;
+
+        let make_params = || RegisterV4PoolParams {
+            pool_manager,
+            pool_id: pool_id_bytes,
+            pool_key: V4PoolKey {
+                currency0: Address::ZERO,
+                currency1: Address::from([1u8; 20]),
+                fee: 500,
+                tick_spacing: 10,
+                hooks: Address::ZERO,
+            },
+            hook_flags: 0,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: HashMap::new(),
+            update_block: 0,
+            coverage: PoolTickCoverage::Sparse,
+        };
+
+        // Twin V4 pools: A read via the family accessor after a dispatcher
+        // apply; B updated via the dedicated `apply_v4_swap`. Both start
+        // identical.
+        let mut core_a = BotState::new();
+        let id_a = core_a
+            .register_v4_pool(&make_params())
+            .expect("V4 pool A registers");
+        let mut core_b = BotState::new();
+        let id_b = core_b
+            .register_v4_pool(&make_params())
+            .expect("V4 pool B registers");
+
+        // Before the fix, `get_v3_or_v4_pool` did not exist and the Python
+        // reader used `get_v3_pool` (None for V4). Assert the accessor now
+        // returns a non-None view of the post-apply state.
+        let _ = core_a.apply_swap_by_pool_id(
+            id_a,
+            U256::from(3u128) << 96,
+            9_000_000,
+            -240,
+            block_b,
+            &[],
+        );
+        let view_a = core_a
+            .get_v3_or_v4_pool(id_a)
+            .expect("V4 pool must surface a non-None reader view");
+        assert_eq!(view_a.sqrt_price_x96(), U256::from(3u128) << 96);
+        assert_eq!(view_a.liquidity(), 9_000_000);
+        assert_eq!(view_a.tick(), -240);
+        assert_eq!(view_a.update_block(), block_b);
+        // Immutable V4 key fields surface from `pool_key`.
+        assert_eq!(view_a.fee(), 500);
+        assert_eq!(view_a.tick_spacing(), 10);
+
+        // AC parity: identical scalar inputs via `apply_v4_swap` produce the
+        // same values read through the accessor.
+        let _ = core_b.apply_v4_swap(
+            &V4SwapUpdate {
+                pool_manager,
+                pool_id: pool_id_bytes,
+                sqrt_price_x96: U256::from(3u128) << 96,
+                liquidity: 9_000_000,
+                tick: -240,
+                tick_priors: Vec::new(),
+            },
+            block_b,
+        );
+        let view_b = core_b
+            .get_v3_or_v4_pool(id_b)
+            .expect("V4 pool B surfaces a reader view");
+        assert_eq!(view_b.sqrt_price_x96(), view_a.sqrt_price_x96());
+        assert_eq!(view_b.liquidity(), view_a.liquidity());
+        assert_eq!(view_b.tick(), view_a.tick());
+        assert_eq!(view_b.update_block(), view_a.update_block());
+    }
+
+    /// Regression (J63J3N, tick-data read half): `tick_data_snapshot` and
+    /// `tick_bitmap_snapshot` routed through `get_v3_pool`, returning an
+    /// empty dict for V4 pools. The family `get_v3_or_v4_pool` accessor's
+    /// `tick_data()` must surface a V4 pool's tick map (post-Mint/Burn) — and
+    /// it must match `apply_v4_liquidity_update` on the same inputs.
+    #[test]
+    fn get_v3_or_v4_pool_reads_v4_tick_data_matching_apply_v4_liquidity_update() {
+        use crate::bot_core::{RegisterV4PoolParams, TickInfo, V4PoolKey};
+        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+        use alloy::primitives::{I256, U128};
+
+        let pool_manager = Address::from([0xaau8; 20]);
+        let pool_id_bytes: crate::bot_core::v4_swap_decoder::PoolId = [0xbbu8; 32];
+        let block_b = 13u64;
+
+        // Pre-seed tick 60 (gross=100, net=+100); tick 120 absent.
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            60,
+            TickInfo {
+                liquidity_gross: U128::from(100),
+                liquidity_net: I256::try_from(100i128).unwrap(),
+            },
+        );
+        let params = RegisterV4PoolParams {
+            pool_manager,
+            pool_id: pool_id_bytes,
+            pool_key: V4PoolKey {
+                currency0: Address::ZERO,
+                currency1: Address::from([1u8; 20]),
+                fee: 3_000,
+                tick_spacing: 60,
+                hooks: Address::ZERO,
+            },
+            hook_flags: 0,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data,
+            update_block: 0,
+            coverage: PoolTickCoverage::Sparse,
+        };
+
+        // Twin pools: A via the dispatcher, B via apply_v4_liquidity_update.
+        let mut core_a = BotState::new();
+        let id_a = core_a.register_v4_pool(&params).expect("V4 A registers");
+        let mut core_b = BotState::new();
+        let id_b = core_b.register_v4_pool(&params).expect("V4 B registers");
+
+        let _ = core_a.apply_liquidity_update_by_pool_id(id_a, 60, 120, 700, block_b);
+        let _ = core_b.apply_v4_liquidity_update(
+            pool_manager,
+            pool_id_bytes,
+            60,
+            120,
+            I256::try_from(700i128).unwrap(),
+            block_b,
+        );
+
+        // Before the fix, the V4 view came back None → empty dict. Assert the
+        // accessor now yields the V4 tick map (non-empty, mutated) and the
+        // view matches the dedicated-path twin.
+        let view_a = core_a
+            .get_v3_or_v4_pool(id_a)
+            .expect("V4 A reader view non-None");
+        let view_b = core_b
+            .get_v3_or_v4_pool(id_b)
+            .expect("V4 B reader view non-None");
+        assert!(!view_a.tick_data().is_empty(), "V4 tick map surfaced");
+        assert_eq!(
+            view_a.tick_data().get(&60).expect("t60").liquidity_gross,
+            U128::from(800),
+            "tick 60 gross reflects the +700 ModifyLiquidity"
+        );
+        assert_eq!(
+            view_a.tick_data().get(&60).expect("t60").liquidity_gross,
+            view_b.tick_data().get(&60).expect("t60").liquidity_gross,
+            "dispatcher and dedicated path produce identical V4 tick maps"
+        );
+        assert_eq!(view_a.update_block(), view_b.update_block());
     }
 }
