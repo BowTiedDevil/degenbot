@@ -1571,6 +1571,191 @@ impl BotState {
         Some(pool_id)
     }
 
+    /// Apply a V4 Swap event to a registered pool by its inner handle
+    /// `pool_id` (the per-handle Python API path, an alternative entry to the
+    /// `(pool_manager, pool_id)`-keyed `apply_v4_swap`).
+    ///
+    /// Mirrors `apply_v3_swap_by_pool_id` for the V4 entry: journals the
+    /// scalar priors (and any passed `tick_priors`, empty from the handle path
+    /// — same "scalars only" contract the V3 handle method documents), mutates
+    /// `slot0`, advances `update_block`, invalidates the tick-range cache.
+    ///
+    /// Returns `Some(pool_id)` if the pool is V4; `None` for V2/V3 or
+    /// unregistered (silent no-op, matching the V3 sibling's contract).
+    pub fn apply_v4_swap_by_pool_id(
+        &mut self,
+        pool_id: u64,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        block_number: u64,
+        tick_priors: &[(i32, TickInfo)],
+    ) -> Option<u64> {
+        let Some(PoolEntry::V4(state)) = self.pools.get_mut(&pool_id) else {
+            return None;
+        };
+
+        let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(tick_priors.len());
+        for &(tick_index, ref new_info) in tick_priors {
+            let prior = state.tick_data.get(&tick_index).cloned();
+            journaled_priors.push((
+                tick_index,
+                TickBefore {
+                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
+                    liquidity_net_before: prior
+                        .as_ref()
+                        .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
+                },
+            ));
+            state.tick_data.insert(tick_index, new_info.clone());
+        }
+
+        state.journal.push_delta(V3BlockDelta {
+            block: block_number,
+            scalar_priors: Some(ScalarPriors {
+                sqrt_price_x96_before: state.sqrt_price_x96,
+                liquidity_before: state.liquidity,
+                tick_before: state.tick,
+            }),
+            tick_priors: journaled_priors,
+        });
+
+        state.sqrt_price_x96 = sqrt_price_x96;
+        state.liquidity = liquidity;
+        state.tick = tick;
+        state.update_block = block_number;
+        state.invalidate_tick_range_cache();
+
+        Some(pool_id)
+    }
+
+    /// Apply a V4 `ModifyLiquidity` event to a registered pool by its inner
+    /// handle `pool_id` (the per-handle Python API path, an alternative entry
+    /// to the `(pool_manager, pool_id)`-keyed `apply_v4_liquidity_update`).
+    ///
+    /// Mirrors `apply_v3_liquidity_update_by_pool_id` for the V4 entry:
+    /// journals the two tick priors, applies the delta to the tick range
+    /// (`liquidity_net` `+=` at lower, `-=` at upper, both `gross +=`),
+    /// advances `update_block`, invalidates the tick-range cache. No scalar
+    /// change (`scalar_priors: None`) — same ADR-004 tick-only contract as V3.
+    ///
+    /// Returns `Some(pool_id)` if the pool is V4; `None` otherwise.
+    pub fn apply_v4_liquidity_update_by_pool_id(
+        &mut self,
+        pool_id: u64,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: i128,
+        block_number: u64,
+    ) -> Option<u64> {
+        let Some(PoolEntry::V4(state)) = self.pools.get_mut(&pool_id) else {
+            return None;
+        };
+
+        let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
+        for &tick_idx in &[tick_lower, tick_upper] {
+            let prior = state.tick_data.get(&tick_idx).cloned();
+            journaled_priors.push((
+                tick_idx,
+                TickBefore {
+                    liquidity_gross_before: prior.as_ref().map(|p| p.liquidity_gross),
+                    liquidity_net_before: prior
+                        .as_ref()
+                        .map_or(alloy::primitives::I256::ZERO, |p| p.liquidity_net),
+                },
+            ));
+        }
+
+        crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
+            &mut state.tick_data,
+            tick_lower,
+            tick_upper,
+            liquidity_delta,
+        );
+
+        state.journal.push_delta(V3BlockDelta {
+            block: block_number,
+            scalar_priors: None,
+            tick_priors: journaled_priors,
+        });
+
+        state.update_block = block_number;
+        state.invalidate_tick_range_cache();
+        Some(pool_id)
+    }
+
+    /// Family-dispatching Swap apply (RAJ3PP). The single entry point
+    /// `PyLiquidityPool.apply_swap` calls — routes V3 pools to
+    /// `apply_v3_swap_by_pool_id` and V4 pools to
+    /// `apply_v4_swap_by_pool_id`. V2/unregistered → `None` (no-op, matching
+    /// the V3 sibling). This preserves the single Python `apply_swap` API
+    /// while correcting the prior unconditional V3 routing that silently
+    /// dropped every V4 update.
+    ///
+    /// The family probe is a `matches!` (Copy discriminant) so the immutable
+    /// borrow of `self.pools` ends before the `&mut self` apply call — one
+    /// held write guard throughout, two O(1) `HashMap` lookups (probe + apply).
+    pub fn apply_swap_by_pool_id(
+        &mut self,
+        pool_id: u64,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        block_number: u64,
+        tick_priors: &[(i32, TickInfo)],
+    ) -> Option<u64> {
+        if matches!(self.pools.get(&pool_id), Some(PoolEntry::V4(_))) {
+            self.apply_v4_swap_by_pool_id(
+                pool_id,
+                sqrt_price_x96,
+                liquidity,
+                tick,
+                block_number,
+                tick_priors,
+            )
+        } else {
+            self.apply_v3_swap_by_pool_id(
+                pool_id,
+                sqrt_price_x96,
+                liquidity,
+                tick,
+                block_number,
+                tick_priors,
+            )
+        }
+    }
+
+    /// Family-dispatching liquidity update (RAJ3PP). The single entry point
+    /// `PyLiquidityPool.apply_liquidity_update` calls — routes V3 to
+    /// `apply_v3_liquidity_update_by_pool_id` and V4 to
+    /// `apply_v4_liquidity_update_by_pool_id`. V2/unregistered → `None`.
+    pub fn apply_liquidity_update_by_pool_id(
+        &mut self,
+        pool_id: u64,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: i128,
+        block_number: u64,
+    ) -> Option<u64> {
+        if matches!(self.pools.get(&pool_id), Some(PoolEntry::V4(_))) {
+            self.apply_v4_liquidity_update_by_pool_id(
+                pool_id,
+                tick_lower,
+                tick_upper,
+                liquidity_delta,
+                block_number,
+            )
+        } else {
+            self.apply_v3_liquidity_update_by_pool_id(
+                pool_id,
+                tick_lower,
+                tick_upper,
+                liquidity_delta,
+                block_number,
+            )
+        }
+    }
+
     /// Buffer a V4 `ModifyLiquidity` event from the backfill phase.
     pub fn buffer_backfill_v4_liquidity_update(
         &mut self,
@@ -2701,5 +2886,184 @@ mod tests {
             },
             "duplicate-registration refusal returns the typed AlreadyRegistered variant"
         );
+    }
+
+    /// Regression (RAJ3PP): `PyLiquidityPool.apply_swap` routed V4 pools into
+    /// `apply_v3_swap_by_pool_id`, which matches `PoolEntry::V3` only and
+    /// silently no-op'd on `PoolEntry::V4` — a Python-side V4 update path
+    /// (snapshots, regression tests, manual `external_update`) dropped every
+    /// update. The fix is a family-dispatching `apply_swap_by_pool_id` on
+    /// `BotState` that `PyLiquidityPool.apply_swap` calls (the preferred
+    /// "existing methods do family dispatch internally" option). This test
+    /// pins both halves of the AC: V4 scalars actually change (not a no-op),
+    /// and they match a direct `apply_v4_swap` on the same scalar inputs.
+    #[test]
+    fn apply_swap_by_pool_id_routes_to_v4_and_matches_apply_v4_swap() {
+        use crate::bot_core::{RegisterV4PoolParams, V4PoolKey, V4SwapUpdate};
+        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+
+        let pool_manager = Address::from([0x44u8; 20]);
+        let pool_id_bytes: crate::bot_core::v4_swap_decoder::PoolId = [0x66u8; 32];
+        let block_b = 7u64;
+
+        let make_params = || RegisterV4PoolParams {
+            pool_manager,
+            pool_id: pool_id_bytes,
+            pool_key: V4PoolKey {
+                currency0: Address::ZERO,
+                currency1: Address::from([1u8; 20]),
+                fee: 10_000,
+                tick_spacing: 60,
+                hooks: Address::ZERO,
+            },
+            hook_flags: 0,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: HashMap::new(),
+            update_block: 0,
+            coverage: PoolTickCoverage::Sparse,
+        };
+
+        // Twin pools: A updated via the family dispatcher, B via the
+        // dedicated V4 path (`apply_v4_swap`). Both start identical.
+        let mut core_a = BotState::new();
+        let id_a = core_a
+            .register_v4_pool(&make_params())
+            .expect("V4 pool A registers");
+        let mut core_b = BotState::new();
+        let id_b = core_b
+            .register_v4_pool(&make_params())
+            .expect("V4 pool B registers");
+
+        // Before the fix, this call was a silent no-op on A (routed to the
+        // V3-only method). Assert it now applies.
+        let _ = core_a.apply_swap_by_pool_id(
+            id_a,
+            U256::from(2u128) << 96,
+            2_000_000,
+            -100,
+            block_b,
+            &[],
+        );
+        let s_a = core_a.get_v4_pool(id_a).expect("V4 pool A registered");
+        assert_eq!(s_a.sqrt_price_x96, U256::from(2u128) << 96);
+        assert_eq!(s_a.liquidity, 2_000_000);
+        assert_eq!(s_a.tick, -100);
+        assert_eq!(s_a.update_block, block_b);
+        assert_eq!(
+            s_a.journal.len(),
+            1,
+            "the dispatcher must journal a scalar delta like apply_v4_swap"
+        );
+
+        // AC parity: same scalar inputs via `apply_v4_swap` produce identical
+        // post-state. The dispatcher's V4 branch mirrors `apply_v4_swap`'s
+        // body (same tick_priors=[], same journal shape).
+        let _ = core_b.apply_v4_swap(
+            &V4SwapUpdate {
+                pool_manager,
+                pool_id: pool_id_bytes,
+                sqrt_price_x96: U256::from(2u128) << 96,
+                liquidity: 2_000_000,
+                tick: -100,
+                tick_priors: Vec::new(),
+            },
+            block_b,
+        );
+        let s_b = core_b.get_v4_pool(id_b).expect("V4 pool B registered");
+        assert_eq!(s_b.sqrt_price_x96, s_a.sqrt_price_x96);
+        assert_eq!(s_b.liquidity, s_a.liquidity);
+        assert_eq!(s_b.tick, s_a.tick);
+        assert_eq!(s_b.update_block, s_a.update_block);
+        assert_eq!(s_b.journal.len(), s_a.journal.len());
+    }
+
+    /// Regression (RAJ3PP, V4 `apply_liquidity_update` half): the liquidity
+    /// update previously routed V4 pools into `apply_v3_liquidity_update_by_pool
+    /// _id` (V3-only, no-op on V4). The family dispatcher must apply a V4
+    /// `ModifyLiquidity` to the tick range and journal it, matching
+    /// `apply_v4_liquidity_update` on the same inputs.
+    #[test]
+    fn apply_liquidity_update_by_pool_id_routes_to_v4_and_applies_ticks() {
+        use crate::bot_core::{RegisterV4PoolParams, TickInfo, V4PoolKey};
+        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+        use alloy::primitives::{I256, U128};
+
+        let pool_manager = Address::from([0x55u8; 20]);
+        let pool_id_bytes: crate::bot_core::v4_swap_decoder::PoolId = [0x77u8; 32];
+        let block_b = 5u64;
+
+        // Pre-seed tick 60 (gross=100, net=+100); tick 120 absent.
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            60,
+            TickInfo {
+                liquidity_gross: U128::from(100),
+                liquidity_net: I256::try_from(100i128).unwrap(),
+            },
+        );
+        let params = RegisterV4PoolParams {
+            pool_manager,
+            pool_id: pool_id_bytes,
+            pool_key: V4PoolKey {
+                currency0: Address::ZERO,
+                currency1: Address::from([1u8; 20]),
+                fee: 10_000,
+                tick_spacing: 60,
+                hooks: Address::ZERO,
+            },
+            hook_flags: 0,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data,
+            update_block: 0,
+            coverage: PoolTickCoverage::Sparse,
+        };
+
+        // Twin pools: A via the dispatcher, B via apply_v4_liquidity_update.
+        let mut core_a = BotState::new();
+        let id_a = core_a.register_v4_pool(&params).expect("V4 A registers");
+        let mut core_b = BotState::new();
+        let id_b = core_b.register_v4_pool(&params).expect("V4 B registers");
+
+        // Before the fix this no-op'd on A. Assert it now applies.
+        assert_eq!(
+            core_a.apply_liquidity_update_by_pool_id(id_a, 60, 120, 500, block_b),
+            Some(id_a),
+            "dispatcher must report an applied V4 liquidity update"
+        );
+        let s_a = core_a.get_v4_pool(id_a).expect("registered A");
+        assert_eq!(s_a.update_block, block_b);
+        assert_eq!(s_a.journal.len(), 1);
+        assert_eq!(
+            s_a.tick_data.get(&60).expect("t60").liquidity_gross,
+            U128::from(600),
+            "tick 60 gross += delta (ModifyLiquidity) via the dispatcher"
+        );
+        assert!(s_a.tick_data.contains_key(&120), "tick 120 initialized");
+        // slot0 scalars unchanged (tick-only event per ADR-004).
+        assert_eq!(s_a.sqrt_price_x96, U256::from(1u128) << 96);
+
+        // Parity: direct apply_v4_liquidity_update on B produces the same state.
+        assert_eq!(
+            core_b.apply_v4_liquidity_update(
+                pool_manager,
+                pool_id_bytes,
+                60,
+                120,
+                I256::try_from(500i128).unwrap(),
+                block_b
+            ),
+            Some(id_b)
+        );
+        let s_b = core_b.get_v4_pool(id_b).expect("registered B");
+        assert_eq!(
+            s_b.tick_data.get(&60).expect("t60").liquidity_gross,
+            s_a.tick_data.get(&60).expect("t60").liquidity_gross
+        );
+        assert_eq!(s_b.journal.len(), s_a.journal.len());
+        assert_eq!(s_b.update_block, s_a.update_block);
     }
 }
