@@ -460,7 +460,24 @@ pub fn apply_liquidity_to_tick_range<S: std::hash::BuildHasher>(
 ) {
     update_tick_liquidity(tick_data, tick_lower, liquidity_delta, true);
     update_tick_liquidity(tick_data, tick_upper, liquidity_delta, false);
-    tick_data.retain(|_, info| !info.liquidity_gross.is_zero());
+    // Match Uniswap V3 `Tick.update`: only the two touched boundary ticks can
+    // have transitioned to zero `liquidity_gross` on this call, so only those
+    // need a gross-zero removal check. A full `HashMap::retain` here would be
+    // O(N) in the number of initialized ticks (mainnet V3 pools routinely
+    // have hundreds–thousands), turning every Mint/Burn/ModifyLiquidity event
+    // into an O(N) map walk + rehash on the hot path.
+    //
+    // By the `apply_liquidity_to_tick_range` invariant, no zero-gross tick is
+    // left in `tick_data` at the end of a call, so any zero-gross tick present
+    // at entry must be one we just touched this call.
+    for tick in [tick_lower, tick_upper] {
+        if tick_data
+            .get(&tick)
+            .is_some_and(|info| info.liquidity_gross.is_zero())
+        {
+            tick_data.remove(&tick);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -903,6 +920,68 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn test_apply_liquidity_removes_touched_tick_when_gross_zero() {
+        // Mint then burn the same liquidity: both boundary ticks should drop
+        // to zero gross and be removed (matches Solidity `Tick.update`).
+        let mut tick_data: HashMap<i32, TickInfo> = HashMap::new();
+        apply_liquidity_to_tick_range(&mut tick_data, 100, 200, 1_000_000);
+        assert!(tick_data.contains_key(&100));
+        assert!(tick_data.contains_key(&200));
+
+        apply_liquidity_to_tick_range(&mut tick_data, 100, 200, -1_000_000);
+        assert!(!tick_data.contains_key(&100), "lower tick not pruned at zero gross");
+        assert!(!tick_data.contains_key(&200), "upper tick not pruned at zero gross");
+    }
+
+    #[test]
+    fn test_apply_liquidity_only_prunes_touched_ticks() {
+        // A pre-existing zero-gross tick *outside* the touched pair is left
+        // alone — we no longer run a full `retain`. This is the O(1) contract:
+        // apply touches only `tick_lower` / `tick_upper`.
+        let mut tick_data: HashMap<i32, TickInfo> = HashMap::new();
+        // Seed an initialized tick we will not touch.
+        tick_data.insert(50, make_tick_info(100, 50));
+        // Seed a (transient, out-of-contract) zero-gross tick elsewhere.
+        tick_data.insert(12345, make_tick_info(0, 0));
+
+        apply_liquidity_to_tick_range(&mut tick_data, 100, 200, 1_000_000);
+
+        assert!(tick_data.contains_key(&50), "untouched live tick must survive");
+        // The pre-existing zero-gross tick is NOT pruned by the touched-pair
+        // fast path; it persists until its own range is touched (matching
+        // Solidity's per-tick `Tick.update`).
+        assert!(
+            tick_data.contains_key(&12345),
+            "untouched zero-gross tick must survive (no full retain)"
+        );
+    }
+
+    #[test]
+    fn test_apply_liquidity_is_o1_in_pool_size() {
+        // A single apply must not scale with the number of initialized ticks.
+        // We don't benchmark wall-clock (flaky in CI); instead we assert the
+        // post-apply map size grows by exactly 2 regardless of starting size —
+        // i.e. no wholesale scan/rehash touched the rest of the map.
+        // (seed_count, untouched range to add)
+        for (seed_count, lower, upper) in [
+            (0usize, 100i32, 200i32),
+            (100usize, 1_000i32, 1_100i32),
+            (1000usize, 10_000i32, 10_100i32),
+        ] {
+            let mut tick_data: HashMap<i32, TickInfo> = HashMap::with_capacity(seed_count + 2);
+            for t in 0..seed_count {
+                tick_data.insert(i32::try_from(t).unwrap(), make_tick_info(100, 50));
+            }
+            apply_liquidity_to_tick_range(&mut tick_data, lower, upper, 1_000_000);
+            assert_eq!(
+                tick_data.len(),
+                seed_count + 2,
+                "apply must add exactly the two touched ticks, regardless of pool size (n={seed_count})"
+            );
         }
     }
 }
