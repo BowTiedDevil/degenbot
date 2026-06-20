@@ -26,6 +26,25 @@ use std::collections::VecDeque;
 pub trait BlockDelta {
     /// The block number this delta was recorded at.
     fn block(&self) -> u64;
+
+    /// Coalesce this delta with the immediately-previous same-block delta
+    /// (`previous` was pushed first → it is the EARLIER event in the block).
+    ///
+    /// Called from `push_delta` when a new delta shares the newest delta's
+    /// block, *before* the previous delta is popped. The default impl is a
+    /// no-op: the new delta wholesale-replaces the previous. That is correct
+    /// for **full-state** delta stores (V2), whose restore reads the
+    /// *surviving* delta's `*_after` (the delta below the target), so
+    /// collapsing to one entry per block loses nothing.
+    ///
+    /// **Partial**-delta stores (V3/V4) must override: each delta carries
+    /// only its own "before" priors, so a wholesale replace discards the
+    /// earliest same-block delta's priors — on `restore_before_block(B)` the
+    /// single popped block-B delta then returns post-first-Swap scalars
+    /// instead of the true pre-block state (F7HX73). The override merges the
+    /// previous delta's earliest pre-block priors into `self` so they
+    /// survive the single-delta-per-block invariant.
+    fn coalesce_with_previous(&mut self, _previous: &Self) {}
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +169,46 @@ impl BlockDelta for V3BlockDelta {
     fn block(&self) -> u64 {
         self.block
     }
+
+    /// Merge the previous same-block delta's priors into `self` (F7HX73).
+    ///
+    /// `previous` is the EARLIER event (pushed first); `self` is the newer.
+    /// Both are partial deltas carrying only their own "before" priors. The
+    /// coalesced delta must carry the **earliest** pre-block priors so that
+    /// `restore_before_block(B)` (which pops the single block-B delta)
+    /// returns the true pre-block state, not post-first-Swap.
+    ///
+    /// - `scalar_priors`: the earliest `Some` wins. `previous` is earlier,
+    ///   so if it recorded a scalar change (`Some`), its priors ARE the
+    ///   pre-block scalar state and override `self`'s. If `previous` was
+    ///   tick-only (`None`), `self`'s priors (the earliest scalar change so
+    ///   far) stand. If both are `None` (all tick-only), stays `None`.
+    /// - `tick_priors`: accumulate, **oldest-wins** de-dupe. `previous`'s
+    ///   prior for a tick is the pre-block tick state (the value before the
+    ///   earliest same-block mutation); `self`'s is a mid-block value. So
+    ///   for a tick modified by both, `previous` wins — overwrite `self`'s
+    ///   entry with `previous`'s. Ticks only in one delta are kept as-is.
+    fn coalesce_with_previous(&mut self, previous: &Self) {
+        // scalar_priors: earliest Some wins (previous if it has Some).
+        if previous.scalar_priors.is_some() {
+            self.scalar_priors = previous.scalar_priors;
+        }
+
+        // tick_priors: oldest-wins dedupe. Index self by tick, then overwrite
+        // with previous's priors (previous is older → its prior is pre-block).
+        let mut merged: std::collections::HashMap<i32, TickBefore> =
+            std::collections::HashMap::with_capacity(
+                self.tick_priors.len() + previous.tick_priors.len(),
+            );
+        for (tick, info) in &self.tick_priors {
+            merged.insert(*tick, info.clone());
+        }
+        for (tick, info) in &previous.tick_priors {
+            // previous (older) overwrites self for duplicate ticks.
+            merged.insert(*tick, info.clone());
+        }
+        self.tick_priors = merged.into_iter().collect();
+    }
 }
 
 /// "Before" values for a single tick that was modified during a block.
@@ -266,12 +325,19 @@ impl<D: BlockDelta> ReorgJournal<D> {
     ///
     /// Returns `true` if the delta was appended (new or same-block replacement).
     /// Returns `false` if the delta is older than the newest delta.
-    pub fn push_delta(&mut self, delta: D) -> bool {
+    pub fn push_delta(&mut self, mut delta: D) -> bool {
         if let Some(newest) = self.deltas.back() {
             if delta.block() < newest.block() {
                 return false;
             }
             if delta.block() == newest.block() {
+                // F7HX73: before discarding the previous same-block delta,
+                // let the delta merge the previous's earliest pre-block
+                // priors into itself. V2 (full-state deltas) returns the
+                // previous's `*_after` on restore, so the default no-op
+                // (wholesale replace) is correct; V3/V4 (partial deltas)
+                // override to preserve the earliest scalar/tick priors.
+                delta.coalesce_with_previous(newest);
                 self.deltas.pop_back();
             }
         }
@@ -965,6 +1031,134 @@ mod v3_delta_priors_tests {
         );
         assert_eq!(result.block, 12, "no-op: block is the newest delta's block");
         assert_eq!(j.len(), 3, "no-op: nothing popped");
+    }
+
+    /// F7HX73: V3 same-block coalesce preserves the EARLIEST pre-block scalar
+    /// priors. Pre-fix `push_delta` wholesale-replaced the first Swap, so the
+    /// recorded `scalar_priors` became post-first-Swap; `restore_before_block`
+    /// then returned post-first-Swap instead of pre-block.
+    #[test]
+    fn push_delta_same_block_coalesces_keeping_earliest_scalar_priors() {
+        let pre_b = ScalarPriors {
+            sqrt_price_x96_before: U256::from(100u64),
+            liquidity_before: 10,
+            tick_before: 0,
+        };
+        let post_first = ScalarPriors {
+            sqrt_price_x96_before: U256::from(200u64),
+            liquidity_before: 20,
+            tick_before: 5,
+        };
+        let mut j = ReorgJournal::<V3BlockDelta>::new(8);
+        j.push_delta(v3_delta(9, Some(pre_b)));
+        // Same-block second Swap — coalesce must keep `pre_b` (earliest).
+        assert!(j.push_delta(v3_delta(9, Some(post_first))));
+        assert_eq!(j.len(), 1, "same-block V3 deltas coalesce to one entry");
+        assert_eq!(
+            j.deltas[0].scalar_priors,
+            Some(pre_b),
+            "coalesced scalar_priors is the earliest (pre-block) state, not post-first-Swap"
+        );
+    }
+
+    /// F7HX73: the earliest `Some` `scalar_priors` survives regardless of order
+    /// (tick-only `None` never clobbers a `Some`; a `Some` followed by
+    /// tick-only keeps the `Some`).
+    #[test]
+    fn push_delta_same_block_coalesce_scalar_priors_earliest_some_wins() {
+        let s_pre = ScalarPriors {
+            sqrt_price_x96_before: U256::from(111u64),
+            liquidity_before: 11,
+            tick_before: 1,
+        };
+        // tick-only(None) then scalar(Some): earliest Some wins.
+        let mut j = ReorgJournal::<V3BlockDelta>::new(8);
+        j.push_delta(v3_delta(7, None));
+        j.push_delta(v3_delta(7, Some(s_pre)));
+        assert_eq!(
+            j.deltas[0].scalar_priors,
+            Some(s_pre),
+            "tick-only then scalar: earliest Some wins"
+        );
+        // scalar(Some) then tick-only(None): Some survives (None must not overwrite).
+        let mut j2 = ReorgJournal::<V3BlockDelta>::new(8);
+        j2.push_delta(v3_delta(7, Some(s_pre)));
+        j2.push_delta(v3_delta(7, None));
+        assert_eq!(
+            j2.deltas[0].scalar_priors,
+            Some(s_pre),
+            "scalar then tick-only: earliest Some survives, not clobbered by None"
+        );
+    }
+
+    /// F7HX73: same-block `tick_priors` coalesce accumulates with
+    /// oldest-wins de-dupe — a tick modified by both deltas keeps the EARLIER
+    /// (previous) delta's prior (the pre-block tick state).
+    #[test]
+    fn push_delta_same_block_coalesces_tick_priors_oldest_wins() {
+        let scalars = || ScalarPriors {
+            sqrt_price_x96_before: U256::from(1u64),
+            liquidity_before: 1,
+            tick_before: 0,
+        };
+        // First delta: tick 60 prior = pre-block gross 100.
+        let first = V3BlockDelta {
+            block: 9,
+            scalar_priors: Some(scalars()),
+            tick_priors: vec![(
+                60,
+                TickBefore {
+                    liquidity_gross_before: Some(U128::from(100)),
+                    liquidity_net_before: I256::try_from(100i128).unwrap(),
+                },
+            )],
+        };
+        // Second same-block delta: tick 60 prior = mid-block gross 500, plus
+        // tick 120 (newly initialized).
+        let second = V3BlockDelta {
+            block: 9,
+            scalar_priors: Some(ScalarPriors {
+                sqrt_price_x96_before: U256::from(2u64),
+                liquidity_before: 2,
+                tick_before: 2,
+            }),
+            tick_priors: vec![
+                (
+                    60,
+                    TickBefore {
+                        liquidity_gross_before: Some(U128::from(500)),
+                        liquidity_net_before: I256::try_from(500i128).unwrap(),
+                    },
+                ),
+                (
+                    120,
+                    TickBefore {
+                        liquidity_gross_before: None,
+                        liquidity_net_before: I256::ZERO,
+                    },
+                ),
+            ],
+        };
+        let mut j = ReorgJournal::<V3BlockDelta>::new(8);
+        j.push_delta(first);
+        j.push_delta(second);
+        assert_eq!(j.len(), 1);
+        assert_eq!(j.deltas[0].scalar_priors, Some(scalars()));
+        let by_tick: std::collections::HashMap<i32, &TickBefore> = j.deltas[0]
+            .tick_priors
+            .iter()
+            .map(|(t, b)| (*t, b))
+            .collect();
+        assert_eq!(by_tick.len(), 2, "both distinct ticks kept");
+        assert_eq!(
+            by_tick[&60].liquidity_gross_before,
+            Some(U128::from(100)),
+            "tick 60 prior is the earliest (pre-block) value, oldest-wins"
+        );
+        assert!(
+            by_tick.contains_key(&120),
+            "tick 120 (only in second delta) carried through"
+        );
     }
 }
 
