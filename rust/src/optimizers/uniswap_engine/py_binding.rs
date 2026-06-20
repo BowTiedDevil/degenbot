@@ -45,16 +45,17 @@ use super::{
 // - `VerificationMismatchError`: the engine's tick data does NOT match
 //   on-chain. Fatal — the bot must shut down rather than trade on stale data.
 // - `VerificationRpcError`: the verification RPC could not be performed
-//   (provider construction failure, etc.). Also not safe to silently skip;
-//   surfaced as a distinct type so the caller can choose retry/backoff vs
-//   abort without re-introducing the swallowing bug.
+//   (provider construction failure OR a per-call RPC transport failure —
+//   VP42BP). Not safe to silently skip; surfaced as a distinct type so the
+//   caller can choose retry/backoff vs abort without re-introducing the
+//   swallowing bug.
 //
-// NOTE: per-call RPC transport failures inside `liquidity_verifier` are
-// currently folded into `VerifyError::Snapshot` (hence
-// `VerificationMismatchError`) — see follow-up task for separating those into
-// a dedicated `VerifyError::Rpc` variant. The distinction here covers the
-// `VerifyError::Provider` (provider-construction) category the seam already
-// knows about.
+// VP42BP: per-call RPC transport failures inside `liquidity_verifier` are now
+// `LiquidityVerifyError::Rpc` (VP42BP), mapped here to `VerifyError::Rpc` →
+// `VerificationRpcError` (NOT flattened to `Snapshot`). The distinction here
+// covers the `VerifyError::Provider` (provider-construction) category AND the
+// `VerifyError::Rpc` (per-call transport) category the seam now routes to the
+// retryable `VerificationRpcError`.
 create_exception!(
     degenbot_rs,
     VerificationMismatchError,
@@ -127,9 +128,12 @@ fn map_register_v4_err(err: crate::bot_core::RegisterV4PoolError) -> pyo3::PyErr
 /// [`Result<(), VerifyError>`] → typed Python exception seam for the extracted
 /// snapshot/verify module (ADR-006 slice 5b + slice-5 candidate-2).
 ///
-/// Distinguishes the two failure categories by *type* (TODO-53b7453b):
+/// Distinguishes the failure categories by *type* (TODO-53b7453b + VP42BP):
 /// - `Snapshot` → [`VerificationMismatchError`] (genuine mismatch — fatal)
 /// - `Provider` → [`VerificationRpcError`] (transport/provider-construction)
+/// - `Rpc` → [`VerificationRpcError`] (per-call RPC transport — retryable,
+///   VP42BP; folded into the same Python type as `Provider` so a broad
+///   retry-on-`VerificationRpcError` policy catches both transport classes)
 /// - `NoSnapshotStream` → `PyRuntimeError` (programmer error: no snapshot
 ///   stream in progress — distinct from verification failure categories)
 fn map_verify_err(res: Result<(), VerifyError>) -> PyResult<()> {
@@ -138,7 +142,7 @@ fn map_verify_err(res: Result<(), VerifyError>) -> PyResult<()> {
             pyo3::exceptions::PyRuntimeError::new_err("No snapshot stream in progress.")
         }
         VerifyError::Snapshot(msg) => VerificationMismatchError::new_err(msg),
-        VerifyError::Provider(msg) => VerificationRpcError::new_err(msg),
+        VerifyError::Provider(msg) | VerifyError::Rpc(msg) => VerificationRpcError::new_err(msg),
     })
 }
 
@@ -204,6 +208,37 @@ impl EngineVerifyRpc<'_> {
     }
 }
 
+/// Map a [`liquidity_verifier::LiquidityVerifyError`] (VP42BP) to the pure
+/// [`VerifyError`] the orchestrator propagates, preserving the
+/// mismatch-vs-RPC-transport distinction:
+/// - `Mismatch` → `VerifyError::Snapshot` (genuine on-chain divergence —
+///   fatal; surfaces as `VerificationMismatchError` at the seam).
+/// - `Rpc` → `VerifyError::Rpc` (per-call transport failure — transient;
+///   surfaces as `VerificationRpcError`). NOT flattened to `Snapshot`, so the
+///   seam routes transport failures to the retryable type.
+///
+/// `label` is the pool label (V3 address / V4 `pool_id` hex), `phase` is
+/// `"snapshot"` or `"backfill"`. The verifier's own message already carries
+/// pool+block+call-site detail, so this wraps it with the phase prefix
+/// (mirroring the pre-VP42BP message shape).
+fn map_liquidity_verify_error(
+    e: crate::bot_core::liquidity_verifier::LiquidityVerifyError,
+    label: &str,
+    phase: &str,
+    block: u64,
+) -> VerifyError {
+    match e {
+        crate::bot_core::liquidity_verifier::LiquidityVerifyError::Mismatch(m) => {
+            VerifyError::Snapshot(format!(
+                "{label} at {phase} block {block}: tick data mismatch: {m}"
+            ))
+        }
+        crate::bot_core::liquidity_verifier::LiquidityVerifyError::Rpc { message } => {
+            VerifyError::Rpc(format!("{label} at {phase} block {block}: {message}"))
+        }
+    }
+}
+
 impl VerifyRpc for EngineVerifyRpc<'_> {
     fn enabled(&self) -> bool {
         self.rpc_url().is_some()
@@ -226,10 +261,8 @@ impl VerifyRpc for EngineVerifyRpc<'_> {
                 block,
             )
             .await
-            .map_err(|mismatch| {
-                VerifyError::Snapshot(format!(
-                    "V3 pool {addr_str} at snapshot block {block}: tick data mismatch: {mismatch}"
-                ))
+            .map_err(|e| {
+                map_liquidity_verify_error(e, &format!("V3 pool {addr_str}"), "snapshot", block)
             })
         })
     }
@@ -256,10 +289,8 @@ impl VerifyRpc for EngineVerifyRpc<'_> {
                 Some(block),
             )
             .await
-            .map_err(|mismatch| {
-                VerifyError::Snapshot(format!(
-                    "V3 pool {label} at backfill block {block}: tick data mismatch: {mismatch}"
-                ))
+            .map_err(|e| {
+                map_liquidity_verify_error(e, &format!("V3 pool {label}"), "backfill", block)
             })
         })
     }
@@ -279,10 +310,8 @@ impl VerifyRpc for EngineVerifyRpc<'_> {
                 &provider, state_view, pool_id, tick_data, block,
             )
             .await
-            .map_err(|mismatch| {
-                VerifyError::Snapshot(format!(
-                    "V4 pool {pool_id_hex} at snapshot block {block}: tick data mismatch: {mismatch}"
-                ))
+            .map_err(|e| {
+                map_liquidity_verify_error(e, &format!("V4 pool {pool_id_hex}"), "snapshot", block)
             })
         })
     }
@@ -302,13 +331,14 @@ impl VerifyRpc for EngineVerifyRpc<'_> {
         let runtime = crate::runtime::get_runtime();
         runtime.block_on(async {
             crate::bot_core::liquidity_verifier::verify_v4_pools(
-                &provider, state_view, pools, Some(block),
+                &provider,
+                state_view,
+                pools,
+                Some(block),
             )
             .await
-            .map_err(|mismatch| {
-                VerifyError::Snapshot(format!(
-                    "V4 pool {pool_id_hex} at backfill block {block}: tick data mismatch: {mismatch}"
-                ))
+            .map_err(|e| {
+                map_liquidity_verify_error(e, &format!("V4 pool {pool_id_hex}"), "backfill", block)
             })
         })
     }
@@ -2882,4 +2912,98 @@ fn hop_info_to_pydict<'py>(py: Python<'py>, hop: &HopInfo) -> PyResult<Bound<'py
         hop_dict.set_item("tick_spacing", ts)?;
     }
     Ok(hop_dict)
+}
+
+#[cfg(test)]
+mod tests {
+    //! VP42BP: pin the `LiquidityVerifyError` → `VerifyError` → Python
+    //! exception-type chain so a per-call RPC transport failure surfaces as
+    //! `VerificationRpcError` (retryable), distinct from a genuine on-chain
+    //! mismatch which surfaces as `VerificationMismatchError` (fatal). The AC
+    //! test ("a mock-provider verifier that returns a transport error surfaces
+    //! `VerificationRpcError`") is exercised at the mapping seam — the
+    //! verifier's RPC-failure branch (in `liquidity_verifier`) feeds a
+    //! `LiquidityVerifyError::Rpc` through `map_liquidity_verify_error` and
+    //! `map_verify_err` to a typed Python exception.
+
+    use super::*;
+    use crate::bot_core::liquidity_verifier::{LiquidityVerifyError, VerificationMismatch};
+
+    /// `map_liquidity_verify_error` preserves the distinction: `Mismatch` →
+    /// `Snapshot`, `Rpc` → `Rpc` (NOT flattened to `Snapshot`).
+    #[test]
+    fn map_liquidity_verify_error_routes_rpc_separately_from_mismatch() {
+        // Transport failure → Rpc variant, with phase prefix + the verifier's
+        // per-call message.
+        let rpc_err = LiquidityVerifyError::Rpc {
+            message: "tickBitmap(0) RPC call failed: timeout".to_string(),
+        };
+        let mapped = map_liquidity_verify_error(rpc_err, "V3 pool 0x..", "snapshot", 10);
+        assert!(
+            matches!(mapped, VerifyError::Rpc(m) if m.contains("tickBitmap(0) RPC call failed")
+                && m.contains("snapshot block 10")
+                && m.contains("V3 pool 0x..")),
+            "per-call RPC transport failure must map to VerifyError::Rpc, not Snapshot"
+        );
+
+        // Genuine mismatch → Snapshot variant.
+        let mismatch = LiquidityVerifyError::Mismatch(VerificationMismatch {
+            message: "tick 5 lg mismatch".to_string(),
+        });
+        let mapped = map_liquidity_verify_error(mismatch, "V4 pool 0x..", "backfill", 20);
+        assert!(
+            matches!(mapped, VerifyError::Snapshot(m) if m.contains("tick 5 lg mismatch")
+                && m.contains("backfill block 20")
+                && m.contains("V4 pool 0x..")),
+            "genuine on-chain mismatch must map to VerifyError::Snapshot"
+        );
+    }
+
+    /// `map_verify_err` (the `PyO3` seam) routes `VerifyError::Rpc` →
+    /// `VerificationRpcError` and `VerifyError::Snapshot` →
+    /// `VerificationMismatchError` (distinct Python types). Requires the GIL to
+    /// construct the Python exceptions.
+    #[test]
+    fn map_verify_err_routes_rpc_to_verification_rpc_error() {
+        pyo3::Python::attach(|py| {
+            // RPC transport failure → VerificationRpcError (retryable).
+            let res: PyResult<()> = map_verify_err(Err(VerifyError::Rpc(
+                "tickBitmap(0) RPC call failed: timeout".to_string(),
+            )));
+            let err = res.expect_err("Rpc must surface as a PyErr");
+            assert!(
+                err.is_instance_of::<VerificationRpcError>(py),
+                "VerifyError::Rpc must surface as VerificationRpcError (retryable), not VerificationMismatchError"
+            );
+
+            // Genuine mismatch → VerificationMismatchError (fatal).
+            let res: PyResult<()> = map_verify_err(Err(VerifyError::Snapshot(
+                "tick 5 lg mismatch".to_string(),
+            )));
+            let err = res.expect_err("Snapshot must surface as a PyErr");
+            assert!(
+                err.is_instance_of::<VerificationMismatchError>(py),
+                "VerifyError::Snapshot must surface as VerificationMismatchError (fatal)"
+            );
+            // Cross-check the two are distinct types.
+            assert!(
+                !err.is_instance_of::<VerificationRpcError>(py),
+                "genuine mismatch is NOT an Rpc error (distinct types)"
+            );
+
+            // Provider construction → VerificationRpcError (unchanged, now
+            // shares the arm with Rpc).
+            let res: PyResult<()> = map_verify_err(Err(VerifyError::Provider(
+                "failed to create provider: connection refused".to_string(),
+            )));
+            let err = res.expect_err("Provider must surface as a PyErr");
+            assert!(
+                err.is_instance_of::<VerificationRpcError>(py),
+                "VerifyError::Provider still surfaces as VerificationRpcError"
+            );
+
+            Ok::<_, pyo3::PyErr>(())
+        })
+        .expect("gil test must not panic");
+    }
 }

@@ -49,6 +49,53 @@ impl std::fmt::Display for VerificationMismatch {
 
 impl std::error::Error for VerificationMismatch {}
 
+/// Outcome of a liquidity-map verification call (VP42BP).
+///
+/// Distinguishes a genuine on-chain **mismatch** (fatal — the engine's
+/// in-memory tick data disagrees with the chain; the bot must not operate
+/// with stale data) from a per-call **RPC transport failure** (transient —
+/// the `eth_call` / `getTickBitmap` / `getTickLiquidity` read could not
+/// reach the node or decode; a retry/backoff candidate, NOT evidence of a
+/// mismatch).
+///
+/// Pre-VP42BP every verification function returned `Result<_,
+/// VerificationMismatch>`, folding RPC transport failures into a
+/// `VerificationMismatch` whose message said "... RPC call failed: {e}". The
+/// `EngineVerifyRpc` seam then mapped all `VerificationMismatch` →
+/// `VerifyError::Snapshot` → `VerificationMismatchError`, conflating a
+/// transient transport error (potentially retryable) with a genuine mismatch
+/// (always fatal). This enum makes the two categories distinguishable so the
+/// seam can route transport failures to `VerificationRpcError` (retryable)
+/// and genuine mismatches to `VerificationMismatchError` (fatal).
+#[derive(Debug)]
+pub enum LiquidityVerifyError {
+    /// Genuine on-chain tick-data mismatch (bitmap divergence, `liquidityGross`
+    /// / `liquidityNet` disagreement). Fatal.
+    Mismatch(VerificationMismatch),
+    /// Per-call RPC transport failure (the `eth_call` couldn't reach the node
+    /// or its response was undecodable). Transient. The `message` carries the
+    /// pool label, block tag, call site (e.g. `tickBitmap(word)`), and the
+    /// underlying transport error.
+    Rpc { message: String },
+}
+
+impl std::fmt::Display for LiquidityVerifyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Mismatch(m) => write!(f, "{m}"),
+            Self::Rpc { message } => write!(f, "{message}"),
+        }
+    }
+}
+
+impl std::error::Error for LiquidityVerifyError {}
+
+impl From<VerificationMismatch> for LiquidityVerifyError {
+    fn from(m: VerificationMismatch) -> Self {
+        Self::Mismatch(m)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // ABI selectors
 // ---------------------------------------------------------------------------
@@ -114,7 +161,7 @@ pub async fn verify_v3_liquidity_map<S: std::hash::BuildHasher>(
     pool_address: Address,
     tick_data: &HashMap<i32, crate::bot_core::TickInfo, S>,
     block_number: u64,
-) -> Result<(), VerificationMismatch> {
+) -> Result<(), LiquidityVerifyError> {
     for (&tick_idx, our_info) in tick_data {
         let our_gross = our_info.liquidity_gross.to::<u128>();
         let our_net: i128 = our_info.liquidity_net.try_into().unwrap_or_default();
@@ -123,11 +170,11 @@ pub async fn verify_v3_liquidity_map<S: std::hash::BuildHasher>(
             call_v3_ticks(provider, pool_address, tick_idx, Some(block_number)).await?;
 
         if our_gross != on_chain_gross || our_net != on_chain_net {
-            return Err(VerificationMismatch {
+            return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
                 message: format!(
                     "V3 pool {pool_address} at snapshot block {block_number}: tick {tick_idx} mismatch — snapshot: (lg={our_gross}, ln={our_net}), on-chain: (lg={on_chain_gross}, ln={on_chain_net})"
                 ),
-            });
+            }));
         }
     }
     Ok(())
@@ -148,7 +195,7 @@ pub async fn verify_v4_liquidity_map<S: std::hash::BuildHasher>(
     pool_id: [u8; 32],
     tick_data: &HashMap<i32, crate::bot_core::TickInfo, S>,
     block_number: u64,
-) -> Result<(), VerificationMismatch> {
+) -> Result<(), LiquidityVerifyError> {
     for (&tick_idx, our_info) in tick_data {
         let our_gross = our_info.liquidity_gross.to::<u128>();
         let our_net: i128 = our_info.liquidity_net.try_into().unwrap_or_default();
@@ -164,11 +211,11 @@ pub async fn verify_v4_liquidity_map<S: std::hash::BuildHasher>(
 
         if our_gross != on_chain_gross || our_net != on_chain_net {
             let pool_id_hex = crate::hex_utils::encode_hex(&pool_id);
-            return Err(VerificationMismatch {
+            return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
                 message: format!(
                     "V4 pool {pool_id_hex} at snapshot block {block_number}: tick {tick_idx} mismatch — snapshot: (lg={our_gross}, ln={our_net}), on-chain: (lg={on_chain_gross}, ln={on_chain_net})"
                 ),
-            });
+            }));
         }
     }
     Ok(())
@@ -191,7 +238,7 @@ pub async fn verify_v3_pools<S: std::hash::BuildHasher>(
     _tick_lens: Address, // Kept for API compatibility; not used
     pools: &HashMap<u64, V3PoolState, S>,
     block_number: Option<u64>,
-) -> Result<(), VerificationMismatch> {
+) -> Result<(), LiquidityVerifyError> {
     for pool in pools.values() {
         verify_v3_pool(provider, pool, block_number).await?;
     }
@@ -202,7 +249,7 @@ async fn verify_v3_pool<T: TickMap + ?Sized>(
     provider: &AlloyProvider,
     pool: &T,
     block_number: Option<u64>,
-) -> Result<(), VerificationMismatch> {
+) -> Result<(), LiquidityVerifyError> {
     // Read the tick bookkeeping map + immutable identification through the ADR-004
     // `TickMap` trait — the slot0 head scalars (`sqrt_price_x96`, `liquidity`)
     // are deliberately out of reach here. `active_tick()` is read-only (only
@@ -248,7 +295,7 @@ async fn verify_v3_pool<T: TickMap + ?Sized>(
         let result = provider
             .eth_call(&pool_addr, calldata, block_number)
             .await
-            .map_err(|e| VerificationMismatch {
+            .map_err(|e| LiquidityVerifyError::Rpc {
                 message: format!(
                     "V3 pool {pool_addr} {block_tag}: tickBitmap({word}) RPC call failed: {e}"
                 ),
@@ -281,18 +328,18 @@ async fn verify_v3_pool<T: TickMap + ?Sized>(
             call_v3_ticks(provider, pool_addr, tick_idx, block_number).await?;
 
         if our_gross != on_chain_gross {
-            return Err(VerificationMismatch {
+            return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
                 message: format!(
                     "V3 pool {pool_addr} {block_tag}: tick {tick_idx} liquidityGross mismatch — engine: {our_gross}, on-chain: {on_chain_gross}"
                 ),
-            });
+            }));
         }
         if our_net != on_chain_net {
-            return Err(VerificationMismatch {
+            return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
                 message: format!(
                     "V3 pool {pool_addr} {block_tag}: tick {tick_idx} liquidityNet mismatch — engine: {our_net}, on-chain: {on_chain_net}"
                 ),
-            });
+            }));
         }
 
         // Remove from on-chain set (we've verified this tick)
@@ -303,11 +350,11 @@ async fn verify_v3_pool<T: TickMap + ?Sized>(
     if let Some(&tick_idx) = on_chain_tick_indices.iter().next() {
         let (on_chain_gross, on_chain_net) =
             call_v3_ticks(provider, pool_addr, tick_idx, block_number).await?;
-        return Err(VerificationMismatch {
+        return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
             message: format!(
                 "V3 pool {pool_addr} {block_tag}: tick {tick_idx} exists on-chain (lg={on_chain_gross}, ln={on_chain_net}) but NOT in engine"
             ),
-        });
+        }));
     }
 
     Ok(())
@@ -319,7 +366,7 @@ async fn call_v3_ticks(
     pool_addr: Address,
     tick: i32,
     block_number: Option<u64>,
-) -> Result<(u128, i128), VerificationMismatch> {
+) -> Result<(u128, i128), LiquidityVerifyError> {
     let block_tag = match block_number {
         Some(b) => format!("block={b}"),
         None => "block=pending".to_string(),
@@ -332,19 +379,19 @@ async fn call_v3_ticks(
     let result = provider
         .eth_call(&pool_addr, calldata, block_number)
         .await
-        .map_err(|e| VerificationMismatch {
+        .map_err(|e| LiquidityVerifyError::Rpc {
             message: format!("V3 pool {pool_addr} {block_tag}: ticks({tick}) RPC call failed: {e}"),
         })?;
 
     // ticks() returns (uint128 liquidityGross, int128 liquidityNet, ...)
     // We only need the first two fields.
     if result.len() < 64 {
-        return Err(VerificationMismatch {
+        return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
             message: format!(
                 "V3 pool {pool_addr} {block_tag}: ticks({tick}) returned {} bytes, expected at least 64",
                 result.len()
             ),
-        });
+        }));
     }
 
     let lg = decode_uint128(&result[0..32]);
@@ -359,7 +406,7 @@ async fn call_state_view_tick_liquidity(
     pool_id: [u8; 32],
     tick: i32,
     block_number: Option<u64>,
-) -> Result<(u128, i128), VerificationMismatch> {
+) -> Result<(u128, i128), LiquidityVerifyError> {
     let pool_id_hex = crate::hex_utils::encode_hex(&pool_id);
     let block_tag = match block_number {
         Some(b) => format!("block={b}"),
@@ -377,19 +424,19 @@ async fn call_state_view_tick_liquidity(
     let result = provider
         .eth_call(&state_view, calldata, block_number)
         .await
-        .map_err(|e| VerificationMismatch {
+        .map_err(|e| LiquidityVerifyError::Rpc {
             message: format!(
                 "V4 pool 0x{pool_id_hex} {block_tag}: getTickLiquidity({tick}) RPC call failed: {e}"
             ),
         })?;
 
     if result.len() < 64 {
-        return Err(VerificationMismatch {
+        return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
             message: format!(
                 "V4 pool 0x{pool_id_hex} {block_tag}: getTickLiquidity({tick}) returned {} bytes, expected 64",
                 result.len()
             ),
-        });
+        }));
     }
 
     let lg = decode_uint128(&result[0..32]);
@@ -417,7 +464,7 @@ pub async fn verify_v4_pools<S: std::hash::BuildHasher>(
     state_view: Address,
     pools: &HashMap<u64, V4PoolState, S>,
     block_number: Option<u64>,
-) -> Result<(), VerificationMismatch> {
+) -> Result<(), LiquidityVerifyError> {
     // Deduplicate by pool_id — both forward and reverse orientations share the same
     // on-chain state, so we only need to verify each pool_id once.
     let mut seen_pool_ids: HashMap<[u8; 32], &V4PoolState> = HashMap::new();
@@ -438,7 +485,7 @@ async fn verify_v4_pool<T: TickMap + ?Sized>(
     pool_id: [u8; 32],
     pool: &T,
     block_number: Option<u64>,
-) -> Result<(), VerificationMismatch> {
+) -> Result<(), LiquidityVerifyError> {
     // Read the tick bookkeeping map + immutable identification through the ADR-004
     // `TickMap` trait — the slot0 head scalars are deliberately out of reach.
     // `pool_id` and `state_view` stay as separate args (V4-specific RPC concerns
@@ -506,36 +553,36 @@ async fn verify_v4_pool<T: TickMap + ?Sized>(
 
         if let Some(&(on_chain_gross, on_chain_net)) = on_chain_ticks.get(&tick_idx) {
             if our_gross != on_chain_gross {
-                return Err(VerificationMismatch {
+                return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
                     message: format!(
                         "V4 pool 0x{pool_id_hex} {block_tag}: tick {tick_idx} liquidityGross mismatch — engine: {our_gross}, on-chain: {on_chain_gross}"
                     ),
-                });
+                }));
             }
             if our_net != on_chain_net {
-                return Err(VerificationMismatch {
+                return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
                     message: format!(
                         "V4 pool 0x{pool_id_hex} {block_tag}: tick {tick_idx} liquidityNet mismatch — engine: {our_net}, on-chain: {on_chain_net}"
                     ),
-                });
+                }));
             }
         } else {
-            return Err(VerificationMismatch {
+            return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
                 message: format!(
                     "V4 pool 0x{pool_id_hex} {block_tag}: tick {tick_idx} exists in engine (lg={our_gross}, ln={our_net}) but NOT on-chain"
                 ),
-            });
+            }));
         }
     }
 
     // 3. Check for on-chain ticks we're missing
     for (&tick_idx, &(on_chain_gross, on_chain_net)) in &on_chain_ticks {
         if !tick_data.contains_key(&tick_idx) {
-            return Err(VerificationMismatch {
+            return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
                 message: format!(
                     "V4 pool 0x{pool_id_hex} {block_tag}: tick {tick_idx} exists on-chain (lg={on_chain_gross}, ln={on_chain_net}) but NOT in engine"
                 ),
-            });
+            }));
         }
     }
 
@@ -571,7 +618,7 @@ async fn fetch_v4_tick_bitmap(
     block_tag: &str,
     word: i16,
     block_number: Option<u64>,
-) -> Result<U256, VerificationMismatch> {
+) -> Result<U256, LiquidityVerifyError> {
     let bitmap_calldata = encode_calldata(
         STATE_VIEW_GET_TICK_BITMAP_SELECTOR,
         &[
@@ -583,7 +630,7 @@ async fn fetch_v4_tick_bitmap(
     let bitmap_result = provider
         .eth_call(&state_view, bitmap_calldata, block_number)
         .await
-        .map_err(|e| VerificationMismatch {
+        .map_err(|e| LiquidityVerifyError::Rpc {
             message: format!(
                 "V4 pool 0x{pool_id_hex} {block_tag}: getTickBitmap({word}) RPC call failed: {e}"
             ),
@@ -601,7 +648,7 @@ async fn fetch_v4_tick_liquidity(
     block_tag: &str,
     tick_i32: i32,
     block_number: Option<u64>,
-) -> Result<(u128, i128), VerificationMismatch> {
+) -> Result<(u128, i128), LiquidityVerifyError> {
     let tick_liq_calldata = encode_calldata(
         STATE_VIEW_GET_TICK_LIQUIDITY_SELECTOR,
         &[
@@ -613,19 +660,19 @@ async fn fetch_v4_tick_liquidity(
     let tick_liq_result = provider
         .eth_call(&state_view, tick_liq_calldata, block_number)
         .await
-        .map_err(|e| VerificationMismatch {
+        .map_err(|e| LiquidityVerifyError::Rpc {
             message: format!(
                 "V4 pool 0x{pool_id_hex} {block_tag}: getTickLiquidity({tick_i32}) RPC call failed: {e}"
             ),
         })?;
 
     if tick_liq_result.len() < 64 {
-        return Err(VerificationMismatch {
+        return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
             message: format!(
                 "V4 pool 0x{pool_id_hex} {block_tag}: getTickLiquidity({tick_i32}) returned {} bytes, expected 64",
                 tick_liq_result.len()
             ),
-        });
+        }));
     }
 
     let gross = decode_uint128(&tick_liq_result[0..32]);

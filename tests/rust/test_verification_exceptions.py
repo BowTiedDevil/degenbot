@@ -77,3 +77,33 @@ def test_both_exceptions_caught_by_runtime_error_handler() -> None:
             raise exc_type("boom")  # noqa: EM101, TRY301
         except RuntimeError as exc:  # noqa: PERF203
             assert isinstance(exc, exc_type)
+
+
+def test_rpc_transport_failure_message_is_not_a_mismatch() -> None:
+    """VP42BP: a per-call RPC transport failure surfaces as
+    ``VerificationRpcError`` — the type a retry/backoff policy would branch on
+    — NOT as ``VerificationMismatchError`` (the fatal mismatch type).
+
+    Pins the seam contract the Rust-side `LiquidityVerifyError::Rpc` →
+    `VerifyError::Rpc` → `VerificationRpcError` mapping now satisfies. The
+    Rust verifier's RPC-failure branches (``"... RPC call failed: ..."``)
+    previously folded into ``VerificationMismatch``, surfaced as
+    ``VerificationMismatchError``; they now surface as the retryable type.
+    """
+    transport_msg = (
+        "V3 pool 0x.. at snapshot block 1: "
+        "tickBitmap(0) RPC call failed: connection reset"
+    )
+    rpc_exc = degenbot_rs.VerificationRpcError(transport_msg)
+    mismatch_exc = degenbot_rs.VerificationMismatchError(
+        "V3 pool 0x.. at snapshot block 1: tick data mismatch"
+    )
+    # A transport failure raises the Rpc type, not the Mismatch type — the
+    # two are distinguishable by isinstance (the contract build_paths relies
+    # on, per VP42BP).
+    assert isinstance(rpc_exc, degenbot_rs.VerificationRpcError)
+    assert not isinstance(rpc_exc, degenbot_rs.VerificationMismatchError)
+    assert isinstance(mismatch_exc, degenbot_rs.VerificationMismatchError)
+    assert not isinstance(mismatch_exc, degenbot_rs.VerificationRpcError)
+    assert str(rpc_exc) == transport_msg
+

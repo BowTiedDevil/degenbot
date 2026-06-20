@@ -27,7 +27,18 @@ use crate::optimizers::uniswap_engine::{PoolTickCoverage, UniswapEngine};
 
 /// A verify-pipeline error — the non-pyo3 analogue of `PyRuntimeError`.
 ///
-/// `py_binding.rs` maps this to `pyo3::exceptions::PyRuntimeError` at the seam.
+/// `py_binding.rs` maps this to typed Python exceptions at the seam
+/// (`map_verify_err`):
+/// - `Snapshot` → `VerificationMismatchError` (genuine mismatch — fatal)
+/// - `Provider` → `VerificationRpcError` (verify-provider construction failure)
+/// - `Rpc` → `VerificationRpcError` (per-call RPC transport failure — VP42BP)
+/// - `NoSnapshotStream` → `PyRuntimeError` (programmer error)
+///
+/// `Rpc` and `Provider` both surface as `VerificationRpcError` but are kept
+/// distinct here so the *orchestrator* (`run_cl_verification`) preserves the
+/// per-call-transport category through the pure layer (a future retry/backoff
+/// policy can branch on it). The Python seam folds both into the same
+/// retryable exception type (VP42BP).
 #[derive(Debug)]
 pub(crate) enum VerifyError {
     /// `insert()` was called with no snapshot stream in progress.
@@ -38,6 +49,12 @@ pub(crate) enum VerifyError {
     Snapshot(String),
     /// A verify-provider construction failure (RPC init / connection error).
     Provider(String),
+    /// A per-call RPC transport failure (an `eth_call` / `getTickBitmap` /
+    /// `getTickLiquidity` read failed to reach the node). Transient — a
+    /// retry/backoff candidate, NOT a genuine on-chain mismatch. Distinct from
+    /// `Snapshot` (fatal) so the seam routes it to `VerificationRpcError`
+    /// instead of `VerificationMismatchError` (VP42BP).
+    Rpc(String),
 }
 
 /// The minimal on-chain RPC surface the two-phase CL verification needs
@@ -460,6 +477,7 @@ mod tests {
             VerifyError::NoSnapshotStream => VerifyError::NoSnapshotStream,
             VerifyError::Snapshot(m) => VerifyError::Snapshot(m.clone()),
             VerifyError::Provider(m) => VerifyError::Provider(m.clone()),
+            VerifyError::Rpc(m) => VerifyError::Rpc(m.clone()),
         }
     }
 
@@ -581,6 +599,61 @@ mod tests {
         let res = run_cl_verification(&rpc, Some(10), Some(20), snap, back);
         assert!(matches!(res, Err(VerifyError::Provider(_))));
         assert!(rpc.backfill_calls.lock().is_empty());
+    }
+
+    /// VP42BP: a per-call RPC transport failure from the snapshot phase
+    /// propagates as `VerifyError::Rpc` — NOT flattened to `Snapshot` (which
+    /// would conflate a transient transport error with a genuine mismatch and
+    /// surface as `VerificationMismatchError` at the Python seam). The
+    /// orchestrator must preserve the variant so `map_verify_err` can route it
+    /// to `VerificationRpcError` (retryable) distinct from
+    /// `VerificationMismatchError` (fatal).
+    #[test]
+    fn run_cl_verification_rpc_error_propagates_unflattened() {
+        let mut rpc = FakeVerifyRpc::new(true);
+        rpc.fail_snapshot = Some(VerifyError::Rpc(
+            "V3 pool 0x.. at snapshot block 10: tickBitmap(0) RPC call failed: timeout".to_string(),
+        ));
+
+        let snap =
+            |r: &FakeVerifyRpc, b: u64| r.verify_v3_snapshot(Address::ZERO, &HashMap::new(), b);
+        let back = |_: &FakeVerifyRpc, b: u64| {
+            panic!("backfill must not run after a snapshot RPC failure (block {b})")
+        };
+
+        let res = run_cl_verification(&rpc, Some(10), Some(20), snap, back);
+        assert!(
+            matches!(res, Err(VerifyError::Rpc(m)) if m.contains("RPC call failed")),
+            "per-call RPC transport failure must surface as VerifyError::Rpc, not Snapshot"
+        );
+        assert_eq!(*rpc.snapshot_calls.lock(), vec![10]);
+        assert!(
+            rpc.backfill_calls.lock().is_empty(),
+            "backfill skipped after snapshot RPC failure"
+        );
+    }
+
+    /// VP42BP: a per-call RPC transport failure from the backfill phase
+    /// propagates as `VerifyError::Rpc` (snapshot phase ran first + ok).
+    #[test]
+    fn run_cl_verification_backfill_rpc_error_propagates_unflattened() {
+        let mut rpc = FakeVerifyRpc::new(true);
+        rpc.fail_backfill = Some(VerifyError::Rpc(
+            "V3 pool 0x.. at backfill block 20: ticks(100) RPC call failed: connection reset"
+                .to_string(),
+        ));
+
+        let snap =
+            |r: &FakeVerifyRpc, b: u64| r.verify_v3_snapshot(Address::ZERO, &HashMap::new(), b);
+        let back = |r: &FakeVerifyRpc, b: u64| r.verify_v3_backfill(&HashMap::new(), b);
+
+        let res = run_cl_verification(&rpc, Some(10), Some(20), snap, back);
+        assert!(
+            matches!(res, Err(VerifyError::Rpc(m)) if m.contains("backfill block 20") && m.contains("RPC call failed")),
+            "backfill-phase RPC failure must surface as VerifyError::Rpc, not Snapshot"
+        );
+        assert_eq!(*rpc.snapshot_calls.lock(), vec![10]);
+        assert_eq!(*rpc.backfill_calls.lock(), vec![20]);
     }
 
     /// Missing snapshot block is a no-op for the snapshot phase but the
