@@ -55,7 +55,7 @@ pub struct PyAlloySubscription {
 #[pymethods]
 impl PyAlloySubscription {
     /// Return self as the async iterator.
-    const fn __aiter__(this: PyRef<'_, Self>) -> PyRef<'_, Self> {
+    const fn __aiter__(this: PyClassGuard<'_, Self>) -> PyClassGuard<'_, Self> {
         this
     }
 
