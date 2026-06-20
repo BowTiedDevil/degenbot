@@ -157,8 +157,10 @@ impl PyLiquidityPool {
         if let Some(s) = core.get_v2_pool_state(self.pool_id) {
             return s.update_block;
         }
-        if let Some(s) = core.get_v3_pool(self.pool_id) {
-            return s.update_block;
+        // J63J3N: V3 *or* V4 (previously V3-only via get_v3_pool, which
+        // returned None for V4 and fell through to 0).
+        if let Some(s) = core.get_v3_or_v4_pool(self.pool_id) {
+            return s.update_block();
         }
         0
     }
@@ -200,8 +202,8 @@ impl PyLiquidityPool {
     fn sqrt_price_x96(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let spx = {
             let core = self.core.read();
-            core.get_v3_pool(self.pool_id)
-                .map(|s| s.sqrt_price_x96)
+            core.get_v3_or_v4_pool(self.pool_id)
+                .map(super::V3FamilyPool::sqrt_price_x96)
                 .unwrap_or_default()
         };
         Ok(crate::alloy_py::u256_to_py(py, &spx)?.unbind())
@@ -212,8 +214,8 @@ impl PyLiquidityPool {
     fn liquidity(&self) -> u128 {
         self.core
             .read()
-            .get_v3_pool(self.pool_id)
-            .map(|s| s.liquidity)
+            .get_v3_or_v4_pool(self.pool_id)
+            .map(super::V3FamilyPool::liquidity)
             .unwrap_or_default()
     }
 
@@ -222,8 +224,8 @@ impl PyLiquidityPool {
     fn tick(&self) -> i32 {
         self.core
             .read()
-            .get_v3_pool(self.pool_id)
-            .map(|s| s.tick)
+            .get_v3_or_v4_pool(self.pool_id)
+            .map(super::V3FamilyPool::tick)
             .unwrap_or_default()
     }
 
@@ -232,8 +234,8 @@ impl PyLiquidityPool {
     fn fee(&self) -> u32 {
         self.core
             .read()
-            .get_v3_pool(self.pool_id)
-            .map(|s| s.fee)
+            .get_v3_or_v4_pool(self.pool_id)
+            .map(super::V3FamilyPool::fee)
             .unwrap_or_default()
     }
 
@@ -242,8 +244,8 @@ impl PyLiquidityPool {
     fn tick_spacing(&self) -> i32 {
         self.core
             .read()
-            .get_v3_pool(self.pool_id)
-            .map(|s| s.tick_spacing)
+            .get_v3_or_v4_pool(self.pool_id)
+            .map(super::V3FamilyPool::tick_spacing)
             .unwrap_or_default()
     }
 
@@ -406,10 +408,15 @@ impl PyLiquidityPool {
     fn snapshot_v3(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         let snap = {
             let core = self.core.read();
-            let Some(s) = core.get_v3_pool(self.pool_id) else {
+            let Some(s) = core.get_v3_or_v4_pool(self.pool_id) else {
                 return Ok(None);
             };
-            (s.sqrt_price_x96, s.liquidity, s.tick, s.update_block)
+            (
+                s.sqrt_price_x96(),
+                s.liquidity(),
+                s.tick(),
+                s.update_block(),
+            )
         };
         let tuple = pyo3::types::PyTuple::new(
             py,
@@ -435,13 +442,14 @@ impl PyLiquidityPool {
     #[pyo3(signature = (block))]
     fn discard_v3_before_block(&self, block: u64) -> PyResult<()> {
         let mut core = self.core.write();
-        // Only apply when this handle points at a V3/V4 pool — otherwise
-        // silently no-op (avoids corrupting a V2's journal from a V3-shaped
-        // companion).
-        if core.get_v3_pool(self.pool_id).is_none() {
+        // J63J3N: only apply when this handle points at a V3/V4 pool —
+        // otherwise silently no-op (avoids corrupting a V2's journal from a
+        // V3-shaped companion). The family dispatcher routes V4 to its own
+        // journal method; V2 / unregistered no-ops (V3's contract).
+        if core.get_v3_or_v4_pool(self.pool_id).is_none() {
             return Ok(());
         }
-        core.v3_discard_before_block(self.pool_id, block)
+        core.discard_v3_or_v4_before_block(self.pool_id, block)
             .map_err(journal_err_to_py)
     }
 
@@ -456,10 +464,10 @@ impl PyLiquidityPool {
     fn restore_v3_before_block(&self, py: Python<'_>, block: u64) -> PyResult<Option<Py<PyAny>>> {
         let result = {
             let mut core = self.core.write();
-            if core.get_v3_pool(self.pool_id).is_none() {
+            if core.get_v3_or_v4_pool(self.pool_id).is_none() {
                 return Ok(None);
             }
-            core.v3_restore_before_block(self.pool_id, block)
+            core.restore_v3_or_v4_before_block(self.pool_id, block)
         };
         match result {
             None => Ok(None),
@@ -496,15 +504,16 @@ impl PyLiquidityPool {
     fn tick_data_snapshot(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let rows: Vec<(i32, (u128, i128, u64))> = {
             let core = self.core.read();
-            let Some(s) = core.get_v3_pool(self.pool_id) else {
+            let Some(s) = core.get_v3_or_v4_pool(self.pool_id) else {
                 return Ok(pyo3::types::PyDict::new(py).into_any().unbind());
             };
-            s.tick_data
+            let update_block = s.update_block();
+            s.tick_data()
                 .iter()
                 .map(|(tick, info)| {
                     let net: i128 = i128::try_from(info.liquidity_net).unwrap_or(0);
                     let gross: u128 = info.liquidity_gross.to::<u128>();
-                    (*tick, (gross, net, s.update_block))
+                    (*tick, (gross, net, update_block))
                 })
                 .collect()
         };
@@ -538,15 +547,16 @@ impl PyLiquidityPool {
         // guard, then build the output dict without holding the lock.
         let rows: Vec<(i32, i32, u64)> = {
             let core = self.core.read();
-            let Some(s) = core.get_v3_pool(self.pool_id) else {
+            let Some(s) = core.get_v3_or_v4_pool(self.pool_id) else {
                 return Ok(pyo3::types::PyDict::new(py).into_any().unbind());
             };
-            let spacing = s.tick_spacing.max(1);
-            s.tick_data
+            let spacing = s.tick_spacing().max(1);
+            let update_block = s.update_block();
+            s.tick_data()
                 .keys()
                 .map(|&tick| {
                     let compressed = tick / spacing;
-                    (compressed >> 8, compressed.rem_euclid(256), s.update_block)
+                    (compressed >> 8, compressed.rem_euclid(256), update_block)
                 })
                 .collect()
         };
