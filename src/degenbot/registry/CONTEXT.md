@@ -17,6 +17,12 @@
 - A **Pool Type Registry** maps factory addresses to pool classes; each DEX module self-registers at import time
 - All registry instances except **Pool Type Registry** are owned by **Bot**; the **Pool Type Registry** is a module-level singleton
 
+## Removed terms
+
+- **`pool_registry` / `token_registry` / `managed_pool_registry`** (Removed under ADR-006 slice 8b): formerly module-level singletons; now Bot-owned class instances `PoolRegistry` / `TokenRegistry` / `ManagedPoolRegistry`. See CONTEXT-MAP.md ambiguity #4.
+- **`Pool Class Registry`** (Removed, superseded by **Pool Type Registry**): former factory→class-only map with deployment data scattered elsewhere; consolidated into the single `pool_type_registry.register()` call.
+- **`FACTORY_DEPLOYMENTS` dict** (Removed, superseded by **Pool Type Registry**): former `(chain_id, factory) → (deployer, pool_init_hash)` lookup; each DEX `__init__.py` now passes hardcoded values directly to `pool_type_registry.register()`, and trackers resolve via `pool_type_registry.get_deployment()`.
+
 ## Resolved Ambiguities
 
 ### Registry vs Manager
@@ -33,19 +39,13 @@ A Registry is a simple lookup table. A Pool Tracker (e.g., `UniswapV2PoolTracker
 - ✅ "The **Pool Type Registry** maps SushiSwap's factory to a `LiquidityPool` registration carrying the `sushiswap-v2` `DexIdentity` preset + `variant="sushiswap"` (post slice-7 collapse — the per-DEX `SushiswapV2Pool` subclass is deleted)"
 - ❌ "The Pool Registry maps the factory to the class" (that's the **Pool Type Registry**)
 
-### Pool Class Registry (removed) vs Pool Type Registry
+### Use Pool Type Registry, not the removed Pool Class Registry or FACTORY_DEPLOYMENTS
 
-**Ruling: Use **Pool Type Registry** always. The Pool Class Registry has been removed.**
+**Ruling: `pool_type_registry` is the sole source of truth for `(chain_id, factory) → (class, identity, deployment data)`.** The former `Pool Class Registry` (factory→class only) and `FACTORY_DEPLOYMENTS` dict are removed (see Removed terms above).
 
 - ✅ "Register the pool class with `pool_type_registry.register()`"
-- ❌ "Register with `pool_class_registry`" (removed)
-
-### FACTORY_DEPLOYMENTS (removed) vs Pool Type Registry
-
-**Ruling: The `FACTORY_DEPLOYMENTS` dict has been removed. `pool_type_registry` is the sole source of truth for `(chain_id, factory) → (deployer, pool_init_hash)` data.** Each DEX `__init__.py` passes hardcoded values directly to `pool_type_registry.register()` instead of reading from and populating a separate dict. Trackers resolve deployment data via `pool_type_registry.get_deployment()`. Pool constructors trust builder-provided values instead of silently overwriting from `FACTORY_DEPLOYMENTS`.
-
 - ✅ "Resolve deployer from `pool_type_registry.get_deployment()`"
-- ✅ "Register the exchange with hardcoded deployer and pool_init_hash via `pool_type_registry.register()`"
+- ❌ "Register with `pool_class_registry`" (removed)
 - ❌ "Look up the deployer in `FACTORY_DEPLOYMENTS`" (removed)
 - ❌ "Call `register_exchange()` to populate `FACTORY_DEPLOYMENTS`" (removed)
 

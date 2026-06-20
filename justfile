@@ -61,6 +61,50 @@ test-all: test-rust test-python
 lint-markdown:
     npx --yes markdownlint-cli2 "**/*.md" "!node_modules/**" "!.opencode/node_modules/**" "!.venv/**"
 
+# Enforce the context-map maintenance contract (docs/agents/context-map-maintenance.md).
+# Banned: brace dialect {Foo}, status-prose markers, references to the deleted
+# connection module. No-op deps; grep-based; fails loud on drift.
+lint-context-maps:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=( CONTEXT-MAP.md rust/CONTEXT.md src/degenbot/*/CONTEXT.md )
+    fail=0
+    # 1. Brace dialect is banned (use real markdown links or plain **Term**)
+    if rg -n --no-heading "\{[A-Z][^}]+\}" "${files[@]}"; then
+      echo "ERROR: brace dialect {Foo} is banned in context maps — use plain **Term** or a markdown link." >&2
+      fail=1
+    fi
+    # 2. Status-prose markers are banned (status belongs in ADRs, not vocabulary)
+    if rg -n --no-heading "Status: complete|Implementation status|Revised by ADR-|Prior to ADR-" CONTEXT-MAP.md rust/CONTEXT.md; then
+      echo "ERROR: status-prose markers are banned in context maps (see docs/agents/context-map-maintenance.md)." >&2
+      fail=1
+    fi
+    # 3. No references to the deleted connection module
+    if rg -n --no-heading --ignore-case "connection manager" CONTEXT-MAP.md src/degenbot/provider/CONTEXT.md; then
+      echo "ERROR: connection module was deleted (ADR-006 slice 8b); remove the reference." >&2
+      fail=1
+    fi
+    if rg -n --no-heading "src/degenbot/connection/CONTEXT" CONTEXT-MAP.md; then
+      echo "ERROR: src/degenbot/connection/ no longer exists; remove the link." >&2
+      fail=1
+    fi
+    # 4. Relative-link targets must resolve on disk (resolved per-file)
+    while IFS= read -r line; do
+      # line is "filename:match", where match is '](target)'
+      file="${line%%:*}"
+      match="${line#*:}"              # "]../types/CONTEXT.md)"
+      target="${match#\](}"           # strip "](" prefix → "../types/CONTEXT.md)"
+      target="${target%)}"            # strip trailing ")"
+      [[ -z "$target" ]] && continue
+      dir="$(dirname "$file")"
+      resolved="$dir/$target"
+      if [[ ! -e "$resolved" ]]; then
+        echo "ERROR: $file: broken CONTEXT link '$target' (resolved '$resolved' does not exist)." >&2
+        fail=1
+      fi
+    done < <(rg --no-heading -o --with-filename "\]\([^)]+CONTEXT\.md\)" CONTEXT-MAP.md rust/CONTEXT.md src/degenbot/*/CONTEXT.md)
+    exit $fail
+
 # Lint Python files
 lint-python:
     uv run ruff check src/
@@ -71,7 +115,7 @@ fmt-check-python:
     uv run ruff format --check src/
 
 # Run all linters (Rust + Python + Markdown)
-lint: fmt-check fmt-check-python lint-rust lint-python lint-markdown
+lint: fmt-check fmt-check-python lint-rust lint-python lint-markdown lint-context-maps
 
 # Format all code
 format: 
