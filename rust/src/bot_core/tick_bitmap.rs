@@ -933,8 +933,14 @@ mod tests {
         assert!(tick_data.contains_key(&200));
 
         apply_liquidity_to_tick_range(&mut tick_data, 100, 200, -1_000_000);
-        assert!(!tick_data.contains_key(&100), "lower tick not pruned at zero gross");
-        assert!(!tick_data.contains_key(&200), "upper tick not pruned at zero gross");
+        assert!(
+            !tick_data.contains_key(&100),
+            "lower tick not pruned at zero gross"
+        );
+        assert!(
+            !tick_data.contains_key(&200),
+            "upper tick not pruned at zero gross"
+        );
     }
 
     #[test]
@@ -950,7 +956,10 @@ mod tests {
 
         apply_liquidity_to_tick_range(&mut tick_data, 100, 200, 1_000_000);
 
-        assert!(tick_data.contains_key(&50), "untouched live tick must survive");
+        assert!(
+            tick_data.contains_key(&50),
+            "untouched live tick must survive"
+        );
         // The pre-existing zero-gross tick is NOT pruned by the touched-pair
         // fast path; it persists until its own range is touched (matching
         // Solidity's per-tick `Tick.update`).
