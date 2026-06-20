@@ -22,11 +22,15 @@ from .types import ArbitrageCalculationResult, V4PoolKey
 _LAZY = {
     "EngineRegistry": ".engine_registry",
     "HopInfo": ".hop_info",
+    "NoOpPathPredicate": ".policy",
+    "PathCompositionPredicate": ".policy",
     "PathInfo": ".hop_info",
+    "PathPolicy": ".policy",
     "V2HopInfo": ".hop_info",
     "V3HopInfo": ".hop_info",
     "V4HopInfo": ".hop_info",
     "build_hops_from_pools": ".hop_info",
+    "touched_tokens": ".policy",
 }
 
 _DEPRECATED_NAMES = {
@@ -60,7 +64,10 @@ __all__ = (
     "FlatComposer",
     "HopInfo",  # noqa: F822
     "NoApprovals",
+    "NoOpPathPredicate",  # noqa: F822
+    "PathCompositionPredicate",  # noqa: F822
     "PathInfo",  # noqa: F822
+    "PathPolicy",  # noqa: F822
     "PayloadComposer",
     "UniswapCurveCycle",  # noqa: F822
     "UniswapLpCycle",  # noqa: F822
@@ -70,4 +77,5 @@ __all__ = (
     "V4PoolKey",
     "build_hops_from_pools",  # noqa: F822
     "generate_payloads",
+    "touched_tokens",  # noqa: F822
 )
