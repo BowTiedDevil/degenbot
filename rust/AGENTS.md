@@ -293,7 +293,7 @@ Function docs with structured sections:
 | Crate | Purpose |
 |-------|---------|
 | `alloy` | Ethereum primitives, RPC types, keccak256 (`full` feature) |
-| `pyo3` | Python bindings (`abi3-py312` + `serde` features) |
+| `pyo3` | Python bindings (`abi3-py312` + `serde` features). The newer `abi3t` feature was evaluated and rejected for now — it requires Python ≥3.15 and forces `Py_GIL_DISABLED`; see [`docs/architecture/pyo3-abi3t-evaluation.md`](../docs/architecture/pyo3-abi3t-evaluation.md). |
 | `pyo3-async-runtimes` | Async Python interop with Tokio (`tokio-runtime` feature) |
 | `pyo3-log` | Rust `log` → Python `logging` bridge, initialized in `lib.rs` via `pyo3_log::init()` |
 | `tokio` | Async runtime (`rt-multi-thread` + `time` features) |
