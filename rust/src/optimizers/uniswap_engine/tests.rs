@@ -491,6 +491,94 @@ mod tests {
     }
 
     #[test]
+    fn solve_does_not_send_result_batch_only_send_does() {
+        // Contract (lock granularity, 3HYYGQ): solving
+        // (`solve_all_paths` / `solve_dirty` / `process_updates` — all through
+        // `rebuild_and_solve_affected`) recomputes `results` but must NOT push
+        // a batch onto the result channel. Only `send_result_batch`
+        // (→ `compute_diff_and_send`) sends.
+        //
+        // This separation is load-bearing for lock granularity: the pump holds
+        // the engine `Mutex` for the solve window only, releases it, then
+        // re-acquires briefly for the channel send (an unbounded, non-blocking
+        // `mpsc::UnboundedSender::send`). Python's hot loop reads results via
+        // `result_rx.recv().await` — never a locked `latest_results()` — so it
+        // never contends with a solve-held lock. Re-coupling the send into the
+        // solve path would reintroduce exactly the "Mutex held for entire
+        // solve including the (now-blocking) channel send" concern this task
+        // exists to prevent. The cold-start half of this invariant is pinned
+        // by `solve_all_paths_does_not_advance_delivered_without_channel`
+        // (no channel set); this test pins the live half (channel set, solve
+        // still must not fire it).
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut engine = UniswapEngine::new();
+        engine.set_result_channel(tx);
+
+        // Two mispriced V2 pools → a profitable V2→V2 arb at solve time.
+        let v2_addr_a = Address::from([0x11u8; 20]);
+        let v2_fwd_a = engine.register_v2_pool(
+            v2_addr_a,
+            usdc(1_500_000),
+            weth(800),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let v2_addr_b = Address::from([0x12u8; 20]);
+        let v2_fwd_b = engine.register_v2_pool(
+            v2_addr_b,
+            weth(800),
+            usdc(1_600_000),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let path_id = engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: v2_fwd_a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v2_fwd_b,
+                    zero_for_one: true,
+                },
+            ])
+            .unwrap();
+
+        // Solve with a live channel — must NOT send.
+        engine.solve_all_paths(1);
+        assert!(
+            matches!(
+                rx.try_recv(),
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+            ),
+            "solve must not push a result batch onto the channel; \
+             only send_result_batch sends"
+        );
+
+        // Solving did run: a profitable result is present but undelivered.
+        let (results, block) = engine.latest_results();
+        assert_eq!(block, 1);
+        let solve_result = results
+            .get(&path_id)
+            .expect("solve should populate a profitable result");
+        assert!(!solve_result.profit.is_zero());
+        assert!(
+            engine.delivered.is_empty(),
+            "solve must not advance `delivered` (Python has received nothing)"
+        );
+
+        // Only the explicit send drives the channel.
+        engine.send_result_batch(&BlockMetadata::default());
+        let batch = rx
+            .try_recv()
+            .expect("send_result_batch must deliver the batch");
+        assert!(
+            batch.fresh.iter().any(|(id, _)| *id == path_id),
+            "the solved path should arrive in the `fresh` list"
+        );
+    }
+
+    #[test]
     fn send_result_batch_advances_delivered_to_above_threshold() {
         // Contract: after a real `send_result_batch` (channel live + send
         // fires), `delivered` equals the above-threshold subset of `results`.
