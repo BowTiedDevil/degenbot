@@ -2706,7 +2706,7 @@ impl PyUniswapArbEngine {
 
     /// Return self as an async iterator over result batches.
     #[allow(clippy::missing_const_for_fn)]
-    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+    fn __aiter__(slf: PyClassGuard<'_, Self>) -> PyClassGuard<'_, Self> {
         slf
     }
 
