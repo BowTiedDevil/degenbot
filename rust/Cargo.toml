@@ -45,30 +45,7 @@ auto-initialize = ["pyo3/auto-initialize"]
 
 [dev-dependencies]
 ctor = "^1"
-criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "^1.10"
-
-[[bench]]
-name = "tick_math"
-harness = false
-required-features = ["auto-initialize"]
-
-[[bench]]
-name = "address_utils"
-harness = false
-required-features = ["auto-initialize"]
-
-[[bench]]
-name = "abi_decode"
-harness = false
-
-[[bench]]
-name = "abi_encode"
-harness = false
-
-[[bench]]
-name = "mobius_solver"
-harness = false
 
 [[test]]
 name = "python_integration"
@@ -82,7 +59,3 @@ required-features = ["auto-initialize"]
 lto = "thin"
 strip = true
 codegen-units = 1
-
-[profile.bench]
-inherits = "release"
-debug = true
