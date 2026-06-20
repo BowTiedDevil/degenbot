@@ -227,6 +227,101 @@ class BackrunConfig:
 
 
 # ──────────────────────────────────────────────────────────────────
+# Simulation revert taxonomy
+# ──────────────────────────────────────────────────────────────────
+
+# Selector → human name for the revert selectors the cmd_executor / V4
+# PoolManager emit. Kept as canonical data so both the (verbose) per-fail
+# diagnostic decode in eth_backrun_v2_v3_v4_rust.py and the (short) bucket
+# label produced by _classify_revert stay in sync.
+_V4_REVERT_SELECTORS: dict[str, str] = {
+    "5212cba1": "CurrencyNotSettled()",
+    "486aa307": "PoolNotInitialized()",
+    "1e048e1d": "InvalidHookResponse()",
+    "a3603d66": "SwapQuantityCannotBeZero()",
+    "38606b01": "PriceLimitAlreadyExceeded()",
+    "30d6072a": "PriceLimitOutOfBounds()",
+    "a40afa38": "LockFailure()",
+    "5090d6c6": "AlreadyUnlocked()",
+    "54e3ca0d": "ManagerLocked()",
+}
+
+_EXECUTOR_REVERT_SELECTORS: dict[str, str] = {
+    # Legacy (bare assert)
+    "4b9dfc58": "!OWNER",
+    "49494100": "IIA(insufficient-input-amount)",
+    # Custom errors (Vyper 0.5.0a3+)
+    "8e4a23d6": "Unauthorized(caller)",
+    "b028a63a": "InvalidCallback(caller)",
+    "cf479181": "InsufficientBalance(amount,available)",
+    "4e88422a": "InsufficientProfit(actual,expected)",
+    "83276224": "InvalidCommand(opcode)",
+    "60ef0bb0": "BipsTooHigh(bips)",
+    "a61be9f0": "InvalidMsgValue(value)",
+    "e5b6bf32": "NotPlainEthTransfer()",
+}
+
+# Solidity revert selectors shared across all contracts.
+_ERROR_STRING_SELECTOR = "08c379a0"  # Error(string)
+_PANIC_SELECTOR = "4e487b71"  # Panic(uint256)
+
+
+def _classify_revert(revert_data: bytes) -> str:
+    """Classify raw simulation revert return-data into a short stable label.
+
+    Used by the ``[sim]`` summary to break the ``N failed`` bucket down by root
+    cause. Returns the canonical error *name* for custom-error selectors (params
+    dropped, so ``InsufficientProfit(1,2)`` and ``InsufficientProfit(3,4)``
+    tally together), the decoded message for ``Error(string)``, the panic code
+    for ``Panic``, or ``unknown:0x........`` for anything unrecognised.
+
+    Deliberately never raises — a taxonomy must classify every revert, even
+    malformed ones, so the summary always adds up.
+    """
+    if not revert_data:
+        return "empty"
+    hexed = revert_data.hex()
+    if len(hexed) < 8:
+        return f"short:{hexed}"
+    selector = hexed[:8]
+    if selector == _PANIC_SELECTOR:
+        # Panic(uint256 code) — code is the first 32-byte arg.
+        code = int(hexed[8:72], 16) if len(hexed) >= 72 else 0
+        return f"Panic(0x{code:x})"
+    if selector == _ERROR_STRING_SELECTOR:
+        # Error(string): [sel][offset:32][len:32][data:N]
+        try:
+            str_len = int(hexed[8 + 64 : 8 + 128], 16)
+            str_start = 8 + 64 + 64
+            msg = bytes.fromhex(hexed[str_start : str_start + str_len * 2]).decode(
+                "utf-8", errors="replace"
+            )
+        except (ValueError, IndexError):
+            return "Error(string:undecodable)"
+        return msg or "Error(string:empty)"
+    if selector in _V4_REVERT_SELECTORS:
+        return _V4_REVERT_SELECTORS[selector].split("(", 1)[0]
+    if selector in _EXECUTOR_REVERT_SELECTORS:
+        return _EXECUTOR_REVERT_SELECTORS[selector].split("(", 1)[0]
+    # Bare 32-byte numeric revert (Vyper): 0x00..00<value>
+    if len(hexed) >= 64 and hexed[:24] == "0" * 24:
+        return "numeric-revert"
+    return f"unknown:0x{selector}"
+
+
+def _format_failure_breakdown(buckets: dict[str, int]) -> str:
+    """Render a ``name=count`` breakdown, highest count first (name breaks ties).
+
+    Returns ``""`` for an empty tally so the caller can skip the suffix when no
+    failures were classified.
+    """
+    if not buckets:
+        return ""
+    ordered = sorted(buckets.items(), key=lambda kv: (-kv[1], kv[0]))
+    return " ".join(f"{name}={count}" for name, count in ordered)
+
+
+# ──────────────────────────────────────────────────────────────────
 # Payload encoding
 # ──────────────────────────────────────────────────────────────────
 
