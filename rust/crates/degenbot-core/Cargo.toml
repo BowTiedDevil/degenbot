@@ -1,0 +1,35 @@
+[package]
+name = "degenbot-core"
+description = "Foundational utilities (errors, hex, addresses, runtime) for the degenbot Rust crates."
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"
+pedantic = "warn"
+perf = "warn"
+style = "warn"
+suspicious = "warn"
+
+[dependencies]
+alloy = { version = "^2.0" }
+log = { version = "^0.4" }
+thiserror = { version = "^2.0" }
+tokio = { version = "^1.52", features = ["rt-multi-thread"] }
+
+# Optional: enables `From<*> for PyErr` conversions in `errors`.
+# Gated (not default) so pure-Rust consumers build without pulling pyo3.
+# The orphan rule forbids placing these impls in a downstream crate where both
+# `PyErr` and the error types are foreign, so they live here with the types.
+pyo3 = { version = "^0.29", features = ["abi3-py312", "serde"], optional = true }
+
+[features]
+default = []
+# Enables `impl From<degenbot_core::errors::*> for pyo3::PyErr`.
+pyo3 = ["dep:pyo3"]

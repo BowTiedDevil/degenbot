@@ -26,6 +26,19 @@ lint-rust:
 fmt-check:
     cargo fmt --manifest-path rust/Cargo.toml -- --check
 
+# Enforce the no-pyo3-in-core invariant (Plan 103). Pure Rust core crates must
+# not depend on pyo3 under their default features. Add new core crates here.
+check-no-pyo3-in-cores:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for crate in degenbot-core degenbot-cl-math degenbot-abi degenbot-rpc degenbot-bot; do
+        if cargo tree --manifest-path rust/Cargo.toml -p "$crate" 2>/dev/null | grep -qi 'pyo3 v'; then
+            echo "ERROR: $crate pulls pyo3 under default features (must be feature-gated)." >&2
+            exit 1
+        fi
+    done
+    echo "OK: core crates are pyo3-free under default features"
+
 # Build Rust release library (links Python - for testing only)
 build-rust-debug:
     cargo build --release --manifest-path rust/Cargo.toml
@@ -132,7 +145,7 @@ update-deps:
 # ========== CI/CD ==========
 
 # Simulate CI Rust checks
-ci-rust: fmt-check lint-rust test-rust
+ci-rust: fmt-check check-no-pyo3-in-cores lint-rust test-rust
     cargo build --release --features extension-module --manifest-path rust/Cargo.toml
 
 # Simulate full CI pipeline

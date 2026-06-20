@@ -22,8 +22,23 @@ suspicious = "warn"
 name = "degenbot_rs"
 crate-type = ["rlib", "cdylib"]
 
+[workspace]
+resolver = "2"
+# The root `degenbot_rs` package (the cdylib / binding layer) plus the pure
+# Rust cores under `crates/`. Cores are pyo3-free under their default features;
+# the root enables each core's `pyo3` feature so the `From<Error> for PyErr`
+# conversions are available at the binding layer.
+members = ["crates/degenbot-core", "crates/degenbot-cl-math", "crates/degenbot-abi", "crates/degenbot-rpc", "crates/degenbot-bot"]
+
 [dependencies]
 alloy = { version = "^2.0", features = ["full", "transport-throttle"] }
+# Path dependency enables the `pyo3` feature so `From<Error> for PyErr`
+# conversions from core are available at this binding layer.
+degenbot-rpc = { path = "crates/degenbot-rpc" }
+degenbot-bot = { path = "crates/degenbot-bot" }
+degenbot-abi = { path = "crates/degenbot-abi" }
+degenbot-cl-math = { path = "crates/degenbot-cl-math" }
+degenbot-core = { path = "crates/degenbot-core", features = ["pyo3"] }
 dashmap = { version = "^6.1" }
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
 log = { version = "^0.4" }
@@ -46,6 +61,10 @@ auto-initialize = ["pyo3/auto-initialize"]
 [dev-dependencies]
 ctor = "^1"
 proptest = "^1.10"
+# Enable test-only constructors (e.g. `AlloyProvider::from_provider`) for
+# the root crate's tests. Production builds pull degenbot-rpc without this
+# feature.
+degenbot-rpc = { path = "crates/degenbot-rpc", features = ["test-utils"] }
 
 [[test]]
 name = "python_integration"
@@ -55,7 +74,38 @@ required-features = ["auto-initialize"]
 name = "concurrency_stress"
 required-features = ["auto-initialize"]
 
+# Release profile.
+#
+# The root `degenbot_rs` cdylib (the Python extension) gets the heavy
+# optimizations — `lto = "thin"` + `strip` + `codegen-units = 1` — because it is
+# the shipped runtime artifact. `lto`/`strip` are profile-level (Cargo has no
+# per-package `lto`), so they apply workspace-wide, but the final thin-LTO link
+# only spans codegen units that survive into the cdylib.
+#
+# The pure-Rust core crates (`degenbot-core`, `-cl-math`, `-abi`, `-rpc`,
+# `-bot`) get per-package overrides below: more `codegen-units` for faster
+# compilation during a cdylib release build. They are libraries consumed (and
+# inlined at the final link) by the cdylib, so the looser per-package codegen
+# does not meaningfully hurt runtime — the cdylib's thin LTO re-converges.
 [profile.release]
 lto = "thin"
 strip = true
 codegen-units = 1
+
+[profile.release.package.degenbot-core]
+codegen-units = 16
+[profile.release.package.degenbot-cl-math]
+codegen-units = 16
+[profile.release.package.degenbot-abi]
+codegen-units = 16
+[profile.release.package.degenbot-rpc]
+codegen-units = 16
+[profile.release.package.degenbot-bot]
+codegen-units = 16
+
+# Dev profile (default for `cargo test` / `just dev`): keep compilation fast.
+# No LTO, relaxed debug-info so the pure-Rust cores (`cargo test -p <crate>`)
+# rebuild quickly during the red-green loop.
+[profile.dev]
+# More codegen units for faster incremental dev builds across all crates.
+codegen-units = 16

@@ -12,12 +12,102 @@
 //! cannot deadlock — see `async_provider.rs` module-level comment for the
 //! full reasoning.
 
-use crate::subscription::{drain_buffer, DrainResult, SubscriptionHandle};
+use crate::subscription::SubscriptionHandle;
 use pyo3::exceptions::{PyRuntimeError, PyStopAsyncIteration};
 use pyo3::prelude::*;
 use pyo3_async_runtimes::tokio::future_into_py;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+
+// =============================================================================
+// Drain result + GIL-bound conversion (split out of the pure subscription core)
+// =============================================================================
+//
+// [`SubscriptionHandle::drain_raw`] and [`RawDrainResult`] live in the
+// `degenbot-rpc` crate (pure Rust, no `pyo3`). The GIL-bound conversion layer
+// (`DrainResult`, `convert_item`, `drain_buffer`) stays here in the binding
+// layer because it constructs Python objects via `py_converters`.
+
+use crate::py_converters::{block_to_py_dict, header_to_py_dict, log_to_py_dict};
+use crate::subscription::RawSubItem;
+
+/// Result of draining a buffer and converting to Python objects.
+pub(crate) enum DrainResult {
+    /// Normal items converted to Python objects.
+    Items(Vec<Py<PyAny>>),
+    /// The subscription ended cleanly. Contains any items before the end marker.
+    Ended(Vec<Py<PyAny>>),
+    /// The subscription disconnected. Contains any items before the disconnect.
+    Disconnected {
+        items: Vec<Py<PyAny>>,
+        message: String,
+    },
+}
+
+/// Convert a single raw item to a Python object. Returns None for End/Disconnected
+/// (these are handled by `DrainResult` variants).
+fn convert_item(py: Python<'_>, item: RawSubItem) -> PyResult<Option<Py<PyAny>>> {
+    match item {
+        RawSubItem::Header(header) => {
+            let d = header_to_py_dict(py, &header)?;
+            Ok(Some(d.into_any().unbind()))
+        }
+        RawSubItem::Block(block) => {
+            let d = block_to_py_dict(py, &block)?;
+            Ok(Some(d.into_any().unbind()))
+        }
+        RawSubItem::PendingTxHash(hash) => {
+            let hex_str = hash.to_string();
+            Ok(Some(
+                pyo3::types::PyString::new(py, &hex_str).into_any().unbind(),
+            ))
+        }
+        RawSubItem::FullPendingTx(json_guard) => {
+            let json_val = json_guard.lock().take().ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err("Transaction data already consumed")
+            })?;
+            let obj = crate::py_converters::json_to_py_with_hexbytes(py, json_val)?;
+            Ok(Some(obj.unbind()))
+        }
+        RawSubItem::Log(log) => {
+            let d = log_to_py_dict(py, &log)?;
+            Ok(Some(d.into_any().unbind()))
+        }
+        RawSubItem::End | RawSubItem::Disconnected { message: _ } => Ok(None),
+    }
+}
+
+/// Drain the stale buffer and convert all items to Python objects.
+/// Called with the GIL held. Delegates buffer mechanics to [`SubscriptionHandle::drain_raw`].
+pub(crate) fn drain_buffer(handle: &SubscriptionHandle, py: Python<'_>) -> PyResult<DrainResult> {
+    let raw = handle.drain_raw();
+
+    // Convert raw items to Python objects
+    let convert_all = |items: Vec<RawSubItem>| -> PyResult<Vec<Py<PyAny>>> {
+        let mut converted = Vec::with_capacity(items.len());
+        for item in items {
+            if let Some(py_obj) = convert_item(py, item)? {
+                converted.push(py_obj);
+            }
+        }
+        Ok(converted)
+    };
+
+    match raw {
+        crate::subscription::RawDrainResult::Items(items) => {
+            Ok(DrainResult::Items(convert_all(items)?))
+        }
+        crate::subscription::RawDrainResult::Ended(items) => {
+            Ok(DrainResult::Ended(convert_all(items)?))
+        }
+        crate::subscription::RawDrainResult::Disconnected { items, message } => {
+            Ok(DrainResult::Disconnected {
+                items: convert_all(items)?,
+                message,
+            })
+        }
+    }
+}
 
 /// Python wrapper for a subscription.
 ///

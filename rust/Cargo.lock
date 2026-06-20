@@ -1535,12 +1535,89 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8"
 
 [[package]]
+name = "degenbot-abi"
+version = "0.0.0"
+dependencies = [
+ "alloy",
+ "degenbot-core",
+ "lru 0.18.0",
+ "parking_lot",
+ "proptest",
+ "thiserror",
+]
+
+[[package]]
+name = "degenbot-bot"
+version = "0.0.0"
+dependencies = [
+ "alloy",
+ "dashmap",
+ "degenbot-abi",
+ "degenbot-cl-math",
+ "degenbot-core",
+ "degenbot-rpc",
+ "futures-util",
+ "log",
+ "parking_lot",
+ "proptest",
+ "rand 0.10.1",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "degenbot-cl-math"
+version = "0.0.0"
+dependencies = [
+ "alloy",
+ "degenbot-core",
+ "proptest",
+ "thiserror",
+]
+
+[[package]]
+name = "degenbot-core"
+version = "0.0.0"
+dependencies = [
+ "alloy",
+ "log",
+ "pyo3",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "degenbot-rpc"
+version = "0.0.0"
+dependencies = [
+ "alloy",
+ "dashmap",
+ "degenbot-abi",
+ "degenbot-core",
+ "futures-util",
+ "log",
+ "parking_lot",
+ "rand 0.10.1",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "degenbot_rs"
 version = "0.0.0"
 dependencies = [
  "alloy",
  "ctor",
  "dashmap",
+ "degenbot-abi",
+ "degenbot-bot",
+ "degenbot-cl-math",
+ "degenbot-core",
+ "degenbot-rpc",
  "futures-util",
  "log",
  "lru 0.18.0",

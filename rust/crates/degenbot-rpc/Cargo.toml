@@ -1,0 +1,39 @@
+[package]
+name = "degenbot-rpc"
+description = "Pure-Rust Ethereum RPC provider, contract interface, and subscription core."
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"
+pedantic = "warn"
+perf = "warn"
+style = "warn"
+suspicious = "warn"
+
+[dependencies]
+alloy = { version = "^2.0", features = ["full", "transport-throttle"] }
+dashmap = { version = "^6.1" }
+degenbot-abi = { path = "../degenbot-abi" }
+degenbot-core = { path = "../degenbot-core" }
+futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
+log = { version = "^0.4" }
+parking_lot = { version = "^0.12" }
+rand = { version = "^0.10" }
+serde = { version = "^1.0", features = ["derive"] }
+serde_json = { version = "^1.0" }
+thiserror = { version = "^2.0" }
+tokio = { version = "^1.52", features = ["rt-multi-thread", "time", "macros", "sync"] }
+
+[features]
+default = []
+# Test-only constructors (e.g. `AlloyProvider::from_provider`) visible to
+# downstream crates' tests. In a library crate `#[cfg(test)]` is not visible to
+# consumers' tests, so this feature is the seam.
+test-utils = []

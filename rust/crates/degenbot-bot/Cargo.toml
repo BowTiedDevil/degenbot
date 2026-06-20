@@ -1,0 +1,40 @@
+[package]
+name = "degenbot-bot"
+description = "Rust-owned bot state (BotState) + Möbius solvers + unified Uniswap V2/V3/V4 engine."
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"
+pedantic = "warn"
+perf = "warn"
+style = "warn"
+suspicious = "warn"
+
+[dependencies]
+alloy = { version = "^2.0", features = ["full", "transport-throttle"] }
+dashmap = { version = "^6.1" }
+degenbot-abi = { path = "../degenbot-abi" }
+degenbot-cl-math = { path = "../degenbot-cl-math" }
+degenbot-core = { path = "../degenbot-core" }
+degenbot-rpc = { path = "../degenbot-rpc" }
+futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
+log = { version = "^0.4" }
+parking_lot = { version = "^0.12" }
+rand = { version = "^0.10" }
+serde = { version = "^1.0", features = ["derive"] }
+serde_json = { version = "^1.0" }
+thiserror = { version = "^2.0" }
+tokio = { version = "^1.52", features = ["rt-multi-thread", "time", "macros", "sync"] }
+
+[dev-dependencies]
+proptest = "^1.10"
+# Test-only constructors (e.g. AlloyProvider::from_provider) used by the
+# bot_core block-pump tests.
+degenbot-rpc = { path = "../degenbot-rpc", features = ["test-utils"] }
