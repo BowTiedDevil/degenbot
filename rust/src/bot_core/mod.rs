@@ -1943,7 +1943,7 @@ pub(crate) struct Bot {
 /// to Python via the result batch channel. Lives in `bot_core` (general block
 /// data) so the `BlockPump` + `DrainSink` seams stay in `bot_core` without a
 /// reverse dependency on `optimizers` (ADR-006 D4).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BlockMetadata {
     /// Block timestamp
     pub timestamp: u64,

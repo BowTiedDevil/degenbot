@@ -540,6 +540,20 @@ impl BlockPump {
                     gas_used,
                     gas_limit,
                 })) => {
+                    // Snapshot the just-finished block's metadata BEFORE
+                    // overwriting `current_metadata` with the incoming
+                    // header's. `current_metadata` at this point holds the
+                    // metadata of `current_block` (set when ITS header arrived
+                    // and held through that block's log processing), so the
+                    // batch that finalizes `current_block` must carry THAT
+                    // metadata — NOT the incoming header's. Passing the
+                    // post-overwrite value here would make Python compute
+                    // `base_fee_next` from the wrong block and submit
+                    // under-/over-priced backrun txs (VTWCIG). The incoming
+                    // metadata (assigned just below) drives the empty-block
+                    // send path, which is correctly about the NEW block.
+                    let finished_block_metadata = current_metadata;
+
                     // Update metadata for the current block
                     current_metadata = BlockMetadata {
                         timestamp,
@@ -575,9 +589,12 @@ impl BlockPump {
                         // New block header — finalize the current block.
                         // Cancel the debounce timer and send immediately.
                         debounce_active = false;
+                        // VTWCIG: pass the just-finished block's metadata
+                        // (snapshotted before the overwrite above), not the
+                        // incoming header's.
                         self.finalize_if_dirty(
                             current_block,
-                            &current_metadata,
+                            &finished_block_metadata,
                             &mut last_solved_block,
                             &mut has_logs_this_block,
                         );
@@ -821,6 +838,43 @@ impl BlockPump {
     }
 }
 
+#[cfg(test)]
+impl BlockPump {
+    /// Test-only constructor with an injected `AlloyProvider` (typically a
+    /// mock transport) + a `Bot`/`sink`/`reorg_coordinator`. Lets tests drive
+    /// [`BlockPump::run_with_stream`] from a deterministic synthetic
+    /// `WsEvent` stream without a live RPC connection. The provider is only
+    /// touched on the 60s-timeout backfill path — tests that avoid timeouts
+    /// and block gaps never invoke it.
+    #[must_use]
+    pub(crate) fn for_test(
+        bot: Arc<Bot>,
+        sink: Arc<dyn DrainSink>,
+        reorg_coordinator: Arc<crate::bot_core::reorg_coordinator::ReorgCoordinator>,
+        provider: Arc<AlloyProvider>,
+        shutdown: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            bot,
+            sink,
+            reorg_coordinator,
+            provider,
+            shutdown,
+        }
+    }
+
+    /// Drive the resume loop with a synthetic `WsEvent` stream. Test-only
+    /// seam over [`run_with_stream`](Self::run_with_stream) so tests need not
+    /// reach the private method name.
+    pub(crate) async fn run_test_loop(
+        &mut self,
+        combined: stream::BoxStream<'static, WsEvent>,
+        first_observed_block: u64,
+    ) {
+        self.run_with_stream(combined, first_observed_block).await;
+    }
+}
+
 /// Filter a set of logs to only those relevant to the engine.
 ///
 /// A log is relevant if:
@@ -895,6 +949,8 @@ fn stream_select(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicU64;
+    use std::sync::Mutex;
 
     #[test]
     fn build_backfill_filter_constructs_valid_filter() {
@@ -1001,5 +1057,157 @@ mod tests {
         assert!(!super::log_confirms_header_block(None, 100));
         // A log explicitly tagged as block 0 does not confirm a non-zero header.
         assert!(!super::log_confirms_header_block(Some(0), 100));
+    }
+
+    /// A `DrainSink` test double (AGENTS.md: `Fake` prefix, no mocking).
+    ///
+    /// Records every `finalize_block` / `on_send` / `on_drain` invocation with
+    /// the `(block, metadata)` pair the pump passed, so tests can assert the
+    /// *block N's* result batch carries *block N's* metadata — the VTWCIG
+    /// contract. Behaves as an empty sink (no dirty paths, no state).
+    struct FakeDrainSink {
+        finalized: Mutex<Vec<(u64, BlockMetadata)>>,
+        sent: Mutex<Vec<BlockMetadata>>,
+        drained: Mutex<Vec<(u64, BlockMetadata)>>,
+        last_processed: AtomicU64,
+    }
+
+    impl FakeDrainSink {
+        fn new(last_processed: Option<u64>) -> Self {
+            Self {
+                finalized: Mutex::new(Vec::new()),
+                sent: Mutex::new(Vec::new()),
+                drained: Mutex::new(Vec::new()),
+                last_processed: AtomicU64::new(last_processed.unwrap_or(0)),
+            }
+        }
+    }
+
+    impl DrainSink for FakeDrainSink {
+        fn has_dirty_paths(&self) -> bool {
+            false
+        }
+        fn on_drain(&self, block: u64, metadata: &BlockMetadata) {
+            self.drained.lock().unwrap().push((block, *metadata));
+        }
+        fn on_send(&self, metadata: &BlockMetadata) {
+            self.sent.lock().unwrap().push(*metadata);
+        }
+        fn finalize_block(
+            &self,
+            block: u64,
+            metadata: &BlockMetadata,
+            _last_solved_block: &mut u64,
+            _has_logs_this_block: &mut bool,
+        ) {
+            self.finalized.lock().unwrap().push((block, *metadata));
+        }
+        fn last_processed_block(&self) -> Option<u64> {
+            let v = self.last_processed.load(Ordering::Relaxed);
+            (v != 0).then_some(v)
+        }
+    }
+
+    /// Build a `BlockPump` whose provider is an `alloy` mock transport (never
+    /// hit on the no-timeout / no-gap test paths) and whose sink is a
+    /// `FakeDrainSink` that records metadata calls. Returns the pump + the
+    /// sink handle (for inspection). Offline + deterministic.
+    fn pump_for_test(
+        last_processed: Option<u64>,
+    ) -> (
+        BlockPump,
+        Arc<FakeDrainSink>,
+    ) {
+        use alloy::network::Ethereum as NetEth;
+        use alloy::providers::{Provider, ProviderBuilder};
+        // `alloy_transport::mock::{Asserter, MockTransport}` — unfeatured (no
+        // `mock` feature flag needed under `alloy = { features = ["full"] }`).
+        // The asserter's queue is never drained because the test paths avoid
+        // provider calls (no 60s timeout, no block gaps).
+        use alloy::transports::mock::{Asserter, MockTransport};
+        use alloy::rpc::client::ClientBuilder;
+
+        let asserter = Asserter::new();
+        let client =
+            ClientBuilder::default().transport(MockTransport::new(asserter), true);
+        // `.erased()` yields a `DynProvider<Ethereum>` (implements
+        // `Provider<Ethereum>`), matching `AlloyProvider::from_provider`'s
+        // `Arc<dyn Provider<Ethereum>>` parameter — same shape as the live
+        // `build_provider` path.
+        let dyn_provider = ProviderBuilder::new().connect_client(client).erased();
+        let provider =
+            Arc::new(AlloyProvider::from_provider(Arc::new(dyn_provider) as Arc<dyn alloy::providers::Provider<NetEth>>));
+
+        let bot = Arc::new(Bot::new(1));
+        let reorg = Arc::new(
+            crate::bot_core::reorg_coordinator::ReorgCoordinator::new(Arc::clone(&bot)),
+        );
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let sink = Arc::new(FakeDrainSink::new(last_processed));
+        let pump = BlockPump::for_test(bot, sink.clone(), reorg, provider, shutdown);
+        (pump, sink)
+    }
+
+    #[tokio::test]
+    async fn finalize_carries_just_finished_blocks_metadata() {
+        // Contract (VTWCIG): when the header for block N+1 arrives, the result
+        // batch that finalizes block N must carry block N's metadata (held
+        // before the incoming header overwrites `current_metadata`), NOT N+1's.
+        // Python computes `base_fee_next` from this metadata; the previous
+        // ordering sent N+1's metadata with N's batch → systematically
+        // under-/over-priced backrun txs.
+        //
+        // Stream: header N (distinct metadata), header N+1 (distinct
+        // metadata), then end. Finalizing N on the N+1 header must pass N's
+        // metadata to `finalize_block(N, &N_metadata, …)`.
+        let (mut pump, sink) = pump_for_test(Some(100));
+        // The loop seeds `current_block` from `last_processed_block()` → 100.
+        // Feed header 101 (its arrival finalizes 100) and header 102 (its
+        // arrival finalizes 101). We must NOT skip the first header
+        // (`first_header` anchor logic just sets the cursor — it doesn't
+        // finalize). So: emit 101 → first_header anchor (current_block→101),
+        // then 102 → finalizes 101.
+        let meta_101 = BlockMetadata {
+            timestamp: 1_700_000_100,
+            base_fee_per_gas: Some(1_000_000_001),
+            gas_used: 10_000_001,
+            gas_limit: 30_000_001,
+        };
+        let meta_102 = BlockMetadata {
+            timestamp: 1_700_000_200,
+            base_fee_per_gas: Some(2_000_000_002),
+            gas_used: 20_000_002,
+            gas_limit: 30_000_002,
+        };
+        let events: Vec<WsEvent> = vec![
+            WsEvent::BlockHeader {
+                number: 101,
+                timestamp: meta_101.timestamp,
+                base_fee_per_gas: meta_101.base_fee_per_gas,
+                gas_used: meta_101.gas_used,
+                gas_limit: meta_101.gas_limit,
+            },
+            WsEvent::BlockHeader {
+                number: 102,
+                timestamp: meta_102.timestamp,
+                base_fee_per_gas: meta_102.base_fee_per_gas,
+                gas_used: meta_102.gas_used,
+                gas_limit: meta_102.gas_limit,
+            },
+        ];
+        let combined = stream::iter(events).boxed();
+        pump.run_test_loop(combined, 100).await;
+
+        // The first finalize is for block 101 (finalized when 102's header
+        // arrives). It must carry meta_101, NOT meta_102.
+        let finalized = sink.finalized.lock().unwrap().clone();
+        assert!(
+            !finalized.is_empty(),
+            "header 102 should finalize block 101"
+        );
+        let (block, metadata) = &finalized[0];
+        assert_eq!(*block, 101, "first finalize is for block 101");
+        assert_eq!(*metadata, meta_101, "block 101's batch must carry 101's metadata, not 102's");
+        assert_ne!(*metadata, meta_102, "block 101's batch must NOT carry 102's metadata");
     }
 }
