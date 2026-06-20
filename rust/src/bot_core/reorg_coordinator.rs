@@ -127,8 +127,9 @@ mod tests {
     use crate::bot_core::log_dispatcher::PoolStateSubscriber;
     use crate::bot_core::state_history::{ReorgJournal, V2BlockDelta};
     use crate::bot_core::{Bot, RegisterV2PoolParams};
-    use alloy::primitives::{Address, Bytes, U256};
+    use alloy::primitives::{Address, Bytes, I256, U128, U256};
     use alloy::rpc::types::Log;
+    use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
     // Journal-level invariants the coordinator relies on. These are
@@ -395,5 +396,409 @@ mod tests {
             Some((U256::from(1_000), U256::from(2_000), 5)),
             "too-deep reorg left state unchanged"
         );
+    }
+
+    // ── V3 mirror helpers ───────────────────────────────────────────
+    //
+    // V3/V4 journals have NO genesis anchor (registration pushes no delta),
+    // so the "before" values of the FIRST forward event ARE the registration
+    // state. A too-deep reorg is therefore ONLY the empty-journal case —
+    // `restore_before_block(block)` panics iff the journal is empty, and
+    // handles single-delta-at-target by popping it and returning registration
+    // state. The pre-check must reflect that, not the V2 rule.
+
+    /// Build a `Bot` with a V3 pool registered at `update_block` (no tick data,
+    /// `Sparse` coverage) + a counting subscriber. Registration scalars:
+    /// `sqrt_price` = 1<<96, liquidity = `1_000_000`, tick = 0.
+    fn bot_with_v3(
+        pool_addr: Address,
+        update_block: u64,
+    ) -> (Arc<Bot>, u64, Arc<CountingSubscriber>) {
+        use crate::bot_core::{PoolTickCoverage, RegisterV3PoolParams};
+        let bot = Arc::new(Bot::new(1));
+        let pool_id = bot.state.write().register_v3_pool(&RegisterV3PoolParams {
+            address: pool_addr,
+            token0: Address::from([0xa0u8; 20]),
+            token1: Address::from([0xa1u8; 20]),
+            fee: 3_000,
+            tick_spacing: 60,
+            factory: Address::from([0xf0u8; 20]),
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: HashMap::new(),
+            update_block,
+            coverage: PoolTickCoverage::Sparse,
+        });
+        let counting = Arc::new(CountingSubscriber {
+            notifies: Mutex::new(0),
+        });
+        let sub: Arc<dyn PoolStateSubscriber> = counting.clone();
+        bot.attach_engine(pool_id, Arc::downgrade(&sub));
+        (bot, pool_id, counting)
+    }
+
+    /// Build a V3 `Swap` log. `sender`/`recipient`/`amount0`/`amount1` are
+    /// filler — the reorg path only consumes `pool_address` + `block_number`
+    /// + the `removed` flag (the journal's stored "before" values are truth).
+    #[allow(clippy::too_many_arguments)]
+    fn make_v3_swap_log(
+        pool_address: Address,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        block_number: u64,
+        removed: bool,
+    ) -> Log {
+        use crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC;
+        let sender = Address::from([0xbbu8; 20]);
+        let recipient = Address::from([0xccu8; 20]);
+        let amount0 = I256::try_from(-1_000_i128).unwrap();
+        let amount1 = I256::try_from(4_000_i128).unwrap();
+        let mut data = Vec::with_capacity(160);
+        data.extend_from_slice(&amount0.to_be_bytes::<32>());
+        data.extend_from_slice(&amount1.to_be_bytes::<32>());
+        data.extend_from_slice(&sqrt_price_x96.to_be_bytes::<32>());
+        let liq_bytes = U128::from(liquidity).to_be_bytes::<16>();
+        let mut liq_word = [0u8; 32];
+        liq_word[16..32].copy_from_slice(&liq_bytes);
+        data.extend_from_slice(&liq_word);
+        let tick_i256 = I256::try_from(i128::from(tick)).unwrap();
+        data.extend_from_slice(&tick_i256.to_be_bytes::<32>());
+
+        let inner = alloy::primitives::Log::new_unchecked(
+            pool_address,
+            vec![V3_SWAP_TOPIC, sender.into_word(), recipient.into_word()],
+            Bytes::from(data),
+        );
+        Log {
+            inner,
+            block_hash: None,
+            block_number: Some(block_number),
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed,
+        }
+    }
+
+    /// Regression (perm-V3-V4-V3 reorg crash): a V3 pool whose journal holds
+    /// ONLY the forward swap at the reorg target block must restore to
+    /// registration state — NOT fail-stop as "too-deep". V3 journals carry no
+    /// genesis anchor: the first delta's `scalar_priors` ARE the registration
+    /// scalars, so `restore_before_block(B)` pops it and returns registration
+    /// state. Pre-fix `has_state_prior_to` rejected `earliest >= block`
+    /// uniformly, so the pump shut down on the exact single-delta-at-target
+    /// case `restore_before_block` handles correctly — the crash in
+    /// `logs/perm-V3-V4-V3-reorg_crash.log` (pool 16, block 25350592).
+    #[test]
+    fn dispatch_reorg_log_v3_single_delta_at_target_restores_to_registration() {
+        let pool_addr = Address::from([0x33u8; 20]);
+        let (bot, pool_id, sub) = bot_with_v3(pool_addr, 5);
+        let count = || *sub.notifies.lock().unwrap();
+
+        let reg_sqrt = U256::from(1u128) << 96;
+
+        // Forward V3 Swap at block 7 — moves scalars off registration + seeds
+        // the journal with its single delta (block 7, scalar_priors = registration).
+        let new_sqrt = U256::from(2u128) << 96;
+        bot.dispatch_log(&make_v3_swap_log(
+            pool_addr,
+            new_sqrt,
+            2_000_000,
+            50,
+            7,
+            false,
+        ));
+        assert_eq!(count(), 1, "forward swap notified once");
+        {
+            let guard = bot.state.read();
+            let s = guard.get_v3_pool(pool_id).expect("registered");
+            assert_eq!(s.sqrt_price_x96, new_sqrt);
+            assert_eq!(s.liquidity, 2_000_000);
+            assert_eq!(s.tick, 50);
+            assert_eq!(
+                s.journal.len(),
+                1,
+                "V3 registration pushes no genesis — one delta after the swap"
+            );
+        }
+
+        // Reorg: removed-flag V3 Swap log at block 7 (the only journal delta).
+        let coordinator = ReorgCoordinator::new(Arc::clone(&bot));
+        coordinator
+            .dispatch_reorg_log(&make_v3_swap_log(
+                pool_addr,
+                new_sqrt,
+                2_000_000,
+                50,
+                7,
+                true,
+            ))
+            .expect("single-delta-at-target restores, is NOT too-deep");
+        assert_eq!(count(), 2, "reorg dispatched the SAME notify as forward");
+        {
+            let guard = bot.state.read();
+            let s = guard.get_v3_pool(pool_id).expect("registered");
+            assert_eq!(
+                s.sqrt_price_x96, reg_sqrt,
+                "scalars rolled back to registration"
+            );
+            assert_eq!(s.liquidity, 1_000_000);
+            assert_eq!(s.tick, 0);
+            assert_eq!(
+                s.journal.len(),
+                0,
+                "the block-7 delta was popped — journal now empty"
+            );
+            // V3 has no genesis anchor, so the restore point is the popped
+            // delta's block (7), not the registration block (5). The scalars
+            // are the registration state; update_block is a staleness hint,
+            // not a correctness input for the solver.
+            assert_eq!(s.update_block, 7);
+        }
+    }
+
+    /// The flip side of the single-delta-at-target regression: a V3 pool that
+    /// has received NO forward event has an EMPTY journal, and
+    /// `restore_before_block` would panic on it. `has_state_prior_to` MUST
+    /// return `false` here (→ `Err(NoStatePriorToBlock)` → graceful shutdown)
+    /// even after the V3/V4 predicate relaxation. This pins that the relaxed
+    /// predicate didn't drop the empty-journal guard — only an empty V3/V4
+    /// journal is too-deep.
+    #[test]
+    fn dispatch_reorg_log_v3_empty_journal_is_too_deep() {
+        let pool_addr = Address::from([0x34u8; 20]);
+        let (bot, pool_id, _sub) = bot_with_v3(pool_addr, 5);
+        // No forward dispatch → V3 journal is empty (registration pushes no
+        // genesis delta, unlike V2).
+        assert!(
+            bot.state.read().get_v3_pool(pool_id).unwrap().journal.is_empty()
+        );
+
+        let coordinator = ReorgCoordinator::new(Arc::clone(&bot));
+        let err = coordinator
+            .dispatch_reorg_log(&make_v3_swap_log(
+                pool_addr,
+                U256::from(2u128) << 96,
+                2_000_000,
+                50,
+                5,
+                true,
+            ))
+            .unwrap_err();
+        match err {
+            ReorgError::NoStatePriorToBlock { pool_id: p, block } => {
+                assert_eq!(p, pool_id);
+                assert_eq!(block, 5);
+            }
+        }
+        // State untouched — the registration scalars survive.
+        let guard = bot.state.read();
+        let s = guard.get_v3_pool(pool_id).expect("registered");
+        assert_eq!(s.sqrt_price_x96, U256::from(1u128) << 96);
+        assert_eq!(s.liquidity, 1_000_000);
+        assert_eq!(s.tick, 0);
+        assert!(s.journal.is_empty(), "empty journal left untouched");
+    }
+
+    // ── V4 mirror ────────────────────────────────────────────────────
+    //
+    // V4 uses the same `V3BlockDelta` journal shape as V3 (no genesis anchor).
+    // The crash log's permutation (`V3-V4-V3`) means V4 pools are registered
+    // alongside V3 — the same single-delta-at-target restore must work, and
+    // the same empty-journal guard must hold.
+
+    /// Build a `Bot` with a V4 pool registered under `pool_manager` + `pool_id`
+    /// at `update_block` (no tick data, `Sparse` coverage) + a counting
+    /// subscriber. Registration scalars: `sqrt_price` = 1<<96, liq = `1_000_000`,
+    /// tick = 0.
+    fn bot_with_v4(
+        pool_manager: Address,
+        pool_id: crate::bot_core::v4_swap_decoder::PoolId,
+        update_block: u64,
+    ) -> (Arc<Bot>, u64, Arc<CountingSubscriber>) {
+        use crate::bot_core::{PoolTickCoverage, RegisterV4PoolParams, V4PoolKey};
+        let bot = Arc::new(Bot::new(1));
+        let pool_id = bot
+            .state
+            .write()
+            .register_v4_pool(&RegisterV4PoolParams {
+                pool_manager,
+                pool_id,
+                pool_key: V4PoolKey {
+                    currency0: Address::from([0xa0u8; 20]),
+                    currency1: Address::from([0xa1u8; 20]),
+                    fee: 3_000,
+                    tick_spacing: 60,
+                    hooks: Address::from([0xf0u8; 20]),
+                },
+                hook_flags: 0,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block,
+                coverage: PoolTickCoverage::Sparse,
+            })
+            .expect("V4 pool registers");
+        let counting = Arc::new(CountingSubscriber {
+            notifies: Mutex::new(0),
+        });
+        let sub: Arc<dyn PoolStateSubscriber> = counting.clone();
+        bot.attach_engine(pool_id, Arc::downgrade(&sub));
+        (bot, pool_id, counting)
+    }
+
+    /// Build a V4 `Swap` log emitted by `pool_manager`. `sender`/`amount0`/
+    /// `amount1`/`fee` are filler — the reorg path consumes only
+    /// `pool_manager` (the log emitter) + `pool_id` (topic[1]) + `block_number`
+    /// + the `removed` flag.
+    #[allow(clippy::too_many_arguments)]
+    fn make_v4_swap_log(
+        pool_manager: Address,
+        pool_id: crate::bot_core::v4_swap_decoder::PoolId,
+        sqrt_price_x96: U256,
+        liquidity: u128,
+        tick: i32,
+        block_number: u64,
+        removed: bool,
+    ) -> Log {
+        use crate::bot_core::v4_swap_decoder::V4_SWAP_TOPIC;
+        use alloy::primitives::B256;
+        let sender = Address::from([0xbbu8; 20]);
+        let amount0 = I256::try_from(-1_000_i128).unwrap();
+        let amount1 = I256::try_from(4_000_i128).unwrap();
+        let fee: u32 = 3_000;
+        let mut data = Vec::with_capacity(192);
+        data.extend_from_slice(&amount0.to_be_bytes::<32>());
+        data.extend_from_slice(&amount1.to_be_bytes::<32>());
+        data.extend_from_slice(&sqrt_price_x96.to_be_bytes::<32>());
+        let liq_bytes = U128::from(liquidity).to_be_bytes::<16>();
+        let mut liq_word = [0u8; 32];
+        liq_word[16..32].copy_from_slice(&liq_bytes);
+        data.extend_from_slice(&liq_word);
+        let tick_i256 = I256::try_from(i128::from(tick)).unwrap();
+        data.extend_from_slice(&tick_i256.to_be_bytes::<32>());
+        let mut fee_word = [0u8; 32];
+        fee_word[28..32].copy_from_slice(&fee.to_be_bytes());
+        data.extend_from_slice(&fee_word);
+
+        let inner = alloy::primitives::Log::new_unchecked(
+            pool_manager,
+            vec![V4_SWAP_TOPIC, B256::from(pool_id), sender.into_word()],
+            Bytes::from(data),
+        );
+        Log {
+            inner,
+            block_hash: None,
+            block_number: Some(block_number),
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed,
+        }
+    }
+
+    /// V4 mirror of `dispatch_reorg_log_v3_single_delta_at_target_restores_to_registration`:
+    /// a V4 pool whose only journal delta is the forward swap at the reorg
+    /// target block restores to registration state. Confirms the
+    /// `has_state_prior_to` split covers V4 (same `V3BlockDelta` journal shape,
+    /// no genesis anchor).
+    #[test]
+    fn dispatch_reorg_log_v4_single_delta_at_target_restores_to_registration() {
+        let pool_manager = Address::from([0x44u8; 20]);
+        let pool_id_bytes: crate::bot_core::v4_swap_decoder::PoolId = [0xeeu8; 32];
+        let (bot, pool_id, sub) = bot_with_v4(pool_manager, pool_id_bytes, 5);
+        let count = || *sub.notifies.lock().unwrap();
+
+        let reg_sqrt = U256::from(1u128) << 96;
+        let new_sqrt = U256::from(2u128) << 96;
+
+        // Forward V4 Swap at block 7.
+        bot.dispatch_log(&make_v4_swap_log(
+            pool_manager,
+            pool_id_bytes,
+            new_sqrt,
+            2_000_000,
+            50,
+            7,
+            false,
+        ));
+        assert_eq!(count(), 1);
+        {
+            let guard = bot.state.read();
+            let s = guard.get_v4_pool(pool_id).expect("registered");
+            assert_eq!(s.sqrt_price_x96, new_sqrt);
+            assert_eq!(s.journal.len(), 1, "V4 registration pushes no genesis");
+        }
+
+        // Reorg: removed-flag V4 Swap at block 7 (the only journal delta).
+        let coordinator = ReorgCoordinator::new(Arc::clone(&bot));
+        coordinator
+            .dispatch_reorg_log(&make_v4_swap_log(
+                pool_manager,
+                pool_id_bytes,
+                new_sqrt,
+                2_000_000,
+                50,
+                7,
+                true,
+            ))
+            .expect("V4 single-delta-at-target restores, is NOT too-deep");
+        assert_eq!(count(), 2, "reorg dispatched the SAME notify as forward");
+        {
+            let guard = bot.state.read();
+            let s = guard.get_v4_pool(pool_id).expect("registered");
+            assert_eq!(
+                s.sqrt_price_x96, reg_sqrt,
+                "V4 scalars rolled back to registration"
+            );
+            assert_eq!(s.liquidity, 1_000_000);
+            assert_eq!(s.tick, 0);
+            assert_eq!(s.journal.len(), 0);
+        }
+    }
+
+    /// V4 mirror of the empty-journal guard: a V4 pool with no forward event
+    /// has an empty journal → too-deep (would panic in `restore_before_block`).
+    #[test]
+    fn dispatch_reorg_log_v4_empty_journal_is_too_deep() {
+        let pool_manager = Address::from([0x44u8; 20]);
+        let pool_id_bytes: crate::bot_core::v4_swap_decoder::PoolId = [0xefu8; 32];
+        let (bot, pool_id, _sub) = bot_with_v4(pool_manager, pool_id_bytes, 5);
+        assert!(
+            bot.state
+                .read()
+                .get_v4_pool(pool_id)
+                .unwrap()
+                .journal
+                .is_empty()
+        );
+
+        let coordinator = ReorgCoordinator::new(Arc::clone(&bot));
+        let err = coordinator
+            .dispatch_reorg_log(&make_v4_swap_log(
+                pool_manager,
+                pool_id_bytes,
+                U256::from(2u128) << 96,
+                2_000_000,
+                50,
+                7,
+                true,
+            ))
+            .unwrap_err();
+        match err {
+            ReorgError::NoStatePriorToBlock { pool_id: p, block } => {
+                assert_eq!(p, pool_id);
+                assert_eq!(block, 7);
+            }
+        }
+        let guard = bot.state.read();
+        let s = guard.get_v4_pool(pool_id).expect("registered");
+        assert_eq!(s.sqrt_price_x96, U256::from(1u128) << 96);
+        assert!(s.journal.is_empty());
     }
 }

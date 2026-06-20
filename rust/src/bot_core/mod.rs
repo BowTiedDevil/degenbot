@@ -1274,40 +1274,42 @@ impl BotState {
     }
 
     /// Does `pool_id`'s journal have state at or before `block`? (ADR-006
-    /// slice 7.) `ReorgCoordinator`'s too-deep check: `false` → the reorg
-    /// target is at or below the journal's earliest surviving delta → return
-    /// `Err(NoStatePriorToBlock)` + graceful pump shutdown (immutable pool whose
-    /// newest delta < `block` still returns `true` — that's an idempotent
-    /// no-op restore, not a too-deep failure).
+    /// slice 7.) `false` → a too-deep reorg; `ReorgCoordinator` returns
+    /// `Err(NoStatePriorToBlock)` and the pump shuts down gracefully.
+    ///
+    /// The predicate is **family-dependent** because the journals differ in
+    /// whether they carry a genesis anchor:
+    ///
+    /// - **V2** carries a genesis delta (pushed at registration, `before ==
+    ///   after`). There is genuinely no state *prior to* the genesis block, so
+    ///   a target at or before the earliest (genesis) delta is too-deep:
+    ///   `earliest < block`.
+    /// - **V3/V4** push **no** genesis delta at registration. The "before"
+    ///   values of the first forward event ARE the registration state, so
+    ///   `restore_before_block(B)` handles a single delta at `B` (and any
+    ///   target below the earliest delta) by popping down to registration
+    ///   state. The ONLY unrecoverable case is an empty journal
+    ///   (`restore_before_block` panics on empty) → `!is_empty()`.
+    ///
+    /// A pool whose newest delta is below `block` (idempotent no-op restore)
+    /// returns `true` under both predicates.
     #[must_use]
     #[allow(dead_code)]
     pub fn has_state_prior_to(&self, pool_id: u64, block: u64) -> bool {
-        let Some((journal_earliest, _journal_newest)) = self.pool_journal_bounds(pool_id) else {
+        let Some(entry) = self.pools.get(&pool_id) else {
             // Pool not registered → no journal → the reorg can't restore it.
             // Treat as "has state" (no-op) so the caller proceeds to the normal
             // pool-not-found no-op path rather than a fail-stop.
             return true;
         };
-        // Empty journal has no state before any block. Otherwise there is
-        // state before `block` iff the earliest delta is strictly before it
-        // (the genesis delta itself has no "before" — its before == after).
-        journal_earliest.is_some_and(|earliest| earliest < block)
-    }
-
-    /// `(earliest, newest)` block bounds of `pool_id`'s journal, or `None` if
-    /// the pool isn't registered.
-    #[must_use]
-    fn pool_journal_bounds(&self, pool_id: u64) -> Option<(Option<u64>, Option<u64>)> {
-        match self.pools.get(&pool_id)? {
-            PoolEntry::V2(state) => {
-                Some((state.journal.earliest_block(), state.journal.newest_block()))
-            }
-            PoolEntry::V3(state) => {
-                Some((state.journal.earliest_block(), state.journal.newest_block()))
-            }
-            PoolEntry::V4(state) => {
-                Some((state.journal.earliest_block(), state.journal.newest_block()))
-            }
+        match entry {
+            PoolEntry::V2(state) => state
+                .journal
+                .earliest_block()
+                .is_some_and(|earliest| earliest < block),
+            // No genesis anchor — empty journal is the only too-deep case.
+            PoolEntry::V3(state) => !state.journal.is_empty(),
+            PoolEntry::V4(state) => !state.journal.is_empty(),
         }
     }
 
@@ -2303,8 +2305,9 @@ mod tests {
 
         // Reorg: a removed log arrives for an unrelated pool whose newest
         // journal delta (block 10) is BELOW the reorg target (block 12).
-        // `has_state_prior_to` returns true (earliest 5 < 12), so the coordinator
-        // proceeds to `restore_pool_before_block` → `v3_restore_before_block`.
+        // `has_state_prior_to` returns true (V3 journal non-empty), so the
+        // coordinator proceeds to `restore_pool_before_block` →
+        // `v3_restore_before_block`.
         assert!(core.has_state_prior_to(pool_id, 12));
         let result = core.v3_restore_before_block(pool_id, 12);
         assert!(
