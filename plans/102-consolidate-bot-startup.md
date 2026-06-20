@@ -249,7 +249,7 @@ end-to-end `BackrunSession` flow against the lifted `EngineRegistry`.
 
 ## Status
 
-[ ] Slice 1: delete the legacy one-shot
-[ ] Slice 2: typed V4 pool-admission exceptions
-[ ] Slice 3: lift `EngineRegistry` + `HopInfo` family into the library
-[ ] Slice 4: re-point example + docs + validate; file path-predicate follow-up
+[x] Slice 1: delete the legacy one-shot
+[x] Slice 2: typed V4 pool-admission exceptions
+[x] Slice 3: lift `EngineRegistry` + `HopInfo` family into the library
+[x] Slice 4: re-point example + docs + validate; file path-predicate follow-up

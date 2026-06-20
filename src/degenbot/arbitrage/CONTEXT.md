@@ -15,6 +15,14 @@
 | **Swap Amounts** | The per-pool input/output amounts and parameters needed to execute the swaps in an arbitrage cycle. `input_amount()` / `output_amount()` provide generic extraction; `build_swap_amount()` on pool classes replaces isinstance-chain factory. | Swap details |
 | **Calculation Result** | The complete output of an arbitrage calculation: input amount, profit amount, per-pool swap amounts, and state block | Arb result |
 
+## Engine Orchestration
+
+| Term | Definition | Aliases to avoid |
+| ---- | ---------- | ---------------- |
+| **Engine Registry** | `degenbot.arbitrage.EngineRegistry` — the **one canonical way to start** a `UniswapArbEngine` operator. Runs the pre-pump startup ritual (`subscribe` → stream snapshots → `backfill_from_snapshot` → verify config) and **stops before `resume()`**, so the caller attaches its result consumer before any batches flow. Maintains the Python pool ↔ Rust `pool_id` key maps + registers paths. Construct with `bot=` (production, builds the engine against the bot's shared `BotState`) or `engine=` (testability seam). | Engine orchestrator, engine wrapper |
+| **Engine-Facing Hop Descriptor** | The `V2HopInfo` / `V3HopInfo` / `V4HopInfo` / `HopInfo` / `PathInfo` / `build_hops_from_pools` family in `degenbot.arbitrage.hop_info` — distinct from the *solver's* `HopType`/`BoundedProductHop` shape. Frozen dataclasses reading only pool attributes, used by `EngineRegistry.register_path` to hand hops to the Rust engine and read back by deployment-side `encode_cmd_stream`. | Hop info, hop struct |
+| **Pool Admission** | The Rust core's correctness floor: `BotState::register_v4_pool` refuses amount-modifying-hook pools (`hook_flags & 0xCC != 0`) and dynamic-fee pools (`fee == 0x100000`), surfacing as typed `HookedPoolRejectedError` / `DynamicFeePoolRejectedError` (both subclass `ValueError`). The solver's V3-CL math assumes no hook intervention + a fixed fee; admission is enforced in Rust (ADR-005 standalone-core), not as a Python pre-check. | V4 hook filter |
+
 ## Solvers & Optimizers
 
 | Term | Definition | Aliases to avoid |
@@ -48,6 +56,7 @@
 - **Swap Amounts** self-encode into **EncodedCall**s; `generate_payloads()` wires encoding → **ApprovalStrategy** → **PayloadComposer**
 - **Swap Amounts** provide `input_amount()` / `output_amount()` for generic amount extraction; pool classes implement `build_swap_amount()` from the `ArbitragePathPool` protocol
 - A **V4PoolKey** is available to custom **PayloadComposers** for V4's unlock/swap callback dispatch
+- The **Engine Registry** is the single canonical startup orchestrator: it sequences `subscribe` → snapshot stream → `backfill_from_snapshot` → verify config, halting before `resume()` so the consumer attaches safely. **Pool Admission** (hooked/dynamic-fee V4 refusal) is enforced in the Rust core, not as a Python pre-check; rejections surface as `HookedPoolRejectedError` / `DynamicFeePoolRejectedError` for type-safe classification
 - A **Dynamic Amount** is a V4 swap where the contract derives `amountSpecified` from the **V4 Delta Ledger** instead of a pre-computed value; ensures intermediate deltas cancel exactly in V4-V4 paths
 - The **V4 Delta Ledger** (`t_v4_deltas`) tracks all currency deltas across V4 swaps; replaces the former two-accumulator pattern (`ether_delta`/`weth_delta`) to properly handle intermediate ERC-20 tokens
 - **int128 overflow guard** (`fits_int128()`) prevents V4 `SafeCastOverflow` reverts by skipping paths where `amountSpecified` exceeds ±2^127; checked by all 5 V4 encoder functions
