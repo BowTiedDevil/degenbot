@@ -112,6 +112,8 @@ from degenbot.uniswap.v4_snapshot import DatabaseSnapshot as V4DatabaseSnapshot
 from degenbot.uniswap.v4_snapshot import UniswapV4LiquiditySnapshot
 from examples.eth_backrun_helpers import (
     BackrunConfig,
+    _classify_revert,
+    _format_failure_breakdown,
     encode_cmd_stream,
     v4_input_is_native,
 )
@@ -1521,6 +1523,15 @@ async def dispatch_profitable_results(
         else:
             bot_logger.debug(msg)
 
+    # Per-root-cause tally of simulation failures, mutated by simulate_one.
+    # The [sim] summary appends this breakdown so a block's reverts are
+    # classified (e.g. "CurrencyNotSettled=9 no-profit=5") instead of a
+    # single opaque "N failed" count.
+    _fail_buckets: dict[str, int] = {}
+
+    def _tally_fail(bucket: str) -> None:
+        _fail_buckets[bucket] = _fail_buckets.get(bucket, 0) + 1
+
     def _write_jsonl(file_path: Path, obj: dict[str, Any]) -> None:
         """Synchronous JSONL writer helper for asyncio.to_thread."""
         file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1605,6 +1616,7 @@ async def dispatch_profitable_results(
                         f"int128 overflow at V4 hop[{i}] "
                         f"amount_specified={amount_specified} output={output_amount}"
                     )
+                    _tally_fail("int128-overflow")
                     return None
 
         # Encode as cmd_executor command stream
@@ -1751,6 +1763,7 @@ async def dispatch_profitable_results(
             _sim_log(
                 f"[sim-fail] path={path_id} {path_info.path_type}: simulation RPC failed ({e})"
             )
+            _tally_fail("rpc-failed")
             return None
 
         calls = sim[0]["calls"]
@@ -2064,7 +2077,7 @@ async def dispatch_profitable_results(
                     f"block={current_block} age={current_block - solve_block} "
                     f"calldata={_cd}"
                 )
-
+                _tally_fail(_classify_revert(revert_data))
                 return None
         try:
             weth_before = int.from_bytes(calls[0]["returnData"], byteorder="big")
@@ -2075,6 +2088,7 @@ async def dispatch_profitable_results(
             erc6909_after = int.from_bytes(calls[6]["returnData"], byteorder="big")
         except (IndexError, ValueError):
             _sim_log(f"[sim-fail] path={path_id} {path_info.path_type}: balance decode failed")
+            _tally_fail("balance-decode")
             return None
 
         combined_before = weth_before + eth_before + erc6909_before
@@ -2087,6 +2101,7 @@ async def dispatch_profitable_results(
                 f"eth_before={eth_before} eth_after={eth_after} "
                 f"erc6909_before={erc6909_before} erc6909_after={erc6909_after}"
             )
+            _tally_fail("no-profit")
             return None
 
         # ── Slice 5: Gas estimation from simulation ──────────────────
@@ -2180,12 +2195,14 @@ async def dispatch_profitable_results(
     sim_ok_count = len(gas_profitable) + len(gas_unprofitable)
     sim_fail_count = len(candidates) - sim_ok_count - exception_count
     best_net = max((r[2] for r in gas_profitable), default=0)
+    _breakdown = _format_failure_breakdown(_fail_buckets)
     bot_logger.info(
         f"[sim] {len(candidates)} candidates: "
         f"{sim_ok_count} ok ({len(gas_profitable)} profitable, "
         f"{len(gas_unprofitable)} below threshold), "
         f"{sim_fail_count} failed, {exception_count} exceptions"
         f"{f' — best net={best_net // 10**9}gwei' if gas_profitable else ''}"
+        f"{f' — by reason: {_breakdown}' if _breakdown else ''}"
     )
 
     # ── Record simulation outcomes for path suppression ──────────
