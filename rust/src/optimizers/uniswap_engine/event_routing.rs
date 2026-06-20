@@ -13,6 +13,14 @@ impl UniswapEngine {
     ///
     /// Decodes the topic and dispatches to the V2, V3, or V4 engine.
     /// Marks affected pool keys as dirty for subsequent `solve_dirty()`.
+    ///
+    /// The topic0 re-match below (`*topic == V2_SYNC_TOPIC`, etc.) is
+    /// **intentional and defensive**, not redundant with the pump's `Log`-arm
+    /// topic pre-filter. `apply_log` must remain safe to call with
+    /// **unfiltered** inputs — backfill, tests, and any future caller may
+    /// pass logs whose topic0 is outside `RELEVANT_TOPICS`, and those must
+    /// no-op here rather than dispatch to a wrong decoder. The pre-filter is
+    /// a lock-avoidance fast path; this re-check is the correctness floor.
     pub fn apply_log(&mut self, log: &Log, block_number: u64) {
         let Some(topic) = log.topics().first() else {
             return;

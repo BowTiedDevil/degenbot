@@ -614,6 +614,19 @@ impl BlockPump {
                 // Solve happens at the top of the next iteration. Batch send
                 // is debounced — the timer starts/resets on each log.
                 Ok(Some(WsEvent::Log(log))) => {
+                    // Fast-path topic pre-filter: the `logs` WS subscription
+                    // is unfiltered (no topic/address filter on the server —
+                    // see `stream_select`), so the overwhelming majority of
+                    // logs here are irrelevant to any pool we track. Checking
+                    // topic0 against `RELEVANT_TOPICS` *before* acquiring
+                    // `engine.lock()` (a parking_lot mutex) and running the
+                    // decoders skips the lock + decode work for those logs,
+                    // keeping the hot path off the contention path. This is
+                    // NOT redundant with the topic re-match inside
+                    // `apply_log` — that re-check is defensive, so `apply_log`
+                    // stays safe to call with unfiltered inputs (e.g. from
+                    // backfill or tests). Do not remove this pre-filter: it
+                    // is the lock-avoidance fast path.
                     if !relevant_topic_set.contains(log.topics().first().unwrap_or(&B256::ZERO)) {
                         continue;
                     }
@@ -813,6 +826,18 @@ impl BlockPump {
 /// A log is relevant if:
 /// 1. Its topic0 matches one of the 6 monitored event types, AND
 /// 2. Its emitting address is a registered V2/V3 pool or V4 `PoolManager`
+///
+/// # Live call sites
+///
+/// Currently has **no live (non-test) callers** — the pump's hot path
+/// pre-filters inline (see the `WsEvent::Log` arm of `run_with_stream`),
+/// and backfill uses `build_backfill_filter` for server-side topic filtering
+/// instead. Kept as the address-agnostic, reusable topic filter (its doc
+/// contract is that engines handle unregistered addresses gracefully, so it
+/// is safe to feed unfiltered-by-address logs). Do not assume it is dead —
+/// if removing, grep for callers across the crate first. Tracked as a
+/// cleanup todo separately.
+#[allow(dead_code)]
 pub fn filter_relevant_logs<S: std::hash::BuildHasher>(
     logs: &[Log],
     relevant_topic_set: &HashSet<B256, S>,
