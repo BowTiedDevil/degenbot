@@ -8,10 +8,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use alloy::primitives::{Address, U256};
-use pyo3::exceptions::PyStopAsyncIteration;
-use pyo3::prelude::*;
 #[allow(unused_imports)]
 use pyo3::create_exception;
+use pyo3::exceptions::PyStopAsyncIteration;
+use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use tokio::sync::mpsc;
 
@@ -1464,38 +1464,6 @@ impl PyUniswapArbEngine {
             self.bot.attach_engine(pool_id, subscriber.clone());
         }
         Ok(path_id)
-    }
-
-    /// Start the engine. Freezes registration and spawns the unified pump.
-    ///
-    /// The pump subscribes to both block headers and log events via WS.
-    /// Logs are buffered and processed atomically when the next block header
-    /// arrives. If no logs are received for a block, `eth_getLogs` is used to
-    /// verify. A 60s timeout triggers backfill for the missing range.
-    ///
-    /// After calling `start()`, the engine processes events autonomously.
-    /// Python reads results via the result batch channel (`async for`).
-    #[allow(clippy::needless_pass_by_value)]
-    #[pyo3(signature = (rpc_url))]
-    fn start(&self, rpc_url: String) -> PyResult<()> {
-        // ADR-006 D4 (slice 6): the pump holds `Arc<Bot>` +
-        // `Arc<dyn DrainSink>` — not the engine. The sink is now the real
-        // `SolveCoordinator` (replacing slice 5a's `EngineDrainSink`
-        // placeholder): it fans drain-tick / send / finalize / reorg calls to
-        // the engine under a `drain_lock`. `start` asserts the engine's cursor
-        // is consistent (precondition 2; today single-engine so trivially
-        // agreed) before the pump's WS phase begins.
-        self.coordinator.start();
-        let bot = Arc::clone(&self.bot);
-        let sink: Arc<dyn DrainSink> = self.coordinator.clone();
-        let reorg_coordinator = Arc::clone(&self.reorg_coordinator);
-        let shutdown = Arc::clone(&self.shutdown);
-        let handle = BlockPump::spawn(rpc_url, bot, sink, reorg_coordinator, &shutdown)
-            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
-
-        *self.pump_handle.lock() = Some(handle);
-
-        Ok(())
     }
 
     /// Subscribe phase: open WS connections and observe until first complete block.
