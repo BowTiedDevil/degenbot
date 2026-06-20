@@ -38,36 +38,79 @@ pub fn decode(py: Python<'_>, types: Vec<String>, data: &[u8]) -> PyResult<Py<Py
 
 ### Module Organization
 
+The Rust extension is a **Cargo workspace** of five pure-Rust core crates
+(`degenbot-core`, `-cl-math`, `-abi`, `-rpc`, `-bot`) plus a root `degenbot_rs`
+**cdylib binding layer**. The core crates have **no `pyo3` dependency**
+(compiler-enforced; verify with `just check-no-pyo3-in-cores`); the root cdylib
+glues them to Python via PyO3. See [`plans/completed/103-rust-workspace-split.md`](../plans/completed/103-rust-workspace-split.md).
+
+#### `degenbot_rs` cdylib (binding layer) — `rust/src/`
+
 | File | Purpose |
 |------|---------|
-| `lib.rs` | Python module entry point, re-exports, `pyo3_log::init()` |
-| `errors.rs` | Centralized error types with `thiserror` + `From<->PyErr` conversions |
-| `abi_types/` | Unified ABI type/value representation. Directory module with three submodules: `type_` (`AbiType`, `AbiTypeError`, type parsing), `value` (`AbiValue`, integer parsing, string-to-value conversion), `cached` (`CachedAbiTypes`, `value_to_alloy_for_type`, shared `TYPE_CACHE`). Shared canonical type system used by decoder, encoder, and contract modules |
-| `abi_decoder.rs` | ABI decoding with pure Rust core + LRU type cache |
-| `abi_encoder.rs` | ABI encoding with pure Rust core + LRU type cache |
-| `alloy_py.rs` | Newtype wrappers (`PyU256`, `PyI256`) for zero-copy U256/I256 → Python int conversion via `int.from_bytes`; `extract_python_u256` for Python int/bytes → U256 extraction; `abi_value_from_python` for converting arbitrary Python objects into `AbiValue` enums for ABI encoding |
-| `py_cache.rs` | Cached Python function/class references (`int.from_bytes`, `HexBytes`) via `PyOnceLock` |
-| `tick_math.rs` | Uniswap V3 tick math — pure Rust core (no `pyo3` imports) |
-| `tick_math_py.rs` | `PyO3` wrappers for tick math (`get_sqrt_ratio_at_tick`, `get_tick_at_sqrt_ratio`, `extract_u160`) |
-| `hex_utils.rs` | Pure-Rust hex encoding/decoding (`decode_hex`, `encode_hex`) — no `PyO3` dependency |
-| `py_converters.rs` | Python object converters for RPC types: `log_to_py_dict`, `block_to_py_dict`, `json_to_py_with_hexbytes`; field-aware `HexBytes`/address/int detection; block/transaction/log dict builders. All functions require the GIL (documented as accepted cost) |
-| `address_utils.rs` | EIP-55 checksummed addresses (pure Rust core) |
-| `address_utils_py.rs` | `PyO3` wrappers for address utilities |
-| `bot_core/` | The Rust-owned backrun engine + Bot FFI family. `engine.rs` (`UniswapEngine` composing V2/V3/V4 block state), `block_pump.rs`, `log_dispatcher.rs`, `solve_coordinator.rs`, `reorg_coordinator.rs`, `state_history.rs`, `liquidity_verifier.rs`, `tick_bitmap.rs`/`tick_map.rs` (shared `update_tick_liquidity`/`apply_liquidity_to_tick_range`), `v2_encoding.rs`, `v2_sync_decoder.rs`, `v3_*` (`state.rs`/`swap_decoder.rs`/`mint_burn_decoder.rs`), `v4_*` (`state.rs`/`swap_decoder.rs`/`modify_liquidity_decoder.rs`), `py_bot.rs`/`py_liquidity_pool.rs`/`py_erc20_token.rs`/`py_dex_identity.rs` (ADR-005 Polars-style three-layer shared-core wrappers), `dex_identity.rs`, `drain_sink.rs`. Documented in [`docs/architecture/rust-owned-bot.md`](../docs/architecture/rust-owned-bot.md) and [`rust/CONTEXT.md`](CONTEXT.md) |
-| `optimizers/` | Möbius solvers: `mobius_int_exact.rs`, `mobius_v3_int.rs`, `mobius_int.rs`, plus `affected_keys.rs`/`liquidity_event_buffer.rs` and the `uniswap_engine/` sub-module. See [`docs/architecture/rust-owned-bot.md`](../docs/architecture/rust-owned-bot.md) §5 |
-| `cl_lib/` | Uniswap V3 core math ports (portable, no `pyo3`): `bit_math`, `full_math`, `sqrt_price_math`, `tick_math`, `liquidity_math`, `swap_math`, `unsafe_math`, `functions` |
-| `cl_lib_py.rs` | `PyO3` wrappers exposing `cl_lib` math to Python |
-| `subscription.rs` | WS subscription core (double-buffer `SubscriptionHandle`, `drain_raw`) |
-| `subscription_py.rs` | `PyO3` bindings for subscriptions |
+| `lib.rs` | Python module entry point (`#[pymodule]`), re-exports `pub use degenbot_{core,cl_math,abi,rpc,bot}::{...}`, `pyo3_log::init()`, `#[ctor]` pre-test Python init |
+| `alloy_py.rs` | Newtype wrappers (`PyU256`, `PyI256`) for zero-copy U256/I256 → Python int via `int.from_bytes`; `extract_python_u256`; `abi_value_from_python`. Shared by all `*_py` wrappers |
+| `py_cache.rs` | Cached Python function/class refs (`int.from_bytes`, `HexBytes`) via `PyOnceLock` |
+| `py_converters.rs` | GIL-bound converters for RPC types: `log_to_py_dict`, `block_to_py_dict`, `json_to_py_with_hexbytes`; field-aware `HexBytes`/address/int detection |
 | `json_converters.rs` | JSON RPC response converters feeding `py_converters` |
-| `provider.rs` | Ethereum RPC provider (sync, Alloy-based), retry logic, `LogFetcher`, `EthBlock` type alias, `rpc_call!` macro, `IntoProviderError` trait, eager `LogFilter` validation |
-| `async_provider.rs` | Async provider wrapper for Python via `pyo3-async-runtimes` |
-| `contract.rs` | Smart contract interface with `FunctionSignature` parsing |
-| `async_contract.rs` | Async contract wrapper with `batch_call` via `join_all` |
-| `provider_py.rs` | `PyO3` bindings for provider (`PyAlloyProvider`, `PyLogFilter`) |
-| `contract_py.rs` | `PyO3` bindings for contract (`PyContract`, `encode_function_call`, `decode_return_data`, `get_function_selector`) |
+| `abi_decoder_py.rs` / `abi_encoder_py.rs` | `#[pyfunction]` wrappers over `degenbot_abi::{abi_decoder, abi_encoder}` |
+| `address_utils_py.rs` | `#[pyfunction]` wrapper for address utilities |
+| `tick_math_py.rs` / `cl_lib_py.rs` | `PyO3` wrappers for V3 tick math (over `degenbot_cl_math::cl_lib`) |
+| `provider_py.rs` / `contract_py.rs` / `subscription_py.rs` | `PyO3` bindings over `degenbot_rpc` (incl. GIL-bound `drain_buffer`/`DrainResult`, absorbed from the pure core in slice 5) |
+| `async_provider.rs` / `async_contract.rs` | Async wrappers via `pyo3-async-runtimes` |
+| `py_bot.rs` / `py_liquidity_pool.rs` / `py_erc20_token.rs` / `py_dex_identity.rs` | ADR-005 three-layer `PyBot`/`PyLiquidityPool`/`PyErc20Token`/`PyDexIdentity` wrappers over `degenbot_bot::bot_core`. Absorbed the GIL-bound `DrainResult`/`convert_item`/`drain_buffer` from `subscription.rs` (slice 5) |
+| `py_binding.rs` | `PyUniswapArbEngine` + the `Verification*Error`/`*RejectedError` `#[create_exception]` types over `degenbot_bot::optimizers::uniswap_engine`. Absorbed from `uniswap_engine/py_binding.rs` (slice 6); still root here — needs `alloy_py`/`runtime` glue |
+
+#### `degenbot-core` — `rust/crates/degenbot-core/src/`
+
+Foundational types with **no `pyo3`** by default. The `From<*> for PyErr` impls
+live here behind a non-default `pyo3` feature (orphan rule: both `PyErr` and
+the error types are foreign to the root cdylib); the root enables it.
+
+| File | Purpose |
+|------|---------|
+| `errors.rs` | Centralized error types with `thiserror` + feature-gated `From<->PyErr` conversions: `TickMathError`, `ClMathError`, `AbiDecodeError`, `AddressError`, `ProviderError` |
+| `hex_utils.rs` | Pure-Rust hex encoding/decoding (`decode_hex`, `encode_hex`) |
+| `runtime.rs` | Shared Tokio runtime singleton (multi-threaded, `TOKIO_WORKER_THREADS`-tunable); lazily initialized |
+| `address_utils.rs` | EIP-55 checksummed addresses (pure Rust core; `parse_address`, `to_checksum_address_*`) |
+
+#### `degenbot-cl-math` — `rust/crates/degenbot-cl-math/src/`
+
+| File | Purpose |
+|------|---------|
+| `cl_lib/` | Uniswap V3 core math ports (portable, **no `pyo3`**): `bit_math`, `full_math`, `sqrt_price_math`, `tick_math`, `liquidity_math`, `swap_math`, `unsafe_math`, `functions` |
+
+#### `degenbot-abi` — `rust/crates/degenbot-abi/src/`
+
+| File | Purpose |
+|------|---------|
+| `abi_types/` | Unified ABI type/value representation; three submodules: `type_` (`AbiType`, type parsing), `value` (`AbiValue`), `cached` (`CachedAbiTypes`, shared `TYPE_CACHE`). Shared canonical type system used by decoder/encoder/contract |
+| `abi_decoder.rs` | ABI decoding with pure Rust core + LRU type cache. `#[pyfunction]` wrappers live in root `abi_decoder_py.rs` |
+| `abi_encoder.rs` | ABI encoding with pure Rust core + LRU type cache |
 | `signature_parser.rs` | Robust recursive-descent function signature parser |
-| `runtime.rs` | Shared Tokio runtime singleton |
+
+#### `degenbot-rpc` — `rust/crates/degenbot-rpc/src/`
+
+Pure provider/contract/subscription core, + the `test-utils` feature exposing
+`AlloyProvider::from_provider` to downstream tests (not production builds).
+
+| File | Purpose |
+|------|---------|
+| `provider.rs` | Ethereum RPC provider (sync, Alloy-based), retry logic, `LogFetcher`, `EthBlock` alias, `rpc_call!` macro, `IntoProviderError` trait, eager `LogFilter` validation |
+| `contract.rs` | Smart contract interface with `FunctionSignature` parsing |
+| `subscription.rs` | WS subscription pure core (double-buffer `SubscriptionHandle`, `RawSubItem`, `drain_raw`, `pump_*`). The GIL-bound `drain_buffer`/`DrainResult`/`convert_item` moved to root `subscription_py.rs` (slice 5) |
+
+#### `degenbot-bot` — `rust/crates/degenbot-bot/src/`
+
+One crate by ADR-003: the `bot_core` (state) ↔ `optimizers` (solvers) seam is
+genuine domain coupling (~30 mutual refs, now intra-crate). `#[pyclass]`/
+`#[pyfunction]` wrappers (`PyBot`, `PyUniswapArbEngine`, etc.) live in the
+root cdylib (`py_bot.rs`, `py_binding.rs`) — they need `alloy_py`/`py_cache`.
+
+| Module | Purpose |
+|--------|---------|
+| `bot_core/` | `BotState` single-owner state, `engine.rs`, `block_pump.rs`, `log_dispatcher.rs`, `solve_coordinator.rs`, `reorg_coordinator.rs`, `state_history.rs` (reorg journal), `liquidity_verifier.rs`, `tick_bitmap.rs`/`tick_map.rs`, `v2_encoding.rs`, `v3_*`/`v4_*` (state + decoders), `dex_identity.rs`, `drain_sink.rs`. Documented in [`docs/architecture/rust-owned-bot.md`](../docs/architecture/rust-owned-bot.md) and [`CONTEXT.md`](CONTEXT.md) |
+| `optimizers/` | Möbius solvers (`mobius_int_exact.rs`, `mobius_v3_int.rs`, `mobius_int.rs`), `affected_keys.rs`/`liquidity_event_buffer.rs`, + `uniswap_engine/` sub-module (`diagnostic`, `event_routing`, `solver_dispatch`, `lifecycle`, `snapshot_verify`, `result_channel`, `tests`). See [`docs/architecture/rust-owned-bot.md`](../docs/architecture/rust-owned-bot.md) §5 |
 
 ### Key Design Patterns
 
@@ -83,11 +126,13 @@ pub fn decode(py: Python<'_>, types: Vec<String>, data: &[u8]) -> PyResult<Py<Py
 
 ### Module Naming Convention
 
-Files follow a strict naming convention that signals their `PyO3` dependency:
+Files follow a strict naming convention that signals their `PyO3` dependency —
+split across the workspace: **core crates** hold `foo.rs` pure cores; the **root
+cdylib** holds the `foo_py.rs` wrappers (they need `alloy_py`/`py_cache` glue).
 
 | Pattern | Meaning | Example |
 |---------|---------|--------|
-| `foo.rs` | Pure Rust core — zero `pyo3` imports | `tick_math.rs`, `hex_utils.rs`, `provider.rs` |
+| `foo.rs` | Pure Rust core — zero `pyo3` imports | `hex_utils.rs` (core), `provider.rs` (rpc), `address_utils.rs` (core) |
 | `foo_py.rs` | `PyO3` wrappers only — `#[pyfunction]`, `#[pyclass]`, type conversion | `tick_math_py.rs`, `provider_py.rs`, `contract_py.rs` |
 | `foo_py.rs` (conversion) | `PyO3`-dependent converters (no `#[pyfunction]`, but creates Python objects) | `py_converters.rs`, `alloy_py.rs`, `py_cache.rs` |
 

@@ -1,0 +1,823 @@
+//! ABI value representation and conversions.
+//!
+//! Provides `AbiValue` enum for representing encoded/decoded ABI values,
+//! plus integer parsing helpers and string-to-value conversion.
+
+use crate::abi_types::type_::AbiType;
+use degenbot_core::errors::{AbiDecodeError, ContractError};
+use alloy::dyn_abi::DynSolValue;
+use alloy::primitives::{Address, I256, U256};
+use std::str::FromStr;
+
+/// Decode a hex string (with optional "0x" prefix) to bytes.
+///
+/// Delegates to [`degenbot_core::hex_utils::decode_hex`].
+///
+/// # Errors
+///
+/// Returns `Err` if the string contains invalid hex characters.
+pub(crate) fn decode_hex(hex_str: &str) -> Result<Vec<u8>, degenbot_core::hex_utils::HexError> {
+    degenbot_core::hex_utils::decode_hex(hex_str)
+}
+
+/// Represents an ABI value for encoding/decoding.
+///
+/// This enum captures all possible ABI types without any Python dependencies,
+/// enabling pure Rust testing and GIL-free processing.
+///
+/// # Integer bit widths
+///
+/// `Uint` and `Int` store their bit width alongside the value so that
+/// `to_alloy()` can produce correctly-typed `DynSolValue` without external
+/// context. The bit width must be a multiple of 8 in the range 8..=256.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AbiValue {
+    /// Ethereum address (20 bytes)
+    Address([u8; 20]),
+    /// Boolean value
+    Bool(bool),
+    /// Fixed-size bytes (bytes1-bytes32)
+    FixedBytes(Vec<u8>),
+    /// Dynamic bytes
+    Bytes(Vec<u8>),
+    /// Unsigned integer with bit width (8-256, multiple of 8)
+    Uint(U256, usize),
+    /// Signed integer with bit width (8-256, multiple of 8)
+    Int(I256, usize),
+    /// String
+    String(String),
+    /// Array of values
+    Array(Vec<Self>),
+}
+
+impl AbiValue {
+    /// Convert an `AbiValue` to a `DynSolValue` for encoding.
+    ///
+    /// # Errors
+    ///
+    /// Returns `AbiDecodeError` if conversion fails (e.g., value too large).
+    pub fn to_alloy(&self) -> Result<DynSolValue, AbiDecodeError> {
+        match self {
+            Self::Address(addr) => {
+                let addr = Address::from_slice(addr);
+                Ok(DynSolValue::Address(addr))
+            }
+            Self::Bool(b) => Ok(DynSolValue::Bool(*b)),
+            Self::FixedBytes(bytes) => {
+                let size = bytes.len();
+                if size > 32 {
+                    return Err(AbiDecodeError::UnsupportedType(format!(
+                        "bytes{size} requires at most 32 bytes, got {size}"
+                    )));
+                }
+                let mut arr = [0u8; 32];
+                arr[..size].copy_from_slice(bytes);
+                Ok(DynSolValue::FixedBytes(
+                    alloy::primitives::FixedBytes::<32>::new(arr),
+                    size,
+                ))
+            }
+            Self::Bytes(bytes) => Ok(DynSolValue::Bytes(bytes.clone())),
+            Self::String(s) => Ok(DynSolValue::String(s.clone())),
+            Self::Uint(n, bits) => Ok(DynSolValue::Uint(*n, *bits)),
+            Self::Int(n, bits) => Ok(DynSolValue::Int(*n, *bits)),
+            Self::Array(values) => {
+                let alloy_values: Result<Vec<_>, _> = values.iter().map(Self::to_alloy).collect();
+                Ok(DynSolValue::Array(alloy_values?))
+            }
+        }
+    }
+
+    /// Convert a `DynSolValue` from alloy to `AbiValue`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `AbiDecodeError` if the alloy type is unsupported.
+    pub fn from_alloy(value: DynSolValue) -> Result<Self, AbiDecodeError> {
+        match value {
+            DynSolValue::Address(addr) => Ok(Self::Address(addr.into())),
+            DynSolValue::Bool(b) => Ok(Self::Bool(b)),
+            DynSolValue::Uint(u, bits) => Ok(Self::Uint(u, bits)),
+            DynSolValue::Int(i, bits) => Ok(Self::Int(i, bits)),
+            DynSolValue::FixedBytes(fb, size) => Ok(Self::FixedBytes(fb[..size].to_vec())),
+            DynSolValue::Bytes(b) => Ok(Self::Bytes(b)),
+            DynSolValue::String(s) => Ok(Self::String(s)),
+            DynSolValue::Array(arr) | DynSolValue::FixedArray(arr) => {
+                let values: Result<Vec<Self>, _> = arr.into_iter().map(Self::from_alloy).collect();
+                Ok(Self::Array(values?))
+            }
+            DynSolValue::Tuple(vals) => {
+                let values: Result<Vec<Self>, _> = vals.into_iter().map(Self::from_alloy).collect();
+                Ok(Self::Array(values?))
+            }
+            DynSolValue::Function(_) => Err(AbiDecodeError::UnsupportedType(
+                "function type not supported".to_string(),
+            )),
+        }
+    }
+
+    /// Parse a string argument into an `AbiValue` based on the expected type.
+    ///
+    /// Used by `contract.rs` to convert string arguments from Python into
+    /// typed values for encoding.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ContractError` if the string cannot be parsed for the given type.
+    pub fn from_str_arg(abi_type: &AbiType, arg: &str) -> Result<Self, ContractError> {
+        let trimmed = arg.trim();
+        match abi_type {
+            AbiType::Address => {
+                let addr =
+                    Address::from_str(trimmed).map_err(|_| ContractError::InvalidAddress {
+                        address: trimmed.to_string(),
+                        reason: "Invalid address format".to_string(),
+                    })?;
+                Ok(Self::Address(addr.into()))
+            }
+            AbiType::Bool => match trimmed.to_lowercase().as_str() {
+                "true" | "1" => Ok(Self::Bool(true)),
+                "false" | "0" => Ok(Self::Bool(false)),
+                _ => Err(ContractError::InvalidAbi {
+                    message: format!(
+                        "Invalid bool value '{arg}': expected 'true', 'false', '1', or '0'"
+                    ),
+                }),
+            },
+            AbiType::Uint(bits) => {
+                let uint_val = parse_uint256_with_hex_prefix(trimmed).map_err(|e| {
+                    ContractError::InvalidAbi {
+                        message: format!("Invalid uint value '{arg}': {e}"),
+                    }
+                })?;
+                Ok(Self::Uint(uint_val, *bits))
+            }
+            AbiType::Int(bits) => {
+                let int_val = parse_int256_with_hex_prefix(trimmed).map_err(|e| {
+                    ContractError::InvalidAbi {
+                        message: format!("Invalid int value '{arg}': {e}"),
+                    }
+                })?;
+                Ok(Self::Int(int_val, *bits))
+            }
+            AbiType::FixedBytes(size) => {
+                let bytes = decode_hex(trimmed).map_err(|_| ContractError::InvalidAbi {
+                    message: format!("Invalid hex value for bytes{size}: {arg}"),
+                })?;
+                if bytes.len() != *size {
+                    return Err(ContractError::InvalidAbi {
+                        message: format!(
+                            "bytes{size} requires exactly {size} bytes, got {}",
+                            bytes.len()
+                        ),
+                    });
+                }
+                Ok(Self::FixedBytes(bytes))
+            }
+            AbiType::Bytes => {
+                let bytes = decode_hex(trimmed).map_err(|_| ContractError::InvalidAbi {
+                    message: format!("Invalid hex value for bytes: {arg}"),
+                })?;
+                Ok(Self::Bytes(bytes))
+            }
+            AbiType::String => Ok(Self::String(trimmed.to_string())),
+            AbiType::Array(element_type) => {
+                let elements = parse_json_array(trimmed)?;
+                let values: Result<Vec<_>, _> = elements
+                    .iter()
+                    .map(|elem| Self::from_str_arg(element_type, elem))
+                    .collect();
+                Ok(Self::Array(values?))
+            }
+            AbiType::FixedArray(element_type, size) => {
+                let elements = parse_json_array(trimmed)?;
+                if elements.len() != *size {
+                    return Err(ContractError::InvalidAbi {
+                        message: format!(
+                            "Fixed array of size {size} requires exactly {size} elements, got {}",
+                            elements.len()
+                        ),
+                    });
+                }
+                let values: Result<Vec<_>, _> = elements
+                    .iter()
+                    .map(|elem| Self::from_str_arg(element_type, elem))
+                    .collect();
+                Ok(Self::Array(values?))
+            }
+        }
+    }
+
+    /// Convert this value to a string for contract return values.
+    ///
+    /// Used by `contract.rs` to format decoded values as strings for Python.
+    #[must_use]
+    pub fn to_contract_string(&self) -> String {
+        match self {
+            Self::Address(addr) => format!("0x{}", alloy::hex::encode(addr)),
+            Self::Bool(b) => b.to_string(),
+            Self::FixedBytes(bytes) | Self::Bytes(bytes) => {
+                format!("0x{}", alloy::hex::encode(bytes))
+            }
+            Self::Uint(n, _) => n.to_string(),
+            Self::Int(n, _) => n.to_string(),
+            Self::String(s) => s.clone(),
+            Self::Array(values) => {
+                let elements: Vec<String> = values.iter().map(Self::to_contract_string).collect();
+                format!("[{}]", elements.join(", "))
+            }
+        }
+    }
+}
+
+/// Parse a uint256 value from a string, handling hex prefix.
+pub(crate) fn parse_uint256_with_hex_prefix(s: &str) -> Result<U256, ParseIntError> {
+    let s = s.trim();
+    s.strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .map_or_else(
+            || U256::from_str_radix(s, 10).map_err(|_| ParseIntError::InvalidDecimal),
+            |hex_str| U256::from_str_radix(hex_str, 16).map_err(|_| ParseIntError::InvalidHex),
+        )
+}
+
+/// Parse an int256 value from a string, handling hex prefix.
+///
+/// Handles the tricky boundary cases around `I256::MAX` (2^255 - 1) and `I256::MIN` (-2^255).
+/// For positive hex values, any value >= 2^255 is rejected as out of range.
+pub(crate) fn parse_int256_with_hex_prefix(s: &str) -> Result<I256, ParseIntError> {
+    let s = s.trim();
+
+    let max_positive = (U256::from(1u8) << 255) - U256::from(1u8);
+
+    if let Some(abs_str) = s.strip_prefix('-') {
+        if let Some(hex_str) = abs_str
+            .strip_prefix("0x")
+            .or_else(|| abs_str.strip_prefix("0X"))
+        {
+            let abs_val =
+                U256::from_str_radix(hex_str, 16).map_err(|_| ParseIntError::InvalidHex)?;
+
+            let min_abs = U256::from(1u8) << 255;
+            if abs_val == min_abs {
+                return Ok(I256::MIN);
+            }
+
+            if abs_val > max_positive + U256::from(1u8) {
+                return Err(ParseIntError::InvalidHex);
+            }
+
+            Ok(I256::from_raw(abs_val).wrapping_neg())
+        } else {
+            I256::from_str(s).map_err(|_| ParseIntError::InvalidDecimal)
+        }
+    } else if let Some(hex_str) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        let uval = U256::from_str_radix(hex_str, 16).map_err(|_| ParseIntError::InvalidHex)?;
+
+        if uval > max_positive {
+            return Err(ParseIntError::InvalidHex);
+        }
+
+        Ok(I256::from_raw(uval))
+    } else {
+        I256::from_str(s).map_err(|_| ParseIntError::InvalidDecimal)
+    }
+}
+
+/// Error parsing an integer from string.
+#[derive(Debug, Clone, thiserror::Error)]
+#[non_exhaustive]
+pub enum ParseIntError {
+    /// Invalid hex format
+    #[error("invalid hex format")]
+    InvalidHex,
+    /// Invalid decimal format
+    #[error("invalid decimal format")]
+    InvalidDecimal,
+}
+
+/// Parse a JSON array string into individual element strings.
+///
+/// Accepts `["elem1", "elem2"]` format with optional whitespace.
+/// Quoted strings (`"..."`) have their surrounding quotes stripped.
+/// Unquoted elements are returned as-is.
+fn parse_json_array(input: &str) -> Result<Vec<String>, ContractError> {
+    let trimmed = input.trim();
+
+    if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
+        return Err(ContractError::InvalidAbi {
+            message: format!("Array value must be enclosed in square brackets, got: '{input}'"),
+        });
+    }
+
+    let content = &trimmed[1..trimmed.len() - 1];
+    let content = content.trim();
+
+    if content.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut elements = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    let mut in_string = false;
+    let mut escape_next = false;
+
+    for (i, c) in content.char_indices() {
+        if in_string {
+            if escape_next {
+                escape_next = false;
+                continue;
+            }
+            if c == '\\' {
+                escape_next = true;
+                continue;
+            }
+            if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            '[' => depth += 1,
+            ']' => {
+                if depth == 0 {
+                    return Err(ContractError::InvalidAbi {
+                        message: format!("Unmatched ']' in array value: '{input}'"),
+                    });
+                }
+                depth -= 1;
+            }
+            ',' if depth == 0 => {
+                let element = strip_quotes(content[start..i].trim());
+                if !element.is_empty() {
+                    elements.push(element);
+                }
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+
+    // Check for unterminated string
+    if in_string {
+        return Err(ContractError::InvalidAbi {
+            message: format!("Unterminated string in array value: '{input}'"),
+        });
+    }
+
+    let last_element = strip_quotes(content[start..].trim());
+    if !last_element.is_empty() {
+        elements.push(last_element);
+    }
+
+    Ok(elements)
+}
+
+/// Strip surrounding double-quote marks from a string element.
+///
+/// Handles basic JSON string escaping: `\"` → `"`, `\\` → `\`.
+/// Returns the string as-is if not quoted.
+fn strip_quotes(s: &str) -> String {
+    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+        // Unescape basic JSON sequences within the quoted content
+        let inner = &s[1..s.len() - 1];
+        let mut result = String::with_capacity(inner.len());
+        let mut chars = inner.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.peek().copied() {
+                    Some('"') => result.push('"'),
+                    Some('\\') => result.push('\\'),
+                    Some('n') => result.push('\n'),
+                    Some('t') => result.push('\t'),
+                    Some('/') => result.push('/'),
+                    _ => {
+                        // Unknown escape: keep the backslash
+                        result.push('\\');
+                        continue;
+                    }
+                }
+                chars.next();
+            } else {
+                result.push(c);
+            }
+        }
+        result
+    } else {
+        s.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+
+    // Test for P0.2: I256 hex parsing bug with large positive values
+    #[test]
+    fn test_parse_int256_large_positive_hex() {
+        let max_hex = "0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF";
+        let result = parse_int256_with_hex_prefix(max_hex);
+
+        assert!(result.is_ok(), "Should parse successfully: {result:?}");
+        let parsed = result.unwrap();
+
+        assert!(
+            parsed > I256::ZERO,
+            "I256::MAX should be positive, but got {parsed}"
+        );
+        assert_eq!(parsed, I256::MAX);
+    }
+
+    #[test]
+    fn test_parse_int256_edge_case_near_sign_bit() {
+        let val_hex = "0x4000000000000000000000000000000000000000000000000000000000000000";
+        let result = parse_int256_with_hex_prefix(val_hex);
+
+        assert!(result.is_ok(), "Should parse successfully");
+        let parsed = result.unwrap();
+
+        assert!(
+            parsed > I256::ZERO,
+            "Value 2^254 should be positive, but got {parsed}"
+        );
+
+        let expected = I256::try_from(U256::from(1u8) << 254).unwrap();
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn test_parse_int256_hex_out_of_range_positive_fails() {
+        let too_large = "0x8000000000000000000000000000000000000000000000000000000000000000";
+        let result = parse_int256_with_hex_prefix(too_large);
+
+        assert!(
+            result.is_err(),
+            "Hex value 2^255 should be out of range for positive int256"
+        );
+    }
+
+    #[test]
+    fn test_parse_int256_negative_hex_roundtrip() {
+        let negative_hex = "-0x1";
+        let result = parse_int256_with_hex_prefix(negative_hex).unwrap();
+        assert_eq!(result, I256::MINUS_ONE);
+    }
+
+    #[test]
+    fn test_parse_int256_max_hex() {
+        let max_hex = "0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF";
+        let result = parse_int256_with_hex_prefix(max_hex).unwrap();
+        assert_eq!(result, I256::MAX);
+    }
+
+    #[test]
+    fn test_parse_int256_min_hex() {
+        let min_hex = "-0x8000000000000000000000000000000000000000000000000000000000000000";
+        let result = parse_int256_with_hex_prefix(min_hex).unwrap();
+        assert_eq!(result, I256::MIN);
+    }
+
+    #[test]
+    fn test_parse_uint256_max() {
+        let max_hex = "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF";
+        let result = parse_uint256_with_hex_prefix(max_hex).unwrap();
+        assert_eq!(result, U256::MAX);
+    }
+
+    #[test]
+    fn test_parse_uint256_overflow_fails() {
+        let overflow = "0x10000000000000000000000000000000000000000000000000000000000000000";
+        let result = parse_uint256_with_hex_prefix(overflow);
+        assert!(result.is_err(), "U256 overflow should be rejected");
+    }
+
+    #[test]
+    fn test_parse_uint256_max_decimal() {
+        let max_decimal =
+            "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+        let result = parse_uint256_with_hex_prefix(max_decimal).unwrap();
+        assert_eq!(result, U256::MAX);
+    }
+
+    #[test]
+    fn test_int256_min_from_str_arg() {
+        let min_val =
+            "-57896044618658097711785492504343953926634992332820282019728792003956564819968";
+        let result = AbiValue::from_str_arg(&AbiType::Int(256), min_val).unwrap();
+        match result {
+            AbiValue::Int(n, bits) => {
+                assert_eq!(n, I256::MIN);
+                assert_eq!(bits, 256);
+            }
+            _ => panic!("Expected Int variant"),
+        }
+    }
+
+    #[test]
+    fn test_int256_min_hex_from_str_arg() {
+        let min_hex = "-0x8000000000000000000000000000000000000000000000000000000000000000";
+        let result = AbiValue::from_str_arg(&AbiType::Int(256), min_hex).unwrap();
+        match result {
+            AbiValue::Int(n, bits) => {
+                assert_eq!(n, I256::MIN);
+                assert_eq!(bits, 256);
+            }
+            _ => panic!("Expected Int variant"),
+        }
+    }
+
+    #[test]
+    fn test_uint256_max_from_str_arg() {
+        let max_hex = "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF";
+        let result = AbiValue::from_str_arg(&AbiType::Uint(256), max_hex).unwrap();
+        match result {
+            AbiValue::Uint(n, bits) => {
+                assert_eq!(n, U256::MAX);
+                assert_eq!(bits, 256);
+            }
+            _ => panic!("Expected Uint variant"),
+        }
+    }
+
+    #[test]
+    fn test_abi_value_stores_bit_width() {
+        let u8_val = AbiValue::from_str_arg(&AbiType::Uint(8), "255").unwrap();
+        match u8_val {
+            AbiValue::Uint(n, bits) => {
+                assert_eq!(n, U256::from(255u64));
+                assert_eq!(bits, 8);
+            }
+            _ => panic!("Expected Uint variant"),
+        }
+
+        let u128_val = AbiValue::from_str_arg(&AbiType::Uint(128), "42").unwrap();
+        match u128_val {
+            AbiValue::Uint(n, bits) => {
+                assert_eq!(n, U256::from(42u64));
+                assert_eq!(bits, 128);
+            }
+            _ => panic!("Expected Uint variant"),
+        }
+    }
+
+    #[test]
+    fn test_bool_true_values() {
+        for val in ["true", "True", "TRUE", "1"] {
+            let result = AbiValue::from_str_arg(&AbiType::Bool, val).unwrap();
+            assert_eq!(result, AbiValue::Bool(true), "'{val}' should parse as true");
+        }
+    }
+
+    #[test]
+    fn test_bool_false_values() {
+        for val in ["false", "False", "FALSE", "0"] {
+            let result = AbiValue::from_str_arg(&AbiType::Bool, val).unwrap();
+            assert_eq!(
+                result,
+                AbiValue::Bool(false),
+                "'{val}' should parse as false"
+            );
+        }
+    }
+
+    #[test]
+    fn test_bool_invalid_values() {
+        for val in ["yes", "no", "ture", "flase", "2", "-1", ""] {
+            let result = AbiValue::from_str_arg(&AbiType::Bool, val);
+            assert!(
+                result.is_err(),
+                "'{val}' should be rejected as invalid bool"
+            );
+        }
+    }
+
+    // =========================================================================
+    // parse_json_array: quoted strings and edge cases
+    // =========================================================================
+    #[test]
+    fn test_parse_json_array_quoted_strings() {
+        // Quoted strings should have their quotes stripped
+        let result = AbiValue::from_str_arg(
+            &AbiType::Array(Box::new(AbiType::String)),
+            "[\"hello\", \"world\"]",
+        )
+        .expect("should parse quoted string array");
+        match result {
+            AbiValue::Array(arr) => {
+                assert_eq!(arr.len(), 2);
+                assert_eq!(arr[0], AbiValue::String("hello".to_string()));
+                assert_eq!(arr[1], AbiValue::String("world".to_string()));
+            }
+            _ => panic!("Expected Array variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_json_array_unquoted_strings() {
+        // Unquoted elements should work as before (for non-string types)
+        let result =
+            AbiValue::from_str_arg(&AbiType::Array(Box::new(AbiType::Uint(256))), "[1, 2, 3]")
+                .expect("should parse unquoted uint array");
+        match result {
+            AbiValue::Array(arr) => {
+                assert_eq!(arr.len(), 3);
+            }
+            _ => panic!("Expected Array variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_json_array_single_quoted_string() {
+        // Single quoted string element: ["hello"]
+        let input = "[\"hello\"]";
+        let result = AbiValue::from_str_arg(&AbiType::Array(Box::new(AbiType::String)), input)
+            .expect("should parse single-element quoted string array");
+        match result {
+            AbiValue::Array(arr) => {
+                assert_eq!(arr.len(), 1);
+                assert_eq!(arr[0], AbiValue::String("hello".to_string()));
+            }
+            _ => panic!("Expected Array variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_json_array_escaped_quotes() {
+        // String with escaped quotes inside: ["he\"llo"] → he"llo
+        let input = "[\"he\\\"llo\"]";
+        let result = AbiValue::from_str_arg(&AbiType::Array(Box::new(AbiType::String)), input)
+            .expect("should parse string with escaped quotes");
+        match result {
+            AbiValue::Array(arr) => {
+                assert_eq!(arr.len(), 1);
+                assert_eq!(arr[0], AbiValue::String("he\"llo".to_string()));
+            }
+            _ => panic!("Expected Array variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_json_array_unmatched_bracket_errors() {
+        // Unmatched ']' without a matching '[' should error
+        let result =
+            AbiValue::from_str_arg(&AbiType::Array(Box::new(AbiType::Uint(256))), "[foo]bar]");
+        assert!(
+            result.is_err(),
+            "Should reject unmatched ']' in array value"
+        );
+    }
+
+    #[test]
+    fn test_parse_json_array_string_with_bracket_inside() {
+        // String containing ] inside quotes should not be treated as array close
+        // Input: ["hello]"]
+        let input = "[\"hello]\"]";
+        let result = AbiValue::from_str_arg(&AbiType::Array(Box::new(AbiType::String)), input);
+        assert!(
+            result.is_ok(),
+            "String containing ] inside quotes should still parse: {result:?}"
+        );
+        if let Ok(AbiValue::Array(arr)) = result {
+            assert_eq!(arr.len(), 1);
+            match &arr[0] {
+                AbiValue::String(s) => assert_eq!(s, "hello]"),
+                _ => panic!("Expected String variant"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_json_array_mixed_quoted_and_unquoted() {
+        // addresses can be quoted or unquoted
+        let addr1 = "0x742d35Cc6634C0532925a3b8D4C9db96590d6B75";
+        let input = format!("[\"{addr1}\"]");
+        let result = AbiValue::from_str_arg(&AbiType::Array(Box::new(AbiType::Address)), &input)
+            .expect("should parse quoted address array");
+        match result {
+            AbiValue::Array(arr) => {
+                assert_eq!(arr.len(), 1);
+            }
+            _ => panic!("Expected Array variant"),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Property-based tests for parse_int256_with_hex_prefix
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod proptests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::tuple_array_conversions
+    )]
+
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Generate a U256 that exercises the Int256 sign-bit boundary at 2^255.
+    /// Produces values concentrated near 0, near 2^255-1 (max positive),
+    /// near 2^255 (min negative), and near 2^256-1 (max U256).
+    fn arb_u256_near_sign_bit() -> impl Strategy<Value = U256> {
+        prop_oneof![
+            // Near zero
+            (any::<u64>()).prop_map(|lo| U256::from(lo)),
+            // Near 2^255 - 1: set top limb to 0x7FFF_FFFF_FFFF_FFFF, random lower limbs
+            (any::<u64>(), any::<u64>(), any::<u64>()).prop_map(|(b, c, d)| U256::from_limbs([
+                0x7FFF_FFFF_FFFF_FFFF,
+                b,
+                c,
+                d
+            ])),
+            // Near 2^255: set top limb to 0x8000_0000_0000_0000, random lower limbs
+            (any::<u64>(), any::<u64>(), any::<u64>()).prop_map(|(b, c, d)| U256::from_limbs([
+                0x8000_0000_0000_0000,
+                b,
+                c,
+                d
+            ])),
+            // Near U256::MAX
+            (any::<u64>(), any::<u64>(), any::<u64>()).prop_map(|(b, c, d)| U256::from_limbs([
+                0xFFFF_FFFF_FFFF_FFFF,
+                b,
+                c,
+                d
+            ])),
+            // Fully random
+            (any::<u64>(), any::<u64>(), any::<u64>(), any::<u64>())
+                .prop_map(|(a, b, c, d)| U256::from_limbs([a, b, c, d])),
+        ]
+    }
+
+    proptest! {
+        /// Positive hex values at and just below the sign bit (2^255) parse or
+        /// are correctly rejected.
+        #[test]
+        fn int256_hex_sign_bit_boundary(v in arb_u256_near_sign_bit()) {
+            let hex = format!("0x{v:x}");
+            let result = parse_int256_with_hex_prefix(&hex);
+            let max_positive = (U256::from(1u8) << 255) - U256::from(1u8);
+            if v <= max_positive {
+                // Valid positive I256
+                let parsed = result.expect("valid positive should parse");
+                assert!(parsed >= I256::ZERO);
+                assert_eq!(I256::from_raw(v), parsed, "value mismatch");
+            } else if v == U256::from(1u8) << 255 {
+                // This is I256::MIN — only valid as negative, not positive
+                assert!(result.is_err(), "2^255 as positive should be rejected");
+            } else {
+                // Above sign bit — should be rejected as positive
+                assert!(result.is_err(), "overflow value should be rejected");
+            }
+        }
+
+        /// Negative hex values round-trip correctly, including near I256::MIN.
+        #[test]
+        fn int256_hex_negative_roundtrip(v in arb_u256_near_sign_bit()) {
+            // Treat v as the absolute value of a negative number
+            // and construct the hex string "-0x{abs:x}"
+            let min_abs = U256::from(1u8) << 255; // |I256::MIN| = 2^255
+            let _max_positive = min_abs - U256::from(1u8); // 2^255 - 1
+            let hex = format!("-0x{v:x}");
+            let result = parse_int256_with_hex_prefix(&hex);
+
+            match v.cmp(&min_abs) {
+                std::cmp::Ordering::Equal => {
+                    // Exact I256::MIN case
+                    let parsed = result.expect("I256::MIN should parse");
+                    assert_eq!(parsed, I256::MIN);
+                }
+                std::cmp::Ordering::Greater => {
+                    // |abs_val| exceeds I256 range
+                    assert!(result.is_err(), "overflow negative should be rejected");
+                }
+                std::cmp::Ordering::Less => {
+                    // Valid negative value: 1 <= abs_val <= max_positive
+                    let parsed = result.expect("valid negative should parse");
+                    assert!(parsed < I256::ZERO);
+                    // Round-trip: construct the I256 from raw bits and verify
+                    let expected = I256::from_raw(v).wrapping_neg();
+                    assert_eq!(parsed, expected);
+                }
+            }
+        }
+
+        /// Zero should parse correctly in all representations.
+        #[test]
+        fn int256_zero_variants(prefix in 0u8..3u8) {
+            let s = match prefix % 3 {
+                0 => "0x0",
+                1 => "0X0",
+                _ => "0",
+            };
+            let result = parse_int256_with_hex_prefix(s).unwrap();
+            assert_eq!(result, I256::ZERO);
+        }
+    }
+}

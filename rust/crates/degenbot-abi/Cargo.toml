@@ -1,0 +1,28 @@
+[package]
+name = "degenbot-abi"
+description = "Pure-Rust ABI type/decode/encode and function-signature parsing."
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"
+pedantic = "warn"
+perf = "warn"
+style = "warn"
+suspicious = "warn"
+
+[dependencies]
+alloy = { version = "^2.0" }
+degenbot-core = { path = "../degenbot-core" }
+lru = { version = "^0.18" }
+parking_lot = { version = "^0.12" }
+thiserror = { version = "^2.0" }
+
+[dev-dependencies]
+proptest = "^1.10"

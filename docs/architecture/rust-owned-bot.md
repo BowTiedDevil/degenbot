@@ -40,17 +40,17 @@ Every hot-path operation — event decoding, pool state mutation, tick-range con
 
 | Component | Language | File(s) | Role |
 |-----------|----------|---------|------|
-| UniswapEngine | Rust | `rust/src/optimizers/uniswap_engine.rs` | Unified V2+V3+V4 engine: state, solving, result storage |
-| V2BlockEngine | Rust | `rust/src/optimizers/v2_block_engine.rs` | V2 pool state, Sync decoding, constant-product solving |
-| V3BlockEngine | Rust | `rust/src/optimizers/v3_block_engine.rs` | V3 pool state, Swap/Mint/Burn decoding, tick-range construction, piecewise solving |
-| V4BlockEngine | Rust | `rust/src/optimizers/v4_block_engine.rs` | V4 pool state, Swap/ModifyLiquidity decoding, same CL math as V3 |
-| UniswapEnginePump | Rust | `rust/src/optimizers/uniswap_engine_pump.rs` | Unified async pump: dual WS subscription (newHeads + logs), backfill on timeout/empty block, routes to sub-engines |
-| Bot | Rust | `rust/src/bot_core/mod.rs` | Single owner of pool/token state (future all-state owner, currently V2+V3 partial) |
-| ReorgJournal | Rust | `rust/src/bot_core/state_history.rs` | Bounded deque of per-block deltas for rollback (V2: 2 reserves; V3: scalars + tick priors) |
-| Tick bitmap walk & tick mutation | Rust | `rust/src/bot_core/tick_bitmap.rs` | `gen_ticks()` port + shared `update_tick_liquidity` / `apply_liquidity_to_tick_range` helpers used by both V3 and V4 engines |
-| Event decoders | Rust | `rust/src/bot_core/v*_decoder.rs` | Decode Sync, Swap, Mint/Burn, ModifyLiquidity from Alloy logs |
-| Möbius solvers | Rust | `rust/src/optimizers/mobius_*.rs` | Integer-exact arbitrage solvers (V2-V2, mixed V2-V3, V3-V3) |
-| V2 swap encoding | Rust | `rust/src/bot_core/v2_encoding.rs` | Pre-encoded `swap()` calldata production |
+| UniswapEngine | Rust | `rust/crates/degenbot-bot/src/optimizers/uniswap_engine.rs` | Unified V2+V3+V4 engine: state, solving, result storage |
+| V2BlockEngine | Rust | `rust/crates/degenbot-bot/src/optimizers/v2_block_engine.rs` | V2 pool state, Sync decoding, constant-product solving |
+| V3BlockEngine | Rust | `rust/crates/degenbot-bot/src/optimizers/v3_block_engine.rs` | V3 pool state, Swap/Mint/Burn decoding, tick-range construction, piecewise solving |
+| V4BlockEngine | Rust | `rust/crates/degenbot-bot/src/optimizers/v4_block_engine.rs` | V4 pool state, Swap/ModifyLiquidity decoding, same CL math as V3 |
+| UniswapEnginePump | Rust | `rust/crates/degenbot-bot/src/optimizers/uniswap_engine_pump.rs` | Unified async pump: dual WS subscription (newHeads + logs), backfill on timeout/empty block, routes to sub-engines |
+| Bot | Rust | `rust/crates/degenbot-bot/src/bot_core/mod.rs` | Single owner of pool/token state (future all-state owner, currently V2+V3 partial) |
+| ReorgJournal | Rust | `rust/crates/degenbot-bot/src/bot_core/state_history.rs` | Bounded deque of per-block deltas for rollback (V2: 2 reserves; V3: scalars + tick priors) |
+| Tick bitmap walk & tick mutation | Rust | `rust/crates/degenbot-bot/src/bot_core/tick_bitmap.rs` | `gen_ticks()` port + shared `update_tick_liquidity` / `apply_liquidity_to_tick_range` helpers used by both V3 and V4 engines |
+| Event decoders | Rust | `rust/crates/degenbot-bot/src/bot_core/v*_decoder.rs` | Decode Sync, Swap, Mint/Burn, ModifyLiquidity from Alloy logs |
+| Möbius solvers | Rust | `rust/crates/degenbot-bot/src/optimizers/mobius_*.rs` | Integer-exact arbitrage solvers (V2-V2, mixed V2-V3, V3-V3) |
+| V2 swap encoding | Rust | `rust/crates/degenbot-bot/src/bot_core/v2_encoding.rs` | Pre-encoded `swap()` calldata production |
 | PyUniswapArbEngine | Rust/PyO3 | `uniswap_engine.rs` (bottom) | PyO3 wrapper exposing engine to Python |
 | Executor contract | Vyper | `contracts/tstore_executor.vy` | Generic payload queue with V2/V3/V4 callbacks |
 | Backrun bot | Python | `examples/eth_backrun_v2_v3_v4_rust.py` | Pool discovery, encoding, simulation, submission |
@@ -386,7 +386,7 @@ Property-based tests (via proptest) verify the journal matches a faithful model 
 
 ## 8. Event Decoders
 
-All decoders live in `rust/src/bot_core/` and decode from Alloy `Log` objects:
+All decoders live in `rust/crates/degenbot-bot/src/bot_core/` and decode from Alloy `Log` objects:
 
 | Decoder | File | Event signature | Topic constant |
 |---------|------|-----------------|---------------|
@@ -589,7 +589,7 @@ Eliminates ~95%+ of simulation failures from scam/tax/honeypot tokens.
 
 ### 13.1 Role
 
-`Bot` (in `rust/src/bot_core/mod.rs`) is the single Rust owner of all runtime pool/token state — the state layer ADR-003 makes a peer to `UniswapEngine`. Under Plan 100 it holds V2/V3/V4 `PoolEntry` state, the reorg journal, per-pool swap math (`calculate_tokens_out`/`calculate_tokens_in` via `v3_simulate_swap`/`v4_simulate_swap`), and V2 swap encoding. The block engines (`V2BlockEngine`/`V3BlockEngine`/`V4BlockEngine`) are dissolved — `UniswapEngine` holds `core: Arc<Mutex<Bot>>` and reads/writes all pool state through it. See `rust/CONTEXT.md` {Bot} for the field inventory and **ADR-003** for the state-ownership decision.
+`Bot` (in `rust/crates/degenbot-bot/src/bot_core/mod.rs`) is the single Rust owner of all runtime pool/token state — the state layer ADR-003 makes a peer to `UniswapEngine`. Under Plan 100 it holds V2/V3/V4 `PoolEntry` state, the reorg journal, per-pool swap math (`calculate_tokens_out`/`calculate_tokens_in` via `v3_simulate_swap`/`v4_simulate_swap`), and V2 swap encoding. The block engines (`V2BlockEngine`/`V3BlockEngine`/`V4BlockEngine`) are dissolved — `UniswapEngine` holds `core: Arc<Mutex<Bot>>` and reads/writes all pool state through it. See `rust/CONTEXT.md` {Bot} for the field inventory and **ADR-003** for the state-ownership decision.
 
 ### 13.2 FFI Topology — Polars-Inspired Three-Layer Architecture
 
