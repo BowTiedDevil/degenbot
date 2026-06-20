@@ -10,7 +10,7 @@ risk of unbounded backlog or stale-batch dispatch.
 
 from __future__ import annotations
 
-import examples.eth_backrun_v2_v3_v4_rust as runner
+import degenbot.arbitrage.engine_registry as runner
 
 
 class FakeEngine:
