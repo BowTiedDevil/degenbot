@@ -134,6 +134,8 @@ class Bot:
         self.tokens = TokenRegistry()
         self.managed_pools = ManagedPoolRegistry()
         self._trackers: dict[str, AbstractPoolTracker[Any]] = {}
+        # Idempotency flag for close(); mirrored by bot_lifecycle.close.
+        self._closed: bool = False
 
         # Builders own I/O orchestration; Bot hands them its I/O dependencies.
         # Erc20Builder is a leaf — constructed before BuilderContext.

@@ -24,21 +24,29 @@ that wrapper's ref. A running engine that took its own ref (via
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from degenbot.types.abstract.pool_tracker import AbstractPoolTracker
 
 
 class _BotLike(Protocol):
-    """Structural shape required by the teardown functions."""
+    """Structural shape required by the teardown functions.
 
-    _trackers: dict[str, AbstractPoolTracker[object]]
-    pools: object
-    tokens: object
-    db: object
-    _provider: object
-    _py_bot: object
+    The volatile members are typed :data:`~typing.Any` because teardown
+    reaches into registry/provider internals (``pools._reset``,
+    ``tokens.reset``, ``db.remove``, ``_provider.close``) whose precise types
+    live in unrelated modules — pulling them in here would create import
+    cycles for a structural protocol that only needs call-site shape.
+    """
+
+    _trackers: dict[str, AbstractPoolTracker[Any]]
+    pools: Any
+    tokens: Any
+    db: Any
+    _provider: Any
+    _py_bot: Any
+    _closed: bool
 
 
 def release_python_state(bot: _BotLike) -> None:
@@ -54,8 +62,9 @@ def release_python_state(bot: _BotLike) -> None:
             tracker._tracked_pools.clear()  # noqa: SLF001
         if hasattr(tracker, "_untracked_pools"):
             tracker._untracked_pools.clear()  # noqa: SLF001
-        if hasattr(tracker, "unload_snapshot"):
-            tracker.unload_snapshot()
+        unload_snapshot = getattr(tracker, "unload_snapshot", None)
+        if callable(unload_snapshot):
+            unload_snapshot()
 
     # 2. Drop the pool and token registries (Rust owns canonical state)
     bot.pools._reset()  # type: ignore[attr-defined]  # noqa: SLF001

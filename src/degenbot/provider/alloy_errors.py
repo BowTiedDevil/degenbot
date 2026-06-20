@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING
 from web3.exceptions import ContractLogicError
 
 if TYPE_CHECKING:
-    from eth_typing import ChecksumAddress
+    from eth_typing import Address
 
 # Markers indicating an EVM execution revert inside the Rust provider's
 # formatted error string. Solidity >=0.8 surfaces as the phrase
@@ -71,7 +71,7 @@ def is_alloy_revert(exc: BaseException) -> bool:
 def alloy_revert_error(
     exc: RuntimeError,
     *,
-    to: ChecksumAddress | str,
+    to: Address | str,
 ) -> ContractLogicError:
     """Build a ``ContractLogicError`` mirroring an Alloy ``eth_call`` revert.
 

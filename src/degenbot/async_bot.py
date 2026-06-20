@@ -101,6 +101,8 @@ class AsyncBot:
         self.tokens = TokenRegistry()
         self.managed_pools = ManagedPoolRegistry()
         self._trackers: dict[str, Any] = {}
+        # Idempotency flag for close(); mirrored by bot_lifecycle.close.
+        self._closed: bool = False
 
         self._erc20_builder = AsyncErc20Builder(
             default_chain_id=self._chain_id, db=self.db, tokens=self.tokens, py_bot=self._py_bot
