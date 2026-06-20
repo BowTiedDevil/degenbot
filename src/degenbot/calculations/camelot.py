@@ -54,11 +54,20 @@ def get_y_camelot(
     x_0: int,
     xy: int,
     y: int,
+    decimals0: int | None = None,  # noqa: ARG001  # unused — see below
+    decimals1: int | None = None,  # noqa: ARG001  # unused — see below
 ) -> int:
     """Solve for y in the Camelot invariant using Newton's method.
 
     Uses the Solidly calc_d (same D function) but the Camelot f() and a
     simpler convergence check (delta <= 1 in either direction).
+
+    ``decimals0`` / ``decimals1`` are accepted to align with the 5-arg
+    ``get_y_func`` calling convention of ``calc_exact_in_stable`` (which
+    Aerodrome's ``get_y_solidly`` needs for its edge-case ``calc_k``
+    fallback). Camelot's Newton loop does NOT need them — it converges via
+    ``solidly_calc_d`` alone — so they are ignored here. Passing them
+    positionally (as ``calc_exact_in_stable`` does) is the supported form.
 
     Returns:
         The computed integer value.

@@ -704,7 +704,7 @@ class LiquidityPool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
                     decimals1=_decimals1,
                     fee=_fee,
                     k_func=k_camelot,
-                    get_y_func=get_y_camelot,  # ty:ignore[invalid-argument-type]
+                    get_y_func=get_y_camelot,
                 )
 
             return SolidlyStableHop(
