@@ -3376,4 +3376,83 @@ mod tests {
         );
         assert_eq!(view_a.update_block(), view_b.update_block());
     }
+
+    /// Regression (F7HX73): same-block multi-Swap reorg rollback.
+    ///
+    /// `push_delta` collapsed same-block deltas ("same-block replacement"):
+    /// the second Swap at block B replaced the first, so the recorded
+    /// `scalar_priors` became post-first-Swap, not pre-block. On
+    /// `restore_before_block(B)` the popped delta then returned post-first-Swap
+    /// scalars, landing the pool on post-first-Swap instead of the true pre-B
+    /// state. (Two same-block swaps on mainnet V3/V4 are common — multi-hop
+    /// arb bots, MEV activity.)
+    ///
+    /// This test pins the AC: register a V3 pool, push two Swap deltas at
+    /// block B with different scalars, then `restore_before_block(B)` and
+    /// assert the pool scalars match the pre-B (registration) state, not
+    /// post-first-Swap.
+    ///
+    /// Note: the AC text says `restore_before_block(B+1)`, but that is the
+    /// no-op case (newest at B < B+1 returns current state = post-both-swaps,
+    /// correct for "before B+1"). The bug manifests at `restore_before_block(B)`,
+    /// which pops the block-B delta — the trigger exercised here.
+    #[test]
+    fn v3_restore_before_block_after_same_block_multi_swap_lands_on_pre_block() {
+        use crate::bot_core::RegisterV3PoolParams;
+        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+
+        let mut core = BotState::new();
+        let pool_id = core.register_v3_pool(&RegisterV3PoolParams {
+            address: Address::from([0xf7u8; 20]),
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 500,
+            tick_spacing: 10,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data: HashMap::new(),
+            update_block: 0,
+            coverage: PoolTickCoverage::Sparse,
+        });
+
+        let block_b = 9u64;
+        // Two same-block Swaps with distinct scalars.
+        let _ = core.apply_v3_swap_by_pool_id(
+            pool_id,
+            U256::from(2u128) << 96,
+            2_000_000,
+            -10,
+            block_b,
+            &[],
+        );
+        let _ = core.apply_v3_swap_by_pool_id(
+            pool_id,
+            U256::from(3u128) << 96,
+            3_000_000,
+            -20,
+            block_b,
+            &[],
+        );
+
+        // Sanity: current state reflects the second swap.
+        {
+            let s = core.get_v3_pool(pool_id).expect("registered");
+            assert_eq!(s.sqrt_price_x96, U256::from(3u128) << 96);
+        }
+
+        // Roll back block B. Pre-fix this returned post-first-Swap scalars
+        // (2<<96, 2_000_000, -10); the fix must land on the pre-B (registration)
+        // state (1<<96, 1_000_000, 0).
+        let _ = core.v3_restore_before_block(pool_id, block_b);
+        let s = core.get_v3_pool(pool_id).expect("registered after restore");
+        assert_eq!(
+            s.sqrt_price_x96,
+            U256::from(1u128) << 96,
+            "same-block multi-swap restore lands on pre-B sqrt_price, not post-first-Swap"
+        );
+        assert_eq!(s.liquidity, 1_000_000);
+        assert_eq!(s.tick, 0);
+    }
 }
