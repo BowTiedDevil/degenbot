@@ -9,7 +9,7 @@ mod tests {
     use crate::bot_core::RegisterV4PoolParams;
     use crate::optimizers::uniswap_engine::ResolvedMixedPath;
     use crate::optimizers::uniswap_engine::{
-        BlockMetadata, HopType, PoolHop, ResolvedHop, UniswapEngine, INT128_MAX,
+        BlockMetadata, HopType, PoolHop, ResolvedHop, SolvePathResult, UniswapEngine, INT128_MAX,
     };
 
     fn usdc(amount: u64) -> U256 {
@@ -565,6 +565,125 @@ mod tests {
         assert!(
             engine.delivered.contains_key(&path_id),
             "delivered should include the just-sent profitable path"
+        );
+    }
+
+    #[test]
+    fn profit_threshold_includes_results_above_u64_max_when_unbounded() {
+        // Contract: profits above `u64::MAX` (~1.84e19) are reachable for
+        // 18-decimal tokens with large reserves, and the V4 int128 guard
+        // permits up to 2^127-1. With the default unbounded cap
+        // (`max_profit == U256::MAX`), such a result must surface in `fresh` —
+        // the previous `< max_profit` filter using a u64-truncated binding
+        // would silently drop everything above `u64::MAX`.
+        //
+        // We inject a synthetic `SolvePathResult` directly into `results`
+        // (the filter reads from there; the solver path is irrelevant to
+        // this bound) and drive `compute_diff_and_send`.
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut engine = UniswapEngine::new();
+        engine.set_result_channel(tx);
+        // Defaults: min_profit = 0, max_profit = U256::MAX (cap fully open).
+
+        let huge_profit = U256::from(u64::MAX) + U256::from(1u64);
+        let path_id = 7u64;
+        engine.results.insert(
+            path_id,
+            SolvePathResult {
+                optimal_input: U256::from(1_000u64),
+                profit: huge_profit,
+                hop_outputs: vec![U256::from(1u64), huge_profit],
+                consumed_inputs: vec![U256::from(1_000u64)],
+            },
+        );
+
+        engine.compute_diff_and_send(&BlockMetadata::default());
+
+        let batch = rx
+            .try_recv()
+            .expect("compute_diff_and_send should deliver a batch");
+        assert!(
+            batch.fresh.iter().any(|(id, _)| *id == path_id),
+            "a result with profit > u64::MAX must appear in fresh when the cap is unbounded"
+        );
+        assert!(
+            engine.delivered.contains_key(&path_id),
+            "a result with profit > u64::MAX must be delivered"
+        );
+    }
+
+    #[test]
+    fn profit_threshold_max_bound_is_inclusive() {
+        // Contract: the max bound is inclusive (`profit <= max_profit`), so a
+        // result whose profit exactly equals `max_profit` is included in
+        // `fresh`. This is what makes `None` / `U256::MAX` (the only safe
+        // unbounded value under the old u64 binding) reachable as an open cap.
+        //
+        // Same injection strategy as the above-u64-max test.
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut engine = UniswapEngine::new();
+        engine.set_result_channel(tx);
+
+        let profit = U256::from(1_000_000u64);
+        engine.set_profit_thresholds(U256::ZERO, profit);
+
+        let path_id = 7u64;
+        engine.results.insert(
+            path_id,
+            SolvePathResult {
+                optimal_input: U256::from(1_000u64),
+                profit,
+                hop_outputs: vec![U256::from(1u64), profit],
+                consumed_inputs: vec![U256::from(1_000u64)],
+            },
+        );
+
+        engine.compute_diff_and_send(&BlockMetadata::default());
+
+        let batch = rx
+            .try_recv()
+            .expect("compute_diff_and_send should deliver a batch");
+        assert!(
+            batch.fresh.iter().any(|(id, _)| *id == path_id),
+            "a result with profit == max_profit must be included under the inclusive (`<=`) max bound"
+        );
+    }
+
+    #[test]
+    fn profit_threshold_min_bound_is_exclusive() {
+        // Contract guard: the min bound stays strict (`profit > min_profit`),
+        // unchanged by the max-bound inclusive fix. A result equal to
+        // `min_profit` must be excluded.
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut engine = UniswapEngine::new();
+        engine.set_result_channel(tx);
+
+        let profit = U256::from(1_000_000u64);
+        engine.set_profit_thresholds(profit, U256::MAX);
+
+        let path_id = 7u64;
+        engine.results.insert(
+            path_id,
+            SolvePathResult {
+                optimal_input: U256::from(1_000u64),
+                profit,
+                hop_outputs: vec![U256::from(1u64), profit],
+                consumed_inputs: vec![U256::from(1_000u64)],
+            },
+        );
+
+        engine.compute_diff_and_send(&BlockMetadata::default());
+
+        let batch = rx
+            .try_recv()
+            .expect("compute_diff_and_send should deliver a batch");
+        assert!(
+            batch.fresh.is_empty(),
+            "a result with profit == min_profit must be excluded under the strict (`>`) min bound"
+        );
+        assert!(
+            !engine.delivered.contains_key(&path_id),
+            "a result with profit == min_profit must not be delivered"
         );
     }
 

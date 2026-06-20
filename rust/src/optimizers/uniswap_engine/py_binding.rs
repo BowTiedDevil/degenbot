@@ -2584,13 +2584,32 @@ impl PyUniswapArbEngine {
 
     /// Set the profit thresholds for the result batch channel.
     ///
-    /// Only paths with `profit > min_profit` and `profit < max_profit`
+    /// Only paths with `profit > min_profit` and `profit <= max_profit`
     /// appear in batch `fresh` / `updated` entries.
-    #[pyo3(signature = (min_profit, max_profit))]
-    fn set_profit_thresholds(&self, min_profit: u64, max_profit: u64) {
-        self.engine
-            .lock()
-            .set_profit_thresholds(U256::from(min_profit), U256::from(max_profit));
+    ///
+    /// Both bounds accept full `uint256`-scale Python integers (matching the
+    /// `U256` profits the solver produces); the previous `u64` signature
+    /// silently dropped any profit above `u64::MAX` (~1.84e19), which is
+    /// reachable for 18-decimal tokens with large reserves and within the
+    /// V4 `int128` guard's `2^127-1` ceiling.
+    ///
+    /// `max_profit` defaults to `None`, which means "no upper cap"
+    /// (`U256::MAX`) — the only safe unbounded setting. Callers should prefer
+    /// `max_profit=None` over passing `0`, since `max_profit == 0` excludes
+    /// every non-negative profit under the inclusive (`<=`) bound.
+    #[pyo3(signature = (min_profit, max_profit=None))]
+    fn set_profit_thresholds(
+        &self,
+        min_profit: &Bound<'_, pyo3::PyAny>,
+        max_profit: Option<&Bound<'_, pyo3::PyAny>>,
+    ) -> PyResult<()> {
+        let min = crate::alloy_py::extract_python_u256(min_profit)?;
+        let max = match max_profit {
+            Some(obj) => crate::alloy_py::extract_python_u256(obj)?,
+            None => U256::MAX,
+        };
+        self.engine.lock().set_profit_thresholds(min, max);
+        Ok(())
     }
 
     /// DIAG-a3f2: Dump V2 pool state for a given address.
