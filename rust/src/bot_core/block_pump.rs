@@ -1177,4 +1177,219 @@ mod tests {
             "block w+1's batch carries w+1's metadata (in-order)"
         );
     }
+
+    // -----------------------------------------------------------------
+    // Pump-level reorg integration (ADR-006 slice 7).
+    //
+    // `ReorgCoordinator` is covered directly in `reorg_coordinator.rs`
+    // (dispatch → restore_before_block → notify). What is NOT covered
+    // anywhere is the pump's own reorg branch in `run_with_stream`: the
+    // `log.removed` arm routes the log to the coordinator, cancels the
+    // pending debounce, continues on an in-journal-depth reorg, and shuts
+    // down gracefully on a too-deep reorg. These tests pin those
+    // pump-specific behaviors (the coordinator's restore+notify is
+    // asserted as the downstream observable, not re-tested for its own
+    // sake).
+    // -----------------------------------------------------------------
+
+    use crate::bot_core::log_dispatcher::PoolStateSubscriber;
+    use crate::bot_core::RegisterV2PoolParams;
+    use alloy::primitives::{Address, Bytes, U256};
+
+    /// Build a V2 `Sync` log for `pool_address` carrying
+    /// `(reserve0, reserve1)`, at `block_number`, with `removed` set.
+    /// Mirrors `reorg_coordinator.rs`'s `make_sync_log` test helper.
+    fn make_v2_sync_log(
+        pool_address: Address,
+        reserve0: U256,
+        reserve1: U256,
+        block_number: u64,
+        removed: bool,
+    ) -> Log {
+        let data = {
+            let mut data = Vec::with_capacity(64);
+            data.extend_from_slice(&reserve0.to_be_bytes::<32>());
+            data.extend_from_slice(&reserve1.to_be_bytes::<32>());
+            data
+        };
+        let inner = alloy::primitives::Log::new_unchecked(
+            pool_address,
+            vec![V2_SYNC_TOPIC],
+            Bytes::from(data),
+        );
+        Log {
+            inner,
+            block_hash: None,
+            block_number: Some(block_number),
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed,
+        }
+    }
+
+    /// Counting subscriber — records `on_pool_state_updated` invocations so a
+    /// pump-level reorg test can assert the restore fired the SAME notify
+    /// path as a forward `dispatch_log`. `Fake` prefix per AGENTS.md.
+    struct FakeCountingSubscriber {
+        notifies: Mutex<u32>,
+    }
+    impl PoolStateSubscriber for FakeCountingSubscriber {
+        fn on_pool_state_updated(&self, _pool_id: u64) {
+            *self.notifies.lock().unwrap() += 1;
+        }
+    }
+
+    /// Register a V2 pool on a fresh `Bot` with a counting subscriber attached,
+    /// returning `(bot, pool_id, counting_subscriber)`. Genesis reserves are
+    /// anchored at `update_block`, seeding the reorg journal so an in-journal
+    /// reorg can roll back to them.
+    fn bot_with_registered_v2(
+        pool_addr: Address,
+        update_block: u64,
+    ) -> (Arc<Bot>, u64, Arc<FakeCountingSubscriber>) {
+        let bot = Arc::new(Bot::new(1));
+        let pool_id = bot.state.write().register_v2_pool(&RegisterV2PoolParams {
+            address: pool_addr,
+            token0: Address::from([0xa0u8; 20]),
+            token1: Address::from([0xa1u8; 20]),
+            reserve0: U256::from(1_000),
+            reserve1: U256::from(2_000),
+            fee_token0: (997, 1000),
+            fee_token1: (997, 1000),
+            factory: Address::from([0xf0u8; 20]),
+            update_block,
+        });
+        let counting = Arc::new(FakeCountingSubscriber {
+            notifies: Mutex::new(0),
+        });
+        let sub: Arc<dyn PoolStateSubscriber> = counting.clone();
+        bot.attach_engine(pool_id, Arc::downgrade(&sub));
+        (bot, pool_id, counting)
+    }
+
+    /// Build a `BlockPump` over a caller-provided `Arc<Bot>` (rather than a
+    /// fresh empty `Bot::new(1)`), returning the pump + sink + the shared
+    /// shutdown flag so a test can assert shutdown behavior. Same mock-transport
+    /// provider as `pump_for_test`; test paths avoid provider calls.
+    fn pump_for_test_with_bot(
+        bot: Arc<Bot>,
+        last_processed: Option<u64>,
+    ) -> (BlockPump, Arc<FakeDrainSink>, Arc<AtomicBool>) {
+        use alloy::network::Ethereum as NetEth;
+        use alloy::providers::{Provider, ProviderBuilder};
+        use alloy::rpc::client::ClientBuilder;
+        use alloy::transports::mock::{Asserter, MockTransport};
+
+        let asserter = Asserter::new();
+        let client = ClientBuilder::default().transport(MockTransport::new(asserter), true);
+        let dyn_provider = ProviderBuilder::new().connect_client(client).erased();
+        let provider = Arc::new(AlloyProvider::from_provider(
+            Arc::new(dyn_provider) as Arc<dyn alloy::providers::Provider<NetEth>>
+        ));
+        let reorg = Arc::new(crate::bot_core::reorg_coordinator::ReorgCoordinator::new(
+            Arc::clone(&bot),
+        ));
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let sink = Arc::new(FakeDrainSink::new(last_processed));
+        let pump = BlockPump::for_test(bot, sink.clone(), reorg, provider, Arc::clone(&shutdown));
+        (pump, sink, shutdown)
+    }
+
+    /// A `removed: true` V2 Sync log for a registered pool, when its block is
+    /// within the reorg journal's depth, drives the pump's reorg branch to
+    /// restore the pool to its pre-fork state via the `ReorgCoordinator` —
+    /// firing the SAME `on_pool_state_updated` notify as a forward Sync —
+    /// and the pump does NOT shut down (it continues processing).
+    ///
+    /// This pins the pump-level wiring of ADR-006 slice 7: the coordinator's
+    /// restore+notify (covered in `reorg_coordinator.rs`) is the downstream
+    /// observable; what is asserted here is that the *pump* routes a
+    /// `removed: true` log there, and that an in-depth reorg is non-fatal.
+    #[tokio::test]
+    async fn reorg_log_restores_pool_via_coordinator_and_pump_continues() {
+        let pool_addr = Address::from([0x11u8; 20]);
+        let (bot, pool_id, sub) = bot_with_registered_v2(pool_addr, 5);
+        let notify_count = || *sub.notifies.lock().unwrap();
+
+        // Forward Sync at block 7 — misprices the pool and seeds the journal
+        // genesis(5) → transition(7). Drive through the *pump* (not
+        // `bot.dispatch_log` directly) so the same code path that handles
+        // live WS logs is exercised.
+        let (mut pump, _sink, shutdown) = pump_for_test_with_bot(Arc::clone(&bot), Some(5));
+        let forward = make_v2_sync_log(pool_addr, U256::from(1_500), U256::from(2_500), 7, false);
+        // Stream ends immediately after the log; the loop returns via the
+        // `Ok(None)` arm (both subscription streams ended) once the reorg
+        // branch `continue`s and the stream is exhausted.
+        let combined = stream::iter(vec![WsEvent::Log(forward)]).boxed();
+        pump.run_test_loop(combined, 5).await;
+
+        assert_eq!(notify_count(), 1, "forward Sync through the pump notified");
+        assert_eq!(
+            bot.state.read().v2_snapshot(pool_id),
+            Some((U256::from(1_500), U256::from(2_500), 7)),
+            "forward Sync applied through the pump",
+        );
+        assert!(
+            !shutdown.load(Ordering::Relaxed),
+            "no reorg yet — pump running"
+        );
+
+        // Reorg: a removed-flag Sync at block 7 rolls back to genesis. Build a
+        // fresh pump over the SAME bot (the journal + state persist on `Bot`)
+        // and feed only the removed log.
+        let (mut pump, _sink, shutdown) = pump_for_test_with_bot(Arc::clone(&bot), Some(5));
+        let reorg_log = make_v2_sync_log(
+            pool_addr,
+            U256::from(1_500), // content unused — block + pool identity matter
+            U256::from(2_500),
+            7,
+            true,
+        );
+        let combined = stream::iter(vec![WsEvent::Log(reorg_log)]).boxed();
+        pump.run_test_loop(combined, 5).await;
+
+        assert_eq!(
+            notify_count(),
+            2,
+            "reorg fired the SAME notify path as a forward Sync",
+        );
+        assert_eq!(
+            bot.state.read().v2_snapshot(pool_id),
+            Some((U256::from(1_000), U256::from(2_000), 5)),
+            "reorg rolled back to genesis reserves",
+        );
+        assert!(
+            !shutdown.load(Ordering::Relaxed),
+            "in-journal-depth reorg is non-fatal — pump did NOT shut down"
+        );
+    }
+
+    /// A too-deep reorg (the removed log's block is at/below the journal's
+    /// earliest delta) returns `Err(NoStatePriorToBlock)` from the
+    /// coordinator; the pump treats this as unrecoverable — it sets the
+    /// shutdown flag and returns from `run_with_stream` so Python observes
+    /// the pump task exiting, rather than continuing with stale state.
+    #[tokio::test]
+    async fn too_deep_reorg_shuts_down_pump_gracefully() {
+        let pool_addr = Address::from([0x22u8; 20]);
+        // Genesis anchored at block 5 — restore_before_block(5) is too deep
+        // (nothing the journal can land on prior to the genesis delta).
+        let (bot, _pool_id, _sub) = bot_with_registered_v2(pool_addr, 5);
+
+        let (mut pump, _sink, shutdown) = pump_for_test_with_bot(Arc::clone(&bot), Some(5));
+        // Removed-flag Sync at block 5 → coordinator restores before 5, which
+        // is at the journal's genesis floor → `Err(NoStatePriorToBlock)`.
+        let reorg_log = make_v2_sync_log(pool_addr, U256::from(1_500), U256::from(2_500), 5, true);
+        let combined = stream::iter(vec![WsEvent::Log(reorg_log)]).boxed();
+        pump.run_test_loop(combined, 5).await;
+
+        assert!(
+            shutdown.load(Ordering::Relaxed),
+            "too-deep reorg must set the shutdown flag",
+        );
+        // `run_test_loop` returned (this assert is reached), proving the pump
+        // exited its loop instead of looping forever on a fatal reorg.
+    }
 }
