@@ -978,7 +978,6 @@ class UniswapArbEngine:
     ) -> None: ...
     def finish_v4_snapshot(self) -> None: ...
 
-
 class VerificationMismatchError(RuntimeError):
     """On-chain verification mismatch: engine tick data != on-chain state.
 
@@ -988,7 +987,6 @@ class VerificationMismatchError(RuntimeError):
     Subclasses ``RuntimeError`` so broad ``except RuntimeError`` handlers
     still catch it; classify by ``isinstance`` for the fatal path.
     """
-
 
 class VerificationRpcError(RuntimeError):
     """RPC/transport failure during on-chain verification (provider

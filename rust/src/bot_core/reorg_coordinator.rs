@@ -504,12 +504,7 @@ mod tests {
         // the journal with its single delta (block 7, scalar_priors = registration).
         let new_sqrt = U256::from(2u128) << 96;
         bot.dispatch_log(&make_v3_swap_log(
-            pool_addr,
-            new_sqrt,
-            2_000_000,
-            50,
-            7,
-            false,
+            pool_addr, new_sqrt, 2_000_000, 50, 7, false,
         ));
         assert_eq!(count(), 1, "forward swap notified once");
         {
@@ -529,12 +524,7 @@ mod tests {
         let coordinator = ReorgCoordinator::new(Arc::clone(&bot));
         coordinator
             .dispatch_reorg_log(&make_v3_swap_log(
-                pool_addr,
-                new_sqrt,
-                2_000_000,
-                50,
-                7,
-                true,
+                pool_addr, new_sqrt, 2_000_000, 50, 7, true,
             ))
             .expect("single-delta-at-target restores, is NOT too-deep");
         assert_eq!(count(), 2, "reorg dispatched the SAME notify as forward");
@@ -573,9 +563,13 @@ mod tests {
         let (bot, pool_id, _sub) = bot_with_v3(pool_addr, 5);
         // No forward dispatch → V3 journal is empty (registration pushes no
         // genesis delta, unlike V2).
-        assert!(
-            bot.state.read().get_v3_pool(pool_id).unwrap().journal.is_empty()
-        );
+        assert!(bot
+            .state
+            .read()
+            .get_v3_pool(pool_id)
+            .unwrap()
+            .journal
+            .is_empty());
 
         let coordinator = ReorgCoordinator::new(Arc::clone(&bot));
         let err = coordinator
@@ -769,14 +763,13 @@ mod tests {
         let pool_manager = Address::from([0x44u8; 20]);
         let pool_id_bytes: crate::bot_core::v4_swap_decoder::PoolId = [0xefu8; 32];
         let (bot, pool_id, _sub) = bot_with_v4(pool_manager, pool_id_bytes, 5);
-        assert!(
-            bot.state
-                .read()
-                .get_v4_pool(pool_id)
-                .unwrap()
-                .journal
-                .is_empty()
-        );
+        assert!(bot
+            .state
+            .read()
+            .get_v4_pool(pool_id)
+            .unwrap()
+            .journal
+            .is_empty());
 
         let coordinator = ReorgCoordinator::new(Arc::clone(&bot));
         let err = coordinator
