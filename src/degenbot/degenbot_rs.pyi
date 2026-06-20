@@ -978,6 +978,48 @@ class UniswapArbEngine:
     ) -> None: ...
     def finish_v4_snapshot(self) -> None: ...
 
+    # ── Phase / startup ritual (Plan 102: the canonical two-phase flow). ──
+    def subscribe(self, rpc_url: str) -> int: ...
+    def backfill_from_snapshot(
+        self, rpc_url: str, snapshot_block: int, chunk_size: int = 2000
+    ) -> int: ...
+    def resume_from_subscribe(self) -> None: ...
+
+    # ── Verify config (consumer-safe: nothing emits before resume). ──
+    def set_verify_on_register(self, enabled: bool) -> None: ...
+    def set_verify_rpc_url(self, rpc_url: str) -> None: ...
+    def set_verify_state_view(self, state_view_address: str) -> None: ...
+
+    # ── Pool + path registration ──
+    def register_v3_pool(
+        self,
+        address: str,
+        token0: str,
+        token1: str,
+        fee: int,
+        tick_spacing: int,
+        factory: str,
+        sqrt_price_x96: int,
+        liquidity: int,
+        tick: int,
+        block: int = 0,
+    ) -> int: ...
+    def register_v4_pool(
+        self,
+        pool_manager: str,
+        pool_id_hex: str,
+        currency0: str,
+        currency1: str,
+        fee: int,
+        tick_spacing: int,
+        hook_flags: int,
+        sqrt_price_x96: int,
+        liquidity: int,
+        tick: int,
+        block: int = 0,
+    ) -> int: ...
+    def register_and_solve_path(self, pool_refs: list[tuple[int, bool]]) -> int: ...
+
 class VerificationMismatchError(RuntimeError):
     """On-chain verification mismatch: engine tick data != on-chain state.
 
@@ -989,13 +1031,13 @@ class VerificationMismatchError(RuntimeError):
     """
 
 class VerificationRpcError(RuntimeError):
-    """RPC/transport failure during on-chain verification (provider
-    construction failure, etc.).
+    """RPC/transport failure during on-chain verification.
 
-    Raised by the Rust seam (`VerifyError::Provider`). The bot could not
-    reach the node to verify — also not safe to silently skip (an unverifiable
-    pool is no safer than a mismatched one), but a distinct type so the caller
-    can choose retry/backoff vs abort. Subclasses ``RuntimeError``.
+    Covers provider construction failure, etc. Raised by the Rust seam
+    (`VerifyError::Provider`). The bot could not reach the node to verify —
+    also not safe to silently skip (an unverifiable pool is no safer than a
+    mismatched one), but a distinct type so the caller can choose
+    retry/backoff vs abort. Subclasses ``RuntimeError``.
     """
 
 class HookedPoolRejectedError(ValueError):
