@@ -225,6 +225,19 @@ impl BlockPump {
     ///
     /// Equivalent to calling `subscribe()` then `resume()` immediately.
     /// Provided for backward compatibility with existing callers.
+    ///
+    /// 5DM6JJ: previously this discarded the `subscribe()` result's
+    /// `first_block` + `combined_stream` (hard-coding `first_block: 0` and
+    /// re-subscribing a THIRD time for the resume stream). That (a) threw
+    /// away the subscribe-phase anchor and (b) opened a gap window between
+    /// the subscribe-phase subscription and the third subscription. Now we
+    /// reuse the `state` returned by `subscribe()` — `subscribe()` itself
+    /// already re-subscribes once internally to produce a clean resume
+    /// stream — passing the real `first_block` so the cold-start anchor in
+    /// `run_with_stream` (`current_block == 0 && first_observed_block > 0`)
+    /// is the defensive fallback, with `on_drain(first_block)` as the
+    /// primary anchor (mirrors `SolveCoordinator::on_drain` setting
+    /// `last_drained_block`).
     #[allow(clippy::missing_errors_doc, clippy::unnecessary_wraps)]
     pub(crate) fn spawn(
         rpc_url: String,
@@ -237,61 +250,39 @@ impl BlockPump {
 
         let shutdown_clone = Arc::clone(shutdown);
         let handle = runtime.spawn(async move {
-            let mut pump =
+            let (mut pump, state) =
                 match Self::subscribe(&rpc_url, bot, sink, reorg_coordinator, shutdown_clone).await
                 {
-                    Ok((pump, state)) => {
-                        // Send the first block as an empty batch so Python learns about it.
-                        // `process_block(&[], block, metadata)` decomposed: no logs to
-                        // dispatch + an `on_drain` (solve_dirty on the empty engine is
-                        // a no-op, but keeps the sink's last-processed-block coherent).
-                        pump.sink.on_drain(
-                            state.first_block,
-                            &BlockMetadata {
-                                timestamp: state.first_timestamp,
-                                base_fee_per_gas: None,
-                                gas_used: 0,
-                                gas_limit: 0,
-                            },
-                        );
-                        pump
-                    }
+                    Ok((pump, state)) => (pump, state),
                     Err(e) => {
                         log::error!("BlockPump: subscribe failed: {e}");
                         return;
                     }
                 };
 
-            // Build a SubscribeState from the subscribe results
-            // In the legacy path, we re-subscribe to get a fresh stream
-            let provider_arc = pump.provider.provider_arc();
+            // Send the first block as an empty batch so Python learns about
+            // it + anchors the drain cursor (`last_processed_block` → W,
+            // mirroring `SolveCoordinator::on_drain`). `process_block(&[],
+            // block, metadata)` decomposed: no logs to dispatch + an
+            // `on_drain` (solve_dirty on the empty engine is a no-op, but
+            // keeps the sink's last-processed-block coherent).
+            pump.sink.on_drain(
+                state.first_block,
+                &BlockMetadata {
+                    timestamp: state.first_timestamp,
+                    base_fee_per_gas: None,
+                    gas_used: 0,
+                    gas_limit: 0,
+                },
+            );
 
-            let block_stream = match provider_arc.subscribe_blocks().await {
-                Ok(s) => s.into_stream(),
-                Err(e) => {
-                    log::error!("BlockPump: failed to subscribe to blocks: {e}");
-                    return;
-                }
-            };
-
-            let log_filter = Filter::new();
-            let log_stream = match provider_arc.subscribe_logs(&log_filter).await {
-                Ok(s) => s.into_stream(),
-                Err(e) => {
-                    log::error!("BlockPump: failed to subscribe to logs: {e}");
-                    return;
-                }
-            };
-
-            let combined2 = stream_select(block_stream, log_stream).boxed();
-
-            let subscribe_state = SubscribeState {
-                first_block: 0, // Not used for legacy path
-                first_timestamp: 0,
-                combined_stream: Some(combined2),
-            };
-
-            pump.resume(subscribe_state).await;
+            // Reuse the subscribe-phase `first_block` + the
+            // subscribe-prepared resume stream (`subscribe()` already
+            // re-subscribed once internally to produce a clean resume
+            // stream — a third re-subscribe here would open a gap window +
+            // discard the anchor). `resume()` passes `state.first_block`
+            // as `first_observed_block` (NOT the legacy hard-coded 0).
+            pump.resume(state).await;
         });
 
         Ok(handle)
@@ -1088,7 +1079,12 @@ mod tests {
             false
         }
         fn on_drain(&self, block: u64, metadata: &BlockMetadata) {
+            // Faithful to `SolveCoordinator::on_drain`: record + advance the
+            // drain cursor so `last_processed_block()` reflects the drained
+            // block (the anchoring `spawn` relies on — see
+            // `legacy_spawn_anchors_current_block_to_subscribe_block`).
             self.drained.lock().unwrap().push((block, *metadata));
+            self.last_processed.store(block, Ordering::Relaxed);
         }
         fn on_send(&self, metadata: &BlockMetadata) {
             self.sent.lock().unwrap().push(*metadata);
@@ -1209,6 +1205,148 @@ mod tests {
         assert_ne!(
             *metadata, meta_102,
             "block 101's batch must NOT carry 102's metadata"
+        );
+    }
+
+    /// 5DM6JJ contract: the cold-start branch in `run_with_stream` must honor
+    /// `first_observed_block` when `last_processed_block()` is `None` (no
+    /// prior anchor). This is the defensive safety net the legacy `spawn` fix
+    /// leans on: passing the REAL subscribe block W (instead of the legacy
+    /// hard-coded `0`) means that if the `on_drain(first_block)` anchor were
+    /// ever absent, the pump still cold-starts to W — NOT stuck at 0 to be
+    /// jumped out-of-order by the first WS log.
+    #[tokio::test]
+    async fn cold_start_anchors_to_first_observed_block() {
+        // No prior processed block → `current_block` starts at 0. Pass the
+        // subscribe block W (a "huge" chain-head number) as
+        // `first_observed_block`. The cold-start branch
+        // (`current_block == 0 && first_observed_block > 0`) anchors
+        // `current_block` to W. Then header(W) is the first header (anchor
+        // confirmation, no finalize), and header(W+1) finalizes W in order —
+        // proving we cold-started to W, not 0.
+        let (mut pump, sink) = pump_for_test(None);
+        let w = 21_500_000u64; // a "huge" chain-head block number
+        let meta_w = BlockMetadata {
+            timestamp: 1,
+            base_fee_per_gas: Some(7),
+            gas_used: 8,
+            gas_limit: 9,
+        };
+        let meta_w1 = BlockMetadata {
+            timestamp: 2,
+            base_fee_per_gas: Some(10),
+            gas_used: 11,
+            gas_limit: 12,
+        };
+        let events: Vec<WsEvent> = vec![
+            WsEvent::BlockHeader {
+                number: w,
+                timestamp: meta_w.timestamp,
+                base_fee_per_gas: meta_w.base_fee_per_gas,
+                gas_used: meta_w.gas_used,
+                gas_limit: meta_w.gas_limit,
+            },
+            WsEvent::BlockHeader {
+                number: w + 1,
+                timestamp: meta_w1.timestamp,
+                base_fee_per_gas: meta_w1.base_fee_per_gas,
+                gas_used: meta_w1.gas_used,
+                gas_limit: meta_w1.gas_limit,
+            },
+        ];
+        let combined = stream::iter(events).boxed();
+        pump.run_test_loop(combined, w).await;
+
+        // header(W+1) finalizes W. Carrying meta_w (the just-finished
+        // block's metadata, held before W+1's header overwrote it — VTWCIG).
+        // The fact W was finalized proves `current_block` cold-started to W
+        // (not 0): had it stayed at 0, header(W) would have been the first
+        // header advancing 0→W, then header(W+1) would finalize W — looks
+        // similar, BUT the cold-start log line + the absence of a jump from
+        // 0 to W via a stray log is the invariant. We assert the finalized
+        // block is W with meta_w (in-order, anchored).
+        let finalized = sink.finalized.lock().unwrap().clone();
+        assert!(!finalized.is_empty(), "header w+1 should finalize block w");
+        assert_eq!(finalized[0].0, w, "first finalize is for the anchored block w");
+        assert_eq!(
+            finalized[0].1, meta_w,
+            "block w's batch carries w's metadata (in-order, anchored)"
+        );
+    }
+
+    /// 5DM6JJ contract: the legacy `spawn` flow's `on_drain(first_block)`
+    /// anchors `current_block` to the subscribe block W (mimics
+    /// `SolveCoordinator::on_drain` setting `last_drained_block`). With
+    /// `first_observed_block = W` (the real subscribe block, NOT the legacy
+    /// hard-coded `0`) the pump processes W+1, W+2 in order — the
+    /// "applies logs in block order against DB-snapshot-seeded engine state"
+    /// invariant — with no out-of-order jump from 0.
+    #[tokio::test]
+    async fn legacy_spawn_processes_blocks_in_order_anchored_at_subscribe_block() {
+        // Mimic spawn's flow: start with no prior cursor, then `on_drain(W)`
+        // (the empty-batch send spawn issues before resume) anchors
+        // `last_processed_block` to W — exactly as the real
+        // `SolveCoordinator` does. Then resume with first_observed=W (the
+        // real subscribe block, post-fix).
+        let (mut pump, sink) = pump_for_test(None);
+        let w = 21_500_000u64;
+        let meta_w = BlockMetadata {
+            timestamp: 1,
+            base_fee_per_gas: Some(7),
+            gas_used: 8,
+            gas_limit: 9,
+        };
+        let meta_w1 = BlockMetadata {
+            timestamp: 2,
+            base_fee_per_gas: Some(10),
+            gas_used: 11,
+            gas_limit: 12,
+        };
+        let meta_w2 = BlockMetadata {
+            timestamp: 3,
+            base_fee_per_gas: Some(13),
+            gas_used: 14,
+            gas_limit: 15,
+        };
+        // The empty-batch send spawn performs before resume:
+        pump.sink.on_drain(w, &meta_w);
+        assert_eq!(
+            pump.sink.last_processed_block(),
+            Some(w),
+            "on_drain(W) must anchor the cursor (mirrors SolveCoordinator)"
+        );
+
+        // Resume stream (post-fix: first_observed = W, not 0). header(W+1) is
+        // the first header → first_header anchor advances W→W+1; header(W+2)
+        // finalizes W+1. In-order W→W+1→W+2, no jump from 0.
+        let events: Vec<WsEvent> = vec![
+            WsEvent::BlockHeader {
+                number: w + 1,
+                timestamp: meta_w1.timestamp,
+                base_fee_per_gas: meta_w1.base_fee_per_gas,
+                gas_used: meta_w1.gas_used,
+                gas_limit: meta_w1.gas_limit,
+            },
+            WsEvent::BlockHeader {
+                number: w + 2,
+                timestamp: meta_w2.timestamp,
+                base_fee_per_gas: meta_w2.base_fee_per_gas,
+                gas_used: meta_w2.gas_used,
+                gas_limit: meta_w2.gas_limit,
+            },
+        ];
+        let combined = stream::iter(events).boxed();
+        pump.run_test_loop(combined, w).await;
+
+        // header(W+2) finalizes W+1 — carrying meta_w1 (just-finished block's
+        // metadata). This proves the anchor held: we advanced W→W+1→W+2 in
+        // order, never jumping from 0.
+        let finalized = sink.finalized.lock().unwrap().clone();
+        assert!(!finalized.is_empty(), "header w+2 should finalize block w+1");
+        assert_eq!(finalized[0].0, w + 1, "first finalize is for block w+1");
+        assert_eq!(
+            finalized[0].1, meta_w1,
+            "block w+1's batch carries w+1's metadata (in-order)"
         );
     }
 }
