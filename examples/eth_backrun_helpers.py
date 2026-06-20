@@ -2460,15 +2460,25 @@ def _3hop_v3_v4_v3(
 ) -> bytes | None:
     """V3a→V4b→V3c: V3c-reverse pattern.
 
-    Per docs/pool-mechanics.md §4.1 (V3-V4-V3):
-    V3c fires first (outermost). Inside V3c callback: V3a swap
-    (forward_a→PM), V3a forward_data with ERC20 WETH→V3a +
-    V4 unlock (V4b swap + V4_TAKE forward_b→V3c during V3c
-    callback, IIA ✓). V4_SYNC(forward_a) before V3c swap to
-    capture V3a→PM deposit for delta netting.
+    V3c fires first (outermost). V3's optimistic transfer delivers V3c's WETH
+    output to the executor before the callback, and V3a's forward_a output to
+    the PoolManager (recipient=PM) before V3a's callback — so the V4 unlock
+    inside V3a's callback sees the forward_a deposit.
+
+    Inside the V4 unlock:
+      V4_SETTLE          — credit V3a's *actual* forward_a deposit
+      V4_SWAP_DYNAMIC    — consume the actual settled forward_a (PM exttload)
+      V4_TAKE_DELTA      — take the *actual* produced forward_b → V3c
+      V4_SETTLE_ALL      — sweep residual dust before the unlock closes
+
+    Using ``V4_SWAP_DYNAMIC`` + ``V4_TAKE_DELTA`` (not ``V4_SWAP_COMPACT`` /
+    ``V4_TAKE_COMPACT`` with static solver amounts) avoids ``CurrencyNotSettled``
+    when V3a's on-chain deposit or the V4 swap's on-chain output differs from
+    the solver's ``out_a`` / ``out_b`` — the residual PM delta would otherwise
+    survive at unlock-end. Mirrors the V2-V2-V4 fix (commit 2e505536).
     """
     ha, hb, hc = path_info.hops
-    out_a, out_b, _out_c = hop_outputs
+    _out_a, _out_b, _out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
     if not fits_int128(optimal_input):
@@ -2491,32 +2501,32 @@ def _3hop_v3_v4_v3(
         hb.currency1_address if hb.zfo else hb.currency0_address
     )
 
-    # V3a callback forward_data: erc20_transfer WETH→V3a + V4 unlock
-    v4_inner = enc_v4_swap_compact(
+    # V4 unlock inner: settle the actual forward_a deposit, dynamic-swap it to
+    # forward_b, take the full actual forward_b output to V3c, then sweep dust.
+    v4_inner = enc_v4_settle()
+    v4_inner += enc_v4_swap_dynamic(
         at.add(hb.currency0_address),
         at.add(hb.currency1_address),
         hb.fee,
         hb.tick_spacing,
         zero_idx,
         hb.zfo,
-        out_a,
     )
-    v4_inner += enc_v4_take_compact(forward_b_idx, v3c_idx, out_b)
+    v4_inner += enc_v4_take_delta(forward_b_idx, v3c_idx)
+    v4_inner += enc_v4_settle_all()
 
-    # Plain settle credits forward_a delta from V3a's direct deposit to PM.
-    # V4_SETTLE_DELTA would fail because it tries to transfer from executor,
-    # but V3a sent directly to PM — the executor holds zero forward_a tokens.
-    v4_inner = enc_v4_settle() + v4_inner
-
+    # V3a callback forward_data: explicit WETH→V3a payment (auto-pay can't be
+    # used — V3a's callback must also process the V4 unlock) + V4 unlock.
     a_fwd = enc_erc20_transfer(weth_idx, v3a_idx, optimal_input)
     a_fwd += enc_v4_unlock(v4_inner)
 
     # V3c callback: V3a swap (forward_a→PM) with forward_data
     c_fwd = enc_v3_swap_compact(v3a_idx, ha.zfo, optimal_input, pm_idx, forward_data=a_fwd)
 
-    # Top level: sync forward_a before V3c swap (for PM delta netting), V3c swap
+    # Top level: sync forward_a before V3c swap (baseline PM balance so the
+    # inner V4_SETTLE credits V3a's subsequent deposit), V3c swap.
     commands = enc_v4_sync(forward_a_idx)
-    commands += enc_v3_swap_compact(v3c_idx, hc.zfo, out_b, executor_idx, forward_data=c_fwd)
+    commands += enc_v3_swap_compact(v3c_idx, hc.zfo, _out_b, executor_idx, forward_data=c_fwd)
     return enc_preamble(at) + commands
 
 
