@@ -131,11 +131,13 @@ fn degenbot_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // failures by type instead of fragile string matching.
     m.add(
         "VerificationMismatchError",
-        m.py().get_type::<optimizers::uniswap_engine::VerificationMismatchError>(),
+        m.py()
+            .get_type::<optimizers::uniswap_engine::VerificationMismatchError>(),
     )?;
     m.add(
         "VerificationRpcError",
-        m.py().get_type::<optimizers::uniswap_engine::VerificationRpcError>(),
+        m.py()
+            .get_type::<optimizers::uniswap_engine::VerificationRpcError>(),
     )?;
 
     // Bot — Rust-owned state
