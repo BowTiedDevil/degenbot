@@ -37,8 +37,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-#[cfg(test)]
-use alloy::primitives::Address;
 use alloy::primitives::B256;
 use alloy::rpc::types::{Filter, Log, Topic};
 use futures_util::{stream, StreamExt};
@@ -785,37 +783,6 @@ impl BlockPump {
     }
 }
 
-/// Filter a set of logs to only those relevant to the engine.
-///
-/// A log is relevant if:
-/// 1. Its topic0 matches one of the 6 monitored event types, AND
-/// 2. Its emitting address is a registered V2/V3 pool or V4 `PoolManager`
-///
-/// # Live call sites
-///
-/// Currently has **no live (non-test) callers** — the pump's hot path
-/// pre-filters inline (see the `WsEvent::Log` arm of `run_with_stream`),
-/// and backfill uses `build_backfill_filter` for server-side topic filtering
-/// instead. Kept as the address-agnostic, reusable topic filter (its doc
-/// contract is that engines handle unregistered addresses gracefully, so it
-/// is safe to feed unfiltered-by-address logs). Do not assume it is dead —
-/// if removing, grep for callers across the crate first. Tracked as a
-/// cleanup todo separately.
-#[allow(dead_code)]
-pub fn filter_relevant_logs<S: std::hash::BuildHasher>(
-    logs: &[Log],
-    relevant_topic_set: &HashSet<B256, S>,
-) -> Vec<Log> {
-    logs.iter()
-        .filter(|log| {
-            log.topics()
-                .first()
-                .is_some_and(|topic0| relevant_topic_set.contains(topic0))
-        })
-        .cloned()
-        .collect()
-}
-
 /// Build an Alloy `Filter` for backfill via `eth_getLogs`.
 ///
 /// Uses topic filtering server-side to reduce response size. No address
@@ -882,75 +849,6 @@ mod tests {
         for topic in &RELEVANT_TOPICS {
             assert_ne!(topic, &B256::ZERO);
         }
-    }
-
-    #[test]
-    fn filter_relevant_logs_empty_input() {
-        let topics: HashSet<B256> = RELEVANT_TOPICS.into_iter().collect();
-        let result = filter_relevant_logs(&[], &topics);
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn filter_relevant_logs_filters_by_topic_only() {
-        // filter_relevant_logs only filters by topic. All engines
-        // (V2, V3, V4) handle unregistered addresses gracefully —
-        // V2/V3 ignore unknown pools, V4 buffers them.
-        use alloy::primitives::{Bytes, Log as InnerLog};
-        let topics: HashSet<B256> = RELEVANT_TOPICS.into_iter().collect();
-
-        // All relevant topics pass through regardless of address
-        let pm_address = Address::ZERO;
-
-        let v4_modify_inner = InnerLog::new_unchecked(
-            pm_address,
-            vec![V4_MODIFY_LIQUIDITY_TOPIC, B256::ZERO],
-            Bytes::new(),
-        );
-        let v4_modify_log = Log {
-            inner: v4_modify_inner,
-            block_hash: None,
-            block_number: None,
-            block_timestamp: None,
-            transaction_hash: None,
-            transaction_index: None,
-            log_index: None,
-            removed: false,
-        };
-
-        let v2_inner = InnerLog::new_unchecked(pm_address, vec![V2_SYNC_TOPIC], Bytes::new());
-        let v2_log = Log {
-            inner: v2_inner,
-            block_hash: None,
-            block_number: None,
-            block_timestamp: None,
-            transaction_hash: None,
-            transaction_index: None,
-            log_index: None,
-            removed: false,
-        };
-
-        let result = filter_relevant_logs(&[v4_modify_log, v2_log], &topics);
-        assert_eq!(
-            result.len(),
-            2,
-            "Relevant topic logs should pass through regardless of address"
-        );
-
-        // Irrelevant topic filtered out
-        let irrelevant_inner = InnerLog::new_unchecked(pm_address, vec![B256::ZERO], Bytes::new());
-        let irrelevant_log = Log {
-            inner: irrelevant_inner,
-            block_hash: None,
-            block_number: None,
-            block_timestamp: None,
-            transaction_hash: None,
-            transaction_index: None,
-            log_index: None,
-            removed: false,
-        };
-        let result = filter_relevant_logs(&[irrelevant_log], &topics);
-        assert!(result.is_empty(), "Irrelevant topic should be filtered out");
     }
 
     #[test]
