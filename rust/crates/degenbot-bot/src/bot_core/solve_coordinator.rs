@@ -62,13 +62,11 @@ struct CoordinatorState {
 /// Holds `Vec<Arc<dyn Engine>>` — multi-engine-honest shape, holds one engine
 /// today. See module docs for the preconditions that make this safe without
 /// per-engine backfill machinery.
-#[allow(dead_code)]
 pub struct SolveCoordinator {
     engines: Vec<Arc<dyn Engine>>,
     drain_lock: Mutex<CoordinatorState>,
 }
 
-#[allow(dead_code)]
 impl SolveCoordinator {
     /// Construct with an engine vector. Callers (the wiring layer) build the
     /// `Arc<dyn Engine>` entries from concrete engines before pump spawn.
@@ -89,7 +87,6 @@ impl SolveCoordinator {
     ///
     /// Panics on cursor divergence — a wiring bug (engines must backfill to
     /// the same block before `start`).
-    #[allow(dead_code)]
     pub fn start(&self) {
         let mut state = self.drain_lock.lock().expect("drain_lock poisoned");
         // Precondition 2: all engines agree on the starting block.

@@ -1238,7 +1238,6 @@ impl BotState {
     /// Pools with no journal delta at/after `target` are left as-is (idempotent
     /// — a reorg touches only a subset of pools). Returns the count of pools
     /// that were rolled back.
-    #[allow(dead_code)]
     pub fn restore_all_pools_before_block(&mut self, target: u64) -> usize {
         let pool_ids: Vec<u64> = self.pools.keys().copied().collect();
         let mut restored = 0usize;
@@ -1348,7 +1347,6 @@ impl BotState {
     /// the V3/V4 `restore_before_block` panics on an empty journal; the
     /// pre-check avoids that and returns `Err` uniformly so the pump shuts down
     /// gracefully on a too-deep reorg.
-    #[allow(dead_code)]
     pub fn restore_pool_before_block(&mut self, pool_id: u64, block: u64) {
         // V2 returns Result; ignore the Err here (too-deep was pre-checked).
         // V3/V4 return Option (None for unregistered / non-matching family).
@@ -1387,7 +1385,6 @@ impl BotState {
     /// A pool whose newest delta is below `block` (idempotent no-op restore)
     /// returns `true` under both predicates.
     #[must_use]
-    #[allow(dead_code)]
     pub fn has_state_prior_to(&self, pool_id: u64, block: u64) -> bool {
         let Some(entry) = self.pools.get(&pool_id) else {
             // Pool not registered → no journal → the reorg can't restore it.
@@ -1495,7 +1492,6 @@ impl BotState {
 
     /// Get the pool address for a given pool ID.
     #[must_use]
-    #[allow(dead_code)]
     pub fn pool_address(&self, pool_id: u64) -> Option<Address> {
         match self.pools.get(&pool_id)? {
             PoolEntry::V2(state) => Some(state.address),
@@ -2075,7 +2071,6 @@ impl BotState {
 
     /// Get the number of deltas in the reorg journal for a V4 pool.
     #[must_use]
-    #[allow(dead_code)]
     pub fn v4_journal_len(&self, pool_id: u64) -> usize {
         match self.pools.get(&pool_id) {
             Some(PoolEntry::V4(state)) => state.journal.len(),
@@ -2089,7 +2084,6 @@ impl BotState {
     ///
     /// Returns `Err(JournalError::NoStateAtOrAfterBlock)` if the target is past
     /// the newest delta. The `PyO3` layer maps this to `ValueError`.
-    #[allow(dead_code)]
     pub fn v4_discard_before_block(
         &mut self,
         pool_id: u64,
@@ -2247,14 +2241,12 @@ impl Default for BotState {
 pub struct Bot {
     /// The chain this bot orchestrates (ADR-006 D1+D5: one `Bot` per chain).
     /// Read by the standalone-Rust path; `PyBot` wires 0 until slice 8.
-    #[allow(dead_code)]
     chain_id: u64,
     /// The shared pure-data state. Handles clone this `Arc`.
     state: Arc<parking_lot::RwLock<BotState>>,
     /// The per-`Bot` event bus (ADR-006 D4). The pump (slice 5) drives
     /// [`dispatch_log`](Self::dispatch_log) per WS log; engine subscriber
     /// adapters attach via [`attach_engine`](Self::attach_engine).
-    #[allow(dead_code)]
     dispatcher: log_dispatcher::LogDispatcher,
 }
 
@@ -2310,7 +2302,6 @@ impl Bot {
     /// The chain this bot orchestrates. Used by the standalone-Rust path;
     /// `PyBot` does not expose it until ADR-006 slice 8.
     #[must_use]
-    #[allow(dead_code)]
     pub const fn chain_id(&self) -> u64 {
         self.chain_id
     }
@@ -2327,7 +2318,6 @@ impl Bot {
     /// Drive one WS log through the event bus (ADR-006 D4). Decode via a
     /// registered decoder, apply to `BotState` under a write guard, release,
     /// then notify subscribers. The pump (slice 5) calls this per log.
-    #[allow(dead_code)]
     pub fn dispatch_log(&self, log: &alloy::rpc::types::Log) {
         self.dispatcher.dispatch(log, &self.state);
     }
@@ -2335,7 +2325,6 @@ impl Bot {
     /// Decode `log` into a [`DecodedPoolEvent`] without applying (ADR-006 slice 7).
     /// `ReorgCoordinator` uses this on `removed: true` logs to identify the
     /// target pool before restoring it from the journal.
-    #[allow(dead_code)]
     pub fn try_decode_log(
         &self,
         log: &alloy::rpc::types::Log,
@@ -2345,7 +2334,6 @@ impl Bot {
 
     /// Resolve a decoded event's `pool_id` against `BotState` (ADR-006 slice 7).
     /// V2/V3 by address, V4 by `(pool_manager, pool_id)` key.
-    #[allow(dead_code)]
     pub fn resolve_pool_id(&self, event: &log_dispatcher::DecodedPoolEvent) -> Option<u64> {
         event.resolve_pool_id(&self.state.read())
     }
@@ -2354,7 +2342,6 @@ impl Bot {
     /// Writes the journal's landed-at state into the current mutable fields.
     /// Pre-check [`has_state_prior_to`](Self::has_state_prior_to) first — the
     /// V3/V4 journal `restore_before_block` panics on an empty journal.
-    #[allow(dead_code)]
     pub fn restore_pool_before_block(&self, pool_id: u64, block: u64) {
         self.state.write().restore_pool_before_block(pool_id, block);
     }
@@ -2363,7 +2350,6 @@ impl Bot {
     /// slice 7.) `false` → a too-deep reorg; `ReorgCoordinator` returns
     /// `Err(NoStatePriorToBlock)` and the pump shuts down gracefully.
     #[must_use]
-    #[allow(dead_code)]
     pub fn has_state_prior_to(&self, pool_id: u64, block: u64) -> bool {
         self.state.read().has_state_prior_to(pool_id, block)
     }
@@ -2372,7 +2358,6 @@ impl Bot {
     /// `ReorgCoordinator` calls this after a per-pool restore — the same
     /// notify path `dispatch_log` uses, so the engine dirties + re-solves at
     /// the next drain tick with no distinct reorg path.
-    #[allow(dead_code)]
     pub fn notify_pool_state_updated(&self, pool_id: u64) {
         self.dispatcher.notify(pool_id);
     }
@@ -2380,7 +2365,6 @@ impl Bot {
     /// Subscribe `engine` to updates for `pool_id` (ADR-006 D4). `Bot` calls
     /// this when an engine registers a path touching `pool_id`. `engine` is a
     /// `Weak` so a de-registered engine is silently skipped (no leak).
-    #[allow(dead_code)]
     pub fn attach_engine(
         &self,
         pool_id: u64,
@@ -2391,7 +2375,6 @@ impl Bot {
 
     /// Start the block pump. Placeholder — the `BlockPump` wiring lands in
     /// ADR-006 slice 5; until then this panics to make the unwired state loud.
-    #[allow(dead_code)]
     pub fn start(&self) {
         unimplemented!("BlockPump wiring lands in ADR-006 slice 5");
     }

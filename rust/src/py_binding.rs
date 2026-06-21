@@ -349,7 +349,6 @@ impl VerifyRpc for EngineVerifyRpc<'_> {
 /// Wraps [`UniswapEngine`] with a `parking_lot::Mutex` for safe access
 /// from the Tokio pump task.
 #[pyclass(name = "UniswapArbEngine", skip_from_py_object)]
-#[allow(dead_code)]
 pub struct PyUniswapArbEngine {
     /// Shared engine state
     engine: Arc<parking_lot::Mutex<UniswapEngine>>,

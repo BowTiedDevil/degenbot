@@ -35,7 +35,6 @@ use super::UniswapEngine;
 /// strong clone for direct engine access (e.g. `register_path`,
 /// `latest_results`) not on the `Engine` drain trait; both clones reference
 /// the same underlying `UniswapEngine`.
-#[allow(dead_code)]
 pub struct EngineHandle {
     engine: Arc<parking_lot::Mutex<UniswapEngine>>,
 }
@@ -43,7 +42,6 @@ pub struct EngineHandle {
 impl EngineHandle {
     /// Construct from a strong clone of the shared engine handle.
     #[must_use]
-    #[allow(dead_code)]
     pub fn new(engine: Arc<parking_lot::Mutex<UniswapEngine>>) -> Self {
         Self { engine }
     }
@@ -51,7 +49,6 @@ impl EngineHandle {
     /// Construct an `Arc<dyn Engine>` from a strong clone — the convenience
     /// the wiring layer uses to populate `SolveCoordinator::new`.
     #[must_use]
-    #[allow(dead_code)]
     pub fn arc_dyn(engine: Arc<parking_lot::Mutex<UniswapEngine>>) -> Arc<dyn Engine> {
         Arc::new(Self::new(engine))
     }
