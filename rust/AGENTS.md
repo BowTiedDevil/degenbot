@@ -39,11 +39,14 @@ pub fn decode(py: Python<'_>, types: Vec<String>, data: &[u8]) -> PyResult<Py<Py
 ### Module Organization
 
 The Rust extension is a **Cargo workspace** of seven pure-Rust core crates
-(`degenbot-core`, `-cl-math`, `-abi`, `-rpc`, `-decoders`, `-uniswap`, `-bot`) plus the
-`degenbot_rs` **cdylib binding layer** at `rust/crates/degenbot-python/` (a peer
-workspace member, mirroring `polars-python`'s position under `crates/`). The
-workspace root `rust/Cargo.toml` is a **pure virtual manifest** (workspace +
-profiles only); the binding package lives in `rust/crates/degenbot-python/Cargo.toml`.
+(`degenbot-core`, `-cl-math`, `-abi`, `-rpc`, `-decoders`, `-uniswap`, `-bot`),
+the `degenbot_rs` **cdylib binding layer** at `rust/crates/degenbot-python/`
+(a peer workspace member, mirroring `polars-python`'s position under `crates/`),
+and a **`degenbot` umbrella crate** at `rust/crates/degenbot/` that re-exports
+the cores with zero `pyo3` for standalone Rust consumers (mirrors the `polars`
+Rust crate; ADR-005 slice 13). The workspace root `rust/Cargo.toml` is a **pure
+virtual manifest** (workspace + profiles only); the binding package lives in
+`rust/crates/degenbot-python/Cargo.toml`.
 The core crates have **no `pyo3` dependency** (compiler-enforced; verify with
 `just check-no-pyo3-in-cores`); the binding cdylib glues them to Python via PyO3.
 See [`plans/completed/103-rust-workspace-split.md`](../plans/completed/103-rust-workspace-split.md).
@@ -155,6 +158,20 @@ root cdylib (`py_bot.rs`, `py_binding.rs`) — they need `alloy_py`/`py_cache`.
 |--------|---------|
 | `bot_core/` | `BotState` single-owner state, `engine.rs`, `block_pump.rs`, `log_dispatcher.rs` (the `LogDecoder` trait + `DecodedPoolEvent` + `LogDispatcher` bus + `PoolStateSubscriber` — the state-coupled dispatch layer), `solve_coordinator.rs`, `reorg_coordinator.rs`, `state_history.rs` (reorg journal), `liquidity_verifier.rs`, `tick_bitmap.rs`/`tick_map.rs`, `v3_state.rs`/`v4_state.rs` (V3/V4 pool state — the pure event-log **decoders** moved to `degenbot-decoders`; the `DexIdentity` presets + V2 swap encoding moved to `degenbot-uniswap`; see below), `drain_sink.rs`. Documented in [`docs/architecture/rust-owned-bot.md`](../docs/architecture/rust-owned-bot.md) and [`CONTEXT.md`](CONTEXT.md) |
 | `optimizers/` | Möbius solvers (`mobius_int_exact.rs`, `mobius_v3_int.rs`, `mobius_int.rs`), `affected_keys.rs`/`liquidity_event_buffer.rs`, + `uniswap_engine/` sub-module (`diagnostic`, `event_routing`, `solver_dispatch`, `lifecycle`, `snapshot_verify`, `result_channel`, `tests`). See [`docs/architecture/rust-owned-bot.md`](../docs/architecture/rust-owned-bot.md) §5 |
+
+#### `degenbot` umbrella — `rust/crates/degenbot/src/`
+
+A **pure-Rust umbrella crate** that re-exports the seven pyo3-free cores with
+**zero `pyo3`** (verified by `just check-no-pyo3-in-cores`, which includes this
+crate). A standalone Rust consumer `cargo add degenbot` reaches
+`BotState`/`DexIdentity` presets/V2-V4 state structs/calc math with no Python
+interpreter, no `pyo3` feature, no maturin in the build graph — the ADR-005
+standalone claim made concrete (mirrors how the `polars` umbrella Rust crate
+`pub use`s `polars_core` with zero pyo3). `examples/standalone_consumer.rs`
+is the concretization: a `cargo run -p degenbot --example standalone_consumer`
+that registers a V2 pool via the `UNISWAP_V2` preset and runs a swap calc. The
+binding cdylib `degenbot_rs` (built from `crates/degenbot-python/`) is a separate
+workspace member that DOES pull pyo3; the umbrella never depends on it.
 
 ### Key Design Patterns
 

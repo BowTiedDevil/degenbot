@@ -255,9 +255,14 @@ Two targets are deferred, both consequences of this ADR's standalone-core direct
   already import no `pyo3`). **The mechanical relocation + virtual-manifest workspace
   restructure is DONE** (the `degenbot_rs` binding layer now lives at
   `rust/crates/degenbot-python/` as a peer of the seven pyo3-free cores; `rust/Cargo.toml`
-  is a pure virtual manifest — see ergo `DPSVCH`). **Still deferred under ergo `KWTAXJ`:**
-  (b) the standalone-`degenbot-core` Rust-consumer smoke test, and (c) the `degenbot`
-  umbrella Python package + `cargo add degenbot` re-export. Triggered when either (a) a
+  is a pure virtual manifest — see ergo `DPSVCH`). The umbrella Rust crate
+  `degenbot` (`rust/crates/degenbot/`) re-exports the cores with zero `pyo3`, and
+  `examples/standalone_consumer.rs` is the standalone-Rust-consumer smoke test
+  (constructs a `BotState`, registers a V2 pool via the `UNISWAP_V2` preset, runs a
+  swap calc — no Python in the build) — see ergo `KWTAXJ`. **Remains deferred:**
+  the polish pass on a `cargo add degenbot` re-export surface for external Rust
+  consumers (publish) and the `degenbot` umbrella Python package wiring beyond the
+  existing `degenbot` Python package built by maturin. Triggered when either (a) a
   standalone Rust consumer wants `cargo add degenbot-core`, or (b) the Python-binding
   surface grows large enough to deserve its own release cadence. The `DexIdentity`
   preset registry lands in `degenbot-core` *now* (regardless of split timing) per the

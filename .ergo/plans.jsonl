@@ -319,3 +319,5 @@
 {"type":"tombstone","ts":"2026-06-21T15:59:27.168190709Z","data":{"id":"ZNCAWD","ts":"2026-06-21T15:59:27.168190709Z"}}
 {"type":"claim","ts":"2026-06-21T16:03:28.638750307Z","data":{"id":"DPSVCH","agent_id":"pi@fedora","ts":"2026-06-21T16:03:28.638750307Z"}}
 {"type":"state","ts":"2026-06-21T16:03:28.638750307Z","data":{"id":"DPSVCH","state":"doing","ts":"2026-06-21T16:03:28.638750307Z"}}
+{"type":"result","ts":"2026-06-21T16:20:38.628518824Z","data":{"task_id":"DPSVCH","summary":"dpsvch-result.txt","path":"dpsvch-result.txt","sha256_at_attach":"8727c9447b90e259540d387291243d78604a74e46d45e94f3f2006fd9ff47e68","mtime_at_attach":"2026-06-21T16:20:38.616414343Z","git_commit_at_attach":"8236c76ac88172c496ab2eeeea1de002bd84752d","ts":"2026-06-21T16:20:38.628518824Z"}}
+{"type":"state","ts":"2026-06-21T16:20:38.633880542Z","data":{"id":"DPSVCH","state":"done","ts":"2026-06-21T16:20:38.633880542Z"}}
