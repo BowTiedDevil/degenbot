@@ -7,12 +7,14 @@
 //! Owns no state — property reads and calculation calls cross `PyO3` on every
 //! access, locking the shared `BotState` for reading.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
 use crate::py_bot::journal_err_to_py;
-use degenbot_bot::bot_core::BotState;
+use degenbot_bot::bot_core::{BotState, TickInfo};
 
 /// Encode a byte slice as a lowercase hex string (no "0x" prefix).
 fn bytes_to_hex(bytes: &[u8]) -> String {
@@ -395,6 +397,66 @@ impl PyLiquidityPool {
             block_number,
         );
         Ok(applied.is_some())
+    }
+
+    /// Replace this pool's `tick_data` with an external snapshot (Python
+    /// sparse-map backfill). Mirrors the Python `UniswapV3Pool.update_tick_data`
+    /// — the companion delegates here once it's rewritten over the handle
+    /// (plan-101 slice 8b). No journal delta (full-sync; the pump is the
+    /// authority for event-derived ticks — mirrors `sync_v3_pool_state`).
+    ///
+    /// `tick_data` is the SAME shape `tick_data_snapshot` returns:
+    /// `{tick: (liquidity_gross, liquidity_net, block)}` — the write path is
+    /// symmetric with the read path, + the companion converts its
+    /// `LiquidityAtTick` objects to this tuple shape at the boundary (matching
+    /// how V2 converts its Python `Fraction` fees to the Rust `gamma_numer` at
+    /// the boundary). The `tick_bitmap` dict is REDUNDANT in Rust (the bitmap
+    /// is derived from `tick_data` keys — see `tick_bitmap_snapshot`);
+    /// accepted for API parity with the Python caller signature, ignored.
+    ///
+    /// Scalars (`sqrt_price_x96`/`liquidity`/`tick`) are UNCHANGED — this is
+    /// tick-only. `update_block` advances to `block` if newer (monotonic).
+    ///
+    /// Returns `True` if the replace applied to a registered V3/V4 pool,
+    /// `False` if this `pool_id` is a V2 pool or unregistered (silent no-op —
+    /// mirrors the `apply_liquidity_update` family contract).
+    #[pyo3(signature = (tick_bitmap, tick_data, block))]
+    fn update_tick_data(
+        &self,
+        tick_bitmap: &Bound<'_, PyAny>,
+        tick_data: &Bound<'_, PyDict>,
+        block: u64,
+    ) -> PyResult<bool> {
+        let _ = tick_bitmap; // redundant in Rust (derived from tick_data keys)
+        let mut map: HashMap<i32, TickInfo> = HashMap::with_capacity(tick_data.len());
+        for (key, value) in tick_data.iter() {
+            let tick: i32 = key.extract().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err(
+                    "update_tick_data: tick_data keys must be ints",
+                )
+            })?;
+            // Symmetric with `tick_data_snapshot`: a 3-tuple
+            // `(liquidity_gross, liquidity_net, block)` (the block is the
+            // pool's `update_block` on read; on write the per-tick block is
+            // ignored — Rust stores no per-tick block, see `tick_data_snapshot`).
+            let (gross, net, _block): (u128, i128, u64) = value.extract().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err(
+                    "update_tick_data: tick_data values must be (gross, net, block) tuples",
+                )
+            })?;
+            map.insert(
+                tick,
+                TickInfo {
+                    liquidity_gross: alloy::primitives::U128::from(gross),
+                    liquidity_net: alloy::primitives::I256::try_from(net)
+                        .unwrap_or(alloy::primitives::I256::ZERO),
+                },
+            );
+        }
+        Ok(self
+            .core
+            .write()
+            .sync_tick_data_by_pool_id(self.pool_id, map, block))
     }
 
     /// Atomic V3/V4 scalar snapshot: `(sqrt_price_x96, liquidity, tick, block)`.

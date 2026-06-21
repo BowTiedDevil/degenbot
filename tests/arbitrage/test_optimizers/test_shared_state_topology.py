@@ -418,6 +418,121 @@ class TestSharedStateTopologyV3:
         )
         assert bad is False
 
+    def test_v3_handle_update_tick_data_replaces_tick_map(self) -> None:
+        """A V3 ``update_tick_data`` full-sync replaces the pool's tick_data map.
+
+        The Python sparse-map fetcher (``make_tick_data_fetcher``) writes
+        fetched ticks back through ``pool.update_tick_data(tick_bitmap,
+        tick_data, block)``. In the post-8b topology the companion delegates
+        here; this pins the Rust write path the delegation targets. Symmetric
+        with ``tick_data_snapshot``: the dict shape written in is the shape read
+        back out. The ``tick_bitmap`` arg is redundant in Rust (the bitmap is
+        derived from ``tick_data`` keys — see ``tick_bitmap_snapshot``);
+        accepted for API parity with the Python caller signature, ignored.
+        Scalars (sqrt_price/liquidity/tick) are UNCHANGED — ``update_tick_data``
+        is tick-only (a wholesale replace from a fetched snapshot, not a
+        journalled event delta).
+        """
+        core = PyBot()
+        pool_id = core.register_v3_pool(
+            address=V3_POOL_A,
+            token0=TOKEN0,
+            token1=TOKEN1,
+            fee=V3_FEE,
+            tick_spacing=V3_TICK_SPACING,
+            factory=FACTORY,
+            sqrt_price_x96=V3_SQRT_PRICE,
+            liquidity=V3_LIQUIDITY,
+            tick=V3_TICK,
+        )
+        handle = core.get_pool(pool_id)
+        assert handle is not None
+        assert handle.tick_data_snapshot() == {}
+
+        # Seed two ticks via apply_liquidity_update (the Mint/Burn event path).
+        seeded_lower = V3_TICK - V3_TICK_SPACING
+        seeded_upper = V3_TICK + V3_TICK_SPACING
+        handle.apply_liquidity_update(
+            tick_lower=seeded_lower,
+            tick_upper=seeded_upper,
+            liquidity_delta=7_500,
+            block_number=3,
+        )
+        assert set(handle.tick_data_snapshot().keys()) == {seeded_lower, seeded_upper}
+
+        # Full-sync a DIFFERENT tick set via update_tick_data — REPLACES the map.
+        new_tick_a = V3_TICK - 2 * V3_TICK_SPACING
+        new_tick_b = V3_TICK + 2 * V3_TICK_SPACING
+        new_tick_data: dict[int, tuple[int, int, int]] = {
+            new_tick_a: (12_000, 12_000, 9),
+            new_tick_b: (12_000, -12_000, 9),
+        }
+        applied = handle.update_tick_data(
+            tick_bitmap={},  # redundant in Rust (derived from tick_data keys)
+            tick_data=new_tick_data,
+            block=9,
+        )
+        assert applied, "update_tick_data should succeed on a registered V3 pool"
+
+        # The tick map is REPLACED (the two apply_liquidity_update ticks gone).
+        snap = handle.tick_data_snapshot()
+        assert set(snap.keys()) == {new_tick_a, new_tick_b}
+        gross_a, net_a, block_a = snap[new_tick_a]
+        gross_b, net_b, _block_b = snap[new_tick_b]
+        assert gross_a == 12_000
+        assert net_a == 12_000
+        assert gross_b == 12_000
+        assert net_b == -12_000
+        assert block_a == 9
+
+        # Scalars UNCHANGED (update_tick_data is tick-only, not a scalar event).
+        assert handle.sqrt_price_x96 == V3_SQRT_PRICE
+        assert handle.liquidity == V3_LIQUIDITY
+        assert handle.tick == V3_TICK
+        # update_block advanced to the new block (full-sync moves it forward).
+        assert handle.update_block == 9
+
+        # tick_bitmap_snapshot reflects the new tick keys (derived from keys).
+        def word_of(tick: int) -> int:
+            return (tick // V3_TICK_SPACING) >> 8
+
+        bitmap = handle.tick_bitmap_snapshot()
+        assert set(bitmap.keys()) == {word_of(new_tick_a), word_of(new_tick_b)}
+
+        # An older block does NOT rewind update_block (monotonic).
+        applied_older = handle.update_tick_data(
+            tick_bitmap={},
+            tick_data={new_tick_a: (1, 1, 1)},
+            block=2,
+        )
+        assert applied_older
+        assert handle.update_block == 9, "update_block must not rewind"
+        # The tick map is still replaced (full-sync semantics, even for old block).
+        assert set(handle.tick_data_snapshot().keys()) == {new_tick_a}
+
+        # A V2 apply returns False silently (don't corrupt) — mirrors the
+        # apply_liquidity_update V2-rejection contract (a V2 pool has no ticks).
+        v2_pool_id = core.register_v2_pool(
+            address=V2_POOL_B,
+            token0=TOKEN0,
+            token1=TOKEN1,
+            reserve0=1_500_000 * USDC,
+            reserve1=800 * WETH,
+            gamma_numer0=997,
+            fee_denom0=1000,
+            gamma_numer1=997,
+            fee_denom1=1000,
+            factory=FACTORY,
+        )
+        v2_handle = core.get_pool(v2_pool_id)
+        assert v2_handle is not None
+        bad = v2_handle.update_tick_data(
+            tick_bitmap={},
+            tick_data={new_tick_a: (1, 1, 1)},
+            block=1,
+        )
+        assert bad is False
+
     def test_v3_handle_tick_data_snapshot_returns_dict(self) -> None:
         """tick_data_snapshot() returns {tick: (gross, net, block)} dict.
 
@@ -623,3 +738,59 @@ class TestSharedStateTopologyV4:
         assert net_lower == delta
         assert net_upper == -delta
         assert block_lower == 3
+
+    def test_v4_handle_update_tick_data_replaces_tick_map(self) -> None:
+        """A V4 ``update_tick_data`` full-sync replaces the pool's tick_data map.
+
+        The family-agnostic twin of
+        ``test_v3_handle_update_tick_data_replaces_tick_map``: the V4 arm of
+        ``BotState::sync_tick_data_by_pool_id`` mirrors the V3 path (both
+        store an identical ``tick_data: HashMap<i32, TickInfo>`` — J63J3N).
+        Pins that the V3-paid-for family-agnostic write path actually reaches
+        a V4 pool (a future maintainer narrowing it to V3-only would re-open
+        the RAJ3PP silent-drop footgun shape).
+        """
+        core = PyBot()
+        engine = UniswapArbEngine(py_bot=core)
+        pool_id = self._register_v4(core, engine)
+        handle = core.get_pool(pool_id)
+        assert handle is not None
+        assert handle.tick_data_snapshot() == {}
+
+        # Seed two ticks via the V4 Mint/Burn event path.
+        seeded_lower = V4_TICK - V4_TICK_SPACING
+        seeded_upper = V4_TICK + V4_TICK_SPACING
+        handle.apply_liquidity_update(
+            tick_lower=seeded_lower,
+            tick_upper=seeded_upper,
+            liquidity_delta=7_500,
+            block_number=3,
+        )
+        assert set(handle.tick_data_snapshot().keys()) == {seeded_lower, seeded_upper}
+
+        # Full-sync a DIFFERENT tick set — REPLACES the map (V4 family).
+        new_tick_a = V4_TICK - 2 * V4_TICK_SPACING
+        new_tick_b = V4_TICK + 2 * V4_TICK_SPACING
+        new_tick_data: dict[int, tuple[int, int, int]] = {
+            new_tick_a: (12_000, 12_000, 9),
+            new_tick_b: (12_000, -12_000, 9),
+        }
+        applied = handle.update_tick_data(
+            tick_bitmap={},
+            tick_data=new_tick_data,
+            block=9,
+        )
+        assert applied, "update_tick_data should succeed on a registered V4 pool"
+
+        snap = handle.tick_data_snapshot()
+        assert set(snap.keys()) == {new_tick_a, new_tick_b}
+        gross_a, net_a, block_a = snap[new_tick_a]
+        assert gross_a == 12_000
+        assert net_a == 12_000
+        assert block_a == 9
+
+        # V4 scalars UNCHANGED; update_block advanced.
+        assert handle.sqrt_price_x96 == V4_SQRT_PRICE
+        assert handle.liquidity == V4_LIQUIDITY
+        assert handle.tick == V4_TICK
+        assert handle.update_block == 9
