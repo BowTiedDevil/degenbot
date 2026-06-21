@@ -43,6 +43,7 @@ class AsyncV2PoolBuilder:
         self._pools = ctx.pools
         self._tokens = ctx.tokens
         self._erc20_builder = ctx.erc20_builder
+        self._py_bot = ctx.py_bot
 
     async def _fetch_v2_common_data(
         self,
@@ -186,20 +187,51 @@ class AsyncV2PoolBuilder:
             msg = f"No V2 pool class registered for chain {chain_id}, factory {common.factory}"
             raise ValueError(msg)
 
+        # Resolve the canonical DexIdentity preset (ADR-005 slice 7 step 3) —
+        # carries the variant tag, reserves ABI shape, + default fees. Passed
+        # to the companion as metadata; explicit factory/fees (from on-chain
+        # fetches) still take precedence in the companion constructor.
+        dex = pool_type_registry.get_v2_identity(chain_id, common.factory)
+
+        # Register the pool in the shared Rust Bot and wrap the handle with
+        # the Python companion (ADR-005 slice 4). The builder's update_block is
+        # the fetched state block; reserves are the genesis delta's after-values.
+        # ``gamma_numer`` is the retained POST-FEE fraction (Rust convention per
+        # the ``IntHopState`` docs: ``gamma_numer=997`` for 0.3%); the source
+        # ``fee_tokenN`` Fraction is the FEE — convert by subtraction.
+        gamma_numer0 = common.fee_token0.denominator - common.fee_token0.numerator
+        fee_denom0 = common.fee_token0.denominator
+        gamma_numer1 = common.fee_token1.denominator - common.fee_token1.numerator
+        fee_denom1 = common.fee_token1.denominator
+
+        pool_id = self._py_bot.register_v2_pool(
+            address=common.pool_address,
+            token0=common.token0_address,
+            token1=common.token1_address,
+            reserve0=common.reserves0,
+            reserve1=common.reserves1,
+            gamma_numer0=gamma_numer0,
+            fee_denom0=fee_denom0,
+            gamma_numer1=gamma_numer1,
+            fee_denom1=fee_denom1,
+            factory=common.factory,
+            update_block=common.state_block,
+        )
+        py_pool = self._py_bot.get_pool(pool_id)
+        assert py_pool is not None, "register_v2_pool returned a pool_id with no handle"
+
         pool = pool_class(
-            address=pool_address,
-            chain_id=common.chain_id,
+            py_pool,
+            address=common.pool_address,
             token0=token0,
             token1=token1,
+            dex=dex,
+            chain_id=common.chain_id,
             factory=common.factory,
             fee_token0=common.fee_token0,
             fee_token1=common.fee_token1,
-            reserves_token0=common.reserves0,
-            reserves_token1=common.reserves1,
-            state_block=common.state_block,
             deployer_address=common.deployer,
             init_hash=common.init_hash,
-            state_cache_depth=request.state_cache_depth,
         )
 
         # Register pool

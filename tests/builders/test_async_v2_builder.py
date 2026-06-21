@@ -19,6 +19,7 @@ from degenbot.builders.request import BuildPoolRequest
 from degenbot.builders.v2_builder_base import V2BuilderBase
 from degenbot.database.models.pools import UniswapFeeMixin
 from degenbot.database.session_manager import DatabaseSessionManager
+from degenbot.degenbot_rs import PyBot
 from degenbot.erc20 import Erc20Token
 from degenbot.registry import PoolRegistry, TokenRegistry
 from degenbot.uniswap.liquidity_pool import LiquidityPool
@@ -148,6 +149,7 @@ class TestAsyncV2PoolBuilder:
             pools=MagicMock(spec=PoolRegistry),
             tokens=MagicMock(spec=TokenRegistry),
             erc20_builder=erc20_builder,
+            py_bot=PyBot(),
             default_chain_id=1,
         )
 

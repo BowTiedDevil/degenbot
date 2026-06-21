@@ -166,6 +166,11 @@ def test_tripool(
     _test_calculations(lp=tripool, w3=fork_mainnet_full.w3)
 
 
+@pytest.mark.parametrize(
+    "fork_mainnet_archive",
+    [18849426],
+    indirect=True,
+)
 def test_pool_state_at_different_blocks(fork_mainnet_archive: AnvilFork):
     # Build the pool at a known historical block
     block_number = fork_mainnet_archive.w3.eth.block_number
