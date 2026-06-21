@@ -7,12 +7,13 @@
 //! # Layout
 //!
 //! - [`PyUniswapArbEngine`] (the `#[pyclass]`) is declared here; its
-//! `#[pymethods]` surface is split across [`register`], [`snapshot`],
-//! [`verify`], [`solve`], [`result_channel`] (PyO3 permits multiple
-//! `#[pymethods] impl PyUniswapArbEngine` blocks). [`errors`] holds the
-//! `#[create_exception]` types. Mirrors `polars-python/src/expr/`'s 17-file
-//! `PyExpr` split and the existing `crates/degenbot-bot/src/optimizers/
-//! uniswap_engine/` core split. (ergo UG6FKN task 74W2Z6.)
+//!   `#[pymethods]` surface is split across [`register`], [`snapshot`],
+//!   [`verify`], [`solve`], [`result_channel`] (`PyO3` permits multiple
+//!   `#[pymethods] impl PyUniswapArbEngine` blocks). [`errors`] holds the
+//!   `#[create_exception]` types.
+//! - Mirrors `polars-python/src/expr/`'s 17-file `PyExpr` split and the
+//!   existing `crates/degenbot-bot/src/optimizers/uniswap_engine/` core split.
+//!   (ergo UG6FKN task 74W2Z6.)
 
 mod errors;
 mod register;

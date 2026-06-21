@@ -2,10 +2,16 @@
 //!
 //! Split out of the former monolithic `py_binding.rs` (ergo UG6FKN task 74W2Z6),
 //! mirroring `crates/degenbot-bot/src/optimizers/uniswap_engine/`'s per-concern
-//! layout. PyO3 allows multiple `#[pymethods] impl PyUniswapArbEngine { … }`
+//! layout. `PyO3` allows multiple `#[pymethods] impl PyUniswapArbEngine { … }`
 //! blocks per type, so each concern file contributes one slice.
 
-use super::*;
+use super::{
+    hex_string_to_pool_id, mpsc, register_with_cl_buffers, run_cl_verification, Address, Arc,
+    BlockPump, Bot, DrainSink, DynamicFeePoolRejectedError, EngineHandle, EnginePhase,
+    EngineSubscriber, HashMap, HookedPoolRejectedError, PoolHop, PoolTickCoverage, PyBot, PyList,
+    PySubscribeState, PyUniswapArbEngine, RegisterV3PoolParams, RegisterV4PoolParams,
+    ReorgCoordinator, SnapshotStore, SolveCoordinator, UniswapEngine, VerifyError, VerifyRpc,
+};
 use crate::prelude::*;
 
 use super::verify::{map_verify_err, EngineVerifyRpc};

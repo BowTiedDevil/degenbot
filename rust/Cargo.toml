@@ -34,12 +34,12 @@ members = ["crates/degenbot-core", "crates/degenbot-cl-math", "crates/degenbot-a
 alloy = { version = "^2.0", features = ["full", "transport-throttle"] }
 # Path dependency enables the `pyo3` feature so `From<Error> for PyErr`
 # conversions from core are available at this binding layer.
-degenbot-rpc = { path = "crates/degenbot-rpc" }
-degenbot-bot = { path = "crates/degenbot-bot" }
-degenbot-decoders = { path = "crates/degenbot-decoders" }
-degenbot-uniswap = { path = "crates/degenbot-uniswap" }
-degenbot-abi = { path = "crates/degenbot-abi" }
-degenbot-cl-math = { path = "crates/degenbot-cl-math" }
+degenbot-rpc = { path = "crates/degenbot-rpc", optional = true }
+degenbot-bot = { path = "crates/degenbot-bot", optional = true }
+degenbot-decoders = { path = "crates/degenbot-decoders", optional = true }
+degenbot-uniswap = { path = "crates/degenbot-uniswap", optional = true }
+degenbot-abi = { path = "crates/degenbot-abi", optional = true }
+degenbot-cl-math = { path = "crates/degenbot-cl-math", optional = true }
 degenbot-core = { path = "crates/degenbot-core", features = ["pyo3"] }
 dashmap = { version = "^6.1" }
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
@@ -56,9 +56,24 @@ thiserror = { version = "^2.0" }
 tokio = { version = "^1.52", features = ["rt-multi-thread", "time", "macros", "sync"] }
 
 [features]
-default = ["auto-initialize"]
+# Per-domain binding-layer features (ergo UG6FKN task UKDOUR). Each gates its optional
+# core-crate path dep + the corresponding binding module/mod registrations, mirroring
+# how polars gates polars-python with features matching polars-core/-plan/etc.
+# Default = all-on (byte-equivalent to the pre-feature surface). Implicit coupling
+# (documented in the task completion body): `bot` implies `rpc`+`decoders`+`uniswap`
+# (the engine wrapper references degenbot_rpc::provider::AlloyProvider + degenbot_decoders::PoolId
+# + degenbot_uniswap::dex_identity directly), and `rpc` implies `abi` (rpc/contract wraps
+# crate::abi_types). `async` gates the rpc/ async submodules (no new dep).
+default = ["auto-initialize", "bot", "rpc", "abi", "cl-math", "uniswap", "async"]
 extension-module = ["pyo3/extension-module"]
 auto-initialize = ["pyo3/auto-initialize"]
+bot = ["dep:degenbot-bot", "rpc", "decoders", "uniswap"]
+rpc = ["dep:degenbot-rpc", "abi"]
+abi = ["dep:degenbot-abi"]
+cl-math = ["dep:degenbot-cl-math"]
+uniswap = ["dep:degenbot-uniswap"]
+decoders = ["dep:degenbot-decoders"]
+async = []
 
 [dev-dependencies]
 ctor = "^1"

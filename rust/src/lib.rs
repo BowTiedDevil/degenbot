@@ -23,13 +23,18 @@
 //!
 //! See individual module documentation for usage examples.
 
+#[cfg(feature = "abi")]
 pub mod abi;
+#[cfg(feature = "bot")]
 pub mod bot;
 pub mod c_api;
+#[cfg(feature = "cl-math")]
 pub mod cl_math;
 pub mod conversion;
 pub mod prelude;
+#[cfg(feature = "rpc")]
 pub mod rpc;
+#[cfg(feature = "uniswap")]
 pub mod uniswap;
 
 // The foundational core modules live in the `degenbot-core` workspace member.
@@ -43,6 +48,7 @@ pub use degenbot_core::{address_utils, errors, hex_utils, runtime};
 // workspace member. Re-exported as `crate::cl_lib` so every existing
 // `crate::cl_lib::` call site in the binding layer keeps resolving through the
 // re-export. Pure-Rust consumers depend on `degenbot-cl-math` directly.
+#[cfg(feature = "cl-math")]
 pub use degenbot_cl_math::cl_lib;
 
 // The ABI type/decode/encode + signature-parsing core lives in the
@@ -51,6 +57,7 @@ pub use degenbot_cl_math::cl_lib;
 // every existing call site in the binding layer (`contract`, `rpc::contract`,
 // `conversion::alloy`, `degenbot-uniswap::v2_encoding`) keeps resolving. The `#[pyfunction]`
 // wrappers (`decode`/`encode`) live in `abi::decoder` / `abi::encoder`.
+#[cfg(feature = "abi")]
 pub use degenbot_abi::{abi_decoder, abi_encoder, abi_types, signature_parser};
 
 // The RPC provider / contract / subscription core lives in the
@@ -60,6 +67,7 @@ pub use degenbot_abi::{abi_decoder, abi_encoder, abi_types, signature_parser};
 // `rpc::async_provider`, `rpc::async_contract`) keeps resolving. The `#[pyfunction]`
 // wrappers + the GIL-bound `drain_buffer`/`DrainResult` stay in the root
 // `*_py` modules (they need `conversion::cache` / `conversion::rpc_types`).
+#[cfg(feature = "rpc")]
 pub use degenbot_rpc::{contract, provider, subscription};
 
 // The bot state (`BotState`, reorg journal, verifier, pump,
@@ -72,6 +80,7 @@ pub use degenbot_rpc::{contract, provider, subscription};
 // `PyUniswapArbEngine`, the `Verification*Error`/`*RejectedError` exception
 // types) live in the `bot` / `bot::pool` / `bot::token` /
 // `bot::dex_identity` modules and the `bot::engine` subdir (they need `conversion::alloy` / `conversion::cache`).
+#[cfg(feature = "bot")]
 pub use degenbot_bot::{bot_core, optimizers};
 
 // The pure Uniswap V2/V3/V4 event-log decoders live in the `degenbot-decoders`
@@ -91,15 +100,19 @@ pub use degenbot_bot::{bot_core, optimizers};
 // Re-export commonly used items at the crate root
 pub use address_utils::{parse_address, to_checksum_address_bytes, to_checksum_address_str};
 pub use hex_utils::{decode_hex, encode_hex, HexError};
+#[cfg(feature = "uniswap")]
 pub use uniswap::address::to_checksum_address;
 
+#[cfg(feature = "cl-math")]
 pub use cl_lib::tick_math::{
     get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO,
     MIN_SQRT_RATIO,
 };
+#[cfg(feature = "cl-math")]
 pub use cl_lib::{
     bit_math, full_math, functions, liquidity_math, sqrt_price_math, swap_math, unsafe_math,
 };
+#[cfg(feature = "cl-math")]
 pub use cl_math::tick_math::{get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio};
 pub use errors::{AbiDecodeError, AddressError, ClMathError, ProviderError, TickMathError};
 
