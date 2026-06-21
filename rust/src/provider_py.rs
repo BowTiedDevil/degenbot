@@ -8,11 +8,11 @@
 
 use crate::conversion::cache::create_hexbytes;
 use crate::conversion::rpc_types::{block_to_py_dict, json_to_py_with_hexbytes, log_to_py_dict};
+use crate::prelude::*;
 use crate::provider::{AlloyProvider, LogFetcher, LogFilter};
-use crate::runtime::get_runtime;
 use pyo3::exceptions::PyValueError;
-use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList};
+use runtime::get_runtime;
 use std::sync::Arc;
 
 /// Python wrapper for `LogFilter`.

@@ -7,8 +7,9 @@
 //! operations take ~20ns — far less than the ~200ns GIL release/reacquire
 //! overhead.
 
+use crate::prelude::*;
 use alloy::primitives::{aliases::I256, U256};
-use pyo3::{exceptions::PyValueError, prelude::*, types::PyAny, PyTypeInfo};
+use pyo3::{exceptions::PyValueError, types::PyAny, PyTypeInfo};
 
 // PyObject alias for pyo3 0.28+
 type PyObject = pyo3::Py<pyo3::PyAny>;

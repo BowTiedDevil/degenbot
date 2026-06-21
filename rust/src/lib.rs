@@ -32,6 +32,7 @@ pub mod c_api;
 pub mod cl_lib_py;
 pub mod contract_py;
 pub mod conversion;
+pub mod prelude;
 pub mod provider_py;
 pub mod py_binding;
 pub mod py_bot;

@@ -7,10 +7,10 @@
 //! Owns no state — property reads and calculation calls cross `PyO3` on every
 //! access, locking the shared `BotState` for reading.
 
+use crate::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::py_bot::journal_err_to_py;

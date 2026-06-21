@@ -7,11 +7,11 @@
 //! [`crate::lib`]'s `#[pymodule]`. Python-value extraction delegates to
 //! [`crate::conversion::alloy::abi_value_from_python`].
 
+use crate::prelude::*;
 use degenbot_abi::abi_encoder::{encode_rust, encode_single_rust};
 use degenbot_abi::abi_types::AbiValue;
-use pyo3::{exceptions::PyValueError, prelude::*, types::PyBytes, types::PyList};
-
-use crate::conversion::alloy as alloy_py;
+use pyo3::exceptions::PyValueError;
+use pyo3::types::{PyBytes, PyList};
 
 // =============================================================================
 // PyO3-exposed functions (thin wrappers)

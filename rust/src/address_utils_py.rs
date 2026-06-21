@@ -1,10 +1,8 @@
 //! `PyO3` bindings for address utilities.
 
 use crate::address_utils::{to_checksum_address_bytes, to_checksum_address_str};
-use pyo3::{
-    exceptions::{PyTypeError, PyValueError},
-    prelude::*,
-};
+use crate::prelude::*;
+use pyo3::exceptions::{PyTypeError, PyValueError};
 
 /// Generates an EIP-55 checksummed address from the input.
 ///

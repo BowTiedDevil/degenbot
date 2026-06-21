@@ -4,10 +4,10 @@
 //! Rust-owned `BotState`, many thin Python handles). Part of the Polars-inspired
 //! three-layer topology — see `docs/adr/ADR-005-polars-inspired-three-layer-architecture.md`.
 
+use crate::prelude::*;
 use std::sync::Arc;
 
 use alloy::primitives::Address;
-use pyo3::prelude::*;
 
 use degenbot_bot::bot_core::BotState;
 

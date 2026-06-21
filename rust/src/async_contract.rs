@@ -4,9 +4,9 @@
 //! smart contract interactions.
 
 use crate::contract::Contract;
+use crate::prelude::*;
 use crate::provider::AlloyProvider;
 use crate::provider_py::PyAlloyProvider;
-use pyo3::prelude::*;
 use pyo3_async_runtimes::tokio::future_into_py;
 use std::sync::Arc;
 

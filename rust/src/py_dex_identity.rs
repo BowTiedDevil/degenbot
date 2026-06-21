@@ -18,12 +18,11 @@
 //! COPY of the preset fields (addresses as checksummed hex strings, fees as
 //! Python int tuples, init hash as a hex digest) — built once at lookup time.
 
+use crate::prelude::*;
 use std::str::FromStr;
 use std::sync::OnceLock;
 
-use pyo3::prelude::*;
-
-use degenbot_core::address_utils::{address_to_checksum_string, parse_address};
+use address_utils::{address_to_checksum_string, parse_address};
 use degenbot_uniswap::dex_identity::{DexIdentity, DexVariant, ReservesAbi};
 
 /// Frozen Python view over a `DexIdentity` preset (ADR-005 slice 6).

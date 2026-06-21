@@ -4,6 +4,7 @@
 //! for safe access from the Tokio pump task. All Python-facing methods
 //! acquire the lock, perform their operation, and release it.
 
+use crate::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -11,7 +12,6 @@ use alloy::primitives::{Address, U256};
 #[allow(unused_imports)]
 use pyo3::create_exception;
 use pyo3::exceptions::PyStopAsyncIteration;
-use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use tokio::sync::mpsc;
 
