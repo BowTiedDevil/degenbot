@@ -26,9 +26,9 @@ use std::sync::Arc;
 // [`SubscriptionHandle::drain_raw`] and [`RawDrainResult`] live in the
 // `degenbot-rpc` crate (pure Rust, no `pyo3`). The GIL-bound conversion layer
 // (`DrainResult`, `convert_item`, `drain_buffer`) stays here in the binding
-// layer because it constructs Python objects via `py_converters`.
+// layer because it constructs Python objects via `conversion::rpc_types`.
 
-use crate::py_converters::{block_to_py_dict, header_to_py_dict, log_to_py_dict};
+use crate::conversion::rpc_types::{block_to_py_dict, header_to_py_dict, log_to_py_dict};
 use crate::subscription::RawSubItem;
 
 /// Result of draining a buffer and converting to Python objects.
@@ -66,7 +66,7 @@ fn convert_item(py: Python<'_>, item: RawSubItem) -> PyResult<Option<Py<PyAny>>>
             let json_val = json_guard.lock().take().ok_or_else(|| {
                 pyo3::exceptions::PyRuntimeError::new_err("Transaction data already consumed")
             })?;
-            let obj = crate::py_converters::json_to_py_with_hexbytes(py, json_val)?;
+            let obj = crate::conversion::rpc_types::json_to_py_with_hexbytes(py, json_val)?;
             Ok(Some(obj.unbind()))
         }
         RawSubItem::Log(log) => {

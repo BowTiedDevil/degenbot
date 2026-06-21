@@ -13,8 +13,8 @@
 //!   producing `FunctionSignature`.
 //!
 //! The Python-facing `decode`/`encode` wrappers live in the root `degenbot_rs`
-//! crate's `abi_decoder_py` / `abi_encoder_py` modules (they need `alloy_py`
-//! and `py_cache`, which are binding-layer concerns).
+//! crate's `abi_decoder_py` / `abi_encoder_py` modules (they need
+//! `conversion::alloy` and `conversion::cache`, which are binding-layer concerns).
 
 pub mod abi_decoder;
 pub mod abi_encoder;

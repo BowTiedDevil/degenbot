@@ -140,8 +140,8 @@ impl PyBot {
         let t0 = parse_address(token0)?;
         let t1 = parse_address(token1)?;
         let fac = parse_address(factory)?;
-        let r0 = crate::alloy_py::extract_python_u256(reserve0)?;
-        let r1 = crate::alloy_py::extract_python_u256(reserve1)?;
+        let r0 = crate::conversion::alloy::extract_python_u256(reserve0)?;
+        let r1 = crate::conversion::alloy::extract_python_u256(reserve1)?;
 
         Ok(self
             .bot
@@ -170,8 +170,8 @@ impl PyBot {
         block_number: u64,
     ) -> PyResult<()> {
         let addr = parse_address(address)?;
-        let r0 = crate::alloy_py::extract_python_u256(reserve0)?;
-        let r1 = crate::alloy_py::extract_python_u256(reserve1)?;
+        let r0 = crate::conversion::alloy::extract_python_u256(reserve0)?;
+        let r1 = crate::conversion::alloy::extract_python_u256(reserve1)?;
 
         self.bot
             .state_arc()
@@ -197,13 +197,13 @@ impl PyBot {
         zero_for_one: bool,
         amount_in: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
-        let amount = crate::alloy_py::extract_python_u256(amount_in)?;
+        let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
         let result = {
             let state = self.bot.state_arc();
             let core = state.read();
             core.calculate_tokens_out(pool_id, zero_for_one, amount)
         };
-        let bound = crate::alloy_py::u256_to_py(py, &result)?;
+        let bound = crate::conversion::alloy::u256_to_py(py, &result)?;
         Ok(bound.unbind())
     }
 
@@ -224,13 +224,13 @@ impl PyBot {
         zero_for_one: bool,
         amount_out: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
-        let amount = crate::alloy_py::extract_python_u256(amount_out)?;
+        let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
         let result = {
             let state = self.bot.state_arc();
             let core = state.read();
             core.calculate_tokens_in(pool_id, zero_for_one, amount)
         };
-        let bound = crate::alloy_py::u256_to_py(py, &result)?;
+        let bound = crate::conversion::alloy::u256_to_py(py, &result)?;
         Ok(bound.unbind())
     }
 
@@ -349,9 +349,9 @@ impl PyBot {
         let t0 = parse_address(token0)?;
         let t1 = parse_address(token1)?;
         let fac = parse_address(factory)?;
-        let spx = crate::alloy_py::extract_python_u256(sqrt_price_x96)?;
+        let spx = crate::conversion::alloy::extract_python_u256(sqrt_price_x96)?;
         // liquidity is uint128 — extracted as U256 then narrowed.
-        let liq = crate::alloy_py::extract_python_u256(liquidity)?.to::<u128>();
+        let liq = crate::conversion::alloy::extract_python_u256(liquidity)?.to::<u128>();
 
         Ok(self
             .bot
@@ -386,8 +386,8 @@ impl PyBot {
         block_number: u64,
     ) -> PyResult<()> {
         let addr = parse_address(address)?;
-        let spx = crate::alloy_py::extract_python_u256(sqrt_price_x96)?;
-        let liq = crate::alloy_py::extract_python_u256(liquidity)?.to::<u128>();
+        let spx = crate::conversion::alloy::extract_python_u256(sqrt_price_x96)?;
+        let liq = crate::conversion::alloy::extract_python_u256(liquidity)?.to::<u128>();
 
         self.bot
             .state_arc()
@@ -449,7 +449,8 @@ impl PyBot {
                 let tuple = pyo3::types::PyTuple::new(
                     py,
                     [
-                        crate::alloy_py::u256_to_py(py, &p.sqrt_price_x96_before)?.unbind(),
+                        crate::conversion::alloy::u256_to_py(py, &p.sqrt_price_x96_before)?
+                            .unbind(),
                         liq_u128.into_pyobject(py)?.into_any().unbind(),
                         p.tick_before.into_pyobject(py)?.into_any().unbind(),
                         restore.block.into_pyobject(py)?.into_any().unbind(),
@@ -523,7 +524,7 @@ impl PyBot {
         amount_out: &Bound<'_, PyAny>,
         recipient: &str,
     ) -> PyResult<Option<(String, String, u64)>> {
-        let amount = crate::alloy_py::extract_python_u256(amount_out)?;
+        let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
         let recip = parse_address(recipient)?;
 
         let result = {
@@ -593,8 +594,8 @@ impl PyBot {
                 let tuple = pyo3::types::PyTuple::new(
                     py,
                     [
-                        crate::alloy_py::u256_to_py(py, &r0)?.unbind(),
-                        crate::alloy_py::u256_to_py(py, &r1)?.unbind(),
+                        crate::conversion::alloy::u256_to_py(py, &r0)?.unbind(),
+                        crate::conversion::alloy::u256_to_py(py, &r1)?.unbind(),
                         blk.into_pyobject(py)?.into_any().unbind(),
                     ],
                 )?;

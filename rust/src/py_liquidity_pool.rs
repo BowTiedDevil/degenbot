@@ -66,12 +66,12 @@ impl PyLiquidityPool {
         zero_for_one: bool,
         amount_in: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
-        let amount = crate::alloy_py::extract_python_u256(amount_in)?;
+        let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
         let result = {
             let core = self.core.read();
             core.calculate_tokens_out(self.pool_id, zero_for_one, amount)
         };
-        let bound = crate::alloy_py::u256_to_py(py, &result)?;
+        let bound = crate::conversion::alloy::u256_to_py(py, &result)?;
         Ok(bound.unbind())
     }
 
@@ -83,12 +83,12 @@ impl PyLiquidityPool {
         zero_for_one: bool,
         amount_out: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
-        let amount = crate::alloy_py::extract_python_u256(amount_out)?;
+        let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
         let result = {
             let core = self.core.read();
             core.calculate_tokens_in(self.pool_id, zero_for_one, amount)
         };
-        let bound = crate::alloy_py::u256_to_py(py, &result)?;
+        let bound = crate::conversion::alloy::u256_to_py(py, &result)?;
         Ok(bound.unbind())
     }
 
@@ -100,7 +100,7 @@ impl PyLiquidityPool {
         amount_out: &Bound<'_, PyAny>,
         recipient: &str,
     ) -> PyResult<Option<(String, String, u64)>> {
-        let amount = crate::alloy_py::extract_python_u256(amount_out)?;
+        let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
         let recip = match recipient.parse() {
             Ok(addr) => addr,
             Err(e) => {
@@ -136,7 +136,7 @@ impl PyLiquidityPool {
                 .map(|s| s.reserve0)
                 .unwrap_or_default()
         };
-        Ok(crate::alloy_py::u256_to_py(py, &r)?.unbind())
+        Ok(crate::conversion::alloy::u256_to_py(py, &r)?.unbind())
     }
 
     /// Current reserve of token1.
@@ -148,7 +148,7 @@ impl PyLiquidityPool {
                 .map(|s| s.reserve1)
                 .unwrap_or_default()
         };
-        Ok(crate::alloy_py::u256_to_py(py, &r)?.unbind())
+        Ok(crate::conversion::alloy::u256_to_py(py, &r)?.unbind())
     }
 
     /// Block number of the most recent state update. Falls through V2→V3→V4
@@ -184,8 +184,8 @@ impl PyLiquidityPool {
                 let tuple = pyo3::types::PyTuple::new(
                     py,
                     [
-                        crate::alloy_py::u256_to_py(py, &r0)?.unbind(),
-                        crate::alloy_py::u256_to_py(py, &r1)?.unbind(),
+                        crate::conversion::alloy::u256_to_py(py, &r0)?.unbind(),
+                        crate::conversion::alloy::u256_to_py(py, &r1)?.unbind(),
                         blk.into_pyobject(py)?.into_any().unbind(),
                     ],
                 )?;
@@ -208,7 +208,7 @@ impl PyLiquidityPool {
                 .map(degenbot_bot::bot_core::V3FamilyPool::sqrt_price_x96)
                 .unwrap_or_default()
         };
-        Ok(crate::alloy_py::u256_to_py(py, &spx)?.unbind())
+        Ok(crate::conversion::alloy::u256_to_py(py, &spx)?.unbind())
     }
 
     /// Current active liquidity for a V3/V4 pool. 0 if not V3/V4.
@@ -263,8 +263,8 @@ impl PyLiquidityPool {
         reserve1: &Bound<'_, PyAny>,
         block_number: u64,
     ) -> PyResult<()> {
-        let r0 = crate::alloy_py::extract_python_u256(reserve0)?;
-        let r1 = crate::alloy_py::extract_python_u256(reserve1)?;
+        let r0 = crate::conversion::alloy::extract_python_u256(reserve0)?;
+        let r1 = crate::conversion::alloy::extract_python_u256(reserve1)?;
         let _ = self
             .core
             .write()
@@ -310,8 +310,8 @@ impl PyLiquidityPool {
                 let tuple = pyo3::types::PyTuple::new(
                     py,
                     [
-                        crate::alloy_py::u256_to_py(py, &r0)?.unbind(),
-                        crate::alloy_py::u256_to_py(py, &r1)?.unbind(),
+                        crate::conversion::alloy::u256_to_py(py, &r0)?.unbind(),
+                        crate::conversion::alloy::u256_to_py(py, &r1)?.unbind(),
                         blk.into_pyobject(py)?.into_any().unbind(),
                     ],
                 )?;
@@ -342,8 +342,8 @@ impl PyLiquidityPool {
         tick: i32,
         block_number: u64,
     ) -> PyResult<()> {
-        let spx = crate::alloy_py::extract_python_u256(sqrt_price_x96)?;
-        let liq = crate::alloy_py::extract_python_u256(liquidity)?.to::<u128>();
+        let spx = crate::conversion::alloy::extract_python_u256(sqrt_price_x96)?;
+        let liq = crate::conversion::alloy::extract_python_u256(liquidity)?.to::<u128>();
         // RAJ3PP: family-dispatching apply. Routes V4 pools to the V4 apply
         // path (previously this called `apply_v3_swap_by_pool_id`
         // unconditionally, which no-op'd on `PoolEntry::V4` and silently
@@ -383,7 +383,7 @@ impl PyLiquidityPool {
         block_number: u64,
     ) -> PyResult<bool> {
         // liquidity_delta is i128 — accept Python int, narrow from i256.
-        let delta_i256 = crate::alloy_py::extract_python_u256(liquidity_delta)?;
+        let delta_i256 = crate::conversion::alloy::extract_python_u256(liquidity_delta)?;
         let delta = alloy::primitives::I256::from_raw(delta_i256)
             .try_into()
             .map_err(|_| {
@@ -483,7 +483,7 @@ impl PyLiquidityPool {
         let tuple = pyo3::types::PyTuple::new(
             py,
             [
-                crate::alloy_py::u256_to_py(py, &snap.0)?.unbind(),
+                crate::conversion::alloy::u256_to_py(py, &snap.0)?.unbind(),
                 snap.1.into_pyobject(py)?.into_any().unbind(),
                 snap.2.into_pyobject(py)?.into_any().unbind(),
                 snap.3.into_pyobject(py)?.into_any().unbind(),
@@ -541,7 +541,8 @@ impl PyLiquidityPool {
                 let tuple = pyo3::types::PyTuple::new(
                     py,
                     [
-                        crate::alloy_py::u256_to_py(py, &p.sqrt_price_x96_before)?.unbind(),
+                        crate::conversion::alloy::u256_to_py(py, &p.sqrt_price_x96_before)?
+                            .unbind(),
                         p.liquidity_before.into_pyobject(py)?.into_any().unbind(),
                         p.tick_before.into_pyobject(py)?.into_any().unbind(),
                         restore.block.into_pyobject(py)?.into_any().unbind(),

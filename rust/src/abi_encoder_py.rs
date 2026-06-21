@@ -5,13 +5,13 @@
 //! live in the `degenbot-abi` workspace member and have no `PyO3` dependency;
 //! this module adds the `#[pyfunction]` entry points registered in
 //! [`crate::lib`]'s `#[pymodule]`. Python-value extraction delegates to
-//! [`crate::alloy_py::abi_value_from_python`].
+//! [`crate::conversion::alloy::abi_value_from_python`].
 
 use degenbot_abi::abi_encoder::{encode_rust, encode_single_rust};
 use degenbot_abi::abi_types::AbiValue;
 use pyo3::{exceptions::PyValueError, prelude::*, types::PyBytes, types::PyList};
 
-use crate::alloy_py;
+use crate::conversion::alloy as alloy_py;
 
 // =============================================================================
 // PyO3-exposed functions (thin wrappers)

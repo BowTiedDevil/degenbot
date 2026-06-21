@@ -13,8 +13,8 @@ use pyo3::{
     exceptions::PyTypeError, exceptions::PyValueError, prelude::*, types::PyAny, PyTypeInfo,
 };
 
-use crate::alloy_py;
 use crate::cl_lib::tick_math::{get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal};
+use crate::conversion::alloy as alloy_py;
 
 /// Extract a U160 from a Python object (accepts int or bytes).
 #[inline]

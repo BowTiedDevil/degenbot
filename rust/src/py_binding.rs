@@ -448,8 +448,8 @@ impl PyUniswapArbEngine {
             let addr = addr_str.parse::<Address>().map_err(|e| {
                 pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}"))
             })?;
-            let r0 = crate::alloy_py::extract_python_u256(&tuple.get_item(1)?)?;
-            let r1 = crate::alloy_py::extract_python_u256(&tuple.get_item(2)?)?;
+            let r0 = crate::conversion::alloy::extract_python_u256(&tuple.get_item(1)?)?;
+            let r1 = crate::conversion::alloy::extract_python_u256(&tuple.get_item(2)?)?;
             rust_v2.push((addr, r0, r1));
         }
         Ok(rust_v2)
@@ -504,7 +504,7 @@ impl PyUniswapArbEngine {
             let addr = addr_str.parse::<Address>().map_err(|e| {
                 pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}"))
             })?;
-            let sqrt_price = crate::alloy_py::extract_python_u256(&tuple.get_item(1)?)?;
+            let sqrt_price = crate::conversion::alloy::extract_python_u256(&tuple.get_item(1)?)?;
             let liquidity: u128 = tuple.get_item(2)?.extract()?;
             let tick: i32 = tuple.get_item(3)?.extract()?;
 
@@ -548,7 +548,7 @@ impl PyUniswapArbEngine {
             let pid_str: String = pid_obj.extract()?;
             let pool_id = hex_string_to_pool_id(&pid_str)?;
 
-            let sqrt_price = crate::alloy_py::extract_python_u256(&tuple.get_item(2)?)?;
+            let sqrt_price = crate::conversion::alloy::extract_python_u256(&tuple.get_item(2)?)?;
             let liquidity: u128 = tuple.get_item(3)?.extract()?;
             let tick: i32 = tuple.get_item(4)?.extract()?;
 
@@ -1163,8 +1163,8 @@ impl PyUniswapArbEngine {
         let addr: Address = address.parse().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}"))
         })?;
-        let r0 = crate::alloy_py::extract_python_u256(reserve0)?;
-        let r1 = crate::alloy_py::extract_python_u256(reserve1)?;
+        let r0 = crate::conversion::alloy::extract_python_u256(reserve0)?;
+        let r1 = crate::conversion::alloy::extract_python_u256(reserve1)?;
 
         // ADR-006 D3: pool construction is a `BotState` concern only. The engine
         // registers into its associated `BotState` (`core`) — for a standalone
@@ -1225,7 +1225,7 @@ impl PyUniswapArbEngine {
         let fac = factory.parse::<Address>().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid factory address: {e}"))
         })?;
-        let sp = crate::alloy_py::extract_python_u256(sqrt_price_x96)?;
+        let sp = crate::conversion::alloy::extract_python_u256(sqrt_price_x96)?;
 
         // Look up tick_data from stored V3 snapshot (one-way transfer via remove)
         let (rust_tick_data, coverage) = self.v3_snapshot.take(&addr);
@@ -1359,7 +1359,7 @@ impl PyUniswapArbEngine {
         let c1 = currency1.parse::<Address>().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid currency1 address: {e}"))
         })?;
-        let sp = crate::alloy_py::extract_python_u256(sqrt_price_x96)?;
+        let sp = crate::conversion::alloy::extract_python_u256(sqrt_price_x96)?;
 
         // Look up tick_data from stored V4 snapshot (one-way transfer via remove)
         let (rust_tick_data, coverage) = self.v4_snapshot.take(&(pm, pool_id));
@@ -2390,7 +2390,7 @@ impl PyUniswapArbEngine {
             let addr: Address = addr_str.parse().map_err(|e| {
                 pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}"))
             })?;
-            let sqrt_price = crate::alloy_py::extract_python_u256(&tuple.get_item(1)?)?;
+            let sqrt_price = crate::conversion::alloy::extract_python_u256(&tuple.get_item(1)?)?;
             let liquidity: u128 = tuple.get_item(2)?.extract()?;
             let tick: i32 = tuple.get_item(3)?.extract()?;
 
@@ -2454,7 +2454,7 @@ impl PyUniswapArbEngine {
             let pid_str: String = tuple.get_item(1)?.extract()?;
             let pool_id = hex_string_to_pool_id(&pid_str)?;
 
-            let sqrt_price = crate::alloy_py::extract_python_u256(&tuple.get_item(2)?)?;
+            let sqrt_price = crate::conversion::alloy::extract_python_u256(&tuple.get_item(2)?)?;
             let liquidity: u128 = tuple.get_item(3)?.extract()?;
             let tick: i32 = tuple.get_item(4)?.extract()?;
 
@@ -2642,13 +2642,15 @@ impl PyUniswapArbEngine {
         let py_list = PyList::empty(py);
         for (path_id, solve_result) in results {
             let path_id_py = path_id.into_pyobject(py)?;
-            let input_py = crate::alloy_py::PyU256(solve_result.optimal_input).into_pyobject(py)?;
-            let profit_py = crate::alloy_py::PyU256(solve_result.profit).into_pyobject(py)?;
+            let input_py =
+                crate::conversion::alloy::PyU256(solve_result.optimal_input).into_pyobject(py)?;
+            let profit_py =
+                crate::conversion::alloy::PyU256(solve_result.profit).into_pyobject(py)?;
 
             // Build hop_outputs as a Python tuple
             let hop_outputs_py = PyList::empty(py);
             for hop_out in &solve_result.hop_outputs {
-                let hop_py = crate::alloy_py::PyU256(*hop_out).into_pyobject(py)?;
+                let hop_py = crate::conversion::alloy::PyU256(*hop_out).into_pyobject(py)?;
                 hop_outputs_py.append(hop_py)?;
             }
             let hop_tuple = hop_outputs_py.into_pyobject(py)?;
@@ -2656,7 +2658,7 @@ impl PyUniswapArbEngine {
             // Build consumed_inputs as a Python tuple
             let consumed_inputs_py = PyList::empty(py);
             for consumed in &solve_result.consumed_inputs {
-                let consumed_py = crate::alloy_py::PyU256(*consumed).into_pyobject(py)?;
+                let consumed_py = crate::conversion::alloy::PyU256(*consumed).into_pyobject(py)?;
                 consumed_inputs_py.append(consumed_py)?;
             }
             let consumed_tuple = consumed_inputs_py.into_pyobject(py)?;
@@ -2701,9 +2703,9 @@ impl PyUniswapArbEngine {
         min_profit: &Bound<'_, pyo3::PyAny>,
         max_profit: Option<&Bound<'_, pyo3::PyAny>>,
     ) -> PyResult<()> {
-        let min = crate::alloy_py::extract_python_u256(min_profit)?;
+        let min = crate::conversion::alloy::extract_python_u256(min_profit)?;
         let max = match max_profit {
-            Some(obj) => crate::alloy_py::extract_python_u256(obj)?,
+            Some(obj) => crate::conversion::alloy::extract_python_u256(obj)?,
             None => U256::MAX,
         };
         self.engine.lock().set_profit_thresholds(min, max);
@@ -2830,18 +2832,18 @@ fn solve_result_to_py_tuple<'py>(
     py: Python<'py>,
 ) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
     let path_id_py = path_id.into_pyobject(py)?;
-    let input_py = crate::alloy_py::PyU256(result.optimal_input).into_pyobject(py)?;
-    let profit_py = crate::alloy_py::PyU256(result.profit).into_pyobject(py)?;
+    let input_py = crate::conversion::alloy::PyU256(result.optimal_input).into_pyobject(py)?;
+    let profit_py = crate::conversion::alloy::PyU256(result.profit).into_pyobject(py)?;
 
     let hop_outputs_py = PyList::empty(py);
     for hop_out in &result.hop_outputs {
-        let hop_py = crate::alloy_py::PyU256(*hop_out).into_pyobject(py)?;
+        let hop_py = crate::conversion::alloy::PyU256(*hop_out).into_pyobject(py)?;
         hop_outputs_py.append(hop_py)?;
     }
 
     let consumed_inputs_py = PyList::empty(py);
     for consumed in &result.consumed_inputs {
-        let consumed_py = crate::alloy_py::PyU256(*consumed).into_pyobject(py)?;
+        let consumed_py = crate::conversion::alloy::PyU256(*consumed).into_pyobject(py)?;
         consumed_inputs_py.append(consumed_py)?;
     }
 

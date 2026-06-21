@@ -8,8 +8,7 @@
 //! - [`abi_types`] - Unified ABI type/value representation (`AbiType`, `AbiValue`, `CachedAbiTypes`)
 //! - [`abi_decoder`] - High-performance ABI decoding
 //! - [`abi_encoder`] - High-performance ABI encoding
-//! - [`alloy_py`] - Zero-intermediate-allocation U256/I256 → Python int conversion
-//! - [`py_cache`] - Cached Python function/class references (`int.from_bytes`, `HexBytes`)
+//! - [`conversion`] - Shared PyO3-dependent converters (U256/I256 ↔ Python `int`, cached refs, JSON/RPC type → Python)
 //! - [`address_utils`] - Ethereum address utilities (EIP-55 checksumming)
 //! - [`errors`] - Centralized error types with `thiserror`
 //! - [`provider`] - Ethereum RPC provider with Alloy (HTTP, WS, IPC)
@@ -21,25 +20,21 @@
 //! - [`signature_parser`] - Robust function signature parsing
 //! - [`runtime`] - Shared Tokio runtime singleton
 //! - [`hex_utils`] - Pure-Rust hex encoding/decoding (no `PyO3` dependency)
-//! - [`py_converters`] - Python object converters for RPC types (block/tx/log dicts, JSON-to-Python with `HexBytes`)
 //!
 //! See individual module documentation for usage examples.
 
 pub mod abi_decoder_py;
 pub mod abi_encoder_py;
 pub mod address_utils_py;
-pub mod alloy_py;
 pub mod async_contract;
 pub mod async_provider;
 pub mod c_api;
 pub mod cl_lib_py;
 pub mod contract_py;
-pub mod json_converters;
+pub mod conversion;
 pub mod provider_py;
 pub mod py_binding;
 pub mod py_bot;
-pub mod py_cache;
-pub mod py_converters;
 pub mod py_dex_identity;
 pub mod py_erc20_token;
 pub mod py_liquidity_pool;
@@ -63,7 +58,7 @@ pub use degenbot_cl_math::cl_lib;
 // `degenbot-abi` workspace member. Re-exported as `crate::abi_types` /
 // `crate::abi_decoder` / `crate::abi_encoder` / `crate::signature_parser` so
 // every existing call site in the binding layer (`contract`, `contract_py`,
-// `alloy_py`, `degenbot-uniswap::v2_encoding`) keeps resolving. The `#[pyfunction]`
+// `conversion::alloy`, `degenbot-uniswap::v2_encoding`) keeps resolving. The `#[pyfunction]`
 // wrappers (`decode`/`encode`) live in `abi_decoder_py` / `abi_encoder_py`.
 pub use degenbot_abi::{abi_decoder, abi_encoder, abi_types, signature_parser};
 
@@ -73,7 +68,7 @@ pub use degenbot_abi::{abi_decoder, abi_encoder, abi_types, signature_parser};
 // binding layer (`provider_py`, `contract_py`, `subscription_py`,
 // `async_provider`, `async_contract`) keeps resolving. The `#[pyfunction]`
 // wrappers + the GIL-bound `drain_buffer`/`DrainResult` stay in the root
-// `*_py` modules (they need `py_cache` / `py_converters`).
+// `*_py` modules (they need `conversion::cache` / `conversion::rpc_types`).
 pub use degenbot_rpc::{contract, provider, subscription};
 
 // The bot state (`BotState`, reorg journal, verifier, pump,
@@ -85,7 +80,7 @@ pub use degenbot_rpc::{contract, provider, subscription};
 // (`PyBot`, `PyLiquidityPool`, `PyErc20Token`, `PyDexIdentity`,
 // `PyUniswapArbEngine`, the `Verification*Error`/`*RejectedError` exception
 // types) live in the root `py_bot` / `py_liquidity_pool` / `py_erc20_token` /
-// `py_dex_identity` / `py_binding` modules (they need `alloy_py` / `py_cache`).
+// `py_dex_identity` / `py_binding` modules (they need `conversion::alloy` / `conversion::cache`).
 pub use degenbot_bot::{bot_core, optimizers};
 
 // The pure Uniswap V2/V3/V4 event-log decoders live in the `degenbot-decoders`
