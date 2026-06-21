@@ -1490,16 +1490,6 @@ impl BotState {
         }
     }
 
-    /// Get the pool address for a given pool ID.
-    #[must_use]
-    pub fn pool_address(&self, pool_id: u64) -> Option<Address> {
-        match self.pools.get(&pool_id)? {
-            PoolEntry::V2(state) => Some(state.address),
-            PoolEntry::V3(state) => Some(state.address),
-            PoolEntry::V4(_) => None,
-        }
-    }
-
     // -----------------------------------------------------------------------
     // V4 state (ADR-003: single entry per `(pool_manager, pool_id)`;
     // orientation derived at solve from `zero_for_one`)
@@ -2069,15 +2059,6 @@ impl BotState {
 
     // --- V4 journal methods ---
 
-    /// Get the number of deltas in the reorg journal for a V4 pool.
-    #[must_use]
-    pub fn v4_journal_len(&self, pool_id: u64) -> usize {
-        match self.pools.get(&pool_id) {
-            Some(PoolEntry::V4(state)) => state.journal.len(),
-            _ => 0,
-        }
-    }
-
     /// Discard V4 reorg journal deltas earlier than the given block.
     ///
     /// # Errors
@@ -2240,7 +2221,10 @@ impl Default for BotState {
 /// whole bot through this facade without Python.
 pub struct Bot {
     /// The chain this bot orchestrates (ADR-006 D1+D5: one `Bot` per chain).
-    /// Read by the standalone-Rust path; `PyBot` wires 0 until slice 8.
+    /// Read by the standalone-Rust path; `PyBot` currently stubs `0` —
+    /// real wiring lands when ADR-006 D4 makes `chain_id` a Bot-level
+    /// construction-time invariant used for cross-chain validation (see
+    /// `docs/adr/ADR-006-bot-as-per-chain-orchestrator.md` §D4).
     chain_id: u64,
     /// The shared pure-data state. Handles clone this `Arc`.
     state: Arc<parking_lot::RwLock<BotState>>,
@@ -2300,7 +2284,8 @@ impl Bot {
     }
 
     /// The chain this bot orchestrates. Used by the standalone-Rust path;
-    /// `PyBot` does not expose it until ADR-006 slice 8.
+    /// `PyBot` does not expose it until ADR-006 D4 wires it as a real
+    /// construction-time invariant (see `docs/adr/ADR-006-bot-as-per-chain-orchestrator.md` §D4).
     #[must_use]
     pub const fn chain_id(&self) -> u64 {
         self.chain_id
