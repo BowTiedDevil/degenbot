@@ -33,6 +33,7 @@ use std::sync::LazyLock;
 use crate::address_utils::address_to_checksum_string;
 use crate::conversion::cache::create_hexbytes;
 use crate::hex_utils::decode_hex;
+#[cfg(feature = "rpc")]
 use crate::provider::EthBlock;
 use alloy::rpc::types::eth::Header as RpcHeader;
 
@@ -654,6 +655,7 @@ pub fn header_to_py_dict<'py>(
     Ok(dict)
 }
 
+#[cfg(feature = "rpc")]
 #[allow(clippy::missing_errors_doc)]
 pub fn block_to_py_dict<'py>(py: Python<'py>, block: &EthBlock) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);

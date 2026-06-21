@@ -19,6 +19,7 @@
 //! which prevent implementing foreign traits (`IntoPyObject` from `pyo3`)
 //! for foreign types (`U256`/`I256` from `alloy`).
 
+#[cfg(feature = "abi")]
 use crate::abi_types::AbiValue;
 use crate::conversion::cache::{bytes_to_int, bytes_to_int_signed};
 use alloy::primitives::{I256, U256};
@@ -128,6 +129,7 @@ pub(crate) fn extract_python_u256(obj: &Bound<'_, PyAny>) -> PyResult<U256> {
 // Python → AbiValue conversion
 // =============================================================================
 
+#[cfg(feature = "abi")]
 /// Create an `AbiValue` from a Python object.
 ///
 /// Converts Python types to their ABI equivalents:
