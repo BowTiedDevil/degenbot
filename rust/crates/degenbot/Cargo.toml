@@ -1,0 +1,38 @@
+[package]
+name = "degenbot"
+description = "Umbrella Rust crate: re-exports the pyo3-free degenbot core surface (Bot state, DexIdentity presets, calc math) for standalone Rust consumers."
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"
+pedantic = "warn"
+perf = "warn"
+style = "warn"
+suspicious = "warn"
+
+# The umbrella is pure-Rust: it pulls ONLY the pyo3-free core crates and
+# re-exports them. It has NO `pyo3` dependency (verified by
+# `rg 'use pyo3' rust/crates/degenbot` — empty). A standalone Rust consumer
+# `cargo add degenbot` gets `BotState`/`DexIdentity`/presets/calc with zero
+# Python in the build graph (ADR-005 standalone claim, made concrete by
+# `examples/standalone_consumer.rs`). The binding layer (`degenbot_rs` cdylib,
+# built from `crates/degenbot-python/`) is a separate workspace member that
+# DOES pull pyo3; the umbrella never depends on it.
+[dependencies]
+degenbot-core = { path = "../degenbot-core" }
+degenbot-cl-math = { path = "../degenbot-cl-math" }
+degenbot-abi = { path = "../degenbot-abi" }
+degenbot-uniswap = { path = "../degenbot-uniswap" }
+degenbot-rpc = { path = "../degenbot-rpc" }
+degenbot-decoders = { path = "../degenbot-decoders" }
+degenbot-bot = { path = "../degenbot-bot" }
+
+[dev-dependencies]
+alloy = { version = "^2.0" }

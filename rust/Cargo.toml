@@ -23,6 +23,7 @@ members = [
     "crates/degenbot-decoders",
     "crates/degenbot-uniswap",
     "crates/degenbot-python",
+    "crates/degenbot",
 ]
 
 # Release profile.

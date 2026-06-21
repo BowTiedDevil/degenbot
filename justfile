@@ -31,13 +31,13 @@ fmt-check:
 check-no-pyo3-in-cores:
     #!/usr/bin/env bash
     set -euo pipefail
-    for crate in degenbot-core degenbot-cl-math degenbot-abi degenbot-rpc degenbot-bot degenbot-decoders degenbot-uniswap; do
+    for crate in degenbot-core degenbot-cl-math degenbot-abi degenbot-rpc degenbot-bot degenbot-decoders degenbot-uniswap degenbot; do
         if cargo tree --manifest-path rust/Cargo.toml -p "$crate" 2>/dev/null | grep -qi 'pyo3 v'; then
             echo "ERROR: $crate pulls pyo3 under default features (must be feature-gated)." >&2
             exit 1
         fi
     done
-    echo "OK: core crates are pyo3-free under default features"
+    echo "OK: core crates + umbrella are pyo3-free under default features"
 
 # Build Rust release library (links Python - for testing only)
 build-rust-debug:
