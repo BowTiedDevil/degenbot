@@ -10,10 +10,11 @@
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
 
+use crate::bot::engine;
 use crate::{
     abi_decoder_py, abi_encoder_py, address_utils_py, async_contract, async_provider, cl_lib_py,
-    contract_py, provider_py, py_binding, py_bot, py_dex_identity, py_erc20_token,
-    py_liquidity_pool, subscription_py, tick_math_py,
+    contract_py, provider_py, py_bot, py_dex_identity, py_erc20_token, py_liquidity_pool,
+    subscription_py, tick_math_py,
 };
 
 /// Register every Rust-wrapped symbol on the Python module `m`.
@@ -48,18 +49,18 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     contract_py::add_contract_module(m)?;
 
     // Uniswap mixed V2/V3/V4 engine
-    m.add_class::<py_binding::PyUniswapArbEngine>()?;
+    m.add_class::<engine::PyUniswapArbEngine>()?;
 
     // Typed verification exceptions (TODO-53b7453b): distinct
     // `RuntimeError` subclasses so `build_paths` can classify verification
     // failures by type instead of fragile string matching.
     m.add(
         "VerificationMismatchError",
-        m.py().get_type::<py_binding::VerificationMismatchError>(),
+        m.py().get_type::<engine::VerificationMismatchError>(),
     )?;
     m.add(
         "VerificationRpcError",
-        m.py().get_type::<py_binding::VerificationRpcError>(),
+        m.py().get_type::<engine::VerificationRpcError>(),
     )?;
 
     // Typed V4 pool-admission exceptions (Plan 102, slice 2): distinct
@@ -68,11 +69,11 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // pattern above.
     m.add(
         "HookedPoolRejectedError",
-        m.py().get_type::<py_binding::HookedPoolRejectedError>(),
+        m.py().get_type::<engine::HookedPoolRejectedError>(),
     )?;
     m.add(
         "DynamicFeePoolRejectedError",
-        m.py().get_type::<py_binding::DynamicFeePoolRejectedError>(),
+        m.py().get_type::<engine::DynamicFeePoolRejectedError>(),
     )?;
 
     // Bot — Rust-owned state

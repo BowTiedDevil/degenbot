@@ -316,7 +316,7 @@ impl PyBot {
     fn unregister_pool(&self, address: &str, pool_id: Option<Vec<u8>>) -> PyResult<bool> {
         let addr = parse_address(address)?;
         // V4 on PyBot is intentionally not exposed: registration for V4 lives
-        // on UniswapArbEngine (py_binding.rs), so the symmetric V4 unregister
+        // on UniswapArbEngine (bot::engine), so the symmetric V4 unregister
         // belongs there too (ADR-007 Consequences / Deferred). A `Some` here
         // would be a caller bug — surface it rather than silently no-op.
         if pool_id.is_some() {

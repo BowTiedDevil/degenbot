@@ -28,13 +28,13 @@ pub mod abi_encoder_py;
 pub mod address_utils_py;
 pub mod async_contract;
 pub mod async_provider;
+pub mod bot;
 pub mod c_api;
 pub mod cl_lib_py;
 pub mod contract_py;
 pub mod conversion;
 pub mod prelude;
 pub mod provider_py;
-pub mod py_binding;
 pub mod py_bot;
 pub mod py_dex_identity;
 pub mod py_erc20_token;
@@ -80,15 +80,15 @@ pub use degenbot_rpc::{contract, provider, subscription};
 // binding layer keeps resolving. The `#[pyclass]`/`#[pyfunction]` wrappers
 // (`PyBot`, `PyLiquidityPool`, `PyErc20Token`, `PyDexIdentity`,
 // `PyUniswapArbEngine`, the `Verification*Error`/`*RejectedError` exception
-// types) live in the root `py_bot` / `py_liquidity_pool` / `py_erc20_token` /
-// `py_dex_identity` / `py_binding` modules (they need `conversion::alloy` / `conversion::cache`).
+// types) live in the `py_bot` / `py_liquidity_pool` / `py_erc20_token` /
+// `py_dex_identity` modules and the `bot::engine` subdir (they need `conversion::alloy` / `conversion::cache`).
 pub use degenbot_bot::{bot_core, optimizers};
 
 // The pure Uniswap V2/V3/V4 event-log decoders live in the `degenbot-decoders`
 // workspace member (Plan 104) — an alloy-only leaf (no pyo3/tokio/degenbot-core).
 // No `pub use` re-export: the binding layer reaches the lone type it needs
 // (`degenbot_decoders::v4_swap_decoder::PoolId`) via the direct path dependency
-// in `py_binding`. The state-coupled dispatch layer (`LogDecoder`,
+// in `bot::engine`. The state-coupled dispatch layer (`LogDecoder`,
 // `DecodedPoolEvent`, `LogDispatcher`) stays in `degenbot-bot`'s
 // `bot_core::log_dispatcher`.
 
