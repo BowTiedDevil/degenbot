@@ -68,8 +68,7 @@ pub use diagnostic::{DiagnosticHop, DiagnosticPathState, DiagnosticPoolState};
 /// V4's `toBalanceDelta()` reverts with `SafeCastOverflow` if either
 /// component exceeds this value. The solver must reject paths where any
 /// V4 hop would produce amounts exceeding this limit.
-pub const INT128_MAX: U256 =
-    U256::from_limbs([0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_FFFF_FFFF, 0, 0]);
+pub const INT128_MAX: U256 = U256::from_limbs([0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_FFFF_FFFF, 0, 0]);
 
 // ---------------------------------------------------------------------------
 // Engine phase state machine (Plan 098)
@@ -139,8 +138,7 @@ pub use crate::bot_core::PoolTickCoverage;
 pub type V3SnapshotData = HashMap<Address, HashMap<i32, crate::bot_core::TickInfo>>;
 
 /// V4 snapshot data: (`pool_manager`, `pool_id`) → tick data (consumed at registration).
-pub type V4SnapshotData =
-    HashMap<(Address, [u8; 32]), HashMap<i32, crate::bot_core::TickInfo>>;
+pub type V4SnapshotData = HashMap<(Address, [u8; 32]), HashMap<i32, crate::bot_core::TickInfo>>;
 
 // ---------------------------------------------------------------------------
 // Path types

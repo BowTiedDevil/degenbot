@@ -24,12 +24,12 @@
 //! The `encode_for_types` and `decode_for_types` functions take `&[AbiType]`
 //! directly, avoiding string parsing overhead.
 
-use degenbot_abi::abi_types::{AbiType, AbiValue, CachedAbiTypes};
-use degenbot_core::errors::{ContractError, ContractResult, ProviderResult};
 use crate::provider::AlloyProvider;
-use degenbot_abi::signature_parser;
 use alloy::primitives::{Address, Bytes};
 use dashmap::DashMap;
+use degenbot_abi::abi_types::{AbiType, AbiValue, CachedAbiTypes};
+use degenbot_abi::signature_parser;
+use degenbot_core::errors::{ContractError, ContractResult, ProviderResult};
 use std::sync::Arc;
 
 /// Parsed function signature with pre-built cached types for encoding/decoding.
@@ -448,8 +448,8 @@ impl Contract {
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use degenbot_core::runtime::get_runtime;
     use alloy::primitives::I256;
+    use degenbot_core::runtime::get_runtime;
 
     #[test]
     fn test_abi_type_parse() {

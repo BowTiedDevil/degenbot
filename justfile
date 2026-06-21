@@ -24,7 +24,7 @@ lint-rust:
 
 # Check Rust formatting (read-only; fails on drift). Run `just format` to fix.
 fmt-check:
-    cargo fmt --manifest-path rust/Cargo.toml -- --check
+    cargo fmt --manifest-path rust/Cargo.toml --all -- --check
 
 # Enforce the no-pyo3-in-core invariant (Plan 103). Pure Rust core crates must
 # not depend on pyo3 under their default features. Add new core crates here.
@@ -150,7 +150,7 @@ lint: fmt-check fmt-check-python lint-rust lint-python lint-markdown lint-contex
 
 # Format all code
 format:
-    cargo fmt --manifest-path rust/Cargo.toml
+    cargo fmt --manifest-path rust/Cargo.toml --all
     uv run ruff format src/
 
 # ========== Dependency Updates ==========

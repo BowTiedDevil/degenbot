@@ -4,7 +4,6 @@
 //! retry logic, response caching, optional transport-level rate limiting, and
 //! chunked log fetching. Also supports IPC endpoints for local node connections.
 
-use degenbot_core::errors::{ProviderError, ProviderResult};
 use alloy::consensus::{Header as ConsensusHeader, TxEnvelope};
 use alloy::eips::BlockNumberOrTag;
 use alloy::network::Ethereum;
@@ -18,6 +17,7 @@ use alloy::transports::ipc::IpcConnect;
 use alloy::transports::layers::ThrottleLayer;
 use alloy::transports::ws::WsConnect;
 use alloy::transports::{RpcError, TransportErrorKind};
+use degenbot_core::errors::{ProviderError, ProviderResult};
 use rand::RngExt;
 use std::num::NonZeroU32;
 use std::str::FromStr;
@@ -346,6 +346,11 @@ impl AlloyProvider {
     ///
     /// If `rate_limit` is `Some((rps, burst))`, the HTTP transport gets a
     /// `ThrottleLayer`. Otherwise the client is built without throttling.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError::ConnectionFailed`] if the RPC URL is invalid or the
+    /// transport cannot be constructed.
     pub async fn build_provider(
         rpc_url: &str,
         max_retries: u32,
@@ -552,6 +557,7 @@ impl AlloyProvider {
     ///
     /// Used by the subscription module to spawn pump tasks that
     /// need access to the provider for subscription calls.
+    #[must_use]
     pub fn provider_arc(&self) -> Arc<dyn Provider<Ethereum>> {
         Arc::clone(&self.inner)
     }
