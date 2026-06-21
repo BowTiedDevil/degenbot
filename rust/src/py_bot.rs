@@ -286,6 +286,48 @@ impl PyBot {
         }
     }
 
+    /// Unregister a V2/V3 pool by its contract address.
+    ///
+    /// ADR-007 U3. Drops the `PoolEntry`, its reorg journal, its index entry,
+    /// and any buffered V3 liquidity events for the address so a re-register
+    /// does not replay stale Mint/Burn onto the fresh pool. `next_pool_id` is
+    /// not reused — removed ids are retired to prevent stale `PyLiquidityPool`
+    /// handles aliasing to a different pool on recreate.
+    ///
+    /// V2/V3 path only — `PyBot` exposes `register_v2/v3_pool` (no V4;
+    /// V4 registration lives on `UniswapArbEngine`, and its symmetric
+    /// unregister belongs there too — see ADR-007 Consequences).
+    ///
+    /// Returns `True` if a pool was found and removed; `False` if the address
+    /// was never registered (silent no-op, mirroring Python `PoolRegistry.remove`).
+    /// Register stays refusal-on-panic for duplicates (ADR-007 U2) — the
+    /// asymmetry reflects the asymmetry in the operations' invariants.
+    ///
+    /// Args:
+    ///     `address`: The V2/V3 pool contract address (checksum or 0x-hex).
+    ///     `pool_id`: Reserved — must be `None` on `PyBot`. (V4 tuple-key
+    ///         unregister is engine-side; kept in the signature for parity
+    ///         with `BotState::unregister_pool`.)
+    ///
+    /// Raises:
+    ///     `ValueError`: If `address` cannot be parsed.
+    #[pyo3(signature = (address, pool_id=None))]
+    #[allow(clippy::needless_pass_by_value)] // PyO3 binding idiom for optional bytes
+    fn unregister_pool(&self, address: &str, pool_id: Option<Vec<u8>>) -> PyResult<bool> {
+        let addr = parse_address(address)?;
+        // V4 on PyBot is intentionally not exposed: registration for V4 lives
+        // on UniswapArbEngine (py_binding.rs), so the symmetric V4 unregister
+        // belongs there too (ADR-007 Consequences / Deferred). A `Some` here
+        // would be a caller bug — surface it rather than silently no-op.
+        if pool_id.is_some() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "PyBot.unregister_pool does not handle V4 (pool_id set); \
+                 V4 unregister is engine-side — use the engine’s unregister path.",
+            ));
+        }
+        Ok(self.bot.state_arc().write().unregister_pool(addr, None))
+    }
+
     /// Register a V3 pool by contract address.
     ///
     /// Returns the auto-assigned pool ID.

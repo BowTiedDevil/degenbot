@@ -1116,6 +1116,59 @@ impl BotState {
         self.pool_addresses.get(address).copied()
     }
 
+    /// Unregister a pool. ADR-007 U3.
+    ///
+    /// Drops the `PoolEntry` (and its reorg journal with it — restore for a
+    /// removed pool is a no-op target) plus its index entries, and discards
+    /// any buffered liquidity events for the pool so a re-register does not
+    /// replay stale Mint/Burn/ModifyLiquidity onto the fresh pool.
+    ///
+    /// # Keying
+    ///
+    /// - **V2/V3 path** (`pool_id` = `None`): keyed by contract `address`
+    ///   (`pool_addresses`).
+    /// - **V4 path** (`pool_id` = `Some`): keyed by `(address, pool_id)` where
+    ///   `address` is the **`PoolManager`** contract address (one `PoolManager`
+    ///   hosts many pool ids — address alone is ambiguous, hence the tuple).
+    ///
+    /// `next_pool_id` is **not** reused — removed ids are retired so a stale
+    /// `PyLiquidityPool` handle retained by a Python caller cannot alias onto
+    /// a different pool that happens to receive the recycled id.
+    ///
+    /// # Returns
+    ///
+    /// `true` if an entry was found and removed; `false` if the address/tuple
+    /// was never registered (silent no-op, mirroring Python `PoolRegistry.remove`
+    /// silent-on-miss). Register stays refusal-on-`panic!`/`Err` (ADR-007 U2);
+    /// the asymmetry reflects the asymmetry in the operations' invariants.
+    pub fn unregister_pool(
+        &mut self,
+        address: Address,
+        pool_id: Option<degenbot_decoders::v4_swap_decoder::PoolId>,
+    ) -> bool {
+        match pool_id {
+            None => {
+                // V2/V3 path: address-keyed.
+                let Some(id) = self.pool_addresses.remove(&address) else {
+                    return false;
+                };
+                self.pools.remove(&id);
+                self.v3_buffer.discard_for(&address);
+                true
+            }
+            Some(pid) => {
+                // V4 path: (pool_manager, pool_id)-keyed.
+                let key = (address, pid);
+                let Some(id) = self.v4_pool_ids.remove(&key) else {
+                    return false;
+                };
+                self.pools.remove(&id);
+                self.v4_buffer.discard_for(&key);
+                true
+            }
+        }
+    }
+
     /// Number of registered pools.
     #[must_use]
     pub fn pool_count(&self) -> usize {
@@ -3412,5 +3465,162 @@ mod tests {
         );
         assert_eq!(s.liquidity, 1_000_000);
         assert_eq!(s.tick, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // ADR-007: BotState::unregister_pool (V2/V3 address-keyed, V4 tuple-keyed).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn unregister_v2_pool_returns_true_then_re_register_allocates_fresh_id() {
+        let mut core = BotState::new();
+        let params = make_params(U256::from(1000), U256::from(2000));
+        let first_id = core.register_v2_pool(&params);
+        assert_eq!(core.pool_count(), 1);
+
+        // Unregister the V2 pool.
+        let removed = core.unregister_pool(make_pool_addr(), None);
+        assert!(removed, "unregister of a registered V2 pool returns true");
+        assert_eq!(core.pool_count(), 0, "unregister must drop the PoolEntry");
+        assert_eq!(
+            core.pool_id_by_address(&make_pool_addr()),
+            None,
+            "unregister must clear pool_addresses"
+        );
+
+        // Re-register: must succeed (no panic) and allocate a fresh id
+        // (retired ids are NOT reused — ADR-007 U3).
+        let second_id = core.register_v2_pool(&params);
+        assert_ne!(
+            second_id, first_id,
+            "re-register must allocate a fresh id (retired, not reused)",
+        );
+        assert_eq!(core.pool_count(), 1);
+    }
+
+    #[test]
+    fn unregister_pool_on_unknown_address_returns_false_silently() {
+        let mut core = BotState::new();
+        // Register one pool at make_pool_addr().
+        let _ = core.register_v2_pool(&make_params(U256::from(1000), U256::from(2000)));
+        let unknown = Address::from([0x99u8; 20]);
+
+        let removed = core.unregister_pool(unknown, None);
+        assert!(!removed, "unregister on an unknown address returns false");
+        // No mutation occurred.
+        assert_eq!(core.pool_count(), 1);
+    }
+
+    #[test]
+    fn unregister_v3_pool_discards_buffered_liquidity_events() {
+        let mut core = BotState::new();
+        let v3_addr = make_pool_addr();
+
+        // Pre-registration: buffer a backfill ModifyLiquidity for `v3_addr`.
+        // `buffer_backfill_v3_liquidity_update` on an UNregistered address
+        // buffers (the registered-address early-return path doesn't fire).
+        core.buffer_backfill_v3_liquidity_update(v3_addr, -100, 100, 500_i128, 42_u64);
+        assert_eq!(
+            core.buffered_v3_event_count(&v3_addr),
+            1,
+            "precondition: the event is buffered for the unregistered address"
+        );
+
+        // Register the V3 pool. Registration does NOT auto-drain the buffer
+        // (drain is caller-driven via `apply_backfill_buffer_v3`); the buffer
+        // entry persists. This mirrors the live pump path where events can
+        // arrive pre-registration and stay buffered.
+        let _ = core.register_v3_pool(&RegisterV3PoolParams {
+            address: v3_addr,
+            token0: make_token0(),
+            token1: make_token1(),
+            fee: 3_000,
+            tick_spacing: 60,
+            factory: make_factory(),
+            sqrt_price_x96: U256::from(1u64) << 96,
+            liquidity: 0,
+            tick: 0,
+            tick_data: HashMap::new(),
+            update_block: 0,
+            coverage: PoolTickCoverage::Sparse,
+        });
+        assert_eq!(
+            core.buffered_v3_event_count(&v3_addr),
+            1,
+            "registration must not auto-drain (drain is caller-driven), so the buffer entry survives to here"
+        );
+
+        // Unregister the V3 pool. ADR-007 U3: drain the V3 buffer for the
+        // removed address so a re-register does not replay stale Mint/Burn.
+        let removed = core.unregister_pool(v3_addr, None);
+        assert!(removed);
+        assert_eq!(
+            core.buffered_v3_event_count(&v3_addr),
+            0,
+            "unregister must discard buffered V3 events for the removed address"
+        );
+    }
+
+    #[test]
+    fn unregister_v4_pool_by_tuple_key_discards_buffered_modify_liquidity() {
+        use crate::bot_core::{RegisterV4PoolParams, V4PoolKey};
+        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+
+        let pool_manager = Address::from([0x44u8; 20]);
+        let pool_id_bytes: degenbot_decoders::v4_swap_decoder::PoolId = [0xeeu8; 32];
+        let mut core = BotState::new();
+
+        let pool_id_u64 = core
+            .register_v4_pool(&RegisterV4PoolParams {
+                pool_manager,
+                pool_id: pool_id_bytes,
+                pool_key: V4PoolKey {
+                    currency0: Address::ZERO,
+                    currency1: Address::from([1u8; 20]),
+                    fee: 10_000,
+                    tick_spacing: 60,
+                    hooks: Address::ZERO,
+                },
+                hook_flags: 0,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                coverage: PoolTickCoverage::Sparse,
+            })
+            .expect("V4 pool registers");
+        assert_eq!(core.pool_count(), 1);
+
+        // Unregister by the V4 tuple key (address = pool_manager).
+        let removed = core.unregister_pool(pool_manager, Some(pool_id_bytes));
+        assert!(removed, "unregister of a registered V4 pool returns true");
+        assert_eq!(core.pool_count(), 0);
+
+        // Re-register must succeed (no Err) and allocate a fresh id.
+        let second_id = core
+            .register_v4_pool(&RegisterV4PoolParams {
+                pool_manager,
+                pool_id: pool_id_bytes,
+                pool_key: V4PoolKey {
+                    currency0: Address::ZERO,
+                    currency1: Address::from([1u8; 20]),
+                    fee: 10_000,
+                    tick_spacing: 60,
+                    hooks: Address::ZERO,
+                },
+                hook_flags: 0,
+                sqrt_price_x96: U256::from(1u128) << 96,
+                liquidity: 1_000_000,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                coverage: PoolTickCoverage::Sparse,
+            })
+            .expect("V4 re-register after unregister must succeed");
+        assert_ne!(
+            second_id, pool_id_u64,
+            "re-register must allocate a fresh id (retired, not reused)",
+        );
     }
 }
