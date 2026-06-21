@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from degenbot.builders.async_erc20_builder import AsyncErc20Builder
     from degenbot.database.session_manager import DatabaseSessionManager
+    from degenbot.degenbot_rs import PyBot
     from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
     from degenbot.types.aliases import ChainId
 
@@ -30,5 +31,6 @@ class AsyncBuilderContext:
     pools: PoolRegistry
     tokens: TokenRegistry
     erc20_builder: AsyncErc20Builder
+    py_bot: PyBot
     default_chain_id: ChainId | None = None
     managed_pools: ManagedPoolRegistry | None = None
