@@ -12,7 +12,7 @@ test-rust:
     #!/usr/bin/env bash
     python_libdir="$(.venv/bin/python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
     export LD_LIBRARY_PATH="${python_libdir}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    cargo test --manifest-path rust/Cargo.toml
+    cargo test --manifest-path rust/Cargo.toml --workspace
 
 # Run wrapped Rust Python tests
 test-rust-python:
@@ -31,7 +31,7 @@ fmt-check:
 check-no-pyo3-in-cores:
     #!/usr/bin/env bash
     set -euo pipefail
-    for crate in degenbot-core degenbot-cl-math degenbot-abi degenbot-rpc degenbot-bot; do
+    for crate in degenbot-core degenbot-cl-math degenbot-abi degenbot-rpc degenbot-bot degenbot-decoders; do
         if cargo tree --manifest-path rust/Cargo.toml -p "$crate" 2>/dev/null | grep -qi 'pyo3 v'; then
             echo "ERROR: $crate pulls pyo3 under default features (must be feature-gated)." >&2
             exit 1
