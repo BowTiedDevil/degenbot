@@ -41,6 +41,18 @@ V3_SQRT_PRICE = 2_198_666_895_605_149_686_863  # ~2000 USDC per WETH
 V3_TICK = -76020
 V3_LIQUIDITY = 1_234_567_890
 
+# ─── V4 topology round-trip fixtures (RAJ3PP public-interface regression) ─
+# A V4 pool registered via UniswapArbEngine.register_v4_pool (with its core
+# shared from a PyBot) and read back through a PyLiquidityPool handle. The
+# handle is family-agnostic — the same getters/apply methods used for V3.
+V4_POOL_MANAGER = "0x" + "ee" * 20
+V4_POOL_ID_HEX = "0x" + "01" * 32
+V4_FEE = 3000
+V4_TICK_SPACING = 60
+V4_SQRT_PRICE = V3_SQRT_PRICE
+V4_LIQUIDITY = V3_LIQUIDITY
+V4_TICK = V3_TICK
+
 
 def _v2_sync_log_data(reserve0: int, reserve1: int) -> str:
     """ABI-encode `Sync(uint112, uint112)` data: two 32-byte left-padded slots."""
@@ -505,3 +517,109 @@ class TestSharedStateTopologyV3:
         if word_lower == word_upper:
             expected_bits = (1 << bit_lower) | (1 << bit_upper)
             assert gross_lower_word_bits == expected_bits
+
+
+class TestSharedStateTopologyV4:
+    """Uniswap V4 over PyLiquidityPool — V4-specific RAJ3PP closure.
+
+    Mirrors ``TestSharedStateTopologyV3`` for the V4 family. The headline
+    regression: before RAJ3PP, ``PyLiquidityPool.apply_swap``/
+    ``apply_liquidity_update`` routed unconditionally into V3-only
+    ``apply_v3_*_by_pool_id`` methods that match ``PoolEntry::V3`` only and
+    return ``None`` for ``PoolEntry::V4`` — so every Python-side V4 update
+    (snapshots, manual ``external_update`` flows driven through the handle)
+    was **silently dropped**. The fix is a family-dispatching
+    ``apply_swap_by_pool_id``/``apply_liquidity_update_by_pool_id`` on
+    ``BotState``; these tests pin that dispatch through the *public* Python
+    handle surface (the exact layer that was broken).
+    """
+
+    @staticmethod
+    def _register_v4(core: PyBot, engine: UniswapArbEngine) -> int:
+        """Register a V4 pool via the engine's shared core; return its handle key."""
+        return engine.register_v4_pool(
+            pool_manager=V4_POOL_MANAGER,
+            pool_id_hex=V4_POOL_ID_HEX,
+            currency0=TOKEN0,
+            currency1=TOKEN1,
+            fee=V4_FEE,
+            tick_spacing=V4_TICK_SPACING,
+            hook_flags=0,
+            sqrt_price_x96=V4_SQRT_PRICE,
+            liquidity=V4_LIQUIDITY,
+            tick=V4_TICK,
+        )
+
+    def test_v4_handle_apply_swap_is_visible_to_handle_reads(self) -> None:
+        """A V4 ``apply_swap`` through the handle lands on the shared BotState.
+
+        RAJ3PP headline regression via the public interface: pre-fix,
+        ``PyLiquidityPool.apply_swap`` called ``apply_v3_swap_by_pool_id``
+        unconditionally, which no-op'd on a ``PoolEntry::V4`` and silently left
+        the V4 scalars at their registration values. After the family-dispatch
+        fix, the write is visible to the next handle read — the V4 family of
+        the V3 ``apply_swap → sqrt_price_x96`` visibility contract
+        (``test_v3_handle_apply_swap_is_visible_to_handle_reads``).
+        """
+        core = PyBot()
+        engine = UniswapArbEngine(py_bot=core)
+        pool_id = self._register_v4(core, engine)
+        handle = core.get_pool(pool_id)
+        assert handle is not None
+
+        new_spx = V4_SQRT_PRICE + 1
+        new_liq = V4_LIQUIDITY + 100
+        new_tick = V4_TICK + 1
+        handle.apply_swap(
+            sqrt_price_x96=new_spx,
+            liquidity=new_liq,
+            tick=new_tick,
+            block_number=5,
+        )
+
+        # All four written fields are immediately visible — proving the handle
+        # dispatched to the V4 apply path (not the V3-only no-op).
+        assert handle.sqrt_price_x96 == new_spx
+        assert handle.liquidity == new_liq
+        assert handle.tick == new_tick
+        assert handle.update_block == 5
+
+    def test_v4_handle_apply_liquidity_update_inits_ticks(self) -> None:
+        """A V4 ``apply_liquidity_update`` through the handle inits tick entries.
+
+        The other half of RAJ3PP: pre-fix ``PyLiquidityPool.apply_liquidity_update``
+        routed to ``apply_v3_liquidity_update_by_pool_id`` unconditionally, which
+        no-op'd on ``PoolEntry::V4`` and silently dropped the ModifyLiquidity
+        tick mutation. After the fix the dispatch reaches the V4 path and the
+        tick_data map gains entries — the V4 family of the V3
+        ``apply_liquidity_update`` contract
+        (``test_v3_handle_apply_liquidity_update_inits_ticks``).
+        """
+        core = PyBot()
+        engine = UniswapArbEngine(py_bot=core)
+        pool_id = self._register_v4(core, engine)
+        handle = core.get_pool(pool_id)
+        assert handle is not None
+
+        assert handle.tick_data_snapshot() == {}, "V4 pool starts with no ticks"
+
+        tick_lower = V4_TICK - V4_TICK_SPACING
+        tick_upper = V4_TICK + V4_TICK_SPACING
+        delta = 10_000
+        applied = handle.apply_liquidity_update(
+            tick_lower=tick_lower,
+            tick_upper=tick_upper,
+            liquidity_delta=delta,
+            block_number=3,
+        )
+        assert applied, "apply_liquidity_update should succeed on a registered V4 pool"
+
+        snap = handle.tick_data_snapshot()
+        assert set(snap.keys()) == {tick_lower, tick_upper}
+        gross_lower, net_lower, block_lower = snap[tick_lower]
+        gross_upper, net_upper, _block_upper = snap[tick_upper]
+        assert gross_lower == delta
+        assert gross_upper == delta
+        assert net_lower == delta
+        assert net_upper == -delta
+        assert block_lower == 3
