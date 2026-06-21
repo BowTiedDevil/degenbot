@@ -21,6 +21,7 @@ from tests.constants import (
     WETH_ETH,
 )
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.v3_pool_factory import make_v3_pool
 
 _PY_BOT = PyBot()
 
@@ -148,7 +149,7 @@ def offline_wbtc_weth_v3_pool(offline_adapter: ProviderAdapter) -> UniswapV3Pool
         block_identifier=UNISWAP_V3_WBTC_WETH_BLOCK,
     )
 
-    return UniswapV3Pool(
+    return make_v3_pool(
         address=UNISWAP_V3_WBTC_WETH_POOL,
         chain_id=1,
         state_block=UNISWAP_V3_WBTC_WETH_BLOCK,

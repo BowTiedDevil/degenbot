@@ -44,6 +44,7 @@ mod tests {
                 liquidity_gross: alloy::primitives::U128::from(300),
                 liquidity_net: alloy::primitives::I256::try_from(150i128)
                     .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
             },
         );
         tick_data.insert(
@@ -52,6 +53,7 @@ mod tests {
                 liquidity_gross: alloy::primitives::U128::from(200),
                 liquidity_net: alloy::primitives::I256::try_from(-100i128)
                     .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
             },
         );
 
@@ -154,6 +156,7 @@ mod tests {
                 liquidity_gross: alloy::primitives::U128::from(300),
                 liquidity_net: alloy::primitives::I256::try_from(150i128)
                     .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
             },
         );
         tick_data.insert(
@@ -162,6 +165,7 @@ mod tests {
                 liquidity_gross: alloy::primitives::U128::from(200),
                 liquidity_net: alloy::primitives::I256::try_from(-100i128)
                     .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
             },
         );
 
@@ -924,6 +928,7 @@ mod tests {
                 liquidity_gross: alloy::primitives::U128::from(5_000_000_000_000_000u64),
                 liquidity_net: alloy::primitives::I256::try_from(5_000_000_000_000_000i128)
                     .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
             },
         );
         tick_data_a.insert(
@@ -932,6 +937,7 @@ mod tests {
                 liquidity_gross: alloy::primitives::U128::from(5_000_000_000_000_000u64),
                 liquidity_net: alloy::primitives::I256::try_from(-5_000_000_000_000_000i128)
                     .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
             },
         );
 
@@ -963,6 +969,7 @@ mod tests {
                 liquidity_gross: alloy::primitives::U128::from(5_000_000_000_000_000u64),
                 liquidity_net: alloy::primitives::I256::try_from(5_000_000_000_000_000i128)
                     .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
             },
         );
         tick_data_b.insert(
@@ -971,6 +978,7 @@ mod tests {
                 liquidity_gross: alloy::primitives::U128::from(5_000_000_000_000_000u64),
                 liquidity_net: alloy::primitives::I256::try_from(-5_000_000_000_000_000i128)
                     .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
             },
         );
 
@@ -1028,6 +1036,7 @@ mod tests {
                 liquidity_gross: alloy::primitives::U128::from(300),
                 liquidity_net: alloy::primitives::I256::try_from(150i128)
                     .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
             },
         );
         tick_data.insert(
@@ -1036,6 +1045,7 @@ mod tests {
                 liquidity_gross: alloy::primitives::U128::from(200),
                 liquidity_net: alloy::primitives::I256::try_from(-100i128)
                     .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
             },
         );
 
@@ -1087,6 +1097,7 @@ mod tests {
                 liquidity_gross: alloy::primitives::U128::from(300),
                 liquidity_net: alloy::primitives::I256::try_from(150i128)
                     .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
             },
         );
         tick_data.insert(
@@ -1095,6 +1106,7 @@ mod tests {
                 liquidity_gross: alloy::primitives::U128::from(200),
                 liquidity_net: alloy::primitives::I256::try_from(-100i128)
                     .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
             },
         );
 
@@ -1324,6 +1336,7 @@ mod tests {
                 liquidity_gross: alloy::primitives::U128::from(300),
                 liquidity_net: alloy::primitives::I256::try_from(150i128)
                     .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
             },
         );
         tick_data.insert(
@@ -1332,6 +1345,7 @@ mod tests {
                 liquidity_gross: alloy::primitives::U128::from(200),
                 liquidity_net: alloy::primitives::I256::try_from(-100i128)
                     .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
             },
         );
         let v3_key = engine.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
@@ -1439,6 +1453,7 @@ mod tests {
                     liquidity_gross: alloy::primitives::U128::from(100),
                     liquidity_net: alloy::primitives::I256::try_from(100i128)
                         .unwrap_or(alloy::primitives::I256::ZERO),
+                    block: 0,
                 },
             );
             td.insert(
@@ -1447,6 +1462,7 @@ mod tests {
                     liquidity_gross: alloy::primitives::U128::from(100),
                     liquidity_net: alloy::primitives::I256::try_from(-100i128)
                         .unwrap_or(alloy::primitives::I256::ZERO),
+                    block: 0,
                 },
             );
             td
@@ -1565,6 +1581,7 @@ mod tests {
                 liquidity_gross: alloy::primitives::U128::from(100),
                 liquidity_net: alloy::primitives::I256::try_from(100i128)
                     .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
             },
         );
         tick_data.insert(
@@ -1573,6 +1590,7 @@ mod tests {
                 liquidity_gross: alloy::primitives::U128::from(100),
                 liquidity_net: alloy::primitives::I256::try_from(-100i128)
                     .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
             },
         );
         let v3_key = engine.register_v3_pool(&RegisterV3PoolParams {
@@ -1772,6 +1790,7 @@ mod tests {
             TickInfo {
                 liquidity_gross: U128::from(100),
                 liquidity_net: I256::try_from(100i128).unwrap(),
+                block: 0,
             },
         );
         let pool_id = engine.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {

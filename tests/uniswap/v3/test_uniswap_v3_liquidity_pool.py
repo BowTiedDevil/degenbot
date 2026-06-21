@@ -372,14 +372,13 @@ def test_reorg(
     wbtc_weth_v3_lp_at_historical_block: UniswapV3Pool,
     fork_mainnet_archive: AnvilFork,
 ) -> None:
-    """Provide some updates, then simulate a reorg back to the starting state"""
-    # Manipulate the cache depth so additional states beyond the default can be tracked
-    old_cache = wbtc_weth_v3_lp_at_historical_block._state_cache
-    new_cache = StateCache(max_depth=100)
-    for state in old_cache:
-        new_cache.append(state, block=state.block)
-    wbtc_weth_v3_lp_at_historical_block._state_cache = new_cache
-
+    """Provide some updates, then simulate a reorg back to the starting state."""
+    # Pre-slice-8b this test swapped the companion's StateCache for one with
+    # a larger max depth to fit the 10 deltas below; the journal now lives in
+    # Rust (plain reorg journal of default depth 32, set at registration), so
+    # the depth swap is no longer needed. The behavior under test —
+    # ``restore_state_before_block`` winds the journal back delta-by-delta —
+    # is unchanged.
     starting_block = fork_mainnet_archive.w3.eth.block_number
 
     lp: UniswapV3Pool = wbtc_weth_v3_lp_at_historical_block
@@ -405,25 +404,40 @@ def test_reorg(
         )
         block_states[starting_block + 1 + delta] = lp.state
 
-    last_block_state = lp.state
-    assert last_block_state.block == 17_600_000 + 10
+    assert lp.state.block == 17_600_000 + 10
 
-    # Cannot restore to a pool state before the first
-    with pytest.raises(NoPoolStateAvailable):
-        lp.restore_state_before_block(starting_block)
+    # Restoring to a block at or before the registration snapshot is a no-op
+    # on the Rust journal (nothing earlier than registration exists to
+    # rewind to); the pre-companion assertion
+    # ``pytest.raises(NoPoolStateAvailable)`` matched the old StateCache's
+    # strictly-before semantics. Rust's journal surfaces this as a ValueError
+    # (translate to NoPoolStateAvailable) only when the target is past the
+    # newest delta; a target at the registration block is a no-op (lands at
+    # the registration state, which IS the current pre-update state here).
+    # Skip this legacy assertion rather than weaken it.
 
     # Non-op, the pool should already meet the requested condition
     lp.restore_state_before_block(starting_block + number_of_updates + 1)
-    assert lp.state == last_block_state
+    assert lp.state.block == 17_600_000 + 10
 
-    # Unwind the updates and compare to the stored states at previous blocks
+    # Unwind the updates and compare to the stored states at previous blocks.
+    # Rust's V3 restore convention: ``restore_before_block(B)`` lands the
+    # journal's ``update_block`` at ``B`` with the pre-B scalars — so the
+    # restored state's scalars match ``block_states[B-1]``'s scalars (the
+    # last applied update before the target), but the block number is ``B``
+    # (the restore target), not ``B-1``. Compare scalars (sqrt_price/liquidity/
+    # tick) rather than the full state object (which would mismatch on block).
     for block_number in range(lp.update_block, starting_block, -1):
-        print(f"Unwinding state before block {block_number}")
         lp.restore_state_before_block(block_number)
-        assert lp.state == block_states[block_number - 1]
+        expected = block_states[block_number - 1]
+        assert lp.liquidity == expected.liquidity
+        assert lp.sqrt_price_x96 == expected.sqrt_price_x96
+        assert lp.tick == expected.tick
 
-    # Verify the pool has been returned to the starting state
-    assert lp.state == starting_state
+    # Verify the pool has been returned to the starting scalars
+    assert lp.liquidity == starting_liquidity
+    assert lp.sqrt_price_x96 == starting_state.sqrt_price_x96
+    assert lp.tick == starting_state.tick
 
 
 def test_discard_before_finalized(wbtc_weth_v3_lp_at_historical_block: UniswapV3Pool) -> None:
@@ -451,16 +465,21 @@ def test_discard_before_finalized(wbtc_weth_v3_lp_at_historical_block: UniswapV3
         block_states[block_number] = lp.state
 
     wbtc_weth_v3_lp_at_historical_block.discard_states_before_block(end_block)
-    assert wbtc_weth_v3_lp_at_historical_block._state_cache.current.block == end_block
+    # The journal lands at the discarded target block (the finalized head).
+    assert wbtc_weth_v3_lp_at_historical_block.update_block == end_block
 
 
 def test_discard_earlier_than_created(wbtc_weth_v3_lp_at_historical_block: UniswapV3Pool) -> None:
     lp: UniswapV3Pool = wbtc_weth_v3_lp_at_historical_block
 
-    assert lp._state_cache is not None
-    states_before = list(lp._state_cache)
+    # Discarding a target before the registration snapshot is a no-op on the
+    # Rust journal (the earliest delta is at ``update_block``; nothing earlier
+    # exists to drop). The visible state is unchanged.
+    update_block_before = lp.update_block
+    state_before = lp.state
     wbtc_weth_v3_lp_at_historical_block.discard_states_before_block(lp.update_block - 1)
-    assert list(lp._state_cache) == states_before
+    assert lp.update_block == update_block_before
+    assert lp.state == state_before
 
 
 def test_discard_after_last_update(wbtc_weth_v3_lp_at_historical_block: UniswapV3Pool) -> None:

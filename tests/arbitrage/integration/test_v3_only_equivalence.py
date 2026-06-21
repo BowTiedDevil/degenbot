@@ -28,6 +28,7 @@ from degenbot.exceptions import OptimizationError
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.fakes.tokens import FakeToken
+from tests.helpers.v3_pool_factory import make_v3_pool
 
 
 @pytest.fixture
@@ -73,7 +74,7 @@ def _make_profitable_v3_v3_cycle(
     sqrt_a = get_sqrt_ratio_at_tick(tick_a)
     sqrt_b = get_sqrt_ratio_at_tick(tick_b)
 
-    pool_a = UniswapV3Pool(
+    pool_a = make_v3_pool(
         address="0x00000000000000000000000000000000000000a0",  # type: ignore[arg-type]
         token0=t0,  # type: ignore[arg-type]
         token1=t1,  # type: ignore[arg-type]
@@ -85,7 +86,7 @@ def _make_profitable_v3_v3_cycle(
         liquidity=liquidity,
         state_block=1,
     )
-    pool_b = UniswapV3Pool(
+    pool_b = make_v3_pool(
         address="0x00000000000000000000000000000000000000a1",  # type: ignore[arg-type]
         token0=t0,  # type: ignore[arg-type]
         token1=t1,  # type: ignore[arg-type]
@@ -232,7 +233,7 @@ class TestV3OnlyEquivalance:
         sqrt_3 = get_sqrt_ratio_at_tick(tick_3)
         sqrt_inv5 = get_sqrt_ratio_at_tick(tick_inv5)
 
-        pool_0 = UniswapV3Pool(
+        pool_0 = make_v3_pool(
             address="0x00000000000000000000000000000000000000a0",  # type: ignore[arg-type]
             token0=t0,  # type: ignore[arg-type]
             token1=t1,  # type: ignore[arg-type]
@@ -244,7 +245,7 @@ class TestV3OnlyEquivalance:
             liquidity=10**18,
             state_block=1,
         )
-        pool_1 = UniswapV3Pool(
+        pool_1 = make_v3_pool(
             address="0x00000000000000000000000000000000000000a1",  # type: ignore[arg-type]
             token0=t1,  # type: ignore[arg-type]
             token1=t2,  # type: ignore[arg-type]
@@ -256,7 +257,7 @@ class TestV3OnlyEquivalance:
             liquidity=10**18,
             state_block=1,
         )
-        pool_2 = UniswapV3Pool(
+        pool_2 = make_v3_pool(
             address="0x00000000000000000000000000000000000000a2",  # type: ignore[arg-type]
             token0=t2,  # type: ignore[arg-type]
             token1=t0,  # type: ignore[arg-type]

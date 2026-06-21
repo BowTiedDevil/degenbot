@@ -19,6 +19,7 @@ from degenbot.uniswap.v3_types import (
     UniswapV3PoolExternalUpdate,
 )
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.v3_pool_factory import make_v3_pool
 
 _PY_BOT = PyBot()
 
@@ -68,7 +69,7 @@ class TestV3PoolIOFreeConstructor:
         weth = _make_weth()
         usdc = _make_usdc()
 
-        pool = UniswapV3Pool(
+        pool = make_v3_pool(
             address=USDC_WETH_V3_POOL,
             chain_id=1,
             token0=weth,
@@ -115,7 +116,7 @@ class TestV3PoolIOFreeConstructor:
             -297: BitmapAtWord(bitmap=3, block=18_000_000),
         }
 
-        pool = UniswapV3Pool(
+        pool = make_v3_pool(
             address=USDC_WETH_V3_POOL,
             chain_id=1,
             token0=weth,
@@ -141,7 +142,7 @@ class TestV3PoolIOFreeConstructor:
         weth = _make_weth()
         usdc = _make_usdc()
 
-        pool = UniswapV3Pool(
+        pool = make_v3_pool(
             address=USDC_WETH_V3_POOL,
             chain_id=1,
             token0=weth,
@@ -278,7 +279,7 @@ class TestV3PoolTrackerWithBot:
         # Create an I/O-free pool and register in bot.pools
         weth = _make_weth()
         usdc = _make_usdc()
-        mock_pool = UniswapV3Pool(
+        mock_pool = make_v3_pool(
             address=USDC_WETH_V3_POOL,
             chain_id=1,
             token0=weth,

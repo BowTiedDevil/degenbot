@@ -23,6 +23,7 @@ from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.fakes.tokens import FakeToken
 from tests.helpers.v2_pool_factory import make_v2_pool
+from tests.helpers.v3_pool_factory import make_v3_pool
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -124,7 +125,7 @@ def v3_profitable_pair(usdc: FakeToken, weth: FakeToken) -> list[UniswapV3Pool]:
     sqrt_2200 = get_sqrt_ratio_at_tick(tick_2200)
     sqrt_2000 = get_sqrt_ratio_at_tick(tick_2000)
 
-    pool_a = UniswapV3Pool(
+    pool_a = make_v3_pool(
         address=ADDR_V3A,  # type: ignore[arg-type]
         token0=usdc,  # type: ignore[arg-type]
         token1=weth,  # type: ignore[arg-type]
@@ -136,7 +137,7 @@ def v3_profitable_pair(usdc: FakeToken, weth: FakeToken) -> list[UniswapV3Pool]:
         liquidity=10**18,
         state_block=1,
     )
-    pool_b = UniswapV3Pool(
+    pool_b = make_v3_pool(
         address=ADDR_V3B,  # type: ignore[arg-type]
         token0=usdc,  # type: ignore[arg-type]
         token1=weth,  # type: ignore[arg-type]

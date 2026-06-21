@@ -343,6 +343,7 @@ mod tests {
             TickInfo {
                 liquidity_gross: alloy::primitives::U128::ZERO,
                 liquidity_net: alloy::primitives::I256::ZERO,
+                block: 0,
             },
         );
         let mut data = HashMap::new();
