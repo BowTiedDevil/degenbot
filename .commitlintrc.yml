@@ -22,8 +22,6 @@ rules:
     - never
 
   # ── Scope ─────────────────────────────────────────────────
-  # Keep this list in sync with AGENTS.md "### Scopes". AGENTS.md is the
-  # human-readable source of truth; this file is the linter authority.
   scope-enum:
     - 2
     - always
@@ -36,10 +34,11 @@ rules:
       - camelot
       - balancer
       - arbitrage
-      - builders   # pool/token construction layer (src/degenbot/builders/)
+      - builders
       - database
-      - rust       # Rust core; mirrors `python`
-      - python     # Python wrappers/linting; mirrors `rust`
+      - plans
+      - rust
+      - python
       - sdk
 
   scope-case:

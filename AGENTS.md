@@ -25,7 +25,7 @@ Uses `just` (see justfile) and `uv` as the package runner. Key commands:
 - `just format` - Run formatters (Rust + Python)
 
 ## Git Commits
-Commit messages must follow the project convention enforced by `commitlint`. Run `just setup-git-hooks` once after cloning to enable the local hook and editor template.
+Commit messages must follow the project convention enforced by `commitlint`. Run `just setup-git-hooks` once after cloning to enable the local hooks (`commit-msg` at commit time, `pre-push` that re-lints the push range as a safety net for `--no-verify` bypasses) and the editor template. For manual range checks: `just lint-commits` (default: unpushed commits) or `just lint-commits main..HEAD`.
 
 ## Backwards Compatibility
 - Unless directed otherwise, design standalone features without a backwards compatibility layer.
