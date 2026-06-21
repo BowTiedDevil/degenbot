@@ -1557,6 +1557,7 @@ dependencies = [
  "degenbot-core",
  "degenbot-decoders",
  "degenbot-rpc",
+ "degenbot-uniswap",
  "futures-util",
  "log",
  "parking_lot",
@@ -1615,6 +1616,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "degenbot-uniswap"
+version = "0.0.0"
+dependencies = [
+ "alloy",
+ "degenbot-abi",
+ "degenbot-core",
+]
+
+[[package]]
 name = "degenbot_rs"
 version = "0.0.0"
 dependencies = [
@@ -1627,6 +1637,7 @@ dependencies = [
  "degenbot-core",
  "degenbot-decoders",
  "degenbot-rpc",
+ "degenbot-uniswap",
  "futures-util",
  "log",
  "lru 0.18.0",

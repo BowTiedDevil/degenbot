@@ -38,8 +38,8 @@ pub fn decode(py: Python<'_>, types: Vec<String>, data: &[u8]) -> PyResult<Py<Py
 
 ### Module Organization
 
-The Rust extension is a **Cargo workspace** of six pure-Rust core crates
-(`degenbot-core`, `-cl-math`, `-abi`, `-rpc`, `-decoders`, `-bot`) plus a root `degenbot_rs`
+The Rust extension is a **Cargo workspace** of seven pure-Rust core crates
+(`degenbot-core`, `-cl-math`, `-abi`, `-rpc`, `-decoders`, `-uniswap`, `-bot`) plus a root `degenbot_rs`
 **cdylib binding layer**. The core crates have **no `pyo3` dependency**
 (compiler-enforced; verify with `just check-no-pyo3-in-cores`); the root cdylib
 glues them to Python via PyO3. See [`plans/completed/103-rust-workspace-split.md`](../plans/completed/103-rust-workspace-split.md).
@@ -58,7 +58,7 @@ glues them to Python via PyO3. See [`plans/completed/103-rust-workspace-split.md
 | `tick_math_py.rs` / `cl_lib_py.rs` | `PyO3` wrappers for V3 tick math (over `degenbot_cl_math::cl_lib`) |
 | `provider_py.rs` / `contract_py.rs` / `subscription_py.rs` | `PyO3` bindings over `degenbot_rpc` (incl. GIL-bound `drain_buffer`/`DrainResult`, absorbed from the pure core in slice 5) |
 | `async_provider.rs` / `async_contract.rs` | Async wrappers via `pyo3-async-runtimes` |
-| `py_bot.rs` / `py_liquidity_pool.rs` / `py_erc20_token.rs` / `py_dex_identity.rs` | ADR-005 three-layer `PyBot`/`PyLiquidityPool`/`PyErc20Token`/`PyDexIdentity` wrappers over `degenbot_bot::bot_core`. Absorbed the GIL-bound `DrainResult`/`convert_item`/`drain_buffer` from `subscription.rs` (slice 5) |
+| `py_bot.rs` / `py_liquidity_pool.rs` / `py_erc20_token.rs` / `py_dex_identity.rs` | ADR-005 three-layer `PyBot`/`PyLiquidityPool`/`PyErc20Token`/`PyDexIdentity` wrappers over `degenbot_bot::bot_core` + `degenbot_uniswap::dex_identity` (DexIdentity presets reached via the direct path dep). Absorbed the GIL-bound `DrainResult`/`convert_item`/`drain_buffer` from `subscription.rs` (slice 5) |
 | `py_binding.rs` | `PyUniswapArbEngine` + the `Verification*Error`/`*RejectedError` `#[create_exception]` types over `degenbot_bot::optimizers::uniswap_engine`. Absorbed from `uniswap_engine/py_binding.rs` (slice 6); still root here — needs `alloy_py`/`runtime` glue |
 
 #### `degenbot-core` — `rust/crates/degenbot-core/src/`
@@ -124,6 +124,24 @@ consumes any `impl LogDecoder`.
 | `v4_swap_decoder.rs` | V4 `Swap` from `PoolManager` — `V4_SWAP_TOPIC`, `decode_v4_swap_log` |
 | `v4_modify_liquidity_decoder.rs` | V4 `ModifyLiquidity` (signed delta, replaces V3 Mint/Burn) — `V4_MODIFY_LIQUIDITY_TOPIC`, `decode_v4_modify_liquidity_log` |
 
+#### `degenbot-uniswap` — `rust/crates/degenbot-uniswap/src/`
+
+Pure Uniswap-protocol domain crate (Plan 105): DEX identity presets + V2 swap
+callldata encoding. Depends on `alloy`, `degenbot-abi` (the encoder +
+`AbiValue` for `encode_v2_swap`), and `degenbot-core` (`AbiDecodeError`). No
+`pyo3`/`tokio`/`degenbot-rpc`/`degenbot-bot` — a standalone Rust consumer can
+look up a Sushiswap V2 preset and encode a V2 swap call without pulling the
+engine/pump/RPC stack (ADR-005 "standalone constraint").
+
+Plan 103's target diagram originally placed `dex_identity` in `degenbot-core`;
+this crate lands it in a more honest home (DEX presets are Uniswap-V2-domain
+data, not foundational utilities — see the crate-level doc for the rationale).
+
+| File | Purpose |
+|------|---------|
+| `dex_identity.rs` | `DexIdentity`/`DexVariant`/`ReservesAbi` value objects + `pub const` per-DEX+variant presets (factory/deployer/init-hash/fees/ABI shape); `preset_for_variant`, `DexVariant::ALL` |
+| `v2_encoding.rs` | V2 `swap(uint256,uint256,address,bytes)` callldata encoding — `EncodedCall`, `V2_SWAP_SELECTOR`, `encode_v2_swap()` |
+
 #### `degenbot-bot` — `rust/crates/degenbot-bot/src/`
 
 One crate by ADR-003: the `bot_core` (state) ↔ `optimizers` (solvers) seam is
@@ -133,7 +151,7 @@ root cdylib (`py_bot.rs`, `py_binding.rs`) — they need `alloy_py`/`py_cache`.
 
 | Module | Purpose |
 |--------|---------|
-| `bot_core/` | `BotState` single-owner state, `engine.rs`, `block_pump.rs`, `log_dispatcher.rs` (the `LogDecoder` trait + `DecodedPoolEvent` + `LogDispatcher` bus + `PoolStateSubscriber` — the state-coupled dispatch layer), `solve_coordinator.rs`, `reorg_coordinator.rs`, `state_history.rs` (reorg journal), `liquidity_verifier.rs`, `tick_bitmap.rs`/`tick_map.rs`, `v2_encoding.rs`, `v3_state.rs`/`v4_state.rs` (V3/V4 pool state — the pure event-log **decoders** moved to `degenbot-decoders`, see below), `dex_identity.rs`, `drain_sink.rs`. Documented in [`docs/architecture/rust-owned-bot.md`](../docs/architecture/rust-owned-bot.md) and [`CONTEXT.md`](CONTEXT.md) |
+| `bot_core/` | `BotState` single-owner state, `engine.rs`, `block_pump.rs`, `log_dispatcher.rs` (the `LogDecoder` trait + `DecodedPoolEvent` + `LogDispatcher` bus + `PoolStateSubscriber` — the state-coupled dispatch layer), `solve_coordinator.rs`, `reorg_coordinator.rs`, `state_history.rs` (reorg journal), `liquidity_verifier.rs`, `tick_bitmap.rs`/`tick_map.rs`, `v3_state.rs`/`v4_state.rs` (V3/V4 pool state — the pure event-log **decoders** moved to `degenbot-decoders`; the `DexIdentity` presets + V2 swap encoding moved to `degenbot-uniswap`; see below), `drain_sink.rs`. Documented in [`docs/architecture/rust-owned-bot.md`](../docs/architecture/rust-owned-bot.md) and [`CONTEXT.md`](CONTEXT.md) |
 | `optimizers/` | Möbius solvers (`mobius_int_exact.rs`, `mobius_v3_int.rs`, `mobius_int.rs`), `affected_keys.rs`/`liquidity_event_buffer.rs`, + `uniswap_engine/` sub-module (`diagnostic`, `event_routing`, `solver_dispatch`, `lifecycle`, `snapshot_verify`, `result_channel`, `tests`). See [`docs/architecture/rust-owned-bot.md`](../docs/architecture/rust-owned-bot.md) §5 |
 
 ### Key Design Patterns

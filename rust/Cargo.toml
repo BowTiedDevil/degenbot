@@ -28,7 +28,7 @@ resolver = "2"
 # Rust cores under `crates/`. Cores are pyo3-free under their default features;
 # the root enables each core's `pyo3` feature so the `From<Error> for PyErr`
 # conversions are available at the binding layer.
-members = ["crates/degenbot-core", "crates/degenbot-cl-math", "crates/degenbot-abi", "crates/degenbot-rpc", "crates/degenbot-bot", "crates/degenbot-decoders"]
+members = ["crates/degenbot-core", "crates/degenbot-cl-math", "crates/degenbot-abi", "crates/degenbot-rpc", "crates/degenbot-bot", "crates/degenbot-decoders", "crates/degenbot-uniswap"]
 
 [dependencies]
 alloy = { version = "^2.0", features = ["full", "transport-throttle"] }
@@ -37,6 +37,7 @@ alloy = { version = "^2.0", features = ["full", "transport-throttle"] }
 degenbot-rpc = { path = "crates/degenbot-rpc" }
 degenbot-bot = { path = "crates/degenbot-bot" }
 degenbot-decoders = { path = "crates/degenbot-decoders" }
+degenbot-uniswap = { path = "crates/degenbot-uniswap" }
 degenbot-abi = { path = "crates/degenbot-abi" }
 degenbot-cl-math = { path = "crates/degenbot-cl-math" }
 degenbot-core = { path = "crates/degenbot-core", features = ["pyo3"] }
@@ -104,6 +105,8 @@ codegen-units = 16
 [profile.release.package.degenbot-bot]
 codegen-units = 16
 [profile.release.package.degenbot-decoders]
+codegen-units = 16
+[profile.release.package.degenbot-uniswap]
 codegen-units = 16
 
 # Dev profile (default for `cargo test` / `just dev`): keep compilation fast.

@@ -1,0 +1,23 @@
+[package]
+name = "degenbot-uniswap"
+description = "Pure-Rust Uniswap-protocol domain crate — DEX identity presets + V2 swap callldata encoding."
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"
+pedantic = "warn"
+perf = "warn"
+style = "warn"
+suspicious = "warn"
+
+[dependencies]
+alloy = { version = "^2.0" }
+degenbot-abi = { path = "../degenbot-abi" }
+degenbot-core = { path = "../degenbot-core" }

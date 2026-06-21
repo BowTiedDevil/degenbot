@@ -25,6 +25,7 @@ degenbot-cl-math = { path = "../degenbot-cl-math" }
 degenbot-core = { path = "../degenbot-core" }
 degenbot-decoders = { path = "../degenbot-decoders" }
 degenbot-rpc = { path = "../degenbot-rpc" }
+degenbot-uniswap = { path = "../degenbot-uniswap" }
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
 log = { version = "^0.4" }
 parking_lot = { version = "^0.12" }

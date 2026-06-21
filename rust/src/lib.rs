@@ -63,7 +63,7 @@ pub use degenbot_cl_math::cl_lib;
 // `degenbot-abi` workspace member. Re-exported as `crate::abi_types` /
 // `crate::abi_decoder` / `crate::abi_encoder` / `crate::signature_parser` so
 // every existing call site in the binding layer (`contract`, `contract_py`,
-// `alloy_py`, `bot_core::v2_encoding`) keeps resolving. The `#[pyfunction]`
+// `alloy_py`, `degenbot-uniswap::v2_encoding`) keeps resolving. The `#[pyfunction]`
 // wrappers (`decode`/`encode`) live in `abi_decoder_py` / `abi_encoder_py`.
 pub use degenbot_abi::{abi_decoder, abi_encoder, abi_types, signature_parser};
 
@@ -95,6 +95,12 @@ pub use degenbot_bot::{bot_core, optimizers};
 // in `py_binding`. The state-coupled dispatch layer (`LogDecoder`,
 // `DecodedPoolEvent`, `LogDispatcher`) stays in `degenbot-bot`'s
 // `bot_core::log_dispatcher`.
+
+// The Uniswap-protocol domain crate `degenbot-uniswap` (Plan 105) holds the
+// DEX identity presets (`DexIdentity`/`DexVariant`/`ReservesAbi`) and the V2
+// swap callldata encoder (`encode_v2_swap`/`EncodedCall`). No `pub use`
+// re-export: the binding layer reaches these via the direct path dependency in
+// `py_dex_identity` (and `bot_core` reaches `v2_encoding` directly).
 
 // Re-export commonly used items at the crate root
 pub use address_utils::{parse_address, to_checksum_address_bytes, to_checksum_address_str};
