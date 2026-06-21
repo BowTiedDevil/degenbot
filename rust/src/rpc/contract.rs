@@ -4,7 +4,7 @@ use crate::abi_types::AbiValue;
 use crate::contract::{encode_arguments, Contract, FunctionSignature};
 use crate::prelude::*;
 use crate::provider::AlloyProvider;
-use crate::provider_py::PyAlloyProvider;
+use crate::rpc::provider::PyAlloyProvider;
 use alloy::hex;
 use pyo3::types::{PyBool, PyBytes, PyList};
 use runtime::get_runtime;

@@ -13,7 +13,7 @@
 //! ident.factory  # 0x6EcCab422D763aC031210895C81787E87B43A652
 //! ```
 //!
-//! Lives in this `py_dex_identity.rs` file (not `dex_identity.rs`) so the Rust
+//! Lives in this `bot::dex_identity.rs` file (not `dex_identity.rs`) so the Rust
 //! core stays `pyo3`-free per the ADR-005 standalone constraint. The view is a
 //! COPY of the preset fields (addresses as checksummed hex strings, fees as
 //! Python int tuples, init hash as a hex digest) — built once at lookup time.

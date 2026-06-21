@@ -32,7 +32,7 @@ pub(crate) use pyo3::exceptions::PyStopAsyncIteration;
 pub(crate) use pyo3::types::{PyDict, PyList};
 pub(crate) use tokio::sync::mpsc;
 
-pub(crate) use crate::py_bot::PyBot;
+pub(crate) use crate::bot::PyBot;
 pub(crate) use degenbot_bot::bot_core::block_pump::{BlockPump, WsEvent};
 pub(crate) use degenbot_bot::bot_core::reorg_coordinator::ReorgCoordinator;
 pub(crate) use degenbot_bot::bot_core::solve_coordinator::SolveCoordinator;

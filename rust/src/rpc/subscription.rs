@@ -9,7 +9,7 @@
 //! `Python::attach()` is used in async contexts (Tokio worker threads) to
 //! construct Python objects from subscription data. These may block briefly
 //! while the Python event loop or another Python thread holds the GIL. This
-//! cannot deadlock — see `async_provider.rs` module-level comment for the
+//! cannot deadlock — see `rpc::async_provider.rs` module-level comment for the
 //! full reasoning.
 
 use crate::prelude::*;
