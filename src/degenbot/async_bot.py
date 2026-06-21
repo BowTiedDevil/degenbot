@@ -97,7 +97,7 @@ class AsyncBot:
         self.db = DatabaseSessionManager(
             get_scoped_sqlite_session(database_path=config.database.path)
         )
-        self.pools = PoolRegistry()
+        self.pools = PoolRegistry(py_bot=self._py_bot)
         self.tokens = TokenRegistry()
         self.managed_pools = ManagedPoolRegistry()
         self._trackers: dict[str, Any] = {}
