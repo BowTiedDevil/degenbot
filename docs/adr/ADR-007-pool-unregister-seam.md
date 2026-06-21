@@ -90,14 +90,17 @@ panic for that detector role under the unified registry.
 Add `BotState::unregister_pool` and a `PyBot::unregister_pool` PyO3 method:
 
 ```rust
-// BotState
+// BotState — V2/V3 path (PyBot-exposed) + V4 path (engine-exposed, deferred here)
 pub fn unregister_pool(&mut self, address: Address, pool_id: Option<PoolId>) -> bool
-// PyBot
+// PyBot — V2/V3 only (matches what PyBot exposes today: register_v2/v3_pool, no V4)
 #[pyo3(signature = (address, pool_id=None))]
 pub fn unregister_pool(&self, address: &str, pool_id: Option<Vec<u8>>) -> PyResult<bool>
 ```
 
-(`PoolId` is `degenbot_decoders::v4_swap_decoder::PoolId` — the V4 `[u8; 32]` pool-id type.)
+(The V4 `pool_id: Some` arm is in `BotState` for when the engine-side unregister lands;
+`PyBot` itself only takes the V2/V3 path — see above — and returns `PyResult<bool>`
+matching `PoolRegistry.remove`'s silent-on-miss contract. `PoolId` is
+`degenbot_decoders::v4_swap_decoder::PoolId` — the V4 `[u8; 32]` pool-id type.)
 
 Disposal rules:
 
@@ -111,6 +114,14 @@ Disposal rules:
   Resolve `(address, pool_id)` → `u64` via `v4_pool_ids`, drop the `PoolEntry` from `pools`, the
   tuple from `v4_pool_ids`, and drain `v4_buffer` for the same key (symmetric reason — stale
   buffered `ModifyLiquidity` must not replay onto a re-created pool).
+
+  **V4 on `PyBot`: deferred to the engine-side seam.** `PyBot` does not expose a V4
+  `register_v4_pool` today — V4 registration lives on `UniswapArbEngine`
+  (`rust/src/py_binding.rs:1332`, invoked via `EngineRegistry.register_v4_pool` where
+  `pool.address` is the PoolManager), not on `PyBot`. So `PyBot::unregister_pool` handles only
+  the V2/V3 path; the V4 `(address=pool_manager, pool_id)` path lands on `UniswapArbEngine`
+  alongside the engine-side unregister that "Consequences" already defers — the V4 removal
+  is the matching half of the V4 registration that lives on the engine.
 - **Return contract**: `true` if an entry was found and removed; `false` if the address/tuple was
   never registered (silent no-op, returning `false`). Mirrors the Python `PoolRegistry.remove`
   silent-on-miss behavior; the `bool` is for testability and a future engine-key cleanup.

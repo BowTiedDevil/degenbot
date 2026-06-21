@@ -109,6 +109,17 @@ where
         self.pump.clear();
     }
 
+    /// Discard all buffered events (backfill + pump) for a single key.
+    ///
+    /// ADR-007 U3: the per-key inverse of `flush()`. Called by
+    /// `BotState::unregister_pool` when removing a pool — a re-register must
+    /// not replay stale buffered Mint/Burn/ModifyLiquidity onto the fresh
+    /// pool. Silent no-op if the key was never buffered (matches `drain_*`).
+    pub fn discard_for(&mut self, key: &K) {
+        self.backfill.remove(key);
+        self.pump.remove(key);
+    }
+
     /// Expire pump buffer events whose `block_number` is older than
     /// `current_block - max_age`.
     ///
@@ -138,6 +149,45 @@ where
 {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discard_for_clears_backfill_and_pump_for_one_key() {
+        let mut buf: LiquidityEventBuffer<u32, u64> = LiquidityEventBuffer::new();
+
+        // Two keys, each with a backfill + a pump event.
+        buf.buffer_backfill(1, 100);
+        buf.buffer_pump(1, 101);
+        buf.buffer_backfill(2, 200);
+        buf.buffer_pump(2, 201);
+
+        // precondition: both keys hold 2 events
+        assert_eq!(buf.event_count(&1), 2);
+        assert_eq!(buf.event_count(&2), 2);
+
+        // Discard only key 1.
+        buf.discard_for(&1);
+
+        // Key 1 is gone from both buffers; key 2 is untouched.
+        assert_eq!(buf.event_count(&1), 0, "discard_for must clear key 1");
+        assert_eq!(buf.event_count(&2), 2, "key 2 must be untouched");
+    }
+
+    #[test]
+    fn discard_for_on_unknown_key_is_a_silent_no_op() {
+        let mut buf: LiquidityEventBuffer<u32, u64> = LiquidityEventBuffer::new();
+        buf.buffer_backfill(1, 100);
+
+        // Discard a key that was never buffered.
+        buf.discard_for(&99);
+
+        // Existing key untouched.
+        assert_eq!(buf.event_count(&1), 1);
     }
 }
 
