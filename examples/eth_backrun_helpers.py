@@ -42,6 +42,7 @@ from degenbot.arbitrage import (
     build_hops_from_pools,
 )
 from degenbot.arbitrage.encoding import fits_int128
+from degenbot.arbitrage.verification_retry import VerificationRetryPolicy
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
 from degenbot.logging import logger as bot_logger
@@ -65,6 +66,13 @@ _MIN_PRIORITY_FEE_PERCENTILE = 10
 _MAX_PRIORITY_FEE_PERCENTILE = 50
 _PATH_SUPPRESS_THRESHOLD = 10
 _PATH_SUPPRESS_RETRY_INTERVAL = 100
+# VP42BP AC item 4: default verification retry policy knobs — mirror
+# ``VerificationRetryPolicy()`` so an unset env reproduces the sane defaults.
+# Sane for a local/edge node recovering from a transient transport blip.
+_VERIFICATION_RETRY_MAX_ATTEMPTS = 4
+_VERIFICATION_RETRY_BASE_DELAY = 0.5
+_VERIFICATION_RETRY_MAX_DELAY = 4.0
+_VERIFICATION_RETRY_JITTER = 0.5
 # Ethereum mainnet default allowed intermediate tokens — mirrors the example's
 # ETH_MAINNET_ALLOWED_TOKENS set.
 _ALLOWED_INTERMEDIATE_TOKENS = frozenset({
@@ -84,6 +92,52 @@ _ALLOWED_INTERMEDIATE_TOKENS = frozenset({
 _DEFAULT_EXECUTOR_ADDRESS = "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5"
 _DEFAULT_INJECTED_ADDRESS = "0x0D6d4c3cF3BD3b769De1821f2BE0d7d99913E4F1"
 _DEFAULT_EXECUTOR_OWNER = "0x9C56a29c7231974c269E24F9FB3c29203039089E"
+
+
+def _verification_retry_policy_from_env(env: Mapping[str, str | None]) -> VerificationRetryPolicy:
+    """Build the ``VerificationRetryPolicy`` from ``VERIFICATION_RETRY_*`` env vars.
+
+    Unset vars fall back to the module defaults (mirroring
+    ``VerificationRetryPolicy()``). Non-integer / non-float values raise
+    ``ValueError`` (fail fast — a typo'd env var must NOT silently fall back to
+    defaults, masking the misconfiguration).
+    """
+    raw_attempts = env.get("VERIFICATION_RETRY_MAX_ATTEMPTS")
+    raw_base = env.get("VERIFICATION_RETRY_BASE_DELAY")
+    raw_max = env.get("VERIFICATION_RETRY_MAX_DELAY")
+    raw_jitter = env.get("VERIFICATION_RETRY_JITTER")
+
+    max_attempts = _parse_int_env(raw_attempts, _VERIFICATION_RETRY_MAX_ATTEMPTS, "MAX_ATTEMPTS")
+    base_delay = _parse_float_env(raw_base, _VERIFICATION_RETRY_BASE_DELAY, "BASE_DELAY")
+    max_delay = _parse_float_env(raw_max, _VERIFICATION_RETRY_MAX_DELAY, "MAX_DELAY")
+    jitter = _parse_float_env(raw_jitter, _VERIFICATION_RETRY_JITTER, "JITTER")
+
+    return VerificationRetryPolicy(
+        max_attempts=max_attempts,
+        base_delay=base_delay,
+        max_delay=max_delay,
+        jitter=jitter,
+    )
+
+
+def _parse_int_env(raw: str | None, default: int, name_suffix: str) -> int:
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        msg = f"VERIFICATION_RETRY_{name_suffix} must be an integer, got {raw!r}"
+        raise ValueError(msg) from None
+
+
+def _parse_float_env(raw: str | None, default: float, name_suffix: str) -> float:
+    if raw is None or raw == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        msg = f"VERIFICATION_RETRY_{name_suffix} must be a float, got {raw!r}"
+        raise ValueError(msg) from None
 
 
 def _checksum_or_empty(addr: str | None) -> str:
@@ -131,6 +185,9 @@ class BackrunConfig:
     # Path discovery
     allowed_intermediate_tokens: frozenset[str]
     permutation_filter: frozenset[str] | None
+    # VP42BP AC item 4: bounded retry-with-backoff for transient verification
+    # RPC failures (per-call transport / provider-init). Mismatch stays fatal.
+    verification_retry_policy: VerificationRetryPolicy
     # Run mode
     dry_run: bool
 
@@ -200,6 +257,8 @@ class BackrunConfig:
         if inject_executor_code:
             executor_address = injected_address
 
+        verification_retry_policy = _verification_retry_policy_from_env(env)
+
         return cls(
             operator_address=operator_address,
             operator_private_key=operator_private_key,
@@ -223,6 +282,7 @@ class BackrunConfig:
             allowed_intermediate_tokens=_ALLOWED_INTERMEDIATE_TOKENS,
             permutation_filter=(frozenset({permutation}) if permutation is not None else None),
             dry_run=not live,
+            verification_retry_policy=verification_retry_policy,
         )
 
 

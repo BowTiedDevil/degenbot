@@ -74,6 +74,10 @@ from degenbot.arbitrage import (
     build_hops_from_pools,
 )
 from degenbot.arbitrage.encoding import fits_int128
+from degenbot.arbitrage.verification_retry import (
+    VerificationRetryPolicy,
+    retry_verification_call,
+)
 from degenbot.calculations.evm_math import next_base_fee
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
@@ -931,6 +935,7 @@ class BackrunSession:
             engine_registry=self.engine_registry,
             v3_snapshot=self.v3_snapshot,
             v4_snapshot=self.v4_snapshot,
+            retry_policy=cfg.verification_retry_policy,
         )
 
         # 4. Trim redundant Python state — Rust engine owns canonical pool state.
@@ -993,6 +998,7 @@ async def build_paths(
     engine_registry: EngineRegistry,
     v3_snapshot: UniswapV3LiquiditySnapshot | None = None,
     v4_snapshot: UniswapV4LiquiditySnapshot | None = None,
+    retry_policy: VerificationRetryPolicy | None = None,
 ) -> None:
     """Discover V2/V3/V4 arb paths, build Python pools, register with Rust engine.
 
@@ -1009,7 +1015,18 @@ async def build_paths(
     by the engine (verify_on_register) — the tick data snapshot is taken while the
     engine lock is held, eliminating the race that existed with Python-side async
     verification.
+
+    VP42BP AC item 4: each ``register_vN_pool`` call is wrapped in
+    ``retry_verification_call`` with a bounded retry-with-backoff policy
+    (defaults from ``VerificationRetryPolicy()``; override via
+    ``BackrunConfig.verification_retry_policy`` / the
+    ``VERIFICATION_RETRY_*`` env vars). Transient ``VerificationRpcError``
+    (per-call transport / provider-init) is retried; ``VerificationMismatchError``
+    (genuine on-chain divergence) is never retried and still crashes the bot.
+    Admission errors (``HookedPoolRejectedError`` / ``DynamicFeePoolRejectedError``
+    / ``ValueError``) are not in the retry set and propagate immediately.
     """
+    _retry_policy = retry_policy or VerificationRetryPolicy()
     # V3 snapshot provides tick data for Python pool builds via trackers.
     # Event backfill is handled by the Rust engine.
     # Trackers use it for tick data at build time.
@@ -1157,12 +1174,12 @@ async def build_paths(
         try:
             for pool, pt in zip(pools, pool_type_strs, strict=True):
                 if pt == "V2":
-                    engine_registry.register_v2_pool(pool)
+                    retry_verification_call(_retry_policy, engine_registry.register_v2_pool, pool)
                 elif pt == "V3":
-                    engine_registry.register_v3_pool(pool)
+                    retry_verification_call(_retry_policy, engine_registry.register_v3_pool, pool)
                 elif pt == "V4":
                     v4_pool_count += 1
-                    engine_registry.register_v4_pool(pool)
+                    retry_verification_call(_retry_policy, engine_registry.register_v4_pool, pool)
         except HookedPoolRejectedError:
             # Amount-modifying hook — admission refusal (correctness floor,
             # enforced by the Rust core). Expected when scanning many V4
@@ -1194,14 +1211,14 @@ async def build_paths(
             raise
         except VerificationRpcError as exc:
             # Verification could not be performed (provider construction /
-            # transport failure during verify_on_register). Previously this
-            # category was SILENTLY SKIPPED (string lacked "tick data
-            # mismatch") — masking RPC overload against a local node and
-            # letting the bot continue with un-verified tick data. An
-            # unverifiable pool is not safe to operate on either → crash loudly
-            # here too. (Bounded retry-with-backoff for transient per-call RPC
-            # blips is tracked as a follow-up; provider-construction failure is
-            # not transient, so abort is the correct default.)
+            # transport failure during verify_on_register) AFTER exhausting the
+            # bounded retry-with-backoff in ``retry_verification_call`` above
+            # (``cfg.verification_retry_policy`` — VP42BP AC item 4). A
+            # persistent transport failure means the node is unreachable; the
+            # bot must not operate on unverified tick data → crash loudly.
+            # (Transient per-call blips are retried before reaching here;
+            # provider-construction failure is not transient, so abort is the
+            # correct default.)
             bot_logger.critical(f"[build_paths] VERIFICATION RPC FAILURE — shutting down: {exc}")
             raise
         except RuntimeError as exc:
