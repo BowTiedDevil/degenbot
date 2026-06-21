@@ -1397,7 +1397,7 @@ mod tests {
         assert!(matches!(path.pools[2].hop_type, HopType::V4));
 
         // Verify we can resolve pool addresses via BotState (V2) / sub-engines (V3/V4)
-        let v2_addr = engine.core.read().pool_address(v2_fwd);
+        let v2_addr = engine.core.read().get_v2_pool_state(v2_fwd).map(|p| p.address);
         assert_eq!(v2_addr, Some(Address::from([0x11u8; 20])));
 
         let core = engine.core.read();

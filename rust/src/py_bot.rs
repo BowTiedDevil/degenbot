@@ -17,7 +17,7 @@ use pyo3::prelude::*;
 use crate::py_erc20_token::PyErc20Token;
 use crate::py_liquidity_pool::PyLiquidityPool;
 use degenbot_bot::bot_core::state_history::JournalError;
-use degenbot_bot::bot_core::{Bot, BotState, RegisterV2PoolParams, RegisterV3PoolParams};
+use degenbot_bot::bot_core::{Bot, RegisterV2PoolParams, RegisterV3PoolParams};
 
 /// Build an `alloy::rpc::types::Log` from the WS-log shape Python tests pass —
 /// `(address, topics, data, block_number)` reconstructed into the same
@@ -95,22 +95,6 @@ pub struct PyBot {
 
 /// Crate-internal Rust surface on `PyBot` (not Python-visible).
 impl PyBot {
-    /// Hand out a clone of the shared `Arc<RwLock<BotState>>` so a sibling
-    /// Rust-owned consumer (notably `UniswapEngine::with_core` — ADR-006 D1)
-    /// can read/write the SAME state that `PyBot`/`PyLiquidityPool`/
-    /// `PyErc20Token` share. This is the seam that dissolves the dual-state
-    /// split (pump in `BotState` B, handles in `BotState` A —
-    /// `rust-owned-bot.md` §17).
-    //
-    // `pub(crate)` + zero callers — `dead_code` flagged once the stale
-    // `#[allow(dead_code)]` was stripped (ergo task LDNRYF / Cleanup A). Kept
-    // for now: this is an ADR-006 D1 seam whose consumer (`UniswapEngine::
-    // with_core`) has not shipped; deletion is a Category B decision.
-    #[allow(dead_code)]
-    pub(crate) fn core_arc(&self) -> Arc<parking_lot::RwLock<BotState>> {
-        self.bot.state_arc()
-    }
-
     /// Hand out a clone of the shared `Arc<Bot>` so `BlockPump` (and other
     /// sibling consumers) drive the SAME `Bot`'s `dispatch_log` + state that
     /// `PyBot` owns (ADR-006 D4: pump lifecycle relocation onto `Bot`).

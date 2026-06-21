@@ -36,7 +36,6 @@ use crate::optimizers::v2_sync_decoder::decode_sync_log;
 ///
 /// Ships as `PoolStateSubscriber` until a second state-subject type proves
 /// generality (then rename to `StateSubscriber`).
-#[allow(dead_code)]
 pub trait PoolStateSubscriber: Send + Sync {
     /// `pool_id`'s state in the associated `BotState` just changed; re-solve
     /// dirtied paths at the drain tick (slice 6).
@@ -48,7 +47,6 @@ pub trait PoolStateSubscriber: Send + Sync {
 /// One variant per pool family — the decoder selects the family; the apply
 /// method matches on it. Future families (Curve/Aave) add variants + decoders
 /// without `Bot` knowledge.
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub enum DecodedPoolEvent {
     /// V2 `Sync` — `(address, reserve0, reserve1)`.
@@ -96,7 +94,6 @@ pub enum DecodedPoolEvent {
 
 impl DecodedPoolEvent {
     /// The block number carried by this event's source log.
-    #[allow(dead_code)]
     pub fn block_number(&self) -> u64 {
         match self {
             Self::V2Sync { block_number, .. }
@@ -111,7 +108,6 @@ impl DecodedPoolEvent {
     /// `ReorgCoordinator` uses this to identify which pool a `removed: true`
     /// log is about (the removed event's content is unused — only its block
     /// + pool identity matter; the journal's stored "before" values are truth).
-    #[allow(dead_code)]
     pub fn resolve_pool_id(&self, bot_state: &BotState) -> Option<u64> {
         match self {
             Self::V2Sync { pool_address, .. }
@@ -132,7 +128,6 @@ impl DecodedPoolEvent {
 
     /// Apply this event to `bot_state`, returning the affected `pool_id` (or
     /// `None` if the pool isn't registered / the event is a no-op).
-    #[allow(dead_code)]
     fn apply(self, bot_state: &mut BotState) -> Option<u64> {
         match self {
             Self::V2Sync {
@@ -209,7 +204,6 @@ impl DecodedPoolEvent {
 ///
 /// The strategy-extension seam: a future Curve/Aave decoder registers here
 /// without `Bot` knowing its event shapes.
-#[allow(dead_code)]
 pub trait LogDecoder: Send + Sync {
     /// Decode `log` into a [`DecodedPoolEvent`], or `None` if unrecognized.
     fn try_decode(&self, log: &Log) -> Option<DecodedPoolEvent>;
@@ -313,7 +307,6 @@ impl LogDecoder for V4ModifyLiquidityDecoder {
 /// subscriber registry uses interior mutability so [`subscribe`](Self::subscribe)
 /// (registration-time) and [`dispatch`](Self::dispatch) (hot loop) both take
 /// `&self` — `Bot` is shared across threads.
-#[allow(dead_code)]
 pub struct LogDispatcher {
     decoders: Vec<Box<dyn LogDecoder>>,
     subscribers: parking_lot::Mutex<HashMap<u64, Vec<Weak<dyn PoolStateSubscriber>>>>,
@@ -350,7 +343,6 @@ impl LogDispatcher {
 
     /// Subscribe `subscriber` to updates for `pool_id`. `Bot` calls this when
     /// an engine registers a path touching `pool_id` (ADR-006 D4).
-    #[allow(dead_code)]
     pub fn subscribe(&self, pool_id: u64, subscriber: Weak<dyn PoolStateSubscriber>) {
         self.subscribers
             .lock()
@@ -367,7 +359,6 @@ impl LogDispatcher {
     /// **Lock order:** the `state` write guard is acquired and released BEFORE
     /// any subscriber notify — subscribers take only their own lock (D2's
     /// engine-then-core order preserved by not nesting).
-    #[allow(dead_code)]
     pub fn dispatch(&self, log: &Log, state: &Arc<parking_lot::RwLock<BotState>>) {
         let Some(decoded) = self.decoders.iter().find_map(|d| d.try_decode(log)) else {
             return;
@@ -383,7 +374,6 @@ impl LogDispatcher {
     /// `None` if no decoder recognizes it. Used by `dispatch` (forward) and
     /// `ReorgCoordinator::dispatch_reorg_log` (removed) — both decode the pool
     /// identity; only the forward path `apply`s.
-    #[allow(dead_code)]
     pub fn try_decode_log(&self, log: &Log) -> Option<DecodedPoolEvent> {
         self.decoders.iter().find_map(|d| d.try_decode(log))
     }
@@ -392,7 +382,6 @@ impl LogDispatcher {
     /// `ReorgCoordinator` calls this after a per-pool `restore_before_block` —
     /// the SAME notify path forward `dispatch` uses, so the engine dirties +
     /// re-solves at the next drain tick with no distinct reorg path.
-    #[allow(dead_code)]
     pub fn notify(&self, pool_id: u64) {
         let Some(subs) = self.subscribers.lock().get(&pool_id).cloned() else {
             return;
