@@ -699,6 +699,56 @@ impl BotState {
         Some(pool_id)
     }
 
+    /// Full-sync a V3/V4 pool's `tick_data` from an external source (Python
+    /// sparse-map backfill). Replaces the entire `tick_data` map; keeps the
+    /// scalars (`sqrt_price_x96`/`liquidity`/`tick`) unchanged; advances
+    /// `update_block` if `update_block` is newer (monotonic — no rewind).
+    /// No journal delta (a wholesale replace has undefined rollback semantics;
+    /// the pump is the authority for event-derived ticks — mirrors
+    /// `sync_v3_pool_state`). Returns `false` for V2 / unregistered (mirrors
+    /// the apply dispatchers' silent no-op contract).
+    ///
+    /// The pool_id-keyed twin of `sync_v3_pool_state` (address-keyed): the
+    /// `PyLiquidityPool` handle holds the canonical `pool_id`, so this is the
+    /// one-lock, one-lookup path. Family-agnostic (V3 + V4) — both store an
+    /// identical `tick_data: HashMap<i32, TickInfo>` (J63J3N).
+    #[must_use]
+    pub fn sync_tick_data_by_pool_id(
+        &mut self,
+        pool_id: u64,
+        tick_data: HashMap<i32, TickInfo>,
+        update_block: u64,
+    ) -> bool {
+        let Some(entry) = self.pools.get_mut(&pool_id) else {
+            return false;
+        };
+        match entry {
+            // Two arms (not an or-pattern) because `V3PoolState` and
+            // `V4PoolState` are distinct structs — an or-pattern binding
+            // `state` would require one type. The read path uses a `&dyn
+            // V3FamilyPool` trait object, but the trait is read-only (no
+            // mutable tick_data accessor); the 4-line body is duplicated
+            // rather than threading a mutable trait. Slice 9a reuses this for V4.
+            PoolEntry::V3(state) => {
+                state.tick_data = tick_data;
+                if update_block > state.update_block {
+                    state.update_block = update_block;
+                }
+                state.invalidate_tick_range_cache();
+                true
+            }
+            PoolEntry::V4(state) => {
+                state.tick_data = tick_data;
+                if update_block > state.update_block {
+                    state.update_block = update_block;
+                }
+                state.invalidate_tick_range_cache();
+                true
+            }
+            PoolEntry::V2(_) => false,
+        }
+    }
+
     /// Buffer a V3 liquidity update from the backfill phase. During backfill no
     /// pools are registered yet, so this always buffers (routes to the
     /// never-expired backfill buffer). If the pool happens to be registered
