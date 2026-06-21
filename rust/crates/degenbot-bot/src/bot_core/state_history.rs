@@ -1061,6 +1061,53 @@ mod v3_delta_priors_tests {
         );
     }
 
+    /// F7HX73 (end-to-end, public interface): pushing two same-block Swap
+    /// deltas at block B with different scalars, then `restore_before_block(B)`
+    /// must return the EARLIEST (pre-B) scalar priors — not post-first-Swap.
+    /// Exercising the coalesce-then-restore path through the public
+    /// `restore_before_block` API: the surrounding `push_delta_same_block_*`
+    /// tests assert on the internal `deltas[0]` field, this one pins the
+    /// *observable restored result* a caller would write back into pool state.
+    ///
+    /// V3 partial-delta note: the journal stores no post-swap "after" snapshot,
+    /// so a reorg rolling block B out restores by *popping* the block-B delta
+    /// and reverse-applying the returned `scalar_priors` to current state.
+    /// Hence the target is `B` (not `B+1`, which would land past the newest and
+    /// hit the no-op branch — leaving the post-second-Swap landed state).
+    #[test]
+    fn restore_after_same_block_double_swap_returns_pre_block_scalars() {
+        // Registration (genesis) at block 5 — tick-only so it carries no scalar
+        // priors and stays out of the scalar assertion; it survives the pop so
+        // the journal models the realistic registration + block-B-swaps shape.
+        let pre_b = ScalarPriors {
+            sqrt_price_x96_before: U256::from(100u64),
+            liquidity_before: 10,
+            tick_before: 0,
+        };
+        // second Swap at block B records the post-first-Swap scalars as its
+        // "before" — the pre-fix corruption source.
+        let post_first = ScalarPriors {
+            sqrt_price_x96_before: U256::from(200u64),
+            liquidity_before: 20,
+            tick_before: 5,
+        };
+        let mut j = ReorgJournal::<V3BlockDelta>::new(8);
+        j.push_delta(v3_delta(5, None)); // genesis (tick-only) at block 5
+        j.push_delta(v3_delta(9, Some(pre_b))); // first Swap at B=9 (priors = pre-B)
+        j.push_delta(v3_delta(9, Some(post_first))); // second Swap at B: coalesces
+        assert_eq!(j.len(), 2, "two distinct blocks: genesis(5) + coalesced(9)");
+
+        // Reorg rolls block B out: restore to before block B (== 9).
+        let result = j.restore_before_block(9);
+        assert_eq!(
+            result.scalar_priors,
+            Some(pre_b),
+            "restored scalars must be pre-B (first-Swap priors), not post-first-Swap"
+        );
+        assert_eq!(result.block, 9, "restore point is the popped block-B delta");
+        assert_eq!(j.len(), 1, "only the genesis delta survives the pop");
+    }
+
     /// F7HX73: the earliest `Some` `scalar_priors` survives regardless of order
     /// (tick-only `None` never clobbers a `Some`; a `Some` followed by
     /// tick-only keeps the `Some`).
