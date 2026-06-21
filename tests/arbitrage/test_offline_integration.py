@@ -38,6 +38,7 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.fakes.subscribers import FakeSubscriber
 from tests.fakes.tokens import FakeToken
 from tests.helpers.v2_pool_factory import make_v2_pool
+from tests.helpers.v3_pool_factory import make_v3_pool
 
 # ==============================================================================
 # Token and Pool Constants
@@ -94,7 +95,7 @@ def wbtc_weth_v2_lp(wbtc: FakeToken, weth: FakeToken) -> LiquidityPool:
 @pytest.fixture
 def wbtc_weth_v3_lp(wbtc: FakeToken, weth: FakeToken) -> UniswapV3Pool:
     """V3 WBTC/WETH pool with minimal tick data."""
-    return UniswapV3Pool(
+    return make_v3_pool(
         address=WBTC_WETH_V3_POOL_ADDRESS,
         token0=wbtc,  # type: ignore[arg-type]
         token1=weth,  # type: ignore[arg-type]

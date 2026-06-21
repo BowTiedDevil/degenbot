@@ -52,6 +52,7 @@ class AsyncV3PoolBuilder:
         self._tokens = ctx.tokens
         self._managed_pools = ctx.managed_pools
         self._erc20_builder = ctx.erc20_builder
+        self._py_bot = ctx.py_bot
 
     async def build(
         self,
@@ -276,24 +277,64 @@ class AsyncV3PoolBuilder:
             msg = f"No V3 pool class registered for chain {chain_id}, factory {factory}"
             raise ValueError(msg)
 
-        pool = pool_class(
+        pool_id = self._py_bot.register_v3_pool(
             address=pool_address,
-            chain_id=chain_id,
+            token0=token0_address,
+            token1=token1_address,
+            fee=fee,
+            tick_spacing=tick_spacing_for_pool,
+            factory=factory,
+            sqrt_price_x96=int(sqrt_price_x96),
+            liquidity=int(liquidity),
+            tick=int(tick),
+        )
+        py_pool_handle = self._py_bot.get_pool(pool_id)
+        assert py_pool_handle is not None, "register_v3_pool returned a pool_id with no handle"
+        if state_block is not None and int(state_block) > 0:
+            py_pool_handle.apply_swap(
+                sqrt_price_x96=int(sqrt_price_x96),
+                liquidity=int(liquidity),
+                tick=int(tick),
+                block_number=int(state_block),
+            )
+        # Seed the initial tick snapshot (snapshot-provided OR RPC-fetched)
+        # into Rust so the companion starts non-empty.
+        if working_tick_data:
+            rows: dict[int, tuple[int, int, int]] = {}
+            for t, info in working_tick_data.items():
+                if isinstance(info, LiquidityAtTick):
+                    rows[int(t)] = (
+                        int(info.liquidity_gross),
+                        int(info.liquidity_net),
+                        int(info.block),
+                    )
+                else:
+                    rows[int(t)] = (
+                        int(info[0]),
+                        int(info[1]),
+                        int(info[2]) if len(info) > 2 else 0,
+                    )
+            py_pool_handle.update_tick_data(
+                working_tick_bitmap,
+                rows,
+                int(state_block) if state_block is not None else 0,
+            )
+
+        pool = pool_class(
+            py_pool_handle,
+            address=pool_address,
             token0=token0,
             token1=token1,
             factory=factory,
             fee=fee,
             tick_spacing=tick_spacing_for_pool,
-            sqrt_price_x96=int(sqrt_price_x96),
-            tick=int(tick),
-            liquidity=int(liquidity),
-            state_block=state_block,
-            tick_bitmap=tick_bitmap_arg,
-            tick_data=tick_data_arg,
+            chain_id=chain_id,
             deployer_address=deployer,
             init_hash=init_hash,
             tick_data_fetcher=None,
-            state_cache_depth=request.state_cache_depth,
+            state_block=int(state_block) if state_block is not None else 0,
+            sparse_liquidity_map=not (db_snapshot_loaded and bool(working_tick_data)),
+            tick_bitmap_override=working_tick_bitmap if working_tick_bitmap else None,
         )
 
         # Register pool

@@ -382,13 +382,15 @@ impl PyLiquidityPool {
         liquidity_delta: &Bound<'_, PyAny>,
         block_number: u64,
     ) -> PyResult<bool> {
-        // liquidity_delta is i128 — accept Python int, narrow from i256.
-        let delta_i256 = crate::conversion::alloy::extract_python_u256(liquidity_delta)?;
-        let delta = alloy::primitives::I256::from_raw(delta_i256)
-            .try_into()
-            .map_err(|_| {
-                pyo3::exceptions::PyOverflowError::new_err("liquidity_delta does not fit in i128")
-            })?;
+        // liquidity_delta is a signed V3 Mint/Burn delta (Burn events are
+        // negative). Extract as i128 directly — V3 deltas fit in i128 (the
+        // contract's int128 type). For unusual callers passing values outside
+        // i128 range, surface OverflowError rather than silently muffling.
+        let delta: i128 = liquidity_delta.extract().map_err(|_| {
+            pyo3::exceptions::PyOverflowError::new_err(
+                "liquidity_delta must fit in i128 (V3 contract int128 range)",
+            )
+        })?;
         let applied = self.core.write().apply_liquidity_update_by_pool_id(
             self.pool_id,
             tick_lower,
@@ -437,9 +439,12 @@ impl PyLiquidityPool {
             })?;
             // Symmetric with `tick_data_snapshot`: a 3-tuple
             // `(liquidity_gross, liquidity_net, block)` (the block is the
-            // pool's `update_block` on read; on write the per-tick block is
-            // ignored — Rust stores no per-tick block, see `tick_data_snapshot`).
-            let (gross, net, _block): (u128, i128, u64) = value.extract().map_err(|_| {
+            // Symmetric with `tick_data_snapshot`: a 3-tuple
+            // `(liquidity_gross, liquidity_net, block)`. The per-tick block is
+            // preserved on the Rust ``TickInfo.block`` field (mirrors the
+            // Python ``LiquidityAtTick.block`` — the snapshot round-trip's
+            // per-tick block contract).
+            let (gross, net, tick_block): (u128, i128, u64) = value.extract().map_err(|_| {
                 pyo3::exceptions::PyTypeError::new_err(
                     "update_tick_data: tick_data values must be (gross, net, block) tuples",
                 )
@@ -450,6 +455,7 @@ impl PyLiquidityPool {
                     liquidity_gross: alloy::primitives::U128::from(gross),
                     liquidity_net: alloy::primitives::I256::try_from(net)
                         .unwrap_or(alloy::primitives::I256::ZERO),
+                    block: tick_block,
                 },
             );
         }
@@ -558,8 +564,9 @@ impl PyLiquidityPool {
     /// Returns `{tick: (liquidity_gross, liquidity_net, block)}` — the Python
     /// companion's `tick_data` property lifts each row into an immutable
     /// `LiquidityAtTick(liquidity_net, liquidity_gross, block)`. Rust's
-    /// `TickInfo` stores only `liquidity_gross` and `liquidity_net` (no per-tick
-    /// block); the block returned is the pool's `update_block`.
+    /// `TickInfo` stores `liquidity_gross`, `liquidity_net`, and `block`
+    /// (the block at which the tick was last mutated — mirrors the Python
+    /// ``LiquidityAtTick.block`` field).
     ///
     /// Returns an empty dict if this `pool_id` is not registered as a V3/V4
     /// pool (defensive — non-V3 callers shouldn't crash).
@@ -570,13 +577,12 @@ impl PyLiquidityPool {
             let Some(s) = core.get_v3_or_v4_pool(self.pool_id) else {
                 return Ok(pyo3::types::PyDict::new(py).into_any().unbind());
             };
-            let update_block = s.update_block();
             s.tick_data()
                 .iter()
                 .map(|(tick, info)| {
                     let net: i128 = i128::try_from(info.liquidity_net).unwrap_or(0);
                     let gross: u128 = info.liquidity_gross.to::<u128>();
-                    (*tick, (gross, net, update_block))
+                    (*tick, (gross, net, info.block))
                 })
                 .collect()
         };
@@ -608,36 +614,43 @@ impl PyLiquidityPool {
     fn tick_bitmap_snapshot(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         // Collect (word_pos, bit_pos, block) per initialized tick under one read
         // guard, then build the output dict without holding the lock.
-        let rows: Vec<(i32, i32, u64)> = {
+        let rows: Vec<(i32, u32, u64)> = {
             let core = self.core.read();
             let Some(s) = core.get_v3_or_v4_pool(self.pool_id) else {
                 return Ok(pyo3::types::PyDict::new(py).into_any().unbind());
             };
             let spacing = s.tick_spacing().max(1);
             let update_block = s.update_block();
+            // U256 (256 bits per word) — `u128` would overflow for bit positions
+            // ≥ 128 (large ticks land in high bits). Mirrors Solidity's uint256.
             s.tick_data()
                 .keys()
                 .map(|&tick| {
                     let compressed = tick / spacing;
-                    (compressed >> 8, compressed.rem_euclid(256), update_block)
+                    (
+                        compressed >> 8,
+                        compressed.rem_euclid(256) as u32,
+                        update_block,
+                    )
                 })
                 .collect()
         };
         // Fold bits into per-word (bitmap_int, block) accumulators.
-        let mut words: std::collections::BTreeMap<i32, (u128, u64)> =
+        let one = alloy::primitives::U256::from(1u64);
+        let mut words: std::collections::BTreeMap<i32, (alloy::primitives::U256, u64)> =
             std::collections::BTreeMap::new();
         for (word_pos, bit_pos, block) in rows {
             words
                 .entry(word_pos)
-                .and_modify(|(bits, _)| *bits |= 1u128 << bit_pos)
-                .or_insert((1u128 << bit_pos, block));
+                .and_modify(|(bits, _)| *bits |= one << bit_pos)
+                .or_insert((one << bit_pos, block));
         }
         let dict = pyo3::types::PyDict::new(py);
         for (word_pos, (bits, block)) in words {
             let tuple = pyo3::types::PyTuple::new(
                 py,
                 [
-                    bits.into_pyobject(py)?.into_any().unbind(),
+                    crate::conversion::alloy::u256_to_py(py, &bits)?.unbind(),
                     block.into_pyobject(py)?.into_any().unbind(),
                 ],
             )?;

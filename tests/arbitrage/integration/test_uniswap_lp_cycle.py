@@ -32,6 +32,7 @@ from degenbot.uniswap.v3_types import (
 from tests.fakes.subscribers import FakeSubscriber
 from tests.helpers.bot_factory import make_bot_with_provider
 from tests.helpers.v2_pool_factory import make_v2_pool
+from tests.helpers.v3_pool_factory import make_v3_pool
 
 if TYPE_CHECKING:
     from degenbot.arbitrage._legacy._uniswap_lp_cycle import Pool, PoolState
@@ -225,7 +226,7 @@ def test_arbitrage_with_overrides(
         state_block=1,
     )
 
-    _irrelevant_v3_pool = UniswapV3Pool(
+    _irrelevant_v3_pool = make_v3_pool(
         address="0x0000000000000000000000000000000000000420",
         token0=wbtc_token,  # type: ignore[arg-type]
         token1=weth_token,  # type: ignore[arg-type]

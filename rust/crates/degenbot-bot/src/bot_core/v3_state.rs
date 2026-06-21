@@ -503,6 +503,7 @@ mod tests {
             TickInfo {
                 liquidity_gross: liq_u128,
                 liquidity_net: I256::try_from(i128::try_from(liq).unwrap()).unwrap(),
+                block: 0,
             },
         );
         tick_data.insert(
@@ -510,6 +511,7 @@ mod tests {
             TickInfo {
                 liquidity_gross: liq_u128,
                 liquidity_net: I256::try_from(-i128::try_from(liq).unwrap()).unwrap(),
+                block: 0,
             },
         );
         V3PoolState {

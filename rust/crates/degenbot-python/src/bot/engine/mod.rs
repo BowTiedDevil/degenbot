@@ -500,6 +500,7 @@ pub(crate) fn make_tick_info(
     degenbot_bot::bot_core::TickInfo {
         liquidity_gross: U128::from(liquidity_gross),
         liquidity_net: I256::try_from(liquidity_net).unwrap_or(I256::ZERO),
+        block: 0,
     }
 }
 

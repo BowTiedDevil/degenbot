@@ -417,11 +417,17 @@ pub fn update_tick_liquidity<S: std::hash::BuildHasher>(
     tick: i32,
     delta: i128,
     is_lower_tick: bool,
+    block: u64,
 ) {
     let entry = tick_data.entry(tick).or_insert(TickInfo {
         liquidity_gross: U128::ZERO,
         liquidity_net: I256::ZERO,
+        block,
     });
+    // Update the per-tick block to the event block — mirrors the Python
+    // ``LiquidityAtTick`` replacement (a touched tick's block reflects the
+    // last mutation).
+    entry.block = block;
 
     // Update liquidity_gross: += delta (always the same direction for both ticks)
     let current_gross = entry.liquidity_gross.to::<u128>();
@@ -459,9 +465,10 @@ pub fn apply_liquidity_to_tick_range<S: std::hash::BuildHasher>(
     tick_lower: i32,
     tick_upper: i32,
     liquidity_delta: i128,
+    block: u64,
 ) {
-    update_tick_liquidity(tick_data, tick_lower, liquidity_delta, true);
-    update_tick_liquidity(tick_data, tick_upper, liquidity_delta, false);
+    update_tick_liquidity(tick_data, tick_lower, liquidity_delta, true, block);
+    update_tick_liquidity(tick_data, tick_upper, liquidity_delta, false, block);
     // Match Uniswap V3 `Tick.update`: only the two touched boundary ticks can
     // have transitioned to zero `liquidity_gross` on this call, so only those
     // need a gross-zero removal check. A full `HashMap::retain` here would be
@@ -491,6 +498,7 @@ mod tests {
         TickInfo {
             liquidity_gross: U128::from(liquidity_gross),
             liquidity_net: I256::try_from(liquidity_net).unwrap_or(I256::ZERO),
+            block: 0,
         }
     }
 
@@ -930,11 +938,11 @@ mod tests {
         // Mint then burn the same liquidity: both boundary ticks should drop
         // to zero gross and be removed (matches Solidity `Tick.update`).
         let mut tick_data: HashMap<i32, TickInfo> = HashMap::new();
-        apply_liquidity_to_tick_range(&mut tick_data, 100, 200, 1_000_000);
+        apply_liquidity_to_tick_range(&mut tick_data, 100, 200, 1_000_000, 0);
         assert!(tick_data.contains_key(&100));
         assert!(tick_data.contains_key(&200));
 
-        apply_liquidity_to_tick_range(&mut tick_data, 100, 200, -1_000_000);
+        apply_liquidity_to_tick_range(&mut tick_data, 100, 200, -1_000_000, 0);
         assert!(
             !tick_data.contains_key(&100),
             "lower tick not pruned at zero gross"
@@ -956,7 +964,7 @@ mod tests {
         // Seed a (transient, out-of-contract) zero-gross tick elsewhere.
         tick_data.insert(12345, make_tick_info(0, 0));
 
-        apply_liquidity_to_tick_range(&mut tick_data, 100, 200, 1_000_000);
+        apply_liquidity_to_tick_range(&mut tick_data, 100, 200, 1_000_000, 0);
 
         assert!(
             tick_data.contains_key(&50),
@@ -987,7 +995,7 @@ mod tests {
             for t in 0..seed_count {
                 tick_data.insert(i32::try_from(t).unwrap(), make_tick_info(100, 50));
             }
-            apply_liquidity_to_tick_range(&mut tick_data, lower, upper, 1_000_000);
+            apply_liquidity_to_tick_range(&mut tick_data, lower, upper, 1_000_000, 0);
             assert_eq!(
                 tick_data.len(),
                 seed_count + 2,

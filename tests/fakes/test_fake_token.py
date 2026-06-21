@@ -19,6 +19,7 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.fakes.tokens import FakeToken
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
+from tests.helpers.v3_pool_factory import make_v3_pool
 
 _PY_BOT = PyBot()
 
@@ -159,7 +160,7 @@ class TestCanaryV3PoolWithFakeToken:
     def test_construct_v3_pool(self) -> None:
         token0 = FakeToken(WBTC_ADDRESS, name="Wrapped BTC", symbol="WBTC", decimals=8)
         token1 = FakeToken(WETH_ADDRESS, name="Wrapped Ether", symbol="WETH", decimals=18)
-        pool = UniswapV3Pool(
+        pool = make_v3_pool(
             address="0xCBCdF9626bC03E24f779434178A73a0B4bad62eD",
             token0=token0,  # type: ignore[arg-type]
             token1=token1,  # type: ignore[arg-type]

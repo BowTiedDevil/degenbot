@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from tests.helpers.v3_pool_factory import make_v3_pool
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
@@ -134,7 +135,7 @@ def build_v3_pool_with_ticks(
         for word_pos, bitmap in tick_bitmap_raw.items()
     }
 
-    return UniswapV3Pool(
+    return make_v3_pool(
         address=address,
         token0=token0,  # type: ignore[arg-type]
         token1=token1,  # type: ignore[arg-type]

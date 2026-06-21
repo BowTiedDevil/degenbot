@@ -5,6 +5,7 @@ from degenbot.uniswap.liquidity_pool import LiquidityPool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.fakes.tokens import FakeToken
 from tests.helpers.v2_pool_factory import make_v2_pool
+from tests.helpers.v3_pool_factory import make_v3_pool
 
 
 def _make_token(address: str, decimals: int = 18) -> FakeToken:
@@ -42,7 +43,7 @@ def _make_v3_pool(
     tick_spacing: int = 60,
     address: str = "0x0000000000000000000000000000000000000002",
 ) -> UniswapV3Pool:
-    return UniswapV3Pool(
+    return make_v3_pool(
         address=address,  # type: ignore[arg-type]
         token0=token0,  # type: ignore[arg-type]
         token1=token1,  # type: ignore[arg-type]

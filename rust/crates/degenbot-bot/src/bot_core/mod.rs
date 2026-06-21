@@ -189,6 +189,13 @@ pub struct TickInfo {
     /// The liquidity delta for ticks entered from left to right.
     /// Positive for lower ticks, negative for upper ticks.
     pub liquidity_net: alloy::primitives::I256,
+    /// The block at which this tick was last mutated (Mint/Burn event block,
+    /// or the pool's registration block for genesis-seeded ticks). Mirrors the
+    /// Python ``LiquidityAtTick.block`` field; preserved through the FFI
+    /// round-trip (``update_tick_data`` writes it, ``tick_data_snapshot``
+    /// reads it). The simulation math does NOT read this — it's diagnostic
+    /// metadata + the snapshot round-trip's per-tick block contract.
+    pub block: u64,
 }
 
 // `RegisterV3PoolParams` lives in [`v3_state`] (re-exported above).
@@ -682,6 +689,7 @@ impl BotState {
             tick_lower,
             tick_upper,
             liquidity_delta,
+            block_number,
         );
 
         // Journal: Mint/Burn mutate tick_data only, NOT the active `liquidity`
@@ -768,6 +776,7 @@ impl BotState {
                     tick_lower,
                     tick_upper,
                     liquidity_delta,
+                    block_number,
                 );
                 state.update_block = block_number;
                 state.invalidate_tick_range_cache();
@@ -829,6 +838,7 @@ impl BotState {
                     update.tick_lower,
                     update.tick_upper,
                     update.liquidity_delta,
+                    update.block_number,
                 );
                 state.journal.push_delta(V3BlockDelta {
                     block: update.block_number,
@@ -873,6 +883,7 @@ impl BotState {
                     update.tick_lower,
                     update.tick_upper,
                     update.liquidity_delta,
+                    update.block_number,
                 );
                 state.journal.push_delta(V3BlockDelta {
                     block: update.block_number,
@@ -1536,6 +1547,7 @@ impl BotState {
                         TickInfo {
                             liquidity_gross: gross_before,
                             liquidity_net: tick_before.liquidity_net_before,
+                            block: 0,
                         },
                     );
                 }
@@ -1729,6 +1741,7 @@ impl BotState {
             tick_lower,
             tick_upper,
             delta_i128,
+            block_number,
         );
 
         // Journal: V4 `ModifyLiquidity` mutates tick_data only, NOT the slot0
@@ -1846,6 +1859,7 @@ impl BotState {
             tick_lower,
             tick_upper,
             liquidity_delta,
+            block_number,
         );
 
         state.journal.push_delta(V3BlockDelta {
@@ -1950,6 +1964,7 @@ impl BotState {
                         tick_lower,
                         tick_upper,
                         delta_i128,
+                        block_number,
                     );
                     state.update_block = block_number;
                     state.invalidate_tick_range_cache();
@@ -2009,6 +2024,7 @@ impl BotState {
                     update.tick_lower,
                     update.tick_upper,
                     delta_i128,
+                    update.block_number,
                 );
                 state.journal.push_delta(V3BlockDelta {
                     block: update.block_number,
@@ -2060,6 +2076,7 @@ impl BotState {
                     update.tick_lower,
                     update.tick_upper,
                     delta_i128,
+                    update.block_number,
                 );
                 state.journal.push_delta(V3BlockDelta {
                     block: update.block_number,
@@ -2220,6 +2237,7 @@ impl BotState {
                         TickInfo {
                             liquidity_gross: gross_before,
                             liquidity_net: tick_before.liquidity_net_before,
+                            block: 0,
                         },
                     );
                 }
@@ -2661,6 +2679,7 @@ mod tests {
                 TickInfo {
                     liquidity_gross: alloy::primitives::U128::from(500),
                     liquidity_net: alloy::primitives::I256::try_from(500i64).unwrap(),
+                    block: 0,
                 },
             )],
         );
@@ -2737,6 +2756,7 @@ mod tests {
             TickInfo {
                 liquidity_gross: U128::from(100),
                 liquidity_net: I256::try_from(100i128).unwrap(),
+                block: 0,
             },
         );
         core.register_v3_pool(&RegisterV3PoolParams {
@@ -2908,6 +2928,7 @@ mod tests {
             TickInfo {
                 liquidity_gross: U128::from(100),
                 liquidity_net: I256::try_from(100i128).unwrap(),
+                block: 0,
             },
         );
         let pool_id = core
@@ -3198,6 +3219,7 @@ mod tests {
             TickInfo {
                 liquidity_gross: U128::from(100),
                 liquidity_net: I256::try_from(100i128).unwrap(),
+                block: 0,
             },
         );
         let params = RegisterV4PoolParams {
@@ -3378,6 +3400,7 @@ mod tests {
             TickInfo {
                 liquidity_gross: U128::from(100),
                 liquidity_net: I256::try_from(100i128).unwrap(),
+                block: 0,
             },
         );
         let params = RegisterV4PoolParams {

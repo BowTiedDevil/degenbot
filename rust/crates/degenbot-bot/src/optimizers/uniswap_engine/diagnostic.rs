@@ -850,6 +850,7 @@ mod tests {
                 liquidity_gross: alloy::primitives::U128::from(300),
                 liquidity_net: alloy::primitives::I256::try_from(150i128)
                     .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
             },
         );
         let v3_key = engine.register_v3_pool(&V3Params {
@@ -875,6 +876,7 @@ mod tests {
                 liquidity_gross: alloy::primitives::U128::from(400),
                 liquidity_net: alloy::primitives::I256::try_from(200i128)
                     .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
             },
         );
         let v4_fwd = engine

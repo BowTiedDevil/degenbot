@@ -21,6 +21,7 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
+from tests.helpers.v3_pool_factory import make_v3_pool
 
 _PY_BOT = PyBot()
 
@@ -172,7 +173,7 @@ def _make_uniswap_v3_pool() -> UniswapV3Pool:
     weth = _make_weth()
     uni = _make_uni()
 
-    return UniswapV3Pool(
+    return make_v3_pool(
         address="0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801",
         chain_id=1,
         token0=uni,
@@ -191,7 +192,7 @@ def _make_sushiswap_v3_pool() -> SushiswapV3Pool:
     weth = _make_weth()
     usdc = _make_usdc()
 
-    return SushiswapV3Pool(
+    return make_v3_pool(
         address="0x35644Fb61aFBc458bf92B15AdD6ABc1996Be5014",
         chain_id=1,
         token0=usdc,
@@ -203,6 +204,7 @@ def _make_sushiswap_v3_pool() -> SushiswapV3Pool:
         tick=-76020,
         liquidity=9876543210,
         state_block=18_000_000,
+        pool_class=SushiswapV3Pool,
     )
 
 
@@ -210,7 +212,7 @@ def _make_pancakeswap_v3_pool() -> PancakeswapV3Pool:
     usdc = _make_usdc()
     dai = _make_dai()
 
-    return PancakeswapV3Pool(
+    return make_v3_pool(
         address="0xD9e497BD8f491fE163b42A62c296FB54CaEA74B7",
         chain_id=1,
         token0=dai,
@@ -222,6 +224,7 @@ def _make_pancakeswap_v3_pool() -> PancakeswapV3Pool:
         tick=0,
         liquidity=5_000_000_000_000,
         state_block=18_000_000,
+        pool_class=PancakeswapV3Pool,
     )
 
 
