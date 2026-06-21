@@ -23,11 +23,11 @@
 
 use crate::provider::AlloyProvider;
 
-use degenbot_core::runtime::get_runtime;
 use alloy::network::Ethereum;
 use alloy::primitives::B256;
 use alloy::providers::Provider;
 use alloy::rpc::types::Filter;
+use degenbot_core::runtime::get_runtime;
 use futures_util::StreamExt;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -143,10 +143,7 @@ fn signal_start_failed(handle: &SubscriptionHandle, message: String) {
 // ---------------------------------------------------------------------------
 
 /// Pump task for block header subscriptions.
-pub async fn pump_blocks(
-    provider: Arc<dyn Provider<Ethereum>>,
-    handle: Arc<SubscriptionHandle>,
-) {
+pub async fn pump_blocks(provider: Arc<dyn Provider<Ethereum>>, handle: Arc<SubscriptionHandle>) {
     let sub_result = provider.subscribe_blocks().await;
     let mut stream = match sub_result {
         Ok(s) => {

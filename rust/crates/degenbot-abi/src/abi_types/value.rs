@@ -4,9 +4,9 @@
 //! plus integer parsing helpers and string-to-value conversion.
 
 use crate::abi_types::type_::AbiType;
-use degenbot_core::errors::{AbiDecodeError, ContractError};
 use alloy::dyn_abi::DynSolValue;
 use alloy::primitives::{Address, I256, U256};
+use degenbot_core::errors::{AbiDecodeError, ContractError};
 use std::str::FromStr;
 
 /// Decode a hex string (with optional "0x" prefix) to bytes.

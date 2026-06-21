@@ -192,11 +192,7 @@ impl<K: Eq + std::hash::Hash + Clone> SnapshotStore<K> {
     ///
     /// # Errors
     /// [`VerifyError::NoSnapshotStream`] if `begin_load`/`load` hasn't been called.
-    pub fn insert(
-        &self,
-        key: K,
-        tick_data: HashMap<i32, TickInfo>,
-    ) -> Result<(), VerifyError> {
+    pub fn insert(&self, key: K, tick_data: HashMap<i32, TickInfo>) -> Result<(), VerifyError> {
         let mut guard = self.data.lock();
         let Some(ref mut map) = *guard else {
             return Err(VerifyError::NoSnapshotStream);

@@ -343,9 +343,11 @@ pub fn compute_tick_ranges<S: std::hash::BuildHasher>(
         );
 
         let sqrt_price_lower =
-            degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(tick_lower).ok()?;
+            degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(tick_lower)
+                .ok()?;
         let sqrt_price_upper =
-            degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(tick_upper).ok()?;
+            degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(tick_upper)
+                .ok()?;
 
         debug_assert!(
             tick_lower < tick_upper,

@@ -493,9 +493,11 @@ async fn fetch_v3_onchain(
         }
     })?;
     let chain_liquidity = uint_value(&decoded_liquidity, 128)
-        .ok_or_else(|| degenbot_core::errors::ProviderError::SerializationError {
-            message: "liquidity decode mismatch".to_string(),
-        })?
+        .ok_or_else(
+            || degenbot_core::errors::ProviderError::SerializationError {
+                message: "liquidity decode mismatch".to_string(),
+            },
+        )?
         .to::<u128>();
 
     let mut outcome = FetchOutcome::new(DiagnosticPoolState::V3 {
@@ -606,9 +608,11 @@ async fn fetch_v4_onchain(
         }
     })?;
     let chain_liquidity = uint_value(&decoded_liquidity, 128)
-        .ok_or_else(|| degenbot_core::errors::ProviderError::SerializationError {
-            message: "getLiquidity decode mismatch".to_string(),
-        })?
+        .ok_or_else(
+            || degenbot_core::errors::ProviderError::SerializationError {
+                message: "getLiquidity decode mismatch".to_string(),
+            },
+        )?
         .to::<u128>();
 
     let mut outcome = FetchOutcome::new(DiagnosticPoolState::V4 {
