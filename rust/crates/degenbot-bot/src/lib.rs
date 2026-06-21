@@ -11,7 +11,7 @@
 //! generic against this sample-of-one, so the two live in one crate here
 //! rather than behind an artificial shared-trait seam.
 //!
-//! # PyO3 boundary
+//! # `PyO3` boundary
 //!
 //! The pure core (this crate's default features) has **no `pyo3` dependency**.
 //! The `#[pyclass]`/`#[pyfunction]` bindings (`PyBot`, `PyLiquidityPool`,

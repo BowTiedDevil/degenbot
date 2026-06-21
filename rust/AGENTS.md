@@ -11,7 +11,7 @@ Every Rust-accelerated feature follows three layers with strict separation of co
 - Imports from `degenbot_rs`; adds Python-idiomatic convenience methods (rich `__repr__`, `Fraction`-based prices, database lookups, publisher/subscriber).
 - Knows nothing about Rust internals.
 
-**Layer 2 — PyO3 Bindings** (`rust/src/<domain>/<name>.rs`)
+**Layer 2 — PyO3 Bindings** (`rust/crates/degenbot-python/src/<domain>/<name>.rs`)
 - `#[pyclass]` / `#[pyfunction]` only; files live in per-domain subdirs mirroring the seven core crates (`abi/`, `cl_math/`, `rpc/`, `uniswap/`, `bot/` [+ `bot/engine/`]).
 - Converts between Rust and Python types: argument extraction → GIL release → core call → result wrapping.
 - Contains **no business logic**.
@@ -39,12 +39,16 @@ pub fn decode(py: Python<'_>, types: Vec<String>, data: &[u8]) -> PyResult<Py<Py
 ### Module Organization
 
 The Rust extension is a **Cargo workspace** of seven pure-Rust core crates
-(`degenbot-core`, `-cl-math`, `-abi`, `-rpc`, `-decoders`, `-uniswap`, `-bot`) plus a root `degenbot_rs`
-**cdylib binding layer**. The core crates have **no `pyo3` dependency**
-(compiler-enforced; verify with `just check-no-pyo3-in-cores`); the root cdylib
-glues them to Python via PyO3. See [`plans/completed/103-rust-workspace-split.md`](../plans/completed/103-rust-workspace-split.md).
+(`degenbot-core`, `-cl-math`, `-abi`, `-rpc`, `-decoders`, `-uniswap`, `-bot`) plus the
+`degenbot_rs` **cdylib binding layer** at `rust/crates/degenbot-python/` (a peer
+workspace member, mirroring `polars-python`'s position under `crates/`). The
+workspace root `rust/Cargo.toml` is a **pure virtual manifest** (workspace +
+profiles only); the binding package lives in `rust/crates/degenbot-python/Cargo.toml`.
+The core crates have **no `pyo3` dependency** (compiler-enforced; verify with
+`just check-no-pyo3-in-cores`); the binding cdylib glues them to Python via PyO3.
+See [`plans/completed/103-rust-workspace-split.md`](../plans/completed/103-rust-workspace-split.md).
 
-#### `degenbot_rs` cdylib (binding layer) — `rust/src/`
+#### `degenbot_rs` cdylib (binding layer) — `rust/crates/degenbot-python/src/`
 
 | File | Purpose |
 |------|---------|
@@ -167,7 +171,7 @@ root cdylib (`py_bot.rs`, `py_binding.rs`) — they need `alloy_py`/`py_cache`.
 ### Module Naming Convention
 
 Files are organized into **per-domain subdirs mirroring the seven core crates**
-(`rust/src/abi/`, `cl_math/`, `rpc/`, `uniswap/`, `bot/`[+ `bot/engine/`]), with a `conversion/`
+(`rust/crates/degenbot-python/src/abi/`, `cl_math/`, `rpc/`, `uniswap/`, `bot/`[+ `bot/engine/`]), with a `conversion/`
 dir for shared `PyO3`-dependent converters. Core crates hold `foo.rs` pure cores; the
 root cdylib's per-domain subdirs hold the `foo.rs` PyO3 wrappers (they need
 `conversion::alloy`/`conversion::cache` glue). **The `*_py.rs` filename convention
@@ -183,7 +187,7 @@ one `*_py.rs` file.)
 | `<domain>/foo.rs` | Binding-layer `PyO3` wrapper — `#[pyfunction]`/`#[pyclass]`/type conversion | `rpc/provider.rs`, `abi/decoder.rs`, `bot/mod.rs` (`PyBot`), `bot/engine/register.rs` |
 | `conversion/foo.rs` | `PyO3`-dependent converters (no `#[pyfunction]`, but create Python objects) | `conversion/alloy.rs`, `conversion/cache.rs`, `conversion/rpc_types.rs` |
 
-**Rule**: `pyo3` may only appear in the binding crate (`rust/src/`) or in a core crate's
+**Rule**: `pyo3` may only appear in the binding crate (`rust/crates/degenbot-python/src/`) or in a core crate's
 `pyo3`-gated feature (the `just check-no-pyo3-in-cores` gate enforces cores stay
 `pyo3`-free under default features). If `pyo3` appears in a core file outside its
 opt-in feature, it's a code smell — split the pure Rust logic out.

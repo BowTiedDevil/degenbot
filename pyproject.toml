@@ -215,11 +215,12 @@ exclude-newer = "14 days"
 link-mode = "copy"
 cache-keys = [
     {file = "rust/Cargo.toml"},
-    {file = "rust/src/**/*.rs"},
+    {file = "rust/crates/degenbot-python/Cargo.toml"},
+    {file = "rust/crates/degenbot-python/src/**/*.rs"},
 ]
 
 [tool.maturin]
-manifest-path = "rust/Cargo.toml"
+manifest-path = "rust/crates/degenbot-python/Cargo.toml"
 python-source = "src"
 module-name = "degenbot.degenbot_rs"
 bindings = "pyo3"

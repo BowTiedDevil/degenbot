@@ -219,6 +219,7 @@ impl Clone for V4PoolState {
 
 impl V4PoolState {
     /// Construct from registration params with a journal of the given depth.
+    #[must_use]
     pub fn from_params(params: RegisterV4PoolParams, journal_depth: usize) -> Self {
         Self {
             pool_manager: params.pool_manager,

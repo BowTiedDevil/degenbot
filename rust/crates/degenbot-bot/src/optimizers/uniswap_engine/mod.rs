@@ -232,6 +232,7 @@ pub enum ResolvedHop {
 impl ResolvedHop {
     /// The hop type for this resolved hop.
     #[allow(dead_code)] // Used in unit tests and available for future dispatch.
+    #[must_use]
     pub const fn hop_type(&self) -> HopType {
         match self {
             Self::V2 { .. } => HopType::V2,
@@ -241,6 +242,7 @@ impl ResolvedHop {
     }
 
     /// The V2 `IntHopState`, if this is a V2 hop.
+    #[must_use]
     pub const fn as_v2_state(&self) -> Option<&crate::optimizers::mobius_int::IntHopState> {
         match self {
             Self::V2 { state, .. } => Some(state),
@@ -249,6 +251,7 @@ impl ResolvedHop {
     }
 
     /// The integer tick-range sequence, if this is a CL hop (V3 or V4).
+    #[must_use]
     pub const fn as_int_sequence(
         &self,
     ) -> Option<&crate::optimizers::mobius_v3_int::IntV3TickRangeSequence> {
@@ -515,14 +518,17 @@ impl UniswapEngine {
 #[cfg(test)]
 impl UniswapEngine {
     /// Test-only: are the V2 dirty sets empty? (ADR-006 slice 4 adapter tests.)
+    #[must_use]
     pub fn dirty_v2_is_empty(&self) -> bool {
         self.dirty_v2.is_empty()
     }
     /// Test-only: are the V3 dirty sets empty?
+    #[must_use]
     pub fn dirty_v3_is_empty(&self) -> bool {
         self.dirty_v3.is_empty()
     }
     /// Test-only: are the V4 dirty sets empty?
+    #[must_use]
     pub fn dirty_v4_is_empty(&self) -> bool {
         self.dirty_v4.is_empty()
     }

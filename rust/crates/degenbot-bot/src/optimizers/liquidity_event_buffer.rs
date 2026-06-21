@@ -49,6 +49,7 @@ where
     K: Eq + Hash + Clone,
 {
     /// Create a new empty buffer with unbounded pump event age.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             backfill: HashMap::new(),
@@ -152,6 +153,12 @@ where
     }
 }
 
+/// Trait for buffered liquidity events that support expiry by block number.
+pub trait LiquidityEvent {
+    /// The block number at which this event occurred.
+    fn block_number(&self) -> u64;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,10 +196,4 @@ mod tests {
         // Existing key untouched.
         assert_eq!(buf.event_count(&1), 1);
     }
-}
-
-/// Trait for buffered liquidity events that support expiry by block number.
-pub trait LiquidityEvent {
-    /// The block number at which this event occurred.
-    fn block_number(&self) -> u64;
 }

@@ -41,11 +41,11 @@ check-no-pyo3-in-cores:
 
 # Build Rust release library (links Python - for testing only)
 build-rust-debug:
-    cargo build --release --manifest-path rust/Cargo.toml
+    cargo build --release -p degenbot_rs --manifest-path rust/Cargo.toml
 
 # Build Rust extension module (correct for Python extension)
 build-rust-extension:
-    cargo build --release --features extension-module --manifest-path rust/Cargo.toml
+    cargo build --release -p degenbot_rs --features extension-module --manifest-path rust/Cargo.toml
 
 # ========== Python Development ==========
 
@@ -164,7 +164,7 @@ update-deps:
 
 # Simulate CI Rust checks
 ci-rust: fmt-check check-no-pyo3-in-cores lint-rust test-rust
-    cargo build --release --features extension-module --manifest-path rust/Cargo.toml
+    cargo build --release -p degenbot_rs --features extension-module --manifest-path rust/Cargo.toml
 
 # Simulate full CI pipeline
 ci-full: ci-rust lint-markdown test-python
