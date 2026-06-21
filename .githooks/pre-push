@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+#
+# pre-push hook — re-lint every commit message in the push range.
+# Installed by: just setup-git-hooks
+#
+# The commit-msg hook already validates each message at commit time, but a
+# `git commit --no-verify` (or a commit made before hooks were configured)
+# bypasses it. This hook is the safety net: it re-runs commitlint across the
+# full range being pushed, so a non-conforming commit is caught before it
+# leaves the local repository — strictly earlier than CI, never reaching the
+# remote or a PR.
+#
+# stdin (git pre-push protocol): lines of
+#   <local ref> <local sha> <remote ref> <remote sha>
+# A remote sha of all zeros means the branch is new on the remote.
+
+set -euo pipefail
+
+if ! command -v npx &>/dev/null; then
+  echo "⚠  npx not found; skipping pre-push commit-message lint." >&2
+  exit 0
+fi
+
+ZERO="0000000000000000000000000000000000000000"
+status=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # Skip deletions (local sha all zeros) — nothing to lint.
+  [ "$local_sha" = "$ZERO" ] && continue
+
+  if [ "$remote_sha" = "$ZERO" ]; then
+    # New branch on the remote — lint back to the nearest existing remote
+    # ref's merge-base (so only THIS branch's new commits are checked, not
+    # shared history that already shipped). Fall back to just HEAD if no
+    # merge-base is resolvable.
+    from=$(git merge-base origin/HEAD "$local_sha" 2>/dev/null || true)
+    if [ -z "$from" ]; then
+      from="${local_sha}^"
+    fi
+  else
+    from="$remote_sha"
+  fi
+
+  # `--from X --to Y` lints every commit in X..Y. Exits non-zero if any fail.
+  if ! npx --yes @commitlint/cli --from "$from" --to "$local_sha" >&2; then
+    status=1
+  fi
+done
+
+if [ "$status" -ne 0 ]; then
+  echo "" >&2
+  echo "💡 Push blocked: one or more commit messages fail commitlint." >&2
+  echo "   Fix with: git commit --amend  (for the tip) or git rebase -i." >&2
+  echo "   To bypass locally: git push --no-verify  (CI will still reject on PR)." >&2
+fi
+
+exit "$status"

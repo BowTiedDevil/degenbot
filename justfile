@@ -127,11 +127,29 @@ lint-python:
 fmt-check-python:
     uv run ruff format --check src/
 
+# Lint commit messages across a range (default: everything not yet pushed).
+# Examples: just lint-commits              # @{push}..HEAD
+#           just lint-commits HEAD~5..HEAD # explicit range
+# just lint-commits main..HEAD   # branch commits
+lint-commits range="@{push}..HEAD":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    range="{{ range }}"
+    if [[ "$range" == *".."* ]]; then
+      from="${range%%..*}"
+      to="${range##*..}"
+      [ -z "$to" ] && to=HEAD
+    else
+      from="$range"
+      to=HEAD
+    fi
+    npx --yes @commitlint/cli --from "$from" --to "$to"
+
 # Run all linters (Rust + Python + Markdown)
 lint: fmt-check fmt-check-python lint-rust lint-python lint-markdown lint-context-maps
 
 # Format all code
-format: 
+format:
     cargo fmt --manifest-path rust/Cargo.toml
     uv run ruff format src/
 
@@ -153,23 +171,27 @@ ci-full: ci-rust lint-markdown test-python
 
 # ========== Repository Setup ==========
 
-# Install git hooks and configure commit template
+# Install git hooks and configure commit template.
+# Run this once after cloning so commit messages are linted locally at
+# commit time AND pre-push (catches `--no-verify` bypasses before they leave
+# the machine, strictly earlier than CI). For manual range checks: just lint-commits.
 setup-git-hooks:
     git config core.hooksPath .githooks
     git config commit.template .commit-template
-    @echo "✓ Git hooks and commit template configured."
+    chmod +x .githooks/*
+    @echo "✓ Git hooks (commit-msg, pre-commit, pre-push) and commit template configured."
 
 # ========== Documentation ==========
 
 # Render a Mermaid diagram (Markdown or .mmd) to PNG.
 # Example: just mermaid-png docs/architecture/rust-solver-engine.md
 mermaid-png input output='':
-    scripts/mermaid-export {{input}} {{output}} -f png
+    scripts/mermaid-export {{ input }} {{ output }} -f png
 
 # Render a Mermaid diagram (Markdown or .mmd) to SVG.
 # Example: just mermaid-svg docs/architecture/rust-solver-engine.md
 mermaid-svg input output='':
-    scripts/mermaid-export {{input}} {{output}} -f svg
+    scripts/mermaid-export {{ input }} {{ output }} -f svg
 
 # Build documentation
 docs:
