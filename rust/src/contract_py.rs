@@ -267,7 +267,7 @@ fn abi_value_to_python<'py>(
     py: Python<'py>,
     value: &AbiValue,
 ) -> PyResult<Bound<'py, pyo3::types::PyAny>> {
-    use crate::alloy_py::{i256_to_py, u256_to_py};
+    use crate::conversion::alloy::{i256_to_py, u256_to_py};
 
     match value {
         AbiValue::Address(addr) => {

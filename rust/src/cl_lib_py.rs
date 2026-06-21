@@ -13,7 +13,6 @@ use pyo3::{exceptions::PyValueError, prelude::*, types::PyAny, PyTypeInfo};
 // PyObject alias for pyo3 0.28+
 type PyObject = pyo3::Py<pyo3::PyAny>;
 
-use crate::alloy_py;
 use crate::cl_lib::bit_math;
 use crate::cl_lib::full_math;
 use crate::cl_lib::liquidity_math;
@@ -21,6 +20,7 @@ use crate::cl_lib::sqrt_price_math;
 use crate::cl_lib::swap_math;
 use crate::cl_lib::tick_math;
 use crate::cl_lib::unsafe_math;
+use crate::conversion::alloy as alloy_py;
 
 /// Convert a Python int/bytes to U256.
 fn extract_u256(obj: &Bound<'_, PyAny>) -> PyResult<U256> {

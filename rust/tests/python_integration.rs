@@ -19,7 +19,7 @@
 
 use alloy::primitives::{I256, U256};
 use degenbot_rs::abi_types::AbiValue;
-use degenbot_rs::alloy_py::abi_value_from_python;
+use degenbot_rs::conversion::alloy::abi_value_from_python;
 use pyo3::prelude::*;
 
 /// Helper to run a Python test with proper GIL handling.

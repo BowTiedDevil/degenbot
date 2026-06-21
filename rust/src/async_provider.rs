@@ -16,10 +16,10 @@
 //! If attach fails because the interpreter is shutting down, `try_attach`
 //! returns None and we propagate a clear error.
 
+use crate::conversion::cache::create_hexbytes;
+use crate::conversion::rpc_types::{block_to_py_dict, json_to_py_with_hexbytes, log_to_py_dict};
 use crate::provider::{AlloyProvider, LogFetcher};
 use crate::provider_py::PyAlloyProvider;
-use crate::py_cache::create_hexbytes;
-use crate::py_converters::{block_to_py_dict, json_to_py_with_hexbytes, log_to_py_dict};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
@@ -330,7 +330,7 @@ impl PyAsyncAlloyProvider {
     ) -> PyResult<Bound<'py, PyAny>> {
         let addr = crate::address_utils::parse_address(address)
             .map_err(|e| PyValueError::new_err(format!("Invalid address: {e}")))?;
-        let pos = crate::alloy_py::extract_python_u256(position)?;
+        let pos = crate::conversion::alloy::extract_python_u256(position)?;
         let provider = Arc::clone(&self.provider);
 
         future_into_py(py, async move {
@@ -361,7 +361,9 @@ impl PyAsyncAlloyProvider {
                 .await
                 .map_err(Into::<PyErr>::into)?;
 
-            Python::attach(|py| crate::alloy_py::u256_to_py(py, &balance).map(Bound::unbind))
+            Python::attach(|py| {
+                crate::conversion::alloy::u256_to_py(py, &balance).map(Bound::unbind)
+            })
         })
     }
 
@@ -397,7 +399,7 @@ impl PyAsyncAlloyProvider {
         method: &str,
         params: &Bound<'_, PyList>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let params_json = crate::json_converters::python_list_to_json(params)?;
+        let params_json = crate::conversion::json::python_list_to_json(params)?;
 
         let method = method.to_string();
         let provider = Arc::clone(&self.provider);

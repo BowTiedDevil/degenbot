@@ -20,7 +20,7 @@
 //! for foreign types (`U256`/`I256` from `alloy`).
 
 use crate::abi_types::AbiValue;
-use crate::py_cache::{bytes_to_int, bytes_to_int_signed};
+use crate::conversion::cache::{bytes_to_int, bytes_to_int_signed};
 use alloy::primitives::{I256, U256};
 use pyo3::types::{PyAny, PyBool, PyBytes, PyDict, PyList, PyString};
 use pyo3::{exceptions::PyValueError, prelude::*, PyTypeInfo};

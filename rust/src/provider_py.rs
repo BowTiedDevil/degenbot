@@ -6,9 +6,9 @@
 //! - Input validation errors (invalid address, invalid position) → `PyValueError`
 //! - Serialization/conversion errors during Python object creation → `PyValueError`
 
+use crate::conversion::cache::create_hexbytes;
+use crate::conversion::rpc_types::{block_to_py_dict, json_to_py_with_hexbytes, log_to_py_dict};
 use crate::provider::{AlloyProvider, LogFetcher, LogFilter};
-use crate::py_cache::create_hexbytes;
-use crate::py_converters::{block_to_py_dict, json_to_py_with_hexbytes, log_to_py_dict};
 use crate::runtime::get_runtime;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -429,7 +429,7 @@ impl PyAlloyProvider {
             .map_err(|e| PyValueError::new_err(format!("Invalid address: {e}")))?;
 
         // Extract position as U256 (supports large integers like mapping slots)
-        let pos = crate::alloy_py::extract_python_u256(position)?;
+        let pos = crate::conversion::alloy::extract_python_u256(position)?;
 
         let provider = Arc::clone(&self.provider);
 
@@ -469,7 +469,7 @@ impl PyAlloyProvider {
             .map_err(Into::<PyErr>::into)?;
 
         // Convert U256 to Python int
-        let py_int = crate::alloy_py::u256_to_py(py, &balance)?;
+        let py_int = crate::conversion::alloy::u256_to_py(py, &balance)?;
 
         Ok(py_int.into())
     }
@@ -516,7 +516,7 @@ impl PyAlloyProvider {
         params: &Bound<'_, PyList>,
     ) -> PyResult<Bound<'py, PyAny>> {
         // Convert Python list to JSON array using shared converter
-        let params_json = crate::json_converters::python_list_to_json(params)?;
+        let params_json = crate::conversion::json::python_list_to_json(params)?;
 
         let method = method.to_string();
         let provider = Arc::clone(&self.provider);

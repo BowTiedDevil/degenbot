@@ -18,8 +18,8 @@
 //! `PyErc20Token`, `PyDexIdentity`, `PyUniswapArbEngine`, the
 //! `Verification*Error`/`*RejectedError` exception types) live in the root
 //! `degenbot_rs` cdylib's `py_bot` / `py_liquidity_pool` / `py_erc20_token` /
-//! `py_dex_identity` / `py_binding` modules — they need `alloy_py` /
-//! `py_cache` (binding-layer concerns). They reach the pure core through
+//! `py_dex_identity` / `py_binding` modules — they need `conversion::alloy` /
+//! `conversion::cache` (binding-layer concerns). They reach the pure core through
 //! `degenbot_bot::{bot_core, optimizers}`.
 //!
 //! # Modules

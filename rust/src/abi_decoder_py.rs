@@ -15,7 +15,7 @@ use pyo3::{
     types::{PyBool, PyBytes, PyList, PyString},
 };
 
-use crate::alloy_py;
+use crate::conversion::alloy as alloy_py;
 
 // =============================================================================
 // Python conversion
