@@ -72,10 +72,13 @@ _Avoid_: pool handle, pool wrapper
 **PyErc20Token**: A thin `PyO3` handle (exposed in Python as `PyErc20Token` — keeps the `Py` prefix per ADR-005; the earlier `#[pyclass(name = "Token")]` override was dropped) that holds `Arc<parking_lot::RwLock<Bot>>` + an `Address` key, sharing the same `Arc` as the owning `PyBot` (see **Polars-Inspired Three-Layer Architecture**). Reads token metadata (address, decimals, symbol, name) from `Bot.tokens`. ADR-005 (implemented): `Erc20Token` is the Python companion over `PyErc20Token` (slice 3 — no bridge type remains).
 _Avoid_: token handle, token wrapper
 
-**EncodedCall**: A pre-encoded EVM call ready for on-chain submission: `to` (target `Address`), `data` (selector + ABI-encoded parameters as `Vec<u8>`), `value` (`U256`, always zero for V2 swaps). Produced by `encode_v2_swap()` — Python never calls `eth_abi.encode()`.
+**degenbot-uniswap**: The pure-Rust workspace crate (Plan 105) holding the Uniswap-protocol domain value objects — `rust/crates/degenbot-uniswap/src/`. Depends only on `alloy`, `degenbot-abi` (encoder/`AbiValue`), and `degenbot-core` (`AbiDecodeError`). No `pyo3`/`tokio`/`degenbot-rpc`/`degenbot-bot`. Holds `DexIdentity`/`DexVariant`/`ReservesAbi` + `pub const` per-DEX presets (`dex_identity.rs`) and the V2 swap callldata encoder (`encode_v2_swap`/`EncodedCall`/`V2_SWAP_SELECTOR` in `v2_encoding.rs`). Bot-internal + root consumers reach it via the direct path (`use degenbot_uniswap::...`) — the codebase convention, no re-export shim. Plan 103 originally targeted `dex_identity` for `degenbot-core`; this crate lands it in a more honest Uniswap-domain home (DEX presets are protocol data, not foundational utilities).
+_Avoid_: identity crate, presets crate, dex crate
+
+**EncodedCall**: A pre-encoded EVM call ready for on-chain submission: `to` (target `Address`), `data` (selector + ABI-encoded parameters as `Vec<u8>`), `value` (`U256`, always zero for V2 swaps). Lives in `degenbot_uniswap::v2_encoding`; produced by `encode_v2_swap()` — Python never calls `eth_abi.encode()`.
 _Avoid_: encoded swap, call data, swap call
 
-**V2_SWAP_SELECTOR**: `[0x02, 0x2c, 0x0d, 0x9f]` — the first 4 bytes of `keccak256("swap(uint256,uint256,address,bytes)")`. Prepended to ABI-encoded parameters in `encode_v2_swap()`.
+**V2_SWAP_SELECTOR**: `[0x02, 0x2c, 0x0d, 0x9f]` — the first 4 bytes of `keccak256("swap(uint256,uint256,address,bytes)")`. Lives in `degenbot_uniswap::v2_encoding`; prepended to ABI-encoded parameters in `encode_v2_swap()`.
 _Avoid_: swap selector, v2 swap function hash
 
 _Avoid_: v2 state snapshot, reserve snapshot

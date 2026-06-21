@@ -1,4 +1,4 @@
-//! Python seam for the Rust-core [`DexIdentity`](degenbot_bot::bot_core::dex_identity)
+//! Python seam for the Rust-core [`DexIdentity`](degenbot_uniswap::dex_identity)
 //! presets (ADR-005 slice 6).
 //!
 //! [`PyDexIdentity`] is a frozen read-only view over a `DexIdentity` preset.
@@ -23,8 +23,8 @@ use std::sync::OnceLock;
 
 use pyo3::prelude::*;
 
-use degenbot_bot::bot_core::dex_identity::{DexIdentity, DexVariant, ReservesAbi};
 use degenbot_core::address_utils::{address_to_checksum_string, parse_address};
+use degenbot_uniswap::dex_identity::{DexIdentity, DexVariant, ReservesAbi};
 
 /// Frozen Python view over a `DexIdentity` preset (ADR-005 slice 6).
 ///
@@ -239,8 +239,8 @@ fn dex_identity(variant: &str) -> Option<PyDexIdentity> {
         OnceLock::new();
     let presets = PRESETS.get_or_init(|| {
         let mut m = std::collections::HashMap::new();
-        for v in degenbot_bot::bot_core::dex_identity::DexVariant::ALL {
-            let ident = degenbot_bot::bot_core::dex_identity::preset_for_variant(v);
+        for v in degenbot_uniswap::dex_identity::DexVariant::ALL {
+            let ident = degenbot_uniswap::dex_identity::preset_for_variant(v);
             m.insert(v.as_str(), PyDexIdentity::from_core(&ident));
         }
         m

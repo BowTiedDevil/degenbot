@@ -13,11 +13,10 @@ use crate::bot_core::state_history::{
     JournalError, ReorgJournal, ScalarPriors, TickBefore, V2BlockDelta, V3BlockDelta,
     V3RestoreResult,
 };
-use crate::bot_core::v2_encoding::{encode_v2_swap, EncodedCall};
 use crate::optimizers::mobius_int::IntHopState;
+use degenbot_uniswap::v2_encoding::{encode_v2_swap, EncodedCall};
 
 pub mod block_pump;
-pub mod dex_identity;
 pub mod drain_sink;
 pub mod engine;
 pub mod liquidity_verifier;
@@ -27,7 +26,6 @@ pub mod solve_coordinator;
 pub mod state_history;
 pub mod tick_bitmap;
 pub mod tick_map;
-pub mod v2_encoding;
 pub mod v3_state;
 pub mod v4_state;
 

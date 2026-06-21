@@ -13,7 +13,8 @@
 //! look up its factory/deployer/init-hash/fees **without a Python import**. If
 //! these presets lived in `degenbot.dex_presets` (Python), the standalone
 //! claim breaks. So `DexIdentity` + presets are pure Rust (no `pyo3`); the
-//! Python seam ([`crate::bot_core::py_dex_identity`]) is a thin read-only view.
+//! Python seam (`py_dex_identity` in the root `degenbot_rs` cdylib) is a thin
+//! read-only view.
 //!
 //! ## Why `DexIdentity` is NOT a `V2PoolState` field
 //!
