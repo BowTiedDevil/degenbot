@@ -101,6 +101,11 @@ impl PyBot {
     /// `PyErc20Token` share. This is the seam that dissolves the dual-state
     /// split (pump in `BotState` B, handles in `BotState` A —
     /// `rust-owned-bot.md` §17).
+    //
+    // `pub(crate)` + zero callers — `dead_code` flagged once the stale
+    // `#[allow(dead_code)]` was stripped (ergo task LDNRYF / Cleanup A). Kept
+    // for now: this is an ADR-006 D1 seam whose consumer (`UniswapEngine::
+    // with_core`) has not shipped; deletion is a Category B decision.
     #[allow(dead_code)]
     pub(crate) fn core_arc(&self) -> Arc<parking_lot::RwLock<BotState>> {
         self.bot.state_arc()

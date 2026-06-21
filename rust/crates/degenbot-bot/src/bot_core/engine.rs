@@ -28,7 +28,6 @@ use crate::bot_core::BlockMetadata;
 /// (`on_block`) into per-state-subject publish (slice 4's `LogDispatcher`
 /// plus `PoolStateSubscriber`) plus this drain-point fan-out. The trait is
 /// `Send + Sync` so `Arc<dyn Engine>` can cross the pump's tokio task.
-#[allow(dead_code)]
 pub trait Engine: Send + Sync {
     /// Solve every dirty path at `block` (the eager drain tick). Each engine
     /// owns its own dirty-set (seeded by `PoolStateSubscriber` notifications

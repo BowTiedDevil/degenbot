@@ -32,7 +32,6 @@ use crate::bot_core::BlockMetadata;
 /// decompose in the pump into `dispatch_log`-per-log + `on_drain` (+
 /// `on_send`). This routes ALL log application through the dispatcher (the D4
 /// goal) — the sink only owns solve/send/reorg.
-#[allow(dead_code)]
 pub trait DrainSink: Send + Sync {
     /// Are there unsolved dirty pool keys accumulated since the last drain?
     #[must_use]

@@ -24,7 +24,6 @@ use crate::optimizers::uniswap_engine::UniswapEngine;
 /// (all strong handles dropped) is silently skipped by the dispatcher's
 /// `Weak::upgrade` — no leak, no panic. `Bot.attach_engine` receives this as a
 /// `Weak<dyn PoolStateSubscriber>`.
-#[allow(dead_code)]
 pub struct EngineSubscriber {
     engine: Weak<Mutex<UniswapEngine>>,
 }
@@ -32,7 +31,6 @@ pub struct EngineSubscriber {
 impl EngineSubscriber {
     /// Construct from a weak reference to the shared engine.
     #[must_use]
-    #[allow(dead_code)]
     pub fn new(engine: Weak<Mutex<UniswapEngine>>) -> Self {
         Self { engine }
     }
@@ -40,7 +38,6 @@ impl EngineSubscriber {
     /// Construct a `Weak<dyn PoolStateSubscriber>` from a strong engine handle,
     /// the convenience `Bot.attach_engine` callers use.
     #[must_use]
-    #[allow(dead_code)]
     pub fn weak_handle(engine: &Arc<Mutex<UniswapEngine>>) -> Weak<dyn PoolStateSubscriber> {
         let strong: Arc<dyn PoolStateSubscriber> = Arc::new(Self {
             engine: Arc::downgrade(engine),

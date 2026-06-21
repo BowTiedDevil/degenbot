@@ -51,7 +51,6 @@ use crate::bot_core::Bot;
 /// earliest surviving delta. There is no known state before it, so the bot
 /// cannot safely continue; the pump shuts down gracefully.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum ReorgError {
     /// `pool_id`'s journal has no state at or before `block`.
     NoStatePriorToBlock { pool_id: u64, block: u64 },
@@ -69,7 +68,6 @@ impl ReorgCoordinator {
     ///
     /// The removed event's CONTENT is unused — only its block number + pool
     /// identity (the journal's stored "before" values are the source of truth).
-    #[allow(dead_code)]
     pub fn dispatch_reorg_log(&self, log: &Log) -> Result<(), ReorgError> {
         let bot = &*self.bot;
         // Decode the log to identify the target pool. Reuses the same decoder
@@ -108,12 +106,10 @@ impl ReorgCoordinator {
 /// Thin struct wrapping `Arc<Bot>` — gives the ADR-006-named helper a real
 /// home + its own test seam. Holds no own state; restoration delegates to
 /// `BotState`, decode+notify to `LogDispatcher`.
-#[allow(dead_code)]
 pub struct ReorgCoordinator {
     bot: Arc<Bot>,
 }
 
-#[allow(dead_code)]
 impl ReorgCoordinator {
     #[must_use]
     pub fn new(bot: Arc<Bot>) -> Self {
