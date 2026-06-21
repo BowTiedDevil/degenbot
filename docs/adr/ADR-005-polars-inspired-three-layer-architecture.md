@@ -57,7 +57,7 @@ The **crate split target** mirrors Polars' topology:
 | Crate | Contents | `pyo3`? | Consumers |
 |---|---|---|---|
 | `degenbot-core` | `Bot`, `V2/V3/V4PoolState`, `DexIdentity` + presets, calc math, reorg, decoders | none | Rust users *and* the binding crate |
-| `degenbot-python` (name TBD) | `PyBot`, `PyLiquidityPool`, `PyErc20Token`, `PyBotIo` (future), all `#[pyclass]`/`#[pyfunction]` | all | Python only |
+| `degenbot-python` | `PyBot`, `PyLiquidityPool`, `PyErc20Token`, `PyBotIo` (future), all `#[pyclass]`/`#[pyfunction]` | all | Python only |
 | `degenbot` (umbrella Python package) | the Python `Bot` companion + the `degenbot_rs` extension built from `degenbot-python` | n/a | Python users |
 
 This is exactly `polars-core` / `polars-python` / `polars` (the umbrella `polars`
@@ -252,11 +252,16 @@ Two targets are deferred, both consequences of this ADR's standalone-core direct
   `rust/` is one crate with `pyo3` permeating (the `*_py.rs` convention). The split
   peels the `*_py.rs` files into `degenbot-python`, leaving `degenbot-core` with zero
   `pyo3` — a packaging change, not a rewrite (core structs like `Bot`/`V3PoolState`
-  already import no `pyo3`). Triggered when either (a) a standalone Rust consumer
-  wants `cargo add degenbot-core`, or (b) the Python-binding surface grows large
-  enough to deserve its own release cadence. The `DexIdentity` preset registry lands in
-  `degenbot-core` *now* (regardless of split timing) per the standalone-core
-  consequence above, so the split never has to relocate it.
+  already import no `pyo3`). **The mechanical relocation + virtual-manifest workspace
+  restructure is DONE** (the `degenbot_rs` binding layer now lives at
+  `rust/crates/degenbot-python/` as a peer of the seven pyo3-free cores; `rust/Cargo.toml`
+  is a pure virtual manifest — see ergo `DPSVCH`). **Still deferred under ergo `KWTAXJ`:**
+  (b) the standalone-`degenbot-core` Rust-consumer smoke test, and (c) the `degenbot`
+  umbrella Python package + `cargo add degenbot` re-export. Triggered when either (a) a
+  standalone Rust consumer wants `cargo add degenbot-core`, or (b) the Python-binding
+  surface grows large enough to deserve its own release cadence. The `DexIdentity`
+  preset registry lands in `degenbot-core` *now* (regardless of split timing) per the
+  standalone-core consequence above, so the split never has to relocate it.
 
 - **`UniswapEngine` lock unification.** `UniswapEngine` holds its own
   `Arc<Mutex<Bot>>` (engine-then-core order, ADR-003). Unifying the engine onto the

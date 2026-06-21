@@ -94,6 +94,7 @@ pub enum DecodedPoolEvent {
 
 impl DecodedPoolEvent {
     /// The block number carried by this event's source log.
+    #[must_use]
     pub fn block_number(&self) -> u64 {
         match self {
             Self::V2Sync { block_number, .. }
@@ -108,6 +109,7 @@ impl DecodedPoolEvent {
     /// `ReorgCoordinator` uses this to identify which pool a `removed: true`
     /// log is about (the removed event's content is unused — only its block
     /// + pool identity matter; the journal's stored "before" values are truth).
+    #[must_use]
     pub fn resolve_pool_id(&self, bot_state: &BotState) -> Option<u64> {
         match self {
             Self::V2Sync { pool_address, .. }

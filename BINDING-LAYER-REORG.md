@@ -1,12 +1,12 @@
-# Binding-Layer Reorganization — Polars-Style `rust/src/` Migration
+# Binding-Layer Reorganization — Polars-Style Binding Crate Migration
 
-**Status:** proposed. Tracked by ergo epic `UG6FKN` ("Polars-style binding-crate reorganization (rust/src/)").
+**Status:** done. Tracked by ergo epic `UG6FKN` ("Polars-style binding-crate reorganization") + the follow-up ergo `DPSVCH` ("Lift binding layer to `crates/degenbot-python/`").
 **Related:** ADR-005 (Polars-Inspired Three-Layer Architecture), ADR-003 (Bot as state owner),
 `rust/AGENTS.md` (three-layer pattern + module organization). Reference project: `polars-python`
 (`~/.cache/checkouts/github.com/pola-rs/polars/crates/polars-python/src/`).
 
-> **Scope boundary.** This migration concerns the **organization of the `rust/src/` binding
-> crate** (the `degenbot_rs` cdylib) — file layout, `#[pymethods]` splitting, shared converters,
+> **Scope boundary.** This migration concerns the **organization of the binding
+> crate** (the `degenbot_rs` cdylib — now at `rust/crates/degenbot-python/src/`) — file layout, `#[pymethods]` splitting, shared converters,
 > registration, cargo features. It is **distinct from** the existing epic `XQ5UX6`
 > ("Polars three-layer migration"), which tracks the **stateful companion** migrations
 > (Python `V2/V3/V4/Curve/Balancer` companions over `Py*` wrappers — ADR-005 slices 1–15).
@@ -162,7 +162,15 @@ rust/src/
 ## Non-goals
 
 - No change to the public Python API surface (function names, class names, signatures).
-- No change to the Rust core crates (`crates/degenbot-*`) — this is `rust/src/` only.
+- No change to the Rust core crates (`crates/degenbot-*`) — binding-crate only.
 - No stateful-companion work (that's epic `XQ5UX6`).
-- No binding-crate workspace-member split (ADR-005 deferral; step 7 *prepares* for it but
-  does not execute it).
+
+## Completed (post-execution)
+
+- **Binding-crate workspace-member split** — originally listed above as a non-goal
+  ("step 7 *prepares* for it but does not execute it"). Executed by ergo `DPSVCH`: the
+  `degenbot_rs` binding layer now lives at `rust/crates/degenbot-python/` as a peer
+  workspace member of the seven pyo3-free cores, and `rust/Cargo.toml` is a pure
+  virtual manifest (workspace + profiles only). The standalone-`degenbot-core`
+  Rust-consumer smoke test and the `degenbot` umbrella + `cargo add degenbot`
+  re-export remain deferred under ergo `KWTAXJ` (ADR-005 slice 13).

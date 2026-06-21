@@ -1,0 +1,90 @@
+[package]
+authors = ["BowTiedDevil <devil@bowtieddevil.com>"]
+name = "degenbot_rs"
+description = "Rust implementations used by the degenbot Python package."
+edition = "2021"
+publish = false
+repository = "https://github.com/BowTiedDevil/degenbot"
+license = "MIT"
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"
+pedantic = "warn"
+perf = "warn"
+style = "warn"
+suspicious = "warn"
+
+[lib]
+name = "degenbot_rs"
+crate-type = ["rlib", "cdylib"]
+
+# The PyO3 binding layer (cdylib) over the seven pyo3-free core crates. It is a
+# workspace member at `rust/crates/degenbot-python/` (a peer of the cores),
+# mirroring `polars-python`'s position in the `polars` workspace. The workspace
+# root `rust/Cargo.toml` is a pure virtual manifest. (ergo UG6FKN follow-up:
+# ADR-005 deferral — binding layer lifted out of the workspace root.)
+
+[dependencies]
+alloy = { version = "^2.0", features = ["full", "transport-throttle"] }
+# Path dependency enables the `pyo3` feature so `From<Error> for PyErr`
+# conversions from core are available at this binding layer.
+degenbot-rpc = { path = "../degenbot-rpc", optional = true }
+degenbot-bot = { path = "../degenbot-bot", optional = true }
+degenbot-decoders = { path = "../degenbot-decoders", optional = true }
+degenbot-uniswap = { path = "../degenbot-uniswap", optional = true }
+degenbot-abi = { path = "../degenbot-abi", optional = true }
+degenbot-cl-math = { path = "../degenbot-cl-math", optional = true }
+degenbot-core = { path = "../degenbot-core", features = ["pyo3"] }
+dashmap = { version = "^6.1" }
+futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
+log = { version = "^0.4" }
+lru = { version = "^0.18" }
+parking_lot = { version = "^0.12" }
+pyo3 = { version = "^0.29", features = [ "abi3-py312", "serde", "multiple-pymethods"] }
+pyo3-async-runtimes = { version = "^0.29", features = ["tokio-runtime"] }
+pyo3-log = { version = "^0.13" }
+rand = { version = "^0.10" }
+serde = { version = "^1.0", features = ["derive"] }
+serde_json = { version = "^1.0" }
+thiserror = { version = "^2.0" }
+tokio = { version = "^1.52", features = ["rt-multi-thread", "time", "macros", "sync"] }
+
+[features]
+# Per-domain binding-layer features (ergo UG6FKN task UKDOUR). Each gates its optional
+# core-crate path dep + the corresponding binding module/mod registrations, mirroring
+# how polars gates polars-python with features matching polars-core/-plan/etc.
+# Default = all-on (byte-equivalent to the pre-feature surface). Implicit coupling
+# (documented in the task completion body): `bot` implies `rpc`+`decoders`+`uniswap`
+# (the engine wrapper references degenbot_rpc::provider::AlloyProvider + degenbot_decoders::PoolId
+# + degenbot_uniswap::dex_identity directly), and `rpc` implies `abi` (rpc/contract wraps
+# crate::abi_types). `async` gates the rpc/ async submodules (no new dep).
+default = ["auto-initialize", "bot", "rpc", "abi", "cl-math", "uniswap", "async"]
+extension-module = ["pyo3/extension-module"]
+auto-initialize = ["pyo3/auto-initialize"]
+bot = ["dep:degenbot-bot", "rpc", "decoders", "uniswap"]
+rpc = ["dep:degenbot-rpc", "abi"]
+abi = ["dep:degenbot-abi"]
+cl-math = ["dep:degenbot-cl-math"]
+uniswap = ["dep:degenbot-uniswap"]
+decoders = ["dep:degenbot-decoders"]
+async = []
+
+[dev-dependencies]
+ctor = "^1"
+proptest = "^1.10"
+# Enable test-only constructors (e.g. `AlloyProvider::from_provider`) for
+# the root crate's tests. Production builds pull degenbot-rpc without this
+# feature.
+degenbot-rpc = { path = "../degenbot-rpc", features = ["test-utils"] }
+
+[[test]]
+name = "python_integration"
+required-features = ["auto-initialize"]
+
+[[test]]
+name = "concurrency_stress"
+required-features = ["auto-initialize"]
