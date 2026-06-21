@@ -20,12 +20,12 @@ use std::sync::{Arc, Weak};
 
 use alloy::rpc::types::Log;
 
-use crate::bot_core::v3_mint_burn_decoder::{decode_v3_burn_log, decode_v3_mint_log};
-use crate::bot_core::v3_swap_decoder::decode_v3_swap_log;
-use crate::bot_core::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log;
-use crate::bot_core::v4_swap_decoder::decode_v4_swap_log;
 use crate::bot_core::BotState;
-use crate::optimizers::v2_sync_decoder::decode_sync_log;
+use degenbot_decoders::v2_sync_decoder::decode_sync_log;
+use degenbot_decoders::v3_mint_burn_decoder::{decode_v3_burn_log, decode_v3_mint_log};
+use degenbot_decoders::v3_swap_decoder::decode_v3_swap_log;
+use degenbot_decoders::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log;
+use degenbot_decoders::v4_swap_decoder::decode_v4_swap_log;
 
 /// A subscriber to pool-state updates (ADR-006 D4).
 ///
@@ -75,7 +75,7 @@ pub enum DecodedPoolEvent {
     /// V4 `Swap` — `(pool_manager, pool_id, sqrt_price_x96, liquidity, tick)`.
     V4Swap {
         pool_manager: alloy::primitives::Address,
-        pool_id: crate::bot_core::v4_swap_decoder::PoolId,
+        pool_id: degenbot_decoders::v4_swap_decoder::PoolId,
         sqrt_price_x96: alloy::primitives::U256,
         liquidity: alloy::primitives::U256,
         tick: i32,
@@ -84,7 +84,7 @@ pub enum DecodedPoolEvent {
     /// V4 `ModifyLiquidity` — `(pool_manager, pool_id, tick_lower, tick_upper, delta)`.
     V4Liquidity {
         pool_manager: alloy::primitives::Address,
-        pool_id: crate::bot_core::v4_swap_decoder::PoolId,
+        pool_id: degenbot_decoders::v4_swap_decoder::PoolId,
         tick_lower: i32,
         tick_upper: i32,
         liquidity_delta: alloy::primitives::I256,

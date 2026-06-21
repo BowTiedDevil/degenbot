@@ -26,8 +26,8 @@ impl UniswapEngine {
             return;
         };
 
-        if *topic == crate::optimizers::v2_sync_decoder::V2_SYNC_TOPIC {
-            if let Some(event) = crate::optimizers::v2_sync_decoder::decode_sync_log(log) {
+        if *topic == degenbot_decoders::v2_sync_decoder::V2_SYNC_TOPIC {
+            if let Some(event) = degenbot_decoders::v2_sync_decoder::decode_sync_log(log) {
                 // ADR-003: V2 state lives in BotState. apply under the core lock
                 // (nested inside the engine lock the pump already holds —
                 // engine-then-core ordering). The returned single pool_id marks
@@ -41,8 +41,8 @@ impl UniswapEngine {
                     self.dirty_v2.insert(pool_id);
                 }
             }
-        } else if *topic == crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC {
-            if let Some(event) = crate::bot_core::v3_swap_decoder::decode_v3_swap_log(log) {
+        } else if *topic == degenbot_decoders::v3_swap_decoder::V3_SWAP_TOPIC {
+            if let Some(event) = degenbot_decoders::v3_swap_decoder::decode_v3_swap_log(log) {
                 // ADR-003: V3 state lives in BotState; apply under the core lock
                 // (nested inside the engine lock the pump already holds).
                 if let Some(pool_id) = self.core.write().apply_v3_swap(
@@ -56,8 +56,8 @@ impl UniswapEngine {
                     self.dirty_v3.insert(pool_id);
                 }
             }
-        } else if *topic == crate::bot_core::v3_mint_burn_decoder::V3_MINT_TOPIC {
-            if let Some(event) = crate::bot_core::v3_mint_burn_decoder::decode_v3_mint_log(log) {
+        } else if *topic == degenbot_decoders::v3_mint_burn_decoder::V3_MINT_TOPIC {
+            if let Some(event) = degenbot_decoders::v3_mint_burn_decoder::decode_v3_mint_log(log) {
                 if let Some(pool_id) = self.core.write().apply_v3_liquidity_update(
                     event.pool_address,
                     event.tick_lower,
@@ -68,8 +68,8 @@ impl UniswapEngine {
                     self.dirty_v3.insert(pool_id);
                 }
             }
-        } else if *topic == crate::bot_core::v3_mint_burn_decoder::V3_BURN_TOPIC {
-            if let Some(event) = crate::bot_core::v3_mint_burn_decoder::decode_v3_burn_log(log) {
+        } else if *topic == degenbot_decoders::v3_mint_burn_decoder::V3_BURN_TOPIC {
+            if let Some(event) = degenbot_decoders::v3_mint_burn_decoder::decode_v3_burn_log(log) {
                 if let Some(pool_id) = self.core.write().apply_v3_liquidity_update(
                     event.pool_address,
                     event.tick_lower,
@@ -80,8 +80,8 @@ impl UniswapEngine {
                     self.dirty_v3.insert(pool_id);
                 }
             }
-        } else if *topic == crate::bot_core::v4_swap_decoder::V4_SWAP_TOPIC {
-            if let Some(event) = crate::bot_core::v4_swap_decoder::decode_v4_swap_log(log) {
+        } else if *topic == degenbot_decoders::v4_swap_decoder::V4_SWAP_TOPIC {
+            if let Some(event) = degenbot_decoders::v4_swap_decoder::decode_v4_swap_log(log) {
                 if let Some(pool_id) = self.core.write().apply_v4_swap(
                     &V4SwapUpdate {
                         pool_manager: log.address(),
@@ -96,10 +96,11 @@ impl UniswapEngine {
                     self.dirty_v4.insert(pool_id);
                 }
             }
-        } else if *topic == crate::bot_core::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC
+        } else if *topic
+            == degenbot_decoders::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC
         {
             if let Some(event) =
-                crate::bot_core::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log(log)
+                degenbot_decoders::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log(log)
             {
                 if let Some(pool_id) = self.core.write().apply_v4_liquidity_update(
                     log.address(),
@@ -367,10 +368,10 @@ impl UniswapEngine {
     /// replacement collapsed the whole chunk into one journal delta and a
     /// mid-chunk reorg couldn't restore a per-block landed-at state.
     pub fn process_backfill_logs(&mut self, logs: &[Log], chunk_end: u64) {
-        use crate::bot_core::v3_mint_burn_decoder::{decode_v3_burn_log, decode_v3_mint_log};
-        use crate::bot_core::v3_swap_decoder::decode_v3_swap_log;
-        use crate::bot_core::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log;
-        use crate::bot_core::v4_swap_decoder::decode_v4_swap_log;
+        use degenbot_decoders::v3_mint_burn_decoder::{decode_v3_burn_log, decode_v3_mint_log};
+        use degenbot_decoders::v3_swap_decoder::decode_v3_swap_log;
+        use degenbot_decoders::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log;
+        use degenbot_decoders::v4_swap_decoder::decode_v4_swap_log;
 
         let mut v3_touched = false;
         let mut v4_touched = false;
@@ -385,7 +386,7 @@ impl UniswapEngine {
                 continue;
             };
 
-            if *topic0 == crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC {
+            if *topic0 == degenbot_decoders::v3_swap_decoder::V3_SWAP_TOPIC {
                 if let Some(event) = decode_v3_swap_log(log) {
                     self.core.write().apply_v3_swap(
                         event.pool_address,
@@ -397,7 +398,7 @@ impl UniswapEngine {
                     );
                     v3_touched = true;
                 }
-            } else if *topic0 == crate::bot_core::v3_mint_burn_decoder::V3_MINT_TOPIC {
+            } else if *topic0 == degenbot_decoders::v3_mint_burn_decoder::V3_MINT_TOPIC {
                 if let Some(event) = decode_v3_mint_log(log) {
                     self.core.write().buffer_backfill_v3_liquidity_update(
                         event.pool_address,
@@ -408,7 +409,7 @@ impl UniswapEngine {
                     );
                     v3_touched = true;
                 }
-            } else if *topic0 == crate::bot_core::v3_mint_burn_decoder::V3_BURN_TOPIC {
+            } else if *topic0 == degenbot_decoders::v3_mint_burn_decoder::V3_BURN_TOPIC {
                 if let Some(event) = decode_v3_burn_log(log) {
                     self.core.write().buffer_backfill_v3_liquidity_update(
                         event.pool_address,
@@ -419,7 +420,7 @@ impl UniswapEngine {
                     );
                     v3_touched = true;
                 }
-            } else if *topic0 == crate::bot_core::v4_swap_decoder::V4_SWAP_TOPIC {
+            } else if *topic0 == degenbot_decoders::v4_swap_decoder::V4_SWAP_TOPIC {
                 if let Some(event) = decode_v4_swap_log(log) {
                     self.core.write().apply_v4_swap(
                         &V4SwapUpdate {
@@ -435,7 +436,7 @@ impl UniswapEngine {
                     v4_touched = true;
                 }
             } else if *topic0
-                == crate::bot_core::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC
+                == degenbot_decoders::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC
             {
                 if let Some(event) = decode_v4_modify_liquidity_log(log) {
                     self.core.write().buffer_backfill_v4_liquidity_update(

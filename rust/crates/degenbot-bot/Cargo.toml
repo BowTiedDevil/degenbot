@@ -23,6 +23,7 @@ dashmap = { version = "^6.1" }
 degenbot-abi = { path = "../degenbot-abi" }
 degenbot-cl-math = { path = "../degenbot-cl-math" }
 degenbot-core = { path = "../degenbot-core" }
+degenbot-decoders = { path = "../degenbot-decoders" }
 degenbot-rpc = { path = "../degenbot-rpc" }
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
 log = { version = "^0.4" }

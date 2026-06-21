@@ -951,8 +951,9 @@ mod tests {
         });
 
         // V3 pool B at tick -60 (slightly cheaper token1), high liquidity
-        let sqrt_price_lower_u160 = degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-60)
-            .unwrap_or(alloy::primitives::U160::ZERO);
+        let sqrt_price_lower_u160 =
+            degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-60)
+                .unwrap_or(alloy::primitives::U160::ZERO);
         let sqrt_price_lower = U256::from(sqrt_price_lower_u160);
 
         let mut tick_data_b = HashMap::new();
@@ -1229,7 +1230,8 @@ mod tests {
         let v4_pool_manager = Address::from([0x40u8; 20]);
         // tick -886_983 → sqrtPrice ≈ 4.36e9 (very low price, token0 is nearly worthless)
         let sp_extreme =
-            degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-886_983).unwrap_or_default();
+            degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(-886_983)
+                .unwrap_or_default();
         let extreme_liquidity: u128 = 76_688_550_121_478_947_320_312_764_923_207_804;
 
         let v4_id = engine
@@ -1397,7 +1399,11 @@ mod tests {
         assert!(matches!(path.pools[2].hop_type, HopType::V4));
 
         // Verify we can resolve pool addresses via BotState (V2) / sub-engines (V3/V4)
-        let v2_addr = engine.core.read().get_v2_pool_state(v2_fwd).map(|p| p.address);
+        let v2_addr = engine
+            .core
+            .read()
+            .get_v2_pool_state(v2_fwd)
+            .map(|p| p.address);
         assert_eq!(v2_addr, Some(Address::from([0x11u8; 20])));
 
         let core = engine.core.read();
@@ -1943,10 +1949,10 @@ mod tests {
     #[test]
     #[allow(clippy::too_many_lines)]
     fn process_backfill_logs_stamps_per_log_block_number() {
-        use crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC;
         use crate::optimizers::uniswap_engine::PoolTickCoverage;
         use alloy::primitives::{Bytes, B256};
         use alloy::rpc::types::Log;
+        use degenbot_decoders::v3_swap_decoder::V3_SWAP_TOPIC;
 
         /// Build a V3 Swap log carrying post-swap scalars, at `block_number`.
         /// data = abi.encode(int256 amount0, int256 amount1, uint160 sqrtPriceX96,

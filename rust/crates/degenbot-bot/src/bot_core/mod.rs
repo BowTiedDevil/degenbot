@@ -28,12 +28,8 @@ pub mod state_history;
 pub mod tick_bitmap;
 pub mod tick_map;
 pub mod v2_encoding;
-pub mod v3_mint_burn_decoder;
 pub mod v3_state;
-pub mod v3_swap_decoder;
-pub mod v4_modify_liquidity_decoder;
 pub mod v4_state;
-pub mod v4_swap_decoder;
 
 // Re-export the merged V3/V4 state types (ADR-003: BotState owns CL state).
 pub use v3_state::{
@@ -248,13 +244,13 @@ pub struct BotState {
     /// Dual-buffer for V4 `ModifyLiquidity` events awaiting pool registration.
     /// Keyed by `(pool_manager, pool_id)`.
     v4_buffer: crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer<
-        (Address, crate::bot_core::v4_swap_decoder::PoolId),
+        (Address, degenbot_decoders::v4_swap_decoder::PoolId),
         BufferedV4LiquidityUpdate,
     >,
     /// V4 pool registry: `(pool_manager, pool_id)` → `pool_id` (single entry
     /// per pool — ADR-003 Option I: orientation derived at solve from
     /// `zero_for_one`, not stored as separate forward/reverse entries).
-    v4_pool_ids: HashMap<(Address, crate::bot_core::v4_swap_decoder::PoolId), u64>,
+    v4_pool_ids: HashMap<(Address, degenbot_decoders::v4_swap_decoder::PoolId), u64>,
 }
 
 impl BotState {
@@ -1587,7 +1583,7 @@ impl BotState {
     pub fn apply_v4_liquidity_update(
         &mut self,
         pool_manager: Address,
-        pool_id: crate::bot_core::v4_swap_decoder::PoolId,
+        pool_id: degenbot_decoders::v4_swap_decoder::PoolId,
         tick_lower: i32,
         tick_upper: i32,
         liquidity_delta: alloy::primitives::I256,
@@ -1838,7 +1834,7 @@ impl BotState {
     pub fn buffer_backfill_v4_liquidity_update(
         &mut self,
         pool_manager: Address,
-        pool_id: crate::bot_core::v4_swap_decoder::PoolId,
+        pool_id: degenbot_decoders::v4_swap_decoder::PoolId,
         tick_lower: i32,
         tick_upper: i32,
         liquidity_delta: alloy::primitives::I256,
@@ -1880,7 +1876,7 @@ impl BotState {
     pub fn apply_backfill_buffer_v4(
         &mut self,
         pool_manager: Address,
-        pool_id: crate::bot_core::v4_swap_decoder::PoolId,
+        pool_id: degenbot_decoders::v4_swap_decoder::PoolId,
     ) {
         let key = (pool_manager, pool_id);
         let Some(&id) = self.v4_pool_ids.get(&key) else {
@@ -1931,7 +1927,7 @@ impl BotState {
     pub fn apply_pump_buffer_v4(
         &mut self,
         pool_manager: Address,
-        pool_id: crate::bot_core::v4_swap_decoder::PoolId,
+        pool_id: degenbot_decoders::v4_swap_decoder::PoolId,
     ) {
         let key = (pool_manager, pool_id);
         let Some(&id) = self.v4_pool_ids.get(&key) else {
@@ -2002,7 +1998,7 @@ impl BotState {
     pub fn v4_pool_id_by_key(
         &self,
         pool_manager: Address,
-        pool_id: &crate::bot_core::v4_swap_decoder::PoolId,
+        pool_id: &degenbot_decoders::v4_swap_decoder::PoolId,
     ) -> Option<u64> {
         self.v4_pool_ids.get(&(pool_manager, *pool_id)).copied()
     }
@@ -2040,7 +2036,7 @@ impl BotState {
     pub fn sync_v4_pool_state(
         &mut self,
         pool_manager: Address,
-        pool_id: crate::bot_core::v4_swap_decoder::PoolId,
+        pool_id: degenbot_decoders::v4_swap_decoder::PoolId,
         update: V4StateSync,
     ) {
         let Some(&id) = self.v4_pool_ids.get(&(pool_manager, pool_id)) else {
@@ -2790,7 +2786,7 @@ mod tests {
         use alloy::primitives::{I256, U128};
 
         let pool_manager = Address::from([0x44u8; 20]);
-        let pool_id_bytes: crate::bot_core::v4_swap_decoder::PoolId = [0xeeu8; 32];
+        let pool_id_bytes: degenbot_decoders::v4_swap_decoder::PoolId = [0xeeu8; 32];
         let block_b = 9u64;
 
         // 1. Pre-registration: buffer a backfill ModifyLiquidity at [60,120].
@@ -2953,7 +2949,7 @@ mod tests {
         use std::collections::HashMap;
 
         let pool_manager = Address::from([0x44u8; 20]);
-        let pool_id_bytes: crate::bot_core::v4_swap_decoder::PoolId = [0xeeu8; 32];
+        let pool_id_bytes: degenbot_decoders::v4_swap_decoder::PoolId = [0xeeu8; 32];
         let mut core = BotState::new();
         let params = RegisterV4PoolParams {
             pool_manager,
@@ -3003,7 +2999,7 @@ mod tests {
         use crate::optimizers::uniswap_engine::PoolTickCoverage;
 
         let pool_manager = Address::from([0x44u8; 20]);
-        let pool_id_bytes: crate::bot_core::v4_swap_decoder::PoolId = [0x66u8; 32];
+        let pool_id_bytes: degenbot_decoders::v4_swap_decoder::PoolId = [0x66u8; 32];
         let block_b = 7u64;
 
         let make_params = || RegisterV4PoolParams {
@@ -3091,7 +3087,7 @@ mod tests {
         use alloy::primitives::{I256, U128};
 
         let pool_manager = Address::from([0x55u8; 20]);
-        let pool_id_bytes: crate::bot_core::v4_swap_decoder::PoolId = [0x77u8; 32];
+        let pool_id_bytes: degenbot_decoders::v4_swap_decoder::PoolId = [0x77u8; 32];
         let block_b = 5u64;
 
         // Pre-seed tick 60 (gross=100, net=+100); tick 120 absent.
@@ -3181,7 +3177,7 @@ mod tests {
         use crate::optimizers::uniswap_engine::PoolTickCoverage;
 
         let pool_manager = Address::from([0x88u8; 20]);
-        let pool_id_bytes: crate::bot_core::v4_swap_decoder::PoolId = [0x99u8; 32];
+        let pool_id_bytes: degenbot_decoders::v4_swap_decoder::PoolId = [0x99u8; 32];
         let block_b = 11u64;
 
         let make_params = || RegisterV4PoolParams {
@@ -3271,7 +3267,7 @@ mod tests {
         use alloy::primitives::{I256, U128};
 
         let pool_manager = Address::from([0xaau8; 20]);
-        let pool_id_bytes: crate::bot_core::v4_swap_decoder::PoolId = [0xbbu8; 32];
+        let pool_id_bytes: degenbot_decoders::v4_swap_decoder::PoolId = [0xbbu8; 32];
         let block_b = 13u64;
 
         // Pre-seed tick 60 (gross=100, net=+100); tick 120 absent.

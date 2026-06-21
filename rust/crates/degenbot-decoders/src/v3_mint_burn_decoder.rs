@@ -655,7 +655,7 @@ mod tests {
         let inner = alloy::primitives::Log::new_unchecked(
             pool,
             vec![
-                crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC,
+                crate::v3_swap_decoder::V3_SWAP_TOPIC,
                 sender.into_word(),
                 recipient.into_word(),
             ],

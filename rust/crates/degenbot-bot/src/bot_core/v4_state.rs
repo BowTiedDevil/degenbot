@@ -16,15 +16,15 @@ use alloy::primitives::{Address, I256, U160, U256};
 use crate::bot_core::state_history::{ReorgJournal, V3BlockDelta};
 use crate::bot_core::tick_bitmap::{compute_tick_ranges, gen_ticks, V3TickRangeForSolver};
 use crate::bot_core::v3_state::{PoolTickCoverage, V3SwapOutcome};
-use crate::bot_core::v4_swap_decoder::PoolId;
 use crate::bot_core::TickInfo;
+use crate::optimizers::liquidity_event_buffer::LiquidityEvent;
+use crate::optimizers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v4;
 use degenbot_cl_math::cl_lib::tick_math::{
     get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO,
     MIN_SQRT_RATIO,
 };
-use crate::optimizers::liquidity_event_buffer::LiquidityEvent;
-use crate::optimizers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence};
+use degenbot_decoders::v4_swap_decoder::PoolId;
 
 // ---------------------------------------------------------------------------
 // Hook filtering constants

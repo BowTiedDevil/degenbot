@@ -1555,6 +1555,7 @@ dependencies = [
  "degenbot-abi",
  "degenbot-cl-math",
  "degenbot-core",
+ "degenbot-decoders",
  "degenbot-rpc",
  "futures-util",
  "log",
@@ -1589,6 +1590,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "degenbot-decoders"
+version = "0.0.0"
+dependencies = [
+ "alloy",
+]
+
+[[package]]
 name = "degenbot-rpc"
 version = "0.0.0"
 dependencies = [
@@ -1617,6 +1625,7 @@ dependencies = [
  "degenbot-bot",
  "degenbot-cl-math",
  "degenbot-core",
+ "degenbot-decoders",
  "degenbot-rpc",
  "futures-util",
  "log",

@@ -17,12 +17,12 @@ use alloy::primitives::{Address, I256, U160, U256};
 use crate::bot_core::state_history::{ReorgJournal, V3BlockDelta};
 use crate::bot_core::tick_bitmap::{compute_tick_ranges, gen_ticks, V3TickRangeForSolver};
 use crate::bot_core::TickInfo;
+use crate::optimizers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v3;
 use degenbot_cl_math::cl_lib::tick_math::{
     get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO,
     MIN_SQRT_RATIO,
 };
-use crate::optimizers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence};
 
 // ---------------------------------------------------------------------------
 // Coverage flag
@@ -484,8 +484,8 @@ pub fn v3_simulate_swap(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v3;
     use alloy::primitives::{I256, U128, U256};
+    use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v3;
 
     /// Build a V3 pool at tick 0 (1:1 price, `sqrt_price` = 2^96), liquidity `liq`,
     /// fee 0.3% (3000 pips), `tick_spacing` 60, with a single position spanning
