@@ -70,6 +70,7 @@ def _fake_async_builder_context() -> AsyncBuilderContext:
         pools=MagicMock(spec=PoolRegistry),
         tokens=MagicMock(spec=TokenRegistry),
         erc20_builder=erc20_builder,
+        py_bot=PyBot(),
         default_chain_id=1,
     )
 
