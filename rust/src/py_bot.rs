@@ -9,10 +9,10 @@
 //! See: `docs/adr/ADR-005-polars-inspired-three-layer-architecture.md` (the
 //! decision, rejected alternatives, and the deferred `UniswapEngine` unification).
 
+use crate::prelude::*;
 use std::sync::Arc;
 
 use alloy::primitives::Address;
-use pyo3::prelude::*;
 
 use crate::py_erc20_token::PyErc20Token;
 use crate::py_liquidity_pool::PyLiquidityPool;

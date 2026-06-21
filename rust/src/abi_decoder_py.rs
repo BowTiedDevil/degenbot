@@ -6,16 +6,12 @@
 //! this module adds the Python-object conversion (`AbiValue` → Python) and the
 //! `#[pyfunction]` entry points registered in [`crate::lib`]'s `#[pymodule]`.
 
+use crate::prelude::*;
 use degenbot_abi::abi_decoder::{decode_rust, decode_single_rust};
 use degenbot_abi::abi_types::AbiValue;
-use degenbot_core::errors::AbiDecodeError;
-use pyo3::{
-    exceptions::{PyNotImplementedError, PyValueError},
-    prelude::*,
-    types::{PyBool, PyBytes, PyList, PyString},
-};
-
-use crate::conversion::alloy as alloy_py;
+use errors::AbiDecodeError;
+use pyo3::exceptions::{PyNotImplementedError, PyValueError};
+use pyo3::types::{PyBool, PyBytes, PyList, PyString};
 
 // =============================================================================
 // Python conversion

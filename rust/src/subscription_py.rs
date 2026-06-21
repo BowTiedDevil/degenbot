@@ -12,9 +12,9 @@
 //! cannot deadlock — see `async_provider.rs` module-level comment for the
 //! full reasoning.
 
+use crate::prelude::*;
 use crate::subscription::SubscriptionHandle;
 use pyo3::exceptions::{PyRuntimeError, PyStopAsyncIteration};
-use pyo3::prelude::*;
 use pyo3_async_runtimes::tokio::future_into_py;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
