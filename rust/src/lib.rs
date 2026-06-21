@@ -31,7 +31,7 @@ pub mod address_utils_py;
 pub mod alloy_py;
 pub mod async_contract;
 pub mod async_provider;
-
+pub mod c_api;
 pub mod cl_lib_py;
 pub mod contract_py;
 pub mod json_converters;
@@ -143,75 +143,13 @@ use pyo3::prelude::*;
 
 #[pymodule]
 fn degenbot_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Initialize logging bridge from Rust to Python
+    // Initialize logging bridge from Rust to Python. Stays in the module init
+    // (not `c_api::register`) because it is module-lifecycle setup rather than
+    // symbol registration.
     pyo3_log::init();
 
-    // Tick math functions
-    m.add_function(wrap_pyfunction!(tick_math_py::get_sqrt_ratio_at_tick, m)?)?;
-    m.add_function(wrap_pyfunction!(tick_math_py::get_tick_at_sqrt_ratio, m)?)?;
-
-    // Address utilities
-    m.add_function(wrap_pyfunction!(address_utils_py::to_checksum_address, m)?)?;
-
-    // CL math library
-    cl_lib_py::add_cl_lib_module(m)?;
-
-    // ABI decoder functions
-    m.add_function(wrap_pyfunction!(abi_decoder_py::decode, m)?)?;
-    m.add_function(wrap_pyfunction!(abi_decoder_py::decode_single, m)?)?;
-
-    // ABI encoder functions
-    m.add_function(wrap_pyfunction!(abi_encoder_py::encode, m)?)?;
-    m.add_function(wrap_pyfunction!(abi_encoder_py::encode_single, m)?)?;
-
-    // Provider module
-    provider_py::add_provider_module(m)?;
-
-    // Contract module
-    contract_py::add_contract_module(m)?;
-
-    // Uniswap mixed V2/V3/V4 engine
-    m.add_class::<py_binding::PyUniswapArbEngine>()?;
-
-    // Typed verification exceptions (TODO-53b7453b): distinct
-    // `RuntimeError` subclasses so `build_paths` can classify verification
-    // failures by type instead of fragile string matching.
-    m.add(
-        "VerificationMismatchError",
-        m.py().get_type::<py_binding::VerificationMismatchError>(),
-    )?;
-    m.add(
-        "VerificationRpcError",
-        m.py().get_type::<py_binding::VerificationRpcError>(),
-    )?;
-
-    // Typed V4 pool-admission exceptions (Plan 102, slice 2): distinct
-    // `ValueError` subclasses so `build_paths` can classify pool rejections
-    // by type instead of fragile string matching. Mirror of the verification
-    // pattern above.
-    m.add(
-        "HookedPoolRejectedError",
-        m.py().get_type::<py_binding::HookedPoolRejectedError>(),
-    )?;
-    m.add(
-        "DynamicFeePoolRejectedError",
-        m.py().get_type::<py_binding::DynamicFeePoolRejectedError>(),
-    )?;
-
-    // Bot — Rust-owned state
-    m.add_class::<py_bot::PyBot>()?;
-    m.add_class::<py_liquidity_pool::PyLiquidityPool>()?;
-    m.add_class::<py_erc20_token::PyErc20Token>()?;
-
-    // DEX identity presets (ADR-005 slice 6)
-    py_dex_identity::add_dex_identity(m)?;
-
-    // Async modules
-    m.add_class::<async_provider::PyAsyncAlloyProvider>()?;
-    m.add_class::<async_contract::PyAsyncContract>()?;
-
-    // Subscription module
-    m.add_class::<subscription_py::PyAlloySubscription>()?;
-
-    Ok(())
+    // Register every `#[pyfunction]`/`#[pyclass]` surface on the module.
+    // See `c_api.rs` (ergo UG6FKN task KFVI5F) — mirrors polars-python's
+    // `c_api/mod.rs` registration site.
+    c_api::register(m)
 }
