@@ -6,7 +6,7 @@
 use crate::contract::Contract;
 use crate::prelude::*;
 use crate::provider::AlloyProvider;
-use crate::provider_py::PyAlloyProvider;
+use crate::rpc::provider::PyAlloyProvider;
 use pyo3_async_runtimes::tokio::future_into_py;
 use std::sync::Arc;
 

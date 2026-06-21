@@ -556,9 +556,9 @@ impl PyAlloyProvider {
     fn subscribe_blocks(
         &self,
         py: Python<'_>,
-    ) -> PyResult<Py<crate::subscription_py::PyAlloySubscription>> {
+    ) -> PyResult<Py<crate::rpc::subscription::PyAlloySubscription>> {
         let handle = self.provider.subscribe_blocks();
-        let sub = crate::subscription_py::PyAlloySubscription::from_handle(handle);
+        let sub = crate::rpc::subscription::PyAlloySubscription::from_handle(handle);
         Py::new(py, sub)
     }
 
@@ -568,9 +568,9 @@ impl PyAlloyProvider {
     fn subscribe_full_blocks(
         &self,
         py: Python<'_>,
-    ) -> PyResult<Py<crate::subscription_py::PyAlloySubscription>> {
+    ) -> PyResult<Py<crate::rpc::subscription::PyAlloySubscription>> {
         let handle = self.provider.subscribe_full_blocks();
-        let sub = crate::subscription_py::PyAlloySubscription::from_handle(handle);
+        let sub = crate::rpc::subscription::PyAlloySubscription::from_handle(handle);
         Py::new(py, sub)
     }
 
@@ -580,9 +580,9 @@ impl PyAlloyProvider {
     fn subscribe_pending_transactions(
         &self,
         py: Python<'_>,
-    ) -> PyResult<Py<crate::subscription_py::PyAlloySubscription>> {
+    ) -> PyResult<Py<crate::rpc::subscription::PyAlloySubscription>> {
         let handle = self.provider.subscribe_pending_transactions();
-        let sub = crate::subscription_py::PyAlloySubscription::from_handle(handle);
+        let sub = crate::rpc::subscription::PyAlloySubscription::from_handle(handle);
         Py::new(py, sub)
     }
 
@@ -592,9 +592,9 @@ impl PyAlloyProvider {
     fn subscribe_full_pending_transactions(
         &self,
         py: Python<'_>,
-    ) -> PyResult<Py<crate::subscription_py::PyAlloySubscription>> {
+    ) -> PyResult<Py<crate::rpc::subscription::PyAlloySubscription>> {
         let handle = self.provider.subscribe_full_pending_transactions();
-        let sub = crate::subscription_py::PyAlloySubscription::from_handle(handle);
+        let sub = crate::rpc::subscription::PyAlloySubscription::from_handle(handle);
         Py::new(py, sub)
     }
 
@@ -611,7 +611,7 @@ impl PyAlloyProvider {
         py: Python<'_>,
         addresses: Option<Vec<String>>,
         topics: Option<Vec<Vec<String>>>,
-    ) -> PyResult<Py<crate::subscription_py::PyAlloySubscription>> {
+    ) -> PyResult<Py<crate::rpc::subscription::PyAlloySubscription>> {
         use alloy::rpc::types::{Filter, Topic};
 
         let mut filter = Filter::new();
@@ -647,7 +647,7 @@ impl PyAlloyProvider {
         }
 
         let handle = self.provider.subscribe_logs(filter);
-        let sub = crate::subscription_py::PyAlloySubscription::from_handle(handle);
+        let sub = crate::rpc::subscription::PyAlloySubscription::from_handle(handle);
         Py::new(py, sub)
     }
 

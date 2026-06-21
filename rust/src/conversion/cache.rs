@@ -18,7 +18,7 @@
 //! `Python::attach()` calls in this module run on Tokio worker threads after
 //! async RPC calls complete. These may block briefly while the Python event
 //! loop or another Python thread holds the GIL. This cannot deadlock — see
-//! `async_provider.rs` module-level comment for the full reasoning.
+//! `rpc::async_provider.rs` module-level comment for the full reasoning.
 
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyAnyMethods, PyBytes, PyDictMethods};

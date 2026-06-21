@@ -11,11 +11,7 @@ use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
 
 use crate::bot::engine;
-use crate::{
-    abi_decoder_py, abi_encoder_py, address_utils_py, async_contract, async_provider, cl_lib_py,
-    contract_py, provider_py, py_bot, py_dex_identity, py_erc20_token, py_liquidity_pool,
-    subscription_py, tick_math_py,
-};
+use crate::{abi, bot, cl_math, rpc, uniswap};
 
 /// Register every Rust-wrapped symbol on the Python module `m`.
 ///
@@ -25,28 +21,34 @@ use crate::{
 /// is module-lifecycle setup, not symbol registration.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Tick math functions
-    m.add_function(wrap_pyfunction!(tick_math_py::get_sqrt_ratio_at_tick, m)?)?;
-    m.add_function(wrap_pyfunction!(tick_math_py::get_tick_at_sqrt_ratio, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        cl_math::tick_math::get_sqrt_ratio_at_tick,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        cl_math::tick_math::get_tick_at_sqrt_ratio,
+        m
+    )?)?;
 
     // Address utilities
-    m.add_function(wrap_pyfunction!(address_utils_py::to_checksum_address, m)?)?;
+    m.add_function(wrap_pyfunction!(uniswap::address::to_checksum_address, m)?)?;
 
     // CL math library
-    cl_lib_py::add_cl_lib_module(m)?;
+    cl_math::cl_lib::add_cl_lib_module(m)?;
 
     // ABI decoder functions
-    m.add_function(wrap_pyfunction!(abi_decoder_py::decode, m)?)?;
-    m.add_function(wrap_pyfunction!(abi_decoder_py::decode_single, m)?)?;
+    m.add_function(wrap_pyfunction!(abi::decoder::decode, m)?)?;
+    m.add_function(wrap_pyfunction!(abi::decoder::decode_single, m)?)?;
 
     // ABI encoder functions
-    m.add_function(wrap_pyfunction!(abi_encoder_py::encode, m)?)?;
-    m.add_function(wrap_pyfunction!(abi_encoder_py::encode_single, m)?)?;
+    m.add_function(wrap_pyfunction!(abi::encoder::encode, m)?)?;
+    m.add_function(wrap_pyfunction!(abi::encoder::encode_single, m)?)?;
 
     // Provider module
-    provider_py::add_provider_module(m)?;
+    rpc::provider::add_provider_module(m)?;
 
     // Contract module
-    contract_py::add_contract_module(m)?;
+    rpc::contract::add_contract_module(m)?;
 
     // Uniswap mixed V2/V3/V4 engine
     m.add_class::<engine::PyUniswapArbEngine>()?;
@@ -77,19 +79,19 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
 
     // Bot — Rust-owned state
-    m.add_class::<py_bot::PyBot>()?;
-    m.add_class::<py_liquidity_pool::PyLiquidityPool>()?;
-    m.add_class::<py_erc20_token::PyErc20Token>()?;
+    m.add_class::<bot::PyBot>()?;
+    m.add_class::<bot::pool::PyLiquidityPool>()?;
+    m.add_class::<bot::token::PyErc20Token>()?;
 
     // DEX identity presets (ADR-005 slice 6)
-    py_dex_identity::add_dex_identity(m)?;
+    bot::dex_identity::add_dex_identity(m)?;
 
     // Async modules
-    m.add_class::<async_provider::PyAsyncAlloyProvider>()?;
-    m.add_class::<async_contract::PyAsyncContract>()?;
+    m.add_class::<rpc::async_provider::PyAsyncAlloyProvider>()?;
+    m.add_class::<rpc::async_contract::PyAsyncContract>()?;
 
     // Subscription module
-    m.add_class::<subscription_py::PyAlloySubscription>()?;
+    m.add_class::<rpc::subscription::PyAlloySubscription>()?;
 
     Ok(())
 }

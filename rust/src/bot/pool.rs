@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use pyo3::types::PyDict;
 
-use crate::py_bot::journal_err_to_py;
+use crate::bot::journal_err_to_py;
 use degenbot_bot::bot_core::{BotState, TickInfo};
 
 /// Encode a byte slice as a lowercase hex string (no "0x" prefix).

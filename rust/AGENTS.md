@@ -11,8 +11,8 @@ Every Rust-accelerated feature follows three layers with strict separation of co
 - Imports from `degenbot_rs`; adds Python-idiomatic convenience methods (rich `__repr__`, `Fraction`-based prices, database lookups, publisher/subscriber).
 - Knows nothing about Rust internals.
 
-**Layer 2 — PyO3 Bindings** (`foo_py.rs`)
-- `#[pyclass]` / `#[pyfunction]` only, in `*_py.rs` files and `#[pyfunction]` entry points.
+**Layer 2 — PyO3 Bindings** (`rust/src/<domain>/<name>.rs`)
+- `#[pyclass]` / `#[pyfunction]` only; files live in per-domain subdirs mirroring the seven core crates (`abi/`, `cl_math/`, `rpc/`, `uniswap/`, `bot/` [+ `bot/engine/`]).
 - Converts between Rust and Python types: argument extraction → GIL release → core call → result wrapping.
 - Contains **no business logic**.
 
@@ -49,17 +49,15 @@ glues them to Python via PyO3. See [`plans/completed/103-rust-workspace-split.md
 | File | Purpose |
 |------|---------|
 | `lib.rs` | Python module entry point (`#[pymodule]`), re-exports `pub use degenbot_{core,cl_math,abi,rpc,bot}::{...}`, `pyo3_log::init()`, `#[ctor]` pre-test Python init |
-| `alloy_py.rs` | Newtype wrappers (`PyU256`, `PyI256`) for zero-copy U256/I256 → Python int via `int.from_bytes`; `extract_python_u256`; `abi_value_from_python`. Shared by all `*_py` wrappers |
-| `py_cache.rs` | Cached Python function/class refs (`int.from_bytes`, `HexBytes`) via `PyOnceLock` |
-| `py_converters.rs` | GIL-bound converters for RPC types: `log_to_py_dict`, `block_to_py_dict`, `json_to_py_with_hexbytes`; field-aware `HexBytes`/address/int detection |
-| `json_converters.rs` | JSON RPC response converters feeding `py_converters` |
-| `abi_decoder_py.rs` / `abi_encoder_py.rs` | `#[pyfunction]` wrappers over `degenbot_abi::{abi_decoder, abi_encoder}` |
-| `address_utils_py.rs` | `#[pyfunction]` wrapper for address utilities |
-| `tick_math_py.rs` / `cl_lib_py.rs` | `PyO3` wrappers for V3 tick math (over `degenbot_cl_math::cl_lib`) |
-| `provider_py.rs` / `contract_py.rs` / `subscription_py.rs` | `PyO3` bindings over `degenbot_rpc` (incl. GIL-bound `drain_buffer`/`DrainResult`, absorbed from the pure core in slice 5) |
-| `async_provider.rs` / `async_contract.rs` | Async wrappers via `pyo3-async-runtimes` |
-| `py_bot.rs` / `py_liquidity_pool.rs` / `py_erc20_token.rs` / `py_dex_identity.rs` | ADR-005 three-layer `PyBot`/`PyLiquidityPool`/`PyErc20Token`/`PyDexIdentity` wrappers over `degenbot_bot::bot_core` + `degenbot_uniswap::dex_identity` (DexIdentity presets reached via the direct path dep). Absorbed the GIL-bound `DrainResult`/`convert_item`/`drain_buffer` from `subscription.rs` (slice 5). `PyBot::unregister_pool` (ADR-007) is the symmetric removal half of the V2/V3 register seam — `pool_id`s are **retired** (not reused; `next_pool_id` only advances) so a stale handle cannot alias to a different pool on recreate. V4 removal is engine-side (deferred). |
-| `py_binding.rs` | `PyUniswapArbEngine` + the `Verification*Error`/`*RejectedError` `#[create_exception]` types over `degenbot_bot::optimizers::uniswap_engine`. Absorbed from `uniswap_engine/py_binding.rs` (slice 6); still root here — needs `alloy_py`/`runtime` glue |
+| `c_api.rs` | `#[pymodule]` symbol registration site (`add_class`/`add_function`/`wrap_pyfunction!`) — every PyO3 symbol is registered here, mirroring `polars-python/src/c_api/mod.rs` (ergo UG6FKN task KFVI5F) |
+| `prelude.rs` | Curated re-export surface (`pyo3::prelude::*`, the `conversion::*` module namespace, the most-used `crate::address_utils`/`errors`/`runtime`) so wrapper files open with `use crate::prelude::*;` (ergo UG6FKN task ZNCAWD) |
+| `conversion/` | Shared `PyO3`-dependent converters (no `#[pyfunction]`, but create Python objects): `alloy.rs` (`PyU256`/`PyI256` newtypes, `extract_python_u256`, `abi_value_from_python`), `cache.rs` (cached `int.from_bytes`/`HexBytes` refs via `PyOnceLock`), `rpc_types.rs` (GIL-bound `log_to_py_dict`/`block_to_py_dict`/`json_to_py_with_hexbytes`), `json.rs` (JSON RPC response converters). (ergo UG6FKN task XRF6HV.) |
+| `abi/` | `degenbot-abi` PyO3 wrappers: `decoder.rs` / `encoder.rs` — `#[pyfunction]` over `degenbot_abi::{abi_decoder, abi_encoder}` |
+| `cl_math/` | `degenbot-cl-math` PyO3 wrappers: `tick_math.rs` / `cl_lib.rs` over `degenbot_cl_math::cl_lib` |
+| `rpc/` | `degenbot-rpc` PyO3 wrappers: `provider.rs` / `contract.rs` / `subscription.rs` (incl. GIL-bound `drain_buffer`/`DrainResult`, absorbed from the pure core in slice 5) + `async_provider.rs` / `async_contract.rs` (async via `pyo3-async-runtimes`) |
+| `uniswap/` | `degenbot-uniswap` PyO3 wrappers: `address.rs` — `#[pyfunction]` over `degenbot_core::address_utils` |
+| `bot/` | `degenbot-bot` PyO3 wrappers: `mod.rs` (`PyBot` — `#[pyclass]` holding `Arc<RwLock<BotState>>` + `PyBot::unregister_pool` ADR-007), `pool.rs` (`PyLiquidityPool`), `token.rs` (`PyErc20Token`), `dex_identity.rs` (`PyDexIdentity`) + the `engine/` subdir. Absorbed the GIL-bound `DrainResult`/`convert_item`/`drain_buffer` from `subscription.rs` (slice 5). `pool_id`s are **retired** (not reused; `next_pool_id` only advances) so a stale handle cannot alias to a different pool on recreate. V4 removal is engine-side (deferred). |
+| `bot/engine/` | `PyUniswapArbEngine` (`#[pyclass]`) + the `Verification*Error`/`*RejectedError` `#[create_exception]` types (`errors.rs`) over `degenbot_bot::optimizers::uniswap_engine`. Split into per-concern `#[pymethods]` impl blocks (`register`/`snapshot`/`verify`/`solve`/`result_channel`) — PyO3's multiple-`#[pymethods]`-per-type support, mirroring `polars-python/src/expr/`'s 17-file `PyExpr` split and the existing `crates/degenbot-bot/src/optimizers/uniswap_engine/` core split. (ergo UG6FKN task 74W2Z6.) |
 
 #### `degenbot-core` — `rust/crates/degenbot-core/src/`
 
@@ -168,19 +166,27 @@ root cdylib (`py_bot.rs`, `py_binding.rs`) — they need `alloy_py`/`py_cache`.
 
 ### Module Naming Convention
 
-Files follow a strict naming convention that signals their `PyO3` dependency —
-split across the workspace: **core crates** hold `foo.rs` pure cores; the **root
-cdylib** holds the `foo_py.rs` wrappers (they need `alloy_py`/`py_cache` glue).
+Files are organized into **per-domain subdirs mirroring the seven core crates**
+(`rust/src/abi/`, `cl_math/`, `rpc/`, `uniswap/`, `bot/`[+ `bot/engine/`]), with a `conversion/`
+dir for shared `PyO3`-dependent converters. Core crates hold `foo.rs` pure cores; the
+root cdylib's per-domain subdirs hold the `foo.rs` PyO3 wrappers (they need
+`conversion::alloy`/`conversion::cache` glue). **The `*_py.rs` filename convention
+is dropped inside the binding crate** — every file there is "py" by default; the
+**workspace/crate boundary** (the core crates are `pyo3`-free — verify with
+`just check-no-pyo3-in-cores`) is the separator that matters, not a filename
+suffix. (Ergo UG6FKN task WXHGOH — mirrors `polars-python/src/`, which has exactly
+one `*_py.rs` file.)
 
 | Pattern | Meaning | Example |
 |---------|---------|--------|
-| `foo.rs` | Pure Rust core — zero `pyo3` imports | `hex_utils.rs` (core), `provider.rs` (rpc), `address_utils.rs` (core) |
-| `foo_py.rs` | `PyO3` wrappers only — `#[pyfunction]`, `#[pyclass]`, type conversion | `tick_math_py.rs`, `provider_py.rs`, `contract_py.rs` |
-| `foo_py.rs` (conversion) | `PyO3`-dependent converters (no `#[pyfunction]`, but creates Python objects) | `py_converters.rs`, `alloy_py.rs`, `py_cache.rs` |
+| `foo.rs` | Pure Rust core — zero `pyo3` imports | `hex_utils.rs` (core), `crates/degenbot-rpc/src/provider.rs` (rpc), `address_utils.rs` (core) |
+| `<domain>/foo.rs` | Binding-layer `PyO3` wrapper — `#[pyfunction]`/`#[pyclass]`/type conversion | `rpc/provider.rs`, `abi/decoder.rs`, `bot/mod.rs` (`PyBot`), `bot/engine/register.rs` |
+| `conversion/foo.rs` | `PyO3`-dependent converters (no `#[pyfunction]`, but create Python objects) | `conversion/alloy.rs`, `conversion/cache.rs`, `conversion/rpc_types.rs` |
 
-**Rule**: If `pyo3` appears in a file that isn't named `*_py.rs` or isn't a `PyO3`-only conversion module, it's a code smell. Consider splitting the pure Rust logic into a separate file.
-
-**Exception**: `alloy_py.rs` is named with `_py` suffix because its entire purpose is `PyO3` type conversion, even though it doesn't contain `#[pyfunction]` entries.
+**Rule**: `pyo3` may only appear in the binding crate (`rust/src/`) or in a core crate's
+`pyo3`-gated feature (the `just check-no-pyo3-in-cores` gate enforces cores stay
+`pyo3`-free under default features). If `pyo3` appears in a core file outside its
+opt-in feature, it's a code smell — split the pure Rust logic out.
 
 ### ABI Types: String Interface Decision
 
@@ -189,7 +195,7 @@ cdylib** holds the `foo_py.rs` wrappers (they need `alloy_py`/`py_cache` glue).
 - Exposing `AbiType` as a `#[pyclass]` would add API surface without clear benefit
 - Invalid type strings (e.g., `"uint56"`) surface errors at encoding/decoding time, which is the expected behavior
 
-If type-safe ABI construction becomes valuable later, add it as a separate `abi_types_py.rs` module.
+If type-safe ABI construction becomes valuable later, add it as a separate `abi/abi_types.rs`.
 
 ## Design Principles for New Rust Modules
 

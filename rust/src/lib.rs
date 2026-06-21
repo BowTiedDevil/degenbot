@@ -12,35 +12,25 @@
 //! - [`address_utils`] - Ethereum address utilities (EIP-55 checksumming)
 //! - [`errors`] - Centralized error types with `thiserror`
 //! - [`provider`] - Ethereum RPC provider with Alloy (HTTP, WS, IPC)
-//! - [`provider_py`] - `PyO3` bindings for sync provider
-//! - [`async_provider`] - Async Ethereum provider wrapper
+//! - [`rpc::provider`] - `PyO3` bindings for sync provider
+//! - [`rpc::async_provider`] - Async Ethereum provider wrapper
 //! - [`contract`] - Smart contract interface with ABI encoding/decoding
-//! - [`contract_py`] - `PyO3` bindings for contract
-//! - [`async_contract`] - Async contract wrapper with batch calls
+//! - [`rpc::contract`] - `PyO3` bindings for contract
+//! - [`rpc::async_contract`] - Async contract wrapper with batch calls
 //! - [`signature_parser`] - Robust function signature parsing
 //! - [`runtime`] - Shared Tokio runtime singleton
 //! - [`hex_utils`] - Pure-Rust hex encoding/decoding (no `PyO3` dependency)
 //!
 //! See individual module documentation for usage examples.
 
-pub mod abi_decoder_py;
-pub mod abi_encoder_py;
-pub mod address_utils_py;
-pub mod async_contract;
-pub mod async_provider;
+pub mod abi;
 pub mod bot;
 pub mod c_api;
-pub mod cl_lib_py;
-pub mod contract_py;
+pub mod cl_math;
 pub mod conversion;
 pub mod prelude;
-pub mod provider_py;
-pub mod py_bot;
-pub mod py_dex_identity;
-pub mod py_erc20_token;
-pub mod py_liquidity_pool;
-pub mod subscription_py;
-pub mod tick_math_py;
+pub mod rpc;
+pub mod uniswap;
 
 // The foundational core modules live in the `degenbot-core` workspace member.
 // Re-exported here as `crate::errors` / `crate::hex_utils` / etc. so every
@@ -58,16 +48,16 @@ pub use degenbot_cl_math::cl_lib;
 // The ABI type/decode/encode + signature-parsing core lives in the
 // `degenbot-abi` workspace member. Re-exported as `crate::abi_types` /
 // `crate::abi_decoder` / `crate::abi_encoder` / `crate::signature_parser` so
-// every existing call site in the binding layer (`contract`, `contract_py`,
+// every existing call site in the binding layer (`contract`, `rpc::contract`,
 // `conversion::alloy`, `degenbot-uniswap::v2_encoding`) keeps resolving. The `#[pyfunction]`
-// wrappers (`decode`/`encode`) live in `abi_decoder_py` / `abi_encoder_py`.
+// wrappers (`decode`/`encode`) live in `abi::decoder` / `abi::encoder`.
 pub use degenbot_abi::{abi_decoder, abi_encoder, abi_types, signature_parser};
 
 // The RPC provider / contract / subscription core lives in the
 // `degenbot-rpc` workspace member. Re-exported as `crate::provider` /
 // `crate::contract` / `crate::subscription` so every existing call site in the
-// binding layer (`provider_py`, `contract_py`, `subscription_py`,
-// `async_provider`, `async_contract`) keeps resolving. The `#[pyfunction]`
+// binding layer (`rpc::provider`, `rpc::contract`, `rpc::subscription`,
+// `rpc::async_provider`, `rpc::async_contract`) keeps resolving. The `#[pyfunction]`
 // wrappers + the GIL-bound `drain_buffer`/`DrainResult` stay in the root
 // `*_py` modules (they need `conversion::cache` / `conversion::rpc_types`).
 pub use degenbot_rpc::{contract, provider, subscription};
@@ -80,8 +70,8 @@ pub use degenbot_rpc::{contract, provider, subscription};
 // binding layer keeps resolving. The `#[pyclass]`/`#[pyfunction]` wrappers
 // (`PyBot`, `PyLiquidityPool`, `PyErc20Token`, `PyDexIdentity`,
 // `PyUniswapArbEngine`, the `Verification*Error`/`*RejectedError` exception
-// types) live in the `py_bot` / `py_liquidity_pool` / `py_erc20_token` /
-// `py_dex_identity` modules and the `bot::engine` subdir (they need `conversion::alloy` / `conversion::cache`).
+// types) live in the `bot` / `bot::pool` / `bot::token` /
+// `bot::dex_identity` modules and the `bot::engine` subdir (they need `conversion::alloy` / `conversion::cache`).
 pub use degenbot_bot::{bot_core, optimizers};
 
 // The pure Uniswap V2/V3/V4 event-log decoders live in the `degenbot-decoders`
@@ -96,12 +86,12 @@ pub use degenbot_bot::{bot_core, optimizers};
 // DEX identity presets (`DexIdentity`/`DexVariant`/`ReservesAbi`) and the V2
 // swap callldata encoder (`encode_v2_swap`/`EncodedCall`). No `pub use`
 // re-export: the binding layer reaches these via the direct path dependency in
-// `py_dex_identity` (and `bot_core` reaches `v2_encoding` directly).
+// `bot::dex_identity` (and `bot_core` reaches `v2_encoding` directly).
 
 // Re-export commonly used items at the crate root
 pub use address_utils::{parse_address, to_checksum_address_bytes, to_checksum_address_str};
-pub use address_utils_py::to_checksum_address;
 pub use hex_utils::{decode_hex, encode_hex, HexError};
+pub use uniswap::address::to_checksum_address;
 
 pub use cl_lib::tick_math::{
     get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO,
@@ -110,8 +100,8 @@ pub use cl_lib::tick_math::{
 pub use cl_lib::{
     bit_math, full_math, functions, liquidity_math, sqrt_price_math, swap_math, unsafe_math,
 };
+pub use cl_math::tick_math::{get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio};
 pub use errors::{AbiDecodeError, AddressError, ClMathError, ProviderError, TickMathError};
-pub use tick_math_py::{get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio};
 
 /// Ensure Python is initialized before the test harness spawns threads.
 ///
