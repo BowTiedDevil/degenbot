@@ -412,7 +412,7 @@ pub struct PyUniswapArbEngine {
     v3_snapshot: SnapshotStore<Address>,
     /// V4 snapshot tick data, loaded via `load_v4_snapshot()` and consumed
     /// at registration time. One-way transfer: `remove()` not `clone()`.
-    v4_snapshot: SnapshotStore<(Address, degenbot_bot::bot_core::v4_swap_decoder::PoolId)>,
+    v4_snapshot: SnapshotStore<(Address, degenbot_decoders::v4_swap_decoder::PoolId)>,
 }
 
 /// Python-facing subscribe state.
@@ -2864,9 +2864,7 @@ fn make_tick_info(liquidity_gross: u128, liquidity_net: i128) -> degenbot_bot::b
 }
 
 /// Helper to decode a hex string (e.g. "0xabcd...") to a V4 `PoolId` ([u8; 32]).
-fn hex_string_to_pool_id(
-    hex_str: &str,
-) -> PyResult<degenbot_bot::bot_core::v4_swap_decoder::PoolId> {
+fn hex_string_to_pool_id(hex_str: &str) -> PyResult<degenbot_decoders::v4_swap_decoder::PoolId> {
     let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
     if hex_str.len() != 64 {
         let msg = format!(

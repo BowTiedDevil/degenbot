@@ -42,12 +42,12 @@ use alloy::rpc::types::{Filter, Log, Topic};
 use futures_util::{stream, StreamExt};
 use tokio::time::timeout;
 
-use crate::bot_core::v3_mint_burn_decoder::{V3_BURN_TOPIC, V3_MINT_TOPIC};
-use crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC;
-use crate::bot_core::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC;
-use crate::bot_core::v4_swap_decoder::V4_SWAP_TOPIC;
 use crate::bot_core::{drain_sink::DrainSink, BlockMetadata, Bot};
-use crate::optimizers::v2_sync_decoder::V2_SYNC_TOPIC;
+use degenbot_decoders::v2_sync_decoder::V2_SYNC_TOPIC;
+use degenbot_decoders::v3_mint_burn_decoder::{V3_BURN_TOPIC, V3_MINT_TOPIC};
+use degenbot_decoders::v3_swap_decoder::V3_SWAP_TOPIC;
+use degenbot_decoders::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC;
+use degenbot_decoders::v4_swap_decoder::V4_SWAP_TOPIC;
 use degenbot_rpc::provider::AlloyProvider;
 
 /// How long to wait with no activity before assuming the connection is dead.

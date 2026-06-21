@@ -35,7 +35,7 @@
 use alloy::primitives::{Address, B256, I256};
 use alloy::rpc::types::Log;
 
-use crate::bot_core::v4_swap_decoder::PoolId;
+use crate::v4_swap_decoder::PoolId;
 
 /// Keccak256 of `ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)`.
 pub const V4_MODIFY_LIQUIDITY_TOPIC: B256 = B256::new([
@@ -372,7 +372,7 @@ mod tests {
         let inner = alloy::primitives::Log::new_unchecked(
             Address::ZERO,
             vec![
-                crate::bot_core::v4_swap_decoder::V4_SWAP_TOPIC,
+                crate::v4_swap_decoder::V4_SWAP_TOPIC,
                 B256::from(pool_id),
                 sender.into_word(),
             ],
@@ -418,6 +418,6 @@ mod tests {
             removed: false,
         };
 
-        assert!(crate::bot_core::v4_swap_decoder::decode_v4_swap_log(&log).is_none());
+        assert!(crate::v4_swap_decoder::decode_v4_swap_log(&log).is_none());
     }
 }

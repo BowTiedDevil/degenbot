@@ -233,10 +233,8 @@ mod tests {
     //     wiring). A registered V2 pool + a real Sync log + a removed-flag
     //     variant. Verifies the per-event restore + the subscriber notify.
 
-    /// The V2 `Sync` topic, duplicated here from `optimizers::v2_sync_decoder`
-    /// to avoid a cross-module test import (the constant is `pub` there, but
-    /// the test module is in `bot_core` and importing from `optimizers`
-    /// would reverse the layering edge the slice avoids).
+    /// The V2 `Sync` topic, duplicated here from `degenbot_decoders::v2_sync_decoder`
+    /// to keep the test self-contained.
     const V2_SYNC_TOPIC: alloy::primitives::B256 = alloy::primitives::B256::new([
         0x1c, 0x41, 0x1e, 0x9a, 0x96, 0xe0, 0x71, 0x24, 0x1c, 0x2f, 0x21, 0xf7, 0x72, 0x6b, 0x17,
         0xae, 0x89, 0xe3, 0xca, 0xb4, 0xc7, 0x8b, 0xe5, 0x0e, 0x06, 0x2b, 0x03, 0xa9, 0xff, 0xfb,
@@ -446,7 +444,7 @@ mod tests {
         block_number: u64,
         removed: bool,
     ) -> Log {
-        use crate::bot_core::v3_swap_decoder::V3_SWAP_TOPIC;
+        use degenbot_decoders::v3_swap_decoder::V3_SWAP_TOPIC;
         let sender = Address::from([0xbbu8; 20]);
         let recipient = Address::from([0xccu8; 20]);
         let amount0 = I256::try_from(-1_000_i128).unwrap();
@@ -606,7 +604,7 @@ mod tests {
     /// tick = 0.
     fn bot_with_v4(
         pool_manager: Address,
-        pool_id: crate::bot_core::v4_swap_decoder::PoolId,
+        pool_id: degenbot_decoders::v4_swap_decoder::PoolId,
         update_block: u64,
     ) -> (Arc<Bot>, u64, Arc<CountingSubscriber>) {
         use crate::bot_core::{PoolTickCoverage, RegisterV4PoolParams, V4PoolKey};
@@ -648,15 +646,15 @@ mod tests {
     #[allow(clippy::too_many_arguments)]
     fn make_v4_swap_log(
         pool_manager: Address,
-        pool_id: crate::bot_core::v4_swap_decoder::PoolId,
+        pool_id: degenbot_decoders::v4_swap_decoder::PoolId,
         sqrt_price_x96: U256,
         liquidity: u128,
         tick: i32,
         block_number: u64,
         removed: bool,
     ) -> Log {
-        use crate::bot_core::v4_swap_decoder::V4_SWAP_TOPIC;
         use alloy::primitives::B256;
+        use degenbot_decoders::v4_swap_decoder::V4_SWAP_TOPIC;
         let sender = Address::from([0xbbu8; 20]);
         let amount0 = I256::try_from(-1_000_i128).unwrap();
         let amount1 = I256::try_from(4_000_i128).unwrap();
@@ -700,7 +698,7 @@ mod tests {
     #[test]
     fn dispatch_reorg_log_v4_single_delta_at_target_restores_to_registration() {
         let pool_manager = Address::from([0x44u8; 20]);
-        let pool_id_bytes: crate::bot_core::v4_swap_decoder::PoolId = [0xeeu8; 32];
+        let pool_id_bytes: degenbot_decoders::v4_swap_decoder::PoolId = [0xeeu8; 32];
         let (bot, pool_id, sub) = bot_with_v4(pool_manager, pool_id_bytes, 5);
         let count = || *sub.notifies.lock().unwrap();
 
@@ -757,7 +755,7 @@ mod tests {
     #[test]
     fn dispatch_reorg_log_v4_empty_journal_is_too_deep() {
         let pool_manager = Address::from([0x44u8; 20]);
-        let pool_id_bytes: crate::bot_core::v4_swap_decoder::PoolId = [0xefu8; 32];
+        let pool_id_bytes: degenbot_decoders::v4_swap_decoder::PoolId = [0xefu8; 32];
         let (bot, pool_id, _sub) = bot_with_v4(pool_manager, pool_id_bytes, 5);
         assert!(bot
             .state

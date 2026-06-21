@@ -38,8 +38,8 @@ pub fn decode(py: Python<'_>, types: Vec<String>, data: &[u8]) -> PyResult<Py<Py
 
 ### Module Organization
 
-The Rust extension is a **Cargo workspace** of five pure-Rust core crates
-(`degenbot-core`, `-cl-math`, `-abi`, `-rpc`, `-bot`) plus a root `degenbot_rs`
+The Rust extension is a **Cargo workspace** of six pure-Rust core crates
+(`degenbot-core`, `-cl-math`, `-abi`, `-rpc`, `-decoders`, `-bot`) plus a root `degenbot_rs`
 **cdylib binding layer**. The core crates have **no `pyo3` dependency**
 (compiler-enforced; verify with `just check-no-pyo3-in-cores`); the root cdylib
 glues them to Python via PyO3. See [`plans/completed/103-rust-workspace-split.md`](../plans/completed/103-rust-workspace-split.md).
@@ -100,6 +100,30 @@ Pure provider/contract/subscription core, + the `test-utils` feature exposing
 | `contract.rs` | Smart contract interface with `FunctionSignature` parsing |
 | `subscription.rs` | WS subscription pure core (double-buffer `SubscriptionHandle`, `RawSubItem`, `drain_raw`, `pump_*`). The GIL-bound `drain_buffer`/`DrainResult`/`convert_item` moved to root `subscription_py.rs` (slice 5) |
 
+#### `degenbot-decoders` — `rust/crates/degenbot-decoders/src/`
+
+Pure Uniswap V2/V3/V4 event-log decoders (Plan 104). An **alloy-only leaf** —
+no `pyo3`, no `tokio`, no `degenbot-core`, no `degenbot-abi`. Each decoder
+hand-slices EVM log bytes and returns a plain `Option<Event>` struct, making
+them independently testable without a Python interpreter and reusable in
+non-Python Rust code (a standalone consumer can decode a V3 `Swap` log without
+pulling the engine/pump/RPC stack).
+
+The **state-coupled dispatch layer** (`LogDecoder` trait, `DecodedPoolEvent`,
+`LogDispatcher` bus, `PoolStateSubscriber`) stays in `degenbot-bot`'s
+`bot_core/log_dispatcher.rs` — those touch `BotState` and reach the leaf
+decode fns via `degenbot_decoders::`. Extension seam: a future Curve/Aave
+event decoder lands here alongside the Uniswap ones; `LogDispatcher::register_decoder`
+consumes any `impl LogDecoder`.
+
+| File | Purpose |
+|------|---------|
+| `v2_sync_decoder.rs` | V2 `Sync(uint112,uint112)` — `V2_SYNC_TOPIC`, `SyncEvent`, `decode_sync_log` |
+| `v3_swap_decoder.rs` | V3 `Swap` — `V3_SWAP_TOPIC`, `V3SwapEvent`, `decode_v3_swap_log`, `PoolId` (V4 shared) |
+| `v3_mint_burn_decoder.rs` | V3 `Mint`/`Burn` — `V3_MINT_TOPIC`/`V3_BURN_TOPIC`, `decode_v3_mint_log`/`decode_v3_burn_log` |
+| `v4_swap_decoder.rs` | V4 `Swap` from `PoolManager` — `V4_SWAP_TOPIC`, `decode_v4_swap_log` |
+| `v4_modify_liquidity_decoder.rs` | V4 `ModifyLiquidity` (signed delta, replaces V3 Mint/Burn) — `V4_MODIFY_LIQUIDITY_TOPIC`, `decode_v4_modify_liquidity_log` |
+
 #### `degenbot-bot` — `rust/crates/degenbot-bot/src/`
 
 One crate by ADR-003: the `bot_core` (state) ↔ `optimizers` (solvers) seam is
@@ -109,7 +133,7 @@ root cdylib (`py_bot.rs`, `py_binding.rs`) — they need `alloy_py`/`py_cache`.
 
 | Module | Purpose |
 |--------|---------|
-| `bot_core/` | `BotState` single-owner state, `engine.rs`, `block_pump.rs`, `log_dispatcher.rs`, `solve_coordinator.rs`, `reorg_coordinator.rs`, `state_history.rs` (reorg journal), `liquidity_verifier.rs`, `tick_bitmap.rs`/`tick_map.rs`, `v2_encoding.rs`, `v3_*`/`v4_*` (state + decoders), `dex_identity.rs`, `drain_sink.rs`. Documented in [`docs/architecture/rust-owned-bot.md`](../docs/architecture/rust-owned-bot.md) and [`CONTEXT.md`](CONTEXT.md) |
+| `bot_core/` | `BotState` single-owner state, `engine.rs`, `block_pump.rs`, `log_dispatcher.rs` (the `LogDecoder` trait + `DecodedPoolEvent` + `LogDispatcher` bus + `PoolStateSubscriber` — the state-coupled dispatch layer), `solve_coordinator.rs`, `reorg_coordinator.rs`, `state_history.rs` (reorg journal), `liquidity_verifier.rs`, `tick_bitmap.rs`/`tick_map.rs`, `v2_encoding.rs`, `v3_state.rs`/`v4_state.rs` (V3/V4 pool state — the pure event-log **decoders** moved to `degenbot-decoders`, see below), `dex_identity.rs`, `drain_sink.rs`. Documented in [`docs/architecture/rust-owned-bot.md`](../docs/architecture/rust-owned-bot.md) and [`CONTEXT.md`](CONTEXT.md) |
 | `optimizers/` | Möbius solvers (`mobius_int_exact.rs`, `mobius_v3_int.rs`, `mobius_int.rs`), `affected_keys.rs`/`liquidity_event_buffer.rs`, + `uniswap_engine/` sub-module (`diagnostic`, `event_routing`, `solver_dispatch`, `lifecycle`, `snapshot_verify`, `result_channel`, `tests`). See [`docs/architecture/rust-owned-bot.md`](../docs/architecture/rust-owned-bot.md) §5 |
 
 ### Key Design Patterns
