@@ -2,7 +2,7 @@
 
 Verifies that V4-V4 different-currency paths (e.g., WETH→USDC→ETH)
 produce:
-- First swap: specified amount (kickstart from optimizer)
+- First swap: specified amount (kickstart from solver)
 - Second swap: dynamic amount (contract derives from actual deltas)
 - Correct V4SwapPayload ABI encoding including the dynamic_amount flag
 """
@@ -71,7 +71,7 @@ class TestV4V4DynamicAmount:
     """V4-V4 encoding with dynamic amounts for subsequent swaps."""
 
     def test_first_swap_is_specified_amount(self) -> None:
-        """First swap uses the optimizer's kickstart amount (dynamic_amount=False)."""
+        """First swap uses the solver's kickstart amount (dynamic_amount=False)."""
         # WETH→USDC at pool A (zfo=True if WETH < USDC, False otherwise)
         swap_a = _make_v4_swap(
             token0=WETH_ADDRESS,

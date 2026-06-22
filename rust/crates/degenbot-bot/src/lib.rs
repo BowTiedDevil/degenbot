@@ -2,10 +2,10 @@
 //! Uniswap V2/V3/V4 engine, combined into one crate.
 //!
 //! Per ADR-003, `bot_core` (the `BotState` single-owner state, decoders,
-//! reorg journal, verifier, pump) and `optimizers` (the Möbius solvers and
+//! reorg journal, verifier, pump) and `solvers` (the Möbius solvers and
 //! the `UniswapEngine` path/solver/dispatch layer) are a **mutually coupled
 //! pair** — ~30 cross-references each way (`BotState` needs
-//! `IntHopState`/`IntV3TickRangeSequence`/decoders from `optimizers`; the
+//! `IntHopState`/`IntV3TickRangeSequence`/decoders from `solvers`; the
 //! engine needs `BotState`/`V3PoolState`/`TickInfo`/`PoolStateSubscriber`
 //! from `bot_core`). ADR-003 explicitly refuses to extract a `LiquidityMap`
 //! generic against this sample-of-one, so the two live in one crate here
@@ -20,13 +20,13 @@
 //! `degenbot_rs` cdylib's `py_bot` / `py_liquidity_pool` / `py_erc20_token` /
 //! `py_dex_identity` / `py_binding` modules — they need `conversion::alloy` /
 //! `conversion::cache` (binding-layer concerns). They reach the pure core through
-//! `degenbot_bot::{bot_core, optimizers}`.
+//! `degenbot_bot::{bot_core, solvers}`.
 //!
 //! # Modules
 //!
 //! - [`bot_core`] — `BotState`, decoders, reorg journal, liquidity verifier,
 //!   block pump, log/solve/reorg coordinators, V2/V3/V4 state.
-//! - [`optimizers`] — Möbius solvers + the unified `UniswapEngine`.
+//! - [`solvers`] — Möbius solvers + the unified `UniswapEngine`.
 
 pub mod bot_core;
-pub mod optimizers;
+pub mod solvers;

@@ -500,7 +500,7 @@ class _UniswapCurveCycle(PublisherMixin):
                             )
 
                 except (EVMRevertError, LiquidityPoolError):
-                    # The optimizer might send invalid amounts into the swap calculation during
+                    # The solver might send invalid amounts into the swap calculation during
                     # iteration. We don't want it to stop, so catch the exception and pretend the
                     # swap resulted in zero output
                     token_out_quantity = 0

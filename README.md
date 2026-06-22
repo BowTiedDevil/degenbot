@@ -912,7 +912,7 @@ v3_pool = make_v3_pool(
 
 ```python
 from degenbot.arbitrage.path.arbitrage_path import ArbitragePath
-from degenbot.arbitrage.optimizers.solver import ArbSolver
+from degenbot.arbitrage.solvers.solver import ArbSolver
 from degenbot.exceptions.arbitrage import OptimizationError
 
 # Create an arbitrage path with I/O-free pools
@@ -1526,7 +1526,7 @@ Each module has a `CONTEXT.md` defining domain terminology:
 - [Curve StableSwap](src/degenbot/curve/CONTEXT.md) — Metapools, lending pools, CurveDataProvider seam, DyCalculationInputs, DyCalculator, A coefficient
 - [Balancer V2](src/degenbot/balancer/CONTEXT.md) — Weighted pools, FixedPoint math, PowVersion detection, scaling helpers, MetaStablePool, ComposableStablePool with BPT index, StableMath V1/V2 invariant versions, CacheAwareRateProvider, BalancerRateProvider protocol
 - [Aave](src/degenbot/aave/CONTEXT.md) — Market, Asset, Reserve, Enrichment, Liquidation
-- [Arbitrage](src/degenbot/arbitrage/CONTEXT.md) — Arbitrage Cycle, Solver, Optimizer, Hop State
+- [Arbitrage](src/degenbot/arbitrage/CONTEXT.md) — Arbitrage Cycle, Solver, Hop State
 - [Registries](src/degenbot/registry/CONTEXT.md) — Pool, Token, Managed Pool registries
 - [Connection](src/degenbot/connection/CONTEXT.md) — Provider management, RPC routing
 - [Chainlink](src/degenbot/chainlink/CONTEXT.md) — price feeds, aggregators, round data

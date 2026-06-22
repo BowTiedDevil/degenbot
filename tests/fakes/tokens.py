@@ -2,7 +2,7 @@
 
 Replaces the previous ad hoc token fakes:
 - FakeToken (from tests/arbitrage/test_path/conftest.py)
-- MockToken (from tests/arbitrage/test_optimizers/test_v2_v3_optimizer.py)
+- MockToken (from tests/arbitrage/test_solvers/test_v2_v3_solver.py)
 
 The consolidated FakeToken is a frozen dataclass that inherits from
 AddressComparable, providing address-based equality, hashing, and

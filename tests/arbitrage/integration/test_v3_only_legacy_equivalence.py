@@ -1,7 +1,7 @@
 """V3-only legacy ↔ new equivalence: UniswapLpCycle vs ArbitragePath.
 
 Uses production UniswapV3Pool with exact V3 math to compare the legacy
-brent optimizer with the new MobiusSolver / BrentSolver optimizers.
+brent solver with the new MobiusSolver / BrentSolver solvers.
 
 Production V3 pools are fully I/O-free when constructed directly — no RPC
 calls, no provider needed. FakeToken is used as a lightweight test double
@@ -17,7 +17,7 @@ from fractions import Fraction
 import pytest
 
 from degenbot.arbitrage._legacy import _UniswapLpCycle as UniswapLpCycle
-from degenbot.arbitrage.optimizers.solver import BrentSolver, MobiusSolver
+from degenbot.arbitrage.solvers.solver import BrentSolver, MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.exceptions.arbitrage import OptimizationError, RateOfExchangeBelowMinimum
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool

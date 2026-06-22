@@ -1,6 +1,6 @@
 //! V3 concentrated-liquidity pool state — the single BotState-owned home for
 //! V3 pool data (ADR-003). Supersedes the engine-side `V3PoolState` that lived
-//! in `optimizers/v3_block_engine.rs`; that engine is dissolved and V3 state
+//! in `solvers/v3_block_engine.rs`; that engine is dissolved and V3 state
 //! is owned by [`crate::bot_core::BotState`], peer to `UniswapEngine`.
 //!
 //! This struct carries both the authoritative mutable state (`sqrt_price_x96`,
@@ -17,7 +17,7 @@ use alloy::primitives::{Address, I256, U160, U256};
 use crate::bot_core::state_history::{ReorgJournal, V3BlockDelta};
 use crate::bot_core::tick_bitmap::{compute_tick_ranges, gen_ticks, V3TickRangeForSolver};
 use crate::bot_core::TickInfo;
-use crate::optimizers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence};
+use crate::solvers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v3;
 use degenbot_cl_math::cl_lib::tick_math::{
     get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO,
@@ -34,7 +34,7 @@ use degenbot_cl_math::cl_lib::tick_math::{
 /// genuinely illiquid). `Sparse` means no snapshot data exists for this pool
 /// — solver results may contain errors or phantom profits.
 ///
-/// Moved from `optimizers/uniswap_engine/mod.rs` to live with V3 state under
+/// Moved from `solvers/uniswap_engine/mod.rs` to live with V3 state under
 /// ADR-003; re-exported from `uniswap_engine` for back-compat with callers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PoolTickCoverage {
@@ -63,7 +63,7 @@ pub struct BufferedV3LiquidityUpdate {
     pub block_number: u64,
 }
 
-impl crate::optimizers::liquidity_event_buffer::LiquidityEvent for BufferedV3LiquidityUpdate {
+impl crate::solvers::liquidity_event_buffer::LiquidityEvent for BufferedV3LiquidityUpdate {
     fn block_number(&self) -> u64 {
         self.block_number
     }

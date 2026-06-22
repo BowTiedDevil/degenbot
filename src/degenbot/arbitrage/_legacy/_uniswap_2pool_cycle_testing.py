@@ -24,8 +24,8 @@ from scipy.optimize import OptimizeResult, minimize_scalar
 from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
 from degenbot.aerodrome.types import AerodromeV2PoolState
 from degenbot.arbitrage._legacy._uniswap_lp_cycle import _UniswapLpCycle
-from degenbot.arbitrage.optimizers.solver import ArbSolver as _ArbSolver
-from degenbot.arbitrage.optimizers.solver import SolveInput as _SolveInput
+from degenbot.arbitrage.solvers.solver import ArbSolver as _ArbSolver
+from degenbot.arbitrage.solvers.solver import SolveInput as _SolveInput
 from degenbot.arbitrage.types import (
     ArbitrageCalculationResult,
     UniswapV2PoolSwapAmounts,
@@ -1108,7 +1108,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             assert v3_pool_max_output > 0
             assert v4_pool_max_input > 0
 
-            # Bound the input to the Brent optimizer
+            # Bound the input to the Brent solver
             forward_token_bounds = (
                 1.0,
                 float(min(v4_pool_max_input, v3_pool_max_output)),
@@ -1292,7 +1292,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             if v4_pool_max_output == 0:
                 raise ArbitrageError(message="Insufficient liquidity")
 
-            # Bound the input to the Brent optimizer
+            # Bound the input to the Brent solver
             # NOTE: the V2 pool input does not need to be considered, an infinite amount can be
             # swapped in
             forward_token_bounds = (
@@ -1493,7 +1493,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             if v3_pool_max_input == 0:
                 raise ArbitrageError(message="Insufficient liquidity")
 
-            # Bound the input to the Brent optimizer
+            # Bound the input to the Brent solver
             forward_token_bounds = (
                 1.0,
                 float(min(v4_pool_max_output, v3_pool_max_input)),
@@ -1835,7 +1835,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             assert v2_pool_max_output > 0
             assert v3_pool_max_input > 0
 
-            # Bound the input to the Brent optimizer
+            # Bound the input to the Brent solver
             forward_token_bounds = (
                 1.0,
                 float(
@@ -2020,7 +2020,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             assert v2_pool_max_output > 0
             assert v4_pool_max_input > 0
 
-            # Bound the input to the Brent optimizer
+            # Bound the input to the Brent solver
             forward_token_bounds = (
                 1.0,
                 float(min(v4_pool_max_input, v2_pool_max_output)),
@@ -2203,7 +2203,7 @@ class _UniswapTwoPoolCycleTesting(_UniswapLpCycle):
             if v3_pool_max_output == 0:
                 raise ArbitrageError(message="Insufficient liquidity")
 
-            # Bound the input to the Brent optimizer
+            # Bound the input to the Brent solver
             # NOTE: the V2 pool input does not need to be considered, an infinite amount can be
             # swapped in
             forward_token_bounds = (

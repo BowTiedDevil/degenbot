@@ -12,8 +12,8 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot.arbitrage.optimizers._solver_utils import _simulate_path
-from degenbot.arbitrage.optimizers.solidly_stable import (
+from degenbot.arbitrage.solvers._solver_utils import _simulate_path
+from degenbot.arbitrage.solvers.solidly_stable import (
     _simulate_mixed_path,
     _simulate_mixed_path_int,
 )

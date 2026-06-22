@@ -8,8 +8,8 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot.arbitrage.optimizers.hop_types import SolveResult, SolverMethod
-from degenbot.arbitrage.optimizers.solver import MobiusSolver
+from degenbot.arbitrage.solvers.hop_types import SolveResult, SolverMethod
+from degenbot.arbitrage.solvers.solver import MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath, PathValidationError
 from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
 from degenbot.checksum_cache import get_checksum_address

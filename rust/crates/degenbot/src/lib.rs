@@ -31,7 +31,7 @@ pub use degenbot_core::{address_utils, errors, hex_utils, runtime};
 /// Per-chain Rust-owned bot state (`BotState`), reorg journal, decoders,
 /// liquidity verifier, block pump, log/solve/reorg coordinators, V2/V3/V4
 /// state, plus the Möbius solvers + the unified `UniswapEngine`.
-pub use degenbot_bot::{bot_core, optimizers};
+pub use degenbot_bot::{bot_core, solvers};
 
 /// Uniswap-protocol domain — `DexIdentity` / `DexVariant` / `ReservesAbi`
 /// value objects + `pub const` per-DEX presets, and the V2 swap-call encoder.

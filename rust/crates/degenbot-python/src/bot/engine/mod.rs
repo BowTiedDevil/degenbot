@@ -12,7 +12,7 @@
 //!   `#[pymethods] impl PyUniswapArbEngine` blocks). [`errors`] holds the
 //!   `#[create_exception]` types.
 //! - Mirrors `polars-python/src/expr/`'s 17-file `PyExpr` split and the
-//!   existing `crates/degenbot-bot/src/optimizers/uniswap_engine/` core split.
+//!   existing `crates/degenbot-bot/src/solvers/uniswap_engine/` core split.
 //!   (ergo UG6FKN task 74W2Z6.)
 
 mod errors;
@@ -44,13 +44,13 @@ pub(crate) use degenbot_bot::bot_core::{
 };
 pub(crate) use degenbot_bot::bot_core::{RegisterV4PoolParams, V4StateSync, V4SwapUpdate};
 
-pub(crate) use degenbot_bot::optimizers::uniswap_engine::engine_handle::EngineHandle;
-pub(crate) use degenbot_bot::optimizers::uniswap_engine::engine_subscriber::EngineSubscriber;
+pub(crate) use degenbot_bot::solvers::uniswap_engine::engine_handle::EngineHandle;
+pub(crate) use degenbot_bot::solvers::uniswap_engine::engine_subscriber::EngineSubscriber;
 
-pub(crate) use degenbot_bot::optimizers::uniswap_engine::snapshot_verify::{
+pub(crate) use degenbot_bot::solvers::uniswap_engine::snapshot_verify::{
     register_with_cl_buffers, run_cl_verification, SnapshotStore, VerifyError, VerifyRpc,
 };
-pub(crate) use degenbot_bot::optimizers::uniswap_engine::{
+pub(crate) use degenbot_bot::solvers::uniswap_engine::{
     BlockMetadata, EnginePhase, HopType, MixedPoolRef, PoolHop, PoolTickCoverage, ResultBatch,
     SolvePathResult, UniswapEngine, V3SnapshotData, V4SnapshotData,
 };
@@ -544,7 +544,7 @@ mod tests {
     use super::verify::{map_liquidity_verify_error, map_verify_err};
     use super::*;
     use degenbot_bot::bot_core::liquidity_verifier::{LiquidityVerifyError, VerificationMismatch};
-    use degenbot_bot::optimizers::uniswap_engine::snapshot_verify::VerifyError;
+    use degenbot_bot::solvers::uniswap_engine::snapshot_verify::VerifyError;
 
     /// `map_liquidity_verify_error` preserves the distinction: `Mismatch` →
     /// `Snapshot`, `Rpc` → `Rpc` (NOT flattened to `Snapshot`).

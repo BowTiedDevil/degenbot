@@ -24,12 +24,11 @@
 | **Pool Admission** | The Rust core's correctness floor: `BotState::register_v4_pool` refuses amount-modifying-hook pools (`hook_flags & 0xCC != 0`) and dynamic-fee pools (`fee == 0x100000`), surfacing as typed `HookedPoolRejectedError` / `DynamicFeePoolRejectedError` (both subclass `ValueError`). The solver's V3-CL math assumes no hook intervention + a fixed fee; admission is enforced in Rust (ADR-005 standalone-core), not as a Python pre-check. | V4 hook filter, pool-admission floor |
 | **Path-Composition Policy** | The distinct, *policy*-layer concern: a `PathCompositionPredicate` (pluggable protocol mirroring `ApprovalStrategy`/`PayloadComposer`, injected into `EngineRegistry`) refuses an `ArbitragePath`/`register_path` candidate by deployment rule — token denylist/allowlist (input + intermediates + profit), hop-count min/max, min-liquidity gate (caller-supplied `liquidity_of` extractor), duplicate-pool guard. Rejections surface as the typed `PathRejectedError` family (`TokenDenylistedError`, `HopCountExceededError`, `HopCountInsufficientError`, `InsufficientLiquidityError`, `DuplicatePoolError`), subclassing `ArbitrageError` (NOT `ValueError` — so callers' `except` arms separate **policy** from Rust **admission**). `PathPolicy` is the composable built-in; `NoOpPathPredicate` is the default (accept all). | Path predicate, path policy |
 
-## Solvers & Optimizers
+## Solvers
 
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
-| **Solver** | An algorithm that finds the optimal **Input Amount** for a single arbitrage path given **Hop States**; operates on one path at a time | Optimizer, finder |
-| **Optimizer** | A higher-level routine that coordinates **Solvers** across multiple paths or state configurations; finds the best path/strategy across alternatives | Solver |
+| **Solver** | An algorithm that finds the optimal **Input Amount** for a single arbitrage path given **Hop States**; operates on one path at a time | finder |
 | **Hop State** | The numerical representation of a single pool's state in a form suitable for solver consumption (e.g., virtual reserves) | Pool state (solver context), solver state |
 | **Mobius Solver** | A solver using the Möbius transformation approach for constant-product and concentrated-liquidity pools | — |
 
@@ -65,26 +64,16 @@
 - **V4→V2 amount_out** — V2 `swap(amount0Out, amount1Out, ...)` names what V2 SENDS; for USDC→WETH@V2 the `amount_out` is `weth_out`, not `forward_out`. See: `TestV4ToV2WrongAmountOut`.
 - **V2 N-hop encoding** — `_encode_cmd_v2_n_hop` (`eth_backrun_helpers.py`) uses V2_SWAP_COMPACT flash + chained V2_SWAP_CALC. Fixed bug: a list comprehension `for h in hops` referenced `hop.pool_address` from outer scope instead of `h.pool_address`, so all pools resolved to the last hop's deduplicated index → the executor called the wrong pool for every V2_SWAP_CALC; symptom was 100% V2-V2-V2 simulation failure with `V2_SWAP_CALC: no excess balance`.
 
-## Resolved ambiguities
-
-### Solver vs Optimizer
-
-**Ruling: **Solver** = single-path input optimization. **Optimizer** = multi-path coordination. Never substitute.**
-
-The codebase enforces this hierarchy: `Solver` / `SolverProtocol` receives a sequence of **Hop States** and returns a result for one path. An **Optimizer** coordinates across multiple paths, calling Solvers internally. An Optimizer decides *which* path is best; a Solver decides *how much* to input on a given path.
-
-- ✅ "The **Mobius Solver** found an optimal **Input Amount** of 5 ETH for this path"
-- ✅ "The **Optimizer** compared 12 paths and selected the best one"
-- ❌ "The solver compared 12 paths" (that's an **Optimizer**)
-- ❌ "The optimizer found the input amount" (that's a **Solver**)
-
 ## Example dialogue
 
-> **Dev:** "The **Solver** compared 12 paths and picked the best one."
-> **Domain expert:** "That's the **Optimizer**, not the **Solver**. A **Solver** finds the optimal **Input Amount** for one path. An **Optimizer** coordinates multiple Solvers across paths and picks the best."
+> **Dev:** "So the **Solver** returns a **Calculation Result** — what's in it?"
 >
-> **Dev:** "OK, so the Solver returns a **Calculation Result** — what's in it?"
 > **Domain expert:** "The **Input Amount**, **Profit Amount**, and per-pool **Swap Amounts** — the full output for that single path."
 >
 > **Dev:** "And to actually execute the swaps, I just use the Swap Amounts?"
+>
 > **Domain expert:** "Each **Swap Amounts** subclass has an `encode()` method that produces an **EncodedCall**. The pipeline function `generate_payloads()` wires encoding → **ApprovalStrategy** injection → **PayloadComposer** composition. You can plug in custom strategies — for example, a V4 **PayloadComposer** that handles the unlock/swap callback pattern."
+>
+> **Dev:** "What if I want to compare several paths and pick the best?"
+>
+> **Domain expert:** "That multi-path coordination layer doesn't exist in the codebase yet. For now **Solver** is the only term — each path is solved independently. If a higher-level coordinator is introduced later, it'll get its own term at that point."

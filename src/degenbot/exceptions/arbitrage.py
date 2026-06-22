@@ -153,7 +153,7 @@ class NoSolverSolution(ArbitrageError):
 
 
 class OptimizationError(ArbitrageError):
-    """Raised when an optimizer fails to find a profitable solution,.
+    """Raised when a solver fails to find a profitable solution,.
 
     fails to converge, or receives invalid inputs.
 
