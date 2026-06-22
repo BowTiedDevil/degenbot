@@ -33,7 +33,7 @@
 //! [PoolIO]: degenbot/builders/pool_io.py
 
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyString, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyList, PyString, PyTuple};
 
 /// The Rust I/O façade for pool builders (ADR-005 slice 14a).
 ///
@@ -951,6 +951,148 @@ impl PyBotIo {
         ))
     }
 
+    /// Fetch a Balancer pool's pool_id via `getPoolId()` (ADR-005 slice 14l).
+    ///
+    /// Mirrors `balancer_builder_base.py::_fetch_pool_id`. Returns the raw
+    /// 32-byte `bytes32` value (no decode — bytes32 is already 32 bytes).
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (address, block=None))]
+    fn fetch_balancer_pool_id(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let calldata = selector(b"getPoolId()");
+        let result_obj = self.forward_call_to_provider(py, address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        if bytes.len() < 32 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "getPoolId result < 32 bytes",
+            ));
+        }
+        Ok(PyBytes::new(py, &bytes[0..32]).into())
+    }
+
+    /// Fetch a Balancer pool's swap fee via `getSwapFeePercentage()`
+    /// (ADR-005 slice 14l).
+    ///
+    /// Mirrors `balancer_builder_base.py::_fetch_swap_fee`. Returns `uint256`.
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (address, block=None))]
+    fn fetch_balancer_swap_fee(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        use alloy::primitives::U256;
+
+        let calldata = selector(b"getSwapFeePercentage()");
+        let result_obj = self.forward_call_to_provider(py, address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        if bytes.len() < 32 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "getSwapFeePercentage result < 32 bytes",
+            ));
+        }
+        let val = U256::from_be_slice(&bytes[0..32]);
+        crate::conversion::alloy::u256_to_py(py, &val).map(|b| b.unbind())
+    }
+
+    /// Fetch a Balancer pool's amplification parameter via
+    /// `getAmplificationParameter()` (ADR-005 slice 14l).
+    ///
+    /// Mirrors `balancer_builder_base.py::_fetch_amp`. The full struct is
+    /// `(uint256, bool, uint256)`; we only need the first word (amp value).
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (address, block=None))]
+    fn fetch_balancer_amp(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        use alloy::primitives::U256;
+
+        let calldata = selector(b"getAmplificationParameter()");
+        let result_obj = self.forward_call_to_provider(py, address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        if bytes.len() < 32 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "getAmplificationParameter result < 32 bytes",
+            ));
+        }
+        let val = U256::from_be_slice(&bytes[0..32]);
+        crate::conversion::alloy::u256_to_py(py, &val).map(|b| b.unbind())
+    }
+
+    /// Fetch a Balancer weighted pool's normalized weights via
+    /// `getNormalizedWeights()` (ADR-005 slice 14l).
+    ///
+    /// Mirrors `balancer_builder_base.py::_fetch_weights`. Returns `uint256[]`
+    /// as a Python list of ints. New decode pattern: ABI-encoded dynamic array
+    /// = offset (32) + length (32) + N 32-byte elements.
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (address, block=None))]
+    fn fetch_balancer_weights(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        use alloy::primitives::U256;
+
+        let calldata = selector(b"getNormalizedWeights()");
+        let result_obj = self.forward_call_to_provider(py, address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        let elements = decode_dynamic_array_words(bytes)?;
+        let list = PyList::empty(py);
+        for word in elements {
+            let val = U256::from_be_slice(word);
+            list.append(crate::conversion::alloy::u256_to_py(py, &val)?.unbind())?;
+        }
+        Ok(list.into())
+    }
+
+    /// Fetch a Balancer pool's rate providers via `getRateProviders()`
+    /// (ADR-005 slice 14l).
+    ///
+    /// Mirrors `balancer_builder_base.py::_fetch_rate_providers`. Returns
+    /// `address[]` as a Python list of lowercase hex strings. Reverts propagate
+    /// (the Python caller's `except (Web3Exception, DecodingError): return []`
+    /// handles WeightedPool2Tokens / MetaStablePools that don't expose this).
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (address, block=None))]
+    fn fetch_balancer_rate_providers(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let calldata = selector(b"getRateProviders()");
+        let result_obj = self.forward_call_to_provider(py, address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        let elements = decode_dynamic_array_words(bytes)?;
+        let list = PyList::empty(py);
+        for word in elements {
+            // Each address is the last 20 bytes of its 32-byte word.
+            let addr = &word[12..32];
+            let mut hex = String::with_capacity(42);
+            hex.push_str("0x");
+            for b in addr {
+                hex.push_str(&format!("{:02x}", b));
+            }
+            list.append(hex)?;
+        }
+        Ok(list.into())
+    }
+
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
         let has_db = self.db.is_some();
         let provider_repr = self.provider.bind(py).repr()?.to_str()?.to_string();
@@ -1182,4 +1324,63 @@ fn sign_extend_to_32_bytes(val: i64) -> [u8; 32] {
     }
     buf[24..].copy_from_slice(&val.to_be_bytes());
     buf
+}
+
+/// Decode an ABI-encoded top-level dynamic array into an iterator of 32-byte
+/// element words.
+///
+/// Layout: `offset (32) + length (32) + N × 32` where `offset` is the byte
+/// offset from the start of the encoding to where the array data begins.
+/// For a single top-level dynamic value, this is always `0x20` (32).
+///
+/// Returns the N 32-byte element slices (without the length word).
+///
+/// # Errors
+///
+/// Returns `PyValueError` if the encoding is too short or malformed.
+/// Read a 32-byte big-endian word as a `usize` if it fits.
+fn read_u256_as_usize(word: &[u8]) -> PyResult<Option<usize>> {
+    use alloy::primitives::U256;
+    let val = U256::from_be_slice(&word[..32]);
+    if val > U256::from(usize::MAX) {
+        return Ok(None);
+    }
+    let mut buf = [0u8; 8];
+    let bytes = val.to_be_bytes::<32>();
+    buf.copy_from_slice(&bytes[24..32]);
+    Ok(Some(usize::from_be_bytes(buf)))
+}
+
+fn decode_dynamic_array_words(bytes: &[u8]) -> PyResult<Vec<&[u8]>> {
+    use std::cmp::min;
+    if bytes.len() < 64 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "dynamic array result < 64 bytes",
+        ));
+    }
+    // Word 0: offset (we read it but assume standard layout).
+    let offset = read_u256_as_usize(&bytes[0..32])?.unwrap_or(32);
+    let length_offset = min(offset, bytes.len().saturating_sub(32));
+    let n = read_u256_as_usize(&bytes[length_offset..length_offset + 32])?
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("array length overflow"))?;
+    let data_start = length_offset + 32;
+    if data_start.checked_mul(0).is_none() || data_start > bytes.len() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "array data out of bounds",
+        ));
+    }
+    let available = bytes.len() - data_start;
+    let needed = n
+        .checked_mul(32)
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("array size overflow"))?;
+    if available < needed {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "array data shorter than length",
+        ));
+    }
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        out.push(&bytes[data_start + i * 32..data_start + (i + 1) * 32]);
+    }
+    Ok(out)
 }
