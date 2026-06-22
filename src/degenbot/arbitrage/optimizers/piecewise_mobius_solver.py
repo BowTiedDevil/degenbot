@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, override
 
 if TYPE_CHECKING:
@@ -37,8 +36,6 @@ from degenbot.uniswap.v3_libraries.constants import Q96
 # ---------------------------------------------------------------------------
 # V3 sqrt-price estimation (pure math, no I/O)
 # ---------------------------------------------------------------------------
-
-_SEQUENTIAL_CANDIDATE_THRESHOLD = 2
 
 
 def _estimate_sqrt_price_after_swap(
@@ -245,26 +242,26 @@ class PiecewiseMobiusSolver(Solver):
                 method=SolverMethod.PIECEWISE_MOBIUS.name,
             )
 
-        # Evaluate candidates (parallel if multiple, sequential if single)
-        if len(plausible_candidates) > 1:
-            # Parallel evaluation for multiple candidates
-            results = self._evaluate_candidates_parallel(
-                solve_input=solve_input,
-                v3_hop_index=v3_hop_index,
-                v3_hop=v3_hop,
-                current_idx=current_idx,
-                candidates=plausible_candidates,
-            )
-        else:
-            # Sequential for single candidate (avoids thread overhead)
-            results = [
-                self._try_candidate_range(
+        # Evaluate plausible candidates sequentially. The candidate set
+        # is bounded by min(current_idx + 3, len(tick_ranges)) — at most 3
+        # candidates, each running a ~1-3μs solve. The previous 3+-candidate
+        # ThreadPoolExecutor path was a documented anti-pattern: thread
+        # submit/schedule/result overhead (~15-20μs/item) dwarfed the solve.
+        # ADR-005 slice 15b-5 retired the concurrent.futures import from
+        # src/ (the Rust engine's parallel `solve_dirty` fan-out is now the
+        # production parallelism path, at the per-path batch level).
+        results: list[SolveResult] = []
+        for end_idx in plausible_candidates:
+            try:
+                result = self._try_candidate_range(
                     solve_input=solve_input,
                     v3_hop_index=v3_hop_index,
                     v3_hop=v3_hop,
-                    end_idx=plausible_candidates[0],
+                    end_idx=end_idx,
                 )
-            ]
+                results.append(result)
+            except (OptimizationError, ArithmeticError, ValueError):
+                logger.debug("Candidate range evaluation failed", exc_info=True)
 
         # Find best result
         for result in results:
@@ -289,63 +286,6 @@ class PiecewiseMobiusSolver(Solver):
             method=SolverMethod.PIECEWISE_MOBIUS,
             solve_time_ns=elapsed_ns,
         )
-
-    def _evaluate_candidates_parallel(
-        self,
-        solve_input: SolveInput,
-        v3_hop_index: int,
-        v3_hop: BoundedProductHop,
-        current_idx: int,  # noqa: ARG002
-        candidates: list[int],
-    ) -> list[SolveResult]:
-        """Evaluate multiple candidate ranges.
-
-        Uses sequential evaluation for 1-2 candidates (avoids thread overhead).
-        Only uses threads for 3+ candidates where parallelism pays off.
-
-        Returns:
-            The computed value.
-
-        """
-        results: list[SolveResult] = []
-
-        # Sequential evaluation for small number of candidates
-        # Thread overhead exceeds benefit for 1-2 candidates
-        if len(candidates) <= _SEQUENTIAL_CANDIDATE_THRESHOLD:
-            for end_idx in candidates:
-                try:
-                    result = self._try_candidate_range(
-                        solve_input=solve_input,
-                        v3_hop_index=v3_hop_index,
-                        v3_hop=v3_hop,
-                        end_idx=end_idx,
-                    )
-                    results.append(result)
-                except (OptimizationError, ArithmeticError, ValueError):
-                    logger.debug("Candidate range evaluation failed", exc_info=True)
-            return results
-
-        # Parallel evaluation only for 3+ candidates
-        with ThreadPoolExecutor(max_workers=min(len(candidates), 3)) as executor:
-            future_to_idx = {
-                executor.submit(
-                    self._try_candidate_range,
-                    solve_input=solve_input,
-                    v3_hop_index=v3_hop_index,
-                    v3_hop=v3_hop,
-                    end_idx=end_idx,
-                ): end_idx
-                for end_idx in candidates
-            }
-
-            for future in as_completed(future_to_idx):
-                try:
-                    result = future.result()
-                    results.append(result)
-                except (OptimizationError, ArithmeticError, ValueError):
-                    logger.debug("Parallel evaluation failed", exc_info=True)
-
-        return results
 
     @staticmethod
     def _is_candidate_plausible(
