@@ -1435,3 +1435,58 @@ def test_pybot_io_fetch_camelot_state_propagates_reverts():
     io = PyBotIo(provider=_BalancerProvider())  # no responses configured
     with pytest.raises(Web3Exception):
         io.fetch_camelot_state("0x" + "ca" * 20)
+
+
+# === Curve pool params RPCs (slice 14r) ===
+#
+# `fetch_curve_pool_params` moves `_fetch_pool_params`'s 3 no-arg
+# uint256-returning calls (A(), fee(), admin_fee()) into a single Rust method.
+# These follow the same no-arg + uint256-decode pattern as ERC20 decimals/factory,
+# but use io.call_raw in Python (the I/O API surface differentiates only tx shape;
+# the Rust method uses forward_call_to_provider's `.call` kw-form provider call).
+
+
+class _CurveProvider:
+    """Provider returning canned A/fee/admin_fee responses."""
+
+    def __init__(self, *, a: int, fee: int, admin_fee: int) -> None:
+        self._r = {
+            Web3.keccak(text="A()")[:4]: eth_abi.abi.encode(types=["uint256"], args=[a]),
+            Web3.keccak(text="fee()")[:4]: eth_abi.abi.encode(types=["uint256"], args=[fee]),
+            Web3.keccak(text="admin_fee()")[:4]: eth_abi.abi.encode(
+                types=["uint256"], args=[admin_fee]
+            ),
+        }
+        self.calls: list[bytes] = []
+
+    def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+        self.calls.append(data)
+        sel = data[:4]
+        if sel in self._r:
+            return HexBytes(self._r[sel])
+        msg = f"unexpected selector {sel.hex()}"
+        raise ValueError(msg)
+
+
+def test_pybot_io_fetch_curve_pool_params_decodes_three_uint256():
+    """fetch_curve_pool_params(pool, block) → 3 no-arg calls →
+    returns (A, fee, admin_fee)."""
+    io = PyBotIo(provider=_CurveProvider(a=2_000, fee=4_000_000, admin_fee=5_000_000))
+
+    a, fee, admin_fee = io.fetch_curve_pool_params("0x" + "cu" * 20)
+
+    assert int(a) == 2_000
+    assert int(fee) == 4_000_000
+    assert int(admin_fee) == 5_000_000
+    # Verify the selectors in order.
+    sels = [c[:4] for c in io.provider.calls]
+    assert sels[0] == Web3.keccak(text="A()")[:4]
+    assert sels[1] == Web3.keccak(text="fee()")[:4]
+    assert sels[2] == Web3.keccak(text="admin_fee()")[:4]
+
+
+def test_pybot_io_fetch_curve_pool_params_propagates_reverts():
+    """When the first call reverts, the exception propagates."""
+    io = PyBotIo(provider=_BalancerProvider())  # no responses configured
+    with pytest.raises(Web3Exception):
+        io.fetch_curve_pool_params("0x" + "cu" * 20)
