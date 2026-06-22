@@ -14,7 +14,7 @@ use std::sync::Arc;
 use pyo3::types::{PyDict, PyList};
 
 use crate::bot::journal_err_to_py;
-use degenbot_bot::bot_core::{BotState, CurvePoolState, TickInfo};
+use degenbot_bot::bot_core::{BalancerWeightedPoolState, BotState, CurvePoolState, TickInfo};
 
 /// Encode a byte slice as a lowercase hex string (no "0x" prefix).
 fn bytes_to_hex(bytes: &[u8]) -> String {
@@ -167,6 +167,11 @@ impl PyLiquidityPool {
         // Curve: the ADR-005 slice 11a state port. Mirrors V2/V3/V4 — the
         // mutable update_block slot lives in Rust now.
         if let Some(s) = core.get_curve_pool(self.pool_id) {
+            return s.update_block;
+        }
+        // Balancer weighted: the ADR-005 slice 12a state port. Same
+        // family-falling-through discipline.
+        if let Some(s) = core.get_balancer_weighted_pool(self.pool_id) {
             return s.update_block;
         }
         0
@@ -748,6 +753,98 @@ impl PyLiquidityPool {
             .core
             .write()
             .apply_curve_balance_update_by_pool_id(self.pool_id, bal, block_number)
+            .is_some())
+    }
+
+    // --- Balancer weighted state read getters + mutations
+    //     (ADR-005 slice 12a state port) ---
+
+    /// Token count for a Balancer weighted pool (`balances.len()`).
+    ///
+    /// Returns 0 if this `pool_id` is not registered as a Balancer weighted pool.
+    #[getter]
+    fn n_balancer_tokens(&self) -> usize {
+        self.core
+            .read()
+            .get_balancer_weighted_pool(self.pool_id)
+            .map_or(0, BalancerWeightedPoolState::n_tokens)
+    }
+
+    /// Current balances for a Balancer weighted pool (one `U256` per token).
+    ///
+    /// Returns an empty list if this `pool_id` is not registered as a
+    /// Balancer weighted pool (so a V2/V3/V4/Curve companion built for a
+    /// different family doesn't crash).
+    #[getter]
+    fn balancer_balances(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let bal: Vec<alloy::primitives::U256> = {
+            let core = self.core.read();
+            let Some(s) = core.get_balancer_weighted_pool(self.pool_id) else {
+                return Ok(pyo3::types::PyList::empty(py).into_any().unbind());
+            };
+            s.balances.clone()
+        };
+        let py_bal: Vec<Py<PyAny>> = bal
+            .iter()
+            .map(|b| crate::conversion::alloy::u256_to_py(py, b).map(pyo3::Bound::unbind))
+            .collect::<PyResult<_>>()?;
+        Ok(pyo3::types::PyList::new(py, py_bal)?.into_any().unbind())
+    }
+
+    /// Snapshot a Balancer weighted pool's mutable state as
+    /// `(balances, update_block)`.
+    ///
+    /// Returns `None` for non-Balancer-weighted pools (the family-
+    /// dispatching reader analogue to `snapshot_curve` / `snapshot_v3`).
+    #[pyo3(signature = ())]
+    fn snapshot_balancer_weighted(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        let snap: Option<(Vec<alloy::primitives::U256>, u64)> = {
+            let core = self.core.read();
+            let Some(s) = core.get_balancer_weighted_pool(self.pool_id) else {
+                return Ok(None);
+            };
+            Some((s.balances.clone(), s.update_block))
+        };
+        let Some(snap) = snap else {
+            return Ok(None);
+        };
+        let py_bal: Vec<Py<PyAny>> = snap
+            .0
+            .iter()
+            .map(|b| crate::conversion::alloy::u256_to_py(py, b).map(pyo3::Bound::unbind))
+            .collect::<PyResult<_>>()?;
+        let list = pyo3::types::PyList::new(py, py_bal)?;
+        let tuple = pyo3::types::PyTuple::new(
+            py,
+            [
+                list.into_any().unbind(),
+                snap.1.into_pyobject(py)?.into_any().unbind(),
+            ],
+        )?;
+        Ok(Some(tuple.into_any().unbind()))
+    }
+
+    /// Apply a Balancer weighted `external_update` (new balances from a Vault
+    /// `PoolBalanceChanged` event).
+    ///
+    /// Journals the prior balances then lands the new balances +
+    /// `update_block`. Silent no-op (`False`) if this `pool_id` is not
+    /// registered as a Balancer weighted pool (so a V2/V3/V4/Curve companion
+    /// doesn't corrupt its state).
+    #[pyo3(signature = (balances, block_number))]
+    fn apply_balancer_weighted_balance_update(
+        &self,
+        balances: &Bound<'_, PyList>,
+        block_number: u64,
+    ) -> PyResult<bool> {
+        let bal: Vec<alloy::primitives::U256> = balances
+            .iter()
+            .map(|item| crate::conversion::alloy::extract_python_u256(&item))
+            .collect::<PyResult<_>>()?;
+        Ok(self
+            .core
+            .write()
+            .apply_balancer_weighted_balance_update_by_pool_id(self.pool_id, bal, block_number)
             .is_some())
     }
 }
