@@ -16,6 +16,7 @@ use crate::bot_core::state_history::{
 use crate::optimizers::mobius_int::IntHopState;
 use degenbot_uniswap::v2_encoding::{encode_v2_swap, EncodedCall};
 
+pub mod balancer_stable_state;
 pub mod balancer_weighted_state;
 pub mod block_pump;
 pub mod curve_state;
@@ -33,6 +34,9 @@ pub mod v4_state;
 
 // Re-export the merged V3/V4/Curve state types (ADR-003: BotState owns
 // pool state; Curve is the ADR-003 "third family").
+pub use balancer_stable_state::{
+    BalancerStableBlockDelta, BalancerStablePoolState, RegisterBalancerStablePoolParams,
+};
 pub use balancer_weighted_state::{
     BalancerWeightedBlockDelta, BalancerWeightedPoolState, RegisterBalancerWeightedPoolParams,
 };
@@ -64,6 +68,7 @@ pub enum PoolEntry {
     V4(V4PoolState),
     Curve(CurvePoolState),
     BalancerWeighted(BalancerWeightedPoolState),
+    BalancerStable(BalancerStablePoolState),
 }
 
 /// Read-only surface shared by [`V3PoolState`] and [`V4PoolState`] — the
@@ -471,7 +476,8 @@ impl BotState {
             PoolEntry::V2(_)
             | PoolEntry::V3(_)
             | PoolEntry::V4(_)
-            | PoolEntry::BalancerWeighted(_) => None,
+            | PoolEntry::BalancerWeighted(_)
+            | PoolEntry::BalancerStable(_) => None,
         }
     }
 
@@ -572,7 +578,124 @@ impl BotState {
     pub fn get_balancer_weighted_pool(&self, pool_id: u64) -> Option<&BalancerWeightedPoolState> {
         match self.pools.get(&pool_id)? {
             PoolEntry::BalancerWeighted(state) => Some(state),
-            PoolEntry::V2(_) | PoolEntry::V3(_) | PoolEntry::V4(_) | PoolEntry::Curve(_) => None,
+            PoolEntry::V2(_)
+            | PoolEntry::V3(_)
+            | PoolEntry::V4(_)
+            | PoolEntry::Curve(_)
+            | PoolEntry::BalancerStable(_) => None,
+        }
+    }
+
+    // --- ADR-005 slice 12c: Balancer V2 stable state port --------------
+
+    /// Register a Balancer V2 stable pool. The pool's immutable config
+    /// (`pool_id`, vault, tokens, amp, `scaling_factors`, `swap_fee`,
+    /// `bpt_idx`, `invariant_version`) + the registration `balances`/
+    /// `update_block` are stored in a `BalancerStablePoolState` and seeded
+    /// with a genesis reorg journal delta. The Python `BalancerV2StablePool`
+    /// companion (slice 12d) will be built over a `PyLiquidityPool` handle
+    /// that reads back through [`Self::get_balancer_stable_pool`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if the pool's address is already registered, if
+    /// `balances.len()` doesn't match `tokens.len()` / `scaling_factors.len()`,
+    /// or if `bpt_idx` is `Some(i)` with `i >= tokens.len()` (a builder
+    /// wiring error — the builder always passes N-token tuples of
+    /// consistent arity and resolves `bpt_idx` via `detect_bpt_index`).
+    pub fn register_balancer_stable_pool(
+        &mut self,
+        params: &RegisterBalancerStablePoolParams,
+    ) -> u64 {
+        assert!(
+            !self.pool_addresses.contains_key(&params.address),
+            "pool already registered: {}",
+            params.address
+        );
+
+        assert!(
+            params.balances.len() == params.tokens.len()
+                && params.balances.len() == params.scaling_factors.len(),
+            "Balancer stable params mismatch: tokens={}, balances={}, scaling_factors={} (must all be N)",
+            params.tokens.len(),
+            params.balances.len(),
+            params.scaling_factors.len(),
+        );
+
+        if let Some(idx) = params.bpt_idx {
+            assert!(
+                idx < params.tokens.len(),
+                "Balancer stable bpt_idx {} >= tokens.len() {} (BPT must be in-token-list)",
+                idx,
+                params.tokens.len(),
+            );
+        }
+
+        let pool_id = self.next_pool_id;
+        self.next_pool_id += 1;
+
+        let state = BalancerStablePoolState::from_params(params.clone(), self.journal_depth);
+        self.pools.insert(pool_id, PoolEntry::BalancerStable(state));
+        self.pool_addresses.insert(params.address, pool_id);
+
+        pool_id
+    }
+
+    /// Apply a Balancer stable `external_update` (new balances from a Vault
+    /// `PoolBalanceChanged` event) by `pool_id` — the
+    /// `PyLiquidityPool.apply_balancer_stable_balance_update` backing.
+    ///
+    /// Journals the prior balances (genesis-anchor V2-style discipline), then
+    /// lands the new balances + `update_block`. Returns the affected `pool_id`,
+    /// or `None` if not registered / not a Balancer stable pool (silent
+    /// no-op — don't corrupt a V2/V3/V4/Curve/BalancerWeighted pool).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `balances.len()` doesn't match the registered pool's token
+    /// count — a wiring error (the builder always passes a balance tuple of
+    /// the right arity).
+    #[must_use]
+    pub fn apply_balancer_stable_balance_update_by_pool_id(
+        &mut self,
+        pool_id: u64,
+        balances: Vec<U256>,
+        block_number: u64,
+    ) -> Option<u64> {
+        let Some(PoolEntry::BalancerStable(state)) = self.pools.get_mut(&pool_id) else {
+            return None;
+        };
+        assert!(
+            balances.len() == state.balances.len(),
+            "Balancer stable balance length mismatch: pool has {} tokens, update has {}",
+            state.balances.len(),
+            balances.len(),
+        );
+        state.journal.push_delta(BalancerStableBlockDelta {
+            block: block_number,
+            balances_before: state.balances.clone(),
+            balances_after: balances.clone(),
+        });
+        state.balances = balances;
+        state.update_block = block_number;
+        Some(pool_id)
+    }
+
+    /// Read a registered Balancer stable pool's state by `pool_id`.
+    ///
+    /// The Python companion (slice 12d) reads `balances` / `update_block` /
+    /// `bpt_idx` / `invariant_version` / `amp` through this accessor via
+    /// `PyLiquidityPool` getters. Returns `None` for non-Balancer-stable
+    /// pools (silent no-op).
+    #[must_use]
+    pub fn get_balancer_stable_pool(&self, pool_id: u64) -> Option<&BalancerStablePoolState> {
+        match self.pools.get(&pool_id)? {
+            PoolEntry::BalancerStable(state) => Some(state),
+            PoolEntry::V2(_)
+            | PoolEntry::V3(_)
+            | PoolEntry::V4(_)
+            | PoolEntry::Curve(_)
+            | PoolEntry::BalancerWeighted(_) => None,
         }
     }
 
@@ -678,7 +801,8 @@ impl BotState {
             PoolEntry::V3(_)
             | PoolEntry::V4(_)
             | PoolEntry::Curve(_)
-            | PoolEntry::BalancerWeighted(_) => None,
+            | PoolEntry::BalancerWeighted(_)
+            | PoolEntry::BalancerStable(_) => None,
         }
     }
 
@@ -965,7 +1089,10 @@ impl BotState {
                 state.invalidate_tick_range_cache();
                 true
             }
-            PoolEntry::V2(_) | PoolEntry::Curve(_) | PoolEntry::BalancerWeighted(_) => false,
+            PoolEntry::V2(_)
+            | PoolEntry::Curve(_)
+            | PoolEntry::BalancerWeighted(_)
+            | PoolEntry::BalancerStable(_) => false,
         }
     }
 
@@ -1143,7 +1270,8 @@ impl BotState {
             PoolEntry::V2(_)
             | PoolEntry::V4(_)
             | PoolEntry::Curve(_)
-            | PoolEntry::BalancerWeighted(_) => None,
+            | PoolEntry::BalancerWeighted(_)
+            | PoolEntry::BalancerStable(_) => None,
         }
     }
 
@@ -1160,7 +1288,8 @@ impl BotState {
                 PoolEntry::V2(_)
                 | PoolEntry::V4(_)
                 | PoolEntry::Curve(_)
-                | PoolEntry::BalancerWeighted(_) => None,
+                | PoolEntry::BalancerWeighted(_)
+                | PoolEntry::BalancerStable(_) => None,
             })
             .collect()
     }
@@ -1185,7 +1314,10 @@ impl BotState {
         match self.pools.get(&pool_id)? {
             PoolEntry::V3(state) => Some(state),
             PoolEntry::V4(state) => Some(state),
-            PoolEntry::V2(_) | PoolEntry::Curve(_) | PoolEntry::BalancerWeighted(_) => None,
+            PoolEntry::V2(_)
+            | PoolEntry::Curve(_)
+            | PoolEntry::BalancerWeighted(_)
+            | PoolEntry::BalancerStable(_) => None,
         }
     }
 
@@ -1291,14 +1423,17 @@ impl BotState {
                     outcome.amount0
                 }
             }
-            // Curve (11a) + Balancer weighted (12a): the stableswap / weighted-
-            // product math is NOT ported in their state-port sub-slices. The
-            // Python companions (11b / 12b) keep doing their own math via
-            // `DyCalculator` / `WeightedMath` through the `swap_fn` returned
+            // Curve (11a) + Balancer weighted (12a) + Balancer stable (12c): the
+            // stableswap / weighted-product / stable-invariant math is NOT
+            // ported in their state-port sub-slices. The Python companions
+            // (11b / 12b / 12d) keep doing their own math via `DyCalculator`
+            // / `WeightedMath` / `StableMath` through the `swap_fn` returned
             // by `to_hop_state`; this Rust core path returns 0 (the
             // "not-yet-Rust-side" sentinel — same as an unregistered pool).
-            // Curve ported in sub-slice 11c; Balancer weighted in 12e.
-            PoolEntry::Curve(_) | PoolEntry::BalancerWeighted(_) => U256::ZERO,
+            // Curve ported in 11c; Balancer weighted stable in 12e.
+            PoolEntry::Curve(_) | PoolEntry::BalancerWeighted(_) | PoolEntry::BalancerStable(_) => {
+                U256::ZERO
+            }
         }
     }
 
@@ -1394,10 +1529,13 @@ impl BotState {
                     outcome.amount1
                 }
             }
-            // Curve (11a) + Balancer weighted (12a): math not ported in their
-            // state-port sub-slices; see `calculate_tokens_out`'s combined
-            // arm. Returns 0 (the Python companion handles the calc).
-            PoolEntry::Curve(_) | PoolEntry::BalancerWeighted(_) => U256::ZERO,
+            // Curve (11a) + Balancer weighted (12a) + Balancer stable (12c):
+            // math not ported in their state-port sub-slices; see
+            // `calculate_tokens_out`'s combined arm. Returns 0 (the Python
+            // companion handles the calc).
+            PoolEntry::Curve(_) | PoolEntry::BalancerWeighted(_) | PoolEntry::BalancerStable(_) => {
+                U256::ZERO
+            }
         }
     }
 
@@ -1599,6 +1737,9 @@ impl BotState {
                 Some(PoolEntry::BalancerWeighted(state)) => {
                     state.journal.newest_block().is_some_and(|b| b >= target)
                 }
+                Some(PoolEntry::BalancerStable(state)) => {
+                    state.journal.newest_block().is_some_and(|b| b >= target)
+                }
                 None => false,
             };
             if !needs_restore {
@@ -1641,6 +1782,13 @@ impl BotState {
                     // as V2/Curve; delegated to
                     // `balancer_weighted_restore_before_block`.
                     self.balancer_weighted_restore_before_block(pool_id, target)
+                        .is_some()
+                }
+                Some(PoolEntry::BalancerStable(_)) => {
+                    // Balancer stable restore: same full-state delta shape as
+                    // V2/Curve/BalancerWeighted; delegated to
+                    // `balancer_stable_restore_before_block`.
+                    self.balancer_stable_restore_before_block(pool_id, target)
                         .is_some()
                 }
                 None => false,
@@ -1773,6 +1921,67 @@ impl BotState {
         Some(Ok((balances, blk)))
     }
 
+    // --- ADR-005 slice 12c: Balancer stable journal methods ---
+
+    /// Get the number of deltas in the reorg journal for a Balancer stable
+    /// pool. Returns 0 if the pool ID is not registered or is not a Balancer
+    /// stable pool.
+    #[must_use]
+    pub fn balancer_stable_journal_len(&self, pool_id: u64) -> usize {
+        match self.pools.get(&pool_id) {
+            Some(PoolEntry::BalancerStable(state)) => state.journal.len(),
+            _ => 0,
+        }
+    }
+
+    /// Discard Balancer stable reorg journal deltas earlier than the given
+    /// block. No-op if the pool ID is not registered / not a Balancer stable
+    /// pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(JournalError::NoStateAtOrAfterBlock)` if the target is past
+    /// the newest delta.
+    pub fn balancer_stable_discard_before_block(
+        &mut self,
+        pool_id: u64,
+        block: u64,
+    ) -> Result<(), JournalError> {
+        let Some(PoolEntry::BalancerStable(state)) = self.pools.get_mut(&pool_id) else {
+            return Ok(());
+        };
+        state.journal.discard_before_block(block)
+    }
+
+    /// Restore Balancer stable pool state prior to a target block.
+    ///
+    /// Pops reorg journal deltas at/after the target block and restores the
+    /// landed-at balances (the `balances_after` of the largest delta below
+    /// the target) into the current mutable fields. Mirrors
+    /// `balancer_weighted_restore_before_block` (Balancer stable is a
+    /// full-state delta, same shape as V2/Curve/BalancerWeighted).
+    ///
+    /// Returns `Some(Ok((balances, block)))` on success, `Some(Err)` if the
+    /// pool exists but the target is at/before registration (no state before
+    /// it), or `None` if the pool ID is not registered / not a Balancer
+    /// stable pool.
+    pub fn balancer_stable_restore_before_block(
+        &mut self,
+        pool_id: u64,
+        block: u64,
+    ) -> Option<Result<(Vec<U256>, u64), JournalError>> {
+        let PoolEntry::BalancerStable(state) = self.pools.get_mut(&pool_id)? else {
+            return None;
+        };
+        let (balances, blk) = match state.journal.restore_balancer_stable_before_block(block) {
+            Ok(v) => v,
+            Err(e) => return Some(Err(e)),
+        };
+        state.balances.clone_from(&balances);
+        state.update_block = blk;
+        Some(Ok((balances, blk)))
+    }
+
     // --- V3 journal methods ---
 
     /// Get the number of deltas in the reorg journal for a V3 pool.
@@ -1843,6 +2052,9 @@ impl BotState {
             Some(PoolEntry::BalancerWeighted(_)) => {
                 let _ = self.balancer_weighted_restore_before_block(pool_id, block);
             }
+            Some(PoolEntry::BalancerStable(_)) => {
+                let _ = self.balancer_stable_restore_before_block(pool_id, block);
+            }
             None => {}
         }
     }
@@ -1892,6 +2104,13 @@ impl BotState {
             // Balancer weighted carries a genesis delta (mirror of V2/Curve) —
             // ADR-005 slice 12a. Same predicate: `earliest < block`.
             PoolEntry::BalancerWeighted(state) => state
+                .journal
+                .earliest_block()
+                .is_some_and(|earliest| earliest < block),
+            // Balancer stable carries a genesis delta (mirror of
+            // V2/Curve/BalancerWeighted) — ADR-005 slice 12c. Same predicate:
+            // `earliest < block`.
+            PoolEntry::BalancerStable(state) => state
                 .journal
                 .earliest_block()
                 .is_some_and(|earliest| earliest < block),
@@ -1985,7 +2204,8 @@ impl BotState {
             PoolEntry::V3(_)
             | PoolEntry::V4(_)
             | PoolEntry::Curve(_)
-            | PoolEntry::BalancerWeighted(_) => None,
+            | PoolEntry::BalancerWeighted(_)
+            | PoolEntry::BalancerStable(_) => None,
         }
     }
 
@@ -2500,7 +2720,8 @@ impl BotState {
             PoolEntry::V2(_)
             | PoolEntry::V3(_)
             | PoolEntry::Curve(_)
-            | PoolEntry::BalancerWeighted(_) => None,
+            | PoolEntry::BalancerWeighted(_)
+            | PoolEntry::BalancerStable(_) => None,
         }
     }
 
@@ -2541,7 +2762,8 @@ impl BotState {
                 PoolEntry::V2(_)
                 | PoolEntry::V3(_)
                 | PoolEntry::Curve(_)
-                | PoolEntry::BalancerWeighted(_) => None,
+                | PoolEntry::BalancerWeighted(_)
+                | PoolEntry::BalancerStable(_) => None,
             })
             .collect()
     }

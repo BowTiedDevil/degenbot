@@ -14,7 +14,9 @@ use std::sync::Arc;
 use pyo3::types::{PyDict, PyList};
 
 use crate::bot::journal_err_to_py;
-use degenbot_bot::bot_core::{BalancerWeightedPoolState, BotState, CurvePoolState, TickInfo};
+use degenbot_bot::bot_core::{
+    BalancerStablePoolState, BalancerWeightedPoolState, BotState, CurvePoolState, TickInfo,
+};
 
 /// Encode a byte slice as a lowercase hex string (no "0x" prefix).
 fn bytes_to_hex(bytes: &[u8]) -> String {
@@ -172,6 +174,11 @@ impl PyLiquidityPool {
         // Balancer weighted: the ADR-005 slice 12a state port. Same
         // family-falling-through discipline.
         if let Some(s) = core.get_balancer_weighted_pool(self.pool_id) {
+            return s.update_block;
+        }
+        // Balancer stable: the ADR-005 slice 12c state port. Same
+        // family-falling-through discipline.
+        if let Some(s) = core.get_balancer_stable_pool(self.pool_id) {
             return s.update_block;
         }
         0
@@ -845,6 +852,139 @@ impl PyLiquidityPool {
             .core
             .write()
             .apply_balancer_weighted_balance_update_by_pool_id(self.pool_id, bal, block_number)
+            .is_some())
+    }
+
+    // --- Balancer stable state read getters + mutations
+    //     (ADR-005 slice 12c state port) ---
+
+    /// Token count for a Balancer stable pool (`balances.len()` — includes
+    /// BPT for Composable pools).
+    ///
+    /// Returns 0 if this `pool_id` is not registered as a Balancer stable pool.
+    #[getter]
+    fn n_balancer_stable_tokens(&self) -> usize {
+        self.core
+            .read()
+            .get_balancer_stable_pool(self.pool_id)
+            .map_or(0, BalancerStablePoolState::n_tokens)
+    }
+
+    /// Current balances for a Balancer stable pool (one `U256` per token,
+    /// including BPT for Composable pools).
+    ///
+    /// Returns an empty list if this `pool_id` is not registered as a Balancer
+    /// stable pool (so a companion built for a different family doesn't crash).
+    #[getter]
+    fn balancer_stable_balances(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let bal: Vec<alloy::primitives::U256> = {
+            let core = self.core.read();
+            let Some(s) = core.get_balancer_stable_pool(self.pool_id) else {
+                return Ok(pyo3::types::PyList::empty(py).into_any().unbind());
+            };
+            s.balances.clone()
+        };
+        let py_bal: Vec<Py<PyAny>> = bal
+            .iter()
+            .map(|b| crate::conversion::alloy::u256_to_py(py, b).map(pyo3::Bound::unbind))
+            .collect::<PyResult<_>>()?;
+        Ok(pyo3::types::PyList::new(py, py_bal)?.into_any().unbind())
+    }
+
+    /// BPT token index for a Balancer stable pool: `None` for MetaStablePools,
+    /// `Some(i)` for ComposableStablePools.
+    ///
+    /// Returns `None` if this `pool_id` is not registered as a Balancer stable
+    /// pool (also a valid value for a registered MetaStable — see the
+    /// `invariant_version` getter to distinguish).
+    #[getter]
+    fn balancer_bpt_index(&self) -> Option<usize> {
+        self.core
+            .read()
+            .get_balancer_stable_pool(self.pool_id)
+            .and_then(|s| s.bpt_idx)
+    }
+
+    /// Amplification coefficient `amp` for a Balancer stable pool (immutable
+    /// after registration in this plan — A ramping is a future, non-epic
+    /// concern resolved by the builder at registration).
+    ///
+    /// Returns 0 if this `pool_id` is not registered as a Balancer stable pool.
+    #[getter]
+    fn balancer_amp(&self) -> u128 {
+        self.core
+            .read()
+            .get_balancer_stable_pool(self.pool_id)
+            .map_or(0, |s| s.amp)
+    }
+
+    /// `invariant_version` discriminator (1 = V1 always-roundDown D_P
+    /// accumulation; 2 = V2 roundUp-param P_D accumulation) — the
+    /// systematic-1-wei-error guard.
+    ///
+    /// Returns 0 if this `pool_id` is not registered as a Balancer stable pool.
+    #[getter]
+    fn balancer_invariant_version(&self) -> u8 {
+        self.core
+            .read()
+            .get_balancer_stable_pool(self.pool_id)
+            .map_or(0, |s| s.invariant_version)
+    }
+
+    /// Snapshot a Balancer stable pool's mutable state as
+    /// `(balances, update_block)`.
+    ///
+    /// Returns `None` for non-Balancer-stable pools (the family-dispatching
+    /// reader analogue to `snapshot_curve` / `snapshot_balancer_weighted`).
+    #[pyo3(signature = ())]
+    fn snapshot_balancer_stable(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        let snap: Option<(Vec<alloy::primitives::U256>, u64)> = {
+            let core = self.core.read();
+            let Some(s) = core.get_balancer_stable_pool(self.pool_id) else {
+                return Ok(None);
+            };
+            Some((s.balances.clone(), s.update_block))
+        };
+        let Some(snap) = snap else {
+            return Ok(None);
+        };
+        let py_bal: Vec<Py<PyAny>> = snap
+            .0
+            .iter()
+            .map(|b| crate::conversion::alloy::u256_to_py(py, b).map(pyo3::Bound::unbind))
+            .collect::<PyResult<_>>()?;
+        let list = pyo3::types::PyList::new(py, py_bal)?;
+        let tuple = pyo3::types::PyTuple::new(
+            py,
+            [
+                list.into_any().unbind(),
+                snap.1.into_pyobject(py)?.into_any().unbind(),
+            ],
+        )?;
+        Ok(Some(tuple.into_any().unbind()))
+    }
+
+    /// Apply a Balancer stable `external_update` (new balances from a Vault
+    /// `PoolBalanceChanged` event).
+    ///
+    /// Journals the prior balances then lands the new balances +
+    /// `update_block`. Silent no-op (`False`) if this `pool_id` is not
+    /// registered as a Balancer stable pool (so a companion built for a
+    /// different family doesn't corrupt its state).
+    #[pyo3(signature = (balances, block_number))]
+    fn apply_balancer_stable_balance_update(
+        &self,
+        balances: &Bound<'_, PyList>,
+        block_number: u64,
+    ) -> PyResult<bool> {
+        let bal: Vec<alloy::primitives::U256> = balances
+            .iter()
+            .map(|item| crate::conversion::alloy::extract_python_u256(&item))
+            .collect::<PyResult<_>>()?;
+        Ok(self
+            .core
+            .write()
+            .apply_balancer_stable_balance_update_by_pool_id(self.pool_id, bal, block_number)
             .is_some())
     }
 }
