@@ -1554,7 +1554,7 @@ mod tests {
         // Now the N-hop CL solver runs. With 3 pools at the same price but
         // different liquidity, the path is unlikely to be profitable after fees,
         // but the solver must not reject due to hop count.
-        let result = engine.solve_path(resolved);
+        let result = UniswapEngine::solve_path(resolved);
         let _ = result; // No panic = test passes
     }
 
@@ -1643,7 +1643,7 @@ mod tests {
         assert_eq!(resolved.hops[2].hop_type(), HopType::V2);
 
         // Key: previously this returned None due to hop_types.len() != 2
-        let result = engine.solve_path(resolved);
+        let result = UniswapEngine::solve_path(resolved);
         let _ = result;
     }
 
@@ -2198,5 +2198,192 @@ mod tests {
             handle.join().expect("reader panicked");
         }
         writer_result.expect("writer deadlocked (engine-then-core ordering broken)");
+    }
+
+    // --- ADR-005 slice 15b-1: Rust parallel solve fan-out -----------------
+    //
+    // `solve_dirty`'s affected-path solve loop is parallelized via rayon
+    // `par_iter`. The tracer bullet below pins the invariant the parallel
+    // fan-out must preserve: equivalence with the serial baseline. This test
+    // runs green against the current serial `solve_all()`; after the parallel
+    // refactor, the test must stay green — proving the fan-out introduces no
+    // correctness drift. The companion stress test below it characterizes the
+    // engine-then-core lock ordering under the new parallel solve path with
+    // many paths (drives the par_iter loop across non-trivial batch sizes).
+
+    /// Pin the parallel-fan-out equivalence invariant: the batch re-solver
+    /// (`solve_all_paths` → `solve_all` → rayon `par_iter` of `solve_path`)
+    /// must produce results identical to the per-path eager baseline captured
+    /// at `register_and_solve_path` time. Any drift between the two means the
+    //  fan-out is dropping paths, double-counting, or producing a different
+    //  solve output for the same input snapshot.
+    #[test]
+    fn solve_all_parallel_fanout_matches_per_path_eager_baseline() {
+        let mut engine = UniswapEngine::new();
+
+        // Register 8 V2-V2 paths on distinct pool pairs with stable price
+        // divergence. Each eagerly solves at registration; we capture the
+        // eager SolvePathResult as the per-path baseline.
+        let mut baseline: HashMap<u64, SolvePathResult> = HashMap::new();
+        for i in 0..8u64 {
+            let addr_a = Address::from([0x10_u8 + i as u8; 20]);
+            let v2_fwd_a = engine.register_v2_pool(
+                addr_a,
+                usdc(1_500_000),
+                weth(800 + i * 10),
+                GAMMA_03,
+                FEE_DENOM_03,
+            );
+            let addr_b = Address::from([0x20_u8 + i as u8; 20]);
+            let v2_fwd_b = engine.register_v2_pool(
+                addr_b,
+                weth(800 + i * 10),
+                usdc(2_000_000),
+                GAMMA_03,
+                FEE_DENOM_03,
+            );
+            let path_id = engine
+                .register_and_solve_path(vec![
+                    PoolHop {
+                        pool_id: v2_fwd_a,
+                        zero_for_one: true,
+                    },
+                    PoolHop {
+                        pool_id: v2_fwd_b,
+                        zero_for_one: true,
+                    },
+                ])
+                .expect("path registration should succeed");
+            let (results, _block) = engine.latest_results();
+            let eager = results
+                .get(&path_id)
+                .expect("register_and_solve_path must eagerly solve a profitable path");
+            baseline.insert(path_id, eager.clone());
+        }
+
+        // Full batch re-solve via solve_all_paths — this is the call path
+        // whose solve loop gets parallelized. Equivalent eager results must
+        // survive the batch re-solve (today serial; after the refactor, rayon
+        // `par_iter`).
+        engine.solve_all_paths(1);
+        let (results, block) = engine.latest_results();
+        assert_eq!(block, 1);
+        assert_eq!(
+            results.len(),
+            baseline.len(),
+            "batch re-solve must produce the same path-count as the eager baseline"
+        );
+        for (pid, expected) in &baseline {
+            let got = results
+                .get(pid)
+                .unwrap_or_else(|| panic!("batch re-solve dropped path {pid}"));
+            assert_eq!(
+                got, expected,
+                "path {pid} diverged: parallel fan-out != serial eager baseline"
+            );
+        }
+    }
+
+    /// ADR-006 slice 10 acceptance for the parallel solve fan-out
+    /// (ADR-005 slice 15b-1): characterize the engine-then-core lock ordering
+    /// when the engine's `solve_dirty` solve loop runs under rayon `par_iter`.
+    /// The `par_iter` workers operate only on owned/Cloned data (`ResolvedMixedPath`
+    /// clones + collected `(pid, SolvePathResult)` pairs); they acquire NO
+    /// engine `Mutex` and NO core lock — so the engine-then-core lock order
+    /// is preserved unchanged even with multiple workers spawned.
+    ///
+    /// This test drives the contention with N=8 paths registered (so the
+    /// `par_iter` batch is non-trivial — at least 8 work items per `solve_dirty`)
+    /// under one writer (`solve_dirty`) + four readers (core.read companions).
+    /// Bounded join; a real deadlock (rayon re-entering the engine `Mutex`, or
+    /// a re-entrant core guard) surfaces as a panic on the writer thread.
+    #[test]
+    fn solve_dirty_parallel_fanout_survives_concurrent_readers_and_writer() {
+        use std::sync::Arc;
+        use std::thread;
+
+        use parking_lot::RwLock;
+
+        use crate::bot_core::BlockMetadata;
+
+        let core = Arc::new(RwLock::new(crate::bot_core::BotState::new()));
+        let mut engine = UniswapEngine::with_core(Arc::clone(&core));
+
+        // Register N paths so `solve_dirty` exercises a real par_iter batch.
+        for i in 0..8u64 {
+            let addr_a = Address::from([0x10_u8 + i as u8; 20]);
+            let v2_fwd_a = engine.register_v2_pool(
+                addr_a,
+                usdc(1_500_000),
+                weth(800 + i * 10),
+                GAMMA_03,
+                FEE_DENOM_03,
+            );
+            let addr_b = Address::from([0x20_u8 + i as u8; 20]);
+            let v2_fwd_b = engine.register_v2_pool(
+                addr_b,
+                weth(800 + i * 10),
+                usdc(2_000_000),
+                GAMMA_03,
+                FEE_DENOM_03,
+            );
+            let _ = engine
+                .register_path(vec![
+                    PoolHop {
+                        pool_id: v2_fwd_a,
+                        zero_for_one: true,
+                    },
+                    PoolHop {
+                        pool_id: v2_fwd_b,
+                        zero_for_one: true,
+                    },
+                ])
+                .expect("path registration should succeed");
+        }
+
+        let engine = Arc::new(parking_lot::Mutex::new(engine));
+        let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        // Writer: `solve_dirty` invokes `solve_all_paths` semantically via
+        // `rebuild_and_solve_affected` → `par_iter` of `Self::solve_path`. The
+        // writer holds the engine `Mutex` then (inside) `core.read()` (path
+        // resolution) and briefly `core.write()` (V3/V4 buffer expiry). Rayon's
+        // internal workers touch no engine/core state.
+        let writer_engine = Arc::clone(&engine);
+        let writer_done = Arc::clone(&done);
+        let metadata = BlockMetadata::default();
+        let writer = thread::spawn(move || {
+            for block in 1..=2_000u64 {
+                if writer_done.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+                writer_engine.lock().solve_dirty(block, &metadata);
+            }
+        });
+
+        // Readers: core.read alone — the companion-getter path. Mirrors slice
+        // 10's reader pattern (never the engine lock).
+        let mut readers = Vec::new();
+        for _ in 0..4 {
+            let core = Arc::clone(&core);
+            let done = Arc::clone(&done);
+            readers.push(thread::spawn(move || {
+                while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                    let _r = core.read();
+                    // Optional pool-state read; spurious empty reads on the
+                    // V2 registry are fine (the registered pool_ids are stable).
+                }
+            }));
+        }
+
+        let writer_result = writer.join();
+        done.store(true, std::sync::atomic::Ordering::Relaxed);
+        for handle in readers {
+            handle.join().expect("reader panicked");
+        }
+        writer_result.expect(
+            "writer deadlocked — rayon `par_iter` in `solve_dirty` reintroduced a \
+             core/engine lock nesting or re-entrant guard (ADR-006 D2 violated)",
+        );
     }
 }

@@ -1,6 +1,7 @@
 //! Path resolution, solver dispatch, and rebuild logic.
 
 use alloy::primitives::U256;
+use rayon::prelude::*;
 
 use super::{
     BlockMetadata, HashMap, HashSet, HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPath,
@@ -80,20 +81,48 @@ impl UniswapEngine {
             self.results.remove(&path_id);
         }
 
-        // Solve affected paths and insert new results
-        for &path_id in &affected_path_ids {
-            let Some(resolved) = self.path_resolved.get(&path_id) else {
-                continue;
-            };
-            if !resolved.valid {
-                continue;
-            }
-
-            if let Some(solve_result) = self.solve_path(resolved) {
-                if !solve_result.optimal_input.is_zero() && !solve_result.profit.is_zero() {
-                    self.results.insert(path_id, solve_result);
+        // Solve affected paths and insert new results.
+        //
+        // ADR-005 slice 15b-1: rayon `par_iter` parallelizes the solve across
+        // the affected-path set. `Self::solve_path` is a free-standing dispatch
+        // (no `&self` read); each work item takes the `path_id` + a CLONED
+        // `ResolvedMixedPath` (the `Clone` derive is cheap; the V3-V4 path
+        // math reads only immutable statics), then writes — under the parallel
+        // closure — into the engine-level result-set via a `Mutex`-free
+        // pattern: collect `(path_id, SolvePathResult)` pairs into a Vec, then
+        // merge sequentially into `self.results`. The parallel workers touch
+        // NO engine state and NO core.lock — engine-then-core lock ordering is
+        // preserved unchanged (rayon's internal thread pool never re-enters the
+        // engine `Mutex`). For tiny batches the par_iter dispatch overhead is
+        // bounded by rayon's lazy split (see `par_iter` docs); the sequential
+        // cost dominates below the rayon internal cutoff.
+        //
+        // Pre-collect the work items (path_id + resolved-snapshot). The clone
+        // drops the immutable borrow on `self.path_resolved` that would block
+        // parallel dispatch.
+        let to_solve: Vec<(u64, ResolvedMixedPath)> = affected_path_ids
+            .iter()
+            .filter_map(|&pid| {
+                let resolved = self.path_resolved.get(&pid)?;
+                if !resolved.valid {
+                    return None;
                 }
-            }
+                Some((pid, resolved.clone()))
+            })
+            .collect();
+
+        // Filter out empty/profitless results in the same pass that produces
+        // them — the contract is identical to the prior serial loop.
+        let solved: Vec<(u64, SolvePathResult)> = to_solve
+            .par_iter()
+            .filter_map(|(pid, resolved)| Self::solve_path(resolved).map(|r| (*pid, r)))
+            .filter(|(_, r)| !r.optimal_input.is_zero() && !r.profit.is_zero())
+            .collect();
+
+        // Sequential merge — no lock acquisition; workers above owned their
+        // clones.
+        for (pid, solve_result) in solved {
+            self.results.insert(pid, solve_result);
         }
 
         self.results_block = block_number;
@@ -105,8 +134,15 @@ impl UniswapEngine {
     /// - V2-V2: integer-exact Möbius solver (closed-form U512 isqrt)
     /// - V3-V3 / V4-V4 / V3-V4 / V4-V3: integer piecewise-Möbius (CL × CL)
     /// - V2-V3 / V3-V2 / V2-V4 / V4-V2: mixed integer-exact solver
+    ///
+    /// ADR-005 slice 15b-1: signature dropped the `&self` receiver (it was
+    /// `#[allow(clippy::unused_self)]` — body is pure dispatch to freestanding
+    /// math helpers). The static form lets `rebuild_and_solve_affected` and
+    /// `solve_all` invoke `solve_path` from a rayon `par_iter` closure without
+    /// borrowing `self` (which would conflict with the `&mut self` write to
+    /// `self.results` that follows the solve).
     #[allow(clippy::unused_self)]
-    pub fn solve_path(&self, resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
+    pub fn solve_path(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
         let all_v2 = resolved
             .hops
             .iter()
@@ -206,23 +242,29 @@ impl UniswapEngine {
     }
 
     /// Solve all registered paths using `solve_path`.
+    ///
+    /// ADR-005 slice 15b-1: the solve loop runs under rayon `par_iter` over
+    /// the registered `path_resolved` map. `Self::solve_path` is receiver-free
+    /// (slice 15b-1: pure dispatch to the freestanding math helpers), so the
+    /// parallel closure borrows only the `path_resolved` entry — no `&self`
+    /// mutation under the workers; they collect pairs that the outer loop
+    /// inserts into the fresh result map sequentially. The engine-then-core
+    /// lock ordering is unchanged: this method is `&self` (no core.lock taken
+    /// here; the caller already resolved the paths under `core.read()` at the
+    /// `solve_all_paths` entry).
     #[must_use]
     pub fn solve_all(&self) -> HashMap<u64, SolvePathResult> {
-        let mut results = HashMap::with_capacity(self.path_resolved.len());
-
-        for (&path_id, resolved) in &self.path_resolved {
-            if !resolved.valid {
-                continue;
-            }
-
-            if let Some(solve_result) = self.solve_path(resolved) {
-                if !solve_result.optimal_input.is_zero() && !solve_result.profit.is_zero() {
-                    results.insert(path_id, solve_result);
+        self.path_resolved
+            .par_iter()
+            .filter_map(|(&path_id, resolved)| {
+                if !resolved.valid {
+                    return None;
                 }
-            }
-        }
-
-        results
+                Self::solve_path(resolved)
+                    .filter(|r| !r.optimal_input.is_zero() && !r.profit.is_zero())
+                    .map(|r| (path_id, r))
+            })
+            .collect()
     }
 
     /// Solve a mixed V2 + CL (V3 or V4) path using integer-exact Möbius solver.
