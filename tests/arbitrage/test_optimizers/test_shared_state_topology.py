@@ -16,6 +16,8 @@ closure of the ``rust-owned-bot.md`` §17 stale-state caveat:
 
 from __future__ import annotations
 
+import threading
+
 from degenbot.degenbot_rs import PyBot, UniswapArbEngine
 
 USDC = 10**6
@@ -794,3 +796,202 @@ class TestSharedStateTopologyV4:
         assert handle.liquidity == V4_LIQUIDITY
         assert handle.tick == V4_TICK
         assert handle.update_block == 9
+
+
+class TestSharedStateTopologyConcurrency:
+    """ADR-006 slice 10 acceptance: the deadlock surface + atomic-read invariant.
+
+    The lock-ordering invariant is **engine-then-core**: every pump path holds
+    the engine ``Mutex<UniswapEngine>`` and nests ``core.write()``/``core.read()``
+    inside; ``PyBot``/``PyLiquidityPool`` methods take ``core`` alone and never
+    call into the engine (ADR-003's rule keeping the deadlock surface empty).
+    These tests characterize that invariant under concurrent writer/reader
+    threads — the pump-side write (``apply_swap``) interleaved with companion
+    reads (``snapshot_v3``).
+
+    Note on the GIL: under CPython's GIL these threads don't create true
+    parallel lock contention, but they DO exercise the lock-acquire/release
+    paths + document the atomic-read contract the free-threaded future will
+    exercise in earnest. The pump itself runs off the GIL (a tokio task), so
+    a Python read genuinely can interleave with a pump-side write.
+    """
+
+    _ITERATIONS = 2_000
+    _READERS = 4
+
+    def test_concurrent_apply_swap_writes_complete_without_deadlock(self) -> None:
+        """A writer thread looping ``apply_swap`` joins within a sane timeout.
+
+        Regression guard for the engine-then-core lock ordering: if a path
+        ever nested core-then-engine, the writer (which takes ``core.write()``
+        via the handle) would block the pump and the join would time out.
+        """
+        core = PyBot()
+        core.register_v3_pool(
+            address=V3_POOL_A,
+            token0=TOKEN0,
+            token1=TOKEN1,
+            fee=V3_FEE,
+            tick_spacing=V3_TICK_SPACING,
+            factory=FACTORY,
+            sqrt_price_x96=V3_SQRT_PRICE,
+            liquidity=V3_LIQUIDITY,
+            tick=V3_TICK,
+        )
+        handle = core.get_pool(1)
+        assert handle is not None
+
+        errors: list[BaseException] = []
+
+        def writer() -> None:
+            try:
+                for i in range(self._ITERATIONS):
+                    handle.apply_swap(
+                        sqrt_price_x96=V3_SQRT_PRICE + i,
+                        liquidity=V3_LIQUIDITY + i,
+                        tick=V3_TICK + (i % 7),
+                        block_number=i + 1,
+                    )
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        thread = threading.Thread(target=writer)
+        thread.start()
+        thread.join(timeout=30.0)
+        assert not thread.is_alive(), (
+            "writer thread deadlocked (engine-then-core lock ordering broken)"
+        )
+        assert not errors, errors
+        # The final write is visible (live read after the pump-side writes).
+        assert handle.update_block == self._ITERATIONS
+
+    def test_snapshot_v3_is_atomic_under_concurrent_writes(self) -> None:
+        """``snapshot_v3()`` returns 4 coherent fields — no torn reads.
+
+        The writer writes a tagged tuple per iteration: ``spx = base + i``,
+        ``liq = base + i``, ``tick = base + i``, ``block = i`` — all four fields
+        encode the same iteration index ``i``. A reader's ``snapshot_v3()``
+        must return four fields that all agree on the same ``i`` (i.e.
+        ``spx == V3_SQRT_PRICE + block`` AND ``liq == V3_LIQUIDITY + block``
+        AND ``tick == V3_TICK + block``). A torn read (e.g. new ``spx`` from
+        iteration N+1 with the old ``block`` from N) would fail this — proving
+        the single-``core.read()`` guard around the snapshot tuple.
+        """
+        core = PyBot()
+        core.register_v3_pool(
+            address=V3_POOL_A,
+            token0=TOKEN0,
+            token1=TOKEN1,
+            fee=V3_FEE,
+            tick_spacing=V3_TICK_SPACING,
+            factory=FACTORY,
+            sqrt_price_x96=V3_SQRT_PRICE,
+            liquidity=V3_LIQUIDITY,
+            tick=V3_TICK,
+        )
+        handle = core.get_pool(1)
+        assert handle is not None
+
+        errors: list[str] = []
+        stop = threading.Event()
+
+        def writer() -> None:
+            i = 0
+            while not stop.is_set() and i < self._ITERATIONS:
+                i += 1
+                handle.apply_swap(
+                    sqrt_price_x96=V3_SQRT_PRICE + i,
+                    liquidity=V3_LIQUIDITY + i,
+                    tick=V3_TICK + i,
+                    block_number=i,
+                )
+
+        def reader() -> None:
+            while not stop.is_set():
+                snap = handle.snapshot_v3()
+                if snap is None:
+                    errors.append("snapshot_v3() returned None on a V3 pool")
+                    return
+                spx, liq, tick, block = snap
+                # All four fields must encode the SAME write index `block`.
+                if spx != V3_SQRT_PRICE + block:
+                    errors.append(
+                        f"torn read: spx={spx} != base+block={V3_SQRT_PRICE + block}"
+                    )
+                    return
+                if liq != V3_LIQUIDITY + block:
+                    errors.append(
+                        f"torn read: liq={liq} != base+block={V3_LIQUIDITY + block}"
+                    )
+                    return
+                if tick != V3_TICK + block:
+                    errors.append(
+                        f"torn read: tick={tick} != base+block={V3_TICK + block}"
+                    )
+                    return
+
+        writer_thread = threading.Thread(target=writer)
+        readers = [threading.Thread(target=reader) for _ in range(self._READERS)]
+        writer_thread.start()
+        for t in readers:
+            t.start()
+        writer_thread.join(timeout=30.0)
+        assert not writer_thread.is_alive(), "writer deadlocked"
+        stop.set()
+        for t in readers:
+            t.join(timeout=10.0)
+            assert not t.is_alive(), "reader deadlocked"
+        assert not errors, errors
+
+    def test_concurrent_engine_solve_and_handle_reads_do_not_deadlock(self) -> None:
+        """Engine-path solve (engine lock + core read) + handle reads (core
+        read) interleave without deadlock.
+
+        The pump's drain→``solve_all_paths`` takes the engine ``Mutex`` then
+        reads ``core``; the companion's getters take ``core`` alone. This
+        stresses the engine-then-core ordering from BOTH sides concurrently —
+        if the engine ever tried to re-enter ``core`` while holding a
+        reader-held core guard (or vice versa), this would deadlock or panic.
+        """
+        core = PyBot()
+        pool_id_a, pool_id_b = _register_balanced_v2_pair(core)
+        engine = UniswapArbEngine(py_bot=core)
+        engine.register_and_solve_path([(pool_id_a, True), (pool_id_b, True)])
+
+        errors: list[BaseException] = []
+        done = threading.Event()
+
+        def solver() -> None:
+            try:
+                for i in range(1, self._ITERATIONS + 1):
+                    if done.is_set():
+                        return
+                    engine.solve_all_paths(i)
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        def reader() -> None:
+            handle_a = core.get_pool(pool_id_a)
+            assert handle_a is not None
+            try:
+                while not done.is_set():
+                    _ = handle_a.reserve0
+                    _ = handle_a.reserve1
+                    _ = handle_a.update_block
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        solver_thread = threading.Thread(target=solver)
+        reader_threads = [
+            threading.Thread(target=reader) for _ in range(self._READERS)
+        ]
+        solver_thread.start()
+        for t in reader_threads:
+            t.start()
+        solver_thread.join(timeout=60.0)
+        assert not solver_thread.is_alive(), "solver deadlocked"
+        done.set()
+        for t in reader_threads:
+            t.join(timeout=10.0)
+            assert not t.is_alive(), "reader deadlocked"
+        assert not errors, errors

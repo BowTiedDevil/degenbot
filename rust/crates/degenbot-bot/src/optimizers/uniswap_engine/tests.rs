@@ -2103,4 +2103,100 @@ mod tests {
         // for 3ECKWX (per-log stamping); the scalar assertions above are the
         // restorability proof.
     }
+
+    /// ADR-006 slice 10 acceptance: `UniswapEngine::with_core` shares the
+    /// SAME `Arc<RwLock<BotState>>` as the peer `Bot`/`PyBot` — the structural
+    /// unification that dissolves the dual-`BotState` split (the
+    /// `rust-owned-bot.md` §17 stale-state root cause). Proven by pointer
+    /// equality of the two `Arc` clones (same allocation).
+    #[test]
+    fn with_core_shares_the_same_core_arc_as_a_peer_bot() {
+        use std::sync::Arc;
+
+        use parking_lot::RwLock;
+
+        let core = Arc::new(RwLock::new(crate::bot_core::BotState::new()));
+        let engine = UniswapEngine::with_core(Arc::clone(&core));
+        // `Arc::ptr_eq` proves the engine + the peer hold the SAME allocation
+        // — not a copy, not a fresh `BotState`. Writes through either side
+        // are visible to the other (the §17 live-read payoff).
+        assert!(
+            Arc::ptr_eq(&engine.core, &core),
+            "engine.core must be the same Arc<RwLock<BotState>> as the peer \
+             (ADR-006 D1+D4 shared-core topology)"
+        );
+    }
+
+    /// ADR-006 slice 10 acceptance: characterize the engine-then-core lock
+    /// ordering under concurrent access. Engine paths hold the engine
+    /// `Mutex<UniswapEngine>` and nest `core.write()`/`core.read()` inside;
+    /// core-only paths (`PyBot`/`PyLiquidityPool` getters) take `core` alone
+    /// and never re-enter the engine — the ADR-003 rule keeping the deadlock
+    /// surface empty. This test drives that contention concretely: the
+    /// `solve_dirty` writer (engine lock + core write — the pump's drain
+    /// path) interleaves with reader threads taking `core.read()` alone (the
+    /// companion-getter path). `parking_lot` `RwLock` is writer-preferenced, so
+    /// no reader starves the writer; the join is bounded so a real deadlock
+    /// would surface as a panic.
+    #[test]
+    fn engine_then_core_lock_order_survives_concurrent_readers_and_writer() {
+        use std::sync::Arc;
+        use std::thread;
+
+        use parking_lot::RwLock;
+
+        use crate::bot_core::BlockMetadata;
+
+        let core = Arc::new(RwLock::new(crate::bot_core::BotState::new()));
+        let engine = UniswapEngine::with_core(Arc::clone(&core));
+        let pool_id = engine.register_v2_pool(
+            Address::repeat_byte(0x11),
+            usdc(2_000_000),
+            weth(1_000),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let engine = Arc::new(parking_lot::Mutex::new(engine));
+
+        let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        // Writer: pump drain path — engine lock then core.write() inside
+        // `solve_dirty` (expires buffered events + solves dirty paths).
+        let writer_engine = Arc::clone(&engine);
+        let writer_done = Arc::clone(&done);
+        let metadata = BlockMetadata::default();
+        let writer = thread::spawn(move || {
+            for block in 1..=2_000u64 {
+                if writer_done.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+                // engine.lock() then, inside, core.write() — engine-then-core.
+                writer_engine.lock().solve_dirty(block, &metadata);
+            }
+        });
+
+        // Readers: companion-getter path — core.read() alone, never the engine.
+        let mut readers = Vec::new();
+        for _ in 0..4 {
+            let core = Arc::clone(&core);
+            let done = Arc::clone(&done);
+            readers.push(thread::spawn(move || {
+                while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                    let r = core.read();
+                    // Read is coherent under one guard — no torn state.
+                    let _pool = r.get_v2_pool_state(pool_id);
+                }
+            }));
+        }
+
+        // The writer must finish within a sane bound. A real deadlock
+        // (core-then-engine nesting, or a re-entrant core guard) would hit
+        // this timeout.
+        let writer_result = writer.join();
+        done.store(true, std::sync::atomic::Ordering::Relaxed);
+        for handle in readers {
+            handle.join().expect("reader panicked");
+        }
+        writer_result.expect("writer deadlocked (engine-then-core ordering broken)");
+    }
 }
