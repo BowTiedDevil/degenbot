@@ -71,22 +71,30 @@ class AerodromeV2Builder(V2BuilderBase):
         )
 
         # Aerodrome-specific: fetch stable flag and fee
-        stable_result = io.call(
-            to=pool_address,
-            data=encode_function_calldata("stable()", None),
-            block=state_block,
-        )
-        (stable,) = eth_abi.abi.decode(types=["bool"], data=stable_result)
+        # ADR-005 slice 14g: when io is a PyBotIo (Bot's build path),
+        # delegate the 2-call stable()+getFee choreography to Rust.
+        # SyncPoolIO fallback keeps the Python implementation as a parity gate.
+        fetch_aero = getattr(io, "fetch_aerodrome_v2_stable_and_fee", None)
+        if fetch_aero is not None:
+            stable, fee_raw = fetch_aero(pool_address, common.factory, block=state_block)
+        else:
+            stable_result = io.call(
+                to=pool_address,
+                data=encode_function_calldata("stable()", None),
+                block=state_block,
+            )
+            (stable,) = eth_abi.abi.decode(types=["bool"], data=stable_result)
 
-        fee_result = io.call(
-            to=common.factory,
-            data=encode_function_calldata(
-                "getFee(address,bool)",
-                [pool_address, stable],
-            ),
-            block=state_block,
-        )
-        (fee_raw,) = eth_abi.abi.decode(types=["uint256"], data=fee_result)
+            fee_result = io.call(
+                to=common.factory,
+                data=encode_function_calldata(
+                    "getFee(address,bool)",
+                    [pool_address, stable],
+                ),
+                block=state_block,
+            )
+            (fee_raw,) = eth_abi.abi.decode(types=["uint256"], data=fee_result)
+
         fee = Fraction(fee_raw, AerodromeV2Pool.FEE_DENOMINATOR)
 
         # Determine pool class from registry
