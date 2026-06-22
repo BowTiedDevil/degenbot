@@ -20,6 +20,7 @@ from typing import Any
 import eth_abi.abi
 import pytest
 from hexbytes import HexBytes
+from web3 import Web3
 
 from degenbot.builders.pool_io import SyncPoolIO
 from degenbot.builders.type_resolution import fetch_factory_from_chain
@@ -505,6 +506,7 @@ def test_pybot_io_fetch_v2_immutable_data_propagates_reverts_as_exception():
 # fee/tickSpacing) + 2-call state fetch (slot0/liquidity). The no-arg address-
 # returning reads reuse the 14e `fetch_address_returning_method` seam.
 
+
 class _V3PoolProvider:
     """Provider double returning ABI-encoded V3 immutable + state values."""
 
@@ -636,3 +638,89 @@ def test_pybot_io_fetch_v3_immutable_data_propagates_reverts_as_exception():
     io = PyBotIo(provider=_RevertingProvider())
     with pytest.raises(RuntimeError):
         io.fetch_v3_immutable_data("0x" + "aa" * 20)
+
+
+# === Aerodrome V2 stable+fee choreography (slice 14g) ===
+#
+# `fetch_aerodrome_v2_stable_and_fee` moves the 2-call Aerodrome-specific
+# choreography (stable() -> bool, then getFee(address,bool) -> uint256)
+# into Rust. New pattern: `getFee` takes mixed-type args (address + bool),
+# and the second call depends on the first's result (data dependency).
+
+
+class _AerodromeProvider:
+    """Provider double for Aerodrome stable() + getFee(address,bool)."""
+
+    def __init__(self, *, stable: bool, fee_raw: int) -> None:
+        self._stable = stable
+        self._fee_raw = fee_raw
+        self.calls: list[tuple[str, bytes]] = []  # (to, data) audit trail
+
+    def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+        self.calls.append((to, data))
+        sel = data[:4]
+        # keccak256("stable()")[..4]
+        _stable_sel = Web3.keccak(text="stable()")[:4]
+        if sel == _stable_sel:
+            return HexBytes(eth_abi.abi.encode(types=["bool"], args=[self._stable]))
+        # keccak256("getFee(address,bool)")[..4]
+        _get_fee_sel = Web3.keccak(text="getFee(address,bool)")[:4]
+        if sel == _get_fee_sel:
+            return HexBytes(eth_abi.abi.encode(types=["uint256"], args=[self._fee_raw]))
+        msg = f"unexpected selector {sel.hex()}"
+        raise ValueError(msg)
+
+
+def test_pybot_io_fetch_aerodrome_stable_and_fee_returns_bool_and_uint256():
+    """fetch_aerodrome_v2_stable_and_fee(pool, factory) runs the 2-call
+    choreography: stable() -> bool, then getFee(pool, stable) -> uint256,
+    with the first call's result fed as an argument to the second."""
+    stable = True
+    fee_raw = 30  # Aerodrome fee numerator (denominator 10000 = 0.3%)
+    pool = "0x" + "aa" * 20
+    factory = "0x" + "bb" * 20
+
+    io = PyBotIo(provider=_AerodromeProvider(stable=stable, fee_raw=fee_raw))
+
+    got_stable, got_fee = io.fetch_aerodrome_v2_stable_and_fee(pool, factory)
+
+    assert got_stable is True
+    assert got_fee == fee_raw
+
+    # First call: stable() to the pool address.
+    assert io.provider.calls[0] == (pool, Web3.keccak(text="stable()")[:4])
+    # Second call: getFee(address,bool) to the factory address.
+    second_to, second_data = io.provider.calls[1]
+    assert second_to == factory
+    assert second_data[:4] == Web3.keccak(text="getFee(address,bool)")[:4]
+    # Verify the encoded args: pool address (right-padded in word 0),
+    # stable bool (word 1).
+    assert second_data[16:36] == bytes.fromhex("aa" * 20)  # pool address
+    assert second_data[67] == 1  # bool True (last byte of word 1)
+
+
+def test_pybot_io_fetch_aerodrome_stable_and_fee_handles_false_stable():
+    """When stable() returns False, getFee is called with bool=False in the
+    second word (last byte = 0)."""
+    io = PyBotIo(provider=_AerodromeProvider(stable=False, fee_raw=100))
+
+    got_stable, got_fee = io.fetch_aerodrome_v2_stable_and_fee("0x" + "aa" * 20, "0x" + "bb" * 20)
+
+    assert got_stable is False
+    assert got_fee == 100
+    # The bool arg in word 1 is 0.
+    _, second_data = io.provider.calls[1]
+    assert second_data[67] == 0
+
+
+def test_pybot_io_fetch_aerodrome_stable_and_fee_propagates_reverts():
+    """A provider revert on either call surfaces as an exception (no swallowing)."""
+
+    class _RevertingProvider:
+        def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+            msg = "eth_call reverted"
+            raise RuntimeError(msg)
+
+    io = PyBotIo(provider=_RevertingProvider())
+    with pytest.raises(RuntimeError):
+        io.fetch_aerodrome_v2_stable_and_fee("0x" + "aa" * 20, "0x" + "bb" * 20)

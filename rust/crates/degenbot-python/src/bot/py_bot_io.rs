@@ -601,6 +601,72 @@ impl PyBotIo {
         crate::conversion::alloy::u256_to_py(py, &n).map(|b| b.unbind())
     }
 
+    /// Fetch Aerodrome V2 pool's `stable()` flag and factory `getFee(address,bool)`
+    /// — the 2-call choreography with a data dependency (ADR-005 slice 14g).
+    ///
+    /// Mirrors `aerodrome_v2_builder.py::AerodromeV2PoolBuilder.build`'s
+    /// Aerodrome-specific RPC block. First call: `stable()` on the pool address
+    /// (no-arg, returns `bool`). Second call: `getFee(address,bool)` on the
+    /// factory address, with the pool address and the first call's `stable`
+    /// result as ABI-encoded arguments. Returns `(stable, fee_raw)`.
+    ///
+    /// New pattern introduced: mixed-type ABI encoding (address + bool in a
+    /// single calldata), and a data dependency between the two calls (the `stable`
+    /// result from call 1 is an argument to call 2).
+    ///
+    /// Errors propagate: any provider revert surfaces as `PyErr`.
+    #[pyo3(signature = (pool_address, factory_address, block=None))]
+    fn fetch_aerodrome_v2_stable_and_fee(
+        &self,
+        py: Python<'_>,
+        pool_address: &str,
+        factory_address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<(bool, Py<PyAny>)> {
+        use alloy::dyn_abi::{DynSolType, DynSolValue};
+
+        // Call 1: stable() on the pool — no-arg, decode as bool.
+        let stable_calldata = selector(b"stable()");
+        let stable_result =
+            self.forward_call_to_provider(py, pool_address, &stable_calldata, block)?;
+        let stable_bytes: &[u8] = stable_result.bind(py).extract::<&[u8]>()?;
+        let stable = match DynSolType::Bool.abi_decode(stable_bytes) {
+            Ok(DynSolValue::Bool(b)) => b,
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "invalid stable decode",
+                ))
+            }
+        };
+
+        // Call 2: getFee(address,bool) on the factory — ABI-encode pool address
+        // (right-padded 32-byte word 0) + stable bool (32-byte word 1).
+        let pool_addr = parse_address_for_call(pool_address)?;
+        let get_fee_sel = selector(b"getFee(address,bool)");
+        let mut calldata = Vec::with_capacity(4 + 64);
+        calldata.extend_from_slice(&get_fee_sel);
+        calldata.extend_from_slice(&[0u8; 12]);
+        calldata.extend_from_slice(pool_addr.as_slice());
+        calldata.extend_from_slice(&[0u8; 31]);
+        calldata.push(if stable { 1 } else { 0 });
+
+        let fee_result = self.forward_call_to_provider(py, factory_address, &calldata, block)?;
+        let fee_bytes: &[u8] = fee_result.bind(py).extract::<&[u8]>()?;
+        let fee = match DynSolType::Uint(256).abi_decode(fee_bytes) {
+            Ok(DynSolValue::Uint(n, _)) => n,
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "invalid fee decode",
+                ))
+            }
+        };
+
+        Ok((
+            stable,
+            crate::conversion::alloy::u256_to_py(py, &fee)?.unbind(),
+        ))
+    }
+
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
         let has_db = self.db.is_some();
         let provider_repr = self.provider.bind(py).repr()?.to_str()?.to_string();
