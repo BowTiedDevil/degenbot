@@ -17,6 +17,7 @@ resolver = "2"
 members = [
     "crates/degenbot-core",
     "crates/degenbot-cl-math",
+    "crates/degenbot-curve-math",
     "crates/degenbot-abi",
     "crates/degenbot-rpc",
     "crates/degenbot-bot",
@@ -48,6 +49,8 @@ codegen-units = 1
 [profile.release.package.degenbot-core]
 codegen-units = 16
 [profile.release.package.degenbot-cl-math]
+codegen-units = 16
+[profile.release.package.degenbot-curve-math]
 codegen-units = 16
 [profile.release.package.degenbot-abi]
 codegen-units = 16

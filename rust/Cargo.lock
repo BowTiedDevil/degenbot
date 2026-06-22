@@ -1605,6 +1605,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "degenbot-curve-math"
+version = "0.0.0"
+dependencies = [
+ "alloy",
+ "proptest",
+]
+
+[[package]]
 name = "degenbot-decoders"
 version = "0.0.0"
 dependencies = [
