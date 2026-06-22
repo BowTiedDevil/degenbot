@@ -1330,3 +1330,221 @@ class TestSharedStateTopologyBalancerWeighted:
         # balancer_balances returns an empty list (not None) so a Curve
         # companion never crashes on `for b in handle.balancer_balances`.
         assert curve_handle.balancer_balances == []
+
+
+# ─── Balancer stable topology round-trip fixtures
+#                   (ADR-005 slice 12c stable state port) ───────────────
+# A 3-token ComposableStablePool registered via
+# PyBot.register_balancer_stable_pool and read back through a
+# PyLiquidityPool handle — the **fifth** ``PoolEntry`` family (alongside
+# V2/V3/V4/Curve/BalancerWeighted). Mirrors the V3/V4/Curve/Weighted
+# topology class: register → handle → live-write → atomic-snapshot visibility
+# contract; plus the BPT-index + invariant_version round-trip tests (the
+# stable-specific seams).
+BALANCER_STABLE_POOL_A = "0x" + "b5" * 20
+# 32-byte Balancer V2 pool identifier.
+BALANCER_STABLE_POOL_ID_HEX = "0x" + "b5" * 32
+BALANCER_STABLE_TOKENS = [TOKEN0, TOKEN1, "0x" + "cc" * 20]
+# amp = 200 (typical ComposableStablePool value).
+BALANCER_STABLE_AMP = 200
+# 18-decimal tokens (scaling_factor = ONE = 1e18 for all).
+BALANCER_STABLE_SCALING_FACTORS = [10**18, 10**18, 10**18]
+# Swap fee = 0.1% of FEE_DENOMINATOR = 1e18 → 1e15.
+BALANCER_STABLE_SWAP_FEE = 1_000_000_000_000_000
+# ComposableStablePool: BPT at index 2 (in-token-list).
+BALANCER_STABLE_BPT_INDEX = 2
+# INVARIANT_V1 (always-roundDown D_P accumulation — most Composable pools).
+BALANCER_STABLE_INVARIANT_VERSION_V1 = 1
+# INVARIANT_V2 (roundUp-param P_D accumulation — MetaStable pools).
+BALANCER_STABLE_INVARIANT_VERSION_V2 = 2
+BALANCER_STABLE_BALANCES = [1_500_000 * WETH, 1_500_000 * WETH, 1_500_000 * WETH]
+
+
+class TestSharedStateTopologyBalancerStable:
+    """Balancer stable — the fifth ``PoolEntry`` family (ADR-005 slice 12c).
+
+    Mirrors the V3/V4/Curve/BalancerWeighted topology class: register via
+    ``PyBot.register_balancer_stable_pool``, read independently via a
+    ``PyLiquidityPool`` handle, and prove a live balance write
+    (``apply_balancer_stable_balance_update``) is immediately visible to
+    handle reads (the §17 live-read payoff, extended to the Balancer stable
+    family). The mutable slot is ``balances`` (one U256 per token, including
+    BPT for Composable pools); ``update_block`` tracks the last balance-update
+    block. The Rust core owns the reorg journal (genesis-anchor V2-style
+    discipline) so ``snapshot_balancer_stable`` is atomic under one read guard
+    — the same contract ``snapshot_curve`` / ``snapshot_balancer_weighted``
+    have. Plus the stable-specific seams: ``bpt_idx`` (BPT-drop index) +
+    ``invariant_version`` (V1/V2 — the systematic-1-wei-error guard).
+
+    Sub-slice scope (12c): state port only — the Python
+    ``BalancerV2StablePool`` companion rewrite +
+    ``make_balancer_stable_pool`` factory + ``BalancerBuilder`` stable-branch
+    migration + ``CacheAwareRateProvider`` + ``StaleRateResult`` are 12d. The
+    pure-math Rust port (``StableMath``) is 12e.
+    """
+
+    def test_balancer_stable_handle_reads_registered_balances(self) -> None:
+        """``PyLiquidityPool`` reads the registration balances + stable seams."""
+        core = PyBot()
+        pool_id = core.register_balancer_stable_pool(
+            address=BALANCER_STABLE_POOL_A,
+            vault=BALANCER_VAULT,
+            pool_id_hex=BALANCER_STABLE_POOL_ID_HEX,
+            tokens=BALANCER_STABLE_TOKENS,
+            amp=BALANCER_STABLE_AMP,
+            scaling_factors=BALANCER_STABLE_SCALING_FACTORS,
+            swap_fee=BALANCER_STABLE_SWAP_FEE,
+            bpt_idx=BALANCER_STABLE_BPT_INDEX,
+            invariant_version=BALANCER_STABLE_INVARIANT_VERSION_V1,
+            balances=BALANCER_STABLE_BALANCES,
+            update_block=10,
+        )
+        handle = core.get_pool(pool_id)
+        assert handle is not None
+        assert handle.n_balancer_stable_tokens == 3
+        assert handle.balancer_stable_balances == list(BALANCER_STABLE_BALANCES)
+        # BPT-index round-trip — Composable → Some(2).
+        assert handle.balancer_bpt_index == BALANCER_STABLE_BPT_INDEX
+        # invariant_version round-trip — V1 (always-roundDown).
+        assert handle.balancer_invariant_version == BALANCER_STABLE_INVARIANT_VERSION_V1
+        # amp immutable at registration.
+        assert handle.balancer_amp == BALANCER_STABLE_AMP
+        # update_block falls through every family — a 12c stable slot is now
+        # read by the family-falling-through getter too.
+        assert handle.update_block == 10
+
+    def test_balancer_stable_meta_stable_bpt_idx_is_none_and_v2(self) -> None:
+        """MetaStablePool — `bpt_idx=None` + `invariant_version=V2`.
+
+        Variant round-trip: the BPT-index + invariant_version discriminators
+        must round-trip None → None and V2 → V2 (the MetaStablePool seam).
+        """
+        core = PyBot()
+        pool_id = core.register_balancer_stable_pool(
+            address=BALANCER_STABLE_POOL_A,
+            vault=BALANCER_VAULT,
+            pool_id_hex=BALANCER_STABLE_POOL_ID_HEX,
+            tokens=BALANCER_STABLE_TOKENS,
+            amp=BALANCER_STABLE_AMP,
+            scaling_factors=BALANCER_STABLE_SCALING_FACTORS,
+            swap_fee=BALANCER_STABLE_SWAP_FEE,
+            bpt_idx=None,  # MetaStable — no BPT in token list.
+            invariant_version=BALANCER_STABLE_INVARIANT_VERSION_V2,
+            balances=BALANCER_STABLE_BALANCES,
+            update_block=10,
+        )
+        handle = core.get_pool(pool_id)
+        assert handle is not None
+        assert handle.balancer_bpt_index is None
+        assert handle.balancer_invariant_version == BALANCER_STABLE_INVARIANT_VERSION_V2
+
+    def test_balancer_stable_apply_balance_update_is_visible_to_handle_reads(self) -> None:
+        """A Balancer stable ``apply_balancer_stable_balance_update`` write is
+        immediately readable.
+
+        The deepest assertion of the state-port sub-slice: a write through
+        the handle lands on the shared ``BotState`` and the next getter read
+        sees the new balances — the Balancer stable family of the V3
+        ``apply_swap → sqrt_price_x96`` visibility contract.
+        """
+        core = PyBot()
+        pool_id = core.register_balancer_stable_pool(
+            address=BALANCER_STABLE_POOL_A,
+            vault=BALANCER_VAULT,
+            pool_id_hex=BALANCER_STABLE_POOL_ID_HEX,
+            tokens=BALANCER_STABLE_TOKENS,
+            amp=BALANCER_STABLE_AMP,
+            scaling_factors=BALANCER_STABLE_SCALING_FACTORS,
+            swap_fee=BALANCER_STABLE_SWAP_FEE,
+            bpt_idx=BALANCER_STABLE_BPT_INDEX,
+            invariant_version=BALANCER_STABLE_INVARIANT_VERSION_V1,
+            balances=BALANCER_STABLE_BALANCES,
+            update_block=10,
+        )
+        handle = core.get_pool(pool_id)
+        assert handle is not None
+        new_balances = [1_600_000 * WETH, 1_400_000 * WETH, 1_500_000 * WETH]
+        applied = handle.apply_balancer_stable_balance_update(new_balances, 12)
+        assert applied, "apply_balancer_stable_balance_update should succeed"
+        # immediate visibility — the §17 contract.
+        assert handle.balancer_stable_balances == new_balances
+        assert handle.update_block == 12
+
+    def test_balancer_stable_snapshot_is_atomic(self) -> None:
+        """``snapshot_balancer_stable()`` returns ``(balances, block)``
+        atomically — one read-guard over both handoffs (same guarantee as
+        ``snapshot_v3`` / ``snapshot_curve`` / ``snapshot_balancer_weighted``).
+        """
+        core = PyBot()
+        pool_id = core.register_balancer_stable_pool(
+            address=BALANCER_STABLE_POOL_A,
+            vault=BALANCER_VAULT,
+            pool_id_hex=BALANCER_STABLE_POOL_ID_HEX,
+            tokens=BALANCER_STABLE_TOKENS,
+            amp=BALANCER_STABLE_AMP,
+            scaling_factors=BALANCER_STABLE_SCALING_FACTORS,
+            swap_fee=BALANCER_STABLE_SWAP_FEE,
+            bpt_idx=BALANCER_STABLE_BPT_INDEX,
+            invariant_version=BALANCER_STABLE_INVARIANT_VERSION_V1,
+            balances=BALANCER_STABLE_BALANCES,
+            update_block=10,
+        )
+        handle = core.get_pool(pool_id)
+        assert handle is not None
+        snap = handle.snapshot_balancer_stable()
+        assert snap is not None
+        snap_balances, snap_block = snap
+        assert snap_balances == list(BALANCER_STABLE_BALANCES)
+        assert snap_block == 10
+
+    def test_balancer_stable_apply_is_silent_noop_on_curve_pool(self) -> None:
+        """``apply_balancer_stable_balance_update`` on a Curve pool is a
+        silent no-op (``False``) — the family-dispatch contract: a non-matching
+        companion must NOT corrupt a pool registered under a different family.
+        """
+        core = PyBot()
+        curve_pool_id = core.register_curve_pool(
+            address=CURVE_POOL_A,
+            tokens=CURVE_TOKENS,
+            a_coefficient=CURVE_A,
+            fee=CURVE_FEE,
+            admin_fee=CURVE_ADMIN_FEE,
+            rate_multipliers=CURVE_RATE_MULTIPLIERS,
+            balances=CURVE_BALANCES,
+            update_block=10,
+        )
+        curve_handle = core.get_pool(curve_pool_id)
+        assert curve_handle is not None
+        applied = curve_handle.apply_balancer_stable_balance_update([1, 2, 3], 5)
+        assert applied is False, "Balancer stable apply on a Curve pool must be a silent no-op"
+        # The Curve balances are unchanged — no corruption.
+        assert curve_handle.balances == list(CURVE_BALANCES)
+
+    def test_balancer_stable_snapshot_returns_none_for_curve_pool(self) -> None:
+        """``snapshot_balancer_stable()`` returns ``None`` on non-Balancer-
+        stable pools (family-dispatching reader analogue)."""
+        core = PyBot()
+        curve_pool_id = core.register_curve_pool(
+            address=CURVE_POOL_A,
+            tokens=CURVE_TOKENS,
+            a_coefficient=CURVE_A,
+            fee=CURVE_FEE,
+            admin_fee=CURVE_ADMIN_FEE,
+            rate_multipliers=CURVE_RATE_MULTIPLIERS,
+            balances=CURVE_BALANCES,
+            update_block=10,
+        )
+        curve_handle = core.get_pool(curve_pool_id)
+        assert curve_handle is not None
+        assert curve_handle.snapshot_balancer_stable() is None
+        # n_balancer_stable_tokens reads 0 on a non-stable pool (defensive).
+        assert curve_handle.n_balancer_stable_tokens == 0
+        # balancer_stable_balances returns an empty list (not None) so a
+        # Curve companion never crashes on `for b in handle.balancer_stable_balances`.
+        assert curve_handle.balancer_stable_balances == []
+        # balancer_bpt_index reads None on a non-stable pool (defensive — does
+        # NOT crash; the MetaStable None is also None but the pool is Curve).
+        assert curve_handle.balancer_bpt_index is None
+        # balancer_amp / balancer_invariant_version read 0 on a non-stable pool.
+        assert curve_handle.balancer_amp == 0
+        assert curve_handle.balancer_invariant_version == 0

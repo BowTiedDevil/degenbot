@@ -30,8 +30,9 @@ use crate::bot::token::PyErc20Token;
 use degenbot_bot::bot_core::state_history::JournalError;
 use degenbot_bot::bot_core::PoolTickCoverage;
 use degenbot_bot::bot_core::{
-    Bot, RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams, RegisterV2PoolParams,
-    RegisterV3PoolParams, RegisterV4PoolParams, V4PoolKey,
+    Bot, RegisterBalancerStablePoolParams, RegisterBalancerWeightedPoolParams,
+    RegisterCurvePoolParams, RegisterV2PoolParams, RegisterV3PoolParams, RegisterV4PoolParams,
+    V4PoolKey,
 };
 use pyo3::types::PyList;
 use pyo3::Bound;
@@ -591,6 +592,73 @@ impl PyBot {
                 balances: bal_vals,
                 update_block,
             }))
+    }
+
+    /// Register a Balancer V2 stable pool (ADR-005 slice 12c state port).
+    ///
+    /// Stores immutable pool config (`pool_id`, vault, tokens, amp,
+    /// scaling_factors, swap_fee, `bpt_idx`, `invariant_version`) +
+    /// registration balances + a genesis reorg journal delta. The slice 12d
+    /// Python `BalancerV2StablePool` companion will be constructed over the
+    /// returned `PyLiquidityPool` handle (call `get_pool(id)` after this).
+    ///
+    /// Returns the auto-assigned numeric pool ID. `tokens` / `scaling_factors`
+    /// / `balances` lists MUST all have length `N`. `bpt_idx` is `None` for
+    /// MetaStablePools and `Some(i)` (`i < N`) for ComposableStablePools.
+    ///
+    /// Raises:
+    ///     `ValueError`: If an address is malformed, the pool is already
+    ///         registered, the list lengths mismatch, `bpt_idx` is
+    ///         out-of-range, or `pool_id_hex` is not a 32-byte hex string.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        address,
+        vault,
+        pool_id_hex,
+        tokens,
+        amp,
+        scaling_factors,
+        swap_fee,
+        bpt_idx,
+        invariant_version,
+        balances,
+        update_block
+    ))]
+    fn register_balancer_stable_pool(
+        &self,
+        address: &str,
+        vault: &str,
+        pool_id_hex: &str,
+        tokens: &Bound<'_, PyList>,
+        amp: u128,
+        scaling_factors: &Bound<'_, PyList>,
+        swap_fee: u128,
+        bpt_idx: Option<usize>,
+        invariant_version: u8,
+        balances: &Bound<'_, PyList>,
+        update_block: u64,
+    ) -> PyResult<u64> {
+        let addr = parse_address(address)?;
+        let vault_addr = parse_address(vault)?;
+        let pool_id_bytes = hex_string_to_pool_id(pool_id_hex)?;
+        let token_addrs = parse_address_list(tokens)?;
+        let scaling_vals = extract_u256_list(scaling_factors)?;
+        let bal_vals = extract_u256_list(balances)?;
+        Ok(self.bot.state_arc().write().register_balancer_stable_pool(
+            &RegisterBalancerStablePoolParams {
+                address: addr,
+                vault: vault_addr,
+                pool_id: pool_id_bytes,
+                tokens: token_addrs,
+                amp,
+                scaling_factors: scaling_vals,
+                swap_fee,
+                bpt_idx,
+                invariant_version,
+                balances: bal_vals,
+                update_block,
+            },
+        ))
     }
 
     /// Update a V3 pool's state from a Swap event.
