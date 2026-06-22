@@ -617,8 +617,8 @@ class TestSharedStateTopologyV3:
         )
 
         bitmap = handle.tick_bitmap_snapshot()
-        from degenbot.uniswap.v3_libraries.tick_bitmap import position as _position
         from degenbot.calculations.evm_math import evm_divide
+        from degenbot.uniswap.v3_libraries.tick_bitmap import position as _position
 
         word_lower, bit_lower = _position(evm_divide(tick_lower, V3_TICK_SPACING))
         word_upper, bit_upper = _position(evm_divide(tick_upper, V3_TICK_SPACING))

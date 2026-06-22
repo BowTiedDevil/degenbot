@@ -293,12 +293,6 @@ class V3PoolBuilder(V3BuilderBase):
                     deployer = get_checksum_address(registry_deployment.deployer)
 
         # Only pass tick data if we have a complete DB snapshot.
-        tick_bitmap_arg, tick_data_arg = V3BuilderBase.resolve_tick_data_args(
-            db_snapshot_loaded=db_snapshot_loaded,
-            working_tick_bitmap=working_tick_bitmap,
-            working_tick_data=working_tick_data,
-        )
-
         # Map factory addresses to pool classes for V3 variants
         pool_class = pool_type_registry.get_v3_class(chain_id, factory)
 
@@ -353,7 +347,7 @@ class V3PoolBuilder(V3BuilderBase):
                     rows[int(t)] = (
                         int(info[0]),
                         int(info[1]),
-                        int(info[2]) if len(info) > 2 else 0,
+                        int(info[2]) if len(info) > 2 else 0,  # noqa: PLR2004
                     )
             py_pool_handle.update_tick_data(
                 working_tick_bitmap,
@@ -375,7 +369,7 @@ class V3PoolBuilder(V3BuilderBase):
             tick_data_fetcher=self._make_tick_data_fetcher(pool_address, chain_id, io=io),
             state_block=int(state_block) if state_block is not None else 0,
             sparse_liquidity_map=not (db_snapshot_loaded and bool(working_tick_data)),
-            tick_bitmap_override=working_tick_bitmap if working_tick_bitmap else None,
+            tick_bitmap_override=working_tick_bitmap or None,
         )
 
         # Register pool

@@ -23,10 +23,14 @@ use std::sync::Arc;
 
 use alloy::primitives::Address;
 
+use crate::bot::engine::{hex_string_to_pool_id, map_register_v4_err};
 use crate::bot::pool::PyLiquidityPool;
 use crate::bot::token::PyErc20Token;
 use degenbot_bot::bot_core::state_history::JournalError;
-use degenbot_bot::bot_core::{Bot, RegisterV2PoolParams, RegisterV3PoolParams};
+use degenbot_bot::bot_core::PoolTickCoverage;
+use degenbot_bot::bot_core::{
+    Bot, RegisterV2PoolParams, RegisterV3PoolParams, RegisterV4PoolParams, V4PoolKey,
+};
 
 /// Build an `alloy::rpc::types::Log` from the WS-log shape Python tests pass —
 /// `(address, topics, data, block_number)` reconstructed into the same
@@ -380,6 +384,71 @@ impl PyBot {
                 update_block: 0,
                 coverage: degenbot_bot::bot_core::PoolTickCoverage::Sparse,
             }))
+    }
+
+    /// Register a V4 pool by `(pool_manager, pool_id)`.
+    ///
+    /// Returns the auto-assigned pool ID. The hook + dynamic-fee admission
+    /// floor lives in `BotState::register_v4_pool` (ADR-005 slice 9a): pools
+    /// with amount-modifying hooks (`hook_flags & 0xCC != 0`) or dynamic fees
+    /// (`fee == 0x100000`) are rejected here, surfacing as typed Python
+    /// exceptions (`HookedPoolRejectedError` / `DynamicFeePoolRejectedError`)
+    /// so Python classifies by type, not string matching.
+    ///
+    /// Raises:
+    ///     `HookedPoolRejectedError`: If `hook_flags & 0xCC != 0`.
+    ///     `DynamicFeePoolRejectedError`: If `fee == 0x100000`.
+    ///     `ValueError`: If `addresses/pool_id` are malformed or already
+    ///         registered.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, sqrt_price_x96, liquidity, tick, block))]
+    fn register_v4_pool(
+        &self,
+        pool_manager: &str,
+        pool_id_hex: &str,
+        currency0: &str,
+        currency1: &str,
+        fee: u32,
+        tick_spacing: i32,
+        hook_flags: u16,
+        sqrt_price_x96: &Bound<'_, PyAny>,
+        liquidity: u128,
+        tick: i32,
+        block: u64,
+    ) -> PyResult<u64> {
+        let pm = pool_manager.parse::<Address>().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager address: {e}"))
+        })?;
+        let pool_id = hex_string_to_pool_id(pool_id_hex)?;
+        let c0 = currency0.parse::<Address>().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid currency0 address: {e}"))
+        })?;
+        let c1 = currency1.parse::<Address>().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid currency1 address: {e}"))
+        })?;
+        let sp = crate::conversion::alloy::extract_python_u256(sqrt_price_x96)?;
+        self.bot
+            .state_arc()
+            .write()
+            .register_v4_pool(&RegisterV4PoolParams {
+                pool_manager: pm,
+                pool_id,
+                pool_key: V4PoolKey {
+                    currency0: c0,
+                    currency1: c1,
+                    fee,
+                    tick_spacing,
+                    hooks: Address::ZERO, // Hook filtering already done via hook_flags.
+                },
+                hook_flags,
+                sqrt_price_x96: sp,
+                liquidity,
+                tick,
+                tick_data: std::collections::HashMap::new(),
+                update_block: block,
+                coverage: PoolTickCoverage::Sparse,
+            })
+            .map_err(map_register_v4_err)
     }
 
     /// Update a V3 pool's state from a Swap event.

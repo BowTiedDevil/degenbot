@@ -74,8 +74,8 @@ def test_both_exceptions_caught_by_runtime_error_handler() -> None:
         degenbot_rs.VerificationRpcError,
     ):
         try:
-            raise exc_type("boom")  # noqa: EM101, TRY301
-        except RuntimeError as exc:  # noqa: PERF203
+            raise exc_type("boom")  # noqa: EM101
+        except RuntimeError as exc:
             assert isinstance(exc, exc_type)
 
 
@@ -106,4 +106,3 @@ def test_rpc_transport_failure_message_is_not_a_mismatch() -> None:
     assert isinstance(mismatch_exc, degenbot_rs.VerificationMismatchError)
     assert not isinstance(mismatch_exc, degenbot_rs.VerificationRpcError)
     assert str(rpc_exc) == transport_msg
-

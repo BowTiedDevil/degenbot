@@ -31,7 +31,6 @@ if TYPE_CHECKING:
     from degenbot.builders.request import BuildRequest
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
-    from degenbot.uniswap.v3_types import BitmapWord, Tick
 
 
 class AsyncV4PoolBuilder:
@@ -52,6 +51,7 @@ class AsyncV4PoolBuilder:
         self._tokens = ctx.tokens
         self._managed_pools = ctx.managed_pools
         self._erc20_builder = ctx.erc20_builder
+        self._py_bot = ctx.py_bot
 
     async def build(
         self,
@@ -256,13 +256,48 @@ class AsyncV4PoolBuilder:
                 )
 
         # If tick data was populated, pass both. Otherwise pass None (sparse mode).
-        tick_bitmap_arg, tick_data_arg = V4BuilderBase.resolve_tick_data_args(
-            working_tick_data=working_tick_data,
-            working_tick_bitmap=working_tick_bitmap,
-        )
-
         assert state_view_address is not None
+        # Register the V4 pool in Rust (BotState) and wrap the returned
+        # PyLiquidityPool handle in the companion (mirrors the sync V4 builder;
+        # ADR-005 slice 9b/9c).
+        hook_flags = int(hook_address, 16) if hook_address else 0
+        pool_handle_pool_id = self._py_bot.register_v4_pool(
+            pool_manager=pool_manager_address,
+            pool_id_hex=pool_id_bytes.to_0x_hex(),
+            currency0=token0.address,
+            currency1=token1.address,
+            fee=fee_for_pool,
+            tick_spacing=tick_spacing_for_pool,
+            hook_flags=hook_flags,
+            sqrt_price_x96=slot0_data.sqrt_price_x96,
+            liquidity=int(liquidity_val),
+            tick=slot0_data.tick,
+            block=state_block,
+        )
+        py_pool_handle = self._py_bot.get_pool(pool_handle_pool_id)
+        assert py_pool_handle is not None, "register_v4_pool returned a pool_id with no handle"
+        if working_tick_data:
+            rows: dict[int, tuple[int, int, int]] = {}
+            for t, info in working_tick_data.items():
+                if isinstance(info, LiquidityAtTick):
+                    rows[int(t)] = (
+                        int(info.liquidity_gross),
+                        int(info.liquidity_net),
+                        int(info.block),
+                    )
+                else:
+                    rows[int(t)] = (
+                        int(info[0]),
+                        int(info[1]),
+                        int(info[2]) if len(info) > 2 else 0,  # noqa: PLR2004
+                    )
+            py_pool_handle.update_tick_data(
+                working_tick_bitmap,
+                rows,
+                int(state_block),
+            )
         pool = UniswapV4Pool(
+            py_pool_handle,
             pool_id=pool_id_bytes,
             pool_manager_address=pool_manager_address,
             token0=token0,
@@ -271,23 +306,14 @@ class AsyncV4PoolBuilder:
             tick_spacing=tick_spacing_for_pool,
             hook_address=hook_address,
             state_view_address=state_view_address,
-            sqrt_price_x96=slot0_data.sqrt_price_x96,
-            tick=slot0_data.tick,
-            liquidity=int(liquidity_val),
+            chain_id=chain_id,
             protocol_fee_zero_for_one=slot0_data.protocol_fee_zero_to_one,
             protocol_fee_one_for_zero=slot0_data.protocol_fee_one_to_zero,
             lp_fee=slot0_data.lp_fee,
+            tick_bitmap=working_tick_bitmap if working_tick_data else None,
             state_block=state_block,
-            tick_bitmap=cast(
-                "dict[BitmapWord, dict[str, Any] | BitmapAtWord] | None",
-                tick_bitmap_arg,
-            ),
-            tick_data=cast(
-                "dict[Tick, dict[str, Any] | LiquidityAtTick] | None",
-                tick_data_arg,
-            ),
             tick_data_fetcher=None,
-            state_cache_depth=request.state_cache_depth,
+            sparse_liquidity_map=not bool(working_tick_data),
         )
 
         # Register pool in managed pool registry

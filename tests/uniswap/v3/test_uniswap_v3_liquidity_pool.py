@@ -22,7 +22,6 @@ from degenbot.exceptions.pool import (
     NoPoolStateAvailable,
 )
 from degenbot.provider import ProviderAdapter
-from degenbot.types.state_cache import StateCache
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.deployments import (
     UniswapFactoryDeployment,

@@ -304,7 +304,7 @@ def test_register_path_custom_predicate_injection() -> None:
     calls: list[int] = []
 
     class RecordingPredicate:
-        def evaluate(self, pools_and_zfos) -> None:  # noqa: ANN001
+        def evaluate(self, pools_and_zfos) -> None:
             calls.append(len(pools_and_zfos))
 
     registry, fake = _registry_with_fake_engine(predicate=RecordingPredicate())

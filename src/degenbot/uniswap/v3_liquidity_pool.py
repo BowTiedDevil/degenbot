@@ -26,7 +26,7 @@ sparse-map concept at all.
 
 import dataclasses
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
+from typing import Any, ClassVar, TypedDict, cast
 from weakref import WeakSet
 
 from eth_typing import ChecksumAddress
@@ -61,7 +61,7 @@ from degenbot.uniswap.log_decoders import (
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v3_functions import generate_v3_pool_address, get_tick_word_and_bit_position
 from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves
-from degenbot.uniswap.v3_libraries.tick_bitmap import flip_tick, gen_ticks
+from degenbot.uniswap.v3_libraries.tick_bitmap import gen_ticks
 from degenbot.uniswap.v3_libraries.tick_math import (
     MAX_SQRT_RATIO,
     MAX_TICK,
@@ -177,9 +177,7 @@ class UniswapV3Pool(
     ) -> None:
         """Initialize the instance over a ``PyLiquidityPool`` handle.
 
-        Raises:
-            DegenbotValueError: never — construction is purely in-memory.
-
+        Construction is purely in-memory (no I/O, no failure modes).
         """
         self._py_pool = py_pool
         self.address = get_checksum_address(address)
@@ -395,7 +393,7 @@ class UniswapV3Pool(
             deployer_address=self.deployer_address,
             token_addresses=(self._token0.address, self._token1.address),
             fee=self._fee,
-            tick_spacing=self._tick_spacing,
+            init_hash=self.init_hash,
         )
 
     @property
@@ -494,7 +492,7 @@ class UniswapV3Pool(
         # replaces the derived entry (so snapshot bitmaps are preserved
         # verbatim and checked-empty words appear as present-but-zero).
         for word, bitmap_at_word in self._bitmap_override.items():
-            result[word] = bitmap_at_word
+            result[word] = bitmap_at_word  # noqa: PERF403
         return cast("InitializedTickMap", result)
 
     @property
@@ -533,10 +531,10 @@ class UniswapV3Pool(
         """
         return self._py_pool.update_block
 
-    def swap_is_viable(
+    def swap_is_viable(  # noqa: PLR6301
         self,
         state: PoolState,
-        vector: UniswapPoolSwapVector,
+        vector: UniswapPoolSwapVector,  # noqa: ARG002
     ) -> bool:
         """Swap is viable.
 
@@ -584,7 +582,7 @@ class UniswapV3Pool(
                 normalized[int(tick)] = (
                     int(info[0]),
                     int(info[1]),
-                    int(info[2]) if len(info) > 2 else block,
+                    int(info[2]) if len(info) > 2 else block,  # noqa: PLR2004
                 )
         self._py_pool.update_tick_data(tick_bitmap, normalized, block)
         # Record every word the caller passed (verbatim bitmap override) so
@@ -662,10 +660,6 @@ class UniswapV3Pool(
         ``liquidity`` scalar adjustment (when ``current_tick`` is in range)
         is then landed via a separate ``apply_swap`` carrying the new scalar —
         mirroring the pre-companion ``push_state(working_state)`` semantics.
-
-        Raises:
-            MissingLiquidityData: If a sparse map is missing a required word and no fetcher is set.
-
         """
         state_block = update.block_number
 

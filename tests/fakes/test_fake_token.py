@@ -15,7 +15,6 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.degenbot_rs import PyBot
 from degenbot.types.address_comparable import AddressComparable
-from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.fakes.tokens import FakeToken
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool

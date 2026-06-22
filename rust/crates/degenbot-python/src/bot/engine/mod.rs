@@ -22,6 +22,8 @@ mod snapshot;
 mod solve;
 mod verify;
 
+pub(crate) use register::map_register_v4_err;
+
 pub use errors::*;
 
 use crate::prelude::*;
