@@ -350,25 +350,31 @@ class CurvePoolBuilder:
         )
 
         # Fetch balances for each token in the pool
-        new_balances: list[int] = []
-        for i, _ in enumerate(pool.tokens):
-            (balance,) = cast(
-                "tuple[int]",
-                eth_abi.abi.decode(
-                    types=["uint256"],
-                    data=io.call_raw(
-                        {
-                            "to": pool.address,
-                            "data": encode_function_calldata(
-                                function_prototype="balances(uint256)",
-                                function_arguments=[i],
-                            ),
-                        },
-                        block=block_number_,
+        # ADR-005 slice 14s: when io is a PyBotIo, delegate the full loop to Rust.
+        fetcher = getattr(io, "fetch_curve_balances", None)
+        if fetcher is not None:
+            balances_result = fetcher(pool.address, len(pool.tokens), block=block_number_)
+            new_balances = [int(b) for b in balances_result]
+        else:
+            new_balances = []
+            for i, _ in enumerate(pool.tokens):
+                (balance,) = cast(
+                    "tuple[int]",
+                    eth_abi.abi.decode(
+                        types=["uint256"],
+                        data=io.call_raw(
+                            {
+                                "to": pool.address,
+                                "data": encode_function_calldata(
+                                    function_prototype="balances(uint256)",
+                                    function_arguments=[i],
+                                ),
+                            },
+                            block=block_number_,
+                        ),
                     ),
-                ),
-            )
-            new_balances.append(balance)
+                )
+                new_balances.append(balance)
 
         if pool.balances == tuple(new_balances):
             return False

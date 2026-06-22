@@ -1490,3 +1490,61 @@ def test_pybot_io_fetch_curve_pool_params_propagates_reverts():
     io = PyBotIo(provider=_BalancerProvider())  # no responses configured
     with pytest.raises(Web3Exception):
         io.fetch_curve_pool_params("0x" + "cu" * 20)
+
+
+# === Curve balances RPC (slice 14s) ===
+#
+# `fetch_curve_balances` moves `_fetch_balances`'s `balances(uint256)` loop
+# into Rust. New pattern: unsigned-integer-arg encoding (uint256 for index).
+# The loop count is passed as a parameter; the Rust method iterates 0..count.
+
+
+class _CurveBalancesProvider:
+    """Provider returning canned balances(uint256) responses."""
+
+    def __init__(self, balances: list[int]) -> None:
+        self._balances = balances
+        self.calls: list[bytes] = []
+
+    def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+        self.calls.append(data)
+        sel = data[:4]
+        if sel == Web3.keccak(text="balances(uint256)")[:4]:
+            # uint256 arg is in word 0 (bytes 4..36). Decode it as the index.
+            idx = int.from_bytes(data[4:36], "big")
+            return HexBytes(eth_abi.abi.encode(types=["uint256"], args=[self._balances[idx]]))
+        msg = f"unexpected selector {sel.hex()}"
+        raise ValueError(msg)
+
+
+def test_pybot_io_fetch_curve_balances_encodes_uint256_args_and_decodes_results():
+    """fetch_curve_balances(pool, count, block) → issues count calls with
+    each index ABI-encoded as a 32-byte unsigned-int256 word, decodes the
+    uint256 results, returns them as a list of ints."""
+    balances = [10**18, 2 * 10**18, 5 * 10**17]
+    io = PyBotIo(provider=_CurveBalancesProvider(balances=balances))
+
+    result = io.fetch_curve_balances("0x" + "cu" * 20, 3)
+
+    assert [int(r) for r in result] == balances
+    # Verify the indexes encode as uint256 in each call's word 0.
+    for i, calldata in enumerate(io.provider.calls):
+        assert calldata[:4] == Web3.keccak(text="balances(uint256)")[:4]
+        assert int.from_bytes(calldata[4:36], "big") == i
+
+
+def test_pybot_io_fetch_curve_balances_zero_count_returns_empty_list():
+    """When count=0, no RPC issued and empty list returned."""
+    io = PyBotIo(provider=_CurveBalancesProvider(balances=[]))
+
+    result = io.fetch_curve_balances("0x" + "cu" * 20, 0)
+
+    assert list(result) == []
+    assert io.provider.calls == []
+
+
+def test_pybot_io_fetch_curve_balances_propagates_reverts():
+    """When any single balance call reverts, the exception propagates."""
+    io = PyBotIo(provider=_BalancerProvider())  # no responses configured
+    with pytest.raises(Web3Exception):
+        io.fetch_curve_balances("0x" + "cu" * 20, 3)

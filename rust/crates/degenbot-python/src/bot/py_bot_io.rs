@@ -722,6 +722,48 @@ impl PyBotIo {
         Ok((a, fee, admin_fee))
     }
 
+    /// Fetch all Curve pool balances via `balances(uint256)` in a loop
+    /// (ADR-005 slice 14s).
+    ///
+    /// Mirrors `curve_pool_builder.py::_fetch_balances`'s snapshot-update loop.
+    /// Issues `count` RPCs, indexing 0..count, gathering `uint256` results into
+    /// a Python list. New pattern: unsigned-integer-arg encoding (the index is
+    /// ABI-encoded as a 32-byte big-endian `uint256` word).
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (pool_address, count, block=None))]
+    fn fetch_curve_balances(
+        &self,
+        py: Python<'_>,
+        pool_address: &str,
+        count: usize,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        use alloy::primitives::U256;
+
+        let sel = selector(b"balances(uint256)");
+        let list = PyList::empty(py);
+        for idx in 0..count {
+            // ABI-encode the index as a uint256 (32-byte big-endian word).
+            let mut calldata = Vec::with_capacity(36);
+            calldata.extend_from_slice(&sel);
+            let mut arg = [0u8; 32];
+            arg[24..].copy_from_slice(&(idx as u64).to_be_bytes());
+            calldata.extend_from_slice(&arg);
+
+            let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
+            let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+            if bytes.len() < 32 {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "balances({idx}) result < 32 bytes"
+                )));
+            }
+            let val = U256::from_be_slice(&bytes[0..32]);
+            list.append(crate::conversion::alloy::u256_to_py(py, &val)?.unbind())?;
+        }
+        Ok(list.into())
+    }
+
     /// Fetch an ERC-20 token balance via `balanceOf(address)`, performing the
     /// full encode -> call -> decode choreography in Rust (ADR-005 slice 14d).
     ///
