@@ -871,6 +871,86 @@ impl PyBotIo {
         ))
     }
 
+    /// Fetch a V4 pool's tick bitmap via `getTickBitmap(bytes32,int16)` on the
+    /// state-view contract (ADR-005 slice 14k).
+    ///
+    /// Mirrors `tick_data_fetcher.py::_fetch_v4`'s bitmap RPC block. V4 adds a
+    /// `pool_id` (`bytes32`) prefix argument before the `int16` word position.
+    /// Calldata: selector (4) + pool_id (32) + sign-extended int16 (32) = 68 bytes.
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (state_view_address, pool_id, word_position, block=None))]
+    fn fetch_v4_tick_bitmap(
+        &self,
+        py: Python<'_>,
+        state_view_address: &str,
+        pool_id: &[u8],
+        word_position: i64,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        use alloy::primitives::U256;
+
+        let sel = selector(b"getTickBitmap(bytes32,int16)");
+        let arg = sign_extend_to_32_bytes(word_position);
+        let mut calldata = Vec::with_capacity(68);
+        calldata.extend_from_slice(&sel);
+        calldata.extend_from_slice(pool_id);
+        calldata.extend_from_slice(&arg);
+
+        let result_obj = self.forward_call_to_provider(py, state_view_address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        if bytes.len() < 32 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "getTickBitmap result < 32 bytes",
+            ));
+        }
+        let bitmap = U256::from_be_slice(&bytes[0..32]);
+        crate::conversion::alloy::u256_to_py(py, &bitmap).map(|b| b.unbind())
+    }
+
+    /// Fetch a V4 pool's tick liquidity via `getTickLiquidity(bytes32,int24)`
+    /// on the state-view contract (ADR-005 slice 14k).
+    ///
+    /// Mirrors `tick_data_fetcher.py::_fetch_v4`'s tick-data RPC block. V4 adds
+    /// a `pool_id` (`bytes32`) prefix argument before the `int24` tick. The V4
+    /// tick return is just `(uint128, int128)` — exactly 2 fields.
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (state_view_address, pool_id, tick, block=None))]
+    fn fetch_v4_tick_data(
+        &self,
+        py: Python<'_>,
+        state_view_address: &str,
+        pool_id: &[u8],
+        tick: i64,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
+        use alloy::primitives::U256;
+
+        let sel = selector(b"getTickLiquidity(bytes32,int24)");
+        let arg = sign_extend_to_32_bytes(tick);
+        let mut calldata = Vec::with_capacity(68);
+        calldata.extend_from_slice(&sel);
+        calldata.extend_from_slice(pool_id);
+        calldata.extend_from_slice(&arg);
+
+        let result_obj = self.forward_call_to_provider(py, state_view_address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        if bytes.len() < 64 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "getTickLiquidity result < 64 bytes",
+            ));
+        }
+        let gross = U256::from_be_slice(&bytes[0..32]);
+        let net = alloy::primitives::I256::try_from_be_slice(&bytes[32..64])
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid int128 decode"))?;
+
+        Ok((
+            crate::conversion::alloy::u256_to_py(py, &gross)?.unbind(),
+            crate::conversion::alloy::i256_to_py(py, &net)?.unbind(),
+        ))
+    }
+
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
         let has_db = self.db.is_some();
         let provider_repr = self.provider.bind(py).repr()?.to_str()?.to_string();

@@ -203,19 +203,31 @@ def _fetch_v4(
     types: TickDataTypes,
 ) -> None:
     """Fetch tick bitmap + data for a V4 pool via the state-view contract."""
-    try:
-        (bitmap_value,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=io.call(
-                to=get_checksum_address(state_view_address),
-                data=encode_function_calldata(
-                    "getTickBitmap(bytes32,int16)", [pool_id, word_position]
+    # ADR-005 slice 14k: when io is a PyBotIo, delegate V4 tick RPCs to Rust.
+    fetch_v4_tick_bitmap = getattr(io, "fetch_v4_tick_bitmap", None)
+    fetch_v4_tick_data = getattr(io, "fetch_v4_tick_data", None)
+
+    if fetch_v4_tick_bitmap is not None:
+        try:
+            bitmap_value = fetch_v4_tick_bitmap(
+                state_view_address, pool_id, word_position, block=block_number
+            )
+        except Exception:  # noqa: BLE001
+            return
+    else:
+        try:
+            (bitmap_value,) = eth_abi.abi.decode(
+                types=["uint256"],
+                data=io.call(
+                    to=get_checksum_address(state_view_address),
+                    data=encode_function_calldata(
+                        "getTickBitmap(bytes32,int16)", [pool_id, word_position]
+                    ),
+                    block=block_number,
                 ),
-                block=block_number,
-            ),
-        )
-    except Exception:  # noqa: BLE001
-        return
+            )
+        except Exception:  # noqa: BLE001
+            return
 
     working_tick_bitmap[word_position] = types.bitmap_at_word(
         bitmap=bitmap_value, block=block_number
@@ -229,23 +241,41 @@ def _fetch_v4(
         ]
 
         for active_tick in active_ticks:
-            try:
-                result = io.call(
-                    to=state_view_address,
-                    data=encode_function_calldata(
-                        "getTickLiquidity(bytes32,int24)",
-                        [pool_id, active_tick],
-                    ),
-                    block=block_number,
-                )
-            except Exception:  # noqa: BLE001
-                logger.debug("Failed to fetch V4 tick data for tick %d", active_tick, exc_info=True)
-                continue
+            if fetch_v4_tick_data is not None:
+                try:
+                    liquidity_gross, liquidity_net = fetch_v4_tick_data(
+                        state_view_address, pool_id, active_tick, block=block_number
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.debug(
+                        "Failed to fetch V4 tick data for tick %d",
+                        active_tick,
+                        exc_info=True,
+                    )
+                    continue
+            else:
+                try:
+                    result = io.call(
+                        to=state_view_address,
+                        data=encode_function_calldata(
+                            "getTickLiquidity(bytes32,int24)",
+                            [pool_id, active_tick],
+                        ),
+                        block=block_number,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.debug(
+                        "Failed to fetch V4 tick data for tick %d",
+                        active_tick,
+                        exc_info=True,
+                    )
+                    continue
 
-            liquidity_gross, liquidity_net = eth_abi.abi.decode(
-                types=types.tick_struct_types,
-                data=result,
-            )
+                liquidity_gross, liquidity_net = eth_abi.abi.decode(
+                    types=types.tick_struct_types,
+                    data=result,
+                )
+
             working_tick_data[active_tick] = types.liquidity_at_tick(
                 liquidity_net=int(liquidity_net),
                 liquidity_gross=int(liquidity_gross),
