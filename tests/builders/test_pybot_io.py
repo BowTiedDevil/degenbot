@@ -21,6 +21,7 @@ import eth_abi.abi
 import pytest
 from hexbytes import HexBytes
 from web3 import Web3
+from web3.exceptions import Web3Exception
 
 from degenbot.builders.pool_io import SyncPoolIO
 from degenbot.builders.type_resolution import fetch_factory_from_chain
@@ -813,3 +814,62 @@ def test_pybot_io_fetch_erc20_uint_field_decodes_uint256():
     result = io.fetch_erc20_uint_field("0x" + "ab" * 20, "decimals()")
 
     assert result == decimals
+
+
+# === Pool type probing (slice 14i) ===
+#
+# `probe_pool_type` moves the 4-call try/catch probing choreography from
+# `resolve_pool_type_by_probing` into Rust. Each probe is a no-arg call that
+# either succeeds (method exists) or reverts (method doesn't exist). The Rust
+# method returns a string tag identifying which probe succeeded:
+# "slot0", "getReserves", "balancer_weighted", "balancer_stable", or
+# "stableswap" (Curve fallback when nothing matched).
+
+
+class _ProbeProvider:
+    """Provider that succeeds for some selectors, reverts for others."""
+
+    def __init__(self, *, succeed: set[bytes]) -> None:
+        self._succeed = succeed
+
+    def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+        if data[:4] in self._succeed:
+            return HexBytes(b"\x00" * 32)  # dummy non-empty response
+        msg = "execution reverted"
+        raise Web3Exception(msg)
+
+
+def _sel(sig: str) -> bytes:
+    return Web3.keccak(text=sig)[:4]
+
+
+def test_pybot_io_probe_pool_type_returns_slot0_for_v3():
+    """When slot0() succeeds, probe returns 'slot0'."""
+    io = PyBotIo(provider=_ProbeProvider(succeed={_sel("slot0()")}))
+    assert io.probe_pool_type("0x" + "aa" * 20) == "slot0"
+
+
+def test_pybot_io_probe_pool_type_returns_getreserves_for_v2():
+    """When slot0() reverts but getReserves() succeeds, probe returns 'getReserves'."""
+    io = PyBotIo(provider=_ProbeProvider(succeed={_sel("getReserves()")}))
+    assert io.probe_pool_type("0x" + "aa" * 20) == "getReserves"
+
+
+def test_pybot_io_probe_pool_type_returns_balancer_weighted():
+    """When getPoolId() + getNormalizedWeights() succeed, probe returns 'balancer_weighted'."""
+    io = PyBotIo(
+        provider=_ProbeProvider(succeed={_sel("getPoolId()"), _sel("getNormalizedWeights()")})
+    )
+    assert io.probe_pool_type("0x" + "aa" * 20) == "balancer_weighted"
+
+
+def test_pybot_io_probe_pool_type_returns_balancer_stable():
+    """When getPoolId() succeeds but getNormalizedWeights() reverts, probe returns 'balancer_stable'."""
+    io = PyBotIo(provider=_ProbeProvider(succeed={_sel("getPoolId()")}))
+    assert io.probe_pool_type("0x" + "aa" * 20) == "balancer_stable"
+
+
+def test_pybot_io_probe_pool_type_returns_stableswap_fallback():
+    """When all probes revert, probe returns 'stableswap' (Curve fallback)."""
+    io = PyBotIo(provider=_ProbeProvider(succeed=set()))
+    assert io.probe_pool_type("0x" + "aa" * 20) == "stableswap"
