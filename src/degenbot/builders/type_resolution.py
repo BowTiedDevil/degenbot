@@ -253,6 +253,45 @@ def resolve_pool_type_by_probing(
         The computed value.
 
     """
+    # ADR-005 slice 14i: when io is a PyBotIo (Bot's build path), delegate
+    # the 4-call probing choreography to Rust. SyncPoolIO fallback keeps the
+    # Python implementation as a parity gate.
+    probe_pool_type = getattr(io, "probe_pool_type", None)
+    if probe_pool_type is not None:
+        result = probe_pool_type(address)
+        if result == "slot0":
+            return _descriptor_from_probing_result(
+                succeeded_method="slot0",
+                chain_id=chain_id,
+                factory=factory,
+            )
+        if result == "getReserves":
+            return _descriptor_from_probing_result(
+                succeeded_method="getReserves",
+                chain_id=chain_id,
+                factory=factory,
+            )
+        if result == "balancer_weighted":
+            return PoolTypeDescriptor(
+                family=PoolFamily.WEIGHTED,
+                variant="balancer_weighted",
+                kind=derive_kind(PoolFamily.WEIGHTED, "balancer_weighted"),
+                factory=factory,
+            )
+        if result == "balancer_stable":
+            return PoolTypeDescriptor(
+                family=PoolFamily.STABLESWAP,
+                variant="balancer_stable",
+                kind=derive_kind(PoolFamily.STABLESWAP, "balancer_stable"),
+                factory=factory,
+            )
+        # "stableswap" fallback.
+        return _descriptor_from_probing_result(
+            succeeded_method=None,
+            chain_id=chain_id,
+            factory=factory,
+        )
+
     # Try V3: slot0() exists → CONCENTRATED_LIQUIDITY
     try:
         io.call(

@@ -734,6 +734,57 @@ impl PyBotIo {
         ))
     }
 
+    /// Probe a pool's type by trying method calls in order (ADR-005 slice 14i).
+    ///
+    /// Mirrors `type_resolution.py::resolve_pool_type_by_probing`: tries V3
+    /// (`slot0()`), then V2 (`getReserves()`), then Balancer (`getPoolId()` +
+    /// `getNormalizedWeights()` sub-probe). Returns a string tag identifying
+    /// which probe succeeded so the Python caller can construct a
+    /// `PoolTypeDescriptor` from the registry.
+    ///
+    /// Returns one of:
+    /// - `"slot0"` — V3 concentrated-liquidity pool.
+    /// - `"getReserves"` — V2 constant-product pool.
+    /// - `"balancer_weighted"` — Balancer weighted pool.
+    /// - `"balancer_stable"` — Balancer stable pool.
+    /// - `"stableswap"` — Curve fallback (all probes reverted).
+    ///
+    /// Each probe is a fire-and-forget `call` — the result is not decoded, only
+    /// whether the call succeeded or reverted matters. Reverts (any `PyErr`)
+    /// are caught and the next probe is tried.
+    #[pyo3(signature = (address, block=None))]
+    fn probe_pool_type(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<String> {
+        // Helper: try a no-arg call, return true if it succeeded.
+        let try_call = |sig: &[u8]| -> bool {
+            let calldata = selector(sig);
+            self.forward_call_to_provider(py, address, &calldata, block)
+                .is_ok()
+        };
+
+        // Probe 1: slot0() → V3.
+        if try_call(b"slot0()") {
+            return Ok("slot0".to_string());
+        }
+        // Probe 2: getReserves() → V2.
+        if try_call(b"getReserves()") {
+            return Ok("getReserves".to_string());
+        }
+        // Probe 3: getPoolId() → Balancer (weighted or stable).
+        if try_call(b"getPoolId()") {
+            if try_call(b"getNormalizedWeights()") {
+                return Ok("balancer_weighted".to_string());
+            }
+            return Ok("balancer_stable".to_string());
+        }
+        // Fallback: Curve stableswap.
+        Ok("stableswap".to_string())
+    }
+
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
         let has_db = self.db.is_some();
         let provider_repr = self.provider.bind(py).repr()?.to_str()?.to_string();
