@@ -1356,3 +1356,82 @@ def test_pybot_io_fetch_v4_slot0_liquidity_propagates_reverts():
     io = PyBotIo(provider=_RevProv())
     with pytest.raises(Web3Exception):
         io.fetch_v4_slot0_liquidity("0x" + "cc" * 20, bytes(32))
+
+
+# === Camelot state RPCs (slice 14q) ===
+#
+# `fetch_camelot_state` moves `_fetch_camelot_state`'s 4 no-arg RPC calls
+# (stableSwap → bool, FEE_DENOMINATOR → uint256, token0FeePercent → uint16,
+# token1FeePercent → uint16) into a single Rust method. The four calls have no
+# inter-dependencies.
+
+
+class _CamelotProvider:
+    """Provider returning canned Camelot state responses by selector."""
+
+    def __init__(self, *, stable: bool, fee_denom: int, fee0: int, fee1: int) -> None:
+        t = [stable, fee_denom, fee0, fee1]
+        sigs = ["stableSwap()", "FEE_DENOMINATOR()", "token0FeePercent()", "token1FeePercent()"]
+        types = ["bool", "uint256", "uint16", "uint16"]
+        self._responses = {
+            Web3.keccak(text=sig)[:4]: eth_abi.abi.encode(types=[ty], args=[v])
+            for sig, ty, v in zip(sigs, types, t, strict=True)
+        }
+        self.calls: list[bytes] = []
+
+    def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+        self.calls.append(data)
+        sel = data[:4]
+        if sel in self._responses:
+            return HexBytes(self._responses[sel])
+        msg = f"unexpected selector {sel.hex()}"
+        raise ValueError(msg)
+
+
+def test_pybot_io_fetch_camelot_state_decodes_four_fields():
+    """fetch_camelot_state(pool, block) → 4 calls → CamelotStateFetch
+    fields: (stable_swap, fee_denominator, fee_token0, fee_token1)."""
+    io = PyBotIo(
+        provider=_CamelotProvider(
+            stable=True,
+            fee_denom=10_000_000,
+            fee0=300,
+            fee1=350,
+        )
+    )
+
+    stable, denom, fee0, fee1 = io.fetch_camelot_state("0x" + "ca" * 20)
+
+    assert stable is True
+    assert int(denom) == 10_000_000
+    assert int(fee0) == 300
+    assert int(fee1) == 350
+    # Verify each call used the correct selector in sequence.
+    sels = [c[:4] for c in io.provider.calls]
+    assert sels[0] == Web3.keccak(text="stableSwap()")[:4]
+    assert sels[1] == Web3.keccak(text="FEE_DENOMINATOR()")[:4]
+    assert sels[2] == Web3.keccak(text="token0FeePercent()")[:4]
+    assert sels[3] == Web3.keccak(text="token1FeePercent()")[:4]
+
+
+def test_pybot_io_fetch_camelot_state_unpacks_bool_with_zero_one_values():
+    """ABI bool decode: 1 = True, 0 = False."""
+    io = PyBotIo(
+        provider=_CamelotProvider(
+            stable=False,
+            fee_denom=1,
+            fee0=0,
+            fee1=1,
+        )
+    )
+    stable, _, fee0, fee1 = io.fetch_camelot_state("0x" + "ca" * 20)
+    assert stable is False
+    assert int(fee0) == 0
+    assert int(fee1) == 1
+
+
+def test_pybot_io_fetch_camelot_state_propagates_reverts():
+    """When the first call (stableSwap) reverts, the exception propagates."""
+    io = PyBotIo(provider=_BalancerProvider())  # no responses configured
+    with pytest.raises(Web3Exception):
+        io.fetch_camelot_state("0x" + "ca" * 20)

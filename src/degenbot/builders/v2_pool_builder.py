@@ -208,6 +208,18 @@ class V2PoolBuilder(V2BuilderBase):
             A ``CamelotStateFetch`` with stable_swap + integer fee fields.
 
         """
+        # ADR-005 slice 14q: when io is a PyBotIo, delegate all 4 RPCs to Rust.
+        fetch_camelot_state = getattr(io, "fetch_camelot_state", None)
+        if fetch_camelot_state is not None:
+            stable_swap, fee_denominator, fee_token0, fee_token1 = fetch_camelot_state(
+                pool_address, block=state_block
+            )
+            return CamelotStateFetch(
+                stable_swap=stable_swap,
+                fee_token0=int(fee_token0),
+                fee_token1=int(fee_token1),
+                fee_denominator=int(fee_denominator),
+            )
         stable_result = io.call(
             to=pool_address,
             data=encode_function_calldata("stableSwap()", None),
