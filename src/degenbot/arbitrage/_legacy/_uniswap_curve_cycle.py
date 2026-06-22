@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Iterable, Mapping, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 
     from eth_typing import ChecksumAddress
 
@@ -179,13 +177,6 @@ class _UniswapCurveCycle(PublisherMixin):
         self._subscribers: WeakSet[Subscriber] = WeakSet()
         for pool in self.swap_pools:
             pool.subscribe(self)
-
-    def __getstate__(self) -> dict[str, Any]:
-        # Remove objects that cannot be pickled and are unnecessary to perform
-        # the calculation
-        dropped_attributes = ("_subscribers", "_bot")
-
-        return {key: value for key, value in self.__dict__.items() if key not in dropped_attributes}
 
     def __str__(self) -> str:
         return self.name
@@ -576,79 +567,6 @@ class _UniswapCurveCycle(PublisherMixin):
         self._pre_calculation_check(state_overrides=state_overrides)
 
         return self._calculate(state_overrides=state_overrides)
-
-    async def calculate_with_pool(
-        self,
-        executor: ProcessPoolExecutor | ThreadPoolExecutor,
-        state_overrides: Mapping[ChecksumAddress, CurveOrUniswapPoolState] | None = None,
-    ) -> Awaitable[Any]:
-        """Wrap the arbitrage calculation into an asyncio future using the.
-
-        specified executor.
-
-        Arguments:
-        ---------
-        executor : Executor
-            An executor (from `concurrent.futures`) to process the calculation
-            work. Both `ThreadPoolExecutor` and `ProcessPoolExecutor` are
-            supported, but `ProcessPoolExecutor` is recommended.
-        state_overrides : Mapping[ChecksumAddress, StateOverrideTypes], optional
-            A mapping (dict or dict-like) of pool states, keyed by the pool address.
-
-        Returns:
-        -------
-        A future which returns a `ArbitrageCalculationResult` (or exception)
-        when awaited.
-
-        Raises:
-            ValueError: If the operation fails.
-            DegenbotValueError: If the operation fails.
-
-        Notes:
-        -----
-        This is an async function that must be called with the `await` keyword.
-
-        """
-        if state_overrides is None:
-            state_overrides = {}
-
-        self._pre_calculation_check(state_overrides=state_overrides)
-
-        if isinstance(executor, ProcessPoolExecutor) and any(
-            pool.sparse_liquidity_map for pool in self.swap_pools if isinstance(pool, UniswapV3Pool)
-        ):  # pragma: no cover
-            raise DegenbotValueError(
-                message=f"Cannot calculate {self} with executor. One or more V3 pools has a sparse liquidity map."
-            )
-
-        curve_pool = self.swap_pools[1]
-        curve_swap_vector = self._swap_vectors[1]
-
-        if TYPE_CHECKING:
-            assert isinstance(curve_pool, CurveStableswapPool)
-            assert isinstance(curve_swap_vector, CurveStableSwapPoolVector)
-
-        if self._bot is None:
-            msg = "A Bot instance is required for async calculations"
-            raise ValueError(msg)
-        block_number = self._bot.provider.get_block_number()
-
-        # Some Curve pools utilize on-chain lookups in their calc, so do a simple pre-calc to
-        # cache those values for a given block since the pool will be disconnected once sent
-        # into the process pool, e.g. it will have no web3 object for communication with the chain
-        curve_pool.calculate_tokens_out_from_tokens_in(
-            token_in=curve_swap_vector.token_in,
-            token_in_quantity=1,
-            token_out=curve_swap_vector.token_out,
-            block_identifier=block_number,
-        )
-
-        return asyncio.get_running_loop().run_in_executor(
-            executor,
-            self._calculate,
-            state_overrides,
-            block_number,
-        )
 
     def generate_payloads(
         self,
