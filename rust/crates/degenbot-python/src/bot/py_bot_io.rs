@@ -396,6 +396,119 @@ impl PyBotIo {
         ))
     }
 
+    /// Fetch a V3-style pool's immutable data — `factory()`, `token0()`, `token1()`,
+    /// `fee()`, `tickSpacing()` — the 5-call encode -> call -> decode choreography
+    /// in Rust (ADR-005 slice 14f).
+    ///
+    /// Mirrors the immutable-RPC block of `v3_pool_builder.py::V3PoolBuilder.build`'s
+    /// DB-miss fallback path. The first 3 calls are no-arg address-returning reads
+    /// (re-use [`Self::fetch_address_returning_method`]); the last 2 are no-arg
+    /// numeric reads (`fee` as `uint24`, `tickSpacing` as `int24`).
+    ///
+    /// Returns `(factory, token0, token1, fee, tick_spacing)` with addresses
+    /// EIP-55 checksummed; `fee`/`tick_spacing` returned as Python ints (small
+    /// values, safe lossless conversion).
+    ///
+    /// Errors propagate (see [`Self::fetch_v2_immutable_data`]).
+    #[pyo3(signature = (pool_address, block=None))]
+    fn fetch_v3_immutable_data(
+        &self,
+        py: Python<'_>,
+        pool_address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<(String, String, String, Py<PyAny>, Py<PyAny>)> {
+        use alloy::dyn_abi::DynSolType;
+
+        let factory = self.fetch_address_returning_method(py, b"factory()", pool_address, block)?;
+        let token0 = self.fetch_address_returning_method(py, b"token0()", pool_address, block)?;
+        let token1 = self.fetch_address_returning_method(py, b"token1()", pool_address, block)?;
+
+        // fee() -> uint24, no args.
+        let fee =
+            self.fetch_no_arg_uint(py, b"fee()", pool_address, block, DynSolType::Uint(24))?;
+        // tickSpacing() -> int24, no args.
+        let tick_spacing = self.fetch_no_arg_int(
+            py,
+            b"tickSpacing()",
+            pool_address,
+            block,
+            DynSolType::Int(24),
+        )?;
+
+        Ok((factory, token0, token1, fee, tick_spacing))
+    }
+
+    /// Fetch a V3-style pool's `slot0()` + `liquidity()` state — the 2-call
+    /// encode -> call -> decode choreography in Rust (ADR-005 slice 14f).
+    ///
+    /// Mirrors `V3PoolBuilder.build`'s slot0+liquidity RPC block. `slot0()`
+    /// returns `(uint160 sqrtPriceX96, int24 tick, uint16, uint16, uint16, uint8,
+    /// bool)` — only the first two values are needed (the rest are ignored,
+    /// matching Python `decode_slot0`). `liquidity()` returns `uint128`.
+    ///
+    /// Returns `(sqrt_price_x96, tick, liquidity)`: sqrtPriceX96 + liquidity as
+    /// Python ints (via [`crate::conversion::alloy::u256_to_py`] —> large values
+    /// stay exact); tick as a Python int (`int24` sign-extended, preserved
+    /// through `I256` -> `i64` -> Python int).
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (pool_address, block=None))]
+    fn fetch_v3_slot0_liquidity(
+        &self,
+        py: Python<'_>,
+        pool_address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<(Py<PyAny>, Py<PyAny>, Py<PyAny>)> {
+        use alloy::dyn_abi::{DynSolType, DynSolValue};
+
+        // slot0(): decode sqrtPriceX96 as uint160 (word 0) + tick as int24 (word 1);
+        // the remaining 5 packed fields are ignored.
+        let slot0_calldata = selector(b"slot0()");
+        let slot0_obj = self.forward_call_to_provider(py, pool_address, &slot0_calldata, block)?;
+        let slot0_bytes: &[u8] = slot0_obj.bind(py).extract::<&[u8]>()?;
+        let slot0_tuple = DynSolType::Tuple(vec![DynSolType::Uint(160), DynSolType::Int(24)]);
+        let slot0_decoded = slot0_tuple.abi_decode(slot0_bytes).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("invalid slot0 decode: {e}"))
+        })?;
+        let mut slot0_it = match slot0_decoded {
+            DynSolValue::Tuple(vals) => vals.into_iter(),
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "expected tuple for slot0",
+                ))
+            }
+        };
+        let sqrt_price_x96 = match slot0_it.next() {
+            Some(DynSolValue::Uint(n, _)) => n,
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "invalid sqrtPriceX96",
+                ))
+            }
+        };
+        let tick_i256 = match slot0_it.next() {
+            Some(DynSolValue::Int(n, _)) => n,
+            _ => return Err(pyo3::exceptions::PyValueError::new_err("invalid tick")),
+        };
+
+        // liquidity(): uint128, right-padded in a 32-byte word; treat as uint256 decode for convenience.
+        let liq_calldata = selector(b"liquidity()");
+        let liq_obj = self.forward_call_to_provider(py, pool_address, &liq_calldata, block)?;
+        let liq_bytes: &[u8] = liq_obj.bind(py).extract::<&[u8]>()?;
+        let liquidity = match DynSolType::Uint(128).abi_decode(liq_bytes) {
+            Ok(DynSolValue::Uint(n, _)) => n,
+            _ => return Err(pyo3::exceptions::PyValueError::new_err("invalid liquidity")),
+        };
+
+        Ok((
+            crate::conversion::alloy::u256_to_py(py, &sqrt_price_x96)?.unbind(),
+            // int24 sign-extended: convert through i256_to_py (handles
+            // negatives; no precision loss since int24 fits in i32).
+            crate::conversion::alloy::i256_to_py(py, &tick_i256)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &liquidity)?.unbind(),
+        ))
+    }
+
     /// Fetch an ERC-20 token balance via `balanceOf(address)`, performing the
     /// full encode -> call -> decode choreography in Rust (ADR-005 slice 14d).
     ///
@@ -532,6 +645,64 @@ impl PyBotIo {
     /// the immutable-data choreography in `_fetch_v2_common_data` wants the
     /// underlying exception so the Python caller wraps it in
     /// `LiquidityPoolError`).
+    /// Shared skeleton for no-arg, unsigned-int-returning pool read methods
+    /// (`fee()` returns `uint24`, `liquidity()` returns `uint128`): build
+    /// selector, call, decode the full ABI word as `DynSolType` `ty` (typically
+    /// `Uint(bits)`), convert to a Python `int` via `u256_to_py` (large values
+    /// preserved). Errors propagate.
+    fn fetch_no_arg_uint(
+        &self,
+        py: Python<'_>,
+        signature: &[u8],
+        pool_address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+        ty: alloy::dyn_abi::DynSolType,
+    ) -> PyResult<Py<PyAny>> {
+        use alloy::dyn_abi::DynSolValue;
+
+        let calldata = selector(signature);
+        let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        let n = match ty.abi_decode(bytes) {
+            Ok(DynSolValue::Uint(n, _)) => n,
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "invalid uint decode for no-arg read",
+                ))
+            }
+        };
+        crate::conversion::alloy::u256_to_py(py, &n).map(|b| b.unbind())
+    }
+
+    /// Shared skeleton for no-arg, signed-int-returning pool read methods
+    /// (`tickSpacing()` returns `int24`): build selector, call, decode the full
+    /// ABI word as the given `DynSolType` (typically `Int(bits)`), convert to a
+    /// Python `int` via `i256_to_py` (negative values preserved through the
+    /// sign-extended decode). Errors propagate.
+    fn fetch_no_arg_int(
+        &self,
+        py: Python<'_>,
+        signature: &[u8],
+        pool_address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+        ty: alloy::dyn_abi::DynSolType,
+    ) -> PyResult<Py<PyAny>> {
+        use alloy::dyn_abi::DynSolValue;
+
+        let calldata = selector(signature);
+        let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        let n = match ty.abi_decode(bytes) {
+            Ok(DynSolValue::Int(n, _)) => n,
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "invalid int decode for no-arg read",
+                ))
+            }
+        };
+        crate::conversion::alloy::i256_to_py(py, &n).map(|b| b.unbind())
+    }
+
     fn fetch_address_returning_method(
         &self,
         py: Python<'_>,

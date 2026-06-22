@@ -496,3 +496,143 @@ def test_pybot_io_fetch_v2_immutable_data_propagates_reverts_as_exception():
     io = PyBotIo(provider=_RevertingProvider())
     with pytest.raises(RuntimeError):
         io.fetch_v2_immutable_data("0x" + "aa" * 20)
+
+
+# === V3 pool immutable + slot0/liquidity choreographies (slice 14f) ===
+#
+# `fetch_v3_immutable_data` and `fetch_v3_slot0_liquidity` mirror 14e's V2
+# work for UniswapV3Pool builders: 5-call immutable fetch (factory/token0/token1/
+# fee/tickSpacing) + 2-call state fetch (slot0/liquidity). The no-arg address-
+# returning reads reuse the 14e `fetch_address_returning_method` seam.
+
+class _V3PoolProvider:
+    """Provider double returning ABI-encoded V3 immutable + state values."""
+
+    def __init__(
+        self,
+        *,
+        factory: str,
+        token0: str,
+        token1: str,
+        fee: int,
+        tick_spacing: int,
+        sqrt_price_x96: int,
+        tick: int,
+        liquidity: int,
+    ) -> None:
+        self._responses: dict[bytes, bytes] = {
+            # factory() / token0() / token1() selectors (same as V2).
+            bytes.fromhex("c45a0155"): eth_abi.abi.encode(types=["address"], args=[factory]),
+            bytes.fromhex("0dfe1681"): eth_abi.abi.encode(types=["address"], args=[token0]),
+            bytes.fromhex("d21220a7"): eth_abi.abi.encode(types=["address"], args=[token1]),
+            # keccak256("fee()")[..4] = 0xddca3f43
+            bytes.fromhex("ddca3f43"): eth_abi.abi.encode(types=["uint24"], args=[fee]),
+            # keccak256("tickSpacing()")[..4] = 0xd0c93a7c
+            bytes.fromhex("d0c93a7c"): eth_abi.abi.encode(types=["int24"], args=[tick_spacing]),
+            # keccak256("slot0()")[..4] = 0x3850c7bd
+            bytes.fromhex("3850c7bd"): eth_abi.abi.encode(
+                types=["uint160", "int24", "uint16", "uint16", "uint16", "uint8", "bool"],
+                args=[sqrt_price_x96, tick, 0, 0, 0, 0, False],
+            ),
+            # keccak256("liquidity()")[..4] = 0x1a686502
+            bytes.fromhex("1a686502"): eth_abi.abi.encode(types=["uint128"], args=[liquidity]),
+        }
+        self.calls: list[bytes] = []
+
+    def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+        self.calls.append(data)
+        return HexBytes(self._responses[data[:4]])
+
+
+def test_pybot_io_fetch_v3_immutable_data_decodes_factory_token0_token1_fee_tickspacing():
+    """`fetch_v3_immutable_data(address)` runs the 5-call immutable choreography
+    in Rust; addresses are EIP-55 checksummed; fee + tick_spacing returned as ints."""
+    raw_factory = "0x" + "11" * 20
+    raw_token0 = "0x" + "22" * 20
+    raw_token1 = "0x" + "33" * 20
+    fee = 500  # 0.05% fee tier
+    tick_spacing = 10
+    io = PyBotIo(
+        provider=_V3PoolProvider(
+            factory=raw_factory,
+            token0=raw_token0,
+            token1=raw_token1,
+            fee=fee,
+            tick_spacing=tick_spacing,
+            sqrt_price_x96=0,
+            tick=0,
+            liquidity=0,
+        )
+    )
+
+    factory, token0, token1, got_fee, got_tick_spacing = io.fetch_v3_immutable_data(
+        "0x" + "aa" * 20
+    )
+
+    assert factory == _eip55(raw_factory)
+    assert token0 == _eip55(raw_token0)
+    assert token1 == _eip55(raw_token1)
+    assert got_fee == fee
+    assert got_tick_spacing == tick_spacing
+
+
+def test_pybot_io_fetch_v3_immutable_data_handles_negative_tick_spacing():
+    """tick_spacing is int24; decode path handles the sign-extension correctly.
+    (Negative tick spacing doesn't happen on-chain but exercises the int24 decode.)"""
+    io = PyBotIo(
+        provider=_V3PoolProvider(
+            factory="0x" + "11" * 20,
+            token0="0x" + "22" * 20,
+            token1="0x" + "33" * 20,
+            fee=500,
+            tick_spacing=-7,
+            sqrt_price_x96=0,
+            tick=0,
+            liquidity=0,
+        )
+    )
+
+    _, _, _, _, got_tick_spacing = io.fetch_v3_immutable_data("0x" + "aa" * 20)
+
+    assert got_tick_spacing == -7
+
+
+def test_pybot_io_fetch_v3_slot0_liquidity_decodes_sqrt_price_tick_liquidity():
+    """`fetch_v3_slot0_liquidity(address)` runs the 2-call state choreography;
+    slot0's packed tuple is decoded as (uint160 sqrtPriceX96, int24 tick, ...) and
+    liquidity's uint128 → Python int (large values preserved)."""
+    sqrt_price_x96 = 1_005_993_009_944_122_914_871_674_682  # ≈ real mainnet value
+    tick = -5
+    liquidity = 1_234_567_890_123_456_789_012_345  # > u64
+    io = PyBotIo(
+        provider=_V3PoolProvider(
+            factory="0x" + "11" * 20,
+            token0="0x" + "22" * 20,
+            token1="0x" + "33" * 20,
+            fee=500,
+            tick_spacing=10,
+            sqrt_price_x96=sqrt_price_x96,
+            tick=tick,
+            liquidity=liquidity,
+        )
+    )
+
+    got_sqrt, got_tick, got_liq = io.fetch_v3_slot0_liquidity("0x" + "aa" * 20)
+
+    assert got_sqrt == sqrt_price_x96
+    assert got_tick == tick
+    assert got_liq == liquidity
+
+
+def test_pybot_io_fetch_v3_immutable_data_propagates_reverts_as_exception():
+    """Provider revert surfaces as exception -- mirrors V3PoolBuilder's
+    `except Exception: raise LiquidityPoolError` contract."""
+
+    class _RevertingProvider:
+        def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+            msg = "eth_call reverted"
+            raise RuntimeError(msg)
+
+    io = PyBotIo(provider=_RevertingProvider())
+    with pytest.raises(RuntimeError):
+        io.fetch_v3_immutable_data("0x" + "aa" * 20)
