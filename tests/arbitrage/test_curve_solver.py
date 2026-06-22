@@ -5,7 +5,7 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot.arbitrage.optimizers._solver_utils import _simulate_path
+from degenbot.arbitrage.solvers._solver_utils import _simulate_path
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.types.hop_types import ConstantProductHop, CurveStableswapHop, PoolInvariant
 

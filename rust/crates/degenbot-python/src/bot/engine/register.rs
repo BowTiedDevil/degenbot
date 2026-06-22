@@ -1,7 +1,7 @@
 //! `PyO3` wrapper for the `UniswapEngine` — register `#[pymethods]` slice.
 //!
 //! Split out of the former monolithic `py_binding.rs` (ergo UG6FKN task 74W2Z6),
-//! mirroring `crates/degenbot-bot/src/optimizers/uniswap_engine/`'s per-concern
+//! mirroring `crates/degenbot-bot/src/solvers/uniswap_engine/`'s per-concern
 //! layout. `PyO3` allows multiple `#[pymethods] impl PyUniswapArbEngine { … }`
 //! blocks per type, so each concern file contributes one slice.
 

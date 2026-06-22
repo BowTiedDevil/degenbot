@@ -9,8 +9,8 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot.arbitrage.optimizers.hop_types import SolveResult
-from degenbot.arbitrage.optimizers.solver import MobiusSolver
+from degenbot.arbitrage.solvers.hop_types import SolveResult
+from degenbot.arbitrage.solvers.solver import MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.arbitrage.path.arbitrage_path import (
     _ProfitableStateDiscovered,

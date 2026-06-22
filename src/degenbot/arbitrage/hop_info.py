@@ -1,6 +1,6 @@
 """Engine-facing arbitrage hop descriptors (Plan 102, slice 3).
 
-The :class:`degenbot.arbitrage.optimizers.hop_types.Solver` family uses its own
+The :class:`degenbot.arbitrage.solvers.hop_types.Solver` family uses its own
 ``HopType``/``BoundedProductHop`` shape for *solving*. This module holds a
 distinct, **engine-facing** shape: the hop descriptors
 ``EngineRegistry.register_path`` builds from concrete pool objects to hand to

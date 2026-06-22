@@ -3,7 +3,7 @@
 //! `BlockPump` (Bot's WS transport + drain loop) holds an `Arc<dyn DrainSink>`
 //! instead of `Arc<Mutex<UniswapEngine>>`. Per WS log, the pump calls
 //! `bot.dispatch_log(log)` (slice 4: decode→apply→notify, which dirties the
-//! engine via the [`EngineSubscriber`](crate::optimizers::uniswap_engine::engine_subscriber) adapter).
+//! engine via the [`EngineSubscriber`](crate::solvers::uniswap_engine::engine_subscriber) adapter).
 //! At block boundaries / drain ticks / reorg, the pump calls the sink:
 //! - `on_drain` solves the dirty paths the subscriber accumulated.
 //! - `on_send` flushes a debounced result batch to Python.

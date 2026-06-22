@@ -20,9 +20,9 @@ import math
 
 import pytest
 
-from degenbot.arbitrage.optimizers._solver_utils import _simulate_path
-from degenbot.arbitrage.optimizers.hop_types import SolverMethod
-from degenbot.arbitrage.optimizers.solver import BrentSolver, MobiusSolver
+from degenbot.arbitrage.solvers._solver_utils import _simulate_path
+from degenbot.arbitrage.solvers.hop_types import SolverMethod
+from degenbot.arbitrage.solvers.solver import BrentSolver, MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.exceptions import OptimizationError
 from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
@@ -161,7 +161,7 @@ class TestV3OnlyEquivalance:
         assert result_mobius.profit > 0
         assert result_brent.profit > 0
 
-        # Both optimizers find an integer near the boundary (within 1)
+        # Both solvers find an integer near the boundary (within 1)
         assert abs(result_mobius.optimal_input - result_brent.optimal_input) <= 1
         assert max_input - result_mobius.optimal_input <= 10
         assert max_input - result_brent.optimal_input <= 10

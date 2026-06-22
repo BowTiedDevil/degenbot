@@ -11,13 +11,13 @@ import pytest
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.arbitrage._legacy import _UniswapCurveCycle as UniswapCurveCycle
-from degenbot.arbitrage.optimizers._solver_utils import _simulate_path
-from degenbot.arbitrage.optimizers.hop_types import SolveInput
-from degenbot.arbitrage.optimizers.solidly_stable import (
+from degenbot.arbitrage.solvers._solver_utils import _simulate_path
+from degenbot.arbitrage.solvers.hop_types import SolveInput
+from degenbot.arbitrage.solvers.solidly_stable import (
     _simulate_mixed_path,
     _simulate_mixed_path_int,
 )
-from degenbot.arbitrage.optimizers.solver import BrentSolver
+from degenbot.arbitrage.solvers.solver import BrentSolver
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.degenbot_rs import PyBot
 from degenbot.exceptions.arbitrage import ArbitrageError

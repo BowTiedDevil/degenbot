@@ -13,7 +13,7 @@ use crate::bot_core::state_history::{
     JournalError, ReorgJournal, ScalarPriors, TickBefore, V2BlockDelta, V3BlockDelta,
     V3RestoreResult,
 };
-use crate::optimizers::mobius_int::IntHopState;
+use crate::solvers::mobius_int::IntHopState;
 use degenbot_uniswap::v2_encoding::{encode_v2_swap, EncodedCall};
 
 pub mod balancer_stable_state;
@@ -256,13 +256,13 @@ pub struct BotState {
     /// Dual-buffer for V3 liquidity (Mint/Burn) events awaiting pool
     /// registration (ADR-003: the accurate-state buffer lives on `BotState`, not
     /// the dissolved `V3BlockEngine`).
-    v3_buffer: crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer<
+    v3_buffer: crate::solvers::liquidity_event_buffer::LiquidityEventBuffer<
         Address,
         BufferedV3LiquidityUpdate,
     >,
     /// Dual-buffer for V4 `ModifyLiquidity` events awaiting pool registration.
     /// Keyed by `(pool_manager, pool_id)`.
-    v4_buffer: crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer<
+    v4_buffer: crate::solvers::liquidity_event_buffer::LiquidityEventBuffer<
         (Address, degenbot_decoders::v4_swap_decoder::PoolId),
         BufferedV4LiquidityUpdate,
     >,
@@ -288,8 +288,8 @@ impl BotState {
             tokens: HashMap::new(),
             next_pool_id: 1,
             journal_depth,
-            v3_buffer: crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer::new(),
-            v4_buffer: crate::optimizers::liquidity_event_buffer::LiquidityEventBuffer::new(),
+            v3_buffer: crate::solvers::liquidity_event_buffer::LiquidityEventBuffer::new(),
+            v4_buffer: crate::solvers::liquidity_event_buffer::LiquidityEventBuffer::new(),
             v4_pool_ids: HashMap::new(),
         }
     }
@@ -2972,7 +2972,7 @@ pub struct Bot {
 /// Passed from the pump's WS block header into the drain tick, then forwarded
 /// to Python via the result batch channel. Lives in `bot_core` (general block
 /// data) so the `BlockPump` + `DrainSink` seams stay in `bot_core` without a
-/// reverse dependency on `optimizers` (ADR-006 D4).
+/// reverse dependency on `solvers` (ADR-006 D4).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BlockMetadata {
     /// Block timestamp
@@ -3366,7 +3366,7 @@ mod tests {
     /// caller must buffer events on the SAME core before calling this.
     fn register_v3_on_core(core: &mut BotState, pool_addr: Address, update_block: u64) -> u64 {
         use crate::bot_core::{RegisterV3PoolParams, TickInfo};
-        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::uniswap_engine::PoolTickCoverage;
         use alloy::primitives::{I256, U128};
         let mut tick_data = HashMap::new();
         tick_data.insert(
@@ -3521,7 +3521,7 @@ mod tests {
     #[test]
     fn apply_backfill_buffer_v4_journals_and_advances_update_block() {
         use crate::bot_core::{RegisterV4PoolParams, TickInfo, V4PoolKey};
-        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::uniswap_engine::PoolTickCoverage;
         use alloy::primitives::{I256, U128};
 
         let pool_manager = Address::from([0x44u8; 20]);
@@ -3614,7 +3614,7 @@ mod tests {
     #[test]
     fn register_v4_pool_rejects_amount_modifying_hook_with_typed_error() {
         use crate::bot_core::{RegisterV4PoolError, RegisterV4PoolParams, V4PoolKey};
-        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::uniswap_engine::PoolTickCoverage;
         use std::collections::HashMap;
 
         let mut core = BotState::new();
@@ -3649,7 +3649,7 @@ mod tests {
     #[test]
     fn register_v4_pool_rejects_dynamic_fee_with_typed_error() {
         use crate::bot_core::{RegisterV4PoolError, RegisterV4PoolParams, V4PoolKey};
-        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::uniswap_engine::PoolTickCoverage;
         use std::collections::HashMap;
 
         let mut core = BotState::new();
@@ -3685,7 +3685,7 @@ mod tests {
     #[test]
     fn register_v4_pool_rejects_duplicate_with_already_registered_variant() {
         use crate::bot_core::{RegisterV4PoolError, RegisterV4PoolParams, V4PoolKey};
-        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::uniswap_engine::PoolTickCoverage;
         use std::collections::HashMap;
 
         let pool_manager = Address::from([0x44u8; 20]);
@@ -3736,7 +3736,7 @@ mod tests {
     #[test]
     fn apply_swap_by_pool_id_routes_to_v4_and_matches_apply_v4_swap() {
         use crate::bot_core::{RegisterV4PoolParams, V4PoolKey, V4SwapUpdate};
-        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::uniswap_engine::PoolTickCoverage;
 
         let pool_manager = Address::from([0x44u8; 20]);
         let pool_id_bytes: degenbot_decoders::v4_swap_decoder::PoolId = [0x66u8; 32];
@@ -3823,7 +3823,7 @@ mod tests {
     #[test]
     fn apply_liquidity_update_by_pool_id_routes_to_v4_and_applies_ticks() {
         use crate::bot_core::{RegisterV4PoolParams, TickInfo, V4PoolKey};
-        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::uniswap_engine::PoolTickCoverage;
         use alloy::primitives::{I256, U128};
 
         let pool_manager = Address::from([0x55u8; 20]);
@@ -3915,7 +3915,7 @@ mod tests {
     #[test]
     fn get_v3_or_v4_pool_reads_v4_scalars_matching_apply_v4_swap() {
         use crate::bot_core::{RegisterV4PoolParams, V4PoolKey, V4SwapUpdate};
-        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::uniswap_engine::PoolTickCoverage;
 
         let pool_manager = Address::from([0x88u8; 20]);
         let pool_id_bytes: degenbot_decoders::v4_swap_decoder::PoolId = [0x99u8; 32];
@@ -4004,7 +4004,7 @@ mod tests {
     #[test]
     fn get_v3_or_v4_pool_reads_v4_tick_data_matching_apply_v4_liquidity_update() {
         use crate::bot_core::{RegisterV4PoolParams, TickInfo, V4PoolKey};
-        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::uniswap_engine::PoolTickCoverage;
         use alloy::primitives::{I256, U128};
 
         let pool_manager = Address::from([0xaau8; 20]);
@@ -4101,7 +4101,7 @@ mod tests {
     #[test]
     fn v3_restore_before_block_after_same_block_multi_swap_lands_on_pre_block() {
         use crate::bot_core::RegisterV3PoolParams;
-        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::uniswap_engine::PoolTickCoverage;
 
         let mut core = BotState::new();
         let pool_id = core.register_v3_pool(&RegisterV3PoolParams {
@@ -4255,7 +4255,7 @@ mod tests {
     #[test]
     fn unregister_v4_pool_by_tuple_key_discards_buffered_modify_liquidity() {
         use crate::bot_core::{RegisterV4PoolParams, V4PoolKey};
-        use crate::optimizers::uniswap_engine::PoolTickCoverage;
+        use crate::solvers::uniswap_engine::PoolTickCoverage;
 
         let pool_manager = Address::from([0x44u8; 20]);
         let pool_id_bytes: degenbot_decoders::v4_swap_decoder::PoolId = [0xeeu8; 32];

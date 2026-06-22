@@ -8,8 +8,8 @@ from typing import Any
 
 import pytest
 
-from degenbot.arbitrage.optimizers.hop_types import SolverMethod
-from degenbot.arbitrage.optimizers.solver import MobiusSolver, NewtonSolver
+from degenbot.arbitrage.solvers.hop_types import SolverMethod
+from degenbot.arbitrage.solvers.solver import MobiusSolver, NewtonSolver
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.arbitrage.path.types import SwapVector
 from degenbot.arbitrage.types import (

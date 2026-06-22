@@ -7,8 +7,8 @@ from fractions import Fraction
 
 import pytest
 
-from degenbot.arbitrage.optimizers.hop_types import SolveInput, SolveResult
-from degenbot.arbitrage.optimizers.solver import ArbSolver, MobiusSolver
+from degenbot.arbitrage.solvers.hop_types import SolveInput, SolveResult
+from degenbot.arbitrage.solvers.solver import ArbSolver, MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath, PathValidationError, SwapVector
 from degenbot.exceptions.arbitrage import IncompatiblePoolInvariant
 from degenbot.types.hop_types import BoundedProductHop, ConstantProductHop

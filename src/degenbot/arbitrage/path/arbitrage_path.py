@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 from weakref import WeakSet
 
-from degenbot.arbitrage.optimizers.hop_types import SolveInput
+from degenbot.arbitrage.solvers.hop_types import SolveInput
 from degenbot.arbitrage.path.types import PathValidationError, SwapVector
 from degenbot.arbitrage.types import (
     AbstractSwapAmounts,
@@ -60,7 +60,7 @@ if TYPE_CHECKING:
 
     from eth_typing import ChecksumAddress
 
-    from degenbot.arbitrage.optimizers.hop_types import Solver, SolveResult
+    from degenbot.arbitrage.solvers.hop_types import Solver, SolveResult
     from degenbot.types.abstract import AbstractPoolState
     from degenbot.types.hop_types import HopType
     from degenbot.types.pool_protocols import ArbitragePathPool

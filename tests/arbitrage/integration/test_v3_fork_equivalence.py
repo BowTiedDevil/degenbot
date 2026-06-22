@@ -13,7 +13,7 @@ import pytest
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.arbitrage._legacy import _UniswapLpCycle as UniswapLpCycle
-from degenbot.arbitrage.optimizers.solver import BrentSolver
+from degenbot.arbitrage.solvers.solver import BrentSolver
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.arbitrage.types import UniswapV3PoolSwapAmounts
 from degenbot.erc20.erc20 import Erc20Token

@@ -1,6 +1,6 @@
 //! V4 concentrated-liquidity pool state — the single BotState-owned home for
 //! V4 pool data (ADR-003). Supersedes the engine-side `V4PoolState` that lived
-//! in `optimizers/v4_block_engine.rs`; that engine's path/solve subsystem is
+//! in `solvers/v4_block_engine.rs`; that engine's path/solve subsystem is
 //! deleted as orphan dead code (the unified `UniswapEngine` already handles V4
 //! paths via `HopType::V4` in its `register_path`/`solve_path`).
 //!
@@ -17,8 +17,8 @@ use crate::bot_core::state_history::{ReorgJournal, V3BlockDelta};
 use crate::bot_core::tick_bitmap::{compute_tick_ranges, gen_ticks, V3TickRangeForSolver};
 use crate::bot_core::v3_state::{PoolTickCoverage, V3SwapOutcome};
 use crate::bot_core::TickInfo;
-use crate::optimizers::liquidity_event_buffer::LiquidityEvent;
-use crate::optimizers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence};
+use crate::solvers::liquidity_event_buffer::LiquidityEvent;
+use crate::solvers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v4;
 use degenbot_cl_math::cl_lib::tick_math::{
     get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO,

@@ -14,8 +14,8 @@ from hexbytes import HexBytes
 from web3 import Web3
 
 from degenbot.aerodrome import AerodromeV2Pool, AerodromeV2PoolState, AerodromeV3Pool
-from degenbot.arbitrage.optimizers.hop_types import SolveInput
-from degenbot.arbitrage.optimizers.solver import ArbSolver
+from degenbot.arbitrage.solvers.hop_types import SolveInput
+from degenbot.arbitrage.solvers.solver import ArbSolver
 from degenbot.arbitrage.types import (
     ArbitrageCalculationResult,
     UniswapV2PoolSwapAmounts,
