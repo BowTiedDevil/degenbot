@@ -145,6 +145,9 @@ class BalancerBuilderBase:
 
     @staticmethod
     def _fetch_pool_id(io: PoolIO, address: str, block: int) -> bytes:
+        fetcher = getattr(io, "fetch_balancer_pool_id", None)
+        if fetcher is not None:
+            return bytes(fetcher(address, block=block))
         data = encode_function_calldata("getPoolId()", None)
         result = io.call(to=address, data=data, block=block)
         decoded = eth_abi.abi.decode(["bytes32"], result)
@@ -170,6 +173,9 @@ class BalancerBuilderBase:
 
     @staticmethod
     def _fetch_swap_fee(io: PoolIO, address: str, block: int) -> Fraction:
+        fetcher = getattr(io, "fetch_balancer_swap_fee", None)
+        if fetcher is not None:
+            return Fraction(fetcher(address, block=block), 10**18)
         data = encode_function_calldata("getSwapFeePercentage()", None)
         result = io.call(to=address, data=data, block=block)
         decoded = eth_abi.abi.decode(["uint256"], result)
@@ -177,6 +183,9 @@ class BalancerBuilderBase:
 
     @staticmethod
     def _fetch_weights(io: PoolIO, address: str, block: int) -> list[int]:
+        fetcher = getattr(io, "fetch_balancer_weights", None)
+        if fetcher is not None:
+            return list(fetcher(address, block=block))
         data = encode_function_calldata("getNormalizedWeights()", None)
         result = io.call(to=address, data=data, block=block)
         decoded = eth_abi.abi.decode(["uint256[]"], result)
@@ -184,6 +193,9 @@ class BalancerBuilderBase:
 
     @staticmethod
     def _fetch_amp(io: PoolIO, address: str, block: int) -> int:
+        fetcher = getattr(io, "fetch_balancer_amp", None)
+        if fetcher is not None:
+            return fetcher(address, block=block)
         data = encode_function_calldata("getAmplificationParameter()", None)
         result = io.call(to=address, data=data, block=block)
         decoded = eth_abi.abi.decode(["uint256", "bool"], result)
@@ -195,6 +207,12 @@ class BalancerBuilderBase:
         address: str,
         block: int,
     ) -> list[str]:
+        fetcher = getattr(io, "fetch_balancer_rate_providers", None)
+        if fetcher is not None:
+            try:
+                return list(fetcher(address, block=block))
+            except (Web3Exception, DecodingError):
+                return []
         try:
             data = encode_function_calldata("getRateProviders()", None)
             result = io.call(to=address, data=data, block=block)

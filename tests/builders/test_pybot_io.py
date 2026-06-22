@@ -1022,3 +1022,136 @@ def test_pybot_io_fetch_v4_tick_data_encodes_pool_id_and_int24_args():
     assert calldata[:4] == Web3.keccak(text="getTickLiquidity(bytes32,int24)")[:4]
     assert calldata[4:36] == pool_id
     assert calldata[36:68] == (b"\xff" * 31) + b"\x9c"  # -100 sign-extended
+
+
+# === Balancer RPCs (slice 14l) ===
+#
+# Five Balancer pool-builder helpers move into PyBotIo: `_fetch_pool_id`
+# (bytes32 decode), `_fetch_swap_fee` (uint256), `_fetch_amp` (multi-word
+# return, take first), `_fetch_weights` (`uint256[]` dynamic array — new
+# decode pattern), `_fetch_rate_providers` (`address[]` dynamic array with
+# fallback to [] on revert).
+
+
+class _BalancerProvider:
+    """Provider returning canned Balancer responses based on selector."""
+
+    def __init__(self, **responses: bytes) -> None:
+        # responses keyed by the 4-byte selector
+        self._responses = {Web3.keccak(text=sig)[:4]: data for sig, data in responses.items()}
+        self.calls: list[bytes] = []
+
+    def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+        self.calls.append(data)
+        sel = data[:4]
+        if sel in self._responses:
+            return HexBytes(self._responses[sel])
+        msg = f"unexpected selector {sel.hex()}"
+        raise Web3Exception(msg)
+
+
+def test_pybot_io_fetch_balancer_pool_id_decodes_bytes32():
+    """fetch_balancer_pool_id(address, block) → getPoolId() → 32 raw bytes."""
+    pool_id = bytes(range(32))
+    io = PyBotIo(provider=_BalancerProvider(**{"getPoolId()": pool_id}))
+
+    result = io.fetch_balancer_pool_id("0x" + "aa" * 20)
+
+    assert bytes(result) == pool_id
+    # The return should be the raw 32 bytes (bytes32).
+    assert isinstance(result, (bytes, bytearray))
+
+
+def test_pybot_io_fetch_balancer_swap_fee_decodes_uint256():
+    """fetch_balancer_swap_fee(address, block) → getSwapFeePercentage() → uint256."""
+    fee = 3 * 10**16  # 3%
+    io = PyBotIo(
+        provider=_BalancerProvider(**{
+            "getSwapFeePercentage()": eth_abi.abi.encode(types=["uint256"], args=[fee])
+        })
+    )
+
+    result = io.fetch_balancer_swap_fee("0x" + "aa" * 20)
+
+    assert result == fee
+
+
+def test_pybot_io_fetch_balancer_amp_takes_first_word_of_multi():
+    """fetch_balancer_amp(address, block) → getAmplificationParameter() →
+    multi-word (uint256, bool, uint256) return; we take the first uint256."""
+    amp_value = 2_000
+    # The full struct is (uint256 value, bool isUpdating, uint256 precision)
+    # — we only care about the first word.
+    payload = eth_abi.abi.encode(
+        types=["uint256", "bool", "uint256"], args=[amp_value, False, 1000]
+    )
+    io = PyBotIo(provider=_BalancerProvider(**{"getAmplificationParameter()": payload}))
+
+    result = io.fetch_balancer_amp("0x" + "aa" * 20)
+
+    assert result == amp_value
+
+
+def test_pybot_io_fetch_balancer_weights_decodes_uint256_array():
+    """fetch_balancer_weights(address, block) → getNormalizedWeights() →
+    dynamic uint256[] array. New decode pattern: skip offset word, read
+    length, then N 32-byte words."""
+    weights = [5 * 10**17, 5 * 10**17]  # 50/50
+    io = PyBotIo(
+        provider=_BalancerProvider(**{
+            "getNormalizedWeights()": eth_abi.abi.encode(types=["uint256[]"], args=[weights])
+        })
+    )
+
+    result = io.fetch_balancer_weights("0x" + "aa" * 20)
+
+    assert list(result) == weights
+
+
+def test_pybot_io_fetch_balancer_weights_empty_array():
+    """Empty uint256[] returns offset=0x20, length=0, no data words."""
+    io = PyBotIo(
+        provider=_BalancerProvider(**{
+            "getNormalizedWeights()": eth_abi.abi.encode(types=["uint256[]"], args=[[]])
+        })
+    )
+
+    result = io.fetch_balancer_weights("0x" + "aa" * 20)
+
+    assert list(result) == []
+
+
+def test_pybot_io_fetch_balancer_rate_providers_decodes_address_array():
+    """fetch_balancer_rate_providers(address, block) → getRateProviders() →
+    dynamic address[] array. Each address is 20 bytes, left-padded with 12
+    zero bytes in its 32-byte word."""
+    addrs = [
+        "0x" + "11" * 20,
+        "0x" + "22" * 20,
+        "0x" + "33" * 20,
+    ]
+    io = PyBotIo(
+        provider=_BalancerProvider(**{
+            "getRateProviders()": eth_abi.abi.encode(types=["address[]"], args=[addrs])
+        })
+    )
+
+    result = io.fetch_balancer_rate_providers("0x" + "aa" * 20)
+
+    assert [a.lower() for a in result] == [a.lower() for a in addrs]
+
+
+def test_pybot_io_fetch_balancer_rate_providers_returns_empty_on_revert():
+    """When getRateProviders reverts (WeightedPool2Tokens/MetaStablePools),
+    the Python caller returns []. The Rust method should propagate the
+    exception so the caller's try/except handles it (sync path). For the
+    PyBotIo path, propagate so the Python helper's except catches it."""
+
+    class _RevProv:
+        def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+            msg = "execution reverted"
+            raise Web3Exception(msg)
+
+    io = PyBotIo(provider=_RevProv())
+    with pytest.raises(Web3Exception):
+        io.fetch_balancer_rate_providers("0x" + "aa" * 20)
