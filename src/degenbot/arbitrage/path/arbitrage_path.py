@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 from weakref import WeakSet
 
-from degenbot.arbitrage.optimizers.hop_types import SolveInput, Solver, SolveResult
-from degenbot.arbitrage.optimizers.solver import ArbSolver
+from degenbot.arbitrage.optimizers.hop_types import SolveInput
 from degenbot.arbitrage.path.types import PathValidationError, SwapVector
 from degenbot.arbitrage.types import (
     AbstractSwapAmounts,
@@ -18,21 +15,6 @@ from degenbot.constants import WRAPPED_NATIVE_TOKENS
 from degenbot.erc20 import Erc20Token, EtherPlaceholder
 from degenbot.exceptions import OptimizationError
 from degenbot.exceptions.arbitrage import IncompatiblePoolInvariant
-
-
-def _solve_in_subprocess(solve_input: SolveInput) -> SolveResult:
-    """Solve in a subprocess by constructing a fresh ArbSolver (no RustPoolCache pickling needed).
-
-    This is a module-level function so it can be pickled and sent to a ProcessPoolExecutor.
-    A fresh ArbSolver is constructed per-call, which is cheap since the RustPoolCache
-    is empty and the solve itself is CPU-bound.
-
-    Returns:
-        The solve result.
-
-    """
-    solver = ArbSolver()
-    return solver.solve(solve_input)
 
 
 def _tokens_equivalent(a: Erc20Token, b: Erc20Token) -> bool:
@@ -78,6 +60,7 @@ if TYPE_CHECKING:
 
     from eth_typing import ChecksumAddress
 
+    from degenbot.arbitrage.optimizers.hop_types import Solver, SolveResult
     from degenbot.types.abstract import AbstractPoolState
     from degenbot.types.hop_types import HopType
     from degenbot.types.pool_protocols import ArbitragePathPool
@@ -279,52 +262,6 @@ class ArbitragePath(PublisherMixin):
         """
         hops = self._resolve_state_overrides(state_overrides)
         return self._solver.solve(self._build_solve_input(hops=hops))
-
-    def calculate_with_pool(
-        self,
-        executor: ProcessPoolExecutor | ThreadPoolExecutor,
-        state_overrides: Mapping[ChecksumAddress, AbstractPoolState] | None = None,
-    ) -> asyncio.Future[SolveResult]:
-        """Execute calculation in the given executor.
-
-        **ProcessPoolExecutor** (recommended for CPU parallelism):
-        Each subprocess has its own GIL, so Python-side preamble (cache lookups,
-        dispatch logic) and Rust computation run without inter-process contention.
-        A module-level ``_solve_in_subprocess`` function is submitted instead of a bound
-        method so that the ArbSolver (no longer a RustPoolCache carrier under ADR-003 Slice 4)
-        is never serialized. A fresh ArbSolver is constructed inside the subprocess — this
-        is cheap since the cache starts empty and the compute cost dominates.
-
-        **ThreadPoolExecutor** (GIL-safe but not parallel for short calls):
-        The Rust solver releases the GIL via ``py.detach()`` during computation.
-        However, each ``solve_raw`` call is ~1-2μs and the Python overhead per call
-        (GIL acquire/release, loop iteration, cache lookups) is comparable. This means
-        threads contend for the GIL between short Rust calls and do not achieve meaningful
-        speedup. ThreadPoolExecutor is safe to use but will not spread CPU load across
-        cores for this workload.
-
-        Returns:
-            The computed value.
-
-        """
-        self._refresh_hop_states()
-
-        hops = tuple(self._hop_states)
-        if state_overrides is not None and state_overrides:
-            hops = self._resolve_state_overrides(state_overrides)
-
-        solve_input = self._build_solve_input(hops=hops)
-
-        if isinstance(executor, ProcessPoolExecutor):
-            callable_ = _solve_in_subprocess
-        else:
-            callable_ = self._solver.solve
-
-        return asyncio.get_running_loop().run_in_executor(
-            executor,
-            callable_,
-            solve_input,
-        )
 
     def _resolve_state_overrides(
         self,
