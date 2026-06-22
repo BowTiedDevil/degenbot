@@ -604,6 +604,86 @@ impl PyBotIo {
         ))
     }
 
+    /// Fetch Camelot pool state via four no-arg RPCs, returning
+    /// (stable_swap, fee_denominator, fee_token0, fee_token1) (ADR-005 slice 14q).
+    ///
+    /// Mirrors `v2_pool_builder.py::_fetch_camelot_state`. The four calls run
+    /// sequentially in their original order, though they have no data
+    /// dependencies (independent probes — a batched multicall would be a future
+    /// optimization):
+    /// - `stableSwap()` → `bool`
+    /// - `FEE_DENOMINATOR()` → `uint256`
+    /// - `token0FeePercent()` → `uint16`
+    /// - `token1FeePercent()` → `uint16`
+    ///
+    /// The bool decode extracts the low byte of word 0 (1 = True, 0 = False).
+    /// The uint16/uint256 decodes treat the value as right-aligned in its
+    /// 32-byte word. Errors propagate.
+    #[pyo3(signature = (pool_address, block=None))]
+    fn fetch_camelot_state(
+        &self,
+        py: Python<'_>,
+        pool_address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<(bool, Py<PyAny>, Py<PyAny>, Py<PyAny>)> {
+        use alloy::dyn_abi::{DynSolType, DynSolValue};
+        use alloy::primitives::U256;
+
+        // stableSwap() → bool
+        let stable_calldata = selector(b"stableSwap()");
+        let stable_obj =
+            self.forward_call_to_provider(py, pool_address, &stable_calldata, block)?;
+        let stable_bytes: &[u8] = stable_obj.bind(py).extract::<&[u8]>()?;
+        let stable = match DynSolType::Bool.abi_decode(stable_bytes) {
+            Ok(DynSolValue::Bool(b)) => b,
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "invalid stableSwap() decode",
+                ))
+            }
+        };
+
+        // FEE_DENOMINATOR() → uint256
+        let denom_calldata = selector(b"FEE_DENOMINATOR()");
+        let denom_obj = self.forward_call_to_provider(py, pool_address, &denom_calldata, block)?;
+        let denom_bytes: &[u8] = denom_obj.bind(py).extract::<&[u8]>()?;
+        if denom_bytes.len() < 32 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "FEE_DENOMINATOR result < 32 bytes",
+            ));
+        }
+        let denom = U256::from_be_slice(&denom_bytes[0..32]);
+
+        // token0FeePercent() → uint16
+        let fee0_calldata = selector(b"token0FeePercent()");
+        let fee0_obj = self.forward_call_to_provider(py, pool_address, &fee0_calldata, block)?;
+        let fee0_bytes: &[u8] = fee0_obj.bind(py).extract::<&[u8]>()?;
+        if fee0_bytes.len() < 32 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "token0FeePercent result < 32 bytes",
+            ));
+        }
+        let fee0 = U256::from_be_slice(&fee0_bytes[0..32]);
+
+        // token1FeePercent() → uint16
+        let fee1_calldata = selector(b"token1FeePercent()");
+        let fee1_obj = self.forward_call_to_provider(py, pool_address, &fee1_calldata, block)?;
+        let fee1_bytes: &[u8] = fee1_obj.bind(py).extract::<&[u8]>()?;
+        if fee1_bytes.len() < 32 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "token1FeePercent result < 32 bytes",
+            ));
+        }
+        let fee1 = U256::from_be_slice(&fee1_bytes[0..32]);
+
+        Ok((
+            stable,
+            crate::conversion::alloy::u256_to_py(py, &denom)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &fee0)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &fee1)?.unbind(),
+        ))
+    }
+
     /// Fetch an ERC-20 token balance via `balanceOf(address)`, performing the
     /// full encode -> call -> decode choreography in Rust (ADR-005 slice 14d).
     ///
