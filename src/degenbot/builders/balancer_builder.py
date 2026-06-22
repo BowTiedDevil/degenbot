@@ -251,12 +251,40 @@ class BalancerBuilder(BalancerBuilderBase):
             override=request.invariant_version,
         )
 
+        # ADR-005 slice 12d: register the stable pool in the Rust core +
+        # build the companion over the resulting PyLiquidityPool handle
+        # (production-path twin of make_balancer_stable_pool). Registers
+        # immutable config (amp, scaling_factors, swap_fee, bpt_idx,
+        # invariant_version) + registration balances + genesis journal delta;
+        # the companion reads balances / update_block / state / external_update
+        # through the handle. The rate_provider stays Python-side (the
+        # ``requires_io_at_calculation_time`` I/O / ``StaleRateResult`` flow
+        # the swap calc still drives).
+        fee_scaled_int = int(ctx.fee * BalancerV2StablePool.FEE_DENOMINATOR)
+        pool_id_rust = self._py_bot.register_balancer_stable_pool(
+            address=ctx.address,
+            vault=BALANCER_V2_VAULT_ADDRESS,
+            pool_id_hex="0x" + ctx.pool_id.hex(),
+            tokens=[t.address for t in tokens],
+            amp=amp,
+            scaling_factors=list(scaling_factors),
+            swap_fee=fee_scaled_int,
+            bpt_idx=bpt_idx,
+            invariant_version=invariant_version,
+            balances=list(ctx.balances),
+            update_block=ctx.state_block,
+        )
+        py_pool = self._py_bot.get_pool(pool_id_rust)
+        assert py_pool is not None, (
+            "register_balancer_stable_pool returned a pool_id with no handle"
+        )
+
         pool = BalancerV2StablePool(
+            py_pool,
             address=ctx.address,
             pool_id=ctx.pool_id,
             vault=BALANCER_V2_VAULT_ADDRESS,
             tokens=tokens,
-            balances=ctx.balances,
             fee=ctx.fee,
             amp=amp,
             scaling_factors=scaling_factors,
