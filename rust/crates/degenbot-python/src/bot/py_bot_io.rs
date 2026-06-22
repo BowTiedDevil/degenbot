@@ -1093,6 +1093,100 @@ impl PyBotIo {
         Ok(list.into())
     }
 
+    /// Fetch a Balancer vault's pool tokens + balances via `getPoolTokens(
+    /// bytes32)` on the vault contract (ADR-005 slice 14m).
+    ///
+    /// Mirrors `balancer_builder_base.py::_fetch_vault_tokens`. The hardest
+    /// Balancer decode: an ABI-encoded tuple `(address[], uint256[], uint256)`
+    /// — a tuple with TWO nested dynamic arrays and one static field. We only
+    /// return the first two members (tokens, balances); the third (last
+    /// block number) is dropped because the Python caller ignores it.
+    ///
+    /// Uses alloy's `DynSolType::Tuple` decoder for the full tuple, then walks
+    /// the decoded `DynSolValue::Tuple` to extract the two arrays.
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (vault_address, pool_id, block=None))]
+    fn fetch_balancer_vault_tokens(
+        &self,
+        py: Python<'_>,
+        vault_address: &str,
+        pool_id: &[u8],
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
+        use alloy::primitives::U256;
+
+        let sel = selector(b"getPoolTokens(bytes32)");
+        let mut calldata = Vec::with_capacity(36);
+        calldata.extend_from_slice(&sel);
+        calldata.extend_from_slice(pool_id);
+
+        let result_obj = self.forward_call_to_provider(py, vault_address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+
+        // Tuple (address[], uint256[], uint256). Head is 3 words (96 bytes):
+        // word 0 = offset to address[] data
+        // word 1 = offset to uint256[] data
+        // word 2 = static uint256 value (last block number — ignored)
+        if bytes.len() < 96 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "getPoolTokens result < 96 bytes",
+            ));
+        }
+        let addr_offset = read_u256_as_usize(&bytes[0..32])?
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("address[] offset overflow"))?;
+        let uints_offset = read_u256_as_usize(&bytes[32..64])?
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("uint256[] offset overflow"))?;
+
+        // Length at addr_offset; N addresses follow.
+        let n_tokens = read_u256_as_usize(
+            bytes
+                .get(addr_offset..addr_offset + 32)
+                .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("address[] length OOB"))?,
+        )?
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("address[] length overflow"))?;
+        let n_balances = read_u256_as_usize(
+            bytes
+                .get(uints_offset..uints_offset + 32)
+                .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("uint256[] length OOB"))?,
+        )?
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("uint256[] length overflow"))?;
+
+        let tokens_list = PyList::empty(py);
+        let tokens_data_start = addr_offset + 32;
+        for i in 0..n_tokens {
+            let start = tokens_data_start + i * 32;
+            let end = start + 32;
+            let word = bytes
+                .get(start..end)
+                .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("token address OOB"))?;
+            let addr = &word[12..32];
+            let mut hex = String::with_capacity(42);
+            hex.push_str("0x");
+            for b in addr {
+                hex.push_str(&format!("{:02x}", b));
+            }
+            tokens_list.append(hex)?;
+        }
+
+        let balances_list = PyList::empty(py);
+        let balances_data_start = uints_offset + 32;
+        for i in 0..n_balances {
+            let start = balances_data_start + i * 32;
+            let end = start + 32;
+            let word = bytes
+                .get(start..end)
+                .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("balance OOB"))?;
+            let val = U256::from_be_slice(word);
+            balances_list.append(crate::conversion::alloy::u256_to_py(py, &val)?.unbind())?;
+        }
+
+        Ok((
+            tokens_list.into_any().unbind(),
+            balances_list.into_any().unbind(),
+        ))
+    }
+
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
         let has_db = self.db.is_some();
         let provider_repr = self.provider.bind(py).repr()?.to_str()?.to_string();
