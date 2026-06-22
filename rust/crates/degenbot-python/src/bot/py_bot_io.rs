@@ -349,6 +349,98 @@ impl PyBotIo {
         Ok(Some((name, symbol, decimals)))
     }
 
+    /// Fetch an ERC-20 token balance via `balanceOf(address)`, performing the
+    /// full encode -> call -> decode choreography in Rust (ADR-005 slice 14d).
+    ///
+    /// Mirrors `degenbot/builders/erc20_builder.py::Erc20Builder.get_token_balance`'s
+    /// I/O call path (cache + checksum are out of scope; the caller still owns
+    /// those). The `balanceOf(address)` selector (`0x70a08231`) is built via the
+    /// [`selector`] helper; the 20-byte address arg is ABI-encoded right-padded
+    /// in a 32-byte word; the `uint256` result is decoded via alloy's `DynSolType`.
+    ///
+    /// Errors propagate: a provider call revert or decode failure surfaces as a
+    /// `PyErr` to the caller (no swallowing) — matches the Python impl's no-
+    /// try/except contract, which trusts the caller to handle.
+    #[pyo3(signature = (token, owner, block=None))]
+    fn fetch_token_balance(
+        &self,
+        py: Python<'_>,
+        token: &str,
+        owner: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        self.fetch_single_address_arg_uint(py, selector(b"balanceOf(address)"), token, owner, block)
+    }
+
+    /// Fetch an ERC-20 token allowance via `allowance(address,address)`, the
+    /// two-address-arg parameterized-call pattern (ADR-005 slice 14d).
+    ///
+    /// Mirrors `Erc20Builder.get_token_approval`'s I/O path. Selector
+    /// `0xdd62ed3e`; two ABI-encoded `address` args; decoded `uint256` result.
+    /// Errors propagate (see [`Self::fetch_token_balance`]).
+    #[pyo3(signature = (token, owner, spender, block=None))]
+    fn fetch_token_allowance(
+        &self,
+        py: Python<'_>,
+        token: &str,
+        owner: &str,
+        spender: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        use alloy::dyn_abi::{DynSolType, DynSolValue};
+
+        let sel = selector(b"allowance(address,address)");
+        let owner_addr = parse_address_for_call(owner)?;
+        let spender_addr = parse_address_for_call(spender)?;
+        // Manually pack: selector (4) + 2 right-padded 32-byte address words.
+        let mut calldata = Vec::with_capacity(4 + 64);
+        calldata.extend_from_slice(&sel);
+        calldata.extend_from_slice(&[0u8; 12]);
+        calldata.extend_from_slice(owner_addr.as_slice());
+        calldata.extend_from_slice(&[0u8; 12]);
+        calldata.extend_from_slice(spender_addr.as_slice());
+
+        let result_obj = self.forward_call_to_provider(py, token, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        let n = match DynSolType::Uint(256).abi_decode(bytes) {
+            Ok(DynSolValue::Uint(n, _)) => n,
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "invalid uint256 decode",
+                ))
+            }
+        };
+        crate::conversion::alloy::u256_to_py(py, &n).map(|b| b.unbind())
+    }
+
+    /// Fetch an ERC-20 token's total supply via `totalSupply()`, the no-arg
+    /// uint256-returning call pattern (ADR-005 slice 14d).
+    ///
+    /// Mirrors `Erc20Builder.get_token_total_supply`'s I/O path. Selector
+    /// `0x18160ddd`; no args; decoded `uint256` result. Errors propagate.
+    #[pyo3(signature = (token, block=None))]
+    fn fetch_token_total_supply(
+        &self,
+        py: Python<'_>,
+        token: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        use alloy::dyn_abi::{DynSolType, DynSolValue};
+
+        let calldata = selector(b"totalSupply()");
+        let result_obj = self.forward_call_to_provider(py, token, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        let n = match DynSolType::Uint(256).abi_decode(bytes) {
+            Ok(DynSolValue::Uint(n, _)) => n,
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "invalid uint256 decode",
+                ))
+            }
+        };
+        crate::conversion::alloy::u256_to_py(py, &n).map(|b| b.unbind())
+    }
+
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
         let has_db = self.db.is_some();
         let provider_repr = self.provider.bind(py).repr()?.to_str()?.to_string();
@@ -378,6 +470,79 @@ impl PyBotIo {
         }
         Ok(method.call((), Some(&kw_dict))?.unbind())
     }
+
+    /// Build a `call(to=token, data=calldata, block=None)` forward to the held
+    /// provider -- the common skeleton the choreography methods (`fetch_factory_address`,
+    /// `fetch_erc20_metadata`, `fetch_token_*`) share. Returns the raw result
+    /// `Py<PyAny>` without extraction so callers can decide what to decode.
+    ///
+    /// Single seam: changing the call-forward strategy (e.g. native-alloy swap
+    /// in a later slice) is localized to this helper.
+    fn forward_call_to_provider(
+        &self,
+        py: Python<'_>,
+        token: &str,
+        calldata: &[u8],
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let address_obj = PyString::new(py, token);
+        let data_obj = PyBytes::new(py, calldata);
+        self.call_kw(
+            py,
+            "call",
+            &[
+                ("to", Some(address_obj.as_any())),
+                ("data", Some(data_obj.as_any())),
+                ("block", block),
+            ],
+        )
+    }
+
+    /// Shared skeleton for the single-address-arg, uint256-returning ERC-20
+    /// read methods (`balanceOf(address)`):
+    /// build selector + right-padded 32-byte address word, call, decode `uint256`.
+    /// Used by `fetch_token_balance` (and re-usable for any future analogous
+    /// read). Errors propagate.
+    fn fetch_single_address_arg_uint(
+        &self,
+        py: Python<'_>,
+        sel: [u8; 4],
+        token: &str,
+        address_arg: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        use alloy::dyn_abi::{DynSolType, DynSolValue};
+
+        let addr = parse_address_for_call(address_arg)?;
+        // ABI-encode: selector (4) + 32-byte word, right-padded with 12 zero
+        // prefix bytes then the 20-byte address.
+        let mut calldata = Vec::with_capacity(4 + 32);
+        calldata.extend_from_slice(&sel);
+        calldata.extend_from_slice(&[0u8; 12]);
+        calldata.extend_from_slice(addr.as_slice());
+
+        let result_obj = self.forward_call_to_provider(py, token, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        let n = match DynSolType::Uint(256).abi_decode(bytes) {
+            Ok(DynSolValue::Uint(n, _)) => n,
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "invalid uint256 decode",
+                ))
+            }
+        };
+        crate::conversion::alloy::u256_to_py(py, &n).map(|b| b.unbind())
+    }
+}
+
+/// Parse a 20-byte address from a hex string, returning a borrowed 20-byte array
+/// view for ABI-encoding. Internally uses the core `parse_address` so input
+/// validation matches every other Rust pyclass (e.g. `PyAlloyProvider::get_balance`).
+fn parse_address_for_call(address: &str) -> PyResult<[u8; 20]> {
+    use degenbot_core::address_utils::parse_address;
+    parse_address(address)
+        .map(|a| a.into_array())
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}")))
 }
 
 /// Build `Some(dict{block: …})` when `block` is present, `None` otherwise —

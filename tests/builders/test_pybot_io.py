@@ -301,3 +301,98 @@ def test_pybot_io_fetch_erc20_metadata_parity_with_python_batched():
 
     assert rust_result is not None
     assert rust_result == py_result
+
+
+# === ERC20 read methods (slice 14d) ===
+#
+# `fetch_token_balance` / `fetch_token_allowance` / `fetch_token_total_supply`
+# move the three stateless token-read choreographies (balanceOf(address),
+# allowance(owner,spender), totalSupply()) from Erc20Builder into PyBotIo.
+# Each is a clean encode->call->decode atom -- pure-RPC, no DB same as 14c but
+# now with ABI-encoded arguments, covering the parameterized-call pattern the
+# snapshot-update choreographies (V2 getReserves, V3 slot0) are also shaped by.
+
+class _AddressArgProvider:
+    """Provider double: encodes matching call-data -> canned ABI uint256 result."""
+
+    def __init__(self, *, response: bytes) -> None:
+        self._response = response
+        self.calls: list[bytes] = []
+
+    def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+        self.calls.append(data)
+        return HexBytes(self._response)
+
+
+def _uint256_encoded(value: int) -> bytes:
+    return eth_abi.abi.encode(types=["uint256"], args=[value])
+
+
+def test_pybot_io_fetch_token_balance_encodes_owner_arg_and_decodes_uint256():
+    """fetch_token_balance(token, owner) -- balanceOf(address) selector +
+    ABI-encoded `address` arg, ABI-decoded uint256 result."""
+    balance = 1_000_000 * 10**18
+    provider = _AddressArgProvider(response=_uint256_encoded(balance))
+    io = PyBotIo(provider=provider)
+
+    token = "0x" + "aa" * 20
+    owner = "0x" + "bb" * 20
+
+    result = io.fetch_token_balance(token, owner)
+
+    assert result == balance
+    # balanceOf(address) selector = 0x70a08231; the data's first 4 bytes match,
+    # and bytes 16..36 are the right-padded 20-byte address argument.
+    assert provider.calls[0][:4] == bytes.fromhex("70a08231")
+    assert provider.calls[0][16:36] == bytes.fromhex("bb" * 20)
+
+
+def test_pybot_io_fetch_token_allowance_encodes_owner_spender_args():
+    """fetch_token_allowance(token, owner, spender) -- allowance(address,address)
+    selector + two ABI-encoded address args, decoded uint256 result."""
+    allowance = 5_000 * 10**6
+    provider = _AddressArgProvider(response=_uint256_encoded(allowance))
+    io = PyBotIo(provider=provider)
+
+    token = "0x" + "aa" * 20
+    owner = "0x" + "bb" * 20
+    spender = "0x" + "cc" * 20
+
+    result = io.fetch_token_allowance(token, owner, spender)
+
+    assert result == allowance
+    # allowance(address,address) selector = 0xdd62ed3e.
+    assert provider.calls[0][:4] == bytes.fromhex("dd62ed3e")
+    # args packed right-aligned in 32-byte words: word0 (bytes 4..36) = owner,
+    # word1 (bytes 36..68) = spender. Verify owner @ 16..36, spender @ 48..68.
+    assert provider.calls[0][16:36] == bytes.fromhex("bb" * 20)
+    assert provider.calls[0][48:68] == bytes.fromhex("cc" * 20)
+
+
+def test_pybot_io_fetch_token_total_supply_no_args_decodes_uint256():
+    """fetch_token_total_supply(token) -- totalSupply() selector, no args, decoded
+    uint256 result."""
+    total_supply = 21_000_000 * 10**18
+    provider = _AddressArgProvider(response=_uint256_encoded(total_supply))
+    io = PyBotIo(provider=provider)
+
+    result = io.fetch_token_total_supply("0x" + "aa" * 20)
+
+    assert result == total_supply
+    # totalSupply() selector = 0x18160ddd; call-data is exactly 4 bytes (no arg).
+    assert provider.calls[0] == bytes.fromhex("18160ddd")
+
+
+def test_pybot_io_fetch_token_balance_propagates_reverts_as_exception():
+    """A provider.call() revert propagates as an exception — mirrors
+    Erc20Builder.get_token_balance's no-try/except contract (revert / decode
+    failure surfaces untouched, the Python caller decides)."""
+
+    class _RevertingProvider:
+        def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+            msg = "eth_call reverted"
+            raise RuntimeError(msg)
+
+    io = PyBotIo(provider=_RevertingProvider())
+    with pytest.raises(RuntimeError):
+        io.fetch_token_balance("0x" + "aa" * 20, "0x" + "bb" * 20)
