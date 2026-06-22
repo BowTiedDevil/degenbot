@@ -52,10 +52,15 @@ A single `solve_raw(hops_flat, None)` call from Python takes ~1,180ns, but the a
 2. **Rust → Python result construction** — Each `optimal_input_int`/`profit_int` field calls `int.from_bytes()`, ~158ns per field
 3. **GIL release/reacquire** — ~160ns per cycle
 
-### The Python Dispatch Chain
+### The Python Dispatch Chain (historical — pre slice 15b)
+
+> **Note (ADR-005 slice 15b):** `ArbitragePath.calculate_with_pool()` was retired;
+> the Rust engine's `solve_dirty` now provides the parallel solve fan-out
+> (rayon `par_iter`) at the engine-batch level. The dispatch chain below is
+> preserved as historical context for the per-path PyO3 overhead breakdown.
 
 ```
-ArbitragePath.calculate_with_pool()
+ArbitragePath.calculate_with_pool()  # retired (slice 15b-2)
   → _refresh_hop_states()       # GIL held: pool.to_hop_state() per pool
   → _build_solve_input()        # GIL held: SolveInput construction
   → MobiusSolver.solve()        # GIL held: method selection
