@@ -33,7 +33,7 @@
 //! [PoolIO]: degenbot/builders/pool_io.py
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyString, PyTuple};
 
 /// The Rust I/O façade for pool builders (ADR-005 slice 14a).
 ///
@@ -182,6 +182,71 @@ impl PyBotIo {
         let kwargs = build_block_kw(py, block)?;
         let args = PyTuple::new(py, [tx])?;
         Ok(method.call(args, kwargs.as_ref())?.unbind())
+    }
+
+    /// Fetch the factory address for a V2-style pool, performing the full
+    /// encode -> call -> decode -> checksum choreography in Rust (ADR-005 slice 14b).
+    ///
+    /// Mirrors `degenbot/builders/type_resolution.py::fetch_factory_from_chain`:
+    /// encode `factory()`, `eth_call` the pool, ABI-decode the right-aligned
+    /// 20-byte `address`, EIP-55 checksum it. The RPC primitive (`call`)
+    /// still delegates to the held provider (the native-alloy swap is a later
+    /// slice); the *choreography* now lives in Rust — slice 14's
+    /// "methods for the builder I/O choreography … moved here, called from
+    /// Python via `PyBotIo`".
+    ///
+    /// Returns `None` on any provider error, decode failure, or short result —
+    /// mirrors the Python impl's `except (Web3Exception, DecodingError): return None`
+    /// contract (a pool whose `factory()` reverts yields `None`, not an error).
+    #[pyo3(signature = (address))]
+    fn fetch_factory_address(&self, py: Python<'_>, address: &str) -> PyResult<Option<String>> {
+        // Build the `factory()` 4-byte selector: keccak256("factory()")[..4].
+        // keccak256("factory()") = c45a0155... (verified against the v3/v4 test
+        // golden value `bytes.fromhex("c45a0155")`); the constant is computed
+        // at compile time, so the selector is the same bytes every real
+        // `factory()` selector matches at runtime.
+        use alloy::primitives::keccak256;
+        let selector = {
+            let hash = keccak256(b"factory()");
+            let mut s = [0u8; 4];
+            s.copy_from_slice(&hash[..4]);
+            s
+        };
+
+        // Build Python `bytes` for the `data=` kwarg, and a Python `str` for
+        // the `to=` kwarg (the held provider's `call(*, to, data, block)` is
+        // kw-only and operates on Python objects).
+        let address_obj = PyString::new(py, address);
+        let data_obj = PyBytes::new(py, &selector);
+        let result_obj = match self.call_kw(
+            py,
+            "call",
+            &[
+                ("to", Some(address_obj.as_any())),
+                ("data", Some(data_obj.as_any())),
+                ("block", None),
+            ],
+        ) {
+            Ok(r) => r,
+            Err(_) => return Ok(None), // provider call raised -- mirror `return None`.
+        };
+
+        // ABI-decode: result must be >=32 bytes; the address is the
+        // right-aligned 20 bytes of the first 32-byte return word.
+        let bytes: &[u8] = match result_obj.bind(py).extract::<&[u8]>() {
+            Ok(b) => b,
+            Err(_) => return Ok(None), // not bytes — mirror `return None`.
+        };
+        if bytes.len() < 32 {
+            return Ok(None); // truncated / decode error.
+        }
+        let addr_bytes = &bytes[12..32];
+
+        // EIP-55 checksum.
+        match degenbot_core::address_utils::to_checksum_address_bytes(addr_bytes) {
+            Ok(s) => Ok(Some(s)),
+            Err(_) => Ok(None),
+        }
     }
 
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {

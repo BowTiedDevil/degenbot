@@ -184,10 +184,24 @@ def fetch_factory_from_chain(
 ) -> ChecksumAddress | None:
     """Fetch the factory address from the pool contract's factory() method.
 
+    When ``io`` is a Rust :class:`~degenbot.degenbot_rs.PyBotIo` (the Bot's
+    build-path adapter — ADR-005 slice 14a), the encode -> call -> decode ->
+    checksum choreography is delegated to ``PyBotIo.fetch_factory_address``
+    (Rust, slice 14b), not run in Python. Raw ``SyncPoolIO`` / ``AsyncPoolIO``
+    callers (e.g. offline / fork tests) still exercise the Python implementation
+    below — a behavior-preserving parity gate against the Rust impl.
+
     Returns:
         The computed value.
 
     """
+    # ADR-005 slice 14b: route through PyBotIo when available — the
+    # choreography is now Rust-owned. `hasattr` keeps the SyncPoolIO fallback
+    # path working without importing PyBotIo (which lives in the Rust ext).
+    fetch_factory = getattr(io, "fetch_factory_address", None)
+    if fetch_factory is not None:
+        return fetch_factory(address)
+
     try:
         factory_result = io.call(
             to=address,

@@ -7,7 +7,7 @@ exposes the 7-method `PoolIO` surface (`get_block_number`, `get_block`,
 `get_block_timestamp`, `get_code`, `get_balance`, `call`, `call_raw`) by
 delegating to the held provider.
 
-These tests pin the *seam* — that delegating through the Rust pyclass yields
+These tests pin the *seam* -- that delegating through the Rust pyclass yields
 the same observable result as calling the provider directly. They do NOT yet
 route a real builder through `PyBotIo`; that's the 14a follow-on (one builder's
 `build()` via `PyBotIo`), and 14b extends it to all families.
@@ -17,9 +17,12 @@ from __future__ import annotations
 
 from typing import Any
 
+import eth_abi.abi
 import pytest
 from hexbytes import HexBytes
 
+from degenbot.builders.pool_io import SyncPoolIO
+from degenbot.builders.type_resolution import fetch_factory_from_chain
 from degenbot.degenbot_rs import PyBotIo
 
 
@@ -120,3 +123,89 @@ def test_pybot_io_satisfies_pool_io_protocol(method: str):
     """
     io = PyBotIo(provider=_FakeProvider())
     assert hasattr(io, method), f"PyBotIo missing PoolIO method {method!r}"
+
+
+# === I/O choreography methods (slice 14b) ===
+#
+# `fetch_factory_address` is the first choreography method moved into `PyBotIo`:
+# the multi-step (encode `factory()` selector -> `eth_call` -> ABI-decode `address`
+# -> EIP-55 checksum), previously `fetch_factory_from_chain` in
+# `type_resolution.py`, now reachable as a single Rust-owned method. The RPC
+# primitive (`call`) still delegates to the held provider (the native-alloy
+# swap is a later slice); the *choreography* -- the orchestration of those 4
+# steps -- now lives in Rust, satisfying slice 14's "methods for the builder
+# I/O choreography … moved here, called from Python via PyBotIo".
+
+class _FactoryCallProvider:
+    """Provider double that returns an ABI-encoded factory address for `factory()`.
+
+    Mirrors ``ProviderAdapter.call(*, to, data, block)`` (kw-only) so it stays
+    compatible with ``PyBotIo``'s kw-only forward contract.
+    """
+
+    def __init__(self, factory_raw: str) -> None:
+        # factory_raw is the 40-hex-char lowercase address (no 0x prefix),
+        # ABI-encoded right-aligned in a 32-byte word -- what a real
+        # `factory()` call returns.
+        self._encoded = eth_abi.abi.encode(types=["address"], args=[factory_raw])
+        self.calls: list[tuple[str, bytes]] = []  # (to, data)
+
+    def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+        self.calls.append((to, data))
+        return HexBytes(self._encoded)
+
+
+def test_pybot_io_fetch_factory_address_decodes_and_checksums():
+    """PyBotIo.fetch_factory_address runs encode->call->decode->checksum in Rust
+    and returns an EIP-55 checksummed address.
+    """
+    factory_raw = "66f9664f97f2b50f62d13ea064982f936de76657"  # arbitrary 20-byte
+    expected = "0x66f9664f97F2b50F62D13eA064982f936dE76657"  # EIP-55 of above
+    pool_address = "0x" + "ab" * 20
+    provider = _FactoryCallProvider(factory_raw)
+    io = PyBotIo(provider=provider)
+
+    result = io.fetch_factory_address(pool_address)
+
+    assert result == expected
+    # Exactly one call made, to the pool address, with the 4-byte `factory()`
+    # selector (keccak256("factory()")[:4] = 0xc45a0155).
+    assert len(provider.calls) == 1
+    to, data = provider.calls[0]
+    assert to == pool_address
+    assert data[:4] == bytes.fromhex("c45a0155")
+
+
+def test_pybot_io_fetch_factory_address_returns_none_on_revert():
+    """On a provider-side error (revert / call failure), return None -- mirrors
+    `fetch_factory_from_chain`'s `except (Web3Exception, DecodingError): return None`."""
+    class _RevertingProvider:
+        def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+            msg = "eth_call reverted"
+            raise RuntimeError(msg)
+
+    io = PyBotIo(provider=_RevertingProvider())
+    assert io.fetch_factory_address("0x" + "ab" * 20) is None
+
+
+def test_pybot_io_fetch_factory_parity_with_python_impl():
+    """`PyBotIo.fetch_factory_address` returns the exact same EIP-55 checksum
+    as the original Python `fetch_factory_from_chain` for the same provider
+    `call` result.
+
+    Two independent implementations (Rust on PyBotIo, Python on SyncPoolIO)
+    against identical backends must agree -- this is the parity gate that lets
+    `Bot.build_pool` route through `PyBotIo.fetch_factory_address` without
+    behavior change. The SyncPoolIO path exercises the original Python
+    decode/checksum; the PyBotIo path exercises the Rust impl."""
+    factory_raw = "66f9664f97f2b50f62d13ea064982f936de76657"
+    pool_address = "0x" + "ab" * 20
+
+    rust_result = PyBotIo(provider=_FactoryCallProvider(factory_raw)).fetch_factory_address(
+        pool_address
+    )
+    py_result = fetch_factory_from_chain(
+        pool_address, chain_id=1, io=SyncPoolIO(_FactoryCallProvider(factory_raw))
+    )
+
+    assert rust_result == py_result
