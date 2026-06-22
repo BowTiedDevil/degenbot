@@ -1,8 +1,8 @@
 """Sync provider adapters and the ProviderAdapter facade.
 
 Contains the sync subscription support mixin, private backend adapters
-(_Web3Adapter, _AlloyAdapter, _OfflineAdapter), the public ProviderAdapter,
-and the internal _backend_for_type helper for pickle round-tripping.
+(_Web3Adapter, _AlloyAdapter, _OfflineAdapter), and the public
+ProviderAdapter facade with the factory methods that construct each backend.
 """
 
 # ruff: noqa: ERA001
@@ -10,7 +10,7 @@ and the internal _backend_for_type helper for pickle round-tripping.
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, Any, Literal, Self, cast
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 from web3 import Web3
 
@@ -390,30 +390,6 @@ class ProviderAdapter(SyncSubscriptionSupport):
     def _subscription_rpc_url(self) -> str:
         return str(self._raw_provider)
 
-    # --- Pickle support ---
-
-    def __getstate__(self) -> dict[str, Any]:
-        """Pickle by storing only the type label; the provider must be re-acquired.
-
-        Returns:
-            A dict with the provider type and a None backend reference.
-
-        """
-        return {
-            "_provider_type": self._provider_type,
-            "_backend": None,
-            "_raw_provider": None,
-        }
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """Restore the type label. The backend must be set externally via set_provider."""
-        self.__dict__ = state
-
-    def set_provider(self, provider: AlloyProvider | OfflineProvider | Web3) -> None:
-        """Set the underlying provider by re-wrapping it in the correct backend."""
-        self._backend = _backend_for_type(self._provider_type, provider)
-        self._raw_provider = provider
-
     # -------------------------------------------------------------------------
     # Factory methods
     # -------------------------------------------------------------------------
@@ -734,33 +710,3 @@ class ProviderAdapter(SyncSubscriptionSupport):
 
         """
         return f"ProviderAdapter(type={self._provider_type})"
-
-
-# ============================================================================
-# Internal helper for round-trip pickling
-# ============================================================================
-
-
-def _backend_for_type(
-    provider_type: Literal["web3", "alloy", "offline"],
-    provider: AlloyProvider | OfflineProvider | Web3,
-) -> ProviderBackend:
-    """Create the correct backend adapter for a provider type label.
-
-    Returns:
-        The backend adapter for the given provider type.
-
-    Raises:
-        ValueError: If the provider type is unknown.
-
-    """
-    match provider_type:
-        case "web3":
-            return _Web3Adapter(cast("Web3", provider))
-        case "alloy":
-            return _AlloyAdapter(cast("AlloyProvider", provider))
-        case "offline":
-            return _OfflineAdapter(cast("OfflineProvider", provider))
-        case _:
-            msg = f"Unknown provider type: {provider_type}"
-            raise ValueError(msg)
