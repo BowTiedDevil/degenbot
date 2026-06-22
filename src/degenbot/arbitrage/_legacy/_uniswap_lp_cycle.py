@@ -1,11 +1,9 @@
 # ty: ignore
 
-import asyncio
 import math
 import uuid
 import warnings
 from collections.abc import Mapping, Sequence
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from fractions import Fraction
 from typing import Any
 from weakref import WeakSet
@@ -178,16 +176,6 @@ class _UniswapLpCycle(PublisherMixin):
         self._subscribers: WeakSet[Subscriber] = WeakSet()
         for pool in self.swap_pools:
             pool.subscribe(self)
-
-    def __getstate__(self) -> dict[str, Any]:
-        dropped_attributes = ("_subscribers",)
-        copied_attributes = ()
-
-        return {
-            k: (v.copy() if k in copied_attributes else v)
-            for k, v in self.__dict__.items()
-            if k not in dropped_attributes
-        }
 
     def __str__(self) -> str:
         return self.name
@@ -523,57 +511,6 @@ class _UniswapLpCycle(PublisherMixin):
         )
 
         return self._calculate(state_overrides=state_overrides)
-
-    async def calculate_with_pool(
-        self,
-        executor: ProcessPoolExecutor | ThreadPoolExecutor,
-        state_overrides: Mapping[Pool, PoolState] | None = None,
-        min_rate_of_exchange: Fraction = Fraction(1, 1),
-    ) -> asyncio.Future[ArbitrageCalculationResult[SwapAmount]]:
-        """Wrap the arbitrage calculation into an asyncio future using the specified executor.
-
-        Arguments:
-        ---------
-        executor : Executor
-            An executor (from `concurrent.futures`) to process the calculation work. Both
-            `ThreadPoolExecutor` and `ProcessPoolExecutor` are supported, but `ProcessPoolExecutor`
-            is recommended for CPU-bound work like this.
-        state_overrides : Mapping[ChecksumAddress, UniswapPoolStateOverride], optional
-            A dict (or equivalent mapping) of pool states, keyed by the checksummed address of that
-            pool.
-        min_rate_of_exchange : Fraction, optional
-            The minimum net rate of exchange for the arbitrage path. Rates below this minimum will
-            raise an exception.
-
-        Returns:
-        -------
-        A future which returns a `ArbitrageCalculationResult` (or exception) when awaited.
-
-        Raises:
-            DegenbotValueError: If the operation fails.
-
-        Notes:
-        -----
-        This is an async function that must be called with the `await` keyword.
-
-        """
-        if isinstance(executor, ProcessPoolExecutor) and any(
-            pool.sparse_liquidity_map for pool in self.swap_pools if isinstance(pool, UniswapV3Pool)
-        ):
-            raise DegenbotValueError(
-                message="Cannot perform calculation with process pool executor. One or more V3 pools has a sparse bitmap."
-            )
-
-        self._pre_calculation_check(
-            min_rate_of_exchange=min_rate_of_exchange,
-            state_overrides=state_overrides,
-        )
-
-        return asyncio.get_running_loop().run_in_executor(
-            executor,
-            self._calculate,
-            state_overrides,
-        )
 
     def generate_payloads(
         self,
