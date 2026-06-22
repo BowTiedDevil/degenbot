@@ -954,3 +954,71 @@ def test_pybot_io_fetch_tick_bitmap_returns_zero_on_revert():
     io = PyBotIo(provider=_RevProv())
     with pytest.raises(RuntimeError):
         io.fetch_tick_bitmap("0x" + "aa" * 20, 0)
+
+
+# === V4 tick bitmap + tick data RPCs (slice 14k) ===
+#
+# `fetch_v4_tick_bitmap` and `fetch_v4_tick_data` mirror 14j's V3 methods but
+# add a `bytes32 pool_id` prefix argument (V4 uses `getTickBitmap(bytes32,
+# int16)` and `getTickLiquidity(bytes32,int24)` on a state-view contract).
+
+
+class _V4TickDataProvider:
+    """Provider returning canned getTickBitmap + getTickLiquidity responses."""
+
+    def __init__(self, *, bitmap: int, liquidity_gross: int, liquidity_net: int) -> None:
+        self._bitmap = bitmap
+        self._lg = liquidity_gross
+        self._ln = liquidity_net
+        self.calls: list[bytes] = []
+
+    def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+        self.calls.append(data)
+        sel = data[:4]
+        if sel == Web3.keccak(text="getTickBitmap(bytes32,int16)")[:4]:
+            return HexBytes(eth_abi.abi.encode(types=["uint256"], args=[self._bitmap]))
+        if sel == Web3.keccak(text="getTickLiquidity(bytes32,int24)")[:4]:
+            return HexBytes(
+                eth_abi.abi.encode(types=["uint128", "int128"], args=[self._lg, self._ln])
+            )
+        msg = f"unexpected selector {sel.hex()}"
+        raise ValueError(msg)
+
+
+def test_pybot_io_fetch_v4_tick_bitmap_encodes_pool_id_and_int16_args():
+    """fetch_v4_tick_bitmap(state_view, pool_id, word_position) encodes
+    getTickBitmap(bytes32,int16) with pool_id in word 0 and sign-extended
+    int16 in word 1."""
+    bitmap = 0xCAFE
+    pool_id = bytes.fromhex("db" * 32)
+    word_position = -1
+    io = PyBotIo(provider=_V4TickDataProvider(bitmap=bitmap, liquidity_gross=0, liquidity_net=0))
+
+    result = io.fetch_v4_tick_bitmap("0x" + "cc" * 20, pool_id, word_position)
+
+    assert result == bitmap
+    calldata = io.provider.calls[0]
+    assert calldata[:4] == Web3.keccak(text="getTickBitmap(bytes32,int16)")[:4]
+    # pool_id is bytes 4..36 (already 32 bytes, used as-is).
+    assert calldata[4:36] == pool_id
+    # word_position -1 sign-extended in word 1 (bytes 36..68).
+    assert calldata[36:68] == (b"\xff" * 32)
+
+
+def test_pybot_io_fetch_v4_tick_data_encodes_pool_id_and_int24_args():
+    """fetch_v4_tick_data(state_view, pool_id, tick) encodes
+    getTickLiquidity(bytes32,int24) with pool_id in word 0 and sign-extended
+    int24 in word 1, decodes (uint128, int128)."""
+    lg = 42_000_000_000_000
+    ln = -17_000_000_000_000
+    pool_id = bytes.fromhex("db" * 32)
+    tick = -100
+    io = PyBotIo(provider=_V4TickDataProvider(bitmap=0, liquidity_gross=lg, liquidity_net=ln))
+
+    result = io.fetch_v4_tick_data("0x" + "cc" * 20, pool_id, tick)
+
+    assert result == (lg, ln)
+    calldata = io.provider.calls[0]
+    assert calldata[:4] == Web3.keccak(text="getTickLiquidity(bytes32,int24)")[:4]
+    assert calldata[4:36] == pool_id
+    assert calldata[36:68] == (b"\xff" * 31) + b"\x9c"  # -100 sign-extended
