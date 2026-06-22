@@ -12,7 +12,7 @@ from eth_abi.exceptions import DecodingError
 from web3.exceptions import Web3Exception
 
 from degenbot.balancer.deployments import BALANCER_V2_VAULT_ADDRESS
-from degenbot.balancer.libraries.constants import ONE
+from degenbot.balancer.libraries.constants import ONE, PowVersion
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.exceptions import DegenbotValueError
 from degenbot.provider.call_helpers import encode_function_calldata
@@ -60,6 +60,24 @@ class BalancerBuilderBase:
 
     INVARIANT_V1 = 1
     INVARIANT_V2 = 2
+
+    @staticmethod
+    def pow_version_to_rust(pow_version: PowVersion | int) -> int:
+        """Map a ``PowVersion`` enum (or raw int) → the ``u8`` discriminant Rust stores.
+
+        The Rust core (``register_balancer_weighted_pool``, ADR-005 slice
+        12a) carries ``PowVersion`` as an opaque ``u8`` (V1=1 / V2=2) for the
+        future Rust ``WeightedMath`` port (ADR-005 slice 12e). Not consumed by
+        slice 12b's companion — the Python companion keeps its own
+        ``PowVersion`` for the Python calc path through ``weighted_math.py``.
+
+        Returns:
+            The computed value.
+
+        """
+        if isinstance(pow_version, PowVersion):
+            return 1 if pow_version is PowVersion.V1 else 2
+        return int(pow_version)
 
     @staticmethod
     def decode_pool_id(raw: bytes) -> DecodedPoolId:

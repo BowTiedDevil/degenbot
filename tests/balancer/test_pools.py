@@ -13,6 +13,7 @@ from degenbot.balancer.deployments import (
 from degenbot.balancer.pools import BalancerV2Pool, detect_pow_version
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.provider import ProviderAdapter
+from tests.helpers.balancer_pool_factory import make_balancer_weighted_pool
 from tests.helpers.bot_factory import make_bot_with_provider
 
 # ---------- Pool Addresses ----------
@@ -101,7 +102,7 @@ def _build_pool_from_chain(
     bytecode = fork.w3.eth.get_code(get_checksum_address(pool_address)).hex()
     pow_version = detect_pow_version(bytecode)
 
-    return BalancerV2Pool(
+    return make_balancer_weighted_pool(
         address=get_checksum_address(pool_address),
         pool_id=pool_id,
         vault=vault,
