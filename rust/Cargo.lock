@@ -1580,6 +1580,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "degenbot-balancer-math"
+version = "0.0.0"
+dependencies = [
+ "alloy",
+ "proptest",
+]
+
+[[package]]
 name = "degenbot-bot"
 version = "0.0.0"
 dependencies = [
