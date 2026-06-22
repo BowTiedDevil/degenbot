@@ -232,10 +232,16 @@ class BalancerBuilderBase:
         rate_providers: list[str],
         block: int,
     ) -> list[int]:
+        # ADR-005 slice 14n: when io is a PyBotIo, delegate each per-provider
+        # getRate() call to Rust. The zero-address sentinel check stays.
+        fetcher = getattr(io, "fetch_balancer_rate", None)
         rates: list[int] = []
         for provider in rate_providers:
             if provider == "0x0000000000000000000000000000000000000000":
                 rates.append(ONE)
+                continue
+            if fetcher is not None:
+                rates.append(int(fetcher(provider, block=block)))
                 continue
             data = encode_function_calldata("getRate()", None)
             result = io.call(to=provider, data=data, block=block)
@@ -263,6 +269,23 @@ class BalancerBuilderBase:
             DegenbotValueError: If the operation fails.
 
         """
+        # ADR-005 slice 14n: when io is a PyBotIo, delegate both probes to Rust.
+        probe_balancer_pool_type = getattr(io, "probe_balancer_pool_type", None)
+        if probe_balancer_pool_type is not None:
+            try:
+                result = probe_balancer_pool_type(address, block=block)
+            except ValueError:
+                msg = (
+                    f"Cannot determine Balancer pool type for {address}. "
+                    "Neither getNormalizedWeights() nor "
+                    "getAmplificationParameter() responded. "
+                    "Linear pools are not yet supported."
+                )
+                raise DegenbotValueError(message=msg) from None
+            if result == "weighted":
+                return _BalancerPoolType.WEIGHTED
+            return _BalancerPoolType.STABLE
+
         try:
             data = encode_function_calldata("getNormalizedWeights()", None)
         except (Web3Exception, DecodingError):
