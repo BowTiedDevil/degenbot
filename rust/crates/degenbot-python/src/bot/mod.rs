@@ -7,6 +7,7 @@
 pub mod dex_identity;
 pub mod engine;
 pub mod pool;
+pub mod py_bot_io;
 pub mod token;
 
 // === PyBot (moved from the former root `py_bot.rs`) ===

@@ -8,7 +8,10 @@ from collections.abc import Coroutine
 from typing import Any, Literal, overload
 
 from hexbytes import HexBytes
+from web3.types import BlockData as Web3BlockData
+from web3.types import BlockIdentifier, TxParams
 
+from degenbot.builders.pool_io import PoolIO
 from degenbot.types.rpc_types import (
     BlockData,
     LogData,
@@ -911,6 +914,43 @@ class PyLiquidityPool:
     def discard_v3_before_block(self, block: int) -> None: ...
     def restore_v3_before_block(self, block: int) -> tuple[int, int, int, int] | None: ...
 
+class PyBotIo(PoolIO):
+    """PyO3 wrapper (exposed as `PyBotIo` in Python) holding a provider + optional DB.
+
+    The Rust I/O facade for pool builders (ADR-005 slice 14a). Builders
+    receive this in place of the Python ``SyncPoolIO`` adapter; it delegates
+    the 7-method ``PoolIO`` surface (``get_block_number``, ``get_block``,
+    ``get_block_timestamp``, ``get_code``, ``get_balance``, ``call``,
+    ``call_raw``) to the held ``ProviderAdapter`` so any backend (web3 /
+    alloy / offline) works unchanged. The calling convention mirrors
+    ``SyncPoolIO`` exactly (positional leading args + ``block=`` kwarg), so
+    ``OfflineProvider``-style keyword-only ``call(*, to, data, block_number)``
+    backends and ``MagicMock(side_effect=...)`` test doubles designed against
+    ``SyncPoolIO``'s kw-call shape aren't broken by the swap.
+    """
+
+    def __init__(self, provider: object, db: object | None = None) -> None: ...
+
+    @property
+    def provider(self) -> object: ...
+
+    @property
+    def db(self) -> object | None: ...
+
+    def get_block_number(self) -> int: ...
+
+    def get_block(self, block_identifier: int | str) -> Web3BlockData | None: ...
+
+    def get_block_timestamp(self, block: int | None = None) -> int: ...
+
+    def get_code(self, address: str, block: int | None = None) -> HexBytes: ...
+
+    def get_balance(self, address: str, block: int | None = None) -> int: ...
+
+    def call(self, to: str, data: bytes, block: int | None = None) -> HexBytes: ...
+
+    def call_raw(self, tx: TxParams, block: BlockIdentifier | None = None) -> HexBytes: ...
+
 class PyBot:
     """PyO3 wrapper (exposed as `PyBot` in Python) holding `Arc<RwLock<Bot>>`.
 
@@ -1140,6 +1180,7 @@ __all__ = [
     "LogData",
     "LogFilter",
     "PyBot",
+    "PyBotIo",
     "PyErc20Token",
     "PyLiquidityPool",
     "TransactionData",

@@ -20,7 +20,6 @@ from degenbot.builders.balancer_builder import BalancerBuilder
 from degenbot.builders.context import BuilderContext
 from degenbot.builders.curve_pool_builder import CurvePoolBuilder
 from degenbot.builders.erc20_builder import Erc20Builder
-from degenbot.builders.pool_io import SyncPoolIO
 from degenbot.builders.request import BuildManagedPoolRequest, BuildPoolRequest, BuildRequest
 from degenbot.builders.type_resolution import (
     pool_class_for_descriptor,
@@ -36,7 +35,7 @@ from degenbot.config import DegenbotConfig, _init_config
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.database.operations import get_alembic_config, get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.degenbot_rs import PyBot
+from degenbot.degenbot_rs import PyBot, PyBotIo
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import TrackerAlreadyInitialized
 from degenbot.logging import logger
@@ -362,7 +361,7 @@ class Bot:
             The computed value.
 
         """
-        io = SyncPoolIO(self.provider)
+        io = PyBotIo(provider=self.provider, db=self.db)
         return self._erc20_builder.build(address, chain_id=self.chain_id, silent=silent, io=io)
 
     def get_token(self, address: str) -> Erc20Token:
@@ -397,7 +396,7 @@ class Bot:
         """
         address = get_checksum_address(address)
         chain_id = self.chain_id
-        io = SyncPoolIO(self.provider)
+        io = PyBotIo(provider=self.provider, db=self.db)
 
         request = BuildPoolRequest(
             silent=silent,
@@ -455,7 +454,7 @@ class Bot:
         builder: PoolBuilder,
         address: ChecksumAddress,
         chain_id: ChainId,
-        io: SyncPoolIO,
+        io: PyBotIo,
         request: BuildRequest,
     ) -> AbstractLiquidityPool:
         """Dispatch to the builder with a typed request.
@@ -511,7 +510,7 @@ class Bot:
                 assert isinstance(existing, UniswapV4Pool)
             return existing
 
-        io = SyncPoolIO(self.provider)
+        io = PyBotIo(provider=self.provider, db=self.db)
 
         request = BuildManagedPoolRequest(
             pool_id=pool_id,
@@ -547,7 +546,7 @@ class Bot:
             The computed integer value.
 
         """
-        io = SyncPoolIO(self.provider)
+        io = PyBotIo(provider=self.provider, db=self.db)
         return self._erc20_builder.get_token_balance(
             token, address, block_identifier=block_identifier, io=io
         )
@@ -565,7 +564,7 @@ class Bot:
             The computed integer value.
 
         """
-        io = SyncPoolIO(self.provider)
+        io = PyBotIo(provider=self.provider, db=self.db)
         return self._erc20_builder.get_token_approval(
             token, owner, spender, block_identifier=block_identifier, io=io
         )
@@ -581,7 +580,7 @@ class Bot:
             The computed integer value.
 
         """
-        io = SyncPoolIO(self.provider)
+        io = PyBotIo(provider=self.provider, db=self.db)
         return self._erc20_builder.get_token_total_supply(
             token, block_identifier=block_identifier, io=io
         )
@@ -597,7 +596,7 @@ class Bot:
             The computed integer value.
 
         """
-        io = SyncPoolIO(self.provider)
+        io = PyBotIo(provider=self.provider, db=self.db)
         return self._erc20_builder.get_ether_balance(
             self.chain_id, address, block_identifier=block_identifier, io=io
         )
@@ -674,7 +673,7 @@ class Bot:
             if block_number is not None and not isinstance(block_number, int)
             else block_number
         )
-        io = SyncPoolIO(self.provider)
+        io = PyBotIo(provider=self.provider, db=self.db)
         return builder.update(pool, block_number=resolved_block_number, io=io)
 
     def _builder_for_pool(
