@@ -340,10 +340,36 @@ def _resolve_block_number(io: PoolIO, block_identifier: BlockIdentifier | None) 
 def _fetch_name_symbol_decimals_batched(*, address: str, io: PoolIO) -> tuple[str, str, int]:
     """Fetch token name, symbol, and decimals via batched RPC calls.
 
+    When ``io`` is a Rust :class:`~degenbot.degenbot_rs.PyBotIo` (the Bot's
+    build-path adapter -- ADR-005 slice 14a), the encode -> call (x3) -> decode
+    choreography is delegated to ``PyBotIo.fetch_erc20_metadata`` (Rust, slice
+    14c), not run in Python. Raw ``SyncPoolIO`` callers fork / offline tests
+    still exercise the Python implementation below -- a behavior-preserving
+    parity gate against the Rust impl. Returns `None` from the Rust impl on
+    provider error / decode failure (mirrors the caller's `except
+    (Web3Exception, DecodingError)` fallback contract); a Python-raised error
+    from the fallback path is surfaced untouched.
+
     Returns:
         The computed value.
 
+    Raises:
+        DecodingError: If the Rust batched path failed (provider revert or
+            decode failure) -- re-raised so the caller's `except
+            (Web3Exception, DecodingError)` fallback kicks in identically.
+
     """
+    # ADR-005 slice 14c: route through PyBotIo when available -- the
+    # choreography is Rust-owned. `hasattr` keeps the SyncPoolIO fallback path
+    # working without importing PyBotIo (which lives in the Rust ext).
+    fetch_metadata = getattr(io, "fetch_erc20_metadata", None)
+    if fetch_metadata is not None:
+        result = fetch_metadata(address)
+        if result is None:
+            msg = "batched fetch failed (provider revert or decode failure)"
+            raise DecodingError(msg)
+        return cast("tuple[str, str, int]", result)
+
     name_calldata = encode_function_calldata(
         function_prototype="name()",
         function_arguments=None,

@@ -209,3 +209,95 @@ def test_pybot_io_fetch_factory_parity_with_python_impl():
     )
 
     assert rust_result == py_result
+
+
+# === ERC20 metadata choreography (slice 14c) ===
+#
+# `fetch_erc20_metadata` is the second choreography method: the batched
+# name/symbol/decimals RPC fetch (3 selectors -> 3 eth_calls -> 3 ABI-decodes).
+# Mirrors `_fetch_name_symbol_decimals_batched` in `erc20_builder.py`. The
+# `Erc20Builder.build` caller's fallback contract is: if the batched call fails
+# (call raised, decode failed), try individual calls with `bytes32` alternate
+# prototypes. `PyBotIo.fetch_erc20_metadata` returns `None` on any such failure
+# (mirrors `except (Web3Exception, DecodingError): return None` style) so the
+# caller's fallback kicks in identically.
+
+class _Erc20MetadataProvider:
+    """Provider double returning ABI-encoded name/symbol/decimals for the 3 selectors."""
+
+    def __init__(self, *, name: str, symbol: str, decimals: int) -> None:
+        self._responses: dict[bytes, bytes] = {
+            # keccak256("name()")[..4] = 0x06fdde03
+            bytes.fromhex("06fdde03"): eth_abi.abi.encode(types=["string"], args=[name]),
+            # keccak256("symbol()")[..4] = 0x95d89b41
+            bytes.fromhex("95d89b41"): eth_abi.abi.encode(types=["string"], args=[symbol]),
+            # keccak256("decimals()")[..4] = 0x313ce567
+            bytes.fromhex("313ce567"): eth_abi.abi.encode(types=["uint256"], args=[decimals]),
+        }
+        self.calls: list[bytes] = []  # data received
+
+    def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+        self.calls.append(data)
+        return HexBytes(self._responses[data[:4]])
+
+
+def test_pybot_io_fetch_erc20_metadata_decodes_string_string_uint():
+    """PyBotIo.fetch_erc20_metadata runs 3-call encode->call->decode choreography
+    in Rust and returns (name, symbol, decimals) with exact ABI semantics."""
+    name, symbol, decimals = "Dai Stablecoin", "DAI", 18
+    io = PyBotIo(provider=_Erc20MetadataProvider(name=name, symbol=symbol, decimals=decimals))
+
+    result = io.fetch_erc20_metadata("0x" + "ab" * 20)
+
+    assert result is not None
+    got_name, got_symbol, got_decimals = result
+    assert got_name == name
+    assert got_symbol == symbol
+    assert got_decimals == decimals
+
+
+def test_pybot_io_fetch_erc20_metadata_returns_none_on_decode_failure():
+    """A truncated return (not a valid ABI string) yields None -- mirrors the
+    Python batched impl's `except DecodingError` fallback contract."""
+
+    class _MalformedProvider:
+        def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+            #selector = data[:4]; for any selector return 1 byte -- too short to decode.
+            return HexBytes(b"\x00")
+
+    io = PyBotIo(provider=_MalformedProvider())
+    assert io.fetch_erc20_metadata("0x" + "ab" * 20) is None
+
+
+def test_pybot_io_fetch_erc20_metadata_returns_none_on_revert():
+    """A provider.call() revert (any exception) yields None -- the batched
+    fallback kicks in identically to the Python `except Web3Exception` path."""
+
+    class _RevertingProvider:
+        def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+            msg = "eth_call reverted"
+            raise RuntimeError(msg)
+
+    io = PyBotIo(provider=_RevertingProvider())
+    assert io.fetch_erc20_metadata("0x" + "ab" * 20) is None
+
+
+from degenbot.builders.erc20_builder import _fetch_name_symbol_decimals_batched
+
+
+def test_pybot_io_fetch_erc20_metadata_parity_with_python_batched():
+    """`PyBotIo.fetch_erc20_metadata` returns the exact same tuple as the Python
+    `_fetch_name_symbol_decimals_batched` for the same provider `call` results."""
+    name, symbol, decimals = "Wrapped Ether", "WETH", 18
+    address = "0x" + "cd" * 20
+
+    rust_result = PyBotIo(
+        provider=_Erc20MetadataProvider(name=name, symbol=symbol, decimals=decimals)
+    ).fetch_erc20_metadata(address)
+    py_result = _fetch_name_symbol_decimals_batched(
+        address=address,
+        io=SyncPoolIO(_Erc20MetadataProvider(name=name, symbol=symbol, decimals=decimals)),
+    )
+
+    assert rust_result is not None
+    assert rust_result == py_result
