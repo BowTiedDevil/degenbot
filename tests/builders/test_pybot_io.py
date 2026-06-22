@@ -136,6 +136,7 @@ def test_pybot_io_satisfies_pool_io_protocol(method: str):
 # steps -- now lives in Rust, satisfying slice 14's "methods for the builder
 # I/O choreography … moved here, called from Python via PyBotIo".
 
+
 class _FactoryCallProvider:
     """Provider double that returns an ABI-encoded factory address for `factory()`.
 
@@ -179,6 +180,7 @@ def test_pybot_io_fetch_factory_address_decodes_and_checksums():
 def test_pybot_io_fetch_factory_address_returns_none_on_revert():
     """On a provider-side error (revert / call failure), return None -- mirrors
     `fetch_factory_from_chain`'s `except (Web3Exception, DecodingError): return None`."""
+
     class _RevertingProvider:
         def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
             msg = "eth_call reverted"
@@ -222,6 +224,7 @@ def test_pybot_io_fetch_factory_parity_with_python_impl():
 # (mirrors `except (Web3Exception, DecodingError): return None` style) so the
 # caller's fallback kicks in identically.
 
+
 class _Erc20MetadataProvider:
     """Provider double returning ABI-encoded name/symbol/decimals for the 3 selectors."""
 
@@ -262,7 +265,7 @@ def test_pybot_io_fetch_erc20_metadata_returns_none_on_decode_failure():
 
     class _MalformedProvider:
         def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
-            #selector = data[:4]; for any selector return 1 byte -- too short to decode.
+            # selector = data[:4]; for any selector return 1 byte -- too short to decode.
             return HexBytes(b"\x00")
 
     io = PyBotIo(provider=_MalformedProvider())
@@ -311,6 +314,7 @@ def test_pybot_io_fetch_erc20_metadata_parity_with_python_batched():
 # Each is a clean encode->call->decode atom -- pure-RPC, no DB same as 14c but
 # now with ABI-encoded arguments, covering the parameterized-call pattern the
 # snapshot-update choreographies (V2 getReserves, V3 slot0) are also shaped by.
+
 
 class _AddressArgProvider:
     """Provider double: encodes matching call-data -> canned ABI uint256 result."""
@@ -396,3 +400,99 @@ def test_pybot_io_fetch_token_balance_propagates_reverts_as_exception():
     io = PyBotIo(provider=_RevertingProvider())
     with pytest.raises(RuntimeError):
         io.fetch_token_balance("0x" + "aa" * 20, "0x" + "bb" * 20)
+
+
+# === V2 pool immutable + reserves choreographies (slice 14e) ===
+#
+# `fetch_v2_immutable_data` and `fetch_v2_reserves` move the two pure-RPC
+# sub-choreographies of `_fetch_v2_common_data` (factory/token0/token1 +
+# getReserves) into Rust. The DB lookup, `extract_db_values`, and
+# `resolve_deployer_and_init_hash` dispatch stay Python-side -- these are the
+# *RPC* pieces only, building on the 14d `forward_call_to_provider`/`selector`
+# seams. The DB-delegation tracer is explicitly deferred to 14f.
+
+
+class _V2PoolProvider:
+    """Provider double returning ABI-encoded immutable + reserves values."""
+
+    def __init__(
+        self, *, factory: str, token0: str, token1: str, reserves0: int, reserves1: int
+    ) -> None:
+        # Selectors for the 4 reads this provider answers.
+        self._responses: dict[bytes, bytes] = {
+            # keccak256("factory()")[..4] = 0xc45a0155
+            bytes.fromhex("c45a0155"): eth_abi.abi.encode(types=["address"], args=[factory]),
+            # keccak256("token0()")[..4] = 0x0dfe1681
+            bytes.fromhex("0dfe1681"): eth_abi.abi.encode(types=["address"], args=[token0]),
+            # keccak256("token1()")[..4] = 0xd21220a7
+            bytes.fromhex("d21220a7"): eth_abi.abi.encode(types=["address"], args=[token1]),
+            # keccak256("getReserves()")[..4] = 0x0902f1ac
+            bytes.fromhex("0902f1ac"): eth_abi.abi.encode(
+                types=["uint256", "uint256"], args=[reserves0, reserves1]
+            ),
+        }
+        self.calls: list[bytes] = []
+
+    def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+        self.calls.append(data)
+        return HexBytes(self._responses[data[:4]])
+
+
+def _eip55(addr: str) -> str:
+    from degenbot.checksum_cache import get_checksum_address
+
+    return get_checksum_address(addr)
+
+
+def test_pybot_io_fetch_v2_immutable_data_decodes_factory_token0_token1():
+    """`fetch_v2_immutable_data(address)` runs the 3-call factory/token0/token1 RPC
+    choreography in Rust and returns EIP-55 checksummed addresses."""
+    raw_factory = "0x" + "11" * 20
+    raw_token0 = "0x" + "22" * 20
+    raw_token1 = "0x" + "33" * 20
+    io = PyBotIo(
+        provider=_V2PoolProvider(
+            factory=raw_factory, token0=raw_token0, token1=raw_token1, reserves0=0, reserves1=0
+        )
+    )
+
+    factory, token0, token1 = io.fetch_v2_immutable_data("0x" + "aa" * 20)
+
+    assert factory == _eip55(raw_factory)
+    assert token0 == _eip55(raw_token0)
+    assert token1 == _eip55(raw_token1)
+
+
+def test_pybot_io_fetch_v2_reserves_decodes_two_uint256():
+    """`fetch_v2_reserves(address)` runs getReserves() in Rust, ABI-decodes the
+    (uint256, uint256) tuple, returns both as Python ints (large values stay
+    exact, no float coercion)."""
+    r0 = 1_234_567_890_123_456_789  # larger than i64
+    r1 = 9_876_543_210_987_654_321
+    io = PyBotIo(
+        provider=_V2PoolProvider(
+            factory="0x" + "11" * 20,
+            token0="0x" + "22" * 20,
+            token1="0x" + "33" * 20,
+            reserves0=r0,
+            reserves1=r1,
+        )
+    )
+
+    result = io.fetch_v2_reserves("0x" + "aa" * 20)
+
+    assert result == (r0, r1)
+
+
+def test_pybot_io_fetch_v2_immutable_data_propagates_reverts_as_exception():
+    """A provider.call revert surfaces as an exception (no swallowing) -- mirrors
+    `_fetch_v2_common_data`'s `except Exception: raise LiquidityPoolError contract."""
+
+    class _RevertingProvider:
+        def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+            msg = "eth_call reverted"
+            raise RuntimeError(msg)
+
+    io = PyBotIo(provider=_RevertingProvider())
+    with pytest.raises(RuntimeError):
+        io.fetch_v2_immutable_data("0x" + "aa" * 20)
