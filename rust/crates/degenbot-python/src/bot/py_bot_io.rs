@@ -667,6 +667,73 @@ impl PyBotIo {
         ))
     }
 
+    /// Fetch an ERC-20 uint field (`decimals()` / `DECIMALS()`) -- the
+    /// dynamic-signature no-arg uint-returning choreography (ADR-005 slice 14h).
+    ///
+    /// Mirrors `erc20_builder.py::_fetch_decimals`: the caller passes the
+    /// signature dynamically (`"decimals()"` vs `"DECIMALS()"`) and the method
+    /// encodes the selector, calls, and decodes `uint256`. Errors propagate.
+    #[pyo3(signature = (address, signature, block=None))]
+    fn fetch_erc20_uint_field(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        signature: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        self.fetch_no_arg_uint(
+            py,
+            signature.as_bytes(),
+            address,
+            block,
+            alloy::dyn_abi::DynSolType::Uint(256),
+        )
+    }
+
+    /// Fetch an ERC-20 string field (`name()` / `symbol()` / `NAME()` etc.) --
+    /// performs the encode -> call -> decode choreography in Rust with a
+    /// string-or-bytes32 fallback (ADR-005 slice 14h).
+    ///
+    /// Mirrors `erc20_builder.py::_fetch_name` / `_fetch_symbol`: try `string`
+    /// ABI-decode first; on decode failure, fall back to `bytes32` decode
+    /// (UTF-8 with errors ignored, leading/trailing null bytes stripped).
+    /// The `signature` parameter is dynamic (e.g. `"name()"` vs `"NAME()"`)
+    /// so the caller can try alternate prototypes in a loop.
+    ///
+    /// Errors propagate: provider revert or total decode failure (neither
+    /// `string` nor `bytes32` could decode) surfaces as `PyErr` -- the Python
+    /// caller catches it in its `except (Web3Exception, DecodingError)` loop.
+    #[pyo3(signature = (address, signature, block=None))]
+    fn fetch_erc20_string_field(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        signature: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<String> {
+        use alloy::dyn_abi::{DynSolType, DynSolValue};
+
+        let calldata = selector(signature.as_bytes());
+        let result_obj = self.forward_call_to_provider(py, address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+
+        // Try string decode first.
+        if let Ok(DynSolValue::String(s)) = DynSolType::String.abi_decode(bytes) {
+            return Ok(s);
+        }
+
+        // Fallback: bytes32 decode (some tokens use bytes32 for name/symbol).
+        if let Ok(DynSolValue::FixedBytes(fb, _)) = DynSolType::FixedBytes(32).abi_decode(bytes) {
+            return Ok(String::from_utf8_lossy(fb.as_slice())
+                .trim_matches('\0')
+                .to_string());
+        }
+
+        Err(pyo3::exceptions::PyValueError::new_err(
+            "could not decode ERC-20 string field as string or bytes32",
+        ))
+    }
+
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
         let has_db = self.db.is_some();
         let provider_repr = self.provider.bind(py).repr()?.to_str()?.to_string();

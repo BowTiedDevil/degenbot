@@ -415,10 +415,23 @@ def _fetch_name_symbol_decimals_batched(*, address: str, io: PoolIO) -> tuple[st
 def _fetch_name(*, address: str, io: PoolIO, func_prototype: str = "name()") -> str:
     """Fetch token name via RPC call.
 
+    When ``io`` is a Rust :class:`~degenbot.degenbot_rs.PyBotIo`, delegates
+    to ``PyBotIo.fetch_erc20_string_field`` (Rust, slice 14h).
+
     Returns:
         The computed value.
 
+    Raises:
+        DecodingError: If the field could not be decoded as string or bytes32.
+
     """
+    fetch_string_field = getattr(io, "fetch_erc20_string_field", None)
+    if fetch_string_field is not None:
+        try:
+            return fetch_string_field(address, func_prototype)
+        except ValueError as exc:
+            raise DecodingError(str(exc)) from exc
+
     result = io.call(
         to=address,
         data=encode_function_calldata(
@@ -438,10 +451,23 @@ def _fetch_name(*, address: str, io: PoolIO, func_prototype: str = "name()") -> 
 def _fetch_symbol(*, address: str, io: PoolIO, func_prototype: str = "symbol()") -> str:
     """Fetch token symbol via RPC call.
 
+    When ``io`` is a Rust :class:`~degenbot.degenbot_rs.PyBotIo`, delegates
+    to ``PyBotIo.fetch_erc20_string_field`` (Rust, slice 14h).
+
     Returns:
         The computed value.
 
+    Raises:
+        DecodingError: If the field could not be decoded as string or bytes32.
+
     """
+    fetch_string_field = getattr(io, "fetch_erc20_string_field", None)
+    if fetch_string_field is not None:
+        try:
+            return fetch_string_field(address, func_prototype)
+        except ValueError as exc:
+            raise DecodingError(str(exc)) from exc
+
     result = io.call(
         to=address,
         data=encode_function_calldata(
@@ -461,10 +487,23 @@ def _fetch_symbol(*, address: str, io: PoolIO, func_prototype: str = "symbol()")
 def _fetch_decimals(*, address: str, io: PoolIO, func_prototype: str = "decimals()") -> int:
     """Fetch token decimals via RPC call.
 
+    When ``io`` is a Rust :class:`~degenbot.degenbot_rs.PyBotIo`, delegates
+    to ``PyBotIo.fetch_erc20_uint_field`` (Rust, slice 14h).
+
     Returns:
         The computed value.
 
+    Raises:
+        DecodingError: If the field could not be decoded as uint256.
+
     """
+    fetch_uint_field = getattr(io, "fetch_erc20_uint_field", None)
+    if fetch_uint_field is not None:
+        try:
+            return cast("int", fetch_uint_field(address, func_prototype))
+        except ValueError as exc:
+            raise DecodingError(str(exc)) from exc
+
     (result,) = eth_abi.abi.decode(
         types=["uint256"],
         data=io.call(
