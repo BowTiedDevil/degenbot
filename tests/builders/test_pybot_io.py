@@ -1215,3 +1215,63 @@ def test_pybot_io_fetch_balancer_vault_tokens_propagates_reverts():
     io = PyBotIo(provider=_RevProv())
     with pytest.raises(Web3Exception):
         io.fetch_balancer_vault_tokens("0x" + "ba" * 20, bytes(32))
+
+
+# === Balancer rate + pool-type detect (slice 14n) ===
+#
+# `fetch_balancer_rate` moves the per-provider `getRate()` call out of
+# `_fetch_rates`'s loop. `probe_balancer_pool_type` moves
+# `_detect_pool_type`'s two-call probing: returns "weighted" if
+# getNormalizedWeights() succeeds, "stable" if getAmplificationParameter()
+# succeeds, or raises ValueError if neither works.
+
+
+def test_pybot_io_fetch_balancer_rate_decodes_uint256():
+    """fetch_balancer_rate(provider, block) → getRate() → uint256."""
+    rate = 1_050_000_000_000_000_000  # 1.05e18
+    io = PyBotIo(
+        provider=_BalancerProvider(**{
+            "getRate()": eth_abi.abi.encode(types=["uint256"], args=[rate])
+        })
+    )
+
+    result = io.fetch_balancer_rate("0x" + "ee" * 20)
+
+    assert result == rate
+
+
+def test_pybot_io_fetch_balancer_rate_propagates_reverts():
+    """When getRate() reverts, the exception propagates."""
+    io = PyBotIo(provider=_BalancerProvider())  # no responses → raise
+    with pytest.raises(Web3Exception):
+        io.fetch_balancer_rate("0x" + "ee" * 20)
+
+
+def test_pybot_io_probe_balancer_pool_type_returns_weighted():
+    """When getNormalizedWeights() succeeds, probe returns 'weighted'."""
+    weights = [5 * 10**17, 5 * 10**17]
+    io = PyBotIo(
+        provider=_BalancerProvider(**{
+            "getNormalizedWeights()": eth_abi.abi.encode(types=["uint256[]"], args=[weights])
+        })
+    )
+
+    assert io.probe_balancer_pool_type("0x" + "aa" * 20) == "weighted"
+
+
+def test_pybot_io_probe_balancer_pool_type_returns_stable():
+    """When getNormalizedWeights() reverts but getAmplificationParameter()
+    succeeds, probe returns 'stable'."""
+    amp_payload = eth_abi.abi.encode(
+        types=["uint256", "bool", "uint256"], args=[2_000, False, 1000]
+    )
+    io = PyBotIo(provider=_BalancerProvider(**{"getAmplificationParameter()": amp_payload}))
+
+    assert io.probe_balancer_pool_type("0x" + "aa" * 20) == "stable"
+
+
+def test_pybot_io_probe_balancer_pool_type_raises_when_neither_works():
+    """When both probes revert, raise ValueError (surfaces as Python error)."""
+    io = PyBotIo(provider=_BalancerProvider())  # no responses
+    with pytest.raises(ValueError):
+        io.probe_balancer_pool_type("0x" + "aa" * 20)

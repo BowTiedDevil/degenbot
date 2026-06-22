@@ -1187,6 +1187,82 @@ impl PyBotIo {
         ))
     }
 
+    /// Fetch a single Balancer rate provider's rate via `getRate()` (ADR-005
+    /// slice 14n).
+    ///
+    /// Mirrors the per-provider loop body of `balancer_builder_base.py::
+    /// _fetch_rates`. Each rate provider exposes a `getRate()` no-arg call
+    /// returning `uint256`. The sentinel check (zero address → `ONE`) stays
+    /// Python-side.
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (provider_address, block=None))]
+    fn fetch_balancer_rate(
+        &self,
+        py: Python<'_>,
+        provider_address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        use alloy::primitives::U256;
+
+        let calldata = selector(b"getRate()");
+        let result_obj = self.forward_call_to_provider(py, provider_address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        if bytes.len() < 32 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "getRate result < 32 bytes",
+            ));
+        }
+        let val = U256::from_be_slice(&bytes[0..32]);
+        crate::conversion::alloy::u256_to_py(py, &val).map(|b| b.unbind())
+    }
+
+    /// Probe a Balancer pool's sub-type by trying `getNormalizedWeights()` and
+    /// `getAmplificationParameter()` in order (ADR-005 slice 14n).
+    ///
+    /// Mirrors `balancer_builder_base.py::_detect_pool_type`. By the time this
+    /// runs, the pool is already known to be Balancer (via `probe_pool_type`,
+    /// 14i). This sub-probe distinguishes weighted vs stable.
+    ///
+    /// Returns:
+    /// - `"weighted"` — `getNormalizedWeights()` succeeded.
+    /// - `"stable"` — `getAmplificationParameter()` succeeded (and
+    ///   getNormalizedWeights reverted).
+    ///
+    /// Errors:
+    /// - `PyValueError` — neither method responded (raises so the Python
+    ///   caller can wrap as `DegenbotValueError`; linear pools unsupported).
+    #[pyo3(signature = (address, block=None))]
+    fn probe_balancer_pool_type(
+        &self,
+        py: Python<'_>,
+        address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<String> {
+        // Probe 1: getNormalizedWeights() → WEIGHTED.
+        let weights_calldata = selector(b"getNormalizedWeights()");
+        if self
+            .forward_call_to_provider(py, address, &weights_calldata, block)
+            .is_ok()
+        {
+            return Ok("weighted".to_string());
+        }
+        // Probe 2: getAmplificationParameter() → STABLE.
+        let amp_calldata = selector(b"getAmplificationParameter()");
+        if self
+            .forward_call_to_provider(py, address, &amp_calldata, block)
+            .is_ok()
+        {
+            return Ok("stable".to_string());
+        }
+        // Neither method responded — Linear pools not yet supported.
+        Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Cannot determine Balancer pool type for {address}. \
+             Neither getNormalizedWeights() nor getAmplificationParameter() responded. \
+             Linear pools are not yet supported."
+        )))
+    }
+
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
         let has_db = self.db.is_some();
         let provider_repr = self.provider.bind(py).repr()?.to_str()?.to_string();
