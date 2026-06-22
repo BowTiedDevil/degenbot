@@ -509,6 +509,101 @@ impl PyBotIo {
         ))
     }
 
+    /// Fetch a V4 pool's slot0 + liquidity via `getSlot0(bytes32)` +
+    /// `getLiquidity(bytes32)` on the state-view contract (ADR-005 slice 14o).
+    ///
+    /// Mirrors `degenbot/builders/v4_pool_builder.py`'s slot0/liquidity RPC
+    /// block in `_build_pool`. V4 differs from V3 (slice 14f) in two ways:
+    /// 1. Methods take a `bytes32 pool_id` prefix argument (like the V4 tick
+    ///    RPCs from slices 14j/14k).
+    /// 2. `getSlot0` returns `(uint160 sqrtPriceX96, int24 tick, uint24
+    ///    protocolFee, uint24 lpFee)` — 4 fields, not 6. The protocolFee word
+    ///    packs two uint12 fees; we return the raw `uint24` and leave that
+    ///    interpretation to Python's `decode_slot0` callers.
+    ///
+    /// Returns a 5-tuple `(sqrtPriceX96, tick, protocolFee, lpFee, liquidity)`.
+    ///
+    /// Errors propagate.
+    #[pyo3(signature = (state_view_address, pool_id, block=None))]
+    fn fetch_v4_slot0_liquidity(
+        &self,
+        py: Python<'_>,
+        state_view_address: &str,
+        pool_id: &[u8],
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<(Py<PyAny>, Py<PyAny>, Py<PyAny>, Py<PyAny>, Py<PyAny>)> {
+        use alloy::dyn_abi::{DynSolType, DynSolValue};
+
+        // getSlot0(bytes32)
+        let mut slot0_calldata = Vec::with_capacity(36);
+        slot0_calldata.extend_from_slice(&selector(b"getSlot0(bytes32)"));
+        slot0_calldata.extend_from_slice(pool_id);
+        let slot0_obj =
+            self.forward_call_to_provider(py, state_view_address, &slot0_calldata, block)?;
+        let slot0_bytes: &[u8] = slot0_obj.bind(py).extract::<&[u8]>()?;
+        let slot0_tuple = DynSolType::Tuple(vec![
+            DynSolType::Uint(160),
+            DynSolType::Int(24),
+            DynSolType::Uint(24),
+            DynSolType::Uint(24),
+        ]);
+        let slot0_decoded = slot0_tuple.abi_decode(slot0_bytes).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("invalid V4 slot0 decode: {e}"))
+        })?;
+        let mut slot0_it = match slot0_decoded {
+            DynSolValue::Tuple(vals) => vals.into_iter(),
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "expected tuple for V4 slot0",
+                ))
+            }
+        };
+        let sqrt_price_x96 = match slot0_it.next() {
+            Some(DynSolValue::Uint(n, _)) => n,
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "invalid sqrtPriceX96",
+                ))
+            }
+        };
+        let tick_i256 = match slot0_it.next() {
+            Some(DynSolValue::Int(n, _)) => n,
+            _ => return Err(pyo3::exceptions::PyValueError::new_err("invalid tick")),
+        };
+        let protocol_fee = match slot0_it.next() {
+            Some(DynSolValue::Uint(n, _)) => n,
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "invalid protocolFee",
+                ))
+            }
+        };
+        let lp_fee = match slot0_it.next() {
+            Some(DynSolValue::Uint(n, _)) => n,
+            _ => return Err(pyo3::exceptions::PyValueError::new_err("invalid lpFee")),
+        };
+
+        // getLiquidity(bytes32)
+        let mut liq_calldata = Vec::with_capacity(36);
+        liq_calldata.extend_from_slice(&selector(b"getLiquidity(bytes32)"));
+        liq_calldata.extend_from_slice(pool_id);
+        let liq_obj =
+            self.forward_call_to_provider(py, state_view_address, &liq_calldata, block)?;
+        let liq_bytes: &[u8] = liq_obj.bind(py).extract::<&[u8]>()?;
+        let liquidity = match DynSolType::Uint(256).abi_decode(liq_bytes) {
+            Ok(DynSolValue::Uint(n, _)) => n,
+            _ => return Err(pyo3::exceptions::PyValueError::new_err("invalid liquidity")),
+        };
+
+        Ok((
+            crate::conversion::alloy::u256_to_py(py, &sqrt_price_x96)?.unbind(),
+            crate::conversion::alloy::i256_to_py(py, &tick_i256)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &protocol_fee)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &lp_fee)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &liquidity)?.unbind(),
+        ))
+    }
+
     /// Fetch an ERC-20 token balance via `balanceOf(address)`, performing the
     /// full encode -> call -> decode choreography in Rust (ADR-005 slice 14d).
     ///
