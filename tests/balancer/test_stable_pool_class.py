@@ -31,6 +31,7 @@ from degenbot.balancer.stable_pools import (
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.degenbot_rs import PyBot
 from degenbot.exceptions.pool import StaleRateResult
+from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 from tests.helpers.erc20_factory import make_erc20
 
 if TYPE_CHECKING:
@@ -240,7 +241,7 @@ def _build_stable_pool(
             w3=w3,
         )
 
-    return BalancerV2StablePool(
+    return make_balancer_stable_pool(
         address=pool_address,
         pool_id=pool_id,
         vault=BALANCER_V2_VAULT_ADDRESS,

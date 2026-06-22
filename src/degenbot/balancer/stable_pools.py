@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from threading import Lock
 from typing import TYPE_CHECKING, ClassVar, Protocol, runtime_checkable
 from weakref import WeakSet
 
 from degenbot.balancer.libraries.constants import ONE
+from degenbot.balancer.libraries.scaling_helpers import _compute_scaling_factor
 from degenbot.balancer.libraries.stable_math import (
     _calc_in_given_out,
     _calc_out_given_in,
@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 
     from eth_typing import ChecksumAddress
 
+    from degenbot.degenbot_rs import PyLiquidityPool
     from degenbot.erc20 import Erc20Token
     from degenbot.types.abstract import AbstractPoolState
     from degenbot.types.aliases import BlockNumber, ChainId
@@ -121,12 +122,12 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
 
     def __init__(
         self,
-        address: ChecksumAddress | str,
+        py_pool: PyLiquidityPool,
         *,
+        address: ChecksumAddress | str,
         pool_id: bytes,
         vault: str,
         tokens: Sequence[Erc20Token],
-        balances: Sequence[int],
         fee: Fraction,
         amp: int,
         scaling_factors: Sequence[int],
@@ -137,7 +138,37 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
         chain_id: ChainId | None = None,
         state_block: BlockNumber | None = None,
     ) -> None:
-        """Initialize the instance."""
+        """Initialize the instance.
+
+        A companion over a ``PyLiquidityPool`` handle (ADR-005 slice 12d):
+        Rust ``BotState`` owns the mutable ``balances`` / ``update_block`` slot
+        + the reorg journal; this companion reads them through
+        ``self._py_pool`` (``snapshot_balancer_stable()`` for an atomic
+        ``(balances, block)`` tuple, ``balancer_stable_balances`` /
+        ``update_block`` getters) and delegates ``external_update`` to
+        ``apply_balancer_stable_balance_update``. Immutable config (vault,
+        pool_id, tokens, amp, scaling_factors, swap_fee, bpt_idx,
+        invariant_version, base_scaling_factors, rate_provider) stays
+        Python-side — matches V3/V4/Curve/Weighted.
+
+        The companion is constructed AFTER
+        ``register_balancer_stable_pool`` has landed the registration
+        ``balances`` / ``update_block`` into Rust, so this constructor takes
+        no balance argument — read live from the handle on demand.
+        Constructed from pre-fetched data only. Use ``Bot.build_pool()`` to
+        fetch from chain; tests use ``make_balancer_stable_pool``.
+
+        I/O boundary:
+            Construction is I/O-free — all immutable parameters (amp, fee,
+            tokens, scaling_factors, bpt_idx, invariant_version,
+            rate_provider) are provided by the builder/factory. Calculation is
+            I/O-free for static-rate pools; ComposableStablePools with a
+            non-static ``rate_provider`` may call into it during
+            ``calculate_tokens_out_from_tokens_in`` /
+            ``calculate_tokens_in_from_tokens_out`` (the
+            ``requires_io_at_calculation_time`` property flags this).
+        """
+        self._py_pool = py_pool
         self.address = get_checksum_address(address)
 
         self._chain_id = chain_id if chain_id not in {None, 0} else tokens[0].chain_id
@@ -153,45 +184,49 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
         self.invariant_version = invariant_version
 
         # Base scaling factors: 10^(18 - token_decimals) for each token.
-        # These are the decimal-adjustment-only scaling factors (no rate).
-        # Used alongside rate_provider rates to compute full scaling factors
-        # as base_sf * rate // ONE (mulDown, matching deployed contract).
+        # Base = decimal-adjustment-only scaling factors (no rate). Used
+        # alongside the ``rate_provider`` rates to compute full scaling
+        # factors as ``base_sf * rate // ONE`` (mulDown, matching the deployed
+        # contract) during ``_resolve_scaling_factors``.
         if base_scaling_factors is not None:
             self._base_scaling_factors = tuple(base_scaling_factors)
         else:
-            # Fallback: if base_scaling_factors not provided, derive from
-            # scaling_factors assuming rate=ONE (i.e. scaling_factor IS base_sf)
-            self._base_scaling_factors = tuple(scaling_factors)
+            # Fallback: if base_scaling_factors not provided, derive them
+            # from the per-token decimal lookup (the canonical source of
+            # truth, shared with the weighted companion).
+            self._base_scaling_factors = tuple(
+                _compute_scaling_factor(token) for token in self._tokens
+            )
 
-        # Construction-time scaling factors (base_sf * rate_at_construction // ONE).
-        # Used as fallback when no rate_provider is available.
+        # Construction-time scaling factors (``base_sf * rate // ONE``).
+        # Stored immutably; the rate-cache-aware ``rate_provider`` refreshes
+        # them per-block via ``_resolve_scaling_factors``.
         self.scaling_factors = tuple(scaling_factors)
 
-        # Rate provider for per-block rate resolution.
-        # If not provided, a static provider wraps the construction-time rates.
+        # Rate provider for per-block rate resolution. If not provided, a
+        # static provider wraps the construction-time rates — this drives
+        # ``requires_io_at_calculation_time`` (False for the static case) and
+        # ``_should_warn_stale_rates`` (True for Composable with a static
+        # provider, the ``StaleRateResult`` sentinel that swap callers can
+        # unwrap).
         if rate_provider is not None:
             self._rate_provider = rate_provider
         else:
             # Extract construction-time rates from scaling_factors.
-            # rate = sf * ONE // base_sf for each token.
+            # ``rate = sf * ONE // base_sf`` per token.
             construction_rates = tuple(
                 sf * ONE // bsf
                 for sf, bsf in zip(scaling_factors, self._base_scaling_factors, strict=True)
             )
             self._rate_provider = _StaticRateProvider(construction_rates)
 
-        # Precompute non-BPT index mapping for ComposableStablePool
+        # Precompute non-BPT index mapping for ComposableStablePool — the
+        # BPT-drop index used by ``_skip_bpt_index`` + invariant calc.
         if bpt_idx is not None:
             self._non_bpt_indices = tuple(i for i in range(len(tokens)) if i != bpt_idx)
         else:
             self._non_bpt_indices = tuple(range(len(tokens)))
 
-        self._state_lock = Lock()
-        self._state = BalancerV2PoolState(
-            address=self.address,
-            block=state_block,
-            balances=tuple(balances),
-        )
         self._subscribers: WeakSet[Subscriber] = WeakSet()
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -219,8 +254,14 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
 
     @property
     def balances(self) -> tuple[int, ...]:
-        """Balances."""
-        return self.state.balances
+        """Balances.
+
+        Read from the Rust core via the ``PyLiquidityPool`` handle
+        (ADR-005 slice 12d). Rust ``BotState`` is the single source of truth
+        for the mutable ``balances`` slot; this getter returns the live tuple
+        (one U256 per token, including BPT for Composable pools).
+        """
+        return tuple(self._py_pool.balancer_stable_balances)
 
     @property
     def chain_id(self) -> int | None:
@@ -229,8 +270,30 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
 
     @property
     def state(self) -> PoolState:
-        """State."""
-        return self._state
+        """State.
+
+        Built from one atomic Rust snapshot
+        (``snapshot_balancer_stable()`` — ``(balances, block)``) so callers
+        see a coherent tuple (no torn read mid-``external_update``). Mirrors
+        V3/V4's ``snapshot_v3()`` / Curve's ``snapshot_curve()`` /
+        Weighted's ``snapshot_balancer_weighted()`` contract.
+
+        Raises:
+            DegenbotValueError: If the Rust snapshot is absent (the pool is
+                not registered in Rust as a Balancer stable pool —
+                unreachable for a companion built over a registered handle).
+
+        """
+        snap = self._py_pool.snapshot_balancer_stable()
+        if snap is None:  # pragma: no cover - defensive, unreachable in practice
+            msg = f"No Balancer stable pool state available for {self.address}"
+            raise DegenbotValueError(message=msg)
+        balances, block = snap
+        return BalancerV2PoolState(
+            address=self.address,
+            balances=tuple(balances),
+            block=block,
+        )
 
     @property
     def tokens(self) -> tuple[Erc20Token, ...]:
@@ -608,20 +671,40 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
         self,
         update: BalancerV2StablePoolExternalUpdate,
     ) -> None:
-        """Apply an external state update with new balances."""
+        """Apply an external state update with new balances.
+
+        Delegates to the Rust core
+        (``PyLiquidityPool.apply_balancer_stable_balance_update``) which
+        journals the prior balances (genesis-anchor V2-style discipline) and
+        lands the new balances + ``update_block`` atomically
+        (ADR-005 slice 12d). The ``_state_lock`` + double-check-after-acquire
+        pattern is gone — Rust's internal write lock handles atomicity; the
+        registration-state precondition is enforced by the Rust core's
+        silent-no-op-on-older-block contract.
+
+        Raises:
+            DegenbotValueError: If the Rust core rejects the update (the pool
+                is not registered as a Balancer stable pool — unreachable for
+                a companion built over a registered handle).
+
+        """
         if self.state.block is not None and update.block_number < self.state.block:
             return
-        with self._state_lock:
-            # Re-check after acquiring lock
-            if self.state.block is not None and update.block_number < self.state.block:
-                return
-            self._state = BalancerV2PoolState(
-                address=self.address,
-                block=update.block_number,
-                balances=update.balances,
+        applied = self._py_pool.apply_balancer_stable_balance_update(
+            list(update.balances), update.block_number
+        )
+        if not applied:  # pragma: no cover - defensive, unreachable for a stable handle
+            msg = (
+                f"external_update rejected for {self.address} (not a Balancer stable pool in Rust)"
             )
+            raise DegenbotValueError(message=msg)
+        new_state = BalancerV2PoolState(
+            address=self.address,
+            balances=update.balances,
+            block=update.block_number,
+        )
         self._notify_subscribers(
-            BalancerV2PoolStateUpdated(state=self._state),
+            BalancerV2PoolStateUpdated(state=new_state),
         )
 
     def to_hop_state(
