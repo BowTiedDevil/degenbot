@@ -167,6 +167,7 @@ class StableswapPoolState:
 
     # ── Mutable properties (state accessed through the mixin) ──
 
-    # Note: _state, base_cache_updated, and base_virtual_price are set on the
-    # pool class __init__ (they interact with caches/locks). The properties
-    # below provide read access through the mixin for locality.
+    # Note: base_cache_updated and base_virtual_price are set on the pool
+    # class __init__ (they interact with caches/locks). The mutable slot
+    # ``_state`` / ``balances`` is Rust-owned now (ADR-005 slice 11b); the
+    # properties below provide read access through the mixin for locality.

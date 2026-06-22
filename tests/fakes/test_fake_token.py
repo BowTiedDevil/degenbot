@@ -12,10 +12,10 @@ import pytest
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.degenbot_rs import PyBot
 from degenbot.types.address_comparable import AddressComparable
 from tests.fakes.tokens import FakeToken
+from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.v3_pool_factory import make_v3_pool
@@ -200,7 +200,7 @@ class TestCanaryCurveStableswapPoolWithFakeToken:
     def test_construct_curve_pool(self) -> None:
         dai = FakeToken(DAI_ADDRESS, name="Dai Stablecoin", symbol="DAI", decimals=18)
         usdc = FakeToken(USDC_ADDRESS, name="USD Coin", symbol="USDC", decimals=6)
-        pool = CurveStableswapPool(
+        pool = make_curve_pool(
             address="0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7",
             tokens=[dai, usdc],  # type: ignore[arg-type]
             a_coefficient=1000,

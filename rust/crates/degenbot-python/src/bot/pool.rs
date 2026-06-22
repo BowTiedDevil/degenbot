@@ -164,6 +164,11 @@ impl PyLiquidityPool {
         if let Some(s) = core.get_v3_or_v4_pool(self.pool_id) {
             return s.update_block();
         }
+        // Curve: the ADR-005 slice 11a state port. Mirrors V2/V3/V4 — the
+        // mutable update_block slot lives in Rust now.
+        if let Some(s) = core.get_curve_pool(self.pool_id) {
+            return s.update_block;
+        }
         0
     }
 

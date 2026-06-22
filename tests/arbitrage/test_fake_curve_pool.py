@@ -22,6 +22,7 @@ from degenbot.curve.types import CurveStableswapPoolState
 from degenbot.degenbot_rs import PyBot
 from degenbot.types.hop_types import PoolInvariant
 from tests.fakes.curve_data_provider import FakeCurveDataProvider
+from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20
 
 _PY_BOT = PyBot()
@@ -54,7 +55,7 @@ def _make_curve_pool(
 ) -> CurveStableswapPool:
     """Build a production CurveStableswapPool (DAI/USDC) with FakeCurveDataProvider."""
     provider = FakeCurveDataProvider(block_timestamp=1_700_000_000)
-    return CurveStableswapPool(
+    return make_curve_pool(
         address="0x00000000000000000000000000000000000000c0",  # type: ignore[arg-type]
         tokens=(DAI, USDC),
         a_coefficient=a_coefficient,

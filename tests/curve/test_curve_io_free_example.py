@@ -4,9 +4,9 @@ This demonstrates how the I/O-free pattern eliminates the need for mocks
 when testing pool logic. All on-chain data is injected via a CurveDataProvider.
 """
 
-from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.degenbot_rs import PyBot
 from tests.fakes.curve_data_provider import FakeCurveDataProvider
+from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20
 
 _PY_BOT = PyBot()
@@ -36,7 +36,7 @@ def test_curve_plain_pool_with_data_provider():
         block_timestamp=1_700_000_000,
     )
 
-    pool = CurveStableswapPool(
+    pool = make_curve_pool(
         address="0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
         tokens=(dai, usdc),
         a_coefficient=2000,
@@ -87,7 +87,7 @@ def test_curve_lending_pool_with_data_provider():
         lending_rates=(precision * 102 // 100, precision * 105 // 100),
     )
 
-    pool = CurveStableswapPool(
+    pool = make_curve_pool(
         address="0x0000000000000000000000000000000000000001",
         tokens=(cdai, cusdc),
         a_coefficient=1000,
@@ -135,7 +135,7 @@ def test_curve_metapool_with_data_provider():
         base_virtual_price=precision * 102 // 100,  # 1.02
     )
 
-    pool = CurveStableswapPool(
+    pool = make_curve_pool(
         address="0x618788357D0EBd8A37e763ADab3bc575D54c2C7d",
         tokens=(rai, threecrv),
         a_coefficient=400,
@@ -183,7 +183,7 @@ def test_curve_crypto_pool_with_data_provider():
         price_scale=(10**18,),
     )
 
-    pool = CurveStableswapPool(
+    pool = make_curve_pool(
         address="0x0000000000000000000000000000000000000002",
         tokens=(wbtc, weth),
         a_coefficient=400,

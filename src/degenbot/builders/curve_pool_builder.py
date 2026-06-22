@@ -9,7 +9,10 @@ import eth_abi.abi
 from degenbot.builders.request import BuildPoolRequest, BuildRequest
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve._pool_strategies import resolve_pool_strategies
-from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+from degenbot.curve.curve_stableswap_liquidity_pool import (
+    CurveStableswapPool,
+    _compute_rate_and_precision_multipliers,
+)
 from degenbot.curve.data_provider_impl import CurveDataProviderImpl
 from degenbot.curve.deployments import CURVE_V1_FACTORY_ADDRESS, CURVE_V1_REGISTRY_ADDRESS
 from degenbot.curve.detection.a_ramping import detect_a_ramping
@@ -24,11 +27,15 @@ from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from web3.types import BlockIdentifier
 
     from degenbot.builders.context import BuilderContext
     from degenbot.builders.pool_io import PoolIO
     from degenbot.curve.detection.types import MetapoolDetectionResult
+    from degenbot.curve.strategies import PoolStrategies
+    from degenbot.degenbot_rs import PyLiquidityPool
     from degenbot.erc20 import Erc20Token
     from degenbot.types.abstract.liquidity_pool import AbstractLiquidityPool
     from degenbot.types.aliases import ChainId
@@ -51,6 +58,7 @@ class CurvePoolBuilder:
         self._pools = ctx.pools
         self._tokens = ctx.tokens
         self._erc20_builder = ctx.erc20_builder
+        self._py_bot = ctx.py_bot
 
     def build(
         self,
@@ -171,12 +179,23 @@ class CurvePoolBuilder:
             rate_multipliers=rate_multipliers,
         )
         pool = CurveStableswapPool(
+            self._register_handle(
+                address=pool_address,
+                tokens=tokens,
+                a_coefficient=a_coefficient,
+                fee=fee,
+                admin_fee=admin_fee,
+                balances=coins.balances,
+                state_block=state_block,
+                precision_multipliers=lending.precision_multipliers,
+                strategies=strategies,
+                base_pool=base_pool,
+            ),
             address=pool_address,
             tokens=tokens,
             a_coefficient=a_coefficient,
             fee=fee,
             admin_fee=admin_fee,
-            balances=coins.balances,
             chain_id=chain_id,
             state_block=state_block,
             state_cache_depth=request.state_cache_depth,
@@ -210,6 +229,55 @@ class CurvePoolBuilder:
             logger.info(f"• Fee: {100 * pool.fee / pool.FEE_DENOMINATOR:.4f}%")
 
         return pool
+
+    def _register_handle(
+        self,
+        *,
+        address: str,
+        tokens: tuple[Erc20Token, ...],
+        a_coefficient: int,
+        fee: int,
+        admin_fee: int,
+        balances: tuple[int, ...],
+        state_block: int,
+        precision_multipliers: Sequence[int] | None,
+        strategies: PoolStrategies,
+        base_pool: CurveStableswapPool | None,
+    ) -> PyLiquidityPool:
+        """Register the Curve pool in the Rust core + return its handle.
+
+        ADR-005 slice 11b: the production-path twin of ``make_curve_pool``.
+        Derives ``rate_multipliers`` via the shared helper (single source of
+        truth with the companion) + maps the ``PoolStrategies`` enums to the
+        ``u8`` discriminants Rust stores, then calls
+        ``PyBot.register_curve_pool`` + ``get_pool``.
+
+        Returns:
+            The ``PyLiquidityPool`` handle for the registered pool.
+
+        """
+        rate_multipliers, _ = _compute_rate_and_precision_multipliers(
+            tokens, precision_multipliers, CurveStableswapPool.PRECISION_DECIMALS
+        )
+        pool_id = self._py_bot.register_curve_pool(
+            address=address,
+            tokens=[t.address for t in tokens],
+            a_coefficient=a_coefficient,
+            fee=fee,
+            admin_fee=admin_fee,
+            rate_multipliers=list(rate_multipliers),
+            balances=list(balances),
+            update_block=state_block,
+            swap_style=strategies.swap_style.value,
+            lending_rate_style=strategies.lending_rate_style.value,
+            d_variant=strategies.d_variant.value,
+            y_variant=strategies.y_variant.value,
+            yd_variant=strategies.yd_variant.value,
+            base_pool=(base_pool.address if base_pool is not None else None),
+        )
+        handle = self._py_bot.get_pool(pool_id)
+        assert handle is not None, "register_curve_pool returned a pool_id with no handle"
+        return handle
 
     def _resolve_metapool(
         self,

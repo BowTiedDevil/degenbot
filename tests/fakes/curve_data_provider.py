@@ -5,7 +5,7 @@ for on-chain data access, enabling I/O-free CurveStableswapPool testing.
 
 Usage:
     provider = FakeCurveDataProvider(block_timestamp=1_700_000_000)
-    pool = CurveStableswapPool(
+    pool = make_curve_pool(
         address="0x...",
         tokens=(dai, usdc),
         a_coefficient=2000,

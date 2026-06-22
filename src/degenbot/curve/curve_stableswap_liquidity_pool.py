@@ -8,8 +8,7 @@ import contextlib
 import dataclasses
 from collections.abc import Iterable, Sequence
 from fractions import Fraction
-from threading import Lock
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar
 from weakref import WeakSet
 
 from eth_typing import ChecksumAddress
@@ -36,6 +35,7 @@ from degenbot.curve.types import (
     SwapStyle,
     YVariant,
 )
+from degenbot.degenbot_rs import PyLiquidityPool
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.arbitrage import NoLiquidity
@@ -44,12 +44,37 @@ from degenbot.logging import logger
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import (
-    BoundedCache,
     PublisherMixin,
     Subscriber,
 )
 from degenbot.types.hop_types import CurveStableswapHop, HopType, PoolInvariant
 from degenbot.types.pool_protocols import SimulationResult
+
+
+def _compute_rate_and_precision_multipliers(
+    tokens: Sequence[Erc20Token],
+    precision_multipliers: Sequence[int] | None,
+    precision_decimals: int,
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Derive Curve rate + precision multipliers from token decimals.
+
+    Single source of truth — shared by ``CurveStableswapPool.__init__`` and
+    ``make_curve_pool`` (the factory passes the derived ``rate_multipliers`` to
+    ``PyBot.register_curve_pool`` so the Rust core stores the same values the
+    companion keeps; they're consumed by the future Rust ``get_dy``, ADR-005
+    slice 11c). Mirrors the pre-companion derivation exactly.
+
+    Returns:
+        ``(rate_multipliers, precision_multipliers)``.
+
+    """
+    rate_multipliers = tuple(10 ** (2 * precision_decimals - token.decimals) for token in tokens)
+    if precision_multipliers is not None:
+        pms = tuple(precision_multipliers)
+        rate_multipliers = tuple(pm * 10**precision_decimals for pm in pms)
+    else:
+        pms = tuple(10 ** (precision_decimals - token.decimals) for token in tokens)
+    return rate_multipliers, pms
 
 
 class CurveStableswapPool(
@@ -60,7 +85,6 @@ class CurveStableswapPool(
     """CurveStableswapPool class."""
 
     type PoolState = CurveStableswapPoolState
-    _state_cache: BoundedCache[BlockNumber, PoolState]
 
     LOG_HANDLERS: ClassVar[dict[str, Any]] = {}  # Curve stays on polling
 
@@ -75,13 +99,13 @@ class CurveStableswapPool(
 
     def __init__(
         self,
-        address: ChecksumAddress | str,
+        py_pool: PyLiquidityPool,
         *,
+        address: ChecksumAddress | str,
         tokens: Sequence[Erc20Token],
         a_coefficient: int,
         fee: int,
         admin_fee: int,
-        balances: Sequence[int],
         chain_id: ChainId | None = None,
         state_block: BlockNumber | None = None,
         state_cache_depth: int = 8,
@@ -110,24 +134,33 @@ class CurveStableswapPool(
     ) -> None:
         """Curve V1 (StableSwap) pool.
 
-        Constructed from pre-fetched data only. Use Bot.build_pool() to fetch from chain.
+        A companion over a ``PyLiquidityPool`` handle (ADR-005 slice 11b):
+        Rust ``BotState`` owns the mutable ``balances`` / ``update_block`` +
+        the reorg journal; this companion reads them through
+        ``self._py_pool`` (``snapshot_curve()`` for an atomic
+        ``(balances, block)`` tuple, ``balances`` / ``update_block`` getters)
+        and delegates ``external_update`` to
+        ``apply_curve_balance_update``. Immutable config (tokens, A, fee,
+        strategies, rate_multipliers) stays Python-side — matches V3/V4.
+
+        Constructed from pre-fetched data only. Use Bot.build_pool() to fetch
+        from chain; tests use ``make_curve_pool``.
 
         I/O boundary:
-            Construction is I/O-free — all immutable parameters (A, fee, tokens, strategies)
-            are provided by the builder. However, get_dy() and related calculation
-            methods may call CurveDataProvider methods for per-block on-chain data.
+            Construction is I/O-free — all immutable parameters (A, fee, tokens,
+            strategies) are provided by the builder. However, get_dy() and related
+            calculation methods may call CurveDataProvider methods for per-block
+            on-chain data.
 
             I/O-free at calculation time for: plain pools (STANDARD, RAW_BALANCE).
             I/O-required at calculation time for: lending pools, crypto pools,
             live-admin pools, metapools, and pools with A ramping.
 
-            The data_provider must be available for calculation-time I/O. Pools
-            constructed without a data_provider can only perform calculations
-            that don't require on-chain data.
+            The data_provider must be available for calculation-time I/O.
         """
+        self._py_pool = py_pool
         self.address = get_checksum_address(address)
         self._chain_id = chain_id if chain_id is not None else tokens[0].chain_id
-        state_block = state_block if state_block is not None else 0
 
         self._tokens: tuple[Erc20Token, ...] = tuple(tokens)
         self._a_coefficient = a_coefficient
@@ -135,20 +168,11 @@ class CurveStableswapPool(
         self._admin_fee = admin_fee
 
         # Derive rate/precision multipliers from token decimals
-        self._rate_multipliers = tuple(
-            10 ** (2 * self.PRECISION_DECIMALS - token.decimals) for token in self._tokens
+        self._rate_multipliers, self._precision_multipliers = (
+            _compute_rate_and_precision_multipliers(
+                self._tokens, precision_multipliers, self.PRECISION_DECIMALS
+            )
         )
-        if precision_multipliers is not None:
-            self._precision_multipliers = tuple(precision_multipliers)
-            # Recompute rate_multipliers to be consistent
-            self._rate_multipliers = tuple(
-                pm * 10**self.PRECISION_DECIMALS for pm in self._precision_multipliers
-            )
-        else:
-            self._precision_multipliers = tuple(
-                cast("int", 10 ** (self.PRECISION_DECIMALS - token.decimals))
-                for token in self._tokens
-            )
 
         # Set defaults for optional/variant attributes
         self._fee_gamma = fee_gamma if fee_gamma is not None else 0
@@ -190,23 +214,16 @@ class CurveStableswapPool(
 
         self._coin_index_type = "uint256"
 
-        # State caches
-        self._state_cache: BoundedCache[BlockNumber, CurveStableswapPoolState] = BoundedCache(
-            max_items=state_cache_depth
-        )
-        self._state = CurveStableswapPoolState(
-            address=self.address,
-            balances=tuple(balances),
-            block=state_block,
-        )
-        self._state_cache[state_block] = self._state
-        self._state_lock = Lock()
+        # The block of the registration snapshot (the genesis journal delta,
+        # landed by the factory via `register_curve_pool`). Used to pre-populate
+        # base-cache virtual-price values for metapools at construction time.
+        registration_block = state_block if state_block is not None else self._py_pool.update_block
 
         # Pre-populate base cache values for metapools at construction time,
         # matching the contract's _vp_rate_ro() cache behavior.
-        if self.base_pool is not None and state_block != 0:
+        if self.base_pool is not None and registration_block != 0:
             with contextlib.suppress(Exception):
-                self._cache.get_cached_virtual_price(block_number=state_block)
+                self._cache.get_cached_virtual_price(block_number=registration_block)
 
         fee_string = f"{100 * self.fee / self.FEE_DENOMINATOR:.2f}"
         token_string = "-".join([token.symbol for token in self._tokens])
@@ -229,8 +246,13 @@ class CurveStableswapPool(
 
     @property
     def balances(self) -> tuple[int, ...]:
-        """Balances."""
-        return self.state.balances
+        """Balances.
+
+        Read from the Rust core via the ``PyLiquidityPool`` handle
+        (ADR-005 slice 11b). Rust ``BotState`` is the single source of truth
+        for the mutable ``balances`` slot; this getter returns the live tuple.
+        """
+        return tuple(self._py_pool.balances)
 
     @property
     def chain_id(self) -> int | None:
@@ -239,15 +261,36 @@ class CurveStableswapPool(
 
     @property
     def state(self) -> CurveStableswapPoolState:
-        """State."""
-        return self._state
+        """State.
+
+        Built from one atomic Rust snapshot (``snapshot_curve()`` —
+        ``(balances, block)``) so callers see a coherent tuple (no torn read
+        mid-``external_update``). Mirrors V3/V4's ``snapshot_v3()`` contract.
+
+        Raises:
+            DegenbotValueError: If the Rust snapshot is absent (the pool is
+                not registered in Rust as a Curve pool — unreachable for a
+                companion built over a registered handle).
+
+        """
+        snap = self._py_pool.snapshot_curve()
+        # snapshot_curve returns None only for a non-Curve pool_id; this
+        # companion is always built over a registered Curve handle, so the
+        # snapshot is always present. Defensive: treat None as no-state.
+        if snap is None:  # pragma: no cover - defensive, unreachable in practice
+            msg = f"No Curve pool state available for {self.address}"
+            raise DegenbotValueError(message=msg)
+        balances, block = snap
+        return CurveStableswapPoolState(
+            address=self.address,
+            balances=tuple(balances),
+            block=block,
+        )
 
     @property
     def update_block(self) -> BlockNumber:
-        """Update block."""
-        if TYPE_CHECKING:
-            assert self.state.block is not None
-        return self.state.block
+        """Update block (from Rust via the handle)."""
+        return self._py_pool.update_block
 
     @property
     def requires_io_at_calculation_time(self) -> bool:
@@ -276,16 +319,31 @@ class CurveStableswapPool(
         ])
 
     def external_update(self, update: CurveStableswapPoolExternalUpdate) -> None:
-        """Apply an external state update with new balances."""
+        """Apply an external state update with new balances.
+
+        Delegates to the Rust core (``Py.LiquidityPool.apply_curve_balance_update``)
+        which journals the prior balances (genesis-anchor V2-style discipline)
+        and lands the new balances + ``update_block`` atomically
+        (ADR-005 slice 11b). The ``StateCache`` temporal-navigation layer it
+        used to write is gone — the Rust reorg journal handles rollback now.
+
+        Raises:
+            DegenbotValueError: If the Rust core rejects the update (the pool
+                is not registered as a Curve pool — unreachable for a companion
+                built over a registered handle).
+
+        """
+        applied = self._py_pool.apply_curve_balance_update(
+            list(update.balances), update.block_number
+        )
+        if not applied:  # pragma: no cover - defensive, unreachable for a Curve handle
+            msg = f"external_update rejected for {self.address} (not a Curve pool in Rust)"
+            raise DegenbotValueError(message=msg)
         new_state = CurveStableswapPoolState(
             address=self.address,
             balances=update.balances,
             block=update.block_number,
         )
-        with self._state_lock:
-            self._state = new_state
-            self._state_cache[update.block_number] = new_state
-
         self._notify_subscribers(
             CurveStableSwapPoolStateUpdated(state=new_state),
         )

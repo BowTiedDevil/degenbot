@@ -15,6 +15,7 @@ from degenbot.curve.trackers import CurveStableswapPoolTracker
 from degenbot.degenbot_rs import PyBot
 from degenbot.provider import ProviderAdapter
 from tests.helpers.bot_factory import make_bot_with_provider
+from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20
 
 _PY_BOT = PyBot()
@@ -53,7 +54,7 @@ def test_curve_pool_tracker_tracks_pools() -> None:
             decimals=6,
         ),
     )
-    pool = CurveStableswapPool(
+    pool = make_curve_pool(
         address="0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
         tokens=tokens,
         a_coefficient=2000,
@@ -88,7 +89,7 @@ def test_curve_pool_tracker_returns_cached_pool() -> None:
             decimals=18,
         ),
     )
-    pool = CurveStableswapPool(
+    pool = make_curve_pool(
         address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
         tokens=tokens,
         a_coefficient=2000,
