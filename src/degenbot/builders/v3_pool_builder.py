@@ -136,42 +136,58 @@ class V3PoolBuilder(V3BuilderBase):
             tick_spacing_for_pool = db_values.tick_spacing
             db_deployer = db_values.deployer_address
         else:
-            try:
-                factory_result = io.call(
-                    to=pool_address,
-                    data=encode_function_calldata("factory()", None),
-                )
-                token0_result = io.call(
-                    to=pool_address,
-                    data=encode_function_calldata("token0()", None),
-                )
-                token1_result = io.call(
-                    to=pool_address,
-                    data=encode_function_calldata("token1()", None),
-                )
-                fee_result = io.call(
-                    to=pool_address,
-                    data=encode_function_calldata("fee()", None),
-                )
-                tick_spacing_result = io.call(
-                    to=pool_address,
-                    data=encode_function_calldata("tickSpacing()", None),
-                )
-            except Exception as exc:
-                raise LiquidityPoolError(message="Could not decode contract data") from exc
+            # ADR-005 slice 14f: when io is a PyBotIo (Bot's build path),
+            # delegate the 5-call immutable RPC choreography to Rust. SyncPoolIO
+            # fallback keeps the Python implementation as a parity gate.
+            fetch_v3_immutable_data = getattr(io, "fetch_v3_immutable_data", None)
+            if fetch_v3_immutable_data is not None:
+                try:
+                    (
+                        factory,
+                        token0_address,
+                        token1_address,
+                        fee,
+                        tick_spacing_for_pool,
+                    ) = fetch_v3_immutable_data(pool_address)
+                except Exception as exc:
+                    raise LiquidityPoolError(message="Could not decode contract data") from exc
+            else:
+                try:
+                    factory_result = io.call(
+                        to=pool_address,
+                        data=encode_function_calldata("factory()", None),
+                    )
+                    token0_result = io.call(
+                        to=pool_address,
+                        data=encode_function_calldata("token0()", None),
+                    )
+                    token1_result = io.call(
+                        to=pool_address,
+                        data=encode_function_calldata("token1()", None),
+                    )
+                    fee_result = io.call(
+                        to=pool_address,
+                        data=encode_function_calldata("fee()", None),
+                    )
+                    tick_spacing_result = io.call(
+                        to=pool_address,
+                        data=encode_function_calldata("tickSpacing()", None),
+                    )
+                except Exception as exc:
+                    raise LiquidityPoolError(message="Could not decode contract data") from exc
 
-            immutable = V3BuilderBase.decode_immutable_data(
-                factory_result=factory_result,
-                token0_result=token0_result,
-                token1_result=token1_result,
-                fee_result=fee_result,
-                tick_spacing_result=tick_spacing_result,
-            )
-            factory = immutable.factory
-            token0_address = immutable.token0_address
-            token1_address = immutable.token1_address
-            fee = immutable.fee
-            tick_spacing_for_pool = immutable.tick_spacing
+                immutable = V3BuilderBase.decode_immutable_data(
+                    factory_result=factory_result,
+                    token0_result=token0_result,
+                    token1_result=token1_result,
+                    fee_result=fee_result,
+                    tick_spacing_result=tick_spacing_result,
+                )
+                factory = immutable.factory
+                token0_address = immutable.token0_address
+                token1_address = immutable.token1_address
+                fee = immutable.fee
+                tick_spacing_for_pool = immutable.tick_spacing
 
         # Build tokens
         token0 = self._erc20_builder.build(
@@ -182,24 +198,34 @@ class V3PoolBuilder(V3BuilderBase):
         )
 
         # Fetch slot0 + liquidity
-        try:
-            slot0_result = io.call(
-                to=pool_address,
-                data=encode_function_calldata("slot0()", None),
-                block=state_block,
-            )
-            liquidity_result = io.call(
-                to=pool_address,
-                data=encode_function_calldata("liquidity()", None),
-                block=state_block,
-            )
-        except Exception as exc:
-            raise LiquidityPoolError(message="Could not decode contract data") from exc
+        # ADR-005 slice 14f: same delegation seam as the immutable-data block.
+        fetch_v3_slot0_liquidity = getattr(io, "fetch_v3_slot0_liquidity", None)
+        if fetch_v3_slot0_liquidity is not None:
+            try:
+                sqrt_price_x96, tick, liquidity = fetch_v3_slot0_liquidity(
+                    pool_address, block=state_block
+                )
+            except Exception as exc:
+                raise LiquidityPoolError(message="Could not decode contract data") from exc
+        else:
+            try:
+                slot0_result = io.call(
+                    to=pool_address,
+                    data=encode_function_calldata("slot0()", None),
+                    block=state_block,
+                )
+                liquidity_result = io.call(
+                    to=pool_address,
+                    data=encode_function_calldata("liquidity()", None),
+                    block=state_block,
+                )
+            except Exception as exc:
+                raise LiquidityPoolError(message="Could not decode contract data") from exc
 
-        slot0_data = V3BuilderBase.decode_slot0(slot0_result)
-        sqrt_price_x96 = slot0_data.sqrt_price_x96
-        tick = slot0_data.tick
-        (liquidity,) = eth_abi.abi.decode(types=["uint128"], data=liquidity_result)
+            slot0_data = V3BuilderBase.decode_slot0(slot0_result)
+            sqrt_price_x96 = slot0_data.sqrt_price_x96
+            tick = slot0_data.tick
+            (liquidity,) = eth_abi.abi.decode(types=["uint128"], data=liquidity_result)
 
         # Fetch initial tick bitmap and tick data
         db_snapshot_loaded = False
