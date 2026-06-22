@@ -9,7 +9,7 @@ The async counterpart of `ProviderBackend` — a `@runtime_checkable` protocol f
 _Avoid_: Async backend
 
 **ProviderAdapter**:
-The public sync facade wrapping Web3, AlloyProvider, or OfflineProvider. Constructed via `from_web3()`, `from_alloy()`, or `from_offline()`. Delegates to an internal `ProviderBackend`. Supports pickle round-tripping via `__getstate__`/`__setstate__` + `set_provider()`. Defined in `sync_adapter.py`.
+The public sync facade wrapping Web3, AlloyProvider, or OfflineProvider. Constructed via `from_web3()`, `from_alloy()`, or `from_offline()`. Delegates to an internal `ProviderBackend`. Defined in `sync_adapter.py`.
 _Avoid_: sync adapter, provider wrapper
 
 **AsyncProviderAdapter**:
@@ -28,8 +28,8 @@ _Avoid_: async subscription stubs, async subscription base
 An adapter that does **not** inherit `AsyncSubscriptionSupport` because it implements real subscription methods (its backend genuinely supports WS/IPC). This asymmetry reflects a real capability difference, not a design flaw. No additional mixin needed.
 _Avoid_: (private — avoid referencing outside this module)
 
-**_backend_for_type**:
-A private helper in `sync_adapter.py` that maps a `provider_type` label (`"web3"`, `"alloy"`, `"offline"`) to the correct private adapter class. Used by `ProviderAdapter.set_provider()` for pickle round-tripping. Not used by async code.
+**_Web3Adapter / _AlloyAdapter / _OfflineAdapter** (sync) / **_AsyncWeb3Adapter / _AsyncAlloyAdapter** (async):
+The private adapter classes implementing `ProviderBackend` / `AsyncProviderBackend` over the underlying Web3/Alloy provider. Each wraps a raw provider (`Web3`, `AsyncWeb3`, `AlloyProvider`, `AsyncAlloyProvider`, `OfflineProvider`) and the `ProviderAdapter` / `AsyncProviderAdapter` facade selects the right backend via its factory methods (`from_web3` / `from_alloy` / `from_offline`).
 _Avoid_: (private — avoid referencing outside this module)
 
 ## File structure
@@ -37,7 +37,7 @@ _Avoid_: (private — avoid referencing outside this module)
 | File | Contents |
 |------|----------|
 | `protocols.py` | `ProviderBackend`, `AsyncProviderBackend` — pure protocol seams, no implementation |
-| `sync_adapter.py` | `SyncSubscriptionSupport`, `_Web3Adapter`, `_AlloyAdapter`, `_OfflineAdapter`, `ProviderAdapter`, `_backend_for_type` |
+| `sync_adapter.py` | `SyncSubscriptionSupport`, `_Web3Adapter`, `_AlloyAdapter`, `_OfflineAdapter`, `ProviderAdapter` |
 | `async_adapter.py` | `AsyncSubscriptionSupport`, `_AsyncWeb3Adapter`, `_AsyncAlloyAdapter`, `AsyncProviderAdapter` |
 | `offline_provider.py` | `OfflineProvider` — local-recording provider for offline/testing use |
 | `subscription.py` | `Subscription`, `LogSubscriptionFilter` — async iterator primitives for `eth_subscribe` |

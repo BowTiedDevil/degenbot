@@ -557,29 +557,9 @@ class AsyncProviderAdapter:
         """
         return f"AsyncProviderAdapter(type={self._provider_type})"
 
-    # -------------------------------------------------------------------------
-    # Pickle support
-    # -------------------------------------------------------------------------
-
-    def __getstate__(self) -> dict[str, Any]:
-        """Pickle by storing only the type label; subscriptions are not picklable.
-
-        Returns:
-            A dict with the provider type and None for non-picklable fields.
-
-        """
-        state = self.__dict__.copy()
-        # Remove unpicklable subscription manager
-        # Backend and raw_provider are also not reliably picklable
-        state["_backend"] = None
-        state["_raw_provider"] = None
-        return state
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """Restore state; the backend must be set externally via set_provider."""
-        self.__dict__ = state
-
-    # --- Subscription methods ---
+    # -----------------------------------------------------------------------
+    # Subscription methods
+    # -----------------------------------------------------------------------
 
     async def subscribe_blocks(self) -> Subscription:
         """Subscribe to new block headers.
