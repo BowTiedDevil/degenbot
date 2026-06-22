@@ -443,10 +443,9 @@ _tbm_raw = _data.get(f'{_pk}_tick_bitmap', {})
 _td_raw = _data.get(f'{_pk}_tick_data', {})
 _tick_bitmap = {int(k): BitmapAtWord(bitmap=int(v['bitmap']), block=v['block']) for k, v in _tbm_raw.items()}
 _tick_data = {int(k): LiquidityAtTick(liquidity_gross=int(v['liquidity_gross']), liquidity_net=int(v['liquidity_net']), block=v['block']) for k, v in _td_raw.items()}
-lp = UniswapV3Pool(
-    address='0xCBCdF9626bC03E24f779434178A73a0B4bad62eD',
-    chain_id=1,
-    state_block=24947230,
+from tests.helpers.v3_pool_factory import make_v3_pool
+lp = make_v3_pool(
+    '0xCBCdF9626bC03E24f779434178A73a0B4bad62eD',
     token0=_wbtc,
     token1=_weth,
     factory='0x1F98431c8aD98523631AE4a59f267346ea31F984',
@@ -455,6 +454,8 @@ lp = UniswapV3Pool(
     sqrt_price_x96=34048891009198980752047510166697902,
     tick=259432,
     liquidity=544425151051415575,
+    chain_id=1,
+    state_block=24947230,
     tick_bitmap=_tick_bitmap,
     tick_data=_tick_data,
 )
@@ -505,7 +506,8 @@ _usdc = make_erc20(_PY_BOT,
     decimals=6,
     chain_id=8453,
 )
-lp = UniswapV4Pool(
+from tests.helpers.v4_pool_factory import make_v4_pool
+lp = make_v4_pool(
     pool_id='0x96d4b53a38337a5733179751781178a2613306063c511b78cd02684739288c0a',
     pool_manager_address='0x498581fF718922c3f8e6A244956aF099B2652b2b',
     token0=_eth,
@@ -686,8 +688,9 @@ _3crv = make_erc20(_PY_BOT,
     decimals=18,
     chain_id=1,
 )
-tripool = CurveStableswapPool(
-    address='0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7',
+from tests.helpers.curve_pool_factory import make_curve_pool
+tripool = make_curve_pool(
+    '0xbEbc44782C7db0a1A60Cb6fe97d0b483032FF1C7',
     tokens=[_dai, _usdc, _usdt],
     lp_token=_3crv,
     a_coefficient=2000,
@@ -889,10 +892,9 @@ _tbm_raw = _data.get(f'{_pk}_tick_bitmap', {})
 _td_raw = _data.get(f'{_pk}_tick_data', {})
 _tick_bitmap = {int(k): BitmapAtWord(bitmap=int(v['bitmap']), block=v['block']) for k, v in _tbm_raw.items()}
 _tick_data = {int(k): LiquidityAtTick(liquidity_gross=int(v['liquidity_gross']), liquidity_net=int(v['liquidity_net']), block=v['block']) for k, v in _td_raw.items()}
-v3_pool = UniswapV3Pool(
-    address='0xCBCdF9626bC03E24f779434178A73a0B4bad62eD',
-    chain_id=1,
-    state_block=24947230,
+from tests.helpers.v3_pool_factory import make_v3_pool
+v3_pool = make_v3_pool(
+    '0xCBCdF9626bC03E24f779434178A73a0B4bad62eD',
     token0=_wbtc,
     token1=_weth,
     factory='0x1F98431c8aD98523631AE4a59f267346ea31F984',
@@ -901,6 +903,8 @@ v3_pool = UniswapV3Pool(
     sqrt_price_x96=34048891009198980752047510166697902,
     tick=259432,
     liquidity=544425151051415575,
+    chain_id=1,
+    state_block=24947230,
     tick_bitmap=_tick_bitmap,
     tick_data=_tick_data,
 )
