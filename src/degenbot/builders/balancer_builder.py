@@ -64,6 +64,7 @@ class BalancerBuilder(BalancerBuilderBase):
         self._pools = ctx.pools
         self._tokens = ctx.tokens
         self._erc20_builder = ctx.erc20_builder
+        self._py_bot = ctx.py_bot
 
     def build(
         self,
@@ -162,12 +163,34 @@ class BalancerBuilder(BalancerBuilderBase):
         bytecode = io.get_code(ctx.address, block=ctx.state_block).hex()
         pow_version = detect_pow_version(bytecode)
 
+        # ADR-005 slice 12b: register the weighted pool in the Rust core +
+        # build the companion over the resulting PyLiquidityPool handle
+        # (production-path twin of make_balancer_weighted_pool).
+        scaling_factors = [_compute_scaling_factor(t) for t in tokens]
+        fee_scaled_int = int(ctx.fee * BalancerV2Pool.FEE_DENOMINATOR)
+        pool_id_rust = self._py_bot.register_balancer_weighted_pool(
+            address=ctx.address,
+            vault=BALANCER_V2_VAULT_ADDRESS,
+            pool_id_hex="0x" + ctx.pool_id.hex(),
+            tokens=[t.address for t in tokens],
+            weights=list(weights),
+            scaling_factors=scaling_factors,
+            swap_fee=fee_scaled_int,
+            pow_version=BalancerBuilderBase.pow_version_to_rust(pow_version),
+            balances=list(ctx.balances),
+            update_block=ctx.state_block,
+        )
+        py_pool = self._py_bot.get_pool(pool_id_rust)
+        assert py_pool is not None, (
+            "register_balancer_weighted_pool returned a pool_id with no handle"
+        )
+
         pool = BalancerV2Pool(
+            py_pool,
             address=ctx.address,
             pool_id=ctx.pool_id,
             vault=BALANCER_V2_VAULT_ADDRESS,
             tokens=tokens,
-            balances=ctx.balances,
             fee=ctx.fee,
             weights=weights,
             pow_version=pow_version,
