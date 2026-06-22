@@ -18,6 +18,7 @@ from degenbot.exceptions import DegenbotValueError
 from degenbot.types.hop_types import PoolInvariant
 from tests.fakes.curve_data_provider import FakeCurveDataProvider
 from tests.fakes.tokens import FakeToken
+from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20
 
 _PY_BOT = PyBot()
@@ -52,7 +53,7 @@ STATE_BLOCK = 18_000_000
 def _make_2coin_pool() -> CurveStableswapPool:
     """2-coin pool: USDC/USDT (both 6 decimals)."""
     provider = FakeCurveDataProvider(block_timestamp=1_700_000_000)
-    return CurveStableswapPool(
+    return make_curve_pool(
         address="0x00000000000000000000000000000000000000c1",  # type: ignore[arg-type]
         tokens=(USDC, USDT),
         a_coefficient=1000,
@@ -67,7 +68,7 @@ def _make_2coin_pool() -> CurveStableswapPool:
 def _make_3coin_pool() -> CurveStableswapPool:
     """3-coin pool: DAI/USDC/USDT."""
     provider = FakeCurveDataProvider(block_timestamp=1_700_000_000)
-    return CurveStableswapPool(
+    return make_curve_pool(
         address="0x00000000000000000000000000000000000000c2",  # type: ignore[arg-type]
         tokens=(DAI, USDC, USDT),
         a_coefficient=1000,
