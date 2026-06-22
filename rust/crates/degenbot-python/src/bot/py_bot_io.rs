@@ -785,6 +785,92 @@ impl PyBotIo {
         Ok("stableswap".to_string())
     }
 
+    /// Fetch a V3 pool's tick bitmap word via `tickBitmap(int16)`, performing
+    /// the encode -> call -> decode choreography in Rust (ADR-005 slice 14j).
+    ///
+    /// Mirrors `tick_data_fetcher.py::_fetch_v3`'s bitmap RPC block. The
+    /// `word_position` is a signed `int16` ABI-encoded as a sign-extended
+    /// 32-byte word. The result is a `uint256` bitmap value.
+    ///
+    /// New pattern: signed-integer argument encoding (int16 sign extension to
+    /// 32 bytes via `I256::to_be_bytes::<32>()`).
+    ///
+    /// Errors propagate: provider revert surfaces as `PyErr` (the Python
+    /// caller's `except Exception: return` handles it).
+    #[pyo3(signature = (pool_address, word_position, block=None))]
+    fn fetch_tick_bitmap(
+        &self,
+        py: Python<'_>,
+        pool_address: &str,
+        word_position: i64,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        use alloy::primitives::U256;
+
+        let sel = selector(b"tickBitmap(int16)");
+        // Sign-extend the int16 argument to a 32-byte word (two's complement).
+        let arg = sign_extend_to_32_bytes(word_position);
+        let mut calldata = Vec::with_capacity(36);
+        calldata.extend_from_slice(&sel);
+        calldata.extend_from_slice(&arg);
+
+        let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        if bytes.len() < 32 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "tickBitmap result < 32 bytes",
+            ));
+        }
+        let bitmap = U256::from_be_slice(&bytes[0..32]);
+        crate::conversion::alloy::u256_to_py(py, &bitmap).map(|b| b.unbind())
+    }
+
+    /// Fetch a V3 pool's tick liquidity data via `ticks(int24)`, performing
+    /// the encode -> call -> decode choreography in Rust (ADR-005 slice 14j).
+    ///
+    /// Mirrors `tick_data_fetcher.py::_fetch_v3`'s tick-data RPC block. The
+    /// `tick` is a signed `int24` ABI-encoded as a sign-extended 32-byte word.
+    /// The result is a multi-field struct; only the first two fields matter:
+    /// `liquidity_gross` (uint128) and `liquidity_net` (int128). These are the
+    /// first two 32-byte words of the ABI-encoded return data.
+    ///
+    /// Errors propagate (see [`Self::fetch_tick_bitmap`]).
+    #[pyo3(signature = (pool_address, tick, block=None))]
+    fn fetch_tick_data(
+        &self,
+        py: Python<'_>,
+        pool_address: &str,
+        tick: i64,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
+        use alloy::primitives::U256;
+
+        let sel = selector(b"ticks(int24)");
+        // Sign-extend the int24 argument to a 32-byte word (two's complement).
+        let arg = sign_extend_to_32_bytes(tick);
+        let mut calldata = Vec::with_capacity(36);
+        calldata.extend_from_slice(&sel);
+        calldata.extend_from_slice(&arg);
+
+        let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        if bytes.len() < 64 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "ticks result < 64 bytes",
+            ));
+        }
+        // Word 0: liquidity_gross (uint128, right-aligned in 32-byte word).
+        let gross = U256::from_be_slice(&bytes[0..32]);
+        // Word 1: liquidity_net (int128, sign-extended in 32-byte word).
+        let net = alloy::primitives::I256::try_from_be_slice(&bytes[32..64])
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("invalid int128 decode"))?;
+
+        Ok((
+            crate::conversion::alloy::u256_to_py(py, &gross)?.unbind(),
+            crate::conversion::alloy::i256_to_py(py, &net)?.unbind(),
+        ))
+    }
+
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
         let has_db = self.db.is_some();
         let provider_repr = self.provider.bind(py).repr()?.to_str()?.to_string();
@@ -1002,4 +1088,18 @@ fn selector(signature: &[u8]) -> [u8; 4] {
     let mut s = [0u8; 4];
     s.copy_from_slice(&hash[..4]);
     s
+}
+
+/// Sign-extend an `i64` value to a 32-byte big-endian two's complement word.
+///
+/// Used by `fetch_tick_bitmap` / `fetch_tick_data` to encode `int16` / `int24`
+/// arguments as ABI-compliant 32-byte words. For negative values, the upper
+/// bytes are filled with `0xFF` (sign extension); for non-negative, `0x00`.
+fn sign_extend_to_32_bytes(val: i64) -> [u8; 32] {
+    let mut buf = [0u8; 32];
+    if val < 0 {
+        buf[..24].fill(0xFF);
+    }
+    buf[24..].copy_from_slice(&val.to_be_bytes());
+    buf
 }
