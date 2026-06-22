@@ -995,3 +995,162 @@ class TestSharedStateTopologyConcurrency:
             t.join(timeout=10.0)
             assert not t.is_alive(), "reader deadlocked"
         assert not errors, errors
+
+
+# ─── Curve topology round-trip fixtures (ADR-005 slice 11a state port) ────
+# A 3-coin Curve StableSwap pool registered via PyBot.register_curve_pool
+# and read back through a PyLiquidityPool handle. This is the third family
+# ported into PoolEntry — the ADR-003 "third family ports, now's the moment"
+# decision point. The slice-11a state-port foundation; the Python companion
+# rewrite + Rust math port follow in 11b/11c.
+CURVE_POOL_A = "0x" + "c1" * 20
+CURVE_TOKENS = ["0x" + "01" * 20, "0x" + "02" * 20, "0x" + "03" * 20]
+CURVE_A = 2000
+CURVE_FEE = 4_000_000  # 0.04% in FEE_DENOMINATOR=1e10 units
+CURVE_ADMIN_FEE = 5_000_000_000  # 50% admin share
+CURVE_RATE_MULTIPLIERS = [10**18, 10**18, 10**18]
+CURVE_BALANCES = [1_500_000 * 10**18, 1_500_000 * 10**18, 1_500_000 * 10**18]
+
+
+class TestSharedStateTopologyCurve:
+    """Curve — the third ``PoolEntry`` family (ADR-005 slice 11a state port).
+
+    Mirrors the V3/V4 topology class: register via ``PyBot.register_curve_pool``,
+    read independently via a ``PyLiquidityPool`` handle, and prove a live
+    balance write (``apply_curve_balance_update``) is immediately visible to
+    handle reads (the §17 live-read payoff, now extended to Curve).
+
+    The mutable slot is ``balances`` (one U256 per token); ``update_block``
+    tracks the last balance-update block. The Rust core owns the reorg journal
+    (genesis-anchor V2-style discipline) so ``snapshot_curve`` is atomic under
+    one read guard — the same atomic-read contract V3's ``snapshot_v3`` has.
+    """
+
+    def test_curve_handle_reads_registered_balances(self) -> None:
+        """``PyLiquidityPool`` reads the registration balances + n_coins."""
+        core = PyBot()
+        pool_id = core.register_curve_pool(
+            address=CURVE_POOL_A,
+            tokens=CURVE_TOKENS,
+            a_coefficient=CURVE_A,
+            fee=CURVE_FEE,
+            admin_fee=CURVE_ADMIN_FEE,
+            rate_multipliers=CURVE_RATE_MULTIPLIERS,
+            balances=CURVE_BALANCES,
+            update_block=10,
+        )
+        handle = core.get_pool(pool_id)
+        assert handle is not None
+        assert handle.n_coins == 3
+        assert handle.balances == list(CURVE_BALANCES)
+
+    def test_curve_apply_balance_update_is_visible_to_handle_reads(self) -> None:
+        """A Curve ``apply_curve_balance_update`` write is immediately readable.
+
+        The deepest assertion of the state-port sub-slice: a write through the
+        handle lands on the shared ``BotState`` and the next getter read sees
+        the new balances — the Curve family of the V3
+        ``apply_swap → sqrt_price_x96`` visibility contract.
+        """
+        core = PyBot()
+        pool_id = core.register_curve_pool(
+            address=CURVE_POOL_A,
+            tokens=CURVE_TOKENS,
+            a_coefficient=CURVE_A,
+            fee=CURVE_FEE,
+            admin_fee=CURVE_ADMIN_FEE,
+            rate_multipliers=CURVE_RATE_MULTIPLIERS,
+            balances=CURVE_BALANCES,
+            update_block=10,
+        )
+        handle = core.get_pool(pool_id)
+        assert handle is not None
+
+        new_balances = [b + 1 for b in CURVE_BALANCES]
+        applied = handle.apply_curve_balance_update(new_balances, 12)
+        assert applied, "apply_curve_balance_update should succeed on a Curve pool"
+
+        # The write is immediately visible — same shared BotState.
+        assert handle.balances == new_balances
+        snap = handle.snapshot_curve()
+        assert snap is not None
+        snap_balances, snap_block = snap
+        assert snap_balances == new_balances
+        assert snap_block == 12
+
+    def test_curve_snapshot_is_atomic_under_one_read(self) -> None:
+        """``snapshot_curve()`` returns (balances, block) atomically.
+
+        All N balances + the block are read under one ``BotState`` read guard,
+        so a reader can't observe a torn tuple (some balances from before a
+        write, some from after). The Python companion (slice 11b) will build
+        its ``CurveStableswapPoolState`` from this snapshot — coherent.
+        """
+        core = PyBot()
+        pool_id = core.register_curve_pool(
+            address=CURVE_POOL_A,
+            tokens=CURVE_TOKENS,
+            a_coefficient=CURVE_A,
+            fee=CURVE_FEE,
+            admin_fee=CURVE_ADMIN_FEE,
+            rate_multipliers=CURVE_RATE_MULTIPLIERS,
+            balances=CURVE_BALANCES,
+            update_block=10,
+        )
+        handle = core.get_pool(pool_id)
+        assert handle is not None
+
+        snap = handle.snapshot_curve()
+        assert snap is not None
+        balances, block = snap
+        assert balances == list(CURVE_BALANCES)
+        assert block == 10
+
+    def test_curve_apply_is_silent_noop_on_v3_pool(self) -> None:
+        """``apply_curve_balance_update`` on a V3 pool returns ``False``.
+
+        The family-dispatching apply is a silent no-op on non-Curve pools — it
+        must NOT corrupt a V3/V4/V2 pool's state. Mirrors the V4-on-V3 contract.
+        """
+        core = PyBot()
+        v3_pool_id = core.register_v3_pool(
+            address=V3_POOL_A,
+            token0=TOKEN0,
+            token1=TOKEN1,
+            fee=V3_FEE,
+            tick_spacing=V3_TICK_SPACING,
+            factory=FACTORY,
+            sqrt_price_x96=V3_SQRT_PRICE,
+            liquidity=V3_LIQUIDITY,
+            tick=V3_TICK,
+        )
+        v3_handle = core.get_pool(v3_pool_id)
+        assert v3_handle is not None
+        applied = v3_handle.apply_curve_balance_update([1, 2, 3], 5)
+        assert applied is False, "Curve apply on a V3 pool must be a silent no-op"
+        # The V3 scalars are unchanged — no corruption.
+        assert v3_handle.sqrt_price_x96 == V3_SQRT_PRICE
+        assert v3_handle.liquidity == V3_LIQUIDITY
+
+    def test_curve_snapshot_returns_none_for_v3_pool(self) -> None:
+        """``snapshot_curve()`` returns ``None`` on non-Curve pools."""
+        core = PyBot()
+        v3_pool_id = core.register_v3_pool(
+            address=V3_POOL_A,
+            token0=TOKEN0,
+            token1=TOKEN1,
+            fee=V3_FEE,
+            tick_spacing=V3_TICK_SPACING,
+            factory=FACTORY,
+            sqrt_price_x96=V3_SQRT_PRICE,
+            liquidity=V3_LIQUIDITY,
+            tick=V3_TICK,
+        )
+        v3_handle = core.get_pool(v3_pool_id)
+        assert v3_handle is not None
+        assert v3_handle.snapshot_curve() is None
+        # n_coins reads 0 on a non-Curve pool (defensive — does NOT crash).
+        assert v3_handle.n_coins == 0
+        # balances returns an empty list (not None) so a V3 companion never
+        # crashes on `for b in handle.balances`.
+        assert v3_handle.balances == []

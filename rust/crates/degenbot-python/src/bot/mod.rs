@@ -29,8 +29,11 @@ use crate::bot::token::PyErc20Token;
 use degenbot_bot::bot_core::state_history::JournalError;
 use degenbot_bot::bot_core::PoolTickCoverage;
 use degenbot_bot::bot_core::{
-    Bot, RegisterV2PoolParams, RegisterV3PoolParams, RegisterV4PoolParams, V4PoolKey,
+    Bot, RegisterCurvePoolParams, RegisterV2PoolParams, RegisterV3PoolParams, RegisterV4PoolParams,
+    V4PoolKey,
 };
+use pyo3::types::PyList;
+use pyo3::Bound;
 
 /// Build an `alloy::rpc::types::Log` from the WS-log shape Python tests pass —
 /// `(address, topics, data, block_number)` reconstructed into the same
@@ -451,6 +454,78 @@ impl PyBot {
             .map_err(map_register_v4_err)
     }
 
+    /// Register a Curve `StableSwap` pool by contract address.
+    ///
+    /// Returns the auto-assigned pool ID. The `tokens` / `rate_multipliers` /
+    /// `balances` lists must all have the same length `N` (the coin count).
+    ///
+    /// Raises:
+    ///     `ValueError`: If the pool address is malformed or already
+    ///         registered, or the list lengths mismatch.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        address,
+        tokens,
+        a_coefficient,
+        fee,
+        admin_fee,
+        rate_multipliers,
+        balances,
+        update_block,
+        swap_style=0,
+        lending_rate_style=0,
+        d_variant=0,
+        y_variant=0,
+        yd_variant=0,
+        base_pool=None
+    ))]
+    fn register_curve_pool(
+        &self,
+        address: &str,
+        tokens: &Bound<'_, PyList>,
+        a_coefficient: u128,
+        fee: u64,
+        admin_fee: u64,
+        rate_multipliers: &Bound<'_, PyList>,
+        balances: &Bound<'_, PyList>,
+        update_block: u64,
+        swap_style: u8,
+        lending_rate_style: u8,
+        d_variant: u8,
+        y_variant: u8,
+        yd_variant: u8,
+        base_pool: Option<&str>,
+    ) -> PyResult<u64> {
+        let addr = parse_address(address)?;
+        let token_addrs = parse_address_list(tokens)?;
+        let rate_mults = extract_u256_list(rate_multipliers)?;
+        let bal_vals = extract_u256_list(balances)?;
+        let base = match base_pool {
+            Some(s) => Some(parse_address(s)?),
+            None => None,
+        };
+        Ok(self
+            .bot
+            .state_arc()
+            .write()
+            .register_curve_pool(&RegisterCurvePoolParams {
+                address: addr,
+                tokens: token_addrs,
+                a_coefficient,
+                fee,
+                admin_fee,
+                rate_multipliers: rate_mults,
+                balances: bal_vals,
+                update_block,
+                swap_style,
+                lending_rate_style,
+                d_variant,
+                y_variant,
+                yd_variant,
+                base_pool: base,
+            }))
+    }
+
     /// Update a V3 pool's state from a Swap event.
     ///
     /// No-op if the pool is not registered.
@@ -690,6 +765,25 @@ impl PyBot {
 fn parse_address(s: &str) -> PyResult<Address> {
     s.parse()
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid address '{s}': {e}")))
+}
+
+/// Parse a Python list of address strings into `Vec<Address>`.
+fn parse_address_list(list: &Bound<'_, PyList>) -> PyResult<Vec<Address>> {
+    list.iter()
+        .map(|item| {
+            let s: String = item.extract().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("token address must be a str: {e}"))
+            })?;
+            parse_address(&s)
+        })
+        .collect()
+}
+
+/// Extract a Python list of ints (or int-like) into `Vec<U256>`.
+fn extract_u256_list(list: &Bound<'_, PyList>) -> PyResult<Vec<alloy::primitives::U256>> {
+    list.iter()
+        .map(|item| crate::conversion::alloy::extract_python_u256(&item))
+        .collect()
 }
 
 /// Map a [`JournalError`] to a Python `ValueError` with the `NoPoolStateAvailable`
