@@ -16,6 +16,7 @@ use crate::bot_core::state_history::{
 use crate::optimizers::mobius_int::IntHopState;
 use degenbot_uniswap::v2_encoding::{encode_v2_swap, EncodedCall};
 
+pub mod balancer_weighted_state;
 pub mod block_pump;
 pub mod curve_state;
 pub mod drain_sink;
@@ -32,6 +33,9 @@ pub mod v4_state;
 
 // Re-export the merged V3/V4/Curve state types (ADR-003: BotState owns
 // pool state; Curve is the ADR-003 "third family").
+pub use balancer_weighted_state::{
+    BalancerWeightedBlockDelta, BalancerWeightedPoolState, RegisterBalancerWeightedPoolParams,
+};
 pub use curve_state::{CurveBlockDelta, CurvePoolState, RegisterCurvePoolParams};
 pub use v3_state::{
     v3_simulate_swap, BufferedV3LiquidityUpdate, PoolTickCoverage, RegisterV3PoolParams,
@@ -59,6 +63,7 @@ pub enum PoolEntry {
     V3(V3PoolState),
     V4(V4PoolState),
     Curve(CurvePoolState),
+    BalancerWeighted(BalancerWeightedPoolState),
 }
 
 /// Read-only surface shared by [`V3PoolState`] and [`V4PoolState`] — the
@@ -463,7 +468,111 @@ impl BotState {
     pub fn get_curve_pool(&self, pool_id: u64) -> Option<&CurvePoolState> {
         match self.pools.get(&pool_id)? {
             PoolEntry::Curve(state) => Some(state),
-            PoolEntry::V2(_) | PoolEntry::V3(_) | PoolEntry::V4(_) => None,
+            PoolEntry::V2(_)
+            | PoolEntry::V3(_)
+            | PoolEntry::V4(_)
+            | PoolEntry::BalancerWeighted(_) => None,
+        }
+    }
+
+    // --- ADR-005 slice 12a: Balancer V2 weighted state port -------------
+
+    /// Register a Balancer V2 weighted pool. The pool's immutable config
+    /// (`pool_id`, vault, tokens, weights, `scaling_factors`, `swap_fee`,
+    /// `pow_version`) + the registration `balances`/`update_block` are stored
+    /// in a `BalancerWeightedPoolState` and seeded with a genesis reorg
+    /// journal delta. The Python `BalancerV2Pool` companion (slice 12b) will
+    /// be built over a `PyLiquidityPool` handle that reads back through
+    /// [`Self::get_balancer_weighted_pool`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if the pool's address is already registered, or if
+    /// `balances.len()` doesn't match `tokens.len()` / `weights.len()` /
+    /// `scaling_factors.len()` (a builder wiring error — the builder always
+    /// passes N-token tuples of consistent arity).
+    pub fn register_balancer_weighted_pool(
+        &mut self,
+        params: &RegisterBalancerWeightedPoolParams,
+    ) -> u64 {
+        assert!(
+            !self.pool_addresses.contains_key(&params.address),
+            "pool already registered: {}",
+            params.address
+        );
+
+        assert!(
+            params.balances.len() == params.tokens.len()
+                && params.balances.len() == params.weights.len()
+                && params.balances.len() == params.scaling_factors.len(),
+            "Balancer weighted params mismatch: tokens={}, balances={}, weights={}, scaling_factors={} (must all be N)",
+            params.tokens.len(),
+            params.balances.len(),
+            params.weights.len(),
+            params.scaling_factors.len(),
+        );
+
+        let pool_id = self.next_pool_id;
+        self.next_pool_id += 1;
+
+        let state = BalancerWeightedPoolState::from_params(params.clone(), self.journal_depth);
+        self.pools
+            .insert(pool_id, PoolEntry::BalancerWeighted(state));
+        self.pool_addresses.insert(params.address, pool_id);
+
+        pool_id
+    }
+
+    /// Apply a Balancer weighted `external_update` (new balances from a Vault
+    /// `PoolBalanceChanged` event) by `pool_id` — the
+    /// `PyLiquidityPool.apply_balancer_weighted_balance_update` backing.
+    ///
+    /// Journals the prior balances (genesis-anchor V2-style discipline), then
+    /// lands the new balances + `update_block`. Returns the affected `pool_id`,
+    /// or `None` if not registered / not a Balancer weighted pool (silent
+    /// no-op — don't corrupt a V2/V3/V4/Curve pool).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `balances.len()` doesn't match the registered pool's token
+    /// count — a wiring error (the builder always passes a balance tuple of
+    /// the right arity).
+    #[must_use]
+    pub fn apply_balancer_weighted_balance_update_by_pool_id(
+        &mut self,
+        pool_id: u64,
+        balances: Vec<U256>,
+        block_number: u64,
+    ) -> Option<u64> {
+        let Some(PoolEntry::BalancerWeighted(state)) = self.pools.get_mut(&pool_id) else {
+            return None;
+        };
+        assert!(
+            balances.len() == state.balances.len(),
+            "Balancer weighted balance length mismatch: pool has {} tokens, update has {}",
+            state.balances.len(),
+            balances.len(),
+        );
+        state.journal.push_delta(BalancerWeightedBlockDelta {
+            block: block_number,
+            balances_before: state.balances.clone(),
+            balances_after: balances.clone(),
+        });
+        state.balances = balances;
+        state.update_block = block_number;
+        Some(pool_id)
+    }
+
+    /// Read a registered Balancer weighted pool's state by `pool_id`.
+    ///
+    /// The Python companion (slice 12b) reads `balances` / `update_block`
+    /// through this accessor via `PyLiquidityPool` getters. Returns `None`
+    /// for non-Balancer-weighted pools (silent no-op).
+    #[must_use]
+    pub fn get_balancer_weighted_pool(&self, pool_id: u64) -> Option<&BalancerWeightedPoolState> {
+        match self.pools.get(&pool_id)? {
+            PoolEntry::BalancerWeighted(state) => Some(state),
+            PoolEntry::V2(_) | PoolEntry::V3(_) | PoolEntry::V4(_) | PoolEntry::Curve(_) => None,
         }
     }
 
@@ -566,7 +675,10 @@ impl BotState {
     pub fn get_v2_pool_state(&self, pool_id: u64) -> Option<&V2PoolState> {
         match self.pools.get(&pool_id)? {
             PoolEntry::V2(state) => Some(state),
-            PoolEntry::V3(_) | PoolEntry::V4(_) | PoolEntry::Curve(_) => None,
+            PoolEntry::V3(_)
+            | PoolEntry::V4(_)
+            | PoolEntry::Curve(_)
+            | PoolEntry::BalancerWeighted(_) => None,
         }
     }
 
@@ -853,7 +965,7 @@ impl BotState {
                 state.invalidate_tick_range_cache();
                 true
             }
-            PoolEntry::V2(_) | PoolEntry::Curve(_) => false,
+            PoolEntry::V2(_) | PoolEntry::Curve(_) | PoolEntry::BalancerWeighted(_) => false,
         }
     }
 
@@ -1028,7 +1140,10 @@ impl BotState {
     pub fn get_v3_pool(&self, pool_id: u64) -> Option<&V3PoolState> {
         match self.pools.get(&pool_id)? {
             PoolEntry::V3(state) => Some(state),
-            PoolEntry::V2(_) | PoolEntry::V4(_) | PoolEntry::Curve(_) => None,
+            PoolEntry::V2(_)
+            | PoolEntry::V4(_)
+            | PoolEntry::Curve(_)
+            | PoolEntry::BalancerWeighted(_) => None,
         }
     }
 
@@ -1042,7 +1157,10 @@ impl BotState {
             .iter()
             .filter_map(|(id, e)| match e {
                 PoolEntry::V3(state) => Some((*id, state.clone())),
-                PoolEntry::V2(_) | PoolEntry::V4(_) | PoolEntry::Curve(_) => None,
+                PoolEntry::V2(_)
+                | PoolEntry::V4(_)
+                | PoolEntry::Curve(_)
+                | PoolEntry::BalancerWeighted(_) => None,
             })
             .collect()
     }
@@ -1067,7 +1185,7 @@ impl BotState {
         match self.pools.get(&pool_id)? {
             PoolEntry::V3(state) => Some(state),
             PoolEntry::V4(state) => Some(state),
-            PoolEntry::V2(_) | PoolEntry::Curve(_) => None,
+            PoolEntry::V2(_) | PoolEntry::Curve(_) | PoolEntry::BalancerWeighted(_) => None,
         }
     }
 
@@ -1173,12 +1291,14 @@ impl BotState {
                     outcome.amount0
                 }
             }
-            // Curve: the stableswap math is NOT ported in the state-port
-            // sub-slice (11a). The Python companion (11b) keeps doing its
-            // own math via `DyCalculator`; this Rust core path returns 0
-            // (the "not-yet-Rust-side" sentinel — same as an unregistered
-            // pool). Ported in sub-slice 11c (pure-math port).
-            PoolEntry::Curve(_) => U256::ZERO,
+            // Curve (11a) + Balancer weighted (12a): the stableswap / weighted-
+            // product math is NOT ported in their state-port sub-slices. The
+            // Python companions (11b / 12b) keep doing their own math via
+            // `DyCalculator` / `WeightedMath` through the `swap_fn` returned
+            // by `to_hop_state`; this Rust core path returns 0 (the
+            // "not-yet-Rust-side" sentinel — same as an unregistered pool).
+            // Curve ported in sub-slice 11c; Balancer weighted in 12e.
+            PoolEntry::Curve(_) | PoolEntry::BalancerWeighted(_) => U256::ZERO,
         }
     }
 
@@ -1274,9 +1394,10 @@ impl BotState {
                     outcome.amount1
                 }
             }
-            // Curve: stableswap math not ported in this sub-slice (11a);
-            // see `calculate_tokens_out`'s Curve arm. Returns 0.
-            PoolEntry::Curve(_) => U256::ZERO,
+            // Curve (11a) + Balancer weighted (12a): math not ported in their
+            // state-port sub-slices; see `calculate_tokens_out`'s combined
+            // arm. Returns 0 (the Python companion handles the calc).
+            PoolEntry::Curve(_) | PoolEntry::BalancerWeighted(_) => U256::ZERO,
         }
     }
 
@@ -1475,6 +1596,9 @@ impl BotState {
                 Some(PoolEntry::Curve(state)) => {
                     state.journal.newest_block().is_some_and(|b| b >= target)
                 }
+                Some(PoolEntry::BalancerWeighted(state)) => {
+                    state.journal.newest_block().is_some_and(|b| b >= target)
+                }
                 None => false,
             };
             if !needs_restore {
@@ -1511,6 +1635,13 @@ impl BotState {
                     // Curve restore: same full-state delta shape as V2;
                     // delegated to `curve_restore_before_block`.
                     self.curve_restore_before_block(pool_id, target).is_some()
+                }
+                Some(PoolEntry::BalancerWeighted(_)) => {
+                    // Balancer weighted restore: same full-state delta shape
+                    // as V2/Curve; delegated to
+                    // `balancer_weighted_restore_before_block`.
+                    self.balancer_weighted_restore_before_block(pool_id, target)
+                        .is_some()
                 }
                 None => false,
             };
@@ -1573,6 +1704,67 @@ impl BotState {
             return None;
         };
         let (balances, blk) = match state.journal.restore_curve_before_block(block) {
+            Ok(v) => v,
+            Err(e) => return Some(Err(e)),
+        };
+        state.balances.clone_from(&balances);
+        state.update_block = blk;
+        Some(Ok((balances, blk)))
+    }
+
+    // --- ADR-005 slice 12a: Balancer weighted journal methods ---
+
+    /// Get the number of deltas in the reorg journal for a Balancer weighted
+    /// pool. Returns 0 if the pool ID is not registered or is not a Balancer
+    /// weighted pool.
+    #[must_use]
+    pub fn balancer_weighted_journal_len(&self, pool_id: u64) -> usize {
+        match self.pools.get(&pool_id) {
+            Some(PoolEntry::BalancerWeighted(state)) => state.journal.len(),
+            _ => 0,
+        }
+    }
+
+    /// Discard Balancer weighted reorg journal deltas earlier than the given
+    /// block. No-op if the pool ID is not registered / not a Balancer weighted
+    /// pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(JournalError::NoStateAtOrAfterBlock)` if the target is past
+    /// the newest delta.
+    pub fn balancer_weighted_discard_before_block(
+        &mut self,
+        pool_id: u64,
+        block: u64,
+    ) -> Result<(), JournalError> {
+        let Some(PoolEntry::BalancerWeighted(state)) = self.pools.get_mut(&pool_id) else {
+            return Ok(());
+        };
+        state.journal.discard_before_block(block)
+    }
+
+    /// Restore Balancer weighted pool state prior to a target block.
+    ///
+    /// Pops reorg journal deltas at/after the target block and restores the
+    /// landed-at balances (the `balances_after` of the largest delta below
+    /// the target) into the current mutable fields. Mirrors
+    /// `curve_restore_before_block` (Balancer weighted is a full-state delta,
+    /// same shape as V2/Curve).
+    ///
+    /// Returns `Some(Ok((balances, block)))` on success, `Some(Err)` if the
+    /// pool exists but the target is at/before registration (no state before
+    /// it), or `None` if the pool ID is not registered / not a Balancer
+    /// weighted pool.
+    pub fn balancer_weighted_restore_before_block(
+        &mut self,
+        pool_id: u64,
+        block: u64,
+    ) -> Option<Result<(Vec<U256>, u64), JournalError>> {
+        let PoolEntry::BalancerWeighted(state) = self.pools.get_mut(&pool_id)? else {
+            return None;
+        };
+        let (balances, blk) = match state.journal.restore_balancer_weighted_before_block(block) {
             Ok(v) => v,
             Err(e) => return Some(Err(e)),
         };
@@ -1648,6 +1840,9 @@ impl BotState {
             Some(PoolEntry::Curve(_)) => {
                 let _ = self.curve_restore_before_block(pool_id, block);
             }
+            Some(PoolEntry::BalancerWeighted(_)) => {
+                let _ = self.balancer_weighted_restore_before_block(pool_id, block);
+            }
             None => {}
         }
     }
@@ -1691,6 +1886,12 @@ impl BotState {
             // Curve carries a genesis delta (mirror of V2) — a target at/before
             // the genesis block is too-deep: `earliest < block`.
             PoolEntry::Curve(state) => state
+                .journal
+                .earliest_block()
+                .is_some_and(|earliest| earliest < block),
+            // Balancer weighted carries a genesis delta (mirror of V2/Curve) —
+            // ADR-005 slice 12a. Same predicate: `earliest < block`.
+            PoolEntry::BalancerWeighted(state) => state
                 .journal
                 .earliest_block()
                 .is_some_and(|earliest| earliest < block),
@@ -1781,7 +1982,10 @@ impl BotState {
                 Some(call)
             }
             // V3 encoding is not yet implemented
-            PoolEntry::V3(_) | PoolEntry::V4(_) | PoolEntry::Curve(_) => None,
+            PoolEntry::V3(_)
+            | PoolEntry::V4(_)
+            | PoolEntry::Curve(_)
+            | PoolEntry::BalancerWeighted(_) => None,
         }
     }
 
@@ -2293,7 +2497,10 @@ impl BotState {
     pub fn get_v4_pool(&self, pool_id: u64) -> Option<&V4PoolState> {
         match self.pools.get(&pool_id)? {
             PoolEntry::V4(state) => Some(state),
-            PoolEntry::V2(_) | PoolEntry::V3(_) | PoolEntry::Curve(_) => None,
+            PoolEntry::V2(_)
+            | PoolEntry::V3(_)
+            | PoolEntry::Curve(_)
+            | PoolEntry::BalancerWeighted(_) => None,
         }
     }
 
@@ -2331,7 +2538,10 @@ impl BotState {
             .iter()
             .filter_map(|(id, e)| match e {
                 PoolEntry::V4(state) => Some((*id, state.clone())),
-                PoolEntry::V2(_) | PoolEntry::V3(_) | PoolEntry::Curve(_) => None,
+                PoolEntry::V2(_)
+                | PoolEntry::V3(_)
+                | PoolEntry::Curve(_)
+                | PoolEntry::BalancerWeighted(_) => None,
             })
             .collect()
     }

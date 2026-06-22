@@ -30,8 +30,8 @@ use crate::bot::token::PyErc20Token;
 use degenbot_bot::bot_core::state_history::JournalError;
 use degenbot_bot::bot_core::PoolTickCoverage;
 use degenbot_bot::bot_core::{
-    Bot, RegisterCurvePoolParams, RegisterV2PoolParams, RegisterV3PoolParams, RegisterV4PoolParams,
-    V4PoolKey,
+    Bot, RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams, RegisterV2PoolParams,
+    RegisterV3PoolParams, RegisterV4PoolParams, V4PoolKey,
 };
 use pyo3::types::PyList;
 use pyo3::Bound;
@@ -524,6 +524,72 @@ impl PyBot {
                 y_variant,
                 yd_variant,
                 base_pool: base,
+            }))
+    }
+
+    /// Register a Balancer V2 weighted pool (ADR-005 slice 12a state port).
+    ///
+    /// Stores immutable pool config (`pool_id`, vault, tokens, weights,
+    /// scaling_factors, swap_fee, `pow_version`) + registration balances + a
+    /// genesis reorg journal delta. The slice 12b Python `BalancerV2Pool`
+    /// companion is constructed over the returned `PyLiquidityPool` handle
+    /// (call `get_pool(id)` after this).
+    ///
+    /// Returns the auto-assigned numeric pool ID. `tokens` / `weights` /
+    /// `scaling_factors` / `balances` lists MUST all have length `N`.
+    ///
+    /// Raises:
+    ///     `ValueError`: If an address is malformed, the pool is already
+    ///         registered, the list lengths mismatch, or `pool_id_hex` is not
+    ///         a 32-byte hex string.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        address,
+        vault,
+        pool_id_hex,
+        tokens,
+        weights,
+        scaling_factors,
+        swap_fee,
+        pow_version,
+        balances,
+        update_block
+    ))]
+    fn register_balancer_weighted_pool(
+        &self,
+        address: &str,
+        vault: &str,
+        pool_id_hex: &str,
+        tokens: &Bound<'_, PyList>,
+        weights: &Bound<'_, PyList>,
+        scaling_factors: &Bound<'_, PyList>,
+        swap_fee: u128,
+        pow_version: u8,
+        balances: &Bound<'_, PyList>,
+        update_block: u64,
+    ) -> PyResult<u64> {
+        let addr = parse_address(address)?;
+        let vault_addr = parse_address(vault)?;
+        let pool_id_bytes = hex_string_to_pool_id(pool_id_hex)?;
+        let token_addrs = parse_address_list(tokens)?;
+        let weight_vals = extract_u256_list(weights)?;
+        let scaling_vals = extract_u256_list(scaling_factors)?;
+        let bal_vals = extract_u256_list(balances)?;
+        Ok(self
+            .bot
+            .state_arc()
+            .write()
+            .register_balancer_weighted_pool(&RegisterBalancerWeightedPoolParams {
+                address: addr,
+                vault: vault_addr,
+                pool_id: pool_id_bytes,
+                tokens: token_addrs,
+                weights: weight_vals,
+                scaling_factors: scaling_vals,
+                swap_fee,
+                pow_version,
+                balances: bal_vals,
+                update_block,
             }))
     }
 

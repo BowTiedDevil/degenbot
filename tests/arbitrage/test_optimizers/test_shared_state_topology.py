@@ -1154,3 +1154,179 @@ class TestSharedStateTopologyCurve:
         # balances returns an empty list (not None) so a V3 companion never
         # crashes on `for b in handle.balances`.
         assert v3_handle.balances == []
+
+
+# ─── Balancer weighted topology round-trip fixtures
+#                   (ADR-005 slice 12a weighted state port) ──────────────
+# A 2-token Balancer V2 weighted pool registered via
+# PyBot.register_balancer_weighted_pool and read back through a
+# PyLiquidityPool handle — the **fourth** ``PoolEntry`` family (alongside
+# V2/V3/V4/Curve). Mirrors the V3/V4/Curve topology class: register →
+# handle → live-write → atomic-snapshot visibility contract.
+BALANCER_VAULT = "0x" + "ba" * 20
+BALANCER_WEIGHTED_POOL_A = "0x" + "b1" * 20
+# 32-byte Balancer V2 pool identifier (encodes address + specialization + nonce).
+BALANCER_WEIGHTED_POOL_ID_HEX = "0x" + "b1" * 32
+BALANCER_WEIGHTED_TOKENS = [TOKEN0, TOKEN1]
+# Equal weights (50/50), each = 0.5e18, summing to ONE = 1e18.
+BALANCER_WEIGHTED_WEIGHTS = [500_000_000_000_000_000, 500_000_000_000_000_000]
+# 18-decimal tokens (scaling factor = ONE = 1e18).
+BALANCER_WEIGHTED_SCALING_FACTORS = [10**18, 10**18]
+# Swap fee = 0.1% of FEE_DENOMINATOR = 1e18 → 1e15.
+BALANCER_WEIGHTED_SWAP_FEE = 1_000_000_000_000_000
+# PowVersion.V1 (WeightedPool2Tokens general path; V2 = 2 has fast paths).
+BALANCER_WEIGHTED_POW_VERSION = 1
+BALANCER_WEIGHTED_BALANCES = [1_500_000 * WETH, 1_500_000 * WETH]
+
+
+class TestSharedStateTopologyBalancerWeighted:
+    """Balancer weighted — the fourth ``PoolEntry`` family (ADR-005 slice 12a).
+
+    Mirrors the V3/V4/Curve topology class: register via
+    ``PyBot.register_balancer_weighted_pool``, read independently via a
+    ``PyLiquidityPool`` handle, and prove a live balance write
+    (``apply_balancer_weighted_balance_update``) is immediately visible to
+    handle reads (the §17 live-read payoff, extended to the Balancer weighted
+    family). The mutable slot is ``balances`` (one U256 per token);
+    ``update_block`` tracks the last balance-update block. The Rust core owns
+    the reorg journal (genesis-anchor V2-style discipline) so
+    ``snapshot_balancer_weighted`` is atomic under one read guard — the same
+    atomic-read contract V3's ``snapshot_v3`` and Curve's ``snapshot_curve``
+    have.
+
+    Sub-slice scope (12a): state port only — the Python ``BalancerV2Pool``
+    companion rewrite + ``make_balancer_weighted_pool`` factory +
+    ``BalancerBuilder`` migration are 12b. The pure-math Rust port
+    (``WeightedMath``/``FixedPoint``/``LogExpMath``) is 12e.
+    """
+
+    def test_balancer_weighted_handle_reads_registered_balances(self) -> None:
+        """``PyLiquidityPool`` reads the registration balances + n_tokens."""
+        core = PyBot()
+        pool_id = core.register_balancer_weighted_pool(
+            address=BALANCER_WEIGHTED_POOL_A,
+            vault=BALANCER_VAULT,
+            pool_id_hex=BALANCER_WEIGHTED_POOL_ID_HEX,
+            tokens=BALANCER_WEIGHTED_TOKENS,
+            weights=BALANCER_WEIGHTED_WEIGHTS,
+            scaling_factors=BALANCER_WEIGHTED_SCALING_FACTORS,
+            swap_fee=BALANCER_WEIGHTED_SWAP_FEE,
+            pow_version=BALANCER_WEIGHTED_POW_VERSION,
+            balances=BALANCER_WEIGHTED_BALANCES,
+            update_block=10,
+        )
+        handle = core.get_pool(pool_id)
+        assert handle is not None
+        assert handle.n_balancer_tokens == 2
+        assert handle.balancer_balances == list(BALANCER_WEIGHTED_BALANCES)
+        # update_block falls through every family (V2/V3/V4/Curve/Balancer
+        # weighted) — a 12a Balancer weighted slot is now read by the
+        # family-falling-through getter too.
+        assert handle.update_block == 10
+
+    def test_balancer_weighted_apply_balance_update_is_visible_to_handle_reads(self) -> None:
+        """A Balancer weighted ``apply_balancer_weighted_balance_update`` write
+        is immediately readable.
+
+        The deepest assertion of the state-port sub-slice: a write through the
+        handle lands on the shared ``BotState`` and the next getter read sees
+        the new balances — the Balancer weighted family of the V3
+        ``apply_swap → sqrt_price_x96`` visibility contract.
+        """
+        core = PyBot()
+        pool_id = core.register_balancer_weighted_pool(
+            address=BALANCER_WEIGHTED_POOL_A,
+            vault=BALANCER_VAULT,
+            pool_id_hex=BALANCER_WEIGHTED_POOL_ID_HEX,
+            tokens=BALANCER_WEIGHTED_TOKENS,
+            weights=BALANCER_WEIGHTED_WEIGHTS,
+            scaling_factors=BALANCER_WEIGHTED_SCALING_FACTORS,
+            swap_fee=BALANCER_WEIGHTED_SWAP_FEE,
+            pow_version=BALANCER_WEIGHTED_POW_VERSION,
+            balances=BALANCER_WEIGHTED_BALANCES,
+            update_block=10,
+        )
+        handle = core.get_pool(pool_id)
+        assert handle is not None
+        new_balances = [1_600_000 * WETH, 1_400_000 * WETH]
+        applied = handle.apply_balancer_weighted_balance_update(new_balances, 12)
+        assert applied, "apply_balancer_weighted_balance_update should succeed"
+        # immediate visibility — the §17 contract.
+        assert handle.balancer_balances == new_balances
+        assert handle.update_block == 12
+
+    def test_balancer_weighted_snapshot_is_atomic(self) -> None:
+        """``snapshot_balancer_weighted()`` returns ``(balances, block)``
+        atomically — one read-guard over both handoffs (same guarantee as
+        ``snapshot_v3`` / ``snapshot_curve``).
+        """
+        core = PyBot()
+        pool_id = core.register_balancer_weighted_pool(
+            address=BALANCER_WEIGHTED_POOL_A,
+            vault=BALANCER_VAULT,
+            pool_id_hex=BALANCER_WEIGHTED_POOL_ID_HEX,
+            tokens=BALANCER_WEIGHTED_TOKENS,
+            weights=BALANCER_WEIGHTED_WEIGHTS,
+            scaling_factors=BALANCER_WEIGHTED_SCALING_FACTORS,
+            swap_fee=BALANCER_WEIGHTED_SWAP_FEE,
+            pow_version=BALANCER_WEIGHTED_POW_VERSION,
+            balances=BALANCER_WEIGHTED_BALANCES,
+            update_block=10,
+        )
+        handle = core.get_pool(pool_id)
+        assert handle is not None
+        snap = handle.snapshot_balancer_weighted()
+        assert snap is not None
+        snap_balances, snap_block = snap
+        assert snap_balances == list(BALANCER_WEIGHTED_BALANCES)
+        assert snap_block == 10
+
+    def test_balancer_weighted_apply_is_silent_noop_on_curve_pool(self) -> None:
+        """``apply_balancer_weighted_balance_update`` on a Curve pool is a
+        silent no-op (``False``) — the family-dispatch contract: a non-matching
+        companion must NOT corrupt a pool registered under a different family.
+        """
+        core = PyBot()
+        curve_pool_id = core.register_curve_pool(
+            address=CURVE_POOL_A,
+            tokens=CURVE_TOKENS,
+            a_coefficient=CURVE_A,
+            fee=CURVE_FEE,
+            admin_fee=CURVE_ADMIN_FEE,
+            rate_multipliers=CURVE_RATE_MULTIPLIERS,
+            balances=CURVE_BALANCES,
+            update_block=10,
+        )
+        curve_handle = core.get_pool(curve_pool_id)
+        assert curve_handle is not None
+        applied = curve_handle.apply_balancer_weighted_balance_update(
+            [1, 2, 3],
+            5,
+        )
+        assert applied is False, "Balancer weighted apply on a Curve pool must be a silent no-op"
+        # The Curve balances are unchanged — no corruption.
+        assert curve_handle.balances == list(CURVE_BALANCES)
+
+    def test_balancer_weighted_snapshot_returns_none_for_curve_pool(self) -> None:
+        """``snapshot_balancer_weighted()`` returns ``None`` on non-Balancer-
+        weighted pools (family-dispatching reader analogue)."""
+        core = PyBot()
+        curve_pool_id = core.register_curve_pool(
+            address=CURVE_POOL_A,
+            tokens=CURVE_TOKENS,
+            a_coefficient=CURVE_A,
+            fee=CURVE_FEE,
+            admin_fee=CURVE_ADMIN_FEE,
+            rate_multipliers=CURVE_RATE_MULTIPLIERS,
+            balances=CURVE_BALANCES,
+            update_block=10,
+        )
+        curve_handle = core.get_pool(curve_pool_id)
+        assert curve_handle is not None
+        assert curve_handle.snapshot_balancer_weighted() is None
+        # n_balancer_tokens reads 0 on a non-Balancer-weighted pool
+        # (defensive — does NOT crash).
+        assert curve_handle.n_balancer_tokens == 0
+        # balancer_balances returns an empty list (not None) so a Curve
+        # companion never crashes on `for b in handle.balancer_balances`.
+        assert curve_handle.balancer_balances == []
