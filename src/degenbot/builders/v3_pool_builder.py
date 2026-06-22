@@ -446,26 +446,34 @@ class V3PoolBuilder(V3BuilderBase):
         raw_block = block_number if block_number is not None else io.get_block_number()
         block_number_ = int(raw_block) if not isinstance(raw_block, int) else raw_block
 
-        slot0_result = io.call(
-            to=pool.address,
-            data=encode_function_calldata("slot0()", None),
-            block=block_number_,
-        )
-        slot0_data = V3BuilderBase.decode_slot0(slot0_result)
-        sqrt_price_x96 = slot0_data.sqrt_price_x96
-        tick = slot0_data.tick
+        # ADR-005 slice 14p: when io is a PyBotIo, delegate slot0+liquidity to Rust.
+        # Reuses the fetch_v3_slot0_liquidity seam from the build path (14f).
+        fetch_v3_slot0_liquidity = getattr(io, "fetch_v3_slot0_liquidity", None)
+        if fetch_v3_slot0_liquidity is not None:
+            sqrt_price_x96, tick, liquidity = fetch_v3_slot0_liquidity(
+                pool.address, block=block_number_
+            )
+        else:
+            slot0_result = io.call(
+                to=pool.address,
+                data=encode_function_calldata("slot0()", None),
+                block=block_number_,
+            )
+            slot0_data = V3BuilderBase.decode_slot0(slot0_result)
+            sqrt_price_x96 = slot0_data.sqrt_price_x96
+            tick = slot0_data.tick
 
-        (liquidity,) = cast(
-            "tuple[int]",
-            eth_abi.abi.decode(
-                types=["uint256"],
-                data=io.call(
-                    to=pool.address,
-                    data=encode_function_calldata("liquidity()", None),
-                    block=block_number_,
+            (liquidity,) = cast(
+                "tuple[int]",
+                eth_abi.abi.decode(
+                    types=["uint256"],
+                    data=io.call(
+                        to=pool.address,
+                        data=encode_function_calldata("liquidity()", None),
+                        block=block_number_,
+                    ),
                 ),
-            ),
-        )
+            )
 
         if (
             pool.sqrt_price_x96 == sqrt_price_x96
