@@ -1275,3 +1275,84 @@ def test_pybot_io_probe_balancer_pool_type_raises_when_neither_works():
     io = PyBotIo(provider=_BalancerProvider())  # no responses
     with pytest.raises(ValueError):
         io.probe_balancer_pool_type("0x" + "aa" * 20)
+
+
+# === V4 slot0 + liquidity RPCs (slice 14o) ===
+#
+# `fetch_v4_slot0_liquidity` mirrors `fetch_v3_slot0_liquidity` (14f) but for
+# V4 pools. V4 queries `getSlot0(bytes32)` + `getLiquidity(bytes32)` on a
+# state-view contract, passing `pool_id` as a bytes32 arg.
+
+
+class _V4Slot0Provider:
+    """Provider returning canned getSlot0 + getLiquidity responses."""
+
+    def __init__(self, *, slot0_bytes: bytes, liquidity: int) -> None:
+        self._slot0 = slot0_bytes
+        self._liq = liquidity
+        self.calls: list[bytes] = []
+
+    def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+        self.calls.append(data)
+        sel = data[:4]
+        if sel == Web3.keccak(text="getSlot0(bytes32)")[:4]:
+            return HexBytes(self._slot0)
+        if sel == Web3.keccak(text="getLiquidity(bytes32)")[:4]:
+            return HexBytes(eth_abi.abi.encode(types=["uint256"], args=[self._liq]))
+        msg = f"unexpected selector {sel.hex()}"
+        raise ValueError(msg)
+
+
+def test_pybot_io_fetch_v4_slot0_liquidity_decodes_all_fields():
+    """fetch_v4_slot0_liquidity(state_view, pool_id, block) →
+    getSlot0(bytes32) + getLiquidity(bytes32) → returns all 4 slot0 fields +
+    liquidity as a 5-tuple."""
+    sqrt_price = 1 << 96  # price 1.0
+    tick = -887_220
+    protocol_fee = 0
+    lp_fee = 3_000
+    liquidity = 10**18
+    slot0_bytes = eth_abi.abi.encode(
+        types=["uint160", "int24", "uint24", "uint24"],
+        args=[sqrt_price, tick, protocol_fee, lp_fee],
+    )
+    pool_id = bytes(range(32))
+    io = PyBotIo(provider=_V4Slot0Provider(slot0_bytes=slot0_bytes, liquidity=liquidity))
+
+    result = io.fetch_v4_slot0_liquidity("0x" + "cc" * 20, pool_id)
+
+    assert len(result) == 5
+    assert int(result[0]) == sqrt_price
+    assert int(result[1]) == tick
+    assert int(result[2]) == protocol_fee
+    assert int(result[3]) == lp_fee
+    assert int(result[4]) == liquidity
+
+
+def test_pybot_io_fetch_v4_slot0_liquidity_encodes_pool_id_arg():
+    """Verify both RPCs encode the pool_id arg correctly (selector+bytes32)."""
+    slot0_bytes = eth_abi.abi.encode(
+        types=["uint160", "int24", "uint24", "uint24"],
+        args=[1 << 96, 0, 0, 0],
+    )
+    pool_id = bytes.fromhex("ab" * 32)
+    io = PyBotIo(provider=_V4Slot0Provider(slot0_bytes=slot0_bytes, liquidity=0))
+
+    io.fetch_v4_slot0_liquidity("0x" + "cc" * 20, pool_id)
+
+    assert len(io.provider.calls) == 2
+    for calldata in io.provider.calls:
+        assert calldata[4:36] == pool_id
+
+
+def test_pybot_io_fetch_v4_slot0_liquidity_propagates_reverts():
+    """When getSlot0 reverts, the exception propagates."""
+
+    class _RevProv:
+        def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+            msg = "execution reverted"
+            raise Web3Exception(msg)
+
+    io = PyBotIo(provider=_RevProv())
+    with pytest.raises(Web3Exception):
+        io.fetch_v4_slot0_liquidity("0x" + "cc" * 20, bytes(32))

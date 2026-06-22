@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from degenbot.builders.request import BuildManagedPoolRequest
 from degenbot.builders.tick_data_fetcher import TickDataTypes, make_tick_data_fetcher
-from degenbot.builders.v4_builder_base import V4BuilderBase
+from degenbot.builders.v4_builder_base import V4BuilderBase, V4Slot0Data
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
 from degenbot.database.models.pools import PoolManagerTable, UniswapV4PoolTable
@@ -189,35 +189,53 @@ class V4PoolBuilder(V4BuilderBase):
         )
 
         # Fetch slot0 + liquidity via state view contract
-        try:
-            slot0_calldata = encode_function_calldata(
-                "getSlot0(bytes32)",
-                [pool_id_bytes],
+        # ADR-005 slice 14o: when io is a PyBotIo, delegate both RPCs to Rust.
+        fetch_v4_slot0_liquidity = getattr(io, "fetch_v4_slot0_liquidity", None)
+        if fetch_v4_slot0_liquidity is not None:
+            try:
+                assert state_view_address is not None
+                sqrt_price_x96, tick_raw, protocol_fee_raw, lp_fee, liquidity_val = (
+                    fetch_v4_slot0_liquidity(state_view_address, pool_id_bytes, block=state_block)
+                )
+            except Exception as exc:
+                raise LiquidityPoolError(message="Could not decode contract data") from exc
+            slot0_data = V4Slot0Data(
+                sqrt_price_x96=int(sqrt_price_x96),
+                tick=int(tick_raw),
+                protocol_fee_one_to_zero=int(protocol_fee_raw) >> 12,
+                protocol_fee_zero_to_one=int(protocol_fee_raw) & 0xFFF,
+                lp_fee=int(lp_fee),
             )
-            liquidity_calldata = encode_function_calldata(
-                "getLiquidity(bytes32)",
-                [pool_id_bytes],
-            )
+        else:
+            try:
+                slot0_calldata = encode_function_calldata(
+                    "getSlot0(bytes32)",
+                    [pool_id_bytes],
+                )
+                liquidity_calldata = encode_function_calldata(
+                    "getLiquidity(bytes32)",
+                    [pool_id_bytes],
+                )
 
-            assert state_view_address is not None
-            slot0_result = io.call(
-                to=state_view_address,
-                data=slot0_calldata,
-                block=state_block,
-            )
-            liquidity_result = io.call(
-                to=state_view_address,
-                data=liquidity_calldata,
-                block=state_block,
-            )
-        except Exception as exc:
-            raise LiquidityPoolError(message="Could not decode contract data") from exc
+                assert state_view_address is not None
+                slot0_result = io.call(
+                    to=state_view_address,
+                    data=slot0_calldata,
+                    block=state_block,
+                )
+                liquidity_result = io.call(
+                    to=state_view_address,
+                    data=liquidity_calldata,
+                    block=state_block,
+                )
+            except Exception as exc:
+                raise LiquidityPoolError(message="Could not decode contract data") from exc
 
-        slot0_data = V4BuilderBase.decode_slot0(slot0_result)
-        (liquidity_val,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=liquidity_result,
-        )
+            slot0_data = V4BuilderBase.decode_slot0(slot0_result)
+            (liquidity_val,) = eth_abi.abi.decode(
+                types=["uint256"],
+                data=liquidity_result,
+            )
 
         # Fetch initial tick bitmap and tick data
         working_tick_bitmap: dict[int, Any] = {}
@@ -402,26 +420,44 @@ class V4PoolBuilder(V4BuilderBase):
         raw_block = block_number if block_number is not None else io.get_block_number()
         block_number_ = int(raw_block) if not isinstance(raw_block, int) else raw_block
 
-        slot0_calldata = encode_function_calldata("getSlot0(bytes32)", [pool.pool_id])
-        slot0_result = io.call(
-            to=pool._state_view_address,  # noqa: SLF001
-            data=slot0_calldata,
-            block=block_number_,
-        )
-        slot0_data = V4BuilderBase.decode_slot0(slot0_result)
-
-        liquidity_calldata = encode_function_calldata("getLiquidity(bytes32)", [pool.pool_id])
-        (liquidity_val,) = cast(
-            "tuple[int]",
-            eth_abi.abi.decode(
-                types=["uint256"],
-                data=io.call(
-                    to=pool._state_view_address,  # noqa: SLF001
-                    data=liquidity_calldata,
+        # ADR-005 slice 14o: when io is a PyBotIo, delegate both RPCs to Rust.
+        fetch_v4_slot0_liquidity = getattr(io, "fetch_v4_slot0_liquidity", None)
+        if fetch_v4_slot0_liquidity is not None:
+            sqrt_price_x96, tick_raw, protocol_fee_raw, lp_fee, liquidity_val = (
+                fetch_v4_slot0_liquidity(
+                    pool._state_view_address,  # noqa: SLF001
+                    pool.pool_id,
                     block=block_number_,
+                )
+            )
+            slot0_data = V4Slot0Data(
+                sqrt_price_x96=int(sqrt_price_x96),
+                tick=int(tick_raw),
+                protocol_fee_one_to_zero=int(protocol_fee_raw) >> 12,
+                protocol_fee_zero_to_one=int(protocol_fee_raw) & 0xFFF,
+                lp_fee=int(lp_fee),
+            )
+        else:
+            slot0_calldata = encode_function_calldata("getSlot0(bytes32)", [pool.pool_id])
+            slot0_result = io.call(
+                to=pool._state_view_address,  # noqa: SLF001
+                data=slot0_calldata,
+                block=block_number_,
+            )
+            slot0_data = V4BuilderBase.decode_slot0(slot0_result)
+
+            liquidity_calldata = encode_function_calldata("getLiquidity(bytes32)", [pool.pool_id])
+            (liquidity_val,) = cast(
+                "tuple[int]",
+                eth_abi.abi.decode(
+                    types=["uint256"],
+                    data=io.call(
+                        to=pool._state_view_address,  # noqa: SLF001
+                        data=liquidity_calldata,
+                        block=block_number_,
+                    ),
                 ),
-            ),
-        )
+            )
 
         if (
             pool.sqrt_price_x96 == slot0_data.sqrt_price_x96
