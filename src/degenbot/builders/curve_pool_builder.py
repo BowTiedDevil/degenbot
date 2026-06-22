@@ -393,6 +393,11 @@ def _fetch_pool_params(
         The computed value.
 
     """
+    # ADR-005 slice 14r: when io is a PyBotIo, delegate all 3 RPCs to Rust.
+    fetcher = getattr(io, "fetch_curve_pool_params", None)
+    if fetcher is not None:
+        a, fee, admin_fee = fetcher(pool_address, block=block_identifier)
+        return int(a), int(fee), int(admin_fee)
     a_result = io.call_raw(
         {
             "to": pool_address,

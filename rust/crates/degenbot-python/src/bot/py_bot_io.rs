@@ -684,6 +684,44 @@ impl PyBotIo {
         ))
     }
 
+    /// Fetch Curve pool params via 3 no-arg `uint256`-returning calls (ADR-005
+    /// slice 14r).
+    ///
+    /// Mirrors `curve_pool_builder.py::_fetch_pool_params`. The Python original
+    /// uses `io.call_raw({"to": ..., "data": ...}, block=...)`; the result is
+    /// identical to a `.call(to=..., data=..., block=...)` because `SyncPoolIO`
+    /// routes both forms to the same underlying provider. So we reuse the `call`
+    /// kw-form via `forward_call_to_provider`.
+    ///
+    /// Returns `(A, fee, admin_fee)`. Each is a `uint256`. Errors propagate.
+    #[pyo3(signature = (pool_address, block=None))]
+    fn fetch_curve_pool_params(
+        &self,
+        py: Python<'_>,
+        pool_address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<(Py<PyAny>, Py<PyAny>, Py<PyAny>)> {
+        use alloy::primitives::U256;
+
+        let fetch_no_arg_uint = |sig: &[u8]| -> PyResult<Py<PyAny>> {
+            let calldata = selector(sig);
+            let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
+            let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+            if bytes.len() < 32 {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "{sig:?} result < 32 bytes"
+                )));
+            }
+            let val = U256::from_be_slice(&bytes[0..32]);
+            crate::conversion::alloy::u256_to_py(py, &val).map(|b| b.unbind())
+        };
+
+        let a = fetch_no_arg_uint(b"A()")?;
+        let fee = fetch_no_arg_uint(b"fee()")?;
+        let admin_fee = fetch_no_arg_uint(b"admin_fee()")?;
+        Ok((a, fee, admin_fee))
+    }
+
     /// Fetch an ERC-20 token balance via `balanceOf(address)`, performing the
     /// full encode -> call -> decode choreography in Rust (ADR-005 slice 14d).
     ///
