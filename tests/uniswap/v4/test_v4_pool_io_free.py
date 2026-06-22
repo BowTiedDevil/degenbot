@@ -21,6 +21,7 @@ from degenbot.uniswap.v4_types import (
     UniswapV4PoolKey,
 )
 from tests.helpers.erc20_factory import make_erc20
+from tests.helpers.v4_pool_factory import make_v4_pool
 
 _PY_BOT = PyBot()
 
@@ -82,7 +83,7 @@ class TestV4PoolIOFreeConstructor:
         protocol_fee_one_for_zero = 200
         lp_fee = 500000
 
-        pool = UniswapV4Pool(
+        pool = make_v4_pool(
             pool_id=V4_POOL_ID,
             pool_manager_address=V4_POOL_MANAGER,
             token0=native_eth,
@@ -122,7 +123,7 @@ class TestV4PoolIOFreeConstructor:
             -10: LiquidityAtTick(liquidity_net=100, liquidity_gross=200, block=18_000_000),
         }
 
-        pool = UniswapV4Pool(
+        pool = make_v4_pool(
             pool_id=V4_POOL_ID,
             pool_manager_address=V4_POOL_MANAGER,
             token0=native_eth,
@@ -150,7 +151,7 @@ class TestV4PoolIOFreeConstructor:
         native_eth = _make_native_eth()
         usdc = _make_usdc()
 
-        pool = UniswapV4Pool(
+        pool = make_v4_pool(
             pool_id=V4_POOL_ID,
             pool_manager_address=V4_POOL_MANAGER,
             token0=native_eth,
@@ -182,7 +183,7 @@ class TestV4PoolIOFreeConstructor:
         native_eth = _make_native_eth()
         usdc = _make_usdc()
 
-        pool = UniswapV4Pool(
+        pool = make_v4_pool(
             pool_id=V4_POOL_ID,
             pool_manager_address=V4_POOL_MANAGER,
             token0=native_eth,
@@ -216,7 +217,7 @@ class TestV4PoolIOFreeConstructor:
 
         state_view = get_checksum_address(V4_STATE_VIEW)
 
-        pool = UniswapV4Pool(
+        pool = make_v4_pool(
             pool_id=V4_POOL_ID,
             pool_manager_address=V4_POOL_MANAGER,
             token0=native_eth,

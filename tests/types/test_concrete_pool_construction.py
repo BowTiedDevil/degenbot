@@ -22,6 +22,7 @@ from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.v3_pool_factory import make_v3_pool
+from tests.helpers.v4_pool_factory import make_v4_pool
 
 _PY_BOT = PyBot()
 
@@ -232,7 +233,7 @@ def _make_uniswap_v4_pool() -> UniswapV4Pool:
     weth = _make_weth()
     usdc = _make_usdc()
 
-    return UniswapV4Pool(
+    return make_v4_pool(
         pool_id="0x4f88f7c99022eace4740c6898f59ce6a2e798a1e64ce54589720b7153eb224a7",
         pool_manager_address=V4_POOL_MANAGER,
         token0=usdc,

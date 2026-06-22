@@ -19,8 +19,8 @@ use super::verify::{map_verify_err, EngineVerifyRpc};
 #[pymethods]
 impl PyUniswapArbEngine {
     #[new]
-    #[pyo3(signature = (bot=None))]
-    fn new(py: Python<'_>, bot: Option<Py<PyBot>>) -> Self {
+    #[pyo3(signature = (py_bot=None))]
+    fn new(py: Python<'_>, py_bot: Option<Py<PyBot>>) -> Self {
         let (result_tx, result_rx) = mpsc::unbounded_channel();
         // ADR-006 D1+D4: if a `PyBot` is supplied, adopt its shared
         // `Arc<RwLock<BotState>>` so the engine reads/writes the SAME core that
@@ -29,7 +29,7 @@ impl PyUniswapArbEngine {
         // reads (dissolving the dual-`BotState` split —
         // `rust-owned-bot.md` §17 stale-state root cause). Without one, allocate
         // a standalone core + wrap it in a fresh `Bot` (no-pyo3 / legacy path).
-        let (engine, bot) = if let Some(bot) = bot {
+        let (engine, bot) = if let Some(bot) = py_bot {
             let bot = bot.borrow(py).bot_arc();
             (UniswapEngine::with_core(bot.state_arc()), bot)
         } else {
@@ -757,7 +757,7 @@ impl PyUniswapArbEngine {
 /// formatting so `build_paths`'s classification (now `isinstance`, was
 /// substring) matches the same diagnostics.
 #[allow(clippy::needless_pass_by_value)]
-fn map_register_v4_err(err: degenbot_bot::bot_core::RegisterV4PoolError) -> pyo3::PyErr {
+pub(crate) fn map_register_v4_err(err: degenbot_bot::bot_core::RegisterV4PoolError) -> pyo3::PyErr {
     match err {
         degenbot_bot::bot_core::RegisterV4PoolError::HookedPool { hook_flags } => {
             HookedPoolRejectedError::new_err(format!(
