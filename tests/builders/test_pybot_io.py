@@ -724,3 +724,92 @@ def test_pybot_io_fetch_aerodrome_stable_and_fee_propagates_reverts():
     io = PyBotIo(provider=_RevertingProvider())
     with pytest.raises(RuntimeError):
         io.fetch_aerodrome_v2_stable_and_fee("0x" + "aa" * 20, "0x" + "bb" * 20)
+
+
+# === ERC20 string-field fallback (slice 14h) ===
+#
+# `fetch_erc20_string_field` moves the per-call `_fetch_name`/`_fetch_symbol`
+# fallback choreography (string decode, then bytes32 fallback) into Rust.
+# The Python caller passes the selector signature dynamically ("name()" vs
+# "NAME()"), so the Rust method accepts a `signature: &str` parameter.
+
+
+class _StringFieldProvider:
+    """Provider returning either ABI string or bytes32 for a given selector."""
+
+    def __init__(self, response: bytes) -> None:
+        self._response = response
+
+    def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+        return HexBytes(self._response)
+
+
+def test_pybot_io_fetch_erc20_string_field_decodes_string():
+    """When the token returns an ABI string, fetch_erc20_string_field decodes it."""
+    name = "Dai Stablecoin"
+    io = PyBotIo(
+        provider=_StringFieldProvider(response=eth_abi.abi.encode(types=["string"], args=[name]))
+    )
+
+    result = io.fetch_erc20_string_field("0x" + "ab" * 20, "name()")
+
+    assert result == name
+
+
+def test_pybot_io_fetch_erc20_string_field_falls_back_to_bytes32():
+    """When the token returns bytes32 (not a valid ABI string), the Rust impl
+    falls back to bytes32 decode + UTF-8 with errors='ignore' + strip nulls.
+    Mirrors _fetch_name's `except DecodingError: decode bytes32` path."""
+    # A bytes32-encoded name: "USDT" right-padded with nulls.
+    raw = b"USDT" + b"\x00" * 28
+    # ABI-encode as bytes32 (the 32 raw bytes, no offset/length prefix).
+    # But actually some tokens return raw bytes32 without ABI string encoding.
+    # eth_abi encodes bytes32 as just the 32 bytes themselves.
+    io = PyBotIo(
+        provider=_StringFieldProvider(response=eth_abi.abi.encode(types=["bytes32"], args=[raw]))
+    )
+
+    result = io.fetch_erc20_string_field("0x" + "ab" * 20, "symbol()")
+
+    assert result == "USDT"
+
+
+def test_pybot_io_fetch_erc20_string_field_strips_trailing_nulls():
+    """bytes32 fallback strips both leading and trailing null bytes (mirrors
+    Python's `.strip("\x00")`)."""
+    raw = b"\x00\x00WETH\x00" + b"\x00" * 25
+    io = PyBotIo(
+        provider=_StringFieldProvider(response=eth_abi.abi.encode(types=["bytes32"], args=[raw]))
+    )
+
+    result = io.fetch_erc20_string_field("0x" + "ab" * 20, "symbol()")
+
+    assert result == "WETH"
+
+
+def test_pybot_io_fetch_erc20_string_field_propagates_reverts():
+    """Provider revert surfaces as exception."""
+
+    class _RevProv:
+        def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+            msg = "reverted"
+            raise RuntimeError(msg)
+
+    io = PyBotIo(provider=_RevProv())
+    with pytest.raises(RuntimeError):
+        io.fetch_erc20_string_field("0x" + "ab" * 20, "name()")
+
+
+def test_pybot_io_fetch_erc20_uint_field_decodes_uint256():
+    """fetch_erc20_uint_field(address, signature) encodes the selector dynamically,
+    calls, and decodes uint256."""
+    decimals = 6
+    io = PyBotIo(
+        provider=_StringFieldProvider(
+            response=eth_abi.abi.encode(types=["uint256"], args=[decimals])
+        )
+    )
+
+    result = io.fetch_erc20_uint_field("0x" + "ab" * 20, "decimals()")
+
+    assert result == decimals
