@@ -200,24 +200,15 @@ impl PyBotIo {
     /// contract (a pool whose `factory()` reverts yields `None`, not an error).
     #[pyo3(signature = (address))]
     fn fetch_factory_address(&self, py: Python<'_>, address: &str) -> PyResult<Option<String>> {
-        // Build the `factory()` 4-byte selector: keccak256("factory()")[..4].
-        // keccak256("factory()") = c45a0155... (verified against the v3/v4 test
-        // golden value `bytes.fromhex("c45a0155")`); the constant is computed
-        // at compile time, so the selector is the same bytes every real
-        // `factory()` selector matches at runtime.
-        use alloy::primitives::keccak256;
-        let selector = {
-            let hash = keccak256(b"factory()");
-            let mut s = [0u8; 4];
-            s.copy_from_slice(&hash[..4]);
-            s
-        };
+        // `factory()` 4-byte selector: keccak256("factory()")[..4] = 0xc45a0155.
+        // Same bytes every real `factory()` selector matches at runtime.
+        let selector_bytes = selector(b"factory()");
 
         // Build Python `bytes` for the `data=` kwarg, and a Python `str` for
         // the `to=` kwarg (the held provider's `call(*, to, data, block)` is
         // kw-only and operates on Python objects).
         let address_obj = PyString::new(py, address);
-        let data_obj = PyBytes::new(py, &selector);
+        let data_obj = PyBytes::new(py, &selector_bytes);
         let result_obj = match self.call_kw(
             py,
             "call",
@@ -247,6 +238,115 @@ impl PyBotIo {
             Ok(s) => Ok(Some(s)),
             Err(_) => Ok(None),
         }
+    }
+
+    /// Fetch ERC-20 token name / symbol / decimals via batched RPC calls,
+    /// performing the full encode -> call (x3) -> decode choreography in Rust
+    /// (ADR-005 slice 14c).
+    ///
+    /// Mirrors `degenbot/builders/erc20_builder.py::_fetch_name_symbol_decimals_batched`:
+    /// encode the 4-byte selectors for `name()`, `symbol()`, `decimals()`, fire
+    /// three `eth_call`s at the token address, ABI-decode each as `string`,
+    /// `string`, `uint256` respectively. Returns the `(name, symbol, decimals)`
+    /// tuple on success.
+    ///
+    /// Returns `None` on any provider error or decode failure — mirrors the
+    /// Python batched impl's caller-side `except (Web3Exception, DecodingError)`
+    /// contract, which falls back to per-call `bytes32` alternate prototypes when
+    /// the batched path fails. (The Rust impl surfaces the same `None` signal so
+    /// the caller's fallback kicks in identically.)
+    #[pyo3(signature = (address))]
+    fn fetch_erc20_metadata(
+        &self,
+        py: Python<'_>,
+        address: &str,
+    ) -> PyResult<Option<(String, String, u64)>> {
+        use alloy::dyn_abi::{DynSolType, DynSolValue};
+
+        // Encode the three selectors at compile time.
+        let name_selector = selector(b"name()");
+        let symbol_selector = selector(b"symbol()");
+        let decimals_selector = selector(b"decimals()");
+
+        let address_obj = pyo3::types::PyString::new(py, address);
+
+        // Fire the three calls; any error -> Ok(None).
+        let name_result = match self.call_kw(
+            py,
+            "call",
+            &[
+                ("to", Some(address_obj.as_any())),
+                (
+                    "data",
+                    Some(pyo3::types::PyBytes::new(py, &name_selector).as_any()),
+                ),
+                ("block", None),
+            ],
+        ) {
+            Ok(r) => r,
+            Err(_) => return Ok(None),
+        };
+        let symbol_result = match self.call_kw(
+            py,
+            "call",
+            &[
+                ("to", Some(address_obj.as_any())),
+                (
+                    "data",
+                    Some(pyo3::types::PyBytes::new(py, &symbol_selector).as_any()),
+                ),
+                ("block", None),
+            ],
+        ) {
+            Ok(r) => r,
+            Err(_) => return Ok(None),
+        };
+        let decimals_result = match self.call_kw(
+            py,
+            "call",
+            &[
+                ("to", Some(address_obj.as_any())),
+                (
+                    "data",
+                    Some(pyo3::types::PyBytes::new(py, &decimals_selector).as_any()),
+                ),
+                ("block", None),
+            ],
+        ) {
+            Ok(r) => r,
+            Err(_) => return Ok(None),
+        };
+
+        // Extract &[u8] from each HexBytes/bytes result.
+        let name_bytes: &[u8] = match name_result.bind(py).extract::<&[u8]>() {
+            Ok(b) => b,
+            Err(_) => return Ok(None),
+        };
+        let symbol_bytes: &[u8] = match symbol_result.bind(py).extract::<&[u8]>() {
+            Ok(b) => b,
+            Err(_) => return Ok(None),
+        };
+        let decimals_bytes: &[u8] = match decimals_result.bind(py).extract::<&[u8]>() {
+            Ok(b) => b,
+            Err(_) => return Ok(None),
+        };
+
+        // Decode dynamic `string`, `string`, and `uint256`. Any decode error -> Ok(None)
+        // (mirror the Python `except DecodingError`).
+        let name = match DynSolType::String.abi_decode(name_bytes) {
+            Ok(DynSolValue::String(s)) => s,
+            _ => return Ok(None),
+        };
+        let symbol = match DynSolType::String.abi_decode(symbol_bytes) {
+            Ok(DynSolValue::String(s)) => s,
+            _ => return Ok(None),
+        };
+        let decimals = match DynSolType::Uint(256).abi_decode(decimals_bytes) {
+            Ok(DynSolValue::Uint(n, _)) => n.to::<u64>(),
+            _ => return Ok(None),
+        };
+
+        Ok(Some((name, symbol, decimals)))
     }
 
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
@@ -294,4 +394,18 @@ fn build_block_kw<'py>(
         }
         None => Ok(None),
     }
+}
+
+/// Compute a 4-byte Solidity function selector (`keccak256(signature)[..4]`).
+///
+/// Same construction as `alloy_sol_types::sol!` would emit at compile time.
+/// Used by `fetch_factory_address` and `fetch_erc20_metadata` to build the
+/// 4-byte calldata prefixes that router-style pool/token read methods (e.g.
+/// `factory()`, `name()`, `symbol()`, `decimals()`) expect.
+fn selector(signature: &[u8]) -> [u8; 4] {
+    use alloy::primitives::keccak256;
+    let hash = keccak256(signature);
+    let mut s = [0u8; 4];
+    s.copy_from_slice(&hash[..4]);
+    s
 }
