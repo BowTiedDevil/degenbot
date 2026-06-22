@@ -173,43 +173,60 @@ class V2BuilderBase:
 
         # Get factory and token addresses
         if not pool_found_in_db:
-            # Fetch immutable values from chain
-            try:
-                factory_result = io.call(
-                    to=pool_address,
-                    data=encode_function_calldata("factory()", None),
-                )
-                token0_result = io.call(
-                    to=pool_address,
-                    data=encode_function_calldata("token0()", None),
-                )
-                token1_result = io.call(
-                    to=pool_address,
-                    data=encode_function_calldata("token1()", None),
-                )
-            except Exception as exc:
-                raise LiquidityPoolError(message="Could not decode contract data") from exc
+            # ADR-005 slice 14e: when io is a PyBotIo (Bot's build path),
+            # delegate the 3-call immutable RPC choreography to Rust. SyncPoolIO
+            # fallback keeps the Python implementation as a parity gate.
+            fetch_v2_immutable_data = getattr(io, "fetch_v2_immutable_data", None)
+            if fetch_v2_immutable_data is not None:
+                try:
+                    factory, token0_address, token1_address = fetch_v2_immutable_data(pool_address)
+                except Exception as exc:
+                    raise LiquidityPoolError(message="Could not decode contract data") from exc
+            else:
+                # Fetch immutable values from chain
+                try:
+                    factory_result = io.call(
+                        to=pool_address,
+                        data=encode_function_calldata("factory()", None),
+                    )
+                    token0_result = io.call(
+                        to=pool_address,
+                        data=encode_function_calldata("token0()", None),
+                    )
+                    token1_result = io.call(
+                        to=pool_address,
+                        data=encode_function_calldata("token1()", None),
+                    )
+                except Exception as exc:
+                    raise LiquidityPoolError(message="Could not decode contract data") from exc
 
-            factory, token0_address, token1_address = V2BuilderBase.decode_immutable_data(
-                factory_result=factory_result,
-                token0_result=token0_result,
-                token1_result=token1_result,
-            )
+                factory, token0_address, token1_address = V2BuilderBase.decode_immutable_data(
+                    factory_result=factory_result,
+                    token0_result=token0_result,
+                    token1_result=token1_result,
+                )
 
             # Default fee for V2 pools
             fee_token0 = Fraction(3, 1000)
             fee_token1 = Fraction(3, 1000)
 
         # Fetch reserves
-        reserves_result = io.call(
-            to=pool_address,
-            data=encode_function_calldata("getReserves()", None),
-            block=state_block,
-        )
-        reserves0, reserves1 = eth_abi.abi.decode(
-            types=["uint256", "uint256"],
-            data=reserves_result,
-        )
+        fetch_v2_reserves = getattr(io, "fetch_v2_reserves", None)
+        if fetch_v2_reserves is not None:
+            try:
+                reserves0, reserves1 = fetch_v2_reserves(pool_address, block=state_block)
+            except Exception as exc:
+                raise LiquidityPoolError(message="Could not decode contract data") from exc
+        else:
+            reserves_result = io.call(
+                to=pool_address,
+                data=encode_function_calldata("getReserves()", None),
+                block=state_block,
+            )
+            reserves0, reserves1 = eth_abi.abi.decode(
+                types=["uint256", "uint256"],
+                data=reserves_result,
+            )
 
         # Determine deployer and init_hash from pool type registry
         deployer, resolved_init_hash = V2BuilderBase.resolve_deployer_and_init_hash(

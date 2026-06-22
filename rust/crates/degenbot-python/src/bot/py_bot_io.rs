@@ -200,41 +200,11 @@ impl PyBotIo {
     /// contract (a pool whose `factory()` reverts yields `None`, not an error).
     #[pyo3(signature = (address))]
     fn fetch_factory_address(&self, py: Python<'_>, address: &str) -> PyResult<Option<String>> {
-        // `factory()` 4-byte selector: keccak256("factory()")[..4] = 0xc45a0155.
-        // Same bytes every real `factory()` selector matches at runtime.
-        let selector_bytes = selector(b"factory()");
-
-        // Build Python `bytes` for the `data=` kwarg, and a Python `str` for
-        // the `to=` kwarg (the held provider's `call(*, to, data, block)` is
-        // kw-only and operates on Python objects).
-        let address_obj = PyString::new(py, address);
-        let data_obj = PyBytes::new(py, &selector_bytes);
-        let result_obj = match self.call_kw(
-            py,
-            "call",
-            &[
-                ("to", Some(address_obj.as_any())),
-                ("data", Some(data_obj.as_any())),
-                ("block", None),
-            ],
-        ) {
-            Ok(r) => r,
-            Err(_) => return Ok(None), // provider call raised -- mirror `return None`.
-        };
-
-        // ABI-decode: result must be >=32 bytes; the address is the
-        // right-aligned 20 bytes of the first 32-byte return word.
-        let bytes: &[u8] = match result_obj.bind(py).extract::<&[u8]>() {
-            Ok(b) => b,
-            Err(_) => return Ok(None), // not bytes — mirror `return None`.
-        };
-        if bytes.len() < 32 {
-            return Ok(None); // truncated / decode error.
-        }
-        let addr_bytes = &bytes[12..32];
-
-        // EIP-55 checksum.
-        match degenbot_core::address_utils::to_checksum_address_bytes(addr_bytes) {
+        // Delegate the encode→call→decode→checksum to the shared no-arg
+        // address-returning helper, then swallow any error into `None` here
+        // to preserve the `None`-on-failure contract this method promises in
+        // 14b (mirrors the Python `except (Web3Exception, DecodingError): return None`).
+        match self.fetch_address_returning_method(py, b"factory()", address, None) {
             Ok(s) => Ok(Some(s)),
             Err(_) => Ok(None),
         }
@@ -347,6 +317,83 @@ impl PyBotIo {
         };
 
         Ok(Some((name, symbol, decimals)))
+    }
+
+    /// Fetch a V2-style pool's immutable data — `factory()`, `token0()`, `token1()` —
+    /// performing the 3-call encode -> call -> decode choreography in Rust
+    /// (ADR-005 slice 14e).
+    ///
+    /// Mirrors the immutable-RPC block of `v2_builder_base.py::V2BuilderBase.
+    /// _fetch_v2_common_data` (the fallback path when the DB lookup misses).
+    /// Each of the 3 calls is a no-arg address-returning read, fulfilled by
+    /// [`Self::fetch_address_returning_method`] (shared with `fetch_factory_address`).
+    /// Returns `(factory, token0, token1)` as EIP-55 checksummed strings.
+    ///
+    /// Errors propagate: any provider call revert surfaces as `PyErr`(no
+    /// swallowing) — matches the Python `except Exception: raise
+    /// LiquidityPoolError` contract (the caller wraps in its own exception).
+    #[pyo3(signature = (pool_address, block=None))]
+    fn fetch_v2_immutable_data(
+        &self,
+        py: Python<'_>,
+        pool_address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<(String, String, String)> {
+        let factory = self.fetch_address_returning_method(py, b"factory()", pool_address, block)?;
+        let token0 = self.fetch_address_returning_method(py, b"token0()", pool_address, block)?;
+        let token1 = self.fetch_address_returning_method(py, b"token1()", pool_address, block)?;
+        Ok((factory, token0, token1))
+    }
+
+    /// Fetch a V2-style pool's reserves via `getReserves()`, performing the
+    /// encode -> call -> decode choreography in Rust (ADR-005 slice 14e).
+    ///
+    /// Mirrors the reserves-RPC block of `V2BuilderBase._fetch_v2_common_data`.
+    /// Selector `0x0902f1ac`; no args; ABI-decodes a `(uint256, uint256)` tuple.
+    /// Returns `(reserves0, reserves1)` as Python ints (preserved through
+    /// [`crate::conversion::alloy::u256_to_py`] — large values stay exact).
+    ///
+    /// Errors propagate (see [`Self::fetch_v2_immutable_data`]).
+    #[pyo3(signature = (pool_address, block=None))]
+    fn fetch_v2_reserves(
+        &self,
+        py: Python<'_>,
+        pool_address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
+        use alloy::dyn_abi::{DynSolType, DynSolValue};
+
+        let calldata = selector(b"getReserves()");
+        let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        // getReserves returns (uint112, uint112, uint32) packed, but the Python
+        // impl decodes as `(uint256, uint256)` and takes the first two words —
+        // the third word (blockTimestampLast) is unused. Replicate exactly so
+        // the parity test passes.
+        let tuple_type = DynSolType::Tuple(vec![DynSolType::Uint(256), DynSolType::Uint(256)]);
+        let decoded = tuple_type.abi_decode(bytes).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("invalid reserves decode: {e}"))
+        })?;
+        let mut it = match decoded {
+            DynSolValue::Tuple(vals) => vals.into_iter(),
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "expected tuple for getReserves",
+                ))
+            }
+        };
+        let r0 = match it.next() {
+            Some(DynSolValue::Uint(n, _)) => n,
+            _ => return Err(pyo3::exceptions::PyValueError::new_err("invalid reserves0")),
+        };
+        let r1 = match it.next() {
+            Some(DynSolValue::Uint(n, _)) => n,
+            _ => return Err(pyo3::exceptions::PyValueError::new_err("invalid reserves1")),
+        };
+        Ok((
+            crate::conversion::alloy::u256_to_py(py, &r0)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &r1)?.unbind(),
+        ))
     }
 
     /// Fetch an ERC-20 token balance via `balanceOf(address)`, performing the
@@ -478,6 +525,33 @@ impl PyBotIo {
     ///
     /// Single seam: changing the call-forward strategy (e.g. native-alloy swap
     /// in a later slice) is localized to this helper.
+    /// Shared skeleton for no-arg, address-returning pool read methods
+    /// (`factory()`, `token0()`, `token1()`): build selector, call, decode
+    /// right-aligned 20-byte address, checksum. Errors propagate
+    /// (unlike `fetch_factory_address` which swallows them — different contract:
+    /// the immutable-data choreography in `_fetch_v2_common_data` wants the
+    /// underlying exception so the Python caller wraps it in
+    /// `LiquidityPoolError`).
+    fn fetch_address_returning_method(
+        &self,
+        py: Python<'_>,
+        signature: &[u8],
+        pool_address: &str,
+        block: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<String> {
+        let calldata = selector(signature);
+        let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
+        let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
+        if bytes.len() < 32 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "address-returning call returned <32 bytes",
+            ));
+        }
+        let addr_bytes = &bytes[12..32];
+        degenbot_core::address_utils::to_checksum_address_bytes(addr_bytes)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("invalid address: {e}")))
+    }
+
     fn forward_call_to_provider(
         &self,
         py: Python<'_>,
