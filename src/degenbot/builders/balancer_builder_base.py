@@ -159,6 +159,10 @@ class BalancerBuilderBase:
         pool_id: bytes,
         block: int | None,
     ) -> tuple[list[str], list[int]]:
+        fetcher = getattr(io, "fetch_balancer_vault_tokens", None)
+        if fetcher is not None:
+            tokens, balances = fetcher(BALANCER_V2_VAULT_ADDRESS, pool_id, block=block)
+            return list(tokens), [int(b) for b in balances]
         data = encode_function_calldata(
             "getPoolTokens(bytes32)",
             [pool_id],

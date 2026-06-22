@@ -1155,3 +1155,63 @@ def test_pybot_io_fetch_balancer_rate_providers_returns_empty_on_revert():
     io = PyBotIo(provider=_RevProv())
     with pytest.raises(Web3Exception):
         io.fetch_balancer_rate_providers("0x" + "aa" * 20)
+
+
+# === Balancer vault tokens RPC (slice 14m) ===
+#
+# `fetch_balancer_vault_tokens` moves `_fetch_vault_tokens` into Rust. The
+# hard part: `getPoolTokens(bytes32)` returns an ABI-encoded tuple of shape
+# `(address[], uint256[], uint256)` — a tuple with TWO nested dynamic arrays.
+# Only the first two members (tokens + balances) are returned.
+
+
+def test_pybot_io_fetch_balancer_vault_tokens_decodes_two_dynamic_arrays():
+    """fetch_balancer_vault_tokens(vault, pool_id, block) →
+    getPoolTokens(bytes32) → decode (address[], uint256[], uint256) and
+    return only the first two (tokens, balances)."""
+    vault = "0x" + "ba" * 20
+    pool_id = bytes(range(32))
+    tokens = ["0x" + "11" * 20, "0x" + "22" * 20]
+    balances = [10**18, 2 * 10**18]
+    last_block = 17_000_000
+    # Encode the full (address[], uint256[], uint256) tuple.
+    payload = eth_abi.abi.encode(
+        types=["address[]", "uint256[]", "uint256"],
+        args=[tokens, balances, last_block],
+    )
+    io = PyBotIo(provider=_BalancerProvider(**{"getPoolTokens(bytes32)": payload}))
+
+    result_tokens, result_balances = io.fetch_balancer_vault_tokens(vault, pool_id)
+
+    assert [t.lower() for t in result_tokens] == [t.lower() for t in tokens]
+    assert list(result_balances) == balances
+
+
+def test_pybot_io_fetch_balancer_vault_tokens_encodes_pool_id_arg():
+    """Verify the calldata passed to the provider: selector(4) + pool_id(32)."""
+    vault = "0x" + "ba" * 20
+    pool_id = bytes.fromhex("cd" * 32)
+    payload = eth_abi.abi.encode(
+        types=["address[]", "uint256[]", "uint256"],
+        args=[[], [], 0],
+    )
+    io = PyBotIo(provider=_BalancerProvider(**{"getPoolTokens(bytes32)": payload}))
+
+    io.fetch_balancer_vault_tokens(vault, pool_id)
+
+    calldata = io.provider.calls[0]
+    assert calldata[:4] == Web3.keccak(text="getPoolTokens(bytes32)")[:4]
+    assert calldata[4:36] == pool_id
+
+
+def test_pybot_io_fetch_balancer_vault_tokens_propagates_reverts():
+    """When getPoolTokens reverts, the exception propagates."""
+
+    class _RevProv:
+        def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+            msg = "execution reverted"
+            raise Web3Exception(msg)
+
+    io = PyBotIo(provider=_RevProv())
+    with pytest.raises(Web3Exception):
+        io.fetch_balancer_vault_tokens("0x" + "ba" * 20, bytes(32))
