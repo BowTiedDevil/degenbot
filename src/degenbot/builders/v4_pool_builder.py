@@ -266,17 +266,25 @@ class V4PoolBuilder(V4BuilderBase):
                 )
 
                 assert state_view_address is not None
-                (bitmap_at_word,) = eth_abi.abi.decode(
-                    types=["uint256"],
-                    data=io.call(
-                        to=state_view_address,
-                        data=encode_function_calldata(
-                            "getTickBitmap(bytes32,int16)",
-                            [pool_id_bytes, word],
+                # ADR-005 slice 14t: delegate V4 tick-bitmap + per-tick RPCs to Rust.
+                fetch_v4_tick_bitmap = getattr(io, "fetch_v4_tick_bitmap", None)
+                fetch_v4_tick_data = getattr(io, "fetch_v4_tick_data", None)
+                if fetch_v4_tick_bitmap is not None:
+                    bitmap_at_word = fetch_v4_tick_bitmap(
+                        state_view_address, pool_id_bytes, word, block=state_block
+                    )
+                else:
+                    (bitmap_at_word,) = eth_abi.abi.decode(
+                        types=["uint256"],
+                        data=io.call(
+                            to=state_view_address,
+                            data=encode_function_calldata(
+                                "getTickBitmap(bytes32,int16)",
+                                [pool_id_bytes, word],
+                            ),
+                            block=state_block,
                         ),
-                        block=state_block,
-                    ),
-                )
+                    )
 
                 if bitmap_at_word != 0:
                     active_ticks = [
@@ -286,18 +294,23 @@ class V4PoolBuilder(V4BuilderBase):
                     ]
 
                     for active_tick in active_ticks:
-                        result = io.call(
-                            to=state_view_address,
-                            data=encode_function_calldata(
-                                "getTickLiquidity(bytes32,int24)",
-                                [pool_id_bytes, active_tick],
-                            ),
-                            block=state_block,
-                        )
-                        liquidity_gross, liquidity_net = eth_abi.abi.decode(
-                            types=["uint128", "int128"],
-                            data=result,
-                        )
+                        if fetch_v4_tick_data is not None:
+                            liquidity_gross, liquidity_net = fetch_v4_tick_data(
+                                state_view_address, pool_id_bytes, active_tick, block=state_block
+                            )
+                        else:
+                            result = io.call(
+                                to=state_view_address,
+                                data=encode_function_calldata(
+                                    "getTickLiquidity(bytes32,int24)",
+                                    [pool_id_bytes, active_tick],
+                                ),
+                                block=state_block,
+                            )
+                            liquidity_gross, liquidity_net = eth_abi.abi.decode(
+                                types=["uint128", "int128"],
+                                data=result,
+                            )
                         working_tick_data[active_tick] = LiquidityAtTick(
                             liquidity_net=int(liquidity_net),
                             liquidity_gross=int(liquidity_gross),

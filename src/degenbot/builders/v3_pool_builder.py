@@ -258,14 +258,20 @@ class V3PoolBuilder(V3BuilderBase):
                     tick=int(tick), tick_spacing=tick_spacing_for_pool
                 )
 
-                (bitmap_at_word,) = eth_abi.abi.decode(
-                    types=["uint256"],
-                    data=io.call(
-                        to=pool_address,
-                        data=encode_function_calldata("tickBitmap(int16)", [word]),
-                        block=state_block,
-                    ),
-                )
+                # ADR-005 slice 14t: delegate tick-bitmap + per-tick RPCs to Rust.
+                fetch_tick_bitmap = getattr(io, "fetch_tick_bitmap", None)
+                fetch_tick_data = getattr(io, "fetch_tick_data", None)
+                if fetch_tick_bitmap is not None:
+                    bitmap_at_word = fetch_tick_bitmap(pool_address, word, block=state_block)
+                else:
+                    (bitmap_at_word,) = eth_abi.abi.decode(
+                        types=["uint256"],
+                        data=io.call(
+                            to=pool_address,
+                            data=encode_function_calldata("tickBitmap(int16)", [word]),
+                            block=state_block,
+                        ),
+                    )
 
                 if bitmap_at_word != 0:
                     active_ticks = [
@@ -275,24 +281,29 @@ class V3PoolBuilder(V3BuilderBase):
                     ]
 
                     for active_tick in active_ticks:
-                        result = io.call(
-                            to=pool_address,
-                            data=encode_function_calldata("ticks(int24)", [active_tick]),
-                            block=state_block,
-                        )
-                        liquidity_gross, liquidity_net, *_ = eth_abi.abi.decode(
-                            types=[
-                                "uint128",
-                                "int128",
-                                "uint256",
-                                "uint256",
-                                "int56",
-                                "uint160",
-                                "uint32",
-                                "bool",
-                            ],
-                            data=result,
-                        )
+                        if fetch_tick_data is not None:
+                            liquidity_gross, liquidity_net = fetch_tick_data(
+                                pool_address, active_tick, block=state_block
+                            )
+                        else:
+                            result = io.call(
+                                to=pool_address,
+                                data=encode_function_calldata("ticks(int24)", [active_tick]),
+                                block=state_block,
+                            )
+                            liquidity_gross, liquidity_net, *_ = eth_abi.abi.decode(
+                                types=[
+                                    "uint128",
+                                    "int128",
+                                    "uint256",
+                                    "uint256",
+                                    "int56",
+                                    "uint160",
+                                    "uint32",
+                                    "bool",
+                                ],
+                                data=result,
+                            )
                         working_tick_data[active_tick] = LiquidityAtTick(
                             liquidity_net=int(liquidity_net),
                             liquidity_gross=int(liquidity_gross),
