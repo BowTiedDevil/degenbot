@@ -211,15 +211,22 @@ class Erc20Builder:
         if (balance := token.get_cached_balance(address, block_number)) is not None:
             return balance
 
-        (balance,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=io.call(
-                to=token.address,
-                data=Web3.keccak(text="balanceOf(address)")[:4]
-                + eth_abi.abi.encode(types=["address"], args=[address]),
-                block=block_number,
-            ),
-        )
+        # ADR-005 slice 14d: when io is a PyBotIo (Bot's build path),
+        # delegate the balanceOf choreography to Rust. SyncPoolIO fallback
+        # keeps the Python implementation as a parity gate.
+        fetch_token_balance = getattr(io, "fetch_token_balance", None)
+        if fetch_token_balance is not None:
+            balance = fetch_token_balance(token.address, address, block=block_number)
+        else:
+            (balance,) = eth_abi.abi.decode(
+                types=["uint256"],
+                data=io.call(
+                    to=token.address,
+                    data=Web3.keccak(text="balanceOf(address)")[:4]
+                    + eth_abi.abi.encode(types=["address"], args=[address]),
+                    block=block_number,
+                ),
+            )
 
         token.set_cached_balance(address, block_number, cast("int", balance))
         return cast("int", balance)
@@ -250,15 +257,20 @@ class Erc20Builder:
         if (approval := token.get_cached_approval(block_number, owner, spender)) is not None:
             return approval
 
-        (approval,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=io.call(
-                to=token.address,
-                data=Web3.keccak(text="allowance(address,address)")[:4]
-                + eth_abi.abi.encode(types=["address", "address"], args=[owner, spender]),
-                block=block_number,
-            ),
-        )
+        # ADR-005 slice 14d: same delegation seam as `get_token_balance`.
+        fetch_token_allowance = getattr(io, "fetch_token_allowance", None)
+        if fetch_token_allowance is not None:
+            approval = fetch_token_allowance(token.address, owner, spender, block=block_number)
+        else:
+            (approval,) = eth_abi.abi.decode(
+                types=["uint256"],
+                data=io.call(
+                    to=token.address,
+                    data=Web3.keccak(text="allowance(address,address)")[:4]
+                    + eth_abi.abi.encode(types=["address", "address"], args=[owner, spender]),
+                    block=block_number,
+                ),
+            )
 
         token.set_cached_approval(block_number, owner, spender, cast("int", approval))
         return cast("int", approval)
@@ -285,14 +297,20 @@ class Erc20Builder:
         if (total_supply := token.get_cached_total_supply(block_number)) is not None:
             return total_supply
 
-        (total_supply,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=io.call(
-                to=token.address,
-                data=Web3.keccak(text="totalSupply()")[:4],
-                block=block_number,
-            ),
-        )
+        # ADR-005 slice 14d: same delegation seam as `get_token_balance`.
+        fetch_token_total_supply = getattr(io, "fetch_token_total_supply", None)
+        if fetch_token_total_supply is not None:
+            total_supply = fetch_token_total_supply(token.address, block=block_number)
+        else:
+            (total_supply,) = eth_abi.abi.decode(
+                types=["uint256"],
+                data=io.call(
+                    to=token.address,
+                    data=Web3.keccak(text="totalSupply()")[:4],
+                    block=block_number,
+                ),
+            )
+            total_supply = int(total_supply)
         total_supply = int(total_supply)
 
         token.set_cached_total_supply(block_number, total_supply)
