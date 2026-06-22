@@ -63,7 +63,7 @@ compile-test-contracts:
 
 # Run Python tests
 test-python: compile-test-contracts
-    uv run pytest tests/ --ff -x -q --no-header
+    uv run pytest --ff -x -q --no-header
 
 # Run all tests (Rust + Python)
 test-all: test-rust test-python
