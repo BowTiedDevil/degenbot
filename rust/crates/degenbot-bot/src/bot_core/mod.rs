@@ -17,6 +17,7 @@ use crate::optimizers::mobius_int::IntHopState;
 use degenbot_uniswap::v2_encoding::{encode_v2_swap, EncodedCall};
 
 pub mod block_pump;
+pub mod curve_state;
 pub mod drain_sink;
 pub mod engine;
 pub mod liquidity_verifier;
@@ -29,7 +30,9 @@ pub mod tick_map;
 pub mod v3_state;
 pub mod v4_state;
 
-// Re-export the merged V3/V4 state types (ADR-003: BotState owns CL state).
+// Re-export the merged V3/V4/Curve state types (ADR-003: BotState owns
+// pool state; Curve is the ADR-003 "third family").
+pub use curve_state::{CurveBlockDelta, CurvePoolState, RegisterCurvePoolParams};
 pub use v3_state::{
     v3_simulate_swap, BufferedV3LiquidityUpdate, PoolTickCoverage, RegisterV3PoolParams,
     V3PoolState, V3SwapOutcome, V3SwapUpdate,
@@ -55,6 +58,7 @@ pub enum PoolEntry {
     V2(V2PoolState),
     V3(V3PoolState),
     V4(V4PoolState),
+    Curve(CurvePoolState),
 }
 
 /// Read-only surface shared by [`V3PoolState`] and [`V4PoolState`] — the
@@ -367,6 +371,102 @@ impl BotState {
         pool_id
     }
 
+    /// Register a Curve `StableSwap` pool by contract address.
+    ///
+    /// ADR-005 slice 11a (state port) — the third `PoolEntry` family. Carries
+    /// immutable config (tokens, A, fee, variant strategy enums, base-pool
+    /// reference) + the registration-time mutable state (`balances`,
+    /// `update_block`). Seeds the reorg journal with a genesis anchor (mirror
+    /// of V2's discipline) so `curve_restore_before_block` can land on the
+    /// registration state.
+    ///
+    /// Returns the auto-assigned pool ID.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the pool address is already registered. The caller pre-checks
+    /// hook / dynamic-fee rejection at the Python seam for V4; Curve has no
+    /// analogous admission floor in this sub-slice (the stableswap math stays
+    /// Python-side at calc time, so there's no Rust correctness floor to
+    /// enforce yet).
+    pub fn register_curve_pool(&mut self, params: &RegisterCurvePoolParams) -> u64 {
+        assert!(
+            !self.pool_addresses.contains_key(&params.address),
+            "pool already registered: {}",
+            params.address
+        );
+
+        assert!(
+            params.balances.len() == params.tokens.len()
+                && params.balances.len() == params.rate_multipliers.len(),
+            "Curve params mismatch: tokens={}, balances={}, rate_multipliers={} (must all be N)",
+            params.tokens.len(),
+            params.balances.len(),
+            params.rate_multipliers.len(),
+        );
+
+        let pool_id = self.next_pool_id;
+        self.next_pool_id += 1;
+
+        let state = CurvePoolState::from_params(params.clone(), self.journal_depth);
+        self.pools.insert(pool_id, PoolEntry::Curve(state));
+        self.pool_addresses.insert(params.address, pool_id);
+
+        pool_id
+    }
+
+    /// Apply a Curve `external_update` (new balances from an `Exchange` event)
+    /// by `pool_id` — the `PyLiquidityPool.apply_curve_balance_update` backing.
+    ///
+    /// Journals the prior balances (genesis-anchor V2-style discipline), then
+    /// lands the new balances + `update_block`. Returns the affected `pool_id`,
+    /// or `None` if not registered / not a Curve pool (silent no-op — don't
+    /// corrupt a V2/V3/V4 pool).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `balances.len()` doesn't match the registered pool's coin
+    /// count — a wiring/programming error (the builder always passes an
+    /// `Exchange`-decoded balance tuple of the right arity).
+    #[must_use]
+    pub fn apply_curve_balance_update_by_pool_id(
+        &mut self,
+        pool_id: u64,
+        balances: Vec<U256>,
+        block_number: u64,
+    ) -> Option<u64> {
+        let Some(PoolEntry::Curve(state)) = self.pools.get_mut(&pool_id) else {
+            return None;
+        };
+        assert!(
+            balances.len() == state.balances.len(),
+            "Curve balance length mismatch: pool has {} tokens, update has {}",
+            state.balances.len(),
+            balances.len(),
+        );
+        state.journal.push_delta(CurveBlockDelta {
+            block: block_number,
+            balances_before: state.balances.clone(),
+            balances_after: balances.clone(),
+        });
+        state.balances = balances;
+        state.update_block = block_number;
+        Some(pool_id)
+    }
+
+    /// Read a registered Curve pool's state by `pool_id`.
+    ///
+    /// The Python companion (slice 11b) reads `balances` / `update_block`
+    /// through this accessor via `PyLiquidityPool.balances` getter. Returns
+    /// `None` for non-Curve pools (silent no-op).
+    #[must_use]
+    pub fn get_curve_pool(&self, pool_id: u64) -> Option<&CurvePoolState> {
+        match self.pools.get(&pool_id)? {
+            PoolEntry::Curve(state) => Some(state),
+            PoolEntry::V2(_) | PoolEntry::V3(_) | PoolEntry::V4(_) => None,
+        }
+    }
+
     /// Apply a V2 `Sync` event to a registered pool's state.
     ///
     /// This is the live-path mutation method (ADR-003): journals the prior
@@ -466,7 +566,7 @@ impl BotState {
     pub fn get_v2_pool_state(&self, pool_id: u64) -> Option<&V2PoolState> {
         match self.pools.get(&pool_id)? {
             PoolEntry::V2(state) => Some(state),
-            PoolEntry::V3(_) | PoolEntry::V4(_) => None,
+            PoolEntry::V3(_) | PoolEntry::V4(_) | PoolEntry::Curve(_) => None,
         }
     }
 
@@ -753,7 +853,7 @@ impl BotState {
                 state.invalidate_tick_range_cache();
                 true
             }
-            PoolEntry::V2(_) => false,
+            PoolEntry::V2(_) | PoolEntry::Curve(_) => false,
         }
     }
 
@@ -928,7 +1028,7 @@ impl BotState {
     pub fn get_v3_pool(&self, pool_id: u64) -> Option<&V3PoolState> {
         match self.pools.get(&pool_id)? {
             PoolEntry::V3(state) => Some(state),
-            PoolEntry::V2(_) | PoolEntry::V4(_) => None,
+            PoolEntry::V2(_) | PoolEntry::V4(_) | PoolEntry::Curve(_) => None,
         }
     }
 
@@ -942,7 +1042,7 @@ impl BotState {
             .iter()
             .filter_map(|(id, e)| match e {
                 PoolEntry::V3(state) => Some((*id, state.clone())),
-                PoolEntry::V2(_) | PoolEntry::V4(_) => None,
+                PoolEntry::V2(_) | PoolEntry::V4(_) | PoolEntry::Curve(_) => None,
             })
             .collect()
     }
@@ -967,7 +1067,7 @@ impl BotState {
         match self.pools.get(&pool_id)? {
             PoolEntry::V3(state) => Some(state),
             PoolEntry::V4(state) => Some(state),
-            PoolEntry::V2(_) => None,
+            PoolEntry::V2(_) | PoolEntry::Curve(_) => None,
         }
     }
 
@@ -1073,6 +1173,12 @@ impl BotState {
                     outcome.amount0
                 }
             }
+            // Curve: the stableswap math is NOT ported in the state-port
+            // sub-slice (11a). The Python companion (11b) keeps doing its
+            // own math via `DyCalculator`; this Rust core path returns 0
+            // (the "not-yet-Rust-side" sentinel — same as an unregistered
+            // pool). Ported in sub-slice 11c (pure-math port).
+            PoolEntry::Curve(_) => U256::ZERO,
         }
     }
 
@@ -1168,6 +1274,9 @@ impl BotState {
                     outcome.amount1
                 }
             }
+            // Curve: stableswap math not ported in this sub-slice (11a);
+            // see `calculate_tokens_out`'s Curve arm. Returns 0.
+            PoolEntry::Curve(_) => U256::ZERO,
         }
     }
 
@@ -1363,6 +1472,9 @@ impl BotState {
                 Some(PoolEntry::V4(state)) => {
                     state.journal.newest_block().is_some_and(|b| b >= target)
                 }
+                Some(PoolEntry::Curve(state)) => {
+                    state.journal.newest_block().is_some_and(|b| b >= target)
+                }
                 None => false,
             };
             if !needs_restore {
@@ -1395,6 +1507,11 @@ impl BotState {
                     // priors); delegated to `v4_restore_before_block`.
                     self.v4_restore_before_block(pool_id, target).is_some()
                 }
+                Some(PoolEntry::Curve(_)) => {
+                    // Curve restore: same full-state delta shape as V2;
+                    // delegated to `curve_restore_before_block`.
+                    self.curve_restore_before_block(pool_id, target).is_some()
+                }
                 None => false,
             };
             if did_restore {
@@ -1402,6 +1519,66 @@ impl BotState {
             }
         }
         restored
+    }
+
+    // --- Curve journal methods (ADR-005 slice 11a state port) ---
+
+    /// Get the number of deltas in the reorg journal for a Curve pool.
+    ///
+    /// Returns 0 if the pool ID is not registered or is not a Curve pool.
+    #[must_use]
+    pub fn curve_journal_len(&self, pool_id: u64) -> usize {
+        match self.pools.get(&pool_id) {
+            Some(PoolEntry::Curve(state)) => state.journal.len(),
+            _ => 0,
+        }
+    }
+
+    /// Discard Curve reorg journal deltas earlier than the given block.
+    ///
+    /// No-op if the earliest delta is at/after the target, or the pool is not
+    /// registered / not a Curve pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(JournalError::NoStateAtOrAfterBlock)` if the target is past
+    /// the newest delta.
+    pub fn curve_discard_before_block(
+        &mut self,
+        pool_id: u64,
+        block: u64,
+    ) -> Result<(), JournalError> {
+        let Some(PoolEntry::Curve(state)) = self.pools.get_mut(&pool_id) else {
+            return Ok(());
+        };
+        state.journal.discard_before_block(block)
+    }
+
+    /// Restore Curve pool state prior to a target block.
+    ///
+    /// Pops reorg journal deltas at/after the target block and restores the
+    /// landed-at balances (the `balances_after` of the largest delta below the
+    /// target) into the current mutable fields. Mirrors `v2_restore_before_block`
+    /// (Curve is a full-state delta, same shape as V2).
+    ///
+    /// Returns `Some(Ok((balances, block)))` on success, `Some(Err)` if the
+    /// pool exists but the target is at/before registration (no state before
+    /// it), or `None` if the pool ID is not registered / not a Curve pool.
+    pub fn curve_restore_before_block(
+        &mut self,
+        pool_id: u64,
+        block: u64,
+    ) -> Option<Result<(Vec<U256>, u64), JournalError>> {
+        let PoolEntry::Curve(state) = self.pools.get_mut(&pool_id)? else {
+            return None;
+        };
+        let (balances, blk) = match state.journal.restore_curve_before_block(block) {
+            Ok(v) => v,
+            Err(e) => return Some(Err(e)),
+        };
+        state.balances.clone_from(&balances);
+        state.update_block = blk;
+        Some(Ok((balances, blk)))
     }
 
     // --- V3 journal methods ---
@@ -1468,6 +1645,9 @@ impl BotState {
             Some(PoolEntry::V4(_)) => {
                 let _ = self.v4_restore_before_block(pool_id, block);
             }
+            Some(PoolEntry::Curve(_)) => {
+                let _ = self.curve_restore_before_block(pool_id, block);
+            }
             None => {}
         }
     }
@@ -1508,6 +1688,12 @@ impl BotState {
             // No genesis anchor — empty journal is the only too-deep case.
             PoolEntry::V3(state) => !state.journal.is_empty(),
             PoolEntry::V4(state) => !state.journal.is_empty(),
+            // Curve carries a genesis delta (mirror of V2) — a target at/before
+            // the genesis block is too-deep: `earliest < block`.
+            PoolEntry::Curve(state) => state
+                .journal
+                .earliest_block()
+                .is_some_and(|earliest| earliest < block),
         }
     }
 
@@ -1595,7 +1781,7 @@ impl BotState {
                 Some(call)
             }
             // V3 encoding is not yet implemented
-            PoolEntry::V3(_) | PoolEntry::V4(_) => None,
+            PoolEntry::V3(_) | PoolEntry::V4(_) | PoolEntry::Curve(_) => None,
         }
     }
 
@@ -2107,7 +2293,7 @@ impl BotState {
     pub fn get_v4_pool(&self, pool_id: u64) -> Option<&V4PoolState> {
         match self.pools.get(&pool_id)? {
             PoolEntry::V4(state) => Some(state),
-            PoolEntry::V2(_) | PoolEntry::V3(_) => None,
+            PoolEntry::V2(_) | PoolEntry::V3(_) | PoolEntry::Curve(_) => None,
         }
     }
 
@@ -2145,7 +2331,7 @@ impl BotState {
             .iter()
             .filter_map(|(id, e)| match e {
                 PoolEntry::V4(state) => Some((*id, state.clone())),
-                PoolEntry::V2(_) | PoolEntry::V3(_) => None,
+                PoolEntry::V2(_) | PoolEntry::V3(_) | PoolEntry::Curve(_) => None,
             })
             .collect()
     }

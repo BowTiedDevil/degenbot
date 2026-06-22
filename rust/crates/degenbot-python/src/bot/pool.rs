@@ -11,10 +11,10 @@ use crate::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyList};
 
 use crate::bot::journal_err_to_py;
-use degenbot_bot::bot_core::{BotState, TickInfo};
+use degenbot_bot::bot_core::{BotState, CurvePoolState, TickInfo};
 
 /// Encode a byte slice as a lowercase hex string (no "0x" prefix).
 fn bytes_to_hex(bytes: &[u8]) -> String {
@@ -657,5 +657,92 @@ impl PyLiquidityPool {
             dict.set_item(word_pos, tuple)?;
         }
         Ok(dict.into_any().unbind())
+    }
+
+    // --- Curve state read getters + mutations (ADR-005 slice 11a state port) ---
+
+    /// Number of tokens for a Curve pool (`balances.len()`).
+    ///
+    /// Returns 0 if this `pool_id` is not registered as a Curve pool.
+    #[getter]
+    fn n_coins(&self) -> usize {
+        self.core
+            .read()
+            .get_curve_pool(self.pool_id)
+            .map_or(0, CurvePoolState::n_coins)
+    }
+
+    /// Current balances for a Curve pool (one `U256` per token).
+    ///
+    /// Returns `None` if this `pool_id` is not registered as a Curve pool
+    /// (so a V2/V3/V4 companion built for a different family doesn't crash).
+    #[getter]
+    fn balances(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let bal: Vec<alloy::primitives::U256> = {
+            let core = self.core.read();
+            let Some(s) = core.get_curve_pool(self.pool_id) else {
+                return Ok(pyo3::types::PyList::empty(py).into_any().unbind());
+            };
+            s.balances.clone()
+        };
+        let py_bal: Vec<Py<PyAny>> = bal
+            .iter()
+            .map(|b| crate::conversion::alloy::u256_to_py(py, b).map(pyo3::Bound::unbind))
+            .collect::<PyResult<_>>()?;
+        Ok(pyo3::types::PyList::new(py, py_bal)?.into_any().unbind())
+    }
+
+    /// Snapshot a Curve pool's mutable state as `(balances, update_block)`.
+    ///
+    /// Returns `None` for non-Curve pools (the V3/V4 `snapshot_v3` family
+    /// analogue — family-dispatching readers).
+    #[pyo3(signature = ())]
+    fn snapshot_curve(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        let snap: Option<(Vec<alloy::primitives::U256>, u64)> = {
+            let core = self.core.read();
+            let Some(s) = core.get_curve_pool(self.pool_id) else {
+                return Ok(None);
+            };
+            Some((s.balances.clone(), s.update_block))
+        };
+        let Some(snap) = snap else {
+            return Ok(None);
+        };
+        let py_bal: Vec<Py<PyAny>> = snap
+            .0
+            .iter()
+            .map(|b| crate::conversion::alloy::u256_to_py(py, b).map(pyo3::Bound::unbind))
+            .collect::<PyResult<_>>()?;
+        let list = pyo3::types::PyList::new(py, py_bal)?;
+        let tuple = pyo3::types::PyTuple::new(
+            py,
+            [
+                list.into_any().unbind(),
+                snap.1.into_pyobject(py)?.into_any().unbind(),
+            ],
+        )?;
+        Ok(Some(tuple.into_any().unbind()))
+    }
+
+    /// Apply a Curve `external_update` (new balances from an `Exchange` event).
+    ///
+    /// Journals the prior balances then lands the new balances + `update_block`.
+    /// Silent no-op (`False`) if this `pool_id` is not registered as a Curve
+    /// pool (so a V2/V3/V4 companion doesn't corrupt its state).
+    #[pyo3(signature = (balances, block_number))]
+    fn apply_curve_balance_update(
+        &self,
+        balances: &Bound<'_, PyList>,
+        block_number: u64,
+    ) -> PyResult<bool> {
+        let bal: Vec<alloy::primitives::U256> = balances
+            .iter()
+            .map(|item| crate::conversion::alloy::extract_python_u256(&item))
+            .collect::<PyResult<_>>()?;
+        Ok(self
+            .core
+            .write()
+            .apply_curve_balance_update_by_pool_id(self.pool_id, bal, block_number)
+            .is_some())
     }
 }

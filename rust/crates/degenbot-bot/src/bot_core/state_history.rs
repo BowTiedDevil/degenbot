@@ -13,6 +13,7 @@
 //! V3 stores only modified tick priors (typically 0–4 entries per block)
 //! plus scalar fields, vastly outperforming full-tick-map cloning.
 
+use crate::bot_core::curve_state::CurveBlockDelta;
 use std::collections::VecDeque;
 
 // ---------------------------------------------------------------------------
@@ -568,6 +569,66 @@ impl ReorgJournal<V3BlockDelta> {
             tick_priors,
             block: oldest_block,
         }
+    }
+}
+
+impl ReorgJournal<CurveBlockDelta> {
+    /// Restore to the state landed just **before** a target block.
+    ///
+    /// Landed-at semantics (ADR-005 slice 4): returns the `balances_after` of
+    /// the largest-block delta strictly less than `block`, and pops every
+    /// delta at/after `block` so the journal's new newest IS the landed-at
+    /// state. Mirrors `ReorgJournal::<V2BlockDelta>::restore_before_block` —
+    /// Curve is a full-state delta (N balances), same shape as V2.
+    ///
+    /// # Errors
+    ///
+    /// - `NoStatePriorToBlock` if the journal is empty, or the target is at
+    ///   or before the registration (genesis) delta — no state exists before
+    ///   it.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the journal's internal invariants are violated (the
+    /// `expect` after the pop loop is unreachable when the earliest-delta
+    /// check above passes).
+    pub fn restore_curve_before_block(
+        &mut self,
+        block: u64,
+    ) -> Result<(Vec<alloy::primitives::U256>, u64), JournalError> {
+        if self.deltas.is_empty() {
+            return Err(JournalError::NoStatePriorToBlock { block });
+        }
+
+        let len = self.deltas.len();
+        let newest = &self.deltas[len - 1];
+        let newest_block = newest.block();
+
+        // No-op: newest is before the target → current state IS the landed-at
+        // state. Return `balances_after` (the current state).
+        if newest_block < block {
+            return Ok((newest.balances_after.clone(), newest_block));
+        }
+
+        // newest >= block: there's something to pop. If the earliest is at or
+        // after the target, no delta lands before it → rolling back past
+        // registration. Raise rather than silently returning registration.
+        let earliest_block = self.deltas[0].block();
+        if earliest_block >= block {
+            return Err(JournalError::NoStatePriorToBlock { block });
+        }
+
+        // Pop every delta at/after the target.
+        while !self.deltas.is_empty() && self.deltas[self.deltas.len() - 1].block() >= block {
+            self.deltas.pop_back();
+        }
+
+        let landed = self
+            .deltas
+            .back()
+            .expect("earliest < block guarantees a surviving delta");
+        let landed_block = landed.block();
+        Ok((landed.balances_after.clone(), landed_block))
     }
 }
 
