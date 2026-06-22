@@ -873,3 +873,84 @@ def test_pybot_io_probe_pool_type_returns_stableswap_fallback():
     """When all probes revert, probe returns 'stableswap' (Curve fallback)."""
     io = PyBotIo(provider=_ProbeProvider(succeed=set()))
     assert io.probe_pool_type("0x" + "aa" * 20) == "stableswap"
+
+
+# === V3 tick bitmap + tick data RPCs (slice 14j) ===
+#
+# `fetch_tick_bitmap` and `fetch_tick_data` move the two parameterized-call
+# sub-choreographies from `_fetch_v3` (tick_data_fetcher.py) into Rust.
+# New pattern: signed-integer argument encoding (int16 for word_position,
+# int24 for tick). The bitmap iteration + dict-building stays Python-side.
+
+
+class _TickDataProvider:
+    """Provider returning canned tickBitmap + ticks responses."""
+
+    def __init__(self, *, bitmap: int, liquidity_gross: int, liquidity_net: int) -> None:
+        self._bitmap = bitmap
+        self._lg = liquidity_gross
+        self._ln = liquidity_net
+        self.calls: list[bytes] = []
+
+    def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+        self.calls.append(data)
+        sel = data[:4]
+        # tickBitmap(int16) selector = 0x5339c296
+        if sel == Web3.keccak(text="tickBitmap(int16)")[:4]:
+            return HexBytes(eth_abi.abi.encode(types=["uint256"], args=[self._bitmap]))
+        # ticks(int24) selector = 0xf30dba93
+        if sel == Web3.keccak(text="ticks(int24)")[:4]:
+            return HexBytes(
+                eth_abi.abi.encode(types=["uint128", "int128"], args=[self._lg, self._ln])
+            )
+        msg = f"unexpected selector {sel.hex()}"
+        raise ValueError(msg)
+
+
+def test_pybot_io_fetch_tick_bitmap_encodes_int16_arg_and_decodes_uint256():
+    """fetch_tick_bitmap(pool, word_position) encodes tickBitmap(int16)
+    with the word position as a sign-extended int16 argument, decodes uint256."""
+    bitmap = 0xDEADBEEF
+    word_position = -3  # negative int16 — sign extension must work
+    io = PyBotIo(provider=_TickDataProvider(bitmap=bitmap, liquidity_gross=0, liquidity_net=0))
+
+    result = io.fetch_tick_bitmap("0x" + "aa" * 20, word_position)
+
+    assert result == bitmap
+    # Verify the int16 arg is sign-extended in the 32-byte word.
+    calldata = io.provider.calls[0]
+    assert calldata[:4] == Web3.keccak(text="tickBitmap(int16)")[:4]
+    # For -3, the 32-byte word should be all 0xFF except the last byte = 0xFD.
+    assert calldata[4:36] == (b"\xff" * 31) + bytes([0xFD])
+
+
+def test_pybot_io_fetch_tick_data_encodes_int24_arg_and_decodes_uint128_int128():
+    """fetch_tick_data(pool, tick) encodes ticks(int24) with the tick as a
+    sign-extended int24 argument, decodes (uint128, int128) — the first two
+    fields of the tick struct (liquidity_gross, liquidity_net)."""
+    lg = 1_000_000_000_000
+    ln = -500_000_000_000  # negative liquidity_net
+    tick = -887_220  # real mainnet negative tick
+    io = PyBotIo(provider=_TickDataProvider(bitmap=0, liquidity_gross=lg, liquidity_net=ln))
+
+    result = io.fetch_tick_data("0x" + "aa" * 20, tick)
+
+    assert result == (lg, ln)
+    # Verify the int24 arg is sign-extended.
+    calldata = io.provider.calls[0]
+    assert calldata[:4] == Web3.keccak(text="ticks(int24)")[:4]
+
+
+def test_pybot_io_fetch_tick_bitmap_returns_zero_on_revert():
+    """When tickBitmap reverts, the Python caller silently returns (no bitmap
+    entry). The Rust method should propagate the exception so the Python
+    caller's except clause handles it."""
+
+    class _RevProv:
+        def call(self, *, to: str, data: bytes, block: int | None = None) -> HexBytes:
+            msg = "reverted"
+            raise RuntimeError(msg)
+
+    io = PyBotIo(provider=_RevProv())
+    with pytest.raises(RuntimeError):
+        io.fetch_tick_bitmap("0x" + "aa" * 20, 0)

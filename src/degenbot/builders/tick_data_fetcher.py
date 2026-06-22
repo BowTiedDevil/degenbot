@@ -121,17 +121,27 @@ def _fetch_v3(
     types: TickDataTypes,
 ) -> None:
     """Fetch tick bitmap + data for a V3 pool using its direct contract calls."""
-    try:
-        (bitmap_value,) = eth_abi.abi.decode(
-            types=["uint256"],
-            data=io.call(
-                to=pool_ref.address,
-                data=encode_function_calldata("tickBitmap(int16)", [word_position]),
-                block=block_number,
-            ),
-        )
-    except Exception:  # noqa: BLE001
-        return
+    # ADR-005 slice 14j: when io is a PyBotIo, delegate tick RPC calls to Rust.
+    fetch_tick_bitmap = getattr(io, "fetch_tick_bitmap", None)
+    fetch_tick_data = getattr(io, "fetch_tick_data", None)
+
+    if fetch_tick_bitmap is not None:
+        try:
+            bitmap_value = fetch_tick_bitmap(pool_ref.address, word_position, block=block_number)
+        except Exception:  # noqa: BLE001
+            return
+    else:
+        try:
+            (bitmap_value,) = eth_abi.abi.decode(
+                types=["uint256"],
+                data=io.call(
+                    to=pool_ref.address,
+                    data=encode_function_calldata("tickBitmap(int16)", [word_position]),
+                    block=block_number,
+                ),
+            )
+        except Exception:  # noqa: BLE001
+            return
 
     working_tick_bitmap[word_position] = types.bitmap_at_word(
         bitmap=bitmap_value, block=block_number
@@ -145,20 +155,34 @@ def _fetch_v3(
         ]
 
         for active_tick in active_ticks:
-            try:
-                result = io.call(
-                    to=pool_ref.address,
-                    data=encode_function_calldata("ticks(int24)", [active_tick]),
-                    block=block_number,
-                )
-            except Exception:  # noqa: BLE001
-                logger.debug("Failed to fetch tick data for tick %d", active_tick, exc_info=True)
-                continue
+            if fetch_tick_data is not None:
+                try:
+                    liquidity_gross, liquidity_net = fetch_tick_data(
+                        pool_ref.address, active_tick, block=block_number
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.debug(
+                        "Failed to fetch tick data for tick %d", active_tick, exc_info=True
+                    )
+                    continue
+            else:
+                try:
+                    result = io.call(
+                        to=pool_ref.address,
+                        data=encode_function_calldata("ticks(int24)", [active_tick]),
+                        block=block_number,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.debug(
+                        "Failed to fetch tick data for tick %d", active_tick, exc_info=True
+                    )
+                    continue
 
-            liquidity_gross, liquidity_net, *_ = eth_abi.abi.decode(
-                types=types.tick_struct_types,
-                data=result,
-            )
+                liquidity_gross, liquidity_net, *_ = eth_abi.abi.decode(
+                    types=types.tick_struct_types,
+                    data=result,
+                )
+
             working_tick_data[active_tick] = types.liquidity_at_tick(
                 liquidity_net=int(liquidity_net),
                 liquidity_gross=int(liquidity_gross),
