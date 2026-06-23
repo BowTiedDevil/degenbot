@@ -311,7 +311,7 @@ class SolidlyStableSolver(Solver):
                         reserve_in=hop.reserve_in,
                         reserve_out=hop.reserve_out,
                         fee=hop.fee,
-                    )
+                    ),
                 )
             else:
                 v2_equiv_hops.append(hop)

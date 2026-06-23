@@ -39,9 +39,9 @@ def cleanup_zero_balance_positions(
                 .where(
                     AaveV3User.market_id == market.id,
                     AaveV3CollateralPosition.balance == 0,
-                )
-            )
-        )
+                ),
+            ),
+        ),
     )
 
     # Delete zero-balance debt positions using bulk delete
@@ -53,9 +53,9 @@ def cleanup_zero_balance_positions(
                 .where(
                     AaveV3User.market_id == market.id,
                     AaveV3DebtPosition.balance == 0,
-                )
-            )
-        )
+                ),
+            ),
+        ),
     )
 
 

@@ -178,7 +178,7 @@ def stream_v3_snapshot_to_engine(
             WHERE p.chain = :chain_id
               AND p.kind IN ('uniswap_v3', 'sushiswap_v3', 'pancakeswap_v3', 'aerodrome_v3')
             ORDER BY p.address, lp.tick
-            """
+            """,
         ),
         {"chain_id": snapshot.chain_id},
     ).yield_per(10_000)
@@ -213,7 +213,7 @@ def stream_v4_snapshot_to_engine(
     if not isinstance(snapshot._source, V4DatabaseSnapshot):  # noqa: SLF001
         # Non-DB source — fall back to batch method
         engine.load_v4_snapshot_from_py(
-            _v4_snapshot_to_py_dict(snapshot, managed_pools=snapshot.pools)
+            _v4_snapshot_to_py_dict(snapshot, managed_pools=snapshot.pools),
         )
         return
 
@@ -233,7 +233,7 @@ def stream_v4_snapshot_to_engine(
             JOIN managed_pool_liquidity_positions lp ON lp.managed_pool_id = mp.id
             WHERE pm.chain = :chain_id AND mp.kind = 'uniswap_v4'
             ORDER BY pm.address, v4.pool_hash, lp.tick
-            """
+            """,
         ),
         {"chain_id": snapshot.chain_id},
     ).yield_per(10_000)

@@ -58,7 +58,10 @@ class V3PoolBuilder(V3BuilderBase):
         self._py_bot = ctx.py_bot
 
     def _make_tick_data_fetcher(
-        self, pool_address: str, chain_id: int, io: PoolIO
+        self,
+        pool_address: str,
+        chain_id: int,
+        io: PoolIO,
     ) -> Callable[[int, int], None]:
         """Create a tick data fetcher callback for a V3 pool.
 
@@ -117,7 +120,7 @@ class V3PoolBuilder(V3BuilderBase):
                 select(LiquidityPoolTable).where(
                     LiquidityPoolTable.address == pool_address,
                     LiquidityPoolTable.chain == chain_id,
-                )
+                ),
             )
             if pool_from_db is not None:
                 if not isinstance(pool_from_db, UniswapV3PoolTableBase):
@@ -191,10 +194,16 @@ class V3PoolBuilder(V3BuilderBase):
 
         # Build tokens
         token0 = self._erc20_builder.build(
-            token0_address, chain_id=chain_id, silent=request.silent, io=io
+            token0_address,
+            chain_id=chain_id,
+            silent=request.silent,
+            io=io,
         )
         token1 = self._erc20_builder.build(
-            token1_address, chain_id=chain_id, silent=request.silent, io=io
+            token1_address,
+            chain_id=chain_id,
+            silent=request.silent,
+            io=io,
         )
 
         # Fetch slot0 + liquidity
@@ -203,7 +212,8 @@ class V3PoolBuilder(V3BuilderBase):
         if fetch_v3_slot0_liquidity is not None:
             try:
                 sqrt_price_x96, tick, liquidity = fetch_v3_slot0_liquidity(
-                    pool_address, block=state_block
+                    pool_address,
+                    block=state_block,
                 )
             except Exception as exc:
                 raise LiquidityPoolError(message="Could not decode contract data") from exc
@@ -244,10 +254,11 @@ class V3PoolBuilder(V3BuilderBase):
             if pool_id_db is not None:
                 with contextlib.suppress(Exception), self._db() as session:
                     pool_with_data = session.scalar(
-                        select(LiquidityPoolTable).where(LiquidityPoolTable.id == pool_id_db)
+                        select(LiquidityPoolTable).where(LiquidityPoolTable.id == pool_id_db),
                     )
                     if pool_with_data is not None and isinstance(
-                        pool_with_data, UniswapV3PoolTableBase
+                        pool_with_data,
+                        UniswapV3PoolTableBase,
                     ):
                         working_tick_bitmap, working_tick_data, db_snapshot_loaded = (
                             V3BuilderBase.load_tick_snapshot(pool_with_data)
@@ -255,7 +266,8 @@ class V3PoolBuilder(V3BuilderBase):
 
             if not db_snapshot_loaded:
                 word, _ = get_tick_word_and_bit_position(
-                    tick=int(tick), tick_spacing=tick_spacing_for_pool
+                    tick=int(tick),
+                    tick_spacing=tick_spacing_for_pool,
                 )
 
                 # ADR-005 slice 14t: delegate tick-bitmap + per-tick RPCs to Rust.
@@ -283,7 +295,9 @@ class V3PoolBuilder(V3BuilderBase):
                     for active_tick in active_ticks:
                         if fetch_tick_data is not None:
                             liquidity_gross, liquidity_net = fetch_tick_data(
-                                pool_address, active_tick, block=state_block
+                                pool_address,
+                                active_tick,
+                                block=state_block,
                             )
                         else:
                             result = io.call(
@@ -462,7 +476,8 @@ class V3PoolBuilder(V3BuilderBase):
         fetch_v3_slot0_liquidity = getattr(io, "fetch_v3_slot0_liquidity", None)
         if fetch_v3_slot0_liquidity is not None:
             sqrt_price_x96, tick, liquidity = fetch_v3_slot0_liquidity(
-                pool.address, block=block_number_
+                pool.address,
+                block=block_number_,
             )
         else:
             slot0_result = io.call(

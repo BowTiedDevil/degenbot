@@ -63,7 +63,7 @@ def activate_base_aerodrome_v2(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
         if exchange is not None:
             if exchange.active:
@@ -79,7 +79,7 @@ def activate_base_aerodrome_v2(
                     name=exchange_name,
                     active=True,
                     factory=BaseAerodromeV2.factory.address,
-                )
+                ),
             )
             session.commit()
 
@@ -99,7 +99,7 @@ def activate_base_aerodrome_v3(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
         if exchange is not None:
             if exchange.active:
@@ -115,7 +115,7 @@ def activate_base_aerodrome_v3(
                     name=exchange_name,
                     active=True,
                     factory=BaseAerodromeV3.factory.address,
-                )
+                ),
             )
             session.commit()
 
@@ -135,7 +135,7 @@ def activate_base_pancakeswap_v2(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
         if exchange is not None:
             if exchange.active:
@@ -151,7 +151,7 @@ def activate_base_pancakeswap_v2(
                     name=exchange_name,
                     active=True,
                     factory=BasePancakeswapV2.factory.address,
-                )
+                ),
             )
             session.commit()
 
@@ -171,7 +171,7 @@ def activate_base_pancakeswap_v3(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
         if exchange is not None:
             if exchange.active:
@@ -188,7 +188,7 @@ def activate_base_pancakeswap_v3(
                     active=True,
                     factory=BasePancakeswapV3.factory.address,
                     deployer=BasePancakeswapV3.factory.deployer,
-                )
+                ),
             )
             session.commit()
 
@@ -208,7 +208,7 @@ def activate_base_swapbased_v2(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
         if exchange is not None:
             if exchange.active:
@@ -224,7 +224,7 @@ def activate_base_swapbased_v2(
                     name=exchange_name,
                     active=True,
                     factory=BaseSwapbasedV2.factory.address,
-                )
+                ),
             )
             session.commit()
 
@@ -244,7 +244,7 @@ def activate_base_sushiswap_v2(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
         if exchange is not None:
             if exchange.active:
@@ -260,7 +260,7 @@ def activate_base_sushiswap_v2(
                     name=exchange_name,
                     active=True,
                     factory=BaseSushiswapV2.factory.address,
-                )
+                ),
             )
             session.commit()
 
@@ -280,7 +280,7 @@ def activate_base_sushiswap_v3(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
         if exchange is not None:
             if exchange.active:
@@ -296,7 +296,7 @@ def activate_base_sushiswap_v3(
                     name=exchange_name,
                     active=True,
                     factory=BaseSushiswapV3.factory.address,
-                )
+                ),
             )
             session.commit()
 
@@ -316,7 +316,7 @@ def activate_base_uniswap_v2(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
         if exchange is not None:
             if exchange.active:
@@ -332,7 +332,7 @@ def activate_base_uniswap_v2(
                     name=exchange_name,
                     active=True,
                     factory=BaseUniswapV2.factory.address,
-                )
+                ),
             )
             session.commit()
 
@@ -352,7 +352,7 @@ def activate_base_uniswap_v3(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
         if exchange is not None:
             if exchange.active:
@@ -368,7 +368,7 @@ def activate_base_uniswap_v3(
                     name=exchange_name,
                     active=True,
                     factory=BaseUniswapV3.factory.address,
-                )
+                ),
             )
             session.commit()
 
@@ -390,7 +390,7 @@ def activate_base_uniswap_v4(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
         if exchange is not None:
             if exchange.active:
@@ -413,7 +413,7 @@ def activate_base_uniswap_v4(
                 select(PoolManagerTable).where(
                     PoolManagerTable.address == BaseUniswapV4.pool_manager.address,
                     PoolManagerTable.chain == chain_id,
-                )
+                ),
             )
             if manager_in_db is None:
                 session.add(
@@ -423,7 +423,7 @@ def activate_base_uniswap_v4(
                         kind=exchange_kind,
                         exchange_id=exchange.id,
                         state_view=BaseUniswapV4.state_view.address,
-                    )
+                    ),
                 )
 
             session.commit()
@@ -444,7 +444,7 @@ def activate_ethereum_pancakeswap_v2(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
         if exchange is not None:
             if exchange.active:
@@ -460,7 +460,7 @@ def activate_ethereum_pancakeswap_v2(
                     name=exchange_name,
                     active=True,
                     factory=EthereumMainnetPancakeswapV2.factory.address,
-                )
+                ),
             )
             session.commit()
 
@@ -480,7 +480,7 @@ def activate_ethereum_pancakeswap_v3(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
         if exchange is not None:
             if exchange.active:
@@ -497,7 +497,7 @@ def activate_ethereum_pancakeswap_v3(
                     active=True,
                     factory=EthereumMainnetPancakeswapV3.factory.address,
                     deployer=EthereumMainnetPancakeswapV3.factory.deployer,
-                )
+                ),
             )
             session.commit()
 
@@ -517,7 +517,7 @@ def activate_ethereum_sushiswap_v2(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
         if exchange is not None:
             if exchange.active:
@@ -533,7 +533,7 @@ def activate_ethereum_sushiswap_v2(
                     name=exchange_name,
                     active=True,
                     factory=EthereumMainnetSushiswapV2.factory.address,
-                )
+                ),
             )
             session.commit()
 
@@ -553,7 +553,7 @@ def activate_ethereum_sushiswap_v3(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
         if exchange is not None:
             if exchange.active:
@@ -569,7 +569,7 @@ def activate_ethereum_sushiswap_v3(
                     name=exchange_name,
                     active=True,
                     factory=EthereumMainnetSushiswapV3.factory.address,
-                )
+                ),
             )
             session.commit()
 
@@ -589,7 +589,7 @@ def activate_ethereum_uniswap_v2(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
         if exchange is not None:
             if exchange.active:
@@ -605,7 +605,7 @@ def activate_ethereum_uniswap_v2(
                     name=exchange_name,
                     active=True,
                     factory=EthereumMainnetUniswapV2.factory.address,
-                )
+                ),
             )
             session.commit()
 
@@ -625,7 +625,7 @@ def activate_ethereum_uniswap_v3(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
         if exchange is not None:
             if exchange.active:
@@ -641,7 +641,7 @@ def activate_ethereum_uniswap_v3(
                     name=exchange_name,
                     active=True,
                     factory=EthereumMainnetUniswapV3.factory.address,
-                )
+                ),
             )
             session.commit()
 
@@ -663,7 +663,7 @@ def activate_ethereum_uniswap_v4(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
         if exchange is not None:
             if exchange.active:
@@ -686,7 +686,7 @@ def activate_ethereum_uniswap_v4(
                 select(PoolManagerTable).where(
                     PoolManagerTable.address == EthereumMainnetUniswapV4.pool_manager.address,
                     PoolManagerTable.chain == chain_id,
-                )
+                ),
             )
             if manager_in_db is None:
                 session.add(
@@ -696,7 +696,7 @@ def activate_ethereum_uniswap_v4(
                         kind=exchange_kind,
                         exchange_id=exchange.id,
                         state_view=EthereumMainnetUniswapV4.state_view.address,
-                    )
+                    ),
                 )
 
             session.commit()
@@ -717,7 +717,7 @@ def deactivate_base_aerodrome_v2(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
 
         if exchange is None:
@@ -746,7 +746,7 @@ def deactivate_base_aerodrome_v3(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
 
         if exchange is None:
@@ -775,12 +775,12 @@ def deactivate_base_pancakeswap_v2(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
 
         if exchange is None:
             click.echo(
-                f"The database has no entry for Pancakeswap V2 on Base (chain ID {chain_id})."
+                f"The database has no entry for Pancakeswap V2 on Base (chain ID {chain_id}).",
             )
             return
 
@@ -806,12 +806,12 @@ def deactivate_base_pancakeswap_v3(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
 
         if exchange is None:
             click.echo(
-                f"The database has no entry for Pancakeswap V3 on Base (chain ID {chain_id})."
+                f"The database has no entry for Pancakeswap V3 on Base (chain ID {chain_id}).",
             )
             return
 
@@ -837,7 +837,7 @@ def deactivate_base_sushiswap_v2(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
 
         if exchange is None:
@@ -866,7 +866,7 @@ def deactivate_base_sushiswap_v3(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
 
         if exchange is None:
@@ -895,7 +895,7 @@ def deactivate_base_swapbased_v2(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
 
         if exchange is None:
@@ -924,7 +924,7 @@ def deactivate_base_uniswap_v2(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
 
         if exchange is None:
@@ -953,7 +953,7 @@ def deactivate_base_uniswap_v3(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
 
         if exchange is None:
@@ -982,7 +982,7 @@ def deactivate_base_uniswap_v4(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
 
         if exchange is None:
@@ -1011,12 +1011,12 @@ def deactivate_ethereum_pancakeswap_v2(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
 
         if exchange is None:
             click.echo(
-                f"The database has no entry for Pancakeswap V2 on Ethereum (chain ID {chain_id})."
+                f"The database has no entry for Pancakeswap V2 on Ethereum (chain ID {chain_id}).",
             )
             return
 
@@ -1042,12 +1042,12 @@ def deactivate_ethereum_pancakeswap_v3(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
 
         if exchange is None:
             click.echo(
-                f"The database has no entry for Pancakeswap V3 on Ethereum (chain ID {chain_id})."
+                f"The database has no entry for Pancakeswap V3 on Ethereum (chain ID {chain_id}).",
             )
             return
 
@@ -1073,12 +1073,12 @@ def deactivate_ethereum_sushiswap_v2(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
 
         if exchange is None:
             click.echo(
-                f"The database has no entry for Sushiswap V2 on Ethereum (chain ID {chain_id})."
+                f"The database has no entry for Sushiswap V2 on Ethereum (chain ID {chain_id}).",
             )
             return
 
@@ -1104,7 +1104,7 @@ def deactivate_ethereum_sushiswap_v3(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
 
         if exchange is None:
@@ -1133,12 +1133,12 @@ def deactivate_ethereum_uniswap_v2(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
 
         if exchange is None:
             click.echo(
-                f"The database has no entry for Uniswap V2 on Ethereum (chain ID {chain_id})."
+                f"The database has no entry for Uniswap V2 on Ethereum (chain ID {chain_id}).",
             )
             return
 
@@ -1164,12 +1164,12 @@ def deactivate_ethereum_uniswap_v3(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
 
         if exchange is None:
             click.echo(
-                f"The database has no entry for Uniswap V3 on Ethereum (chain ID {chain_id})."
+                f"The database has no entry for Uniswap V3 on Ethereum (chain ID {chain_id}).",
             )
             return
 
@@ -1195,12 +1195,12 @@ def deactivate_ethereum_uniswap_v4(
             select(ExchangeTable).where(
                 ExchangeTable.chain_id == chain_id,
                 ExchangeTable.name == exchange_name,
-            )
+            ),
         )
 
         if exchange is None:
             click.echo(
-                f"The database has no entry for Uniswap V4 on Ethereum (chain ID {chain_id})."
+                f"The database has no entry for Uniswap V4 on Ethereum (chain ID {chain_id}).",
             )
             return
 

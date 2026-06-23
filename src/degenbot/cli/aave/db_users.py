@@ -34,7 +34,7 @@ def get_gho_vtoken_revision(
         .join(AaveGhoToken.token)
         .where(
             AaveGhoToken.v_token_id.is_not(None),
-        )
+        ),
     )
 
     if gho_asset is None or gho_asset.v_token is None:
@@ -46,7 +46,7 @@ def get_gho_vtoken_revision(
         .where(
             AaveV3Asset.market_id == market.id,
             Erc20TokenTable.address == gho_asset.v_token.address,
-        )
+        ),
     )
 
 
@@ -89,7 +89,7 @@ def get_or_create_user(
         select(AaveV3User).where(
             AaveV3User.address == user_address,
             AaveV3User.market_id == tx_context.market.id,
-        )
+        ),
     )
 
     if user is not None:
@@ -132,7 +132,7 @@ def get_or_create_user(
             # or function not found after upgrade to revision 4+), default to 0
             logger.warning(
                 f"Failed to fetch GHO discount for user {user_address} at block "
-                f"{block_number}: {e}. Using default 0."
+                f"{block_number}: {e}. Using default 0.",
             )
 
     # Log all user creations for debugging

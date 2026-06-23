@@ -178,7 +178,7 @@ class ArbitragePath(PublisherMixin):
                     token_in=current,
                     token_out=token_out,
                     zero_for_one=zero_for_one,
-                )
+                ),
             )
             current = token_out
 
@@ -275,7 +275,7 @@ class ArbitragePath(PublisherMixin):
                     pool.to_hop_state(
                         zero_for_one=self._swap_vectors[i].zero_for_one,
                         state_override=state,
-                    )
+                    ),
                 )
             else:
                 hop_states.append(self._hop_states[i])
@@ -322,7 +322,7 @@ class ArbitragePath(PublisherMixin):
                 override_state=pool_state,
             )
             swap_amounts.append(
-                pool.build_swap_amount(sv.zero_for_one, token_in_quantity, token_out_quantity)
+                pool.build_swap_amount(sv.zero_for_one, token_in_quantity, token_out_quantity),
             )
             token_in_quantity = token_out_quantity
 

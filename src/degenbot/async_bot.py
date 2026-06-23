@@ -97,7 +97,7 @@ class AsyncBot:
         self._py_bot = PyBot(self._chain_id)
 
         self.db = DatabaseSessionManager(
-            get_scoped_sqlite_session(database_path=config.database.path)
+            get_scoped_sqlite_session(database_path=config.database.path),
         )
         self.pools = PoolRegistry(py_bot=self._py_bot)
         self.tokens = TokenRegistry()
@@ -107,7 +107,10 @@ class AsyncBot:
         self._closed: bool = False
 
         self._erc20_builder = AsyncErc20Builder(
-            default_chain_id=self._chain_id, db=self.db, tokens=self.tokens, py_bot=self._py_bot
+            default_chain_id=self._chain_id,
+            db=self.db,
+            tokens=self.tokens,
+            py_bot=self._py_bot,
         )
         ctx = AsyncBuilderContext(
             db=self.db,
@@ -236,7 +239,7 @@ class AsyncBot:
                     message=(
                         f"A {manager_cls.__name__} is already registered"
                         f" for factory {factory_address}"
-                    )
+                    ),
                 )
             manager = manager_cls(*args, **kwargs)
             self._trackers[key] = manager
@@ -311,7 +314,10 @@ class AsyncBot:
         """
         io = AsyncPoolIO(self._provider)
         return await self._erc20_builder.build(
-            address, chain_id=self._chain_id, silent=silent, io=io
+            address,
+            chain_id=self._chain_id,
+            silent=silent,
+            io=io,
         )
 
     def get_token(self, address: str) -> Erc20Token | None:
@@ -366,7 +372,10 @@ class AsyncBot:
 
         try:
             pool_type = await _resolve_pool_type_async_impl(
-                address, chain_id=chain_id, io=io, db=self.db
+                address,
+                chain_id=chain_id,
+                io=io,
+                db=self.db,
             )
         except DegenbotValueError:
             msg = f"Cannot resolve pool type for address {address} on chain {chain_id}"
@@ -382,7 +391,7 @@ class AsyncBot:
 
         if builder is None:
             raise DegenbotValueError(
-                message=f"No async builder for pool class {pool_class.__name__}"
+                message=f"No async builder for pool class {pool_class.__name__}",
             )
 
         return await self._dispatch_build(
@@ -519,7 +528,10 @@ class AsyncBot:
 
         io = AsyncPoolIO(self._provider)
         return await self._erc20_builder.get_token_balance(
-            token, holder_address, block_identifier=block_identifier, io=io
+            token,
+            holder_address,
+            block_identifier=block_identifier,
+            io=io,
         )
 
     async def get_token_approval(
@@ -543,7 +555,11 @@ class AsyncBot:
 
         io = AsyncPoolIO(self._provider)
         return await self._erc20_builder.get_token_approval(
-            token, owner, spender, block_identifier=block_identifier, io=io
+            token,
+            owner,
+            spender,
+            block_identifier=block_identifier,
+            io=io,
         )
 
     async def get_token_total_supply(
@@ -565,7 +581,9 @@ class AsyncBot:
 
         io = AsyncPoolIO(self._provider)
         return await self._erc20_builder.get_token_total_supply(
-            token, block_identifier=block_identifier, io=io
+            token,
+            block_identifier=block_identifier,
+            io=io,
         )
 
     async def get_ether_balance(
@@ -582,7 +600,10 @@ class AsyncBot:
         """
         io = AsyncPoolIO(self._provider)
         return await self._erc20_builder.get_ether_balance(
-            self._chain_id, address, block_identifier=block_identifier, io=io
+            self._chain_id,
+            address,
+            block_identifier=block_identifier,
+            io=io,
         )
 
     def get_provider(self) -> AsyncProviderAdapter:

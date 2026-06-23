@@ -123,7 +123,7 @@ class AbiAdapter:
         if self._backend == AbiBackend.RUST:
             raise AbiUnsupportedOperation(
                 message="Encoding is not supported by the Rust backend. "
-                "Switch to AbiBackend.ETH_ABI for encoding operations."
+                "Switch to AbiBackend.ETH_ABI for encoding operations.",
             )
 
         try:

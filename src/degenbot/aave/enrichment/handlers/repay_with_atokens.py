@@ -101,7 +101,7 @@ class RepayWithAtokensHandler:
         ):
             logger.debug(
                 "ENRICHMENT: REPAY_WITH_ATOKENS interest exceeds repayment on collateral - "
-                "using COLLATERAL_BURN calculation (ceil rounding)"
+                "using COLLATERAL_BURN calculation (ceil rounding)",
             )
 
             # Extract actual repayment amount
@@ -174,7 +174,7 @@ class RepayWithAtokensHandler:
         if event_type == ScaledTokenEventType.DEBT_MINT and event.balance_increase is not None:
             logger.debug(
                 "ENRICHMENT: REPAY_WITH_ATOKENS interest exceeds repayment on debt - "
-                "using DEBT_BURN calculation (floor rounding)"
+                "using DEBT_BURN calculation (floor rounding)",
             )
 
             # Extract actual repayment amount

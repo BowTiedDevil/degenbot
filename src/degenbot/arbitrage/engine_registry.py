@@ -156,7 +156,7 @@ class EngineRegistry:
         if pool._fee_token0 != pool._fee_token1:  # noqa: SLF001
             bot_logger.warning(
                 f"Asymmetric V2 fees detected for {pool.address} "
-                f"(fee_token0={pool._fee_token0}, fee_token1={pool._fee_token1})."  # noqa: SLF001
+                f"(fee_token0={pool._fee_token0}, fee_token1={pool._fee_token1}).",  # noqa: SLF001
             )
         self._v2_keys[pool.address] = key
         return key

@@ -396,7 +396,7 @@ class TransactionOperations:
                         f"{assigned_indices[log_idx]} and {op.operation_id}. "
                         f"DEBUG NOTE: This event may need to be reusable. "
                         f"Investigate whether it can match multiple operations "
-                        f"(e.g., LIQUIDATION_CALL or REPAY with useATokens)."
+                        f"(e.g., LIQUIDATION_CALL or REPAY with useATokens).",
                     )
                 assigned_indices[log_idx] = op.operation_id
 

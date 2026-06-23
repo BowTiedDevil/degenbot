@@ -41,7 +41,8 @@ class ScaledAmountCalculator:
         return method(raw_amount, index)
 
     def _get_calculation_method(
-        self, event_type: ScaledTokenEventType
+        self,
+        event_type: ScaledTokenEventType,
     ) -> Callable[[int, int], int]:
         """Get the appropriate TokenMath method for this event type.
 

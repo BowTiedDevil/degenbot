@@ -64,10 +64,16 @@ class AerodromeV2Builder(V2BuilderBase):
 
         # Build tokens
         token0 = self._erc20_builder.build(
-            common.token0_address, chain_id=chain_id, silent=request.silent, io=io
+            common.token0_address,
+            chain_id=chain_id,
+            silent=request.silent,
+            io=io,
         )
         token1 = self._erc20_builder.build(
-            common.token1_address, chain_id=chain_id, silent=request.silent, io=io
+            common.token1_address,
+            chain_id=chain_id,
+            silent=request.silent,
+            io=io,
         )
 
         # Aerodrome-specific: fetch stable flag and fee
@@ -155,7 +161,9 @@ class AerodromeV2Builder(V2BuilderBase):
         block_number_ = block_number if block_number is not None else io.get_block_number()
         block_number_ = int(block_number_) if not isinstance(block_number_, int) else block_number_
         reserves0, reserves1 = V2BuilderBase._fetch_reserves(  # noqa: SLF001
-            pool.address, io, block_identifier=block_number_
+            pool.address,
+            io,
+            block_identifier=block_number_,
         )
 
         if pool.reserves_token0 == reserves0 and pool.reserves_token1 == reserves1:

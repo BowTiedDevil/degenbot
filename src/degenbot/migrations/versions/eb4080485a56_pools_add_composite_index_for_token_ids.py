@@ -21,12 +21,16 @@ def upgrade() -> None:
     """Upgrade schema."""
     with op.batch_alter_table("pools", schema=None) as batch_op:
         batch_op.create_index(
-            "ix_liquidity_pools_token_ids", ["token0_id", "token1_id"], unique=False
+            "ix_liquidity_pools_token_ids",
+            ["token0_id", "token1_id"],
+            unique=False,
         )
 
     with op.batch_alter_table("uniswap_v4_pools", schema=None) as batch_op:
         batch_op.create_index(
-            "ix_uniswap_v4_pools_token_ids", ["currency0_id", "currency1_id"], unique=False
+            "ix_uniswap_v4_pools_token_ids",
+            ["currency0_id", "currency1_id"],
+            unique=False,
         )
 
 

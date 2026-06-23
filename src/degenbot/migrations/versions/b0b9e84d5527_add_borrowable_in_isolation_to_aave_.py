@@ -22,7 +22,7 @@ def upgrade() -> None:
     """Upgrade schema."""
     with op.batch_alter_table("aave_v3_asset_configs", schema=None) as batch_op:
         batch_op.add_column(
-            sa.Column("borrowable_in_isolation", sa.Boolean(), nullable=False, server_default="0")
+            sa.Column("borrowable_in_isolation", sa.Boolean(), nullable=False, server_default="0"),
         )
 
 

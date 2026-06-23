@@ -238,7 +238,9 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         )
 
         return int(
-            _downscale_down(amount=amount_out, scaling_factor=self.scaling_factors[token_out_index])
+            _downscale_down(
+                amount=amount_out, scaling_factor=self.scaling_factors[token_out_index],
+            ),
         )
 
     def calculate_tokens_in_from_tokens_out(
@@ -284,7 +286,7 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
             _downscale_up(
                 amount=amount_in,
                 scaling_factor=self.scaling_factors[token_in_index],
-            )
+            ),
         )
 
         return _add_swap_fee_amount(
@@ -368,7 +370,8 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
 
         """
         applied = self._py_pool.apply_balancer_weighted_balance_update(
-            list(update.balances), update.block_number
+            list(update.balances),
+            update.block_number,
         )
         if not applied:  # pragma: no cover - defensive, unreachable for a weighted handle
             msg = (

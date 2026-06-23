@@ -170,7 +170,9 @@ class CurveStableswapPool(
         # Derive rate/precision multipliers from token decimals
         self._rate_multipliers, self._precision_multipliers = (
             _compute_rate_and_precision_multipliers(
-                self._tokens, precision_multipliers, self.PRECISION_DECIMALS
+                self._tokens,
+                precision_multipliers,
+                self.PRECISION_DECIMALS,
             )
         )
 
@@ -334,7 +336,8 @@ class CurveStableswapPool(
 
         """
         applied = self._py_pool.apply_curve_balance_update(
-            list(update.balances), update.block_number
+            list(update.balances),
+            update.block_number,
         )
         if not applied:  # pragma: no cover - defensive, unreachable for a Curve handle
             msg = f"external_update rejected for {self.address} (not a Curve pool in Rust)"
@@ -349,7 +352,11 @@ class CurveStableswapPool(
         )
 
     def _fetch_token_balance(
-        self, token: Erc20Token, address: ChecksumAddress, *, block_identifier: int | None = None
+        self,
+        token: Erc20Token,
+        address: ChecksumAddress,
+        *,
+        block_identifier: int | None = None,
     ) -> int:
         """Fetch token balance using the data provider if available.
 
@@ -369,7 +376,10 @@ class CurveStableswapPool(
         )
 
     def _fetch_token_total_supply(
-        self, token: Erc20Token, *, block_identifier: int | None = None
+        self,
+        token: Erc20Token,
+        *,
+        block_identifier: int | None = None,
     ) -> int:
         """Fetch token total supply using the data provider if available.
 
@@ -492,7 +502,8 @@ class CurveStableswapPool(
         xp = self._xp(rates=self.rate_multipliers, balances=pool_balances)
         d_1 = self._get_d(xp, amp)
         token_amount: int = self._fetch_token_total_supply(
-            self.lp_token, block_identifier=block_number
+            self.lp_token,
+            block_identifier=block_number,
         )
 
         diff = d_1 - d_0 if deposit else d_0 - d_1
@@ -500,7 +511,10 @@ class CurveStableswapPool(
         return diff * token_amount // d_0
 
     def calc_withdraw_one_coin(
-        self, _token_amount: int, i: int, block_identifier: BlockIdentifier | None = None
+        self,
+        _token_amount: int,
+        i: int,
+        block_identifier: BlockIdentifier | None = None,
     ) -> tuple[int, ...]:
         """Calc withdraw one coin.
 
@@ -648,7 +662,8 @@ class CurveStableswapPool(
             # For LIVE_ADMIN_ORACLE, re-resolve rates using effective balances
             if swap_style == SwapStyle.LIVE_ADMIN_ORACLE:
                 oracle_rates = self._resolve_rates(
-                    rates=self.rate_multipliers, block_number=block_number
+                    rates=self.rate_multipliers,
+                    block_number=block_number,
                 )
                 oracle_xp = tuple(
                     rate * balance // self.PRECISION
@@ -915,7 +930,7 @@ class CurveStableswapPool(
             )
         except ValueError as e:
             raise EVMRevertError(
-                error=f"_newton_y() did not converge for pool {self.address}"
+                error=f"_newton_y() did not converge for pool {self.address}",
             ) from e
 
     @staticmethod
@@ -1047,7 +1062,7 @@ class CurveStableswapPool(
             )
 
         raise DegenbotValueError(
-            message="Tokens not held by pool or in underlying base pool"
+            message="Tokens not held by pool or in underlying base pool",
         )  # pragma: no cover
 
     def simulate_swap(

@@ -165,7 +165,10 @@ class _AsyncWeb3Adapter(AsyncSubscriptionSupport):
         return await self._w3.eth.get_balance(address, block)  # ty:ignore[invalid-argument-type]
 
     async def get_storage_at(
-        self, address: str, position: int, block: int | None = None
+        self,
+        address: str,
+        position: int,
+        block: int | None = None,
     ) -> HexBytes:
         return await self._w3.eth.get_storage_at(address, position, block)  # ty:ignore[invalid-argument-type]
 
@@ -231,7 +234,10 @@ class _AsyncAlloyAdapter:
         return await self._alloy.get_balance(address, block)
 
     async def get_storage_at(
-        self, address: str, position: int, block: int | None = None
+        self,
+        address: str,
+        position: int,
+        block: int | None = None,
     ) -> HexBytes:
         return await self._alloy.get_storage_at(address, position, block)
 

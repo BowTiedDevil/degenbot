@@ -43,7 +43,7 @@ def generate_v2_pool_address(
         eth_abi.packed.encode_packed(
             ("address", "address"),
             sorted_token_addresses,
-        )
+        ),
     )
 
     return create2_address(

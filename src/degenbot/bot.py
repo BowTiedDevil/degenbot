@@ -130,7 +130,7 @@ class Bot:
         self._py_bot = PyBot(self._chain_id)
 
         self.db = DatabaseSessionManager(
-            get_scoped_sqlite_session(database_path=config.database.path)
+            get_scoped_sqlite_session(database_path=config.database.path),
         )
         self.pools = PoolRegistry(py_bot=self._py_bot)
         self.tokens = TokenRegistry()
@@ -219,13 +219,13 @@ class Bot:
         try:
             with self.db():
                 current_version = MigrationContext.configure(
-                    connection=self.db.connection()
+                    connection=self.db.connection(),
                 ).get_current_revision()
         except Exception:  # noqa: BLE001
             return
 
         latest_version = ScriptDirectory.from_config(
-            config=get_alembic_config(database_path=self.config.database.path)
+            config=get_alembic_config(database_path=self.config.database.path),
         ).get_current_head()
 
         if current_version is not None and current_version != latest_version:
@@ -234,7 +234,7 @@ class Bot:
                 f"({latest_version}) for {__package__} version {__version__}!"
                 "\n"
                 "Database-related features may raise exceptions if you continue. Perform database "
-                "migrations with 'degenbot database upgrade'."
+                "migrations with 'degenbot database upgrade'.",
             )
 
     @classmethod
@@ -273,7 +273,7 @@ class Bot:
         if key in self._trackers:
             raise TrackerAlreadyInitialized(
                 message="A manager has already been initialized for this address. "
-                "Access it using the bot's manager registry."
+                "Access it using the bot's manager registry.",
             )
 
         manager = manager_cls(
@@ -551,7 +551,10 @@ class Bot:
         """
         io = PyBotIo(provider=self.provider, db=self.db)
         return self._erc20_builder.get_token_balance(
-            token, address, block_identifier=block_identifier, io=io
+            token,
+            address,
+            block_identifier=block_identifier,
+            io=io,
         )
 
     def get_token_approval(
@@ -569,7 +572,11 @@ class Bot:
         """
         io = PyBotIo(provider=self.provider, db=self.db)
         return self._erc20_builder.get_token_approval(
-            token, owner, spender, block_identifier=block_identifier, io=io
+            token,
+            owner,
+            spender,
+            block_identifier=block_identifier,
+            io=io,
         )
 
     def get_token_total_supply(
@@ -585,7 +592,9 @@ class Bot:
         """
         io = PyBotIo(provider=self.provider, db=self.db)
         return self._erc20_builder.get_token_total_supply(
-            token, block_identifier=block_identifier, io=io
+            token,
+            block_identifier=block_identifier,
+            io=io,
         )
 
     def get_ether_balance(
@@ -601,7 +610,10 @@ class Bot:
         """
         io = PyBotIo(provider=self.provider, db=self.db)
         return self._erc20_builder.get_ether_balance(
-            self.chain_id, address, block_identifier=block_identifier, io=io
+            self.chain_id,
+            address,
+            block_identifier=block_identifier,
+            io=io,
         )
 
     def get_provider(self) -> ProviderAdapter:

@@ -91,10 +91,10 @@ def database_upgrade(bot: Bot, *, force: bool) -> None:
     """
     with bot.db() as _:
         current_version = MigrationContext.configure(
-            connection=bot.db.connection()
+            connection=bot.db.connection(),
         ).get_current_revision()
     latest_version = ScriptDirectory.from_config(
-        config=get_alembic_config(database_path=bot.config.database.path)
+        config=get_alembic_config(database_path=bot.config.database.path),
     ).get_current_head()
 
     if force or click.confirm(

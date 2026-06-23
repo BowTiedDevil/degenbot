@@ -38,7 +38,7 @@ class TransactionContext:
     # Key: user address, Value: list of (log_index, old_discount_percent) tuples sorted by
     # log_index. This allows determining the discount in effect at any point in the transaction.
     discount_updates_by_log_index: dict[ChecksumAddress, list[tuple[int, int]]] = field(
-        default_factory=dict
+        default_factory=dict,
     )
 
     # Set of user addresses with stkAAVE Transfer events in this transaction
@@ -78,7 +78,7 @@ class TransactionContext:
     # Pattern-aware liquidation context for multi-liquidation scenarios
     # Replaces liquidation_aggregates, liquidation_counts, and processed_liquidations
     liquidation_patterns: LiquidationPatternContext = field(
-        default_factory=LiquidationPatternContext
+        default_factory=LiquidationPatternContext,
     )
     """Pattern detection and processing state for liquidations."""
 

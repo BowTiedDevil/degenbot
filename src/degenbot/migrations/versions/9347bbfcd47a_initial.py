@@ -34,7 +34,10 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
-        "ix_erc20_tokens_address_chain", "erc20_tokens", ["address", "chain"], unique=True
+        "ix_erc20_tokens_address_chain",
+        "erc20_tokens",
+        ["address", "chain"],
+        unique=True,
     )
     op.create_table(
         "metadata",

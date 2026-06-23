@@ -336,7 +336,7 @@ class UniswapV3Pool(
                             message=f"Tick data fetcher did not resolve word {exc.word} "
                             f"on a previous attempt. "
                             f"pool={self.address} zfo={zero_for_one} "
-                            f"amount_specified={amount_specified}"
+                            f"amount_specified={amount_specified}",
                         ) from exc
                     if self._tick_data_fetcher is not None:
                         fetched_words.add(exc.word)
@@ -1014,7 +1014,7 @@ class UniswapV3Pool(
                     liquidity=liquidity,
                     sqrt_price_lower=sqrt_price_lower,
                     sqrt_price_upper=sqrt_price_upper,
-                )
+                ),
             )
 
             if tick_lower <= current_tick < tick_upper:

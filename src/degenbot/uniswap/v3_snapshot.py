@@ -282,7 +282,7 @@ class DatabaseSnapshot:
 
         """
         pool_in_db = self.session.scalar(
-            select(LiquidityPoolTable).where(LiquidityPoolTable.address == pool_address)
+            select(LiquidityPoolTable).where(LiquidityPoolTable.address == pool_address),
         )
         if pool_in_db is None:
             return None
@@ -328,7 +328,7 @@ class DatabaseSnapshot:
                 WHERE p.chain = :chain_id
                   AND p.kind IN ('uniswap_v3', 'sushiswap_v3', 'pancakeswap_v3', 'aerodrome_v3')
                 ORDER BY p.address, lp.tick
-                """
+                """,
             ),
             {"chain_id": self.chain_id},
         ).all()
@@ -353,7 +353,7 @@ class DatabaseSnapshot:
                 select(ExchangeTable.last_update_block).where(
                     ExchangeTable.chain_id == self.chain_id,
                     ExchangeTable.name.like("%!_v3", escape="!"),
-                )
+                ),
             ).all()
 
         if not last_update_blocks or None in last_update_blocks:
@@ -382,10 +382,10 @@ class UniswapV3LiquiditySnapshot:
     """Retrieve and maintain liquidity positions for Uniswap V3 pools."""
 
     UNISWAP_V3_MINT_EVENT_HASH = HexBytes(
-        Web3().eth.contract(abi=UNISWAP_V3_POOL_ABI).events.Mint().topic
+        Web3().eth.contract(abi=UNISWAP_V3_POOL_ABI).events.Mint().topic,
     )
     UNISWAP_V3_BURN_EVENT_HASH = HexBytes(
-        Web3().eth.contract(abi=UNISWAP_V3_POOL_ABI).events.Burn().topic
+        Web3().eth.contract(abi=UNISWAP_V3_POOL_ABI).events.Burn().topic,
     )
 
     def __init__(self, source: UniswapV3LiquiditySnapshotSource) -> None:
@@ -404,10 +404,10 @@ class UniswapV3LiquiditySnapshot:
         self.newest_block: BlockNumber = source_block
 
         self._liquidity_events: dict[ChecksumAddress, deque[UniswapV3LiquidityEvent]] = defaultdict(
-            deque
+            deque,
         )
         self._liquidity_snapshot: dict[ChecksumAddress, LiquidityMap | None] = KeyedDefaultDict(
-            lambda key: self._source.get_liquidity_map(get_checksum_address(key))
+            lambda key: self._source.get_liquidity_map(get_checksum_address(key)),
         )
 
         logger.info(f"Loaded Uniswap V3 LP snapshot from {source.storage_kind} source")
@@ -546,7 +546,7 @@ class UniswapV3LiquiditySnapshot:
                 [
                     self.UNISWAP_V3_MINT_EVENT_HASH,
                     self.UNISWAP_V3_BURN_EVENT_HASH,
-                ]
+                ],
             ],
         )
 

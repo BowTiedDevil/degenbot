@@ -86,7 +86,7 @@ class _AbstractAerodromeV2PoolTracker[Pool: AerodromeV2Pool](AbstractPoolTracker
             )
         except LiquidityPoolError as exc:
             raise PoolCreationFailed(
-                message=f"Could not build V2 pool {pool_address}: {exc}"
+                message=f"Could not build V2 pool {pool_address}: {exc}",
             ) from exc
         else:
             self._add_tracked_pool(new_pool)
@@ -94,7 +94,8 @@ class _AbstractAerodromeV2PoolTracker[Pool: AerodromeV2Pool](AbstractPoolTracker
 
 
 class AerodromeV2PoolTracker(
-    _AbstractAerodromeV2PoolTracker[AerodromeV2Pool], pool_factory=AerodromeV2Pool
+    _AbstractAerodromeV2PoolTracker[AerodromeV2Pool],
+    pool_factory=AerodromeV2Pool,
 ):
     """Generate and track concrete instances of V2 liquidity pool helpers.
 
@@ -209,7 +210,8 @@ class AerodromeV2PoolTracker(
 
 
 class AerodromeV3PoolTracker(
-    AbstractUniswapV3PoolTracker[AerodromeV3Pool], pool_factory=AerodromeV3Pool
+    AbstractUniswapV3PoolTracker[AerodromeV3Pool],
+    pool_factory=AerodromeV3Pool,
 ):
     """AerodromeV3PoolTracker class."""
 

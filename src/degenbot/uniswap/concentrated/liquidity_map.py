@@ -140,7 +140,7 @@ class LiquidityMapSnapshot:
                 starting_tick=tick,
                 tick_spacing=self.tick_spacing,
                 less_than_or_equal=zero_for_one,
-            )
+            ),
         )
 
     def ticks_along_path(

@@ -69,7 +69,7 @@ def generate_aerodrome_v2_pool_address(
         eth_abi.packed.encode_packed(
             ("address", "address", "bool"),
             [*sorted_token_addresses, stable],
-        )
+        ),
     )
 
     return eip_1167_clone_address(
@@ -103,7 +103,7 @@ def generate_aerodrome_v3_pool_address(
         eth_abi.abi.encode(
             ("address", "address", "int24"),
             [*sorted_token_addresses, tick_spacing],
-        )
+        ),
     )
 
     return eip_1167_clone_address(

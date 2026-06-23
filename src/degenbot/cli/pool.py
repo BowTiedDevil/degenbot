@@ -83,37 +83,37 @@ class PoolLiquidityMap(pydantic.BaseModel):
 
 
 AERODROME_V2_POOLCREATED_EVENT_HASH = HexBytes(
-    "0x2128d88d14c80cb081c1252a5acff7a264671bf199ce226b53788fb26065005e"
+    "0x2128d88d14c80cb081c1252a5acff7a264671bf199ce226b53788fb26065005e",
 )
 AERODROME_V3_POOLCREATED_EVENT_HASH = HexBytes(
-    "0xab0d57f0df537bb25e80245ef7748fa62353808c54d6e528a9dd20887aed9ac2"
+    "0xab0d57f0df537bb25e80245ef7748fa62353808c54d6e528a9dd20887aed9ac2",
 )
 
 UNISWAP_V2_PAIRCREATED_EVENT_HASH = HexBytes(
-    "0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9"
+    "0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9",
 )
 PANCAKESWAP_V2_PAIRCREATED_EVENT_HASH = UNISWAP_V2_PAIRCREATED_EVENT_HASH
 SUSHISWAP_V2_PAIRCREATED_EVENT_HASH = UNISWAP_V2_PAIRCREATED_EVENT_HASH
 SWAPBASED_V2_PAIRCREATED_EVENT_HASH = UNISWAP_V2_PAIRCREATED_EVENT_HASH
 
 UNISWAP_V3_MINT_EVENT_HASH = HexBytes(
-    "0x7a53080ba414158be7ec69b987b5fb7d07dee101fe85488f0853ae16239d0bde"
+    "0x7a53080ba414158be7ec69b987b5fb7d07dee101fe85488f0853ae16239d0bde",
 )
 UNISWAP_V3_BURN_EVENT_HASH = HexBytes(
-    "0x0c396cd989a39f4459b5fa1aed6a9a8dcdbc45908acfd67e028cd568da98982c"
+    "0x0c396cd989a39f4459b5fa1aed6a9a8dcdbc45908acfd67e028cd568da98982c",
 )
 UNISWAP_V3_POOLCREATED_EVENT_HASH = HexBytes(
-    "0x783cca1c0412dd0d695e784568c96da2e9c22ff989357a2e8b1d9b2b4e6b7118"
+    "0x783cca1c0412dd0d695e784568c96da2e9c22ff989357a2e8b1d9b2b4e6b7118",
 )
 PANCAKESWAP_V3_POOLCREATED_EVENT_HASH = UNISWAP_V3_POOLCREATED_EVENT_HASH
 SUSHISWAP_V3_POOLCREATED_EVENT_HASH = UNISWAP_V3_POOLCREATED_EVENT_HASH
 
 UNISWAP_V4_POOLCREATED_EVENT_HASH = HexBytes(
-    "0xdd466e674ea557f56295e2d0218a125ea4b4f0f6f3307b95f85e6110838d6438"
+    "0xdd466e674ea557f56295e2d0218a125ea4b4f0f6f3307b95f85e6110838d6438",
 )
 
 UNISWAP_V4_MODIFYLIQUIDITY_EVENT_HASH = HexBytes(
-    "0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af63baa85f711d5ec"
+    "0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af63baa85f711d5ec",
 )
 
 
@@ -141,7 +141,7 @@ def apply_v3_liquidity_updates(
         select(LiquidityPoolTable).where(
             LiquidityPoolTable.address == pool_address,
             LiquidityPoolTable.chain == provider.chain_id,
-        )
+        ),
     )
 
     if (pool_in_db is None) or (pool_in_db.exchange not in exchanges_in_scope):
@@ -239,7 +239,7 @@ def apply_v3_liquidity_updates(
             delete(LiquidityPositionTable).where(
                 LiquidityPositionTable.pool_id == pool_in_db.id,
                 LiquidityPositionTable.tick.in_(ticks_to_drop),
-            )
+            ),
         )
 
     # Upsert remaining ticks
@@ -286,7 +286,7 @@ def apply_v3_liquidity_updates(
             delete(InitializationMapTable).where(
                 InitializationMapTable.pool_id == pool_in_db.id,
                 InitializationMapTable.word.in_(words_to_drop),
-            )
+            ),
         )
 
     # Upsert remaining maps
@@ -342,7 +342,7 @@ def apply_v4_liquidity_updates(
         select(UniswapV4PoolTable).where(
             UniswapV4PoolTable.pool_hash == pool_id.to_0x_hex(),
             UniswapV4PoolTable.manager.has(id=pool_manager.id),
-        )
+        ),
     )
 
     assert isinstance(pool_in_db, UniswapV4PoolTableBase)
@@ -428,7 +428,7 @@ def apply_v4_liquidity_updates(
             delete(ManagedPoolLiquidityPositionTable).where(
                 ManagedPoolLiquidityPositionTable.managed_pool_id == pool_in_db.id,
                 ManagedPoolLiquidityPositionTable.tick.in_(ticks_to_drop),
-            )
+            ),
         )
 
     # Upsert remaining ticks
@@ -480,7 +480,7 @@ def apply_v4_liquidity_updates(
             delete(ManagedPoolInitializationMapTable).where(
                 ManagedPoolInitializationMapTable.managed_pool_id == pool_in_db.id,
                 ManagedPoolInitializationMapTable.word.in_(words_to_drop),
-            )
+            ),
         )
 
     # Upsert remaining maps
@@ -686,7 +686,7 @@ def pool_update(bot: Bot, chunk_size: int, to_block: str) -> None:
     """
     with bot.db() as session, logging_redirect_tqdm(loggers=[logger]):
         active_chains = set(
-            session.scalars(select(ExchangeTable.chain_id).where(ExchangeTable.active)).all()
+            session.scalars(select(ExchangeTable.chain_id).where(ExchangeTable.active)).all(),
         )
 
         for chain_id in active_chains:
@@ -696,7 +696,7 @@ def pool_update(bot: Bot, chunk_size: int, to_block: str) -> None:
                 select(ExchangeTable).where(
                     ExchangeTable.active,
                     ExchangeTable.chain_id == chain_id,
-                )
+                ),
             ).all()
 
             initial_start_block = working_start_block = min(
@@ -777,7 +777,11 @@ def pool_update(bot: Bot, chunk_size: int, to_block: str) -> None:
                 for exchange in exchanges_to_update:
                     pool_updater = POOL_UPDATER[chain_id, exchange.name]
                     pool_updater(
-                        provider, working_start_block, working_end_block, exchange, session
+                        provider,
+                        working_start_block,
+                        working_end_block,
+                        exchange,
+                        session,
                     )
 
                 # Fetch and process V3 liquidity events
@@ -815,7 +819,7 @@ def pool_update(bot: Bot, chunk_size: int, to_block: str) -> None:
                         select(PoolManagerTable).where(
                             PoolManagerTable.address == v4_exchange.factory,
                             PoolManagerTable.chain == chain_id,
-                        )
+                        ),
                     )
                     assert pool_manager_in_db is not None
                     pool_manager_address = get_checksum_address(pool_manager_in_db.address)
@@ -940,7 +944,8 @@ def get_v4_liquidity_events(
 
 
 POOL_UPDATER: dict[
-    tuple[ChainId, str], Callable[[ProviderAdapter, int, int, ExchangeTable, Session], None]
+    tuple[ChainId, str],
+    Callable[[ProviderAdapter, int, int, ExchangeTable, Session], None],
 ] = {
     (eth_typing.ChainId.BASE, "aerodrome_v2"): _pool_updater,
     (eth_typing.ChainId.BASE, "aerodrome_v3"): _pool_updater,

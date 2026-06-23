@@ -373,7 +373,8 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
         return numerator // denominator + (1 if numerator % denominator > 0 else 0)
 
     def _resolve_scaling_factors(
-        self, block_identifier: int | str | None = None
+        self,
+        block_identifier: int | str | None = None,
     ) -> tuple[int, ...]:
         """Resolve scaling factors at the given block.
 
@@ -691,7 +692,8 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
         if self.state.block is not None and update.block_number < self.state.block:
             return
         applied = self._py_pool.apply_balancer_stable_balance_update(
-            list(update.balances), update.block_number
+            list(update.balances),
+            update.block_number,
         )
         if not applied:  # pragma: no cover - defensive, unreachable for a stable handle
             msg = (

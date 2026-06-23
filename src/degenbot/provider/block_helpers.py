@@ -45,7 +45,7 @@ def get_number_for_block_identifier(
                 return int(block_number_as_str, 16)
             except ValueError:
                 raise DegenbotValueError(
-                    message=f"Invalid block identifier {identifier!r}"
+                    message=f"Invalid block identifier {identifier!r}",
                 ) from None
         case bytes() as block_number_as_bytes:
             return int.from_bytes(block_number_as_bytes, byteorder="big")
@@ -84,7 +84,7 @@ async def get_number_for_block_identifier_async(
                 return int(block_number_as_str, 16)
             except ValueError:
                 raise DegenbotValueError(
-                    message=f"Invalid block identifier {identifier!r}"
+                    message=f"Invalid block identifier {identifier!r}",
                 ) from None
         case bytes() as block_number_as_bytes:
             return int.from_bytes(block_number_as_bytes, byteorder="big")

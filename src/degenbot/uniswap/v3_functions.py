@@ -108,7 +108,7 @@ def generate_v3_pool_address(
         eth_abi.abi.encode(
             ("address", "address", "uint24"),
             (*token_addresses, fee),
-        )
+        ),
     )
 
     return create2_address(

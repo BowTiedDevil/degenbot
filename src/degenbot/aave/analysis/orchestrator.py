@@ -62,7 +62,7 @@ class DatabasePositionQuery:
                 .where(AaveV3User.market_id == market_id)
                 .options(
                     joinedload(AaveV3User.debt_positions),
-                )
+                ),
             )
             .unique()
             .all()
@@ -90,7 +90,7 @@ class DatabasePositionQuery:
                 joinedload(AaveV3CollateralPosition.asset).joinedload(AaveV3Asset.underlying_token),
                 joinedload(AaveV3CollateralPosition.asset).joinedload(AaveV3Asset.asset_config),
                 joinedload(AaveV3CollateralPosition.asset).joinedload(AaveV3Asset.e_mode_category),
-            )
+            ),
         ).all()
 
         return [_convert_collateral_position(p) for p in positions]
@@ -108,7 +108,7 @@ class DatabasePositionQuery:
             .options(
                 joinedload(AaveV3DebtPosition.asset).joinedload(AaveV3Asset.underlying_token),
                 joinedload(AaveV3DebtPosition.asset).joinedload(AaveV3Asset.e_mode_category),
-            )
+            ),
         ).all()
 
         return [_convert_debt_position(p) for p in positions]
@@ -121,7 +121,7 @@ class DatabasePositionQuery:
 
         """
         configs = self._session.scalars(
-            select(AaveV3UserCollateralConfig).where(AaveV3UserCollateralConfig.user_id == user_id)
+            select(AaveV3UserCollateralConfig).where(AaveV3UserCollateralConfig.user_id == user_id),
         ).all()
         return {cfg.asset_id: cfg.enabled for cfg in configs}
 
@@ -136,7 +136,7 @@ class DatabasePositionQuery:
             select(AaveV3Contract).where(
                 AaveV3Contract.market_id == market_id,
                 AaveV3Contract.name == ORACLE_CONTRACT_NAME,
-            )
+            ),
         )
         return contract.address if contract else None
 
@@ -154,7 +154,7 @@ class DatabasePositionQuery:
                 .where(AaveV3Asset.market_id == market_id)
                 .options(
                     joinedload(AaveV3Asset.underlying_token),
-                )
+                ),
             )
             .unique()
             .all()
@@ -356,7 +356,7 @@ class PositionAnalysisService:
         logger.info(
             f"Analysis complete: {len(result.safe_users)} safe, "
             f"{len(result.at_risk_users)} at risk, "
-            f"{len(result.liquidatable_users)} liquidatable"
+            f"{len(result.liquidatable_users)} liquidatable",
         )
 
         return result

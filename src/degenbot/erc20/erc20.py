@@ -40,7 +40,7 @@ def get_token_from_database(
         select(Erc20TokenTable).where(
             Erc20TokenTable.address == token,
             Erc20TokenTable.chain == chain_id,
-        )
+        ),
     )
 
 
@@ -82,7 +82,8 @@ class Erc20Token(AbstractErc20Token):
         self._price_oracle = None
         if oracle_address:
             self._price_oracle = ChainlinkPriceContract(
-                address=oracle_address, chain_id=self.chain_id
+                address=oracle_address,
+                chain_id=self.chain_id,
             )
 
     @property
@@ -128,7 +129,10 @@ class Erc20Token(AbstractErc20Token):
         self._cached_balance[address][block_number] = balance
 
     def get_cached_approval(
-        self, block_number: int, owner: ChecksumAddress, spender: ChecksumAddress
+        self,
+        block_number: int,
+        owner: ChecksumAddress,
+        spender: ChecksumAddress,
     ) -> int | None:
         """Return cached approval.
 
@@ -139,7 +143,11 @@ class Erc20Token(AbstractErc20Token):
         return self._cached_approval.get((block_number, owner, spender))
 
     def set_cached_approval(
-        self, block_number: int, owner: ChecksumAddress, spender: ChecksumAddress, amount: int
+        self,
+        block_number: int,
+        owner: ChecksumAddress,
+        spender: ChecksumAddress,
+        amount: int,
     ) -> None:
         """Set cached approval."""
         self._cached_approval[block_number, owner, spender] = amount
@@ -161,7 +169,8 @@ class Erc20Token(AbstractErc20Token):
 
     @staticmethod
     def fetch_name_symbol_decimals_batched(
-        address: ChecksumAddress, provider: ProviderAdapter
+        address: ChecksumAddress,
+        provider: ProviderAdapter,
     ) -> tuple[str, str, int]:
         """Fetch token name, symbol, and decimals via batched RPC calls.
 
@@ -194,7 +203,9 @@ class Erc20Token(AbstractErc20Token):
 
     @staticmethod
     def fetch_name(
-        address: ChecksumAddress, provider: ProviderAdapter, func_prototype: str = "name()"
+        address: ChecksumAddress,
+        provider: ProviderAdapter,
+        func_prototype: str = "name()",
     ) -> str:
         """Fetch token name via RPC call.
 
@@ -219,7 +230,9 @@ class Erc20Token(AbstractErc20Token):
 
     @staticmethod
     def fetch_symbol(
-        address: ChecksumAddress, provider: ProviderAdapter, func_prototype: str = "symbol()"
+        address: ChecksumAddress,
+        provider: ProviderAdapter,
+        func_prototype: str = "symbol()",
     ) -> str:
         """Fetch token symbol via RPC call.
 
@@ -244,7 +257,9 @@ class Erc20Token(AbstractErc20Token):
 
     @staticmethod
     def fetch_decimals(
-        address: ChecksumAddress, provider: ProviderAdapter, func_prototype: str = "decimals()"
+        address: ChecksumAddress,
+        provider: ProviderAdapter,
+        func_prototype: str = "decimals()",
     ) -> int:
         """Fetch token decimals via RPC call.
 

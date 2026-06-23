@@ -35,7 +35,7 @@ def get_or_create_erc20_token(
             select(Erc20TokenTable).where(
                 Erc20TokenTable.chain == chain_id,
                 Erc20TokenTable.address == token_address,
-            )
+            ),
         )
     ) is None:
         token = Erc20TokenTable(chain=chain_id, address=token_address)
@@ -59,7 +59,7 @@ def get_or_create_erc20_token(
         if name is not None or symbol is not None or decimals is not None:
             logger.debug(
                 f"Created ERC20 token {token_address} with metadata: "
-                f"name='{name}', symbol='{symbol}', decimals={decimals}"
+                f"name='{name}', symbol='{symbol}', decimals={decimals}",
             )
 
     return token
@@ -87,7 +87,7 @@ def get_gho_asset(
             select(AaveGhoToken).options(
                 joinedload(AaveGhoToken.token),
                 joinedload(AaveGhoToken.v_token),
-            )
+            ),
         )
         .unique()
         .all()
@@ -116,7 +116,7 @@ def get_contract(
         select(AaveV3Contract).where(
             AaveV3Contract.market_id == market.id,
             AaveV3Contract.name == contract_name,
-        )
+        ),
     )
 
 
@@ -144,7 +144,7 @@ def get_asset_by_token_type(
                     AaveV3Asset.market_id == market.id,
                     Erc20TokenTable.address == token_address,
                 )
-                .options(joinedload(AaveV3Asset.a_token))
+                .options(joinedload(AaveV3Asset.a_token)),
             )
         case TokenType.V_TOKEN:
             return session.scalar(
@@ -154,7 +154,7 @@ def get_asset_by_token_type(
                     AaveV3Asset.market_id == market.id,
                     Erc20TokenTable.address == token_address,
                 )
-                .options(joinedload(AaveV3Asset.v_token))
+                .options(joinedload(AaveV3Asset.v_token)),
             )
         case _ as unreachable:
             msg = f"Unexpected token type: {unreachable}"

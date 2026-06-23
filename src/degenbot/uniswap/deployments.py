@@ -116,7 +116,7 @@ EthereumMainnetUniswapV4 = UniswapV4ExchangeDeployment(
         address=get_checksum_address("0x000000000004444c5dc75cB358380D2e3dE08A90"),
     ),
     state_view=UniswapStateViewDeployment(
-        address=get_checksum_address("0x7fFE42C4a5DEeA5b0feC41C94C136Cf115597227")
+        address=get_checksum_address("0x7fFE42C4a5DEeA5b0feC41C94C136Cf115597227"),
     ),
 )
 # Mainnet DEX --------------- END
@@ -211,7 +211,7 @@ BaseUniswapV4 = UniswapV4ExchangeDeployment(
         address=get_checksum_address("0x498581fF718922c3f8e6A244956aF099B2652b2b"),
     ),
     state_view=UniswapStateViewDeployment(
-        address=get_checksum_address("0xA3c0c9b65baD0b08107Aa264b0f3dB444b867A71")
+        address=get_checksum_address("0xA3c0c9b65baD0b08107Aa264b0f3dB444b867A71"),
     ),
 )
 # Base DEX -------------------- END

@@ -84,7 +84,11 @@ class Erc20Builder:
         # Check for Ether placeholder
         if address in EtherPlaceholder.addresses:
             py_token = self._py_bot.register_token(
-                address, "Ether Placeholder", "ETH", 18, chain_id
+                address,
+                "Ether Placeholder",
+                "ETH",
+                18,
+                chain_id,
             )
             token: Erc20Token = EtherPlaceholder(py_token)
             self._tokens.add(token_address=token.address, chain_id=chain_id, token=token)
@@ -129,7 +133,9 @@ class Erc20Builder:
                 for func_prototype in ("name()", "NAME()"):
                     try:
                         fetched_name = _fetch_name(
-                            address=address, io=io, func_prototype=func_prototype
+                            address=address,
+                            io=io,
+                            func_prototype=func_prototype,
                         )
                         break
                     except (Web3Exception, DecodingError):
@@ -140,7 +146,9 @@ class Erc20Builder:
                 for func_prototype in ("symbol()", "SYMBOL()"):
                     try:
                         fetched_symbol = _fetch_symbol(
-                            address=address, io=io, func_prototype=func_prototype
+                            address=address,
+                            io=io,
+                            func_prototype=func_prototype,
                         )
                         break
                     except (Web3Exception, DecodingError):
@@ -151,7 +159,9 @@ class Erc20Builder:
                 for func_prototype in ("decimals()", "DECIMALS()"):
                     try:
                         fetched_decimals = _fetch_decimals(
-                            address=address, io=io, func_prototype=func_prototype
+                            address=address,
+                            io=io,
+                            func_prototype=func_prototype,
                         )
                         break
                     except (Web3Exception, DecodingError):

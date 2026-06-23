@@ -179,7 +179,10 @@ class AsyncProviderBackend(Protocol):
         ...
 
     async def get_storage_at(
-        self, address: str, position: int, block: int | None = None
+        self,
+        address: str,
+        position: int,
+        block: int | None = None,
     ) -> HexBytes:
         """Return the storage value at the given position."""
         ...

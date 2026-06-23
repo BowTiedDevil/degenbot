@@ -40,10 +40,14 @@ def upgrade() -> None:
     )
     with op.batch_alter_table("aave_v3_emode_categories", schema=None) as batch_op:
         batch_op.create_index(
-            "ix_aave_emode_category_market_cat", ["market_id", "category_id"], unique=True
+            "ix_aave_emode_category_market_cat",
+            ["market_id", "category_id"],
+            unique=True,
         )
         batch_op.create_index(
-            batch_op.f("ix_aave_v3_emode_categories_market_id"), ["market_id"], unique=False
+            batch_op.f("ix_aave_v3_emode_categories_market_id"),
+            ["market_id"],
+            unique=False,
         )
 
     op.create_table(
@@ -72,7 +76,9 @@ def upgrade() -> None:
     with op.batch_alter_table("aave_v3_asset_configs", schema=None) as batch_op:
         batch_op.create_index("ix_aave_asset_config_asset", ["asset_id"], unique=True)
         batch_op.create_index(
-            batch_op.f("ix_aave_v3_asset_configs_asset_id"), ["asset_id"], unique=False
+            batch_op.f("ix_aave_v3_asset_configs_asset_id"),
+            ["asset_id"],
+            unique=False,
         )
 
     op.create_table(
@@ -94,19 +100,27 @@ def upgrade() -> None:
     with op.batch_alter_table("aave_v3_user_collateral_configs", schema=None) as batch_op:
         batch_op.create_index("ix_aave_user_collateral_config_enabled", ["enabled"], unique=False)
         batch_op.create_index(
-            "ix_aave_user_collateral_config_user_asset", ["user_id", "asset_id"], unique=True
+            "ix_aave_user_collateral_config_user_asset",
+            ["user_id", "asset_id"],
+            unique=True,
         )
         batch_op.create_index(
-            batch_op.f("ix_aave_v3_user_collateral_configs_asset_id"), ["asset_id"], unique=False
+            batch_op.f("ix_aave_v3_user_collateral_configs_asset_id"),
+            ["asset_id"],
+            unique=False,
         )
         batch_op.create_index(
-            batch_op.f("ix_aave_v3_user_collateral_configs_user_id"), ["user_id"], unique=False
+            batch_op.f("ix_aave_v3_user_collateral_configs_user_id"),
+            ["user_id"],
+            unique=False,
         )
 
     with op.batch_alter_table("aave_v3_assets", schema=None) as batch_op:
         batch_op.add_column(sa.Column("e_mode_category_id", sa.Integer(), nullable=True))
         batch_op.create_index(
-            batch_op.f("ix_aave_v3_assets_e_mode_category_id"), ["e_mode_category_id"], unique=False
+            batch_op.f("ix_aave_v3_assets_e_mode_category_id"),
+            ["e_mode_category_id"],
+            unique=False,
         )
         batch_op.create_foreign_key(
             "fk_aave_v3_assets_emode_category",
@@ -117,7 +131,7 @@ def upgrade() -> None:
 
     with op.batch_alter_table("aave_v3_users", schema=None) as batch_op:
         batch_op.add_column(
-            sa.Column("isolation_mode_collateral_asset_id", sa.Integer(), nullable=True)
+            sa.Column("isolation_mode_collateral_asset_id", sa.Integer(), nullable=True),
         )
         batch_op.add_column(
             sa.Column(
@@ -125,7 +139,7 @@ def upgrade() -> None:
                 degenbot.database.models.base.IntMappedToString(length=78),
                 nullable=False,
                 server_default="0",
-            )
+            ),
         )
         batch_op.create_index(
             batch_op.f("ix_aave_v3_users_isolation_mode_collateral_asset_id"),

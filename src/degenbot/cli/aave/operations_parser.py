@@ -103,7 +103,7 @@ class TransactionOperationsParser:
                 select(AaveGhoToken).options(
                     joinedload(AaveGhoToken.token),
                     joinedload(AaveGhoToken.v_token),
-                )
+                ),
             )
             .unique()
             .all()
@@ -136,7 +136,7 @@ class TransactionOperationsParser:
                 .where(
                     AaveV3Asset.market_id == self.market.id,
                     Erc20TokenTable.address == token_address,
-                )
+                ),
             )
             is not None
         ):
@@ -150,7 +150,7 @@ class TransactionOperationsParser:
                 .where(
                     AaveV3Asset.market_id == self.market.id,
                     Erc20TokenTable.address == token_address,
-                )
+                ),
             )
             is not None
         ):
@@ -160,7 +160,7 @@ class TransactionOperationsParser:
         gho_asset = self.session.scalar(
             select(AaveGhoToken)
             .join(AaveGhoToken.token)
-            .where(Erc20TokenTable.chain == self.market.chain_id)
+            .where(Erc20TokenTable.chain == self.market.chain_id),
         )
         if gho_asset is not None and token_address == gho_asset.v_gho_discount_token:
             return TokenType.GHO_DISCOUNT
@@ -168,7 +168,8 @@ class TransactionOperationsParser:
         return None
 
     def _get_reserve_for_debt_token(
-        self, debt_token_address: ChecksumAddress
+        self,
+        debt_token_address: ChecksumAddress,
     ) -> ChecksumAddress | None:
         """Get the underlying reserve address for a debt token.
 
@@ -182,7 +183,7 @@ class TransactionOperationsParser:
             .where(
                 AaveV3Asset.market_id == self.market.id,
                 Erc20TokenTable.address == debt_token_address,
-            )
+            ),
         )
         assert asset is not None
 
@@ -201,7 +202,7 @@ class TransactionOperationsParser:
             .where(
                 AaveV3Asset.market_id == self.market.id,
                 Erc20TokenTable.address == underlying_asset,
-            )
+            ),
         )
         assert asset is not None
 
@@ -221,7 +222,7 @@ class TransactionOperationsParser:
             .where(
                 AaveV3Asset.market_id == self.market.id,
                 Erc20TokenTable.address == underlying_asset,
-            )
+            ),
         )
         assert asset is not None
 
@@ -238,7 +239,7 @@ class TransactionOperationsParser:
             select(AaveV3Contract).where(
                 AaveV3Contract.market_id == self.market.id,
                 AaveV3Contract.name == "POOL",
-            )
+            ),
         )
         assert pool_contract is not None
         assert pool_contract.revision is not None
@@ -273,7 +274,7 @@ class TransactionOperationsParser:
             .where(
                 AaveV3Asset.market_id == self.market.id,
                 Erc20TokenTable.address == token_address,
-            )
+            ),
         )
 
     def _get_asset_by_a_token(self, a_token_address: ChecksumAddress) -> AaveV3Asset | None:
@@ -797,7 +798,8 @@ class TransactionOperationsParser:
 
         on_behalf_of = decode_address(supply_event["topics"][2])
         _, supply_amount = eth_abi.abi.decode(
-            types=["address", "uint256"], data=supply_event["data"]
+            types=["address", "uint256"],
+            data=supply_event["data"],
         )
 
         # Get the reserve (underlying asset) from the Supply event
@@ -2003,7 +2005,7 @@ class TransactionOperationsParser:
                         scaled_token_events=paired_events,
                         transfer_events=[],
                         balance_transfer_events=bt_events,
-                    )
+                    ),
                 )
                 operation_id += 1
                 local_assigned.add(bt_ev.event["logIndex"])
@@ -2096,7 +2098,7 @@ class TransactionOperationsParser:
                     scaled_token_events=[ev],
                     transfer_events=transfer_events,
                     balance_transfer_events=[],
-                )
+                ),
             )
             operation_id += 1
 
@@ -2164,7 +2166,7 @@ class TransactionOperationsParser:
             if ev.amount == ev.balance_increase:
                 logger.debug(
                     f"Skipping interest accrual Mint event at logIndex {ev.event['logIndex']} - "
-                    f"amount ({ev.amount}) equals balance_increase ({ev.balance_increase})"
+                    f"amount ({ev.amount}) equals balance_increase ({ev.balance_increase})",
                 )
                 assigned_indices.add(ev.event["logIndex"])
                 continue
@@ -2172,7 +2174,7 @@ class TransactionOperationsParser:
             # This is a mint to treasury - create operation
             logger.debug(
                 f"Creating MINT_TO_TREASURY for event at logIndex {ev.event['logIndex']}, "
-                f"user={ev.user_address}, amount={ev.amount}"
+                f"user={ev.user_address}, amount={ev.amount}",
             )
 
             # Extract MintedToTreasury amount
@@ -2215,7 +2217,7 @@ class TransactionOperationsParser:
                     transfer_events=[],
                     balance_transfer_events=[],
                     minted_to_treasury_amount=minted_amount,
-                )
+                ),
             )
             operation_id += 1
 
@@ -2351,7 +2353,8 @@ class TransactionOperationsParser:
                 and bt_ev.target_address == scaled_token_event.target_address
                 and bt_ev.event["address"] == scaled_token_event.event["address"]
                 and TransactionOperationsParser._are_compatible_transfer_types(
-                    bt_ev, scaled_token_event
+                    bt_ev,
+                    scaled_token_event,
                 )
             ):
                 local_assigned.add(bt_ev.event["logIndex"])
@@ -2394,11 +2397,15 @@ class TransactionOperationsParser:
 
             # Skip transfers to/from zero address that are part of mints/burns
             if ev.target_address == ZERO_ADDRESS and TransactionOperationsParser._is_part_of_burn(
-                ev, scaled_events, local_assigned
+                ev,
+                scaled_events,
+                local_assigned,
             ):
                 continue
             if ev.from_address == ZERO_ADDRESS and TransactionOperationsParser._is_part_of_mint(
-                ev, scaled_events, local_assigned
+                ev,
+                scaled_events,
+                local_assigned,
             ):
                 continue
 
@@ -2429,7 +2436,7 @@ class TransactionOperationsParser:
                     scaled_token_events=[ev],
                     transfer_events=[],
                     balance_transfer_events=balance_transfer_events,
-                )
+                ),
             )
             operation_id += 1
 

@@ -88,7 +88,9 @@ class LiveAdminDynamicDyCalculator:
             xp_ = [
                 balance * rate
                 for balance, rate in zip(
-                    inputs.effective_balances, inputs.precision_multipliers, strict=True
+                    inputs.effective_balances,
+                    inputs.precision_multipliers,
+                    strict=True,
                 )
             ]
             x = xp_[i] + dx * inputs.precision_multipliers[i]

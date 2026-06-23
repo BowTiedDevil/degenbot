@@ -36,7 +36,7 @@ def _get_v_token_for_underlying(
         select(AaveV3Asset).where(
             AaveV3Asset.market_id == market.id,
             AaveV3Asset.underlying_token.has(address=underlying_address),
-        )
+        ),
     )
     assert asset is not None
     assert asset.v_token is not None
@@ -64,7 +64,7 @@ def _get_all_scaled_token_addresses(
             .options(
                 joinedload(AaveV3Asset.a_token),
                 joinedload(AaveV3Asset.v_token),
-            )
+            ),
         )
         .unique()
         .all()
@@ -107,12 +107,12 @@ def _build_transaction_contexts(
         logger.debug(
             f"_build_transaction_contexts: processing event "
             f"block={block_num} tx={tx_hash.to_0x_hex()} "
-            f"topic={topic.to_0x_hex()} addr={event_address}"
+            f"topic={topic.to_0x_hex()} addr={event_address}",
         )
 
         if tx_hash not in contexts:
             logger.debug(
-                f"_build_transaction_contexts: creating new context for tx={tx_hash.to_0x_hex()}"
+                f"_build_transaction_contexts: creating new context for tx={tx_hash.to_0x_hex()}",
             )
             contexts[tx_hash] = TransactionContext(
                 provider=provider,

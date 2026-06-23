@@ -98,7 +98,7 @@ def gen_ticks(
     initialized_ticks_iter = iter(
         sorted((tick for tick in tick_data if tick <= starting_tick), reverse=True)
         if less_than_or_equal
-        else sorted(tick for tick in tick_data if tick > starting_tick)
+        else sorted(tick for tick in tick_data if tick > starting_tick),
     )
 
     next_initialized_tick = next(initialized_ticks_iter, None)

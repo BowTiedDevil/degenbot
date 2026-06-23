@@ -112,7 +112,7 @@ def detect_liquidation_patterns(
             f"debt_v_token={key[1]}\n"
             f"  Liquidations: {group.liquidation_count}\n"
             f"  Burn events: {group.burn_event_count}\n"
-            f"  Total debt: {group.total_debt_to_cover}"
+            f"  Total debt: {group.total_debt_to_cover}",
         )
 
     return LiquidationPatternContext(patterns=patterns, groups=groups)

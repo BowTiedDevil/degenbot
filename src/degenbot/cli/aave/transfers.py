@@ -63,7 +63,7 @@ def _should_skip_collateral_transfer(
     return bool(
         scaled_event.index is None
         and operation
-        and operation.operation_type in {OperationType.LIQUIDATION, OperationType.GHO_LIQUIDATION}
+        and operation.operation_type in {OperationType.LIQUIDATION, OperationType.GHO_LIQUIDATION},
     )
 
 

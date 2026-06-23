@@ -23,7 +23,7 @@ def upgrade() -> None:
         """
         UPDATE uniswap_v4_pools
         SET pool_hash = LOWER(pool_hash)
-        """
+        """,
     )
 
 

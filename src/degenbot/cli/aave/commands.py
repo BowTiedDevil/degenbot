@@ -123,7 +123,7 @@ def activate_ethereum_aave_v3(bot: Bot, chain_id: ChainId = ChainId.ETH) -> None
             select(AaveV3Market).where(
                 AaveV3Market.chain_id == chain_id,
                 AaveV3Market.name == market_name,
-            )
+            ),
         )
 
         if market is not None:
@@ -144,7 +144,7 @@ def activate_ethereum_aave_v3(bot: Bot, chain_id: ChainId = ChainId.ETH) -> None
                     market_id=market.id,
                     name="POOL_ADDRESS_PROVIDER",
                     address=EthereumMainnetAaveV3.pool_address_provider,
-                )
+                ),
             )
 
             # GHO tokens are chain-unique, so create a single entry that all markets on this chain
@@ -160,7 +160,7 @@ def activate_ethereum_aave_v3(bot: Bot, chain_id: ChainId = ChainId.ETH) -> None
                 session.scalar(
                     select(AaveGhoToken).where(
                         AaveGhoToken.token_id == gho_asset_token.id,
-                    )
+                    ),
                 )
                 is None
             ):
@@ -192,7 +192,7 @@ def deactivate_mainnet_aave_v3(
             select(AaveV3Market).where(
                 AaveV3Market.chain_id == chain_id,
                 AaveV3Market.name == market_name,
-            )
+            ),
         )
 
         if market is None:
@@ -356,8 +356,8 @@ def aave_update(
                     select(AaveV3Market.chain_id).where(
                         AaveV3Market.active,
                         AaveV3Market.name.contains("aave"),
-                    )
-                ).all()
+                    ),
+                ).all(),
             )
 
         if not active_chains:
@@ -373,7 +373,7 @@ def aave_update(
                         AaveV3Market.active,
                         AaveV3Market.chain_id == chain_id,
                         AaveV3Market.name.contains("aave"),
-                    )
+                    ),
                 ).all()
 
                 if not active_markets:
@@ -439,7 +439,7 @@ def aave_update(
                             AaveV3Market.active,
                             AaveV3Market.chain_id == chain_id,
                             AaveV3Market.name.contains("aave"),
-                        )
+                        ),
                     ).all()
 
                     # Cap the working end block at the lowest of:
@@ -459,7 +459,7 @@ def aave_update(
                     assert working_end_block >= working_start_block
 
                     block_pbar.set_description(
-                        f"Processing block range {working_start_block:,} -> {working_end_block:,}"
+                        f"Processing block range {working_start_block:,} -> {working_end_block:,}",
                     )
                     block_pbar.refresh()
 
@@ -492,7 +492,7 @@ def aave_update(
                             session.rollback()
                             click.echo(
                                 f"Dry run: processed blocks {working_start_block:,} -> "
-                                f"{working_end_block:,} for {market.name} (no changes committed)"
+                                f"{working_end_block:,} for {market.name} (no changes committed)",
                             )
                             continue
 
@@ -523,7 +523,7 @@ def aave_update(
                                     skip_confirmation=True,
                                 )
                                 logger.info(
-                                    f"Created database backup at block {working_end_block:,}"
+                                    f"Created database backup at block {working_end_block:,}",
                                 )
                             bot.db.remove()
                         else:
@@ -581,7 +581,7 @@ def position_show(bot: Bot, address: str, market: str, chain_id: int) -> None:
             select(AaveV3Market).where(
                 AaveV3Market.name == market,
                 AaveV3Market.chain_id == chain_id,
-            )
+            ),
         )
 
         if market_obj is None:
@@ -593,13 +593,13 @@ def position_show(bot: Bot, address: str, market: str, chain_id: int) -> None:
             select(AaveV3User).where(
                 AaveV3User.address == user_address,
                 AaveV3User.market_id == market_obj.id,
-            )
+            ),
         )
 
         if user is None:
             click.echo(
                 f"No Aave user found for address {user_address} in market '{market}' "
-                f"on chain {chain_id}."
+                f"on chain {chain_id}.",
             )
             return
 
@@ -607,14 +607,14 @@ def position_show(bot: Bot, address: str, market: str, chain_id: int) -> None:
         collateral_positions = session.scalars(
             select(AaveV3CollateralPosition)
             .where(AaveV3CollateralPosition.user_id == user.id)
-            .options(joinedload(AaveV3CollateralPosition.asset))
+            .options(joinedload(AaveV3CollateralPosition.asset)),
         ).all()
 
         # Get debt positions
         debt_positions = session.scalars(
             select(AaveV3DebtPosition)
             .where(AaveV3DebtPosition.user_id == user.id)
-            .options(joinedload(AaveV3DebtPosition.asset))
+            .options(joinedload(AaveV3DebtPosition.asset)),
         ).all()
 
         click.echo(f"\nAave V3 Positions for {user_address}")
@@ -723,7 +723,7 @@ def position_risk(  # noqa: PLR0917
             select(AaveV3Market).where(
                 AaveV3Market.name == market,
                 AaveV3Market.chain_id == chain_id,
-            )
+            ),
         )
 
         if market_obj is None:
@@ -803,7 +803,7 @@ def _display_user_risk(
                     click.echo(
                         f"      {collateral_pos.asset_symbol}: {collateral_pos.actual_balance:,} "
                         f"(LT: {collateral_pos.liquidation_threshold / 100:.0f}%)"
-                        f"{enabled_str}{emode_str}"
+                        f"{enabled_str}{emode_str}",
                     )
 
         if user_summary.debt_positions:
@@ -812,7 +812,7 @@ def _display_user_risk(
                 if debt_pos.actual_balance > 0:
                     emode_str = " [eMode]" if debt_pos.in_emode else ""
                     click.echo(
-                        f"      {debt_pos.asset_symbol}: {debt_pos.actual_balance:,}{emode_str}"
+                        f"      {debt_pos.asset_symbol}: {debt_pos.actual_balance:,}{emode_str}",
                     )
 
 
@@ -914,7 +914,7 @@ def update_aave_market(
     """
     logger.debug(
         f"Updating {market.name} (chain {market.chain_id}): "
-        f"block range {start_block:,} - {end_block:,}"
+        f"block range {start_block:,} - {end_block:,}",
     )
 
     # Phase 1: Collect proxy events and config events
@@ -1064,7 +1064,7 @@ def update_aave_market(
         _get_all_scaled_token_addresses(
             session=session,
             chain_id=provider.chain_id,
-        )
+        ),
     )
 
     scaled_token_events = fetch_scaled_token_events(
@@ -1099,7 +1099,7 @@ def update_aave_market(
             discount_token=gho_asset.v_gho_discount_token,
             start_block=start_block,
             end_block=end_block,
-        )
+        ),
     )
 
     # Group the events into transaction bundles with a shared context
@@ -1142,7 +1142,7 @@ def update_aave_market(
             if verify_block and users_modified_this_block:
                 logger.debug(
                     f"Verifying {len(users_modified_this_block)} users at "
-                    f"block {last_verified_block}"
+                    f"block {last_verified_block}",
                 )
                 verify_positions_for_users(
                     provider=provider,
@@ -1168,7 +1168,7 @@ def update_aave_market(
     if verify_block and users_modified_this_block:
         assert last_verified_block is not None
         logger.debug(
-            f"Verifying {len(users_modified_this_block)} users at block {last_verified_block}"
+            f"Verifying {len(users_modified_this_block)} users at block {last_verified_block}",
         )
         verify_positions_for_users(
             provider=provider,

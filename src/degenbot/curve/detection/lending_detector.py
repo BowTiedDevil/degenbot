@@ -78,7 +78,8 @@ def detect_lending_tokens(
                         block=block_identifier,
                     )
                     (underlying_addr,) = eth_abi.abi.decode(
-                        types=["address"], data=underlying_result
+                        types=["address"],
+                        data=underlying_result,
                     )
                     underlying_addr = get_checksum_address(underlying_addr)
                     # Fetch underlying decimals
@@ -94,7 +95,8 @@ def detect_lending_tokens(
                             block=block_identifier,
                         )
                         (underlying_dec,) = eth_abi.abi.decode(
-                            types=["uint8"], data=underlying_dec_result
+                            types=["uint8"],
+                            data=underlying_dec_result,
                         )
                         # Override precision_multiplier to use underlying decimals
                         precision_multiplier_overrides[idx] = 10 ** (18 - underlying_dec)

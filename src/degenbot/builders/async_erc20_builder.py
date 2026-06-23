@@ -78,7 +78,11 @@ class AsyncErc20Builder:
         # Check for Ether placeholder
         if address in EtherPlaceholder.addresses:
             py_token = self._py_bot.register_token(
-                address, "Ether Placeholder", "ETH", 18, chain_id
+                address,
+                "Ether Placeholder",
+                "ETH",
+                18,
+                chain_id,
             )
             token: Erc20Token = EtherPlaceholder(py_token)
             self._tokens.add(token_address=token.address, chain_id=chain_id, token=token)
@@ -120,13 +124,22 @@ class AsyncErc20Builder:
             except (Web3Exception, DecodingError):
                 # Fallback: try individual calls with alternate prototypes
                 fetched_name = await self._fetch_with_fallback(
-                    address, io, ["name()", "NAME()"], UNKNOWN_NAME
+                    address,
+                    io,
+                    ["name()", "NAME()"],
+                    UNKNOWN_NAME,
                 )
                 fetched_symbol = await self._fetch_with_fallback(
-                    address, io, ["symbol()", "SYMBOL()"], UNKNOWN_SYMBOL
+                    address,
+                    io,
+                    ["symbol()", "SYMBOL()"],
+                    UNKNOWN_SYMBOL,
                 )
                 fetched_decimals = await self._fetch_with_fallback_int(
-                    address, io, ["decimals()", "DECIMALS()"], UNKNOWN_DECIMALS
+                    address,
+                    io,
+                    ["decimals()", "DECIMALS()"],
+                    UNKNOWN_DECIMALS,
                 )
 
             name = name or fetched_name
