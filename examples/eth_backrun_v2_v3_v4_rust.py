@@ -1058,7 +1058,6 @@ async def build_paths(
     v4_pool_count = 0
     v4_hook_rejected = 0
     v4_dynamic_fee_rejected = 0
-    v4_other_value_error = 0
     other_exc_count = 0
     registered_path_sigs: set[tuple[str, ...]] = set()
 
@@ -1106,6 +1105,14 @@ async def build_paths(
         # Build pools through appropriate constructors
         pools: list[LiquidityPool | UniswapV3Pool | UniswapV4Pool] = []
         skip = False
+        # V4 admission refusals (hook/dynamic-fee) surface from the builder at
+        # `bot.build_managed_pool` time — the Rust core enforces them in
+        # BotState::register_v4_pool (the builder calls py_bot.register_v4_pool
+        # → shared BotState). They are counted on their OWN dedicated counters
+        # (not skip_count / engine_reject_count), so the summary reflects
+        # admission refusals distinctly from generic build skips. Tracked with
+        # this flag so the `if skip:` guard below skips skip_count for them.
+        v4_admission_rejected = False
         for step, pt in zip(steps, pool_type_strs, strict=True):
             if pt == "V2":
                 try:
@@ -1157,6 +1164,25 @@ async def build_paths(
                         pool_id=step.hash,
                         silent=True,
                     )
+                except HookedPoolRejectedError:
+                    # Amount-modifying hook — admission refusal (correctness
+                    # floor, enforced by the Rust core at build time). Skip this
+                    # path and continue. (Previously mis-handled: this fired at
+                    # the registration block, but admission runs at build time,
+                    # so the registration-site branch was dead and these were
+                    # silently counted as generic skip_count. Now classified by
+                    # type per Plan 102.)
+                    v4_hook_rejected += 1
+                    skip = True
+                    v4_admission_rejected = True
+                    break
+                except DynamicFeePoolRejectedError:
+                    # Dynamic fee — admission refusal (correctness floor).
+                    # Same rationale as HookedPoolRejectedError above.
+                    v4_dynamic_fee_rejected += 1
+                    skip = True
+                    v4_admission_rejected = True
+                    break
                 except Exception as exc:
                     bot_logger.debug(f"Skip V4 {step.hash}: {exc}")
                     skip = True
@@ -1167,7 +1193,10 @@ async def build_paths(
             pools.append(pool)
 
         if skip:
-            skip_count += 1
+            # V4 admission refusals have their own dedicated counters; don't
+            # also count them as generic skips (avoids double-counting).
+            if not v4_admission_rejected:
+                skip_count += 1
             continue
 
         # Register with Rust engine
@@ -1180,28 +1209,6 @@ async def build_paths(
                 elif pt == "V4":
                     v4_pool_count += 1
                     retry_verification_call(_retry_policy, engine_registry.register_v4_pool, pool)
-        except HookedPoolRejectedError:
-            # Amount-modifying hook — admission refusal (correctness floor,
-            # enforced by the Rust core). Expected when scanning many V4
-            # pools; skip this path and continue. Classified by type per
-            # Plan 102 (replaces the former string-match on
-            # "amount-modifying hooks").
-            v4_hook_rejected += 1
-            engine_reject_count += 1
-            continue
-        except DynamicFeePoolRejectedError:
-            # Dynamic fee — admission refusal (correctness floor). Skip path.
-            v4_dynamic_fee_rejected += 1
-            engine_reject_count += 1
-            continue
-        except ValueError as exc:
-            # Other V4 ValueError (e.g. already-registered, bad address) —
-            # NOT an admission category; log + skip.
-            v4_other_value_error += 1
-            if v4_other_value_error <= 5:
-                bot_logger.info(f"[build_paths] V4 ValueError (other): {exc}")
-            engine_reject_count += 1
-            continue
         except VerificationMismatchError as exc:
             # Verification mismatch — on-chain tick state does not match the
             # engine state. This is fatal: trade on stale data = lose money.
@@ -1289,8 +1296,9 @@ async def build_paths(
         f"{time.perf_counter() - start:.1f}s — "
         f"{skip_count} skipped, {token_filter_count} token-filtered, "
         f"{engine_reject_count} engine-rejected "
-        f"(hooks={v4_hook_rejected}, dynamic_fee={v4_dynamic_fee_rejected}, "
-        f"v4_other={v4_other_value_error}, other_exc={other_exc_count}), "
+        f"(other_exc={other_exc_count}), "
+        f"{v4_hook_rejected} V4 hook-rejected, "
+        f"{v4_dynamic_fee_rejected} V4 dynamic-fee-rejected, "
         f"{dup_count} duplicates, "
         f"{direction_fail_count} direction-failed, "
         f"{register_fail_count} register-failed"
@@ -1303,7 +1311,6 @@ async def build_paths(
         f"{v4_pool_count} V4 pools, "
         f"{v4_hook_rejected} V4 hook-rejected, "
         f"{v4_dynamic_fee_rejected} V4 dynamic-fee-rejected, "
-        f"{v4_other_value_error} V4 other-ValueError, "
         f"{other_exc_count} other-Exception, "
         f"{engine_registry.engine.path_count()} engine paths"
     )
