@@ -360,7 +360,11 @@ impl PyUniswapArbEngine {
                                    block: u64|
              -> Result<(), VerifyError> {
                 let (Some(sv), Some(ref td)) = (state_view, tick_data_for_snapshot_verify) else {
-                    return Ok(());
+                    return Err(VerifyError::NotConfigured(
+                        "verify_on_register is enabled for a V4 pool but set_verify_state_view() \
+                         was never called — the StateView address is required to verify V4 \
+                         tick data".to_string(),
+                    ));
                 };
                 rpc.verify_v4_snapshot(sv, pool_id, td, block)
             };
@@ -369,7 +373,11 @@ impl PyUniswapArbEngine {
              -> Result<(), VerifyError> {
                 let (Some(sv), Some(ref pool_snapshot)) = (state_view, backfill_verify_snapshot)
                 else {
-                    return Ok(());
+                    return Err(VerifyError::NotConfigured(
+                        "verify_on_register is enabled for a V4 pool but set_verify_state_view() \
+                         was never called — the StateView address is required to verify V4 \
+                         tick data".to_string(),
+                    ));
                 };
                 let mut pool_map = HashMap::new();
                 pool_map.insert(key, pool_snapshot.clone());

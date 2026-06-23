@@ -55,6 +55,14 @@ pub enum VerifyError {
     /// `Snapshot` (fatal) so the seam routes it to `VerificationRpcError`
     /// instead of `VerificationMismatchError` (VP42BP).
     Rpc(String),
+    /// Verification was opted into (`verify_on_register = true`) for a
+    /// snapshot-built (`Tracked`) pool but a required precondition was never
+    /// set: the RPC URL (and, for V4 pools, the `StateView` address). This is a
+    /// fatal misconfiguration — the bot must NOT operate with an unverified
+    /// tick map, so `run_cl_verification` raises `NotConfigured` instead of the
+    /// legacy silent `Ok(())` skip. The message names the missing call
+    /// (`set_verify_rpc_url()` / `set_verify_state_view()`).
+    NotConfigured(String),
 }
 
 /// The minimal on-chain RPC surface the two-phase CL verification needs
@@ -170,7 +178,11 @@ where
     F2: FnOnce(&R, u64) -> Result<(), VerifyError>,
 {
     if !rpc.enabled() {
-        return Ok(());
+        return Err(VerifyError::NotConfigured(
+            "verify_on_register is enabled but verification is not configured — \
+             call set_verify_rpc_url() (and set_verify_state_view() for V4 pools) \
+             before registering snapshot pools".to_string(),
+        ));
     }
     if let Some(block) = snapshot_block {
         verify_snapshot(rpc, block)?;
@@ -501,22 +513,32 @@ mod tests {
             VerifyError::Snapshot(m) => VerifyError::Snapshot(m.clone()),
             VerifyError::Provider(m) => VerifyError::Provider(m.clone()),
             VerifyError::Rpc(m) => VerifyError::Rpc(m.clone()),
+            VerifyError::NotConfigured(m) => VerifyError::NotConfigured(m.clone()),
         }
     }
 
-    /// `enabled() == false` short-circuits both phases (the legacy
-    /// `rpc_url: None` early return).
+    /// Opted-in-but-not-configured is a FATAL misconfiguration, not a silent
+    /// skip. `run_cl_verification` is only reached when the caller opted into
+    /// verification (`verify_on_register = true`) for a snapshot-built
+    /// (`Tracked`) pool. Reaching it with `enabled() == false` therefore means
+    /// verification was requested but the RPC URL was never set — the bot must
+    /// NOT proceed with an unverified tick map. Raises `NotConfigured` (loud)
+    /// rather than returning `Ok(())` (silent), so "startup succeeded" can no
+    /// longer mean "never verified".
     #[test]
-    fn run_cl_verification_skips_when_disabled() {
+    fn run_cl_verification_errors_when_not_configured() {
         let rpc = FakeVerifyRpc::new(false);
         let snap = |_: &FakeVerifyRpc, b: u64| {
-            panic!("snapshot phase must not run when disabled (block {b})")
+            panic!("snapshot phase must not run when not configured (block {b})")
         };
         let back = |_: &FakeVerifyRpc, b: u64| {
-            panic!("backfill phase must not run when disabled (block {b})")
+            panic!("backfill phase must not run when not configured (block {b})")
         };
         let res = run_cl_verification(&rpc, Some(10), Some(20), snap, back);
-        assert!(res.is_ok());
+        assert!(
+            matches!(res, Err(VerifyError::NotConfigured(_))),
+            "opted-in-but-no-url must raise NotConfigured, not return Ok"
+        );
         assert!(rpc.snapshot_calls.lock().is_empty());
         assert!(rpc.backfill_calls.lock().is_empty());
     }
@@ -693,5 +715,28 @@ mod tests {
         assert!(res.is_ok());
         assert!(rpc.snapshot_calls.lock().is_empty());
         assert_eq!(*rpc.backfill_calls.lock(), vec![20]);
+    }
+
+    /// A `NotConfigured` returned by an opted-in phase (e.g. a V4 snapshot
+    /// closure that found `state_view` unset) propagates to the caller — it is
+    /// NOT swallowed. The register.rs V4 closures rely on this to surface a
+    /// missing `set_verify_state_view()` as a loud fatal error.
+    #[test]
+    fn run_cl_verification_propagates_not_configured_from_phase() {
+        let rpc = FakeVerifyRpc::new(true);
+        let snap = |_: &FakeVerifyRpc, _b: u64| {
+            Err(VerifyError::NotConfigured(
+                "missing set_verify_state_view() for V4 pool".to_string(),
+            ))
+        };
+        let back = |_: &FakeVerifyRpc, b: u64| {
+            panic!("backfill must not run after a NotConfigured (block {b})")
+        };
+
+        let res = run_cl_verification(&rpc, Some(10), Some(20), snap, back);
+        assert!(
+            matches!(res, Err(VerifyError::NotConfigured(m)) if m.contains("set_verify_state_view")),
+            "NotConfigured from a phase must propagate, not be swallowed"
+        );
     }
 }

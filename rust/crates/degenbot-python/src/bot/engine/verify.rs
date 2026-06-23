@@ -23,11 +23,15 @@ use crate::prelude::*;
 ///   retry-on-`VerificationRpcError` policy catches both transport classes)
 /// - `NoSnapshotStream` → `PyRuntimeError` (programmer error: no snapshot
 ///   stream in progress — distinct from verification failure categories)
+/// - `NotConfigured` → `PyRuntimeError` (programmer error: `verify_on_register`
+///   enabled but the RPC URL / V4 `StateView` was never set — the bot must not
+///   run with an unverified tick map)
 pub(crate) fn map_verify_err(res: Result<(), VerifyError>) -> PyResult<()> {
     res.map_err(|e| match e {
         VerifyError::NoSnapshotStream => {
             pyo3::exceptions::PyRuntimeError::new_err("No snapshot stream in progress.")
         }
+        VerifyError::NotConfigured(msg) => pyo3::exceptions::PyRuntimeError::new_err(msg),
         VerifyError::Snapshot(msg) => VerificationMismatchError::new_err(msg),
         VerifyError::Provider(msg) | VerifyError::Rpc(msg) => VerificationRpcError::new_err(msg),
     })
@@ -152,6 +156,9 @@ impl VerifyRpc for EngineVerifyRpc<'_> {
                 map_liquidity_verify_error(e, &format!("V3 pool {addr_str}"), "snapshot", block)
             })
         })
+        .map(|()| {
+            log::info!("[verify] V3 snapshot OK: pool {addr_str} at block {block}");
+        })
     }
 
     fn verify_v3_backfill(
@@ -180,6 +187,9 @@ impl VerifyRpc for EngineVerifyRpc<'_> {
                 map_liquidity_verify_error(e, &format!("V3 pool {label}"), "backfill", block)
             })
         })
+        .map(|()| {
+            log::info!("[verify] V3 backfill OK: pool {label} at block {block}");
+        })
     }
 
     fn verify_v4_snapshot(
@@ -200,6 +210,9 @@ impl VerifyRpc for EngineVerifyRpc<'_> {
             .map_err(|e| {
                 map_liquidity_verify_error(e, &format!("V4 pool {pool_id_hex}"), "snapshot", block)
             })
+        })
+        .map(|()| {
+            log::info!("[verify] V4 snapshot OK: pool {pool_id_hex} at block {block}");
         })
     }
 
@@ -227,6 +240,9 @@ impl VerifyRpc for EngineVerifyRpc<'_> {
             .map_err(|e| {
                 map_liquidity_verify_error(e, &format!("V4 pool {pool_id_hex}"), "backfill", block)
             })
+        })
+        .map(|()| {
+            log::info!("[verify] V4 backfill OK: pool {pool_id_hex} at block {block}");
         })
     }
 }
@@ -313,6 +329,10 @@ impl PyUniswapArbEngine {
             )));
         }
 
+        log::info!(
+            "[verify] V3 + V4 liquidity maps OK at block {}",
+            block_number.unwrap_or_default()
+        );
         Ok(())
     }
 
@@ -355,6 +375,10 @@ impl PyUniswapArbEngine {
             )));
         }
 
+        log::info!(
+            "[verify] V3 liquidity maps OK at block {}",
+            block_number.unwrap_or_default()
+        );
         Ok(())
     }
 
@@ -404,6 +428,10 @@ impl PyUniswapArbEngine {
             )));
         }
 
+        log::info!(
+            "[verify] V4 liquidity maps OK at block {}",
+            block_number.unwrap_or_default()
+        );
         Ok(())
     }
 
