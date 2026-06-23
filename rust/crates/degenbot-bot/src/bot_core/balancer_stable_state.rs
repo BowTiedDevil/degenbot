@@ -10,17 +10,17 @@
 //! Scope of THIS sub-slice: the Rust state struct +
 //! `register_balancer_stable_pool` + `apply_balancer_stable_balance_update_by_pool_id`
 //! + journal restore/discard + `PyBot.register_balancer_stable_pool` +
-//! Balancer stable read getters on `PyLiquidityPool`
-//! (`balancer_stable_balances`, `balancer_stable_update_block`,
-//! `snapshot_balancer_stable`, `n_balancer_stable_tokens`, `balancer_amp`,
-//! `balancer_bpt_index`, `balancer_invariant_version`,
-//! `balancer_stable_scaling_factors`, `balancer_stable_swap_fee`). The
-//! Python `BalancerV2StablePool` companion
-//! rewrite (delegating `self._state` to the handle) +
-//! `make_balancer_stable_pool` factory + `BalancerBuilder` stable-branch
-//! migration + `CacheAwareRateProvider`-in-Rust + `StaleRateResult` are
-//! deferred to follow-on sub-slice 12d. The pure-math Rust port
-//! (`StableMath` + `FixedPoint` / `LogExpMath`) is deferred to 12e.
+//!   Balancer stable read getters on `PyLiquidityPool`
+//!   (`balancer_stable_balances`, `balancer_stable_update_block`,
+//!   `snapshot_balancer_stable`, `n_balancer_stable_tokens`, `balancer_amp`,
+//!   `balancer_bpt_index`, `balancer_invariant_version`,
+//!   `balancer_stable_scaling_factors`, `balancer_stable_swap_fee`). The
+//!   Python `BalancerV2StablePool` companion
+//!   rewrite (delegating `self._state` to the handle) +
+//!   `make_balancer_stable_pool` factory + `BalancerBuilder` stable-branch
+//!   migration + `CacheAwareRateProvider`-in-Rust + `StaleRateResult` are
+//!   deferred to follow-on sub-slice 12d. The pure-math Rust port
+//!   (`StableMath` + `FixedPoint` / `LogExpMath`) is deferred to 12e.
 //!
 //! ## State shape
 //!

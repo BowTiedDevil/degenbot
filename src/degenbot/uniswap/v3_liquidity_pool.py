@@ -26,7 +26,7 @@ sparse-map concept at all.
 
 import dataclasses
 from collections.abc import Callable
-from typing import Any, ClassVar, TypedDict, cast
+from typing import Any, ClassVar, TypedDict
 from weakref import WeakSet
 
 from eth_typing import ChecksumAddress
@@ -493,7 +493,7 @@ class UniswapV3Pool(
         # verbatim and checked-empty words appear as present-but-zero).
         for word, bitmap_at_word in self._bitmap_override.items():
             result[word] = bitmap_at_word  # noqa: PERF403
-        return cast("InitializedTickMap", result)
+        return result
 
     @property
     def tick_data(self) -> LiquidityMap:
@@ -505,21 +505,18 @@ class UniswapV3Pool(
         Mirrors how V2's ``state`` returns a fresh state each read.
         """
         raw = self._py_pool.tick_data_snapshot()
-        return cast(
-            "LiquidityMap",
-            {
-                int(tick): (
-                    LiquidityAtTick(
-                        liquidity_net=int(row[1]),
-                        liquidity_gross=int(row[0]),
-                        block=int(row[2]),
-                    )
-                    if not isinstance(row, LiquidityAtTick)
-                    else row
+        return {
+            int(tick): (
+                LiquidityAtTick(
+                    liquidity_net=int(row[1]),
+                    liquidity_gross=int(row[0]),
+                    block=int(row[2]),
                 )
-                for tick, row in raw.items()
-            },
-        )
+                if not isinstance(row, LiquidityAtTick)
+                else row
+            )
+            for tick, row in raw.items()
+        }
 
     @property
     def update_block(self) -> BlockNumber:

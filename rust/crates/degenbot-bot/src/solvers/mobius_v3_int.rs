@@ -837,8 +837,7 @@ pub fn int_solve_cl_path(sequences: &[&IntV3TickRangeSequence]) -> Option<(U256,
                 .collect();
 
             // Closed-form optimal input for this piece
-            if let Ok(result) = crate::solvers::mobius_int_exact::exact_mobius_solve(&flat_hops)
-            {
+            if let Ok(result) = crate::solvers::mobius_int_exact::exact_mobius_solve(&flat_hops) {
                 if result.is_profitable && !result.optimal_input.is_zero() {
                     let total_optimal_input =
                         result.optimal_input.saturating_add(total_crossing_cost);
@@ -1228,9 +1227,8 @@ fn int_simulate_v2_hops(amount_in: U256, v2_hops: &[IntHopState]) -> U256 {
         if current.is_zero() {
             return U256::ZERO;
         }
-        current =
-            crate::solvers::mobius_int::int_simulate_path(current, std::slice::from_ref(hop))
-                .final_output;
+        current = crate::solvers::mobius_int::int_simulate_path(current, std::slice::from_ref(hop))
+            .final_output;
     }
     current
 }
@@ -1608,8 +1606,7 @@ pub fn exact_solve_mixed_path_n(
 
             if valid {
                 // Closed-form optimal input for this piece
-                if let Ok(result) =
-                    crate::solvers::mobius_int_exact::exact_mobius_solve(&flat_hops)
+                if let Ok(result) = crate::solvers::mobius_int_exact::exact_mobius_solve(&flat_hops)
                 {
                     if result.is_profitable && !result.optimal_input.is_zero() {
                         let total_optimal_input =

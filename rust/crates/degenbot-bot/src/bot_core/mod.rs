@@ -2816,6 +2816,10 @@ impl BotState {
     /// no-op'd — so V4 reorg journals were never trimmed via the handle path.
     /// The `matches!` probe is a Copy discriminant (immutable borrow ends
     /// before the `&mut self` call).
+    ///
+    /// # Errors
+    ///
+    /// Propagates the underlying journal's `JournalError` for V3/V4 discard.
     pub fn discard_v3_or_v4_before_block(
         &mut self,
         pool_id: u64,

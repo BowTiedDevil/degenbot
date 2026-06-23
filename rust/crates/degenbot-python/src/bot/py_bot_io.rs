@@ -34,6 +34,19 @@
 
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyString, PyTuple};
+use std::fmt::Write as _;
+
+/// Immutable data tuple returned by [`PyBotIo::fetch_v2_immutable_data`]:
+/// `(factory, token0, token1, fee, tick_spacing)`.
+type V2ImmutableData = (String, String, String, Py<PyAny>, Py<PyAny>);
+
+/// Slot0 + liquidity state tuple returned by
+/// [`PyBotIo::fetch_v4_slot0_liquidity`]:
+/// `(sqrtPriceX96, tick, protocolFee, lpFee, liquidity)`.
+type Slot0LiquidityState = (Py<PyAny>, Py<PyAny>, Py<PyAny>, Py<PyAny>, Py<PyAny>);
+
+/// Aerodrome stable/fee state tuple: `(stable, fee, token0, token1)`.
+type StableFeeTuple = (bool, Py<PyAny>, Py<PyAny>, Py<PyAny>);
 
 /// The Rust I/O façade for pool builders (ADR-005 slice 14a).
 ///
@@ -199,15 +212,13 @@ impl PyBotIo {
     /// mirrors the Python impl's `except (Web3Exception, DecodingError): return None`
     /// contract (a pool whose `factory()` reverts yields `None`, not an error).
     #[pyo3(signature = (address))]
-    fn fetch_factory_address(&self, py: Python<'_>, address: &str) -> PyResult<Option<String>> {
+    fn fetch_factory_address(&self, py: Python<'_>, address: &str) -> Option<String> {
         // Delegate the encode→call→decode→checksum to the shared no-arg
         // address-returning helper, then swallow any error into `None` here
         // to preserve the `None`-on-failure contract this method promises in
         // 14b (mirrors the Python `except (Web3Exception, DecodingError): return None`).
-        match self.fetch_address_returning_method(py, b"factory()", address, None) {
-            Ok(s) => Ok(Some(s)),
-            Err(_) => Ok(None),
-        }
+        self.fetch_address_returning_method(py, b"factory()", address, None)
+            .ok()
     }
 
     /// Fetch ERC-20 token name / symbol / decimals via batched RPC calls,
@@ -226,11 +237,7 @@ impl PyBotIo {
     /// the batched path fails. (The Rust impl surfaces the same `None` signal so
     /// the caller's fallback kicks in identically.)
     #[pyo3(signature = (address))]
-    fn fetch_erc20_metadata(
-        &self,
-        py: Python<'_>,
-        address: &str,
-    ) -> PyResult<Option<(String, String, u64)>> {
+    fn fetch_erc20_metadata(&self, py: Python<'_>, address: &str) -> Option<(String, String, u64)> {
         use alloy::dyn_abi::{DynSolType, DynSolValue};
 
         // Encode the three selectors at compile time.
@@ -240,8 +247,8 @@ impl PyBotIo {
 
         let address_obj = pyo3::types::PyString::new(py, address);
 
-        // Fire the three calls; any error -> Ok(None).
-        let name_result = match self.call_kw(
+        // Fire the three calls; any error -> None.
+        let Ok(name_result) = self.call_kw(
             py,
             "call",
             &[
@@ -252,11 +259,10 @@ impl PyBotIo {
                 ),
                 ("block", None),
             ],
-        ) {
-            Ok(r) => r,
-            Err(_) => return Ok(None),
+        ) else {
+            return None;
         };
-        let symbol_result = match self.call_kw(
+        let Ok(symbol_result) = self.call_kw(
             py,
             "call",
             &[
@@ -267,11 +273,10 @@ impl PyBotIo {
                 ),
                 ("block", None),
             ],
-        ) {
-            Ok(r) => r,
-            Err(_) => return Ok(None),
+        ) else {
+            return None;
         };
-        let decimals_result = match self.call_kw(
+        let Ok(decimals_result) = self.call_kw(
             py,
             "call",
             &[
@@ -282,41 +287,38 @@ impl PyBotIo {
                 ),
                 ("block", None),
             ],
-        ) {
-            Ok(r) => r,
-            Err(_) => return Ok(None),
+        ) else {
+            return None;
         };
 
         // Extract &[u8] from each HexBytes/bytes result.
         let name_bytes: &[u8] = match name_result.bind(py).extract::<&[u8]>() {
             Ok(b) => b,
-            Err(_) => return Ok(None),
+            Err(_) => return None,
         };
         let symbol_bytes: &[u8] = match symbol_result.bind(py).extract::<&[u8]>() {
             Ok(b) => b,
-            Err(_) => return Ok(None),
+            Err(_) => return None,
         };
         let decimals_bytes: &[u8] = match decimals_result.bind(py).extract::<&[u8]>() {
             Ok(b) => b,
-            Err(_) => return Ok(None),
+            Err(_) => return None,
         };
 
-        // Decode dynamic `string`, `string`, and `uint256`. Any decode error -> Ok(None)
+        // Decode dynamic `string`, `string`, and `uint256`. Any decode error -> None
         // (mirror the Python `except DecodingError`).
-        let name = match DynSolType::String.abi_decode(name_bytes) {
-            Ok(DynSolValue::String(s)) => s,
-            _ => return Ok(None),
+        let Ok(DynSolValue::String(name)) = DynSolType::String.abi_decode(name_bytes) else {
+            return None;
         };
-        let symbol = match DynSolType::String.abi_decode(symbol_bytes) {
-            Ok(DynSolValue::String(s)) => s,
-            _ => return Ok(None),
+        let Ok(DynSolValue::String(symbol)) = DynSolType::String.abi_decode(symbol_bytes) else {
+            return None;
         };
         let decimals = match DynSolType::Uint(256).abi_decode(decimals_bytes) {
             Ok(DynSolValue::Uint(n, _)) => n.to::<u64>(),
-            _ => return Ok(None),
+            _ => return None,
         };
 
-        Ok(Some((name, symbol, decimals)))
+        Some((name, symbol, decimals))
     }
 
     /// Fetch a V2-style pool's immutable data — `factory()`, `token0()`, `token1()` —
@@ -382,13 +384,11 @@ impl PyBotIo {
                 ))
             }
         };
-        let r0 = match it.next() {
-            Some(DynSolValue::Uint(n, _)) => n,
-            _ => return Err(pyo3::exceptions::PyValueError::new_err("invalid reserves0")),
+        let Some(DynSolValue::Uint(r0, _)) = it.next() else {
+            return Err(pyo3::exceptions::PyValueError::new_err("invalid reserves0"));
         };
-        let r1 = match it.next() {
-            Some(DynSolValue::Uint(n, _)) => n,
-            _ => return Err(pyo3::exceptions::PyValueError::new_err("invalid reserves1")),
+        let Some(DynSolValue::Uint(r1, _)) = it.next() else {
+            return Err(pyo3::exceptions::PyValueError::new_err("invalid reserves1"));
         };
         Ok((
             crate::conversion::alloy::u256_to_py(py, &r0)?.unbind(),
@@ -416,7 +416,7 @@ impl PyBotIo {
         py: Python<'_>,
         pool_address: &str,
         block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<(String, String, String, Py<PyAny>, Py<PyAny>)> {
+    ) -> PyResult<V2ImmutableData> {
         use alloy::dyn_abi::DynSolType;
 
         let factory = self.fetch_address_returning_method(py, b"factory()", pool_address, block)?;
@@ -425,14 +425,14 @@ impl PyBotIo {
 
         // fee() -> uint24, no args.
         let fee =
-            self.fetch_no_arg_uint(py, b"fee()", pool_address, block, DynSolType::Uint(24))?;
+            self.fetch_no_arg_uint(py, b"fee()", pool_address, block, &DynSolType::Uint(24))?;
         // tickSpacing() -> int24, no args.
         let tick_spacing = self.fetch_no_arg_int(
             py,
             b"tickSpacing()",
             pool_address,
             block,
-            DynSolType::Int(24),
+            &DynSolType::Int(24),
         )?;
 
         Ok((factory, token0, token1, fee, tick_spacing))
@@ -478,26 +478,22 @@ impl PyBotIo {
                 ))
             }
         };
-        let sqrt_price_x96 = match slot0_it.next() {
-            Some(DynSolValue::Uint(n, _)) => n,
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "invalid sqrtPriceX96",
-                ))
-            }
+        let Some(DynSolValue::Uint(sqrt_price_x96, _)) = slot0_it.next() else {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "invalid sqrtPriceX96",
+            ));
         };
-        let tick_i256 = match slot0_it.next() {
-            Some(DynSolValue::Int(n, _)) => n,
-            _ => return Err(pyo3::exceptions::PyValueError::new_err("invalid tick")),
+        let Some(DynSolValue::Int(tick_i256, _)) = slot0_it.next() else {
+            return Err(pyo3::exceptions::PyValueError::new_err("invalid tick"));
         };
 
         // liquidity(): uint128, right-padded in a 32-byte word; treat as uint256 decode for convenience.
         let liq_calldata = selector(b"liquidity()");
         let liq_obj = self.forward_call_to_provider(py, pool_address, &liq_calldata, block)?;
         let liq_bytes: &[u8] = liq_obj.bind(py).extract::<&[u8]>()?;
-        let liquidity = match DynSolType::Uint(128).abi_decode(liq_bytes) {
-            Ok(DynSolValue::Uint(n, _)) => n,
-            _ => return Err(pyo3::exceptions::PyValueError::new_err("invalid liquidity")),
+        let Ok(DynSolValue::Uint(liquidity, _)) = DynSolType::Uint(128).abi_decode(liq_bytes)
+        else {
+            return Err(pyo3::exceptions::PyValueError::new_err("invalid liquidity"));
         };
 
         Ok((
@@ -531,7 +527,7 @@ impl PyBotIo {
         state_view_address: &str,
         pool_id: &[u8],
         block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<(Py<PyAny>, Py<PyAny>, Py<PyAny>, Py<PyAny>, Py<PyAny>)> {
+    ) -> PyResult<Slot0LiquidityState> {
         use alloy::dyn_abi::{DynSolType, DynSolValue};
 
         // getSlot0(bytes32)
@@ -558,29 +554,21 @@ impl PyBotIo {
                 ))
             }
         };
-        let sqrt_price_x96 = match slot0_it.next() {
-            Some(DynSolValue::Uint(n, _)) => n,
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "invalid sqrtPriceX96",
-                ))
-            }
+        let Some(DynSolValue::Uint(sqrt_price_x96, _)) = slot0_it.next() else {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "invalid sqrtPriceX96",
+            ));
         };
-        let tick_i256 = match slot0_it.next() {
-            Some(DynSolValue::Int(n, _)) => n,
-            _ => return Err(pyo3::exceptions::PyValueError::new_err("invalid tick")),
+        let Some(DynSolValue::Int(tick_i256, _)) = slot0_it.next() else {
+            return Err(pyo3::exceptions::PyValueError::new_err("invalid tick"));
         };
-        let protocol_fee = match slot0_it.next() {
-            Some(DynSolValue::Uint(n, _)) => n,
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "invalid protocolFee",
-                ))
-            }
+        let Some(DynSolValue::Uint(protocol_fee, _)) = slot0_it.next() else {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "invalid protocolFee",
+            ));
         };
-        let lp_fee = match slot0_it.next() {
-            Some(DynSolValue::Uint(n, _)) => n,
-            _ => return Err(pyo3::exceptions::PyValueError::new_err("invalid lpFee")),
+        let Some(DynSolValue::Uint(lp_fee, _)) = slot0_it.next() else {
+            return Err(pyo3::exceptions::PyValueError::new_err("invalid lpFee"));
         };
 
         // getLiquidity(bytes32)
@@ -590,9 +578,9 @@ impl PyBotIo {
         let liq_obj =
             self.forward_call_to_provider(py, state_view_address, &liq_calldata, block)?;
         let liq_bytes: &[u8] = liq_obj.bind(py).extract::<&[u8]>()?;
-        let liquidity = match DynSolType::Uint(256).abi_decode(liq_bytes) {
-            Ok(DynSolValue::Uint(n, _)) => n,
-            _ => return Err(pyo3::exceptions::PyValueError::new_err("invalid liquidity")),
+        let Ok(DynSolValue::Uint(liquidity, _)) = DynSolType::Uint(256).abi_decode(liq_bytes)
+        else {
+            return Err(pyo3::exceptions::PyValueError::new_err("invalid liquidity"));
         };
 
         Ok((
@@ -605,7 +593,7 @@ impl PyBotIo {
     }
 
     /// Fetch Camelot pool state via four no-arg RPCs, returning
-    /// (stable_swap, fee_denominator, fee_token0, fee_token1) (ADR-005 slice 14q).
+    /// (`stable_swap`, `fee_denominator`, `fee_token0`, `fee_token1`) (ADR-005 slice 14q).
     ///
     /// Mirrors `v2_pool_builder.py::_fetch_camelot_state`. The four calls run
     /// sequentially in their original order, though they have no data
@@ -625,7 +613,7 @@ impl PyBotIo {
         py: Python<'_>,
         pool_address: &str,
         block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<(bool, Py<PyAny>, Py<PyAny>, Py<PyAny>)> {
+    ) -> PyResult<StableFeeTuple> {
         use alloy::dyn_abi::{DynSolType, DynSolValue};
         use alloy::primitives::U256;
 
@@ -634,13 +622,10 @@ impl PyBotIo {
         let stable_obj =
             self.forward_call_to_provider(py, pool_address, &stable_calldata, block)?;
         let stable_bytes: &[u8] = stable_obj.bind(py).extract::<&[u8]>()?;
-        let stable = match DynSolType::Bool.abi_decode(stable_bytes) {
-            Ok(DynSolValue::Bool(b)) => b,
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "invalid stableSwap() decode",
-                ))
-            }
+        let Ok(DynSolValue::Bool(stable)) = DynSolType::Bool.abi_decode(stable_bytes) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "invalid stableSwap() decode",
+            ));
         };
 
         // FEE_DENOMINATOR() → uint256
@@ -713,7 +698,7 @@ impl PyBotIo {
                 )));
             }
             let val = U256::from_be_slice(&bytes[0..32]);
-            crate::conversion::alloy::u256_to_py(py, &val).map(|b| b.unbind())
+            crate::conversion::alloy::u256_to_py(py, &val).map(pyo3::Bound::unbind)
         };
 
         let a = fetch_no_arg_uint(b"A()")?;
@@ -817,15 +802,12 @@ impl PyBotIo {
 
         let result_obj = self.forward_call_to_provider(py, token, &calldata, block)?;
         let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        let n = match DynSolType::Uint(256).abi_decode(bytes) {
-            Ok(DynSolValue::Uint(n, _)) => n,
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "invalid uint256 decode",
-                ))
-            }
+        let Ok(DynSolValue::Uint(n, _)) = DynSolType::Uint(256).abi_decode(bytes) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "invalid uint256 decode",
+            ));
         };
-        crate::conversion::alloy::u256_to_py(py, &n).map(|b| b.unbind())
+        crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
     }
 
     /// Fetch an ERC-20 token's total supply via `totalSupply()`, the no-arg
@@ -845,15 +827,12 @@ impl PyBotIo {
         let calldata = selector(b"totalSupply()");
         let result_obj = self.forward_call_to_provider(py, token, &calldata, block)?;
         let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        let n = match DynSolType::Uint(256).abi_decode(bytes) {
-            Ok(DynSolValue::Uint(n, _)) => n,
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "invalid uint256 decode",
-                ))
-            }
+        let Ok(DynSolValue::Uint(n, _)) = DynSolType::Uint(256).abi_decode(bytes) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "invalid uint256 decode",
+            ));
         };
-        crate::conversion::alloy::u256_to_py(py, &n).map(|b| b.unbind())
+        crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
     }
 
     /// Fetch Aerodrome V2 pool's `stable()` flag and factory `getFee(address,bool)`
@@ -885,13 +864,10 @@ impl PyBotIo {
         let stable_result =
             self.forward_call_to_provider(py, pool_address, &stable_calldata, block)?;
         let stable_bytes: &[u8] = stable_result.bind(py).extract::<&[u8]>()?;
-        let stable = match DynSolType::Bool.abi_decode(stable_bytes) {
-            Ok(DynSolValue::Bool(b)) => b,
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "invalid stable decode",
-                ))
-            }
+        let Ok(DynSolValue::Bool(stable)) = DynSolType::Bool.abi_decode(stable_bytes) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "invalid stable decode",
+            ));
         };
 
         // Call 2: getFee(address,bool) on the factory — ABI-encode pool address
@@ -903,17 +879,14 @@ impl PyBotIo {
         calldata.extend_from_slice(&[0u8; 12]);
         calldata.extend_from_slice(pool_addr.as_slice());
         calldata.extend_from_slice(&[0u8; 31]);
-        calldata.push(if stable { 1 } else { 0 });
+        calldata.push(u8::from(stable));
 
         let fee_result = self.forward_call_to_provider(py, factory_address, &calldata, block)?;
         let fee_bytes: &[u8] = fee_result.bind(py).extract::<&[u8]>()?;
-        let fee = match DynSolType::Uint(256).abi_decode(fee_bytes) {
-            Ok(DynSolValue::Uint(n, _)) => n,
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "invalid fee decode",
-                ))
-            }
+        let Ok(DynSolValue::Uint(fee, _)) = DynSolType::Uint(256).abi_decode(fee_bytes) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "invalid fee decode",
+            ));
         };
 
         Ok((
@@ -941,7 +914,7 @@ impl PyBotIo {
             signature.as_bytes(),
             address,
             block,
-            alloy::dyn_abi::DynSolType::Uint(256),
+            &alloy::dyn_abi::DynSolType::Uint(256),
         )
     }
 
@@ -1013,7 +986,7 @@ impl PyBotIo {
         py: Python<'_>,
         address: &str,
         block: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<String> {
+    ) -> String {
         // Helper: try a no-arg call, return true if it succeeded.
         let try_call = |sig: &[u8]| -> bool {
             let calldata = selector(sig);
@@ -1023,21 +996,21 @@ impl PyBotIo {
 
         // Probe 1: slot0() → V3.
         if try_call(b"slot0()") {
-            return Ok("slot0".to_string());
+            return "slot0".to_string();
         }
         // Probe 2: getReserves() → V2.
         if try_call(b"getReserves()") {
-            return Ok("getReserves".to_string());
+            return "getReserves".to_string();
         }
         // Probe 3: getPoolId() → Balancer (weighted or stable).
         if try_call(b"getPoolId()") {
             if try_call(b"getNormalizedWeights()") {
-                return Ok("balancer_weighted".to_string());
+                return "balancer_weighted".to_string();
             }
-            return Ok("balancer_stable".to_string());
+            return "balancer_stable".to_string();
         }
         // Fallback: Curve stableswap.
-        Ok("stableswap".to_string())
+        "stableswap".to_string()
     }
 
     /// Fetch a V3 pool's tick bitmap word via `tickBitmap(int16)`, performing
@@ -1077,7 +1050,7 @@ impl PyBotIo {
             ));
         }
         let bitmap = U256::from_be_slice(&bytes[0..32]);
-        crate::conversion::alloy::u256_to_py(py, &bitmap).map(|b| b.unbind())
+        crate::conversion::alloy::u256_to_py(py, &bitmap).map(pyo3::Bound::unbind)
     }
 
     /// Fetch a V3 pool's tick liquidity data via `ticks(int24)`, performing
@@ -1131,7 +1104,7 @@ impl PyBotIo {
     ///
     /// Mirrors `tick_data_fetcher.py::_fetch_v4`'s bitmap RPC block. V4 adds a
     /// `pool_id` (`bytes32`) prefix argument before the `int16` word position.
-    /// Calldata: selector (4) + pool_id (32) + sign-extended int16 (32) = 68 bytes.
+    /// Calldata: selector (4) + `pool_id` (32) + sign-extended int16 (32) = 68 bytes.
     ///
     /// Errors propagate.
     #[pyo3(signature = (state_view_address, pool_id, word_position, block=None))]
@@ -1160,7 +1133,7 @@ impl PyBotIo {
             ));
         }
         let bitmap = U256::from_be_slice(&bytes[0..32]);
-        crate::conversion::alloy::u256_to_py(py, &bitmap).map(|b| b.unbind())
+        crate::conversion::alloy::u256_to_py(py, &bitmap).map(pyo3::Bound::unbind)
     }
 
     /// Fetch a V4 pool's tick liquidity via `getTickLiquidity(bytes32,int24)`
@@ -1206,7 +1179,7 @@ impl PyBotIo {
         ))
     }
 
-    /// Fetch a Balancer pool's pool_id via `getPoolId()` (ADR-005 slice 14l).
+    /// Fetch a Balancer pool's `pool_id` via `getPoolId()` (ADR-005 slice 14l).
     ///
     /// Mirrors `balancer_builder_base.py::_fetch_pool_id`. Returns the raw
     /// 32-byte `bytes32` value (no decode — bytes32 is already 32 bytes).
@@ -1254,7 +1227,7 @@ impl PyBotIo {
             ));
         }
         let val = U256::from_be_slice(&bytes[0..32]);
-        crate::conversion::alloy::u256_to_py(py, &val).map(|b| b.unbind())
+        crate::conversion::alloy::u256_to_py(py, &val).map(pyo3::Bound::unbind)
     }
 
     /// Fetch a Balancer pool's amplification parameter via
@@ -1282,7 +1255,7 @@ impl PyBotIo {
             ));
         }
         let val = U256::from_be_slice(&bytes[0..32]);
-        crate::conversion::alloy::u256_to_py(py, &val).map(|b| b.unbind())
+        crate::conversion::alloy::u256_to_py(py, &val).map(pyo3::Bound::unbind)
     }
 
     /// Fetch a Balancer weighted pool's normalized weights via
@@ -1320,7 +1293,7 @@ impl PyBotIo {
     /// Mirrors `balancer_builder_base.py::_fetch_rate_providers`. Returns
     /// `address[]` as a Python list of lowercase hex strings. Reverts propagate
     /// (the Python caller's `except (Web3Exception, DecodingError): return []`
-    /// handles WeightedPool2Tokens / MetaStablePools that don't expose this).
+    /// handles `WeightedPool2Tokens` / `MetaStablePools` that don't expose this).
     ///
     /// Errors propagate.
     #[pyo3(signature = (address, block=None))]
@@ -1341,7 +1314,7 @@ impl PyBotIo {
             let mut hex = String::with_capacity(42);
             hex.push_str("0x");
             for b in addr {
-                hex.push_str(&format!("{:02x}", b));
+                let _ = write!(hex, "{b:02x}");
             }
             list.append(hex)?;
         }
@@ -1388,9 +1361,9 @@ impl PyBotIo {
                 "getPoolTokens result < 96 bytes",
             ));
         }
-        let addr_offset = read_u256_as_usize(&bytes[0..32])?
+        let addr_offset = read_u256_as_usize(&bytes[0..32])
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("address[] offset overflow"))?;
-        let uints_offset = read_u256_as_usize(&bytes[32..64])?
+        let uints_offset = read_u256_as_usize(&bytes[32..64])
             .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("uint256[] offset overflow"))?;
 
         // Length at addr_offset; N addresses follow.
@@ -1398,13 +1371,13 @@ impl PyBotIo {
             bytes
                 .get(addr_offset..addr_offset + 32)
                 .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("address[] length OOB"))?,
-        )?
+        )
         .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("address[] length overflow"))?;
         let n_balances = read_u256_as_usize(
             bytes
                 .get(uints_offset..uints_offset + 32)
                 .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("uint256[] length OOB"))?,
-        )?
+        )
         .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("uint256[] length overflow"))?;
 
         let tokens_list = PyList::empty(py);
@@ -1419,7 +1392,7 @@ impl PyBotIo {
             let mut hex = String::with_capacity(42);
             hex.push_str("0x");
             for b in addr {
-                hex.push_str(&format!("{:02x}", b));
+                let _ = write!(hex, "{b:02x}");
             }
             tokens_list.append(hex)?;
         }
@@ -1469,7 +1442,7 @@ impl PyBotIo {
             ));
         }
         let val = U256::from_be_slice(&bytes[0..32]);
-        crate::conversion::alloy::u256_to_py(py, &val).map(|b| b.unbind())
+        crate::conversion::alloy::u256_to_py(py, &val).map(pyo3::Bound::unbind)
     }
 
     /// Probe a Balancer pool's sub-type by trying `getNormalizedWeights()` and
@@ -1573,22 +1546,19 @@ impl PyBotIo {
         signature: &[u8],
         pool_address: &str,
         block: Option<&Bound<'_, PyAny>>,
-        ty: alloy::dyn_abi::DynSolType,
+        ty: &alloy::dyn_abi::DynSolType,
     ) -> PyResult<Py<PyAny>> {
         use alloy::dyn_abi::DynSolValue;
 
         let calldata = selector(signature);
         let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
         let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        let n = match ty.abi_decode(bytes) {
-            Ok(DynSolValue::Uint(n, _)) => n,
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "invalid uint decode for no-arg read",
-                ))
-            }
+        let Ok(DynSolValue::Uint(n, _)) = ty.abi_decode(bytes) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "invalid uint decode for no-arg read",
+            ));
         };
-        crate::conversion::alloy::u256_to_py(py, &n).map(|b| b.unbind())
+        crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
     }
 
     /// Shared skeleton for no-arg, signed-int-returning pool read methods
@@ -1602,22 +1572,19 @@ impl PyBotIo {
         signature: &[u8],
         pool_address: &str,
         block: Option<&Bound<'_, PyAny>>,
-        ty: alloy::dyn_abi::DynSolType,
+        ty: &alloy::dyn_abi::DynSolType,
     ) -> PyResult<Py<PyAny>> {
         use alloy::dyn_abi::DynSolValue;
 
         let calldata = selector(signature);
         let result_obj = self.forward_call_to_provider(py, pool_address, &calldata, block)?;
         let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        let n = match ty.abi_decode(bytes) {
-            Ok(DynSolValue::Int(n, _)) => n,
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "invalid int decode for no-arg read",
-                ))
-            }
+        let Ok(DynSolValue::Int(n, _)) = ty.abi_decode(bytes) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "invalid int decode for no-arg read",
+            ));
         };
-        crate::conversion::alloy::i256_to_py(py, &n).map(|b| b.unbind())
+        crate::conversion::alloy::i256_to_py(py, &n).map(pyo3::Bound::unbind)
     }
 
     fn fetch_address_returning_method(
@@ -1685,15 +1652,12 @@ impl PyBotIo {
 
         let result_obj = self.forward_call_to_provider(py, token, &calldata, block)?;
         let bytes: &[u8] = result_obj.bind(py).extract::<&[u8]>()?;
-        let n = match DynSolType::Uint(256).abi_decode(bytes) {
-            Ok(DynSolValue::Uint(n, _)) => n,
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "invalid uint256 decode",
-                ))
-            }
+        let Ok(DynSolValue::Uint(n, _)) = DynSolType::Uint(256).abi_decode(bytes) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "invalid uint256 decode",
+            ));
         };
-        crate::conversion::alloy::u256_to_py(py, &n).map(|b| b.unbind())
+        crate::conversion::alloy::u256_to_py(py, &n).map(pyo3::Bound::unbind)
     }
 }
 
@@ -1703,7 +1667,7 @@ impl PyBotIo {
 fn parse_address_for_call(address: &str) -> PyResult<[u8; 20]> {
     use degenbot_core::address_utils::parse_address;
     parse_address(address)
-        .map(|a| a.into_array())
+        .map(alloy::primitives::Address::into_array)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid address: {e}")))
 }
 
@@ -1760,20 +1724,17 @@ fn sign_extend_to_32_bytes(val: i64) -> [u8; 32] {
 ///
 /// Returns the N 32-byte element slices (without the length word).
 ///
-/// # Errors
-///
-/// Returns `PyValueError` if the encoding is too short or malformed.
 /// Read a 32-byte big-endian word as a `usize` if it fits.
-fn read_u256_as_usize(word: &[u8]) -> PyResult<Option<usize>> {
+fn read_u256_as_usize(word: &[u8]) -> Option<usize> {
     use alloy::primitives::U256;
     let val = U256::from_be_slice(&word[..32]);
     if val > U256::from(usize::MAX) {
-        return Ok(None);
+        return None;
     }
     let mut buf = [0u8; 8];
     let bytes = val.to_be_bytes::<32>();
     buf.copy_from_slice(&bytes[24..32]);
-    Ok(Some(usize::from_be_bytes(buf)))
+    Some(usize::from_be_bytes(buf))
 }
 
 fn decode_dynamic_array_words(bytes: &[u8]) -> PyResult<Vec<&[u8]>> {
@@ -1784,9 +1745,9 @@ fn decode_dynamic_array_words(bytes: &[u8]) -> PyResult<Vec<&[u8]>> {
         ));
     }
     // Word 0: offset (we read it but assume standard layout).
-    let offset = read_u256_as_usize(&bytes[0..32])?.unwrap_or(32);
+    let offset = read_u256_as_usize(&bytes[0..32]).unwrap_or(32);
     let length_offset = min(offset, bytes.len().saturating_sub(32));
-    let n = read_u256_as_usize(&bytes[length_offset..length_offset + 32])?
+    let n = read_u256_as_usize(&bytes[length_offset..length_offset + 32])
         .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("array length overflow"))?;
     let data_start = length_offset + 32;
     if data_start.checked_mul(0).is_none() || data_start > bytes.len() {

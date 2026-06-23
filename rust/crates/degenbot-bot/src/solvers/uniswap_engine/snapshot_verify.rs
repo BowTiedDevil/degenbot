@@ -78,6 +78,11 @@ pub trait VerifyRpc {
 
     /// Snapshot phase — verify a V3 pool's raw tick data (pre-buffer) against
     /// on-chain at `block`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VerifyError::Snapshot`] when the fetched on-chain tick data
+    /// disagrees with `tick_data`.
     fn verify_v3_snapshot(
         &self,
         pool_address: Address,
@@ -87,6 +92,11 @@ pub trait VerifyRpc {
 
     /// Backfill phase — verify a V3 pool's post-buffer state against on-chain
     /// at `block`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VerifyError::Snapshot`] when the fetched on-chain state
+    /// disagrees with `pools`.
     fn verify_v3_backfill(
         &self,
         pools: &HashMap<u64, V3PoolState>,
@@ -95,6 +105,11 @@ pub trait VerifyRpc {
 
     /// Snapshot phase — verify a V4 pool's raw tick data (pre-buffer) against
     /// on-chain at `block`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VerifyError::Snapshot`] when the fetched on-chain tick data
+    /// disagrees with `tick_data`.
     fn verify_v4_snapshot(
         &self,
         state_view: Address,
@@ -105,6 +120,11 @@ pub trait VerifyRpc {
 
     /// Backfill phase — verify a V4 pool's post-buffer state against on-chain
     /// at `block`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VerifyError::Snapshot`] when the fetched on-chain state
+    /// disagrees with `pools`.
     fn verify_v4_backfill(
         &self,
         state_view: Address,
@@ -131,6 +151,12 @@ pub trait VerifyRpc {
 /// phase (a snapshot mismatch short-circuits before touching the post-buffer
 /// state). Preserves the legacy `RuntimeError`-on-mismatch contract: a
 /// `VerifyError::Snapshot` from either phase propagates immediately.
+///
+/// # Errors
+///
+/// Returns `Ok(())` when `VerifyRpc::enabled` is `false` or both phases pass.
+/// Propagates [`VerifyError`] from `verify_snapshot` / `verify_backfill`
+/// (a snapshot mismatch short-circuits before the backfill phase runs).
 pub fn run_cl_verification<R, F1, F2>(
     rpc: &R,
     snapshot_block: Option<u64>,

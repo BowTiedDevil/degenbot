@@ -101,6 +101,11 @@ pub enum EnginePhase {
 impl EnginePhase {
     /// Check that the current phase allows the given required phase.
     /// Returns `Err` with a descriptive message if the transition is invalid.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(String)` describing the invalid transition when the
+    /// engine's phase is below `required`.
     pub fn require(self, required: Self, method_name: &str) -> Result<(), String> {
         if self >= required {
             Ok(())
@@ -112,6 +117,11 @@ impl EnginePhase {
     }
 
     /// Require that the engine has not yet reached the given phase.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(String)` describing the invalid transition when the
+    /// engine has already reached `phase`.
     pub fn require_before(self, phase: Self, method_name: &str) -> Result<(), String> {
         if self < phase {
             Ok(())

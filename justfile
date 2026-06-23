@@ -20,7 +20,7 @@ test-rust-python:
 
 # Run Rust linter (clippy)
 lint-rust:
-    cargo clippy --all-targets --all-features --fix --allow-dirty --manifest-path rust/Cargo.toml -- --deny warnings
+    cargo clippy --fix --all-targets --all-features --fix --allow-dirty --manifest-path rust/Cargo.toml -- --deny warnings
 
 # Check Rust formatting (read-only; fails on drift). Run `just format` to fix.
 fmt-check:
@@ -120,7 +120,7 @@ lint-context-maps:
 
 # Lint Python files
 lint-python:
-    uv run ruff check src/
+    uv run ruff check --fix src/ 
     uv run ty check --no-progress src/
 
 # Check Python formatting (read-only; fails on drift). Run `just format` to fix.

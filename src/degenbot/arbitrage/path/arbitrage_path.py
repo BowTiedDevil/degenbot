@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 from weakref import WeakSet
 
-from degenbot.arbitrage.solvers.hop_types import SolveInput
 from degenbot.arbitrage.path.types import PathValidationError, SwapVector
+from degenbot.arbitrage.solvers.hop_types import SolveInput
 from degenbot.arbitrage.types import (
     AbstractSwapAmounts,
     ArbitrageCalculationResult,

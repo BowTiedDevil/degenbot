@@ -68,6 +68,13 @@ impl ReorgCoordinator {
     ///
     /// The removed event's CONTENT is unused — only its block number + pool
     /// identity (the journal's stored "before" values are the source of truth).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Ok` on success (including the idempotent no-op case where the
+    /// pool's newest delta is already before the target). Returns
+    /// `Err(NoStatePriorToBlock)` if the reorg target is at or below the
+    /// journal's earliest delta (the pump shuts down gracefully).
     pub fn dispatch_reorg_log(&self, log: &Log) -> Result<(), ReorgError> {
         let bot = &*self.bot;
         // Decode the log to identify the target pool. Reuses the same decoder
