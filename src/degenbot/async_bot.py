@@ -92,7 +92,9 @@ class AsyncBot:
         self._provider = provider
 
         # Polars-inspired three-layer architecture (ADR-005).
-        self._py_bot = PyBot()
+        # ADR-006 slice 8b: the facade is single-chain, so the configured
+        # ``default_chain_id`` is wired into the Rust ``Bot`` here (D4).
+        self._py_bot = PyBot(self._chain_id)
 
         self.db = DatabaseSessionManager(
             get_scoped_sqlite_session(database_path=config.database.path)

@@ -26,11 +26,13 @@ from tests.helpers.erc20_factory import make_erc20
 _PY_BOT = PyBot()
 
 
-def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
+def _make_test_config(
+    tmp_path: pathlib.Path, chain_id: int = 1
+) -> DegenbotConfig:
     return DegenbotConfig(
         database=DatabaseSettings(path=tmp_path / "test.db"),
         rpc={1: "https://eth.llamarpc.com/"},
-        default_chain_id=1,
+        default_chain_id=chain_id,
     )
 
 
@@ -84,6 +86,15 @@ class TestAsyncBotInit:
     def test_from_config_file_async_exists(self) -> None:
         assert hasattr(AsyncBot, "from_config_file_async")
         assert hasattr(AsyncBot, "from_provider")
+
+    @pytest.mark.asyncio
+    async def test_py_bot_carries_configured_chain_id(self, tmp_path: pathlib.Path) -> None:
+        """The AsyncBot facade wires its ``default_chain_id`` into the Rust
+        ``PyBot`` (ADR-006 D4: ``Bot::new(chain_id)``). No placeholder.
+        """
+        config = _make_test_config(tmp_path, chain_id=1)
+        bot = await AsyncBot.from_provider(config, provider=_fake_async_provider(1))
+        assert bot._py_bot.chain_id == 1
 
 
 class TestAsyncBotBuildErc20Token:

@@ -2992,8 +2992,9 @@ pub struct BlockMetadata {
 impl Bot {
     /// Construct a new orchestrator for `chain_id` over a fresh `BotState`.
     ///
-    /// `PyBot` wires `chain_id = 0` until ADR-006 slice 8 makes `bot.py` a
-    /// single-chain facade; the standalone-Rust path passes the real id.
+    /// ADR-006 slice 8b: the Python `Bot` facade is single-chain and passes the
+    /// real `chain_id` via `PyBot::new(chain_id)`; `0` is the default for the
+    /// bare-fixture test path.
     #[must_use]
     pub fn new(chain_id: u64) -> Self {
         Self {
@@ -3009,8 +3010,8 @@ impl Bot {
     /// gets the core via `UniswapEngine::with_core`, `BlockPump`'s `Bot`
     /// shares it, and `dispatch_log` writes flow through to the engine's reads.
     ///
-    /// `chain_id` is 0 on the standalone/no-pyo3 path; `PyBot` passes the real
-    /// id once `bot.py` is a single-chain facade (slice 8).
+    /// The adopting path does not carry a `chain_id` (the original owner did);
+    /// `0` here is a placeholder for the standalone/no-pyo3 adoption path.
     #[must_use]
     pub fn with_core(core: Arc<parking_lot::RwLock<BotState>>) -> Self {
         Self {
@@ -3021,8 +3022,8 @@ impl Bot {
     }
 
     /// The chain this bot orchestrates. Used by the standalone-Rust path;
-    /// `PyBot` does not expose it until ADR-006 D4 wires it as a real
-    /// construction-time invariant (see `docs/adr/ADR-006-bot-as-per-chain-orchestrator.md` §D4).
+    /// `PyBot` exposes it as a `#[getter]` so the Python `Bot` facade can
+    /// assert its `default_chain_id` was wired through (ADR-006 D4).
     #[must_use]
     pub const fn chain_id(&self) -> u64 {
         self.chain_id
