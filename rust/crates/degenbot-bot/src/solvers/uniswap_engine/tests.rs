@@ -1315,20 +1315,9 @@ mod tests {
         // Ideally the path should not appear in results at all
     }
 
-    #[test]
-    fn inspect_path_returns_hop_details() {
-        let mut engine = UniswapEngine::new();
-
-        // Register a V2 pool
-        let v2_fwd = engine.register_v2_pool(
-            Address::from([0x11u8; 20]),
-            usdc(1_500_000),
-            weth(800),
-            GAMMA_03,
-            FEE_DENOM_03,
-        );
-
-        // Register a V3 pool
+    /// Build the minimal V3 tick-data (initialized +60/-60 ticks) used by
+    /// `inspect_path_returns_hop_details`.
+    fn inspect_test_v3_tick_data() -> HashMap<i32, crate::bot_core::TickInfo> {
         let mut tick_data = HashMap::new();
         tick_data.insert(
             60,
@@ -1348,6 +1337,24 @@ mod tests {
                 block: 0,
             },
         );
+        tick_data
+    }
+
+    #[test]
+    fn inspect_path_returns_hop_details() {
+        let mut engine = UniswapEngine::new();
+
+        // Register a V2 pool
+        let v2_fwd = engine.register_v2_pool(
+            Address::from([0x11u8; 20]),
+            usdc(1_500_000),
+            weth(800),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+
+        // Register a V3 pool
+        let tick_data = inspect_test_v3_tick_data();
         let v3_key = engine.register_v3_pool(&crate::bot_core::RegisterV3PoolParams {
             address: Address::from([0x22u8; 20]),
             token0: Address::from([0u8; 20]),
@@ -2225,19 +2232,19 @@ mod tests {
         // divergence. Each eagerly solves at registration; we capture the
         // eager SolvePathResult as the per-path baseline.
         let mut baseline: HashMap<u64, SolvePathResult> = HashMap::new();
-        for i in 0..8u64 {
-            let addr_a = Address::from([0x10_u8 + i as u8; 20]);
+        for i in 0u8..8 {
+            let addr_a = Address::from([0x10_u8 + i; 20]);
             let v2_fwd_a = engine.register_v2_pool(
                 addr_a,
                 usdc(1_500_000),
-                weth(800 + i * 10),
+                weth(800 + u64::from(i) * 10),
                 GAMMA_03,
                 FEE_DENOM_03,
             );
-            let addr_b = Address::from([0x20_u8 + i as u8; 20]);
+            let addr_b = Address::from([0x20_u8 + i; 20]);
             let v2_fwd_b = engine.register_v2_pool(
                 addr_b,
-                weth(800 + i * 10),
+                weth(800 + u64::from(i) * 10),
                 usdc(2_000_000),
                 GAMMA_03,
                 FEE_DENOM_03,
@@ -2310,19 +2317,19 @@ mod tests {
         let mut engine = UniswapEngine::with_core(Arc::clone(&core));
 
         // Register N paths so `solve_dirty` exercises a real par_iter batch.
-        for i in 0..8u64 {
-            let addr_a = Address::from([0x10_u8 + i as u8; 20]);
+        for i in 0u8..8 {
+            let addr_a = Address::from([0x10_u8 + i; 20]);
             let v2_fwd_a = engine.register_v2_pool(
                 addr_a,
                 usdc(1_500_000),
-                weth(800 + i * 10),
+                weth(800 + u64::from(i) * 10),
                 GAMMA_03,
                 FEE_DENOM_03,
             );
-            let addr_b = Address::from([0x20_u8 + i as u8; 20]);
+            let addr_b = Address::from([0x20_u8 + i; 20]);
             let v2_fwd_b = engine.register_v2_pool(
                 addr_b,
-                weth(800 + i * 10),
+                weth(800 + u64::from(i) * 10),
                 usdc(2_000_000),
                 GAMMA_03,
                 FEE_DENOM_03,

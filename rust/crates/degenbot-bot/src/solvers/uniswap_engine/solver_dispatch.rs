@@ -303,13 +303,12 @@ impl UniswapEngine {
             .iter()
             .map(|h| h.as_v2_state().cloned())
             .collect();
-        let int_v3_sequences: Vec<
-            Option<crate::solvers::mobius_v3_int::IntV3TickRangeSequence>,
-        > = resolved
-            .hops
-            .iter()
-            .map(|h| h.as_int_sequence().cloned())
-            .collect();
+        let int_v3_sequences: Vec<Option<crate::solvers::mobius_v3_int::IntV3TickRangeSequence>> =
+            resolved
+                .hops
+                .iter()
+                .map(|h| h.as_int_sequence().cloned())
+                .collect();
 
         crate::solvers::mobius_v3_int::exact_solve_mixed_path_n(
             &v2_hops,

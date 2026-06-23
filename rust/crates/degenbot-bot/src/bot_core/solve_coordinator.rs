@@ -85,8 +85,11 @@ impl SolveCoordinator {
     /// Asserts precondition 2: every engine's `last_processed_block` agrees
     /// (all snapshot-backfilled to the same block).
     ///
-    /// Panics on cursor divergence — a wiring bug (engines must backfill to
-    /// the same block before `start`).
+    /// # Panics
+    ///
+    /// Panics if the `drain_lock` is poisoned (a panic in another thread that
+    /// held the lock). Panics on cursor divergence — a wiring bug (engines
+    /// must backfill to the same block before `start`).
     pub fn start(&self) {
         let mut state = self.drain_lock.lock().expect("drain_lock poisoned");
         // Precondition 2: all engines agree on the starting block.

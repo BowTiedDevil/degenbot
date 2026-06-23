@@ -891,11 +891,11 @@ impl PyLiquidityPool {
         Ok(pyo3::types::PyList::new(py, py_bal)?.into_any().unbind())
     }
 
-    /// BPT token index for a Balancer stable pool: `None` for MetaStablePools,
-    /// `Some(i)` for ComposableStablePools.
+    /// BPT token index for a Balancer stable pool: `None` for `MetaStablePools`,
+    /// `Some(i)` for `ComposableStablePools`.
     ///
     /// Returns `None` if this `pool_id` is not registered as a Balancer stable
-    /// pool (also a valid value for a registered MetaStable — see the
+    /// pool (also a valid value for a registered `MetaStable` — see the
     /// `invariant_version` getter to distinguish).
     #[getter]
     fn balancer_bpt_index(&self) -> Option<usize> {
@@ -918,8 +918,8 @@ impl PyLiquidityPool {
             .map_or(0, |s| s.amp)
     }
 
-    /// `invariant_version` discriminator (1 = V1 always-roundDown D_P
-    /// accumulation; 2 = V2 roundUp-param P_D accumulation) — the
+    /// `invariant_version` discriminator (1 = V1 always-roundDown `D_P`
+    /// accumulation; 2 = V2 roundUp-param `P_D` accumulation) — the
     /// systematic-1-wei-error guard.
     ///
     /// Returns 0 if this `pool_id` is not registered as a Balancer stable pool.

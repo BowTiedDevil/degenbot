@@ -29,7 +29,7 @@ a fetcher-checked empty word is seen as present-but-zero.
 import dataclasses
 from collections.abc import Callable
 from enum import Enum
-from typing import Any, ClassVar, Final, cast
+from typing import Any, ClassVar, Final
 from weakref import WeakSet
 
 import eth_abi.abi
@@ -719,7 +719,7 @@ class UniswapV4Pool(
         }
         for word, bitmap_at_word in self._bitmap_override.items():
             result[word] = bitmap_at_word  # noqa: PERF403
-        return cast("InitializedTickMap", result)
+        return result
 
     @property
     def tick_data(self) -> LiquidityMap:
@@ -728,21 +728,18 @@ class UniswapV4Pool(
         Returns a deep-copy snapshot of the Rust-side tick data (mirrors V3).
         """
         raw = self._py_pool.tick_data_snapshot()
-        return cast(
-            "LiquidityMap",
-            {
-                int(tick): (
-                    LiquidityAtTick(
-                        liquidity_net=int(row[1]),
-                        liquidity_gross=int(row[0]),
-                        block=int(row[2]),
-                    )
-                    if not isinstance(row, LiquidityAtTick)
-                    else row
+        return {
+            int(tick): (
+                LiquidityAtTick(
+                    liquidity_net=int(row[1]),
+                    liquidity_gross=int(row[0]),
+                    block=int(row[2]),
                 )
-                for tick, row in raw.items()
-            },
-        )
+                if not isinstance(row, LiquidityAtTick)
+                else row
+            )
+            for tick, row in raw.items()
+        }
 
     @property
     def tick_spacing(self) -> int:

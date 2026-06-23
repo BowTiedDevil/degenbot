@@ -465,6 +465,11 @@ impl PyBot {
     ///     `ValueError`: If the pool address is malformed or already
     ///         registered, or the list lengths mismatch.
     #[allow(clippy::too_many_arguments)]
+    // `y_variant` / `yd_variant` mirror the public Python kwargs and the
+    // `resolve_y_variant` / `resolve_yd_variant` vocabulary in
+    // `degenbot.curve._variant_groups`; they are intentional domain terms,
+    // not a naming slip, so the `similar_names` nudge does not apply here.
+    #[allow(clippy::similar_names)]
     #[pyo3(signature = (
         address,
         tokens,
@@ -531,7 +536,7 @@ impl PyBot {
     /// Register a Balancer V2 weighted pool (ADR-005 slice 12a state port).
     ///
     /// Stores immutable pool config (`pool_id`, vault, tokens, weights,
-    /// scaling_factors, swap_fee, `pow_version`) + registration balances + a
+    /// `scaling_factors`, `swap_fee`, `pow_version`) + registration balances + a
     /// genesis reorg journal delta. The slice 12b Python `BalancerV2Pool`
     /// companion is constructed over the returned `PyLiquidityPool` handle
     /// (call `get_pool(id)` after this).
@@ -597,14 +602,14 @@ impl PyBot {
     /// Register a Balancer V2 stable pool (ADR-005 slice 12c state port).
     ///
     /// Stores immutable pool config (`pool_id`, vault, tokens, amp,
-    /// scaling_factors, swap_fee, `bpt_idx`, `invariant_version`) +
+    /// `scaling_factors`, `swap_fee`, `bpt_idx`, `invariant_version`) +
     /// registration balances + a genesis reorg journal delta. The slice 12d
     /// Python `BalancerV2StablePool` companion will be constructed over the
     /// returned `PyLiquidityPool` handle (call `get_pool(id)` after this).
     ///
     /// Returns the auto-assigned numeric pool ID. `tokens` / `scaling_factors`
     /// / `balances` lists MUST all have length `N`. `bpt_idx` is `None` for
-    /// MetaStablePools and `Some(i)` (`i < N`) for ComposableStablePools.
+    /// `MetaStablePools` and `Some(i)` (`i < N`) for `ComposableStablePools`.
     ///
     /// Raises:
     ///     `ValueError`: If an address is malformed, the pool is already
