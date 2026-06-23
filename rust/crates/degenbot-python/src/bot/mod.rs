@@ -125,13 +125,15 @@ impl PyBot {
 #[pymethods]
 impl PyBot {
     #[new]
-    fn new() -> Self {
-        // chain_id = 0 placeholder until ADR-006 slice 8 makes `bot.py` a
-        // single-chain facade (Python has no single chain_id at PyBot
-        // construction today). The standalone-Rust path passes the real id.
+    #[pyo3(signature = (chain_id = 0))]
+    fn new(chain_id: u64) -> Self {
+        // ADR-006 slice 8b: the Python ``Bot`` facade is now single-chain,
+        // so it passes its ``config.default_chain_id`` here. The ``chain_id = 0``
+        // default keeps the bare ``PyBot()`` lower-level test fixtures (which
+        // only exercise the Rust core) working without a chain invariant.
         // `Arc<Bot>` so `BlockPump` clones the same orchestrator (ADR-006 D4).
         Self {
-            bot: Arc::new(Bot::new(0)),
+            bot: Arc::new(Bot::new(chain_id)),
         }
     }
 
@@ -255,6 +257,14 @@ impl PyBot {
     /// Number of registered pools.
     fn pool_count(&self) -> usize {
         self.bot.state_arc().read().pool_count()
+    }
+
+    /// The chain this `PyBot` orchestrates (ADR-006 D4). Wired from the
+    /// single-chain Python `Bot` facade's ``config.default_chain_id``; `0` on
+    /// the bare-test-fixture path (see `PyBot::new`).
+    #[getter]
+    fn chain_id(&self) -> u64 {
+        self.bot.chain_id()
     }
 
     /// Drive a raw WS log through the event bus (ADR-006 D4).

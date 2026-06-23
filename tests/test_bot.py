@@ -88,6 +88,22 @@ class TestBotPyBotHandle:
         assert isinstance(bot2._py_bot, PyBot)
         assert bot1._py_bot is not bot2._py_bot
 
+    def test_py_bot_carries_configured_chain_id(self, tmp_path: pathlib.Path) -> None:
+        """The Bot facade wires its ``default_chain_id`` into the Rust ``PyBot``
+        (ADR-006 D4: ``Bot::new(chain_id)``). No more ``chain_id = 0`` placeholder.
+        """
+        config = _make_test_config(tmp_path, chain_id=1)
+        bot = Bot(config, provider=_fake_provider(1))
+        assert bot._py_bot.chain_id == 1
+
+    def test_py_bot_chain_id_follows_config(self, tmp_path: pathlib.Path) -> None:
+        """A non-default ``default_chain_id`` propagates to the ``PyBot`` (the
+        wiring is real, not a hard-coded constant).
+        """
+        config = _make_test_config(tmp_path, chain_id=10)
+        bot = Bot(config, provider=_fake_provider(10))
+        assert bot._py_bot.chain_id == 10
+
 
 class TestBotFromConfigFile:
     """Bot.from_config_file() tests."""

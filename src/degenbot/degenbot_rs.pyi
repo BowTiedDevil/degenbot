@@ -973,7 +973,12 @@ class PyBot:
     shared `Bot`; mutations take a write guard.
     """
 
-    def __init__(self) -> None: ...
+    def __init__(self, chain_id: int = 0) -> None:
+        """Construct a ``PyBot`` for ``chain_id`` (ADR-006 D4).
+
+        The default ``chain_id = 0`` keeps the bare ``PyBot()`` test fixtures
+        (which only exercise the Rust core) working without a chain invariant.
+        """
     def register_v2_pool(
         self,
         address: str,
@@ -994,6 +999,7 @@ class PyBot:
     def calculate_tokens_out(self, pool_id: int, zero_for_one: bool, amount_in: int) -> int: ...
     def calculate_tokens_in(self, pool_id: int, zero_for_one: bool, amount_out: int) -> int: ...
     def pool_count(self) -> int: ...
+    def chain_id(self) -> int: ...
     def dispatch_log(
         self,
         address: str,

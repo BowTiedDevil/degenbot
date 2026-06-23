@@ -124,7 +124,10 @@ class Bot:
         # PyO3 wrapper owns the Rust ``Bot`` state behind an ``RwLock``.
         # Multiple Python handles (this session, plus any ``Pool``/``Token``
         # handles it vends) share the same Rust-owned ``Bot`` thread-safely.
-        self._py_bot = PyBot()
+        #
+        # ADR-006 slice 8b: the facade is single-chain, so the configured
+        # ``default_chain_id`` is wired into the Rust ``Bot`` here (D4).
+        self._py_bot = PyBot(self._chain_id)
 
         self.db = DatabaseSessionManager(
             get_scoped_sqlite_session(database_path=config.database.path)
