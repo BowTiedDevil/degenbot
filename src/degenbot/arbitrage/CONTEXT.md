@@ -4,7 +4,7 @@
 
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
-| **Arbitrage Cycle** | ~~Deprecated.~~ An ordered sequence of pools forming a closed loop. Use **Arbitrage Path** instead. Legacy implementations live in `_legacy/` with `DeprecationWarning`. | Arb cycle, circular path, cycle |
+| **Arbitrage Cycle** | Retired term. An ordered sequence of pools forming a closed loop — use **Arbitrage Path** instead. | Arb cycle, circular path, cycle |
 | **Arbitrage Path** | An event-driven wrapper around a sequence of pools that validates token flow, subscribes to state updates, and delegates solving; the replacement for the deprecated **Arbitrage Cycle** classes | Arb path, path |
 | **Input Token** | The token supplied to the first swap in an arbitrage cycle | Starting token |
 | **Profit Token** | The token in which arbitrage profit is measured (always equals the Input Token for a cycle) | Output token |

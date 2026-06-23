@@ -14,7 +14,6 @@ requires-python = ">=3.12"
 dependencies = [
     "alembic ~= 1.18",
     "click ~= 8.4",
-    "cvxpy ~= 1.9",
     "networkx ~= 3.6",
     "pydantic ~= 2.13",
     "pydantic-settings ~= 2.14",
@@ -157,9 +156,6 @@ allow-star-arg-any = true
     "S403",
     "SLF001",   # tests may need to access private attributes to test implementation
     "T201",     # print
-]
-"**/arbitrage/_legacy/*" = [
-    "ALL",
 ]
 
 [tool.pytest.ini_options]

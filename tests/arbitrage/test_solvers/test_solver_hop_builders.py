@@ -1,7 +1,7 @@
-"""ArbSolver parity tests — ArbSolver.solve() vs UniswapLpCycle._calculate().
+"""ArbSolver solve()/ArbitragePath profitability tests.
 
-Verifies that ArbSolver.solve() produces results consistent with
-UniswapLpCycle._calculate() for V2-V2, V2-V3, and V3-V3 pool configurations.
+Verifies that ArbSolver.solve() produces results consistent with a manual
+pool walk for V2-V2, V2-V3, and V3-V3 pool configurations.
 """
 
 from fractions import Fraction
@@ -14,12 +14,84 @@ from degenbot.arbitrage.solvers.solver import ArbSolver, MobiusSolver
 from degenbot.arbitrage.path import ArbitragePath
 from degenbot.degenbot_rs import PyBot
 from degenbot.erc20.erc20 import Erc20Token
-from tests.arbitrage.integration.test_v3_only_legacy_equivalence import _make_profitable_v3_pair
+from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+from tests.arbitrage.generator.pool_generator import PoolStateGenerator
+from tests.arbitrage.generator.types import V3PoolGenerationConfig
 from tests.fakes.tokens import FakeToken
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
+from tests.helpers.v3_pool_factory import make_v3_pool
 
 _PY_BOT = PyBot()
+
+# ---------------------------------------------------------------------------
+# Helpers: build production UniswapV3Pool pairs from generated pool states
+# ---------------------------------------------------------------------------
+
+
+def _make_v3_pool_from_state(
+    address: str,
+    state,
+    token0: FakeToken,
+    token1: FakeToken,
+    fee: int = 3000,
+    tick_spacing: int = 60,
+) -> UniswapV3Pool:
+    """Build a production UniswapV3Pool from a generated V3 pool state.
+
+    The pool is fully I/O-free — no RPC calls or provider references.
+    """
+    return make_v3_pool(
+        address=address,
+        token0=token0,  # type: ignore[arg-type]
+        token1=token1,  # type: ignore[arg-type]
+        factory="0x1F98431c8aD98523631AE4a59f267346ea31F984",
+        fee=fee,
+        tick_spacing=tick_spacing,
+        sqrt_price_x96=state.sqrt_price_x96,
+        tick=state.tick,
+        liquidity=state.liquidity,
+        tick_bitmap=state.tick_bitmap,
+        tick_data=state.tick_data,
+        state_block=1,
+    )
+
+
+def _make_profitable_v3_pair(
+    t0: FakeToken,
+    t1: FakeToken,
+    price_a: float = 2200.0,
+    price_b: float = 2000.0,
+    liquidity: int = 10**18,
+    fee: int = 500,
+) -> tuple[UniswapV3Pool, UniswapV3Pool]:
+    """Create two production UniswapV3Pool for the same token pair at different prices.
+
+    Pool A: t0/t1 at {price_a}. ArbitragePath goes t0→t1 (zfo=True).
+    Pool B: t0/t1 at {price_b}. ArbitragePath goes t1→t0 (zfo=False).
+    """
+    generator = PoolStateGenerator()
+
+    addr_a = "0x00000000000000000000000000000000000000A1"
+    addr_b = "0x00000000000000000000000000000000000000A2"
+
+    state_a = generator.generate_v3_pool_state_from_price(
+        address=addr_a,
+        price_token1_per_token0=price_a,
+        liquidity=liquidity,
+        config=V3PoolGenerationConfig(fee=Fraction(fee, 1_000_000), tick_spacing=60),
+    )
+    state_b = generator.generate_v3_pool_state_from_price(
+        address=addr_b,
+        price_token1_per_token0=price_b,
+        liquidity=liquidity,
+        config=V3PoolGenerationConfig(fee=Fraction(fee, 1_000_000), tick_spacing=60),
+    )
+
+    pool_a = _make_v3_pool_from_state(state_a.address, state_a, t0, t1, fee=fee)
+    pool_b = _make_v3_pool_from_state(state_b.address, state_b, t0, t1, fee=fee)
+
+    return pool_a, pool_b
 
 # ---------------------------------------------------------------------------
 # Fixtures — real pool objects constructed directly (no RPC)
@@ -68,14 +140,8 @@ def aerodrome_stable_pool(usdc: Erc20Token, usdt: Erc20Token) -> AerodromeV2Pool
 
 
 class TestArbSolverParityWithLpCycle:
-    """ArbSolver.solve() and UniswapLpCycle._calculate() should produce
-    equivalent optimal input amounts for the same pool configurations.
-
-    These tests serve two purposes:
-    1. Verify that the existing ArbSolver produces results close to the
-       legacy scipy solver
-    2. Act as a regression guard for Plan 011 (replacing _calculate()
-       with ArbSolver delegation)
+    """ArbSolver.solve() should produce optimal input amounts whose profit is
+    confirmed by a manual pool walk through the same pool sequence.
     """
 
     def test_v2_v2_pair_parity(self):
@@ -137,7 +203,7 @@ class TestArbSolverParityWithLpCycle:
         assert out_b > solver_result.optimal_input
 
     def test_v2_v3_pair_parity(self):
-        """ArbSolver and _calculate() should agree on V2-V3 cycle using FakeV3Pool."""
+        """ArbSolver + ArbitragePath should find profitable V2-V3 arbitrage."""
         usdc = FakeToken(
             address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", symbol="USDC", decimals=6
         )
@@ -200,7 +266,7 @@ class TestArbSolverParityWithLpCycle:
         assert manual_profit > 0, "Pool walk must show positive profit"
 
     def test_v3_v3_pair_parity(self):
-        """ArbSolver and _calculate() should agree on V3-V3 cycle using FakeV3Pool."""
+        """ArbSolver + ArbitragePath should find profitable V3-V3 arbitrage."""
         usdc = FakeToken(
             address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", symbol="USDC", decimals=6
         )
