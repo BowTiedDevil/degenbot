@@ -35,4 +35,4 @@ The codebase uses layered documentation. This file holds operational guidance on
 - **[`CONTEXT-MAP.md`](CONTEXT-MAP.md)** — ubiquitous-language index + per-module `CONTEXT.md` pointers. Read the relevant module context before naming variables, classes, or docstrings.
 - **[ADR records](docs/adr/)** — ADR-001 I/O-free pools, ADR-002 pool-type registry singleton, ADR-003 Bot as state owner, ADR-004 CL tickmap typed boundary, ADR-005 Polars-inspired three-layer FFI, ADR-006 per-chain bot orchestrator
 - **[`docs/architecture/`](docs/architecture/)** — long-form architecture
-- **[`docs/migration-guides/`](docs/migration-guides/)** — completed refactors:
+- **[`docs/migration-guides/`](docs/migration-guides/)** — completed refactors. Of note: [`three-layer-transition.md`](docs/migration-guides/three-layer-transition.md) — the rubric for evaluating a Python module against the ADR-005 three-layer architecture, moving responsibility to Rust, and transitioning tests.
