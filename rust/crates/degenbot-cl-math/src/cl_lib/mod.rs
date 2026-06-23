@@ -35,7 +35,7 @@
 //! ├── liquidity_math.rs  — add_delta (uint128 overflow check)
 //! ├── sqrt_price_math.rs — amount deltas, next-price calculations
 //! ├── swap_math.rs       — compute_swap_step (V3 + V4 variants)
-//! └── functions.rs       — mulmod, compress, safe casts
+//! └── functions.rs       — mulmod, compress, tick_position, safe casts
 //! ```
 
 pub mod bit_math;
