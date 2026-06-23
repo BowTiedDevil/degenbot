@@ -164,7 +164,6 @@ class EngineRegistry:
     def register_v3_pool(
         self,
         pool: UniswapV3Pool,
-        block: int = 0,
     ) -> int:
         """Register a V3 pool with the Rust engine.
 
@@ -179,25 +178,24 @@ class EngineRegistry:
         if pool.address in self._v3_keys:
             return self._v3_keys[pool.address]
 
-        key = self.engine.register_v3_pool(
-            address=pool.address,
-            token0=pool.token0.address,
-            token1=pool.token1.address,
-            fee=pool.fee,
-            tick_spacing=pool.tick_spacing,
-            factory=pool.factory,
-            sqrt_price_x96=pool.sqrt_price_x96,
-            liquidity=pool.liquidity,
-            tick=pool.tick,
-            block=block,
-        )
+        # ADR-006 slice 9 / D1: the engine shares the Bot's BotState, so the
+        # V3 pool is ALREADY registered there by `bot.build_pool` (the V3
+        # builder calls `py_bot.register_v3_pool` + hands back the
+        # `PyLiquidityPool` handle). Re-registering via
+        # `engine.register_v3_pool` would PANIC the Rust core (``BotCore::
+        # register_v3_pool`` panics on duplicate address, unlike V4 which
+        # raises a catchable ``ValueError``) — taking the process down. Mirror
+        # the V2 path: read the shared-core pool_id from the PyLiquidityPool
+        # handle and cache it so subsequent paths short-circuit. (V2's
+        # `register_v2_pool` documents the same shared-state invariant.)
+        key = pool._py_pool.pool_id  # noqa: SLF001
+
         self._v3_keys[pool.address] = key
         return key
 
     def register_v4_pool(
         self,
         pool: UniswapV4Pool,
-        block: int = 0,
     ) -> int:
         """Register a V4 pool with the Rust engine.
 
@@ -220,23 +218,21 @@ class EngineRegistry:
         if pool_id_hex in self._v4_keys:
             return self._v4_keys[pool_id_hex]
 
-        # V4 hook flags live in the bottom 12 bits of the hook address
-        # (passed to the engine, which enforces the admission floor itself).
-        hook_flags = int(pool.hook_address, 16) & 0xFFF
-
-        key = self.engine.register_v4_pool(
-            pool_manager=pool.address,
-            pool_id_hex=pool_id_hex,
-            currency0=pool.token0.address,
-            currency1=pool.token1.address,
-            fee=pool.fee,
-            tick_spacing=pool.tick_spacing,
-            hook_flags=hook_flags,
-            sqrt_price_x96=pool.sqrt_price_x96,
-            liquidity=pool.liquidity,
-            tick=pool.tick,
-            block=block,
-        )
+        # ADR-006 slice 9 / D1: the engine shares the Bot's BotState, so the
+        # V4 pool is ALREADY registered there by `bot.build_managed_pool` (the
+        # V4 builder calls `py_bot.register_v4_pool` + hands back the
+        # `PyLiquidityPool` handle). Re-registering via
+        # `engine.register_v4_pool` would raise ValueError("V4 pool already
+        # registered") for every V4 hop in every discovered path — and, since
+        # the cache below is only set on success, the same pool would trip it
+        # repeatedly. Mirror the V2 path: read the shared-core pool_id from the
+        # PyLiquidityPool handle and cache it so subsequent paths short-circuit.
+        #
+        # V4 hook/dynamic-fee admission (HookedPoolRejectedError /
+        # DynamicFeePoolRejectedError) is enforced at `bot.build_managed_pool`
+        # time — i.e. BEFORE this method is ever called — so it surfaces from
+        # the builder, not here.
+        key = pool._py_pool.pool_id  # noqa: SLF001
 
         self._v4_keys[pool_id_hex] = key
         return key
