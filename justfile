@@ -48,6 +48,15 @@ check-contract-bindings contracts_root="../../contracts" bindings_path="rust/cra
 # Build and install Python extension in development mode
 dev:
     env -u RUST_LOG uv run --no-project maturin develop --manifest-path rust/Cargo.toml
+    just fix-ext
+
+# Re-align the built extension's Mach-O __LINKEDIT (pre-release macOS/linker
+# workaround: Darwin 27 dyld rejects the mis-aligned LINKEDIT string pool that
+# ld-1328 / lld-22 emit for this binary). Idempotent; runs as a standalone
+# script so it works even when the freshly built .so does not yet load. Remove
+# this once the system linker emits an 8-aligned LINKEDIT string pool.
+fix-ext:
+    env -u RUST_LOG uv run python src/degenbot/devtools/fix_macho_linkedit_alignment.py src/degenbot/degenbot_rs.abi3.so
 
 # Build Python extension wheels
 build-wheels:
