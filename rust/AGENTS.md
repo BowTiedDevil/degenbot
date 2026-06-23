@@ -12,7 +12,7 @@ Every Rust-accelerated feature follows three layers with strict separation of co
 - Knows nothing about Rust internals.
 
 **Layer 2 — PyO3 Bindings** (`rust/crates/degenbot-python/src/<domain>/<name>.rs`)
-- `#[pyclass]` / `#[pyfunction]` only; files live in per-domain subdirs mirroring the seven core crates (`abi/`, `cl_math/`, `rpc/`, `uniswap/`, `bot/` [+ `bot/engine/`]).
+- `#[pyclass]` / `#[pyfunction]` only; files live in per-domain subdirs mirroring the pyo3-wrapped core crates (`abi/`, `cl_math/`, `rpc/`, `uniswap/`, `bot/` [+ `bot/engine/`]); `conversion/` holds shared PyO3-dependent converters.
 - Converts between Rust and Python types: argument extraction → GIL release → core call → result wrapping.
 - Contains **no business logic**.
 
@@ -21,12 +21,12 @@ Every Rust-accelerated feature follows three layers with strict separation of co
 - Pure functions named with an `_internal` suffix or `pub fn name_rust()`, in files without a `_py` suffix.
 - Independently testable: unit tests without Python, parallel processing without the GIL, reusable in non-Python Rust code.
 
-**Stateful specialization (ADR-005).** When the Rust core holds long-lived *mutable* state that many Python objects must reference, the three layers gain a sharing topology: a `#[pyclass]` wrapper holding `Arc<parking_lot::RwLock<Core>>`, thin handles (`PyLiquidityPool`/`PyErc20Token`) cloning that `Arc`, and the Python session owning the wrapper. This is the `Bot`/`PyBot`/`PyLiquidityPool`/`PyErc20Token` family — see ADR-005 (Polars-Inspired Three-Layer Architecture). The `*_py.rs`-only rule above still holds; the wrapper adds the shared-core pattern, not `pyo3` business logic.
+**Stateful specialization (ADR-005).** When the Rust core holds long-lived *mutable* state that many Python objects must reference, the three layers gain a sharing topology: a `#[pyclass]` wrapper holding `Arc<parking_lot::RwLock<Core>>`, thin handles (`PyLiquidityPool`/`PyErc20Token`) cloning that `Arc`, and the Python session owning the wrapper. This is the `Bot`/`PyBot`/`PyLiquidityPool`/`PyErc20Token` family — see ADR-005 (Polars-Inspired Three-Layer Architecture). The no-`pyo3`-business-logic rule above still holds (the crate boundary, not a filename suffix, is the separator — see Module Naming Convention); the wrapper adds the shared-core pattern, not `pyo3` business logic.
 
 Example from `abi_decoder.rs`:
 ```rust
 // Pure Rust core - no PyO3 dependencies
-pub fn decode_rust(types: &[&str], data: &[u8]) -> Result<Vec<DecodedValue>, AbiDecodeError> { ... }
+pub fn decode_rust(types: &[&str], data: &[u8]) -> Result<Vec<AbiValue>, AbiDecodeError> { ... }
 
 // Thin wrapper - GIL released during heavy work
 #[pyfunction]
@@ -38,8 +38,9 @@ pub fn decode(py: Python<'_>, types: Vec<String>, data: &[u8]) -> PyResult<Py<Py
 
 ### Module Organization
 
-The Rust extension is a **Cargo workspace** of seven pure-Rust core crates
-(`degenbot-core`, `-cl-math`, `-abi`, `-rpc`, `-decoders`, `-uniswap`, `-bot`),
+The Rust extension is a **Cargo workspace** of nine pure-Rust core crates
+(`degenbot-core`, `-cl-math`, `-curve-math`, `-balancer-math`, `-abi`, `-rpc`,
+`-decoders`, `-uniswap`, `-bot`),
 the `degenbot_rs` **cdylib binding layer** at `rust/crates/degenbot-python/`
 (a peer workspace member, mirroring `polars-python`'s position under `crates/`),
 and a **`degenbot` umbrella crate** at `rust/crates/degenbot/` that re-exports
@@ -55,7 +56,7 @@ See [`plans/completed/103-rust-workspace-split.md`](../plans/completed/103-rust-
 
 | File | Purpose |
 |------|---------|
-| `lib.rs` | Python module entry point (`#[pymodule]`), re-exports `pub use degenbot_{core,cl_math,abi,rpc,bot}::{...}`, `pyo3_log::init()`, `#[ctor]` pre-test Python init |
+| `lib.rs` | Python module entry point (`#[pymodule]`), re-exports `pub use degenbot_{core,cl_math,abi,rpc,bot}::{...}` (the `uniswap/`/`decoders/` core surfaces are NOT re-exported at top level — the `uniswap/` binding wrapper reaches `address_utils` via `degenbot_core`), `pyo3_log::init()`, `#[ctor]` pre-test Python init |
 | `c_api.rs` | `#[pymodule]` symbol registration site (`add_class`/`add_function`/`wrap_pyfunction!`) — every PyO3 symbol is registered here, mirroring `polars-python/src/c_api/mod.rs` (ergo UG6FKN task KFVI5F) |
 | `prelude.rs` | Curated re-export surface (`pyo3::prelude::*`, the `conversion::*` module namespace, the most-used `crate::address_utils`/`errors`/`runtime`) so wrapper files open with `use crate::prelude::*;` (ergo UG6FKN task ZNCAWD) |
 | `conversion/` | Shared `PyO3`-dependent converters (no `#[pyfunction]`, but create Python objects): `alloy.rs` (`PyU256`/`PyI256` newtypes, `extract_python_u256`, `abi_value_from_python`), `cache.rs` (cached `int.from_bytes`/`HexBytes` refs via `PyOnceLock`), `rpc_types.rs` (GIL-bound `log_to_py_dict`/`block_to_py_dict`/`json_to_py_with_hexbytes`), `json.rs` (JSON RPC response converters). (ergo UG6FKN task XRF6HV.) |
@@ -63,8 +64,8 @@ See [`plans/completed/103-rust-workspace-split.md`](../plans/completed/103-rust-
 | `cl_math/` | `degenbot-cl-math` PyO3 wrappers: `tick_math.rs` / `cl_lib.rs` over `degenbot_cl_math::cl_lib` |
 | `rpc/` | `degenbot-rpc` PyO3 wrappers: `provider.rs` / `contract.rs` / `subscription.rs` (incl. GIL-bound `drain_buffer`/`DrainResult`, absorbed from the pure core in slice 5) + `async_provider.rs` / `async_contract.rs` (async via `pyo3-async-runtimes`) |
 | `uniswap/` | `degenbot-uniswap` PyO3 wrappers: `address.rs` — `#[pyfunction]` over `degenbot_core::address_utils` |
-| `bot/` | `degenbot-bot` PyO3 wrappers: `mod.rs` (`PyBot` — `#[pyclass]` holding `Arc<RwLock<BotState>>` + `PyBot::unregister_pool` ADR-007), `pool.rs` (`PyLiquidityPool`), `token.rs` (`PyErc20Token`), `dex_identity.rs` (`PyDexIdentity`) + the `engine/` subdir. Absorbed the GIL-bound `DrainResult`/`convert_item`/`drain_buffer` from `subscription.rs` (slice 5). `pool_id`s are **retired** (not reused; `next_pool_id` only advances) so a stale handle cannot alias to a different pool on recreate. V4 removal is engine-side (deferred). |
-| `bot/engine/` | `PyUniswapArbEngine` (`#[pyclass]`) + the `Verification*Error`/`*RejectedError` `#[create_exception]` types (`errors.rs`) over `degenbot_bot::optimizers::uniswap_engine`. Split into per-concern `#[pymethods]` impl blocks (`register`/`snapshot`/`verify`/`solve`/`result_channel`) — PyO3's multiple-`#[pymethods]`-per-type support, mirroring `polars-python/src/expr/`'s 17-file `PyExpr` split and the existing `crates/degenbot-bot/src/optimizers/uniswap_engine/` core split. (ergo UG6FKN task 74W2Z6.) |
+| `bot/` | `degenbot-bot` PyO3 wrappers: `mod.rs` (`PyBot` — `#[pyclass]` holding `Arc<RwLock<BotState>>` + `PyBot::unregister_pool` ADR-007), `pool.rs` (`PyLiquidityPool`), `token.rs` (`PyErc20Token`), `dex_identity.rs` (`PyDexIdentity`), `py_bot_io.rs` (GIL-bound I/O helpers for `PyBot`) + the `engine/` subdir. Absorbed the GIL-bound `DrainResult`/`convert_item`/`drain_buffer` from `subscription.rs` (slice 5). `pool_id`s are **retired** (not reused; `next_pool_id` only advances) so a stale handle cannot alias to a different pool on recreate. V4 removal is engine-side (deferred). |
+| `bot/engine/` | `PyUniswapArbEngine` (`#[pyclass]`) + the `Verification*Error`/`*RejectedError` `#[create_exception]` types (`errors.rs`) over `degenbot_bot::solvers::uniswap_engine`. Split into per-concern `#[pymethods]` impl blocks (`register`/`snapshot`/`verify`/`solve`/`result_channel`) — PyO3's multiple-`#[pymethods]`-per-type support, mirroring `polars-python/src/expr/`'s 17-file `PyExpr` split and the existing `crates/degenbot-bot/src/solvers/uniswap_engine/` core split. (ergo UG6FKN task 74W2Z6.) The `multiple-pymethods` pyo3 feature is required by this split — do not drop it. |
 
 #### `degenbot-core` — `rust/crates/degenbot-core/src/`
 
@@ -90,7 +91,7 @@ the error types are foreign to the root cdylib); the root enables it.
 | File | Purpose |
 |------|---------|
 | `abi_types/` | Unified ABI type/value representation; three submodules: `type_` (`AbiType`, type parsing), `value` (`AbiValue`), `cached` (`CachedAbiTypes`, shared `TYPE_CACHE`). Shared canonical type system used by decoder/encoder/contract |
-| `abi_decoder.rs` | ABI decoding with pure Rust core + LRU type cache. `#[pyfunction]` wrappers live in root `abi_decoder_py.rs` |
+| `abi_decoder.rs` | ABI decoding with pure Rust core + LRU type cache. `#[pyfunction]` wrappers live in the binding crate's `abi/decoder.rs` |
 | `abi_encoder.rs` | ABI encoding with pure Rust core + LRU type cache |
 | `signature_parser.rs` | Robust recursive-descent function signature parser |
 
@@ -103,7 +104,7 @@ Pure provider/contract/subscription core, + the `test-utils` feature exposing
 |------|---------|
 | `provider.rs` | Ethereum RPC provider (sync, Alloy-based), retry logic, `LogFetcher`, `EthBlock` alias, `rpc_call!` macro, `IntoProviderError` trait, eager `LogFilter` validation |
 | `contract.rs` | Smart contract interface with `FunctionSignature` parsing |
-| `subscription.rs` | WS subscription pure core (double-buffer `SubscriptionHandle`, `RawSubItem`, `drain_raw`, `pump_*`). The GIL-bound `drain_buffer`/`DrainResult`/`convert_item` moved to root `subscription_py.rs` (slice 5) |
+| `subscription.rs` | WS subscription pure core (double-buffer `SubscriptionHandle`, `RawSubItem`, `drain_raw`, `pump_*`). The GIL-bound `drain_buffer`/`DrainResult`/`convert_item` moved to the binding crate's `rpc/subscription.rs` (slice 5) |
 
 #### `degenbot-decoders` — `rust/crates/degenbot-decoders/src/`
 
@@ -147,23 +148,62 @@ data, not foundational utilities — see the crate-level doc for the rationale).
 | `dex_identity.rs` | `DexIdentity`/`DexVariant`/`ReservesAbi` value objects + `pub const` per-DEX+variant presets (factory/deployer/init-hash/fees/ABI shape); `preset_for_variant`, `DexVariant::ALL` |
 | `v2_encoding.rs` | V2 `swap(uint256,uint256,address,bytes)` callldata encoding — `EncodedCall`, `V2_SWAP_SELECTOR`, `encode_v2_swap()` |
 
+#### `degenbot-curve-math` — `rust/crates/degenbot-curve-math/src/`
+
+An **alloy-only leaf** — no `pyo3`, no `tokio`, no `degenbot-core`, no
+`degenbot-abi`. Pure-Rust port of the deployed Curve `StableSwap` math
+(ADR-005 slice 11c), depending only on `alloy::primitives`. Direct 1:1 ports of
+the deployed-contract arithmetic, cross-checked against the Python oracle.
+The Curve **state** layer is already integrated (`bot_core/curve_state.rs`);
+this pure-math leaf is **not yet re-exported by the umbrella `degenbot` crate,
+wrapped in the binding layer, nor wired into the engine's solve path**.
+
+| File | Purpose |
+|------|---------|
+| `stableswap.rs` | Curve `StableSwap` D/balances math (direct Solidity port) |
+
+#### `degenbot-balancer-math` — `rust/crates/degenbot-balancer-math/src/`
+
+An **alloy-only leaf** — no `pyo3`, no `tokio`, no `degenbot-core`, no
+`degenbot-abi`. Pure-Rust ports of the deployed-contract Balancer V2
+`FixedPoint` / `LogExpMath` / `WeightedMath` / `StableMath` libraries
+(ADR-005 slice 12e, the pure-math sub-slice of the Balancer family port),
+depending only on `alloy::primitives` and mirroring `degenbot-curve-math`'s
+shape. Variable names preserve Solidity-oracle notation for direct-port
+correspondence (lint-allowed). The Balancer **state** layer is already
+integrated (`bot_core/balancer_stable_state.rs` + `balancer_weighted_state.rs`);
+this pure-math leaf is **not yet re-exported by the umbrella `degenbot` crate,
+wrapped in the binding layer, nor wired into the engine's solve path**.
+
+| File | Purpose |
+|------|---------|
+| `fixed_point.rs` | Balancer `FixedPoint` (1e18 fixed-point arithmetic) |
+| `log_exp_math.rs` | Balancer `LogExpMath` (ln / pow fixed-point) |
+| `weighted_math.rs` | Balancer `WeightedMath` (weighted-pool swap math) |
+| `stable_math.rs` | Balancer `StableMath` (stable-pool math) |
+| `constants.rs` | Compile-time constants |
+
 #### `degenbot-bot` — `rust/crates/degenbot-bot/src/`
 
-One crate by ADR-003: the `bot_core` (state) ↔ `optimizers` (solvers) seam is
+One crate by ADR-003: the `bot_core` (state) ↔ `solvers` (solvers) seam is
 genuine domain coupling (~30 mutual refs, now intra-crate). `#[pyclass]`/
 `#[pyfunction]` wrappers (`PyBot`, `PyUniswapArbEngine`, etc.) live in the
-root cdylib (`py_bot.rs`, `py_binding.rs`) — they need `alloy_py`/`py_cache`.
+root cdylib's `bot/` subdir (`mod.rs`, `pool.rs`, `token.rs`) — they need `conversion::alloy`/`conversion::cache` glue.
 
 | Module | Purpose |
 |--------|---------|
-| `bot_core/` | `BotState` single-owner state, `engine.rs`, `block_pump.rs`, `log_dispatcher.rs` (the `LogDecoder` trait + `DecodedPoolEvent` + `LogDispatcher` bus + `PoolStateSubscriber` — the state-coupled dispatch layer), `solve_coordinator.rs`, `reorg_coordinator.rs`, `state_history.rs` (reorg journal), `liquidity_verifier.rs`, `tick_bitmap.rs`/`tick_map.rs`, `v3_state.rs`/`v4_state.rs` (V3/V4 pool state — the pure event-log **decoders** moved to `degenbot-decoders`; the `DexIdentity` presets + V2 swap encoding moved to `degenbot-uniswap`; see below), `drain_sink.rs`. Documented in [`docs/architecture/rust-owned-bot.md`](../docs/architecture/rust-owned-bot.md) and [`CONTEXT.md`](CONTEXT.md) |
-| `optimizers/` | Möbius solvers (`mobius_int_exact.rs`, `mobius_v3_int.rs`, `mobius_int.rs`), `affected_keys.rs`/`liquidity_event_buffer.rs`, + `uniswap_engine/` sub-module (`diagnostic`, `event_routing`, `solver_dispatch`, `lifecycle`, `snapshot_verify`, `result_channel`, `tests`). See [`docs/architecture/rust-owned-bot.md`](../docs/architecture/rust-owned-bot.md) §5 |
+| `bot_core/` | `BotState` single-owner state, `engine.rs`, `block_pump.rs`, `log_dispatcher.rs` (the `LogDecoder` trait + `DecodedPoolEvent` + `LogDispatcher` bus + `PoolStateSubscriber` — the state-coupled dispatch layer), `solve_coordinator.rs`, `reorg_coordinator.rs`, `state_history.rs` (reorg journal), `liquidity_verifier.rs`, `tick_bitmap.rs`/`tick_map.rs`, `v3_state.rs`/`v4_state.rs` (V3/V4 pool state), `curve_state.rs` (Curve V1 `StableSwap` pool state — ADR-005 slice 11), `balancer_stable_state.rs`/`balancer_weighted_state.rs` (Balancer stable/weighted pool state — ADR-005 slice 12) — the pure event-log **decoders** moved to `degenbot-decoders`; the `DexIdentity` presets + V2 swap encoding moved to `degenbot-uniswap`; see below), `drain_sink.rs`. Documented in [`docs/architecture/rust-owned-bot.md`](../docs/architecture/rust-owned-bot.md) and [`CONTEXT.md`](CONTEXT.md) |
+| `solvers/` | Möbius solvers (`mobius_int_exact.rs`, `mobius_v3_int.rs`, `mobius_int.rs`), `affected_keys.rs`/`liquidity_event_buffer.rs`, + `uniswap_engine/` sub-module (`diagnostic`, `engine_handle`, `engine_subscriber`, `event_routing`, `lifecycle`, `snapshot_verify`, `solver_dispatch`, `result_channel`, `tests`; `engine_handle`/`engine_subscriber` expose `EngineHandle`/`EngineSubscriber` that the `PyUniswapArbEngine` wrapper imports). See [`docs/architecture/rust-owned-bot.md`](../docs/architecture/rust-owned-bot.md) §5 |
 
 #### `degenbot` umbrella — `rust/crates/degenbot/src/`
 
-A **pure-Rust umbrella crate** that re-exports the seven pyo3-free cores with
+A **pure-Rust umbrella crate** that re-exports seven of the nine pyo3-free cores with
 **zero `pyo3`** (verified by `just check-no-pyo3-in-cores`, which includes this
-crate). A standalone Rust consumer `cargo add degenbot` reaches
+crate). The balancer/curve **state** variants are already integrated into `bot_core`
+(`balancer_stable_state.rs`/`balancer_weighted_state.rs`/`curve_state.rs`); what
+is pending is wiring the **pure-math leaves** (`degenbot-curve-math`,
+`degenbot-balancer-math`) into the engine's solve path and the umbrella re-export.
+A standalone Rust consumer `cargo add degenbot` reaches
 `BotState`/`DexIdentity` presets/V2-V4 state structs/calc math with no Python
 interpreter, no `pyo3` feature, no maturin in the build graph — the ADR-005
 standalone claim made concrete (mirrors how the `polars` umbrella Rust crate
@@ -175,7 +215,7 @@ workspace member that DOES pull pyo3; the umbrella never depends on it.
 
 ### Key Design Patterns
 
-- **Shared Multi-Threaded Runtime**: `runtime.rs` provides a singleton Tokio runtime using `Runtime::new()` (multi-threaded scheduler). This is intentional: with Python 3.13+ free-threading, multiple threads can call into Rust provider/contract methods simultaneously. A multi-threaded Tokio runtime enables true parallelism for concurrent I/O-bound RPC calls, while a current-thread runtime would serialize them. Thread count is tunable via `TOKIO_WORKER_THREADS`. The runtime is lazily initialized — pure Rust functions (`tick_math`, `abi_decoder`, `address_utils`) never trigger it.
+- **Shared Multi-Threaded Runtime**: `runtime.rs` provides a singleton Tokio runtime built with `Builder::new_multi_thread()` (multi-threaded scheduler). This is intentional: with Python 3.13+ free-threading, multiple threads can call into Rust provider/contract methods simultaneously. A multi-threaded Tokio runtime enables true parallelism for concurrent I/O-bound RPC calls, while a current-thread runtime would serialize them. Thread count is tunable via `TOKIO_WORKER_THREADS`. The runtime is lazily initialized (`OnceLock<Runtime>`) — pure Rust functions (`tick_math`, `abi_decoder`, `address_utils`) never trigger it.
 - **Arc Sharing**: Providers use `Arc<AlloyProvider>` for thread-safe sharing across Python objects. `Contract::clone()` shares the `Arc<RwLock<HashMap>>` signature cache across all clones.
 - **Signature Caching**: `Contract` uses `Arc<RwLock<HashMap<String, Arc<FunctionSignature>>>>` for parsed function signatures. The `Arc<FunctionSignature>` value allows cheap returns from the cache without copying the parsed data.
 - **GIL Release**: See [GIL Release Protocol](#gil-release-protocol) below.
@@ -183,11 +223,11 @@ workspace member that DOES pull pyo3; the umbrella never depends on it.
 - **RPC Call Macro**: The `rpc_call!` macro wraps simple Alloy RPC calls (no request construction needed) with retry logic and error classification, reducing per-method boilerplate from 9 lines to 1. Methods that need conditional block-id handling or request construction (`eth_call`, `estimate_gas`, `get_logs`) write the `retry_with_backoff` call manually.
 - **Consuming Error Trait**: `IntoProviderError` consumes `RpcError<TransportErrorKind>` instead of borrowing it, classifying Alloy errors into `ProviderError` variants without double-borrow issues.
 - **Concurrency Cap**: `LogFetcher::with_concurrency()` caps the semaphore at 32 to prevent file-descriptor exhaustion and RPC rate-limit bans.
-- **Type Alias for Block**: `EthBlock` centralises the verbose `Block<Transaction<TxEnvelope>, RpcHeader<ConsensusHeader>>` generic, used by `provider.rs` and `py_converters.rs`.
+- **Type Alias for Block**: `EthBlock` centralises the verbose `Block<Transaction<TxEnvelope>, RpcHeader<ConsensusHeader>>` generic, used by `provider.rs` and `conversion/rpc_types.rs`.
 
 ### Module Naming Convention
 
-Files are organized into **per-domain subdirs mirroring the seven core crates**
+Files are organized into **per-domain subdirs mirroring the pyo3-wrapped core crates**
 (`rust/crates/degenbot-python/src/abi/`, `cl_math/`, `rpc/`, `uniswap/`, `bot/`[+ `bot/engine/`]), with a `conversion/`
 dir for shared `PyO3`-dependent converters. Core crates hold `foo.rs` pure cores; the
 root cdylib's per-domain subdirs hold the `foo.rs` PyO3 wrappers (they need
@@ -195,8 +235,8 @@ root cdylib's per-domain subdirs hold the `foo.rs` PyO3 wrappers (they need
 is dropped inside the binding crate** — every file there is "py" by default; the
 **workspace/crate boundary** (the core crates are `pyo3`-free — verify with
 `just check-no-pyo3-in-cores`) is the separator that matters, not a filename
-suffix. (Ergo UG6FKN task WXHGOH — mirrors `polars-python/src/`, which has exactly
-one `*_py.rs` file.)
+suffix. (Ergo UG6FKN task WXHGOH — mirrors `polars-python/src/`; degenbot's binding
+crate currently has **zero** `*_py.rs` files.)
 
 | Pattern | Meaning | Example |
 |---------|---------|--------|
@@ -216,7 +256,9 @@ opt-in feature, it's a code smell — split the pure Rust logic out.
 - Exposing `AbiType` as a `#[pyclass]` would add API surface without clear benefit
 - Invalid type strings (e.g., `"uint56"`) surface errors at encoding/decoding time, which is the expected behavior
 
-If type-safe ABI construction becomes valuable later, add it as a separate `abi/abi_types.rs`.
+Type-safe ABI construction already lives in `abi_types/` (`AbiType`, parsing,
+shared `TYPE_CACHE`); there is no separate `abi/abi_types.rs` — the module is
+the canonical home. Add new type-level operations there rather than fragmenting.
 
 ## Design Principles for New Rust Modules
 
@@ -227,7 +269,7 @@ These principles distill lessons from Polars, Pydantic, and this codebase's own 
 1. **Write nice Python** — The Python-facing API should feel native, not like a Rust wrapper
 2. **Write nice Rust** — The Rust core should be idiomatic Rust, not Python-accommodating
 3. **Thin translator** — The PyO3 layer extracts args → calls Rust → wraps result. Nothing else.
-4. **No Python in Rust core** — If `pyo3` appears in a file that isn't `*_py.rs`, it's a code smell
+4. **No Python in Rust core** — If `pyo3` appears in a core crate file outside its opt-in `pyo3` feature, it's a code smell
 5. **Release the GIL** — Every non-trivial operation should release the GIL
 6. **Own your data at the boundary** — Data crossing the boundary must be owned (copied) or Arc-shared, never borrowed
 7. **Map errors at the boundary** — Rust errors become Python exceptions in the PyO3 layer, not the core
@@ -254,7 +296,7 @@ The PyO3 boundary is not an afterthought — it **is** the architecture. Two fun
 | `Bound<'py, T>` | Yes (lifetime tied to `'py`) | Borrowed reference | Inside GIL-held code, function arguments |
 | `Py<T>` | No (independent of GIL) | Owned reference (increments refcount) | Storing across GIL release, struct fields |
 
-**Critical rule**: If you release the GIL (`py.detach()`, `py.allow_threads()`), any `Bound<'py, _>` references become invalid. Extract owned data first:
+**Critical rule**: If you release the GIL (`py.detach()`), any `Bound<'py, _>` references become invalid. Extract owned data first:
 
 ```rust
 // CORRECT: Extract owned data before releasing GIL
@@ -295,22 +337,6 @@ The general rule: **before releasing the GIL, extract all borrowed Python data i
 
 **degenbot's current `Arc<AlloyProvider>` pattern is exactly right** — it matches Pydantic's `Arc<CombinedValidator>`: shared, immutable, thread-safe, cheap to clone. No need for `RwLock` on providers since they aren't mutated. No cycles, so no need for `Weak`.
 
-### Reference Project Lessons
-
-**Polars** — Zero-copy Arrow bridge:
-- Arrow arrays live in Rust-managed memory; Python gets views via the C Data Interface, not copies
-- `RwLock<DataFrame>` at the wrapper level allows mutation from Rust methods while `frozen` pyclass prevents Python mutation
-- The Rust core crate (`polars-core`) has zero PyO3 imports — all Python interop isolated in `polars-python`
-- `SharedStorage` (custom Arc) wraps raw buffers so that cloning/slicing is O(1) and foreign-owned memory (from Python) is kept alive by holding a `Py<PyAny>` reference inside the Rust storage
-- **Lesson for degenbot**: If you ever need to share large memory regions without copy (e.g., raw transaction data), Polars' `ForeignOwner` pattern is the blueprint
-
-**Pydantic** — Schema-as-contract + build/run separation:
-- Schema compilation (Python → Rust) happens once; validation (Rust → Python) happens many times. Build phase can be slower; run phase must be as fast as possible
-- `Arc<CombinedValidator>` shares compiled validator trees; `Weak<OnceLock<T>>` breaks reference cycles for recursive schemas
-- `enum_dispatch` provides zero-cost abstraction — the `CombinedValidator` enum dispatches without virtual method overhead
-- `CoreSchema` dict as the interface contract avoids tight coupling between Python schema changes and Rust type definitions
-- **Lesson for degenbot**: The `Contract` signature cache (`parse once, use many times`) already follows this pattern. Apply the same build/run separation to any new module where setup is expensive but execution is hot-path (e.g., pool state initialization vs. swap calculation)
-
 ### Porting Decision Framework
 
 Not everything should be in Rust. Use this framework:
@@ -330,104 +356,6 @@ Not everything should be in Rust. Use this framework:
 
 ## Coding Standards
 
-### Error Handling
-
-All error types use `thiserror` with explicit variants and `#[non_exhaustive]`:
-
-```rust
-#[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
-pub enum SomeError {
-    #[error("Invalid value: {0}")]
-    InvalidValue(String),
-}
-
-impl From<SomeError> for PyErr {
-    fn from(err: SomeError) -> Self {
-        PyValueError::new_err(err.to_string())
-    }
-}
-```
-
-#### Error Type Hierarchy
-
-Error types form conversion chains. Follow these rules for new errors:
-
-```
-AbiDecodeError ──→ ContractError ──→ ProviderError ──→ PyErr
-                  ─────────────────────────────────────→ PyErr (direct, from decoder/encoder)
-```
-
-- `AbiDecodeError` → `PyErr` directly when the decoder/encoder is called standalone (maps to `PyValueError`)
-- `AbiDecodeError` → `ContractError` when errors flow through contract operations
-- `ContractError` → `ProviderError` via the `Other` variant
-- `ProviderError` → `PyErr` with **Python-exception-type mapping**:
-  - `ProviderError::Timeout` → `PyTimeoutError`
-  - `ProviderError::ConnectionFailed` → `PyConnectionError`
-  - `ProviderError::RateLimited`, `RpcError`, `InvalidResponse`, `AnvilError`, `Other`, `SerializationError` → `PyRuntimeError`
-  - All others → `PyValueError`
-
-When adding a new error type, decide which chain it belongs to. If it can arise in both standalone and contract contexts, implement `From<NewError> for PyErr` directly AND `From<NewError> for ContractError`.
-
-### Documentation
-
-Module-level docs with `//!`:
-```rust
-//! Module description.
-//!
-//! Additional detail on architecture or usage.
-```
-
-Function docs with structured sections:
-```rust
-/// Brief description.
-///
-/// # Arguments
-///
-/// * `param` - Description
-///
-/// # Returns
-///
-/// Description of return value
-///
-/// # Errors
-///
-/// Returns `ErrorType` when...
-///
-/// # Example
-///
-/// ```
-/// use crate::module::function;
-/// let result = function(arg)?;
-/// ```
-```
-
-### Dependencies
-
-| Crate | Purpose |
-|-------|---------|
-| `alloy` | Ethereum primitives, RPC types, keccak256 (`full` feature) |
-| `pyo3` | Python bindings (`abi3-py312` + `serde` features). The newer `abi3t` feature was evaluated and rejected for now — it requires Python ≥3.15 and forces `Py_GIL_DISABLED`; see [`docs/architecture/pyo3-abi3t-evaluation.md`](../docs/architecture/pyo3-abi3t-evaluation.md). |
-| `pyo3-async-runtimes` | Async Python interop with Tokio (`tokio-runtime` feature) |
-| `pyo3-log` | Rust `log` → Python `logging` bridge, initialized in `lib.rs` via `pyo3_log::init()` |
-| `tokio` | Async runtime (`rt-multi-thread` + `time` features) |
-| `parking_lot` | High-performance `RwLock` and `Mutex` (no poisoning) |
-| `lru` | Bounded LRU caches for ABI type parsing in decoder/encoder |
-| `rand` | Jitter for retry backoff (`random_range`) |
-| `thiserror` | Error type derivation |
-| `serde` | Serialization (`derive` feature) |
-| `serde_json` | JSON conversion for RPC responses |
-| `futures` | `join_all` for async batch operations |
-| `log` | Rust logging facade (emitted to Python via `pyo3-log`) |
-
-**Dev dependencies:**
-
-| Crate | Purpose |
-|-------|---------|
-| `proptest` | Property-based testing |
-
-**Removed:** `num-bigint` was previously used for U256/I256 → Python int conversion. It has been replaced by `PyU256`/`PyI256` newtype wrappers in `alloy_py.rs` that use `int.from_bytes` for zero-copy conversion.
-
 ### Caching Strategy & Global State
 
 The codebase uses three caching patterns. Use this decision framework for new caches:
@@ -435,9 +363,9 @@ The codebase uses three caching patterns. Use this decision framework for new ca
 | Pattern | When to use | Example |
 |---------|-------------|---------|
 | `LazyLock<parking_lot::Mutex<LruCache<K, V>>>` | Bounded cache of Rust data, accessed from multiple threads without GIL | `abi_types::cached::TYPE_CACHE` (shared by decoder and encoder) |
-| `PyOnceLock<Py<PyAny>>` | Python object references (require GIL to create, then cached) | `py_cache::INT_FROM_BYTES`, `py_cache::HEXBYTES_CLASS` |
+| `PyOnceLock<Py<PyAny>>` | Python object references (require GIL to create, then cached) | `conversion::cache::INT_FROM_BYTES`, `conversion::cache::HEXBYTES_CLASS` |
 | `OnceLock<T>` | One-time initialization, never evicted, never resized | `runtime::RUNTIME` |
-| `LazyLock<HashSet<&'static str>>` | Immutable constant sets built once | `py_converters::HEXBYTES_FIELDS`, `py_converters::ADDRESS_FIELDS` |
+| `LazyLock<HashSet<&'static str>>` | Immutable constant sets built once | `conversion::rpc_types::HEXBYTES_FIELDS`, `conversion::rpc_types::ADDRESS_FIELDS` |
 
 **Capacity policy:** LRU caches use 10,000 entries as the standard capacity (`const XXX_CAPACITY: NonZeroUsize`). New caches should follow this unless there's a measured reason to differ.
 
@@ -455,7 +383,7 @@ The rule is simple: **release the GIL for any I/O-bound work or long CPU work; h
 | Provider RPC calls (sync) | Released | `py.detach(\|\| get_runtime().block_on(async { ... }))` |
 | ABI encode/decode (pure Rust) | Released | `py.detach(\|\| decode_rust(...))` |
 | Python object creation (PyList, PyDict, HexBytes) | Held | Direct PyO3 API calls |
-| RPC type conversion (block/tx/log dicts) | Held | `py_converters` module (inherently requires GIL) |
+| RPC type conversion (block/tx/log dicts) | Held | `conversion::rpc_types` module (inherently requires GIL) |
 | Async operations | Released | `future_into_py(py, async { ... })` |
 | Post-async Python object construction | Re-acquired | `Python::attach(\|py\| ...)` inside async futures |
 
@@ -463,38 +391,47 @@ The rule is simple: **release the GIL for any I/O-bound work or long CPU work; h
 
 #### `Python::attach()` Risk
 
-`Python::attach()` is used in async futures (e.g., `async_provider.rs`) to re-acquire the GIL after an `.await` completes, so that Python objects can be constructed from the result. This is the standard pattern for `pyo3-async-runtimes`, but carries a **deadlock risk**: if the Python event loop is in a state that prevents GIL acquisition, the call will hang. Mitigate this by:
+`Python::attach()` is used on Tokio worker threads across **four** modules —
+`conversion/alloy.rs`, `conversion/cache.rs`, `conversion/json.rs`, and
+`rpc/async_provider.rs` — to re-acquire the GIL after an `.await` completes so
+that Python objects can be constructed from the result. This is the standard
+pattern for `pyo3-async-runtimes`, but carries a **deadlock risk**: if the
+Python event loop (or interpreter shutdown) is in a state that prevents GIL
+acquisition, the call will hang. Mitigate this by:
+- Preferring `Python::try_attach()` where the caller can tolerate a missed GIL
+  (e.g., interpreter teardown) and fall back gracefully — `async_provider.rs`
+  does this to detect shutdown.
 - Ensuring the Tokio runtime is sized appropriately via `TOKIO_WORKER_THREADS`
 - Never calling sync provider methods from within an async Python context
 
-#### `py_converters` GIL Holding
+#### `conversion::rpc_types` GIL Holding
 
-The `py_converters` module (`log_to_py_dict`, `block_to_py_dict`, `json_to_py_with_hexbytes`) creates Python objects and therefore must hold the GIL. For large blocks with many transactions, this holds the GIL for the duration of object construction. This is an **accepted cost** — Python objects cannot be constructed without the GIL. The actual RPC I/O that precedes these calls already releases the GIL via `py.detach()` in the provider layer.
+The `conversion::rpc_types` module (`log_to_py_dict`, `block_to_py_dict`, `json_to_py_with_hexbytes`) creates Python objects and therefore must hold the GIL. For large blocks with many transactions, this holds the GIL for the duration of object construction. This is an **accepted cost** — Python objects cannot be constructed without the GIL. The actual RPC I/O that precedes these calls already releases the GIL via `py.detach()` in the provider layer.
 
 ### PyO3 API Design Conventions
 
 - **`#[pyclass]`** for stateful objects that Python holds references to (e.g., `PyAlloyProvider`, `PyContract`, `PyLogFilter`). Name with `Py` prefix.
 - **`#[pyfunction]`** for stateless operations (e.g., `decode`, `encode`, `get_function_selector`). No `Py` prefix.
-- **`#[pyo3(signature = (...))]** with defaults for optional parameters. Always specify `signature` explicitly when there are `Option<T>` parameters to control keyword-only vs positional.
+- **`#[pyo3(signature = (...))]`** with defaults for optional parameters. Always specify `signature` explicitly when there are `Option<T>` parameters to control keyword-only vs positional.
 - **Sync wrappers** use `py.detach()` + `get_runtime().block_on()`. This blocks a Tokio worker thread — do not hold this pattern for operations that might deadlock with other Tokio tasks on the same runtime.
 - **Async wrappers** use `pyo3_async_runtimes::tokio::future_into_py()`. Preferred for any long-running I/O operation.
 
 ### Python↔Rust Type Conversion Protocol
 
 #### U256/I256 → Python int
-Use `PyU256`/`PyI256` from `alloy_py.rs` or the convenience functions `u256_to_py()` / `i256_to_py()`. These use `int.from_bytes` via `py_cache` for zero-copy conversion without `num-bigint` intermediate allocations.
+Use `PyU256`/`PyI256` from `conversion::alloy` or the convenience functions `u256_to_py()` / `i256_to_py()`. These use `int.from_bytes` via `conversion::cache` for zero-copy conversion.
 
 #### Python int → U256/I256
-Use `abi_value_from_python()` in `alloy_py.rs` which handles:
+Use `abi_value_from_python()` in `conversion::alloy` which handles:
 - Small integers via `i128` extraction
 - Large integers via Python's `to_bytes()` method
 - Bool before int (since `bool` subclasses `int` in Python)
 
 #### Bytes → Python HexBytes
-Use `py_cache::create_hexbytes()` which caches the `HexBytes` class reference. This ensures compatibility with web3.py and eth_abi.
+Use `conversion::cache::create_hexbytes()` which caches the `HexBytes` class reference. This ensures compatibility with web3.py and eth_abi.
 
 #### JSON → Python dict
-Use `py_converters::json_to_py_with_hexbytes()` for RPC responses. This does field-aware conversion:
+Use `conversion::rpc_types::json_to_py_with_hexbytes()` for RPC responses. This does field-aware conversion:
 - `HEXBYTES_FIELDS` (hash, input, data, topics, etc.) → `HexBytes` objects
 - `ADDRESS_FIELDS` (address, miner, from, to) → EIP-55 checksummed strings
 - `NUMERIC_FIELDS` (gas, value, nonce, etc.) → Python `int` via `u256_to_py`
@@ -507,80 +444,21 @@ This field mapping is a de facto API contract with Python consumers. Changes to 
 
 | Pattern | Module | When to use |
 |---------|--------|-------------|
-| Sync (blocks calling Python thread) | `provider_py.rs`, `contract_py.rs` | Simple scripts, Jupyter notebooks, code that doesn't need concurrency |
+| Sync (blocks calling Python thread) | `rpc/provider.rs`, `rpc/contract.rs` | Simple scripts, Jupyter notebooks, code that doesn't need concurrency |
 | Async (returns coroutine to Python) | `async_provider.rs`, `async_contract.rs` | Async Python applications, high-throughput batch operations |
 
 **Sync path:** `py.detach()` → `get_runtime().block_on()` — blocks a Tokio worker thread. Do not call sync methods from within an async context or from Tokio tasks, as this can deadlock.
 
 **Async path:** `future_into_py()` — returns a Python awaitable. Use for all long-running I/O in async Python code.
 
-**Batch operations:** The async `batch_call` in `PyAsyncContract` uses `futures::future::join_all` to execute multiple contract calls in parallel. Follow this pattern for new batch operations.
-
-### Logging Bridge
-
-`pyo3_log::init()` is called once in the `#[pymodule]` function in `lib.rs`. This bridges Rust's `log` crate to Python's `logging` module:
-- Rust `log::info!()`, `log::warn!()`, etc. → Python logger named after the Rust module
-- The bridge is initialized once at import time
-- Use `log::debug!()` for high-frequency tracing, `log::warn!()` for recoverable issues
-
-## Performance Guidelines
-
-- Use `const` for compile-time constants (e.g., tick math tables)
-- Use `#[inline]` for small, frequently-called functions
-- Use `py.detach()` to release GIL during CPU-intensive work
-- Pre-allocate vectors with `Vec::with_capacity()` when size is known
-- Use `Arc::clone()` (not `.clone()`) to make reference-counting explicit
-- Use `CachedAbiTypes` for batch encode/decode operations (avoids repeated type string parsing)
-- Use `AbiType::type_str()` which returns `Cow<'static, str>` to avoid allocation for common types like "address", "bool"
+**Batch operations:** The async `batch_call` in `PyAsyncContract` spawns one `tokio::task::JoinSet` task per call and drains `join_next().await` — bounded by the Tokio runtime, not a fixed `join_all` allocation. Follow this `JoinSet` pattern (or `futures_util::stream` combinators) for new batch operations.
 
 ## Testing
 
 - Unit tests in `#[cfg(test)]` modules within each file
 - Property-based tests using `proptest` for mathematical invariants and roundtrip encode/decode
-- Integration tests in `rust/tests/python_integration.rs` (requires `--features auto-initialize`)
+- Integration tests in `rust/crates/degenbot-python/tests/python_integration.rs` + `concurrency_stress.rs` (both require `--features auto-initialize`; declared via `[[test]]` blocks in `degenbot-python/Cargo.toml`)
 - **Roundtrip encode→decode is the standard invariant** for property-based testing of ABI operations
-- Run tests: `just test-rust` (runs `cargo test --features auto-initialize -- --test-threads=1`)
-- Run linter: `just lint-rust` (runs `cargo clippy --all-targets --all-features -- -D warnings`)
-- Property-based test example from `tick_math.rs`:
-```rust
-#[cfg(test)]
-mod proptests {
-    use proptest::prelude::*;
-
-    proptest! {
-        #[test]
-        fn roundtrip_any_valid_tick(tick in -887_272_i32..=887_272_i32) {
-            let ratio = get_sqrt_ratio_at_tick_internal(tick)?;
-            let tick_back = get_tick_at_sqrt_ratio_internal(ratio)?;
-            prop_assert_eq!(tick_back.as_i32(), tick);
-        }
-    }
-}
-```
-
-## Build Commands
-
-Uses `just` from the project root (see justfile):
-
-```bash
-just test-rust           # Run Rust tests (with auto-initialize feature, single-threaded)
-just lint-rust           # Run cargo clippy (all targets, all features, deny warnings)
-just build-rust-debug    # Build release library (links Python, no extension-module feature)
-just build-rust-extension # Build Python extension (--features extension-module, for distribution)
-just dev                 # Build and install Python extension in dev mode (maturin develop)
-just test-all            # Run all Rust and Python tests
-```
-
-**Note:** `build-rust-debug` uses `cargo build --release` but without the `extension-module` feature. It's "debug" in the sense that it doesn't produce a standalone Python extension — use `build-rust-extension` or `dev` for that.
-
-## Release Profile
-
-`Cargo.toml` `[profile.release]`:
-- `lto = "thin"` — cross-crate inlining for smaller/faster binaries
-- `strip = true` — strip debug symbols
-- `codegen-units = 1` — maximum optimization at cost of compile time
-
-These trade compile time for runtime performance. The `bench` profile inherits `release` with `debug = true` for profiling.
 
 ## Solidity/EVM Notes
 
