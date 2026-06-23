@@ -93,7 +93,11 @@ def _call_initialize(w3: Web3) -> dict:
         "from": Web3.to_checksum_address(EXECUTOR_OWNER),
         "to": Web3.to_checksum_address(EXECUTOR_ADDRESS),
         "data": selector,
-        "value": 2,
+        # initialize() asserts msg.value == 1: the 1 wei is consumed by
+        # WETH.deposit(value=1) to mint 1 wei WETH → 1 wei ERC6909 (slot warmup).
+        # (Was 2 wei when initialize() did a deposit + leftover; commit 8b8d6d7
+        # made it a 1-wei no-strand warmup.)
+        "value": 1,
         "gas": 1_000_000,
         "maxFeePerGas": w3.eth.gas_price * 2,
         "maxPriorityFeePerGas": 1,
@@ -324,7 +328,8 @@ def test_simulate_v1_gas_comparison(fork: AnvilFork):
             "from": EXECUTOR_OWNER,
             "to": executor_addr,
             "data": "0x" + init_sel.hex(),
-            "value": "0x2",
+            # initialize() requires exactly 1 wei (consumed by WETH.deposit).
+            "value": "0x1",
             "gas": "0xF4240",
         }
 

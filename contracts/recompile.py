@@ -6,7 +6,7 @@ Usage:
 
 Steps:
     1. Compile cmd_executor.vy from ~/code/executor/ using Vyper
-    2. Append 9 × 32-byte immutable slots after the CBOR metadata
+    2. Append 5 × 32-byte immutable slots after the CBOR metadata
     3. Patch POOL_MANAGER_ADDR to the Ethereum mainnet PoolManager
     4. Copy ABI, bytecode, and runtime bytecode into contracts/
 
@@ -33,18 +33,17 @@ IMPORTANT: The CBOR metadata MUST NOT be stripped. Removing it
 breaks the jump table, the JUMPDEST at 0x4046, and the CODECOPY
 offsets for immutables.
 
-Immutable layout (9 slots, 288 bytes, placed after CBOR):
+Immutable layout (5 slots, 160 bytes, placed after CBOR):
     [0]  OWNER_ADDR          — msg.sender at deploy time
     [1]  WETH_ADDR           — constructor param
     [2]  POOL_MANAGER_ADDR   — constructor param
-    [3]  USER0_ADDR          — constructor param (USDC on mainnet)
-    [4]  USER1_ADDR          — constructor param (WBTC on mainnet)
-    [5]  WETH_DELTA_SLOT    — precomputed keccak256(self, WETH)
-    [6]  NATIVE_DELTA_SLOT   — precomputed keccak256(self, NATIVE)
-    [7]  USER0_DELTA_SLOT    — precomputed keccak256(self, USER0)
-    [8]  USER1_DELTA_SLOT    — precomputed keccak256(self, USER1)
+    [3]  WETH_DELTA_SLOT     — precomputed keccak256(self, WETH)
+    [4]  NATIVE_DELTA_SLOT   — precomputed keccak256(self, NATIVE)
 
-The delta slots are precomputed in __init__ as
+The constructor is __init__(weth, pool_manager) — no per-path token
+immutables. Only the two hot protocol currencies (WETH, NATIVE) get
+precomputed delta slots; all other currencies compute the slot on-chain
+via keccak256. The delta slots are precomputed in __init__ as
 keccak256(abi.encodePacked(self, currency)), matching v4-core
 CurrencyDelta._computeSlot. With code injection, self = the injected
 executor address.
@@ -69,8 +68,6 @@ CONTRACTS_DIR = DEGENBOT_ROOT / "contracts"
 OWNER_ADDR = "0x9C56a29c7231974c269E24F9FB3c29203039089E"
 WETH_ADDR = "0xC02aaA39b223Fe8D0A0e5C4f27eAD9083C756Cc2"
 POOL_MANAGER_ADDR = "0x000000000004444c5dc75cB358380D2e3De08A90"
-USER0_ADDR = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"  # USDC
-USER1_ADDR = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"  # WBTC
 NATIVE_ADDRESS = "0x0000000000000000000000000000000000000000"
 
 # The injected executor address — used as `self` for delta slot precomputation.
@@ -152,36 +149,26 @@ def main() -> None:
     # Precompute delta slots using the injected executor address as `self`
     weth_delta_slot = _compute_delta_slot(INJECTED_EXECUTOR_ADDRESS, WETH_ADDR)
     native_delta_slot = _compute_delta_slot(INJECTED_EXECUTOR_ADDRESS, NATIVE_ADDRESS)
-    user0_delta_slot = _compute_delta_slot(INJECTED_EXECUTOR_ADDRESS, USER0_ADDR)
-    user1_delta_slot = _compute_delta_slot(INJECTED_EXECUTOR_ADDRESS, USER1_ADDR)
 
     immutables = (
         _left_pad_address(OWNER_ADDR)          # [0] OWNER_ADDR
         + _left_pad_address(WETH_ADDR)         # [1] WETH_ADDR
         + _left_pad_address(POOL_MANAGER_ADDR) # [2] POOL_MANAGER_ADDR
-        + _left_pad_address(USER0_ADDR)         # [3] USER0_ADDR (USDC)
-        + _left_pad_address(USER1_ADDR)         # [4] USER1_ADDR (WBTC)
-        + _left_pad_bytes32(weth_delta_slot)     # [5] WETH_DELTA_SLOT
-        + _left_pad_bytes32(native_delta_slot)  # [6] NATIVE_DELTA_SLOT
-        + _left_pad_bytes32(user0_delta_slot)   # [7] USER0_DELTA_SLOT
-        + _left_pad_bytes32(user1_delta_slot)   # [8] USER1_DELTA_SLOT
+        + _left_pad_bytes32(weth_delta_slot)    # [3] WETH_DELTA_SLOT
+        + _left_pad_bytes32(native_delta_slot)  # [4] NATIVE_DELTA_SLOT
     )
     runtime_with_immutables = f"0x{runtime_code}{immutables}"
-    print(f"       OWNER  ={OWNER_ADDR}")
-    print(f"       WETH   ={WETH_ADDR}")
-    print(f"       PM     ={POOL_MANAGER_ADDR}")
-    print(f"       USER0  ={USER0_ADDR} (USDC)")
-    print(f"       USER1  ={USER1_ADDR} (WBTC)")
-    print(f"       WETH_DELTA  =0x{weth_delta_slot.hex()}")
-    print(f"       NATIVE_DELTA=0x{native_delta_slot.hex()}")
-    print(f"       USER0_DELTA =0x{user0_delta_slot.hex()}")
-    print(f"       USER1_DELTA =0x{user1_delta_slot.hex()}")
+    print(f"       OWNER        ={OWNER_ADDR}")
+    print(f"       WETH         ={WETH_ADDR}")
+    print(f"       PM           ={POOL_MANAGER_ADDR}")
+    print(f"       WETH_DELTA   =0x{weth_delta_slot.hex()}")
+    print(f"       NATIVE_DELTA =0x{native_delta_slot.hex()}")
 
     # ── Step 3: Patch PM immutable in runtime bytecode ─────────────
     # The compiler may use a different PM than mainnet. We always
     # overwrite it to ensure the runtime bytecode targets mainnet PM.
-    NUM_IMMUTABLE_SLOTS = 9
-    IMMUTABLE_HEX_LEN = NUM_IMMUTABLE_SLOTS * 64  # 576 hex chars = 288 bytes
+    NUM_IMMUTABLE_SLOTS = 5
+    IMMUTABLE_HEX_LEN = NUM_IMMUTABLE_SLOTS * 64  # 320 hex chars = 160 bytes
     PM_SLOT_INDEX = 2  # POOL_MANAGER_ADDR is the 3rd immutable (index 2)
 
     if patch_pm:
@@ -221,15 +208,11 @@ def main() -> None:
     print(f"  Code + CBOR:   {len(runtime_code) // 2} bytes")
     print(f"  Immutables:    {NUM_IMMUTABLE_SLOTS * 32} bytes")
     print(f"  Total:         {len(code) // 2} bytes")
-    print(f"  OWNER slot:    0x{tail[0:64][-40:]}")
-    print(f"  WETH slot:     0x{tail[64:128][-40:]}")
-    print(f"  PM slot:       0x{tail[128:192][-40:]}")
-    print(f"  USER0 slot:    0x{tail[192:256][-40:]}")
-    print(f"  USER1 slot:    0x{tail[256:320][-40:]}")
-    print(f"  WETH_DELTA:    0x{tail[320:384]}")
-    print(f"  NATIVE_DELTA:  0x{tail[384:448]}")
-    print(f"  USER0_DELTA:   0x{tail[448:512]}")
-    print(f"  USER1_DELTA:   0x{tail[512:576]}")
+    print(f"  OWNER slot:        0x{tail[0:64][-40:]}")
+    print(f"  WETH slot:         0x{tail[64:128][-40:]}")
+    print(f"  PM slot:           0x{tail[128:192][-40:]}")
+    print(f"  WETH_DELTA slot:   0x{tail[192:256]}")
+    print(f"  NATIVE_DELTA slot: 0x{tail[256:320]}")
     # Validate total bytecode length
     expected_len = len(runtime_code) // 2 + NUM_IMMUTABLE_SLOTS * 32
     actual_len = len(code) // 2

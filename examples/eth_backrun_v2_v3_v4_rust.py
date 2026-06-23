@@ -7,9 +7,11 @@ construction, swap encoding, simulation, and transaction submission.
 The executor contract (cmd_executor.vy) uses a compact command-stream
 format with 1-byte opcodes and tightly-packed parameters. Address indices
 reference a shared address table with sentinel support for common addresses
-(WETH, PoolManager, executor, USDC, WBTC). V4 swaps execute inside a
-single unlock context with automatic delta settlement. Profit is verified
-via the expected_balance parameter (packed: value<<8 | check_mode).
+(WETH, PoolManager, executor). V4 swaps execute inside a
+single unlock context with automatic delta settlement. Profit check and
+bribes are passed via the packed ``config`` parameter to execute()
+(layout: expected_value<<32 | bribe_recipient_idx<<24 | bribe_bips<<8 | check_mode;
+config=0 skips the check and sends no bribe).
 
 The contract asserts combined WETH + ETH balance does not decrease (profit =
 increase). No WETH prefunding is required — the first pool's callback is the
@@ -290,7 +292,7 @@ PATH_SUPPRESS_RETRY_INTERVAL = 100
 # This lets us test the new V2/V3/V4-capable executor contract
 # WITHOUT deploying it on mainnet first.
 # The runtime bytecode must have immutables (OWNER_ADDR, WETH_ADDR,
-# POOL_MANAGER_ADDR, USER0_ADDR, USER1_ADDR, plus 4 precomputed delta slots)
+# POOL_MANAGER_ADDR, plus 2 precomputed delta slots for WETH and NATIVE)
 # already baked
 # in — see contracts/cmd_executor_runtime_bytecode.txt.
 #
@@ -348,14 +350,14 @@ EXECUTOR_OWNER = os.environ.get(
     "0x9C56a29c7231974c269E24F9FB3c29203039089E",  # Throwaway — override with real key at runtime
 )
 EXECUTOR_ABI = [
-    # execute(commands, expected_balance) — cmd_executor
+    # execute(commands, config) — cmd_executor
     {
         "stateMutability": "payable",
         "type": "function",
         "name": "execute",
         "inputs": [
             {"name": "commands", "type": "bytes"},
-            {"name": "expected_balance", "type": "uint256"},
+            {"name": "config", "type": "uint256"},
         ],
         "outputs": [
             {"name": "", "type": "uint256"},
@@ -386,9 +388,9 @@ _runtime_bytecode_cache: str | None = None
 def _load_executor_runtime_bytecode() -> str:
     """Load the patched runtime bytecode from contracts/ directory.
 
-    The bytecode has all 9 immutable slots baked in: OWNER_ADDR, WETH_ADDR,
-    POOL_MANAGER_ADDR, USER0_ADDR, USER1_ADDR, and 4 precomputed delta
-    slots. See contracts/recompile.py for the full layout.
+    The bytecode has all 5 immutable slots baked in: OWNER_ADDR, WETH_ADDR,
+    POOL_MANAGER_ADDR, and 2 precomputed delta slots (WETH, NATIVE).
+    See contracts/recompile.py for the full layout.
     """
     global _runtime_bytecode_cache
     if _runtime_bytecode_cache is not None:
@@ -1718,14 +1720,14 @@ async def dispatch_profitable_results(
                     f"input={optimal_input} outputs=[{_amounts_str}] "
                     f"cmd_len={len(cmd_bytes)}"
                 )
-        # expected_balance=0 (check_mode=0): skip on-chain profit check,
+        # config=0 (check_mode=0, no bribe): skip on-chain profit check,
         # operator verifies profitability off-chain via the pre/post balance reads.
-
-        expected_balance = pack_expected_balance(check_mode=0, expected_value=0)
+        # For bribes or on-chain checks, build config via pack_config().
+        config = pack_expected_balance(check_mode=0, expected_value=0)
         selector = web3.Web3.keccak(text="execute(bytes,uint256)")[:4]
         calldata = selector + eth_abi.abi.encode(
             types=["bytes", "uint256"],
-            args=[cmd_bytes, expected_balance],
+            args=[cmd_bytes, config],
         )
         bot_logger.info(
             f"[sim-dump] {dump_type} full_calldata_len={len(calldata)} cmd_stream_len={len(cmd_bytes)}"

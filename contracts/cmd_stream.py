@@ -6,21 +6,23 @@ consumed by the on-chain cmd_executor. Each command is:
 
 Addresses are referenced by index into a shared address table,
 built during the preprocessing section of the command stream.
-Sentinel indices (0xF0-0xFF) resolve to common addresses without
-SET_ADDRESS or TLOAD, saving ~476 gas per use.
+Sentinel indices (0xFC-0xFF) resolve to the 4 protocol roles
+(PM / SELF / WETH / NATIVE) without SET_ADDRESS or TLOAD, saving
+~476 gas per use. No per-path token sentinels exist.
 
 Command stream format:
-  [SET_ADDRESS commands][BRIBE commands][0xFF][execution commands]
+  [SET_ADDRESS commands][0xFF][execution commands]
 
-The contract's _preprocess function reads opcodes from offset 0.
-Preprocessing opcodes: 0x00 (SET_ADDRESS), 0x02/0x03 (BRIBE).
-0xFF marks the end of preprocessing / start of execution.
-The stream does NOT start with 0xFE — the contract no longer
-consumes a 0xFE prefix.
+The contract's _preprocess function reads opcodes from offset 0 and
+accepts ONLY 0x00 (SET_ADDRESS) and 0xFF (BEGIN_EXECUTION). There is
+no 0xFE stream prefix. Opcodes 0x01–0x03 are reserved (revert if
+emitted) — the SKIP_PROFIT_CHECK / BRIBE behavior they used to encode
+moved into the packed ``config`` ABI parameter of ``execute()``.
 
-Profit check is controlled by the expected_balance parameter on
-execute() — expected_balance=0 skips the check. The old 0x01
-(SKIP_PROFIT_CHECK) opcode is no longer recognized by the contract.
+Profit check AND bribes are passed via the ``config`` uint256 argument
+to ``execute(commands, config)`` — see :func:`pack_config`.
+``config=0`` skips the profit check (operator verifies off-chain) and
+sends no bribe.
 
 See contracts/cmd_executor.vy for the full command set and encoding.
 """
@@ -47,11 +49,13 @@ NATIVE_ADDRESS: ChecksumAddress = to_checksum_address("0x00000000000000000000000
 ZERO_ADDRESS: ChecksumAddress = to_checksum_address("0x0000000000000000000000000000000000000000")
 
 # ── Command opcodes ──
+# Only 0x00 (SET_ADDRESS) and 0xFF (BEGIN_EXECUTION) remain in the
+# preprocessing section. Opcodes 0x01–0x03 are reserved — the
+# SKIP_PROFIT_CHECK / BRIBE_COINBASE / BRIBE_ADDRESS behavior they used
+# to encode was moved into the packed ``config`` ABI parameter of
+# execute(). Emitting 0x01–0x03 in the stream reverts (InvalidCommand).
 
 CMD_SET_ADDRESS = b"\x00"
-CMD_SKIP_PROFIT_CHECK = b"\x01"  # Deprecated — contract no longer handles 0x01 in preprocessing
-CMD_BRIBE_COINBASE = b"\x02"
-CMD_BRIBE_ADDRESS = b"\x03"
 
 CMD_ERC20_TRANSFER = b"\x10"
 CMD_ERC20_XFER_BALANCE = b"\x11"
@@ -83,8 +87,7 @@ CMD_V4_SETTLE_ALL = b"\x57"
 CMD_V4_MINT_COMPACT = b"\x58"
 CMD_V4_BURN_COMPACT = b"\x59"
 
-# Stream separators
-BEGIN_PREPROCESSING = b"\xfe"  # Deprecated — contract no longer reads 0xFE prefix
+# Stream separator
 BEGIN_EXECUTION = b"\xff"
 
 
@@ -117,28 +120,73 @@ def _address_to_bytes(addr: str | ChecksumAddress) -> bytes:
 
 # ── Sentinel address indices ──
 # Resolved by the contract without SET_ADDRESS or TLOAD.
+# Only 4 protocol sentinels exist (0xFC–0xFF). Per-path tokens (USDC,
+# WBTC, …) are NOT baked into the contract — they go through the
+# t_addresses table via SET_ADDRESS like any other address.
 
 SENTINEL_PM = 0xFC  # PoolManager (immutable, set at deploy)
 SENTINEL_SELF = 0xFD  # self / executor address
 SENTINEL_WETH = 0xFE  # WETH (immutable, set at deploy)
 SENTINEL_NATIVE = 0xFF  # address(0) / NATIVE_ADDRESS — also "no hooks" flag
-SENTINEL_USER0 = 0xF0  # USER0 (deploy-time, typically USDC)
-SENTINEL_USER1 = 0xF1  # USER1 (deploy-time, typically WBTC)
-SENTINEL_THRESHOLD = 0xF0  # Index >= this value is a sentinel, not a table index
+# idx >= SENTINEL_THRESHOLD is a protocol sentinel; idx < it is a table
+# index. The contract's t_addresses table holds MAX_INDEXED_ADDRESSES entries.
+SENTINEL_THRESHOLD = 0xFC
+MAX_INDEXED_ADDRESSES = 32  # must match MAX_INDEXED_ADDRESSES in cmd_executor.vy
+
+
+def pack_config(
+    check_mode: int = 0,
+    expected_value: int = 0,
+    bribe_bips: int = 0,
+    bribe_recipient_idx: int = 0,
+) -> int:
+    """Pack the execute() ``config`` ABI parameter.
+
+    Layout (matches cmd_executor.vy ``execute``):
+        bits   0–7:    check_mode (0=skip, 1=WETH+ETH, 2=ERC6909 WETH)
+        bits   8–23:   bribe_bips (0=no bribe, 1–10000=basis points)
+        bits  24–31:   bribe_recipient_idx (0=block.coinbase, 1–31=table idx)
+        bits 32–255:   expected_value (pre-tx balance for the selected mode)
+
+    Bribes were moved OUT of the command stream (opcodes 0x02/0x03 are
+    reserved) and into this parameter. Pass the result as the second
+    argument to ``execute(commands, config)``.
+
+    Note: when bribe_bips > 0, expected_value MUST be the real pre-tx
+    balance — the contract computes profit = combined_after - expected_value,
+    so expected_value=0 with a bribe over-bribes (drains the full balance).
+
+    Returns:
+        The packed config uint256.
+
+    """
+    msg = f"check_mode must be 0–2, got {check_mode}"
+    assert 0 <= check_mode <= 2, msg
+    msg = f"bribe_bips must be 0–10000, got {bribe_bips}"
+    assert 0 <= bribe_bips <= 10_000, msg
+    msg = f"bribe_recipient_idx must be 0–31, got {bribe_recipient_idx}"
+    assert 0 <= bribe_recipient_idx < MAX_INDEXED_ADDRESSES, msg
+    return (
+        (expected_value << 32)
+        | (bribe_recipient_idx << 24)
+        | (bribe_bips << 8)
+        | check_mode
+    )
 
 
 def pack_expected_balance(check_mode: int, expected_value: int) -> int:
-    """Pack check_mode and expected_value into the expected_balance uint256.
+    """Deprecated alias for :func:`pack_config` (no bribe fields).
 
-    Format: (expected_value << 8) | check_mode
-
-    check_mode: 0=skip, 1=WETH+ETH, 2=ERC6909
+    Kept for callers that predate the bribe config move. Prefer
+    :func:`pack_config` for new code that needs to set bribe bips or a
+    bribe recipient. Returns the same packing as ``pack_config`` with
+    bribe_bips=0 and bribe_recipient_idx=0.
 
     Returns:
-        The packed expected_balance value.
+        The packed config uint256.
 
     """
-    return (expected_value << 8) | check_mode
+    return pack_config(check_mode=check_mode, expected_value=expected_value)
 
 
 # ── Address table ──
@@ -147,9 +195,10 @@ def pack_expected_balance(check_mode: int, expected_value: int) -> int:
 class AddressTable:
     """Tracks addresses for compact index-based referencing in the command stream.
 
-    Each address is assigned a sequential index in insertion order (0-239).
-    Sentinel indices (0xF0-0xFF) resolve to common addresses without
-    SET_ADDRESS or TLOAD, saving ~476 gas per use.
+    Each address is assigned a sequential index in insertion order
+    (0-{MAX_INDEXED_ADDRESSES - 1}). Sentinel indices (0xFC-0xFF) resolve
+    to the 4 protocol roles (PM/SELF/WETH/NATIVE) without SET_ADDRESS or
+    TLOAD, saving ~476 gas per use.
 
     The table is built during preprocessing and referenced during execution.
     """
@@ -160,13 +209,12 @@ class AddressTable:
         weth_address: str | ChecksumAddress | None = None,
         executor_address: str | ChecksumAddress | None = None,
         pool_manager_address: str | ChecksumAddress | None = None,
-        user0_address: str | ChecksumAddress | None = None,
-        user1_address: str | ChecksumAddress | None = None,
     ) -> None:
         self._addresses: list[ChecksumAddress] = []
         self._index_map: dict[ChecksumAddress, int] = {}
 
-        # Build sentinel mapping — these never need SET_ADDRESS
+        # Build sentinel mapping — these never need SET_ADDRESS.
+        # Only protocol roles qualify; per-path tokens go through the table.
         self._sentinel_map: dict[ChecksumAddress, int] = {}
         # NATIVE_ADDRESS always maps to SENTINEL_NATIVE
         self._sentinel_map[NATIVE_ADDRESS] = SENTINEL_NATIVE
@@ -178,10 +226,6 @@ class AddressTable:
             self._sentinel_map[to_checksum_address(executor_address)] = SENTINEL_SELF
         if weth_address:
             self._sentinel_map[to_checksum_address(weth_address)] = SENTINEL_WETH
-        if user0_address:
-            self._sentinel_map[to_checksum_address(user0_address)] = SENTINEL_USER0
-        if user1_address:
-            self._sentinel_map[to_checksum_address(user1_address)] = SENTINEL_USER1
 
     def add(self, addr: str | ChecksumAddress) -> int:
         """Add an address, returning its index. Idempotent for duplicates.
@@ -201,8 +245,8 @@ class AddressTable:
         if addr in self._index_map:
             return self._index_map[addr]
         idx = len(self._addresses)
-        msg = f"Address table full: {idx} (max 239)"
-        assert idx < SENTINEL_THRESHOLD, msg
+        msg = f"Address table full: {idx} (max {MAX_INDEXED_ADDRESSES})"
+        assert idx < MAX_INDEXED_ADDRESSES, msg
         self._addresses.append(addr)
         self._index_map[addr] = idx
         return idx
@@ -257,52 +301,6 @@ def enc_set_addresses(address_table: AddressTable) -> bytes:
     return result
 
 
-def enc_skip_profit_check() -> bytes:
-    """SKIP_PROFIT_CHECK: [0x01] — deprecated, emits empty bytes.
-
-    The contract no longer handles opcode 0x01 in preprocessing.
-    Profit check is controlled by the expected_balance parameter on
-    execute() — passing expected_balance=0 skips the check.
-    This function is kept as a no-op for backwards compatibility with
-    callers that unconditionally include it.
-
-    Returns:
-        Empty bytes (the opcode is deprecated).
-
-    """
-    return b""
-
-
-def enc_bribe_coinbase(bips: int) -> bytes:
-    """BRIBE_COINBASE: [0x02][bips:2] — 3 bytes (preprocessing).
-
-    Sends profit * bips // 10000 ETH to block.coinbase.
-    Max bips: 10000 (= 100% of profit). Never reverts on shortfall.
-
-    Returns:
-        The encoded BRIBE_COINBASE command bytes.
-
-    """
-    msg = f"bips must be 0-10000, got {bips}"
-    assert 0 <= bips <= 10_000, msg
-    return CMD_BRIBE_COINBASE + _e(bips, 2)
-
-
-def enc_bribe_address(recipient_idx: int, bips: int) -> bytes:
-    """BRIBE_ADDRESS: [0x03][recipient_idx:1][bips:2] — 4 bytes (preprocessing).
-
-    Sends profit x bips / 10000 ETH to an arbitrary address.
-    Max bips: 10000 (= 100% of profit). Never reverts on shortfall.
-
-    Returns:
-        The encoded BRIBE_ADDRESS command bytes.
-
-    """
-    msg = f"bips must be 0-10000, got {bips}"
-    assert 0 <= bips <= 10_000, msg
-    return CMD_BRIBE_ADDRESS + _e(recipient_idx, 1) + _e(bips, 2)
-
-
 def enc_preamble(
     address_table: AddressTable,
     skip_profit: bool = True,
@@ -311,38 +309,42 @@ def enc_preamble(
 ) -> bytes:
     """Encode the full preprocessing section + separator.
 
-    Builds: [SET_ADDRESS commands][BRIBE commands][0xFF]
+    Builds: ``[SET_ADDRESS commands][0xFF]``
 
     The stream starts directly with SET_ADDRESS commands — no 0xFE prefix.
-    The contract's _preprocess function reads opcodes from offset 0 and
-    processes 0x00 (SET_ADDRESS), 0x02/0x03 (BRIBE), 0xFF (BEGIN_EXECUTION).
-    Any unrecognized opcode (including the old 0xFE prefix and 0x01
-    skip-profit-check) causes _preprocess to break, then execution
-    dispatches that opcode as an invalid command → revert.
+    The contract's ``_preprocess`` reads opcodes from offset 0 and accepts
+    only 0x00 (SET_ADDRESS) and 0xFF (BEGIN_EXECUTION). Any other byte
+    (including the removed 0x01/0x02/0x03 and the old 0xFE prefix) breaks
+    preprocessing and is then dispatched as an invalid command → revert.
 
-    Profit check is controlled by the expected_balance parameter on
-    execute() — passing expected_balance=0 skips the check. The old
-    0x01 (SKIP_PROFIT_CHECK) opcode is no longer recognized.
+    Profit check and bribes are NO LONGER encoded in the stream. Both are
+    packed into the ``config`` ABI parameter of ``execute()`` — see
+    :func:`pack_config`. Pass bribe bips / recipient there, not here.
 
     Args:
         address_table: Address table with sentinel support.
-        skip_profit: Deprecated — profit check is now controlled by
-            expected_balance parameter on execute(). Kept for API compat.
-        bribe_bips: Profit fraction (in bips, 10000=100%) to send as bribe.
-        bribe_address_idx: If set, bribe to this address index instead of coinbase.
+        skip_profit: Deprecated no-op (profit check lives in ``config``).
+        bribe_bips: Deprecated — if > 0 this raises, because bribes now
+            belong in the ``config`` parameter (``pack_config``).
+        bribe_address_idx: Deprecated — see ``bribe_bips``.
 
     Returns:
         The full encoded preprocessing preamble bytes.
 
+    Raises:
+        ValueError: if ``bribe_bips`` or ``bribe_address_idx`` is set —
+            bribes must be passed via :func:`pack_config` to ``execute()``.
+
     """
-    preamble = enc_set_addresses(address_table)
-    if bribe_bips > 0:
-        if bribe_address_idx is not None:
-            preamble += enc_bribe_address(bribe_address_idx, bribe_bips)
-        else:
-            preamble += enc_bribe_coinbase(bribe_bips)
-    preamble += BEGIN_EXECUTION
-    return preamble
+    if bribe_bips or bribe_address_idx is not None:
+        msg = (
+            "Bribes moved out of the command stream into the execute() "
+            "config parameter; use pack_config(bribe_bips=..., "
+            "bribe_recipient_idx=...) and pass it as execute()'s 2nd arg."
+        )
+        raise ValueError(msg)
+    _ = skip_profit  # deprecated; profit check is controlled by `config`
+    return enc_set_addresses(address_table) + BEGIN_EXECUTION
 
 
 # ── ERC20 / ETH / Native commands ──
@@ -1308,15 +1310,20 @@ class CmdExecutorComposer:
     def compose(
         self,
         swap_amounts: tuple[AbstractSwapAmounts, ...],
+        config: int = 0,
     ) -> list[EncodedCall]:
         """Compose swap amounts into a single cmd_executor execute() call.
 
         Args:
             swap_amounts: Ordered sequence of swap amounts from the solver.
+            config: Packed ``execute()`` config uint256 (see :func:`pack_config`).
+                Defaults to 0 (skip profit check, no bribe — operator verifies
+                off-chain). When setting bribe bips, also set a non-zero
+                ``expected_value`` to avoid over-bribing.
 
         Returns:
             A single-element list containing the EncodedCall for
-            executor.execute(commands_bytes, expected_balance).
+            executor.execute(commands_bytes, config).
 
         """
         # Route to path-specific encoder based on swap types
@@ -1330,13 +1337,14 @@ class CmdExecutorComposer:
             msg = f"Unsupported swap combination: {[type(s).__name__ for s in swap_amounts]}"
             raise NotImplementedError(msg)
 
-        # Encode the execute(commands, expected_balance) call
-        # Use expected_balance=0 (skip on-chain check; operator verifies off-chain)
+        # Encode the execute(commands, config) call. config is packed via
+        # pack_config() — 0 = skip profit check + no bribe (operator verifies
+        # profitability off-chain).
         selector = Web3.keccak(text="execute(bytes,uint256)")[:4]
 
         data = selector + eth_abi_module.encode(
             types=["bytes", "uint256"],
-            args=[commands, 0],
+            args=[commands, config],
         )
 
         return [
