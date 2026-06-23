@@ -1,7 +1,7 @@
 """Pool simulation protocols.
 
-Define structural interfaces for pool behavior. Pools satisfy these
-protocols by implementing the required methods — no inheritance needed.
+Define structural interfaces for pool behavior. Pools satisfy these protocols by implementing the
+required methods — no inheritance needed.
 
 Three pool-shape protocols:
 - ConstantProductPool — V2-family pools
