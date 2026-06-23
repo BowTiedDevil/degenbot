@@ -174,12 +174,12 @@ mod tests {
         // Python: position(tick) = (tick >> 8, tick % 256)
         for tick in [-1000_i32, -256, -1, 0, 1, 255, 256, 1000] {
             let (wp, bp) = tick_position(tick);
-            let py_wp = tick >> 8;
-            let py_bp = tick.rem_euclid(256);
-            assert_eq!(i32::from(wp), py_wp, "word_pos mismatch for tick {tick}");
+            let py_word_pos = tick >> 8;
+            let py_bit_pos = tick.rem_euclid(256);
+            assert_eq!(i32::from(wp), py_word_pos, "word_pos mismatch for tick {tick}");
             assert_eq!(
                 u32::from(bp),
-                py_bp.cast_unsigned(),
+                py_bit_pos.cast_unsigned(),
                 "bit_pos mismatch for tick {tick}"
             );
         }
