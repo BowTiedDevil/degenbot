@@ -291,6 +291,14 @@ pub struct WireMatchParams {
     pub min_profit: U256,
     #[serde(with = "decimal_u256")]
     pub deadline: U256,
+    /// ADR-029 settlement-funding commitment (audit 2026-06-09). `(0x0, 0)`
+    /// when there is no CoW leg. Present in the canonical wire fixture
+    /// (`coordinator/src/types/fixtures.json`) and required to round-trip the
+    /// 12-field `MatchParams`.
+    #[serde(with = "checksum_address")]
+    pub settlement_funding_token: Address,
+    #[serde(with = "decimal_u256")]
+    pub settlement_funding_max: U256,
 }
 
 /// Wire-format mirror of [`ComposeParams`].
@@ -312,6 +320,14 @@ pub struct WireComposeParams {
     pub min_profit: U256,
     #[serde(with = "decimal_u256")]
     pub deadline: U256,
+    /// ADR-029 settlement-funding commitment (audit 2026-06-09). `(0x0, 0)`
+    /// when Leg 3 is empty. Present in the canonical wire fixture
+    /// (`coordinator/src/types/fixtures.json`) and required to round-trip the
+    /// 12-field `ComposeParams`.
+    #[serde(with = "checksum_address")]
+    pub settlement_funding_token: Address,
+    #[serde(with = "decimal_u256")]
+    pub settlement_funding_max: U256,
 }
 
 // ---------------------------------------------------------------------------
@@ -441,6 +457,8 @@ impl From<WireMatchParams> for MatchParams {
             flashAmount: w.flash_amount,
             minProfit: w.min_profit,
             deadline: w.deadline,
+            settlementFundingToken: w.settlement_funding_token,
+            settlementFundingMax: w.settlement_funding_max,
         }
     }
 }
@@ -458,6 +476,8 @@ impl From<WireComposeParams> for ComposeParams {
             flashAmount: w.flash_amount,
             minProfit: w.min_profit,
             deadline: w.deadline,
+            settlementFundingToken: w.settlement_funding_token,
+            settlementFundingMax: w.settlement_funding_max,
         }
     }
 }

@@ -3817,6 +3817,142 @@ function swapWithQuotedV4Input(uint256 amountIn, uint256 minV2, uint256 minV3, u
             }
         }
     }
+    #[automatically_derived]
+    impl MultiHopCallerErrors {
+        /**Creates a [`Expired`] error.
+
+```solidity
+error Expired()
+```*/
+        #[inline]
+        pub fn expired() -> Self {
+            Self::Expired(Expired)
+        }
+        /**Creates a [`NativeRescueFailed`] error.
+
+```solidity
+error NativeRescueFailed()
+```*/
+        #[inline]
+        pub fn native_rescue_failed() -> Self {
+            Self::NativeRescueFailed(NativeRescueFailed)
+        }
+        /**Creates a [`SlippageOutOfRange`] error.
+
+```solidity
+error SlippageOutOfRange()
+```*/
+        #[inline]
+        pub fn slippage_out_of_range() -> Self {
+            Self::SlippageOutOfRange(SlippageOutOfRange)
+        }
+        /**Creates a [`UnauthorizedRescue`] error.
+
+```solidity
+error UnauthorizedRescue()
+```*/
+        #[inline]
+        pub fn unauthorized_rescue() -> Self {
+            Self::UnauthorizedRescue(UnauthorizedRescue)
+        }
+        /**Creates a [`V2ArbUsdcDepthLow`] error.
+
+```solidity
+error V2ArbUsdcDepthLow(uint112)
+```*/
+        #[inline]
+        pub fn v_2_arb_usdc_depth_low(
+            reserve_1: alloy::sol_types::private::primitives::aliases::U112,
+        ) -> Self {
+            Self::V2ArbUsdcDepthLow(V2ArbUsdcDepthLow {
+                reserve1: reserve_1,
+            })
+        }
+        /**Creates a [`V2WethUsdcDepthLow`] error.
+
+```solidity
+error V2WethUsdcDepthLow(uint112)
+```*/
+        #[inline]
+        pub fn v_2_weth_usdc_depth_low(
+            reserve_0: alloy::sol_types::private::primitives::aliases::U112,
+        ) -> Self {
+            Self::V2WethUsdcDepthLow(V2WethUsdcDepthLow {
+                reserve0: reserve_0,
+            })
+        }
+        /**Creates a [`V3WethArbLiqLow`] error.
+
+```solidity
+error V3WethArbLiqLow(uint128)
+```*/
+        #[inline]
+        pub fn v_3_weth_arb_liq_low(liquidity: u128) -> Self {
+            Self::V3WethArbLiqLow(V3WethArbLiqLow {
+                liquidity: liquidity,
+            })
+        }
+        /**Creates a [`V3WstEthWethLiqLow`] error.
+
+```solidity
+error V3WstEthWethLiqLow(uint128)
+```*/
+        #[inline]
+        pub fn v_3_wst_eth_weth_liq_low(liquidity: u128) -> Self {
+            Self::V3WstEthWethLiqLow(V3WstEthWethLiqLow {
+                liquidity: liquidity,
+            })
+        }
+        /**Creates a [`V4AmountInZero`] error.
+
+```solidity
+error V4AmountInZero()
+```*/
+        #[inline]
+        pub fn v_4_amount_in_zero() -> Self {
+            Self::V4AmountInZero(V4AmountInZero)
+        }
+        /**Creates a [`V4WethArbLiqLow`] error.
+
+```solidity
+error V4WethArbLiqLow(uint128)
+```*/
+        #[inline]
+        pub fn v_4_weth_arb_liq_low(liquidity: u128) -> Self {
+            Self::V4WethArbLiqLow(V4WethArbLiqLow {
+                liquidity: liquidity,
+            })
+        }
+        /**Creates a [`V4WstEthWethLiqLow`] error.
+
+```solidity
+error V4WstEthWethLiqLow(uint128)
+```*/
+        #[inline]
+        pub fn v_4_wst_eth_weth_liq_low(liquidity: u128) -> Self {
+            Self::V4WstEthWethLiqLow(V4WstEthWethLiqLow {
+                liquidity: liquidity,
+            })
+        }
+        /**Creates a [`WrongValue`] error.
+
+```solidity
+error WrongValue()
+```*/
+        #[inline]
+        pub fn wrong_value() -> Self {
+            Self::WrongValue(WrongValue)
+        }
+        /**Creates a [`ZeroRecipient`] error.
+
+```solidity
+error ZeroRecipient()
+```*/
+        #[inline]
+        pub fn zero_recipient() -> Self {
+            Self::ZeroRecipient(ZeroRecipient)
+        }
+    }
     ///Container for all the [`MultiHopCaller`](self) events.
     #[derive(Clone)]
     #[derive(serde::Serialize, serde::Deserialize)]
@@ -3913,6 +4049,24 @@ function swapWithQuotedV4Input(uint256 amountIn, uint256 minV2, uint256 minV3, u
                     alloy_sol_types::private::IntoLogData::into_log_data(inner)
                 }
             }
+        }
+    }
+    #[automatically_derived]
+    impl MultiHopCallerEvents {
+        /**Creates a [`NativeRescued`] event.
+
+```solidity
+event NativeRescued(address,uint256)
+```*/
+        #[inline]
+        pub fn native_rescued(
+            to: alloy::sol_types::private::Address,
+            amount: alloy::sol_types::private::primitives::aliases::U256,
+        ) -> Self {
+            Self::NativeRescued(NativeRescued {
+                to: to,
+                amount: amount,
+            })
         }
     }
     use alloy::contract as alloy_contract;

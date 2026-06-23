@@ -13,13 +13,15 @@ use alloy::primitives::{keccak256, Address, Bytes, U256};
 pub const EXECUTE_NATIVE_ARB_SIGNATURE: &str =
     "executeNativeArb((address,uint8,address,uint256,(uint8,address,bytes,address,address,uint256,uint256)[],uint256,uint256))";
 
-/// `Executor.matchInternal((...))` canonical signature.
+/// `Executor.matchInternal((...))` canonical signature (12-field MatchParams,
+/// incl. ADR-029 settlement-funding) → selector 0x210ea473.
 pub const MATCH_INTERNAL_SIGNATURE: &str =
-    "matchInternal((bytes,bytes,address[],uint256[],address,uint8,address,uint256,uint256,uint256))";
+    "matchInternal((bytes,bytes,address[],uint256[],address,uint8,address,uint256,uint256,uint256,address,uint256))";
 
-/// `Executor.composeFourLeg((...))` canonical signature.
+/// `Executor.composeFourLeg((...))` canonical signature (12-field ComposeParams,
+/// incl. ADR-029 settlement-funding) → selector 0x2e1977d2.
 pub const COMPOSE_FOUR_LEG_SIGNATURE: &str =
-    "composeFourLeg((bytes,(uint8,address,bytes,address,address,uint256,uint256)[],bytes,bytes,address,uint8,address,uint256,uint256,uint256))";
+    "composeFourLeg((bytes,(uint8,address,bytes,address,address,uint256,uint256)[],bytes,bytes,address,uint8,address,uint256,uint256,uint256,address,uint256))";
 
 use std::str::FromStr;
 
@@ -197,6 +199,9 @@ pub struct MatchParams {
     pub flash_amount: U256,
     pub min_profit: U256,
     pub deadline: U256,
+    /// ADR-029 settlement-funding commitment (audit 2026-06-09). `(0x0, 0)` when no CoW leg.
+    pub settlement_funding_token: Address,
+    pub settlement_funding_max: U256,
 }
 
 impl MatchParams {
@@ -237,6 +242,8 @@ impl MatchParams {
             DynSolValue::Uint(self.flash_amount, 256),
             DynSolValue::Uint(self.min_profit, 256),
             DynSolValue::Uint(self.deadline, 256),
+            DynSolValue::Address(self.settlement_funding_token),
+            DynSolValue::Uint(self.settlement_funding_max, 256),
         ])
     }
 }
@@ -254,6 +261,9 @@ pub struct ComposeParams {
     pub flash_amount: U256,
     pub min_profit: U256,
     pub deadline: U256,
+    /// ADR-029 settlement-funding commitment (audit 2026-06-09). `(0x0, 0)` when Leg 3 is empty.
+    pub settlement_funding_token: Address,
+    pub settlement_funding_max: U256,
 }
 
 impl ComposeParams {
@@ -279,6 +289,8 @@ impl ComposeParams {
             DynSolValue::Uint(self.flash_amount, 256),
             DynSolValue::Uint(self.min_profit, 256),
             DynSolValue::Uint(self.deadline, 256),
+            DynSolValue::Address(self.settlement_funding_token),
+            DynSolValue::Uint(self.settlement_funding_max, 256),
         ])
     }
 }
@@ -371,6 +383,8 @@ mod tests {
             flash_amount: U256::from(1234u64),
             min_profit: U256::from(42u64),
             deadline: U256::from(999_999u64),
+            settlement_funding_token: Address::ZERO,
+            settlement_funding_max: U256::ZERO,
         }
     }
 
@@ -386,16 +400,32 @@ mod tests {
             flash_amount: U256::from(1234u64),
             min_profit: U256::from(42u64),
             deadline: U256::from(999_999u64),
+            settlement_funding_token: Address::ZERO,
+            settlement_funding_max: U256::ZERO,
         }
     }
 
+    /// The encode_* entry points must PREPEND the locked 4-byte selectors to
+    /// their ABI body. Asserts against byte literals (not `function_selector`
+    /// recomputed on the same string), so it actually guards the
+    /// signature-const → `encode_calldata` wiring end-to-end. (The prior
+    /// `test_selector_matches_keccak` compared `function_selector(SIG)` to
+    /// `keccak256(SIG)` — the same computation on both sides, so it could
+    /// never fail.)
     #[test]
-    fn test_selector_matches_keccak() {
-        let selector = function_selector(EXECUTE_NATIVE_ARB_SIGNATURE);
-        let expected: [u8; 4] = keccak256(EXECUTE_NATIVE_ARB_SIGNATURE.as_bytes())[..4]
-            .try_into()
-            .expect("selector should be 4 bytes");
-        assert_eq!(selector, expected);
+    fn encoders_prepend_locked_selectors() {
+        assert_eq!(
+            &encode_native_arb_calldata(&sample_native_arb_params()).unwrap()[..4],
+            &[0xf6, 0xf6, 0xad, 0xd1]
+        );
+        assert_eq!(
+            &encode_match_internal_calldata(&sample_match_params()).unwrap()[..4],
+            &[0x21, 0x0e, 0xa4, 0x73]
+        );
+        assert_eq!(
+            &encode_compose_four_leg_calldata(&sample_compose_params()).unwrap()[..4],
+            &[0x2e, 0x19, 0x77, 0xd2]
+        );
     }
 
     #[test]
@@ -406,11 +436,39 @@ mod tests {
         );
         assert_eq!(
             function_selector(MATCH_INTERNAL_SIGNATURE),
-            [0x5f, 0x18, 0x86, 0x78]
+            [0x21, 0x0e, 0xa4, 0x73]
         );
         assert_eq!(
             function_selector(COMPOSE_FOUR_LEG_SIGNATURE),
-            [0x72, 0xc0, 0x46, 0x9b]
+            [0x2e, 0x19, 0x77, 0xd2]
+        );
+    }
+
+    /// Cross-check: this hand-rolled `DynSolValue` encoder and the alloy
+    /// `sol!`-generated call structs in `crate::types::executor` (the
+    /// `IExecutor.sol` mirror, fixtures-locked against
+    /// `coordinator/src/types/fixtures.json`) MUST agree on every selector. A
+    /// single edit to one signature string or one sol! struct field — e.g. the
+    /// ADR-029 settlement-funding pair landing in only one of the two — fails
+    /// here, rather than silently shipping calldata the diamond reverts on.
+    #[test]
+    fn selectors_match_sol_call_source_of_truth() {
+        use crate::types::executor::{
+            composeFourLegCall, executeNativeArbCall, matchInternalCall,
+        };
+        use alloy::sol_types::SolCall;
+
+        assert_eq!(
+            function_selector(EXECUTE_NATIVE_ARB_SIGNATURE),
+            executeNativeArbCall::SELECTOR
+        );
+        assert_eq!(
+            function_selector(MATCH_INTERNAL_SIGNATURE),
+            matchInternalCall::SELECTOR
+        );
+        assert_eq!(
+            function_selector(COMPOSE_FOUR_LEG_SIGNATURE),
+            composeFourLegCall::SELECTOR
         );
     }
 
@@ -475,13 +533,15 @@ mod tests {
             DynSolType::Uint(256),
             DynSolType::Uint(256),
             DynSolType::Uint(256),
+            DynSolType::Address,
+            DynSolType::Uint(256),
         ])
         .abi_decode_params(&calldata[4..])
         .expect("calldata should decode");
 
         match decoded {
             DynSolValue::Tuple(fields) => {
-                assert_eq!(fields.len(), 10);
+                assert_eq!(fields.len(), 12);
                 assert_eq!(
                     fields[0],
                     DynSolValue::Bytes(params.cow_settlement_calldata.to_vec())
@@ -524,13 +584,15 @@ mod tests {
             DynSolType::Uint(256),
             DynSolType::Uint(256),
             DynSolType::Uint(256),
+            DynSolType::Address,
+            DynSolType::Uint(256),
         ])
         .abi_decode_params(&calldata[4..])
         .expect("calldata should decode");
 
         match decoded {
             DynSolValue::Tuple(fields) => {
-                assert_eq!(fields.len(), 10);
+                assert_eq!(fields.len(), 12);
                 assert_eq!(
                     fields[0],
                     DynSolValue::Bytes(params.across_fill_calldata.to_vec())

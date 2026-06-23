@@ -13750,6 +13750,271 @@ function withdrawNativeBalance(address to) external;
             }
         }
     }
+    #[automatically_derived]
+    impl BaseMevPaymasterErrors {
+        /**Creates a [`EnforcedPause`] error.
+
+```solidity
+error EnforcedPause()
+```*/
+        #[inline]
+        pub fn enforced_pause() -> Self {
+            Self::EnforcedPause(EnforcedPause)
+        }
+        /**Creates a [`EpochBudgetExceeded`] error.
+
+```solidity
+error EpochBudgetExceeded(uint128,uint128)
+```*/
+        #[inline]
+        pub fn epoch_budget_exceeded(spent: u128, cap: u128) -> Self {
+            Self::EpochBudgetExceeded(EpochBudgetExceeded {
+                spent: spent,
+                cap: cap,
+            })
+        }
+        /**Creates a [`Erc20InsufficientAllowance`] error.
+
+```solidity
+error Erc20InsufficientAllowance(address,address,uint256,uint256)
+```*/
+        #[inline]
+        pub fn erc_20_insufficient_allowance(
+            token: alloy::sol_types::private::Address,
+            sender: alloy::sol_types::private::Address,
+            required_amount: alloy::sol_types::private::primitives::aliases::U256,
+            allowance: alloy::sol_types::private::primitives::aliases::U256,
+        ) -> Self {
+            Self::Erc20InsufficientAllowance(Erc20InsufficientAllowance {
+                token: token,
+                sender: sender,
+                requiredAmount: required_amount,
+                allowance: allowance,
+            })
+        }
+        /**Creates a [`Erc20InvalidConfig`] error.
+
+```solidity
+error Erc20InvalidConfig()
+```*/
+        #[inline]
+        pub fn erc_20_invalid_config() -> Self {
+            Self::Erc20InvalidConfig(Erc20InvalidConfig)
+        }
+        /**Creates a [`Erc20MaxAmountExceeded`] error.
+
+```solidity
+error Erc20MaxAmountExceeded(uint256,uint256)
+```*/
+        #[inline]
+        pub fn erc_20_max_amount_exceeded(
+            required_amount: alloy::sol_types::private::primitives::aliases::U256,
+            max_amount: alloy::sol_types::private::primitives::aliases::U256,
+        ) -> Self {
+            Self::Erc20MaxAmountExceeded(Erc20MaxAmountExceeded {
+                requiredAmount: required_amount,
+                maxAmount: max_amount,
+            })
+        }
+        /**Creates a [`Erc20OracleNotSet`] error.
+
+```solidity
+error Erc20OracleNotSet()
+```*/
+        #[inline]
+        pub fn erc_20_oracle_not_set() -> Self {
+            Self::Erc20OracleNotSet(Erc20OracleNotSet)
+        }
+        /**Creates a [`Erc20PaymasterDataInvalid`] error.
+
+```solidity
+error Erc20PaymasterDataInvalid()
+```*/
+        #[inline]
+        pub fn erc_20_paymaster_data_invalid() -> Self {
+            Self::Erc20PaymasterDataInvalid(Erc20PaymasterDataInvalid)
+        }
+        /**Creates a [`Erc20PriceInvalid`] error.
+
+```solidity
+error Erc20PriceInvalid(address,int256)
+```*/
+        #[inline]
+        pub fn erc_20_price_invalid(
+            oracle: alloy::sol_types::private::Address,
+            answer: alloy::sol_types::private::primitives::aliases::I256,
+        ) -> Self {
+            Self::Erc20PriceInvalid(Erc20PriceInvalid {
+                oracle: oracle,
+                answer: answer,
+            })
+        }
+        /**Creates a [`Erc20PriceStale`] error.
+
+```solidity
+error Erc20PriceStale(address,uint256,uint256)
+```*/
+        #[inline]
+        pub fn erc_20_price_stale(
+            oracle: alloy::sol_types::private::Address,
+            updated_at: alloy::sol_types::private::primitives::aliases::U256,
+            max_staleness: alloy::sol_types::private::primitives::aliases::U256,
+        ) -> Self {
+            Self::Erc20PriceStale(Erc20PriceStale {
+                oracle: oracle,
+                updatedAt: updated_at,
+                maxStaleness: max_staleness,
+            })
+        }
+        /**Creates a [`Erc20TokenNotEnabled`] error.
+
+```solidity
+error Erc20TokenNotEnabled(address)
+```*/
+        #[inline]
+        pub fn erc_20_token_not_enabled(
+            token: alloy::sol_types::private::Address,
+        ) -> Self {
+            Self::Erc20TokenNotEnabled(Erc20TokenNotEnabled {
+                token: token,
+            })
+        }
+        /**Creates a [`ExpectedPause`] error.
+
+```solidity
+error ExpectedPause()
+```*/
+        #[inline]
+        pub fn expected_pause() -> Self {
+            Self::ExpectedPause(ExpectedPause)
+        }
+        /**Creates a [`InvalidParams`] error.
+
+```solidity
+error InvalidParams()
+```*/
+        #[inline]
+        pub fn invalid_params() -> Self {
+            Self::InvalidParams(InvalidParams)
+        }
+        /**Creates a [`InvalidPoolId`] error.
+
+```solidity
+error InvalidPoolId(uint256)
+```*/
+        #[inline]
+        pub fn invalid_pool_id(
+            pool_id: alloy::sol_types::private::primitives::aliases::U256,
+        ) -> Self {
+            Self::InvalidPoolId(InvalidPoolId { poolId: pool_id })
+        }
+        /**Creates a [`MevPaymaster__SenderNotSponsored`] error.
+
+```solidity
+error MevPaymaster__SenderNotSponsored(address)
+```*/
+        #[inline]
+        pub fn mev_paymaster_sender_not_sponsored(
+            sender: alloy::sol_types::private::Address,
+        ) -> Self {
+            Self::MevPaymaster__SenderNotSponsored(MevPaymaster__SenderNotSponsored {
+                sender: sender,
+            })
+        }
+        /**Creates a [`MevPaymaster__UnexpectedEntryPoint`] error.
+
+```solidity
+error MevPaymaster__UnexpectedEntryPoint(address,address)
+```*/
+        #[inline]
+        pub fn mev_paymaster_unexpected_entry_point(
+            actual: alloy::sol_types::private::Address,
+            expected: alloy::sol_types::private::Address,
+        ) -> Self {
+            Self::MevPaymaster__UnexpectedEntryPoint(MevPaymaster__UnexpectedEntryPoint {
+                actual: actual,
+                expected: expected,
+            })
+        }
+        /**Creates a [`MevPaymaster__UntrustedDelegate`] error.
+
+```solidity
+error MevPaymaster__UntrustedDelegate(address,address)
+```*/
+        #[inline]
+        pub fn mev_paymaster_untrusted_delegate(
+            sender: alloy::sol_types::private::Address,
+            delegate: alloy::sol_types::private::Address,
+        ) -> Self {
+            Self::MevPaymaster__UntrustedDelegate(MevPaymaster__UntrustedDelegate {
+                sender: sender,
+                delegate: delegate,
+            })
+        }
+        /**Creates a [`NativeBalanceWithdrawFailed`] error.
+
+```solidity
+error NativeBalanceWithdrawFailed()
+```*/
+        #[inline]
+        pub fn native_balance_withdraw_failed() -> Self {
+            Self::NativeBalanceWithdrawFailed(NativeBalanceWithdrawFailed)
+        }
+        /**Creates a [`PaymasterPaused`] error.
+
+```solidity
+error PaymasterPaused()
+```*/
+        #[inline]
+        pub fn paymaster_paused() -> Self {
+            Self::PaymasterPaused(PaymasterPaused)
+        }
+        /**Creates a [`PoolEthBalanceInsufficient`] error.
+
+```solidity
+error PoolEthBalanceInsufficient(uint256,uint256,uint256)
+```*/
+        #[inline]
+        pub fn pool_eth_balance_insufficient(
+            pool_id: alloy::sol_types::private::primitives::aliases::U256,
+            requested: alloy::sol_types::private::primitives::aliases::U256,
+            available: alloy::sol_types::private::primitives::aliases::U256,
+        ) -> Self {
+            Self::PoolEthBalanceInsufficient(PoolEthBalanceInsufficient {
+                poolId: pool_id,
+                requested: requested,
+                available: available,
+            })
+        }
+        /**Creates a [`PoolTokenBalanceInsufficient`] error.
+
+```solidity
+error PoolTokenBalanceInsufficient(uint256,address,uint256,uint256)
+```*/
+        #[inline]
+        pub fn pool_token_balance_insufficient(
+            pool_id: alloy::sol_types::private::primitives::aliases::U256,
+            token: alloy::sol_types::private::Address,
+            requested: alloy::sol_types::private::primitives::aliases::U256,
+            available: alloy::sol_types::private::primitives::aliases::U256,
+        ) -> Self {
+            Self::PoolTokenBalanceInsufficient(PoolTokenBalanceInsufficient {
+                poolId: pool_id,
+                token: token,
+                requested: requested,
+                available: available,
+            })
+        }
+        /**Creates a [`UnsupportedOperation`] error.
+
+```solidity
+error UnsupportedOperation()
+```*/
+        #[inline]
+        pub fn unsupported_operation() -> Self {
+            Self::UnsupportedOperation(UnsupportedOperation)
+        }
+    }
     ///Container for all the [`BaseMevPaymaster`](self) events.
     #[derive(Clone)]
     #[derive(serde::Serialize, serde::Deserialize)]
@@ -14220,6 +14485,312 @@ function withdrawNativeBalance(address to) external;
                     alloy_sol_types::private::IntoLogData::into_log_data(inner)
                 }
             }
+        }
+    }
+    #[automatically_derived]
+    impl BaseMevPaymasterEvents {
+        /**Creates a [`Erc20ConfigChanged`] event.
+
+```solidity
+event Erc20ConfigChanged(address,bool,address,uint32,uint16,address)
+```*/
+        #[inline]
+        pub fn erc_20_config_changed(
+            token: alloy::sol_types::private::Address,
+            enabled: bool,
+            token_oracle: alloy::sol_types::private::Address,
+            max_staleness: u32,
+            markup_bps: u16,
+            treasury: alloy::sol_types::private::Address,
+        ) -> Self {
+            Self::Erc20ConfigChanged(Erc20ConfigChanged {
+                token: token,
+                enabled: enabled,
+                tokenOracle: token_oracle,
+                maxStaleness: max_staleness,
+                markupBps: markup_bps,
+                treasury: treasury,
+            })
+        }
+        /**Creates a [`Erc20Settled`] event.
+
+```solidity
+event Erc20Settled(address,address,uint256,uint256)
+```*/
+        #[inline]
+        pub fn erc_20_settled(
+            sender: alloy::sol_types::private::Address,
+            token: alloy::sol_types::private::Address,
+            actual_gas_cost: alloy::sol_types::private::primitives::aliases::U256,
+            actual_token_charge: alloy::sol_types::private::primitives::aliases::U256,
+        ) -> Self {
+            Self::Erc20Settled(Erc20Settled {
+                sender: sender,
+                token: token,
+                actualGasCost: actual_gas_cost,
+                actualTokenCharge: actual_token_charge,
+            })
+        }
+        /**Creates a [`Erc20Sponsored`] event.
+
+```solidity
+event Erc20Sponsored(address,address,uint256,uint256)
+```*/
+        #[inline]
+        pub fn erc_20_sponsored(
+            sender: alloy::sol_types::private::Address,
+            token: alloy::sol_types::private::Address,
+            max_token_amount: alloy::sol_types::private::primitives::aliases::U256,
+            price_with_markup: alloy::sol_types::private::primitives::aliases::U256,
+        ) -> Self {
+            Self::Erc20Sponsored(Erc20Sponsored {
+                sender: sender,
+                token: token,
+                maxTokenAmount: max_token_amount,
+                priceWithMarkup: price_with_markup,
+            })
+        }
+        /**Creates a [`EthOracleChanged`] event.
+
+```solidity
+event EthOracleChanged(address,address)
+```*/
+        #[inline]
+        pub fn eth_oracle_changed(
+            old_oracle: alloy::sol_types::private::Address,
+            new_oracle: alloy::sol_types::private::Address,
+        ) -> Self {
+            Self::EthOracleChanged(EthOracleChanged {
+                oldOracle: old_oracle,
+                newOracle: new_oracle,
+            })
+        }
+        /**Creates a [`NativeBalanceWithdrawn`] event.
+
+```solidity
+event NativeBalanceWithdrawn(address,uint256)
+```*/
+        #[inline]
+        pub fn native_balance_withdrawn(
+            to: alloy::sol_types::private::Address,
+            amount: alloy::sol_types::private::primitives::aliases::U256,
+        ) -> Self {
+            Self::NativeBalanceWithdrawn(NativeBalanceWithdrawn {
+                to: to,
+                amount: amount,
+            })
+        }
+        /**Creates a [`Paused`] event.
+
+```solidity
+event Paused(address)
+```*/
+        #[inline]
+        pub fn paused(account: alloy::sol_types::private::Address) -> Self {
+            Self::Paused(Paused { account: account })
+        }
+        /**Creates a [`PoolErc20Settled`] event.
+
+```solidity
+event PoolErc20Settled(address,uint256,address,uint256,uint256)
+```*/
+        #[inline]
+        pub fn pool_erc_20_settled(
+            sender: alloy::sol_types::private::Address,
+            pool_id: alloy::sol_types::private::primitives::aliases::U256,
+            token: alloy::sol_types::private::Address,
+            actual_gas_cost: alloy::sol_types::private::primitives::aliases::U256,
+            actual_charge: alloy::sol_types::private::primitives::aliases::U256,
+        ) -> Self {
+            Self::PoolErc20Settled(PoolErc20Settled {
+                sender: sender,
+                poolId: pool_id,
+                token: token,
+                actualGasCost: actual_gas_cost,
+                actualCharge: actual_charge,
+            })
+        }
+        /**Creates a [`PoolErc20Sponsored`] event.
+
+```solidity
+event PoolErc20Sponsored(address,uint256,address,uint256,uint256)
+```*/
+        #[inline]
+        pub fn pool_erc_20_sponsored(
+            sender: alloy::sol_types::private::Address,
+            pool_id: alloy::sol_types::private::primitives::aliases::U256,
+            token: alloy::sol_types::private::Address,
+            reserved_amount: alloy::sol_types::private::primitives::aliases::U256,
+            price_with_markup: alloy::sol_types::private::primitives::aliases::U256,
+        ) -> Self {
+            Self::PoolErc20Sponsored(PoolErc20Sponsored {
+                sender: sender,
+                poolId: pool_id,
+                token: token,
+                reservedAmount: reserved_amount,
+                priceWithMarkup: price_with_markup,
+            })
+        }
+        /**Creates a [`PoolEthSettled`] event.
+
+```solidity
+event PoolEthSettled(address,uint256,uint256,uint256)
+```*/
+        #[inline]
+        pub fn pool_eth_settled(
+            sender: alloy::sol_types::private::Address,
+            pool_id: alloy::sol_types::private::primitives::aliases::U256,
+            actual_gas_cost: alloy::sol_types::private::primitives::aliases::U256,
+            charged_from_pool: alloy::sol_types::private::primitives::aliases::U256,
+        ) -> Self {
+            Self::PoolEthSettled(PoolEthSettled {
+                sender: sender,
+                poolId: pool_id,
+                actualGasCost: actual_gas_cost,
+                chargedFromPool: charged_from_pool,
+            })
+        }
+        /**Creates a [`PoolEthSponsored`] event.
+
+```solidity
+event PoolEthSponsored(address,uint256,uint256)
+```*/
+        #[inline]
+        pub fn pool_eth_sponsored(
+            sender: alloy::sol_types::private::Address,
+            pool_id: alloy::sol_types::private::primitives::aliases::U256,
+            reserved: alloy::sol_types::private::primitives::aliases::U256,
+        ) -> Self {
+            Self::PoolEthSponsored(PoolEthSponsored {
+                sender: sender,
+                poolId: pool_id,
+                reserved: reserved,
+            })
+        }
+        /**Creates a [`SenderPoolChanged`] event.
+
+```solidity
+event SenderPoolChanged(address,uint256,uint256)
+```*/
+        #[inline]
+        pub fn sender_pool_changed(
+            sender: alloy::sol_types::private::Address,
+            old_pool_id: alloy::sol_types::private::primitives::aliases::U256,
+            new_pool_id: alloy::sol_types::private::primitives::aliases::U256,
+        ) -> Self {
+            Self::SenderPoolChanged(SenderPoolChanged {
+                sender: sender,
+                oldPoolId: old_pool_id,
+                newPoolId: new_pool_id,
+            })
+        }
+        /**Creates a [`Settled`] event.
+
+```solidity
+event Settled(address,uint256,uint64,uint128)
+```*/
+        #[inline]
+        pub fn settled(
+            sender: alloy::sol_types::private::Address,
+            actual_gas_cost: alloy::sol_types::private::primitives::aliases::U256,
+            epoch: u64,
+            spent_in_epoch: u128,
+        ) -> Self {
+            Self::Settled(Settled {
+                sender: sender,
+                actualGasCost: actual_gas_cost,
+                epoch: epoch,
+                spentInEpoch: spent_in_epoch,
+            })
+        }
+        /**Creates a [`Sponsored`] event.
+
+```solidity
+event Sponsored(address,uint256,uint64)
+```*/
+        #[inline]
+        pub fn sponsored(
+            sender: alloy::sol_types::private::Address,
+            max_cost_estimate: alloy::sol_types::private::primitives::aliases::U256,
+            epoch: u64,
+        ) -> Self {
+            Self::Sponsored(Sponsored {
+                sender: sender,
+                maxCostEstimate: max_cost_estimate,
+                epoch: epoch,
+            })
+        }
+        /**Creates a [`SponsoredAccountChanged`] event.
+
+```solidity
+event SponsoredAccountChanged(address,bool)
+```*/
+        #[inline]
+        pub fn sponsored_account_changed(
+            account: alloy::sol_types::private::Address,
+            allowed: bool,
+        ) -> Self {
+            Self::SponsoredAccountChanged(SponsoredAccountChanged {
+                account: account,
+                allowed: allowed,
+            })
+        }
+        /**Creates a [`Transfer`] event.
+
+```solidity
+event Transfer(address,address,address,uint256,uint256)
+```*/
+        #[inline]
+        pub fn transfer(
+            caller: alloy::sol_types::private::Address,
+            from: alloy::sol_types::private::Address,
+            to: alloy::sol_types::private::Address,
+            id: alloy::sol_types::private::primitives::aliases::U256,
+            amount: alloy::sol_types::private::primitives::aliases::U256,
+        ) -> Self {
+            Self::Transfer(Transfer {
+                caller: caller,
+                from: from,
+                to: to,
+                id: id,
+                amount: amount,
+            })
+        }
+        /**Creates a [`TrustedDelegateChanged`] event.
+
+```solidity
+event TrustedDelegateChanged(address,bool)
+```*/
+        #[inline]
+        pub fn trusted_delegate_changed(
+            delegate: alloy::sol_types::private::Address,
+            allowed: bool,
+        ) -> Self {
+            Self::TrustedDelegateChanged(TrustedDelegateChanged {
+                delegate: delegate,
+                allowed: allowed,
+            })
+        }
+        /**Creates a [`TuningUpdated`] event.
+
+```solidity
+event TuningUpdated(uint128,uint64)
+```*/
+        #[inline]
+        pub fn tuning_updated(max_wei_per_epoch: u128, epoch_length: u64) -> Self {
+            Self::TuningUpdated(TuningUpdated {
+                maxWeiPerEpoch: max_wei_per_epoch,
+                epochLength: epoch_length,
+            })
+        }
+        /**Creates a [`Unpaused`] event.
+
+```solidity
+event Unpaused(address)
+```*/
+        #[inline]
+        pub fn unpaused(account: alloy::sol_types::private::Address) -> Self {
+            Self::Unpaused(Unpaused { account: account })
         }
     }
     use alloy::contract as alloy_contract;

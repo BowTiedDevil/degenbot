@@ -13,8 +13,8 @@
 //! - Function selectors:
 //!     - `executeNativeArb`         = `0xf6f6add1`
 //!     - `executeOwnedSwaps`        = `0xba44420d` (disabled owned-inventory ABI)
-//!     - `matchInternal`            = `0x5f188678`
-//!     - `composeFourLeg`           = `0x72c0469b`
+//!     - `matchInternal`            = `0x210ea473` (12-field MatchParams, incl. ADR-029 settlement-funding)
+//!     - `composeFourLeg`           = `0x2e1977d2` (12-field ComposeParams, incl. ADR-029 settlement-funding)
 //!     - `triggerCoWFlashLoanRouter`= `0x900866ce` (Pick C — user-side entry)
 //!     - `transferToSettlement`     = `0x4515dd0f` (ADR-029 — `interactions[1]` callback)
 //! - `FlashProtocol` ordinals — only 0..3 are currently implemented on-chain
@@ -147,6 +147,9 @@ sol! {
     }
 
     /// Params for `matchInternal` (Pick A — internal CoW + UniswapX matching).
+    /// `settlementFundingToken` / `settlementFundingMax` are the ADR-029
+    /// settlement-funding commitment (audit 2026-06-09 hardening) — `(0x0, 0)`
+    /// when there is no CoW leg.
     struct MatchParams {
         bytes cowSettlementCalldata;
         bytes uniswapxBatchCalldata;
@@ -158,9 +161,14 @@ sol! {
         uint256 flashAmount;
         uint256 minProfit;
         uint256 deadline;
+        address settlementFundingToken;
+        uint256 settlementFundingMax;
     }
 
     /// Params for `composeFourLeg` (Pick B — 4-leg cross-protocol composition).
+    /// `settlementFundingToken` / `settlementFundingMax` are the ADR-029
+    /// settlement-funding commitment (audit 2026-06-09 hardening) — `(0x0, 0)`
+    /// when Leg 3 is empty.
     struct ComposeParams {
         bytes acrossFillCalldata;
         SwapStep[] arbSwaps;
@@ -172,6 +180,8 @@ sol! {
         uint256 flashAmount;
         uint256 minProfit;
         uint256 deadline;
+        address settlementFundingToken;
+        uint256 settlementFundingMax;
     }
 
     /// Params for `triggerCoWFlashLoanRouter` (Pick C — solver-side user entry
@@ -223,12 +233,16 @@ mod tests {
 
     #[test]
     fn match_internal_selector_locked() {
-        assert_eq!(matchInternalCall::SELECTOR, [0x5f, 0x18, 0x86, 0x78]);
+        // 12-field MatchParams (incl. ADR-029 settlement-funding). `cast keccak
+        // 'matchInternal((bytes,bytes,address[],uint256[],address,uint8,address,uint256,uint256,uint256,address,uint256))'`
+        // → 0x210ea473
+        assert_eq!(matchInternalCall::SELECTOR, [0x21, 0x0e, 0xa4, 0x73]);
     }
 
     #[test]
     fn compose_four_leg_selector_locked() {
-        assert_eq!(composeFourLegCall::SELECTOR, [0x72, 0xc0, 0x46, 0x9b]);
+        // 12-field ComposeParams (incl. ADR-029 settlement-funding) → 0x2e1977d2
+        assert_eq!(composeFourLegCall::SELECTOR, [0x2e, 0x19, 0x77, 0xd2]);
     }
 
     #[test]

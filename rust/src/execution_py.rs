@@ -72,6 +72,8 @@ pub fn encode_match_internal_calldata_py(
     flash_amount: &Bound<'_, PyAny>,
     min_profit: &Bound<'_, PyAny>,
     deadline: &Bound<'_, PyAny>,
+    settlement_funding_token: &Bound<'_, PyAny>,
+    settlement_funding_max: &Bound<'_, PyAny>,
 ) -> PyResult<Py<PyAny>> {
     let params = MatchParams {
         cow_settlement_calldata: extract_bytes(cow_settlement_calldata)?.into(),
@@ -84,6 +86,8 @@ pub fn encode_match_internal_calldata_py(
         flash_amount: extract_python_u256(flash_amount)?,
         min_profit: extract_python_u256(min_profit)?,
         deadline: extract_python_u256(deadline)?,
+        settlement_funding_token: extract_address(settlement_funding_token)?,
+        settlement_funding_max: extract_python_u256(settlement_funding_max)?,
     };
 
     let calldata = py
@@ -109,6 +113,8 @@ pub fn encode_compose_four_leg_calldata_py(
     flash_amount: &Bound<'_, PyAny>,
     min_profit: &Bound<'_, PyAny>,
     deadline: &Bound<'_, PyAny>,
+    settlement_funding_token: &Bound<'_, PyAny>,
+    settlement_funding_max: &Bound<'_, PyAny>,
 ) -> PyResult<Py<PyAny>> {
     let params = ComposeParams {
         across_fill_calldata: extract_bytes(across_fill_calldata)?.into(),
@@ -121,6 +127,8 @@ pub fn encode_compose_four_leg_calldata_py(
         flash_amount: extract_python_u256(flash_amount)?,
         min_profit: extract_python_u256(min_profit)?,
         deadline: extract_python_u256(deadline)?,
+        settlement_funding_token: extract_address(settlement_funding_token)?,
+        settlement_funding_max: extract_python_u256(settlement_funding_max)?,
     };
 
     let calldata = py
@@ -534,6 +542,8 @@ mod tests {
                 flash_amount: U256::from(1234u64),
                 min_profit: U256::from(42u64),
                 deadline: U256::from(999_999u64),
+                settlement_funding_token: Address::ZERO,
+                settlement_funding_max: U256::ZERO,
             };
 
             let expected_token_inflows = PyList::empty(py);
@@ -554,6 +564,9 @@ mod tests {
             let flash_amount = PyInt::new(py, 1234).into_any();
             let min_profit = PyInt::new(py, 42).into_any();
             let deadline = PyInt::new(py, 999_999).into_any();
+            let settlement_funding_token =
+                PyString::new(py, &format!("{:#x}", params.settlement_funding_token)).into_any();
+            let settlement_funding_max = PyInt::new(py, 0).into_any();
 
             let calldata = encode_match_internal_calldata_py(
                 py,
@@ -567,6 +580,8 @@ mod tests {
                 &flash_amount,
                 &min_profit,
                 &deadline,
+                &settlement_funding_token,
+                &settlement_funding_max,
             )
             .unwrap();
 
@@ -590,6 +605,8 @@ mod tests {
                 flash_amount: U256::from(1234u64),
                 min_profit: U256::from(42u64),
                 deadline: U256::from(999_999u64),
+                settlement_funding_token: Address::ZERO,
+                settlement_funding_max: U256::ZERO,
             };
 
             let arb_swaps = PyList::empty(py);
@@ -615,6 +632,9 @@ mod tests {
             let flash_amount = PyInt::new(py, 1234).into_any();
             let min_profit = PyInt::new(py, 42).into_any();
             let deadline = PyInt::new(py, 999_999).into_any();
+            let settlement_funding_token =
+                PyString::new(py, &format!("{:#x}", params.settlement_funding_token)).into_any();
+            let settlement_funding_max = PyInt::new(py, 0).into_any();
 
             let calldata = encode_compose_four_leg_calldata_py(
                 py,
@@ -628,6 +648,8 @@ mod tests {
                 &flash_amount,
                 &min_profit,
                 &deadline,
+                &settlement_funding_token,
+                &settlement_funding_max,
             )
             .unwrap();
 

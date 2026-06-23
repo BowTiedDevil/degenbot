@@ -517,6 +517,36 @@ error LpTransferLib__V4TransferFailed();
             }
         }
     }
+    #[automatically_derived]
+    impl LpTransferLibErrors {
+        /**Creates a [`InvalidParams`] error.
+
+```solidity
+error InvalidParams()
+```*/
+        #[inline]
+        pub fn invalid_params() -> Self {
+            Self::InvalidParams(InvalidParams)
+        }
+        /**Creates a [`LpTransferLib__V4SetOperatorFailed`] error.
+
+```solidity
+error LpTransferLib__V4SetOperatorFailed()
+```*/
+        #[inline]
+        pub fn lp_transfer_lib_v_4_set_operator_failed() -> Self {
+            Self::LpTransferLib__V4SetOperatorFailed(LpTransferLib__V4SetOperatorFailed)
+        }
+        /**Creates a [`LpTransferLib__V4TransferFailed`] error.
+
+```solidity
+error LpTransferLib__V4TransferFailed()
+```*/
+        #[inline]
+        pub fn lp_transfer_lib_v_4_transfer_failed() -> Self {
+            Self::LpTransferLib__V4TransferFailed(LpTransferLib__V4TransferFailed)
+        }
+    }
     use alloy::contract as alloy_contract;
     /**Creates a new wrapper around an on-chain [`LpTransferLib`](self) contract instance.
 

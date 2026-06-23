@@ -15,9 +15,13 @@ if TYPE_CHECKING:
 DEFAULT_CRATE_NAME = "degenbot_contract_bindings"
 DEFAULT_ALLOY_VERSION = "2.0.5"
 DEFAULT_SELECTED_CONTRACTS = (
-    "Executor",
-    "AtomicExecutor",
-    "LiquidationExecutor",
+    # The standalone monolith executors (Executor / AtomicExecutor /
+    # LiquidationExecutor) were archived at P8 (EIP-2535 executor diamond is the
+    # sole on-chain executor); their Foundry artifacts no longer exist. Bind the
+    # canonical `IExecutor` interface instead — same strategy entry points
+    # (executeNativeArb / matchInternal / composeFourLeg / triggerCoWFlashLoanRouter
+    # / transferToSettlement), implemented by the diamond facets, kept current
+    # (12-field ADR-029 MatchParams/ComposeParams).
     "IExecutor",
     "IFlashLoanRouter",
     "IFlashLoanReceiver",
@@ -171,6 +175,7 @@ def generate_bindings(config: BindingWorkflowConfig, *, dry_run: bool) -> int:
             config.bindings_path,
             alloy_version=config.alloy_version,
         )
+        inject_selected_binding_count(config.bindings_path)
         return 0
 
 
@@ -208,6 +213,7 @@ def check_bindings(config: BindingWorkflowConfig, *, dry_run: bool) -> int:
             generated_path,
             alloy_version=config.alloy_version,
         )
+        inject_selected_binding_count(generated_path)
 
         if directories_match(config.bindings_path, generated_path):
             return 0
@@ -245,6 +251,32 @@ def normalize_generated_crate_manifest(bindings_path: Path, *, alloy_version: st
 
     msg = f"generated Cargo.toml does not contain expected Alloy dependency: {manifest_path}"
     raise RuntimeError(msg)
+
+
+def inject_selected_binding_count(bindings_path: Path) -> None:
+    """
+    Append a `SELECTED_CONTRACT_BINDING_COUNT` constant to the generated
+    `lib.rs`.
+
+    `forge bind --overwrite` regenerates `lib.rs` from scratch on every run, so
+    this tripwire (used by `rust/tests/contract_bindings.rs` to catch the
+    curated binding set silently shrinking) must be re-injected after each
+    bind. The value is the number of generated `pub mod` modules — deterministic
+    from the generated file, so the `check` and `generate` paths agree.
+    """
+
+    lib_path = bindings_path / "src" / "lib.rs"
+    lib_text = lib_path.read_text(encoding="utf-8")
+    module_count = sum(1 for line in lib_text.splitlines() if line.startswith("pub mod "))
+    constant_block = (
+        "\n"
+        "/// Number of generated binding modules. Tripwire for the curated\n"
+        "/// `DEFAULT_SELECTED_CONTRACTS` set in\n"
+        "/// `degenbot.devtools.foundry_bindings` silently shrinking; injected\n"
+        "/// after `forge bind` (not produced by `forge bind` itself).\n"
+        f"pub const SELECTED_CONTRACT_BINDING_COUNT: usize = {module_count};\n"
+    )
+    lib_path.write_text(lib_text + constant_block, encoding="utf-8")
 
 
 def _run_commands(commands: Sequence[Sequence[str]]) -> int:

@@ -7575,6 +7575,105 @@ function transferOwnership(address newOwner) external;
             }
         }
     }
+    #[automatically_derived]
+    impl StrategyLedgerErrors {
+        /**Creates a [`BalanceOverflow`] error.
+
+```solidity
+error BalanceOverflow()
+```*/
+        #[inline]
+        pub fn balance_overflow() -> Self {
+            Self::BalanceOverflow(BalanceOverflow)
+        }
+        /**Creates a [`InsufficientBalance`] error.
+
+```solidity
+error InsufficientBalance()
+```*/
+        #[inline]
+        pub fn insufficient_balance() -> Self {
+            Self::InsufficientBalance(InsufficientBalance)
+        }
+        /**Creates a [`InsufficientPermission`] error.
+
+```solidity
+error InsufficientPermission()
+```*/
+        #[inline]
+        pub fn insufficient_permission() -> Self {
+            Self::InsufficientPermission(InsufficientPermission)
+        }
+        /**Creates a [`InvalidParams`] error.
+
+```solidity
+error InvalidParams()
+```*/
+        #[inline]
+        pub fn invalid_params() -> Self {
+            Self::InvalidParams(InvalidParams)
+        }
+        /**Creates a [`NotExecutor`] error.
+
+```solidity
+error NotExecutor()
+```*/
+        #[inline]
+        pub fn not_executor() -> Self {
+            Self::NotExecutor(NotExecutor)
+        }
+        /**Creates a [`OwnableInvalidOwner`] error.
+
+```solidity
+error OwnableInvalidOwner(address)
+```*/
+        #[inline]
+        pub fn ownable_invalid_owner(owner: alloy::sol_types::private::Address) -> Self {
+            Self::OwnableInvalidOwner(OwnableInvalidOwner {
+                owner: owner,
+            })
+        }
+        /**Creates a [`OwnableUnauthorizedAccount`] error.
+
+```solidity
+error OwnableUnauthorizedAccount(address)
+```*/
+        #[inline]
+        pub fn ownable_unauthorized_account(
+            account: alloy::sol_types::private::Address,
+        ) -> Self {
+            Self::OwnableUnauthorizedAccount(OwnableUnauthorizedAccount {
+                account: account,
+            })
+        }
+        /**Creates a [`StrategyLedger__EthRescueFailed`] error.
+
+```solidity
+error StrategyLedger__EthRescueFailed()
+```*/
+        #[inline]
+        pub fn strategy_ledger_eth_rescue_failed() -> Self {
+            Self::StrategyLedger__EthRescueFailed(StrategyLedger__EthRescueFailed)
+        }
+        /**Creates a [`StrategyLedger__OperatorsDisabled`] error.
+
+```solidity
+error StrategyLedger__OperatorsDisabled()
+```*/
+        #[inline]
+        pub fn strategy_ledger_operators_disabled() -> Self {
+            Self::StrategyLedger__OperatorsDisabled(StrategyLedger__OperatorsDisabled)
+        }
+        /**Creates a [`StrategyLedger__ZeroRecipient`] error.
+
+```solidity
+error StrategyLedger__ZeroRecipient()
+```*/
+        #[inline]
+        pub fn strategy_ledger_zero_recipient() -> Self {
+            Self::StrategyLedger__ZeroRecipient(StrategyLedger__ZeroRecipient)
+        }
+    }
     ///Container for all the [`StrategyLedger`](self) events.
     #[derive(Clone)]
     #[derive(serde::Serialize, serde::Deserialize)]
@@ -7823,6 +7922,145 @@ function transferOwnership(address newOwner) external;
                     alloy_sol_types::private::IntoLogData::into_log_data(inner)
                 }
             }
+        }
+    }
+    #[automatically_derived]
+    impl StrategyLedgerEvents {
+        /**Creates a [`Approval`] event.
+
+```solidity
+event Approval(address,address,uint256,uint256)
+```*/
+        #[inline]
+        pub fn approval(
+            owner: alloy::sol_types::private::Address,
+            spender: alloy::sol_types::private::Address,
+            id: alloy::sol_types::private::primitives::aliases::U256,
+            amount: alloy::sol_types::private::primitives::aliases::U256,
+        ) -> Self {
+            Self::Approval(Approval {
+                owner: owner,
+                spender: spender,
+                id: id,
+                amount: amount,
+            })
+        }
+        /**Creates a [`EthRescued`] event.
+
+```solidity
+event EthRescued(address,uint256)
+```*/
+        #[inline]
+        pub fn eth_rescued(
+            to: alloy::sol_types::private::Address,
+            amount: alloy::sol_types::private::primitives::aliases::U256,
+        ) -> Self {
+            Self::EthRescued(EthRescued {
+                to: to,
+                amount: amount,
+            })
+        }
+        /**Creates a [`ExecutorSet`] event.
+
+```solidity
+event ExecutorSet(address,bool)
+```*/
+        #[inline]
+        pub fn executor_set(
+            executor: alloy::sol_types::private::Address,
+            allowed: bool,
+        ) -> Self {
+            Self::ExecutorSet(ExecutorSet {
+                executor: executor,
+                allowed: allowed,
+            })
+        }
+        /**Creates a [`OperatorSet`] event.
+
+```solidity
+event OperatorSet(address,address,bool)
+```*/
+        #[inline]
+        pub fn operator_set(
+            owner: alloy::sol_types::private::Address,
+            operator: alloy::sol_types::private::Address,
+            approved: bool,
+        ) -> Self {
+            Self::OperatorSet(OperatorSet {
+                owner: owner,
+                operator: operator,
+                approved: approved,
+            })
+        }
+        /**Creates a [`OwnershipTransferStarted`] event.
+
+```solidity
+event OwnershipTransferStarted(address,address)
+```*/
+        #[inline]
+        pub fn ownership_transfer_started(
+            previous_owner: alloy::sol_types::private::Address,
+            new_owner: alloy::sol_types::private::Address,
+        ) -> Self {
+            Self::OwnershipTransferStarted(OwnershipTransferStarted {
+                previousOwner: previous_owner,
+                newOwner: new_owner,
+            })
+        }
+        /**Creates a [`OwnershipTransferred`] event.
+
+```solidity
+event OwnershipTransferred(address,address)
+```*/
+        #[inline]
+        pub fn ownership_transferred(
+            previous_owner: alloy::sol_types::private::Address,
+            new_owner: alloy::sol_types::private::Address,
+        ) -> Self {
+            Self::OwnershipTransferred(OwnershipTransferred {
+                previousOwner: previous_owner,
+                newOwner: new_owner,
+            })
+        }
+        /**Creates a [`ProfitRecorded`] event.
+
+```solidity
+event ProfitRecorded(bytes32,uint256,uint256,address)
+```*/
+        #[inline]
+        pub fn profit_recorded(
+            strategy_tag: alloy::sol_types::private::FixedBytes<32>,
+            id: alloy::sol_types::private::primitives::aliases::U256,
+            amount: alloy::sol_types::private::primitives::aliases::U256,
+            recorded_by: alloy::sol_types::private::Address,
+        ) -> Self {
+            Self::ProfitRecorded(ProfitRecorded {
+                strategyTag: strategy_tag,
+                id: id,
+                amount: amount,
+                recordedBy: recorded_by,
+            })
+        }
+        /**Creates a [`Transfer`] event.
+
+```solidity
+event Transfer(address,address,address,uint256,uint256)
+```*/
+        #[inline]
+        pub fn transfer(
+            by: alloy::sol_types::private::Address,
+            from: alloy::sol_types::private::Address,
+            to: alloy::sol_types::private::Address,
+            id: alloy::sol_types::private::primitives::aliases::U256,
+            amount: alloy::sol_types::private::primitives::aliases::U256,
+        ) -> Self {
+            Self::Transfer(Transfer {
+                by: by,
+                from: from,
+                to: to,
+                id: id,
+                amount: amount,
+            })
         }
     }
     use alloy::contract as alloy_contract;
