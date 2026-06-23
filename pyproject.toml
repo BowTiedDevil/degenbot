@@ -214,9 +214,8 @@ python-version = "3.12"
 exclude-newer = "14 days"
 link-mode = "copy"
 cache-keys = [
-    {file = "rust/Cargo.toml"},
-    {file = "rust/crates/degenbot-python/Cargo.toml"},
-    {file = "rust/crates/degenbot-python/src/**/*.rs"},
+    {file = "rust/**/Cargo.toml"},
+    {file = "rust/crates/*/src/**/*.rs"},
 ]
 
 [tool.maturin]
