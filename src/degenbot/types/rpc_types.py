@@ -1,15 +1,11 @@
-"""TypedDict definitions for Ethereum RPC response data returned by the.
+"""TypedDict definitions for Ethereum RPC response data returned by the Rust extension provider.
 
-Rust extension provider.
+Field types correspond to the Rust converters in ``rust/src/py_converters.rs``. All hash/data fields
+use ``HexBytes``, all addresses are EIP-55 checksummed strings, and all numeric values are Python
+ints.
 
-Field types correspond to the Rust converters in
-``rust/src/py_converters.rs``. All hash/data fields use ``HexBytes``,
-all addresses are EIP-55 checksummed strings, and all numeric values
-are Python ints.
-
-Key naming: Block/transaction dicts use snake_case (produced by the
-typed Rust converters). Log dicts use camelCase (matching the
-web3.py convention, as produced by ``log_to_py_dict``).
+Key naming: Block/transaction dicts use snake_case (produced by the typed Rust converters). Log
+dicts use camelCase (matching the web3.py convention, as produced by ``log_to_py_dict``).
 """
 
 from typing import TypedDict

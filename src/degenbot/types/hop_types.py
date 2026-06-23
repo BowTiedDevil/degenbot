@@ -1,11 +1,8 @@
 """Hop state types for arbitrage solvers.
 
-These data types represent a pool's numerical state in a form suitable for
-solver consumption. They are shared across the arbitrage and pool modules,
-so they live in the types package to avoid circular imports.
-
-Moved from degenbot.arbitrage.solvers.hop_types to break the
-dependency from pools -> arbitrage.
+These data types represent a pool's numerical state in a form suitable for solver consumption. They
+are shared across the arbitrage and pool modules, so they live in the types package to avoid
+circular imports.
 """
 
 from collections.abc import Callable
