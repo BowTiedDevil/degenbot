@@ -43,19 +43,21 @@ CODECOPY offsets.
 The `*_runtime_bytecode.txt` files have immutables pre-appended (after the
 CBOR) so no storage overrides are needed.
 
-### cmd_executor immutables (9 × 32 bytes, appended after CBOR metadata)
+### cmd_executor immutables (5 × 32 bytes, appended after CBOR metadata)
 
 | Slot | Immutable | Value | Notes |
 |------|-----------|-------|-------|
 | 0 | `OWNER_ADDR` | `0x9C56a29c7231974c269E24F9FB3c29203039089E` | Must match `EXECUTOR_OWNER` in the backrun script. `execute()` checks `msg.sender == OWNER_ADDR`, so the simulation's `from` address must equal this |
 | 1 | `WETH_ADDR` | `0xC02aaA39b223Fe8D0A0e5C4f27eAD9083C756Cc2` | WETH on mainnet |
 | 2 | `POOL_MANAGER_ADDR` | **MUST match the target chain's PoolManager** | Controls all V4 operations. If wrong, V4-hybrid paths revert at ~38K gas |
-| 3 | `USER0_ADDR` | `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48` | USDC on mainnet --- used for V4 delta slot precomputation |
-| 4 | `USER1_ADDR` | `0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599` | WBTC on mainnet --- used for V4 delta slot precomputation |
-| 5 | `WETH_DELTA_SLOT` | `keccak256(self, WETH)` | V4 CurrencyDelta precomputed slot |
-| 6 | `NATIVE_DELTA_SLOT` | `keccak256(self, NATIVE)` | V4 CurrencyDelta precomputed slot |
-| 7 | `USER0_DELTA_SLOT` | `keccak256(self, USER0)` | V4 CurrencyDelta precomputed slot |
-| 8 | `USER1_DELTA_SLOT` | `keccak256(self, USER1)` | V4 CurrencyDelta precomputed slot |
+| 3 | `WETH_DELTA_SLOT` | `keccak256(self, WETH)` | V4 CurrencyDelta precomputed slot |
+| 4 | `NATIVE_DELTA_SLOT` | `keccak256(self, NATIVE)` | V4 CurrencyDelta precomputed slot |
+
+The constructor is `__init__(weth, pool_manager)`. Only the two hot protocol
+currencies (WETH, NATIVE) get precomputed delta slots; every other currency
+(including path-specific tokens like USDC/WBTC) computes its delta slot
+on-chain via `keccak256`. Per-path token immutables (the old `USER0`/`USER1`)
+were removed --- those tokens now go through `t_addresses` via `SET_ADDRESS`.
 
 > ⚠️ **Critical**: The `POOL_MANAGER_ADDR` immutable in the runtime bytecode file **must
 > match the PoolManager address on the target chain**. On Ethereum mainnet, this is
@@ -68,7 +70,7 @@ CBOR) so no storage overrides are needed.
 ### Patching immutables
 
 If the runtime bytecode was compiled with wrong immutables (e.g., a throwaway PM address),
-you can patch the 9 × 32-byte tail without recompiling:
+you can patch the 5 × 32-byte tail without recompiling:
 
 ```python
 # Patch POOL_MANAGER_ADDR in the runtime bytecode tail
@@ -78,14 +80,14 @@ pm_padded = "0" * 24 + pm[2:].lower()  # left-pad to 32 bytes
 with open("contracts/cmd_executor_runtime_bytecode.txt") as f:
     code = f.read().strip()[2:]  # strip 0x
 
-# Last 576 hex chars = 9 × 32-byte immutable slots
-# Slot layout: [0:OWNER][1:WETH][2:PM]...[8:USER1_DELTA]
-tail = code[-576:]
+# Last 320 hex chars = 5 × 32-byte immutable slots
+# Slot layout: [0:OWNER][1:WETH][2:PM][3:WETH_DELTA][4:NATIVE_DELTA]
+tail = code[-320:]
 pm_offset = 2 * 64  # slot index 2, each slot is 64 hex chars
 new_tail = tail[:pm_offset] + pm_padded + tail[pm_offset + 64:]
 
 with open("contracts/cmd_executor_runtime_bytecode.txt", "w") as f:
-    f.write("0x" + code[:-576] + new_tail + "\n")
+    f.write("0x" + code[:-320] + new_tail + "\n")
 ```
 
 ### Recompiling
@@ -100,7 +102,7 @@ python3 contracts/recompile.py --no-patch  # compile without PM patch (testnet)
 ```
 
 The script reads `cmd_executor.vy` from `~/code/executor/`, compiles with Vyper,
-appends the 9 × 32-byte immutable slots after the CBOR metadata, patches
+appends the 5 × 32-byte immutable slots after the CBOR metadata, patches
 `POOL_MANAGER_ADDR` to the mainnet address, and writes all 3 output files into
 `contracts/`. The CBOR metadata is preserved in the compiled output --- it must
 NOT be stripped (see "Vyper bytecode layout" above).
@@ -109,7 +111,7 @@ NOT be stripped (see "Vyper bytecode layout" above).
 
 ## cmd_executor — Command-Stream Executor
 
-**Vyper**: 0.5.0a2 | **EVM**: Cancun | **Runtime**: 16,764 bytes (code + CBOR + immutables)
+**Vyper**: 0.5.0a3 | **EVM**: Cancun | **Runtime**: 15,605 bytes (code + CBOR + immutables)
 **Source**: `~/code/executor/contracts/cmd_executor.vy`
 **Tests**: `~/code/executor/tests/` (224 passing, Ape + Foundry)
 
@@ -124,16 +126,24 @@ Full documentation: `~/code/executor/README.md`
 
 ```vyper
 @payable
-def execute(commands: Bytes[512]) -> uint256
+def execute(commands: Bytes[288], config: uint256 = 0) -> uint256
 ```
 
-Single entry point. The command stream format:
+Single entry point. `config` packs profit-check mode, bribe bips/recipient,
+and expected pre-tx balance (see `pack_config()` in `contracts.cmd_stream`):
+`config = (expected_value << 32) | (bribe_recipient_idx << 24) | (bribe_bips << 8) | check_mode`.
+`config=0` skips the on-chain profit check and sends no bribe.
+
+The command stream format:
 
 ```
-[0xFE][SET_ADDRESS commands][SKIP_PROFIT_CHECK][0xFF][execution commands]
+[SET_ADDRESS commands][0xFF][execution commands]
 ```
 
-If the first byte is not `0xFE`, the entire stream is execution (no preprocessing).
+`_preprocess` reads opcodes from offset 0 and accepts ONLY `0x00`
+(SET_ADDRESS) and `0xFF` (BEGIN_EXECUTION). There is no `0xFE` prefix.
+Opcodes `0x01`–`0x03` are reserved (revert if emitted) --- the
+SKIP_PROFIT_CHECK / BRIBE behavior they used to encode moved into `config`.
 
 ### Command Set
 
@@ -141,44 +151,40 @@ If the first byte is not `0xFE`, the entire stream is execution (no preprocessin
 |--------|------|----------|-------------|
 | **Control** |||| |
 | `0x00` | SET_ADDRESS | `[0x00][address:20]` | Append address to lookup table |
-| `0x01` | SKIP_PROFIT_CHECK | `[0x01]` | Skip post-execution profit check |
-| `0x02` | BRIBE_COINBASE | `[0x02][bips:2]` | Bribe block.coinbase |
-| `0x03` | BRIBE_ADDRESS | `[0x03][recipient_idx:1][bips:2]` | Bribe arbitrary address |
-| `0x04` | TSTORE_CONTINUATION | `[0x04][len:2][commands:N]` | Write commands to tstore |
+| `0x01`–`0x03` | *(reserved)* | — | Were SKIP_PROFIT_CHECK / BRIBE_COINBASE / BRIBE_ADDRESS; now packed into `config` — emit reverts |
 | **ERC20 / ETH** |||| |
-| `0x10` | ERC20_TRANSFER | `[0x10][token_idx:1][recipient_idx:1][amount:32]` | Transfer ERC-20 |
+| `0x10` | ERC20_TRANSFER | `[0x10][token_idx:1][recipient_idx:1][amount:12]` | Transfer ERC-20 (uint96 amount) |
 | `0x11` | ERC20_XFER_BALANCE | `[0x11][token_idx:1][recipient_idx:1]` | Transfer entire balance |
-| `0x12` | WETH_DEPOSIT | `[0x12][amount:32]` | Wrap ETH → WETH |
-| `0x13` | WETH_WITHDRAW | `[0x13][amount:32]` | Unwrap WETH → ETH |
+| `0x12` | WETH_DEPOSIT | `[0x12][amount:32]` | Wrap ETH to WETH |
+| `0x13` | WETH_WITHDRAW | `[0x13][amount:32]` | Unwrap WETH to ETH |
 | `0x14` | WETH_DEPOSIT_ALL | `[0x14]` | Wrap all ETH |
 | `0x15` | WETH_WITHDRAW_ALL | `[0x15]` | Unwrap all WETH |
-| `0x16` | SEND_ETH | `[0x16][recipient_idx:1][amount:16]` | Send uint128 ETH |
+| `0x16` | SEND_ETH | `[0x16][recipient_idx:1][amount:12]` | Send uint96 ETH |
 | `0x17` | SEND_ETH_ALL | `[0x17][recipient_idx:1]` | Send all ETH |
 | **V2** |||| |
-| `0x20` | V2_SWAP_COMPACT | `[0x20][pool:1][zfo:1][amt:16][rcpt:1][flen:2][fwd:N]` | V2 swap + forward data |
+| `0x20` | V2_SWAP_COMPACT | `[0x20][pool:1][zfo:1][amt:12][rcpt:1][fee:2][flen:1][fwd:N]` | V2 swap + forward data (uint96 amt) |
 | `0x21` | V2_SWAP_CALC | `[0x21][pool:1][zfo:1][rcpt:1][fee:2]` | V2 swap from excess balance |
-| `0x22` | V2_SWAP_DIRECT | `[0x22][pool:1][zfo:1][amt:16][rcpt:1]` | V2 swap, explicit amount |
+| `0x22` | V2_SWAP_DIRECT | `[0x22][pool:1][zfo:1][amt:12][rcpt:1]` | V2 swap, explicit amount |
 | **V3** |||| |
-| `0x30` | V3_SWAP_COMPACT | `[0x30][pool:1][zfo:1][amt:16][rcpt:1][flen:2][fwd:N]` | V3 swap + auto-pay |
+| `0x30` | V3_SWAP_COMPACT | `[0x30][pool:1][zfo:1][amt:12][rcpt:1][flen:1][fwd:N]` | V3 swap + auto-pay (uint96 amt) |
 | `0x31` | V3_SWAP_DELTA | `[0x31][pool:1][zfo:1][rcpt:1]` | V3 swap from PM exttload |
 | **V4 Swaps** |||| |
-| `0x40` | V4_SWAP_COMPACT | `[0x40][c0:1][c1:1][fee:3][ts:3][hooks:1][zfo:1][amt:16]` | V4 swap, explicit amount |
-| `0x41` | V4_SWAP_DYNAMIC | `[0x41][c0:1][c1:1][fee:3][ts:3][hooks:1][zfo:1]` | V4 swap from PM exttload |
-| `0x42` | V4_BATCH | `[0x42][n:1][entry:26]...` | Multi-swap + auto-settle |
+| `0x40` | V4_SWAP_COMPACT | `[0x40][c0:1][c1:1][fee:2][ts:2][hooks:1][zfo:1][amt:12]` | V4 swap, explicit amount (uint96) |
+| `0x41` | V4_SWAP_DYNAMIC | `[0x41][c0:1][c1:1][fee:2][ts:2][hooks:1][zfo:1]` | V4 swap from PM exttload |
+| `0x42` | V4_BATCH | `[0x42][n:1][entry:20]...` | Multi-swap + auto-settle (max 8) |
 | **V4 Settlement / ERC6909** |||| |
-| `0x50` | V4_UNLOCK | `[0x50][len:2][data:N]` | Enter PM unlock context |
+| `0x50` | V4_UNLOCK | `[0x50][len:1][data:N]` | Enter PM unlock context |
 | `0x51` | V4_TAKE | `[0x51][currency:1][rcpt:1][amount:32]` | Take from PM |
-| `0x52` | V4_TAKE_COMPACT | `[0x52][currency:1][rcpt:1][amount:16]` | Take, uint128 amount |
+| `0x52` | V4_TAKE_COMPACT | `[0x52][currency:1][rcpt:1][amount:12]` | Take, uint96 amount |
 | `0x53` | V4_TAKE_DELTA | `[0x53][currency:1][rcpt:1]` | Take from PM exttload |
 | `0x54` | V4_SYNC | `[0x54][currency:1]` | Sync at PM (anytime) |
 | `0x55` | V4_SETTLE | `[0x55]` | Settle at PM |
 | `0x56` | V4_SETTLE_DELTA | `[0x56][currency:1]` | Settle one currency from exttload |
 | `0x57` | V4_SETTLE_ALL | `[0x57]` | Settle all nonzero deltas |
-| `0x58` | V4_MINT_COMPACT | `[0x58][currency:1][rcpt:1][amount:16]` | Mint ERC6909 (no transfer) |
-| `0x59` | V4_BURN_COMPACT | `[0x59][currency:1][amount:16]` | Burn ERC6909 (no transfer) |
+| `0x58` | V4_MINT_COMPACT | `[0x58][currency:1][rcpt:1][amount:12]` | Mint ERC6909 (no transfer) |
+| `0x59` | V4_BURN_COMPACT | `[0x59][currency:1][amount:12]` | Burn ERC6909 (no transfer) |
 | **Separators** |||| |
-| `0xFE` | BEGIN_PREPROCESSING | First byte of stream with preprocessing | |
-| `0xFF` | BEGIN_EXECUTION | Marks end of preprocessing | |
+| `0xFF` | BEGIN_EXECUTION | Marks end of preprocessing / start of execution | |
 
 ### Callbacks
 
@@ -200,14 +206,15 @@ If the first byte is not `0xFE`, the entire stream is execution (no preprocessin
 |-----------|---------|
 | `AddressTable` | Track addresses for compact index-based referencing |
 | `enc_v4_swap_compact()`, `enc_v4_take()`, etc. | Individual command encoders |
-| `enc_preamble()` | Build preprocessing section (SET_ADDRESS + SKIP_PROFIT_CHECK) |
+| `enc_preamble()` | Build preprocessing section (SET_ADDRESS commands + `0xFF`) |
+| `pack_config()` | Pack the `execute()` `config` param (check_mode + bribe bips/recipient + expected_value) |
 | `V4V4ArbitragePayload` | Build V4→V4 2-pool command stream |
 | `V4V3ArbitragePayload` | Build V4→V3 2-pool command stream |
 | `CmdExecutorComposer` | `PayloadComposer` impl — composes `SwapAmounts` → command stream |
 
 ### Key Design Decisions
 
-1. **PM exttload for authoritative deltas** — V4 deltas read from PoolManager's own transient storage via `exttload()`, eliminating tracker drift. `t_v4_currencies_touched` kept only for V4_SETTLE_ALL iteration.
+1. **PM exttload for authoritative deltas** — V4 deltas read from PoolManager's own transient storage via `exttload()`, eliminating tracker drift. `V4_SETTLE_ALL` iterates `t_addresses` directly --- no touched-currency tracking is stored.
 2. **V3 auto-pay** — Empty `forward_data` → callback reads owed amounts from parameters, auto-transfers. Saves ~37 bytes/swap.
 3. **V2 auto-pay** — `V2_AUTO_PAY_SENTINEL` (1-byte `0xFE` data) triggers auto-pay in callback via `_v2_auto_pay()`.
 4. **Address table in-stream** — SET_ADDRESS commands inside the stream replace the separate `addresses[]` parameter. 1-byte indices save ~19 bytes per reference.
@@ -215,9 +222,9 @@ If the first byte is not `0xFE`, the entire stream is execution (no preprocessin
 6. **ERC6909 mint/burn** — V4_MINT_COMPACT/V4_BURN_COMPACT for internal PM balance holding without physical transfers. Saves ~20K gas vs V4_TAKE.
 7. **V2_SWAP_CALC excess balance** — Reads `balanceOf(pair) - reserves` for input amount from tokens deposited via V4_TAKE directly to V2 pair.
 8. **Address table index hygiene** — `AddressTable` deduplicates by checksummed address. In list comprehensions building `pool_indices`, the iteration variable **must** match the attribute access variable (e.g., `at.add(h.pool_address) for h in hops`, not `at.add(hop.pool_address) for h in hops`). A mismatch silently references an outer-scope variable from a prior loop, causing all pool addresses to resolve to the same deduplicated index. The resulting command stream calls the wrong pool for every V2_SWAP_CALC/V2_SWAP_COMPACT, producing `V2_SWAP_CALC: no excess balance` reverts.
-8. **Tstore continuation (0x04)** — For protocols without data passthrough, stores commands in transient storage; `onExternalCallback()` reads and processes them.
-9. **0xFE/0xFF preprocessing** — SET_ADDRESS, SKIP_PROFIT_CHECK, BRIBE live inside the command stream, eliminating DynArray overhead (~190+ bytes saved for 3 addresses).
-10. **Function extraction for Venom** — Dispatch split into 21+ `@internal` `_cmd_*` functions, enabling Venom's `ConcretizeMemLocPass` to reclaim memory across handlers. Memory: 22,976 → 8,544 (−62.8%).
+9. **Protocol sentinels only** — Only 4 address indices are sentinels: `0xFC`=PM, `0xFD`=self, `0xFE`=WETH, `0xFF`=NATIVE. Per-path tokens (USDC, WBTC, ...) are NOT baked into the contract --- they go through `t_addresses` via SET_ADDRESS. The old `USER0`/`USER1` sentinels were removed to avoid benchmark-overfitting and silent mis-resolution.
+10. **Config in ABI param, not the stream** — Profit check mode, bribe bips/recipient, and expected pre-tx balance are packed into the `config` uint256 argument of `execute()` (see `pack_config()`). The old stream opcodes `0x01`–`0x03` (SKIP_PROFIT_CHECK / BRIBE_COINBASE / BRIBE_ADDRESS) are reserved --- emitting them reverts.
+11. **Function extraction for Venom** — Dispatch split into 21+ `@internal` `_cmd_*` functions, enabling Venom's `ConcretizeMemLocPass` to reclaim memory across handlers. Memory: 22,976 → 8,544 (−62.8%).
 
 ### V3 vs V4 amountSpecified Sign Convention
 

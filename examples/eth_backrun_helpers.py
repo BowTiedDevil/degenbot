@@ -410,19 +410,27 @@ def encode_cmd_stream(
     Returns None if encoding fails for this path type.
 
     Args:
-        bribe_bips: Profit fraction (in bips, 10000=100%) to send as bribe.
-            0 = no bribe. Included in preamble preprocessing section.
+        bribe_bips: Deprecated — bribes moved out of the command stream into
+            the packed ``config`` ABI parameter of execute(). This argument
+            must be 0; pass bribe bips to the caller that builds ``config``
+            via ``pack_config(bribe_bips=...)`` instead.
         erc6909_profit: If True, use V4_MINT_COMPACT instead of V4_TAKE_DELTA
             for profit capture on pure V4 paths. Saves ~20K gas. Requires
-            check_mode=2 on expected_balance. See §13 of user guide.
+            check_mode=2 in the execute() ``config``. See §13 of user guide.
         use_v4_batch: If True, use V4_BATCH instead of individual V4 swap
             commands for pure V4 paths. Saves gas from single PM extcall.
     """
+    if bribe_bips:
+        msg = (
+            "bribes moved to the execute() config parameter; pass "
+            "bribe_bips via pack_config() at the call site, not the stream"
+        )
+        raise ValueError(msg)
     num_hops = len(path_info.hops)
 
     # Generalized N-hop V2 (2+ hops): flash borrow + chained V2_SWAP_CALC
     if all(isinstance(h, V2HopInfo) for h in path_info.hops):
-        return _encode_cmd_v2_n_hop(path_info, optimal_input, hop_outputs, executor_address, weth_address, bribe_bips=bribe_bips)
+        return _encode_cmd_v2_n_hop(path_info, optimal_input, hop_outputs, executor_address, weth_address)
 
     # 2-hop paths
     if num_hops == 2:
@@ -436,7 +444,6 @@ def encode_cmd_stream(
                 executor_address,
                 pool_manager_address,
                 weth_address,
-                bribe_bips=bribe_bips,
                 erc6909_profit=erc6909_profit,
                 use_v4_batch=use_v4_batch,
             )
