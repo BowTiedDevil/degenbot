@@ -142,7 +142,7 @@ def build(self, pool_address):
 - **Builder Protocol** — `PoolBuilder` protocol replaces the 4-way union type annotation; `_dispatch_build()` isinstance chain eliminated via `**kwargs` forwarding (Plan 035)
 - **Pool → Hop conversion** — each pool's `to_hop_state()` is the single source of truth; `solver_hop_builders.py` deleted (Plan 033)
 - **SwapAmounts consolidation** — `input_amount()`/`output_amount()` on `AbstractSwapAmounts`; `build_swap_amount()` on pool classes via `ArbitragePathPool` protocol; `_extract_amount_in/out` deleted (Plan 036)
-- **Legacy arbitrage cycles** — moved to `_legacy/` with deprecation warnings; `AbstractArbitrage` and `get_arbitrage_helpers()` deleted (Plan 038)
+- **Legacy arbitrage cycles** — deleted; `AbstractArbitrage` and `get_arbitrage_helpers()` deleted (Plan 038). Full removal of the `_legacy/` sub-package and `UniswapLpCycle`/`UniswapCurveCycle` redirects completes the migration to `ArbitragePath` + `ArbSolver`.
 - **Bot typed builders deprecated** — `build_v2_pool`, `build_v3_pool`, `build_v4_pool`, `build_curve_pool` emit `DeprecationWarning`; use `build_pool()` (Plan 044). Removed by Plan 059.
 - **Functions module** — `functions.py` split into domain-aligned modules: `provider/call_helpers.py`, `provider/log_fetching.py`, `contract/addresses.py`, `contract/decoding.py` (`decode_address`), `calculations/evm_math.py`, `provider/block_helpers.py`; `eip_191_hash` deleted as dead code (Plan 037); `decode_address` moved from `cli/aave_utils.py` to `contract/decoding.py` (Plan 075)
 - **CurveDataProviderImpl** — 850-line closure bag (`CurveFetcherFactory`) replaced by structured `CurveDataProviderImpl` (~350 lines) with real methods and shared I/O helpers (Plan 049)

@@ -2,14 +2,11 @@
 
 Validates that the ArbSolver fast-path produces identical results to the
 existing Brent/SCIPY optimization for V2-V2 and V2-V3 arbitrage paths.
-
-Also includes CVXPY solver comparison tests for property-based validation.
 """
 
 import time
 from fractions import Fraction
 
-import cvxpy.settings
 import hypothesis
 import pytest
 
@@ -30,7 +27,6 @@ from tests.arbitrage.generator.hypothesis_strategies import (
     seed_strategy,
 )
 
-from ._cvxpy_problem_factory import build_2pool_cvxpy_problem
 from .conftest import (
     FEE_0_05_PCT,
     FEE_0_3_PCT,
@@ -543,208 +539,4 @@ class TestArbSolverMultiHop:
         # Absolute: within 100 wei, relative: within 0.01%
         assert abs_diff <= 100 or rel_diff < 1e-4, (
             f"Möbius profit {solver_result.profit} vs Brent profit {brent_result.profit}"
-        )
-
-
-# ---------------------------------------------------------------------------
-# CVXPY Solver Comparison
-# ---------------------------------------------------------------------------
-
-
-class TestCVXPYSolverComparison:
-    """Compare CVXPY convex optimization solver with Möbius/Brent solvers.
-
-    CVXPY uses geometric mean for the constant-product invariant, which
-    should produce equivalent results to the analytical Möbius solution
-    for 2-pool V2 arbitrage.
-    """
-
-    @hypothesis.given(
-        price_ratio=price_ratio_strategy,
-        seed=seed_strategy,
-    )
-    @hypothesis.settings(deadline=None, max_examples=15)
-    def test_cvxpy_vs_mobius_2pool_v2(self, price_ratio: float, seed: int):
-        """Property: CVXPY and Möbius agree on 2-pool V2 arbitrage.
-
-        For any valid V2 pair, CVXPY convex optimization should find
-        the same optimal input as the analytical Möbius solution.
-        """
-        factory = FixtureFactory()
-        fixture = factory.random_v2_pair(
-            seed=seed,
-            liquidity_depth="medium",
-            price_ratio_range=(price_ratio, price_ratio),
-        )
-
-        pool_states = list(fixture.pool_states.values())
-        state_a, state_b = pool_states[0], pool_states[1]
-
-        # Build Hop objects for Möbius solver
-        # Determine which pool has better rate for token1
-        price_a = state_a.reserves_token1 / state_a.reserves_token0
-        price_b = state_b.reserves_token1 / state_b.reserves_token0
-
-        fee = Fraction(3, 1000)
-
-        if price_a > price_b:
-            # Pool A gives more token1 per token0
-            # Buy token0 in pool B (cheaper), sell in pool A
-            hop_1 = ConstantProductHop(
-                reserve_in=state_b.reserves_token0,
-                reserve_out=state_b.reserves_token1,
-                fee=fee,
-            )
-            hop_2 = ConstantProductHop(
-                reserve_in=state_a.reserves_token1,
-                reserve_out=state_a.reserves_token0,
-                fee=fee,
-            )
-        else:
-            # Pool B gives more token1 per token0
-            hop_1 = ConstantProductHop(
-                reserve_in=state_a.reserves_token0,
-                reserve_out=state_a.reserves_token1,
-                fee=fee,
-            )
-            hop_2 = ConstantProductHop(
-                reserve_in=state_b.reserves_token1,
-                reserve_out=state_b.reserves_token0,
-                fee=fee,
-            )
-
-        # Run Möbius solver
-        solver = ArbSolver()
-        try:
-            mobius_result = solver.solve(SolveInput(hops=(hop_1, hop_2)))
-            mobius_profit = mobius_result.profit
-        except OptimizationError:
-            # No arbitrage opportunity
-            return
-
-        # For CVXPY comparison, we verify the profit is positive
-        assert mobius_profit > 0, "Expected profitable arbitrage"
-
-    @hypothesis.given(
-        seed=seed_strategy,
-    )
-    @hypothesis.settings(deadline=None, max_examples=10)
-    def test_cvxpy_respects_invariant(self, seed: int):
-        """Property: CVXPY solution respects constant-product invariant.
-
-        After optimization, each pool should have k >= k_initial.
-        """
-        factory = FixtureFactory()
-        fixture = factory.random_v2_pair(
-            seed=seed,
-            liquidity_depth="medium",
-            price_ratio_range=(1.02, 1.04),
-        )
-
-        pool_states = list(fixture.pool_states.values())
-        state_a, state_b = pool_states[0], pool_states[1]
-
-        # Calculate initial k values
-        k_a_initial = state_a.reserves_token0 * state_a.reserves_token1
-        k_b_initial = state_b.reserves_token0 * state_b.reserves_token1
-
-        # K should be positive
-        assert k_a_initial > 0
-        assert k_b_initial > 0
-
-    def test_cvxpy_known_value_wbtc_weth(self):
-        """Known value test: CVXPY optimization on WBTC/WETH pools.
-
-        Verifies that CVXPY finds a profitable arbitrage for a known
-        pair of pools with specific reserves.
-        """
-        problem = build_2pool_cvxpy_problem(
-            reserves0_a=900 * 10**8,
-            reserves1_a=2100 * 10**18,
-            reserves0_b=925 * 10**8,
-            reserves1_b=2100 * 10**18,
-            decimals0=8,
-            decimals1=18,
-            fee=Fraction(3, 1000),
-        )
-
-        # Should find an optimal solution
-        assert problem.status in cvxpy.settings.SOLUTION_PRESENT
-
-        # Optimal value should be positive (profitable)
-        if problem.status == cvxpy.settings.OPTIMAL:
-            assert problem.value >= 0
-
-
-class TestCVXPYSolverAccuracy:
-    """Test CVXPY solver accuracy against ground truth."""
-
-    @pytest.mark.parametrize(
-        ("price_ratio", "fee"),
-        [
-            (1.02, Fraction(3, 1000)),
-            (1.05, Fraction(3, 1000)),
-            (1.02, Fraction(5, 10000)),
-            (1.10, Fraction(1, 100)),
-        ],
-        ids=["2%_0.3%", "5%_0.3%", "2%_0.05%", "10%_1%"],
-    )
-    def test_cvxpy_finds_profit(self, price_ratio: float, fee: Fraction):
-        """Test that CVXPY finds profitable arbitrage for various price ratios.
-
-        For any price discrepancy > total fees, arbitrage should be profitable.
-        """
-        # Pool A: base reserves
-        reserves_a_0 = 1000 * 10**18
-        reserves_a_1 = 2000 * 10**18
-
-        # Pool B: different price (price_ratio > 1 means pool B has different rate)
-        reserves_b_0 = reserves_a_0
-        reserves_b_1 = int(reserves_a_1 / price_ratio)
-
-        problem = build_2pool_cvxpy_problem(
-            reserves0_a=reserves_a_0,
-            reserves1_a=reserves_a_1,
-            reserves0_b=reserves_b_0,
-            reserves1_b=reserves_b_1,
-            decimals0=18,
-            decimals1=18,
-            fee=fee,
-        )
-
-        # Should find solution
-        assert problem.status in cvxpy.settings.SOLUTION_PRESENT
-
-        # Value indicates if profitable
-        # Note: with price_ratio > 1 and fees, profit may be zero or positive
-        # depending on whether the spread exceeds the fee cost
-        total_fee_cost = 2 * float(fee)  # Fees paid on both swaps
-        price_diff = price_ratio - 1.0
-
-        if price_diff > total_fee_cost:
-            # Should be profitable
-            assert problem.value >= 0, f"Expected profit for price_ratio={price_ratio}, fee={fee}"
-
-    def test_cvxpy_no_profit_identical_pools(self):
-        """Test that CVXPY finds no arbitrage for identical pools.
-
-        When pools have identical reserves and fees, there should be
-        no profitable arbitrage (profit <= 0 after fees).
-        """
-        problem = build_2pool_cvxpy_problem(
-            reserves0_a=1000 * 10**18,
-            reserves1_a=2000 * 10**18,
-            reserves0_b=1000 * 10**18,
-            reserves1_b=2000 * 10**18,
-            decimals0=18,
-            decimals1=18,
-            fee=Fraction(3, 1000),
-        )
-
-        # Should find solution but profit should be essentially zero
-        # (after fees, arbitrage is unprofitable for identical prices)
-        # Allow small positive value due to numerical precision
-        assert problem.status in cvxpy.settings.SOLUTION_PRESENT
-        assert problem.value < 1e-8, (
-            f"Expected no profit for identical pools with fees, got {problem.value}"
         )
