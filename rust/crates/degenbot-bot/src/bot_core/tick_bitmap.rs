@@ -15,12 +15,10 @@ use std::collections::HashMap;
 
 use alloy::primitives::{I256, U128, U256};
 
-use crate::bot_core::TickInfo;
+use degenbot_cl_math::cl_lib::functions::tick_position;
+use degenbot_cl_math::cl_lib::tick_math::{MAX_TICK, MIN_TICK};
 
-/// Minimum valid tick for Uniswap V3.
-const MIN_TICK: i32 = -887_272;
-/// Maximum valid tick for Uniswap V3.
-const MAX_TICK: i32 = 887_272;
+use crate::bot_core::TickInfo;
 
 /// A tick along the swap path, with an initialization flag.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,27 +27,6 @@ pub struct TickAlongPath {
     pub tick: i32,
     /// Whether this tick has initialized liquidity data.
     pub is_initialized: bool,
-}
-
-/// Compute the word position and bit position for a compressed tick.
-///
-/// This mirrors the Python `position()` function:
-/// `position(tick) = (tick >> 8, tick % 256)`
-///
-/// Note: Python's `%` operator always returns non-negative results for
-/// positive divisors, matching Rust's `rem_euclid`.
-#[must_use]
-pub const fn tick_position(compressed: i32) -> (i16, u8) {
-    // SAFETY: compressed is at most i32::MAX / 1 = 2147483, which fits in i16
-    // after >> 8 (= max 8388607/256 = 32767 which is i16::MAX).
-    // For negative values, >> 8 on i32 is arithmetic right shift.
-    let word_pos = compressed >> 8;
-    let bit_pos = compressed.rem_euclid(256);
-    // SAFETY: word_pos after >> 8 fits in i16 for any valid compressed tick
-    // (max compressed tick ~887272 / 60 ~14787, which fits in i16)
-    // bit_pos is 0..255, fits in u8
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    (word_pos as i16, bit_pos as u8)
 }
 
 /// Error type for [`gen_ticks`].
@@ -503,28 +480,6 @@ mod tests {
     }
 
     #[test]
-    fn test_tick_position_positive() {
-        assert_eq!(tick_position(0), (0, 0));
-        assert_eq!(tick_position(1), (0, 1));
-        assert_eq!(tick_position(255), (0, 255));
-        assert_eq!(tick_position(256), (1, 0));
-        assert_eq!(tick_position(257), (1, 1));
-    }
-
-    #[test]
-    fn test_tick_position_negative() {
-        // Python: -1 // 1 = -1, position(-1) = (-1 >> 8, -1 % 256) = (-1, 255)
-        // Rust: -1_i32 >> 8 = -1 (arithmetic shift), -1_i32.rem_euclid(256) = 255
-        assert_eq!(tick_position(-1), (-1, 255));
-        // Python: -256 // 1 = -256, position(-256) = (-256 >> 8, -256 % 256) = (-1, 0)
-        // Rust: -256_i32 >> 8 = -1, -256_i32.rem_euclid(256) = 0
-        assert_eq!(tick_position(-256), (-1, 0));
-        // Python: -257 // 1 = -257, position(-257) = (-257 >> 8, -257 % 256) = (-2, 255)
-        // Rust: -257_i32 >> 8 = -2, -257_i32.rem_euclid(256) = 255
-        assert_eq!(tick_position(-257), (-2, 255));
-    }
-
-    #[test]
     fn test_gen_ticks_initialized_on_word_boundary_descending() {
         // Regression test: when an initialized tick sits exactly on a word
         // boundary (tick 0 is at word_pos 0, bit 0), the Equal branch must
@@ -702,23 +657,6 @@ mod tests {
         // Should not include any tick below MIN_TICK (-887272)
         for tp in &ticks {
             assert!(tp.tick >= MIN_TICK, "tick {} below MIN_TICK", tp.tick);
-        }
-    }
-
-    #[test]
-    #[allow(clippy::similar_names)]
-    fn test_position_matches_python() {
-        // Python: position(tick) = (tick >> 8, tick % 256)
-        for tick in [-1000i32, -256, -1, 0, 1, 255, 256, 1000] {
-            let (wp, bp) = tick_position(tick);
-            let py_wp = tick >> 8;
-            let py_bp = tick.rem_euclid(256);
-            assert_eq!(i32::from(wp), py_wp, "word_pos mismatch for tick {tick}");
-            assert_eq!(
-                u32::from(bp),
-                py_bp.cast_unsigned(),
-                "bit_pos mismatch for tick {tick}"
-            );
         }
     }
 
