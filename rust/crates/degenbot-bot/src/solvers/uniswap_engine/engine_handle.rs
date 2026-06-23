@@ -55,6 +55,28 @@ impl EngineHandle {
 }
 
 impl Engine for EngineHandle {
+    /// Hold-time invariant (ergo 3HYYGQ, assessed 2026-06 — no refactor).
+    ///
+    /// This call holds the engine `Mutex` for the whole `solve_dirty`,
+    /// including the rayon `par_iter` solve in `rebuild_and_solve_affected`
+    /// (~5-20ms for 100-200 affected paths). This is **acceptable**: Python's
+    /// result hot path consumes batches via the unbounded `mpsc` channel
+    /// (`PyUniswapArbEngine::__anext__` → `rx.recv().await`), which never
+    /// acquires the engine lock, so the hold does NOT block result delivery.
+    /// The only cross-thread contenders during a solve are:
+    ///   - `EngineSubscriber::insert_dirty` (queues a dirty marker for the
+    ///     NEXT solve — a delayed mark is absorbed by the following
+    ///     `solve_dirty` iteration, so the delay is benign);
+    ///   - non-hot-path introspection/admin methods (`inspect_path`,
+    ///     `latest_results`, `deregister_path`, `set_profit_thresholds`).
+    ///
+    /// Do NOT speculatively split this lock (e.g. release around the rayon
+    /// `par_iter`) without first re-deriving interleaving safety for
+    /// `register_path`/`deregister_path`: those run GIL-released on the
+    /// Python thread concurrently with the pump and currently rely on this
+    /// single hold for serialization. `latest_results()` is test/admin-only —
+    /// grep-verified absent from the example hot loop, which is
+    /// `async for batch in engine_registry.engine:`.
     fn solve_dirty(&self, block: u64, metadata: &BlockMetadata) {
         self.engine.lock().solve_dirty(block, metadata);
     }
