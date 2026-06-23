@@ -53,9 +53,26 @@ from degenbot.types_solver.wire import (
 # sibling top-level workspaces, so the relative jump is stable.
 # ---------------------------------------------------------------------------
 
-_FIXTURES_PATH: Path = (
-    Path(__file__).resolve().parents[3] / "coordinator" / "src" / "types" / "fixtures.json"
-)
+
+def _resolve_fixtures_path() -> Path:
+    """Locate ``coordinator/src/types/fixtures.json`` by walking up from this file.
+
+    The canonical fixtures live in the parent monorepo's ``coordinator/`` workspace.
+    A hardcoded ``parents[N]`` jump silently broke when degenbot was vendored under
+    ``vendor/degenbot/`` (the index no longer pointed at the repo root, so the lock
+    test errored-out at collection and stopped guarding selector drift). Walk up
+    instead so the anchor survives relocation.
+    """
+    rel = Path("coordinator") / "src" / "types" / "fixtures.json"
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / rel
+        if candidate.is_file():
+            return candidate
+    # Fall back to the historical sibling-workspace layout for a clear error message.
+    return Path(__file__).resolve().parents[3] / rel
+
+
+_FIXTURES_PATH: Path = _resolve_fixtures_path()
 
 
 def _load_fixtures() -> list[dict[str, Any]]:
@@ -110,14 +127,14 @@ def test_execute_native_arb_selector_is_locked() -> None:
 
 
 def test_match_internal_selector_is_locked() -> None:
-    """``matchInternal`` selector is the locked value 0x5f188678."""
-    assert bytes.fromhex("5f188678") == MATCH_INTERNAL_SELECTOR
+    """``matchInternal`` selector is the locked value 0x210ea473 (12-field MatchParams)."""
+    assert bytes.fromhex("210ea473") == MATCH_INTERNAL_SELECTOR
     assert _sig_keccak(MATCH_INTERNAL_SIGNATURE) == MATCH_INTERNAL_SELECTOR
 
 
 def test_compose_four_leg_selector_is_locked() -> None:
-    """``composeFourLeg`` selector is the locked value 0x72c0469b."""
-    assert bytes.fromhex("72c0469b") == COMPOSE_FOUR_LEG_SELECTOR
+    """``composeFourLeg`` selector is the locked value 0x2e1977d2 (12-field ComposeParams)."""
+    assert bytes.fromhex("2e1977d2") == COMPOSE_FOUR_LEG_SELECTOR
     assert _sig_keccak(COMPOSE_FOUR_LEG_SIGNATURE) == COMPOSE_FOUR_LEG_SELECTOR
 
 
@@ -328,10 +345,12 @@ def test_synthetic_match_internal_encode_starts_with_selector() -> None:
         "flashAmount": "0",
         "minProfit": "0",
         "deadline": "0",
+        "settlementFundingToken": "0x" + "00" * 20,
+        "settlementFundingMax": "0",
     }
     params = match_params_from_wire(payload)
     out = encode_match_internal(params)
-    assert out.startswith("0x5f188678")
+    assert out.startswith("0x210ea473")
 
 
 def test_synthetic_compose_four_leg_encode_starts_with_selector() -> None:
@@ -347,10 +366,12 @@ def test_synthetic_compose_four_leg_encode_starts_with_selector() -> None:
         "flashAmount": "0",
         "minProfit": "0",
         "deadline": "0",
+        "settlementFundingToken": "0x" + "00" * 20,
+        "settlementFundingMax": "0",
     }
     params = compose_params_from_wire(payload)
     out = encode_compose_four_leg(params)
-    assert out.startswith("0x72c0469b")
+    assert out.startswith("0x2e1977d2")
 
 
 # ---------------------------------------------------------------------------

@@ -176,6 +176,8 @@ def match_params_from_wire(d: dict[str, Any]) -> MatchParams:
         flash_amount=int(d["flashAmount"]),
         min_profit=int(d["minProfit"]),
         deadline=int(d["deadline"]),
+        settlement_funding_token=str(d["settlementFundingToken"]),
+        settlement_funding_max=int(d["settlementFundingMax"]),
     )
 
 
@@ -193,4 +195,6 @@ def compose_params_from_wire(d: dict[str, Any]) -> ComposeParams:
         flash_amount=int(d["flashAmount"]),
         min_profit=int(d["minProfit"]),
         deadline=int(d["deadline"]),
+        settlement_funding_token=str(d["settlementFundingToken"]),
+        settlement_funding_max=int(d["settlementFundingMax"]),
     )

@@ -125,7 +125,12 @@ class MatchParams:
     arrays — the Executor checks per-token minimums after CoW + UniswapX
     settlement.
 
-    The 10-attribute count is fixed by the on-chain struct shape; reducing it
+    ``settlement_funding_token`` / ``settlement_funding_max`` are the ADR-029
+    settlement-funding commitment (audit 2026-06-09 hardening): the buyToken
+    and MAXIMUM amount ``transferToSettlement`` may forward to COW_SETTLEMENT
+    during this flow. Use ``(ZERO_ADDRESS, 0)`` when there is no CoW leg.
+
+    The 12-attribute count is fixed by the on-chain struct shape; reducing it
     would break ABI parity with the Executor.
     """
 
@@ -139,6 +144,8 @@ class MatchParams:
     flash_amount: int
     min_profit: int
     deadline: int
+    settlement_funding_token: str
+    settlement_funding_max: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,7 +155,12 @@ class ComposeParams:
     Sequence: Across destination fill, native arbitrage swaps, CoW fill,
     UniswapX rebalance — atomically backed by a single flash loan.
 
-    The 10-attribute count is fixed by the on-chain struct shape; reducing it
+    ``settlement_funding_token`` / ``settlement_funding_max`` are the ADR-029
+    settlement-funding commitment (audit 2026-06-09 hardening): the buyToken
+    and MAXIMUM amount ``transferToSettlement`` may forward to COW_SETTLEMENT
+    during Leg 3. Use ``(ZERO_ADDRESS, 0)`` when Leg 3 is empty.
+
+    The 12-attribute count is fixed by the on-chain struct shape; reducing it
     would break ABI parity with the Executor.
     """
 
@@ -162,3 +174,5 @@ class ComposeParams:
     flash_amount: int
     min_profit: int
     deadline: int
+    settlement_funding_token: str
+    settlement_funding_max: int

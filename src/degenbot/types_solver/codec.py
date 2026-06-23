@@ -46,10 +46,10 @@ if TYPE_CHECKING:
 
 #: ``executeNativeArb(NativeArbParams)`` selector.
 EXECUTE_NATIVE_ARB_SELECTOR: bytes = bytes.fromhex("f6f6add1")
-#: ``matchInternal(MatchParams)`` selector.
-MATCH_INTERNAL_SELECTOR: bytes = bytes.fromhex("5f188678")
-#: ``composeFourLeg(ComposeParams)`` selector.
-COMPOSE_FOUR_LEG_SELECTOR: bytes = bytes.fromhex("72c0469b")
+#: ``matchInternal(MatchParams)`` selector (12-field MatchParams, incl. ADR-029 settlement-funding).
+MATCH_INTERNAL_SELECTOR: bytes = bytes.fromhex("210ea473")
+#: ``composeFourLeg(ComposeParams)`` selector (12-field ComposeParams, incl. ADR-029 settlement-funding).
+COMPOSE_FOUR_LEG_SELECTOR: bytes = bytes.fromhex("2e1977d2")
 
 # ---------------------------------------------------------------------------
 # Canonical Solidity signatures — fully unfolded tuple shapes. Pulled
@@ -64,12 +64,13 @@ EXECUTE_NATIVE_ARB_SIGNATURE: str = (
     "uint256,uint256))"
 )
 MATCH_INTERNAL_SIGNATURE: str = (
-    "matchInternal((bytes,bytes,address[],uint256[],address,uint8,address,uint256,uint256,uint256))"
+    "matchInternal((bytes,bytes,address[],uint256[],address,uint8,address,"
+    "uint256,uint256,uint256,address,uint256))"
 )
 COMPOSE_FOUR_LEG_SIGNATURE: str = (
     "composeFourLeg("
     "(bytes,(uint8,address,bytes,address,address,uint256,uint256)[],"
-    "bytes,bytes,address,uint8,address,uint256,uint256,uint256))"
+    "bytes,bytes,address,uint8,address,uint256,uint256,uint256,address,uint256))"
 )
 
 # ---------------------------------------------------------------------------
@@ -80,11 +81,11 @@ COMPOSE_FOUR_LEG_SIGNATURE: str = (
 
 _NATIVE_ARB_TUPLE_TYPE: str = "(address,uint8,address,uint256,(uint8,address,bytes,address,address,uint256,uint256)[],uint256,uint256)"
 _MATCH_PARAMS_TUPLE_TYPE: str = (
-    "(bytes,bytes,address[],uint256[],address,uint8,address,uint256,uint256,uint256)"
+    "(bytes,bytes,address[],uint256[],address,uint8,address,uint256,uint256,uint256,address,uint256)"
 )
 _COMPOSE_PARAMS_TUPLE_TYPE: str = (
     "(bytes,(uint8,address,bytes,address,address,uint256,uint256)[],"
-    "bytes,bytes,address,uint8,address,uint256,uint256,uint256)"
+    "bytes,bytes,address,uint8,address,uint256,uint256,uint256,address,uint256)"
 )
 
 # ---------------------------------------------------------------------------
@@ -151,7 +152,7 @@ def _native_arb_to_tuple(
 
 def _match_params_to_tuple(
     p: MatchParams,
-) -> tuple[bytes, bytes, list[str], list[int], str, int, str, int, int, int]:
+) -> tuple[bytes, bytes, list[str], list[int], str, int, str, int, int, int, str, int]:
     """Flatten ``MatchParams`` into the eth_abi positional tuple."""
     return (
         _hex_to_bytes(p.cow_settlement_calldata),
@@ -164,6 +165,8 @@ def _match_params_to_tuple(
         p.flash_amount,
         p.min_profit,
         p.deadline,
+        p.settlement_funding_token,
+        p.settlement_funding_max,
     )
 
 
@@ -180,6 +183,8 @@ def _compose_params_to_tuple(
     int,
     int,
     int,
+    str,
+    int,
 ]:
     """Flatten ``ComposeParams`` into the eth_abi positional tuple."""
     return (
@@ -193,6 +198,8 @@ def _compose_params_to_tuple(
         p.flash_amount,
         p.min_profit,
         p.deadline,
+        p.settlement_funding_token,
+        p.settlement_funding_max,
     )
 
 
