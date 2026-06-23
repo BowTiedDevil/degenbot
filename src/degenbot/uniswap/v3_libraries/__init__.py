@@ -1,7 +1,8 @@
 """Uniswap V3 library functions.
 
-Provides Rust-accelerated CL math functions via the ``degenbot_rs`` extension.
-Python implementations remain in each submodule for reference and testing.
+Thin delegation shims over the Rust ``degenbot-cl-math`` core, exposed via
+the ``degenbot_rs`` extension. Each submodule adds only Solidity-matching
+input validation, ``lru_cache`` memoization, and ``EVMRevertError`` conversion.
 """
 
 from degenbot.degenbot_rs import (
