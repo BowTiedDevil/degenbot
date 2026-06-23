@@ -28,6 +28,23 @@ JOBS_DIR="${SCRIPT_DIR}/.jobs"
 DURATION_MINUTES="${TEST_DURATION:-15}"
 PARALLEL="${PARALLEL:-4}"
 
+# ── Pre-flight: kill leftover workers + bots from any previous run ──────────
+# A ^C on a prior run leaves background worker subshells alive (their SIGINT is
+# ignored in non-interactive bash). When their `sleep $DURATION` finally expires
+# they re-emerge and double-stop / double-analyze bots, overwriting good TSV
+# rows with stale results. Kill any `test_all_permutations.sh` worker processes
+# (excluding this very invocation) plus any stray bots before starting fresh.
+_self=$$
+_leftover=$(pgrep -f "test_all_permutations.sh" 2>/dev/null | grep -v "^${_self}$" || true)
+if [[ -n "$_leftover" ]]; then
+    echo "Killing leftover harness workers: $_leftover"
+    kill $_leftover 2>/dev/null || true
+    sleep 1
+    kill -9 $_leftover 2>/dev/null || true
+fi
+pkill -f "eth_backrun_v2_v3_v4_rust.py --permutation" 2>/dev/null || true
+sleep 2
+
 PERMUTATIONS=(
     "V2-V2-V2"
     "V2-V2-V3"
@@ -69,13 +86,31 @@ fi
 # Clean up job tracking directory
 rm -rf "$JOBS_DIR"
 mkdir -p "$JOBS_DIR"
-trap 'rm -rf "$JOBS_DIR"' EXIT
+
+# Forward SIGINT/SIGTERM to the whole process group so background worker
+# subshells actually die when the user hits ^C — otherwise they survive the
+# main script's death (background jobs ignore SIGINT by default in
+# non-interactive bash, but NOT SIGTERM) and later double-stop /
+# double-analyze bots from a later run, overwriting good TSV rows.
+# `kill -TERM 0` signals every process in our group, workers included.
+_CLEANING=0
+_cleanup() {
+    [[ "$_CLEANING" -eq 1 ]] && return 0
+    _CLEANING=1
+    pkill -f "eth_backrun_v2_v3_v4_rust.py --permutation" 2>/dev/null || true
+    kill -TERM 0 2>/dev/null || true
+    rm -rf "$JOBS_DIR"
+}
+trap '_cleanup; exit 130' INT
+trap '_cleanup; exit 143' TERM
+trap '_cleanup' EXIT
 
 # --- Worker: runs a single permutation end-to-end ---
 run_permutation() {
     local i=$1
     local PERM=$2
     local LOGFILE="${SCRIPT_DIR}/perm-${PERM}.log"
+    local STARTFILE="${JOBS_DIR}/starts/${i}"
 
     echo "=== [$i/27] Starting $PERM ==="
 
@@ -94,6 +129,13 @@ run_permutation() {
         --permutation "$PERM" \
         > "$LOGFILE" 2>&1 &
 
+    # Record when we launched the bot THIS invocation. Used after the sleep to
+    # detect zombie re-analysis: a worker from a ^C'd prior run has no fresh
+    # STARTFILE (its JOBS_DIR was wiped by `rm -rf` at the top of this run),
+    # so if STARTFILE is stale/missing we refuse to overwrite good TSV rows.
+    mkdir -p "${JOBS_DIR}/starts"
+    date +%s > "$STARTFILE"
+
     # Wait for duration
     sleep "$((DURATION_MINUTES * 60))"
 
@@ -102,6 +144,24 @@ run_permutation() {
     pkill -f "eth_backrun_v2_v3_v4_rust.py --permutation $PERM" 2>/dev/null || true
     sleep 3
     pkill -9 -f "eth_backrun_v2_v3_v4_rust.py --permutation $PERM" 2>/dev/null || true
+
+    # ── Zombie re-analysis guard ────────────────────────────────────────────
+    # Only analyze if the bot actually wrote to the log during THIS invocation
+    # (log mtime >= our recorded launch epoch). A zombie worker from an aborted
+    # previous run will reference a STARTFILE/LOGFILE state that predates this
+    # run, so its log mtime will be older than its own (bogus) launch epoch —
+    # refuse to analyze rather than overwrite good results with stale data.
+    if [[ ! -f "$LOGFILE" ]] || [[ ! -f "$STARTFILE" ]]; then
+        echo "=== [$i/27] $PERM: missing log/start file, skipping analysis ==="
+        return 0
+    fi
+    local LAUNCH_EPOCH LOG_MTIME
+    LAUNCH_EPOCH=$(cat "$STARTFILE")
+    LOG_MTIME=$(stat -c %Y "$LOGFILE")
+    if [[ "$LOG_MTIME" -lt "$LAUNCH_EPOCH" ]]; then
+        echo "=== [$i/27] $PERM: log predates this run's bot launch (stale), skipping analysis ==="
+        return 0
+    fi
 
     # ── Analyze results (three-category split, with revert decomposition) ──
     ANALYSIS=$(cd /home/ralph/code/degenbot && uv run python3 -c "
@@ -179,12 +239,13 @@ echo ""
 for i in $(seq "$START_INDEX" 27); do
     PERM="${PERMUTATIONS[$((i - 1))]}"
 
-    # Throttle: wait until a slot opens up
-    while [[ $(ls "$JOBS_DIR" 2>/dev/null | wc -l) -ge $PARALLEL ]]; do
+    # Throttle: wait until a slot opens up. Count only numeric job markers,
+    # NOT the `starts/*` launch-epoch files (which live under JOBS_DIR too).
+    while [[ $(find "$JOBS_DIR" -maxdepth 1 -type f -name '[0-9]*' 2>/dev/null | wc -l) -ge $PARALLEL ]]; do
         sleep 10
     done
 
-    # Launch worker in a subshell — creates a job marker, removes when done
+    # Launch worker in a subshell — creates a job marker, removes when done.
     (
         touch "$JOBS_DIR/$i"
         run_permutation "$i" "$PERM"
