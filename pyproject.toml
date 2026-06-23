@@ -123,7 +123,6 @@ extend-select = [
     "TRY",      # tryceratops
 ]
 ignore = [
-    "COM812",   # trailing commas are handled by the formatter
     "N818",     # error-suffix-on-exception-name
     "PLR0904",  # too-many-public-methods
     "PLR0911",  # too-many-return-statements

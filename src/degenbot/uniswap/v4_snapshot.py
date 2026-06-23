@@ -59,7 +59,9 @@ class UniswapV4LiquiditySnapshotSource(Protocol):
     # Any class implementing the protocol must implement these methods, transforming data as
     # necessary to return the specified types.
     def get_liquidity_map(
-        self, pool_manager: ChecksumAddress, pool_id: bytes | str
+        self,
+        pool_manager: ChecksumAddress,
+        pool_id: bytes | str,
     ) -> LiquidityMap | None:
         """Return liquidity map."""
         ...
@@ -215,7 +217,7 @@ class DatabaseSnapshot:
             .where(
                 UniswapV4PoolTable.pool_hash == HexBytes(pool_id).to_0x_hex(),
                 PoolManagerTable.address == pool_manager,
-            )
+            ),
         )
         if pool_in_db is None:
             return None
@@ -258,7 +260,7 @@ class DatabaseSnapshot:
                 JOIN managed_pool_liquidity_positions lp ON lp.managed_pool_id = mp.id
                 WHERE pm.chain = :chain_id AND mp.kind = 'uniswap_v4'
                 ORDER BY pm.address, v4.pool_hash, lp.tick
-                """
+                """,
             ),
             {"chain_id": self.chain_id},
         ).all()
@@ -285,8 +287,8 @@ class DatabaseSnapshot:
                     select(ExchangeTable.last_update_block).where(
                         ExchangeTable.chain_id == self.chain_id,
                         ExchangeTable.name.like("%!_v4", escape="!"),
-                    )
-                ).all()
+                    ),
+                ).all(),
             )
 
         if not last_update_blocks or None in last_update_blocks:
@@ -312,7 +314,7 @@ class UniswapV4LiquiditySnapshot:
     """Retrieve and maintain liquidity positions for Uniswap V4 pools."""
 
     UNISWAP_V4_MODIFYLIQUIDITY_EVENT_HASH = HexBytes(
-        Web3().eth.contract(abi=UNISWAP_V4_POOL_MANAGER_ABI).events.ModifyLiquidity().topic
+        Web3().eth.contract(abi=UNISWAP_V4_POOL_MANAGER_ABI).events.ModifyLiquidity().topic,
     )
 
     def __init__(self, source: UniswapV4LiquiditySnapshotSource) -> None:
@@ -331,7 +333,8 @@ class UniswapV4LiquiditySnapshot:
         self.newest_block: BlockNumber = source_block
 
         self._liquidity_events: dict[
-            tuple[ChecksumAddress, PoolId], list[UniswapV4LiquidityEvent]
+            tuple[ChecksumAddress, PoolId],
+            list[UniswapV4LiquidityEvent],
         ] = defaultdict(list)
         self._liquidity_snapshot: dict[
             tuple[ChecksumAddress, PoolId],
@@ -340,7 +343,7 @@ class UniswapV4LiquiditySnapshot:
             lambda key: self._source.get_liquidity_map(
                 get_checksum_address(key[0]),
                 HexBytes(key[1]).to_0x_hex(),
-            )
+            ),
         )
 
         logger.info(f"Loaded Uniswap V4 LP snapshot from {source.storage_kind} source")
@@ -433,7 +436,7 @@ class UniswapV4LiquiditySnapshot:
             # Ignores zero-amount events
             if any(event_log["data"][64:96]):
                 pool_manager_address, pool_id, liquidity_event = self._process_liquidity_event_log(
-                    event_log
+                    event_log,
                 )
                 self._liquidity_events[pool_manager_address, pool_id].append(liquidity_event)
 
@@ -478,7 +481,7 @@ class UniswapV4LiquiditySnapshot:
             # Ignores zero-amount events
             if any(event_log["data"][64:96]):
                 pool_manager_address, pool_id, liquidity_event = self._process_liquidity_event_log(
-                    event_log
+                    event_log,
                 )
                 self._liquidity_events[pool_manager_address, pool_id].append(liquidity_event)
 

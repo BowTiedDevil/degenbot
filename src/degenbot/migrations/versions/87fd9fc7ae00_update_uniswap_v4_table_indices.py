@@ -23,7 +23,10 @@ def upgrade() -> None:
     op.create_index(op.f("ix_pool_managers_address"), "pool_managers", ["address"], unique=True)
     op.drop_index(op.f("ix_managed_pool_hash"), table_name="uniswap_v4_pools")
     op.create_index(
-        op.f("ix_uniswap_v4_pools_pool_hash"), "uniswap_v4_pools", ["pool_hash"], unique=True
+        op.f("ix_uniswap_v4_pools_pool_hash"),
+        "uniswap_v4_pools",
+        ["pool_hash"],
+        unique=True,
     )
 
 

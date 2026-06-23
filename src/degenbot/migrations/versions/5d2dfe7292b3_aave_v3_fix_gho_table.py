@@ -23,7 +23,9 @@ def upgrade() -> None:
     with op.batch_alter_table("aave_gho_tokens", schema=None) as batch_op:
         batch_op.add_column(sa.Column("v_token_id", sa.Integer(), nullable=True))
         batch_op.create_index(
-            batch_op.f("ix_aave_gho_tokens_v_token_id"), ["v_token_id"], unique=False
+            batch_op.f("ix_aave_gho_tokens_v_token_id"),
+            ["v_token_id"],
+            unique=False,
         )
         batch_op.create_foreign_key(
             "fk_aave_gho_tokens_v_token_id_erc20_tokens",

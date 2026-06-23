@@ -72,7 +72,7 @@ def _process_scaled_token_operation(
     )
     logger.debug(
         f"Processing scaled token operation ({type(event).__name__}) for {token_type} revision "
-        f"{scaled_token_revision}"
+        f"{scaled_token_revision}",
     )
     logger.debug(position)
 
@@ -80,7 +80,7 @@ def _process_scaled_token_operation(
         case CollateralMintEvent():
             assert isinstance(position, AaveV3CollateralPosition)
             collateral_processor = TokenProcessorFactory.get_collateral_processor(
-                scaled_token_revision
+                scaled_token_revision,
             )
             mint_result: ScaledTokenMintResult = collateral_processor.process_mint_event(
                 event_data=event,
@@ -99,7 +99,7 @@ def _process_scaled_token_operation(
         case CollateralBurnEvent():
             assert isinstance(position, AaveV3CollateralPosition)
             collateral_processor = TokenProcessorFactory.get_collateral_processor(
-                scaled_token_revision
+                scaled_token_revision,
             )
             burn_result: ScaledTokenBurnResult = collateral_processor.process_burn_event(
                 event_data=event,
@@ -109,7 +109,7 @@ def _process_scaled_token_operation(
             )
             logger.debug(
                 f"_process_scaled_token_operation burn: delta={burn_result.balance_delta}, "
-                f"new_balance={position.balance + burn_result.balance_delta}"
+                f"new_balance={position.balance + burn_result.balance_delta}",
             )
             position.balance += burn_result.balance_delta
             # Only update last_index if the new index is greater than current
@@ -322,7 +322,7 @@ def _process_deficit_coverage_burn(
     # The raw amount needs to be converted to scaled amount
     assert scaled_event.index is not None
     token_math = TokenMathFactory.get_token_math_for_token_revision(
-        collateral_asset.a_token_revision
+        collateral_asset.a_token_revision,
     )
     scaled_amount = token_math.get_collateral_burn_scaled_amount(
         amount=scaled_event.amount,
@@ -365,7 +365,7 @@ def _process_collateral_mint_with_match(
     asset_identifier = get_asset_identifier(collateral_asset)
     logger.debug(
         f"[Pool rev {tx_context.pool_revision}] Processing {asset_identifier} collateral mint "
-        f"at block {event['blockNumber']}"
+        f"at block {event['blockNumber']}",
     )
 
     user = get_or_create_user(
@@ -431,7 +431,7 @@ def _process_collateral_burn_with_match(
     asset_identifier = get_asset_identifier(collateral_asset)
     logger.debug(
         f"[Pool rev {tx_context.pool_revision}] Processing {asset_identifier} collateral burn "
-        f"at block {event['blockNumber']}"
+        f"at block {event['blockNumber']}",
     )
 
     # Get user
@@ -457,7 +457,7 @@ def _process_collateral_burn_with_match(
     # This should not happen for normal burns, but provides a safety net
     if scaled_amount is None and raw_amount is not None:
         token_math = TokenMathFactory.get_token_math_for_token_revision(
-            collateral_asset.a_token_revision
+            collateral_asset.a_token_revision,
         )
         assert scaled_event.index is not None
         scaled_amount = token_math.get_collateral_burn_scaled_amount(
@@ -478,7 +478,7 @@ def _process_collateral_burn_with_match(
         position=collateral_position,
     )
     logger.debug(
-        f"After burn position id={id(collateral_position)}, balance={collateral_position.balance}"
+        f"After burn position id={id(collateral_position)}, balance={collateral_position.balance}",
     )
 
 
@@ -516,7 +516,7 @@ def _process_debt_mint_with_match(
     asset_identifier = get_asset_identifier(debt_asset)
     logger.debug(
         f"[Pool rev {tx_context.pool_revision}] Processing {asset_identifier} debt mint "
-        f"at block {event['blockNumber']}"
+        f"at block {event['blockNumber']}",
     )
 
     user = get_or_create_user(
@@ -635,7 +635,7 @@ def _process_debt_mint_with_match(
                 if pattern == LiquidationPattern.COMBINED_BURN:
                     logger.debug(
                         f"_process_debt_mint_with_match: COMBINED_BURN pattern - "
-                        f"skipping Mint event for {liquidation_key} (handled by aggregated burn)"
+                        f"skipping Mint event for {liquidation_key} (handled by aggregated burn)",
                     )
                     return
                 # For SINGLE and SEPARATE_BURNS, process the Mint event normally
@@ -671,14 +671,15 @@ def _process_debt_mint_with_match(
 
             # Use token revision (not pool revision) to get correct TokenMath
             token_math = TokenMathFactory.get_token_math_for_token_revision(
-                debt_asset.v_token_revision
+                debt_asset.v_token_revision,
             )
             actual_scaled_burn = token_math.get_debt_burn_scaled_amount(
-                repay_amount, scaled_event.index
+                repay_amount,
+                scaled_event.index,
             )
             logger.debug(
                 f"{operation.operation_type.name} with Mint event: treating as burn, "
-                f"amount={repay_amount}, scaled_burn={actual_scaled_burn}"
+                f"amount={repay_amount}, scaled_burn={actual_scaled_burn}",
             )
             _process_scaled_token_operation(
                 event=DebtBurnEvent(
@@ -764,7 +765,7 @@ def _process_debt_burn_with_match(
     asset_identifier = get_asset_identifier(debt_asset)
     logger.debug(
         f"[Pool rev {tx_context.pool_revision}] Processing {asset_identifier} debt burn "
-        f"at block {event['blockNumber']}"
+        f"at block {event['blockNumber']}",
     )
 
     user = get_or_create_user(
@@ -797,7 +798,7 @@ def _process_debt_burn_with_match(
         debt_position.balance = 0
         logger.debug(
             f"_process_debt_burn_with_match: BAD DEBT LIQUIDATION - setting balance to 0 "
-            f"(was {old_balance})"
+            f"(was {old_balance})",
         )
 
         # Only update last_index if the new index is greater than current
@@ -864,7 +865,7 @@ def _process_debt_burn_with_match(
         logger.debug(f"_process_debt_burn_with_match: scaled_event.amount = {scaled_event.amount}")
         logger.debug(
             f"_process_debt_burn_with_match: scaled_event.balance_increase = "
-            f"{scaled_event.balance_increase}"
+            f"{scaled_event.balance_increase}",
         )
         logger.debug(f"_process_debt_burn_with_match: scaled_event.index = {scaled_event.index}")
 
@@ -880,16 +881,17 @@ def _process_debt_burn_with_match(
                 debt_to_cover = operation.debt_to_cover
 
                 token_math = TokenMathFactory.get_token_math_for_token_revision(
-                    debt_asset.v_token_revision
+                    debt_asset.v_token_revision,
                 )
                 burn_value = token_math.get_debt_burn_scaled_amount(
-                    debt_to_cover, scaled_event.index
+                    debt_to_cover,
+                    scaled_event.index,
                 )
                 scaled_amount = burn_value
 
                 logger.debug(
                     f"_process_debt_burn_with_match: SINGLE liquidation using "
-                    f"debtToCover={debt_to_cover}, scaled_burn={burn_value}"
+                    f"debtToCover={debt_to_cover}, scaled_burn={burn_value}",
                 )
 
             elif pattern == LiquidationPattern.COMBINED_BURN:
@@ -901,14 +903,14 @@ def _process_debt_burn_with_match(
                 total_debt = group.total_debt_to_cover
 
                 token_math = TokenMathFactory.get_token_math_for_token_revision(
-                    debt_asset.v_token_revision
+                    debt_asset.v_token_revision,
                 )
                 burn_value = token_math.get_debt_burn_scaled_amount(total_debt, scaled_event.index)
                 scaled_amount = burn_value
 
                 logger.debug(
                     f"_process_debt_burn_with_match: COMBINED_BURN ({group.liquidation_count}x) "
-                    f"using aggregated debtToCover={total_debt}, scaled_burn={burn_value}"
+                    f"using aggregated debtToCover={total_debt}, scaled_burn={burn_value}",
                 )
 
             elif pattern == LiquidationPattern.SEPARATE_BURNS:
@@ -918,16 +920,17 @@ def _process_debt_burn_with_match(
                 debt_to_cover = operation.debt_to_cover
 
                 token_math = TokenMathFactory.get_token_math_for_token_revision(
-                    debt_asset.v_token_revision
+                    debt_asset.v_token_revision,
                 )
                 burn_value = token_math.get_debt_burn_scaled_amount(
-                    debt_to_cover, scaled_event.index
+                    debt_to_cover,
+                    scaled_event.index,
                 )
                 scaled_amount = burn_value
 
                 logger.debug(
                     f"_process_debt_burn_with_match: SEPARATE_BURNS using "
-                    f"debtToCover={debt_to_cover}, scaled_burn={burn_value}"
+                    f"debtToCover={debt_to_cover}, scaled_burn={burn_value}",
                 )
 
             else:

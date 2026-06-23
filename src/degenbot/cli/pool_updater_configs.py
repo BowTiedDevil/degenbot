@@ -106,7 +106,7 @@ def _get_or_create_token(
             select(Erc20TokenTable).where(
                 Erc20TokenTable.chain == chain_id,
                 Erc20TokenTable.address == address,
-            )
+            ),
         )
     ) is None:
         token = Erc20TokenTable(chain=chain_id, address=address)
@@ -262,7 +262,7 @@ def update_v3_pools(
                 fee_token1=fee,
                 fee_denominator=config.fee_denominator,
                 tick_spacing=tick_spacing,
-            )
+            ),
         )
 
 
@@ -278,7 +278,7 @@ def update_v4_pools(
 ) -> None:
     """Process V4-style pool creation events for a DEX."""
     manager_in_db = session.scalar(
-        select(PoolManagerTable).where(PoolManagerTable.address == exchange.factory)
+        select(PoolManagerTable).where(PoolManagerTable.address == exchange.factory),
     )
     assert manager_in_db is not None
 
@@ -327,5 +327,5 @@ def update_v4_pools(
                 fee_currency1=fee,
                 fee_denominator=config.fee_denominator,
                 tick_spacing=tick_spacing,
-            )
+            ),
         )

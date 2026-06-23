@@ -131,10 +131,10 @@ def _dfs(
                 path_steps.append(
                     PathStep(
                         address=session.scalars(
-                            sqlalchemy.select(pool_type.address).where(pool_type.id == pool_id)
+                            sqlalchemy.select(pool_type.address).where(pool_type.id == pool_id),
                         ).one(),
                         type=pool_type,
-                    )
+                    ),
                 )
             elif issubclass(pool_type, UniswapV4PoolTable):
                 pool_address, pool_hash = session.execute(
@@ -144,7 +144,7 @@ def _dfs(
                         pool_type.pool_hash,
                     )
                     .join(pool_type.manager)
-                    .where(pool_type.id == pool_id)
+                    .where(pool_type.id == pool_id),
                 ).one()
 
                 path_steps.append(
@@ -152,7 +152,7 @@ def _dfs(
                         address=pool_address,
                         hash=pool_hash,
                         type=pool_type,
-                    )
+                    ),
                 )
 
         assert min_depth <= len(path_steps)
@@ -275,10 +275,10 @@ async def _dfs_async(
                 path_steps.append(
                     PathStep(
                         address=session.scalars(
-                            sqlalchemy.select(pool_type.address).where(pool_type.id == pool_id)
+                            sqlalchemy.select(pool_type.address).where(pool_type.id == pool_id),
                         ).one(),
                         type=pool_type,
-                    )
+                    ),
                 )
             elif issubclass(pool_type, UniswapV4PoolTable):
                 pool_address, pool_hash = session.execute(
@@ -288,7 +288,7 @@ async def _dfs_async(
                         pool_type.pool_hash,
                     )
                     .join(pool_type.manager)
-                    .where(pool_type.id == pool_id)
+                    .where(pool_type.id == pool_id),
                 ).one()
 
                 path_steps.append(
@@ -296,7 +296,7 @@ async def _dfs_async(
                         address=pool_address,
                         hash=pool_hash,
                         type=pool_type,
-                    )
+                    ),
                 )
 
         assert min_depth <= len(path_steps)
@@ -373,19 +373,19 @@ def _get_tokens_with_min_degree(
         if issubclass(pool_type, LiquidityPoolTable):
             token_count_selects.extend((
                 sqlalchemy.select(pool_type.token0_id.label("token_id")).where(
-                    pool_type.chain == chain_id
+                    pool_type.chain == chain_id,
                 ),
                 sqlalchemy.select(pool_type.token1_id.label("token_id")).where(
-                    pool_type.chain == chain_id
+                    pool_type.chain == chain_id,
                 ),
             ))
         if issubclass(pool_type, UniswapV4PoolTable):
             token_count_selects.extend((
                 sqlalchemy.select(pool_type.currency0_id.label("token_id")).where(
-                    pool_type.manager.has(chain=chain_id)
+                    pool_type.manager.has(chain=chain_id),
                 ),
                 sqlalchemy.select(pool_type.currency1_id.label("token_id")).where(
-                    pool_type.manager.has(chain=chain_id)
+                    pool_type.manager.has(chain=chain_id),
                 ),
             ))
     token_count_subq = sqlalchemy.union_all(*token_count_selects).subquery()
@@ -401,8 +401,8 @@ def _get_tokens_with_min_degree(
     )
     return set(
         session.scalars(
-            sqlalchemy.select(token_counts_greater_than_two_subq.columns["token_id"])
-        ).all()
+            sqlalchemy.select(token_counts_greater_than_two_subq.columns["token_id"]),
+        ).all(),
     )
 
 
@@ -427,7 +427,7 @@ def _prepare_graph(
         before = len(candidate_tokens)
         candidate_tokens &= allowed_intermediate_tokens
         logger.debug(
-            f"Token whitelist applied: {before} → {len(candidate_tokens)} candidate tokens"
+            f"Token whitelist applied: {before} → {len(candidate_tokens)} candidate tokens",
         )
 
     # Build the graph by creating edges (pools) connecting nodes (tokens) in the
@@ -446,7 +446,7 @@ def _prepare_graph(
                         pool_type.id,
                         pool_type.token0_id,
                         pool_type.token1_id,
-                    ).where(pool_type.chain == chain_id)
+                    ).where(pool_type.chain == chain_id),
                 ).all()
                 if (token0_id in candidate_tokens and token1_id in candidate_tokens)
             )
@@ -462,7 +462,7 @@ def _prepare_graph(
                         pool_type.id,
                         pool_type.currency0_id,
                         pool_type.currency1_id,
-                    ).where(pool_type.manager.has(chain=chain_id))
+                    ).where(pool_type.manager.has(chain=chain_id)),
                 )
                 if (currency0_id in candidate_tokens and currency1_id in candidate_tokens)
             )
@@ -470,7 +470,7 @@ def _prepare_graph(
 
     logger.debug(
         f"Built graph at +{time.perf_counter() - start:.1f}s: "
-        f"{graph.number_of_nodes()} tokens, {graph.number_of_edges()} pools"
+        f"{graph.number_of_nodes()} tokens, {graph.number_of_edges()} pools",
     )
 
     # Prune dead end tokens
@@ -478,7 +478,7 @@ def _prepare_graph(
         graph.remove_nodes_from(tokens_to_prune)
     logger.debug(
         f"Pruned graph at +{time.perf_counter() - start:.1f}s: "
-        f"{graph.number_of_nodes()} tokens, {graph.number_of_edges()} pools"
+        f"{graph.number_of_nodes()} tokens, {graph.number_of_edges()} pools",
     )
 
     return graph
@@ -581,8 +581,8 @@ def find_paths(
                             get_checksum_address(t) for t in allowed_intermediate_tokens
                         }),
                         Erc20TokenTable.chain == chain_id,
-                    )
-                ).all()
+                    ),
+                ).all(),
             )
 
         graph = _prepare_graph(
@@ -600,7 +600,7 @@ def find_paths(
             node_valid_depths = _compute_node_valid_depths(graph, pool_type_per_depth)
             logger.debug(
                 f"Computed node valid depths for lookahead pruning: "
-                f"{sum(1 for v in node_valid_depths.values() if len(v) > 1)} bridge nodes"
+                f"{sum(1 for v in node_valid_depths.values() if len(v) > 1)} bridge nodes",
             )
 
         traversal_plan = _prepare_traversal_plan(
@@ -613,7 +613,7 @@ def find_paths(
                 sqlalchemy.select(Erc20TokenTable.id).where(
                     Erc20TokenTable.address == start_token,
                     Erc20TokenTable.chain == chain_id,
-                )
+                ),
             )
             if start_token_id is None:
                 msg = f"Start token {start_token} was not found in the database."
@@ -623,7 +623,7 @@ def find_paths(
                 sqlalchemy.select(Erc20TokenTable.id).where(
                     Erc20TokenTable.address == end_token,
                     Erc20TokenTable.chain == chain_id,
-                )
+                ),
             )
             if end_token_id is None:
                 msg = f"End token {end_token} was not found in the database."
@@ -633,7 +633,7 @@ def find_paths(
 
             logger.debug(
                 f"Finding paths from {start_token} "
-                f"(id {start_token_id}) -> {end_token} (id {end_token_id})"
+                f"(id {start_token_id}) -> {end_token} (id {end_token_id})",
             )
 
             # A permutation filter implies an exact hop depth: don't yield
@@ -662,7 +662,7 @@ def find_paths(
 
             logger.debug(
                 f"Completed structured generic search (max depth {max_depth}) "
-                f"at +{time.perf_counter() - start:.1f}s"
+                f"at +{time.perf_counter() - start:.1f}s",
             )
 
 
@@ -723,8 +723,8 @@ async def find_paths_async(
                             get_checksum_address(t) for t in allowed_intermediate_tokens
                         }),
                         Erc20TokenTable.chain == chain_id,
-                    )
-                ).all()
+                    ),
+                ).all(),
             )
 
         graph = _prepare_graph(
@@ -742,7 +742,7 @@ async def find_paths_async(
             node_valid_depths = _compute_node_valid_depths(graph, pool_type_per_depth)
             logger.debug(
                 f"Computed node valid depths for lookahead pruning: "
-                f"{sum(1 for v in node_valid_depths.values() if len(v) > 1)} bridge nodes"
+                f"{sum(1 for v in node_valid_depths.values() if len(v) > 1)} bridge nodes",
             )
 
         traversal_plan = _prepare_traversal_plan(
@@ -755,7 +755,7 @@ async def find_paths_async(
                 sqlalchemy.select(Erc20TokenTable.id).where(
                     Erc20TokenTable.address == start_token,
                     Erc20TokenTable.chain == chain_id,
-                )
+                ),
             )
             if start_token_id is None:
                 msg = f"Start token {start_token} was not found in the database."
@@ -765,7 +765,7 @@ async def find_paths_async(
                 sqlalchemy.select(Erc20TokenTable.id).where(
                     Erc20TokenTable.address == end_token,
                     Erc20TokenTable.chain == chain_id,
-                )
+                ),
             )
             if end_token_id is None:
                 msg = f"End token {end_token} was not found in the database."
@@ -775,7 +775,7 @@ async def find_paths_async(
 
             logger.debug(
                 f"Finding paths from {start_token} "
-                f"(id {start_token_id}) -> {end_token} (id {end_token_id})"
+                f"(id {start_token_id}) -> {end_token} (id {end_token_id})",
             )
 
             # A permutation filter implies an exact hop depth: don't yield
@@ -805,7 +805,7 @@ async def find_paths_async(
 
             logger.debug(
                 f"Completed structured generic search (max depth {max_depth}) "
-                f"at +{time.perf_counter() - start:.1f}s"
+                f"at +{time.perf_counter() - start:.1f}s",
             )
     finally:
         session.close()

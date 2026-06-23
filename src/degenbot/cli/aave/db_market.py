@@ -30,7 +30,7 @@ def get_e_mode_category(
         select(AaveV3EModeCategory).where(
             AaveV3EModeCategory.market_id == market.id,
             AaveV3EModeCategory.category_id == category_id,
-        )
+        ),
     )
 
 
@@ -74,7 +74,7 @@ def get_asset_config(
     return session.scalar(
         select(AaveV3AssetConfig).where(
             AaveV3AssetConfig.asset_id == asset_id,
-        )
+        ),
     )
 
 
@@ -124,7 +124,7 @@ def get_user_collateral_config(
         select(AaveV3UserCollateralConfig).where(
             AaveV3UserCollateralConfig.user_id == user_id,
             AaveV3UserCollateralConfig.asset_id == asset_id,
-        )
+        ),
     )
 
 

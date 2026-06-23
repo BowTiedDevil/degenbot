@@ -272,7 +272,7 @@ class LiquidityPool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
         """
         if update.block_number < self.update_block:
             raise ExternalUpdateError(
-                message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}"  # noqa: E501
+                message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}",  # noqa: E501
             )
 
         if (

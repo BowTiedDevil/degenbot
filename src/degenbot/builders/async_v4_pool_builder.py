@@ -92,14 +92,14 @@ class AsyncV4PoolBuilder:
                 select(PoolManagerTable).where(
                     PoolManagerTable.address == pool_manager_address,
                     PoolManagerTable.chain == chain_id,
-                )
+                ),
             )
             if pool_manager_in_db is not None:
                 pool_from_db = session.scalar(
                     select(UniswapV4PoolTable).where(
                         UniswapV4PoolTable.pool_hash == pool_id_bytes.to_0x_hex(),
                         UniswapV4PoolTable.manager.has(id=pool_manager_in_db.id),
-                    )
+                    ),
                 )
                 if pool_from_db is not None:
                     db_values = V4BuilderBase.extract_db_values(pool_from_db)
@@ -116,19 +116,19 @@ class AsyncV4PoolBuilder:
         else:
             if request.state_view_address is None:
                 raise DegenbotValueError(
-                    message="A state view contract address must be provided for a pool not in the database."  # noqa: E501
+                    message="A state view contract address must be provided for a pool not in the database.",  # noqa: E501
                 )
             if request.fee is None:
                 raise DegenbotValueError(
-                    message="A fee must be provided for a pool not in the database."
+                    message="A fee must be provided for a pool not in the database.",
                 )
             if request.tick_spacing is None:
                 raise DegenbotValueError(
-                    message="A tick spacing must be provided for a pool not in the database."
+                    message="A tick spacing must be provided for a pool not in the database.",
                 )
             if request.tokens is None:
                 raise DegenbotValueError(
-                    message="Token addresses must be provided for a pool not in the database."
+                    message="Token addresses must be provided for a pool not in the database.",
                 )
 
             state_view_address = get_checksum_address(request.state_view_address)
@@ -146,10 +146,16 @@ class AsyncV4PoolBuilder:
 
         # Build tokens (async)
         token0 = await self._erc20_builder.build(
-            currency0_address, chain_id=chain_id, silent=request.silent, io=io
+            currency0_address,
+            chain_id=chain_id,
+            silent=request.silent,
+            io=io,
         )
         token1 = await self._erc20_builder.build(
-            currency1_address, chain_id=chain_id, silent=request.silent, io=io
+            currency1_address,
+            chain_id=chain_id,
+            silent=request.silent,
+            io=io,
         )
 
         # Fetch slot0 + liquidity via state view contract
@@ -199,7 +205,7 @@ class AsyncV4PoolBuilder:
             if pool_id_db is not None:
                 with contextlib.suppress(Exception), self._db() as session:
                     pool_with_data = session.scalar(
-                        select(UniswapV4PoolTable).where(UniswapV4PoolTable.id == pool_id_db)
+                        select(UniswapV4PoolTable).where(UniswapV4PoolTable.id == pool_id_db),
                     )
                     if pool_with_data is not None:
                         working_tick_bitmap, working_tick_data, db_snapshot_loaded = (
@@ -208,7 +214,8 @@ class AsyncV4PoolBuilder:
 
             if not db_snapshot_loaded:
                 word, _ = get_tick_word_and_bit_position(
-                    tick=int(slot0_data.tick), tick_spacing=tick_spacing_for_pool
+                    tick=int(slot0_data.tick),
+                    tick_spacing=tick_spacing_for_pool,
                 )
 
                 assert state_view_address is not None

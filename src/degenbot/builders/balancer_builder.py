@@ -97,7 +97,9 @@ class BalancerBuilder(BalancerBuilderBase):
 
         # 2. Fetch pool ID from chain
         pool_id = BalancerBuilderBase._fetch_pool_id(  # noqa: SLF001
-            io, pool_address, state_block
+            io,
+            pool_address,
+            state_block,
         )
 
         # 3. Decode specialization from pool_id
@@ -105,12 +107,16 @@ class BalancerBuilder(BalancerBuilderBase):
 
         # 4. Fetch tokens and balances from Vault
         token_addresses, balances = BalancerBuilderBase._fetch_vault_tokens(  # noqa: SLF001
-            io, pool_id, state_block
+            io,
+            pool_id,
+            state_block,
         )
 
         # 5. Fetch fee
         fee = BalancerBuilderBase._fetch_swap_fee(  # noqa: SLF001
-            io, pool_address, state_block
+            io,
+            pool_address,
+            state_block,
         )
 
         # 6. Build shared context
@@ -126,7 +132,9 @@ class BalancerBuilder(BalancerBuilderBase):
 
         # 7. Detect pool type and build
         pool_type = BalancerBuilderBase._detect_pool_type(  # noqa: SLF001
-            io, pool_address, state_block
+            io,
+            pool_address,
+            state_block,
         )
         if pool_type == _BalancerPoolType.WEIGHTED:
             return self._build_weighted(io, build_ctx, request)
@@ -156,7 +164,9 @@ class BalancerBuilder(BalancerBuilderBase):
 
         # Fetch weights
         weights = BalancerBuilderBase._fetch_weights(  # noqa: SLF001
-            io, ctx.address, ctx.state_block
+            io,
+            ctx.address,
+            ctx.state_block,
         )
 
         # Detect PowVersion from bytecode
@@ -209,7 +219,8 @@ class BalancerBuilder(BalancerBuilderBase):
         specialization: int,
     ) -> BalancerV2StablePool:
         assert isinstance(
-            request, BuildPoolRequest
+            request,
+            BuildPoolRequest,
         )  # Balancer never receives BuildManagedPoolRequest
         # Build tokens
         tokens = [
@@ -219,7 +230,9 @@ class BalancerBuilder(BalancerBuilderBase):
 
         # Fetch amp
         amp = BalancerBuilderBase._fetch_amp(  # noqa: SLF001
-            io, ctx.address, ctx.state_block
+            io,
+            ctx.address,
+            ctx.state_block,
         )
 
         # Detect BPT index
@@ -231,13 +244,17 @@ class BalancerBuilder(BalancerBuilderBase):
 
         # Fetch rate providers and compute scaling factors
         rate_provider_addresses = BalancerBuilderBase._fetch_rate_providers(  # noqa: SLF001
-            io, ctx.address, ctx.state_block
+            io,
+            ctx.address,
+            ctx.state_block,
         )
         base_sf = tuple(_compute_scaling_factor(t) for t in tokens)
 
         if rate_provider_addresses:
             rates = BalancerBuilderBase._fetch_rates(  # noqa: SLF001
-                io, rate_provider_addresses, ctx.state_block
+                io,
+                rate_provider_addresses,
+                ctx.state_block,
             )
             scaling_factors = tuple(
                 bsf * rate // ONE for bsf, rate in zip(base_sf, rates, strict=True)
@@ -318,7 +335,9 @@ class BalancerBuilder(BalancerBuilderBase):
 
         if isinstance(pool, BalancerV2Pool):
             _, new_balances = BalancerBuilderBase._fetch_vault_tokens(  # noqa: SLF001
-                io, pool.pool_id, block_number
+                io,
+                pool.pool_id,
+                block_number,
             )
 
             if pool.balances == tuple(new_balances):
@@ -333,7 +352,9 @@ class BalancerBuilder(BalancerBuilderBase):
 
         if isinstance(pool, BalancerV2StablePool):
             _, new_balances = BalancerBuilderBase._fetch_vault_tokens(  # noqa: SLF001
-                io, pool.pool_id, block_number
+                io,
+                pool.pool_id,
+                block_number,
             )
 
             if pool.balances == tuple(new_balances):

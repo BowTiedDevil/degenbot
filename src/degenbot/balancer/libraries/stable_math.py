@@ -342,7 +342,8 @@ def _calc_bpt_out_given_exact_tokens_in(  # noqa: PLR0917
             taxable_amount = amounts_in[i] - non_taxable_amount
             # Swap fee is guaranteed to be lower than 50%
             amount_in_without_fee = non_taxable_amount + mul_down(
-                taxable_amount, ONE - swap_fee_percentage
+                taxable_amount,
+                ONE - swap_fee_percentage,
             )
         else:
             amount_in_without_fee = amounts_in[i]
@@ -440,7 +441,8 @@ def _calc_bpt_in_given_exact_tokens_out(  # noqa: PLR0917
             taxable_amount = amounts_out[i] - non_taxable_amount
             # Swap fee is guaranteed to be lower than 50%
             amount_out_with_fee = non_taxable_amount + div_up(
-                taxable_amount, ONE - swap_fee_percentage
+                taxable_amount,
+                ONE - swap_fee_percentage,
             )
         else:
             amount_out_with_fee = amounts_out[i]

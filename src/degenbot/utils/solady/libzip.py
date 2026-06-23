@@ -57,7 +57,7 @@ def flz_compress(uncompressed_data: str | bytes) -> HexBytes:
             output_buffer.extend(
                 input_buffer[
                     input_buffer_start_offset : input_buffer_start_offset + number_of_literals
-                ]
+                ],
             )
 
             run_length -= number_of_literals

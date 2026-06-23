@@ -36,7 +36,7 @@ def upgrade() -> None:
             and pool_manager.state_view is None
         ):
             pool_manager.state_view = get_checksum_address(
-                "0x7fFE42C4a5DEeA5b0feC41C94C136Cf115597227"
+                "0x7fFE42C4a5DEeA5b0feC41C94C136Cf115597227",
             )
 
         elif (
@@ -46,7 +46,7 @@ def upgrade() -> None:
             and pool_manager.state_view is None
         ):
             pool_manager.state_view = get_checksum_address(
-                "0xA3c0c9b65baD0b08107Aa264b0f3dB444b867A71"
+                "0xA3c0c9b65baD0b08107Aa264b0f3dB444b867A71",
             )
 
     session.commit()

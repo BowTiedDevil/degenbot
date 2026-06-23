@@ -272,7 +272,9 @@ class PoolTypeRegistry:
         return (chain_id, factory_address) in self._entries
 
     def get_class(
-        self, chain_id: ChainId, factory_address: str
+        self,
+        chain_id: ChainId,
+        factory_address: str,
     ) -> type[AbstractLiquidityPool] | None:
         """Get the pool class for (chain_id, factory).
 
@@ -288,7 +290,9 @@ class PoolTypeRegistry:
         return None
 
     def get_v2_class(
-        self, chain_id: ChainId, factory_address: str
+        self,
+        chain_id: ChainId,
+        factory_address: str,
     ) -> type[ConstantProductPool] | None:
         """Get the V2 pool class for (chain_id, factory), with default fallback.
 
@@ -304,7 +308,9 @@ class PoolTypeRegistry:
         return self._default_v2_class
 
     def get_v3_class(
-        self, chain_id: ChainId, factory_address: str
+        self,
+        chain_id: ChainId,
+        factory_address: str,
     ) -> type[ConcentratedLiquidityPool] | None:
         """Get the V3 pool class for (chain_id, factory), with default fallback.
 

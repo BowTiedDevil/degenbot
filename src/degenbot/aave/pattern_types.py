@@ -73,19 +73,21 @@ class LiquidationPatternContext:
 
     # Detected pattern for each (user, debt_v_token) pair
     patterns: dict[tuple[ChecksumAddress, ChecksumAddress], LiquidationPattern] = field(
-        default_factory=dict
+        default_factory=dict,
     )
 
     # Detailed group information
     groups: dict[tuple[ChecksumAddress, ChecksumAddress], LiquidationGroup] = field(
-        default_factory=dict
+        default_factory=dict,
     )
 
     # Track which groups have been processed (for COMBINED_BURN pattern)
     processed_groups: set[tuple[ChecksumAddress, ChecksumAddress]] = field(default_factory=set)
 
     def get_pattern(
-        self, user: ChecksumAddress, debt_v_token: ChecksumAddress
+        self,
+        user: ChecksumAddress,
+        debt_v_token: ChecksumAddress,
     ) -> LiquidationPattern | None:
         """Get the pattern for a specific (user, debt_v_token).
 
@@ -96,7 +98,9 @@ class LiquidationPatternContext:
         return self.patterns.get((user, debt_v_token))
 
     def get_group(
-        self, user: ChecksumAddress, debt_v_token: ChecksumAddress
+        self,
+        user: ChecksumAddress,
+        debt_v_token: ChecksumAddress,
     ) -> LiquidationGroup | None:
         """Get the liquidation group for detailed analysis.
 

@@ -89,7 +89,9 @@ class CurvePoolBuilder:
 
         # 2. Fetch A, fee, admin_fee
         a_coefficient, fee, admin_fee = _fetch_pool_params(
-            io, pool_address, block_identifier=state_block
+            io,
+            pool_address,
+            block_identifier=state_block,
         )
 
         # 3. Detect A ramping
@@ -106,7 +108,11 @@ class CurvePoolBuilder:
 
         # 6. Detect lending tokens
         lending = detect_lending_tokens(
-            io, pool_address, coins.token_addresses, tokens, block_identifier=state_block
+            io,
+            pool_address,
+            coins.token_addresses,
+            tokens,
+            block_identifier=state_block,
         )
 
         # 7. Detect crypto pool parameters
@@ -141,7 +147,10 @@ class CurvePoolBuilder:
         # 11. Build LP token
         lp_token = (
             self._erc20_builder.build(
-                lp_token_address, chain_id=chain_id, silent=request.silent, io=io
+                lp_token_address,
+                chain_id=chain_id,
+                silent=request.silent,
+                io=io,
             )
             if lp_token_address is not None
             else None
@@ -257,7 +266,9 @@ class CurvePoolBuilder:
 
         """
         rate_multipliers, _ = _compute_rate_and_precision_multipliers(
-            tokens, precision_multipliers, CurveStableswapPool.PRECISION_DECIMALS
+            tokens,
+            precision_multipliers,
+            CurveStableswapPool.PRECISION_DECIMALS,
         )
         pool_id = self._py_bot.register_curve_pool(
             address=address,

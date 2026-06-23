@@ -119,12 +119,12 @@ class AbstractUniswapV2PoolTracker[Pool: LiquidityPool](AbstractPoolTracker[Pool
             )
         except LiquidityPoolError as exc:
             raise PoolCreationFailed(
-                message=f"Could not build V2 pool {pool_address}: {exc}"
+                message=f"Could not build V2 pool {pool_address}: {exc}",
             ) from exc
         else:
             if not isinstance(new_pool, self.pool_factory):
                 raise PoolCreationFailed(
-                    message=f"Pool {pool_address} is not a {self.pool_factory.__name__}"
+                    message=f"Pool {pool_address} is not a {self.pool_factory.__name__}",
                 )
             self._add_tracked_pool(new_pool)
             return new_pool
@@ -288,12 +288,12 @@ class AbstractUniswapV3PoolTracker[Pool: UniswapV3Pool](AbstractPoolTracker[Pool
             )
         except LiquidityPoolError as exc:  # pragma: no cover
             raise PoolCreationFailed(
-                message=f"Could not build V3 pool {pool_address}: {exc}"
+                message=f"Could not build V3 pool {pool_address}: {exc}",
             ) from exc
         else:
             if not isinstance(new_pool, self.pool_factory):
                 raise PoolCreationFailed(
-                    message=f"Pool {pool_address} is not a {self.pool_factory.__name__}"
+                    message=f"Pool {pool_address} is not a {self.pool_factory.__name__}",
                 )
             self._apply_pending_liquidity_updates(new_pool)
             self._add_tracked_pool(new_pool)

@@ -148,7 +148,11 @@ class CurveDataProviderImpl:
         return cast(
             "int",
             self._wrap_revert(
-                self._call_single, target, "get_virtual_price()", "uint256", block_number
+                self._call_single,
+                target,
+                "get_virtual_price()",
+                "uint256",
+                block_number,
             ),
         )
 
@@ -222,7 +226,11 @@ class CurveDataProviderImpl:
         return cast(
             "int",
             self._wrap_revert(
-                self._call_single, self._pool_address, "D()", "uint256", block_number
+                self._call_single,
+                self._pool_address,
+                "D()",
+                "uint256",
+                block_number,
             ),
         )
 
@@ -236,7 +244,11 @@ class CurveDataProviderImpl:
         return cast(
             "int",
             self._wrap_revert(
-                self._call_single, self._pool_address, "gamma()", "uint256", block_number
+                self._call_single,
+                self._pool_address,
+                "gamma()",
+                "uint256",
+                block_number,
             ),
         )
 
@@ -250,7 +262,8 @@ class CurveDataProviderImpl:
         price_scale = [0] * (self._n_coins - 1)
         for token_index in range(self._n_coins - 1):
             data = Web3.keccak(text="price_scale(uint256)")[:4] + eth_abi.abi.encode(
-                types=["uint256"], args=[token_index]
+                types=["uint256"],
+                args=[token_index],
             )
             result = self._io.call_raw(
                 {"to": self._pool_address, "data": data},
@@ -285,7 +298,8 @@ class CurveDataProviderImpl:
 
         """
         data = encode_function_calldata(
-            "balanceOf(address)", [get_checksum_address(holder_address)]
+            "balanceOf(address)",
+            [get_checksum_address(holder_address)],
         )
         result = self._io.call(
             to=get_checksum_address(token_address),
@@ -364,7 +378,10 @@ class CurveDataProviderImpl:
         """
         result: list[int] = []
         for token_addr, is_lending, multiplier in zip(
-            self._token_addresses, self._use_lending, self._precision_multipliers, strict=True
+            self._token_addresses,
+            self._use_lending,
+            self._precision_multipliers,
+            strict=True,
         ):
             if not is_lending:
                 rate = self.PRECISION
@@ -394,13 +411,19 @@ class CurveDataProviderImpl:
         """
         result: list[int] = []
         for token_addr, multiplier, is_lending in zip(
-            self._token_addresses, self._precision_multipliers, self._use_lending, strict=True
+            self._token_addresses,
+            self._precision_multipliers,
+            self._use_lending,
+            strict=True,
         ):
             if is_lending:
                 rate = cast(
                     "int",
                     self._call_single(
-                        token_addr, "getPricePerFullShare()", "uint256", block_number
+                        token_addr,
+                        "getPricePerFullShare()",
+                        "uint256",
+                        block_number,
                     ),
                 )
             else:
@@ -417,7 +440,9 @@ class CurveDataProviderImpl:
         """
         result: list[int] = []
         for token_addr, precision_multiplier in zip(
-            self._token_addresses, self._precision_multipliers, strict=True
+            self._token_addresses,
+            self._precision_multipliers,
+            strict=True,
         ):
             rate = cast(
                 "int",
@@ -445,7 +470,10 @@ class CurveDataProviderImpl:
         ratio = cast(
             "int",
             self._call_single(
-                self._token_addresses[1], "getExchangeRate()", "uint256", block_number
+                self._token_addresses[1],
+                "getExchangeRate()",
+                "uint256",
+                block_number,
             ),
         )
         return (self.PRECISION, ratio)
@@ -504,7 +532,10 @@ class CurveDataProviderImpl:
 
         """
         (snap_contract_address,) = self._call(
-            self._pool_address, "redemption_price_snap()", ["address"], block_number
+            self._pool_address,
+            "redemption_price_snap()",
+            ["address"],
+            block_number,
         )
         rate = self._call_single(
             get_checksum_address(snap_contract_address),

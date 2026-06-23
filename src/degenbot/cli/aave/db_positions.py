@@ -27,7 +27,7 @@ def get_or_create_position[T: (AaveV3CollateralPosition, AaveV3DebtPosition)](
         select(position_table).where(
             position_table.user_id == user.id,
             position_table.asset_id == asset_id,
-        )
+        ),
     )
 
     if existing_position is not None:

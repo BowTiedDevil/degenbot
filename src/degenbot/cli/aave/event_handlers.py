@@ -68,8 +68,8 @@ def _process_collateral_configuration_changed_event(
     # Find the asset in the database
     asset = session.scalar(
         select(AaveV3Asset).where(
-            AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address))
-        )
+            AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address)),
+        ),
     )
     assert asset is not None
 
@@ -250,7 +250,7 @@ def _process_e_mode_category_added_event(
         select(AaveV3EModeCategory).where(
             AaveV3EModeCategory.market_id == market_id,
             AaveV3EModeCategory.category_id == category_id,
-        )
+        ),
     )
 
     if category is None:
@@ -312,7 +312,7 @@ def _process_emode_asset_category_changed_event(
         select(AaveV3Asset).where(
             AaveV3Asset.market_id == market_id,
             AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address)),
-        )
+        ),
     )
     assert asset is not None
 
@@ -335,12 +335,12 @@ def _process_emode_asset_category_changed_event(
         )
         session.add(config)
         logger.info(
-            f"Created AaveV3AssetConfig for {asset_address} with eMode category {new_category_id}"
+            f"Created AaveV3AssetConfig for {asset_address} with eMode category {new_category_id}",
         )
     else:
         config.e_mode_category_id = int(new_category_id) if new_category_id > 0 else None
         logger.info(
-            f"Updated eMode category for {asset_address}: {old_category_id} -> {new_category_id}"
+            f"Updated eMode category for {asset_address}: {old_category_id} -> {new_category_id}",
         )
 
     return config
@@ -384,7 +384,7 @@ def _process_asset_collateral_in_emode_changed_event(
         select(AaveV3Asset).where(
             AaveV3Asset.market_id == market_id,
             AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address)),
-        )
+        ),
     )
     assert asset is not None
 
@@ -409,7 +409,7 @@ def _process_asset_collateral_in_emode_changed_event(
         )
         session.add(config)
         logger.info(
-            f"Created AaveV3AssetConfig for {asset_address} with eMode category {e_mode_cat}"
+            f"Created AaveV3AssetConfig for {asset_address} with eMode category {e_mode_cat}",
         )
     # Update category if asset is being added as collateral, clear if removed
     elif is_collateral and category_id > 0:
@@ -447,7 +447,7 @@ def _process_reserve_used_as_collateral_enabled_event(
         select(AaveV3Asset).where(
             AaveV3Asset.market_id == market_id,
             AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address)),
-        )
+        ),
     )
     assert asset is not None
 
@@ -456,7 +456,7 @@ def _process_reserve_used_as_collateral_enabled_event(
         select(AaveV3User).where(
             AaveV3User.market_id == market_id,
             AaveV3User.address == get_checksum_address(user_address),
-        )
+        ),
     )
     assert user is not None
 
@@ -465,7 +465,7 @@ def _process_reserve_used_as_collateral_enabled_event(
         select(AaveV3UserCollateralConfig).where(
             AaveV3UserCollateralConfig.user_id == user.id,
             AaveV3UserCollateralConfig.asset_id == asset.id,
-        )
+        ),
     )
 
     if config is None:
@@ -510,7 +510,7 @@ def _process_reserve_used_as_collateral_disabled_event(
         select(AaveV3Asset).where(
             AaveV3Asset.market_id == market_id,
             AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address)),
-        )
+        ),
     )
     assert asset is not None
 
@@ -519,7 +519,7 @@ def _process_reserve_used_as_collateral_disabled_event(
         select(AaveV3User).where(
             AaveV3User.market_id == market_id,
             AaveV3User.address == get_checksum_address(user_address),
-        )
+        ),
     )
     assert user is not None
 
@@ -528,7 +528,7 @@ def _process_reserve_used_as_collateral_disabled_event(
         select(AaveV3UserCollateralConfig).where(
             AaveV3UserCollateralConfig.user_id == user.id,
             AaveV3UserCollateralConfig.asset_id == asset.id,
-        )
+        ),
     )
 
     if config is None:
@@ -573,7 +573,8 @@ def _process_asset_initialization_event(
     # Note: stableDebtToken is deprecated in Aave V3 and no longer used, so is ignored
     v_token_address: str
     (_, v_token_address, _) = eth_abi.abi.decode(
-        types=["address", "address", "address"], data=event["data"]
+        types=["address", "address", "address"],
+        data=event["data"],
     )
     v_token_address = get_checksum_address(v_token_address)
 
@@ -677,7 +678,7 @@ def _process_asset_initialization_event(
     gho_asset = get_gho_asset(session, market)
     if asset_address == gho_asset.token.address:
         gho_token_entry = session.scalar(
-            select(AaveGhoToken).where(AaveGhoToken.token_id == erc20_token_in_db.id)
+            select(AaveGhoToken).where(AaveGhoToken.token_id == erc20_token_in_db.id),
         )
         assert gho_token_entry is not None
         gho_token_entry.v_token_id = v_token.id
@@ -731,7 +732,8 @@ def _process_discount_token_updated_event(
     # Ignore the event if it didn't come from the GHO VariableDebtToken contract
     if gho_asset.v_token is None or gho_asset.v_token.address != event["address"]:
         logger.debug(
-            "Ignoring DiscountTokenUpdated event, not from canonical GHO VariableDebtToken contract"
+            "Ignoring DiscountTokenUpdated event, not from canonical GHO VariableDebtToken "
+            "contract",
         )
         return
 
@@ -743,7 +745,7 @@ def _process_discount_token_updated_event(
     gho_asset.v_gho_discount_token = new_discount_token_address
 
     logger.info(
-        f"SET NEW DISCOUNT TOKEN: {old_discount_token_address} -> {new_discount_token_address}"
+        f"SET NEW DISCOUNT TOKEN: {old_discount_token_address} -> {new_discount_token_address}",
     )
 
 
@@ -766,7 +768,7 @@ def _process_discount_rate_strategy_updated_event(
     if gho_asset.v_token is None or gho_asset.v_token.address != event["address"]:
         logger.debug(
             "Ignoring DiscountRateStrategyUpdated event, not from canonical GHO VariableDebtToken "
-            "contract"
+            "contract",
         )
         return
 
@@ -779,7 +781,7 @@ def _process_discount_rate_strategy_updated_event(
 
     logger.info(
         f"SET NEW DISCOUNT RATE STRATEGY: {old_discount_rate_strategy_address} -> "
-        f"{new_discount_rate_strategy_address}"
+        f"{new_discount_rate_strategy_address}",
     )
 
 
@@ -813,7 +815,7 @@ def _process_reserve_data_update_event(
         .where(
             AaveV3Asset.market_id == market.id,
             Erc20TokenTable.address == reserve_asset_address,
-        )
+        ),
     )
     assert asset_in_db is not None
 
@@ -884,7 +886,7 @@ def _process_scaled_token_upgrade_event(
         )
         aave_collateral_asset.a_token_revision = atoken_revision
         logger.info(
-            f"Upgraded aToken revision for {aave_collateral_asset.a_token} to {atoken_revision}"
+            f"Upgraded aToken revision for {aave_collateral_asset.a_token} to {atoken_revision}",
         )
     elif (
         aave_debt_asset := get_asset_by_token_type(
@@ -923,7 +925,7 @@ def _process_scaled_token_upgrade_event(
                     select(AaveV3User).where(
                         AaveV3User.market_id == tx_context.market.id,
                         AaveV3User.gho_discount != 0,
-                    )
+                    ),
                 )
                 .scalars()
                 .all()
@@ -931,7 +933,7 @@ def _process_scaled_token_upgrade_event(
                 user.gho_discount = 0
             logger.info(
                 f"GHO discount mechanism deprecated at revision {vtoken_revision}. "
-                "Set GHO discounts to 0"
+                "Set GHO discounts to 0",
             )
 
     else:
@@ -1008,7 +1010,7 @@ def _process_proxy_creation_event(
             name=proxy_name,
             address=proxy_address,
             revision=revision,
-        )
+        ),
     )
 
 
@@ -1033,11 +1035,11 @@ def _process_pool_data_provider_updated_event(
                 market_id=market.id,
                 name="POOL_DATA_PROVIDER",
                 address=new_pool_data_provider_address,
-            )
+            ),
         )
     else:
         pool_data_provider = session.scalar(
-            select(AaveV3Contract).where(AaveV3Contract.address == old_pool_data_provider_address)
+            select(AaveV3Contract).where(AaveV3Contract.address == old_pool_data_provider_address),
         )
         assert pool_data_provider is not None
         pool_data_provider.address = new_pool_data_provider_address
@@ -1070,7 +1072,7 @@ def _process_address_set_event(
             market_id=market.id,
             name=contract_name,
             address=new_address,
-        )
+        ),
     )
     logger.info(f"Registered contract {contract_name}: @ {new_address}")
 
@@ -1101,7 +1103,7 @@ def _process_price_oracle_updated_event(
 
     logger.info(
         f"PriceOracleUpdated: oldAddress={old_address}, newAddress={new_address} "
-        f"(block {event['blockNumber']})"
+        f"(block {event['blockNumber']})",
     )
 
     # Register or update the PRICE_ORACLE in the database
@@ -1109,7 +1111,7 @@ def _process_price_oracle_updated_event(
         select(AaveV3Contract).where(
             AaveV3Contract.market_id == market.id,
             AaveV3Contract.name == "PRICE_ORACLE",
-        )
+        ),
     )
     assert existing_oracle is None
 
@@ -1118,7 +1120,7 @@ def _process_price_oracle_updated_event(
             market_id=market.id,
             name="PRICE_ORACLE",
             address=new_address,
-        )
+        ),
     )
     logger.info(f"Registered PRICE_ORACLE at {new_address} from PriceOracleUpdated event")
 
@@ -1151,14 +1153,14 @@ def _process_asset_source_updated_event(
         select(AaveV3Asset).where(
             AaveV3Asset.market_id == market.id,
             AaveV3Asset.underlying_token.has(address=get_checksum_address(asset_address)),
-        )
+        ),
     )
     assert asset is not None
 
     asset.price_source = get_checksum_address(source_address)
     logger.info(
         f"AssetSourceUpdated: asset={asset_address}, source={source_address} "
-        f"(block {event['blockNumber']})"
+        f"(block {event['blockNumber']})",
     )
 
 
@@ -1182,7 +1184,7 @@ def _process_discount_percent_updated_event(
     ```
     """
     logger.debug(
-        f"Processing _process_discount_percent_updated_event at block {event['blockNumber']}"
+        f"Processing _process_discount_percent_updated_event at block {event['blockNumber']}",
     )
 
     user_address = decode_address(event["topics"][1])
@@ -1202,6 +1204,6 @@ def _process_discount_percent_updated_event(
     logger.debug(
         f"DiscountPercentUpdated for {user_address}: "
         f"{user.gho_discount} -> {new_discount_percent} "
-        f"(user.id={user.id})"
+        f"(user.id={user.id})",
     )
     user.gho_discount = new_discount_percent

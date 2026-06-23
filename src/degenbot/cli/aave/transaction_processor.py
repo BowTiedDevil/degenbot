@@ -124,7 +124,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
                 select(AaveV3User).where(
                     AaveV3User.address.in_(gho_user_addresses),
                     AaveV3User.market_id == tx_context.market.id,
-                )
+                ),
             )
         }
         if gho_user_addresses
@@ -194,7 +194,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
 
     logger.debug(
         f"[Pool rev {tx_context.pool_revision}] Processing transaction at block "
-        f"{tx_context.block_number}"
+        f"{tx_context.block_number}",
     )
 
     # Parse events into operations
@@ -227,7 +227,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
             logger.debug(
                 f"  Scaled event: logIndex={scaled_ev.event['logIndex']}, "
                 f"type={scaled_ev.event_type}, user={scaled_ev.user_address}, "
-                f"amount={scaled_ev.amount}, index={scaled_ev.index}"
+                f"amount={scaled_ev.amount}, index={scaled_ev.index}",
             )
         for transfer_ev in op.transfer_events:
             logger.debug(f"  Transfer event: logIndex={transfer_ev['logIndex']}")
@@ -279,7 +279,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
             tx_context.last_withdraw_user_address = first_event.user_address
             logger.debug(
                 f"Pre-processed WITHDRAW amount: {tx_context.last_withdraw_amount} "
-                f"for operation {operation.operation_id}"
+                f"for operation {operation.operation_id}",
             )
 
     # Process each operation in chronological order (sorted by pool event or minimum scaled event
@@ -300,7 +300,7 @@ def _process_transaction(tx_context: TransactionContext) -> None:
     sorted_operations = sorted(tx_operations.operations, key=_get_operation_sort_key)
     for operation in sorted_operations:
         logger.debug(
-            f"Processing operation {operation.operation_id}: {operation.operation_type.name}"
+            f"Processing operation {operation.operation_id}: {operation.operation_type.name}",
         )
         _process_operation(
             operation=operation,
@@ -441,7 +441,7 @@ def _process_operation(
     """
     logger.debug(
         f"[Pool rev {tx_context.pool_revision}] Processing operation {operation.operation_id}: "
-        f"{operation.operation_type.name}"
+        f"{operation.operation_type.name}",
     )
 
     # Skip stkAAVE transfers - they're pre-processed separately before operations
@@ -492,7 +492,7 @@ def _process_operation(
                 logger.debug(
                     f"WITHDRAW: Treating COLLATERAL_MINT as burn - interest exceeds withdrawal "
                     f"(amount={scaled_event.amount}, "
-                    f"balance_increase={scaled_event.balance_increase})"
+                    f"balance_increase={scaled_event.balance_increase})",
                 )
                 _process_collateral_burn_with_match(
                     event=event,
@@ -511,7 +511,7 @@ def _process_operation(
                 logger.debug(
                     f"REPAY_WITH_ATOKENS: Treating COLLATERAL_MINT as burn - "
                     f"interest exceeds repayment (amount={scaled_event.amount}, "
-                    f"balance_increase={scaled_event.balance_increase})"
+                    f"balance_increase={scaled_event.balance_increase})",
                 )
                 _process_collateral_burn_with_match(
                     event=event,

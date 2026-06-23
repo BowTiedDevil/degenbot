@@ -54,7 +54,7 @@ def upgrade() -> None:
                 sa.select(Erc20TokenTable.id).where(
                     Erc20TokenTable.chain == chain_id,
                     Erc20TokenTable.address == token_address,
-                )
+                ),
             )
             for chain_id, token_address in tokens
         }  # type: ignore
@@ -66,7 +66,7 @@ def upgrade() -> None:
             batch_op.create_foreign_key("fk_token1_id", "erc20_tokens", ["token1_id"], ["id"])
 
         for pool_id, token0, token1 in connection.execute(
-            sa.text(f"SELECT pool_id,token0,token1 FROM {table.__tablename__}")  # noqa: S608
+            sa.text(f"SELECT pool_id,token0,token1 FROM {table.__tablename__}"),  # noqa: S608
         ).fetchall():
             pool_chain = session.scalar(sa.select(table.chain).where(table.pool_id == pool_id))
             connection.execute(
@@ -74,7 +74,7 @@ def upgrade() -> None:
                     f"""
                     UPDATE {table.__tablename__}\
                     SET token0_id = :token0_value, token1_id = :token1_value\
-                    WHERE pool_id = :pool_id"""  # noqa: S608
+                    WHERE pool_id = :pool_id""",  # noqa: S608
                 ),
                 {
                     "pool_id": pool_id,

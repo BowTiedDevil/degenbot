@@ -84,7 +84,7 @@ class UniswapV2PoolCalc:
                 0,
                 int(
                     self.reserves_token1 / ratio_absolute
-                    - self.reserves_token0 / (1 - self._fee_token0)
+                    - self.reserves_token0 / (1 - self._fee_token0),
                 ),
             )
 
@@ -92,7 +92,7 @@ class UniswapV2PoolCalc:
             0,
             int(
                 self.reserves_token0 / ratio_absolute
-                - self.reserves_token1 / (1 - self._fee_token1)
+                - self.reserves_token1 / (1 - self._fee_token1),
             ),
         )
 
@@ -122,7 +122,7 @@ class UniswapV2PoolCalc:
             zero_for_one = False
         else:  # pragma: no cover
             raise DegenbotValueError(
-                message=f"Could not identify token_out: {token_out}! This pool holds: {self._token0} {self._token1}"  # noqa:E501
+                message=f"Could not identify token_out: {token_out}! This pool holds: {self._token0} {self._token1}",  # noqa:E501
             )
 
         if override_state is None:
@@ -137,7 +137,7 @@ class UniswapV2PoolCalc:
             )
             if result == 0:
                 raise LiquidityPoolError(
-                    message=f"Requested amount out ({token_out_quantity}) >= pool reserves"
+                    message=f"Requested amount out ({token_out_quantity}) >= pool reserves",
                 )
             return result
 
@@ -155,7 +155,7 @@ class UniswapV2PoolCalc:
 
         if token_out_quantity > reserves_out - 1:
             raise LiquidityPoolError(
-                message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})"  # noqa:E501
+                message=f"Requested amount out ({token_out_quantity}) >= pool reserves ({reserves_out})",  # noqa:E501
             )
 
         return constant_product_calc_exact_out(
@@ -190,7 +190,7 @@ class UniswapV2PoolCalc:
             zero_for_one = False
         else:  # pragma: no cover
             raise DegenbotValueError(
-                message=f"Could not identify token_in: {token_in}! Pool holds: {self._token0} {self._token1}"  # noqa:E501
+                message=f"Could not identify token_in: {token_in}! Pool holds: {self._token0} {self._token1}",  # noqa:E501
             )
 
         if override_state is None:

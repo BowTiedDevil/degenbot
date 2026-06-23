@@ -71,7 +71,7 @@ class AsyncV2PoolBuilder:
                 select(LiquidityPoolTable).where(
                     LiquidityPoolTable.address == pool_address,
                     LiquidityPoolTable.chain == chain_id,
-                )
+                ),
             )
             if pool_from_db is not None:
                 factory, token0_address, token1_address, fee_token0, fee_token1 = (
@@ -175,10 +175,16 @@ class AsyncV2PoolBuilder:
 
         # Build tokens (async)
         token0 = await self._erc20_builder.build(
-            common.token0_address, chain_id=chain_id, silent=request.silent, io=io
+            common.token0_address,
+            chain_id=chain_id,
+            silent=request.silent,
+            io=io,
         )
         token1 = await self._erc20_builder.build(
-            common.token1_address, chain_id=chain_id, silent=request.silent, io=io
+            common.token1_address,
+            chain_id=chain_id,
+            silent=request.silent,
+            io=io,
         )
 
         # Determine pool class from registry

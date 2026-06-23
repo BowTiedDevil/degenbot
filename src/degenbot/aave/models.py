@@ -346,7 +346,8 @@ class EnrichedScaledTokenEvent(BaseModel):
             and raw < self.balance_increase
         ):
             expected_burn = token_math.get_collateral_burn_scaled_amount(
-                amount=raw, liquidity_index=idx
+                amount=raw,
+                liquidity_index=idx,
             )
             if scaled == expected_burn:
                 return self

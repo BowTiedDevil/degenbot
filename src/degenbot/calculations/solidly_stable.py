@@ -108,7 +108,11 @@ def calc_exact_in_stable(
             amount_in_after_fee = (amount_in_after_fee * 10**18) // decimals1
 
         y = reserves_b - get_y_func(
-            amount_in_after_fee + reserves_a, xy, reserves_b, decimals0, decimals1
+            amount_in_after_fee + reserves_a,
+            xy,
+            reserves_b,
+            decimals0,
+            decimals1,
         )
         return (y * (decimals1 if token_in == 0 else decimals0)) // 10**18
     except ZeroDivisionError:

@@ -67,7 +67,11 @@ def detect_metapool(
 
             # Get base pool address from the pool contract itself
             base_pool_address = _resolve_base_pool_address(
-                io, pool_address, token_addresses, registry_address, block_identifier
+                io,
+                pool_address,
+                token_addresses,
+                registry_address,
+                block_identifier,
             )
 
             # Get underlying coins from registry
@@ -82,7 +86,8 @@ def detect_metapool(
                 block=block_identifier,
             )
             underlying_addresses = eth_abi.abi.decode(
-                types=["address[8]"], data=underlying_coins_result
+                types=["address[8]"],
+                data=underlying_coins_result,
             )[0]
 
             # Filter out zero addresses

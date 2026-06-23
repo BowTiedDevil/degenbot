@@ -49,31 +49,31 @@ class PerBlockCache:
 
         # Cache fields
         self._cache_block_timestamps: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
+            max_items=state_cache_depth,
         )
         self._cache_contract_D: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
+            max_items=state_cache_depth,
         )
         self._cache_gamma: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
+            max_items=state_cache_depth,
         )
         self._cache_price_scale: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=state_cache_depth
+            max_items=state_cache_depth,
         )
         self._cache_admin_balances: BoundedCache[BlockNumber, tuple[int, ...]] = BoundedCache(
-            max_items=state_cache_depth
+            max_items=state_cache_depth,
         )
         self._cache_scaled_redemption_price: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
+            max_items=state_cache_depth,
         )
         self._cache_virtual_price: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
+            max_items=state_cache_depth,
         )
         self._cache_base_cache_updated: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
+            max_items=state_cache_depth,
         )
         self._cache_base_virtual_price: BoundedCache[BlockNumber, int] = BoundedCache(
-            max_items=state_cache_depth
+            max_items=state_cache_depth,
         )
 
     # ── Accessors (all follow the same try/cache/store/return pattern) ──

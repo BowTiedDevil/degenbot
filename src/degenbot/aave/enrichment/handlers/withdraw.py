@@ -101,7 +101,7 @@ class WithdrawHandler:
         assert event.index is not None
         logger.debug(
             "ENRICHMENT: Interest exceeds withdrawal - using withdraw amount "
-            "from pool event for burn calculation"
+            "from pool event for burn calculation",
         )
 
         # Extract actual withdrawal amount from Pool event
@@ -113,7 +113,7 @@ class WithdrawHandler:
 
         logger.debug(
             "ENRICHMENT: Interest exceeds withdrawal - using COLLATERAL_BURN "
-            "calculation (ceil rounding)"
+            "calculation (ceil rounding)",
         )
 
         # Get token revision for calculation

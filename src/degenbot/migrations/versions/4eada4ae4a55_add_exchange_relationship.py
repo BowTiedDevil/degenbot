@@ -47,7 +47,7 @@ def upgrade() -> None:
                 UPDATE pools
                 SET exchange_id = :exchange_id
                 WHERE kind = :name AND chain = :chain_id
-                """
+                """,
             ),
             {
                 "exchange_id": exchange_id,

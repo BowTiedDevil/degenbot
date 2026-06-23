@@ -20,7 +20,10 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     """Upgrade schema."""
     op.create_index(
-        op.f("ix_uniswap_v4_pools_pool_hash"), "uniswap_v4_pools", ["pool_hash"], unique=True
+        op.f("ix_uniswap_v4_pools_pool_hash"),
+        "uniswap_v4_pools",
+        ["pool_hash"],
+        unique=True,
     )
 
 

@@ -17,7 +17,8 @@ from degenbot.provider.async_adapter import AsyncProviderAdapter
 
 
 def encode_function_calldata(
-    function_prototype: str, function_arguments: Sequence[Any] | None
+    function_prototype: str,
+    function_arguments: Sequence[Any] | None,
 ) -> bytes:
     """Encode calldata for the given function prototype with ordered arguments.
 

@@ -135,7 +135,7 @@ def process_stk_aave_transfer_event(
             f"stkAAVE balance update: {from_address}, "
             f"before: {from_user_old_balance}, "
             f"after: {from_user.stk_aave_balance}, "
-            f"delta: -{value}"
+            f"delta: -{value}",
         )
     if to_user is not None:
         assert to_user.stk_aave_balance is not None
@@ -147,7 +147,7 @@ def process_stk_aave_transfer_event(
             f"stkAAVE balance update: {to_address}"
             f"before: {to_user_old_balance}, "
             f"after: {to_user.stk_aave_balance}, "
-            f"delta: +{value}"
+            f"delta: +{value}",
         )
 
     # Mark this transfer as processed to prevent double-counting in pending delta calculations

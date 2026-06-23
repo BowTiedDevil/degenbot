@@ -128,9 +128,9 @@ def get_scoped_sqlite_session(database_path: pathlib.Path) -> scoped_session[Ses
                 URL.create(
                     drivername="sqlite",
                     database=_get_sqlite_db_string(database_path),
-                )
-            )
-        )
+                ),
+            ),
+        ),
     )
 
 

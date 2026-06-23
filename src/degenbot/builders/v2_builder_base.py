@@ -163,7 +163,7 @@ class V2BuilderBase:
                 select(LiquidityPoolTable).where(
                     LiquidityPoolTable.address == pool_address,
                     LiquidityPoolTable.chain == chain_id,
-                )
+                ),
             )
             if pool_from_db is not None:
                 factory, token0_address, token1_address, fee_token0, fee_token1 = (

@@ -128,14 +128,14 @@ class V4PoolBuilder(V4BuilderBase):
                 select(PoolManagerTable).where(
                     PoolManagerTable.address == pool_manager_address,
                     PoolManagerTable.chain == chain_id,
-                )
+                ),
             )
             if pool_manager_in_db is not None:
                 pool_from_db = session.scalar(
                     select(UniswapV4PoolTable).where(
                         UniswapV4PoolTable.pool_hash == pool_id_bytes.to_0x_hex(),
                         UniswapV4PoolTable.manager.has(id=pool_manager_in_db.id),
-                    )
+                    ),
                 )
                 if pool_from_db is not None:
                     db_values = V4BuilderBase.extract_db_values(pool_from_db)
@@ -152,19 +152,19 @@ class V4PoolBuilder(V4BuilderBase):
         else:
             if request.state_view_address is None:
                 raise DegenbotValueError(
-                    message="A state view contract address must be provided for a pool not in the database."  # noqa: E501
+                    message="A state view contract address must be provided for a pool not in the database.",  # noqa: E501
                 )
             if request.fee is None:
                 raise DegenbotValueError(
-                    message="A fee must be provided for a pool not in the database."
+                    message="A fee must be provided for a pool not in the database.",
                 )
             if request.tick_spacing is None:
                 raise DegenbotValueError(
-                    message="A tick spacing must be provided for a pool not in the database."
+                    message="A tick spacing must be provided for a pool not in the database.",
                 )
             if request.tokens is None:
                 raise DegenbotValueError(
-                    message="Token addresses must be provided for a pool not in the database."
+                    message="Token addresses must be provided for a pool not in the database.",
                 )
 
             state_view_address = get_checksum_address(request.state_view_address)
@@ -182,10 +182,16 @@ class V4PoolBuilder(V4BuilderBase):
 
         # Build tokens
         token0 = self._erc20_builder.build(
-            currency0_address, chain_id=chain_id, silent=request.silent, io=io
+            currency0_address,
+            chain_id=chain_id,
+            silent=request.silent,
+            io=io,
         )
         token1 = self._erc20_builder.build(
-            currency1_address, chain_id=chain_id, silent=request.silent, io=io
+            currency1_address,
+            chain_id=chain_id,
+            silent=request.silent,
+            io=io,
         )
 
         # Fetch slot0 + liquidity via state view contract
@@ -253,7 +259,7 @@ class V4PoolBuilder(V4BuilderBase):
             if pool_id_db is not None:
                 with contextlib.suppress(Exception), self._db() as session:
                     pool_with_data = session.scalar(
-                        select(UniswapV4PoolTable).where(UniswapV4PoolTable.id == pool_id_db)
+                        select(UniswapV4PoolTable).where(UniswapV4PoolTable.id == pool_id_db),
                     )
                     if pool_with_data is not None:
                         working_tick_bitmap, working_tick_data, db_snapshot_loaded = (
@@ -262,7 +268,8 @@ class V4PoolBuilder(V4BuilderBase):
 
             if not db_snapshot_loaded:
                 word, _ = get_tick_word_and_bit_position(
-                    tick=int(slot0_data.tick), tick_spacing=tick_spacing_for_pool
+                    tick=int(slot0_data.tick),
+                    tick_spacing=tick_spacing_for_pool,
                 )
 
                 assert state_view_address is not None
@@ -271,7 +278,10 @@ class V4PoolBuilder(V4BuilderBase):
                 fetch_v4_tick_data = getattr(io, "fetch_v4_tick_data", None)
                 if fetch_v4_tick_bitmap is not None:
                     bitmap_at_word = fetch_v4_tick_bitmap(
-                        state_view_address, pool_id_bytes, word, block=state_block
+                        state_view_address,
+                        pool_id_bytes,
+                        word,
+                        block=state_block,
                     )
                 else:
                     (bitmap_at_word,) = eth_abi.abi.decode(
@@ -296,7 +306,10 @@ class V4PoolBuilder(V4BuilderBase):
                     for active_tick in active_ticks:
                         if fetch_v4_tick_data is not None:
                             liquidity_gross, liquidity_net = fetch_v4_tick_data(
-                                state_view_address, pool_id_bytes, active_tick, block=state_block
+                                state_view_address,
+                                pool_id_bytes,
+                                active_tick,
+                                block=state_block,
                             )
                         else:
                             result = io.call(
@@ -384,7 +397,11 @@ class V4PoolBuilder(V4BuilderBase):
             tick_bitmap=working_tick_bitmap if working_tick_data else None,
             state_block=state_block,
             tick_data_fetcher=self._make_tick_data_fetcher(
-                pool_id_bytes, pool_manager_address, state_view_address, chain_id, io=io
+                pool_id_bytes,
+                pool_manager_address,
+                state_view_address,
+                chain_id,
+                io=io,
             ),
             sparse_liquidity_map=not bool(working_tick_data),
         )

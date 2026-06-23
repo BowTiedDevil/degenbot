@@ -81,7 +81,7 @@ def upgrade() -> None:
     ).all():
         # Get the chain ID from the manager_id
         chain_id = session.scalar(
-            sa.select(PoolManagerTable.chain).where(PoolManagerTable.id == pool_id)
+            sa.select(PoolManagerTable.chain).where(PoolManagerTable.id == pool_id),
         )
         if TYPE_CHECKING:
             assert chain_id is not None
@@ -93,7 +93,8 @@ def upgrade() -> None:
     existing_token_addresses.update(
         (chain_id, token_address)
         for chain_id, token_address in session.query(
-            Erc20TokenTable.chain, Erc20TokenTable.address
+            Erc20TokenTable.chain,
+            Erc20TokenTable.address,
         ).all()
     )
 

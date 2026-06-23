@@ -702,7 +702,8 @@ class AsyncAlloyProvider:
     def get_block(self, block_number: int) -> Coroutine[Any, Any, BlockData | None]: ...
     def get_transaction(self, tx_hash: str) -> Coroutine[Any, Any, TransactionData | None]: ...
     def get_transaction_receipt(
-        self, tx_hash: str
+        self,
+        tx_hash: str,
     ) -> Coroutine[Any, Any, TransactionReceiptData | None]: ...
     def get_logs(
         self,
@@ -885,14 +886,25 @@ class PyLiquidityPool:
     def calculate_tokens_out(self, zero_for_one: bool, amount_in: int) -> int: ...
     def calculate_tokens_in(self, zero_for_one: bool, amount_out: int) -> int: ...
     def encode_swap(
-        self, zero_for_one: bool, amount_out: int, recipient: str
+        self,
+        zero_for_one: bool,
+        amount_out: int,
+        recipient: str,
     ) -> tuple[str, str, int] | None: ...
     def sync_reserves(self, reserve0: int, reserve1: int, block_number: int) -> None: ...
     def apply_swap(
-        self, sqrt_price_x96: int, liquidity: int, tick: int, block_number: int
+        self,
+        sqrt_price_x96: int,
+        liquidity: int,
+        tick: int,
+        block_number: int,
     ) -> bool: ...
     def apply_liquidity_update(
-        self, tick_lower: int, tick_upper: int, liquidity_delta: int, block_number: int
+        self,
+        tick_lower: int,
+        tick_upper: int,
+        liquidity_delta: int,
+        block_number: int,
     ) -> bool: ...
     def update_tick_data(
         self,
@@ -914,7 +926,9 @@ class PyLiquidityPool:
     def balancer_balances(self) -> list[int]: ...
     def snapshot_balancer_weighted(self) -> tuple[list[int], int] | None: ...
     def apply_balancer_weighted_balance_update(
-        self, balances: list[int], block_number: int
+        self,
+        balances: list[int],
+        block_number: int,
     ) -> bool: ...
     @property
     def n_balancer_stable_tokens(self) -> int: ...
@@ -928,7 +942,9 @@ class PyLiquidityPool:
     def balancer_invariant_version(self) -> int: ...
     def snapshot_balancer_stable(self) -> tuple[list[int], int] | None: ...
     def apply_balancer_stable_balance_update(
-        self, balances: list[int], block_number: int
+        self,
+        balances: list[int],
+        block_number: int,
     ) -> bool: ...
     def journal_len(self) -> int: ...
     def discard_before_block(self, block: int) -> None: ...
@@ -994,7 +1010,11 @@ class PyBot:
         update_block: int = 0,
     ) -> int: ...
     def update_v2_pool(
-        self, address: str, reserve0: int, reserve1: int, block_number: int
+        self,
+        address: str,
+        reserve0: int,
+        reserve1: int,
+        block_number: int,
     ) -> None: ...
     def calculate_tokens_out(self, pool_id: int, zero_for_one: bool, amount_in: int) -> int: ...
     def calculate_tokens_in(self, pool_id: int, zero_for_one: bool, amount_out: int) -> int: ...
@@ -1090,14 +1110,25 @@ class PyBot:
     def v3_journal_len(self, pool_id: int) -> int: ...
     def v3_discard_before_block(self, pool_id: int, block: int) -> None: ...
     def v3_restore_before_block(
-        self, pool_id: int, block: int
+        self,
+        pool_id: int,
+        block: int,
     ) -> tuple[int, int, int, int] | None: ...
     def register_token(
-        self, address: str, name: str, symbol: str, decimals: int, chain_id: int
+        self,
+        address: str,
+        name: str,
+        symbol: str,
+        decimals: int,
+        chain_id: int,
     ) -> PyErc20Token: ...
     def get_token(self, address: str) -> PyErc20Token | None: ...
     def encode_swap(
-        self, pool_id: int, zero_for_one: bool, amount_out: int, recipient: str
+        self,
+        pool_id: int,
+        zero_for_one: bool,
+        amount_out: int,
+        recipient: str,
     ) -> tuple[str, str, int] | None: ...
     def v2_journal_len(self, pool_id: int) -> int: ...
     def v2_discard_before_block(self, pool_id: int, block: int) -> None: ...
@@ -1117,22 +1148,31 @@ class UniswapArbEngine:
     def load_v3_snapshot_from_py(self, py_data: dict[str, dict[int, tuple[int, int]]]) -> None: ...
     def begin_v3_snapshot_stream(self) -> None: ...
     def insert_v3_pool_snapshot(
-        self, pool_address: str, tick_data: dict[int, tuple[int, int]]
+        self,
+        pool_address: str,
+        tick_data: dict[int, tuple[int, int]],
     ) -> None: ...
     def finish_v3_snapshot(self) -> None: ...
     def load_v4_snapshot_from_py(
-        self, py_data: dict[str, dict[str, dict[int, tuple[int, int]]]]
+        self,
+        py_data: dict[str, dict[str, dict[int, tuple[int, int]]]],
     ) -> None: ...
     def begin_v4_snapshot_stream(self) -> None: ...
     def insert_v4_pool_snapshot(
-        self, pool_manager: str, pool_id_hex: str, tick_data: dict[int, tuple[int, int]]
+        self,
+        pool_manager: str,
+        pool_id_hex: str,
+        tick_data: dict[int, tuple[int, int]],
     ) -> None: ...
     def finish_v4_snapshot(self) -> None: ...
 
     # ── Phase / startup ritual (Plan 102: the canonical two-phase flow). ──
     def subscribe(self, rpc_url: str) -> int: ...
     def backfill_from_snapshot(
-        self, rpc_url: str, snapshot_block: int, chunk_size: int = 2000
+        self,
+        rpc_url: str,
+        snapshot_block: int,
+        chunk_size: int = 2000,
     ) -> int: ...
     def resume_from_subscribe(self) -> None: ...
 

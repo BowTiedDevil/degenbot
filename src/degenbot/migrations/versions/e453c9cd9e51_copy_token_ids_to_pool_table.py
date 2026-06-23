@@ -61,7 +61,7 @@ def upgrade() -> None:
 
         for pool in session.scalars(sa.select(table)).all():
             base_pool = session.scalar(
-                sa.select(LiquidityPoolTable).where(LiquidityPoolTable.id == pool.pool_id)
+                sa.select(LiquidityPoolTable).where(LiquidityPoolTable.id == pool.pool_id),
             )
 
             assert isinstance(pool, (UniswapV2PoolTableBase, UniswapV3PoolTableBase))

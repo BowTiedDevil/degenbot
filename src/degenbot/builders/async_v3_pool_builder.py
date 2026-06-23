@@ -91,7 +91,7 @@ class AsyncV3PoolBuilder:
                 select(LiquidityPoolTable).where(
                     LiquidityPoolTable.address == pool_address,
                     LiquidityPoolTable.chain == chain_id,
-                )
+                ),
             )
             if pool_from_db is not None:
                 if not isinstance(pool_from_db, UniswapV3PoolTableBase):
@@ -150,10 +150,16 @@ class AsyncV3PoolBuilder:
 
         # Build tokens (async)
         token0 = await self._erc20_builder.build(
-            token0_address, chain_id=chain_id, silent=request.silent, io=io
+            token0_address,
+            chain_id=chain_id,
+            silent=request.silent,
+            io=io,
         )
         token1 = await self._erc20_builder.build(
-            token1_address, chain_id=chain_id, silent=request.silent, io=io
+            token1_address,
+            chain_id=chain_id,
+            silent=request.silent,
+            io=io,
         )
 
         # Fetch slot0 + liquidity
@@ -193,10 +199,11 @@ class AsyncV3PoolBuilder:
             if pool_id_db is not None:
                 with contextlib.suppress(Exception), self._db() as session:
                     pool_with_data = session.scalar(
-                        select(LiquidityPoolTable).where(LiquidityPoolTable.id == pool_id_db)
+                        select(LiquidityPoolTable).where(LiquidityPoolTable.id == pool_id_db),
                     )
                     if pool_with_data is not None and isinstance(
-                        pool_with_data, UniswapV3PoolTableBase
+                        pool_with_data,
+                        UniswapV3PoolTableBase,
                     ):
                         working_tick_bitmap, working_tick_data, db_snapshot_loaded = (
                             V3BuilderBase.load_tick_snapshot(pool_with_data)
@@ -204,7 +211,8 @@ class AsyncV3PoolBuilder:
 
             if not db_snapshot_loaded:
                 word, _ = get_tick_word_and_bit_position(
-                    tick=int(tick), tick_spacing=tick_spacing_for_pool
+                    tick=int(tick),
+                    tick_spacing=tick_spacing_for_pool,
                 )
 
                 (bitmap_at_word,) = eth_abi.abi.decode(

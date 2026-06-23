@@ -209,7 +209,11 @@ class PiecewiseMobiusSolver(Solver):
         return self._solve_multi_range_python(solve_input, v3_hop_index, v3_hop, start_ns)
 
     def _solve_multi_range_python(
-        self, solve_input: SolveInput, v3_hop_index: int, v3_hop: BoundedProductHop, start_ns: int
+        self,
+        solve_input: SolveInput,
+        v3_hop_index: int,
+        v3_hop: BoundedProductHop,
+        start_ns: int,
     ) -> SolveResult:
         """Python-only multi-range solver (fallback when Rust fails).
 
@@ -418,7 +422,7 @@ class PiecewiseMobiusSolver(Solver):
                     sqrt_price_upper=float(range_info.sqrt_price_upper) / Q96,
                     fee=float(v3_hop.fee),
                     zero_for_one=zero_for_one,
-                )
+                ),
             )
 
         sequence = V3TickRangeSequence(tuple(v3_ranges))

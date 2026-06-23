@@ -46,7 +46,7 @@ def fetch_pool_events(
                 AaveV3PoolEvent.SUPPLY.value,
                 AaveV3PoolEvent.USER_E_MODE_SET.value,
                 AaveV3PoolEvent.WITHDRAW.value,
-            ]
+            ],
         ],
     )
 
@@ -75,7 +75,7 @@ def fetch_reserve_initialization_events(
                 AaveV3PoolConfigEvent.EMODE_ASSET_CATEGORY_CHANGED.value,
                 AaveV3PoolConfigEvent.EMODE_CATEGORY_ADDED.value,
                 AaveV3PoolConfigEvent.RESERVE_INITIALIZED.value,
-            ]
+            ],
         ],
     )
 
@@ -109,7 +109,7 @@ def fetch_scaled_token_events(
                 AaveV3ScaledTokenEvent.MINT.value,
                 # Include ERC20 Transfer events for proper paired transfer matching
                 ERC20Event.TRANSFER.value,
-            ]
+            ],
         ],
     )
 
@@ -138,7 +138,7 @@ def fetch_stk_aave_events(
                 AaveV3StkAaveEvent.REDEEM.value,
                 AaveV3StkAaveEvent.STAKED.value,
                 ERC20Event.TRANSFER.value,
-            ]
+            ],
         ],
     )
 
@@ -168,7 +168,7 @@ def fetch_address_provider_events(
                 AaveV3PoolConfigEvent.POOL_UPDATED.value,
                 AaveV3PoolConfigEvent.PRICE_ORACLE_UPDATED.value,
                 AaveV3PoolConfigEvent.PROXY_CREATED.value,
-            ]
+            ],
         ],
     )
 
@@ -192,7 +192,7 @@ def fetch_discount_config_events(
             [
                 AaveV3GhoDebtTokenEvent.DISCOUNT_RATE_STRATEGY_UPDATED.value,
                 AaveV3GhoDebtTokenEvent.DISCOUNT_TOKEN_UPDATED.value,
-            ]
+            ],
         ],
     )
 
@@ -219,6 +219,6 @@ def fetch_oracle_events(
         topic_signature=[
             [
                 AaveV3OracleEvent.ASSET_SOURCE_UPDATED.value,
-            ]
+            ],
         ],
     )

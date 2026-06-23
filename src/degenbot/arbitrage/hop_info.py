@@ -120,7 +120,7 @@ def build_hops_from_pools(
                     token1_address=pool.token1.address,
                     fee=int((pool.fee_token0 if zfo else pool.fee_token1) * 10000),
                     zfo=zfo,
-                )
+                ),
             )
         elif isinstance(pool, UniswapV3Pool):
             hops.append(
@@ -130,7 +130,7 @@ def build_hops_from_pools(
                     token1_address=pool.token1.address,
                     fee=pool.fee,
                     zfo=zfo,
-                )
+                ),
             )
         elif isinstance(pool, UniswapV4Pool):
             hops.append(
@@ -143,7 +143,7 @@ def build_hops_from_pools(
                     tick_spacing=pool.tick_spacing,
                     hook_address=pool.hook_address,
                     zfo=zfo,
-                )
+                ),
             )
         else:
             msg = f"Unsupported pool type: {type(pool).__name__}"

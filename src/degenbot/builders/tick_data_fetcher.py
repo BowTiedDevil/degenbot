@@ -144,7 +144,8 @@ def _fetch_v3(
             return
 
     working_tick_bitmap[word_position] = types.bitmap_at_word(
-        bitmap=bitmap_value, block=block_number
+        bitmap=bitmap_value,
+        block=block_number,
     )
 
     if bitmap_value != 0:
@@ -158,11 +159,15 @@ def _fetch_v3(
             if fetch_tick_data is not None:
                 try:
                     liquidity_gross, liquidity_net = fetch_tick_data(
-                        pool_ref.address, active_tick, block=block_number
+                        pool_ref.address,
+                        active_tick,
+                        block=block_number,
                     )
                 except Exception:  # noqa: BLE001
                     logger.debug(
-                        "Failed to fetch tick data for tick %d", active_tick, exc_info=True
+                        "Failed to fetch tick data for tick %d",
+                        active_tick,
+                        exc_info=True,
                     )
                     continue
             else:
@@ -174,7 +179,9 @@ def _fetch_v3(
                     )
                 except Exception:  # noqa: BLE001
                     logger.debug(
-                        "Failed to fetch tick data for tick %d", active_tick, exc_info=True
+                        "Failed to fetch tick data for tick %d",
+                        active_tick,
+                        exc_info=True,
                     )
                     continue
 
@@ -210,7 +217,10 @@ def _fetch_v4(
     if fetch_v4_tick_bitmap is not None:
         try:
             bitmap_value = fetch_v4_tick_bitmap(
-                state_view_address, pool_id, word_position, block=block_number
+                state_view_address,
+                pool_id,
+                word_position,
+                block=block_number,
             )
         except Exception:  # noqa: BLE001
             return
@@ -221,7 +231,8 @@ def _fetch_v4(
                 data=io.call(
                     to=get_checksum_address(state_view_address),
                     data=encode_function_calldata(
-                        "getTickBitmap(bytes32,int16)", [pool_id, word_position]
+                        "getTickBitmap(bytes32,int16)",
+                        [pool_id, word_position],
                     ),
                     block=block_number,
                 ),
@@ -230,7 +241,8 @@ def _fetch_v4(
             return
 
     working_tick_bitmap[word_position] = types.bitmap_at_word(
-        bitmap=bitmap_value, block=block_number
+        bitmap=bitmap_value,
+        block=block_number,
     )
 
     if bitmap_value != 0:
@@ -244,7 +256,10 @@ def _fetch_v4(
             if fetch_v4_tick_data is not None:
                 try:
                     liquidity_gross, liquidity_net = fetch_v4_tick_data(
-                        state_view_address, pool_id, active_tick, block=block_number
+                        state_view_address,
+                        pool_id,
+                        active_tick,
+                        block=block_number,
                     )
                 except Exception:  # noqa: BLE001
                     logger.debug(

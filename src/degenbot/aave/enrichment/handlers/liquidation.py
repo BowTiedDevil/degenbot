@@ -194,7 +194,8 @@ class LiquidationHandler:
         return RawAmountExtractor.extract_liquidation_debt(pool_event)
 
     def _get_calculation_event_type(  # noqa: PLR6301
-        self, event_type: ScaledTokenEventType
+        self,
+        event_type: ScaledTokenEventType,
     ) -> ScaledTokenEventType:
         """Get the event type to use for calculation.
 
@@ -246,7 +247,7 @@ class LiquidationHandler:
         logger.debug(
             f"ENRICHMENT: Pool Rev {context.pool_revision} LIQUIDATION "
             f"calculated scaled amount: {scaled_amount} "
-            f"from debtToCover={raw_amount} / index={event.index}"
+            f"from debtToCover={raw_amount} / index={event.index}",
         )
 
         return context.build_enriched_event(
@@ -288,7 +289,7 @@ class LiquidationHandler:
 
         logger.debug(
             f"ENRICHMENT: LIQUIDATION net debt increase - using DEBT_BURN "
-            f"calculation with raw_amount={raw_amount}"
+            f"calculation with raw_amount={raw_amount}",
         )
 
         # Get token revision

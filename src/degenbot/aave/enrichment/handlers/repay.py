@@ -114,7 +114,7 @@ class RepayHandler:
         assert event.index is not None
         logger.debug(
             "ENRICHMENT: Interest exceeds repayment - using repay amount "
-            "from pool event for burn calculation"
+            "from pool event for burn calculation",
         )
 
         # Extract actual repayment amount from Pool event
@@ -125,7 +125,7 @@ class RepayHandler:
         )
 
         logger.debug(
-            "ENRICHMENT: Interest exceeds repayment - using DEBT_BURN calculation (floor rounding)"
+            "ENRICHMENT: Interest exceeds repayment - using DEBT_BURN calculation (floor rounding)",
         )
 
         # Get token revision for calculation

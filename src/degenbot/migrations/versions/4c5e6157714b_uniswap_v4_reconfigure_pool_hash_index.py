@@ -22,7 +22,9 @@ def upgrade() -> None:
     with op.batch_alter_table("uniswap_v4_pools", schema=None) as batch_op:
         batch_op.drop_index(batch_op.f("ix_uniswap_v4_pools_pool_hash"))
         batch_op.create_index(
-            batch_op.f("ix_uniswap_v4_pools_pool_hash"), ["pool_hash"], unique=False
+            batch_op.f("ix_uniswap_v4_pools_pool_hash"),
+            ["pool_hash"],
+            unique=False,
         )
 
 

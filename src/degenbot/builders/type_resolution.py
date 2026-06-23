@@ -466,7 +466,7 @@ def resolve_pool_type(
             select(LiquidityPoolTable).where(
                 LiquidityPoolTable.address == address,
                 LiquidityPoolTable.chain == chain_id,
-            )
+            ),
         )
         if pool_from_db is not None:
             descriptor = _build_descriptor_from_db_result(pool_from_db)
@@ -488,7 +488,7 @@ def resolve_pool_type(
         message=(
             f"Cannot resolve pool type for address {address} on chain {chain_id}. "
             f"The factory() call failed and no database entry exists."
-        )
+        ),
     )
 
 
@@ -516,7 +516,7 @@ async def resolve_pool_type_async(
             select(LiquidityPoolTable).where(
                 LiquidityPoolTable.address == address,
                 LiquidityPoolTable.chain == chain_id,
-            )
+            ),
         )
         if pool_from_db is not None:
             descriptor = _build_descriptor_from_db_result(pool_from_db)
@@ -532,12 +532,15 @@ async def resolve_pool_type_async(
 
         # Step 3: No registry match — probe the contract
         return await resolve_pool_type_by_probing_async(
-            address, chain_id=chain_id, factory=factory, io=io
+            address,
+            chain_id=chain_id,
+            factory=factory,
+            io=io,
         )
 
     raise DegenbotValueError(
         message=(
             f"Cannot resolve pool type for address {address} on chain {chain_id}. "
             f"The factory() call failed and no database entry exists."
-        )
+        ),
     )

@@ -63,14 +63,14 @@ class PoolMath:
             amount = wad_ray_math.ray_mul_floor(accrued_to_treasury, index)
             logger.debug(
                 f"PoolMath.get_treasury_mint_amount(rev {pool_revision}): "
-                f"ray_mul_floor({accrued_to_treasury}, {index}) = {amount}"
+                f"ray_mul_floor({accrued_to_treasury}, {index}) = {amount}",
             )
         else:
             # Legacy: half-up rounding
             amount = wad_ray_math.ray_mul(accrued_to_treasury, index)
             logger.debug(
                 f"PoolMath.get_treasury_mint_amount(rev {pool_revision}): "
-                f"ray_mul({accrued_to_treasury}, {index}) = {amount}"
+                f"ray_mul({accrued_to_treasury}, {index}) = {amount}",
             )
         return amount
 
@@ -104,14 +104,14 @@ class PoolMath:
             scaled = wad_ray_math.ray_div_ceil(underlying_amount, liquidity_index)
             logger.debug(
                 f"PoolMath.underlying_to_scaled_collateral(rev {pool_revision}): "
-                f"ray_div_ceil({underlying_amount}, {liquidity_index}) = {scaled}"
+                f"ray_div_ceil({underlying_amount}, {liquidity_index}) = {scaled}",
             )
         else:
             # Reverse of ray_mul (half-up) = ray_div (half-up)
             scaled = wad_ray_math.ray_div(underlying_amount, liquidity_index)
             logger.debug(
                 f"PoolMath.underlying_to_scaled_collateral(rev {pool_revision}): "
-                f"ray_div({underlying_amount}, {liquidity_index}) = {scaled}"
+                f"ray_div({underlying_amount}, {liquidity_index}) = {scaled}",
             )
         return scaled
 
@@ -144,13 +144,13 @@ class PoolMath:
             scaled = wad_ray_math.ray_div_floor(underlying_amount, borrow_index)
             logger.debug(
                 f"PoolMath.underlying_to_scaled_debt(rev {pool_revision}): "
-                f"ray_div_floor({underlying_amount}, {borrow_index}) = {scaled}"
+                f"ray_div_floor({underlying_amount}, {borrow_index}) = {scaled}",
             )
         else:
             # Reverse of ray_mul (half-up) = ray_div (half-up)
             scaled = wad_ray_math.ray_div(underlying_amount, borrow_index)
             logger.debug(
                 f"PoolMath.underlying_to_scaled_debt(rev {pool_revision}): "
-                f"ray_div({underlying_amount}, {borrow_index}) = {scaled}"
+                f"ray_div({underlying_amount}, {borrow_index}) = {scaled}",
             )
         return scaled

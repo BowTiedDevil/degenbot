@@ -91,7 +91,7 @@ class AnvilFork:
                 case "interval":
                     if mining_interval is None:
                         raise DegenbotValueError(
-                            message="Interval mining mode was specified without an interval value."
+                            message="Interval mining mode was specified without an interval value.",
                         )
                     command.append(f"--block-time={mining_interval}")
                 case "none":
@@ -362,7 +362,7 @@ class AnvilFork:
 
             if block_number is not None:
                 logger.warning(
-                    f"Forking from transaction hash {transaction_hash}, ignoring provided block number."  # noqa:E501
+                    f"Forking from transaction hash {transaction_hash}, ignoring provided block number.",  # noqa:E501
                 )
 
             # Sanitize the command by stripping options that may conflict

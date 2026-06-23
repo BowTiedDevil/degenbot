@@ -21,7 +21,8 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     """Upgrade schema."""
     op.add_column(
-        "uniswap_v4_pools", sa.Column("pool_hash_hex", sa.String(length=66), nullable=True)
+        "uniswap_v4_pools",
+        sa.Column("pool_hash_hex", sa.String(length=66), nullable=True),
     )
     op.execute("UPDATE uniswap_v4_pools SET pool_hash_hex = '0x' || hex(pool_hash)")
     with op.batch_alter_table("uniswap_v4_pools") as batch_op:

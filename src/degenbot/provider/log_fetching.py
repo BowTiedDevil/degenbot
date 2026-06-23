@@ -180,10 +180,10 @@ def fetch_logs_retrying(
                     try:
                         logger.debug(
                             f"Fetching logs for range {fetcher.start_block}-{chunk_end} "
-                            f" ({fetcher.chunk_size} blocks)"
+                            f" ({fetcher.chunk_size} blocks)",
                         )
                         event_logs.extend(
-                            _get_logs(fetcher.start_block, chunk_end, address, topic_signature)
+                            _get_logs(fetcher.start_block, chunk_end, address, topic_signature),
                         )
                     except Exception:
                         old_working_span = fetcher.working_span
@@ -191,7 +191,7 @@ def fetch_logs_retrying(
                         logger.debug(
                             f"Attempt {attempt.retry_state.attempt_number} timed out "
                             f"fetching {old_working_span} blocks. "
-                            f"Reducing to {fetcher.working_span}..."
+                            f"Reducing to {fetcher.working_span}...",
                         )
                         raise
                     else:
@@ -260,7 +260,7 @@ async def fetch_logs_retrying_async(
             try:
                 logger.debug(
                     f"Fetching logs for range {fetcher.start_block}-{chunk_end} "
-                    f" ({fetcher.chunk_size} blocks)"
+                    f" ({fetcher.chunk_size} blocks)",
                 )
                 addresses_arg: list[str] | None = [address] if address is not None else None
                 topics_list = _build_topics_list(topic_signature)
@@ -277,7 +277,7 @@ async def fetch_logs_retrying_async(
                 logger.debug(
                     f"Attempt {attempt.retry_state.attempt_number} timed out "  # ty:ignore[unresolved-attribute]
                     f"fetching {old_working_span} blocks. "
-                    f"Reducing to {fetcher.working_span}..."
+                    f"Reducing to {fetcher.working_span}...",
                 )
                 raise
             else:

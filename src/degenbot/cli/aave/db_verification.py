@@ -42,7 +42,7 @@ def verify_gho_discount_amounts(
     logger.debug(f"Verifying GHO discounts: revision={revision}, market.id={market.id}")
     if revision is None or revision >= GHO_DISCOUNT_DEPRECATION_REVISION:
         logger.debug(
-            f"Skipping GHO discount verification for GHO VariableDebtToken revision {revision}"
+            f"Skipping GHO discount verification for GHO VariableDebtToken revision {revision}",
         )
         return
 

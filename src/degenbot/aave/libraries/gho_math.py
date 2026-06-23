@@ -74,7 +74,7 @@ class GhoMath:
         ):
             logger.debug(
                 f"GhoMath.calculate_discount_rate: below minimums "
-                f"(discount_token={discount_token_balance}, debt={debt_balance})"
+                f"(discount_token={discount_token_balance}, debt={debt_balance})",
             )
             return 0
 
@@ -87,7 +87,7 @@ class GhoMath:
             discount_rate = GhoMath.DISCOUNT_RATE_BPS
             logger.debug(
                 f"GhoMath.calculate_discount_rate: max discount "
-                f"(discounted_balance={discounted_balance} >= debt={debt_balance})"
+                f"(discounted_balance={discounted_balance} >= debt={debt_balance})",
             )
         else:
             # Proportional discount: (discounted / total) * max_rate
@@ -95,7 +95,7 @@ class GhoMath:
             logger.debug(
                 f"GhoMath.calculate_discount_rate: proportional discount "
                 f"(discounted_balance={discounted_balance}, debt={debt_balance}, "
-                f"rate={discount_rate})"
+                f"rate={discount_rate})",
             )
 
         return discount_rate
