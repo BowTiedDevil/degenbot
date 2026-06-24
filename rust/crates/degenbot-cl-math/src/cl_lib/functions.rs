@@ -176,7 +176,11 @@ mod tests {
             let (wp, bp) = tick_position(tick);
             let py_word_pos = tick >> 8;
             let py_bit_pos = tick.rem_euclid(256);
-            assert_eq!(i32::from(wp), py_word_pos, "word_pos mismatch for tick {tick}");
+            assert_eq!(
+                i32::from(wp),
+                py_word_pos,
+                "word_pos mismatch for tick {tick}"
+            );
             assert_eq!(
                 u32::from(bp),
                 py_bit_pos.cast_unsigned(),

@@ -144,21 +144,22 @@ impl VerifyRpc for EngineVerifyRpc<'_> {
         let provider = self.provider(&pool_address.to_string())?;
         let runtime = degenbot_core::runtime::get_runtime();
         let addr_str = pool_address.to_string();
-        runtime.block_on(async {
-            degenbot_bot::bot_core::liquidity_verifier::verify_v3_liquidity_map(
-                &provider,
-                pool_address,
-                tick_data,
-                block,
-            )
-            .await
-            .map_err(|e| {
-                map_liquidity_verify_error(e, &format!("V3 pool {addr_str}"), "snapshot", block)
+        runtime
+            .block_on(async {
+                degenbot_bot::bot_core::liquidity_verifier::verify_v3_liquidity_map(
+                    &provider,
+                    pool_address,
+                    tick_data,
+                    block,
+                )
+                .await
+                .map_err(|e| {
+                    map_liquidity_verify_error(e, &format!("V3 pool {addr_str}"), "snapshot", block)
+                })
             })
-        })
-        .map(|()| {
-            log::info!("[verify] V3 snapshot OK: pool {addr_str} at block {block}");
-        })
+            .map(|()| {
+                log::info!("[verify] V3 snapshot OK: pool {addr_str} at block {block}");
+            })
     }
 
     fn verify_v3_backfill(
@@ -175,21 +176,22 @@ impl VerifyRpc for EngineVerifyRpc<'_> {
             .map_or_else(|| "V3 backfill".to_string(), |p| p.address.to_string());
         let provider = self.provider(&label)?;
         let runtime = degenbot_core::runtime::get_runtime();
-        runtime.block_on(async {
-            degenbot_bot::bot_core::liquidity_verifier::verify_v3_pools(
-                &provider,
-                Address::ZERO,
-                pools,
-                Some(block),
-            )
-            .await
-            .map_err(|e| {
-                map_liquidity_verify_error(e, &format!("V3 pool {label}"), "backfill", block)
+        runtime
+            .block_on(async {
+                degenbot_bot::bot_core::liquidity_verifier::verify_v3_pools(
+                    &provider,
+                    Address::ZERO,
+                    pools,
+                    Some(block),
+                )
+                .await
+                .map_err(|e| {
+                    map_liquidity_verify_error(e, &format!("V3 pool {label}"), "backfill", block)
+                })
             })
-        })
-        .map(|()| {
-            log::info!("[verify] V3 backfill OK: pool {label} at block {block}");
-        })
+            .map(|()| {
+                log::info!("[verify] V3 backfill OK: pool {label} at block {block}");
+            })
     }
 
     fn verify_v4_snapshot(
@@ -202,18 +204,24 @@ impl VerifyRpc for EngineVerifyRpc<'_> {
         let pool_id_hex = format!("0x{}", alloy::hex::encode(pool_id));
         let provider = self.provider(&pool_id_hex)?;
         let runtime = degenbot_core::runtime::get_runtime();
-        runtime.block_on(async {
-            degenbot_bot::bot_core::liquidity_verifier::verify_v4_liquidity_map(
-                &provider, state_view, pool_id, tick_data, block,
-            )
-            .await
-            .map_err(|e| {
-                map_liquidity_verify_error(e, &format!("V4 pool {pool_id_hex}"), "snapshot", block)
+        runtime
+            .block_on(async {
+                degenbot_bot::bot_core::liquidity_verifier::verify_v4_liquidity_map(
+                    &provider, state_view, pool_id, tick_data, block,
+                )
+                .await
+                .map_err(|e| {
+                    map_liquidity_verify_error(
+                        e,
+                        &format!("V4 pool {pool_id_hex}"),
+                        "snapshot",
+                        block,
+                    )
+                })
             })
-        })
-        .map(|()| {
-            log::info!("[verify] V4 snapshot OK: pool {pool_id_hex} at block {block}");
-        })
+            .map(|()| {
+                log::info!("[verify] V4 snapshot OK: pool {pool_id_hex} at block {block}");
+            })
     }
 
     fn verify_v4_backfill(
@@ -229,21 +237,27 @@ impl VerifyRpc for EngineVerifyRpc<'_> {
         );
         let provider = self.provider(&pool_id_hex)?;
         let runtime = degenbot_core::runtime::get_runtime();
-        runtime.block_on(async {
-            degenbot_bot::bot_core::liquidity_verifier::verify_v4_pools(
-                &provider,
-                state_view,
-                pools,
-                Some(block),
-            )
-            .await
-            .map_err(|e| {
-                map_liquidity_verify_error(e, &format!("V4 pool {pool_id_hex}"), "backfill", block)
+        runtime
+            .block_on(async {
+                degenbot_bot::bot_core::liquidity_verifier::verify_v4_pools(
+                    &provider,
+                    state_view,
+                    pools,
+                    Some(block),
+                )
+                .await
+                .map_err(|e| {
+                    map_liquidity_verify_error(
+                        e,
+                        &format!("V4 pool {pool_id_hex}"),
+                        "backfill",
+                        block,
+                    )
+                })
             })
-        })
-        .map(|()| {
-            log::info!("[verify] V4 backfill OK: pool {pool_id_hex} at block {block}");
-        })
+            .map(|()| {
+                log::info!("[verify] V4 backfill OK: pool {pool_id_hex} at block {block}");
+            })
     }
 }
 
