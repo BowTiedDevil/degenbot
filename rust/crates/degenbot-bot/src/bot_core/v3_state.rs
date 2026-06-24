@@ -858,4 +858,51 @@ mod tests {
             "a crossing swap must move the price off the start value"
         );
     }
+
+    /// Word-of parity: the Rust sparse miss-detection model (`word_of`, used by
+    /// both V3 + V4 `vX_simulate_swap` to decide whether the current tick's
+    /// bitmap word is "known") must match the Python companion's bitmap word
+    /// computation (`position(tick // tick_spacing)[0]` in
+    /// `v3_libraries/tick_bitmap.py`). Both use floored division (`div_euclid`
+    /// == Python `//`) + arithmetic right-shift (`>> 8`), so they agree for
+    /// negative non-multiple current ticks — the regime a crossing swap's
+    /// post-step price lives in. This test locks that equivalence so the V4
+    /// crossing-swap divergence under the fetch seam (slice 4) is NOT
+    /// mis-attributed to the miss-detection model. See the slice-3 diagnosis
+    /// recorded on ergo task `2ZG6XO`: the models match, so V4 routing's fork
+    /// divergence lives elsewhere (fee accounting / boundary-tick walk / fetch
+    /// merge semantics) and must be fork-validated.
+    #[test]
+    fn word_of_matches_python_bitmap_word_position_for_edge_ticks() {
+        // (tick, tick_spacing) covering: positive + negative, multiples +
+        // non-multiples of spacing, and cross-word boundaries.
+        let cases: &[(i32, i32)] = &[
+            (0, 60),
+            (60, 60),
+            (-60, 60),
+            (-10, 60), // negative non-multiple: div_euclid floors to -1
+            (-1, 60),
+            (59, 60),
+            (-61, 60),
+            (-255, 1),
+            (-256, 1), // word boundary (-1 → -2)
+            (-257, 1),
+            (255, 1),
+            (256, 1), // word boundary (0 → 1)
+            (887_272, 60),
+            (-887_272, 60),
+            (887_270, 60), // negative mirror of a non-multiple
+            (-887_270, 60),
+        ];
+        for &(tick, spacing) in cases {
+            let rust_word = V3PoolState::word_of(tick, spacing);
+            // Python: compressed = tick // spacing (floored); word = compressed >> 8.
+            let compressed = tick.div_euclid(spacing);
+            let py_word = compressed >> 8;
+            assert_eq!(
+                rust_word, py_word,
+                "word_of({tick}, {spacing}) = {rust_word} != python {py_word}"
+            );
+        }
+    }
 }
