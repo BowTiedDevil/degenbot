@@ -46,9 +46,7 @@ from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import BoundedProductHop, HopType, V3TickRangeInfo
 from degenbot.types.pool_protocols import SimulationResult
-from degenbot.uniswap.concentrated.liquidity_map import LiquidityMapSnapshot, MissingLiquidityData
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
-from degenbot.uniswap.concentrated.v3_simulator import calculate_swap as _v3_swap
 from degenbot.uniswap.log_decoders import (
     V3_BURN_TOPIC,
     V3_MINT_TOPIC,
@@ -72,10 +70,7 @@ from degenbot.uniswap.v3_pool_calc import UniswapV3PoolCalc
 from degenbot.uniswap.v3_pool_state import V3PoolState
 from degenbot.uniswap.v3_types import (
     InitializedTickMap,
-    Liquidity,
     LiquidityMap,
-    SqrtPriceX96,
-    Tick,
     UniswapV3PoolExternalUpdate,
     UniswapV3PoolLiquidityMappingUpdate,
     UniswapV3PoolSimulationResult,
@@ -265,122 +260,6 @@ class UniswapV3Pool(
 
         """
         return self.name
-
-    def _calculate_swap(
-        self,
-        *,
-        zero_for_one: bool,
-        amount_specified: int,
-        sqrt_price_limit_x96: int,
-        override_state: PoolState | None = None,
-    ) -> tuple[Token0Amount, Token1Amount, SqrtPriceX96, Liquidity, Tick]:
-        """Ported and adapted from the UniswapV3Pool.sol contract.
-
-        https://github.com/Uniswap/v3-core/blob/main/contracts/UniswapV3Pool.sol
-
-        Returns a tuple with amounts and final pool state values for a successful swap:
-        (amount0, amount1, sqrt_price_x96, liquidity, tick)
-
-        A negative amount indicates the token quantity sent to the swapper, and a positive amount
-        indicates the token quantity deposited.
-
-        Returns:
-            Tuple of (amount0, amount1, sqrt_price_x96, liquidity, tick).
-
-        Raises:
-            LiquidityPoolError: If tick data fetcher fails to resolve a word.
-            MissingLiquidityData: If a sparse liquidity map is missing a required word.
-
-        """
-        if override_state is not None:
-            snapshot = LiquidityMapSnapshot.from_state(
-                override_state,
-                tick_spacing=self._tick_spacing,
-                sparse=self._sparse_liquidity_map,
-            )
-            liquidity_start = override_state.liquidity
-            sqrt_price_x96_start = override_state.sqrt_price_x96
-            tick_start = override_state.tick
-        else:
-            # The tick bitmap and tick data accessed through the property are
-            # copies, so they can be freely modified without corrupting state.
-            snapshot = LiquidityMapSnapshot(
-                tick_data=self.tick_data,
-                tick_bitmap=self.tick_bitmap,
-                tick_spacing=self._tick_spacing,
-                sparse=self._sparse_liquidity_map,
-            )
-            liquidity_start = self.liquidity
-            sqrt_price_x96_start = self.sqrt_price_x96
-            tick_start = self.tick
-
-        if self._sparse_liquidity_map:
-            # Sparse map may raise MissingLiquidityData. Fetch + retry.
-            fetched_words: set[int] = set()
-            while True:
-                try:
-                    result = _v3_swap(
-                        snapshot=snapshot,
-                        zero_for_one=zero_for_one,
-                        amount_specified=amount_specified,
-                        sqrt_price_limit_x96=sqrt_price_limit_x96,
-                        fee=self._fee,
-                        liquidity_start=liquidity_start,
-                        sqrt_price_x96_start=sqrt_price_x96_start,
-                        tick_start=tick_start,
-                    )
-                except MissingLiquidityData as exc:
-                    if exc.word in fetched_words:
-                        raise LiquidityPoolError(
-                            message=f"Tick data fetcher did not resolve word {exc.word} "
-                            f"on a previous attempt. "
-                            f"pool={self.address} zfo={zero_for_one} "
-                            f"amount_specified={amount_specified}",
-                        ) from exc
-                    if self._tick_data_fetcher is not None:
-                        fetched_words.add(exc.word)
-                        # ADR-005 slice 3b: the fetcher RETURNS the word's
-                        # ticks (return-data contract — the Rust fetch+retry
-                        # seam uses the same callback); ``_apply_fetched_tick_word``
-                        # merges them into the pool state. The bitmap derives
-                        # from the tick_data keys (V3 invariant) so no verbatim
-                        # bitmap value is needed for the snapshot rebuild.
-                        self._apply_fetched_tick_word(exc.word, self.update_block)
-                        # Rebuild snapshot from updated tick data
-                        snapshot = LiquidityMapSnapshot(
-                            tick_data=self.tick_data,
-                            tick_bitmap=self.tick_bitmap,
-                            tick_spacing=self._tick_spacing,
-                            sparse=self._sparse_liquidity_map,
-                        )
-                    else:
-                        raise
-                else:
-                    return (
-                        result.amount0,
-                        result.amount1,
-                        result.sqrt_price_x96,
-                        result.liquidity,
-                        result.tick,
-                    )
-        else:
-            result = _v3_swap(
-                snapshot=snapshot,
-                zero_for_one=zero_for_one,
-                amount_specified=amount_specified,
-                sqrt_price_limit_x96=sqrt_price_limit_x96,
-                fee=self._fee,
-                liquidity_start=liquidity_start,
-                sqrt_price_x96_start=sqrt_price_x96_start,
-                tick_start=tick_start,
-            )
-            return (
-                result.amount0,
-                result.amount1,
-                result.sqrt_price_x96,
-                result.liquidity,
-                result.tick,
-            )
 
     def _verified_address(self) -> ChecksumAddress:
         """Compute the deterministic V3 pool address via CREATE2.
@@ -792,12 +671,10 @@ class UniswapV3Pool(
             # delegates to the Rust fetch+retry seam. For a sparse pool the
             # Rust path misses on an unknown word, fetches it via
             # ``_apply_fetched_tick_word`` (the return-data fetcher), merges,
-            # and retries; for a dense pool it computes directly (the dense-map
-            # parity gate asserts Rust == Python ``_v3_swap``). A custom
-            # ``sqrt_price_limit`` threads through (slice 4 — the seam honours
-            # it); the override path keeps the Python ``_calculate_swap``
-            # (arbitrage hypothetical over alternate state — slice-4
-            # override-routing item).
+            # and retries; for a dense pool it computes directly. A custom
+            # ``sqrt_price_limit`` threads through (the seam honours it); the
+            # override path routes to the Rust override seam
+            # (``simulate_swap_with_override`` — see below).
             outcome = self._py_pool.simulate_swap_with_fetch(
                 zero_for_one=zero_for_one,
                 amount_in=token_in_quantity,
@@ -906,8 +783,8 @@ class UniswapV3Pool(
             # to the Rust exact-output fetch+retry seam. The V3 exact-output
             # sign (amountSpecified < 0) is handled in the Rust core; a custom
             # sqrt_price_limit threads through (the seam honours it). The
-            # override path keeps the Python `_calculate_swap` (arbitrage
-            # hypothetical over alternate state — slice-4 override-routing item).
+            # override path routes to the Rust exact-output override seam
+            # (``simulate_exact_output_swap_with_override`` — see below).
             outcome = self._py_pool.simulate_exact_output_swap_with_fetch(
                 zero_for_one=zero_for_one,
                 amount_out=token_out_quantity,

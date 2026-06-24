@@ -670,6 +670,17 @@ mod tests {
         for tp in &ticks {
             assert!(tp.tick <= MAX_TICK, "tick {} exceeds MAX_TICK", tp.tick);
         }
+        // Strand-prevention regression: the final boundary must BE
+        // MAX_TICK (clamped + pushed), not a bare `break` past it — else the
+        // swap loop exhausts its tick list while amount_specified_remaining is
+        // still positive + the price-limit unreached (the sparse+fetch walk
+        // strands short of the limit). Python's `gen_ticks` yields boundary
+        // ticks forever; the clamp matches that at the extremity.
+        assert!(
+            ticks.last().is_some_and(|tp| tp.tick == MAX_TICK),
+            "ascending walk must terminate with the MAX_TICK boundary tick clamped into the last word, got last = {:?}",
+            ticks.last()
+        );
     }
 
     #[test]
@@ -681,6 +692,14 @@ mod tests {
         for tp in &ticks {
             assert!(tp.tick >= MIN_TICK, "tick {} below MIN_TICK", tp.tick);
         }
+        // Strand-prevention regression (mirror of the ascending case): the
+        // final boundary must BE MIN_TICK so the swap walk reaches the price
+        // limit, not strand in the last word above it.
+        assert!(
+            ticks.last().is_some_and(|tp| tp.tick == MIN_TICK),
+            "descending walk must terminate with the MIN_TICK boundary tick clamped into the last word, got last = {:?}",
+            ticks.last()
+        );
     }
 
     fn assert_ranges_well_formed(ranges: &[V3TickRangeForSolver]) {
