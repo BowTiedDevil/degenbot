@@ -469,15 +469,6 @@ def test_rust_v4_dense_corpus_matches_on_chain_quoter():
     assert rust_out == _V4_DIVERGE_QUOTER_OUT, f"Rust dense diverges from quoter: {rust_out}"
 
 
-@pytest.mark.xfail(
-    reason="Rust sparse+fetch != Rust dense on the same corpus: the fetch/merge "
-    "loop undercounts on multi-word ofz swaps (Rust sparse+full-fetch still "
-    "produces the undercount, so the walk diverges BEFORE the final fetched "
-    "word merges). Python sparse+fetch == Python dense == quoter, so this is a "
-    "Rust-internal sparse-path inconsistency. Blocking V4 mainline routing "
-    "(slice 4).",
-    strict=True,
-)
 def test_rust_v4_sparse_fetch_corpus_diverges_from_dense():
     """Rust sparse+fetch vs Rust dense on the SAME corpus (offline, no fork).
 
@@ -500,15 +491,16 @@ def test_rust_v4_sparse_fetch_corpus_diverges_from_dense():
     }
     corpus_by_word: dict[int, dict] = {}
     for t, r in full.items():
-        corpus_by_word.setdefault((int(t) // ts) >> 8, {})[int(t)] = list(r)
+        corpus_by_word.setdefault((int(t) // ts) >> 8, {})[int(t)] = tuple(r)
 
     def full_fetcher(word: int, block: int) -> dict:
         return corpus_by_word.get(word, {})
 
-    py_bot = PyBot()
+    # Each pool gets its OWN PyBot + token pair (distinct addresses) so the
+    # second registration doesn't collide as a duplicate pool_id.
     # Python mainline (sparse, full-fetch) — the oracle (== quoter).
     py_pool = _build_pool_from_corpus(
-        py_bot,
+        PyBot(),
         state,
         td=td_minus76,
         sparse=True,
@@ -521,9 +513,9 @@ def test_rust_v4_sparse_fetch_corpus_diverges_from_dense():
     assert py_out == _V4_DIVERGE_QUOTER_OUT, (
         f"Python sparse+full-fetch must match the quoter (== dense): {py_out}"
     )
-    # Rust seam (sparse, full-fetch) — the buggy path.
+    # Rust seam (sparse, full-fetch) — the path under fix.
     rust_pool = _build_pool_from_corpus(
-        py_bot,
+        PyBot(),
         state,
         td=td_minus76,
         sparse=True,
@@ -537,7 +529,10 @@ def test_rust_v4_sparse_fetch_corpus_diverges_from_dense():
     )
     assert rust_outcome is not None
     rust_out = int(rust_outcome[0])
-    # The bug: Rust sparse+full-fetch undercounts vs its own dense result.
+    # Rust sparse+fetch MUST match its own dense result (== quoter): the
+    # ELSE-branch miss check ensures an amount-capped step landing inside an
+    # unfetched word raises MissingTickWord so the word is backfilled + the
+    # walk re-runs applying its initialized ticks' liquidity-nets.
     assert rust_out == _V4_DIVERGE_QUOTER_OUT, (
         f"Rust sparse+fetch diverges from dense/quoter: rust={rust_out} "
         f"expected={_V4_DIVERGE_QUOTER_OUT} diff={rust_out - _V4_DIVERGE_QUOTER_OUT}"

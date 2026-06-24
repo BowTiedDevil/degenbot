@@ -569,16 +569,32 @@ class UniswapV4Pool(
 
         zero_for_one = token_in == self._token0
 
-        # V4 mainline routing to the Rust fetch+retry seam is DEFERRED to slice 4.
-        # The Rust V4 sim's core crossing-swap math is sound (offline dense
-        # corpus gate `test_rust_v4_dense_corpus_matches_on_chain_quoter` is GREEN:
-        # Rust == Python == on-chain quoter on a 419-tick fork corpus), but the
-        # SPARSE fetch+merge+retry loop diverges from a single dense pass on
-        # multi-word ofz swaps — `test_rust_v4_sparse_fetch_corpus_diverges_from_dense`
-        # (xfail) reproduces it offline from a captured fork corpus. The Python
-        # simulator stays as the V4 parity oracle until the Rust sparse path is
-        # corrected; the fetch-callback seam + `_apply_fetched_tick_word` helper
-        # stay wired + green (non-crossing / dense parity).
+        # ADR-005 slice 3b: mainline exact-input swap (no override, no custom
+        # price limit) delegates to the Rust fetch+retry seam. The sparse-path
+        # crossing-swap divergence (ELSE-branch miss check in `v4_simulate_swap`)
+        # is fixed — `test_cached_calculations` was RED on seed 2, now GREEN
+        # across seeds. The override / custom-limit paths keep the Python
+        # `_calculate_swap` (override is an arbitrage hypothetical; Rust
+        # hardcodes the MIN/MAX price limit so a custom limit can't be honoured
+        # there — a remaining slice-4 item).
+        if override_state is None:
+            outcome = self._py_pool.simulate_swap_with_fetch(
+                zero_for_one=zero_for_one,
+                amount_in=token_in_quantity,
+                block=self.update_block,
+                fetcher=self._tick_data_fetcher,
+            )
+            if outcome is None:
+                raise LiquidityPoolError(
+                    message=(
+                        f"Simulated execution could not compute. "
+                        f"pool={self.address} zfo={zero_for_one} "
+                        f"amount_in={token_in_quantity}"
+                    ),
+                )
+            rust_amount0, rust_amount1 = int(outcome[0]), int(outcome[1])
+            return rust_amount1 if zero_for_one else rust_amount0
+
         try:
             swap_delta, *_ = self._calculate_swap(
                 zero_for_one=zero_for_one,

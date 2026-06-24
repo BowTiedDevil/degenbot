@@ -588,6 +588,27 @@ pub fn v3_simulate_swap(
             tick = get_tick_at_sqrt_ratio_internal(sqrt_price_x96.to::<U160>())
                 .map_err(|_| SimulateSwapError::NotComputable)?
                 .as_i32();
+            // Slice-4 fix (V3 mirror of the V4 ELSE-branch miss check): an
+            // amount-capped step can land inside an UNFETCHED word whose
+            // initialized ticks `gen_ticks` never proposed (absent from
+            // `tick_data`). The CROSS branch above guards its `tick_next`; this
+            // branch derived `tick` from the price with no word-knownness check
+            // — so the walk could terminate having skipped that word's
+            // liquidity-nets, producing a short output. Raise `MissingTickWord`
+            // so the fetch+retry loop backfills the word; on re-run `gen_ticks`
+            // proposes its ticks as `init=true` and they are crossed + applied
+            // like the dense path. See the V4 corpus fixture
+            // (`test_rust_v4_sparse_fetch_corpus_diverges_from_dense`).
+            if sparse
+                && !state
+                    .known_bitmap_words
+                    .contains(&V3PoolState::word_of(tick, tick_spacing))
+            {
+                return Err(SimulateSwapError::MissingTickWord(V3PoolState::word_of(
+                    tick,
+                    tick_spacing,
+                )));
+            }
         }
     }
 
@@ -811,19 +832,54 @@ mod tests {
         // that does NOT reach a proposed tick in an unknown neighbor word must
         // still compute (no false miss). Mirrors Python's per-word miss: the
         // word is only consulted when the walk actually enters it.
+        //
+        // Uses an ofz (price-rising) swap from tick 0: the position's lower
+        // tick −60 lives in word −1 (unknown here), but ofz walks UPWARD into
+        // word 0 (known) toward +60, so word −1 is merely proposed, never
+        // entered — no miss. (A zfo swap would move the tick into word −1, the
+        // endpoint-in-unknown-word case covered by
+        // `sparse_endpoint_in_unknown_word_signals_miss`.)
         let liq = 10_000_000_000_000u128;
         let mut state = pool_1to1_with_position(liq);
         state.coverage = PoolTickCoverage::Sparse;
         // Word 0 (tick 0, the start) is known; word −1 (containing the tick −60
-        // boundary of the position) is NOT known. A small swap stays near tick 0
-        // and never crosses −60, so word −1 is merely proposed, not entered.
+        // boundary of the position) is NOT known.
         state.known_bitmap_words.clear();
         state.known_bitmap_words.insert(0);
 
-        let res = v3_simulate_swap(&state, true, I256::try_from(100u64).unwrap());
+        let res = v3_simulate_swap(&state, false, I256::try_from(100u64).unwrap());
         assert!(
             res.is_ok(),
-            "small swap that never enters the unknown word −1 should compute, got {res:?}"
+            "ofz swap staying in the known word 0 should compute, got {res:?}"
+        );
+    }
+
+    #[test]
+    fn sparse_endpoint_in_unknown_word_signals_miss() {
+        // Slice-4 fix (V3 mirror of the V4 ELSE-branch miss check). A swap
+        // whose price endpoint lands in an UNFETCHED word must signal
+        // `MissingTickWord` — the word may contain initialized ticks the walk
+        // crossed but `gen_ticks` never proposed (they are absent from
+        // `tick_data`). This is the divergence that made V4 `test_cached_
+        // calculations` undercount on multi-word swaps: without this check the
+        // walk committed a result computed with stale liquidity, having skipped
+        // the unknown word's liquidity-nets. Mirrors Python's
+        // `next_initialized_tick_within_one_word`, which raises for the current
+        // tick's word at every step — so Python fetches the endpoint word; Rust
+        // must too.
+        let liq = 10_000_000_000_000u128;
+        let mut state = pool_1to1_with_position(liq);
+        state.coverage = PoolTickCoverage::Sparse;
+        state.known_bitmap_words.clear();
+        state.known_bitmap_words.insert(0); // word 0 known; word −1 unknown
+
+        // zfo drops the price below tick 0 into word −1 (unknown).
+        let res = v3_simulate_swap(&state, true, I256::try_from(100u64).unwrap());
+        assert_eq!(
+            res,
+            Err(SimulateSwapError::MissingTickWord(-1)),
+            "zfo swap whose endpoint enters the unknown word −1 must signal a \
+             fetchable miss, got {res:?}"
         );
     }
 
