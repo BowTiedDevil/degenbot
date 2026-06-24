@@ -1079,6 +1079,7 @@ impl BotState {
                 if update_block > state.update_block {
                     state.update_block = update_block;
                 }
+                state.seed_known_bitmap_words();
                 state.invalidate_tick_range_cache();
                 true
             }
@@ -1087,6 +1088,7 @@ impl BotState {
                 if update_block > state.update_block {
                     state.update_block = update_block;
                 }
+                state.seed_known_bitmap_words();
                 state.invalidate_tick_range_cache();
                 true
             }
@@ -1544,6 +1546,83 @@ impl BotState {
                             self.merge_tick_word(pool_id, data);
                         }
                         Err(_) => return U256::ZERO,
+                    }
+                }
+            }
+        }
+    }
+
+    /// Miss-aware exact-input swap returning the FULL V3/V4 outcome
+    /// (amounts + final `sqrt_price_x96`/`liquidity`/`tick`).
+    ///
+    /// Like [`Self::calculate_tokens_out_miss_aware`] but returns the
+    /// [`V3SwapOutcome`] so the caller (the companion's
+    /// `simulate_exact_input_swap`) can build `final_state`. Returns
+    /// [`SimulateSwapError::NotComputable`] for non-V3/V4 pools (the Rust core
+    /// path doesn't simulate Curve/Balancer) or a zero `amount_in`.
+    ///
+    /// # Errors
+    ///
+    /// [`SimulateSwapError::MissingTickWord(word)`] when a V3/V4 sparse pool's
+    /// walk enters an unfetched tick-bitmap word; [`SimulateSwapError::NotComputable`]
+    /// on overflow / invariant violation / non-V3V4 pool / zero amount.
+    pub fn simulate_exact_input_swap_miss_aware(
+        &self,
+        pool_id: u64,
+        zero_for_one: bool,
+        amount_in: U256,
+    ) -> Result<V3SwapOutcome, SimulateSwapError> {
+        let Some(entry) = self.pools.get(&pool_id) else {
+            return Err(SimulateSwapError::NotComputable);
+        };
+        if amount_in.is_zero() {
+            return Err(SimulateSwapError::NotComputable);
+        }
+        let Some(spec) = I256::try_from(amount_in).ok() else {
+            return Err(SimulateSwapError::NotComputable);
+        };
+        match entry {
+            PoolEntry::V3(state) => v3_simulate_swap(state, zero_for_one, spec),
+            // V4 sign convention: exact-input is `amountSpecified < 0`.
+            PoolEntry::V4(state) => v4_simulate_swap(state, zero_for_one, -spec),
+            PoolEntry::V2(_)
+            | PoolEntry::Curve(_)
+            | PoolEntry::BalancerWeighted(_)
+            | PoolEntry::BalancerStable(_) => Err(SimulateSwapError::NotComputable),
+        }
+    }
+
+    /// Fetch+retry full-outcome exact-input swap for sparse V3/V4 pools
+    /// (ADR-005 slice 3b). Returns the [`V3SwapOutcome`] (amounts + final
+    /// state) or `None` if the pool is not V3/V4, the amount is zero, the fetch
+    /// failed, or the swap is not computable. Mirrors
+    /// [`Self::calculate_tokens_out_with_fetch`] but returns the full outcome.
+    ///
+    /// Returns `None` (not `Result`) for every failure mode by design —
+    /// callers cannot distinguish a fetch miss from `NotComputable` here; use
+    /// [`Self::simulate_exact_input_swap_miss_aware`] for miss-aware control.
+    pub fn simulate_exact_input_swap_with_fetch<F: crate::bot_core::tick_fetch::TickWordFetcher>(
+        &mut self,
+        pool_id: u64,
+        zero_for_one: bool,
+        amount_in: U256,
+        block: u64,
+        fetcher: &F,
+    ) -> Option<V3SwapOutcome> {
+        let mut attempted: HashSet<i32> = HashSet::new();
+        loop {
+            match self.simulate_exact_input_swap_miss_aware(pool_id, zero_for_one, amount_in) {
+                Ok(outcome) => return Some(outcome),
+                Err(SimulateSwapError::NotComputable) => return None,
+                Err(SimulateSwapError::MissingTickWord(word)) => {
+                    if !attempted.insert(word) {
+                        return None;
+                    }
+                    match fetcher.fetch_missing_tick_word(pool_id, word, block) {
+                        Ok(data) => {
+                            self.merge_tick_word(pool_id, data);
+                        }
+                        Err(_) => return None,
                     }
                 }
             }

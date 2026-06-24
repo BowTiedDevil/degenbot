@@ -197,6 +197,52 @@ impl PyLiquidityPool {
         Ok(bound.unbind())
     }
 
+    /// Fetch+retry full-outcome exact-input swap for sparse V3/V4 pools
+    /// (ADR-005 slice 3b). Like [`calculate_tokens_out_with_fetch`][Self::calculate_tokens_out_with_fetch]
+    /// but returns the full swap outcome tuple so the companion can build
+    /// `final_state`.
+    ///
+    /// Returns `(amount0, amount1, sqrt_price_x96, liquidity, tick)` or `None`
+    /// (pool not V3/V4, zero amount, fetch failed, or not computable).
+    #[pyo3(signature = (zero_for_one, amount_in, block, fetcher))]
+    fn simulate_swap_with_fetch(
+        &self,
+        py: Python<'_>,
+        zero_for_one: bool,
+        amount_in: &Bound<'_, PyAny>,
+        block: u64,
+        fetcher: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
+        let adapter = PyTickWordFetcher {
+            callback: fetcher.clone().unbind(),
+        };
+        let outcome = {
+            let mut core = self.core.write();
+            core.simulate_exact_input_swap_with_fetch(
+                self.pool_id,
+                zero_for_one,
+                amount,
+                block,
+                &adapter,
+            )
+        };
+        let Some(outcome) = outcome else {
+            return Ok(None);
+        };
+        let tuple = pyo3::types::PyTuple::new(
+            py,
+            [
+                crate::conversion::alloy::u256_to_py(py, &outcome.amount0)?.unbind(),
+                crate::conversion::alloy::u256_to_py(py, &outcome.amount1)?.unbind(),
+                crate::conversion::alloy::u256_to_py(py, &outcome.sqrt_price_x96)?.unbind(),
+                outcome.liquidity.into_pyobject(py)?.into_any().unbind(),
+                outcome.tick.into_pyobject(py)?.into_any().unbind(),
+            ],
+        )?;
+        Ok(Some(tuple.into_any().unbind()))
+    }
+
     /// Encode a V2 swap call, returning `(to_address_hex, calldata_hex, value)`.
     #[pyo3(signature = (zero_for_one, amount_out, recipient))]
     fn encode_swap(
