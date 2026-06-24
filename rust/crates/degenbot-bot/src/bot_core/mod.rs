@@ -43,7 +43,7 @@ pub use balancer_weighted_state::{
 pub use curve_state::{CurveBlockDelta, CurvePoolState, RegisterCurvePoolParams};
 pub use v3_state::{
     v3_simulate_swap, BufferedV3LiquidityUpdate, PoolTickCoverage, RegisterV3PoolParams,
-    V3PoolState, V3SwapOutcome, V3SwapUpdate,
+    SimulateSwapError, V3PoolState, V3SwapOutcome, V3SwapUpdate,
 };
 pub use v4_state::RegisterV4PoolError;
 pub use v4_state::{
@@ -1394,7 +1394,9 @@ impl BotState {
                 let Some(spec) = I256::try_from(amount_in).ok() else {
                     return U256::ZERO;
                 };
-                let Some(outcome) = v3_simulate_swap(state, zero_for_one, spec) else {
+                let Ok(outcome) = v3_simulate_swap(state, zero_for_one, spec) else {
+                    // NotComputable (overflow/invariant) or MissingTickWord
+                    // (sparse fetchable miss — slice 2 wires fetch+retry).
                     return U256::ZERO;
                 };
                 if zero_for_one {
@@ -1414,7 +1416,7 @@ impl BotState {
                 let Some(spec) = I256::try_from(amount_in).ok() else {
                     return U256::ZERO;
                 };
-                let Some(outcome) = v4_simulate_swap(state, zero_for_one, -spec) else {
+                let Ok(outcome) = v4_simulate_swap(state, zero_for_one, -spec) else {
                     return U256::ZERO;
                 };
                 if zero_for_one {
@@ -1500,7 +1502,7 @@ impl BotState {
                 let Some(spec) = I256::try_from(amount_out).ok() else {
                     return U256::ZERO;
                 };
-                let Some(outcome) = v3_simulate_swap(state, zero_for_one, -spec) else {
+                let Ok(outcome) = v3_simulate_swap(state, zero_for_one, -spec) else {
                     return U256::ZERO;
                 };
                 if zero_for_one {
@@ -1520,7 +1522,7 @@ impl BotState {
                 let Some(spec) = I256::try_from(amount_out).ok() else {
                     return U256::ZERO;
                 };
-                let Some(outcome) = v4_simulate_swap(state, zero_for_one, spec) else {
+                let Ok(outcome) = v4_simulate_swap(state, zero_for_one, spec) else {
                     return U256::ZERO;
                 };
                 if zero_for_one {

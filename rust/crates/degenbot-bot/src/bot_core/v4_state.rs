@@ -9,16 +9,18 @@
 //! produces the same `IntV3TickRangeSequence` the V3 path solver consumes.
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use alloy::primitives::{Address, I256, U160, U256};
 
 use crate::bot_core::state_history::{ReorgJournal, V3BlockDelta};
 use crate::bot_core::tick_bitmap::{compute_tick_ranges, gen_ticks, V3TickRangeForSolver};
-use crate::bot_core::v3_state::{PoolTickCoverage, V3SwapOutcome};
+use crate::bot_core::v3_state::{PoolTickCoverage, SimulateSwapError, V3SwapOutcome};
 use crate::bot_core::TickInfo;
 use crate::solvers::liquidity_event_buffer::LiquidityEvent;
 use crate::solvers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence};
+use degenbot_cl_math::cl_lib::functions::tick_position;
 use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v4;
 use degenbot_cl_math::cl_lib::tick_math::{
     get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO,
@@ -191,6 +193,11 @@ pub struct V4PoolState {
     pub tick_data: HashMap<i32, TickInfo>,
     pub coverage: PoolTickCoverage,
 
+    /// Tick-bitmap word positions known to be fetched. See
+    /// [`V3PoolState::known_bitmap_words`] — V4 shares the same sparse
+    /// miss-detection discipline (ADR-005 sparse-map feature parity).
+    pub known_bitmap_words: HashSet<i32>,
+
     /// Reorg journal — scalar priors + per-tick priors for rollback (V4 uses
     /// the same `V3BlockDelta` shape; `tick_priors` store `ModifyLiquidity` reversal
     /// data).
@@ -211,6 +218,7 @@ impl Clone for V4PoolState {
             update_block: self.update_block,
             tick_data: self.tick_data.clone(),
             coverage: self.coverage,
+            known_bitmap_words: self.known_bitmap_words.clone(),
             journal: self.journal.clone(),
             cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
         }
@@ -218,10 +226,26 @@ impl Clone for V4PoolState {
 }
 
 impl V4PoolState {
+    /// Word position holding `tick` (V3/V4-shared helper).
+    #[must_use]
+    pub fn word_of(tick: i32, tick_spacing: i32) -> i32 {
+        i32::from(tick_position(tick.div_euclid(tick_spacing)).0)
+    }
+
+    /// Seed `known_bitmap_words` from the current `tick_data` keys' word
+    /// positions (Sparse pools only; Tracked bypasses detection).
+    pub fn seed_known_bitmap_words(&mut self) {
+        self.known_bitmap_words = self
+            .tick_data
+            .keys()
+            .map(|&t| Self::word_of(t, self.pool_key.tick_spacing))
+            .collect();
+    }
+
     /// Construct from registration params with a journal of the given depth.
     #[must_use]
     pub fn from_params(params: RegisterV4PoolParams, journal_depth: usize) -> Self {
-        Self {
+        let mut out = Self {
             pool_manager: params.pool_manager,
             pool_id: params.pool_id,
             pool_key: params.pool_key,
@@ -231,9 +255,14 @@ impl V4PoolState {
             update_block: params.update_block,
             tick_data: params.tick_data,
             coverage: params.coverage,
+            known_bitmap_words: HashSet::new(),
             journal: ReorgJournal::<V3BlockDelta>::new(journal_depth),
             cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
+        };
+        if params.coverage == PoolTickCoverage::Sparse {
+            out.seed_known_bitmap_words();
         }
+        out
     }
 
     /// Invalidate the cached tick ranges (call after any state mutation).
@@ -353,16 +382,22 @@ impl V4PoolState {
 /// negative = exact input, positive = exact output (opposite to V3). The
 /// `BotState` `calculate_tokens_*` callers flip before calling so this stays
 /// a pure V4 port.
-#[must_use]
+///
+/// # Errors
+///
+/// Same discipline as [`v3_simulate_swap`]: [`SimulateSwapError::NotComputable`]
+/// for zero amount / overflow / invariant violations;
+/// [`SimulateSwapError::MissingTickWord(w)`] when `coverage == Sparse` and the
+/// walk entered an unfetched tick-bitmap word (caller fetches + retries).
 #[allow(clippy::too_many_lines)] // faithful port of V3/V4's `_calculate_swap`; mirroring `v3_simulate_swap`.
 #[allow(unused_assignments)] // `tick` tracks the contract's post-step tick; faithful to the loop.
 pub fn v4_simulate_swap(
     state: &V4PoolState,
     zero_for_one: bool,
     amount_specified: I256,
-) -> Option<V3SwapOutcome> {
+) -> Result<V3SwapOutcome, SimulateSwapError> {
     if amount_specified.is_zero() {
-        return None; // AS: zero amount (V3 reverts)
+        return Err(SimulateSwapError::NotComputable); // AS: zero amount (V3 reverts)
     }
     // V4 sign convention: `amount_specified < 0` = exact INPUT, `> 0` = exact OUTPUT
     // (opposite to V3). Matches Solidity V4 `Pool.sol:295`
@@ -380,12 +415,27 @@ pub fn v4_simulate_swap(
     let mut amount_calculated = I256::ZERO;
     let mut sqrt_price_x96 = state.sqrt_price_x96;
     let mut tick = state.tick;
-    let mut liquidity = i128::try_from(state.liquidity).ok()?;
+    let mut liquidity =
+        i128::try_from(state.liquidity).map_err(|_| SimulateSwapError::NotComputable)?;
 
     let fee_pips = U256::from(state.pool_key.fee);
     let tick_spacing = state.pool_key.tick_spacing;
 
-    let ticks = gen_ticks(&state.tick_data, tick, tick_spacing, zero_for_one, 30_000).ok()?;
+    // Sparse-map miss detection (V3/V4-shared; see `v3_simulate_swap`).
+    let sparse = state.coverage == PoolTickCoverage::Sparse;
+    if sparse
+        && !state
+            .known_bitmap_words
+            .contains(&V4PoolState::word_of(tick, tick_spacing))
+    {
+        return Err(SimulateSwapError::MissingTickWord(V4PoolState::word_of(
+            tick,
+            tick_spacing,
+        )));
+    }
+
+    let ticks = gen_ticks(&state.tick_data, tick, tick_spacing, zero_for_one, 30_000)
+        .map_err(|_| SimulateSwapError::NotComputable)?;
 
     for tick_along_path in ticks {
         if amount_specified_remaining.is_zero() || sqrt_price_x96 == sqrt_price_limit {
@@ -401,7 +451,10 @@ pub fn v4_simulate_swap(
             tick_next.min(887_272)
         };
 
-        let sqrt_price_next = U256::from(get_sqrt_ratio_at_tick_internal(tick_next).ok()?);
+        let sqrt_price_next = U256::from(
+            get_sqrt_ratio_at_tick_internal(tick_next)
+                .map_err(|_| SimulateSwapError::NotComputable)?,
+        );
 
         let sqrt_price_target = if (zero_for_one && sqrt_price_next < sqrt_price_limit)
             || (!zero_for_one && sqrt_price_next > sqrt_price_limit)
@@ -419,7 +472,7 @@ pub fn v4_simulate_swap(
             amount_specified_remaining,
             fee_pips,
         )
-        .ok()?;
+        .map_err(|_| SimulateSwapError::NotComputable)?;
 
         sqrt_price_x96 = step.sqrt_price_next;
 
@@ -431,31 +484,60 @@ pub fn v4_simulate_swap(
         // calculated — they partially cancelled, producing a ~1-wei over-count
         // instead of total breakage. See `contract_reference/uniswap/V4/PoolManager.sol`.
         if exact_in {
-            let consumed = I256::try_from(step.amount_in.saturating_add(step.fee_amount)).ok()?;
-            amount_specified_remaining = amount_specified_remaining.checked_add(consumed)?;
-            amount_calculated =
-                amount_calculated.checked_add(I256::try_from(step.amount_out).ok()?)?;
+            let consumed = I256::try_from(step.amount_in.saturating_add(step.fee_amount))
+                .map_err(|_| SimulateSwapError::NotComputable)?;
+            amount_specified_remaining = amount_specified_remaining
+                .checked_add(consumed)
+                .ok_or(SimulateSwapError::NotComputable)?;
+            amount_calculated = amount_calculated
+                .checked_add(
+                    I256::try_from(step.amount_out)
+                        .map_err(|_| SimulateSwapError::NotComputable)?,
+                )
+                .ok_or(SimulateSwapError::NotComputable)?;
         } else {
-            amount_specified_remaining =
-                amount_specified_remaining.checked_sub(I256::try_from(step.amount_out).ok()?)?;
-            let gross_input =
-                I256::try_from(step.amount_in.saturating_add(step.fee_amount)).ok()?;
-            amount_calculated = amount_calculated.checked_sub(gross_input)?;
+            amount_specified_remaining = amount_specified_remaining
+                .checked_sub(
+                    I256::try_from(step.amount_out)
+                        .map_err(|_| SimulateSwapError::NotComputable)?,
+                )
+                .ok_or(SimulateSwapError::NotComputable)?;
+            let gross_input = I256::try_from(step.amount_in.saturating_add(step.fee_amount))
+                .map_err(|_| SimulateSwapError::NotComputable)?;
+            amount_calculated = amount_calculated
+                .checked_sub(gross_input)
+                .ok_or(SimulateSwapError::NotComputable)?;
         }
 
         if sqrt_price_x96 == sqrt_price_next {
+            // Gated sparse miss-detection — see `v3_simulate_swap`: only fire
+            // when the walk actually crosses into `tick_next`'s word, so an
+            // unreached proposed boundary does not false-trigger.
+            if sparse
+                && !state
+                    .known_bitmap_words
+                    .contains(&V4PoolState::word_of(tick_next, tick_spacing))
+            {
+                return Err(SimulateSwapError::MissingTickWord(V4PoolState::word_of(
+                    tick_next,
+                    tick_spacing,
+                )));
+            }
             if initialized {
                 if let Some(info) = state.tick_data.get(&tick_next) {
                     let liquidity_net_i256 = info.liquidity_net;
-                    let liquidity_net: i128 = i128::try_from(liquidity_net_i256).ok()?;
+                    let liquidity_net: i128 = i128::try_from(liquidity_net_i256)
+                        .map_err(|_| SimulateSwapError::NotComputable)?;
                     let net = if zero_for_one {
                         -liquidity_net
                     } else {
                         liquidity_net
                     };
-                    liquidity = liquidity.checked_add(net)?;
+                    liquidity = liquidity
+                        .checked_add(net)
+                        .ok_or(SimulateSwapError::NotComputable)?;
                     if liquidity < 0 {
-                        return None; // LO: invariant violated
+                        return Err(SimulateSwapError::NotComputable); // LO: invariant violated
                     }
                 }
             }
@@ -466,12 +548,14 @@ pub fn v4_simulate_swap(
             };
         } else if sqrt_price_x96 != sqrt_price_start {
             tick = get_tick_at_sqrt_ratio_internal(sqrt_price_x96.to::<U160>())
-                .ok()?
+                .map_err(|_| SimulateSwapError::NotComputable)?
                 .as_i32();
         }
     }
 
-    let input_consumed = amount_specified.checked_sub(amount_specified_remaining)?;
+    let input_consumed = amount_specified
+        .checked_sub(amount_specified_remaining)
+        .ok_or(SimulateSwapError::NotComputable)?;
 
     // Solidity V4 `Pool.swap()` final delta assembly:
     //   if (zeroForOne != (amountSpecified < 0)) { (amount0, amount1) = (calculated,   consumed) }
@@ -482,7 +566,7 @@ pub fn v4_simulate_swap(
         (amount_calculated, input_consumed)
     };
 
-    Some(V3SwapOutcome {
+    Ok(V3SwapOutcome {
         amount0: amount0_signed.unsigned_abs(),
         amount1: amount1_signed.unsigned_abs(),
     })
