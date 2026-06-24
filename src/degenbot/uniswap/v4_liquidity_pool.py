@@ -569,70 +569,17 @@ class UniswapV4Pool(
 
         zero_for_one = token_in == self._token0
 
-        if override_state is None:
-            # ADR-005 slice 3b: mainline exact-input swap (no override) delegates
-            # to the Rust fetch+retry seam. For a sparse pool the Rust path
-            # misses on an unknown word, fetches it via
-            # ``_apply_fetched_tick_word`` (the return-data fetcher), merges,
-            # and retries; for a dense pool it computes directly (the dense-map
-            # parity gate asserts Rust == Python ``_v4_swap``). The override
-            # path keeps the Python ``_calculate_swap`` (override is an
-            # arbitrage hypothetical over alternate state — Rust reads from
-            # BotState, not an override — slice 4 retires the Python loop).
-            # Hook check is reconstructed from the outcome amounts (a pool with
-            # swap-mutating hooks keeps the Python path regardless).
-            conflicting_hook_flags = {
-                Hooks.AFTER_SWAP,
-                Hooks.AFTER_SWAP_RETURNS_DELTA,
-                Hooks.BEFORE_SWAP,
-                Hooks.BEFORE_SWAP_RETURNS_DELTA,
-            } & self.active_hooks
-            if conflicting_hook_flags:
-                # Swap-mutating hooks require the Python simulator's hook
-                # accounting — the Rust sim doesn't model hooks. Fall through to
-                # the Python ``_calculate_swap`` (then re-check + raise).
-                swap_delta, *_ = self._calculate_swap(
-                    zero_for_one=zero_for_one,
-                    amount_specified=-token_in_quantity,
-                    sqrt_price_x96_limit=(
-                        MIN_SQRT_PRICE + 1 if zero_for_one else MAX_SQRT_PRICE - 1
-                    ),
-                    override_state=override_state,
-                )
-                raise HookedPoolResult(
-                    amount_in=swap_delta.amount_in,
-                    amount_out=swap_delta.amount_out,
-                    hooks=conflicting_hook_flags,
-                )
-            outcome = self._py_pool.simulate_swap_with_fetch(
-                zero_for_one=zero_for_one,
-                amount_in=token_in_quantity,
-                block=self.update_block,
-                fetcher=self._tick_data_fetcher,
-            )
-            if outcome is None:
-                raise LiquidityPoolError(
-                    message=(
-                        f"Simulated execution could not compute. "
-                        f"pool_id={self.pool_id.to_0x_hex()} zfo={zero_for_one} "
-                        f"amount_in={token_in_quantity}"
-                    ),
-                )
-            # Rust returns UNSIGNED absolute amounts; SwapDelta.amount_out =
-            # max(currency0, currency1) = the withdrawn currency's abs:
-            # ``rust_amount1`` for zfo (token1 out), ``rust_amount0`` for ofz
-            # (token0 out). (Pinned by test test_rust_v4_seam_matches_*.)
-            rust_amount0, rust_amount1 = int(outcome[0]), int(outcome[1])
-            amount_in_consumed = rust_amount0 if zero_for_one else rust_amount1
-            amount_out = rust_amount1 if zero_for_one else rust_amount0
-            assert amount_in_consumed <= token_in_quantity
-            if amount_in_consumed < token_in_quantity:
-                raise IncompleteSwap(
-                    amount_in=amount_in_consumed,
-                    amount_out=amount_out,
-                )
-            return amount_out
-
+        # ADR-005 slice 3b: the V3 mainline routes to the Rust fetch+retry seam,
+        # but the V4 sim is NOT yet a faithful oracle for crossing swaps — the
+        # Rust V4 sim's LP-fee + liquidity-net walk diverges from the Python
+        # simulator + on-chain quoter on swaps that cross a tick boundary
+        # (offline parity gate `test_rust_v4_seam_matches_python_simulator_dense_crossing`
+        # is RED; the fork test `test_cached_calculations` regresses). Per §4.3
+        # the Python simulator stays as the V4 parity oracle until the Rust V4
+        # sim is corrected — slice 4. The fetch-callback seam itself is sound
+        # (dense non-crossing parity is green), so the V4 sparse-loop helper
+        # (`_apply_fetched_tick_word`) stays wired; only the mainline routing
+        # is deferred.
         try:
             swap_delta, *_ = self._calculate_swap(
                 zero_for_one=zero_for_one,
