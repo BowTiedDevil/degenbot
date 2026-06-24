@@ -11,6 +11,148 @@ use serde::{Deserialize, Serialize};
 
 use super::{HopType, MixedPoolRef, UniswapEngine};
 
+/// A single typed field-level divergence between the engine's view of a pool
+/// and the on-chain snapshot (PCG2M3). The string rendering is the single
+/// source of truth for the legacy human-readable `DiagnosticHop::diff` entry:
+/// `to_diff_string()` reproduces the exact `"<field>: engine=<v>, onchain=<v>"`
+/// shape callers and tests already depend on.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FieldDiff {
+    /// Field name (e.g. `reserve_in`, `sqrt_price_x96`, `tick`, `liquidity`).
+    pub field: String,
+    /// Engine-side value, rendered exactly as it appeared in the diff string.
+    pub engine: String,
+    /// On-chain-side value, rendered exactly as it appeared in the diff string.
+    pub onchain: String,
+}
+
+impl FieldDiff {
+    /// Render the legacy `"<field>: engine=<engine>, onchain=<onchain>"` line.
+    #[must_use]
+    pub fn to_diff_string(&self) -> String {
+        format!(
+            "{}: engine={}, onchain={}",
+            self.field, self.engine, self.onchain
+        )
+    }
+}
+
+/// `skip_serializing_if` helper: skip `drift` when it is `false` (the common
+/// no-drift case) so the default JSON stays compact.
+///
+/// `serde`'s `skip_serializing_if` passes the field by reference, so this must
+/// take `&bool` despite clippy wanting pass-by-value.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+/// Compute typed field-level differences between engine and on-chain pool
+/// state (PCG2M3). Pure — no RPC. The single source of truth for `diff`:
+/// `fetch_onchain` calls this and derives the `Vec<String>` `diff` lines via
+/// `FieldDiff::to_diff_string`, so the two never drift.
+///
+/// Fields compared per family:
+/// - V2: `reserve_in`, `reserve_out`
+/// - V3/V4: `sqrt_price_x96`, `tick`, `liquidity` (identical for both CL
+///   families — merged with `|`)
+///
+/// Only true divergences are returned (matching fields are omitted). A
+/// cross-family mismatch (e.g. engine V2 vs onchain V3) is recorded as a
+/// single `FieldDiff { field: "pool_family" }` so the analyzer sees non-empty
+/// `field_drift` instead of silently empty diffs.
+#[must_use]
+pub fn compute_field_diffs(
+    engine: &DiagnosticPoolState,
+    onchain: &DiagnosticPoolState,
+) -> Vec<FieldDiff> {
+    let mut diffs = Vec::new();
+    let mut push = |field: &str, eng: String, chain: String| {
+        if eng != chain {
+            diffs.push(FieldDiff {
+                field: field.to_string(),
+                engine: eng,
+                onchain: chain,
+            });
+        }
+    };
+    match (engine, onchain) {
+        (
+            DiagnosticPoolState::V2 {
+                reserve_in: e_rin,
+                reserve_out: e_rout,
+                ..
+            },
+            DiagnosticPoolState::V2 {
+                reserve_in: c_rin,
+                reserve_out: c_rout,
+                ..
+            },
+        ) => {
+            push("reserve_in", e_rin.clone(), c_rin.clone());
+            push("reserve_out", e_rout.clone(), c_rout.clone());
+        }
+        (
+            DiagnosticPoolState::V3 {
+                sqrt_price_x96: e_sp,
+                tick: e_tick,
+                liquidity: e_liq,
+                ..
+            },
+            DiagnosticPoolState::V3 {
+                sqrt_price_x96: c_sp,
+                tick: c_tick,
+                liquidity: c_liq,
+                ..
+            },
+        )
+        | (
+            DiagnosticPoolState::V4 {
+                sqrt_price_x96: e_sp,
+                tick: e_tick,
+                liquidity: e_liq,
+                ..
+            },
+            DiagnosticPoolState::V4 {
+                sqrt_price_x96: c_sp,
+                tick: c_tick,
+                liquidity: c_liq,
+                ..
+            },
+        ) => {
+            push("sqrt_price_x96", e_sp.clone(), c_sp.clone());
+            push("tick", e_tick.to_string(), c_tick.to_string());
+            push("liquidity", e_liq.clone(), c_liq.clone());
+        }
+        (engine, onchain) => {
+            push(
+                "pool_family",
+                engine.family_tag().to_string(),
+                onchain.family_tag().to_string(),
+            );
+        }
+    }
+    diffs
+}
+
+/// Engine-vs-onchain re-compute of a single hop's output (PCG2M3 schema; fields
+/// populated by the recompute tasks). All `None` until those tasks wire it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HopRecompute {
+    /// The hop's consumed input used as the re-compute basis.
+    pub amount_in: String,
+    /// The output the solver reported for this hop.
+    pub solver_out: String,
+    /// Re-computed output from the ENGINE state. `None` until the recompute
+    /// task runs (intent: identity for V3/V4 — same math the solver ran).
+    pub expected_out_engine: Option<String>,
+    /// Re-computed output from the ONCHAIN state. `None` until the recompute
+    /// task runs (intent: drift detector for V3/V4; meaningful calc check for V2).
+    pub expected_out_onchain: Option<String>,
+    /// True iff the chosen recompute basis agrees with `solver_out`.
+    pub matches_solver: Option<bool>,
+}
+
 /// A snapshot of a single pool's state, formatted for diagnostics.
 ///
 /// Numeric values are stored as hex strings so the output is
@@ -59,6 +201,19 @@ pub enum DiagnosticPoolState {
     },
 }
 
+impl DiagnosticPoolState {
+    /// Short family tag used by `compute_field_diffs` for the cross-family
+    /// mismatch case (e.g. engine V2 vs onchain V3).
+    #[must_use]
+    pub fn family_tag(&self) -> &'static str {
+        match self {
+            Self::V2 { .. } => "V2",
+            Self::V3 { .. } => "V3",
+            Self::V4 { .. } => "V4",
+        }
+    }
+}
+
 /// A single hop inside a diagnostic path snapshot.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -78,6 +233,46 @@ pub struct DiagnosticHop {
     /// Human-readable field-level differences between engine and chain.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub diff: Vec<String>,
+    /// True iff ANY field differs between `engine_state` and `onchain_state`
+    /// (PCG2M3). `false` when no on-chain fetch ran or every fetched field
+    /// matched.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub drift: bool,
+    /// Typed field-level differences engine vs on-chain (PCG2M3). Empty when
+    /// the fetch was skipped or every field matched. The `diff` strings are
+    /// derived from these (`FieldDiff::to_diff_string`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub field_drift: Vec<FieldDiff>,
+    /// Engine-vs-onchain hop-output recompute (PCG2M3 schema; populated by the
+    /// recompute tasks). `None` until a recompute runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recompute: Option<HopRecompute>,
+}
+
+impl DiagnosticHop {
+    /// Apply an on-chain fetch outcome to this hop (PCG2M3). Single source of
+    /// truth: sets `onchain_state` + `field_drift` + `drift`, then DERIVES the
+    /// human-readable `diff` lines from `field_drift` (via
+    /// `FieldDiff::to_diff_string`) and appends any arbitrary `messages`
+    /// (fetch-skip notes / RPC error strings) verbatim. Callers must NEVER push
+    /// field-diff strings to `diff` directly — go through `field_drift` so the
+    /// typed view and the human view never drift.
+    pub(crate) fn apply_onchain_fetch(
+        &mut self,
+        onchain_state: Option<DiagnosticPoolState>,
+        field_drifts: Vec<FieldDiff>,
+        messages: Vec<String>,
+    ) {
+        self.onchain_state = onchain_state;
+        self.drift = !field_drifts.is_empty();
+        self.diff.extend(
+            field_drifts
+                .iter()
+                .map(FieldDiff::to_diff_string)
+                .chain(messages),
+        );
+        self.field_drift.extend(field_drifts);
+    }
 }
 
 impl Default for DiagnosticHop {
@@ -95,6 +290,9 @@ impl Default for DiagnosticHop {
             },
             onchain_state: None,
             diff: Vec::new(),
+            drift: false,
+            field_drift: Vec::new(),
+            recompute: None,
         }
     }
 }
@@ -115,6 +313,14 @@ pub struct DiagnosticPathState {
     pub onchain_block: Option<u64>,
     /// The hop snapshots.
     pub hops: Vec<DiagnosticHop>,
+    /// The solver's reported optimal input for this path (PCG2M3; threaded in
+    /// from `simulate_one`). `None` until populated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub optimal_input: Option<String>,
+    /// The solver's reported per-hop output amounts in path order (PCG2M3;
+    /// threaded in from `simulate_one`). Empty until populated.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hop_outputs: Vec<String>,
     /// Call data that produced the revert, if captured from a sim failure.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failed_calldata: Option<String>,
@@ -133,6 +339,8 @@ impl DiagnosticPathState {
             solve_block,
             onchain_block: None,
             hops: Vec::new(),
+            optimal_input: None,
+            hop_outputs: Vec::new(),
             failed_calldata: None,
             revert_info: None,
         }
@@ -158,95 +366,18 @@ impl DiagnosticPathState {
         self.onchain_block = block_number;
 
         for hop in &mut self.hops {
-            let result = match &hop.engine_state {
-                DiagnosticPoolState::V2 {
-                    address,
-                    reserve_in,
-                    reserve_out,
-                    fee_denom,
-                    gamma_numer,
-                } => {
-                    fetch_v2_onchain(
-                        provider,
-                        block_number,
-                        hop.zero_for_one,
-                        address,
-                        reserve_in,
-                        reserve_out,
-                        fee_denom,
-                        gamma_numer,
-                    )
-                    .await
-                }
-                DiagnosticPoolState::V3 {
-                    address,
-                    token0,
-                    token1,
-                    fee,
-                    tick_spacing,
-                    sqrt_price_x96,
-                    tick,
-                    liquidity,
-                } => {
-                    fetch_v3_onchain(
-                        provider,
-                        block_number,
-                        address,
-                        token0,
-                        token1,
-                        *fee,
-                        *tick_spacing,
-                        sqrt_price_x96,
-                        *tick,
-                        liquidity,
-                    )
-                    .await
-                }
-                DiagnosticPoolState::V4 {
-                    pool_manager,
-                    pool_id,
-                    currency0,
-                    currency1,
-                    fee,
-                    tick_spacing,
-                    hook_flags,
-                    hooks,
-                    sqrt_price_x96,
-                    tick,
-                    liquidity,
-                } => {
-                    if let Some(sv) = state_view {
-                        fetch_v4_onchain(
-                            provider,
-                            block_number,
-                            sv,
-                            pool_manager,
-                            pool_id,
-                            currency0,
-                            currency1,
-                            *fee,
-                            *tick_spacing,
-                            *hook_flags,
-                            hooks,
-                            sqrt_price_x96,
-                            *tick,
-                            liquidity,
-                        )
-                        .await
-                    } else {
-                        Ok(FetchOutcome {
-                            onchain_state: None,
-                            diffs: vec!["V4 on-chain fetch skipped: no StateView address provided"
-                                .to_string()],
-                        })
-                    }
-                }
-            };
-
+            let result = fetch_hop_onchain(hop, provider, block_number, state_view).await;
             match result {
                 Ok(outcome) => {
-                    hop.onchain_state = outcome.onchain_state;
-                    hop.diff.extend(outcome.diffs);
+                    let field_drifts = match &outcome.onchain_state {
+                        Some(oc) => compute_field_diffs(&hop.engine_state, oc),
+                        None => Vec::new(),
+                    };
+                    hop.apply_onchain_fetch(
+                        outcome.onchain_state,
+                        field_drifts,
+                        outcome.messages,
+                    );
                 }
                 Err(e) => {
                     hop.diff.push(format!("on-chain fetch failed: {e}"));
@@ -258,22 +389,111 @@ impl DiagnosticPathState {
     }
 }
 
+/// Dispatch a single hop's on-chain fetch by pool family (PCG2M3; extracted
+/// from `fetch_onchain` to keep that method under the clippy line budget).
+/// Returns the on-chain `FetchOutcome`; field drift is computed by the caller
+/// via `compute_field_diffs` (single source of truth).
+async fn fetch_hop_onchain(
+    hop: &DiagnosticHop,
+    provider: &degenbot_rpc::provider::AlloyProvider,
+    block_number: Option<u64>,
+    state_view: Option<Address>,
+) -> Result<FetchOutcome, degenbot_core::errors::ProviderError> {
+    match &hop.engine_state {
+        DiagnosticPoolState::V2 {
+            address,
+            reserve_in: _,
+            reserve_out: _,
+            fee_denom,
+            gamma_numer,
+        } => {
+            fetch_v2_onchain(
+                provider,
+                block_number,
+                hop.zero_for_one,
+                address,
+                fee_denom,
+                gamma_numer,
+            )
+            .await
+        }
+        DiagnosticPoolState::V3 {
+            address,
+            token0,
+            token1,
+            fee,
+            tick_spacing,
+            sqrt_price_x96: _,
+            tick: _,
+            liquidity: _,
+        } => {
+            fetch_v3_onchain(
+                provider,
+                block_number,
+                address,
+                token0,
+                token1,
+                *fee,
+                *tick_spacing,
+            )
+            .await
+        }
+        DiagnosticPoolState::V4 {
+            pool_manager,
+            pool_id,
+            currency0,
+            currency1,
+            fee,
+            tick_spacing,
+            hook_flags,
+            hooks,
+            sqrt_price_x96: _,
+            tick: _,
+            liquidity: _,
+        } => {
+            if let Some(sv) = state_view {
+                fetch_v4_onchain(
+                    provider,
+                    block_number,
+                    sv,
+                    pool_manager,
+                    pool_id,
+                    currency0,
+                    currency1,
+                    *fee,
+                    *tick_spacing,
+                    *hook_flags,
+                    hooks,
+                )
+                .await
+            } else {
+                Ok(FetchOutcome {
+                    onchain_state: None,
+                    messages: vec![
+                        "V4 on-chain fetch skipped: no StateView address provided"
+                            .to_string(),
+                    ],
+                })
+            }
+        }
+    }
+}
+
 /// Result of fetching on-chain state for a single hop.
 struct FetchOutcome {
     onchain_state: Option<DiagnosticPoolState>,
-    diffs: Vec<String>,
+    /// Arbitrary fetch-time messages appended verbatim to `diff` (skip notes,
+    /// RPC errors) — NOT field divergences. Field drift is computed separately
+    /// by `compute_field_diffs` in `fetch_onchain` (single source of truth).
+    messages: Vec<String>,
 }
 
 impl FetchOutcome {
     fn new(onchain_state: DiagnosticPoolState) -> Self {
         Self {
             onchain_state: Some(onchain_state),
-            diffs: Vec::new(),
+            messages: Vec::new(),
         }
-    }
-
-    fn record_diff(&mut self, msg: String) {
-        self.diffs.push(msg);
     }
 }
 
@@ -295,18 +515,6 @@ fn encode_call(selector: [u8; 4], params: &[DynSolValue]) -> Bytes {
         out.extend_from_slice(&param.abi_encode());
     }
     Bytes::from(out)
-}
-
-/// Parse a `0x`-prefixed hex string into a `U256`.
-fn parse_hex_u256(s: &str) -> Option<U256> {
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    U256::from_str_radix(s, 16).ok()
-}
-
-/// Parse a `0x`-prefixed hex string into a `u128`.
-fn parse_hex_u128(s: &str) -> Option<u128> {
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    u128::from_str_radix(s, 16).ok()
 }
 
 /// Extract a `U256` from an ABI-decoded uint value with the expected bit width.
@@ -338,8 +546,6 @@ async fn fetch_v2_onchain(
     block_number: Option<u64>,
     zero_for_one: bool,
     address: &str,
-    engine_reserve_in: &str,
-    engine_reserve_out: &str,
     fee_denom: &str,
     gamma_numer: &str,
 ) -> Result<FetchOutcome, degenbot_core::errors::ProviderError> {
@@ -390,29 +596,13 @@ async fn fetch_v2_onchain(
         (reserve1, reserve0)
     };
 
-    let mut outcome = FetchOutcome::new(DiagnosticPoolState::V2 {
+    let outcome = FetchOutcome::new(DiagnosticPoolState::V2 {
         address: address.to_string(),
         reserve_in: u256_to_hex(chain_reserve_in),
         reserve_out: u256_to_hex(chain_reserve_out),
         fee_denom: fee_denom.to_string(),
         gamma_numer: gamma_numer.to_string(),
     });
-
-    let engine_r_in = parse_hex_u256(engine_reserve_in);
-    let engine_r_out = parse_hex_u256(engine_reserve_out);
-
-    if engine_r_in != Some(chain_reserve_in) {
-        outcome.record_diff(format!(
-            "reserve_in: engine={engine_reserve_in}, onchain={}",
-            u256_to_hex(chain_reserve_in)
-        ));
-    }
-    if engine_r_out != Some(chain_reserve_out) {
-        outcome.record_diff(format!(
-            "reserve_out: engine={engine_reserve_out}, onchain={}",
-            u256_to_hex(chain_reserve_out)
-        ));
-    }
 
     Ok(outcome)
 }
@@ -426,9 +616,6 @@ async fn fetch_v3_onchain(
     token1: &str,
     fee: u32,
     tick_spacing: i32,
-    engine_sqrt_price_x96: &str,
-    engine_tick: i32,
-    engine_liquidity: &str,
 ) -> Result<FetchOutcome, degenbot_core::errors::ProviderError> {
     let pool_address: Address =
         address
@@ -500,7 +687,7 @@ async fn fetch_v3_onchain(
         )?
         .to::<u128>();
 
-    let mut outcome = FetchOutcome::new(DiagnosticPoolState::V3 {
+    let outcome = FetchOutcome::new(DiagnosticPoolState::V3 {
         address: address.to_string(),
         token0: token0.to_string(),
         token1: token1.to_string(),
@@ -510,22 +697,6 @@ async fn fetch_v3_onchain(
         tick: chain_tick,
         liquidity: u128_to_hex(chain_liquidity),
     });
-
-    if parse_hex_u256(engine_sqrt_price_x96) != Some(chain_sqrt_price_x96) {
-        outcome.record_diff(format!(
-            "sqrt_price_x96: engine={engine_sqrt_price_x96}, onchain={}",
-            u256_to_hex(chain_sqrt_price_x96)
-        ));
-    }
-    if engine_tick != chain_tick {
-        outcome.record_diff(format!("tick: engine={engine_tick}, onchain={chain_tick}"));
-    }
-    if parse_hex_u128(engine_liquidity) != Some(chain_liquidity) {
-        outcome.record_diff(format!(
-            "liquidity: engine={engine_liquidity}, onchain={}",
-            u128_to_hex(chain_liquidity)
-        ));
-    }
 
     Ok(outcome)
 }
@@ -543,9 +714,6 @@ async fn fetch_v4_onchain(
     tick_spacing: i32,
     hook_flags: u16,
     hooks: &str,
-    engine_sqrt_price_x96: &str,
-    engine_tick: i32,
-    engine_liquidity: &str,
 ) -> Result<FetchOutcome, degenbot_core::errors::ProviderError> {
     let pool_id_bytes = degenbot_core::hex_utils::decode_32byte_hex(pool_id).map_err(|e| {
         degenbot_core::errors::ProviderError::Other {
@@ -615,7 +783,7 @@ async fn fetch_v4_onchain(
         )?
         .to::<u128>();
 
-    let mut outcome = FetchOutcome::new(DiagnosticPoolState::V4 {
+    let outcome = FetchOutcome::new(DiagnosticPoolState::V4 {
         pool_manager: pool_manager.to_string(),
         pool_id: pool_id.to_string(),
         currency0: currency0.to_string(),
@@ -628,22 +796,6 @@ async fn fetch_v4_onchain(
         tick: chain_tick,
         liquidity: u128_to_hex(chain_liquidity),
     });
-
-    if parse_hex_u256(engine_sqrt_price_x96) != Some(chain_sqrt_price_x96) {
-        outcome.record_diff(format!(
-            "sqrt_price_x96: engine={engine_sqrt_price_x96}, onchain={}",
-            u256_to_hex(chain_sqrt_price_x96)
-        ));
-    }
-    if engine_tick != chain_tick {
-        outcome.record_diff(format!("tick: engine={engine_tick}, onchain={chain_tick}"));
-    }
-    if parse_hex_u128(engine_liquidity) != Some(chain_liquidity) {
-        outcome.record_diff(format!(
-            "liquidity: engine={engine_liquidity}, onchain={}",
-            u128_to_hex(chain_liquidity)
-        ));
-    }
 
     Ok(outcome)
 }
@@ -722,6 +874,9 @@ impl UniswapEngine {
                     },
                     onchain_state: None,
                     diff: vec![format!("missing pool_key={} in engine", pool_ref.pool_key)],
+                    drift: false,
+                    field_drift: Vec::new(),
+                    recompute: None,
                 });
                 continue;
             };
@@ -733,6 +888,9 @@ impl UniswapEngine {
                 engine_state,
                 onchain_state: None,
                 diff: Vec::new(),
+                drift: false,
+                field_drift: Vec::new(),
+                recompute: None,
             });
         }
 
@@ -956,5 +1114,158 @@ mod tests {
     fn diagnostic_path_state_returns_none_for_unknown_path() {
         let engine = UniswapEngine::new();
         assert!(engine.diagnostic_path_state(1234).is_none());
+    }
+
+    // -----------------------------------------------------------------
+    // Structured typed drift fields (PCG2M3)
+    // -----------------------------------------------------------------
+
+    /// A V2 hop whose engine `reserve_in` / `reserve_out` both diverge from the
+    /// on-chain snapshot yields TWO `FieldDiff` entries (`reserve_in`,
+    /// `reserve_out`), `drift == true`, and the derived `diff` strings preserve
+    /// the legacy `"<field>: engine=<v>, onchain=<v>"` shape exactly.
+    #[test]
+    fn field_diff_v2_divergent_reserves_sets_drift_and_field_drift() {
+        let engine_state = super::DiagnosticPoolState::V2 {
+            address: "0x0000000000000000000000000000000000001111".to_string(),
+            reserve_in: "0x01".to_string(),
+            reserve_out: "0x02".to_string(),
+            fee_denom: "0x03e8".to_string(),
+            gamma_numer: "0x03e5".to_string(),
+        };
+        let onchain_state = super::DiagnosticPoolState::V2 {
+            address: "0x0000000000000000000000000000000000001111".to_string(),
+            reserve_in: "0xff".to_string(),
+            reserve_out: "0xee".to_string(),
+            fee_denom: "0x03e8".to_string(),
+            gamma_numer: "0x03e5".to_string(),
+        };
+
+        let diffs = super::compute_field_diffs(&engine_state, &onchain_state);
+        assert_eq!(
+            diffs.len(),
+            2,
+            "both reserves diverge → two field diffs"
+        );
+        assert_eq!(diffs[0].field, "reserve_in");
+        assert_eq!(diffs[0].engine, "0x01");
+        assert_eq!(diffs[0].onchain, "0xff");
+        assert_eq!(diffs[1].field, "reserve_out");
+        assert_eq!(diffs[1].engine, "0x02");
+        assert_eq!(diffs[1].onchain, "0xee");
+
+        // drift is exactly "field_drift is non-empty".
+        let drift = !diffs.is_empty();
+        assert!(drift);
+
+        // Derived diff strings match the legacy format byte-for-byte.
+        assert_eq!(
+            diffs[0].to_diff_string(),
+            "reserve_in: engine=0x01, onchain=0xff"
+        );
+        assert_eq!(
+            diffs[1].to_diff_string(),
+            "reserve_out: engine=0x02, onchain=0xee"
+        );
+    }
+
+    /// A V2 hop whose reserves match the on-chain snapshot yields NO field
+    /// diffs and `drift == false` (the matching-hop case).
+    #[test]
+    fn field_diff_v2_matching_reserves_no_drift() {
+        let engine_state = super::DiagnosticPoolState::V2 {
+            address: "0x0000000000000000000000000000000000001111".to_string(),
+            reserve_in: "0x01".to_string(),
+            reserve_out: "0x02".to_string(),
+            fee_denom: "0x03e8".to_string(),
+            gamma_numer: "0x03e5".to_string(),
+        };
+        let onchain_state = super::DiagnosticPoolState::V2 {
+            address: "0x0000000000000000000000000000000000001111".to_string(),
+            reserve_in: "0x01".to_string(),
+            reserve_out: "0x02".to_string(),
+            fee_denom: "0x03e8".to_string(),
+            gamma_numer: "0x03e5".to_string(),
+        };
+
+        let diffs = super::compute_field_diffs(&engine_state, &onchain_state);
+        assert!(diffs.is_empty(), "matching state → no field diffs");
+        assert!(diffs.is_empty(), "drift == false");
+    }
+
+    /// `apply_onchain_fetch` is the single source of truth: it sets
+    /// `onchain_state` + `field_drift` + `drift`, and DERIVES the `diff`
+    /// strings from `field_drift` (via `FieldDiff::to_diff_string`) plus any
+    /// arbitrary fetch-time `messages` (skip notes / RPC errors). Field-drift
+    /// entries become `diff` lines in order; messages are appended verbatim.
+    #[test]
+    fn apply_onchain_fetch_derives_diff_from_field_drift() {
+        let mut hop = super::DiagnosticHop {
+            position: 0,
+            hop_type: "V2".to_string(),
+            zero_for_one: true,
+            engine_state: super::DiagnosticPoolState::V2 {
+                address: "0x0000000000000000000000000000000000001111".to_string(),
+                reserve_in: "0x01".to_string(),
+                reserve_out: "0x02".to_string(),
+                fee_denom: "0x03e8".to_string(),
+                gamma_numer: "0x03e5".to_string(),
+            },
+            onchain_state: None,
+            diff: Vec::new(),
+            drift: false,
+            field_drift: Vec::new(),
+            recompute: None,
+        };
+        let onchain = super::DiagnosticPoolState::V2 {
+            address: "0x0000000000000000000000000000000000001111".to_string(),
+            reserve_in: "0xff".to_string(),
+            reserve_out: "0xee".to_string(),
+            fee_denom: "0x03e8".to_string(),
+            gamma_numer: "0x03e5".to_string(),
+        };
+        let field_drifts = vec![
+            super::FieldDiff {
+                field: "reserve_in".to_string(),
+                engine: "0x01".to_string(),
+                onchain: "0xff".to_string(),
+            },
+            super::FieldDiff {
+                field: "reserve_out".to_string(),
+                engine: "0x02".to_string(),
+                onchain: "0xee".to_string(),
+            },
+        ];
+
+        hop.apply_onchain_fetch(
+            Some(onchain),
+            field_drifts.clone(),
+            vec!["V4 fetch skipped".to_string()],
+        );
+
+        assert!(matches!(hop.onchain_state, Some(super::DiagnosticPoolState::V2 { .. })));
+        assert_eq!(hop.field_drift, field_drifts);
+        assert!(hop.drift, "non-empty field_drift → drift == true");
+        // diff derives from field_drift (in order) THEN appends messages verbatim.
+        assert_eq!(
+            hop.diff,
+            vec![
+                "reserve_in: engine=0x01, onchain=0xff",
+                "reserve_out: engine=0x02, onchain=0xee",
+                "V4 fetch skipped",
+            ]
+        );
+    }
+
+    /// `apply_onchain_fetch` with zero field drifts + zero messages leaves
+    /// `drift == false` and `diff` empty (the clean-match path).
+    #[test]
+    fn apply_onchain_fetch_clean_match_no_drift() {
+        let mut hop = super::DiagnosticHop::default();
+        hop.apply_onchain_fetch(None::<super::DiagnosticPoolState>, Vec::new(), Vec::new());
+        assert!(hop.onchain_state.is_none());
+        assert!(hop.field_drift.is_empty());
+        assert!(!hop.drift);
+        assert!(hop.diff.is_empty());
     }
 }
