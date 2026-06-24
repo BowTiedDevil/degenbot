@@ -162,25 +162,48 @@ pub fn gen_ticks<S: std::hash::BuildHasher>(
         }
     }
 
-    // Second phase: yield remaining boundary ticks
+    // Second phase: yield remaining boundary ticks.
+    //
+    // When ``boundary_tick`` crosses past MIN_TICK / MAX_TICK, CLAMP it to
+    // the bound + push the clamped tick (then stop) rather than just
+    // breaking. A bare ``break`` leaves the swap loop (in `v3_simulate_swap` /
+    // `v4_simulate_swap`) with an exhausted tick list while
+    // ``amount_specified_remaining`` is still positive + the price-limit
+    // unreached — the walk strands in the last fully-fitting word + never
+    // enters the final word (the one containing MIN/MAX_TICK) whose
+    // boundary tick drives the price to the limit. Python's `gen_ticks`
+    // yields boundary ticks *forever* (`while True: yield`), so clamping to
+    // the bound matches that behaviour at the extremity. Mirrors the V3/V4
+    // Solity swap's MIN/MAX_TICK termination.
     while result.len() < max_ticks {
-        // Clamp check
+        let clamped;
         if less_than_or_equal {
             if boundary_tick < i64::from(MIN_TICK) {
-                break;
+                clamped = Some(i64::from(MIN_TICK));
+            } else {
+                clamped = None;
             }
         } else if boundary_tick > i64::from(MAX_TICK) {
-            break;
+            clamped = Some(i64::from(MAX_TICK));
+        } else {
+            clamped = None;
         }
 
-        // SAFETY: boundary_tick is within i32 range because it was clamped
-        // to [MIN_TICK, MAX_TICK] which are both i32 values.
+        let push_tick = clamped.unwrap_or(boundary_tick);
+
+        // SAFETY: push_tick is within i32 range because it is clamped to
+        // [MIN_TICK, MAX_TICK] which are both i32 values, or an unclamped
+        // boundary still inside them.
         #[allow(clippy::cast_possible_truncation)]
         result.push(TickAlongPath {
-            tick: boundary_tick as i32,
+            tick: push_tick as i32,
             is_initialized: false,
         });
 
+        if clamped.is_some() {
+            // The last boundary tick was at the MIN/MAX bound — stop.
+            break;
+        }
         boundary_tick += step;
     }
 

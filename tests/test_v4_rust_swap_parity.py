@@ -729,5 +729,124 @@ def test_rust_v4_sparse_fetch_corpus_matches_dense():
     )
 
 
+def test_sparse_fetch_reaches_min_tick_via_empty_words_v4():
+    """Sparse V4 zfo swap with no initialized ticks must reach MIN_TICK, not strand.
+
+    V4 mirror of ``test_sparse_fetch_reaches_min_tick_via_empty_words`` (V3).
+    The V4 sim shares the same ``gen_ticks`` whose 2nd-phase boundary walk
+    previously BROKE past MIN/MAX_TICK — stranding the swap loop short of the
+    price limit. After the clamp fix, the V4 sparse+fetch path must match the
+    Python ``_calculate_swap`` oracle down to MIN_TICK.
+    """
+    py_bot = PyBot()
+    # Dense oracle: a dummy init tick ABOVE the start (opposite the zfo walk)
+    # makes tick_data non-empty → coverage=tracked, but the zfo path (tick ≤
+    # start=0) has NO initialized ticks — liq stays constant to MIN.
+    token0 = make_erc20(py_bot, address="0x" + "f" * 40, name="T0", symbol="T0", decimals=18)
+    token1 = make_erc20(py_bot, address="0x" + "e" * 40, name="T1", symbol="T1", decimals=18)
+    pool_id = _compute_v4_pool_id(token0.address, token1.address, _FEE, _TICK_SPACING, ZERO_ADDRESS)
+    tick_data_dense = {
+        60: LiquidityAtTick(
+            liquidity_net=_LIQUIDITY, liquidity_gross=_LIQUIDITY, block=0
+        ),
+    }
+    dense = make_v4_pool(
+        pool_id=pool_id,
+        pool_manager_address=_V4_POOL_MANAGER,
+        token0=token0,
+        token1=token1,
+        fee=_FEE,
+        tick_spacing=_TICK_SPACING,
+        hook_address=None,
+        sqrt_price_x96=_SQRT_PRICE_1TO1,
+        tick=0,
+        liquidity=_LIQUIDITY,
+        tick_data=tick_data_dense,
+        protocol_fee_zero_for_one=0,
+        protocol_fee_one_for_zero=0,
+        lp_fee=_FEE,
+        state_block=0,
+        py_bot=py_bot,
+    )
+    amount_in = 10**34
+    # A single empty-word fetcher shared by the dense oracle + the sparse pool.
+    # V4 `_calculate_swap` always builds a sparse snapshot + drives its own
+    # fetch+retry loop through `self._tick_data_fetcher`, so the Python oracle
+    # fetches each empty word + reaches MIN — mirroring the Rust sparse path
+    # (which uses the same fetcher via the seam's fetch+retry wrapper).
+    fetched_words: list[int] = []
+
+    def fetcher(word: int, block: int):
+        fetched_words.append(word)
+        return {}
+
+    dense._tick_data_fetcher = fetcher
+    # Python oracle: raw `_calculate_swap` (sparse path fetches empty words →
+    # reaches MIN). V4 exact-input uses amount_specified < 0.
+    swap_delta, _proto_fee, _swap_fee, swap_result = dense._calculate_swap(
+        zero_for_one=True,
+        amount_specified=-amount_in,
+        sqrt_price_x96_limit=MIN_SQRT_PRICE + 1,
+    )
+    py_sp, py_tick, py_liq = (
+        swap_result.sqrt_price_x96,
+        swap_result.tick,
+        swap_result.liquidity,
+    )
+    assert py_sp == MIN_SQRT_PRICE + 1, (
+        f"python V4 oracle did not reach the MIN price limit (got sqrt={py_sp}); "
+        f"bump amount_in"
+    )
+
+    # Sparse pool — identical scalars, NO tick_data seeded. Distinct tokens so
+    # the pool_id differs (same PyBot); the fetcher is shared with the oracle.
+    token0b = make_erc20(py_bot, address="0x" + "d" * 40, name="T0b", symbol="T0", decimals=18)
+    token1b = make_erc20(py_bot, address="0x" + "c" * 40, name="T1b", symbol="T1", decimals=18)
+    pool_id2 = _compute_v4_pool_id(token0b.address, token1b.address, _FEE, _TICK_SPACING, ZERO_ADDRESS)
+    sparse = make_v4_pool(
+        pool_id=pool_id2,
+        pool_manager_address=_V4_POOL_MANAGER,
+        token0=token0b,
+        token1=token1b,
+        fee=_FEE,
+        tick_spacing=_TICK_SPACING,
+        hook_address=None,
+        sqrt_price_x96=_SQRT_PRICE_1TO1,
+        tick=0,
+        liquidity=_LIQUIDITY,
+        protocol_fee_zero_for_one=0,
+        protocol_fee_one_for_zero=0,
+        lp_fee=_FEE,
+        state_block=0,
+        py_bot=py_bot,
+    )
+    sparse._py_pool.update_tick_data({}, {}, 0)
+    sparse._tick_data_fetcher = fetcher
+    sparse._sparse_liquidity_map = True
+    assert sparse.sparse_liquidity_map, "cleared tick_data ⇒ sparse companion"
+
+    rust_outcome = sparse._py_pool.simulate_swap_with_fetch(
+        zero_for_one=True,
+        amount_in=amount_in,
+        block=0,
+        fetcher=fetcher,
+    )
+    assert rust_outcome is not None, "sparse V4 swap returned None"
+    rust_a0, rust_a1, rust_sp, rust_liq, rust_tick = (int(x) for x in rust_outcome)
+    assert rust_sp == MIN_SQRT_PRICE + 1, (
+        f"rust V4 sparse did not reach the MIN price limit (got sqrt={rust_sp}); "
+        f"the walk stranded before MIN_TICK"
+    )
+    # V4 sign convention: zfo deposits currency0 (token0), withdraws currency1
+    # (token1). SwapDelta.currency0 < 0 (deposited), currency1 > 0 (withdrawn).
+    # Rust returns unsigned: rust_amount0 = |c0|, rust_amount1 = c1.
+    c0, c1 = swap_delta.currency0, swap_delta.currency1
+    assert rust_a0 == -c0, f"amount0 (token0 in): rust={rust_a0} py={-c0}"
+    assert rust_a1 == c1, f"amount1 (token1 out): rust={rust_a1} py={c1}"
+    assert rust_tick == py_tick, f"final tick: rust={rust_tick} py={py_tick}"
+    assert rust_liq == py_liq, f"final liq: rust={rust_liq} py={py_liq}"
+    assert rust_sp == py_sp, f"final sqrt: rust={rust_sp} py={py_sp}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-vv"])

@@ -19,6 +19,10 @@ import pytest
 
 from degenbot.degenbot_rs import PyBot
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
+from degenbot.uniswap.v3_libraries.tick_math import (
+    MIN_SQRT_RATIO,
+    get_sqrt_ratio_at_tick,
+)
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v3_pool_factory import make_v3_pool
 
@@ -354,6 +358,112 @@ def test_sparse_mainline_swap_routed_to_rust_matches_dense_oracle():
     assert result.final_state.sqrt_price_x96 == oracle.final_state.sqrt_price_x96
     assert result.final_state.liquidity == oracle.final_state.liquidity
     assert result.final_state.tick == oracle.final_state.tick
+
+
+def test_sparse_fetch_reaches_min_tick_via_empty_words():
+    """Sparse zfo swap with no initialized ticks must reach MIN_TICK, not strand.
+
+    Rust's ``gen_ticks`` 2nd-phase boundary walk BREAKS when the next
+    word-boundary tick falls below MIN_TICK (or above MAX_TICK), leaving the
+    swap loop with an exhausted tick list while ``amount_specified_remaining``
+    is still positive + the price-limit unreached — the walk strands in the
+    last fully-fitting word. Python's ``gen_ticks`` (used by the dense oracle)
+    yields boundary ticks *forever* (``while True: yield``), so the dense path
+    always reaches the price limit. This gate pins Rust sparse+fetch parity
+    with the dense oracle on a zfo swap through empty words down to MIN_TICK.
+    """
+    py_bot = PyBot()
+    token0, token1 = _make_tokens(py_bot, tag="e")
+    # Dense oracle: a single dummy init tick ABOVE the start (opposite the zfo
+    # walk direction) makes tick_data non-empty → coverage=tracked, but the zfo
+    # path (tick ≤ start) has NO initialized ticks — liq stays constant all the
+    # way to MIN.
+    tick_data_dense = {
+        60: LiquidityAtTick(
+            liquidity_net=_LIQUIDITY, liquidity_gross=_LIQUIDITY, block=0
+        ),
+    }
+    dense = make_v3_pool(
+        address="0x" + "66" * 20,
+        token0=token0,
+        token1=token1,
+        factory=_FACTORY,
+        fee=_FEE,
+        tick_spacing=_TICK_SPACING,
+        sqrt_price_x96=_SQRT_PRICE_1TO1,
+        tick=0,
+        liquidity=_LIQUIDITY,
+        tick_data=tick_data_dense,
+        py_bot=py_bot,
+    )
+    # Huge amount: drives the zfo price from 2**96 down to the MIN limit.
+    amount_in = 10**34
+    # Dense oracle: the PYTHON ``_calculate_swap`` (raw simulator, gen_ticks
+    # yields boundary ticks *forever*). The companion's
+    # ``simulate_exact_input_swap`` routes to the Rust seam (the subject under
+    # test), so it is NOT a valid reference here — call the Python sim directly.
+    MIN_SQRT_RATIO_PY = 4295128739
+    py_a0, py_a1, py_sp, py_liq, py_tick = dense._calculate_swap(
+        zero_for_one=True,  # zfo (token0 in → token1 out, descending → MIN)
+        amount_specified=amount_in,
+        sqrt_price_limit_x96=MIN_SQRT_RATIO_PY + 1,
+    )
+    assert py_sp == MIN_SQRT_RATIO_PY + 1, (
+        f"python oracle did not reach the MIN price limit (got sqrt={py_sp}); "
+        f"bump amount_in"
+    )
+    oracle = type("_O", (), {"amount0_delta": py_a0, "amount1_delta": py_a1})()
+    oracle.final_state = type("_S", (), {
+        "sqrt_price_x96": py_sp,
+        "liquidity": py_liq,
+        "tick": py_tick,
+    })()
+
+    # Sparse pool — identical scalars, NO tick_data seeded. The fetcher returns
+    # {} for every word (no initialized ticks anywhere); Rust marks each
+    # fetched-empty word known + continues, but must reach MIN (not strand at
+    # the last word above MIN_TICK).
+    fetched_words: list[int] = []
+
+    def fetcher(word: int, block: int):
+        fetched_words.append(word)
+        return {}
+
+    sparse = make_v3_pool(
+        address="0x" + "77" * 20,
+        token0=token0,
+        token1=token1,
+        factory=_FACTORY,
+        fee=_FEE,
+        tick_spacing=_TICK_SPACING,
+        sqrt_price_x96=_SQRT_PRICE_1TO1,
+        tick=0,
+        liquidity=_LIQUIDITY,
+        py_bot=py_bot,
+        tick_data_fetcher=fetcher,
+    )
+    assert sparse.sparse_liquidity_map, "no tick_data ⇒ sparse companion"
+
+    result = sparse._py_pool.simulate_swap_with_fetch(
+        zero_for_one=True,
+        amount_in=amount_in,
+        block=0,
+        fetcher=fetcher,
+    )
+    assert result is not None, "sparse swap returned None"
+    rust_a0, rust_a1, rust_sp, rust_liq, rust_tick = (int(x) for x in result)
+    assert rust_sp == MIN_SQRT_RATIO + 1, (
+        f"rust sparse did not reach the MIN price limit (got sqrt={rust_sp}); "
+        f"the walk stranded before MIN_TICK"
+    )
+    # Full parity with the python oracle (amounts + final state). Rust
+    # returns UNSIGNED absolute amounts; Python's `_calculate_swap` returns
+    # signed deltas (zfo: amount0 = +input consumed, amount1 = -output).
+    assert rust_a0 == py_a0, f"amount0: rust={rust_a0} py={py_a0}"
+    assert rust_a1 == -py_a1, f"amount1: rust={rust_a1} py={py_a1}"
+    assert rust_tick == py_tick, f"final tick: rust={rust_tick} py={py_tick}"
+    assert rust_liq == py_liq, f"final liq: rust={rust_liq} py={py_liq}"
+    assert rust_sp == py_sp, f"final sqrt: rust={rust_sp} py={py_sp}"
 
 
 if __name__ == "__main__":
