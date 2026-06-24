@@ -900,6 +900,16 @@ class PyLiquidityPool:
         fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None],
         sqrt_price_limit_x96: int | None = None,
     ) -> tuple[int, int, int, int, int] | None: ...
+    def simulate_swap_with_override(
+        self,
+        zero_for_one: bool,
+        amount_in: int,
+        override_sqrt_price_x96: int,
+        override_liquidity: int,
+        override_tick: int,
+        override_tick_data: dict[int, tuple[int, int, int]],
+        sqrt_price_limit_x96: int | None = None,
+    ) -> tuple[int, int, int, int, int] | None: ...
     def encode_swap(
         self,
         zero_for_one: bool,
