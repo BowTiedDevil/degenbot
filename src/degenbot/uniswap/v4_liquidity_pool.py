@@ -511,6 +511,39 @@ class UniswapV4Pool(
 
         zero_for_one = token_out == self._token1
 
+        # ADR-005 slice 4: mainline exact-output swap (no override) delegates to
+        # the Rust exact-output fetch+retry seam. The V4 exact-output sign
+        # convention (amountSpecified > 0) is handled in the Rust core. Custom
+        # limit + override keep the Python `_calculate_swap` (override is an
+        # arbitrage hypothetical — remaining slice-4 override-routing item).
+        if override_state is None:
+            outcome = self._py_pool.simulate_exact_output_swap_with_fetch(
+                zero_for_one=zero_for_one,
+                amount_out=token_out_quantity,
+                block=self.update_block,
+                fetcher=self._tick_data_fetcher,
+            )
+            if outcome is None:
+                raise LiquidityPoolError(
+                    message=(
+                        f"Simulated execution could not compute. "
+                        f"pool={self.address} zfo={zero_for_one} "
+                        f"amount_out={token_out_quantity}"
+                    ),
+                )
+            rust_amount0, rust_amount1 = int(outcome[0]), int(outcome[1])
+            # The output side is the requested token_out; the input side is the
+            # required token_in (opposing amount). zfo: token1 out / token0 in;
+            # ofz: token0 out / token1 in.
+            rust_amount_out = rust_amount1 if zero_for_one else rust_amount0
+            if rust_amount_out < token_out_quantity:
+                rust_amount_in = rust_amount0 if zero_for_one else rust_amount1
+                raise IncompleteSwap(
+                    amount_in=rust_amount_in,
+                    amount_out=rust_amount_out,
+                )
+            return rust_amount0 if zero_for_one else rust_amount1
+
         try:
             swap_delta, *_ = self._calculate_swap(
                 zero_for_one=zero_for_one,
