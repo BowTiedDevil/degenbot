@@ -8,7 +8,7 @@ from _pytest.nodes import Item
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.bot import Bot
-from degenbot.logging import logger
+from degenbot.logging import set_log_level
 from degenbot.provider import ProviderAdapter
 from tests.helpers.bot_factory import make_bot_with_provider
 
@@ -17,32 +17,32 @@ env_values = dotenv.dotenv_values(env_file)
 
 
 ARBITRUM_FULL_NODE_HTTP_URI: str = env_values.get(
-    "ARBITRUM_FULL_NODE_HTTP_URI", "https://arbitrum-one-rpc.publicnode.com"
+    "ARBITRUM_FULL_NODE_HTTP_URI", "https://arbitrum-one-rpc.publicnode.com",
 )
 ARBITRUM_FULL_NODE_WS_URI: str = env_values.get(
-    "ARBITRUM_FULL_NODE_WS_URI", "wss://arbitrum-one-rpc.publicnode.com"
+    "ARBITRUM_FULL_NODE_WS_URI", "wss://arbitrum-one-rpc.publicnode.com",
 )
 
 BASE_ARCHIVE_NODE_HTTP_URI: str = env_values.get(
-    "BASE_ARCHIVE_NODE_HTTP_URI", "https://base.llamarpc.com/"
+    "BASE_ARCHIVE_NODE_HTTP_URI", "https://base.llamarpc.com/",
 )
 BASE_ARCHIVE_NODE_WS_URI: str = env_values.get(
-    "BASE_ARCHIVE_NODE_WS_URI", "wss://base.llamarpc.com/"
+    "BASE_ARCHIVE_NODE_WS_URI", "wss://base.llamarpc.com/",
 )
 BASE_FULL_NODE_HTTP_URI: str = env_values.get("BASE_FULL_NODE_HTTP_URI", "http://localhost:8544/")
 BASE_FULL_NODE_WS_URI: str = env_values.get("BASE_FULL_NODE_WS_URI", "ws://localhost:8548/")
 
 ETHEREUM_ARCHIVE_NODE_HTTP_URI: str = env_values.get(
-    "ETHEREUM_ARCHIVE_NODE_HTTP_URI", "https://eth.llamarpc.com/"
+    "ETHEREUM_ARCHIVE_NODE_HTTP_URI", "https://eth.llamarpc.com/",
 )
 ETHEREUM_ARCHIVE_NODE_WS_URI: str = env_values.get(
-    "ETHEREUM_ARCHIVE_NODE_WS_URI", "wss://eth.llamarpc.com/"
+    "ETHEREUM_ARCHIVE_NODE_WS_URI", "wss://eth.llamarpc.com/",
 )
 ETHEREUM_FULL_NODE_HTTP_URI: str = env_values.get(
-    "ETHEREUM_FULL_NODE_HTTP_URI", "https://eth.llamarpc.com/"
+    "ETHEREUM_FULL_NODE_HTTP_URI", "https://eth.llamarpc.com/",
 )
 ETHEREUM_FULL_NODE_WS_URI: str = env_values.get(
-    "ETHEREUM_FULL_NODE_WS_URI", "wss://eth.llamarpc.com/"
+    "ETHEREUM_FULL_NODE_WS_URI", "wss://eth.llamarpc.com/",
 )
 
 
@@ -89,8 +89,13 @@ def _initialize_and_reset_after_each_test():
 
 @pytest.fixture(scope="session", autouse=True)
 def _set_degenbot_logging():
-    """Set the logging level to DEBUG for the test run"""
-    logger.setLevel(logging.DEBUG)
+    """Set the logging level to DEBUG for the test run.
+
+    Covers both the package logger and the Rust ``log::`` bridge (pyo3-log)
+    loggers, so ``log::debug!`` records from the Rust extension are visible in
+    the test run too.
+    """
+    set_log_level(logging.DEBUG)
 
 
 @pytest.fixture
