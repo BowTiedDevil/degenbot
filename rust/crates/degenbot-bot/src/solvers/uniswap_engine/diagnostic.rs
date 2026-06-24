@@ -190,7 +190,10 @@ pub(crate) fn populate_v2_recompute(hop: &mut DiagnosticHop, amount_in: U256, so
     let (expected_out_onchain, matches_solver) = match &hop.onchain_state {
         Some(oc) => {
             let onchain_recompute = recompute_v2_amount_out(oc, amount_in);
-            (Some(onchain_recompute), Some(onchain_recompute == solver_out))
+            (
+                Some(onchain_recompute),
+                Some(onchain_recompute == solver_out),
+            )
         }
         None => (None, None),
     };
@@ -216,6 +219,14 @@ pub(crate) fn refresh_v2_recompute_onchain(hop: &mut DiagnosticHop) {
     let Some(onchain) = &hop.onchain_state else {
         return;
     };
+    // V2-only: `recompute_v2_amount_out` is only meaningful for a V2 on-chain
+    // state (it returns U256::ZERO for any other family, which would clobber a
+    // V3/V4 hop's deferred-None on-chain fields with a spurious 0x0 /
+    // matches_solver=False). V3/V4 on-chain recompute is deferred — see
+    // [`populate_v3v4_recompute_partial`] + the [`HopRecompute`] docs.
+    if !matches!(onchain, DiagnosticPoolState::V2 { .. }) {
+        return;
+    }
     let Some(amount_in) = parse_hex_u256(&recompute.amount_in) else {
         return;
     };
@@ -525,11 +536,7 @@ impl DiagnosticPathState {
                         Some(oc) => compute_field_diffs(&hop.engine_state, oc),
                         None => Vec::new(),
                     };
-                    hop.apply_onchain_fetch(
-                        outcome.onchain_state,
-                        field_drifts,
-                        outcome.messages,
-                    );
+                    hop.apply_onchain_fetch(outcome.onchain_state, field_drifts, outcome.messages);
                     refresh_v2_recompute_onchain(hop);
                 }
                 Err(e) => {
@@ -623,8 +630,7 @@ async fn fetch_hop_onchain(
                 Ok(FetchOutcome {
                     onchain_state: None,
                     messages: vec![
-                        "V4 on-chain fetch skipped: no StateView address provided"
-                            .to_string(),
+                        "V4 on-chain fetch skipped: no StateView address provided".to_string()
                     ],
                 })
             }
@@ -1047,10 +1053,7 @@ impl UniswapEngine {
             });
         }
 
-        thread_solver_result_and_recompute(
-            &mut snapshot,
-            self.latest_results().0.get(&path_id),
-        );
+        thread_solver_result_and_recompute(&mut snapshot, self.latest_results().0.get(&path_id));
 
         Some(snapshot)
     }
@@ -1326,11 +1329,7 @@ mod tests {
         };
 
         let diffs = super::compute_field_diffs(&engine_state, &onchain_state);
-        assert_eq!(
-            diffs.len(),
-            2,
-            "both reserves diverge → two field diffs"
-        );
+        assert_eq!(diffs.len(), 2, "both reserves diverge → two field diffs");
         assert_eq!(diffs[0].field, "reserve_in");
         assert_eq!(diffs[0].engine, "0x01");
         assert_eq!(diffs[0].onchain, "0xff");
@@ -1427,7 +1426,10 @@ mod tests {
             vec!["V4 fetch skipped".to_string()],
         );
 
-        assert!(matches!(hop.onchain_state, Some(super::DiagnosticPoolState::V2 { .. })));
+        assert!(matches!(
+            hop.onchain_state,
+            Some(super::DiagnosticPoolState::V2 { .. })
+        ));
         assert_eq!(hop.field_drift, field_drifts);
         assert!(hop.drift, "non-empty field_drift → drift == true");
         // diff derives from field_drift (in order) THEN appends messages verbatim.
@@ -1474,7 +1476,7 @@ mod tests {
             address: String::new(),
             reserve_in: format!("0x{reserve_in:x}"),
             reserve_out: format!("0x{reserve_out:x}"),
-            fee_denom: "0x3e8".to_string(), // 1000
+            fee_denom: "0x3e8".to_string(),   // 1000
             gamma_numer: "0x3e5".to_string(), // 997
         };
 
@@ -1482,13 +1484,16 @@ mod tests {
 
         // Reference: amountInWithFee * reserve_out / (reserve_in * 1000 + amountInWithFee)
         let amount_in_with_fee = amount_in * U256::from(997_u64);
-        let expected =
-            (amount_in_with_fee * reserve_out) / (reserve_in * U256::from(1000_u64) + amount_in_with_fee);
+        let expected = (amount_in_with_fee * reserve_out)
+            / (reserve_in * U256::from(1000_u64) + amount_in_with_fee);
         assert_eq!(
             amount_out, expected,
             "recompute must match the canonical Uniswap V2 getAmountOut"
         );
-        assert!(!amount_out.is_zero(), "non-degenerate input must yield non-zero output");
+        assert!(
+            !amount_out.is_zero(),
+            "non-degenerate input must yield non-zero output"
+        );
     }
 
     /// `populate_v2_recompute` fills `DiagnosticHop.recompute` for a V2 hop from
@@ -1503,9 +1508,8 @@ mod tests {
         let reserve_out = U256::from(500_000_000_000_000_000_u64);
         let amount_in = U256::from(1_000_000_000_u64);
         let amount_in_with_fee = amount_in * U256::from(997_u64);
-        let expected =
-            (amount_in_with_fee * reserve_out)
-                / (reserve_in * U256::from(1000_u64) + amount_in_with_fee);
+        let expected = (amount_in_with_fee * reserve_out)
+            / (reserve_in * U256::from(1000_u64) + amount_in_with_fee);
 
         let engine_state = super::DiagnosticPoolState::V2 {
             address: String::new(),
@@ -1563,9 +1567,8 @@ mod tests {
         let reserve_out = U256::from(500_000_000_000_000_000_u64);
         let amount_in = U256::from(1_000_000_000_u64);
         let amount_in_with_fee = amount_in * U256::from(997_u64);
-        let expected_v2_out =
-            (amount_in_with_fee * reserve_out)
-                / (reserve_in * U256::from(1000_u64) + amount_in_with_fee);
+        let expected_v2_out = (amount_in_with_fee * reserve_out)
+            / (reserve_in * U256::from(1000_u64) + amount_in_with_fee);
 
         let mut snapshot = super::DiagnosticPathState::new(7, Some(42));
         snapshot.hops.push(super::DiagnosticHop {
@@ -1623,7 +1626,10 @@ mod tests {
         );
         assert_eq!(
             snapshot.hop_outputs,
-            hop_outputs.iter().map(|v| format!("0x{v:x}")).collect::<Vec<_>>()
+            hop_outputs
+                .iter()
+                .map(|v| format!("0x{v:x}"))
+                .collect::<Vec<_>>()
         );
 
         let v2_recompute = snapshot.hops[0]
@@ -1646,8 +1652,11 @@ mod tests {
             .recompute
             .as_ref()
             .expect("V3/V4 hop gets a partial recompute");
-        assert_eq!(v3_recompute.amount_in, format!("0x{expected_v2_out:x}"),
-            "V3 hop amount_in = consumed_inputs[1] = previous hop output");
+        assert_eq!(
+            v3_recompute.amount_in,
+            format!("0x{expected_v2_out:x}"),
+            "V3 hop amount_in = consumed_inputs[1] = previous hop output"
+        );
         assert_eq!(v3_recompute.solver_out, format!("0x{:x}", hop_outputs[1]));
         assert!(v3_recompute.expected_out_engine.is_none());
         assert!(v3_recompute.expected_out_onchain.is_none());
@@ -1665,9 +1674,8 @@ mod tests {
         let reserve_out = U256::from(500_000_000_000_000_000_u64);
         let amount_in = U256::from(1_000_000_000_u64);
         let amount_in_with_fee = amount_in * U256::from(997_u64);
-        let expected =
-            (amount_in_with_fee * reserve_out)
-                / (reserve_in * U256::from(1000_u64) + amount_in_with_fee);
+        let expected = (amount_in_with_fee * reserve_out)
+            / (reserve_in * U256::from(1000_u64) + amount_in_with_fee);
 
         let engine_state = super::DiagnosticPoolState::V2 {
             address: String::new(),
