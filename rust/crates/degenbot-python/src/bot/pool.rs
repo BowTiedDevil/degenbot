@@ -102,6 +102,63 @@ impl PyLiquidityPool {
         Self { core, pool_id }
     }
 
+    /// Shared override-sim inner: extracts Python args, builds the fetcher
+    /// adapter, locks the core, calls `simulate_swap_with_override`.
+    #[allow(clippy::too_many_arguments)]
+    fn sim_override_inner(
+        &self,
+        zero_for_one: bool,
+        amount: alloy::primitives::U256,
+        exact_output: bool,
+        block: u64,
+        fetcher: &Bound<'_, PyAny>,
+        override_sqrt_price_x96: &Bound<'_, PyAny>,
+        override_liquidity: &Bound<'_, PyAny>,
+        override_tick: &Bound<'_, PyAny>,
+        override_tick_data: &Bound<'_, PyAny>,
+        sqrt_price_limit_x96: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Option<degenbot_bot::bot_core::V3SwapOutcome>> {
+        let override_sqrt = crate::conversion::alloy::extract_python_u256(override_sqrt_price_x96)?;
+        let override_liquidity = u128::try_from(crate::conversion::alloy::extract_python_u256(
+            override_liquidity,
+        )?)
+        .map_err(|_| {
+            pyo3::exceptions::PyOverflowError::new_err("override_liquidity must fit in u128")
+        })?;
+        let override_tick =
+            i32::try_from(override_tick.extract::<i64>().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err("override_tick must be an int")
+            })?)
+            .map_err(|_| {
+                pyo3::exceptions::PyOverflowError::new_err("override_tick must fit in i32")
+            })?;
+        let rust_tick_data = extract_tick_data(override_tick_data)?;
+        let sqrt_price_limit = match sqrt_price_limit_x96 {
+            Some(v) if !v.is_none() => crate::conversion::alloy::extract_python_u256(v)?,
+            _ => degenbot_bot::bot_core::V3PoolState::default_sqrt_price_limit(zero_for_one),
+        };
+        let adapter = PyTickWordFetcher {
+            callback: fetcher.clone().unbind(),
+        };
+        let outcome = {
+            let core = self.core.read();
+            core.simulate_swap_with_override(
+                self.pool_id,
+                zero_for_one,
+                amount,
+                exact_output,
+                sqrt_price_limit,
+                override_sqrt,
+                override_liquidity,
+                override_tick,
+                rust_tick_data,
+                block,
+                &adapter,
+            )
+        };
+        Ok(outcome)
+    }
+
     /// The pool ID this handle references.
     #[must_use]
     pub const fn id(&self) -> u64 {
@@ -303,22 +360,26 @@ impl PyLiquidityPool {
         Ok(Some(tuple.into_any().unbind()))
     }
 
-    /// Simulate an exact-input swap over a HYPOTHETICAL override pool state.
+    /// Simulate an exact-input swap over a HYPOTHETICAL override pool state,
+    /// with fetch+retry for sparse misses.
     ///
     /// Builds a transient V3/V4 state from `override_sqrt_price_x96`,
     /// `override_liquidity`, `override_tick` + `override_tick_data`
     /// (`{tick: (liquidity_gross, liquidity_net, block)}`, same shape as
     /// `register_*_pool`'s `tick_data`), reusing the registered pool's fee /
-    /// `tick_spacing`. NO fetcher, NO `BotState` mutation (frozen hypothetical).
-    /// Returns the same 5-tuple as `simulate_swap_with_fetch`, or `None` if
-    /// not computable (incl. a missing override tick word).
-    #[pyo3(signature = (zero_for_one, amount_in, override_sqrt_price_x96, override_liquidity, override_tick, override_tick_data, sqrt_price_limit_x96=None))]
+    /// `tick_spacing`. On a sparse miss, the fetcher is called + the word's
+    /// ticks are merged into the TRANSIENT state (NOT registered `BotState`),
+    /// and the sim retries. Returns the same 5-tuple as
+    /// `simulate_swap_with_fetch`, or `None` if not computable.
+    #[pyo3(signature = (zero_for_one, amount_in, block, fetcher, override_sqrt_price_x96, override_liquidity, override_tick, override_tick_data, sqrt_price_limit_x96=None))]
     #[allow(clippy::too_many_arguments)]
     fn simulate_swap_with_override(
         &self,
         py: Python<'_>,
         zero_for_one: bool,
         amount_in: &Bound<'_, PyAny>,
+        block: u64,
+        fetcher: &Bound<'_, PyAny>,
         override_sqrt_price_x96: &Bound<'_, PyAny>,
         override_liquidity: &Bound<'_, PyAny>,
         override_tick: &Bound<'_, PyAny>,
@@ -326,53 +387,57 @@ impl PyLiquidityPool {
         sqrt_price_limit_x96: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Option<Py<PyAny>>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
-        let override_sqrt = crate::conversion::alloy::extract_python_u256(override_sqrt_price_x96)?;
-        let override_liquidity = u128::try_from(crate::conversion::alloy::extract_python_u256(
+        let outcome = self.sim_override_inner(
+            zero_for_one,
+            amount,
+            false, // exact_input
+            block,
+            fetcher,
+            override_sqrt_price_x96,
             override_liquidity,
-        )?)
-        .map_err(|_| {
-            pyo3::exceptions::PyOverflowError::new_err("override_liquidity must fit in u128")
-        })?;
-        let override_tick =
-            i32::try_from(override_tick.extract::<i64>().map_err(|_| {
-                pyo3::exceptions::PyTypeError::new_err("override_tick must be an int")
-            })?)
-            .map_err(|_| {
-                pyo3::exceptions::PyOverflowError::new_err("override_tick must fit in i32")
-            })?;
-        let rust_tick_data = extract_tick_data(override_tick_data)?;
-        let sqrt_price_limit = match sqrt_price_limit_x96 {
-            Some(v) if !v.is_none() => crate::conversion::alloy::extract_python_u256(v)?,
-            _ => degenbot_bot::bot_core::V3PoolState::default_sqrt_price_limit(zero_for_one),
-        };
-        let outcome = {
-            let core = self.core.read();
-            core.simulate_exact_input_swap_with_override(
-                self.pool_id,
-                zero_for_one,
-                amount,
-                sqrt_price_limit,
-                override_sqrt,
-                override_liquidity,
-                override_tick,
-                rust_tick_data,
-            )
-        };
-        let Some(outcome) = outcome else {
-            return Ok(None);
-        };
-        let tuple = pyo3::types::PyTuple::new(
-            py,
-            [
-                crate::conversion::alloy::u256_to_py(py, &outcome.amount0)?.unbind(),
-                crate::conversion::alloy::u256_to_py(py, &outcome.amount1)?.unbind(),
-                crate::conversion::alloy::u256_to_py(py, &outcome.sqrt_price_x96)?.unbind(),
-                outcome.liquidity.into_pyobject(py)?.into_any().unbind(),
-                outcome.tick.into_pyobject(py)?.into_any().unbind(),
-            ],
+            override_tick,
+            override_tick_data,
+            sqrt_price_limit_x96,
         )?;
-        Ok(Some(tuple.into_any().unbind()))
+        outcome.map_or(Ok(None), |o| build_swap_outcome_tuple(py, &o))
     }
+
+    /// Exact-OUTPUT swap over a HYPOTHETICAL override pool state, with
+    /// fetch+retry for sparse misses. Caller passes the desired `amount_out`,
+    /// the sim derives the required input. Same 5-tuple return shape as
+    /// `simulate_swap_with_override`. Combines the override-state build with
+    /// the V3/V4 exact-output sign convention (handled in the core).
+    #[pyo3(signature = (zero_for_one, amount_out, block, fetcher, override_sqrt_price_x96, override_liquidity, override_tick, override_tick_data, sqrt_price_limit_x96=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn simulate_exact_output_swap_with_override(
+        &self,
+        py: Python<'_>,
+        zero_for_one: bool,
+        amount_out: &Bound<'_, PyAny>,
+        block: u64,
+        fetcher: &Bound<'_, PyAny>,
+        override_sqrt_price_x96: &Bound<'_, PyAny>,
+        override_liquidity: &Bound<'_, PyAny>,
+        override_tick: &Bound<'_, PyAny>,
+        override_tick_data: &Bound<'_, PyAny>,
+        sqrt_price_limit_x96: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
+        let outcome = self.sim_override_inner(
+            zero_for_one,
+            amount,
+            true, // exact_output
+            block,
+            fetcher,
+            override_sqrt_price_x96,
+            override_liquidity,
+            override_tick,
+            override_tick_data,
+            sqrt_price_limit_x96,
+        )?;
+        outcome.map_or(Ok(None), |o| build_swap_outcome_tuple(py, &o))
+    }
+
     #[pyo3(signature = (zero_for_one, amount_out, recipient))]
     fn encode_swap(
         &self,
@@ -1265,6 +1330,25 @@ impl PyLiquidityPool {
             .apply_balancer_stable_balance_update_by_pool_id(self.pool_id, bal, block_number)
             .is_some())
     }
+}
+
+/// Build the Python 5-tuple `(amount0, amount1, sqrt_price_x96, liquidity,
+/// tick)` returned by the swap-sim `PyO3` seams.
+fn build_swap_outcome_tuple(
+    py: Python<'_>,
+    outcome: &degenbot_bot::bot_core::V3SwapOutcome,
+) -> PyResult<Option<Py<PyAny>>> {
+    let tuple = pyo3::types::PyTuple::new(
+        py,
+        [
+            crate::conversion::alloy::u256_to_py(py, &outcome.amount0)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &outcome.amount1)?.unbind(),
+            crate::conversion::alloy::u256_to_py(py, &outcome.sqrt_price_x96)?.unbind(),
+            outcome.liquidity.into_pyobject(py)?.into_any().unbind(),
+            outcome.tick.into_pyobject(py)?.into_any().unbind(),
+        ],
+    )?;
+    Ok(Some(tuple.into_any().unbind()))
 }
 
 /// Convert a Python `{tick: (liquidity_gross, liquidity_net, block)}` dict into
