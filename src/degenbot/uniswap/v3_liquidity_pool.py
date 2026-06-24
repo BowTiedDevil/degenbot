@@ -32,6 +32,7 @@ from weakref import WeakSet
 from eth_typing import ChecksumAddress
 
 from degenbot.arbitrage.types import UniswapV3PoolSwapAmounts
+from degenbot.builders.tick_data_fetcher import FetchedTickData
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.degenbot_rs import PyLiquidityPool
 from degenbot.erc20 import Erc20Token
@@ -164,7 +165,7 @@ class UniswapV3Pool(
         chain_id: ChainId | None = None,
         deployer_address: str | None = None,
         init_hash: str | None = None,
-        tick_data_fetcher: Callable[[int, int], None] | None = None,
+        tick_data_fetcher: Callable[[int, int], FetchedTickData | None] | None = None,
         state_block: BlockNumber | None = None,
         sparse_liquidity_map: bool | None = None,
         tick_bitmap_override: dict[int, Any] | None = None,

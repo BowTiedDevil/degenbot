@@ -890,14 +890,14 @@ class PyLiquidityPool:
         zero_for_one: bool,
         amount_in: int,
         block: int,
-        fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None],
+        fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None] | None,
     ) -> int: ...
     def simulate_swap_with_fetch(
         self,
         zero_for_one: bool,
         amount_in: int,
         block: int,
-        fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None],
+        fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None] | None,
         sqrt_price_limit_x96: int | None = None,
     ) -> tuple[int, int, int, int, int] | None: ...
     def simulate_swap_with_override(
@@ -905,7 +905,7 @@ class PyLiquidityPool:
         zero_for_one: bool,
         amount_in: int,
         block: int,
-        fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None],
+        fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None] | None,
         override_sqrt_price_x96: int,
         override_liquidity: int,
         override_tick: int,
@@ -917,7 +917,7 @@ class PyLiquidityPool:
         zero_for_one: bool,
         amount_out: int,
         block: int,
-        fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None],
+        fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None] | None,
         override_sqrt_price_x96: int,
         override_liquidity: int,
         override_tick: int,
@@ -929,7 +929,7 @@ class PyLiquidityPool:
         zero_for_one: bool,
         amount_out: int,
         block: int,
-        fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None],
+        fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None] | None,
         sqrt_price_limit_x96: int | None = None,
     ) -> tuple[int, int, int, int, int] | None: ...
     def encode_swap(
@@ -1254,14 +1254,29 @@ class UniswapArbEngine:
         tick_lens_address: str,
         state_view_address: str,
         block_number: int | None,
-    ) -> None: ...
-    def verify_v3_liquidity_maps(self, rpc_url: str, block_number: int | None) -> None: ...
+    ) -> Coroutine[Any, Any, None]: ...
+    def verify_v3_liquidity_maps(
+        self, rpc_url: str, block_number: int | None
+    ) -> Coroutine[Any, Any, None]: ...
     def verify_v4_liquidity_maps(
         self,
         rpc_url: str,
         state_view_address: str,
         block_number: int | None,
-    ) -> None: ...
+    ) -> Coroutine[Any, Any, None]: ...
+    def verify_v3_pool(
+        self,
+        address: str,
+        rpc_url: str,
+        block_number: int | None,
+    ) -> Coroutine[Any, Any, None]: ...
+    def verify_v4_pool(
+        self,
+        pool_id_hex: str,
+        rpc_url: str,
+        state_view_address: str,
+        block_number: int | None,
+    ) -> Coroutine[Any, Any, None]: ...
 
     # ── Pool + path registration ──
     def register_v3_pool(

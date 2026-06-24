@@ -8,7 +8,11 @@ from typing import TYPE_CHECKING, Any, cast
 import eth_abi.abi
 from sqlalchemy import select
 
-from degenbot.builders.tick_data_fetcher import TickDataTypes, make_tick_data_fetcher
+from degenbot.builders.tick_data_fetcher import (
+    FetchedTickData,
+    TickDataTypes,
+    make_tick_data_fetcher,
+)
 from degenbot.builders.v3_builder_base import V3BuilderBase
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.pools import LiquidityPoolTable, UniswapV3PoolTableBase
@@ -62,7 +66,7 @@ class V3PoolBuilder(V3BuilderBase):
         pool_address: str,
         chain_id: int,
         io: PoolIO,
-    ) -> Callable[[int, int], None]:
+    ) -> Callable[[int, int], FetchedTickData | None]:
         """Create a tick data fetcher callback for a V3 pool.
 
         Returns:
