@@ -10,6 +10,7 @@
 //! ([`ReorgJournal`] of [`V3BlockDelta`]).
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use alloy::primitives::{Address, I256, U160, U256};
@@ -18,6 +19,7 @@ use crate::bot_core::state_history::{ReorgJournal, V3BlockDelta};
 use crate::bot_core::tick_bitmap::{compute_tick_ranges, gen_ticks, V3TickRangeForSolver};
 use crate::bot_core::TickInfo;
 use crate::solvers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence};
+use degenbot_cl_math::cl_lib::functions::tick_position;
 use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v3;
 use degenbot_cl_math::cl_lib::tick_math::{
     get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO,
@@ -142,6 +144,17 @@ pub struct V3PoolState {
     /// Whether the snapshot provided complete tick data for this pool.
     pub coverage: PoolTickCoverage,
 
+    /// Tick-bitmap word positions (`tick_position(tick.div_euclid(tick_spacing))`)
+    /// whose bitmap has been fetched and is therefore "known". Only consulted
+    /// when `coverage == Sparse` (Tracked pools have complete data and bypass
+    /// miss-detection). Seeded at registration from the initial `tick_data`
+    /// keys' word positions; grown by the fetch-write seam (`update_tick_data`)
+    /// as the registered tick-data fetcher fills unknown regions. Mirrors the
+    /// Python `LiquidityMapSnapshot.tick_bitmap` key-presence rule: in sparse
+    /// mode a region is unknown unless its word key is in this set (a
+    /// fetched-but-empty word is recorded here as `known`).
+    pub known_bitmap_words: HashSet<i32>,
+
     /// Reorg journal — scalar priors + per-tick priors for rollback.
     pub journal: ReorgJournal<V3BlockDelta>,
 
@@ -166,6 +179,7 @@ impl Clone for V3PoolState {
             update_block: self.update_block,
             tick_data: self.tick_data.clone(),
             coverage: self.coverage,
+            known_bitmap_words: self.known_bitmap_words.clone(),
             // Clones start with no cached ranges — the cache is invalidated on
             // mutation anyway, and a fresh Mutex avoids aliasing the source's.
             journal: self.journal.clone(),
@@ -175,10 +189,29 @@ impl Clone for V3PoolState {
 }
 
 impl V3PoolState {
+    /// Word position (`tick_position(tick.div_euclid(tick_spacing))`) holding
+    /// the given tick. Shared by V3/V4 sparse miss-detection.
+    #[must_use]
+    pub fn word_of(tick: i32, tick_spacing: i32) -> i32 {
+        i32::from(tick_position(tick.div_euclid(tick_spacing)).0)
+    }
+
+    /// Seed `known_bitmap_words` from the current `tick_data` keys' word
+    /// positions. Called at registration for Sparse pools (the keys a partial
+    /// snapshot carries are known); a no-op for Tracked pools (detection is
+    /// bypassed when `coverage != Sparse`).
+    pub fn seed_known_bitmap_words(&mut self) {
+        self.known_bitmap_words = self
+            .tick_data
+            .keys()
+            .map(|&t| Self::word_of(t, self.tick_spacing))
+            .collect();
+    }
+
     /// Construct from registration params with a journal of the given depth.
     #[must_use]
     pub fn from_params(params: RegisterV3PoolParams, journal_depth: usize) -> Self {
-        Self {
+        let mut out = Self {
             address: params.address,
             token0: params.token0,
             token1: params.token1,
@@ -191,9 +224,15 @@ impl V3PoolState {
             update_block: params.update_block,
             tick_data: params.tick_data,
             coverage: params.coverage,
+            known_bitmap_words: HashSet::new(),
             journal: ReorgJournal::<V3BlockDelta>::new(journal_depth),
             cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
+        };
+        // A partial snapshot's tick_data keys are known regions.
+        if params.coverage == PoolTickCoverage::Sparse {
+            out.seed_known_bitmap_words();
         }
+        out
     }
 
     /// Invalidate the cached tick ranges (call after any state mutation).
@@ -318,6 +357,24 @@ pub struct V3SwapOutcome {
     pub amount1: U256,
 }
 
+/// Why a [`v3_simulate_swap`] / [`v4_simulate_swap`] call could not produce a
+/// trustworthy outcome. Shared by V3 and V4.
+///
+/// `NotComputable` covers the non-fetchable failures the previous
+/// `Option::None` return encoded (zero amount, arithmetic overflow, invariant
+/// violation). `MissingTickWord` is the new fetchable sparse-map miss
+/// (ADR-005 sparse-map feature parity): the walk entered a tick-bitmap word
+/// whose bitmap has not been fetched, so the caller must fetch it via the
+/// registered tick-data fetcher and retry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SimulateSwapError {
+    /// The swap is not computable (zero amount, arithmetic overflow, invariant).
+    NotComputable,
+    /// Sparse coverage: the walk entered tick-bitmap word `i32` that has not
+    /// been fetched. Mirrors Python's `MissingLiquidityData(word=...)`.
+    MissingTickWord(i32),
+}
+
 /// Simulate a V3 exact-input or exact-output swap against a pool's state.
 ///
 /// Port of `UniswapV3Pool._calculate_swap` / `degenbot.uniswap.concentrated.
@@ -327,13 +384,19 @@ pub struct V3SwapOutcome {
 /// the solve engine + the calc API both read by reference per ADR-003.
 ///
 /// `amount_specified` uses the V3 sign convention: positive = exact input,
-/// negative = exact output. Returns `None` if the amount is zero, the swap
-/// cannot be computed (tick math / swap-step error, liquidity overflow), or
-/// the state is insufficient (sparse tick data with no walkable ticks).
+/// negative = exact output.
+///
+/// # Errors
+///
+/// Returns [`SimulateSwapError::NotComputable`] if the amount is zero, the
+/// swap cannot be computed (tick math / swap-step error, liquidity overflow),
+/// or an invariant is violated. Returns [`SimulateSwapError::MissingTickWord`]
+/// when `coverage == Sparse` and the walk entered a tick-bitmap word whose
+/// bitmap has not been fetched — the caller must fetch word `w` via the
+/// registered tick-data fetcher and retry (ADR-005 sparse-map parity).
 ///
 /// See: `contract_reference/uniswap/V3/UniswapV3Factory.sol` (`SwapMath`,
 /// `TickBitmap`, `TickMath`).
-#[must_use]
 #[allow(unused_assignments)]
 // `tick` tracks the contract's post-step tick; kept faithful to the V3
 // `_calculate_swap` loop even though this pure simulator returns only amounts.
@@ -342,9 +405,9 @@ pub fn v3_simulate_swap(
     state: &V3PoolState,
     zero_for_one: bool,
     amount_specified: I256,
-) -> Option<V3SwapOutcome> {
+) -> Result<V3SwapOutcome, SimulateSwapError> {
     if amount_specified.is_zero() {
-        return None; // AS: zero amount (V3 reverts)
+        return Err(SimulateSwapError::NotComputable); // AS: zero amount (V3 reverts)
     }
     let exact_in = amount_specified.is_positive();
 
@@ -359,10 +422,30 @@ pub fn v3_simulate_swap(
     let mut amount_calculated = I256::ZERO;
     let mut sqrt_price_x96 = state.sqrt_price_x96;
     let mut tick = state.tick;
-    let mut liquidity = i128::try_from(state.liquidity).ok()?;
+    let mut liquidity =
+        i128::try_from(state.liquidity).map_err(|_| SimulateSwapError::NotComputable)?;
 
     let fee_pips = U256::from(state.fee);
     let tick_spacing = state.tick_spacing;
+
+    // Sparse-map miss detection (ADR-005 feature parity). In sparse mode a
+    // region is unknown unless its word key is in `known_bitmap_words`. The
+    // Python simulator checks the starting word first via
+    // `next_initialized_tick_within_one_word`; mirror that: if the word
+    // containing the current tick is unknown, signal a fetchable miss before
+    // trusting any per-step result derived from `gen_ticks` (which, lacking a
+    // bitmap store, would otherwise silently produce a wrong amount here).
+    let sparse = state.coverage == PoolTickCoverage::Sparse;
+    if sparse
+        && !state
+            .known_bitmap_words
+            .contains(&V3PoolState::word_of(tick, tick_spacing))
+    {
+        return Err(SimulateSwapError::MissingTickWord(V3PoolState::word_of(
+            tick,
+            tick_spacing,
+        )));
+    }
 
     // Walk initialized + word-boundary ticks in the swap direction. gen_ticks
     // yields ticks in swap order (descending for zfo, ascending for ofz).
@@ -375,7 +458,7 @@ pub fn v3_simulate_swap(
         zero_for_one, // less_than_or_equal matches swap direction
         30_000,
     )
-    .ok()?;
+    .map_err(|_| SimulateSwapError::NotComputable)?;
 
     for tick_along_path in ticks {
         if amount_specified_remaining.is_zero() || sqrt_price_x96 == sqrt_price_limit {
@@ -392,7 +475,10 @@ pub fn v3_simulate_swap(
             tick_next.min(887_272)
         };
 
-        let sqrt_price_next = U256::from(get_sqrt_ratio_at_tick_internal(tick_next).ok()?);
+        let sqrt_price_next = U256::from(
+            get_sqrt_ratio_at_tick_internal(tick_next)
+                .map_err(|_| SimulateSwapError::NotComputable)?,
+        );
 
         // Target price: clamp to the swap price-limit if the next tick would
         // cross it.
@@ -412,25 +498,57 @@ pub fn v3_simulate_swap(
             amount_specified_remaining,
             fee_pips,
         )
-        .ok()?;
+        .map_err(|_| SimulateSwapError::NotComputable)?;
 
         sqrt_price_x96 = step.sqrt_price_next;
 
         if exact_in {
             // Gross input consumed this step = amount_in + fee_amount.
-            let consumed = I256::try_from(step.amount_in.saturating_add(step.fee_amount)).ok()?;
-            amount_specified_remaining = amount_specified_remaining.checked_sub(consumed)?;
-            amount_calculated =
-                amount_calculated.checked_sub(I256::try_from(step.amount_out).ok()?)?;
+            let consumed = I256::try_from(step.amount_in.saturating_add(step.fee_amount))
+                .map_err(|_| SimulateSwapError::NotComputable)?;
+            amount_specified_remaining = amount_specified_remaining
+                .checked_sub(consumed)
+                .ok_or(SimulateSwapError::NotComputable)?;
+            amount_calculated = amount_calculated
+                .checked_sub(
+                    I256::try_from(step.amount_out)
+                        .map_err(|_| SimulateSwapError::NotComputable)?,
+                )
+                .ok_or(SimulateSwapError::NotComputable)?;
         } else {
-            amount_specified_remaining =
-                amount_specified_remaining.checked_add(I256::try_from(step.amount_out).ok()?)?;
-            let gross_input =
-                I256::try_from(step.amount_in.saturating_add(step.fee_amount)).ok()?;
-            amount_calculated = amount_calculated.checked_add(gross_input)?;
+            amount_specified_remaining = amount_specified_remaining
+                .checked_add(
+                    I256::try_from(step.amount_out)
+                        .map_err(|_| SimulateSwapError::NotComputable)?,
+                )
+                .ok_or(SimulateSwapError::NotComputable)?;
+            let gross_input = I256::try_from(step.amount_in.saturating_add(step.fee_amount))
+                .map_err(|_| SimulateSwapError::NotComputable)?;
+            amount_calculated = amount_calculated
+                .checked_add(gross_input)
+                .ok_or(SimulateSwapError::NotComputable)?;
         }
 
         if sqrt_price_x96 == sqrt_price_next {
+            // The walk reached `tick_next` — crossing into its word. In sparse
+            // mode a region is unknown unless its word key is in
+            // `known_bitmap_words`; an unfetched word means the result past
+            // this crossing would be untrustworthy, so signal a fetchable miss
+            // (caller fetches + retries) rather than reading potentially-absent
+            // tick_data or proceeding on an unknown region. Mirrors Python's
+            // per-step `MissingLiquidityData` raise on word entry. The check is
+            // gated on an actual crossing so a merely-proposed (unreached)
+            // boundary tick in a neighbouring word does not false-trigger.
+            if sparse
+                && !state
+                    .known_bitmap_words
+                    .contains(&V3PoolState::word_of(tick_next, tick_spacing))
+            {
+                return Err(SimulateSwapError::MissingTickWord(V3PoolState::word_of(
+                    tick_next,
+                    tick_spacing,
+                )));
+            }
             // Reached the next tick — cross it if initialized.
             if initialized {
                 if let Some(info) = state.tick_data.get(&tick_next) {
@@ -438,15 +556,18 @@ pub fn v3_simulate_swap(
                     // Crossing direction: zfo crosses from above (subtract net);
                     // ofz crosses from below (add net). Matches V3's
                     // `liquidity = liquidity - liquidityNet` (zfo) branch.
-                    let liquidity_net: i128 = i128::try_from(liquidity_net_i256).ok()?;
+                    let liquidity_net: i128 = i128::try_from(liquidity_net_i256)
+                        .map_err(|_| SimulateSwapError::NotComputable)?;
                     let net = if zero_for_one {
                         -liquidity_net
                     } else {
                         liquidity_net
                     };
-                    liquidity = liquidity.checked_add(net)?;
+                    liquidity = liquidity
+                        .checked_add(net)
+                        .ok_or(SimulateSwapError::NotComputable)?;
                     if liquidity < 0 {
-                        return None; // LO: invariant violated
+                        return Err(SimulateSwapError::NotComputable); // LO: invariant violated
                     }
                 }
             }
@@ -458,7 +579,7 @@ pub fn v3_simulate_swap(
         } else if sqrt_price_x96 != sqrt_price_start {
             // Price moved but didn't reach tick_next — recompute tick from price.
             tick = get_tick_at_sqrt_ratio_internal(sqrt_price_x96.to::<U160>())
-                .ok()?
+                .map_err(|_| SimulateSwapError::NotComputable)?
                 .as_i32();
         }
     }
@@ -466,7 +587,9 @@ pub fn v3_simulate_swap(
     // Derive amount0 / amount1 per the V3 Swap callback convention.
     // input_consumed = amount_specified - amount_remaining (positive for
     // both exact-in and exact-out).
-    let input_consumed = amount_specified.checked_sub(amount_specified_remaining)?;
+    let input_consumed = amount_specified
+        .checked_sub(amount_specified_remaining)
+        .ok_or(SimulateSwapError::NotComputable)?;
 
     let (amount0_signed, amount1_signed) = if zero_for_one == exact_in {
         // zfo + exact_in  → pool receives token0 (input),  sends token1 (output)
@@ -476,7 +599,7 @@ pub fn v3_simulate_swap(
         (-amount_calculated, input_consumed)
     };
 
-    Some(V3SwapOutcome {
+    Ok(V3SwapOutcome {
         amount0: amount0_signed.unsigned_abs(),
         amount1: amount1_signed.unsigned_abs(),
     })
@@ -527,6 +650,7 @@ mod tests {
             update_block: 0,
             tick_data,
             coverage: PoolTickCoverage::Tracked,
+            known_bitmap_words: HashSet::new(),
             journal: ReorgJournal::<V3BlockDelta>::new(8),
             cached_tick_ranges: parking_lot::Mutex::new(super::TickRangeCache::default()),
         }
@@ -603,12 +727,13 @@ mod tests {
     }
 
     #[test]
-    fn zero_amount_returns_none() {
+    fn zero_amount_is_not_computable() {
         let state = pool_1to1_with_position(1_000_000u128);
         let outcome = v3_simulate_swap(&state, true, I256::ZERO);
-        assert!(
-            outcome.is_none(),
-            "zero amount_specified should return None (AS)"
+        assert_eq!(
+            outcome,
+            Err(SimulateSwapError::NotComputable),
+            "zero amount_specified should be NotComputable (V3 AS revert)"
         );
     }
 
@@ -626,6 +751,69 @@ mod tests {
         assert!(
             large > small,
             "larger input must produce larger output (small={small}, large={large})"
+        );
+    }
+
+    #[test]
+    fn sparse_unknown_word_signals_fetchable_miss() {
+        // ADR-005 sparse-map feature parity. In sparse mode a region is unknown
+        // unless its word key is in `known_bitmap_words`. A pool constructed
+        // sparse with no known words must therefore signal a fetchable miss on
+        // the starting word (mirrors Python's `MissingLiquidityData(word=0)`
+        // first-step raise), NOT a silently-wrong computed amount.
+        let liq = 10_000_000_000_000u128;
+        let mut state = pool_1to1_with_position(liq);
+        state.coverage = PoolTickCoverage::Sparse;
+        state.known_bitmap_words.clear(); // fully sparse: no regions known
+
+        let res = v3_simulate_swap(&state, true, I256::try_from(1_000u64).unwrap());
+        assert_eq!(
+            res,
+            Err(SimulateSwapError::MissingTickWord(0)),
+            "sparse pool with unknown starting word must signal MissingTickWord, \
+             not a computed outcome nor NotComputable"
+        );
+    }
+
+    #[test]
+    fn tracked_pool_bypasses_miss_detection() {
+        // ADR-005 sparse-map feature parity. Miss detection is gated on
+        // `coverage == Sparse`: a Tracked pool (complete tick data) must
+        // compute normally even when `known_bitmap_words` is empty — it never
+        // consults the set. Confirms detection is sparse-only.
+        let liq = 10_000_000_000_000u128;
+        let mut state = pool_1to1_with_position(liq);
+        // Tracked + empty known set — must NOT miss.
+        state.known_bitmap_words.clear();
+        assert_eq!(state.coverage, PoolTickCoverage::Tracked);
+
+        let res = v3_simulate_swap(&state, true, I256::try_from(1_000u64).unwrap());
+        assert!(
+            res.is_ok(),
+            "Tracked pool must compute regardless of known_bitmap_words, got {res:?}"
+        );
+    }
+
+    #[test]
+    fn sparse_unreached_boundary_does_not_false_miss() {
+        // The complement of `sparse_unknown_word_signals_fetchable_miss`.
+        // gen_ticks proposes candidate boundary ticks along the path; a swap
+        // that does NOT reach a proposed tick in an unknown neighbor word must
+        // still compute (no false miss). Mirrors Python's per-word miss: the
+        // word is only consulted when the walk actually enters it.
+        let liq = 10_000_000_000_000u128;
+        let mut state = pool_1to1_with_position(liq);
+        state.coverage = PoolTickCoverage::Sparse;
+        // Word 0 (tick 0, the start) is known; word −1 (containing the tick −60
+        // boundary of the position) is NOT known. A small swap stays near tick 0
+        // and never crosses −60, so word −1 is merely proposed, not entered.
+        state.known_bitmap_words.clear();
+        state.known_bitmap_words.insert(0);
+
+        let res = v3_simulate_swap(&state, true, I256::try_from(100u64).unwrap());
+        assert!(
+            res.is_ok(),
+            "small swap that never enters the unknown word −1 should compute, got {res:?}"
         );
     }
 }
