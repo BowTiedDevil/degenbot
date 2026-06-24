@@ -252,6 +252,57 @@ impl PyLiquidityPool {
         Ok(Some(tuple.into_any().unbind()))
     }
 
+    /// Exact-OUTPUT fetch+retry swap: caller passes the desired `amount_out`,
+    /// the sim derives the required input. Same 5-tuple return shape as
+    /// `simulate_swap_with_fetch` (the caller extracts the opposing amount as
+    /// the required input). Mirrors the Python `calculate_tokens_in_from_
+    /// tokens_out` / `simulate_exact_output_swap` frozen path; the V3/V4
+    /// exact-output sign convention is handled in the core.
+    #[pyo3(signature = (zero_for_one, amount_out, block, fetcher, sqrt_price_limit_x96=None))]
+    fn simulate_exact_output_swap_with_fetch(
+        &self,
+        py: Python<'_>,
+        zero_for_one: bool,
+        amount_out: &Bound<'_, PyAny>,
+        block: u64,
+        fetcher: &Bound<'_, PyAny>,
+        sqrt_price_limit_x96: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
+        let sqrt_price_limit = match sqrt_price_limit_x96 {
+            Some(v) if !v.is_none() => crate::conversion::alloy::extract_python_u256(v)?,
+            _ => degenbot_bot::bot_core::V3PoolState::default_sqrt_price_limit(zero_for_one),
+        };
+        let adapter = PyTickWordFetcher {
+            callback: fetcher.clone().unbind(),
+        };
+        let outcome = {
+            let mut core = self.core.write();
+            core.simulate_exact_output_swap_with_fetch(
+                self.pool_id,
+                zero_for_one,
+                amount,
+                sqrt_price_limit,
+                block,
+                &adapter,
+            )
+        };
+        let Some(outcome) = outcome else {
+            return Ok(None);
+        };
+        let tuple = pyo3::types::PyTuple::new(
+            py,
+            [
+                crate::conversion::alloy::u256_to_py(py, &outcome.amount0)?.unbind(),
+                crate::conversion::alloy::u256_to_py(py, &outcome.amount1)?.unbind(),
+                crate::conversion::alloy::u256_to_py(py, &outcome.sqrt_price_x96)?.unbind(),
+                outcome.liquidity.into_pyobject(py)?.into_any().unbind(),
+                outcome.tick.into_pyobject(py)?.into_any().unbind(),
+            ],
+        )?;
+        Ok(Some(tuple.into_any().unbind()))
+    }
+
     /// Simulate an exact-input swap over a HYPOTHETICAL override pool state.
     ///
     /// Builds a transient V3/V4 state from `override_sqrt_price_x96`,

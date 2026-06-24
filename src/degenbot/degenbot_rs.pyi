@@ -910,6 +910,14 @@ class PyLiquidityPool:
         override_tick_data: dict[int, tuple[int, int, int]],
         sqrt_price_limit_x96: int | None = None,
     ) -> tuple[int, int, int, int, int] | None: ...
+    def simulate_exact_output_swap_with_fetch(
+        self,
+        zero_for_one: bool,
+        amount_out: int,
+        block: int,
+        fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None],
+        sqrt_price_limit_x96: int | None = None,
+    ) -> tuple[int, int, int, int, int] | None: ...
     def encode_swap(
         self,
         zero_for_one: bool,
