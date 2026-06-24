@@ -380,7 +380,9 @@ _V4_MGR = "0x000000000004444c5dc75cB358380D2e3dE08A90"
 _V4_DIVERGE_AMOUNT = 2_655_842_687_976
 _V4_DIVERGE_QUOTER_OUT = 1_032_110_029_338_332_389_817
 _V4_DIVERGE_RUST_OUT = 1_032_109_990_364_539_206_286
-# Rust sparse+fetch undercount vs the quoter (== Rust sparse+full-fetch vs Rust dense).
+# The BUGGY Rust sparse+fetch undercount (pre-ELSE-branch-miss-check fix).
+# Kept as the historical divergence magnitude reference; the fix makes the
+# sparse path match `_V4_DIVERGE_QUOTER_OUT`.
 
 
 def _load_corpus_fixture() -> dict:
@@ -469,17 +471,18 @@ def test_rust_v4_dense_corpus_matches_on_chain_quoter():
     assert rust_out == _V4_DIVERGE_QUOTER_OUT, f"Rust dense diverges from quoter: {rust_out}"
 
 
-def test_rust_v4_sparse_fetch_corpus_diverges_from_dense():
-    """Rust sparse+fetch vs Rust dense on the SAME corpus (offline, no fork).
+def test_rust_v4_sparse_fetch_corpus_matches_dense():
+    """Rust sparse+fetch == Rust dense on the SAME corpus (offline, no fork).
 
     Seeds the pool with the corpus MINUS word -76's ticks and runs both paths
     SPARSE with a fetcher that returns each word's ticks on demand (the last
     word is fetched, not pre-seeded, so the sparse+fetch loop is exercised).
     Python mainline (sparse, full-fetch) reproduces the on-chain quoter exactly;
-    Rust ``simulate_swap_with_fetch`` undercounts by a frozen amount. The
+    Rust ``simulate_swap_with_fetch`` now matches too (the sparse-path
+    divergence is fixed — see the ELSE-branch miss check in `v4_simulate_swap`).
     divergence equals the fork divergence, so this is the offline gate for the
-    V4 mainline routing blocker — flips to XPASS when the Rust sparse path is
-    corrected, prompting V4 routing re-enable (slice 4).
+    V4 mainline routing gate — was RED (sparse-path divergence) before the
+    ELSE-branch miss-check fix in `v4_simulate_swap`; now GREEN.
     """
     state = _load_corpus_fixture()
     ts = state["tick_spacing"]
