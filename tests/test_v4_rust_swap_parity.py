@@ -15,7 +15,9 @@ abs) / ``amount_out = max(c0,c1)`` (withdrawn abs).
 
 from __future__ import annotations
 
-# Lazily import Web3/eth_abi only when computing a pool_id.
+import json
+import pathlib
+
 import eth_abi.abi
 import pytest
 from web3 import Web3
@@ -364,6 +366,182 @@ def test_sparse_mainline_v4_swap_fetch_merge_matches_dense_oracle():
     # The fetch+merge path fetched the starting word (0).
     assert 0 in fetched_words, "the sparse swap must fetch the missing starting word"
     assert result == oracle, f"sparse fetch+merge result={result} != dense oracle={oracle}"
+
+
+_CORPUS_PATH = (
+    pathlib.Path(__file__).parent
+    / "uniswap"
+    / "v4"
+    / "fixtures"
+    / "v4_eth_usdc_diverge_corpus.json"
+)
+_V4_MGR = "0x000000000004444c5dc75cB358380D2e3dE08A90"
+# Frozen fork-captured ground truth (ETH/USDC V4 pool, ofz swap, amt=2.66e12).
+_V4_DIVERGE_AMOUNT = 2_655_842_687_976
+_V4_DIVERGE_QUOTER_OUT = 1_032_110_029_338_332_389_817
+_V4_DIVERGE_RUST_OUT = 1_032_109_990_364_539_206_286
+# Rust sparse+fetch undercount vs the quoter (== Rust sparse+full-fetch vs Rust dense).
+
+
+def _load_corpus_fixture() -> dict:
+    """Load the fork-captured ETH/USDC V4 state + 419-tick corpus fixture."""
+    return json.loads(_CORPUS_PATH.read_bytes())
+
+
+def _build_pool_from_corpus(
+    py_bot: PyBot,
+    state: dict,
+    *,
+    td: dict[int, LiquidityAtTick],
+    sparse: bool,
+    fetcher,
+):
+    """Build a V4 companion seeded with ``td``; if ``sparse``, clear the
+    companion's seeded Rust state + flip sparse + attach ``fetcher`` (so the
+    mainline + seam paths fetch on demand).
+    """
+    token0 = make_erc20(py_bot, address="0x" + "aa" * 20, name="T0", symbol="T0", decimals=18)
+    token1 = make_erc20(py_bot, address="0x" + "bb" * 20, name="T1", symbol="T1", decimals=18)
+    pool_id = (
+        "0x"
+        + Web3.keccak(
+            eth_abi.abi.encode(
+                ["address", "address", "uint24", "int24", "address"],
+                [token0.address, token1.address, state["fee"], state["tick_spacing"], ZERO_ADDRESS],
+            ),
+        ).hex()
+    )
+    pool = make_v4_pool(
+        pool_id=pool_id,
+        pool_manager_address=_V4_MGR,
+        token0=token0,
+        token1=token1,
+        fee=state["fee"],
+        tick_spacing=state["tick_spacing"],
+        hook_address=None,
+        sqrt_price_x96=state["sqrt_price_x96"],
+        tick=state["tick"],
+        liquidity=state["liquidity"],
+        tick_data=td,
+        protocol_fee_zero_for_one=0,
+        protocol_fee_one_for_zero=0,
+        lp_fee=state["fee"],
+        state_block=0,
+        py_bot=py_bot,
+    )
+    if sparse:
+        pool._py_pool.update_tick_data({}, {}, 0)
+        pool._sparse_liquidity_map = True
+        pool._tick_data_fetcher = fetcher
+    return pool
+
+
+def test_rust_v4_dense_corpus_matches_on_chain_quoter():
+    """Rust == Python == on-chain quoter on the captured corpus (DENSE).
+
+    Loads the fork-captured ETH/USDC V4 state + full initialized-tick corpus
+    (419 ticks across words -79..-75) and runs the diverging ofz swap with NO
+    fetcher (dense). All three agree exactly — proving the Rust V4 sim's core
+    crossing-swap math is sound on a real, rich tick corpus. This is the
+    precondition that isolates the sparse-path divergence to the fetch/merge
+    loop (see ``test_rust_v4_sparse_fetch_corpus_diverges``).
+    """
+    state = _load_corpus_fixture()
+    td = {
+        int(t): LiquidityAtTick(liquidity_net=int(r[1]), liquidity_gross=int(r[0]), block=int(r[2]))
+        for t, r in state["tick_data"].items()
+    }
+    py_bot = PyBot()
+    pool = _build_pool_from_corpus(py_bot, state, td=td, sparse=False, fetcher=None)
+    py_out = pool.calculate_tokens_out_from_tokens_in(
+        token_in=pool.token1,
+        token_in_quantity=_V4_DIVERGE_AMOUNT,
+    )
+    rust_outcome = pool._py_pool.simulate_swap_with_fetch(
+        zero_for_one=False,
+        amount_in=_V4_DIVERGE_AMOUNT,
+        block=0,
+        fetcher=lambda *_: {},
+    )
+    assert rust_outcome is not None
+    rust_out = int(rust_outcome[0])  # ofz: token0 out
+    assert py_out == _V4_DIVERGE_QUOTER_OUT, f"Python dense diverges from quoter: {py_out}"
+    assert rust_out == _V4_DIVERGE_QUOTER_OUT, f"Rust dense diverges from quoter: {rust_out}"
+
+
+@pytest.mark.xfail(
+    reason="Rust sparse+fetch != Rust dense on the same corpus: the fetch/merge "
+    "loop undercounts on multi-word ofz swaps (Rust sparse+full-fetch still "
+    "produces the undercount, so the walk diverges BEFORE the final fetched "
+    "word merges). Python sparse+fetch == Python dense == quoter, so this is a "
+    "Rust-internal sparse-path inconsistency. Blocking V4 mainline routing "
+    "(slice 4).",
+    strict=True,
+)
+def test_rust_v4_sparse_fetch_corpus_diverges_from_dense():
+    """Rust sparse+fetch vs Rust dense on the SAME corpus (offline, no fork).
+
+    Seeds the pool with the corpus MINUS word -76's ticks and runs both paths
+    SPARSE with a fetcher that returns each word's ticks on demand (the last
+    word is fetched, not pre-seeded, so the sparse+fetch loop is exercised).
+    Python mainline (sparse, full-fetch) reproduces the on-chain quoter exactly;
+    Rust ``simulate_swap_with_fetch`` undercounts by a frozen amount. The
+    divergence equals the fork divergence, so this is the offline gate for the
+    V4 mainline routing blocker — flips to XPASS when the Rust sparse path is
+    corrected, prompting V4 routing re-enable (slice 4).
+    """
+    state = _load_corpus_fixture()
+    ts = state["tick_spacing"]
+    full = dict(state["tick_data"])
+    minus76 = {t: v for t, v in full.items() if (int(t) // ts) >> 8 != -76}
+    td_minus76 = {
+        int(t): LiquidityAtTick(liquidity_net=int(r[1]), liquidity_gross=int(r[0]), block=int(r[2]))
+        for t, r in minus76.items()
+    }
+    corpus_by_word: dict[int, dict] = {}
+    for t, r in full.items():
+        corpus_by_word.setdefault((int(t) // ts) >> 8, {})[int(t)] = list(r)
+
+    def full_fetcher(word: int, block: int) -> dict:
+        return corpus_by_word.get(word, {})
+
+    py_bot = PyBot()
+    # Python mainline (sparse, full-fetch) — the oracle (== quoter).
+    py_pool = _build_pool_from_corpus(
+        py_bot,
+        state,
+        td=td_minus76,
+        sparse=True,
+        fetcher=full_fetcher,
+    )
+    py_out = py_pool.calculate_tokens_out_from_tokens_in(
+        token_in=py_pool.token1,
+        token_in_quantity=_V4_DIVERGE_AMOUNT,
+    )
+    assert py_out == _V4_DIVERGE_QUOTER_OUT, (
+        f"Python sparse+full-fetch must match the quoter (== dense): {py_out}"
+    )
+    # Rust seam (sparse, full-fetch) — the buggy path.
+    rust_pool = _build_pool_from_corpus(
+        py_bot,
+        state,
+        td=td_minus76,
+        sparse=True,
+        fetcher=full_fetcher,
+    )
+    rust_outcome = rust_pool._py_pool.simulate_swap_with_fetch(
+        zero_for_one=False,
+        amount_in=_V4_DIVERGE_AMOUNT,
+        block=0,
+        fetcher=full_fetcher,
+    )
+    assert rust_outcome is not None
+    rust_out = int(rust_outcome[0])
+    # The bug: Rust sparse+full-fetch undercounts vs its own dense result.
+    assert rust_out == _V4_DIVERGE_QUOTER_OUT, (
+        f"Rust sparse+fetch diverges from dense/quoter: rust={rust_out} "
+        f"expected={_V4_DIVERGE_QUOTER_OUT} diff={rust_out - _V4_DIVERGE_QUOTER_OUT}"
+    )
 
 
 if __name__ == "__main__":
