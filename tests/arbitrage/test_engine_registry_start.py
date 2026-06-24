@@ -10,6 +10,8 @@ risk of unbounded backlog or stale-batch dispatch.
 
 from __future__ import annotations
 
+import pytest
+
 import degenbot.arbitrage.engine_registry as runner
 
 
@@ -49,6 +51,22 @@ class FakeEngine:
 
     def set_verify_on_register(self, enabled: bool) -> None:
         self.calls.append("set_verify_on_register")
+
+    def verify_liquidity_maps(
+        self,
+        *,
+        rpc_url: str,
+        tick_lens_address: str,
+        state_view_address: str,
+        block_number: int | None,
+    ) -> None:
+        self.calls.append("verify_liquidity_maps")
+        self.verify_args = {
+            "rpc_url": rpc_url,
+            "tick_lens_address": tick_lens_address,
+            "state_view_address": state_view_address,
+            "block_number": block_number,
+        }
 
     def resume(self) -> None:
         self.calls.append("resume")
@@ -151,3 +169,51 @@ def test_start_skips_set_verify_state_view_when_none() -> None:
     registry.start("http://node:8545", "ws://node:8546")
 
     assert "set_verify_state_view" not in fake.calls
+
+
+def test_verify_liquidity_maps_raises_when_start_not_called() -> None:
+    """Before start() stashes verify config, verify_liquidity_maps is a
+    RuntimeError — never a silent skip or an unconfigured-RPC failure deep in
+    the engine. Mirrors the WFDTUR fail-fast posture."""
+    fake = FakeEngine()
+    registry = runner.EngineRegistry(bot=None, engine=fake)
+
+    with pytest.raises(RuntimeError, match="verify config"):
+        registry.verify_liquidity_maps()
+    assert "verify_liquidity_maps" not in fake.calls
+
+
+def test_verify_liquidity_maps_delegates_with_stashed_config() -> None:
+    """After start(..., verify_state_view=...), verify_liquidity_maps delegates
+    to the engine with the stashed RPC + StateView, a zero tick_lens (unused by
+    the V3 batch path), and block_number=None (latest). Emits exactly one
+    delegate call — the [verify] line the analyzer keys on."""
+    fake = FakeEngine()
+    registry = runner.EngineRegistry(bot=None, engine=fake)
+    state_view = "0x0000000000000000000000000000000000000abc"
+
+    registry.start(
+        "http://node:8545",
+        "ws://node:8546",
+        verify_state_view=state_view,
+    )
+
+    registry.verify_liquidity_maps()
+
+    assert fake.verify_args == {
+        "rpc_url": "http://node:8545",
+        "tick_lens_address": "0x0000000000000000000000000000000000000000",
+        "state_view_address": state_view,
+        "block_number": None,
+    }
+
+
+def test_verify_liquidity_maps_raises_when_state_view_omitted() -> None:
+    """V4 batch verify needs StateView; start() without verify_state_view must
+    surface as a config error at verify time, not a silent pass."""
+    fake = FakeEngine()
+    registry = runner.EngineRegistry(bot=None, engine=fake)
+    registry.start("http://node:8545", "ws://node:8546")  # no state_view
+
+    with pytest.raises(RuntimeError, match="verify config"):
+        registry.verify_liquidity_maps()

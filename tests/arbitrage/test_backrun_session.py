@@ -87,6 +87,9 @@ class _FakeEngineRegistry:
         })
         return self._backfill_target
 
+    def verify_liquidity_maps(self, *, block_number=None) -> None:
+        self.verify_call = block_number
+
 
 class _FakeBot:
     def __init__(self, events: list[str] | None = None) -> None:
