@@ -1,11 +1,17 @@
 """Tests for the unified tick data fetcher factory.
 
-Verifies that make_tick_data_fetcher produces a callback that correctly
-fetches bitmap/tick data from a concentrated-liquidity pool and pushes
-updated state, for both V3 and V4 type variants.
+Verifies that ``make_tick_data_fetcher`` produces a callback that RETURNS the
+fetched word's tick data (ADR-005 sparse-map parity, slice 3b return-data
+contract) for both V3 and V4 type variants.
+
+The fetcher no longer writes back via ``pool.update_tick_data`` — the Rust
+``simulate_swap_with_fetch`` loop merges the returned data itself (holding the
+write lock), so a write-back fetcher would re-enter that lock and deadlock.
+The Python companion's sparse-write-back sites (``_apply_fetched_tick_word``)
+also consume the returned data explicitly. These tests assert on the RETURNED
+dict, not on pool-state side-effects.
 """
 
-import dataclasses
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -14,14 +20,8 @@ import pytest
 
 from degenbot.builders.tick_data_fetcher import TickDataTypes, make_tick_data_fetcher
 from degenbot.provider.call_helpers import encode_function_calldata
-from degenbot.uniswap.concentrated.state_manager import (
-    ConcentratedLiquidityStateManager,
-)
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
-from degenbot.uniswap.v3_types import (
-    UniswapV3PoolState,
-)
 
 
 class FakePoolIO:
@@ -81,57 +81,16 @@ class FakePoolIO:
         raise NotImplementedError(msg)
 
 
-def _make_fake_pool(state):
-    """Build a fake pool with the given state and a real state manager.
+def _make_fake_pool(tick_spacing: int = 60) -> Any:
+    """Build a fake pool exposing only address + tick_spacing.
 
-    The fake pool exposes tick_bitmap, tick_data, update_block, state,
-    address, tick_spacing, and _state_mgr.push_state — everything the
-    fetcher needs.
+    The return-data fetcher no longer reads/writes the pool's tick maps — it
+    only needs ``address`` + ``tick_spacing`` to encode the per-tick RPCs.
     """
     pool = MagicMock()
     pool.address = "0x" + "00" * 20
-    pool.tick_bitmap = dict(state.tick_bitmap)
-    pool.tick_data = dict(state.tick_data)
-    pool.state = state
-    pool.update_block = state.block or 0
-    pool.tick_spacing = 60
-
-    state_mgr = ConcentratedLiquidityStateManager(initial_state=state)
-    pool._state_mgr = state_mgr
-
-    def _update_tick_data(
-        tick_bitmap: dict,
-        tick_data: dict,
-        block: int,
-    ) -> None:
-        new_state = dataclasses.replace(
-            pool._state_mgr.state,
-            tick_bitmap=tick_bitmap,
-            tick_data=tick_data,
-            block=max(pool.update_block, block),
-        )
-        pool._state_mgr.push_state(new_state)
-        pool.state = new_state
-        pool.tick_bitmap = dict(new_state.tick_bitmap)
-        pool.tick_data = dict(new_state.tick_data)
-        pool.update_block = new_state.block
-
-    pool.update_tick_data = _update_tick_data
-
+    pool.tick_spacing = tick_spacing
     return pool
-
-
-def _make_v3_state(tick_bitmap=None, tick_data=None, block=100) -> UniswapV3PoolState:
-    """Build a minimal V3 pool state for testing."""
-    return UniswapV3PoolState(
-        address="0x" + "00" * 20,
-        block=block,
-        liquidity=0,
-        sqrt_price_x96=2**96,
-        tick=0,
-        tick_bitmap=tick_bitmap or {},
-        tick_data=tick_data or {},
-    )
 
 
 V3_TYPES = TickDataTypes(
@@ -157,23 +116,19 @@ def _encode_ticks_calldata(tick: int) -> bytes:
     return encode_function_calldata("ticks(int24)", [tick])
 
 
-class TestNonZeroBitmapUpdatesBitmapAndTickData:
-    """When the bitmap value is non-zero, the fetcher should:
-    1. Update the bitmap at the word position
-    2. Fetch and store populated ticks at that word
-    3. Push the new state via _state_mgr.push_state()
+class TestNonZeroBitmapReturnsActiveTicks:
+    """When the bitmap value is non-zero, the fetcher should RETURN a dict
+    of the word's active ticks as ``(gross, net, block)`` tuples.
     """
 
     @pytest.mark.parametrize("types", [V3_TYPES, V4_TYPES])
-    def test_updates_state_on_nonzero_bitmap(self, types):
-        state = _make_v3_state(block=100)
-        pool = _make_fake_pool(state)
+    def test_returns_active_ticks_on_nonzero_bitmap(self, types):
+        pool = _make_fake_pool()
 
         # Bitmap value 7 = bits 0,1,2 set
         # Ticks at positions (3<<8 + 0)*60, (3<<8 + 1)*60, (3<<8 + 2)*60
         bitmap_value = 7
 
-        # Build a FakePoolIO that returns the bitmap and then tick data
         io = FakePoolIO()
         io.add_response(
             _encode_bitmap_calldata(3),
@@ -200,37 +155,25 @@ class TestNonZeroBitmapUpdatesBitmapAndTickData:
             types=types,
         )
 
-        fetcher(word_position=3, block_number=200)
+        result = fetcher(word_position=3, block_number=200)
 
-        # The state manager should have the pushed state as current
-        new_state = pool._state_mgr.state
-
-        # Bitmap at word 3 should be updated
-        assert 3 in new_state.tick_bitmap
-        assert new_state.tick_bitmap[3].bitmap == 7
-        assert new_state.tick_bitmap[3].block == 200
-
-        # Tick data should be populated for all 3 active ticks
+        # The fetcher RETURNS the word's active ticks as (gross, net, block).
+        assert result is not None
+        assert len(result) == 3
         for i in range(3):
             tick = ((3 << 8) + i) * 60
-            assert tick in new_state.tick_data
-            assert new_state.tick_data[tick].liquidity_net == 100
-            assert new_state.tick_data[tick].liquidity_gross == 500
-            assert new_state.tick_data[tick].block == 200
-
-        # Block should be max of original and new
-        assert new_state.block == 200
+            assert tick in result
+            assert result[tick] == (500, 100, 200)
 
 
-class TestZeroBitmapUpdatesBitmapOnly:
-    """When the bitmap value is zero, the fetcher should update the bitmap
-    but NOT fetch populated ticks.
+class TestZeroBitmapReturnsEmptyDict:
+    """When the bitmap value is zero, the fetcher should RETURN an empty dict
+    (the word is known-but-empty — an all-zero bitmap word).
     """
 
     @pytest.mark.parametrize("types", [V3_TYPES, V4_TYPES])
-    def test_updates_bitmap_only_on_zero_bitmap(self, types):
-        state = _make_v3_state(block=100)
-        pool = _make_fake_pool(state)
+    def test_returns_empty_dict_on_zero_bitmap(self, types):
+        pool = _make_fake_pool()
 
         io = FakePoolIO()
         # Return bitmap value 0
@@ -245,51 +188,41 @@ class TestZeroBitmapUpdatesBitmapOnly:
             types=types,
         )
 
-        fetcher(word_position=5, block_number=200)
+        result = fetcher(word_position=5, block_number=200)
 
-        new_state = pool._state_mgr.state
+        # An all-zero bitmap word → empty dict (the Rust merge records the word
+        # as known with no initialized ticks).
+        assert result == {}
 
-        # Bitmap updated with value 0
-        assert 5 in new_state.tick_bitmap
-        assert new_state.tick_bitmap[5].bitmap == 0
-
-        # Only 1 call should have been made (the bitmap call)
+        # Only 1 call should have been made (the bitmap call — no tick fetches).
         assert len(io.call_log) == 1
-
-        # No tick data added
-        assert len(new_state.tick_data) == 0
 
 
 class TestPoolNotFound:
-    """When pool_lookup returns None, the fetcher should do nothing."""
+    """When pool_lookup returns None, the fetcher should return None."""
 
     @pytest.mark.parametrize("types", [V3_TYPES, V4_TYPES])
-    def test_no_state_change_when_pool_missing(self, types):
+    def test_returns_none_when_pool_missing(self, types):
         io = FakePoolIO()
 
-        # pool_lookup returns None — the pool object is never consulted
         fetcher = make_tick_data_fetcher(
             pool_lookup=lambda _: None,
             io=io,
             types=types,
         )
 
-        # Should not raise
-        fetcher(word_position=3, block_number=200)
-
-        # No calls made
+        assert fetcher(word_position=3, block_number=200) is None
         assert len(io.call_log) == 0
 
 
 class TestBitmapFetchRaises:
-    """When the bitmap RPC call raises, the fetcher should return
-    early without updating state.
+    """When the bitmap RPC call raises, the fetcher should return None
+    (the Rust loop treats this as a fetch failure).
     """
 
     @pytest.mark.parametrize("types", [V3_TYPES, V4_TYPES])
-    def test_no_state_change_on_fetch_error(self, types):
-        state = _make_v3_state(block=100)
-        pool = _make_fake_pool(state)
+    def test_returns_none_on_fetch_error(self, types):
+        pool = _make_fake_pool()
 
         io = FakePoolIO()
         # All calls raise
@@ -301,10 +234,4 @@ class TestBitmapFetchRaises:
             types=types,
         )
 
-        # Should not raise
-        fetcher(word_position=3, block_number=200)
-
-        # State unchanged from initial
-        new_state = pool._state_mgr.state
-        assert len(new_state.tick_bitmap) == 0
-        assert len(new_state.tick_data) == 0
+        assert fetcher(word_position=3, block_number=200) is None

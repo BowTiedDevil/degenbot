@@ -180,5 +180,63 @@ def test_rust_seam_sign_mapping_dense(*, zero_for_one: bool):
         assert rust_amount1 == py_result.amount1_delta
 
 
+def test_sparse_mainline_swap_routed_to_rust_matches_dense_oracle():
+    """Sparse pool's mainline swap → Rust fetch+retry == dense oracle.
+
+    A sparse pool (empty tick_data) misses on the starting word; the return-data
+    fetcher supplies the word's ticks; the Rust loop merges + retries; the
+    result matches a dense pool (same position) computed via the Python
+    simulator — i.e. the routed sparse path is correct end-to-end.
+    """
+    py_bot = PyBot()
+
+    # Dense oracle: same position, Python simulator.
+    dense = _build_v3_pool(py_bot, dense=True, address="0x" + "11" * 20)
+    oracle = dense.simulate_exact_input_swap(
+        token_in=dense.token0,
+        token_in_quantity=1_000,
+    )
+
+    # Sparse pool: identical scalars + position, but NO tick_data seeded.
+    # The pool's ``_tick_data_fetcher`` is the Rust-side callback the routing
+    # invokes on a miss. The starting tick 0 lives in word 0; the zfo walk
+    # descends to tick -60 which lives in word -1 (tick_spacing 60).
+    fetched_words: list[int] = []
+
+    def fetcher(word: int, block: int):
+        fetched_words.append(word)
+        if word == 0:
+            # tick +60 lives in word 0; its liquidity_net is -L (upper bound).
+            return {60: (_LIQUIDITY, -_LIQUIDITY, 0)}
+        if word == -1:
+            # tick -60 lives in word -1; its liquidity_net is +L (lower bound).
+            return {-60: (_LIQUIDITY, _LIQUIDITY, 0)}
+        return {}
+
+    sparse = _build_v3_pool(
+        py_bot,
+        dense=False,
+        address="0x" + "22" * 20,
+        fetcher=fetcher,
+    )
+    assert sparse.sparse_liquidity_map, "no tick_data ⇒ sparse companion"
+
+    # Mainline (no override, no custom limit) → routed to the Rust seam.
+    result = sparse.simulate_exact_input_swap(
+        token_in=sparse.token0,
+        token_in_quantity=1_000,
+    )
+
+    # The Rust path fetched the starting word (0) and the descending word (-1).
+    assert 0 in fetched_words, "the sparse swap must fetch the missing starting word"
+
+    # The routed result matches the dense-map oracle (amounts + final state).
+    assert result.amount1_delta == oracle.amount1_delta
+    assert result.amount0_delta == oracle.amount0_delta
+    assert result.final_state.sqrt_price_x96 == oracle.final_state.sqrt_price_x96
+    assert result.final_state.liquidity == oracle.final_state.liquidity
+    assert result.final_state.tick == oracle.final_state.tick
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-vv"])
