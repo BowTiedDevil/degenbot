@@ -71,6 +71,78 @@ impl PyUniswapArbEngine {
         self.engine.lock().v4_pool_count()
     }
 
+    /// Apply all buffered **backfill** V3 Mint/Burn events for a pool address
+    /// on top of the snapshot-seeded tick data.
+    ///
+    /// Under the shared-BotState design (ADR-006) V3 pools enter `BotState` via
+    /// the bot builders (`py_bot.register_v3_pool` + `update_tick_data`),
+    /// NOT via the engine's verify-gated `register_v3_pool`. That builder path
+    /// seeds the snapshot tick map but never drains the backfill/pump buffer —
+    /// so Mint/Burn events that fired during `backfill_from_snapshot` (before
+    /// the pool was registered) sit undrained, leaving phantom/missing
+    /// liquidity that fails on-chain verification. This drains both the
+    /// backfill and the pump buffer in order (backfill first, then pump),
+    /// matching what the orphaned `register_v3_pool` path did via
+    /// `register_with_cl_buffers`. Safe to call on an already-registered pool;
+    /// a no-op if the pool is unregistered or has no buffered events.
+    #[pyo3(signature = (pool_address))]
+    fn apply_buffer_v3(&self, pool_address: &str) -> PyResult<()> {
+        let addr = pool_address.parse::<Address>().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
+        })?;
+        let engine = self.engine.lock();
+        engine.core.write().apply_backfill_buffer_v3(&addr);
+        engine.core.write().apply_pump_buffer_v3(&addr);
+        Ok(())
+    }
+
+    /// Apply all buffered **backfill** V4 `ModifyLiquidity` events for a pool
+    /// on top of the snapshot-seeded tick data. V4 analogue of
+    /// [`apply_buffer_v3`][Self::apply_buffer_v3].
+    #[pyo3(signature = (pool_manager, pool_id_hex))]
+    fn apply_buffer_v4(&self, pool_manager: &str, pool_id_hex: &str) -> PyResult<()> {
+        let pm = pool_manager.parse::<Address>().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager address: {e}"))
+        })?;
+        let pool_id = crate::bot::engine::hex_string_to_pool_id(pool_id_hex)?;
+        let engine = self.engine.lock();
+        engine.core.write().apply_backfill_buffer_v4(pm, pool_id);
+        engine.core.write().apply_pump_buffer_v4(pm, pool_id);
+        Ok(())
+    }
+
+    /// Debug/test seam: buffer a V3 backfill liquidity update (Mint/Burn) for
+    /// a pool address WITHOUT applying it. If the pool is already registered it
+    /// is applied directly (mirroring `BotState::buffer_backfill_v3_liquidity_update`);
+    /// otherwise it is buffered for a later [`apply_buffer_v3`] drain. Used to
+    /// test `apply_buffer_v3` against a primed buffer without an RPC backfill.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (pool_address, tick_lower, tick_upper, liquidity_delta, block_number))]
+    fn debug_buffer_v3_liquidity_update(
+        &self,
+        pool_address: &str,
+        tick_lower: i32,
+        tick_upper: i32,
+        liquidity_delta: i128,
+        block_number: u64,
+    ) -> PyResult<()> {
+        let addr = pool_address.parse::<Address>().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
+        })?;
+        self.engine
+            .lock()
+            .core
+            .write()
+            .buffer_backfill_v3_liquidity_update(
+                addr,
+                tick_lower,
+                tick_upper,
+                liquidity_delta,
+                block_number,
+            );
+        Ok(())
+    }
+
     /// Debug: return the number of buffered liquidity events for a V3 pool address.
     fn debug_v3_buffer_count(&self, pool_address: &str) -> PyResult<usize> {
         let addr = pool_address.parse::<Address>().map_err(|e| {
