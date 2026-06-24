@@ -187,6 +187,4 @@ cython_debug/
 tests/aave/libraries/contracts/.foundryrust/proptest-regressions/
 
 # Permutation test logs and run artifacts
-logs/*.log
-logs/*.pid
-logs/permutation_results.tsv
+logs/*
