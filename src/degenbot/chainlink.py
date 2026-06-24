@@ -3,6 +3,7 @@ from web3.contract.contract import Contract
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.connection import connection_manager
+from degenbot.exceptions.base import DegenbotValueError
 from degenbot.types.aliases import ChainId
 
 CHAINLINK_PRICE_FEED_ABI = pydantic_core.from_json(
@@ -42,4 +43,13 @@ class ChainlinkPriceContract:
 
     @property
     def price(self) -> float:
-        return float(self.w3_contract.functions.latestRoundData().call()[1] / (10**self.decimals))
+        # latestRoundData() -> (roundId, answer, startedAt, updatedAt, answeredInRound).
+        # `answer` is an int256; a faulty/deprecated feed can return 0 or a
+        # negative value. Reject it rather than silently scaling a garbage or
+        # zero USD price into downstream money math.
+        answer: int = self.w3_contract.functions.latestRoundData().call()[1]
+        if answer <= 0:
+            raise DegenbotValueError(
+                message=f"Chainlink feed {self.address} returned non-positive answer {answer}"
+            )
+        return float(answer / (10**self.decimals))
