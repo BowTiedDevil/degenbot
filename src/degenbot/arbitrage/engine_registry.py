@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from degenbot import Bot, LiquidityPool
-from degenbot.degenbot_rs import UniswapArbEngine  # type: ignore[attr-defined]
+from degenbot.degenbot_rs import UniswapArbEngine
 from degenbot.logging import logger as bot_logger
 from degenbot.uniswap.snapshot_binary import (
     stream_v3_snapshot_to_engine,
