@@ -223,3 +223,97 @@ def test_v2_v2_v3_uses_calc_not_direct_for_v2_hops() -> None:
     assert CMD_V2_SWAP_CALC in fwd
     assert CMD_V2_SWAP_DIRECT not in fwd
     assert fwd.count(CMD_V2_SWAP_CALC[0]) >= 2
+
+
+# ---------------------------------------------------------------------------
+# [sim-diag] structured per-revert emission (LAV44W)
+# ---------------------------------------------------------------------------
+
+
+def test_format_sim_diag_line_emits_parseable_json_with_required_fields() -> None:
+    """The [sim-diag] line is one JSON object parseable with json.loads.
+
+    Contains the per-candidate attribution fields the analyzer needs:
+    path_id, path_type, solve_block, block, age, revert_info, optimal_input,
+    hop_outputs, and per-hop {engine_state, onchain_state, drift, field_drift,
+    recompute}. Engine-only snapshot (no onchain fetch) yields onchain_state
+    None / drift False / field_drift [].
+    """
+    import json
+
+    from examples.eth_backrun_helpers import _format_sim_diag_line
+
+    snapshot = {
+        "path_id": 7,
+        "path_type": "V2-V3-V4",
+        "solve_block": 100,
+        "hops": [
+            {
+                "position": 0,
+                "hop_type": "V2",
+                "engine_state": {"pool_family": "V2", "reserve_in": "0x1"},
+                "onchain_state": None,
+                "drift": False,
+                "field_drift": [],
+                "recompute": {
+                    "amount_in": "0xa",
+                    "solver_out": "0x64",
+                    "expected_out_engine": "0x64",
+                    "expected_out_onchain": None,
+                    "matches_solver": None,
+                },
+            }
+        ],
+        "optimal_input": "0xa",
+        "hop_outputs": ["0x64"],
+    }
+
+    line = _format_sim_diag_line(
+        snapshot,
+        path_id=7,
+        path_type="V2-V3-V4",
+        solve_block=100,
+        block=103,
+        age=3,
+        revert_info="0x CurrencyNotSettled",
+    )
+
+    assert line.startswith("[sim-diag] "), "line is prefixed [sim-diag] "
+    payload = json.loads(line[len("[sim-diag] "):])
+    assert payload["path_id"] == 7
+    assert payload["path_type"] == "V2-V3-V4"
+    assert payload["solve_block"] == 100
+    assert payload["block"] == 103
+    assert payload["age"] == 3
+    assert payload["revert_info"] == "0x CurrencyNotSettled"
+    assert payload["optimal_input"] == "0xa"
+    assert payload["hop_outputs"] == ["0x64"]
+    hop = payload["hops"][0]
+    assert hop["engine_state"]["reserve_in"] == "0x1"
+    assert hop["onchain_state"] is None
+    assert hop["drift"] is False
+    assert hop["field_drift"] == []
+    assert hop["recompute"]["expected_out_engine"] == "0x64"
+
+
+def test_format_sim_diag_line_never_raises_on_missing_snapshot_keys() -> None:
+    """A taxonomy/emission path must never raise — malformed snapshots emit a
+    best-effort line with whatever fields are present (the analyzer tolerates
+    missing keys)."""
+    import json
+
+    from examples.eth_backrun_helpers import _format_sim_diag_line
+
+    line = _format_sim_diag_line(
+        {},
+        path_id=1,
+        path_type="V2",
+        solve_block=1,
+        block=1,
+        age=0,
+        revert_info="",
+    )
+    payload = json.loads(line[len("[sim-diag] "):])
+    assert payload["path_id"] == 1
+    assert payload["hops"] == []
+    assert payload["optimal_input"] is None

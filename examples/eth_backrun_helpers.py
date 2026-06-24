@@ -1,4 +1,5 @@
 import dataclasses
+import json
 import sys
 import typing
 from pathlib import Path
@@ -379,6 +380,43 @@ def _format_failure_breakdown(buckets: dict[str, int]) -> str:
         return ""
     ordered = sorted(buckets.items(), key=lambda kv: (-kv[1], kv[0]))
     return " ".join(f"{name}={count}" for name, count in ordered)
+
+
+def _format_sim_diag_line(
+    snapshot: dict[str, object],
+    *,
+    path_id: int,
+    path_type: str,
+    solve_block: int,
+    block: int,
+    age: int,
+    revert_info: str,
+) -> str:
+    """Render one always-on ``[sim-diag]`` JSON line per reverted candidate.
+
+    The line is one compact, machine-parseable JSON object (``json.loads`` on
+    the text after the ``[sim-diag] `` prefix) carrying the per-candidate
+    attribution fields the analyzer needs: ``path_id``, ``path_type``,
+    ``solve_block``, ``block``, ``age``, ``revert_info``, ``optimal_input``,
+    ``hop_outputs``, and per-hop ``{engine_state, onchain_state, drift,
+    field_drift, recompute}`` (whatever the snapshot carries — engine-only
+    snapshots yield ``onchain_state: None`` / ``drift: False`` / ``field_drift:
+    []``). Never raises — a malformed snapshot emits a best-effort line with
+    the fields it has, so emission never blocks the revert path.
+    """
+    hops = snapshot.get("hops", []) if isinstance(snapshot, dict) else []
+    payload = {
+        "path_id": path_id,
+        "path_type": path_type,
+        "solve_block": solve_block,
+        "block": block,
+        "age": age,
+        "revert_info": revert_info,
+        "optimal_input": snapshot.get("optimal_input") if isinstance(snapshot, dict) else None,
+        "hop_outputs": snapshot.get("hop_outputs", []) if isinstance(snapshot, dict) else [],
+        "hops": hops,
+    }
+    return "[sim-diag] " + json.dumps(payload, default=str, separators=(",", ":"))
 
 
 # ──────────────────────────────────────────────────────────────────

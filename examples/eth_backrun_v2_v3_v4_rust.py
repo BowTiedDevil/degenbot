@@ -120,6 +120,7 @@ from examples.eth_backrun_helpers import (
     BackrunConfig,
     _classify_revert,
     _format_failure_breakdown,
+    _format_sim_diag_line,
     encode_cmd_stream,
     v4_input_is_native,
 )
@@ -1486,6 +1487,11 @@ async def dispatch_profitable_results(
     """
     bot_logger.info(f"[dispatch] entered with {len(results)} results, dry_run={dry_run}")
 
+    # The RPC endpoint string the [sim-diag] diagnostic snapshot needs to fetch
+    # on-chain per-hop state (slot0/liquidity) inside diagnostic_inspect_path.
+    # Derived from the injected async_w3 — no new RPC beyond this endpoint.
+    node_rpc_url = str(getattr(getattr(async_w3, "provider", None), "endpoint_uri", ""))
+
     # Per-dispatch trace dedup — prevents log spam from debug_traceCall
     _traced_reverts_local: set[tuple[int, str]] = set()
     # One-shot dump per V4-hybrid path type (V4-V2, V2-V4, V4-V4)
@@ -1575,6 +1581,14 @@ async def dispatch_profitable_results(
 
         Deduplicated by (path_id, solve_block) so the same failing path only
         produces one dump per block.
+
+        Deprecated (LAV44W): the always-on ``[sim-diag]`` log line
+        (``_emit_sim_diag``) now carries the structured snapshot — including
+        ``onchain_state`` / ``drift`` / ``field_drift`` / ``recompute`` — per
+        reverted candidate, which the analyzer parses directly from the log.
+        This side JSONL dump is retained only as an opt-in extra behind
+        ``STATE_DUMP_ON_REVERT`` for offline repro with the full failed
+        calldata field.
         """
         key = (path_id, solve_block)
         if key in _state_dump_keys:
@@ -1598,6 +1612,42 @@ async def dispatch_profitable_results(
         dump_file = STATE_DUMP_DIR / f"{timestamp}.jsonl"
         await asyncio.to_thread(_write_jsonl, dump_file, snapshot)
         bot_logger.debug(f"[state-dump] wrote {dump_file} for path={path_id}")
+
+    async def _emit_sim_diag(
+        path_id: int,
+        solve_block: int,
+        path_type: str,
+        revert_info: str,
+        current_block: int,
+    ) -> None:
+        """Emit one always-on ``[sim-diag]`` JSON line per reverted candidate.
+
+        Unlike the deduped ``[v-state]`` verbose block and the gated JSONL
+        dump, this emits on EVERY revert (no dedup, no ``STATE_DUMP_ON_REVERT``
+        gate) so the analyzer can attribute every candidate from the log. The
+        on-chain fetch here IS the fetch the diff needs (``slot0``/``liquidity``
+        per hop via ``diagnostic_inspect_path``'s ``fetch_onchain``) — no extra
+        RPC beyond it.
+        """
+        try:
+            snapshot = await asyncio.to_thread(
+                engine_registry.engine.diagnostic_inspect_path,
+                path_id,
+                node_rpc_url,
+            )
+        except Exception as exc:
+            bot_logger.debug(f"[sim-diag] engine dump failed for path={path_id}: {exc}")
+            return
+        line = _format_sim_diag_line(
+            snapshot,
+            path_id=path_id,
+            path_type=path_type,
+            solve_block=solve_block,
+            block=current_block,
+            age=current_block - solve_block,
+            revert_info=revert_info,
+        )
+        bot_logger.info(line)
 
     async def simulate_one(
         path_id: int,
@@ -2096,6 +2146,19 @@ async def dispatch_profitable_results(
                         revert_info=f"0x{revert_hex}{revert_reason}",
                         calldata=_cd,
                     )
+
+                # Always-on structured per-revert line (LAV44W): one
+                # machine-parseable [sim-diag] JSON line per reverted
+                # candidate — no dedup, no env gate. Deprecates the side
+                # JSONL dump for analyzer attribution (the dump stays as an
+                # opt-in extra behind STATE_DUMP_ON_REVERT).
+                await _emit_sim_diag(
+                    path_id=path_id,
+                    solve_block=solve_block,
+                    path_type=path_info.path_type,
+                    revert_info=f"0x{revert_hex}{revert_reason}",
+                    current_block=current_block,
+                )
 
                 bot_logger.info(
                     f"[sim-revert-data] path={path_id} {path_info.path_type} "
