@@ -23,8 +23,7 @@ use crate::solvers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_cl_math::cl_lib::functions::tick_position;
 use degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v4;
 use degenbot_cl_math::cl_lib::tick_math::{
-    get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal, MAX_SQRT_RATIO,
-    MIN_SQRT_RATIO,
+    get_sqrt_ratio_at_tick_internal, get_tick_at_sqrt_ratio_internal,
 };
 use degenbot_decoders::v4_swap_decoder::PoolId;
 
@@ -395,6 +394,7 @@ pub fn v4_simulate_swap(
     state: &V4PoolState,
     zero_for_one: bool,
     amount_specified: I256,
+    sqrt_price_limit: U256,
 ) -> Result<V3SwapOutcome, SimulateSwapError> {
     if amount_specified.is_zero() {
         return Err(SimulateSwapError::NotComputable); // AS: zero amount (V3 reverts)
@@ -405,11 +405,6 @@ pub fn v4_simulate_swap(
     // internal `amount_remaining < I256::ZERO` check. Verified against the
     // integer-exact oracle suite in `cl_lib::swap_math::tests`.
     let exact_in = amount_specified.is_negative();
-    let sqrt_price_limit = if zero_for_one {
-        U256::from(MIN_SQRT_RATIO) + U256::from(1u64) // 4295128740
-    } else {
-        U256::from(MAX_SQRT_RATIO) - U256::from(1u64)
-    };
 
     let mut amount_specified_remaining = amount_specified;
     let mut amount_calculated = I256::ZERO;

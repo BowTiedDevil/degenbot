@@ -189,6 +189,20 @@ impl Clone for V3PoolState {
 }
 
 impl V3PoolState {
+    /// Default V3/V4 `sqrt_price_limit` bounds (widened `U160` → `U256`).
+    ///
+    /// The swap cannot cross these regardless of amount. Callers without a
+    /// custom limit (the mainline exact-input path) pass this; a custom limit
+    /// (arbitrage / exact-output cap) overrides it.
+    #[must_use]
+    pub fn default_sqrt_price_limit(zero_for_one: bool) -> U256 {
+        if zero_for_one {
+            U256::from(MIN_SQRT_RATIO) + U256::from(1u64) // 4295128740
+        } else {
+            U256::from(MAX_SQRT_RATIO) - U256::from(1u64)
+        }
+    }
+
     /// Word position (`tick_position(tick.div_euclid(tick_spacing))`) holding
     /// the given tick. Shared by V3/V4 sparse miss-detection.
     #[must_use]
@@ -412,18 +426,12 @@ pub fn v3_simulate_swap(
     state: &V3PoolState,
     zero_for_one: bool,
     amount_specified: I256,
+    sqrt_price_limit: U256,
 ) -> Result<V3SwapOutcome, SimulateSwapError> {
     if amount_specified.is_zero() {
         return Err(SimulateSwapError::NotComputable); // AS: zero amount (V3 reverts)
     }
     let exact_in = amount_specified.is_positive();
-
-    // V3 price-limit bounds. The swap cannot cross these regardless of amount.
-    let sqrt_price_limit = if zero_for_one {
-        U256::from(MIN_SQRT_RATIO) + U256::from(1u64) // 4295128740
-    } else {
-        U256::from(MAX_SQRT_RATIO) - U256::from(1u64)
-    };
 
     let mut amount_specified_remaining = amount_specified;
     let mut amount_calculated = I256::ZERO;
@@ -698,8 +706,13 @@ mod tests {
         let state = pool_1to1_with_position(liq);
         let amount_in = U256::from(1000u64);
 
-        let outcome = v3_simulate_swap(&state, true, I256::try_from(amount_in).unwrap())
-            .expect("small swap should produce an outcome");
+        let outcome = v3_simulate_swap(
+            &state,
+            true,
+            I256::try_from(amount_in).unwrap(),
+            V3PoolState::default_sqrt_price_limit(true),
+        )
+        .expect("small swap should produce an outcome");
 
         // Oracle: the single-step target is tick -60's sqrt price (the range
         // lower bound), which a small input does not reach. amount_remaining is
@@ -739,8 +752,13 @@ mod tests {
         let state = pool_1to1_with_position(liq);
         let amount_in = U256::from(1000u64);
 
-        let outcome = v3_simulate_swap(&state, false, I256::try_from(amount_in).unwrap())
-            .expect("small ofz swap should produce an outcome");
+        let outcome = v3_simulate_swap(
+            &state,
+            false,
+            I256::try_from(amount_in).unwrap(),
+            V3PoolState::default_sqrt_price_limit(false),
+        )
+        .expect("small ofz swap should produce an outcome");
 
         let sp_upper = U256::from(get_sqrt_ratio_at_tick_internal(60).unwrap());
         let step = compute_swap_step_v3(
@@ -760,7 +778,12 @@ mod tests {
     #[test]
     fn zero_amount_is_not_computable() {
         let state = pool_1to1_with_position(1_000_000u128);
-        let outcome = v3_simulate_swap(&state, true, I256::ZERO);
+        let outcome = v3_simulate_swap(
+            &state,
+            true,
+            I256::ZERO,
+            V3PoolState::default_sqrt_price_limit(true),
+        );
         assert_eq!(
             outcome,
             Err(SimulateSwapError::NotComputable),
@@ -773,12 +796,22 @@ mod tests {
         // Larger exact-input swaps produce larger outputs (within the same
         // tick range, pre-crossing).
         let state = pool_1to1_with_position(10_000_000_000_000u128);
-        let small = v3_simulate_swap(&state, true, I256::try_from(U256::from(100u64)).unwrap())
-            .unwrap()
-            .amount1;
-        let large = v3_simulate_swap(&state, true, I256::try_from(U256::from(10_000u64)).unwrap())
-            .unwrap()
-            .amount1;
+        let small = v3_simulate_swap(
+            &state,
+            true,
+            I256::try_from(U256::from(100u64)).unwrap(),
+            V3PoolState::default_sqrt_price_limit(true),
+        )
+        .unwrap()
+        .amount1;
+        let large = v3_simulate_swap(
+            &state,
+            true,
+            I256::try_from(U256::from(10_000u64)).unwrap(),
+            V3PoolState::default_sqrt_price_limit(true),
+        )
+        .unwrap()
+        .amount1;
         assert!(
             large > small,
             "larger input must produce larger output (small={small}, large={large})"
@@ -797,7 +830,12 @@ mod tests {
         state.coverage = PoolTickCoverage::Sparse;
         state.known_bitmap_words.clear(); // fully sparse: no regions known
 
-        let res = v3_simulate_swap(&state, true, I256::try_from(1_000u64).unwrap());
+        let res = v3_simulate_swap(
+            &state,
+            true,
+            I256::try_from(1_000u64).unwrap(),
+            V3PoolState::default_sqrt_price_limit(true),
+        );
         assert_eq!(
             res,
             Err(SimulateSwapError::MissingTickWord(0)),
@@ -818,7 +856,12 @@ mod tests {
         state.known_bitmap_words.clear();
         assert_eq!(state.coverage, PoolTickCoverage::Tracked);
 
-        let res = v3_simulate_swap(&state, true, I256::try_from(1_000u64).unwrap());
+        let res = v3_simulate_swap(
+            &state,
+            true,
+            I256::try_from(1_000u64).unwrap(),
+            V3PoolState::default_sqrt_price_limit(true),
+        );
         assert!(
             res.is_ok(),
             "Tracked pool must compute regardless of known_bitmap_words, got {res:?}"
@@ -847,7 +890,12 @@ mod tests {
         state.known_bitmap_words.clear();
         state.known_bitmap_words.insert(0);
 
-        let res = v3_simulate_swap(&state, false, I256::try_from(100u64).unwrap());
+        let res = v3_simulate_swap(
+            &state,
+            false,
+            I256::try_from(100u64).unwrap(),
+            V3PoolState::default_sqrt_price_limit(false),
+        );
         assert!(
             res.is_ok(),
             "ofz swap staying in the known word 0 should compute, got {res:?}"
@@ -874,7 +922,12 @@ mod tests {
         state.known_bitmap_words.insert(0); // word 0 known; word −1 unknown
 
         // zfo drops the price below tick 0 into word −1 (unknown).
-        let res = v3_simulate_swap(&state, true, I256::try_from(100u64).unwrap());
+        let res = v3_simulate_swap(
+            &state,
+            true,
+            I256::try_from(100u64).unwrap(),
+            V3PoolState::default_sqrt_price_limit(true),
+        );
         assert_eq!(
             res,
             Err(SimulateSwapError::MissingTickWord(-1)),
@@ -890,7 +943,13 @@ mod tests {
         // post-walk sqrt_price_x96 / liquidity / tick (not just the amounts).
         let state = pool_1to1_with_position(10_000_000_000_000u128);
         let amount_in = I256::try_from(1_000u128).unwrap();
-        let outcome = v3_simulate_swap(&state, true, amount_in).expect("computes");
+        let outcome = v3_simulate_swap(
+            &state,
+            true,
+            amount_in,
+            V3PoolState::default_sqrt_price_limit(true),
+        )
+        .expect("computes");
         // zfo small swap below +60 (no crossing): price drops (sqrt_price_x96 <
         // start) but liquidity + tick stay within the active range.
         assert!(
@@ -908,7 +967,13 @@ mod tests {
         );
         // A crossing swap (large zfo) must move the state off the start values.
         let big = I256::try_from(100_000_000_000_000_000u128).unwrap();
-        let crossed = v3_simulate_swap(&state, true, big).expect("computes");
+        let crossed = v3_simulate_swap(
+            &state,
+            true,
+            big,
+            V3PoolState::default_sqrt_price_limit(true),
+        )
+        .expect("computes");
         assert_ne!(
             crossed.sqrt_price_x96, state.sqrt_price_x96,
             "a crossing swap must move the price off the start value"

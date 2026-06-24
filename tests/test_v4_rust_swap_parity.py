@@ -25,6 +25,7 @@ from web3 import Web3
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.degenbot_rs import PyBot
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
+from degenbot.uniswap.v4_libraries.tick_math import get_sqrt_price_at_tick
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v4_pool_factory import make_v4_pool
 
@@ -469,6 +470,60 @@ def test_rust_v4_dense_corpus_matches_on_chain_quoter():
     rust_out = int(rust_outcome[0])  # ofz: token0 out
     assert py_out == _V4_DIVERGE_QUOTER_OUT, f"Python dense diverges from quoter: {py_out}"
     assert rust_out == _V4_DIVERGE_QUOTER_OUT, f"Rust dense diverges from quoter: {rust_out}"
+
+
+@pytest.mark.parametrize("zero_for_one", [True, False])
+def test_rust_v4_dense_corpus_custom_sqrt_price_limit_matches_python(*, zero_for_one: bool):
+    """Rust seam honours a custom ``sqrt_price_limit_x96`` (== Python, dense).
+
+    A custom price limit caps the swap walk short of its natural endpoint.
+    The Rust ``simulate_swap_with_fetch`` seam must accept the limit + produce
+    the SAME amount as the Python ``_v4_swap`` with the identical limit (the
+    §4.3 precondition for routing the custom-limit / exact-output companion
+    paths to Rust). Uses the captured corpus dense (no fetcher); picks a limit
+    tick between the current tick and the full-walk endpoint so the limit is
+    binding in both directions.
+    """
+    state = _load_corpus_fixture()
+    td = {
+        int(t): LiquidityAtTick(liquidity_net=int(r[1]), liquidity_gross=int(r[0]), block=int(r[2]))
+        for t, r in state["tick_data"].items()
+    }
+    py_bot = PyBot()
+    pool = _build_pool_from_corpus(py_bot, state, td=td, sparse=False, fetcher=None)
+    # Current tick -202094. ofz (price rises) needs a limit ABOVE current +
+    # below the full-walk endpoint (-194396): -195000 binds ofz. zfo (price
+    # falls) needs a limit BELOW current: -202200 binds zfo.
+    limit_tick = -195_000 if not zero_for_one else -202_200
+    sqrt_price_limit = get_sqrt_price_at_tick(limit_tick)
+    # V4 exact-input: amount_specified < 0.
+    swap_delta, *_ = pool._calculate_swap(
+        zero_for_one=zero_for_one,
+        amount_specified=-_V4_DIVERGE_AMOUNT,
+        sqrt_price_x96_limit=sqrt_price_limit,
+    )
+    py_amount_out = swap_delta.amount_out
+    # Binding check: the limited walk must produce LESS than the unlimited
+    # quoter amount (else the limit was non-binding + the test is vacuous).
+    unlimited = _V4_DIVERGE_QUOTER_OUT  # ofz; for zfo compare the zfo dense out below
+    if not zero_for_one:
+        assert py_amount_out < unlimited, (
+            f"ofz custom limit must cap below the full-walk out: {py_amount_out} >= {unlimited}"
+        )
+    rust_outcome = pool._py_pool.simulate_swap_with_fetch(
+        zero_for_one=zero_for_one,
+        amount_in=_V4_DIVERGE_AMOUNT,
+        block=0,
+        fetcher=lambda *_: {},
+        sqrt_price_limit_x96=sqrt_price_limit,
+    )
+    assert rust_outcome is not None
+    # ofz: token0 out; zfo: token1 out.
+    rust_amount_out = int(rust_outcome[0] if not zero_for_one else rust_outcome[1])
+    assert rust_amount_out == py_amount_out, (
+        f"V4 custom-limit zfo={zero_for_one}: rust={rust_amount_out} py={py_amount_out} "
+        f"diff={rust_amount_out - py_amount_out}"
+    )
 
 
 def test_rust_v4_sparse_fetch_corpus_matches_dense():

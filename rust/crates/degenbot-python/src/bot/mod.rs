@@ -360,13 +360,13 @@ impl PyBot {
     ///
     /// Returns the auto-assigned pool ID.
     #[allow(clippy::too_many_arguments)]
-    /// Register a V3 pool, optionally seeding tick_data inline.
+    /// Register a V3 pool, optionally seeding `tick_data` inline.
     ///
     /// ADR-006 rolling-start race closure: the builder previously called
-    /// ``register_v3_pool`` (empty tick_data) THEN ``update_tick_data`` to seed
+    /// ``register_v3_pool`` (empty `tick_data`) THEN ``update_tick_data`` to seed
     /// the snapshot. Because ``resume()`` runs before ``build_paths``, a pump
     /// Mint/Burn landing between register and seed was applied to the empty
-    /// tick_data then CLOBBERED by the seed overwrite — a lost update the
+    /// `tick_data` then CLOBBERED by the seed overwrite — a lost update the
     /// on-chain ``verify_liquidity_maps`` reproduces. Folding the seed into
     /// ``register_v3_pool`` (one ``BotState`` write lock) closes the window:
     /// the pool is never visible to the pump in an unseeded state, so pump
