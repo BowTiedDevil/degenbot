@@ -180,6 +180,124 @@ def test_rust_seam_sign_mapping_dense(*, zero_for_one: bool):
         assert rust_amount1 == py_result.amount1_delta
 
 
+def _build_v3_pool_crossing(py_bot: PyBot, *, address: str, zero_for_one: bool):
+    """Build a dense V3 pool whose seeded tick_data covers a CROSSING swap's walk.
+
+    Two OVERLAPPING positions keep liquidity > 0 past the crossed boundary so
+    the swap does NOT drain into an unseeded word — both the Python simulator
+    and the Rust seam run fully dense (no fetcher miss), making a crossing-swap
+    parity comparison valid offline (mirrors the V4 gate).
+    """
+    token0, token1 = _make_tokens(py_bot, tag="c")
+    if zero_for_one:
+        # zfo: crossing -60 downward. Active at tick 0 = 2L.
+        tick_data = {
+            -1200: LiquidityAtTick(
+                liquidity_net=_LIQUIDITY,
+                liquidity_gross=_LIQUIDITY,
+                block=0,
+            ),
+            -60: LiquidityAtTick(
+                liquidity_net=_LIQUIDITY,
+                liquidity_gross=2 * _LIQUIDITY,
+                block=0,
+            ),
+            60: LiquidityAtTick(
+                liquidity_net=-2 * _LIQUIDITY,
+                liquidity_gross=2 * _LIQUIDITY,
+                block=0,
+            ),
+        }
+        liquidity = 2 * _LIQUIDITY
+    else:
+        # ofz: crossing +60 upward. Active at tick 0 = 2L.
+        tick_data = {
+            -60: LiquidityAtTick(
+                liquidity_net=2 * _LIQUIDITY,
+                liquidity_gross=2 * _LIQUIDITY,
+                block=0,
+            ),
+            60: LiquidityAtTick(
+                liquidity_net=-_LIQUIDITY,
+                liquidity_gross=2 * _LIQUIDITY,
+                block=0,
+            ),
+            1200: LiquidityAtTick(
+                liquidity_net=-_LIQUIDITY,
+                liquidity_gross=_LIQUIDITY,
+                block=0,
+            ),
+        }
+        liquidity = 2 * _LIQUIDITY
+    return make_v3_pool(
+        address=address,
+        token0=token0,
+        token1=token1,
+        factory=_FACTORY,
+        fee=_FEE,
+        tick_spacing=_TICK_SPACING,
+        sqrt_price_x96=_SQRT_PRICE_1TO1,
+        tick=0,
+        liquidity=liquidity,
+        tick_data=tick_data,
+        py_bot=py_bot,
+    )
+
+
+@pytest.mark.parametrize("zero_for_one", [True, False])
+def test_rust_seam_matches_python_simulator_dense_crossing(*, zero_for_one: bool):
+    """Rust == Python on a DENSE crossing swap (overlapping positions, no miss).
+
+    Mirrors the V4 dense-crossing gate. A 2-position overlapping fixture keeps
+    liquidity > 0 past the crossed boundary so neither path misses on a fetcher
+    (fully dense), making the crossing-swap amount + final-state parity valid
+    offline. Establishes a tight loop proving the Rust V3 sim's crossing math is
+    sound — the precondition that already backs the shipped V3 mainline routing.
+    """
+    py_bot = PyBot()
+    pool = _build_v3_pool_crossing(
+        py_bot,
+        address="0x" + "33" * 20,
+        zero_for_one=zero_for_one,
+    )
+    # Sized to cross the boundary (-60 for zfo / +60 for ofz) but stop well
+    # short of the outer bound (-1200 / +1200), so the walk stays liquid + in a
+    # seeded word (no drain, no fetch miss).
+    amount_in = 400_000_000_000
+    token_in = pool.token0 if zero_for_one else pool.token1
+
+    py_result = pool.simulate_exact_input_swap(
+        token_in=token_in,
+        token_in_quantity=amount_in,
+    )
+    rust_outcome = pool._py_pool.simulate_swap_with_fetch(
+        zero_for_one=zero_for_one,
+        amount_in=amount_in,
+        block=0,
+        fetcher=lambda *_: {},
+    )
+    assert rust_outcome is not None, "dense crossing pool must not miss on the Rust path"
+    rust_amount0, rust_amount1, _rsp, _rli, rust_tick = (int(x) for x in rust_outcome)
+    # Sanity: the swap actually crossed the boundary.
+    crossed = (rust_tick < -60) if zero_for_one else (rust_tick > 60)
+    assert crossed, (
+        f"V3 zfo={zero_for_one}: amount {amount_in} did not cross the boundary "
+        f"(rust_tick={rust_tick}); bump the amount"
+    )
+    in_range = (rust_tick > -1200) if zero_for_one else (rust_tick < 1200)
+    assert in_range, (
+        f"V3 zfo={zero_for_one}: swap drained past the outer bound "
+        f"(rust_tick={rust_tick}); lower the amount"
+    )
+    # Amounts (Rust unsigned abs vs Python signed deltas).
+    if zero_for_one:
+        assert rust_amount0 == py_result.amount0_delta
+        assert rust_amount1 == -py_result.amount1_delta
+    else:
+        assert rust_amount0 == -py_result.amount0_delta
+        assert rust_amount1 == py_result.amount1_delta
+
+
 def test_sparse_mainline_swap_routed_to_rust_matches_dense_oracle():
     """Sparse pool's mainline swap → Rust fetch+retry == dense oracle.
 
