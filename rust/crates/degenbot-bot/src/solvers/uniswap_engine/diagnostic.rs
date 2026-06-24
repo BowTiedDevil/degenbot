@@ -227,6 +227,32 @@ pub(crate) fn refresh_v2_recompute_onchain(hop: &mut DiagnosticHop) {
     recompute.matches_solver = Some(onchain_recompute == solver_out);
 }
 
+/// Populate a PARTIAL `recompute` for a V3/V4 hop (4BKMKX) recording only the
+/// solver's reported `amount_in` + `solver_out`. The recompute fields stay
+/// `None`: engine-state recompute is identity (only `degenbot-cl-math` exists —
+/// the solver's own math) and onchain recompute is deferred (needs the full
+/// tick map, a heavy RPC fetch the diagnostic path does not perform). The
+/// scalar `drift` flag (PCG2M3) + decoded revert reason are the V3/V4
+/// classification basis instead. See [`HopRecompute`] docs.
+///
+/// No-op for V2 hops (V2 uses [`populate_v2_recompute`]).
+pub(crate) fn populate_v3v4_recompute_partial(
+    hop: &mut DiagnosticHop,
+    amount_in: U256,
+    solver_out: U256,
+) {
+    if matches!(hop.engine_state, DiagnosticPoolState::V2 { .. }) {
+        return;
+    }
+    hop.recompute = Some(HopRecompute {
+        amount_in: u256_to_hex(amount_in),
+        solver_out: u256_to_hex(solver_out),
+        expected_out_engine: None,
+        expected_out_onchain: None,
+        matches_solver: None,
+    });
+}
+
 /// Parse a `0x`-prefixed hex string into a `U256` (NL2YY3: the recompute needs
 /// the engine/onchain reserve strings as `U256`).
 fn parse_hex_u256(s: &str) -> Option<U256> {
@@ -242,19 +268,40 @@ fn parse_hex_u64(s: &str) -> Option<u64> {
 
 /// Engine-vs-onchain re-compute of a single hop's output (PCG2M3 schema; fields
 /// populated by the recompute tasks). All `None` until those tasks wire it.
+///
+/// ## V2 (NL2YY3)
+/// All fields populated: `expected_out_engine` (engine reserves + canonical
+/// `getAmountOut`), `expected_out_onchain` + `matches_solver` (onchain
+/// reserves, post-`fetch_onchain`). `matches_solver == false` is the
+/// solver-calc-error / drift detector for V2.
+///
+/// ## V3/V4 (4BKMKX)
+/// Only `amount_in` + `solver_out` are populated (the solver's reported
+/// values). The recompute fields stay `None` by design:
+/// - `expected_out_engine`: identity — the only V3/V4 swap math is
+///   `degenbot-cl-math`, which is what the solver ran, so re-simulating the
+///   engine state reproduces `solver_out` (an internal-consistency check, not
+///   an independent calc check). No clean single-hop simulate primitive exists
+///   independent of the solver's crossing machinery.
+/// - `expected_out_onchain` / `matches_solver`: deferred — a genuine onchain
+///   recompute needs the full tick map (heavy RPC, not fetched by the
+///   diagnostic path; only scalar `slot0`/`liquidity` are fetched). The scalar
+///   [`DiagnosticHop::drift`] flag (PCG2M3) + the decoded revert reason are the
+///   V3/V4 classification basis instead.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HopRecompute {
     /// The hop's consumed input used as the re-compute basis.
     pub amount_in: String,
     /// The output the solver reported for this hop.
     pub solver_out: String,
-    /// Re-computed output from the ENGINE state. `None` until the recompute
-    /// task runs (intent: identity for V3/V4 — same math the solver ran).
+    /// Re-computed output from the ENGINE state. V2: populated (canonical
+    /// `getAmountOut`). V3/V4: `None` (identity — see struct docs).
     pub expected_out_engine: Option<String>,
-    /// Re-computed output from the ONCHAIN state. `None` until the recompute
-    /// task runs (intent: drift detector for V3/V4; meaningful calc check for V2).
+    /// Re-computed output from the ONCHAIN state. V2: populated post-fetch
+    /// (drift detector). V3/V4: `None` (deferred — heavy tick-map fetch).
     pub expected_out_onchain: Option<String>,
-    /// True iff the chosen recompute basis agrees with `solver_out`.
+    /// True iff the chosen recompute basis agrees with `solver_out`. V2:
+    /// populated (onchain recompute vs `solver_out`). V3/V4: `None`.
     pub matches_solver: Option<bool>,
 }
 
@@ -1031,6 +1078,7 @@ fn thread_solver_result_and_recompute(
             continue;
         };
         populate_v2_recompute(hop, amount_in, solver_out);
+        populate_v3v4_recompute_partial(hop, amount_in, solver_out);
     }
 }
 
@@ -1592,11 +1640,18 @@ mod tests {
         assert!(v2_recompute.expected_out_onchain.is_none());
         assert!(v2_recompute.matches_solver.is_none());
 
-        // Non-V2 hop: recompute stays None (no-op).
-        assert!(
-            snapshot.hops[1].recompute.is_none(),
-            "recompute is a no-op for non-V2 hops"
-        );
+        // Non-V2 (V3/V4) hop: PARTIAL recompute — solver values recorded,
+        // recompute fields None (identity/deferred — see HopRecompute docs).
+        let v3_recompute = snapshot.hops[1]
+            .recompute
+            .as_ref()
+            .expect("V3/V4 hop gets a partial recompute");
+        assert_eq!(v3_recompute.amount_in, format!("0x{expected_v2_out:x}"),
+            "V3 hop amount_in = consumed_inputs[1] = previous hop output");
+        assert_eq!(v3_recompute.solver_out, format!("0x{:x}", hop_outputs[1]));
+        assert!(v3_recompute.expected_out_engine.is_none());
+        assert!(v3_recompute.expected_out_onchain.is_none());
+        assert!(v3_recompute.matches_solver.is_none());
     }
 
     /// After `fetch_onchain` sets on-chain state, the V2 hop's existing
@@ -1663,6 +1718,59 @@ mod tests {
             recompute.matches_solver,
             Some(false),
             "drifted on-chain reserves → matches_solver = false"
+        );
+    }
+
+    /// V3/V4 hops get a PARTIAL `recompute`: the solver's reported `amount_in`
+    /// and `solver_out` are populated (so the analyzer + humans have them), but
+    /// `expected_out_engine`, `expected_out_onchain`, and `matches_solver` stay
+    /// `None` — per the spike, V3/V4 engine-state recompute is identity (the
+    /// solver's own `cl-math` against its own state) and onchain recompute
+    /// requires a heavy full-tick-map fetch deferred from the diagnostic path.
+    /// The scalar `drift` flag (PCG2M3) and decoded revert reason are the V3/V4
+    /// classification basis instead.
+    #[test]
+    fn populate_v3v4_recompute_partial_records_solver_values_only() {
+        let v3_state = super::DiagnosticPoolState::V3 {
+            address: String::new(),
+            token0: String::new(),
+            token1: String::new(),
+            fee: 3000,
+            tick_spacing: 60,
+            sqrt_price_x96: "0x0".to_string(),
+            tick: 0,
+            liquidity: "0x0".to_string(),
+        };
+        let mut hop = super::DiagnosticHop {
+            position: 1,
+            hop_type: "V3".to_string(),
+            zero_for_one: false,
+            engine_state: v3_state,
+            onchain_state: None,
+            diff: Vec::new(),
+            drift: false,
+            field_drift: Vec::new(),
+            recompute: None,
+        };
+
+        let amount_in = U256::from(1_000_000_000_u64);
+        let solver_out = U256::from(42_u64);
+        super::populate_v3v4_recompute_partial(&mut hop, amount_in, solver_out);
+
+        let recompute = hop.recompute.as_ref().expect("partial recompute populated");
+        assert_eq!(recompute.amount_in, format!("0x{amount_in:x}"));
+        assert_eq!(recompute.solver_out, format!("0x{solver_out:x}"));
+        assert!(
+            recompute.expected_out_engine.is_none(),
+            "V3/V4 engine recompute is identity → left None"
+        );
+        assert!(
+            recompute.expected_out_onchain.is_none(),
+            "V3/V4 onchain recompute deferred (heavy tick-map fetch) → left None"
+        );
+        assert!(
+            recompute.matches_solver.is_none(),
+            "no recompute basis for V3/V4 → matches_solver left None"
         );
     }
 }
