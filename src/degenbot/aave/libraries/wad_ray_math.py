@@ -107,7 +107,7 @@ def ray_to_wad(a: int) -> int:
     Casts ray value down to wad, rounding half up to the nearest wad.
     """
 
-    return (a // WAD_RAY_RATIO) + (a % WAD_RAY_RATIO > WAD_RAY_RATIO // 2)
+    return (a // WAD_RAY_RATIO) + (a % WAD_RAY_RATIO >= WAD_RAY_RATIO // 2)
 
 
 def wad_to_ray(a: int) -> int:

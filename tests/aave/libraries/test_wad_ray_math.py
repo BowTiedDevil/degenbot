@@ -94,6 +94,14 @@ def test_ray_to_wad() -> None:
     assert ray_to_wad(4122 * 10**26) == 4122 * 10**17
     assert ray_to_wad(0) == 0
 
+    # Half-up rounding at the exact midpoint remainder (Aave WadRayMath.rayToWad
+    # rounds up when remainder >= WAD_RAY_RATIO / 2). The hypothesis fuzz test
+    # below rarely samples the single exact-midpoint remainder, so pin it here.
+    half = WAD_RAY_RATIO // 2  # 5 * 10**8
+    assert ray_to_wad(1 * 10**27 + half - 1) == 1 * 10**18  # just below midpoint -> down
+    assert ray_to_wad(1 * 10**27 + half) == 1 * 10**18 + 1  # exact midpoint -> up
+    assert ray_to_wad(1 * 10**27 + half + 1) == 1 * 10**18 + 1  # above midpoint -> up
+
 
 @hypothesis.given(a=hypothesis.strategies.integers(min_value=MIN_UINT256, max_value=MAX_UINT256))
 def test_wad_to_ray_fuzzing(a: int) -> None:
