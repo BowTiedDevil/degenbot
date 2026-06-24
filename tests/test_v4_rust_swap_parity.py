@@ -598,6 +598,8 @@ def test_rust_v4_dense_corpus_override_state_matches_python(*, zero_for_one: boo
     rust_outcome = pool._py_pool.simulate_swap_with_override(
         zero_for_one=zero_for_one,
         amount_in=_V4_DIVERGE_AMOUNT,
+        block=0,
+        fetcher=lambda *_: {},  # dense corpus: no fetch expected
         override_sqrt_price_x96=override_sqrt,
         override_liquidity=override_liq,
         override_tick=override_tick,

@@ -37,7 +37,6 @@ from degenbot.degenbot_rs import PyLiquidityPool
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import (
-    EVMRevertError,
     ExternalUpdateError,
     LiquidityPoolError,
     NoPoolStateAvailable,
@@ -828,21 +827,42 @@ class UniswapV3Pool(
             amount0_delta = rust_amount0 if zero_for_one else -rust_amount0
             amount1_delta = -rust_amount1 if zero_for_one else rust_amount1
         else:
-            try:
-                amount0_delta, amount1_delta, end_sqrt_price_x96, end_liquidity, end_tick = (
-                    self._calculate_swap(
-                        zero_for_one=zero_for_one,
-                        amount_specified=token_in_quantity,
-                        sqrt_price_limit_x96=(
-                            sqrt_price_limit_x96
-                            if sqrt_price_limit_x96 is not None
-                            else (MIN_SQRT_RATIO + 1 if zero_for_one else MAX_SQRT_RATIO - 1)
-                        ),
-                        override_state=override_state,
-                    )
+            # ADR-005 slice 4: exact-input swap over an override (arbitrage
+            # hypothetical) delegates to the Rust fetch-enhanced override seam.
+            # The override runs over a TRANSIENT state; sparse misses fetch+retry
+            # into the transient state (NOT registered BotState). A custom
+            # sqrt_price_limit threads through.
+            outcome = self._py_pool.simulate_swap_with_override(
+                zero_for_one=zero_for_one,
+                amount_in=token_in_quantity,
+                block=self.update_block,
+                fetcher=self._tick_data_fetcher,
+                override_sqrt_price_x96=override_state.sqrt_price_x96,
+                override_liquidity=override_state.liquidity,
+                override_tick=override_state.tick,
+                override_tick_data={
+                    tick: (la.liquidity_gross, la.liquidity_net, la.block)
+                    for tick, la in override_state.tick_data.items()
+                },
+                sqrt_price_limit_x96=sqrt_price_limit_x96,
+            )
+            if outcome is None:
+                raise LiquidityPoolError(
+                    message=(
+                        f"Simulated execution could not compute. "
+                        f"pool={self.address} zfo={zero_for_one} "
+                        f"amount_in={token_in_quantity} override"
+                    ),
                 )
-            except EVMRevertError as e:  # pragma: no cover
-                raise LiquidityPoolError(message=f"Simulated execution reverted: {e}") from e
+            (
+                rust_amount0,
+                rust_amount1,
+                end_sqrt_price_x96,
+                end_liquidity,
+                end_tick,
+            ) = (int(x) for x in outcome)
+            amount0_delta = rust_amount0 if zero_for_one else -rust_amount0
+            amount1_delta = -rust_amount1 if zero_for_one else rust_amount1
         return UniswapV3PoolSimulationResult(
             amount0_delta=amount0_delta,
             amount1_delta=amount1_delta,
@@ -917,21 +937,40 @@ class UniswapV3Pool(
             amount0_delta = rust_amount0 if zero_for_one else -rust_amount0
             amount1_delta = -rust_amount1 if zero_for_one else rust_amount1
         else:
-            try:
-                amount0_delta, amount1_delta, end_sqrt_price_x96, end_liquidity, end_tick = (
-                    self._calculate_swap(
-                        zero_for_one=zero_for_one,
-                        amount_specified=-token_out_quantity,
-                        sqrt_price_limit_x96=(
-                            sqrt_price_limit_x96
-                            if sqrt_price_limit_x96 is not None
-                            else (MIN_SQRT_RATIO + 1 if zero_for_one else MAX_SQRT_RATIO - 1)
-                        ),
-                        override_state=override_state,
-                    )
+            # ADR-005 slice 4: exact-output swap over an override (arbitrage
+            # hypothetical) delegates to the Rust fetch-enhanced exact-output
+            # override seam. A custom sqrt_price_limit threads through.
+            outcome = self._py_pool.simulate_exact_output_swap_with_override(
+                zero_for_one=zero_for_one,
+                amount_out=token_out_quantity,
+                block=self.update_block,
+                fetcher=self._tick_data_fetcher,
+                override_sqrt_price_x96=override_state.sqrt_price_x96,
+                override_liquidity=override_state.liquidity,
+                override_tick=override_state.tick,
+                override_tick_data={
+                    tick: (la.liquidity_gross, la.liquidity_net, la.block)
+                    for tick, la in override_state.tick_data.items()
+                },
+                sqrt_price_limit_x96=sqrt_price_limit_x96,
+            )
+            if outcome is None:
+                raise LiquidityPoolError(
+                    message=(
+                        f"Simulated execution could not compute. "
+                        f"pool={self.address} zfo={zero_for_one} "
+                        f"amount_out={token_out_quantity} override"
+                    ),
                 )
-            except EVMRevertError as e:  # pragma: no cover
-                raise LiquidityPoolError(message=f"Simulated execution reverted: {e}") from e
+            (
+                rust_amount0,
+                rust_amount1,
+                end_sqrt_price_x96,
+                end_liquidity,
+                end_tick,
+            ) = (int(x) for x in outcome)
+            amount0_delta = rust_amount0 if zero_for_one else -rust_amount0
+            amount1_delta = -rust_amount1 if zero_for_one else rust_amount1
         return UniswapV3PoolSimulationResult(
             amount0_delta=amount0_delta,
             amount1_delta=amount1_delta,

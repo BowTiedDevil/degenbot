@@ -1744,25 +1744,50 @@ impl BotState {
     /// Returns `None` if the pool is not V3/V4, the amount is zero, the sim
     /// is not computable, or the override's tick data is missing a required
     /// word.
+    /// Simulate a swap over a HYPOTHETICAL (override) pool state, with
+    /// fetch+retry for sparse misses.
+    ///
+    /// Builds a transient `V3PoolState`/`V4PoolState` from the override
+    /// scalars (`sqrt_price_x96`, `liquidity`, `tick`) + override `tick_data`,
+    /// reusing the registered pool's immutable params (`fee`, `tick_spacing`,
+    /// `pool_key` / `factory`). The sim runs over the transient state with the
+    /// given `sqrt_price_limit`. On a `MissingTickWord(word)` miss, the fetcher
+    /// is called + the word's ticks are merged into the TRANSIENT state's
+    /// `tick_data` + `known_bitmap_words` (NOT registered `BotState` — the
+    /// override is a hypothetical that cannot pollute real state), and the sim
+    /// retries. Mirrors the Python override path's fetch+retry loop (V3
+    /// `_calculate_swap` line 296-345).
+    ///
+    /// `exact_output = false` -> exact-input (caller passes the input amount);
+    /// `exact_output = true` -> exact-output (caller passes the desired output
+    /// amount). The V3/V4 sign convention is handled here.
+    ///
+    /// Returns `None` if the pool is not V3/V4, the amount is zero, the sim
+    /// is not computable, the fetcher fails, or the override's tick data is
+    /// missing a required word the fetcher cannot resolve.
     #[must_use]
     #[allow(clippy::too_many_arguments)]
-    pub fn simulate_exact_input_swap_with_override(
+    pub fn simulate_swap_with_override<F: crate::bot_core::tick_fetch::TickWordFetcher>(
         &self,
         pool_id: u64,
         zero_for_one: bool,
-        amount_in: U256,
+        amount: U256,
+        exact_output: bool,
         sqrt_price_limit: U256,
         override_sqrt_price_x96: U256,
         override_liquidity: u128,
         override_tick: i32,
         override_tick_data: HashMap<i32, TickInfo>,
+        block: u64,
+        fetcher: &F,
     ) -> Option<V3SwapOutcome> {
-        if amount_in.is_zero() {
+        if amount.is_zero() {
             return None;
         }
         let entry = self.pools.get(&pool_id)?;
-        let spec = I256::try_from(amount_in).ok()?;
+        let spec = I256::try_from(amount).ok()?;
         match entry {
+            // V3: exact-input is `amountSpecified > 0`; exact-output is `< 0`.
             PoolEntry::V3(state) => {
                 let params = RegisterV3PoolParams {
                     address: state.address,
@@ -1778,10 +1803,27 @@ impl BotState {
                     update_block: state.update_block,
                     coverage: PoolTickCoverage::Sparse,
                 };
-                let override_state = V3PoolState::from_params(params, self.journal_depth);
-                v3_simulate_swap(&override_state, zero_for_one, spec, sqrt_price_limit).ok()
+                let mut override_state = V3PoolState::from_params(params, self.journal_depth);
+                let signed = if exact_output { -spec } else { spec };
+                let mut attempted: HashSet<i32> = HashSet::new();
+                loop {
+                    match v3_simulate_swap(&override_state, zero_for_one, signed, sqrt_price_limit)
+                    {
+                        Ok(o) => return Some(o),
+                        Err(SimulateSwapError::NotComputable) => return None,
+                        Err(SimulateSwapError::MissingTickWord(word)) => {
+                            if !attempted.insert(word) {
+                                return None;
+                            }
+                            match fetcher.fetch_missing_tick_word(pool_id, word, block) {
+                                Ok(data) => override_state.merge_tick_word(&data),
+                                Err(_) => return None,
+                            }
+                        }
+                    }
+                }
             }
-            // V4 sign convention: exact-input is `amountSpecified < 0`.
+            // V4: exact-input is `amountSpecified < 0`; exact-output is `> 0`.
             PoolEntry::V4(state) => {
                 let params = RegisterV4PoolParams {
                     pool_manager: state.pool_manager,
@@ -1797,8 +1839,25 @@ impl BotState {
                     update_block: state.update_block,
                     coverage: PoolTickCoverage::Sparse,
                 };
-                let override_state = V4PoolState::from_params(params, self.journal_depth);
-                v4_simulate_swap(&override_state, zero_for_one, -spec, sqrt_price_limit).ok()
+                let mut override_state = V4PoolState::from_params(params, self.journal_depth);
+                let signed = if exact_output { spec } else { -spec };
+                let mut attempted: HashSet<i32> = HashSet::new();
+                loop {
+                    match v4_simulate_swap(&override_state, zero_for_one, signed, sqrt_price_limit)
+                    {
+                        Ok(o) => return Some(o),
+                        Err(SimulateSwapError::NotComputable) => return None,
+                        Err(SimulateSwapError::MissingTickWord(word)) => {
+                            if !attempted.insert(word) {
+                                return None;
+                            }
+                            match fetcher.fetch_missing_tick_word(pool_id, word, block) {
+                                Ok(data) => override_state.merge_tick_word(&data),
+                                Err(_) => return None,
+                            }
+                        }
+                    }
+                }
             }
             PoolEntry::V2(_)
             | PoolEntry::Curve(_)

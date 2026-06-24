@@ -241,6 +241,18 @@ impl V4PoolState {
             .collect();
     }
 
+    /// Merge a fetched tick word's ticks into this state's `tick_data` +
+    /// mark the word as known + invalidate the cached tick ranges. Used by
+    /// the fetch+retry override loop (merges into the TRANSIENT override
+    /// state, not registered `BotState`). Mirrors `BotState::merge_tick_word`.
+    pub fn merge_tick_word(&mut self, fetched: &crate::bot_core::tick_fetch::FetchedTickWord) {
+        for (tick, info) in &fetched.ticks {
+            self.tick_data.insert(*tick, info.clone());
+        }
+        self.known_bitmap_words.insert(fetched.word);
+        self.invalidate_tick_range_cache();
+    }
+
     /// Construct from registration params with a journal of the given depth.
     #[must_use]
     pub fn from_params(params: RegisterV4PoolParams, journal_depth: usize) -> Self {
