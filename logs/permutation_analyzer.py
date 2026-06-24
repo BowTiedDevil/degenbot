@@ -264,3 +264,27 @@ def analyze_logfile(logpath: str, permutation: str = "") -> AnalysisResult:
     """Read + analyze a single permutation log file."""
     with open(logpath, encoding="utf-8", errors="replace") as f:
         return analyze_log(f.read(), permutation=permutation)
+
+def basis_note(
+    *,
+    structured: bool,
+    skipped: bool,
+    verified: bool,
+) -> str:
+    """Render the ``# basis:`` TSV footer note (CPCZZV/ZS2EYW).
+
+    Qualifies what a ``Drift`` verdict means given the verification basis
+    across the analyzed run(s).
+    """
+    note = "# basis: "
+    if structured:
+        note += "structured-four-way"
+    else:
+        note += "fallback-unknown (no [sim-diag] lines — older logs)"
+    if skipped:
+        note += "; drift may also indicate a bad snapshot (verify SKIPPED in some runs)"
+    elif verified:
+        note += "; drift attributable to pump desync (verify OK present)"
+    elif structured:
+        note += "; drift basis unconfirmed (no [verify] line in structured runs)"
+    return note

@@ -159,3 +159,53 @@ def test_tsv_header_has_four_way_columns_no_stale() -> None:
     h = tsv_header()
     assert "Drift" in h and "SolverCalc" in h and "Encoding" in h and "Unknown" in h
     assert "Stale" not in h and "Bug" not in h and "IIA_Reverts" not in h
+
+
+def test_classify_v3_no_drift_partial_recompute_is_unknown_not_solvercalc() -> None:
+    """A V3/V4 no-drift revert where recompute is unavailable (matches_solver
+    None on every hop — the 4BKMKX deferred case) must classify as Unknown,
+    NEVER as SolverCalc. Guards against the V2 refresh clobbering a V3/V4
+    hop's deferred-None on-chain fields with a spurious matches_solver=False
+    (which would wrongly trigger SolverCalc)."""
+    snap = _line(
+        {
+            "hops": [
+                # V3 hop: no drift, recompute fully deferred (all None).
+                _hop(drift=False, matches_solver=None),
+            ],
+            "revert_info": "0x CurrencyNotSettled",
+        }
+    )
+    assert classify_candidate(snap) == "Unknown"
+
+
+# ---------------------------------------------------------------------------
+# basis_note (verify-basis qualifier on the Drift verdict)
+# ---------------------------------------------------------------------------
+
+from logs.permutation_analyzer import basis_note
+
+
+def test_basis_note_structured_but_unverified() -> None:
+    """[sim-diag] lines exist but no run emitted a [verify] line → drift basis
+    unconfirmed (can't attribute to pump desync vs bad snapshot)."""
+    n = basis_note(structured=True, skipped=False, verified=False)
+    assert n == (
+        "# basis: structured-four-way; drift basis unconfirmed "
+        "(no [verify] line in structured runs)"
+    )
+
+
+def test_basis_note_structured_and_verified() -> None:
+    n = basis_note(structured=True, skipped=False, verified=True)
+    assert "drift attributable to pump desync (verify OK present)" in n
+
+
+def test_basis_note_skipped_trumps_verified() -> None:
+    n = basis_note(structured=True, skipped=True, verified=True)
+    assert "verify SKIPPED" in n and "pump desync" not in n
+
+
+def test_basis_note_fallback_when_unstructured() -> None:
+    n = basis_note(structured=False, skipped=False, verified=False)
+    assert n.startswith("# basis: fallback-unknown")
