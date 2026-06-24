@@ -259,6 +259,19 @@ class EngineRegistry:
         # `register_v2_pool` documents the same shared-state invariant.)
         key = pool._py_pool.pool_id  # noqa: SLF001
 
+        # Drain the backfill/pump buffer onto the snapshot seed. Production
+        # ordering (ADR-006): `backfill_from_snapshot` (in `start()`)
+        # buffers V3 Mint/Burn for pools not yet in BotState; `build_paths`
+        # then registers the pool via the builder + seeds tick_data via
+        # `update_tick_data`, and calls this method. The d65c43f6 bypass of
+        # `engine.register_v3_pool` (to avoid the duplicate-address panic)
+        # also skipped its `register_with_cl_buffers` drain — leaving buffered
+        # Mint/Burn undrained and the seed stale (phantom/missing liquidity
+        # that fails on-chain verify). Restore the drain here, on the path
+        # actually used. `apply_buffer_v3` is a no-op if the pool is
+        # unregistered or has no buffered events.
+        self.engine.apply_buffer_v3(pool.address)
+
         self._v3_keys[pool.address] = key
         return key
 
@@ -302,6 +315,12 @@ class EngineRegistry:
         # time — i.e. BEFORE this method is ever called — so it surfaces from
         # the builder, not here.
         key = pool._py_pool.pool_id  # noqa: SLF001
+
+        # Drain backfill/pump buffer — same rationale as register_v3_pool: the
+        # d65c43f6 bypass of `engine.register_v4_pool` skipped its drain, so
+        # ModifyLiquidity events buffered during `backfill_from_snapshot`
+        # would sit undrained, leaving the V4 snapshot seed stale.
+        self.engine.apply_buffer_v4(pool.address, pool_id_hex)
 
         self._v4_keys[pool_id_hex] = key
         return key
