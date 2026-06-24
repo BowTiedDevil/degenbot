@@ -4,7 +4,7 @@ This module provides high-performance implementations of common operations
 used by the degenbot Python package.
 """
 
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from typing import Any, Literal, overload
 
 from hexbytes import HexBytes
@@ -885,6 +885,13 @@ class PyLiquidityPool:
     def snapshot_v3(self) -> tuple[int, int, int, int] | None: ...
     def calculate_tokens_out(self, zero_for_one: bool, amount_in: int) -> int: ...
     def calculate_tokens_in(self, zero_for_one: bool, amount_out: int) -> int: ...
+    def calculate_tokens_out_with_fetch(
+        self,
+        zero_for_one: bool,
+        amount_in: int,
+        block: int,
+        fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None],
+    ) -> int: ...
     def encode_swap(
         self,
         zero_for_one: bool,
