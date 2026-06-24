@@ -239,7 +239,8 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
 
         return int(
             _downscale_down(
-                amount=amount_out, scaling_factor=self.scaling_factors[token_out_index],
+                amount=amount_out,
+                scaling_factor=self.scaling_factors[token_out_index],
             ),
         )
 

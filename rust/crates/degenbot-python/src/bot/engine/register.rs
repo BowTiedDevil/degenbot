@@ -356,33 +356,33 @@ impl PyUniswapArbEngine {
                 rpc_url: &self.verify_rpc_url,
                 provider: &self.verify_provider,
             };
-            let verify_snapshot = |rpc: &EngineVerifyRpc<'_>,
-                                   block: u64|
-             -> Result<(), VerifyError> {
-                let (Some(sv), Some(ref td)) = (state_view, tick_data_for_snapshot_verify) else {
-                    return Err(VerifyError::NotConfigured(
+            let verify_snapshot =
+                |rpc: &EngineVerifyRpc<'_>, block: u64| -> Result<(), VerifyError> {
+                    let (Some(sv), Some(ref td)) = (state_view, tick_data_for_snapshot_verify)
+                    else {
+                        return Err(VerifyError::NotConfigured(
                         "verify_on_register is enabled for a V4 pool but set_verify_state_view() \
                          was never called — the StateView address is required to verify V4 \
                          tick data".to_string(),
                     ));
+                    };
+                    rpc.verify_v4_snapshot(sv, pool_id, td, block)
                 };
-                rpc.verify_v4_snapshot(sv, pool_id, td, block)
-            };
-            let verify_backfill = |rpc: &EngineVerifyRpc<'_>,
-                                   block: u64|
-             -> Result<(), VerifyError> {
-                let (Some(sv), Some(ref pool_snapshot)) = (state_view, backfill_verify_snapshot)
-                else {
-                    return Err(VerifyError::NotConfigured(
+            let verify_backfill =
+                |rpc: &EngineVerifyRpc<'_>, block: u64| -> Result<(), VerifyError> {
+                    let (Some(sv), Some(ref pool_snapshot)) =
+                        (state_view, backfill_verify_snapshot)
+                    else {
+                        return Err(VerifyError::NotConfigured(
                         "verify_on_register is enabled for a V4 pool but set_verify_state_view() \
                          was never called — the StateView address is required to verify V4 \
                          tick data".to_string(),
                     ));
+                    };
+                    let mut pool_map = HashMap::new();
+                    pool_map.insert(key, pool_snapshot.clone());
+                    rpc.verify_v4_backfill(sv, &pool_map, block)
                 };
-                let mut pool_map = HashMap::new();
-                pool_map.insert(key, pool_snapshot.clone());
-                rpc.verify_v4_backfill(sv, &pool_map, block)
-            };
 
             map_verify_err(run_cl_verification(
                 &rpc,

@@ -181,7 +181,8 @@ where
         return Err(VerifyError::NotConfigured(
             "verify_on_register is enabled but verification is not configured — \
              call set_verify_rpc_url() (and set_verify_state_view() for V4 pools) \
-             before registering snapshot pools".to_string(),
+             before registering snapshot pools"
+                .to_string(),
         ));
     }
     if let Some(block) = snapshot_block {
