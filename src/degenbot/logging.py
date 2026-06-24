@@ -14,7 +14,7 @@ bridge forwards each Rust record to ``logging.getLogger(<rust target>.replace(":
 Python logger ``degenbot_bot.bot_core.block_pump``.
 
 Without base config those records are silent: the crate-root loggers
-(``degenbot_bot``, ``degenbot_core``, ``degenbot_python``, ``degenbot_rpc``,
+(``degenbot_bot``, ``degenbot_core``, ``degenbot_rs``, ``degenbot_rpc``,
 ``degenbot_decoders``, ``degenbot_uniswap``) inherit the root logger's default
 ``WARNING`` level and have no handler, so every Rust ``INFO``/``DEBUG`` record
 is dropped at the logger-level gate *before* reaching a handler (and
@@ -65,7 +65,14 @@ logger.addHandler(_STDOUT_HANDLER)
 RUST_BRIDGE_LOGGER_NAMES = (
     "degenbot_bot",
     "degenbot_core",
-    "degenbot_python",
+    # The PyO3 binding crate lives in ``crates/degenbot-python/`` but its
+    # Cargo ``name`` is ``degenbot_rs`` (set in its ``Cargo.toml``), so every
+    # bare ``log::info!`` in that crate (``verify.rs``, ``register.rs``,
+    # ``json.rs``) emits under ``degenbot_rs::...`` → Python logger
+    # ``degenbot_rs.<...>``. A previous entry of ``degenbot_python`` matched
+    # the directory name, which no Rust target ever uses — the ``[verify]``
+    # success/failure lines and the register/snapshot logs were dropped.
+    "degenbot_rs",
     "degenbot_rpc",
     "degenbot_decoders",
     "degenbot_uniswap",
