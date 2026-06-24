@@ -340,12 +340,13 @@ class UniswapV3Pool(
                         ) from exc
                     if self._tick_data_fetcher is not None:
                         fetched_words.add(exc.word)
-                        # Fetch missing word via the injected fetcher
-                        # (typically from Bot). The fetcher calls the
-                        # companion's ``update_tick_data`` which records the
-                        # word in ``_bitmap_override`` so the next
-                        # ``tick_bitmap`` read sees it as present-but-zero.
-                        self._tick_data_fetcher(exc.word, self.update_block)
+                        # ADR-005 slice 3b: the fetcher RETURNS the word's
+                        # ticks (return-data contract — the Rust fetch+retry
+                        # seam uses the same callback); ``_apply_fetched_tick_word``
+                        # merges them into the pool state. The bitmap derives
+                        # from the tick_data keys (V3 invariant) so no verbatim
+                        # bitmap value is needed for the snapshot rebuild.
+                        self._apply_fetched_tick_word(exc.word, self.update_block)
                         # Rebuild snapshot from updated tick data
                         snapshot = LiquidityMapSnapshot(
                             tick_data=self.tick_data,
@@ -606,6 +607,36 @@ class UniswapV3Pool(
         # method (the builder seeds tick data on the handle via the Rust FFI
         # ``update_tick_data``, not this companion method).
 
+    def _apply_fetched_tick_word(self, word: int, block: BlockNumber) -> bool:
+        """Fetch a tick-bitmap word via ``_tick_data_fetcher`` and merge it.
+
+        ADR-005 slice 3b: the fetcher RETURNS the word's ticks (return-data
+        contract — the Rust ``simulate_swap_with_fetch`` seam uses the same
+        callback, and the Python sparse sites consume the returned data).
+        Merge them into the pool state via ``update_tick_data`` (full replace
+        with the merged set, so previously-fetched ticks are preserved); the
+        bitmap is derived from the tick_data keys (V3 invariant: bitmap bit
+        set ⟺ tick_data entry exists), so no verbatim bitmap value is needed.
+
+        Returns:
+            ``True`` if the fetch succeeded (the word is now known),
+            ``False`` if no fetcher is set or the fetch returned ``None`` (a
+            Python sparse loop raises on the dedup retry; the Rust seam gives up).
+
+        """
+        if self._tick_data_fetcher is None:
+            return False
+        fetched = self._tick_data_fetcher(word, block)
+        if fetched is None:
+            return False
+        merged = {**self.tick_data, **fetched}
+        self.update_tick_data(
+            tick_bitmap={word: BitmapAtWord(bitmap=0, block=block)},
+            tick_data=merged,
+            block=block,
+        )
+        return True
+
     def external_update(
         self,
         update: UniswapV3PoolExternalUpdate,
@@ -666,7 +697,7 @@ class UniswapV3Pool(
             for tick in (update.tick_lower, update.tick_upper):
                 word, _ = get_tick_word_and_bit_position(tick, self._tick_spacing)
                 if word not in self.tick_bitmap:
-                    self._tick_data_fetcher(word, state_block - 1)
+                    self._apply_fetched_tick_word(word, state_block - 1)
 
         applied = self._py_pool.apply_liquidity_update(
             tick_lower=update.tick_lower,
@@ -757,34 +788,72 @@ class UniswapV3Pool(
 
         zero_for_one = token_in == self._token0
 
-        try:
-            amount0_delta, amount1_delta, end_sqrt_price_x96, end_liquidity, end_tick = (
-                self._calculate_swap(
-                    zero_for_one=zero_for_one,
-                    amount_specified=token_in_quantity,
-                    sqrt_price_limit_x96=(
-                        sqrt_price_limit_x96
-                        if sqrt_price_limit_x96 is not None
-                        else (MIN_SQRT_RATIO + 1 if zero_for_one else MAX_SQRT_RATIO - 1)
+        if override_state is None and sqrt_price_limit_x96 is None:
+            # ADR-005 slice 3b: mainline exact-input swap (no override, no
+            # custom price limit) delegates to the Rust fetch+retry seam. For
+            # a sparse pool the Rust path misses on an unknown word, fetches it
+            # via ``_apply_fetched_tick_word`` (the return-data fetcher),
+            # merges, and retries; for a dense pool it computes directly (the
+            # dense-map parity gate asserts Rust == Python ``_v3_swap``). The
+            # override / custom-limit paths keep the Python ``_calculate_swap``
+            # (override is an arbitrage hypothetical over alternate state; Rust
+            # hardcodes the MIN/MAX price limit so a custom limit can't be
+            # honoured there — slice 4 retires the Python loop entirely).
+            outcome = self._py_pool.simulate_swap_with_fetch(
+                zero_for_one=zero_for_one,
+                amount_in=token_in_quantity,
+                block=self.update_block,
+                fetcher=self._tick_data_fetcher,
+            )
+            if outcome is None:
+                raise LiquidityPoolError(
+                    message=(
+                        f"Simulated execution could not compute. "
+                        f"pool={self.address} zfo={zero_for_one} "
+                        f"amount_in={token_in_quantity}"
                     ),
-                    override_state=override_state,
                 )
-            )
-        except EVMRevertError as e:  # pragma: no cover
-            raise LiquidityPoolError(message=f"Simulated execution reverted: {e}") from e
+            (
+                rust_amount0,
+                rust_amount1,
+                end_sqrt_price_x96,
+                end_liquidity,
+                end_tick,
+            ) = (int(x) for x in outcome)
+            # Rust returns UNSIGNED absolute amounts; the V3 convention is
+            # signed deltas (deposited +, sent -). zfo exact-in deposits
+            # token0 / sends token1; ofz exact-in deposits token1 / sends
+            # token0. (Pinned by test_rust_seam_sign_mapping_dense.)
+            amount0_delta = rust_amount0 if zero_for_one else -rust_amount0
+            amount1_delta = -rust_amount1 if zero_for_one else rust_amount1
         else:
-            return UniswapV3PoolSimulationResult(
-                amount0_delta=amount0_delta,
-                amount1_delta=amount1_delta,
-                initial_state=initial_state,
-                final_state=dataclasses.replace(
-                    initial_state,
-                    liquidity=end_liquidity,
-                    sqrt_price_x96=end_sqrt_price_x96,
-                    tick=end_tick,
-                    block=self.update_block if override_state is None else initial_state.block,
-                ),
-            )
+            try:
+                amount0_delta, amount1_delta, end_sqrt_price_x96, end_liquidity, end_tick = (
+                    self._calculate_swap(
+                        zero_for_one=zero_for_one,
+                        amount_specified=token_in_quantity,
+                        sqrt_price_limit_x96=(
+                            sqrt_price_limit_x96
+                            if sqrt_price_limit_x96 is not None
+                            else (MIN_SQRT_RATIO + 1 if zero_for_one else MAX_SQRT_RATIO - 1)
+                        ),
+                        override_state=override_state,
+                    )
+                )
+            except EVMRevertError as e:  # pragma: no cover
+                raise LiquidityPoolError(message=f"Simulated execution reverted: {e}") from e
+        return UniswapV3PoolSimulationResult(
+            amount0_delta=amount0_delta,
+            amount1_delta=amount1_delta,
+            initial_state=initial_state,
+            final_state=dataclasses.replace(
+                initial_state,
+                liquidity=end_liquidity,
+                sqrt_price_x96=end_sqrt_price_x96,
+                tick=end_tick,
+                block=self.update_block if override_state is None else initial_state.block,
+            ),
+        )
 
     def simulate_exact_output_swap(
         self,

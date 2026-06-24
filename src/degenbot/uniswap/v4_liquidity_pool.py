@@ -461,7 +461,11 @@ class UniswapV4Pool(
                     ) from exc
                 if self._tick_data_fetcher is not None:
                     fetched_words.add(exc.word)
-                    self._tick_data_fetcher(exc.word, self.update_block)
+                    # ADR-005 slice 3b: the fetcher RETURNS the word's ticks
+                    # (return-data contract); ``_apply_fetched_tick_word`` merges
+                    # them into the pool state. The bitmap derives from the
+                    # tick_data keys, so no verbatim bitmap value is needed.
+                    self._apply_fetched_tick_word(exc.word, self.update_block)
                     snapshot = LiquidityMapSnapshot(
                         tick_data=self.tick_data,
                         tick_bitmap=self.tick_bitmap,
@@ -841,6 +845,33 @@ class UniswapV4Pool(
         # NOTE: ``_sparse_liquidity_map`` NOT flipped — fetcher's incremental
         # backfill must keep the pool sparse. See V3 companion for rationale.
 
+    def _apply_fetched_tick_word(self, word: int, block: BlockNumber) -> bool:
+        """Fetch a tick-bitmap word via ``_tick_data_fetcher`` and merge it.
+
+        ADR-005 slice 3b: the fetcher RETURNS the word's ticks (return-data
+        contract — the Rust ``simulate_swap_with_fetch`` seam uses the same
+        callback). Merge them into the pool state via ``update_tick_data``;
+        the bitmap is derived from the tick_data keys (V3/V4 invariant), so no
+        verbatim bitmap value is needed.
+
+        Returns:
+            ``True`` if the fetch succeeded, ``False`` if no fetcher or the
+            fetch returned ``None``.
+
+        """
+        if self._tick_data_fetcher is None:
+            return False
+        fetched = self._tick_data_fetcher(word, block)
+        if fetched is None:
+            return False
+        merged = {**self.tick_data, **fetched}
+        self.update_tick_data(
+            tick_bitmap={word: BitmapAtWord(bitmap=0, block=block)},
+            tick_data=merged,
+            block=block,
+        )
+        return True
+
     def external_update(
         self,
         update: UniswapV4PoolExternalUpdate,
@@ -899,7 +930,7 @@ class UniswapV4Pool(
             for tick in (update.tick_lower, update.tick_upper):
                 word, _ = get_tick_word_and_bit_position(tick, self.tick_spacing)
                 if word not in self.tick_bitmap:
-                    self._tick_data_fetcher(word, state_block - 1)
+                    self._apply_fetched_tick_word(word, state_block - 1)
 
         applied = self._py_pool.apply_liquidity_update(
             tick_lower=update.tick_lower,
