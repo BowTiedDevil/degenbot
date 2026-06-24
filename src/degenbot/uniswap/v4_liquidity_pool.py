@@ -38,6 +38,7 @@ from hexbytes import HexBytes
 from web3 import Web3
 
 from degenbot.arbitrage.types import UniswapV4PoolSwapAmounts, V4PoolKey
+from degenbot.builders.tick_data_fetcher import FetchedTickData
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.degenbot_rs import PyLiquidityPool
@@ -221,7 +222,7 @@ class UniswapV4Pool(
         lp_fee: int,
         tick_bitmap: dict[int, Any] | None = None,
         state_block: BlockNumber | int | None = None,
-        tick_data_fetcher: Callable[[int, int], None] | None = None,
+        tick_data_fetcher: Callable[[int, int], FetchedTickData | None] | None = None,
         sparse_liquidity_map: bool | None = None,
     ) -> None:
         """Initialize the instance over a ``PyLiquidityPool`` handle.

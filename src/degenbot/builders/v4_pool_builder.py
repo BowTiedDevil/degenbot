@@ -10,7 +10,11 @@ from hexbytes import HexBytes
 from sqlalchemy import select
 
 from degenbot.builders.request import BuildManagedPoolRequest
-from degenbot.builders.tick_data_fetcher import TickDataTypes, make_tick_data_fetcher
+from degenbot.builders.tick_data_fetcher import (
+    FetchedTickData,
+    TickDataTypes,
+    make_tick_data_fetcher,
+)
 from degenbot.builders.v4_builder_base import V4BuilderBase, V4Slot0Data
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
@@ -65,7 +69,7 @@ class V4PoolBuilder(V4BuilderBase):
         state_view_address: str,
         chain_id: int,
         io: PoolIO,
-    ) -> Callable[[int, int], None]:
+    ) -> Callable[[int, int], FetchedTickData | None]:
         """Create a tick data fetcher callback for a V4 pool.
 
         Returns:
