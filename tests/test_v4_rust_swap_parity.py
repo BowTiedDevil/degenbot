@@ -150,6 +150,47 @@ def test_rust_v4_seam_matches_python_simulator_dense(*, zero_for_one: bool):
     )
 
 
+@pytest.mark.xfail(
+    reason="Rust V4 sim diverges from Python on crossing swaps (LP-fee / "
+    "liquidity-net walk); V4 mainline routing deferred to slice 4 until the "
+    "Rust V4 sim is corrected. The non-crossing parity gate is GREEN.",
+    strict=True,
+)
+@pytest.mark.parametrize("zero_for_one", [True, False])
+def test_rust_v4_seam_matches_python_simulator_dense_crossing(*, zero_for_one: bool):
+    """Rust == Python on a CROSSING swap (large amount, crosses ±60 boundary).
+
+    A non-crossing swap (the 1_000 case) matches; this case crosses the
+    position's boundary tick, exercising the LP-fee + liquidity-net walk —
+    the regime where the Rust V4 sim's fee accounting must hold. If this
+    diverges, the V4 mainline routing must stay gated on the Python simulator
+    until the Rust sim is corrected (§4.3 oracle discipline).
+    """
+    py_bot = PyBot()
+    pool = _build_dense_v4_pool(py_bot, address_tag="c")
+
+    # Large enough to cross the ±60 boundary (liquidity = 10_000_000_000_000).
+    amount_in = 10_000_000_000_000_000
+    token_in = pool.token0 if zero_for_one else pool.token1
+
+    py_amount_out = pool.calculate_tokens_out_from_tokens_in(
+        token_in=token_in,
+        token_in_quantity=amount_in,
+    )
+    rust_outcome = pool._py_pool.simulate_swap_with_fetch(
+        zero_for_one=zero_for_one,
+        amount_in=amount_in,
+        block=0,
+        fetcher=lambda *_: {},
+    )
+    assert rust_outcome is not None
+    rust_amount0, rust_amount1 = int(rust_outcome[0]), int(rust_outcome[1])
+    expected = rust_amount1 if zero_for_one else rust_amount0
+    assert py_amount_out == expected, (
+        f"V4 crossing zfo={zero_for_one}: py={py_amount_out} rust={expected}"
+    )
+
+
 def test_sparse_mainline_v4_swap_routed_to_rust_matches_dense_oracle():
     """Sparse V4 pool's mainline swap → Rust fetch+retry == dense oracle.
 
