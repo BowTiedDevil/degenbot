@@ -1424,7 +1424,12 @@ impl BotState {
                 let Some(spec) = I256::try_from(amount_in).ok() else {
                     return Err(SimulateSwapError::NotComputable);
                 };
-                let outcome = v3_simulate_swap(state, zero_for_one, spec)?;
+                let outcome = v3_simulate_swap(
+                    state,
+                    zero_for_one,
+                    spec,
+                    V3PoolState::default_sqrt_price_limit(zero_for_one),
+                )?;
                 Ok(if zero_for_one {
                     outcome.amount1
                 } else {
@@ -1442,7 +1447,12 @@ impl BotState {
                 let Some(spec) = I256::try_from(amount_in).ok() else {
                     return Err(SimulateSwapError::NotComputable);
                 };
-                let outcome = v4_simulate_swap(state, zero_for_one, -spec)?;
+                let outcome = v4_simulate_swap(
+                    state,
+                    zero_for_one,
+                    -spec,
+                    V3PoolState::default_sqrt_price_limit(zero_for_one),
+                )?;
                 Ok(if zero_for_one {
                     outcome.amount1
                 } else {
@@ -1571,6 +1581,7 @@ impl BotState {
         pool_id: u64,
         zero_for_one: bool,
         amount_in: U256,
+        sqrt_price_limit: U256,
     ) -> Result<V3SwapOutcome, SimulateSwapError> {
         let Some(entry) = self.pools.get(&pool_id) else {
             return Err(SimulateSwapError::NotComputable);
@@ -1582,9 +1593,9 @@ impl BotState {
             return Err(SimulateSwapError::NotComputable);
         };
         match entry {
-            PoolEntry::V3(state) => v3_simulate_swap(state, zero_for_one, spec),
+            PoolEntry::V3(state) => v3_simulate_swap(state, zero_for_one, spec, sqrt_price_limit),
             // V4 sign convention: exact-input is `amountSpecified < 0`.
-            PoolEntry::V4(state) => v4_simulate_swap(state, zero_for_one, -spec),
+            PoolEntry::V4(state) => v4_simulate_swap(state, zero_for_one, -spec, sqrt_price_limit),
             PoolEntry::V2(_)
             | PoolEntry::Curve(_)
             | PoolEntry::BalancerWeighted(_)
@@ -1606,12 +1617,18 @@ impl BotState {
         pool_id: u64,
         zero_for_one: bool,
         amount_in: U256,
+        sqrt_price_limit: U256,
         block: u64,
         fetcher: &F,
     ) -> Option<V3SwapOutcome> {
         let mut attempted: HashSet<i32> = HashSet::new();
         loop {
-            match self.simulate_exact_input_swap_miss_aware(pool_id, zero_for_one, amount_in) {
+            match self.simulate_exact_input_swap_miss_aware(
+                pool_id,
+                zero_for_one,
+                amount_in,
+                sqrt_price_limit,
+            ) {
                 Ok(outcome) => return Some(outcome),
                 Err(SimulateSwapError::NotComputable) => return None,
                 Err(SimulateSwapError::MissingTickWord(word)) => {
@@ -1692,7 +1709,12 @@ impl BotState {
                 let Some(spec) = I256::try_from(amount_out).ok() else {
                     return U256::ZERO;
                 };
-                let Ok(outcome) = v3_simulate_swap(state, zero_for_one, -spec) else {
+                let Ok(outcome) = v3_simulate_swap(
+                    state,
+                    zero_for_one,
+                    -spec,
+                    V3PoolState::default_sqrt_price_limit(zero_for_one),
+                ) else {
                     return U256::ZERO;
                 };
                 if zero_for_one {
@@ -1712,7 +1734,12 @@ impl BotState {
                 let Some(spec) = I256::try_from(amount_out).ok() else {
                     return U256::ZERO;
                 };
-                let Ok(outcome) = v4_simulate_swap(state, zero_for_one, spec) else {
+                let Ok(outcome) = v4_simulate_swap(
+                    state,
+                    zero_for_one,
+                    spec,
+                    V3PoolState::default_sqrt_price_limit(zero_for_one),
+                ) else {
                     return U256::ZERO;
                 };
                 if zero_for_one {

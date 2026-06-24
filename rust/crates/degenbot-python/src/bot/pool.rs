@@ -204,7 +204,7 @@ impl PyLiquidityPool {
     ///
     /// Returns `(amount0, amount1, sqrt_price_x96, liquidity, tick)` or `None`
     /// (pool not V3/V4, zero amount, fetch failed, or not computable).
-    #[pyo3(signature = (zero_for_one, amount_in, block, fetcher))]
+    #[pyo3(signature = (zero_for_one, amount_in, block, fetcher, sqrt_price_limit_x96=None))]
     fn simulate_swap_with_fetch(
         &self,
         py: Python<'_>,
@@ -212,8 +212,16 @@ impl PyLiquidityPool {
         amount_in: &Bound<'_, PyAny>,
         block: u64,
         fetcher: &Bound<'_, PyAny>,
+        sqrt_price_limit_x96: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Option<Py<PyAny>>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
+        // Default price-limit bounds mirror the V3/V4 sims: the swap cannot
+        // cross these regardless of amount. A caller-supplied limit caps the
+        // walk short (arbitrage / exact-output limit caps).
+        let sqrt_price_limit = match sqrt_price_limit_x96 {
+            Some(v) if !v.is_none() => crate::conversion::alloy::extract_python_u256(v)?,
+            _ => degenbot_bot::bot_core::V3PoolState::default_sqrt_price_limit(zero_for_one),
+        };
         let adapter = PyTickWordFetcher {
             callback: fetcher.clone().unbind(),
         };
@@ -223,6 +231,7 @@ impl PyLiquidityPool {
                 self.pool_id,
                 zero_for_one,
                 amount,
+                sqrt_price_limit,
                 block,
                 &adapter,
             )

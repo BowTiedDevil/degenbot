@@ -898,6 +898,7 @@ class PyLiquidityPool:
         amount_in: int,
         block: int,
         fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None],
+        sqrt_price_limit_x96: int | None = None,
     ) -> tuple[int, int, int, int, int] | None: ...
     def encode_swap(
         self,
