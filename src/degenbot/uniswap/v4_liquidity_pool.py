@@ -569,17 +569,16 @@ class UniswapV4Pool(
 
         zero_for_one = token_in == self._token0
 
-        # ADR-005 slice 3b: the V3 mainline routes to the Rust fetch+retry seam,
-        # but the V4 sim is NOT yet a faithful oracle for crossing swaps — the
-        # Rust V4 sim's LP-fee + liquidity-net walk diverges from the Python
-        # simulator + on-chain quoter on swaps that cross a tick boundary
-        # (offline parity gate `test_rust_v4_seam_matches_python_simulator_dense_crossing`
-        # is RED; the fork test `test_cached_calculations` regresses). Per §4.3
-        # the Python simulator stays as the V4 parity oracle until the Rust V4
-        # sim is corrected — slice 4. The fetch-callback seam itself is sound
-        # (dense non-crossing parity is green), so the V4 sparse-loop helper
-        # (`_apply_fetched_tick_word`) stays wired; only the mainline routing
-        # is deferred.
+        # V4 mainline routing to the Rust fetch+retry seam is DEFERRED to slice 4.
+        # The Rust V4 sim's core crossing-swap math is sound (offline dense
+        # corpus gate `test_rust_v4_dense_corpus_matches_on_chain_quoter` is GREEN:
+        # Rust == Python == on-chain quoter on a 419-tick fork corpus), but the
+        # SPARSE fetch+merge+retry loop diverges from a single dense pass on
+        # multi-word ofz swaps — `test_rust_v4_sparse_fetch_corpus_diverges_from_dense`
+        # (xfail) reproduces it offline from a captured fork corpus. The Python
+        # simulator stays as the V4 parity oracle until the Rust sparse path is
+        # corrected; the fetch-callback seam + `_apply_fetched_tick_word` helper
+        # stay wired + green (non-crossing / dense parity).
         try:
             swap_delta, *_ = self._calculate_swap(
                 zero_for_one=zero_for_one,
