@@ -6,8 +6,8 @@
 //! blocks per type, so each concern file contributes one slice.
 
 use super::{
-    Address, Arc, HopType, MixedPoolRef, PyDict, PyList, PyStopAsyncIteration, PyUniswapArbEngine,
-    ResultBatch, SolvePathResult, U256,
+    mpsc, Address, Arc, BlockNotification, HopType, MixedPoolRef, PyDict, PyList,
+    PyStopAsyncIteration, PyUniswapArbEngine, ResultBatch, SolvePathResult, U256,
 };
 use crate::prelude::*;
 
@@ -239,6 +239,29 @@ impl PyUniswapArbEngine {
         slf
     }
 
+    /// Return a fresh async iterator over `newHeads` block notifications
+    /// (epic 6W35AI).
+    ///
+    /// The backrun bot must derive its block clock from this stream, NOT
+    /// from the result batch's `solve_block` field — `solve_block` lags by
+    /// the send debounce and only advances when a batch is actually sent,
+    /// so using it as the clock freezes `[block: N]` behind the pump's
+    /// `current_block`. The pump forwards exactly one `BlockNotification`
+    /// per accepted `WsEvent::BlockHeader` (in lockstep with the block the
+    /// solver just solved against), so this stream is the authoritative clock.
+    ///
+    /// Each yielded item is a dict: `number`, `timestamp`,
+    /// `base_fee_per_gas` (int | None), `gas_used`, `gas_limit`.
+    ///
+    /// Can be called at most once (the receiver is moved into the iterator).
+    /// Subsequent calls raise `RuntimeError`.
+    fn block_stream(&self) -> PyResult<BlockStream> {
+        let block_rx = self.block_rx.lock().take().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err("block_stream() can only be called once")
+        })?;
+        Ok(BlockStream::new(block_rx))
+    }
+
     /// Await the next result batch from the engine.
     ///
     /// Returns a dict with keys:
@@ -380,4 +403,76 @@ fn hop_info_to_pydict<'py>(py: Python<'py>, hop: &HopInfo) -> PyResult<Bound<'py
         hop_dict.set_item("tick_spacing", ts)?;
     }
     Ok(hop_dict)
+}
+
+// ── Block stream (epic 6W35AI) ─────────────────────────────────────────────
+//
+// The authoritative `newHeads`-derived block clock for Python. The pump
+// forwards one `BlockNotification` per accepted header via
+// `DrainSink::notify_block`; this class is the async iterator Python consumes
+// (`async for block in engine.block_stream(): …`). Mirrors the result-channel
+// `__anext__` shape (take the receiver, await + send, put it back) so a single
+// shared receiver survives across awaits.
+
+/// pyo3 async iterator over `newHeads` block notifications.
+#[pyclass(name = "BlockStream", skip_from_py_object)]
+pub struct BlockStream {
+    /// The block-notification receiver. `Option` + `put-back` mirrors
+    /// `PyUniswapArbEngine::result_rx` so the coroutine can re-share the
+    /// receiver across `__anext__` calls.
+    block_rx: Arc<parking_lot::Mutex<Option<mpsc::UnboundedReceiver<BlockNotification>>>>,
+}
+
+impl BlockStream {
+    /// Construct from the receiver handed out by `PyUniswapArbEngine::block_stream`.
+    #[must_use]
+    pub fn new(block_rx: mpsc::UnboundedReceiver<BlockNotification>) -> Self {
+        Self {
+            block_rx: Arc::new(parking_lot::Mutex::new(Some(block_rx))),
+        }
+    }
+}
+
+#[pymethods]
+impl BlockStream {
+    /// Return self as the async iterator.
+    #[allow(clippy::missing_const_for_fn)]
+    fn __aiter__(slf: PyClassGuard<'_, Self>) -> PyClassGuard<'_, Self> {
+        slf
+    }
+
+    /// Await the next block notification from the pump.
+    ///
+    /// Returns a dict with keys: `number` (int), `timestamp` (int),
+    /// `base_fee_per_gas` (int | None), `gas_used` (int), `gas_limit` (int).
+    /// Raises `StopAsyncIteration` when the channel closes (pump stopped).
+    fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let block_rx = Arc::clone(&self.block_rx);
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let mut rx = block_rx
+                .lock()
+                .take()
+                .ok_or_else(|| PyStopAsyncIteration::new_err("Block channel closed"))?;
+
+            let notif = rx.recv().await.ok_or_else(|| {
+                PyStopAsyncIteration::new_err("Block channel closed — pump may have stopped.")
+            })?;
+
+            *block_rx.lock() = Some(rx);
+
+            Python::attach(|py| notif_to_py_dict(&notif, py))
+        })
+    }
+}
+
+/// Convert a `BlockNotification` to a Python dict (called under the GIL).
+fn notif_to_py_dict(notif: &BlockNotification, py: Python<'_>) -> PyResult<Py<PyDict>> {
+    let dict = PyDict::new(py);
+    dict.set_item("number", notif.number)?;
+    dict.set_item("timestamp", notif.timestamp)?;
+    dict.set_item("base_fee_per_gas", notif.base_fee_per_gas)?;
+    dict.set_item("gas_used", notif.gas_used)?;
+    dict.set_item("gas_limit", notif.gas_limit)?;
+    Ok(dict.unbind())
 }

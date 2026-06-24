@@ -10,6 +10,9 @@ risk of unbounded backlog or stale-batch dispatch.
 
 from __future__ import annotations
 
+import asyncio
+import inspect
+
 import pytest
 
 import degenbot.arbitrage.engine_registry as runner
@@ -65,13 +68,19 @@ class FakeEngine:
         state_view_address: str,
         block_number: int | None,
     ) -> None:
-        self.calls.append("verify_liquidity_maps")
-        self.verify_args = {
-            "rpc_url": rpc_url,
-            "tick_lens_address": tick_lens_address,
-            "state_view_address": state_view_address,
-            "block_number": block_number,
-        }
+        # Mirrors the real engine seam: async (driven by asyncio via
+        # `future_into_py`), so the registry `await`s it. A plain sync return
+        # here would make the registry's `await` raise — keep it async.
+        async def _verify() -> None:
+            self.calls.append("verify_liquidity_maps")
+            self.verify_args = {
+                "rpc_url": rpc_url,
+                "tick_lens_address": tick_lens_address,
+                "state_view_address": state_view_address,
+                "block_number": block_number,
+            }
+
+        return _verify()  # coroutine — registry `await`s it
 
     def resume(self) -> None:
         self.calls.append("resume")
@@ -184,7 +193,7 @@ def test_verify_liquidity_maps_raises_when_start_not_called() -> None:
     registry = runner.EngineRegistry(bot=None, engine=fake)
 
     with pytest.raises(RuntimeError, match="verify config"):
-        registry.verify_liquidity_maps()
+        asyncio.run(registry.verify_liquidity_maps())
     assert "verify_liquidity_maps" not in fake.calls
 
 
@@ -204,7 +213,7 @@ def test_verify_liquidity_maps_delegates_with_stashed_config() -> None:
         verify_state_view=state_view,
     )
 
-    registry.verify_liquidity_maps()
+    asyncio.run(registry.verify_liquidity_maps())
 
     assert fake.verify_args == {
         "rpc_url": "http://node:8545",
@@ -225,7 +234,7 @@ def test_verify_liquidity_maps_explicit_block_overrides_default() -> None:
         verify_state_view="0x0000000000000000000000000000000000000abc",
     )
 
-    registry.verify_liquidity_maps(block_number=25_384_822)
+    asyncio.run(registry.verify_liquidity_maps(block_number=25_384_822))
 
     assert fake.verify_args["block_number"] == 25_384_822
 
@@ -243,9 +252,30 @@ def test_verify_liquidity_maps_falls_back_to_pending_when_no_block() -> None:
         verify_state_view="0x0000000000000000000000000000000000000abc",
     )
 
-    registry.verify_liquidity_maps()
+    asyncio.run(registry.verify_liquidity_maps())
 
     assert fake.verify_args["block_number"] is None
+
+
+def test_verify_liquidity_maps_is_async_driven_by_asyncio_not_block_on() -> None:
+    """verify_liquidity_maps MUST be an async function (driven by asyncio via
+    pyo3 `future_into_py`), NOT a sync `runtime.block_on` on the shared
+    multi-threaded tokio runtime.
+
+    Regression guard for the 2026-06-24 deadlock: `run()` called the sync
+    `engine.verify_liquidity_maps` (pyo3) which did `runtime.block_on(...)`
+    from a foreign (Python) thread while the pump WS loop was a task on that
+    same runtime. Under the pump's concurrent lock churn the verify future's
+    worker couldn't get scheduled → MainThread + all tokio workers parked on
+    `futex_do_wait` (proven via py-spy + wchan) → permanent stall, no
+    `[DIAG] HEADER` and no `[verify] ... OK`. The async seam (driven by the
+    asyncio loop the consumer already runs on) eliminates the foreign-thread
+    `block_on`, so verify runs concurrently with the pump and cannot deadlock.
+    """
+    assert inspect.iscoroutinefunction(runner.EngineRegistry.verify_liquidity_maps), (
+        "verify_liquidity_maps must be async — sync block_on deadlocks the pump "
+        "(see 2026-06-24 diagnosis)."
+    )
 
 
 def test_verify_liquidity_maps_raises_when_state_view_omitted() -> None:
@@ -256,4 +286,4 @@ def test_verify_liquidity_maps_raises_when_state_view_omitted() -> None:
     registry.start("http://node:8545", "ws://node:8546")  # no state_view
 
     with pytest.raises(RuntimeError, match="verify config"):
-        registry.verify_liquidity_maps()
+        asyncio.run(registry.verify_liquidity_maps())

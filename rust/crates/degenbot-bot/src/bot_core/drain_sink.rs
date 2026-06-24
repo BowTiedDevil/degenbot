@@ -58,4 +58,11 @@ pub trait DrainSink: Send + Sync {
     /// `Bot::start` / the pump's subscribe phase.
     #[must_use]
     fn last_processed_block(&self) -> Option<u64>;
+
+    /// Forward a `newHeads` block tick to every engine's block-notification
+    /// channel (epic 6W35AI). The pump calls this on every accepted
+    /// `WsEvent::BlockHeader` after advancing `current_block`, so Python's
+    /// block clock tracks `newHeads` and is never stale by the send debounce.
+    /// Fan-out mirrors `on_drain`/`on_send` under the drain lock.
+    fn notify_block(&self, block: u64, metadata: &BlockMetadata);
 }

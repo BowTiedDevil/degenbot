@@ -11,6 +11,23 @@ impl UniswapEngine {
         self.result_tx = Some(tx);
     }
 
+    /// Set the sender for the block-notification channel (epic 6W35AI). The
+    /// pump forwards `newHeads` here; Python consumes it as its block clock
+    /// (not `ResultBatch::solve_block`). Independent of `result_tx`.
+    pub fn set_block_channel(&mut self, tx: mpsc::UnboundedSender<super::BlockNotification>) {
+        self.block_tx = Some(tx);
+    }
+
+    /// Forward a `newHeads` block tick onto the block-notification channel
+    /// (epic 6W35AI). Called by the pump on every accepted header, after
+    /// `current_block` is advanced — independent of solve/debounce state.
+    /// A no-op when no block channel is attached (no-pyo3 tests / standalone).
+    pub fn notify_block(&self, block: u64, metadata: &BlockMetadata) {
+        if let Some(ref tx) = self.block_tx {
+            let _ = tx.send(super::BlockNotification::from_metadata(block, metadata));
+        }
+    }
+
     /// Set the profit thresholds for the result batch channel.
     ///
     /// Only paths with `profit > min_profit` and `profit <= max_profit`

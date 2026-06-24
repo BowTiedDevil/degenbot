@@ -56,6 +56,16 @@ pub trait TickMap {
     /// The tick bookkeeping map: tick index → (`liquidity_gross`,
     /// `liquidity_net`). The actual verification content.
     fn tick_data(&self) -> &HashMap<i32, TickInfo>;
+
+    // --- TEMP DEBUG accessors (verify-mismatch diagnostics) ---
+    /// Last block that mutated this pool's tick state (snapshot seed otherwise).
+    fn dbg_update_block(&self) -> u64 {
+        0
+    }
+    /// Number of journaled delta entries (≈ events applied since genesis).
+    fn dbg_journal_len(&self) -> usize {
+        0
+    }
 }
 
 /// Mutable view of a CL pool's tick bookkeeping map. Extends [`TickMap`] with
@@ -86,6 +96,13 @@ impl TickMap for V3PoolState {
 
     fn tick_data(&self) -> &HashMap<i32, TickInfo> {
         &self.tick_data
+    }
+
+    fn dbg_update_block(&self) -> u64 {
+        self.update_block
+    }
+    fn dbg_journal_len(&self) -> usize {
+        self.journal.len()
     }
 }
 

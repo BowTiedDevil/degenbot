@@ -90,7 +90,7 @@ class _FakeEngineRegistry:
         })
         return self._backfill_target
 
-    def verify_liquidity_maps(self, *, block_number=None) -> None:
+    async def verify_liquidity_maps(self, *, block_number=None) -> None:
         self.verify_call = block_number
 
 
