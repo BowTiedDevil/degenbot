@@ -108,6 +108,98 @@ def _build_dense_v4_pool(py_bot: PyBot, address_tag: str):
     )
 
 
+def _build_dense_v4_pool_crossing(py_bot: PyBot, address_tag: str, *, zero_for_one: bool):
+    """Build a dense V4 pool whose seeded tick_data covers a CROSSING swap's walk.
+
+    Two OVERLAPPING positions keep liquidity > 0 past the crossed boundary so
+    the swap does NOT drain into an unseeded word — both the Python simulator
+    and the Rust seam then run fully dense (no fetcher miss), making a
+    crossing-swap amount parity comparison valid offline (no fork).
+
+    - ofz (zero_for_one=False): positions [-60,+60] L + [-60,+1200] L.
+      Crossing +60 (net -L) keeps liquidity L alive in [60,1200] (word 0).
+    - zfo (zero_for_one=True):  positions [-1200,+60] L + [-60,+60] L.
+      Crossing -60 (net +L) keeps liquidity L alive in [-1200,-60] (word -1).
+    """
+    token0 = make_erc20(
+        py_bot,
+        address=f"0x{(address_tag * 40)[:40]}",
+        name="T0",
+        symbol="T0",
+        decimals=18,
+    )
+    token1 = make_erc20(
+        py_bot,
+        address=f"0x{(address_tag * 39 + 'e')[:40]}",
+        name="T1",
+        symbol="T1",
+        decimals=18,
+    )
+    pool_id = _compute_v4_pool_id(
+        token0.address,
+        token1.address,
+        _FEE,
+        _TICK_SPACING,
+        ZERO_ADDRESS,
+    )
+    if zero_for_one:
+        # zfo: crossing -60 downward. Active at tick 0 = 2L.
+        tick_data = {
+            -1200: LiquidityAtTick(
+                liquidity_net=_LIQUIDITY,
+                liquidity_gross=_LIQUIDITY,
+                block=0,
+            ),
+            -60: LiquidityAtTick(
+                liquidity_net=_LIQUIDITY,
+                liquidity_gross=2 * _LIQUIDITY,
+                block=0,
+            ),
+            60: LiquidityAtTick(
+                liquidity_net=-2 * _LIQUIDITY,
+                liquidity_gross=2 * _LIQUIDITY,
+                block=0,
+            ),
+        }
+    else:
+        # ofz: crossing +60 upward. Active at tick 0 = 2L.
+        tick_data = {
+            -60: LiquidityAtTick(
+                liquidity_net=2 * _LIQUIDITY,
+                liquidity_gross=2 * _LIQUIDITY,
+                block=0,
+            ),
+            60: LiquidityAtTick(
+                liquidity_net=-_LIQUIDITY,
+                liquidity_gross=2 * _LIQUIDITY,
+                block=0,
+            ),
+            1200: LiquidityAtTick(
+                liquidity_net=-_LIQUIDITY,
+                liquidity_gross=_LIQUIDITY,
+                block=0,
+            ),
+        }
+    return make_v4_pool(
+        pool_id=pool_id,
+        pool_manager_address=_V4_POOL_MANAGER,
+        token0=token0,
+        token1=token1,
+        fee=_FEE,
+        tick_spacing=_TICK_SPACING,
+        hook_address=None,
+        sqrt_price_x96=_SQRT_PRICE_1TO1,
+        tick=0,
+        liquidity=2 * _LIQUIDITY,
+        tick_data=tick_data,
+        protocol_fee_zero_for_one=0,
+        protocol_fee_one_for_zero=0,
+        lp_fee=_FEE,
+        state_block=0,
+        py_bot=py_bot,
+    )
+
+
 @pytest.mark.parametrize("zero_for_one", [True, False])
 def test_rust_v4_seam_matches_python_simulator_dense(*, zero_for_one: bool):
     """Rust simulate_swap_with_fetch == Python _v4_swap (dense, no miss, no hooks).
@@ -161,6 +253,67 @@ def test_rust_v4_seam_matches_python_simulator_dense(*, zero_for_one: bool):
 # routing reverted; goes RED when V4 mainline routing is re-enabled — that
 # flip is the signal to investigate the Rust V4 sim's multi-tick behavior
 # before re-enabling routing in slice 4).
+
+
+@pytest.mark.parametrize("zero_for_one", [True, False])
+def test_rust_v4_seam_matches_python_simulator_dense_crossing(*, zero_for_one: bool):
+    """Rust == Python on a DENSE crossing swap (overlapping positions, no miss).
+
+    A 2-position overlapping fixture keeps liquidity > 0 past the crossed
+    boundary so the swap does NOT drain into an unseeded word: both the Python
+    simulator and the Rust seam run fully dense (no fetcher miss), making the
+    crossing-swap amount parity comparison valid OFFLINE (no fork). This is the
+    tight loop that isolates whether the Rust V4 sim's crossing-swap math is
+    sound — distinct from the sparse/fetch-merge path exercised by the fork
+    gate `test_cached_calculations`.
+    """
+    py_bot = PyBot()
+    pool = _build_dense_v4_pool_crossing(py_bot, address_tag="c", zero_for_one=zero_for_one)
+
+    # Sized to cross the boundary (-60 for zfo / +60 for ofz) but stop well
+    # short of the outer bound (-1200 / +1200), so the walk stays in a seeded
+    # word and liquidity never drains to 0.
+    amount_in = 400_000_000_000
+    token_in = pool.token0 if zero_for_one else pool.token1
+
+    py_amount_out = pool.calculate_tokens_out_from_tokens_in(
+        token_in=token_in,
+        token_in_quantity=amount_in,
+    )
+    # Build a FRESH identical pool for the Rust call so the mutating fetch seam
+    # (which merges fetched words into BotState on a miss) can't leak one
+    # call's state into the other. A dense pool doesn't miss → no mutation →
+    # both pools stay identical regardless.
+    rust_pool = _build_dense_v4_pool_crossing(
+        py_bot,
+        address_tag="d",
+        zero_for_one=zero_for_one,
+    )
+    rust_outcome = rust_pool._py_pool.simulate_swap_with_fetch(
+        zero_for_one=zero_for_one,
+        amount_in=amount_in,
+        block=0,
+        fetcher=lambda *_: {},
+    )
+    assert rust_outcome is not None, "dense crossing V4 pool must not miss on the Rust path"
+    rust_amount0, rust_amount1, _rsp, _rli, rust_tick = (int(x) for x in rust_outcome)
+    expected = rust_amount1 if zero_for_one else rust_amount0
+    # Sanity: the swap actually crossed the boundary tick.
+    crossed = (rust_tick < -60) if zero_for_one else (rust_tick > 60)
+    assert crossed, (
+        f"V4 zfo={zero_for_one}: amount {amount_in} did not cross the boundary "
+        f"(rust_tick={rust_tick}); bump the amount"
+    )
+    # And did not drain past the outer bound (stays liquid, in a seeded word).
+    in_range = (rust_tick > -1200) if zero_for_one else (rust_tick < 1200)
+    assert in_range, (
+        f"V4 zfo={zero_for_one}: swap drained past the outer bound "
+        f"(rust_tick={rust_tick}); lower the amount"
+    )
+    assert py_amount_out == expected, (
+        f"V4 dense-crossing zfo={zero_for_one}: py={py_amount_out} rust={expected} "
+        f"diff={expected - py_amount_out} (rust_tick={rust_tick})"
+    )
 
 
 def test_sparse_mainline_v4_swap_fetch_merge_matches_dense_oracle():
