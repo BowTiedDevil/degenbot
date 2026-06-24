@@ -150,54 +150,29 @@ def test_rust_v4_seam_matches_python_simulator_dense(*, zero_for_one: bool):
     )
 
 
-@pytest.mark.xfail(
-    reason="Rust V4 sim diverges from Python on crossing swaps (LP-fee / "
-    "liquidity-net walk); V4 mainline routing deferred to slice 4 until the "
-    "Rust V4 sim is corrected. The non-crossing parity gate is GREEN.",
-    strict=True,
-)
-@pytest.mark.parametrize("zero_for_one", [True, False])
-def test_rust_v4_seam_matches_python_simulator_dense_crossing(*, zero_for_one: bool):
-    """Rust == Python on a CROSSING swap (large amount, crosses ±60 boundary).
-
-    A non-crossing swap (the 1_000 case) matches; this case crosses the
-    position's boundary tick, exercising the LP-fee + liquidity-net walk —
-    the regime where the Rust V4 sim's fee accounting must hold. If this
-    diverges, the V4 mainline routing must stay gated on the Python simulator
-    until the Rust sim is corrected (§4.3 oracle discipline).
-    """
-    py_bot = PyBot()
-    pool = _build_dense_v4_pool(py_bot, address_tag="c")
-
-    # Large enough to cross the ±60 boundary (liquidity = 10_000_000_000_000).
-    amount_in = 10_000_000_000_000_000
-    token_in = pool.token0 if zero_for_one else pool.token1
-
-    py_amount_out = pool.calculate_tokens_out_from_tokens_in(
-        token_in=token_in,
-        token_in_quantity=amount_in,
-    )
-    rust_outcome = pool._py_pool.simulate_swap_with_fetch(
-        zero_for_one=zero_for_one,
-        amount_in=amount_in,
-        block=0,
-        fetcher=lambda *_: {},
-    )
-    assert rust_outcome is not None
-    rust_amount0, rust_amount1 = int(rust_outcome[0]), int(rust_outcome[1])
-    expected = rust_amount1 if zero_for_one else rust_amount0
-    assert py_amount_out == expected, (
-        f"V4 crossing zfo={zero_for_one}: py={py_amount_out} rust={expected}"
-    )
+# NOTE: a dense CROSSING-swap parity gate (large amount crossing an
+# initialized tick) is NOT included because an offline 2-tick synthetic pool
+# can't represent a partial multi-tick cross — any swap large enough to cross
+# the position's boundary drains liquidity to 0 and walks into the next
+# (un-seeded) word, raising MissingLiquidityData on the Python side (no
+# fetcher). The Rust fetch-seam marks unknown words known-empty and completes,
+# so the two paths aren't comparable on that fixture. The authoritative V4
+# crossing-swap gate is the fork test `test_cached_calculations` (green with
+# routing reverted; goes RED when V4 mainline routing is re-enabled — that
+# flip is the signal to investigate the Rust V4 sim's multi-tick behavior
+# before re-enabling routing in slice 4).
 
 
-def test_sparse_mainline_v4_swap_routed_to_rust_matches_dense_oracle():
-    """Sparse V4 pool's mainline swap → Rust fetch+retry == dense oracle.
+def test_sparse_mainline_v4_swap_fetch_merge_matches_dense_oracle():
+    """Sparse V4 pool's mainline swap → fetch+merge == dense oracle.
 
     A sparse V4 pool (empty tick_data) misses on the starting word; the
-    return-data fetcher supplies the word's ticks; the Rust loop merges +
-    retries; the result matches a dense pool (same position) computed via the
-    Python simulator — i.e. the routed sparse path is correct end-to-end.
+    return-data fetcher supplies the word's ticks; the Python sparse loop's
+    ``_apply_fetched_tick_word`` merges them and retries; the result matches a
+    dense pool (same position) computed via the Python simulator. (The Rust
+    mainline routing is deferred to slice 4 pending fork-validated crossing-swap
+    parity — see `test_cached_calculations`; the fetch-callback return-data
+    contract + V4 sparse-loop helper stay wired + validated here.)
     """
     py_bot = PyBot()
 
@@ -233,9 +208,9 @@ def test_sparse_mainline_v4_swap_routed_to_rust_matches_dense_oracle():
         token_in_quantity=1_000,
     )
 
-    # The Rust path fetched the starting word (0).
+    # The fetch+merge path fetched the starting word (0).
     assert 0 in fetched_words, "the sparse swap must fetch the missing starting word"
-    assert result == oracle, f"sparse routed result={result} != dense oracle={oracle}"
+    assert result == oracle, f"sparse fetch+merge result={result} != dense oracle={oracle}"
 
 
 if __name__ == "__main__":
