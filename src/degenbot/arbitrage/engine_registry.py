@@ -153,7 +153,7 @@ class EngineRegistry:
         # consumer next, then calls resume() as the single batch-flow gate.
         return backfill_target
 
-    def verify_liquidity_maps(
+    async def verify_liquidity_maps(
         self,
         *,
         block_number: int | None = None,
@@ -194,15 +194,20 @@ class EngineRegistry:
                 "EngineRegistry.start() with verify_state_view set first."
             )
             raise RuntimeError(msg)
-        # Default to the engine's anchored block: engine-state@N vs chain@N is
-        # deterministic. ``pending``/latest would race the pump's lag and false-
-        # fail on high-activity pools (liquidity changed between N and tip).
+        # block_number=None (the default) resolves
+        # to the engine's ``last_processed_block()`` — the latest block whose
+        # events the pump has fully applied — so the verify is deterministic.
+        # Pass an explicit block only to pin a specific checkpoint.
+        #
+        # Async (`await`) because the engine pyo3 method is `future_into_py` —
+        # the sync `runtime.block_on` variant deadlocked the pump (2026-06-24
+        # diagnosis). The asyncio loop driving the consumer also drives this.
         resolved_block = block_number
         if resolved_block is None:
             resolved_block = self.engine.last_processed_block()
         # tick_lens_address is unused by the V3 batch path (it calls
         # pool.ticks() directly); a zero address satisfies the parser.
-        self.engine.verify_liquidity_maps(
+        await self.engine.verify_liquidity_maps(
             rpc_url=self._verify_rpc_url,
             tick_lens_address="0x0000000000000000000000000000000000000000",
             state_view_address=self._verify_state_view,

@@ -59,6 +59,21 @@ const BACKFILL_TIMEOUT_SECS: u64 = 60;
 /// rather than one per individual log.
 const DEBOUNCE_MS: u64 = 50;
 
+/// If no block header arrives within this window, poll `eth_blockNumber`
+/// and backfill the gap — independent of log activity.
+///
+/// The `newHeads` WS subscription can die silently while `logs` keeps
+/// flowing. `stream::select` masks a dead block stream as long as logs
+/// arrive every `< BACKFILL_TIMEOUT_SECS` (the combined-stream-silence
+/// backfill path never fires). Because only headers advance `current_block`,
+/// every result batch would then be stamped with a frozen block while
+/// prices keep updating from the live log applies — looking like the bot is
+/// running but making no block progress. This watchdog independently
+/// detects header staleness (capped `wait_timeout` wakes the loop by the
+/// deadline even under dense log pressure) and runs the same
+/// `handle_timeout_eager` catch-up the no-activity path uses.
+const HEADER_STALENESS_SECS: u64 = 30;
+
 /// Whether a log confirms that a tracked header block is "complete".
 ///
 /// A log confirms the header block only when its `block_number` is known
@@ -119,6 +134,12 @@ pub struct BlockPump {
     provider: Arc<AlloyProvider>,
     /// Shutdown flag — set by `stop()` or by a too-deep reorg (graceful exit)
     shutdown: Arc<AtomicBool>,
+    /// If no header arrives within this window, poll `eth_blockNumber` and
+    /// backfill regardless of log activity (dead-`newHeads` recovery — see
+    /// `HEADER_STALENESS_SECS`). Overridable in tests via
+    /// `set_header_staleness_for_test`.
+    #[allow(dead_code)] // wired in a follow-up commit (header-staleness watchdog)
+    header_staleness: Duration,
 }
 
 /// State held between `subscribe()` and `resume()` calls.
@@ -185,6 +206,7 @@ impl BlockPump {
             reorg_coordinator,
             provider: Arc::new(provider),
             shutdown,
+            header_staleness: Duration::from_secs(HEADER_STALENESS_SECS),
         };
 
         // Observe until we see a "complete" block — both a header and at
@@ -346,6 +368,13 @@ impl BlockPump {
         mut combined: stream::BoxStream<'static, WsEvent>,
         first_observed_block: u64,
     ) {
+        // [DIAG] newHeads-stall investigation: track header arrivals so the
+        // log shows, in production, whether `BlockHeader` events actually stop
+        // arriving (subscription silent) vs. arrive but the arm doesn't fire
+        // (pump not polling / bug). Remove once the freeze root cause is
+        // confirmed and fixed.
+        const DIAG_STATS_INTERVAL: Duration = Duration::from_secs(10);
+
         let relevant_topic_set: HashSet<B256> = RELEVANT_TOPICS.into_iter().collect();
 
         // Read the last block processed by Python backfill.
@@ -376,6 +405,12 @@ impl BlockPump {
         // one per individual log.
         let mut debounce = tokio::time::Instant::now() + Duration::from_millis(DEBOUNCE_MS);
         let mut debounce_active = false;
+
+        // [DIAG]
+        let mut diag_header_count: u64 = 0;
+        let mut diag_log_count: u64 = 0;
+        let mut diag_last_header_at = tokio::time::Instant::now();
+        let mut diag_last_stats = tokio::time::Instant::now();
 
         loop {
             // Solve any dirty paths accumulated from the previous iteration's
@@ -448,6 +483,24 @@ impl BlockPump {
                     gas_used,
                     gas_limit,
                 })) => {
+                    // [DIAG]
+                    diag_header_count += 1;
+                    let diag_gap = if diag_header_count == 1 {
+                        0.0
+                    } else {
+                        diag_last_header_at.elapsed().as_secs_f64()
+                    };
+                    log::info!(
+                        "BlockPump: [DIAG] HEADER block={number} (#{diag_header_count}) gap={diag_gap:.1}s"
+                    );
+                    if diag_header_count > 1
+                        && diag_last_header_at.elapsed() > Duration::from_secs(20)
+                    {
+                        log::warn!(
+                            "BlockPump: [DIAG] *** HEADER STALL: headers were silent {diag_gap:.1}s before block {number}"
+                        );
+                    }
+                    diag_last_header_at = tokio::time::Instant::now();
                     // Snapshot the just-finished block's metadata BEFORE
                     // overwriting `current_metadata` with the incoming
                     // header's. `current_metadata` at this point holds the
@@ -491,6 +544,14 @@ impl BlockPump {
                             }
                             current_block = number;
                             last_solved_block = number;
+                            // Forward the newHeads tick to the block-notification
+                            // channel (epic 6W35AI): Python's block clock tracks
+                            // `newHeads`, not `ResultBatch::solve_block`. Fires
+                            // after `current_block`/`current_metadata` are
+                            // advanced, in lockstep with the block the solver
+                            // solved against. Skipped on the backfill-only path
+                            // below where `number <= current_block`.
+                            self.sink.notify_block(current_block, &current_metadata);
                         }
                         first_header = false;
                     } else if number > current_block {
@@ -520,6 +581,10 @@ impl BlockPump {
 
                         current_block = number;
                         last_solved_block = number;
+
+                        // Forward the newHeads tick (epic 6W35AI) — see the
+                        // first-header branch for rationale.
+                        self.sink.notify_block(current_block, &current_metadata);
 
                         // For empty blocks (no logs arrived), send an
                         // empty batch so Python sees the block boundary.
@@ -616,6 +681,19 @@ impl BlockPump {
                     // Start or reset the debounce timer
                     debounce = tokio::time::Instant::now() + Duration::from_millis(DEBOUNCE_MS);
                     debounce_active = true;
+
+                    // [DIAG] count logs + emit periodic stats so we can see,
+                    // during a freeze, that the pump IS polling logs while
+                    // headers are gone. This is the liveness signal the loop
+                    // otherwise lacks.
+                    diag_log_count += 1;
+                    if diag_last_stats.elapsed() >= DIAG_STATS_INTERVAL {
+                        let diag_since_header = diag_last_header_at.elapsed().as_secs();
+                        log::info!(
+                            "BlockPump: [DIAG] stats headers={diag_header_count} logs={diag_log_count} last_header_ago={diag_since_header}s current_block={current_block}"
+                        );
+                        diag_last_stats = tokio::time::Instant::now();
+                    }
                 }
 
                 Ok(None) => {
@@ -768,6 +846,7 @@ impl BlockPump {
             reorg_coordinator,
             provider,
             shutdown,
+            header_staleness: Duration::from_secs(HEADER_STALENESS_SECS),
         }
     }
 
@@ -877,6 +956,7 @@ mod tests {
         finalized: Mutex<Vec<(u64, BlockMetadata)>>,
         sent: Mutex<Vec<BlockMetadata>>,
         drained: Mutex<Vec<(u64, BlockMetadata)>>,
+        notified: Mutex<Vec<(u64, BlockMetadata)>>,
         last_processed: AtomicU64,
     }
 
@@ -886,6 +966,7 @@ mod tests {
                 finalized: Mutex::new(Vec::new()),
                 sent: Mutex::new(Vec::new()),
                 drained: Mutex::new(Vec::new()),
+                notified: Mutex::new(Vec::new()),
                 last_processed: AtomicU64::new(last_processed.unwrap_or(0)),
             }
         }
@@ -918,6 +999,11 @@ mod tests {
         fn last_processed_block(&self) -> Option<u64> {
             let v = self.last_processed.load(Ordering::Relaxed);
             (v != 0).then_some(v)
+        }
+        fn notify_block(&self, block: u64, metadata: &BlockMetadata) {
+            // Record the forwarded newHeads tick so task 22Y7AB can assert the
+            // pump emits one BlockNotification per accepted header.
+            self.notified.lock().unwrap().push((block, *metadata));
         }
     }
 
@@ -1023,6 +1109,58 @@ mod tests {
             *metadata, meta_102,
             "block 101's batch must NOT carry 102's metadata"
         );
+    }
+
+    /// RED→GREEN tracer (epic 6W35AI, 22Y7AB): the pump forwards a
+    /// `BlockNotification` for every `newHeads` header it accepts (one per
+    /// header, carrying the header's number + metadata), via
+    /// `DrainSink::notify_block` — independent of solve/debounce state. This
+    /// is the seam that lets Python derive its block clock from `newHeads`
+    /// instead of the stale `ResultBatch::solve_block`.
+    #[tokio::test]
+    async fn notify_block_fires_once_per_accepted_header() {
+        let (mut pump, sink) = pump_for_test(Some(100));
+        let meta_101 = BlockMetadata {
+            timestamp: 1_700_000_100,
+            base_fee_per_gas: Some(1_000_000_001),
+            gas_used: 10_000_001,
+            gas_limit: 30_000_001,
+        };
+        let meta_102 = BlockMetadata {
+            timestamp: 1_700_000_200,
+            base_fee_per_gas: Some(2_000_000_002),
+            gas_used: 20_000_002,
+            gas_limit: 30_000_002,
+        };
+        let events: Vec<WsEvent> = vec![
+            WsEvent::BlockHeader {
+                number: 101,
+                timestamp: meta_101.timestamp,
+                base_fee_per_gas: meta_101.base_fee_per_gas,
+                gas_used: meta_101.gas_used,
+                gas_limit: meta_101.gas_limit,
+            },
+            WsEvent::BlockHeader {
+                number: 102,
+                timestamp: meta_102.timestamp,
+                base_fee_per_gas: meta_102.base_fee_per_gas,
+                gas_used: meta_102.gas_used,
+                gas_limit: meta_102.gas_limit,
+            },
+        ];
+        let combined = stream::iter(events).boxed();
+        pump.run_test_loop(combined, 100).await;
+
+        let notified = sink.notified.lock().unwrap().clone();
+        assert_eq!(
+            notified.len(),
+            2,
+            "exactly one notify_block per accepted header"
+        );
+        assert_eq!(notified[0].0, 101);
+        assert_eq!(notified[0].1, meta_101);
+        assert_eq!(notified[1].0, 102);
+        assert_eq!(notified[1].1, meta_102);
     }
 
     /// 5DM6JJ contract: the cold-start branch in `run_with_stream` must honor

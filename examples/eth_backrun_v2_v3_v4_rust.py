@@ -47,7 +47,6 @@ import pathlib
 import time
 import traceback
 from collections import deque
-from collections.abc import Sequence
 from typing import Any
 
 import dotenv
@@ -69,11 +68,9 @@ from degenbot import Bot, LiquidityPool, UniswapV3Pool, get_checksum_address
 from degenbot.arbitrage import (
     EngineRegistry,
     HopInfo,
-    PathInfo,
     V2HopInfo,
     V3HopInfo,
     V4HopInfo,
-    build_hops_from_pools,
 )
 from degenbot.arbitrage.encoding import fits_int128
 from degenbot.arbitrage.verification_retry import (
@@ -82,7 +79,7 @@ from degenbot.arbitrage.verification_retry import (
 )
 from degenbot.calculations.evm_math import next_base_fee
 from degenbot.config import DatabaseSettings, DegenbotConfig
-from degenbot.constants import WRAPPED_NATIVE_TOKENS, ZERO_ADDRESS
+from degenbot.constants import WRAPPED_NATIVE_TOKENS
 from degenbot.database.models.pools import (  # noqa:F401
     PancakeswapV2PoolTable,
     PancakeswapV3PoolTable,
@@ -98,7 +95,6 @@ from degenbot.database.models.pools import (  # noqa:F401
 from degenbot.degenbot_rs import (  # type: ignore[attr-defined]
     DynamicFeePoolRejectedError,
     HookedPoolRejectedError,
-    UniswapArbEngine,
     VerificationMismatchError,
     VerificationRpcError,
 )
@@ -106,10 +102,6 @@ from degenbot.logging import logger as bot_logger
 from degenbot.pathfinding import find_paths_async
 from degenbot.provider.sync_adapter import ProviderAdapter
 from degenbot.uniswap.deployments import EthereumMainnetUniswapV4
-from degenbot.uniswap.snapshot_binary import (
-    stream_v3_snapshot_to_engine,
-    stream_v4_snapshot_to_engine,
-)
 from degenbot.uniswap.trackers import UniswapV3PoolTracker
 from degenbot.uniswap.v3_snapshot import DatabaseSnapshot as V3DatabaseSnapshot
 from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
@@ -318,7 +310,7 @@ INJECTED_EXECUTOR_ADDRESS = get_checksum_address(
     os.environ.get(
         "INJECTED_EXECUTOR_ADDRESS",
         "0x0D6d4c3cF3BD3b769De1821f2BE0d7d99913E4F1",
-    )
+    ),
 )
 
 UNISWAP_V3_MAINNET_FACTORY = "0x33128a8fC17869897dcE68Ed026d694621f6FDfD"
@@ -409,7 +401,7 @@ def _load_executor_runtime_bytecode() -> str:
     _runtime_bytecode_cache = code
     bot_logger.info(
         f"[inject] Loaded executor runtime bytecode: "
-        f"{len(code) // 2 - 1} bytes from {bytecode_path}"
+        f"{len(code) // 2 - 1} bytes from {bytecode_path}",
     )
     return _runtime_bytecode_cache
 
@@ -543,7 +535,7 @@ class PathSuppression:
             self._total_suppressed += 1
             bot_logger.info(
                 f"[suppress] path={path_id} SUPPRESSED after {count} consecutive failures "
-                f"(total suppressed: {self._total_suppressed})"
+                f"(total suppressed: {self._total_suppressed})",
             )
 
     def is_suppressed(self, path_id: int, current_block: int) -> bool:
@@ -593,7 +585,7 @@ class Dispatcher:
     active_tasks: set[asyncio.Task] = dataclasses.field(default_factory=set)
     current_block_ref: list[int] = dataclasses.field(default_factory=lambda: [0])
     block_times: deque[tuple[int, int]] = dataclasses.field(
-        default_factory=lambda: deque(maxlen=60)
+        default_factory=lambda: deque(maxlen=60),
     )
     block_priority_fees: dict[int, dict[int, int]] = dataclasses.field(default_factory=dict)
     path_suppression: PathSuppression = dataclasses.field(default_factory=PathSuppression)
@@ -945,10 +937,12 @@ class BackrunSession:
         # Emits [verify] V3 + V4 liquidity maps OK — the line the permutation
         # analyzer keys on for `verify_basis` ("verified"). With the
         # shared-BotState design the register-gated verify never fires, so this
-        # batch check is the one that actually runs. block_number=None verifies
-        # against latest; a pass transitively confirms the snapshot seed (see
-        # EngineRegistry.verify_liquidity_maps). Fail-fast on mismatch.
-        self.engine_registry.verify_liquidity_maps()
+        # batch check is the one that actually runs. ``block_number=None`` (the
+        # default) resolves to the engine's ``last_processed_block()`` — engine-
+        # state@N vs chain@N is deterministic; a pass transitively confirms the
+        # snapshot seed (see EngineRegistry.verify_liquidity_maps). Fail-fast
+        # on mismatch.
+        await self.engine_registry.verify_liquidity_maps()
 
         # 4. Trim redundant Python state — Rust engine owns canonical pool state.
         self.bot.release_python_state()
@@ -964,7 +958,7 @@ class BackrunSession:
             f"{self.engine_registry.engine.v3_pool_count()} V3, "
             f"{self.engine_registry.engine.v4_pool_count()} V4 pools retained in "
             f"Rust engine; {self.engine_registry.engine.path_count()} paths registered. "
-            f"Entering main loop."
+            f"Entering main loop.",
         )
 
         # 5. Main loop — runs until the consumer task ends.
@@ -1080,7 +1074,7 @@ async def build_paths(
     pool_types = _pool_types_from_filter(PATH_PERMUTATION_FILTER)
     if pool_type_per_depth is not None:
         bot_logger.info(
-            f"[build_paths] Permutation filter active: {PATH_PERMUTATION_FILTER} → depths={pool_type_per_depth}"
+            f"[build_paths] Permutation filter active: {PATH_PERMUTATION_FILTER} → depths={pool_type_per_depth}",
         )
     bot_logger.info(f"[build_paths] Pool types: {[t.__name__ for t in pool_types]}")
     async for path_steps in find_paths_async(  # noqa:PLR1702
@@ -1250,14 +1244,14 @@ async def build_paths(
             engine_reject_count += 1
             other_exc_count += 1
             bot_logger.info(
-                f"[build_paths] Engine registration failed ({type(exc).__name__}): {exc}"
+                f"[build_paths] Engine registration failed ({type(exc).__name__}): {exc}",
             )
             continue
         except Exception as exc:
             engine_reject_count += 1
             other_exc_count += 1
             bot_logger.info(
-                f"[build_paths] Engine registration failed ({type(exc).__name__}): {exc}"
+                f"[build_paths] Engine registration failed ({type(exc).__name__}): {exc}",
             )
             continue
 
@@ -1287,7 +1281,7 @@ async def build_paths(
             continue
         registered_path_sigs.add(path_sig)
 
-        try:  # noqa:PLW0717
+        try:
             engine_registry.register_path(list(zip(pools, zfo_list, strict=True)))
         except Exception as exc:
             register_fail_count += 1
@@ -1300,7 +1294,7 @@ async def build_paths(
             bot_logger.info(
                 f"[build_paths] Progress: {path_count} paths registered, "
                 f"{skip_count} skipped, {token_filter_count} token-filtered, "
-                f"{engine_reject_count} engine-rejected, {dup_count} duplicates"
+                f"{engine_reject_count} engine-rejected, {dup_count} duplicates",
             )
 
     bot_logger.info(
@@ -1313,7 +1307,7 @@ async def build_paths(
         f"{v4_dynamic_fee_rejected} V4 dynamic-fee-rejected, "
         f"{dup_count} duplicates, "
         f"{direction_fail_count} direction-failed, "
-        f"{register_fail_count} register-failed"
+        f"{register_fail_count} register-failed",
     )
     bot_logger.info(
         f"[build_paths] Summary: {path_count} paths in "
@@ -1324,14 +1318,17 @@ async def build_paths(
         f"{v4_hook_rejected} V4 hook-rejected, "
         f"{v4_dynamic_fee_rejected} V4 dynamic-fee-rejected, "
         f"{other_exc_count} other-Exception, "
-        f"{engine_registry.engine.path_count()} engine paths"
+        f"{engine_registry.engine.path_count()} engine paths",
     )
 
 
 def get_snapshots(
     bot: Bot,
 ) -> tuple[
-    UniswapV3LiquiditySnapshot | None, UniswapV4LiquiditySnapshot | None, int | None, int | None
+    UniswapV3LiquiditySnapshot | None,
+    UniswapV4LiquiditySnapshot | None,
+    int | None,
+    int | None,
 ]:
     """Load V3 and V4 liquidity snapshots from the database.
 
@@ -1392,7 +1389,8 @@ def _compute_priority_fee(
     if gas_used <= 0:
         return 1
     target_priority_fee = max(
-        1, int((gross_profit / TARGET_PROFIT_RATIO - gas_used * base_fee_next) / gas_used)
+        1,
+        int((gross_profit / TARGET_PROFIT_RATIO - gas_used * base_fee_next) / gas_used),
     )
 
     # Age decay: older results are worth less
@@ -1445,7 +1443,7 @@ async def monitor_pending_transaction(
             if blocks_waited > BLOCKS_BEFORE_NONCE_EXPIRES:
                 dispatcher.release_tx(tx)
                 bot_logger.info(
-                    f"Voided expired nonce {tx.nonce} ({blocks_waited} blocks without inclusion)"
+                    f"Voided expired nonce {tx.nonce} ({blocks_waited} blocks without inclusion)",
                 )
                 return
         else:
@@ -1676,7 +1674,7 @@ async def dispatch_profitable_results(
         if len(hop_outputs) != len(path_info.hops):
             bot_logger.debug(
                 f"[dispatch] skip path={path_id}: hop_outputs length "
-                f"({len(hop_outputs)}) != hops ({len(path_info.hops)})"
+                f"({len(hop_outputs)}) != hops ({len(path_info.hops)})",
             )
             return None
 
@@ -1699,7 +1697,7 @@ async def dispatch_profitable_results(
                     bot_logger.debug(
                         f"[sim-fail] path={path_id} {path_info.path_type}: "
                         f"int128 overflow at V4 hop[{i}] "
-                        f"amount_specified={amount_specified} output={output_amount}"
+                        f"amount_specified={amount_specified} output={output_amount}",
                     )
                     _tally_fail("int128-overflow")
                     return None
@@ -1720,7 +1718,7 @@ async def dispatch_profitable_results(
         pool_addrs = "→".join(f"{_hop_display_addr(h)}(zfo={h.zfo})" for h in path_info.hops)
         bot_logger.debug(
             f"[sim-debug] path={path_id} {path_info.path_type}: "
-            f"{pool_addrs} input={optimal_input} outputs={hop_outputs}"
+            f"{pool_addrs} input={optimal_input} outputs={hop_outputs}",
         )
 
         # Detailed dump for first occurrence of each path type
@@ -1734,7 +1732,7 @@ async def dispatch_profitable_results(
                     f"v4_c0={hop_v4.currency0_address} v4_c1={hop_v4.currency1_address} "
                     f"v4_zfo={hop_v4.zfo} v2_zfo={hop_v2.zfo} v2_pool={hop_v2.pool_address} "
                     f"input={optimal_input} fwd={hop_outputs[0]} out={hop_outputs[1]} "
-                    f"cmd_len={len(cmd_bytes)}"
+                    f"cmd_len={len(cmd_bytes)}",
                 )
             elif dump_type == "V2-V4":
                 hop_v2, hop_v4 = path_info.hops[0], path_info.hops[1]
@@ -1744,7 +1742,7 @@ async def dispatch_profitable_results(
                     f"v4_c0={hop_v4.currency0_address} v4_c1={hop_v4.currency1_address} "
                     f"v4_zfo={hop_v4.zfo} v2_zfo={hop_v2.zfo} v2_pool={hop_v2.pool_address} "
                     f"v4_native_in={v4_in_native} input={optimal_input} fwd={hop_outputs[0]} out={hop_outputs[1]} "
-                    f"cmd_len={len(cmd_bytes)}"
+                    f"cmd_len={len(cmd_bytes)}",
                 )
             elif dump_type == "V4-V4":
                 hop_a, hop_b = path_info.hops[0], path_info.hops[1]
@@ -1755,7 +1753,7 @@ async def dispatch_profitable_results(
                     f"b_c0={hop_b.currency0_address} b_c1={hop_b.currency1_address} "
                     f"b_zfo={hop_b.zfo} b_fee={hop_b.fee} "
                     f"input={optimal_input} fwd={hop_outputs[0]} out={hop_outputs[1]} "
-                    f"cmd_len={len(cmd_bytes)}"
+                    f"cmd_len={len(cmd_bytes)}",
                 )
             else:
                 # Generic dump for all other path types (V3-V3-V3 etc.)
@@ -1777,7 +1775,7 @@ async def dispatch_profitable_results(
                     f"[sim-dump] {dump_type} path={path_id} "
                     f"hops=[{' → '.join(_hop_parts)}] "
                     f"input={optimal_input} outputs=[{_amounts_str}] "
-                    f"cmd_len={len(cmd_bytes)}"
+                    f"cmd_len={len(cmd_bytes)}",
                 )
         # config=0 (check_mode=0, no bribe): skip on-chain profit check,
         # operator verifies profitability off-chain via the pre/post balance reads.
@@ -1789,7 +1787,7 @@ async def dispatch_profitable_results(
             args=[cmd_bytes, config],
         )
         bot_logger.info(
-            f"[sim-dump] {dump_type} full_calldata_len={len(calldata)} cmd_stream_len={len(cmd_bytes)}"
+            f"[sim-dump] {dump_type} full_calldata_len={len(calldata)} cmd_stream_len={len(cmd_bytes)}",
         )
         tx_params = TxParams(
             to=Web3.to_checksum_address(executor_address),
@@ -1839,14 +1837,14 @@ async def dispatch_profitable_results(
                                 eth_balance_call,  # [5] ETH balance after
                                 erc6909_balance_call,  # [6] ERC-6909 WETH balance after
                             ],
-                        )
+                        ),
                     ],
                 ),
                 block_identifier="pending",
             )
         except Web3Exception as e:
             _sim_log(
-                f"[sim-fail] path={path_id} {path_info.path_type}: simulation RPC failed ({e})"
+                f"[sim-fail] path={path_id} {path_info.path_type}: simulation RPC failed ({e})",
             )
             _tally_fail("rpc-failed")
             return None
@@ -1908,7 +1906,7 @@ async def dispatch_profitable_results(
                 # Log full call result for V4 empty reverts
                 if path_info.path_type in {"V4-V4", "V2-V4", "V4-V2"} and not revert_hex:
                     bot_logger.debug(
-                        f"[sim-raw] path={path_id} {path_info.path_type}: call[{call_idx}] DUMP={c}"
+                        f"[sim-raw] path={path_id} {path_info.path_type}: call[{call_idx}] DUMP={c}",
                     )
                 # Decode common revert patterns
                 revert_reason = ""
@@ -1951,7 +1949,7 @@ async def dispatch_profitable_results(
                             str_start = 8 + 64 + 64  # hex offset to string data
                             str_len_hex = str_len_bytes * 2  # byte length → hex chars
                             msg_bytes = bytes.fromhex(
-                                revert_hex[str_start : str_start + str_len_hex]
+                                revert_hex[str_start : str_start + str_len_hex],
                             )
                             revert_reason = f" {msg_bytes.decode('utf-8', errors='replace')}"
                         except Exception:
@@ -2017,7 +2015,7 @@ async def dispatch_profitable_results(
                             except (ValueError, IndexError):
                                 pass
                     elif revert_hex.startswith(
-                        "00000000000000000000000000000000000000000000000000000000"
+                        "00000000000000000000000000000000000000000000000000000000",
                     ):
                         # Numeric revert
                         revert_reason = f" num=0x{revert_hex[24:]}"
@@ -2030,7 +2028,7 @@ async def dispatch_profitable_results(
                     f"call[{call_idx}] failed (gasUsed={c.get('gasUsed', 0)}) "
                     f"revert=0x{revert_hex}{revert_reason} "
                     f"block={current_block} age={current_block - solve_block} "
-                    f"tokens=[{_hop_token_summary(path_info.hops)}]"
+                    f"tokens=[{_hop_token_summary(path_info.hops)}]",
                 )
 
                 # ── Diagnostic: on-chain state for sim-fail paths ──
@@ -2062,7 +2060,7 @@ async def dispatch_profitable_results(
                                         f"pool={pool_addr} "
                                         f"reserve0={r0} reserve1={r1} "
                                         f"token0={hop.token0_address} token1={hop.token1_address} "
-                                        f"zfo={hop.zfo} amount={hop_amount}"
+                                        f"zfo={hop.zfo} amount={hop_amount}",
                                     )
                             except Exception:
                                 pass
@@ -2081,7 +2079,7 @@ async def dispatch_profitable_results(
                                 ):
                                     bot_logger.info(
                                         f"[v3-state] path={path_id} hop[{hi}] "
-                                        f"pool={pool_addr} NO CODE at block {current_block}"
+                                        f"pool={pool_addr} NO CODE at block {current_block}",
                                     )
                                     continue
                                 slot0_data = await async_w3.eth.call(
@@ -2101,7 +2099,7 @@ async def dispatch_profitable_results(
                                 if len(slot0_data) < 64:
                                     bot_logger.info(
                                         f"[v3-state] path={path_id} hop[{hi}] "
-                                        f"pool={pool_addr} slot0 returned {len(slot0_data)} bytes (expected 96+)"
+                                        f"pool={pool_addr} slot0 returned {len(slot0_data)} bytes (expected 96+)",
                                     )
                                     continue
                                 sqrt_price = int.from_bytes(slot0_data[0:32], "big")
@@ -2119,7 +2117,7 @@ async def dispatch_profitable_results(
                                     f"sqrtPriceX96={sqrt_price} tick={tick} "
                                     f"liquidity={liq} fee={hop.fee} "
                                     f"token0={hop.token0_address} token1={hop.token1_address} "
-                                    f"zfo={hop.zfo} amount={hop_amount}"
+                                    f"zfo={hop.zfo} amount={hop_amount}",
                                 )
                             except Exception:
                                 pass
@@ -2133,7 +2131,7 @@ async def dispatch_profitable_results(
                                 f"c0={hop.currency0_address} c1={hop.currency1_address} "
                                 f"fee={hop.fee} tick_spacing={hop.tick_spacing} "
                                 f"hook={hop.hook_address} "
-                                f"zfo={hop.zfo} amount={hop_amount}"
+                                f"zfo={hop.zfo} amount={hop_amount}",
                             )
 
                     _traced_reverts_local.add(_trace_key)
@@ -2173,7 +2171,7 @@ async def dispatch_profitable_results(
                     f"[sim-revert-data] path={path_id} {path_info.path_type} "
                     f"revert=0x{revert_hex[:16]}{'...' if len(revert_hex) > 16 else ''}{revert_reason} "
                     f"block={current_block} age={current_block - solve_block} "
-                    f"calldata={_cd}"
+                    f"calldata={_cd}",
                 )
                 _tally_fail(_classify_revert(revert_data))
                 return None
@@ -2197,7 +2195,7 @@ async def dispatch_profitable_results(
                 f"[sim-fail] path={path_id} {path_info.path_type}: no profit (gross={gross_profit}) "
                 f"weth_before={weth_before} weth_after={weth_after} "
                 f"eth_before={eth_before} eth_after={eth_after} "
-                f"erc6909_before={erc6909_before} erc6909_after={erc6909_after}"
+                f"erc6909_before={erc6909_before} erc6909_after={erc6909_after}",
             )
             _tally_fail("no-profit")
             return None
@@ -2235,7 +2233,7 @@ async def dispatch_profitable_results(
     suppressed_count = pre_filter_count - len(results)
     if suppressed_count > 0:
         bot_logger.info(
-            f"[dispatch] {suppressed_count}/{pre_filter_count} results filtered by suppression"
+            f"[dispatch] {suppressed_count}/{pre_filter_count} results filtered by suppression",
         )
 
     candidates = results[:MAX_SIMULATE_CONCURRENT]
@@ -2247,7 +2245,7 @@ async def dispatch_profitable_results(
         cand_types[pt] = cand_types.get(pt, 0) + 1
     cand_types_str = " ".join(f"{k}={v}" for k, v in sorted(cand_types.items()))
     bot_logger.info(
-        f"[dispatch] simulating {len(candidates)}/{len(results)} candidates: {cand_types_str}"
+        f"[dispatch] simulating {len(candidates)}/{len(results)} candidates: {cand_types_str}",
     )
     # Track simulation outcomes for path suppression
     _sim_outcomes: dict[int, bool] = {}  # path_id -> succeeded
@@ -2270,15 +2268,15 @@ async def dispatch_profitable_results(
                 bot_logger.info(
                     f"[sim-exc] simulation exception: {result}\n"
                     + "".join(
-                        traceback.format_exception(type(result), result, result.__traceback__)
-                    )
+                        traceback.format_exception(type(result), result, result.__traceback__),
+                    ),
                 )
             else:
                 bot_logger.debug(
                     f"[sim-fail] simulation exception: {result}\n"
                     + "".join(
-                        traceback.format_exception(type(result), result, result.__traceback__)
-                    )
+                        traceback.format_exception(type(result), result, result.__traceback__),
+                    ),
                 )
             continue
         if result is None:
@@ -2300,7 +2298,7 @@ async def dispatch_profitable_results(
         f"{len(gas_unprofitable)} below threshold), "
         f"{sim_fail_count} failed, {exception_count} exceptions"
         f"{f' — best net={best_net // 10**9}gwei' if gas_profitable else ''}"
-        f"{f' — by reason: {_breakdown}' if _breakdown else ''}"
+        f"{f' — by reason: {_breakdown}' if _breakdown else ''}",
     )
 
     # ── Record simulation outcomes for path suppression ──────────
@@ -2310,7 +2308,7 @@ async def dispatch_profitable_results(
     failed_count = len(candidates) - len(succeeded_path_ids)
     if failed_count > 0:
         bot_logger.debug(
-            f"[suppress] {failed_count}/{len(candidates)} candidates failed, {dispatcher.path_suppression.total_suppressed} total suppressed"
+            f"[suppress] {failed_count}/{len(candidates)} candidates failed, {dispatcher.path_suppression.total_suppressed} total suppressed",
         )
     for pid, _inp, _pft, _ho, _ci, _sb in candidates:
         if pid in succeeded_path_ids:
@@ -2330,27 +2328,27 @@ async def dispatch_profitable_results(
                 hop_details.append(
                     f"  hop[{i}] V2 addr={h.pool_address} "
                     f"t0={h.token0_address} t1={h.token1_address} "
-                    f"fee={h.fee} zfo={h.zfo}"
+                    f"fee={h.fee} zfo={h.zfo}",
                 )
             elif isinstance(h, V3HopInfo):
                 hop_details.append(
                     f"  hop[{i}] V3 addr={h.pool_address} "
                     f"t0={h.token0_address} t1={h.token1_address} "
-                    f"fee={h.fee} zfo={h.zfo}"
+                    f"fee={h.fee} zfo={h.zfo}",
                 )
             elif isinstance(h, V4HopInfo):
                 hop_details.append(
                     f"  hop[{i}] V4 pm={h.pool_manager_address} "
                     f"pid={h.pool_id_hex} "
                     f"c0={h.currency0_address} c1={h.currency1_address} "
-                    f"fee={h.fee} ts={h.tick_spacing} zfo={h.zfo}"
+                    f"fee={h.fee} ts={h.tick_spacing} zfo={h.zfo}",
                 )
         hops_str = "\n".join(hop_details)
         bot_logger.info(
             f"[profit] path={path_id} {path_info.path_type} "
             f"gross={gross_profit / 1e18:.6f}ETH ({gross_profit // 10**9}gwei) "
             f"net={net_profit / 1e18:.6f}ETH ({net_profit // 10**9}gwei) "
-            f"gas={gas_used}\n{hops_str}"
+            f"gas={gas_used}\n{hops_str}",
         )
 
     # Log gas-unprofitable but onchain-valid results at debug level
@@ -2361,7 +2359,7 @@ async def dispatch_profitable_results(
             f"net={net_profit / 1e18:.6f}ETH "
             f"gas={gas_used} "
             f"gross_gwei={gross_profit // 10**9}gwei "
-            f"net_gwei={net_profit // 10**9}gwei"
+            f"net_gwei={net_profit // 10**9}gwei",
         )
 
     # ── Submit gas-profitable with mutual exclusivity (Slice 4) ────
@@ -2390,7 +2388,7 @@ async def dispatch_profitable_results(
             f"gross={gross_profit // 10**9}gwei "
             f"net={net_profit // 10**9}gwei "
             f"gas={gas_used} "
-            f"prio={priority_fee // 10**9}gwei"
+            f"prio={priority_fee // 10**9}gwei",
         )
 
         if dry_run:
@@ -2401,7 +2399,7 @@ async def dispatch_profitable_results(
         # (the injected contract doesn't exist on-chain)
         if INJECT_EXECUTOR_CODE:
             bot_logger.warning(
-                f"[dispatch] path={path_id}: skipping submission — INJECT_EXECUTOR_CODE is active"
+                f"[dispatch] path={path_id}: skipping submission — INJECT_EXECUTOR_CODE is active",
             )
             committed_pools.update(path_pools)
             continue
@@ -2446,7 +2444,7 @@ async def dispatch_profitable_results(
                 ),
                 async_w3=async_w3,
                 dispatcher=dispatcher,
-            )
+            ),
         )
         dispatcher.track_task(task)
 
@@ -2459,113 +2457,214 @@ async def consume_result_batches(
     operator_private_key: str,
     dispatcher: Dispatcher,
     dry_run: bool,
+    *,
+    block_stream: "asyncio.AsyncIterator[dict[str, int]] | None" = None,
+    result_iter: "asyncio.AsyncIterator[dict[str, object]] | None" = None,
 ) -> None:
-    """Consume result batches from the Rust engine and dispatch profitable ones.
+    """Consume the block stream (clock) + result batches (dispatch) in parallel.
 
-    Designed to run as a long-lived asyncio task — started before build_paths
-    so eagerly-solved paths are dispatched during path loading (rolling start),
-    then continues as the permanent main loop after build_paths completes.
+    Epic 6W35AI: the block clock comes from the forwarded ``newHeads`` stream
+    (``engine.block_stream()``), NOT from ``ResultBatch.solve_block``. The
+    result batch's ``solve_block`` lagged by the send debounce + only advanced
+    when a batch was actually sent, so the bot's ``[block: N]`` froze behind
+    the pump's ``current_block``. The block stream ticks once per accepted
+    ``WsEvent::BlockHeader`` — the authoritative clock.
+
+    Two async streams are awaited concurrently via ``asyncio.wait``:
+      * block stream  → ``dispatcher.advance_block``, ``record_block_time``,
+        ``fee_history``, the ``[block:]`` log, and ``base_fee_next``.
+      * result batch  → ``dispatch_profitable_results`` keyed off
+        ``dispatcher.current_block`` (the block clock), with the per-result
+        solve_block recorded for age/staleness.
+
+    Both streams are injectable for testing; production pulls them from the
+    engine.
     """
-    bot_logger.info("[consumer] Starting — awaiting result batches from Rust pump")
+    bot_logger.info("[consumer] Starting — block stream + result batches from Rust pump")
 
-    async for batch in engine_registry.engine:
-        block_number = batch["solve_block"]
-        block_timestamp = batch["timestamp"]
-        base_fee = batch.get("base_fee_per_gas") or 0
-        gas_used = batch["gas_used"]
-        gas_limit = batch["gas_limit"]
+    if block_stream is None:
+        block_stream = engine_registry.engine.block_stream()
+    if result_iter is None:
+        result_iter = engine_registry.engine.__aiter__()
 
-        base_fee_next = next_base_fee(
-            parent_base_fee=base_fee,
-            parent_gas_used=gas_used,
-            parent_gas_limit=gas_limit,
+    # Prime both streams. Each completed future is re-primed unless its stream
+    # ended (StopAsyncIteration); the loop exits when both are exhausted.
+    block_fut: asyncio.Task[dict[str, int]] | None = asyncio.ensure_future(
+        block_stream.__anext__()
+    )
+    result_fut: asyncio.Task[dict[str, object]] | None = asyncio.ensure_future(
+        result_iter.__anext__()
+    )
+
+    while block_fut is not None or result_fut is not None:
+        pending = {f for f in (block_fut, result_fut) if f is not None}
+        done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+
+        for fut in done:
+            if fut is block_fut:
+                block_fut = _reprime(block_stream, fut, "block stream")
+                await _apply_block_if_ready(fut, dispatcher, async_w3)
+            elif fut is result_fut:
+                result_fut = _reprime(result_iter, fut, "result stream")
+                await _apply_result_if_ready(
+                    fut, dispatcher, engine_registry, async_w3,
+                    executor_address, operator_address,
+                    operator_private_key, dry_run,
+                )
+
+
+def _reprime(
+    stream: object,
+    fut: asyncio.Task[object],
+    label: str,
+) -> asyncio.Task[object] | None:
+    """If `fut`'s stream ended, return None; else schedule the next pull."""
+    try:
+        fut.result()
+    except StopAsyncIteration:
+        bot_logger.info("[consumer] %s ended", label)
+        return None
+    except BaseException:  # noqa: BLE001 — surfaced via fut.result() in caller
+        return None
+    return asyncio.ensure_future(stream.__anext__())  # type: ignore[attr-defined]
+
+
+async def _apply_block_if_ready(
+    fut: asyncio.Task[dict[str, int]],
+    dispatcher: Dispatcher,
+    async_w3: AsyncWeb3,
+) -> None:
+    """Drive the block clock from a forwarded ``newHeads`` tick if fut resolved.
+
+    Authoritative clock source (epic 6W35AI): ``advance_block``,
+    ``record_block_time``, ``fee_history``, and the ``[block:]`` log all key
+    off the block-stream number — never ``ResultBatch.solve_block``.
+    """
+    if fut.cancelled() or fut.exception() is not None:
+        return
+    try:
+        block = fut.result()
+    except StopAsyncIteration:
+        return
+
+    block_number = int(block["number"])
+    block_timestamp = int(block["timestamp"])
+    base_fee = int(block.get("base_fee_per_gas") or 0)
+    gas_used = int(block["gas_used"])
+    gas_limit = int(block["gas_limit"])
+
+    base_fee_next = next_base_fee(
+        parent_base_fee=base_fee,
+        parent_gas_used=gas_used,
+        parent_gas_limit=gas_limit,
+    )
+
+    try:
+        fee_history = await async_w3.eth.fee_history(
+            block_count=1,
+            newest_block=block_number,
+            reward_percentiles=[float(p) for p in FEE_PERCENTILES],
         )
-        operator_nonce = await async_w3.eth.get_transaction_count(operator_address)
-
-        try:
-            fee_history = await async_w3.eth.fee_history(
-                block_count=1,
-                newest_block=block_number,
-                reward_percentiles=[float(p) for p in FEE_PERCENTILES],
+        reward = fee_history.get("reward", [[]])
+        if reward and reward[-1]:
+            dispatcher.record_priority_fees(
+                block_number,
+                dict(zip(FEE_PERCENTILES, reward[-1], strict=True)),
             )
-            reward = fee_history.get("reward", [[]])
-            if reward and reward[-1]:
-                dispatcher.record_priority_fees(
-                    block_number,
-                    dict(
-                        zip(
-                            FEE_PERCENTILES,
-                            reward[-1],
-                            strict=True,
-                        )
-                    ),
-                )
-        except Web3Exception:
-            pass
+    except Web3Exception:
+        pass
 
-        dispatcher.record_block_time(block_number, block_timestamp)
-        if len(dispatcher.block_times) >= 2:
-            oldest_bn, _oldest_ts = dispatcher.block_times[0]
-            if block_number != oldest_bn:
-                latency = time.time() - block_timestamp
-                bot_logger.info(
-                    f"[{block_number}][+{latency:.1f}s]"
-                    f"[{base_fee / 10**9:.5f}/{base_fee_next / 10**9:.5f}]"
-                )
-
-        dispatcher.advance_block(block_number)
-
-        # Build results list from fresh + updated entries in the batch
-        results: list[tuple[int, int, int, tuple[int, ...], tuple[int, ...], int]] = []
-        for item in batch["fresh"]:
-            path_id, opt_input, profit, hop_outs, consumed_ins = item
-            results.append((
-                int(path_id),
-                int(opt_input),
-                int(profit),
-                tuple(int(h) for h in hop_outs),
-                tuple(int(c) for c in consumed_ins),
-                block_number,
-            ))
-        for item in batch["updated"]:
-            path_id, opt_input, profit, hop_outs, consumed_ins = item
-            results.append((
-                int(path_id),
-                int(opt_input),
-                int(profit),
-                tuple(int(h) for h in hop_outs),
-                tuple(int(c) for c in consumed_ins),
-                block_number,
-            ))
-
-        # Expired: below threshold, still registered (may reappear)
-        # for path_id in batch["expired"]:
-        #     pass  # No action needed — suppression tracking persists
-
-        # Removed: de-registered, permanently gone
-        for path_id in batch["removed"]:
-            dispatcher.path_suppression.discard(int(path_id))
-
-        if results:
-            await dispatch_profitable_results(
-                results=results,
-                engine_registry=engine_registry,
-                async_w3=async_w3,
-                executor_address=executor_address,
-                operator_address=operator_address,
-                operator_private_key=operator_private_key,
-                base_fee_next=base_fee_next,
-                current_block=block_number,
-                operator_nonce=operator_nonce,
-                dispatcher=dispatcher,
-                dry_run=dry_run,
+    dispatcher.record_block_time(block_number, block_timestamp)
+    if len(dispatcher.block_times) >= 2:
+        oldest_bn, _oldest_ts = dispatcher.block_times[0]
+        if block_number != oldest_bn:
+            latency = time.time() - block_timestamp
+            bot_logger.info(
+                f"[block: {block_number}]"
+                f"[latency: {latency:.1f}s]"
+                f"[base fee: {base_fee / 10**9:.5f}, {base_fee_next / 10**9:.5f} next]",
             )
 
+    dispatcher.advance_block(block_number)
+
+
+async def _apply_result_if_ready(
+    fut: asyncio.Task[dict[str, object]],
+    dispatcher: Dispatcher,
+    engine_registry: EngineRegistry,
+    async_w3: AsyncWeb3,
+    executor_address: str,
+    operator_address: str,
+    operator_private_key: str,
+    dry_run: bool,
+) -> None:
+    """Dispatch profitable results from a solver result batch if fut resolved.
+
+    The block clock is read from ``dispatcher.current_block`` (advanced by the
+    block stream), NOT ``batch["solve_block"]`` — the latter is retained only
+    as per-result metadata for age/staleness.
+    """
+    if fut.cancelled() or fut.exception() is not None:
+        return
+    try:
+        batch = fut.result()
+    except StopAsyncIteration:
+        return
+
+    current_block = dispatcher.current_block
+    operator_nonce = await async_w3.eth.get_transaction_count(operator_address)
+    solve_block = int(batch["solve_block"])  # per-result age metadata, not the clock
+
+    results: list[tuple[int, int, int, tuple[int, ...], tuple[int, ...], int]] = []
+    for item in batch["fresh"]:
+        path_id, opt_input, profit, hop_outs, consumed_ins = item
+        results.append((
+            int(path_id),
+            int(opt_input),
+            int(profit),
+            tuple(int(h) for h in hop_outs),
+            tuple(int(c) for c in consumed_ins),
+            solve_block,
+        ))
+    for item in batch["updated"]:
+        path_id, opt_input, profit, hop_outs, consumed_ins = item
+        results.append((
+            int(path_id),
+            int(opt_input),
+            int(profit),
+            tuple(int(h) for h in hop_outs),
+            tuple(int(c) for c in consumed_ins),
+            solve_block,
+        ))
+
+    for path_id in batch["removed"]:
+        dispatcher.path_suppression.discard(int(path_id))
+
+    if results:
+        await dispatch_profitable_results(
+            results=results,
+            engine_registry=engine_registry,
+            async_w3=async_w3,
+            executor_address=executor_address,
+            operator_address=operator_address,
+            operator_private_key=operator_private_key,
+            base_fee_next=next_base_fee(
+                parent_base_fee=int(batch.get("base_fee_per_gas") or 0),
+                parent_gas_used=int(batch["gas_used"]),
+                parent_gas_limit=int(batch["gas_limit"]),
+            ),
+            current_block=current_block,
+            operator_nonce=operator_nonce,
+            dispatcher=dispatcher,
+            dry_run=dry_run,
+        )
 
 async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--live", action="store_true", help="Enable live mode (submits real transactions)"
+        "--live",
+        action="store_true",
+        help="Enable live mode (submits real transactions)",
     )
     parser.add_argument(
         "--permutation",

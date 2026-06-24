@@ -161,6 +161,20 @@ impl DrainSink for SolveCoordinator {
         let state = self.drain_lock.lock().expect("drain_lock poisoned");
         state.last_drained_block
     }
+
+    fn notify_block(&self, block: u64, metadata: &BlockMetadata) {
+        // Fan out to every engine under the drain lock — same shape as
+        // `on_drain`/`on_send`. Each engine forwards to its `block_tx`;
+        // `send` on an unbounded mpsc is non-blocking, so the hold is brief,
+        // and Python's block-clock consumer never acquires the engine lock
+        // (it awaits `block_rx.recv()`). `notify_block` must NOT advance
+        // `last_drained_block` (that clock is solve-driven; the *block*
+        // clock lives on the block channel).
+        let _guard = self.drain_lock.lock().expect("drain_lock poisoned");
+        for engine in &self.engines {
+            engine.notify_block(block, metadata);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -177,6 +191,8 @@ mod tests {
         send_result_batch_calls: StdMutex<u32>,
         finalize_block_calls: StdMutex<u32>,
         has_dirty_paths_calls: StdMutex<u32>,
+        notify_block_calls: StdMutex<u32>,
+        last_notified: StdMutex<Option<u64>>,
         dirty: StdMutex<bool>,
         cursor: StdMutex<Option<u64>>,
     }
@@ -188,6 +204,8 @@ mod tests {
                 send_result_batch_calls: StdMutex::new(0),
                 finalize_block_calls: StdMutex::new(0),
                 has_dirty_paths_calls: StdMutex::new(0),
+                notify_block_calls: StdMutex::new(0),
+                last_notified: StdMutex::new(None),
                 dirty: StdMutex::new(false),
                 cursor: StdMutex::new(None),
             }
@@ -200,6 +218,12 @@ mod tests {
         }
         fn solve_dirty_count(&self) -> u32 {
             *self.solve_dirty_calls.lock().unwrap()
+        }
+        fn notify_block_count(&self) -> u32 {
+            *self.notify_block_calls.lock().unwrap()
+        }
+        fn last_notified_block(&self) -> Option<u64> {
+            *self.last_notified.lock().unwrap()
         }
     }
 
@@ -222,6 +246,10 @@ mod tests {
             _has_logs_this_block: &mut bool,
         ) {
             *self.finalize_block_calls.lock().unwrap() += 1;
+        }
+        fn notify_block(&self, block: u64, _metadata: &BlockMetadata) {
+            *self.notify_block_calls.lock().unwrap() += 1;
+            *self.last_notified.lock().unwrap() = Some(block);
         }
         fn last_processed_block(&self) -> Option<u64> {
             *self.cursor.lock().unwrap()
@@ -346,5 +374,24 @@ mod tests {
 
         // `last_drained_block` seeded from the agreed cursor.
         assert_eq!(coordinator.last_processed_block(), Some(100));
+    }
+
+    /// RED→GREEN tracer (epic 6W35AI): `notify_block` fans out to every
+    /// attached engine under the drain lock, mirroring `on_drain`/`on_send`.
+    /// The pump calls this on every `WsEvent::BlockHeader` so the block
+    /// channel ticks in lockstep with newHeads — independent of solve state.
+    #[test]
+    fn notify_block_fans_out_to_all_engines_with_the_block() {
+        let a = Arc::new(FakeEngine::new());
+        let b = Arc::new(FakeEngine::new());
+        let coordinator = SolveCoordinator::new(vec![a.clone(), b.clone()]);
+
+        let metadata = BlockMetadata::default();
+        coordinator.notify_block(25_390_117, &metadata);
+
+        assert_eq!(a.notify_block_count(), 1);
+        assert_eq!(b.notify_block_count(), 1);
+        assert_eq!(a.last_notified_block(), Some(25_390_117));
+        assert_eq!(b.last_notified_block(), Some(25_390_117));
     }
 }

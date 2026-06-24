@@ -104,6 +104,10 @@ impl Engine for EngineHandle {
     fn last_processed_block(&self) -> Option<u64> {
         self.engine.lock().last_processed_block()
     }
+
+    fn notify_block(&self, block: u64, metadata: &BlockMetadata) {
+        self.engine.lock().notify_block(block, metadata);
+    }
 }
 
 #[cfg(test)]

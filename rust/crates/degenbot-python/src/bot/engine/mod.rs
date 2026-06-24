@@ -25,6 +25,7 @@ mod verify;
 pub(crate) use register::map_register_v4_err;
 
 pub use errors::*;
+pub use result_channel::BlockStream;
 
 use crate::prelude::*;
 pub(crate) use std::collections::HashMap;
@@ -51,8 +52,8 @@ pub(crate) use degenbot_bot::solvers::uniswap_engine::snapshot_verify::{
     register_with_cl_buffers, run_cl_verification, SnapshotStore, VerifyError, VerifyRpc,
 };
 pub(crate) use degenbot_bot::solvers::uniswap_engine::{
-    BlockMetadata, EnginePhase, HopType, MixedPoolRef, PoolHop, PoolTickCoverage, ResultBatch,
-    SolvePathResult, UniswapEngine, V3SnapshotData, V4SnapshotData,
+    BlockMetadata, BlockNotification, EnginePhase, HopType, MixedPoolRef, PoolHop,
+    PoolTickCoverage, ResultBatch, SolvePathResult, UniswapEngine, V3SnapshotData, V4SnapshotData,
 };
 
 /// Python-facing mixed V2/V3 arbitrage engine.
@@ -92,6 +93,11 @@ pub struct PyUniswapArbEngine {
     /// Created in `new()`, consumed by `__anext__`.
     /// Wrapped in Arc so the async coroutine can share it.
     result_rx: Arc<parking_lot::Mutex<Option<mpsc::UnboundedReceiver<ResultBatch>>>>,
+    /// Receiver for the block-notification channel (epic 6W35AI). The pump
+    /// forwards `newHeads` ticks here via `DrainSink::notify_block`;
+    /// Python consumes this as its block clock (not `ResultBatch::solve_block`).
+    /// Consumed by `BlockStream::__anext__`; wrapped in Arc for the coroutine.
+    block_rx: Arc<parking_lot::Mutex<Option<mpsc::UnboundedReceiver<BlockNotification>>>>,
     /// When True, verify each V3/V4 pool's tick data against on-chain state
     /// immediately after registration. The snapshot is taken while the engine
     /// lock is held (so the pump can't race), then verification runs via RPC

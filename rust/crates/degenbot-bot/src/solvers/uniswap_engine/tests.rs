@@ -2393,4 +2393,113 @@ mod tests {
              core/engine lock nesting or re-entrant guard (ADR-006 D2 violated)",
         );
     }
+
+    // ── Block stream (epic 6W35AI) ────────────────────────────────────────
+    //
+    // The backrun bot's block clock must come from a forwarded `newHeads`
+    // stream, NOT from `ResultBatch::solve_block` (which lags by debounce
+    // delay + only advances on a send). `BlockNotification` + `block_tx` are
+    // the dedicated channel, plumbed parallel to `result_tx`.
+    // See docs/architecture/rust-owned-bot.md §6.1 (`block_tx.send — Python
+    // reads this`) and .ergo/plans/block-stream-clock.md.
+
+    #[test]
+    fn block_notification_carries_block_and_metadata() {
+        // Contract: `BlockNotification` is built from a block number + a
+        // `BlockMetadata` and faithfully carries every field Python needs to
+        // advance its block clock (timestamp, base_fee, gas_used, gas_limit)
+        // — mirroring the `ResultBatch` metadata envelope but with an explicit
+        // `number` (the clock field) instead of `solve_block`.
+        let metadata = BlockMetadata {
+            timestamp: 1_700_000_000,
+            base_fee_per_gas: Some(7_000_000_000),
+            gas_used: 15_000_000,
+            gas_limit: 30_000_000,
+        };
+        let notif =
+            crate::solvers::uniswap_engine::BlockNotification::from_metadata(25_390_117, &metadata);
+        assert_eq!(notif.number, 25_390_117);
+        assert_eq!(notif.timestamp, metadata.timestamp);
+        assert_eq!(notif.base_fee_per_gas, metadata.base_fee_per_gas);
+        assert_eq!(notif.gas_used, metadata.gas_used);
+        assert_eq!(notif.gas_limit, metadata.gas_limit);
+    }
+
+    #[test]
+    fn set_block_channel_plumbs_a_sender_separate_from_result_channel() {
+        // Contract: the engine accepts a dedicated `block_tx` independent of
+        // `result_tx`. Solving / sending result batches must NOT touch the block
+        // channel; only an explicit `notify_block` (task AROB7V) does. This test
+        // pins the plumbing + the separation: after `set_block_channel`, a
+        // result-batch `compute_diff_and_send` produces a `ResultBatch` but
+        // leaves the block channel empty.
+        let (block_tx, mut block_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (result_tx, _result_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut engine = UniswapEngine::new();
+        engine.set_block_channel(block_tx);
+        engine.set_result_channel(result_tx);
+
+        // Two mispriced V2 pools so a send has something to report.
+        let v2_addr_a = Address::from([0x31u8; 20]);
+        let _ = engine.register_v2_pool(
+            v2_addr_a,
+            usdc(1_500_000),
+            weth(800),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+        let v2_addr_b = Address::from([0x32u8; 20]);
+        let _ = engine.register_v2_pool(
+            v2_addr_b,
+            weth(800),
+            usdc(1_600_000),
+            GAMMA_03,
+            FEE_DENOM_03,
+        );
+
+        let metadata = BlockMetadata {
+            timestamp: 1,
+            base_fee_per_gas: Some(0),
+            gas_used: 0,
+            gas_limit: 0,
+        };
+        // A send enqueues a result batch but must NOT notify the block stream.
+        engine.send_result_batch(&metadata);
+        assert!(
+            block_rx.try_recv().is_err(),
+            "result-batch send must not touch the block channel"
+        );
+    }
+
+    #[test]
+    fn notify_block_pushes_a_block_notification_on_the_block_channel() {
+        // Contract (AROB7V): `notify_block` forwards exactly one
+        // `BlockNotification` per call, carrying the block number + the
+        // metadata, onto `block_tx`. It must NOT also enqueue a result batch
+        // (the block channel is the block clock, independent of solve state).
+        let (block_tx, mut block_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut engine = UniswapEngine::new();
+        engine.set_block_channel(block_tx);
+
+        let metadata = BlockMetadata {
+            timestamp: 1_700_000_000,
+            base_fee_per_gas: Some(7_000_000_000),
+            gas_used: 15_000_000,
+            gas_limit: 30_000_000,
+        };
+        engine.notify_block(25_390_117, &metadata);
+
+        let notif = block_rx
+            .try_recv()
+            .expect("notify_block sent a notification");
+        assert_eq!(notif.number, 25_390_117);
+        assert_eq!(notif.timestamp, metadata.timestamp);
+        assert_eq!(notif.base_fee_per_gas, metadata.base_fee_per_gas);
+        assert_eq!(notif.gas_used, metadata.gas_used);
+        assert_eq!(notif.gas_limit, metadata.gas_limit);
+        assert!(
+            block_rx.try_recv().is_err(),
+            "exactly one notification per call"
+        );
+    }
 }

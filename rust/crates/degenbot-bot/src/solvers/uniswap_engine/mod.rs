@@ -317,6 +317,44 @@ pub struct SolvePathResult {
 // keep working (ADR-006 D4).
 pub use crate::bot_core::BlockMetadata;
 
+/// Forwarded newHeads tick — the authoritative block clock for Python.
+///
+/// Distinct from [`ResultBatch`] (which carries solve results + the solve
+/// block as metadata): the consumer derives its block clock from
+/// `BlockNotification`s pushed by the pump on every `WsEvent::BlockHeader`,
+/// NOT from `ResultBatch::solve_block`. `solve_block` lags by the send
+/// debounce + only advances when a batch is actually sent, so using it as the
+/// clock makes the bot's `[block: N]` freeze behind the pump's `current_block`
+/// (epic 6W35AI; `docs/architecture/rust-owned-bot.md` §6.1 specifies this
+/// `block_tx.send(BlockNotification)` channel).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlockNotification {
+    /// The block number (the clock field).
+    pub number: u64,
+    /// Block timestamp.
+    pub timestamp: u64,
+    /// Base fee per gas (None for pre-EIP-1559 blocks).
+    pub base_fee_per_gas: Option<u64>,
+    /// Gas used in this block.
+    pub gas_used: u64,
+    /// Gas limit of this block.
+    pub gas_limit: u64,
+}
+
+impl BlockNotification {
+    /// Build a notification from a block number + its `BlockMetadata`.
+    #[must_use]
+    pub fn from_metadata(number: u64, metadata: &BlockMetadata) -> Self {
+        Self {
+            number,
+            timestamp: metadata.timestamp,
+            base_fee_per_gas: metadata.base_fee_per_gas,
+            gas_used: metadata.gas_used,
+            gas_limit: metadata.gas_limit,
+        }
+    }
+}
+
 /// Incremental result batch pushed to Python via the result channel.
 ///
 /// Each batch contains only paths that changed since the last batch
@@ -413,6 +451,12 @@ pub struct UniswapEngine {
     max_profit: U256,
     /// Sender for the result batch channel. Created in `PyUniswapArbEngine::new()`.
     result_tx: Option<tokio::sync::mpsc::UnboundedSender<ResultBatch>>,
+    /// Sender for the block-notification channel (epic 6W35AI). The pump
+    /// forwards every accepted `WsEvent::BlockHeader` here via
+    /// `DrainSink::notify_block`, so Python can drive its block clock from
+    /// `newHeads` (not from `ResultBatch::solve_block`). Plumbed parallel to
+    /// `result_tx`; `compute_diff_and_send` never touches it.
+    block_tx: Option<tokio::sync::mpsc::UnboundedSender<BlockNotification>>,
 }
 
 impl UniswapEngine {
@@ -452,6 +496,7 @@ impl UniswapEngine {
             min_profit: U256::ZERO,
             max_profit: U256::MAX,
             result_tx: None,
+            block_tx: None,
         }
     }
 

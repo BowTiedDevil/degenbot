@@ -58,4 +58,12 @@ pub trait Engine: Send + Sync {
     /// In steady state, callers should prefer the coordinator's
     /// `last_processed_block` (drain-consistent) over a per-engine read.
     fn last_processed_block(&self) -> Option<u64>;
+
+    /// Forward a `newHeads` block tick to the engine's block-notification
+    /// channel (epic 6W35AI). The pump calls this on every
+    /// `WsEvent::BlockHeader` it accepts, after advancing `current_block` —
+    /// independent of solve/debounce state. MUST NOT touch `result_tx`
+    /// (the result batch stays the solver's concern; the block channel is the
+    /// authoritative block clock, not `ResultBatch::solve_block`).
+    fn notify_block(&self, block: u64, metadata: &BlockMetadata);
 }

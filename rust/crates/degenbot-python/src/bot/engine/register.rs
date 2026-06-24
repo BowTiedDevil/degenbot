@@ -41,6 +41,8 @@ impl PyUniswapArbEngine {
         };
         let mut engine = engine;
         engine.set_result_channel(result_tx);
+        let (block_tx, block_rx) = mpsc::unbounded_channel();
+        engine.set_block_channel(block_tx);
         let engine = Arc::new(parking_lot::Mutex::new(engine));
         // ADR-006 slice 6: wrap the shared engine in `EngineHandle` (an
         // `Arc<dyn Engine>` view) and build the coordinator. The coordinator
@@ -65,6 +67,7 @@ impl PyUniswapArbEngine {
             pump_handle: parking_lot::Mutex::new(None),
             subscribe_state: parking_lot::Mutex::new(None),
             result_rx: Arc::new(parking_lot::Mutex::new(Some(result_rx))),
+            block_rx: Arc::new(parking_lot::Mutex::new(Some(block_rx))),
             verify_on_register: std::sync::atomic::AtomicBool::new(false),
             verify_rpc_url: parking_lot::Mutex::new(None),
             verify_provider: parking_lot::Mutex::new(None),

@@ -328,6 +328,14 @@ async fn verify_v3_pool<T: TickMap + ?Sized>(
             call_v3_ticks(provider, pool_addr, tick_idx, block_number).await?;
 
         if our_gross != on_chain_gross {
+            // TEMP DEBUG: dump journal depth + update_block for the failing pool
+            // so we can tell whether ANY events were applied since the snapshot seed.
+            log::info!(
+                "[dbg-verify] MISMATCH {pool_addr} tick={tick_idx} {block_tag} engine={our_gross} onchain={on_chain_gross} update_block={} journal_len={} total_ticks={}",
+                pool.dbg_update_block(),
+                pool.dbg_journal_len(),
+                tick_data.len(),
+            );
             return Err(LiquidityVerifyError::Mismatch(VerificationMismatch {
                 message: format!(
                     "V3 pool {pool_addr} {block_tag}: tick {tick_idx} liquidityGross mismatch — engine: {our_gross}, on-chain: {on_chain_gross}"
