@@ -612,6 +612,50 @@ def test_rust_v4_dense_corpus_override_state_matches_python(*, zero_for_one: boo
     )
 
 
+def test_rust_v4_dense_corpus_exact_output_matches_python():
+    """Rust exact-OUTPUT seam == Python on the captured corpus (DENSE).
+
+    The Rust ``simulate_exact_output_swap_with_fetch`` seam (caller passes the
+    desired ``amount_out``; the sim derives the required input) must match the
+    Python ``calculate_tokens_in_from_tokens_out`` on the captured ETH/USDC V4
+    corpus. The desired output is the full-walk ofz quoter amount
+    (``_V4_DIVERGE_QUOTER_OUT``), so the required input round-trips to the
+    ``_V4_DIVERGE_AMOUNT`` mainline exact-input quantity — a strong
+    round-trip + parity gate for the exact-output sign convention (V4
+    exact-output is ``amountSpecified > 0``).
+    """
+    state = _load_corpus_fixture()
+    td = {
+        int(t): LiquidityAtTick(liquidity_net=int(r[1]), liquidity_gross=int(r[0]), block=int(r[2]))
+        for t, r in state["tick_data"].items()
+    }
+    py_bot = PyBot()
+    pool = _build_pool_from_corpus(py_bot, state, td=td, sparse=False, fetcher=None)
+
+    # ofz exact-output: request token0 (the full-walk quoter out) → required
+    # token1 input. zero_for_one = (token_out == token1) → False for token0.
+    py_required_in = int(
+        pool.calculate_tokens_in_from_tokens_out(
+            token_out=pool.token0,
+            token_out_quantity=_V4_DIVERGE_QUOTER_OUT,
+        ),
+    )
+    rust_outcome = pool._py_pool.simulate_exact_output_swap_with_fetch(
+        zero_for_one=False,
+        amount_out=_V4_DIVERGE_QUOTER_OUT,
+        block=0,
+        fetcher=lambda *_: {},
+        sqrt_price_limit_x96=None,
+    )
+    assert rust_outcome is not None, "exact-output sim returned None"
+    # ofz: token1 is the required input (amount1).
+    rust_required_in = int(rust_outcome[1])
+    assert rust_required_in == py_required_in, (
+        f"V4 exact-output ofz: rust_in={rust_required_in} py_in={py_required_in} "
+        f"diff={rust_required_in - py_required_in}"
+    )
+
+
 def test_rust_v4_sparse_fetch_corpus_matches_dense():
     """Rust sparse+fetch == Rust dense on the SAME corpus (offline, no fork).
 

@@ -1646,6 +1646,89 @@ impl BotState {
         }
     }
 
+    /// Miss-aware exact-OUTPUT swap (full outcome). Mirror of
+    /// [`Self::simulate_exact_input_swap_miss_aware`] but the caller passes the
+    /// desired `amount_out` + the sim derives the required input. V3 sign:
+    /// exact-output is `amountSpecified < 0` (V3 negates). V4 sign:
+    /// exact-output is `amountSpecified > 0` (V4 doesn't negate). Both are
+    /// already handled by `v3_simulate_swap` / `v4_simulate_swap`'s `exact_in`
+    /// flag.
+    ///
+    /// # Errors
+    ///
+    /// [`SimulateSwapError::MissingTickWord(word)`] when a sparse V3/V4 pool's
+    /// walk enters an unfetched tick-bitmap word;
+    /// [`SimulateSwapError::NotComputable`] on overflow / invariant violation /
+    /// non-V3V4 pool / zero amount.
+    pub fn simulate_exact_output_swap_miss_aware(
+        &self,
+        pool_id: u64,
+        zero_for_one: bool,
+        amount_out: U256,
+        sqrt_price_limit: U256,
+    ) -> Result<V3SwapOutcome, SimulateSwapError> {
+        let Some(entry) = self.pools.get(&pool_id) else {
+            return Err(SimulateSwapError::NotComputable);
+        };
+        if amount_out.is_zero() {
+            return Err(SimulateSwapError::NotComputable);
+        }
+        let Some(spec) = I256::try_from(amount_out).ok() else {
+            return Err(SimulateSwapError::NotComputable);
+        };
+        match entry {
+            // V3 sign convention: exact-output is `amountSpecified < 0`.
+            PoolEntry::V3(state) => v3_simulate_swap(state, zero_for_one, -spec, sqrt_price_limit),
+            // V4 sign convention: exact-output is `amountSpecified > 0`.
+            PoolEntry::V4(state) => v4_simulate_swap(state, zero_for_one, spec, sqrt_price_limit),
+            PoolEntry::V2(_)
+            | PoolEntry::Curve(_)
+            | PoolEntry::BalancerWeighted(_)
+            | PoolEntry::BalancerStable(_) => Err(SimulateSwapError::NotComputable),
+        }
+    }
+
+    /// Fetch+retry full-outcome exact-OUTPUT swap for sparse V3/V4 pools.
+    /// Mirror of [`Self::simulate_exact_input_swap_with_fetch`] but the caller
+    /// passes the desired `amount_out` + the sim derives the required input.
+    /// Returns `None` on any non-computable / fetch-failure mode (same
+    /// discipline as the exact-input variant).
+    pub fn simulate_exact_output_swap_with_fetch<
+        F: crate::bot_core::tick_fetch::TickWordFetcher,
+    >(
+        &mut self,
+        pool_id: u64,
+        zero_for_one: bool,
+        amount_out: U256,
+        sqrt_price_limit: U256,
+        block: u64,
+        fetcher: &F,
+    ) -> Option<V3SwapOutcome> {
+        let mut attempted: HashSet<i32> = HashSet::new();
+        loop {
+            match self.simulate_exact_output_swap_miss_aware(
+                pool_id,
+                zero_for_one,
+                amount_out,
+                sqrt_price_limit,
+            ) {
+                Ok(outcome) => return Some(outcome),
+                Err(SimulateSwapError::NotComputable) => return None,
+                Err(SimulateSwapError::MissingTickWord(word)) => {
+                    if !attempted.insert(word) {
+                        return None;
+                    }
+                    match fetcher.fetch_missing_tick_word(pool_id, word, block) {
+                        Ok(data) => {
+                            self.merge_tick_word(pool_id, data);
+                        }
+                        Err(_) => return None,
+                    }
+                }
+            }
+        }
+    }
+
     /// Simulate an exact-input swap over a HYPOTHETICAL (override) pool state.
     ///
     /// Builds a transient `V3PoolState`/`V4PoolState` from the override
