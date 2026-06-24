@@ -941,6 +941,15 @@ class BackrunSession:
             retry_policy=cfg.verification_retry_policy,
         )
 
+        # 3b. Verify liquidity maps against on-chain before the hot loop.
+        # Emits [verify] V3 + V4 liquidity maps OK — the line the permutation
+        # analyzer keys on for `verify_basis` ("verified"). With the
+        # shared-BotState design the register-gated verify never fires, so this
+        # batch check is the one that actually runs. block_number=None verifies
+        # against latest; a pass transitively confirms the snapshot seed (see
+        # EngineRegistry.verify_liquidity_maps). Fail-fast on mismatch.
+        self.engine_registry.verify_liquidity_maps()
+
         # 4. Trim redundant Python state — Rust engine owns canonical pool state.
         self.bot.release_python_state()
         self.v3_snapshot = None

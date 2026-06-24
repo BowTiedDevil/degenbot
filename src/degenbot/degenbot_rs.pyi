@@ -1181,6 +1181,24 @@ class UniswapArbEngine:
     def set_verify_rpc_url(self, rpc_url: str) -> None: ...
     def set_verify_state_view(self, state_view_address: str) -> None: ...
 
+    # ── Batch liquidity-map verification (reads BotState directly; the path
+    # that actually runs verification under the shared-BotState design — the
+    # register-gated verify is architecturally orphaned). ──
+    def verify_liquidity_maps(
+        self,
+        rpc_url: str,
+        tick_lens_address: str,
+        state_view_address: str,
+        block_number: int | None,
+    ) -> None: ...
+    def verify_v3_liquidity_maps(self, rpc_url: str, block_number: int | None) -> None: ...
+    def verify_v4_liquidity_maps(
+        self,
+        rpc_url: str,
+        state_view_address: str,
+        block_number: int | None,
+    ) -> None: ...
+
     # ── Pool + path registration ──
     def register_v3_pool(
         self,

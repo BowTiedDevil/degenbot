@@ -86,6 +86,9 @@ class EngineRegistry:
         # (HookedPoolRejectedError / DynamicFeePoolRejectedError). Default:
         # NoOpPathPredicate (accept all).
         self.path_predicate: PathCompositionPredicate = path_predicate or NoOpPathPredicate()
+        # Verify config (stashed in start(), consumed by verify_liquidity_maps).
+        self._verify_rpc_url: str | None = None
+        self._verify_state_view: str | None = None
         # NOTE: These Python dicts (_v2_keys, _v3_keys, _v4_keys) are plain
         # dicts — NOT thread-safe. All access is on the single asyncio event loop.
 
@@ -135,10 +138,63 @@ class EngineRegistry:
         if verify_state_view is not None:
             self.engine.set_verify_state_view(verify_state_view)
         self.engine.set_verify_on_register(verify_on_register)
+        # Stash the verify RPC + StateView for the post-register batch
+        # verification (verify_liquidity_maps). The per-register verify gate
+        # (engine.register_v3/v4_pool) is architecturally orphaned under the
+        # shared-BotState design: pools enter BotState via the bot builders
+        # (py_bot.register_*) + `PyLiquidityPool.update_tick_data`, never via
+        # the engine's register path that consumes the SnapshotStore — so the
+        # register-gated verify never fires. The batch API reads BotState
+        # directly and is the path that actually runs verification.
+        self._verify_rpc_url = node_http
+        self._verify_state_view = verify_state_view
 
         # Intentionally NOT calling resume() — the caller attaches its
         # consumer next, then calls resume() as the single batch-flow gate.
         return backfill_target
+
+    def verify_liquidity_maps(
+        self,
+        *,
+        block_number: int | None = None,
+    ) -> None:
+        """Verify the engine's V3+V4 liquidity maps against on-chain state.
+
+        Reads BotState directly (``core.v3_pools_snapshot`` /
+        ``v4_pools_snapshot``) and compares each pool's tick map to the chain
+        via ``TickLens`` (V3) / ``StateView`` (V4), emitting
+        ``[verify] V3 + V4 liquidity maps OK at block {}`` on success.
+
+        ``block_number=None`` verifies against **latest**. This transitively
+        confirms the snapshot seed: backfill + pump apply *deltas* on top of
+        the seed, so a wrong seed cannot converge to a matching on-chain
+        state — a passing latest-check witnesses that seed, backfill, and pump
+        are all faithful. Run it after paths are built (pools registered in
+        BotState) and before the hot loop. Raises (fail-fast) on mismatch —
+        do not arb against an unverified engine.
+
+        Args:
+            block_number: Block to verify against (``None`` = latest).
+
+        Raises:
+            RuntimeError: verify config was never stashed (``start()`` not
+                called, or called without ``verify_state_view``).
+
+        """
+        if self._verify_rpc_url is None or self._verify_state_view is None:
+            msg = (
+                "verify_liquidity_maps requires verify config — call "
+                "EngineRegistry.start() with verify_state_view set first."
+            )
+            raise RuntimeError(msg)
+        # tick_lens_address is unused by the V3 batch path (it calls
+        # pool.ticks() directly); a zero address satisfies the parser.
+        self.engine.verify_liquidity_maps(
+            rpc_url=self._verify_rpc_url,
+            tick_lens_address="0x0000000000000000000000000000000000000000",
+            state_view_address=self._verify_state_view,
+            block_number=block_number,
+        )
 
     def register_v2_pool(self, pool: LiquidityPool) -> int:  # noqa: D102
         if pool.address in self._v2_keys:
