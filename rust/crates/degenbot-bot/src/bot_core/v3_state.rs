@@ -355,6 +355,13 @@ pub struct V3SwapOutcome {
     pub amount0: U256,
     /// Absolute token1 amount moved (output for zfo swaps, input for ofz).
     pub amount1: U256,
+    /// Final `sqrtPriceX96` after the swap walk (ADR-005 slice 3b: the
+    /// companion's `simulate_exact_input_swap` builds `final_state` from this).
+    pub sqrt_price_x96: U256,
+    /// Final active liquidity after the swap walk.
+    pub liquidity: u128,
+    /// Final tick after the swap walk.
+    pub tick: i32,
 }
 
 /// Why a [`v3_simulate_swap`] / [`v4_simulate_swap`] call could not produce a
@@ -602,6 +609,9 @@ pub fn v3_simulate_swap(
     Ok(V3SwapOutcome {
         amount0: amount0_signed.unsigned_abs(),
         amount1: amount1_signed.unsigned_abs(),
+        sqrt_price_x96,
+        liquidity: u128::try_from(liquidity.max(0)).unwrap_or(0),
+        tick,
     })
 }
 
@@ -814,6 +824,38 @@ mod tests {
         assert!(
             res.is_ok(),
             "small swap that never enters the unknown word −1 should compute, got {res:?}"
+        );
+    }
+
+    #[test]
+    fn v3_simulate_swap_outcome_caries_final_state() {
+        // ADR-005 slice 3b: the companion's simulate_exact_input_swap builds
+        // final_state from the outcome, so v3_simulate_swap must return the
+        // post-walk sqrt_price_x96 / liquidity / tick (not just the amounts).
+        let state = pool_1to1_with_position(10_000_000_000_000u128);
+        let amount_in = I256::try_from(1_000u128).unwrap();
+        let outcome = v3_simulate_swap(&state, true, amount_in).expect("computes");
+        // zfo small swap below +60 (no crossing): price drops (sqrt_price_x96 <
+        // start) but liquidity + tick stay within the active range.
+        assert!(
+            outcome.sqrt_price_x96 < state.sqrt_price_x96,
+            "zfo swap must drop the price below the start value"
+        );
+        assert_eq!(
+            outcome.liquidity, state.liquidity,
+            "liquidity unchanged (no crossing)"
+        );
+        assert!(
+            (-60..60).contains(&outcome.tick),
+            "tick stays within the active range (no crossing): got {}",
+            outcome.tick
+        );
+        // A crossing swap (large zfo) must move the state off the start values.
+        let big = I256::try_from(100_000_000_000_000_000u128).unwrap();
+        let crossed = v3_simulate_swap(&state, true, big).expect("computes");
+        assert_ne!(
+            crossed.sqrt_price_x96, state.sqrt_price_x96,
+            "a crossing swap must move the price off the start value"
         );
     }
 }

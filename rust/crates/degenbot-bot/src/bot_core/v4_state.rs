@@ -569,5 +569,8 @@ pub fn v4_simulate_swap(
     Ok(V3SwapOutcome {
         amount0: amount0_signed.unsigned_abs(),
         amount1: amount1_signed.unsigned_abs(),
+        sqrt_price_x96,
+        liquidity: u128::try_from(liquidity.max(0)).unwrap_or(0),
+        tick,
     })
 }
