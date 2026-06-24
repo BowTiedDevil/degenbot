@@ -352,11 +352,31 @@ class V3PoolBuilder(V3BuilderBase):
             raise ValueError(msg)
 
         # Register the pool in the shared Rust Bot and wrap the handle with
-        # the Python companion (ADR-005 slice 8b). The builder's state_block
-        # is the fetched snapshot block; ``register_v3_pool`` hardcodes
-        # update_block=0, so when a real state_block was fetched we land the
-        # scalars via ``apply_swap`` to anchor the genesis delta there (mirrors
-        # the V2 builder writing reserves with ``update_block=state_block``).
+        # the Python companion (ADR-005 slice 8b). ADR-006 rolling-start race
+        # closure: the snapshot tick_data is seeded INLINE in
+        # ``register_v3_pool`` (one BotState write lock) so the pool is never
+        # visible to the live pump (resumed before ``build_paths``) in an
+        # unseeded state. Previously the builder registered with empty
+        # tick_data then called ``update_tick_data`` to seed — a pump
+        # Mint/Burn landing between register and seed was applied then
+        # CLOBBERED by the seed overwrite (lost update → verify failure).
+        # ``apply_swap`` still anchors the reorg genesis delta at state_block
+        # (mirrors the V2 builder writing reserves with update_block).
+        rust_rows: dict[int, tuple[int, int, int]] = {}
+        for t, info in working_tick_data.items():
+            if isinstance(info, LiquidityAtTick):
+                rust_rows[int(t)] = (
+                    int(info.liquidity_gross),
+                    int(info.liquidity_net),
+                    int(info.block),
+                )
+            else:
+                rust_rows[int(t)] = (
+                    int(info[0]),
+                    int(info[1]),
+                    int(info[2]) if len(info) > 2 else 0,  # noqa: PLR2004
+                )
+        state_block_int = int(state_block) if state_block is not None else 0
         pool_id = self._py_bot.register_v3_pool(
             address=pool_address,
             token0=token0_address,
@@ -367,45 +387,25 @@ class V3PoolBuilder(V3BuilderBase):
             sqrt_price_x96=int(sqrt_price_x96),
             liquidity=int(liquidity),
             tick=int(tick),
+            tick_data=rust_rows or None,
+            update_block=state_block_int,
+            coverage="tracked" if db_snapshot_loaded else "sparse",
         )
         py_pool_handle = self._py_bot.get_pool(pool_id)
         assert py_pool_handle is not None, "register_v3_pool returned a pool_id with no handle"
-        if state_block is not None and int(state_block) > 0:
+        if state_block is not None and state_block_int > 0:
             py_pool_handle.apply_swap(
                 sqrt_price_x96=int(sqrt_price_x96),
                 liquidity=int(liquidity),
                 tick=int(tick),
-                block_number=int(state_block),
+                block_number=state_block_int,
             )
-        # Seed tick data if a complete DB snapshot was loaded; the engine's
-        # ``load_v3_snapshot`` / ``stream_v3_snapshot_to_engine`` path stays
-        # the authority for tick data on the backrun path (plan-101 slice 8c).
-        # Seed the initial tick snapshot (snapshot-provided OR RPC-fetched
-        # active word) into Rust so the companion starts non-empty — matches
-        # the pre-companion behavior where the constructor stored the initial
-        # ``tick_data``/``tick_bitmap`` verbatim (a sparse pool with a fetcher
-        # then backfills further words on demand during simulation).
-        if working_tick_data:
-            rows: dict[int, tuple[int, int, int]] = {}
-            for t, info in working_tick_data.items():
-                if isinstance(info, LiquidityAtTick):
-                    rows[int(t)] = (
-                        int(info.liquidity_gross),
-                        int(info.liquidity_net),
-                        int(info.block),
-                    )
-                else:
-                    rows[int(t)] = (
-                        int(info[0]),
-                        int(info[1]),
-                        int(info[2]) if len(info) > 2 else 0,  # noqa: PLR2004
-                    )
-            py_pool_handle.update_tick_data(
-                working_tick_bitmap,
-                rows,
-                int(state_block) if state_block is not None else 0,
-            )
-
+        # ADR-006: tick_data was seeded inline in ``register_v3_pool`` above —
+        # no separate ``update_tick_data`` Rust call (that would overwrite the
+        # tick_data map and clobber pump events applied after registration).
+        # The companion's ``_bitmap_override`` is populated by the constructor
+        # from ``tick_bitmap_override`` below; it does not depend on a Rust
+        # ``update_tick_data`` call.
         pool = pool_class(
             py_pool_handle,
             address=pool_address,
