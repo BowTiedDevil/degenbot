@@ -29,6 +29,64 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
     s
 }
 
+/// `PyO3` adapter wrapping a Python fetch-word callable as a
+/// [`TickWordFetcher`] (ADR-005 sparse-map parity, slice 3).
+///
+/// The callable is `fetcher(word: int, block: int) ->
+/// dict[int, tuple[int, int, int]] | None`. It must RETURN the fetched tick data
+/// (not write it back via `update_tick_data`) — the Rust loop merges the
+/// returned [`FetchedTickWord`] itself. See [`PyLiquidityPool::calculate_tokens_out_with_fetch`].
+struct PyTickWordFetcher {
+    callback: pyo3::Py<pyo3::PyAny>,
+}
+
+impl degenbot_bot::bot_core::tick_fetch::TickWordFetcher for PyTickWordFetcher {
+    fn fetch_missing_tick_word(
+        &self,
+        _pool_id: u64,
+        word: i32,
+        block: u64,
+    ) -> Result<
+        degenbot_bot::bot_core::tick_fetch::FetchedTickWord,
+        degenbot_bot::bot_core::tick_fetch::FetchTickWordError,
+    > {
+        use degenbot_bot::bot_core::tick_fetch::{FetchTickWordError, FetchedTickWord};
+        Python::attach(|py| {
+            let result = self
+                .callback
+                .call1(py, (word, block))
+                .map_err(|_| FetchTickWordError::FetchFailed)?;
+            // `None` or `{}` → empty word (known, no initialized ticks).
+            let bound = result.bind(py);
+            if bound.is_none() {
+                return Ok(FetchedTickWord {
+                    word,
+                    ticks: HashMap::new(),
+                });
+            }
+            // Extract `{tick: (gross, net, block)}` directly into a HashMap.
+            let parsed: HashMap<i32, (u128, i128, u64)> = bound
+                .extract()
+                .map_err(|_| FetchTickWordError::FetchFailed)?;
+            let ticks = parsed
+                .into_iter()
+                .map(|(tick, (gross, net, blk))| {
+                    (
+                        tick,
+                        TickInfo {
+                            liquidity_gross: alloy::primitives::U128::from(gross),
+                            liquidity_net: alloy::primitives::I256::try_from(net)
+                                .unwrap_or(alloy::primitives::I256::ZERO),
+                            block: blk,
+                        },
+                    )
+                })
+                .collect();
+            Ok(FetchedTickWord { word, ticks })
+        })
+    }
+}
+
 /// A thin Python handle to a pool registered in `BotState`.
 ///
 /// Does not own any state — all data lives in Rust inside `BotState`.
@@ -89,6 +147,51 @@ impl PyLiquidityPool {
         let result = {
             let core = self.core.read();
             core.calculate_tokens_in(self.pool_id, zero_for_one, amount)
+        };
+        let bound = crate::conversion::alloy::u256_to_py(py, &result)?;
+        Ok(bound.unbind())
+    }
+
+    /// Fetch+retry exact-input swap for sparse V3/V4 pools (ADR-005 slice 3).
+    ///
+    /// Like [`calculate_tokens_out`][Self::calculate_tokens_out], but on a
+    /// sparse tick-map miss it calls `fetcher(word, block)` to fetch the
+    /// missing word's tick data, merges it, and retries (dedup-protected — a
+    /// repeated miss on a word gives up with `0`). Mirrors the Python
+    /// companion's `MissingLiquidityData` → `_tick_data_fetcher` loop, now
+    /// driven from the Rust calc path.
+    ///
+    /// `fetcher` is a Python callable
+    /// `fetcher(word: int, block: int) -> dict[int, tuple[int, int, int]] | None`.
+    /// It MUST return the fetched tick data mapping tick →
+    /// `(liquidity_gross, liquidity_net, block)`; returning `None` or `{}` marks
+    /// the word known with no initialized ticks (an all-zero bitmap word).
+    ///
+    /// The fetcher MUST NOT write back into the pool via `update_tick_data`
+    /// (the Rust loop merges the returned data itself) — doing so would re-enter
+    /// the `BotState` write lock this call holds and deadlock.
+    #[pyo3(signature = (zero_for_one, amount_in, block, fetcher))]
+    fn calculate_tokens_out_with_fetch(
+        &self,
+        py: Python<'_>,
+        zero_for_one: bool,
+        amount_in: &Bound<'_, PyAny>,
+        block: u64,
+        fetcher: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
+        let adapter = PyTickWordFetcher {
+            callback: fetcher.clone().unbind(),
+        };
+        let result = {
+            let mut core = self.core.write();
+            core.calculate_tokens_out_with_fetch(
+                self.pool_id,
+                zero_for_one,
+                amount,
+                block,
+                &adapter,
+            )
         };
         let bound = crate::conversion::alloy::u256_to_py(py, &result)?;
         Ok(bound.unbind())
