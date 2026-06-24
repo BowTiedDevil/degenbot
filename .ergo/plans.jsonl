@@ -267,3 +267,7 @@
 {"type":"state","ts":"2026-06-24T10:52:03.223839213Z","data":{"id":"HPZYLK","state":"blocked","ts":"2026-06-24T10:52:03.223839213Z"}}
 {"type":"claim","ts":"2026-06-24T17:20:02.382010123Z","data":{"id":"JEG56R","agent_id":"pi@degenbot","ts":"2026-06-24T17:20:02.382010123Z"}}
 {"type":"state","ts":"2026-06-24T17:20:02.382010123Z","data":{"id":"JEG56R","state":"doing","ts":"2026-06-24T17:20:02.382010123Z"}}
+{"type":"result","ts":"2026-06-24T18:07:02.126046377Z","data":{"task_id":"JEG56R","summary":"rust/crates/degenbot-bot/src/bot_core/tick_bitmap.rs","path":"rust/crates/degenbot-bot/src/bot_core/tick_bitmap.rs","sha256_at_attach":"3b15e73636efa93773003805c7a1eb5f7ab820191d50cc69de7e9951b4274dd9","mtime_at_attach":"2026-06-24T17:41:21.83792782Z","git_commit_at_attach":"bf3c737dcdad032f271177001826eab297285246","ts":"2026-06-24T18:07:02.126046377Z"}}
+{"type":"state","ts":"2026-06-24T18:07:02.134521486Z","data":{"id":"JEG56R","state":"done","ts":"2026-06-24T18:07:02.134521486Z"}}
+{"type":"unlink","ts":"2026-06-24T18:07:02.147326463Z","data":{"from_id":"HPZYLK","to_id":"JEG56R","type":"depends"}}
+{"type":"state","ts":"2026-06-24T18:07:28.522531788Z","data":{"id":"HPZYLK","state":"todo","ts":"2026-06-24T18:07:28.522531788Z"}}

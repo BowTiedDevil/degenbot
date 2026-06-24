@@ -22,13 +22,12 @@ from fractions import Fraction
 from typing import TYPE_CHECKING
 
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.pool import EVMRevertError, IncompleteSwap, LiquidityPoolError
+from degenbot.exceptions.pool import IncompleteSwap
 from degenbot.uniswap.v3_functions import exchange_rate_from_sqrt_price_x96
-from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 
 if TYPE_CHECKING:
     from degenbot.erc20 import Erc20Token
-    from degenbot.uniswap.v3_types import UniswapV3PoolState
+    from degenbot.uniswap.v3_types import UniswapV3PoolSimulationResult, UniswapV3PoolState
 
 
 class UniswapV3PoolCalc:
@@ -70,14 +69,26 @@ class UniswapV3PoolCalc:
         ...
 
     @abstractmethod
-    def _calculate_swap(
+    def simulate_exact_input_swap(
         self,
-        *,
-        zero_for_one: bool,
-        amount_specified: int,
-        sqrt_price_limit_x96: int,
+        token_in: Erc20Token,
+        token_in_quantity: int,
+        sqrt_price_limit_x96: int | None = None,
         override_state: UniswapV3PoolState | None = None,
-    ) -> tuple[int, int, int, int, int]: ...
+    ) -> UniswapV3PoolSimulationResult:
+        """Exact-input swap simulation (routed to the Rust seam)."""
+        ...
+
+    @abstractmethod
+    def simulate_exact_output_swap(
+        self,
+        token_out: Erc20Token,
+        token_out_quantity: int,
+        sqrt_price_limit_x96: int | None = None,
+        override_state: UniswapV3PoolState | None = None,
+    ) -> UniswapV3PoolSimulationResult:
+        """Exact-output swap simulation (routed to the Rust seam)."""
+        ...
 
     FEE_DENOMINATOR = 1_000_000
 
@@ -95,7 +106,6 @@ class UniswapV3PoolCalc:
         Raises:
             DegenbotValueError: If token_in is not held by this pool.
             IncompleteSwap: If the swap cannot fulfill the full input amount.
-            LiquidityPoolError: If the simulated execution reverts.
 
         """
         if token_in not in self.tokens:  # pragma: no cover
@@ -103,22 +113,22 @@ class UniswapV3PoolCalc:
 
         zero_for_one = token_in == self._token0
 
-        try:
-            amount0_delta, amount1_delta, *_ = self._calculate_swap(
-                zero_for_one=zero_for_one,
-                amount_specified=token_in_quantity,
-                sqrt_price_limit_x96=(MIN_SQRT_RATIO + 1 if zero_for_one else MAX_SQRT_RATIO - 1),
-                override_state=override_state,
-            )
-        except EVMRevertError as e:  # pragma: no cover
-            raise LiquidityPoolError(message=f"Simulated execution reverted: {e}") from e
-        else:
-            if zero_for_one is True and amount0_delta < token_in_quantity:
-                raise IncompleteSwap(amount_in=amount0_delta, amount_out=-amount1_delta)
-            if zero_for_one is False and amount1_delta < token_in_quantity:
-                raise IncompleteSwap(amount_in=amount1_delta, amount_out=-amount0_delta)
+        # ADR-005: delegate to the Rust-routed exact-input seam (override +
+        # mainline both route to Rust; the default MIN/MAX price limit matches
+        # the explicit limit below). Raises LiquidityPoolError on failure.
+        result = self.simulate_exact_input_swap(
+            token_in=token_in,
+            token_in_quantity=token_in_quantity,
+            override_state=override_state,
+        )
+        amount0_delta = result.amount0_delta
+        amount1_delta = result.amount1_delta
+        if zero_for_one is True and amount0_delta < token_in_quantity:
+            raise IncompleteSwap(amount_in=amount0_delta, amount_out=-amount1_delta)
+        if zero_for_one is False and amount1_delta < token_in_quantity:
+            raise IncompleteSwap(amount_in=amount1_delta, amount_out=-amount0_delta)
 
-            return -amount1_delta if zero_for_one else -amount0_delta
+        return -amount1_delta if zero_for_one else -amount0_delta
 
     def calculate_tokens_in_from_tokens_out(
         self,
@@ -134,7 +144,6 @@ class UniswapV3PoolCalc:
         Raises:
             DegenbotValueError: If token_out is not held by this pool.
             IncompleteSwap: If the swap cannot fulfill the full output amount.
-            LiquidityPoolError: If the simulated execution reverts.
 
         """
         if token_out not in self.tokens:  # pragma: no cover
@@ -142,24 +151,22 @@ class UniswapV3PoolCalc:
 
         is_zero_for_one = token_out == self._token1
 
-        try:
-            amount0_delta, amount1_delta, *_ = self._calculate_swap(
-                zero_for_one=is_zero_for_one,
-                amount_specified=-token_out_quantity,
-                sqrt_price_limit_x96=(
-                    MIN_SQRT_RATIO + 1 if is_zero_for_one else MAX_SQRT_RATIO - 1
-                ),
-                override_state=override_state,
-            )
-        except EVMRevertError as e:  # pragma: no cover
-            raise LiquidityPoolError(message=f"Simulated execution reverted: {e}") from e
-        else:
-            if is_zero_for_one is True and -amount1_delta < token_out_quantity:
-                raise IncompleteSwap(amount_in=amount0_delta, amount_out=-amount1_delta)
-            if is_zero_for_one is False and -amount0_delta < token_out_quantity:
-                raise IncompleteSwap(amount_in=amount1_delta, amount_out=-amount0_delta)
+        # ADR-005: delegate to the Rust-routed exact-output seam (override +
+        # mainline both route to Rust; the default MIN/MAX price limit matches
+        # the explicit limit below). Raises LiquidityPoolError on failure.
+        result = self.simulate_exact_output_swap(
+            token_out=token_out,
+            token_out_quantity=token_out_quantity,
+            override_state=override_state,
+        )
+        amount0_delta = result.amount0_delta
+        amount1_delta = result.amount1_delta
+        if is_zero_for_one is True and -amount1_delta < token_out_quantity:
+            raise IncompleteSwap(amount_in=amount0_delta, amount_out=-amount1_delta)
+        if is_zero_for_one is False and -amount0_delta < token_out_quantity:
+            raise IncompleteSwap(amount_in=amount1_delta, amount_out=-amount0_delta)
 
-            return amount0_delta if is_zero_for_one else amount1_delta
+        return amount0_delta if is_zero_for_one else amount1_delta
 
     def get_absolute_price(
         self,
