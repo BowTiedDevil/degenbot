@@ -165,16 +165,23 @@ class EngineRegistry:
         via ``TickLens`` (V3) / ``StateView`` (V4), emitting
         ``[verify] V3 + V4 liquidity maps OK at block {}`` on success.
 
-        ``block_number=None`` verifies against **latest**. This transitively
-        confirms the snapshot seed: backfill + pump apply *deltas* on top of
-        the seed, so a wrong seed cannot converge to a matching on-chain
-        state — a passing latest-check witnesses that seed, backfill, and pump
-        are all faithful. Run it after paths are built (pools registered in
-        BotState) and before the hot loop. Raises (fail-fast) on mismatch —
-        do not arb against an unverified engine.
+        **Block tag.** The comparison must be engine-state@N vs on-chain@N at
+        the *same* block — otherwise a high-activity pool (e.g. USDC/WETH 0.05%)
+        will mismatch on liquidity that changed between the engine's anchored
+        block and the chain tip. ``block_number=None`` (the default) resolves
+        to the engine's ``last_processed_block()`` — the latest block whose
+        events the pump has fully applied — so the verify is deterministic.
+        Pass an explicit block only to pin a specific checkpoint.
+
+        A pass transitively confirms the snapshot seed: backfill + pump apply
+        *deltas* on top of the seed, so a wrong seed cannot converge to a
+        matching on-chain state at block N. Run it after paths are built
+        (pools registered in BotState) and before the hot loop. Raises
+        (fail-fast) on mismatch — do not arb against an unverified engine.
 
         Args:
-            block_number: Block to verify against (``None`` = latest).
+            block_number: Block to verify against. ``None`` (default) resolves
+                to the engine's ``last_processed_block()`` — deterministic.
 
         Raises:
             RuntimeError: verify config was never stashed (``start()`` not
@@ -187,13 +194,19 @@ class EngineRegistry:
                 "EngineRegistry.start() with verify_state_view set first."
             )
             raise RuntimeError(msg)
+        # Default to the engine's anchored block: engine-state@N vs chain@N is
+        # deterministic. ``pending``/latest would race the pump's lag and false-
+        # fail on high-activity pools (liquidity changed between N and tip).
+        resolved_block = block_number
+        if resolved_block is None:
+            resolved_block = self.engine.last_processed_block()
         # tick_lens_address is unused by the V3 batch path (it calls
         # pool.ticks() directly); a zero address satisfies the parser.
         self.engine.verify_liquidity_maps(
             rpc_url=self._verify_rpc_url,
             tick_lens_address="0x0000000000000000000000000000000000000000",
             state_view_address=self._verify_state_view,
-            block_number=block_number,
+            block_number=resolved_block,
         )
 
     def register_v2_pool(self, pool: LiquidityPool) -> int:  # noqa: D102
