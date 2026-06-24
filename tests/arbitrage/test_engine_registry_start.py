@@ -27,6 +27,8 @@ class FakeEngine:
     def __init__(self) -> None:
         self.calls: list[str] = []
         self.backfill_args: list[tuple[str, int]] = []
+        self.verify_args: dict | None = None
+        self._last_processed_block: int | None = 18_000_042
 
     def subscribe(self, ws: str) -> int:
         self.calls.append("subscribe")
@@ -51,6 +53,9 @@ class FakeEngine:
 
     def set_verify_on_register(self, enabled: bool) -> None:
         self.calls.append("set_verify_on_register")
+
+    def last_processed_block(self) -> int | None:
+        return self._last_processed_block
 
     def verify_liquidity_maps(
         self,
@@ -186,8 +191,9 @@ def test_verify_liquidity_maps_raises_when_start_not_called() -> None:
 def test_verify_liquidity_maps_delegates_with_stashed_config() -> None:
     """After start(..., verify_state_view=...), verify_liquidity_maps delegates
     to the engine with the stashed RPC + StateView, a zero tick_lens (unused by
-    the V3 batch path), and block_number=None (latest). Emits exactly one
-    delegate call — the [verify] line the analyzer keys on."""
+    the V3 batch path), and block_number = the engine's last_processed_block()
+    (NOT ``pending``/latest — engine-state@N vs chain@N is deterministic).
+    Emits exactly one delegate call — the [verify] line the analyzer keys on."""
     fake = FakeEngine()
     registry = runner.EngineRegistry(bot=None, engine=fake)
     state_view = "0x0000000000000000000000000000000000000abc"
@@ -204,8 +210,42 @@ def test_verify_liquidity_maps_delegates_with_stashed_config() -> None:
         "rpc_url": "http://node:8545",
         "tick_lens_address": "0x0000000000000000000000000000000000000000",
         "state_view_address": state_view,
-        "block_number": None,
+        "block_number": 18_000_042,
     }
+
+
+def test_verify_liquidity_maps_explicit_block_overrides_default() -> None:
+    """An explicit block_number wins over the engine's last_processed_block —
+    lets a caller pin a specific checkpoint (e.g. the snapshot block)."""
+    fake = FakeEngine()
+    registry = runner.EngineRegistry(bot=None, engine=fake)
+    registry.start(
+        "http://node:8545",
+        "ws://node:8546",
+        verify_state_view="0x0000000000000000000000000000000000000abc",
+    )
+
+    registry.verify_liquidity_maps(block_number=25_384_822)
+
+    assert fake.verify_args["block_number"] == 25_384_822
+
+
+def test_verify_liquidity_maps_falls_back_to_pending_when_no_block() -> None:
+    """If the engine has processed no block yet (last_processed_block() is None),
+    verify falls through to ``pending`` (latest) rather than crashing — the
+    engine state is empty so a latest-check is the only honest comparison."""
+    fake = FakeEngine()
+    fake._last_processed_block = None
+    registry = runner.EngineRegistry(bot=None, engine=fake)
+    registry.start(
+        "http://node:8545",
+        "ws://node:8546",
+        verify_state_view="0x0000000000000000000000000000000000000abc",
+    )
+
+    registry.verify_liquidity_maps()
+
+    assert fake.verify_args["block_number"] is None
 
 
 def test_verify_liquidity_maps_raises_when_state_view_omitted() -> None:

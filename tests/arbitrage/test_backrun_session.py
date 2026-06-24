@@ -48,6 +48,9 @@ class _FakeEngine:
         if self._events is not None:
             self._events.append("resume")
 
+    def last_processed_block(self) -> int | None:
+        return 12_345
+
     def v2_pool_count(self) -> int:
         return 0
 
