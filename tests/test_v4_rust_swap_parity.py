@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+from dataclasses import replace
 
 import eth_abi.abi
 import pytest
@@ -25,7 +26,11 @@ from web3 import Web3
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.degenbot_rs import PyBot
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
-from degenbot.uniswap.v4_libraries.tick_math import get_sqrt_price_at_tick
+from degenbot.uniswap.v4_libraries.tick_math import (
+    MAX_SQRT_PRICE,
+    MIN_SQRT_PRICE,
+    get_sqrt_price_at_tick,
+)
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v4_pool_factory import make_v4_pool
 
@@ -522,6 +527,87 @@ def test_rust_v4_dense_corpus_custom_sqrt_price_limit_matches_python(*, zero_for
     rust_amount_out = int(rust_outcome[0] if not zero_for_one else rust_outcome[1])
     assert rust_amount_out == py_amount_out, (
         f"V4 custom-limit zfo={zero_for_one}: rust={rust_amount_out} py={py_amount_out} "
+        f"diff={rust_amount_out - py_amount_out}"
+    )
+
+
+@pytest.mark.parametrize("zero_for_one", [True, False])
+def test_rust_v4_dense_corpus_override_state_matches_python(*, zero_for_one: bool):
+    """Rust seam honours an override (hypothetical) pool state (== Python).
+
+    ``simulate_swap_with_override`` builds a transient V4 state from override
+    scalars + override ``tick_data`` (reusing the registered pool's fee /
+    tick_spacing) + runs the sim over it with NO fetcher + NO mutation of
+    registered ``BotState`` (a frozen hypothetical, mirroring the Python
+    ``_calculate_swap(override_state=...)`` frozen-snapshot path). This is the
+    arbitrage-hypothetical seam (§4.3 precondition for retiring the Python
+    ``_calculate_swap`` override path).
+
+    The hypothetical shifts the starting price to a tick inside the live
+    liquidity band (override tick = live tick - 6, same band → unchanged active
+    liquidity, so no net walk is needed) — a self-consistent price hypothetical
+    that must DIFFER from the mainline outcome + the Rust override must EXACTLY
+    match the Python override.
+    """
+    state = _load_corpus_fixture()
+    td = {
+        int(t): LiquidityAtTick(liquidity_net=int(r[1]), liquidity_gross=int(r[0]), block=int(r[2]))
+        for t, r in state["tick_data"].items()
+    }
+    # Raw {tick: (gross, net, block)} shape for the Rust seam (mirrors register).
+    rust_td = {int(t): (int(r[0]), int(r[1]), int(r[2])) for t, r in state["tick_data"].items()}
+    py_bot = PyBot()
+    pool = _build_pool_from_corpus(py_bot, state, td=td, sparse=False, fetcher=None)
+
+    # Shift the starting price within the live liquidity band (initialized
+    # ticks bracket the live tick at -202110 / -202020, so -202100 keeps the
+    # SAME active liquidity — no net walk needed). A different starting price
+    # changes the outcome for any non-trivial amount in either direction.
+    override_tick = state["tick"] - 6
+    override_sqrt = get_sqrt_price_at_tick(override_tick)
+    override_liq = state["liquidity"]
+    default_limit = MIN_SQRT_PRICE + 1 if zero_for_one else MAX_SQRT_PRICE - 1
+
+    # Derive the override from the live state (same tick_bitmap/tick_data/id),
+    # overriding the starting price + tick (same active liquidity band).
+    override_state = replace(
+        pool.state,
+        sqrt_price_x96=override_sqrt,
+        tick=override_tick,
+    )
+    swap_delta, *_ = pool._calculate_swap(
+        zero_for_one=zero_for_one,
+        amount_specified=-_V4_DIVERGE_AMOUNT,
+        sqrt_price_x96_limit=default_limit,
+        override_state=override_state,
+    )
+    py_amount_out = swap_delta.amount_out
+    # Binding: the override must differ from the mainline outcome (else the
+    # override scalars had no effect + the test is vacuous).
+    mainline_delta, *_ = pool._calculate_swap(
+        zero_for_one=zero_for_one,
+        amount_specified=-_V4_DIVERGE_AMOUNT,
+        sqrt_price_x96_limit=default_limit,
+        override_state=None,
+    )
+    assert py_amount_out != mainline_delta.amount_out, (
+        f"override price-shift must change the outcome: "
+        f"{py_amount_out} == mainline {mainline_delta.amount_out}"
+    )
+
+    rust_outcome = pool._py_pool.simulate_swap_with_override(
+        zero_for_one=zero_for_one,
+        amount_in=_V4_DIVERGE_AMOUNT,
+        override_sqrt_price_x96=override_sqrt,
+        override_liquidity=override_liq,
+        override_tick=override_tick,
+        override_tick_data=rust_td,
+        sqrt_price_limit_x96=None,  # Rust default (MIN+1 / MAX-1) == default_limit
+    )
+    assert rust_outcome is not None, "override sim returned None"
+    rust_amount_out = int(rust_outcome[0] if not zero_for_one else rust_outcome[1])
+    assert rust_amount_out == py_amount_out, (
+        f"V4 override zfo={zero_for_one}: rust={rust_amount_out} py={py_amount_out} "
         f"diff={rust_amount_out - py_amount_out}"
     )
 

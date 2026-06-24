@@ -252,7 +252,76 @@ impl PyLiquidityPool {
         Ok(Some(tuple.into_any().unbind()))
     }
 
-    /// Encode a V2 swap call, returning `(to_address_hex, calldata_hex, value)`.
+    /// Simulate an exact-input swap over a HYPOTHETICAL override pool state.
+    ///
+    /// Builds a transient V3/V4 state from `override_sqrt_price_x96`,
+    /// `override_liquidity`, `override_tick` + `override_tick_data`
+    /// (`{tick: (liquidity_gross, liquidity_net, block)}`, same shape as
+    /// `register_*_pool`'s `tick_data`), reusing the registered pool's fee /
+    /// `tick_spacing`. NO fetcher, NO `BotState` mutation (frozen hypothetical).
+    /// Returns the same 5-tuple as `simulate_swap_with_fetch`, or `None` if
+    /// not computable (incl. a missing override tick word).
+    #[pyo3(signature = (zero_for_one, amount_in, override_sqrt_price_x96, override_liquidity, override_tick, override_tick_data, sqrt_price_limit_x96=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn simulate_swap_with_override(
+        &self,
+        py: Python<'_>,
+        zero_for_one: bool,
+        amount_in: &Bound<'_, PyAny>,
+        override_sqrt_price_x96: &Bound<'_, PyAny>,
+        override_liquidity: &Bound<'_, PyAny>,
+        override_tick: &Bound<'_, PyAny>,
+        override_tick_data: &Bound<'_, PyAny>,
+        sqrt_price_limit_x96: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
+        let override_sqrt = crate::conversion::alloy::extract_python_u256(override_sqrt_price_x96)?;
+        let override_liquidity = u128::try_from(crate::conversion::alloy::extract_python_u256(
+            override_liquidity,
+        )?)
+        .map_err(|_| {
+            pyo3::exceptions::PyOverflowError::new_err("override_liquidity must fit in u128")
+        })?;
+        let override_tick =
+            i32::try_from(override_tick.extract::<i64>().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err("override_tick must be an int")
+            })?)
+            .map_err(|_| {
+                pyo3::exceptions::PyOverflowError::new_err("override_tick must fit in i32")
+            })?;
+        let rust_tick_data = extract_tick_data(override_tick_data)?;
+        let sqrt_price_limit = match sqrt_price_limit_x96 {
+            Some(v) if !v.is_none() => crate::conversion::alloy::extract_python_u256(v)?,
+            _ => degenbot_bot::bot_core::V3PoolState::default_sqrt_price_limit(zero_for_one),
+        };
+        let outcome = {
+            let core = self.core.read();
+            core.simulate_exact_input_swap_with_override(
+                self.pool_id,
+                zero_for_one,
+                amount,
+                sqrt_price_limit,
+                override_sqrt,
+                override_liquidity,
+                override_tick,
+                rust_tick_data,
+            )
+        };
+        let Some(outcome) = outcome else {
+            return Ok(None);
+        };
+        let tuple = pyo3::types::PyTuple::new(
+            py,
+            [
+                crate::conversion::alloy::u256_to_py(py, &outcome.amount0)?.unbind(),
+                crate::conversion::alloy::u256_to_py(py, &outcome.amount1)?.unbind(),
+                crate::conversion::alloy::u256_to_py(py, &outcome.sqrt_price_x96)?.unbind(),
+                outcome.liquidity.into_pyobject(py)?.into_any().unbind(),
+                outcome.tick.into_pyobject(py)?.into_any().unbind(),
+            ],
+        )?;
+        Ok(Some(tuple.into_any().unbind()))
+    }
     #[pyo3(signature = (zero_for_one, amount_out, recipient))]
     fn encode_swap(
         &self,
@@ -1145,4 +1214,32 @@ impl PyLiquidityPool {
             .apply_balancer_stable_balance_update_by_pool_id(self.pool_id, bal, block_number)
             .is_some())
     }
+}
+
+/// Convert a Python `{tick: (liquidity_gross, liquidity_net, block)}` dict into
+/// the Rust `HashMap<i32, TickInfo>` (same shape as `register_*_pool`'s
+/// `tick_data`, mirroring `PyLiquidityPool.update_tick_data`).
+fn extract_tick_data(
+    dict: &Bound<'_, PyAny>,
+) -> PyResult<std::collections::HashMap<i32, degenbot_bot::bot_core::TickInfo>> {
+    let parsed: std::collections::HashMap<i32, (u128, i128, u64)> =
+        dict.extract().map_err(|_| {
+            pyo3::exceptions::PyTypeError::new_err(
+                "tick_data must be {tick: (liquidity_gross, liquidity_net, block)}",
+            )
+        })?;
+    Ok(parsed
+        .into_iter()
+        .map(|(tick, (gross, net, blk))| {
+            (
+                tick,
+                degenbot_bot::bot_core::TickInfo {
+                    liquidity_gross: alloy::primitives::U128::from(gross),
+                    liquidity_net: alloy::primitives::I256::try_from(net)
+                        .unwrap_or(alloy::primitives::I256::ZERO),
+                    block: blk,
+                },
+            )
+        })
+        .collect())
 }

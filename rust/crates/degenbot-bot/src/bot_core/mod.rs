@@ -1646,6 +1646,84 @@ impl BotState {
         }
     }
 
+    /// Simulate an exact-input swap over a HYPOTHETICAL (override) pool state.
+    ///
+    /// Builds a transient `V3PoolState`/`V4PoolState` from the override
+    /// scalars (`sqrt_price_x96`, `liquidity`, `tick`) + override `tick_data`,
+    /// reusing the registered pool's immutable params (`fee`, `tick_spacing`,
+    /// `pool_key` / `factory`). The sim runs over the transient state with the
+    /// given `sqrt_price_limit` — NO fetch+retry loop, NO mutation of the
+    /// registered `BotState` (the override is a frozen hypothetical; a missing
+    /// tick word surfaces as `None`, mirroring the Python frozen-snapshot
+    /// override's `MissingLiquidityData`). This is the arbitrage-hypothetical
+    /// seam ("what if the pool were at state X?").
+    ///
+    /// Returns `None` if the pool is not V3/V4, the amount is zero, the sim
+    /// is not computable, or the override's tick data is missing a required
+    /// word.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn simulate_exact_input_swap_with_override(
+        &self,
+        pool_id: u64,
+        zero_for_one: bool,
+        amount_in: U256,
+        sqrt_price_limit: U256,
+        override_sqrt_price_x96: U256,
+        override_liquidity: u128,
+        override_tick: i32,
+        override_tick_data: HashMap<i32, TickInfo>,
+    ) -> Option<V3SwapOutcome> {
+        if amount_in.is_zero() {
+            return None;
+        }
+        let entry = self.pools.get(&pool_id)?;
+        let spec = I256::try_from(amount_in).ok()?;
+        match entry {
+            PoolEntry::V3(state) => {
+                let params = RegisterV3PoolParams {
+                    address: state.address,
+                    token0: state.token0,
+                    token1: state.token1,
+                    fee: state.fee,
+                    tick_spacing: state.tick_spacing,
+                    factory: state.factory,
+                    sqrt_price_x96: override_sqrt_price_x96,
+                    liquidity: override_liquidity,
+                    tick: override_tick,
+                    tick_data: override_tick_data,
+                    update_block: state.update_block,
+                    coverage: PoolTickCoverage::Sparse,
+                };
+                let override_state = V3PoolState::from_params(params, self.journal_depth);
+                v3_simulate_swap(&override_state, zero_for_one, spec, sqrt_price_limit).ok()
+            }
+            // V4 sign convention: exact-input is `amountSpecified < 0`.
+            PoolEntry::V4(state) => {
+                let params = RegisterV4PoolParams {
+                    pool_manager: state.pool_manager,
+                    pool_id: state.pool_id,
+                    pool_key: state.pool_key.clone(),
+                    // Registered pool already passed the hook/dynamic-fee gate;
+                    // the override only borrows `pool_key` (fee/tick_spacing).
+                    hook_flags: 0,
+                    sqrt_price_x96: override_sqrt_price_x96,
+                    liquidity: override_liquidity,
+                    tick: override_tick,
+                    tick_data: override_tick_data,
+                    update_block: state.update_block,
+                    coverage: PoolTickCoverage::Sparse,
+                };
+                let override_state = V4PoolState::from_params(params, self.journal_depth);
+                v4_simulate_swap(&override_state, zero_for_one, -spec, sqrt_price_limit).ok()
+            }
+            PoolEntry::V2(_)
+            | PoolEntry::Curve(_)
+            | PoolEntry::BalancerWeighted(_)
+            | PoolEntry::BalancerStable(_) => None,
+        }
+    }
+
     /// Calculate the input token amount required for a given output amount.
     ///
     /// Uses the constant-product invariant with EVM-exact integer arithmetic.
