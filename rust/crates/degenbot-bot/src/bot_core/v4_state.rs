@@ -550,6 +550,29 @@ pub fn v4_simulate_swap(
             tick = get_tick_at_sqrt_ratio_internal(sqrt_price_x96.to::<U160>())
                 .map_err(|_| SimulateSwapError::NotComputable)?
                 .as_i32();
+            // Slice-4 fix: an amount-capped step (the ELSE branch — the step
+            // moved the price but did not reach `sqrt_price_next`) can land
+            // inside an UNFETCHED word whose initialized ticks `gen_ticks`
+            // never proposed (they are absent from `tick_data`). The CROSS
+            // branch above guards its `tick_next`, but this branch derived
+            // `tick` from the price with no word-knownness check — so the walk
+            // could terminate having skipped that word's liquidity-nets,
+            // producing a short output (the V4 `test_cached_calculations`
+            // divergence on multi-word ofz swaps). Raise `MissingTickWord` so
+            // the fetch+retry loop backfills the word; on re-run `gen_ticks`
+            // proposes its ticks as `init=true` and they are crossed + applied
+            // like the dense path. Proven by the captured corpus fixture
+            // (`test_rust_v4_sparse_fetch_corpus_diverges_from_dense`).
+            if sparse
+                && !state
+                    .known_bitmap_words
+                    .contains(&V4PoolState::word_of(tick, tick_spacing))
+            {
+                return Err(SimulateSwapError::MissingTickWord(V4PoolState::word_of(
+                    tick,
+                    tick_spacing,
+                )));
+            }
         }
     }
 
