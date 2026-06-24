@@ -1,16 +1,13 @@
-"""ADR-005 sparse-map parity, slice 3b — companion routing parity gate.
+"""ADR-005 sparse-map parity — Rust sparse+fetch vs dense-Rust oracle.
 
-Establishes that the Rust ``simulate_swap_with_fetch`` seam produces the SAME
-outcome as the Python ``_v3_swap`` simulator on a DENSE pool (where the Rust
-path never misses, so the fetcher is unused). This pins the sign convention
-(Rust returns unsigned absolute amounts; the Python simulator returns signed
-deltas) AND proves the full-outcome (final sqrt_price / liquidity / tick)
-matches — the precondition for routing the companion's mainline swap to Rust.
-
-The companion's mainline ``simulate_exact_input_swap`` (no override, no custom
-``sqrt_price_limit_x96``) is then routed to the Rust seam on a SPARSE pool
-(slice-3b deliverable): the missing starting word is fetched via a return-data
-fetcher, merged, retried, and the result matches the dense-map oracle.
+After the §4.3 oracle retirement (the Python ``_v3_swap`` simulator +
+``_calculate_swap`` are deleted), the durable regression set for the Rust
+V3 sim is: the Rust ``#[cfg(test)]`` corpus (``tick_bitmap.rs`` gen_ticks
+clamping incl. the MIN/MAX strand-prevention assertions) + the on-chain-quoter
+fork gate ``test_cached_calculations``. These offline gates cover the
+sparse+fetch path against a DENSE-Rust oracle (full tick_data, no miss) —
+proving the sparse fetch+retry walk matches the dense reference, including
+the word-boundary walk down to MIN_TICK (the strand fix).
 """
 
 from __future__ import annotations
@@ -19,10 +16,7 @@ import pytest
 
 from degenbot.degenbot_rs import PyBot
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
-from degenbot.uniswap.v3_libraries.tick_math import (
-    MIN_SQRT_RATIO,
-    get_sqrt_ratio_at_tick,
-)
+from degenbot.uniswap.v3_libraries.tick_math import MIN_SQRT_RATIO
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v3_pool_factory import make_v3_pool
 
@@ -97,222 +91,17 @@ def _build_v3_pool(
     )
 
 
-def test_rust_seam_matches_python_simulator_on_dense_pool():
-    """Rust simulate_swap_with_fetch == Python _v3_swap (dense, no miss)."""
-    py_bot = PyBot()
-    pool = _build_v3_pool(py_bot, dense=True, address="0x" + "11" * 20)
-
-    amount_in = 1_000
-
-    # Python simulator path (dense else-branch of _calculate_swap).
-    py_result = pool.simulate_exact_input_swap(
-        token_in=pool.token0,
-        token_in_quantity=amount_in,
-    )
-
-    # Rust seam path (dense → no miss → fetcher unused).
-    fetcher_calls: list[tuple[int, int]] = []
-
-    def fetcher(word: int, block: int):
-        fetcher_calls.append((word, block))
-        return {}
-
-    rust_outcome = pool._py_pool.simulate_swap_with_fetch(
-        zero_for_one=True,
-        amount_in=amount_in,
-        block=0,
-        fetcher=fetcher,
-    )
-
-    assert rust_outcome is not None, "dense pool must not miss on the Rust path"
-    assert fetcher_calls == [], "dense pool must not invoke the fetcher"
-
-    rust_amount0, rust_amount1, rust_sqrt, rust_liq, rust_tick = (
-        int(rust_outcome[0]),
-        int(rust_outcome[1]),
-        int(rust_outcome[2]),
-        int(rust_outcome[3]),
-        int(rust_outcome[4]),
-    )
-
-    # Amounts: Rust returns UNSIGNED absolute values; Python returns signed
-    # deltas. For zfo exact-in: amount0 is deposited (+), amount1 is sent (-).
-    assert py_result.amount0_delta > 0, "zfo exact-in deposits token0"
-    assert py_result.amount1_delta < 0, "zfo exact-in sends token1"
-    assert rust_amount0 == py_result.amount0_delta
-    assert rust_amount1 == -py_result.amount1_delta
-
-    # Final state must match exactly (the companion builds final_state from
-    # this, so any divergence would corrupt arbitrage state propagation).
-    assert rust_sqrt == py_result.final_state.sqrt_price_x96
-    assert rust_liq == py_result.final_state.liquidity
-    assert rust_tick == py_result.final_state.tick
-
-
-@pytest.mark.parametrize("zero_for_one", [True, False])
-def test_rust_seam_sign_mapping_dense(*, zero_for_one: bool):
-    """Pin the Rust→Python sign mapping for both swap directions (dense)."""
-    py_bot = PyBot()
-    pool = _build_v3_pool(py_bot, dense=True, address="0x" + "11" * 20)
-    amount_in = 1_000
-    token_in = pool.token0 if zero_for_one else pool.token1
-
-    py_result = pool.simulate_exact_input_swap(
-        token_in=token_in,
-        token_in_quantity=amount_in,
-    )
-    rust_outcome = pool._py_pool.simulate_swap_with_fetch(
-        zero_for_one=zero_for_one,
-        amount_in=amount_in,
-        block=0,
-        fetcher=lambda *_: {},
-    )
-    assert rust_outcome is not None
-    rust_amount0, rust_amount1 = int(rust_outcome[0]), int(rust_outcome[1])
-
-    if zero_for_one:
-        # zfo exact-in: token0 deposited (+), token1 sent (-).
-        assert py_result.amount0_delta > 0
-        assert py_result.amount1_delta < 0
-        assert rust_amount0 == py_result.amount0_delta
-        assert rust_amount1 == -py_result.amount1_delta
-    else:
-        # ofz exact-in: token0 sent (-), token1 deposited (+).
-        assert py_result.amount0_delta < 0
-        assert py_result.amount1_delta > 0
-        assert rust_amount0 == -py_result.amount0_delta
-        assert rust_amount1 == py_result.amount1_delta
-
-
-def _build_v3_pool_crossing(py_bot: PyBot, *, address: str, zero_for_one: bool):
-    """Build a dense V3 pool whose seeded tick_data covers a CROSSING swap's walk.
-
-    Two OVERLAPPING positions keep liquidity > 0 past the crossed boundary so
-    the swap does NOT drain into an unseeded word — both the Python simulator
-    and the Rust seam run fully dense (no fetcher miss), making a crossing-swap
-    parity comparison valid offline (mirrors the V4 gate).
-    """
-    token0, token1 = _make_tokens(py_bot, tag="c")
-    if zero_for_one:
-        # zfo: crossing -60 downward. Active at tick 0 = 2L.
-        tick_data = {
-            -1200: LiquidityAtTick(
-                liquidity_net=_LIQUIDITY,
-                liquidity_gross=_LIQUIDITY,
-                block=0,
-            ),
-            -60: LiquidityAtTick(
-                liquidity_net=_LIQUIDITY,
-                liquidity_gross=2 * _LIQUIDITY,
-                block=0,
-            ),
-            60: LiquidityAtTick(
-                liquidity_net=-2 * _LIQUIDITY,
-                liquidity_gross=2 * _LIQUIDITY,
-                block=0,
-            ),
-        }
-        liquidity = 2 * _LIQUIDITY
-    else:
-        # ofz: crossing +60 upward. Active at tick 0 = 2L.
-        tick_data = {
-            -60: LiquidityAtTick(
-                liquidity_net=2 * _LIQUIDITY,
-                liquidity_gross=2 * _LIQUIDITY,
-                block=0,
-            ),
-            60: LiquidityAtTick(
-                liquidity_net=-_LIQUIDITY,
-                liquidity_gross=2 * _LIQUIDITY,
-                block=0,
-            ),
-            1200: LiquidityAtTick(
-                liquidity_net=-_LIQUIDITY,
-                liquidity_gross=_LIQUIDITY,
-                block=0,
-            ),
-        }
-        liquidity = 2 * _LIQUIDITY
-    return make_v3_pool(
-        address=address,
-        token0=token0,
-        token1=token1,
-        factory=_FACTORY,
-        fee=_FEE,
-        tick_spacing=_TICK_SPACING,
-        sqrt_price_x96=_SQRT_PRICE_1TO1,
-        tick=0,
-        liquidity=liquidity,
-        tick_data=tick_data,
-        py_bot=py_bot,
-    )
-
-
-@pytest.mark.parametrize("zero_for_one", [True, False])
-def test_rust_seam_matches_python_simulator_dense_crossing(*, zero_for_one: bool):
-    """Rust == Python on a DENSE crossing swap (overlapping positions, no miss).
-
-    Mirrors the V4 dense-crossing gate. A 2-position overlapping fixture keeps
-    liquidity > 0 past the crossed boundary so neither path misses on a fetcher
-    (fully dense), making the crossing-swap amount + final-state parity valid
-    offline. Establishes a tight loop proving the Rust V3 sim's crossing math is
-    sound — the precondition that already backs the shipped V3 mainline routing.
-    """
-    py_bot = PyBot()
-    pool = _build_v3_pool_crossing(
-        py_bot,
-        address="0x" + "33" * 20,
-        zero_for_one=zero_for_one,
-    )
-    # Sized to cross the boundary (-60 for zfo / +60 for ofz) but stop well
-    # short of the outer bound (-1200 / +1200), so the walk stays liquid + in a
-    # seeded word (no drain, no fetch miss).
-    amount_in = 400_000_000_000
-    token_in = pool.token0 if zero_for_one else pool.token1
-
-    py_result = pool.simulate_exact_input_swap(
-        token_in=token_in,
-        token_in_quantity=amount_in,
-    )
-    rust_outcome = pool._py_pool.simulate_swap_with_fetch(
-        zero_for_one=zero_for_one,
-        amount_in=amount_in,
-        block=0,
-        fetcher=lambda *_: {},
-    )
-    assert rust_outcome is not None, "dense crossing pool must not miss on the Rust path"
-    rust_amount0, rust_amount1, _rsp, _rli, rust_tick = (int(x) for x in rust_outcome)
-    # Sanity: the swap actually crossed the boundary.
-    crossed = (rust_tick < -60) if zero_for_one else (rust_tick > 60)
-    assert crossed, (
-        f"V3 zfo={zero_for_one}: amount {amount_in} did not cross the boundary "
-        f"(rust_tick={rust_tick}); bump the amount"
-    )
-    in_range = (rust_tick > -1200) if zero_for_one else (rust_tick < 1200)
-    assert in_range, (
-        f"V3 zfo={zero_for_one}: swap drained past the outer bound "
-        f"(rust_tick={rust_tick}); lower the amount"
-    )
-    # Amounts (Rust unsigned abs vs Python signed deltas).
-    if zero_for_one:
-        assert rust_amount0 == py_result.amount0_delta
-        assert rust_amount1 == -py_result.amount1_delta
-    else:
-        assert rust_amount0 == -py_result.amount0_delta
-        assert rust_amount1 == py_result.amount1_delta
-
-
 def test_sparse_mainline_swap_routed_to_rust_matches_dense_oracle():
-    """Sparse pool's mainline swap → Rust fetch+retry == dense oracle.
+    """Sparse pool's mainline swap → Rust fetch+retry == dense-Rust oracle.
 
     A sparse pool (empty tick_data) misses on the starting word; the return-data
     fetcher supplies the word's ticks; the Rust loop merges + retries; the
-    result matches a dense pool (same position) computed via the Python
-    simulator — i.e. the routed sparse path is correct end-to-end.
+    result matches a dense pool (same position) computed via the dense Rust
+    seam — i.e. the routed sparse path is correct end-to-end.
     """
     py_bot = PyBot()
 
-    # Dense oracle: same position, Python simulator.
+    # Dense oracle: same position, dense Rust seam (full tick_data → no miss).
     dense = _build_v3_pool(py_bot, dense=True, address="0x" + "11" * 20)
     oracle = dense.simulate_exact_input_swap(
         token_in=dense.token0,
@@ -363,14 +152,15 @@ def test_sparse_mainline_swap_routed_to_rust_matches_dense_oracle():
 def test_sparse_fetch_reaches_min_tick_via_empty_words():
     """Sparse zfo swap with no initialized ticks must reach MIN_TICK, not strand.
 
-    Rust's ``gen_ticks`` 2nd-phase boundary walk BREAKS when the next
-    word-boundary tick falls below MIN_TICK (or above MAX_TICK), leaving the
-    swap loop with an exhausted tick list while ``amount_specified_remaining``
-    is still positive + the price-limit unreached — the walk strands in the
-    last fully-fitting word. Python's ``gen_ticks`` (used by the dense oracle)
-    yields boundary ticks *forever* (``while True: yield``), so the dense path
-    always reaches the price limit. This gate pins Rust sparse+fetch parity
-    with the dense oracle on a zfo swap through empty words down to MIN_TICK.
+    Rust's ``gen_ticks`` 2nd-phase boundary walk previously BROKE past
+    MIN_TICK/MAX_TICK, exhausting the tick list while
+    ``amount_specified_remaining`` was still positive + the price-limit
+    unreached — the walk stranded in the last fully-fitting word. The clamp
+    fix yields the MIN/MAX boundary tick (matched by the Rust
+    ``#[cfg(test)]`` gen_ticks clamping assertions in ``tick_bitmap.rs``).
+    This gate is the end-to-end sparse+fetch coverage: a no-init-tick zfo
+    swap through empty words must drive the price down to MIN, fetching each
+    empty word, matching the dense-Rust oracle (full tick_data, no miss).
     """
     py_bot = PyBot()
     token0, token1 = _make_tokens(py_bot, tag="e")
@@ -379,9 +169,7 @@ def test_sparse_fetch_reaches_min_tick_via_empty_words():
     # path (tick ≤ start) has NO initialized ticks — liq stays constant all the
     # way to MIN.
     tick_data_dense = {
-        60: LiquidityAtTick(
-            liquidity_net=_LIQUIDITY, liquidity_gross=_LIQUIDITY, block=0
-        ),
+        60: LiquidityAtTick(liquidity_net=_LIQUIDITY, liquidity_gross=_LIQUIDITY, block=0),
     }
     dense = make_v3_pool(
         address="0x" + "66" * 20,
@@ -398,26 +186,21 @@ def test_sparse_fetch_reaches_min_tick_via_empty_words():
     )
     # Huge amount: drives the zfo price from 2**96 down to the MIN limit.
     amount_in = 10**34
-    # Dense oracle: the PYTHON ``_calculate_swap`` (raw simulator, gen_ticks
-    # yields boundary ticks *forever*). The companion's
-    # ``simulate_exact_input_swap`` routes to the Rust seam (the subject under
-    # test), so it is NOT a valid reference here — call the Python sim directly.
-    MIN_SQRT_RATIO_PY = 4295128739
-    py_a0, py_a1, py_sp, py_liq, py_tick = dense._calculate_swap(
+    # Dense-Rust oracle: the dense pool (full tick_data → no miss) computed
+    # via the Rust seam. gen_ticks (now clamped at MIN_TICK) drives the walk
+    # to the price limit; the dense path never exercises sparse+fetch, so it
+    # is a valid reference for the sparse fetch+retry path below.
+    oracle_outcome = dense._py_pool.simulate_swap_with_fetch(
         zero_for_one=True,  # zfo (token0 in → token1 out, descending → MIN)
-        amount_specified=amount_in,
-        sqrt_price_limit_x96=MIN_SQRT_RATIO_PY + 1,
+        amount_in=amount_in,
+        block=0,
+        fetcher=lambda *_: {},
     )
-    assert py_sp == MIN_SQRT_RATIO_PY + 1, (
-        f"python oracle did not reach the MIN price limit (got sqrt={py_sp}); "
-        f"bump amount_in"
+    assert oracle_outcome is not None, "dense oracle must not miss"
+    py_a0, py_a1, py_sp, py_liq, py_tick = (int(x) for x in oracle_outcome)
+    assert py_sp == MIN_SQRT_RATIO + 1, (
+        f"dense oracle did not reach the MIN price limit (got sqrt={py_sp}); bump amount_in"
     )
-    oracle = type("_O", (), {"amount0_delta": py_a0, "amount1_delta": py_a1})()
-    oracle.final_state = type("_S", (), {
-        "sqrt_price_x96": py_sp,
-        "liquidity": py_liq,
-        "tick": py_tick,
-    })()
 
     # Sparse pool — identical scalars, NO tick_data seeded. The fetcher returns
     # {} for every word (no initialized ticks anywhere); Rust marks each
@@ -456,14 +239,14 @@ def test_sparse_fetch_reaches_min_tick_via_empty_words():
         f"rust sparse did not reach the MIN price limit (got sqrt={rust_sp}); "
         f"the walk stranded before MIN_TICK"
     )
-    # Full parity with the python oracle (amounts + final state). Rust
-    # returns UNSIGNED absolute amounts; Python's `_calculate_swap` returns
-    # signed deltas (zfo: amount0 = +input consumed, amount1 = -output).
-    assert rust_a0 == py_a0, f"amount0: rust={rust_a0} py={py_a0}"
-    assert rust_a1 == -py_a1, f"amount1: rust={rust_a1} py={py_a1}"
-    assert rust_tick == py_tick, f"final tick: rust={rust_tick} py={py_tick}"
-    assert rust_liq == py_liq, f"final liq: rust={rust_liq} py={py_liq}"
-    assert rust_sp == py_sp, f"final sqrt: rust={rust_sp} py={py_sp}"
+    # Full parity with the dense-Rust oracle (amounts + final state). Both
+    # paths return UNSIGNED absolute amounts (zfo: amount0 = input consumed,
+    # amount1 = output sent).
+    assert rust_a0 == py_a0, f"amount0: rust={rust_a0} oracle={py_a0}"
+    assert rust_a1 == py_a1, f"amount1: rust={rust_a1} oracle={py_a1}"
+    assert rust_tick == py_tick, f"final tick: rust={rust_tick} oracle={py_tick}"
+    assert rust_liq == py_liq, f"final liq: rust={rust_liq} oracle={py_liq}"
+    assert rust_sp == py_sp, f"final sqrt: rust={rust_sp} oracle={py_sp}"
 
 
 if __name__ == "__main__":

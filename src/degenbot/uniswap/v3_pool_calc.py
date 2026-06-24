@@ -5,8 +5,9 @@ All methods are read-only with respect to pool state — they compute
 results based on current state but don't modify it.
 
 These methods match the Uniswap V3 contract's math:
-- _calculate_swap: core swap computation ported from UniswapV3Pool.sol
-- calculate_tokens_out_from_tokens_in / calculate_tokens_in_from_tokens_out: degenbot interface
+- calculate_tokens_out_from_tokens_in / calculate_tokens_in_from_tokens_out:
+  degenbot interface (delegated to the Rust-routed
+  simulate_exact_input_swap / simulate_exact_output_swap)
 - get_absolute_price / get_absolute_exchange_rate / get_nominal_price / get_nominal_rate: pricing
 - extract_fee: fee extraction for hop building
 - _get_tick_ranges / _compute_tick_ranges: bounded-product optimization

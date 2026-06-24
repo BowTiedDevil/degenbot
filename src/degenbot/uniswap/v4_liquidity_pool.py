@@ -55,9 +55,7 @@ from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import BoundedProductHop, HopType, V3TickRangeInfo
 from degenbot.types.pool_protocols import SimulationResult
-from degenbot.uniswap.concentrated.liquidity_map import LiquidityMapSnapshot, MissingLiquidityData
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
-from degenbot.uniswap.concentrated.v4_simulator import calculate_swap as _v4_swap
 from degenbot.uniswap.log_decoders import (
     V4_MODIFY_LIQUIDITY_TOPIC,
     V4_SWAP_TOPIC,
@@ -78,11 +76,9 @@ from degenbot.uniswap.v3_libraries.tick_math import (
 from degenbot.uniswap.v4_pool_calc import UniswapV4PoolCalc
 from degenbot.uniswap.v4_pool_state import V4PoolState
 from degenbot.uniswap.v4_types import (
-    FeeToProtocol,
     InitializedTickMap,
     LiquidityMap,
     Pip,
-    SwapFee,
     UniswapV4PoolExternalUpdate,
     UniswapV4PoolKey,
     UniswapV4PoolLiquidityMappingUpdate,
@@ -370,122 +366,6 @@ class UniswapV4Pool(
         numerator = protocol_fee * lp_fee
         return (protocol_fee + lp_fee) - (numerator // PIPS_DENOMINATOR)
 
-    def _calculate_swap(
-        self,
-        *,
-        zero_for_one: bool,
-        amount_specified: int,
-        sqrt_price_x96_limit: int,
-        override_state: UniswapV4PoolState | None = None,
-    ) -> tuple[SwapDelta, FeeToProtocol, SwapFee, SwapResult]:
-        """Port from ``UniswapV4Pool._calculate_swap``.
-
-        Operates on a frozen ``LiquidityMapSnapshot`` and returns ``SwapResult``
-        with no side effects.
-
-        Returns:
-            Tuple of (swap delta, protocol fee, swap fee, swap result).
-
-        Raises:
-            LiquidityPoolError: If tick data fetcher fails to resolve a word.
-            MissingLiquidityData: If a sparse liquidity map is missing a required word.
-
-        """
-        if override_state is not None:
-            snapshot = LiquidityMapSnapshot.from_state(
-                override_state,
-                tick_spacing=self.tick_spacing,
-                sparse=True,
-            )
-            liquidity_start = override_state.liquidity
-            sqrt_price_x96_start = override_state.sqrt_price_x96
-            tick_start = override_state.tick
-        else:
-            snapshot = LiquidityMapSnapshot(
-                tick_data=self.tick_data,
-                tick_bitmap=self.tick_bitmap,
-                tick_spacing=self.tick_spacing,
-                sparse=True,
-            )
-            liquidity_start = self.liquidity
-            sqrt_price_x96_start = self.sqrt_price_x96
-            tick_start = self.tick
-
-        protocol_fee = (
-            self.protocol_fee.zero_for_one if zero_for_one else self.protocol_fee.one_for_zero
-        )
-        swap_fee = (
-            self.lp_fee
-            if protocol_fee == 0
-            else self._calculate_swap_fee(protocol_fee, self.lp_fee)
-        )
-
-        if amount_specified == 0:
-            return (
-                SwapDelta(currency0=0, currency1=0),
-                0,
-                swap_fee,
-                SwapResult(
-                    sqrt_price_x96=sqrt_price_x96_start,
-                    tick=tick_start,
-                    liquidity=liquidity_start,
-                ),
-            )
-
-        # Always use the sparse swap loop so that MissingLiquidityData can be
-        # handled by fetching additional tick data when the fetcher is available.
-        fetched_words: set[int] = set()
-        while True:
-            try:
-                result = _v4_swap(
-                    snapshot=snapshot,
-                    zero_for_one=zero_for_one,
-                    amount_specified=amount_specified,
-                    sqrt_price_x96_limit=sqrt_price_x96_limit,
-                    lp_fee=self.lp_fee,
-                    protocol_fee=protocol_fee,
-                    liquidity_start=liquidity_start,
-                    sqrt_price_x96_start=sqrt_price_x96_start,
-                    tick_start=tick_start,
-                )
-                break
-            except MissingLiquidityData as exc:
-                if exc.word in fetched_words:
-                    raise LiquidityPoolError(
-                        message=f"Tick data fetcher did not resolve word {exc.word} "
-                        f"on a previous attempt. "
-                        f"pool_id={self.pool_id.to_0x_hex()} zfo={zero_for_one} "
-                        f"amount_specified={amount_specified}",
-                    ) from exc
-                if self._tick_data_fetcher is not None:
-                    fetched_words.add(exc.word)
-                    # ADR-005 slice 3b: the fetcher RETURNS the word's ticks
-                    # (return-data contract); ``_apply_fetched_tick_word`` merges
-                    # them into the pool state. The bitmap derives from the
-                    # tick_data keys, so no verbatim bitmap value is needed.
-                    self._apply_fetched_tick_word(exc.word, self.update_block)
-                    snapshot = LiquidityMapSnapshot(
-                        tick_data=self.tick_data,
-                        tick_bitmap=self.tick_bitmap,
-                        tick_spacing=self.tick_spacing,
-                        sparse=True,
-                    )
-                else:
-                    raise
-
-        swap_delta = SwapDelta(currency0=result.amount0, currency1=result.amount1)
-
-        return (
-            swap_delta,
-            protocol_fee,
-            swap_fee,
-            SwapResult(
-                sqrt_price_x96=result.sqrt_price_x96,
-                tick=result.tick,
-                liquidity=result.liquidity,
-            ),
-        )
-
     def calculate_tokens_in_from_tokens_out(
         self,
         token_out: Erc20Token,
@@ -511,9 +391,10 @@ class UniswapV4Pool(
 
         # ADR-005 slice 4: mainline exact-output swap (no override) delegates to
         # the Rust exact-output fetch+retry seam. The V4 exact-output sign
-        # convention (amountSpecified > 0) is handled in the Rust core. Custom
-        # limit + override keep the Python `_calculate_swap` (override is an
-        # arbitrage hypothetical — remaining slice-4 override-routing item).
+        # convention (amountSpecified > 0) is handled in the Rust core; a custom
+        # limit threads through (the seam honours it). The override path routes
+        # to the Rust exact-output override seam
+        # (``simulate_exact_output_swap_with_override`` — see below).
         if override_state is None:
             outcome = self._py_pool.simulate_exact_output_swap_with_fetch(
                 zero_for_one=zero_for_one,
@@ -626,10 +507,9 @@ class UniswapV4Pool(
         # price limit) delegates to the Rust fetch+retry seam. The sparse-path
         # crossing-swap divergence (ELSE-branch miss check in `v4_simulate_swap`)
         # is fixed — `test_cached_calculations` was RED on seed 2, now GREEN
-        # across seeds. The override / custom-limit paths keep the Python
-        # `_calculate_swap` (override is an arbitrage hypothetical; Rust
-        # hardcodes the MIN/MAX price limit so a custom limit can't be honoured
-        # there — a remaining slice-4 item).
+        # across seeds. The override path routes to the Rust override seam
+        # (``simulate_swap_with_override`` — see below); a custom limit threads
+        # through both paths (the seam honours it).
         if override_state is None:
             outcome = self._py_pool.simulate_swap_with_fetch(
                 zero_for_one=zero_for_one,
