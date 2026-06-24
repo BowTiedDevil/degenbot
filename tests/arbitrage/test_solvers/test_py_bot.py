@@ -797,6 +797,93 @@ class TestV3PoolState:
         )
         assert core.v3_journal_len(pool_id) == 1
 
+    def test_register_v3_pool_seeds_tick_data_atomically(self):
+        """register_v3_pool seeds tick_data inline — no separate update_tick_data.
+
+        Reproduces the rolling-start race (ADR-006): under the bypass path the
+        builder called ``py_bot.register_v3_pool`` (empty tick_data) THEN
+        ``update_tick_data`` to seed the snapshot. Because ``resume()`` runs
+        before ``build_paths``, a pump Mint/Burn arriving between register and
+        seed was applied to the (empty) tick_data then CLOBBERED by the seed
+        overwrite — a lost update the on-chain verify reproduces. Folding the
+        seed into ``register_v3_pool`` (one BotState lock) closes the window:
+        the pool is never visible to the pump in an unseeded state, so pump
+        events always land on top of the seed, never to be overwritten.
+        """
+        core = PyBot()
+        seed_tick = -60
+        seed_rows: dict[int, tuple[int, int, int]] = {
+            seed_tick: (1_000_000, 1_000_000, 100),
+            60: (1_000_000, -1_000_000, 100),
+        }
+        pool_id = core.register_v3_pool(
+            address=self.POOL_ADDR,
+            token0=self.TOKEN0_ADDR,
+            token1=self.TOKEN1_ADDR,
+            fee=3000,
+            tick_spacing=60,
+            factory=self.FACTORY_ADDR,
+            sqrt_price_x96=self.SQRT_PRICE_X96,
+            liquidity=1_000_000,
+            tick=0,
+            tick_data=seed_rows,
+            update_block=100,
+        )
+        pool = core.get_pool(pool_id)
+        assert pool is not None
+
+        # The seed landed inline — NO update_tick_data call was made. If the
+        # seed were lost (pre-fix: empty tick_data), this snapshot is empty.
+        assert pool.tick_data_snapshot() == seed_rows
+
+        # update_block advanced to the seed block (not the hardcoded 0).
+        assert pool.snapshot_v3() is not None
+        _, _, _, seeded_block = pool.snapshot_v3()  # type: ignore[misc]
+        assert seeded_block == 100
+
+    def test_register_v3_pool_inline_seed_survives_concurrent_update(self):
+        """A pump liquidity update after the inline seed is NOT clobbered.
+
+        This is the core race-closure assertion: with the seed folded into
+        registration, a liquidity update applied AFTER register (simulating a
+        pump burn landing during build_paths) survives — there is no later
+        ``update_tick_data`` overwrite to discard it.
+        """
+        core = PyBot()
+        seed_rows: dict[int, tuple[int, int, int]] = {
+            0: (1_000_000, 0, 100),
+        }
+        pool_id = core.register_v3_pool(
+            address=self.POOL_ADDR,
+            token0=self.TOKEN0_ADDR,
+            token1=self.TOKEN1_ADDR,
+            fee=3000,
+            tick_spacing=60,
+            factory=self.FACTORY_ADDR,
+            sqrt_price_x96=self.SQRT_PRICE_X96,
+            liquidity=1_000_000,
+            tick=0,
+            tick_data=seed_rows,
+            update_block=100,
+        )
+        pool = core.get_pool(pool_id)
+        assert pool is not None
+
+        # Pump-phase burn at a later block: applies on top of the seed.
+        assert pool.apply_liquidity_update(
+            tick_lower=0,
+            tick_upper=60,
+            liquidity_delta=-500_000,
+            block_number=150,
+        )
+        snapshot = pool.tick_data_snapshot()
+        # The burn SURVIVED — tick 0's gross halved from the seed's 1_000_000
+        # to 500_000 at the burn's block (150). If the seed had been applied
+        # AFTER the burn (the pre-fix clobber), gross would still be 1_000_000
+        # and the block would be the seed's 100.
+        assert snapshot[0][0] == 500_000
+        assert snapshot[0][2] == 150
+
     def test_update_v3_same_block_replaces_delta(self):
         """Same-block V3 update replaces the current delta."""
         core, pool_id = self._make_core_with_v3_pool()

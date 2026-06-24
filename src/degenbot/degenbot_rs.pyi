@@ -1054,6 +1054,9 @@ class PyBot:
         sqrt_price_x96: int,
         liquidity: int,
         tick: int,
+        tick_data: dict[int, tuple[int, int, int]] | None = ...,
+        update_block: int = ...,
+        coverage: str = ...,
     ) -> int: ...
     def update_v3_pool(
         self,

@@ -109,9 +109,15 @@ def make_v3_pool(
     """
     address_checksum = get_checksum_address(address)
     resolved_chain_id = chain_id if chain_id is not None else token0.chain_id
-    state_block_int = state_block if state_block is not None else 0
 
     bot = py_bot if py_bot is not None else PyBot()
+    # ADR-006 rolling-start race closure: seed tick_data INLINE in
+    # ``register_v3_pool`` (one BotState write lock) so a pump Mint/Burn
+    # landing after registration applies on top of the seed and is never
+    # clobbered by a later ``update_tick_data`` overwrite.
+    rust_rows = _tick_data_to_rust_rows(tick_data)
+    state_block_int = state_block if state_block is not None else 0
+    coverage = "sparse" if (tick_data is None or len(tick_data) == 0) else "tracked"
     pool_id = bot.register_v3_pool(
         address=address_checksum,
         token0=token0.address,
@@ -122,13 +128,17 @@ def make_v3_pool(
         sqrt_price_x96=sqrt_price_x96,
         liquidity=liquidity,
         tick=tick,
+        tick_data=rust_rows or None,
+        update_block=state_block_int,
+        coverage=coverage,
     )
     handle: PyLiquidityPool | None = bot.get_pool(pool_id)
     assert handle is not None, "register_v3_pool returned a pool_id with no handle"
 
-    # register_v3_pool hardcodes update_block=0; if the caller passed a real
-    # state_block + tick snapshot, land it now via the scalar+tick write paths
-    # so the companion's ``state`` reflects the registration snapshot.
+    # ``apply_swap`` anchors the reorg genesis delta at state_block (mirrors
+    # the V2 builder writing reserves with update_block=state_block). The
+    # tick_data seed landed inline in ``register_v3_pool`` — no separate
+    # ``update_tick_data`` call (that would clobber pump-applied events).
     if state_block is not None and state_block_int > 0:
         handle.apply_swap(
             sqrt_price_x96=sqrt_price_x96,
@@ -136,9 +146,6 @@ def make_v3_pool(
             tick=tick,
             block_number=state_block_int,
         )
-    if tick_data is not None and len(tick_data) > 0:
-        rows = _tick_data_to_rust_rows(tick_data)
-        handle.update_tick_data(tick_bitmap or {}, rows, state_block_int or 0)
 
     sparse = tick_data is None or len(tick_data) == 0
     pool = pool_class(

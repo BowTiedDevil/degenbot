@@ -208,6 +208,13 @@ class EngineRegistry:
             state_view_address=self._verify_state_view,
             block_number=resolved_block,
         )
+        # The engine's Rust `log::info!("[verify] …")` isn't reliably forwarded
+        # to Python's logging under `pyo3_log`, so emit a Python-side success
+        # marker here. Reaching this line means the engine call returned Ok
+        # (it raises on any mismatch — fail-fast). The permutation analyzer
+        # keys on `[verify]...OK` to set `verify_basis="verified"`.
+        block_tag = resolved_block if resolved_block is not None else "latest"
+        bot_logger.info(f"[verify] V3 + V4 liquidity maps OK at block {block_tag}")
 
     def register_v2_pool(self, pool: LiquidityPool) -> int:  # noqa: D102
         if pool.address in self._v2_keys:

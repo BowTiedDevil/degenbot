@@ -34,7 +34,7 @@ use degenbot_bot::bot_core::{
     RegisterCurvePoolParams, RegisterV2PoolParams, RegisterV3PoolParams, RegisterV4PoolParams,
     V4PoolKey,
 };
-use pyo3::types::PyList;
+use pyo3::types::{PyDict, PyList};
 use pyo3::Bound;
 
 /// Build an `alloy::rpc::types::Log` from the WS-log shape Python tests pass —
@@ -360,7 +360,23 @@ impl PyBot {
     ///
     /// Returns the auto-assigned pool ID.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (address, token0, token1, fee, tick_spacing, factory, sqrt_price_x96, liquidity, tick))]
+    /// Register a V3 pool, optionally seeding tick_data inline.
+    ///
+    /// ADR-006 rolling-start race closure: the builder previously called
+    /// ``register_v3_pool`` (empty tick_data) THEN ``update_tick_data`` to seed
+    /// the snapshot. Because ``resume()`` runs before ``build_paths``, a pump
+    /// Mint/Burn landing between register and seed was applied to the empty
+    /// tick_data then CLOBBERED by the seed overwrite — a lost update the
+    /// on-chain ``verify_liquidity_maps`` reproduces. Folding the seed into
+    /// ``register_v3_pool`` (one ``BotState`` write lock) closes the window:
+    /// the pool is never visible to the pump in an unseeded state, so pump
+    /// events always land on top of the seed and are never overwritten.
+    ///
+    /// `tick_data` is ``{tick: (liquidity_gross, liquidity_net, block)}``
+    /// (symmetric with ``PyLiquidityPool.tick_data_snapshot``).
+    /// `coverage` is ``"tracked"`` (complete DB snapshot) or ``"sparse"``
+    /// (RPC-fetched active word only / no snapshot).
+    #[pyo3(signature = (address, token0, token1, fee, tick_spacing, factory, sqrt_price_x96, liquidity, tick, tick_data=None, update_block=0, coverage="sparse"))]
     fn register_v3_pool(
         &self,
         address: &str,
@@ -372,6 +388,9 @@ impl PyBot {
         sqrt_price_x96: &Bound<'_, PyAny>,
         liquidity: &Bound<'_, PyAny>,
         tick: i32,
+        tick_data: Option<Bound<'_, PyDict>>,
+        update_block: u64,
+        coverage: &str,
     ) -> PyResult<u64> {
         let addr = parse_address(address)?;
         let t0 = parse_address(token0)?;
@@ -380,6 +399,44 @@ impl PyBot {
         let spx = crate::conversion::alloy::extract_python_u256(sqrt_price_x96)?;
         // liquidity is uint128 — extracted as U256 then narrowed.
         let liq = crate::conversion::alloy::extract_python_u256(liquidity)?.to::<u128>();
+
+        // Convert `{tick: (gross, net, block)}` → `HashMap<i32, TickInfo>`
+        // (mirrors `PyLiquidityPool.update_tick_data`'s boundary conversion).
+        let rust_tick_data: std::collections::HashMap<i32, degenbot_bot::bot_core::TickInfo> =
+            match tick_data {
+                Some(dict) => {
+                    let parsed: std::collections::HashMap<i32, (u128, i128, u64)> =
+                        dict.extract().map_err(|_| {
+                            pyo3::exceptions::PyTypeError::new_err(
+                                "register_v3_pool: tick_data must be {tick: (gross, net, block)}",
+                            )
+                        })?;
+                    parsed
+                        .into_iter()
+                        .map(|(tick, (gross, net, blk))| {
+                            (
+                                tick,
+                                degenbot_bot::bot_core::TickInfo {
+                                    liquidity_gross: alloy::primitives::U128::from(gross),
+                                    liquidity_net: alloy::primitives::I256::try_from(net)
+                                        .unwrap_or(alloy::primitives::I256::ZERO),
+                                    block: blk,
+                                },
+                            )
+                        })
+                        .collect()
+                }
+                None => std::collections::HashMap::new(),
+            };
+        let cov = match coverage {
+            "tracked" => PoolTickCoverage::Tracked,
+            "sparse" => PoolTickCoverage::Sparse,
+            other => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "register_v3_pool: coverage must be 'tracked' or 'sparse', got {other:?}",
+                )));
+            }
+        };
 
         Ok(self
             .bot
@@ -395,9 +452,9 @@ impl PyBot {
                 sqrt_price_x96: spx,
                 liquidity: liq,
                 tick,
-                tick_data: std::collections::HashMap::new(),
-                update_block: 0,
-                coverage: degenbot_bot::bot_core::PoolTickCoverage::Sparse,
+                tick_data: rust_tick_data,
+                update_block,
+                coverage: cov,
             }))
     }
 

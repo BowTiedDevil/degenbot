@@ -279,6 +279,29 @@ class AsyncV3PoolBuilder:
             msg = f"No V3 pool class registered for chain {chain_id}, factory {factory}"
             raise ValueError(msg)
 
+        # Register the pool in the shared Rust Bot and wrap the handle with
+        # the Python companion. ADR-006 rolling-start race closure: the
+        # snapshot tick_data is seeded INLINE in ``register_v3_pool`` (one
+        # BotState write lock) so the pool is never visible to the live pump
+        # in an unseeded state — a pump Mint/Burn landing after registration
+        # applies on top of the seed and is never clobbered by a later
+        # ``update_tick_data`` overwrite. ``apply_swap`` still anchors the
+        # reorg genesis delta at state_block.
+        rust_rows: dict[int, tuple[int, int, int]] = {}
+        for t, info in working_tick_data.items():
+            if isinstance(info, LiquidityAtTick):
+                rust_rows[int(t)] = (
+                    int(info.liquidity_gross),
+                    int(info.liquidity_net),
+                    int(info.block),
+                )
+            else:
+                rust_rows[int(t)] = (
+                    int(info[0]),
+                    int(info[1]),
+                    int(info[2]) if len(info) > 2 else 0,  # noqa: PLR2004
+                )
+        state_block_int = int(state_block) if state_block is not None else 0
         pool_id = self._py_bot.register_v3_pool(
             address=pool_address,
             token0=token0_address,
@@ -289,39 +312,19 @@ class AsyncV3PoolBuilder:
             sqrt_price_x96=int(sqrt_price_x96),
             liquidity=int(liquidity),
             tick=int(tick),
+            tick_data=rust_rows or None,
+            update_block=state_block_int,
+            coverage="tracked" if db_snapshot_loaded else "sparse",
         )
         py_pool_handle = self._py_bot.get_pool(pool_id)
         assert py_pool_handle is not None, "register_v3_pool returned a pool_id with no handle"
-        if state_block is not None and int(state_block) > 0:
+        if state_block is not None and state_block_int > 0:
             py_pool_handle.apply_swap(
                 sqrt_price_x96=int(sqrt_price_x96),
                 liquidity=int(liquidity),
                 tick=int(tick),
-                block_number=int(state_block),
+                block_number=state_block_int,
             )
-        # Seed the initial tick snapshot (snapshot-provided OR RPC-fetched)
-        # into Rust so the companion starts non-empty.
-        if working_tick_data:
-            rows: dict[int, tuple[int, int, int]] = {}
-            for t, info in working_tick_data.items():
-                if isinstance(info, LiquidityAtTick):
-                    rows[int(t)] = (
-                        int(info.liquidity_gross),
-                        int(info.liquidity_net),
-                        int(info.block),
-                    )
-                else:
-                    rows[int(t)] = (
-                        int(info[0]),
-                        int(info[1]),
-                        int(info[2]) if len(info) > 2 else 0,  # noqa: PLR2004
-                    )
-            py_pool_handle.update_tick_data(
-                working_tick_bitmap,
-                rows,
-                int(state_block) if state_block is not None else 0,
-            )
-
         pool = pool_class(
             py_pool_handle,
             address=pool_address,
