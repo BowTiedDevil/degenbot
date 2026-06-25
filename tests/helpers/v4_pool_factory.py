@@ -46,8 +46,19 @@ def make_v4_pool(
     tick_bitmap: dict[int, Any] | None = None,
     state_block: int | None = None,
     py_bot: PyBot | None = None,
+    coverage: str | None = None,
 ) -> UniswapV4Pool:
     """Construct an I/O-free `UniswapV4Pool` registered in Rust.
+
+    ``coverage``: override the coverage flag. Defaults to ``"tracked"`` when
+    ``tick_data`` is non-empty and ``"sparse"`` otherwise — BUT a sparse pool
+    seeded with PARTIAL tick_data (a fetch+retry regression gate that must miss
+    + fetch the absent words) must register ``coverage="sparse"`` so the Rust
+    miss-detection in ``v4_simulate_swap`` fires on the unseeded words. Passing
+    ``coverage="sparse"`` explicitly keeps the pool sparse even with seeded
+    data; clearing tick_data via ``update_tick_data({})`` does NOT flip the
+    Rust coverage flag (it is set at registration), so the sparse contract
+    must be established at construction.
 
     Returns the V4 companion over the `PyLiquidityPool` handle.
     """
@@ -59,9 +70,8 @@ def make_v4_pool(
     # ``register_v4_pool`` (mirrors ``make_v3_pool`` + the production V4
     # builders) so the pool is never visible to a live pump unseeded.
     register_rows: dict[int, tuple[int, int, int]] | None = None
-    coverage = "sparse"
-    if tick_data is not None and len(tick_data) > 0:
-        coverage = "tracked"
+    has_tick_data = tick_data is not None and len(tick_data) > 0
+    if has_tick_data:
         register_rows = {}
         for t, info in tick_data.items():
             if isinstance(info, LiquidityAtTick):
@@ -76,6 +86,8 @@ def make_v4_pool(
                     int(info[1]),
                     int(info[2]) if len(info) > 2 else blk,
                 )
+    if coverage is None:
+        coverage = "tracked" if has_tick_data else "sparse"
 
     pool_id_int = bot.register_v4_pool(
         pool_manager=pool_manager_address,

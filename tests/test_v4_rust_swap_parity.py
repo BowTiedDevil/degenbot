@@ -53,7 +53,7 @@ def _compute_v4_pool_id(
     )
 
 
-def _build_dense_v4_pool(py_bot: PyBot, address_tag: str):
+def _build_dense_v4_pool(py_bot: PyBot, address_tag: str, *, coverage: str = "tracked"):
     """Build a dense V4 companion (1:1 price, position [-60, +60], no hooks)."""
     token0 = make_erc20(
         py_bot,
@@ -105,6 +105,7 @@ def _build_dense_v4_pool(py_bot: PyBot, address_tag: str):
         lp_fee=_FEE,
         state_block=0,
         py_bot=py_bot,
+        coverage=coverage,
     )
 
 
@@ -129,7 +130,22 @@ def test_sparse_mainline_v4_swap_fetch_merge_matches_dense_oracle():
         token_in_quantity=1_000,
     )
 
-    # Sparse pool: identical scalars + position, but NO tick_data seeded.
+    # Sparse pool: identical scalars + position, registered SPARSE with NO
+    # tick_data seeded (coverage="sparse"; the contract is established at
+    # registration — clearing tick_data after a dense registration does NOT flip
+    # the Rust `coverage` flag, so the miss-detection in v4_simulate_swap would
+    # never fire + the fetcher would never run). The starting word (0) is
+    # unknown → the first `v4_simulate_swap` call raises `MissingTickWord(0)` →
+    # the fetch+retry loop backfills the bounds' words on demand.
+    token0_b = make_erc20(
+        py_bot, address=f"0x{'b' * 40}", name="T0b", symbol="T0b", decimals=18,
+    )
+    token1_b = make_erc20(
+        py_bot, address=f"0x{'b' * 39}{'e'}", name="T1b", symbol="T1b", decimals=18,
+    )
+    pool_id_b = _compute_v4_pool_id(
+        token0_b.address, token1_b.address, _FEE, _TICK_SPACING, ZERO_ADDRESS,
+    )
     fetched_words: list[int] = []
 
     def fetcher(word: int, block: int):
@@ -142,12 +158,28 @@ def test_sparse_mainline_v4_swap_fetch_merge_matches_dense_oracle():
             return {-60: (_LIQUIDITY, _LIQUIDITY, 0)}
         return {}
 
-    sparse = _build_dense_v4_pool(py_bot, address_tag="b")
-    # Force sparseness: clear the seeded tick_data + attach the fetcher.
-    sparse._py_pool.update_tick_data({}, {}, 0)
+    sparse = make_v4_pool(
+        pool_id=pool_id_b,
+        pool_manager_address=_V4_POOL_MANAGER,
+        token0=token0_b,
+        token1=token1_b,
+        fee=_FEE,
+        tick_spacing=_TICK_SPACING,
+        hook_address=None,
+        sqrt_price_x96=_SQRT_PRICE_1TO1,
+        tick=0,
+        liquidity=_LIQUIDITY,
+        tick_data=None,
+        protocol_fee_zero_for_one=0,
+        protocol_fee_one_for_zero=0,
+        lp_fee=_FEE,
+        state_block=0,
+        py_bot=py_bot,
+        coverage="sparse",
+    )
     sparse._tick_data_fetcher = fetcher
     sparse._sparse_liquidity_map = True
-    assert sparse.sparse_liquidity_map, "cleared tick_data ⇒ sparse companion"
+    assert sparse.sparse_liquidity_map, "sparse-registered companion is sparse"
 
     result = sparse.calculate_tokens_out_from_tokens_in(
         token_in=sparse.token0,
@@ -189,9 +221,14 @@ def _build_pool_from_corpus(
     sparse: bool,
     fetcher,
 ):
-    """Build a V4 companion seeded with ``td``; if ``sparse``, clear the
-    companion's seeded Rust state + flip sparse + attach ``fetcher`` (so the
-    mainline + seam paths fetch on demand).
+    """Build a V4 companion seeded with ``td``.
+
+    If ``sparse``, register with ``coverage="sparse"`` + the partial ``td``
+    (the sparse-fetch contract is established at registration — clearing
+    tick_data after a dense registration does NOT flip the Rust coverage
+    flag). The companion's fetcher is attached so the Rust miss-detection in
+    ``v4_simulate_swap`` fetches the absent words on demand (``td`` omits the
+    words the gate must backfill).
     """
     token0 = make_erc20(py_bot, address="0x" + "aa" * 20, name="T0", symbol="T0", decimals=18)
     token1 = make_erc20(py_bot, address="0x" + "bb" * 20, name="T1", symbol="T1", decimals=18)
@@ -221,9 +258,9 @@ def _build_pool_from_corpus(
         lp_fee=state["fee"],
         state_block=0,
         py_bot=py_bot,
+        coverage="sparse" if sparse else "tracked",
     )
     if sparse:
-        pool._py_pool.update_tick_data({}, {}, 0)
         pool._sparse_liquidity_map = True
         pool._tick_data_fetcher = fetcher
     return pool
