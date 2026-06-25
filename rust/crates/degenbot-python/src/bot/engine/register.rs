@@ -16,6 +16,7 @@ use crate::prelude::*;
 impl PyUniswapArbEngine {
     #[new]
     #[pyo3(signature = (py_bot=None))]
+    #[allow(clippy::needless_pass_by_value)]
     fn new(py: Python<'_>, py_bot: Option<Py<PyBot>>) -> Self {
         let py_bot_ref = py_bot.as_ref();
         let (result_tx, result_rx) = mpsc::unbounded_channel();
@@ -69,10 +70,6 @@ impl PyUniswapArbEngine {
             v4_snapshot: SnapshotStore::new(),
         }
     }
-
-    /// Register a V2 pool by contract address and initial reserves.
-    /// Returns the assigned `pool_id` (orientation is selected at solve time
-    /// via `zero_for_one`; there is no separate reverse id — ADR-006 D3).
 
     /// Register a mixed arbitrage path.
     ///
@@ -187,7 +184,7 @@ impl PyUniswapArbEngine {
         // ADR-006 D4 (T3): delegates to the shared `PumpState::subscribe` —
         // the Bot-owned entry point. Kept on the engine for the engine-only
         // test seam; production routes through PyBot::subscribe.
-        self.pump.subscribe(rpc_url)
+        self.pump.subscribe(&rpc_url)
     }
 
     /// Backfill Mint/Burn/ModifyLiquidity events from the last DB snapshot

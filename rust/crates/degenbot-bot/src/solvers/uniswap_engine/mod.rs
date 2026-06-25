@@ -107,7 +107,6 @@ impl EnginePhase {
     #[must_use]
     pub fn from_u8(v: u8) -> Self {
         match v {
-            0 => Self::Created,
             1 => Self::Subscribed,
             2 => Self::SnapshotLoaded,
             3 => Self::Backfilled,

@@ -179,7 +179,7 @@ impl PyBot {
     /// `PyRuntimeError` if no engine is attached, the pump is already
     /// started/subscribed, or the WS subscribe fails.
     #[pyo3(signature = (rpc_url))]
-    fn subscribe(&self, rpc_url: String) -> PyResult<u64> {
+    fn subscribe(&self, rpc_url: &str) -> PyResult<u64> {
         self.pump_state()?.subscribe(rpc_url)
     }
 
@@ -205,7 +205,7 @@ impl PyBot {
     /// Set the HTTP RPC URL used for verification (ADR-006 D4 T4).
     /// Delegates to the shared `PumpState`.
     #[pyo3(signature = (rpc_url))]
-    fn set_verify_rpc_url(&self, rpc_url: String) {
+    fn set_verify_rpc_url(&self, rpc_url: &str) {
         if let Ok(pump) = self.pump_state() {
             pump.set_verify_rpc_url(rpc_url);
         }
@@ -213,7 +213,7 @@ impl PyBot {
 
     /// Set the `StateView` contract address for V4 verification (ADR-006 D4 T4).
     #[pyo3(signature = (state_view_address))]
-    fn set_verify_state_view(&self, state_view_address: String) {
+    fn set_verify_state_view(&self, state_view_address: &str) {
         if let Ok(pump) = self.pump_state() {
             pump.set_verify_state_view(state_view_address);
         }

@@ -588,22 +588,24 @@ mod tests {
     /// asserts tick 201020 == seed + amount. Red => the Mint is mis-routed/
     /// dropped at the decode+apply seam.
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn v3_mint_log_lands_on_decoded_tick_lower() {
         use crate::bot_core::{PoolTickCoverage, RegisterV3PoolParams, TickInfo};
         use alloy::primitives::{Address, B256, U256};
         use std::str::FromStr;
 
-        let pool_addr: Address = "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640"
-            .parse()
-            .unwrap();
-        let block = 25390812u64;
         const SEED_201020: u128 = 689_141_000_492_849;
         const SEED_203350: u128 = 1_000_000_000_000;
         const MINT_AMOUNT: u128 = 24_703_323_223_522;
 
+        let pool_addr: Address = "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640"
+            .parse()
+            .unwrap();
+        let block = 25_390_812_u64;
+
         let mut tick_data = HashMap::new();
         tick_data.insert(
-            201020,
+            201_020,
             TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(SEED_201020),
                 liquidity_net: alloy::primitives::I256::try_from(0).unwrap(),
@@ -611,7 +613,7 @@ mod tests {
             },
         );
         tick_data.insert(
-            203350,
+            203_350,
             TickInfo {
                 liquidity_gross: alloy::primitives::U128::from(SEED_203350),
                 liquidity_net: alloy::primitives::I256::try_from(0).unwrap(),
@@ -629,7 +631,7 @@ mod tests {
             factory: Address::ZERO,
             sqrt_price_x96: U256::from(1u128) << 96,
             liquidity: 1_000_000_000,
-            tick: 201020,
+            tick: 201_020,
             tick_data,
             update_block: 0,
             coverage: PoolTickCoverage::Tracked,
@@ -667,10 +669,10 @@ mod tests {
         data.extend_from_slice(&MINT_AMOUNT.to_be_bytes());
         // word 2: amount0 (uint256, fits in 128 bits)
         data.extend_from_slice(&[0u8; 16]);
-        data.extend_from_slice(&0x2ab6b07u128.to_be_bytes());
+        data.extend_from_slice(&0x2ab_6b07_u128.to_be_bytes());
         // word 3: amount1 (uint256, fits in 128 bits)
         data.extend_from_slice(&[0u8; 16]);
-        data.extend_from_slice(&0x9442009f44c61du128.to_be_bytes());
+        data.extend_from_slice(&0x0094_4200_9f44_c61du128.to_be_bytes());
         let data = alloy::primitives::Bytes::from(data);
         assert_eq!(data.len(), 128, "Mint data must be 4×32 bytes");
 
@@ -695,8 +697,8 @@ mod tests {
 
         let s = state.read();
         let pool = s.get_v3_pool(pool_id).expect("pool registered");
-        let t201020 = pool.tick_data.get(&201020).cloned().expect("tick 201020");
-        let t203350 = pool.tick_data.get(&203350).cloned().expect("tick 203350");
+        let t201020 = pool.tick_data.get(&201_020).cloned().expect("tick 201020");
+        let t203350 = pool.tick_data.get(&203_350).cloned().expect("tick 203350");
 
         // On-chain ground truth: tick_lower gross += amount.
         assert_eq!(

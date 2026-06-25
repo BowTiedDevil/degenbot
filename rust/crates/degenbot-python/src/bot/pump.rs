@@ -12,8 +12,8 @@
 //! `PumpState` is the lifecycle layer: engine phase, the pump handle, the
 //! subscribe state held between `subscribe` and `resume`, the solve coordinator
 //! + reorg coordinator + shutdown flag. The pure solve core (`Arc<Mutex<UniswapEngine>>`,
-//! `BotState`, v3/v4 snapshot stores, verify config) stays on
-//! `PyUniswapArbEngine`.
+//!   `BotState`, v3/v4 snapshot stores, verify config) stays on
+//!   `PyUniswapArbEngine`.
 
 use std::sync::Arc;
 
@@ -133,7 +133,7 @@ impl PumpState {
     /// # Errors
     /// `PyRuntimeError` if the pump is already started/subscribed, or the WS
     /// subscribe fails.
-    pub(crate) fn subscribe(&self, rpc_url: String) -> PyResult<u64> {
+    pub(crate) fn subscribe(&self, rpc_url: &str) -> PyResult<u64> {
         let phase = self.current_phase();
         phase
             .require(EnginePhase::Created, "subscribe")
@@ -155,7 +155,7 @@ impl PumpState {
         let runtime = degenbot_core::runtime::get_runtime();
         let subscribe_result = runtime
             .block_on(async {
-                BlockPump::subscribe(&rpc_url, bot, sink, reorg_coordinator, shutdown).await
+                BlockPump::subscribe(rpc_url, bot, sink, reorg_coordinator, shutdown).await
             })
             .map_err(PyRuntimeError::new_err)?;
         let (pump, state) = subscribe_result;
@@ -308,9 +308,9 @@ impl PumpState {
     // to PyBot. `set_verify_on_register` is excluded (deleted in T5).
 
     /// Set the HTTP RPC URL used for verification (ADR-006 D4 T4).
-    pub(crate) fn set_verify_rpc_url(&self, rpc_url: String) {
+    pub(crate) fn set_verify_rpc_url(&self, rpc_url: &str) {
         let runtime = degenbot_core::runtime::get_runtime();
-        match runtime.block_on(degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)) {
+        match runtime.block_on(degenbot_rpc::provider::AlloyProvider::new(rpc_url, 3)) {
             Ok(provider) => {
                 *self.verify_provider.lock() = Some(provider);
             }
@@ -318,11 +318,11 @@ impl PumpState {
                 eprintln!("[warn] Failed to create verification provider: {e}");
             }
         }
-        *self.verify_rpc_url.lock() = Some(rpc_url);
+        *self.verify_rpc_url.lock() = Some(rpc_url.to_string());
     }
 
     /// Set the `StateView` contract address for V4 verification (ADR-006 D4 T4).
-    pub(crate) fn set_verify_state_view(&self, state_view_address: String) {
+    pub(crate) fn set_verify_state_view(&self, state_view_address: &str) {
         let addr: alloy::primitives::Address = state_view_address
             .parse()
             .unwrap_or(alloy::primitives::Address::ZERO);
