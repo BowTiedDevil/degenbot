@@ -202,6 +202,69 @@ impl PyBot {
         self.pump_state()?.resume()
     }
 
+    /// Set the HTTP RPC URL used for verification (ADR-006 D4 T4).
+    /// Delegates to the shared `PumpState`.
+    #[pyo3(signature = (rpc_url))]
+    fn set_verify_rpc_url(&self, rpc_url: String) {
+        if let Ok(pump) = self.pump_state() {
+            pump.set_verify_rpc_url(rpc_url);
+        }
+    }
+
+    /// Set the `StateView` contract address for V4 verification (ADR-006 D4 T4).
+    #[pyo3(signature = (state_view_address))]
+    fn set_verify_state_view(&self, state_view_address: String) {
+        if let Ok(pump) = self.pump_state() {
+            pump.set_verify_state_view(state_view_address);
+        }
+    }
+
+    /// Verify all V3 + V4 pool liquidity maps against on-chain state
+    /// (ADR-006 D4 T4). Delegates to the shared `PumpState`.
+    #[allow(clippy::needless_pass_by_value)]
+    #[pyo3(signature = (rpc_url, tick_lens_address, state_view_address, block_number))]
+    fn verify_liquidity_maps<'py>(
+        &self,
+        py: Python<'py>,
+        rpc_url: String,
+        tick_lens_address: String,
+        state_view_address: String,
+        block_number: Option<u64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.pump_state()?.verify_liquidity_maps(
+            py,
+            rpc_url,
+            tick_lens_address,
+            state_view_address,
+            block_number,
+        )
+    }
+
+    /// Verify V3 liquidity maps only (ADR-006 D4 T4).
+    #[allow(clippy::needless_pass_by_value)]
+    #[pyo3(signature = (rpc_url, block_number))]
+    fn verify_v3_liquidity_maps<'py>(
+        &self,
+        py: Python<'py>,
+        rpc_url: String,
+        block_number: Option<u64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.pump_state()?.verify_v3_liquidity_maps(py, rpc_url, block_number)
+    }
+
+    /// Verify V4 liquidity maps only (ADR-006 D4 T4).
+    #[allow(clippy::needless_pass_by_value)]
+    #[pyo3(signature = (rpc_url, state_view_address, block_number))]
+    fn verify_v4_liquidity_maps<'py>(
+        &self,
+        py: Python<'py>,
+        rpc_url: String,
+        state_view_address: String,
+        block_number: Option<u64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.pump_state()?.verify_v4_liquidity_maps(py, rpc_url, state_view_address, block_number)
+    }
+
     /// Register a V2 pool by contract address.
     ///
     /// Returns the auto-assigned pool ID.
