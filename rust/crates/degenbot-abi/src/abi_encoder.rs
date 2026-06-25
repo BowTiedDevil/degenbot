@@ -40,6 +40,12 @@ use degenbot_core::errors::AbiDecodeError;
 ///
 /// Returns `AbiDecodeError` if encoding fails.
 pub fn encode_single_rust(abi_type: &str, value: &AbiValue) -> Result<Vec<u8>, AbiDecodeError> {
+    // Fixed-point types are not representable in `AbiValue` and have no alloy
+    // DynSolType mapping — reject up front so the binding layer can fall back
+    // to eth_abi (mirroring decode_single_rust's guard).
+    if abi_type.contains("fixed") || abi_type.contains("ufixed") {
+        return Err(AbiDecodeError::FixedPointNotImplemented);
+    }
     let cached = get_cached_types(&[abi_type])?;
     let values = [value.clone()];
     cached.encode(&values)
@@ -73,6 +79,15 @@ pub fn encode_rust(types: &[&str], values: &[AbiValue]) -> Result<Vec<u8>, AbiDe
 
     if types.is_empty() {
         return Ok(Vec::new());
+    }
+
+    // Fixed-point types are not representable in `AbiValue` and have no alloy
+    // DynSolType mapping — reject up front so the binding layer can fall back
+    // to eth_abi (mirroring decode_rust's guard).
+    for ty in types {
+        if ty.contains("fixed") || ty.contains("ufixed") {
+            return Err(AbiDecodeError::FixedPointNotImplemented);
+        }
     }
 
     // Delegate to the shared cache + encode_for_types path
@@ -154,6 +169,22 @@ mod tests {
         // Value should be in the last bytes
         assert_eq!(encoded[30], 0x30);
         assert_eq!(encoded[31], 0x39);
+    }
+
+    #[test]
+    fn test_encode_rejects_fixed_point_single() {
+        // Fixed-point types are not representable in AbiValue / alloy DynSolType;
+        // the guard lets the binding layer fall back to eth_abi (mirror decode).
+        let value = AbiValue::Uint(U256::from(1u64), 256);
+        let err = encode_single_rust("fixed168x10", &value).unwrap_err();
+        assert!(matches!(err, AbiDecodeError::FixedPointNotImplemented));
+    }
+
+    #[test]
+    fn test_encode_rejects_fixed_point_multi() {
+        let value = AbiValue::Uint(U256::from(1u64), 256);
+        let err = encode_rust(&["uint256", "ufixed128x18"], &[value.clone(), value]).unwrap_err();
+        assert!(matches!(err, AbiDecodeError::FixedPointNotImplemented));
     }
 
     #[test]

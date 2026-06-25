@@ -9,7 +9,6 @@ from degenbot.abi_adapter import (
     AbiBackend,
     AbiDecodeError,
     AbiEncodeError,
-    AbiUnsupportedOperation,
     _get_default_backend_from_env,
     decode,
     decode_single,
@@ -49,11 +48,19 @@ class TestAbiAdapter:
         decoded = eth_abi.abi.decode(["uint256"], result)
         assert decoded[0] == 42
 
-    def test_encode_with_rust_backend_raises(self) -> None:
-        """Test that encoding with Rust backend raises AbiUnsupportedOperation."""
+    def test_encode_with_rust_backend_parity(self) -> None:
+        """Rust backend encodes byte-for-byte identically to eth_abi."""
         adapter = AbiAdapter(backend=AbiBackend.RUST)
-        with pytest.raises(AbiUnsupportedOperation, match="Encoding is not supported"):
-            adapter.encode(["uint256"], [42])
+        types = ["uint256", "address"]
+        args = [100, "0x" + "00" * 20]
+        result = adapter.encode(types, args)
+        assert isinstance(result, bytes)
+        assert len(result) == 64
+        # Byte-for-byte parity with the eth_abi oracle
+        assert result == eth_abi.abi.encode(types, args)
+        # Round-trips through the Rust decoder
+        decoded = adapter.decode(types, result)
+        assert decoded[0] == 100
 
     def test_decode_uint256_rust_backend(self) -> None:
         """Test decoding uint256 with Rust backend."""
@@ -131,11 +138,11 @@ class TestAbiAdapter:
         assert len(result) == 1
 
     def test_supports_encoding(self) -> None:
-        """Test supports_encoding method."""
+        """Both backends support encoding (Rust falls back to eth_abi for fixed)."""
         rust_adapter = AbiAdapter(backend=AbiBackend.RUST)
         eth_adapter = AbiAdapter(backend=AbiBackend.ETH_ABI)
 
-        assert rust_adapter.supports_encoding() is False
+        assert rust_adapter.supports_encoding() is True
         assert eth_adapter.supports_encoding() is True
 
     def test_supports_type(self) -> None:
@@ -143,17 +150,26 @@ class TestAbiAdapter:
         rust_adapter = AbiAdapter(backend=AbiBackend.RUST)
         eth_adapter = AbiAdapter(backend=AbiBackend.ETH_ABI)
 
-        # Encoding support
-        assert rust_adapter.supports_type("uint256", "encode") is False
+        # Encoding support — both backends, except fixed-point for Rust
+        assert rust_adapter.supports_type("uint256", "encode") is True
         assert eth_adapter.supports_type("uint256", "encode") is True
 
         # Decode support - common types
         assert rust_adapter.supports_type("uint256", "decode") is True
         assert eth_adapter.supports_type("uint256", "decode") is True
 
-        # Fixed-point types - not supported by Rust
+        # Fixed-point types - not supported by Rust (falls back to eth_abi)
         assert rust_adapter.supports_type("fixed128x18", "decode") is False
+        assert rust_adapter.supports_type("fixed128x18", "encode") is False
         assert eth_adapter.supports_type("fixed128x18", "decode") is True
+        assert eth_adapter.supports_type("fixed128x18", "encode") is True
+
+    def test_encode_fallback_to_eth_abi_for_unsupported_types(self) -> None:
+        """Rust backend falls back to eth_abi for fixed-point encode."""
+        adapter = AbiAdapter(backend=AbiBackend.RUST)
+        data = adapter.encode(["fixed168x10"], [15])  # 1.5 scaled by 10^10
+        # Parity with the eth_abi oracle
+        assert data == eth_abi.abi.encode(["fixed168x10"], [15])
 
 
 class TestModuleFunctions:

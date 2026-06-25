@@ -1,14 +1,12 @@
 """ABI encoding/decoding adapter.
 
-Provides a unified interface for ABI operations that can delegate to either:
-- The Rust implementation (`_rs` module) for high-performance decoding
-- The Python `eth_abi` library for full ABI support including encoding
-
-The Rust decoder is faster but only supports decoding. The `eth_abi` library
-supports both encoding and decoding with broader type coverage.
+Provides a unified interface for ABI operations that delegates to the Rust
+implementation (`degenbot_rs`) for high-performance encoding/decoding with a
+fall-back to the Python `eth_abi` library for types the Rust core does not yet
+cover (fixed-point).
 
 Environment Variables:
-    DEGENBOT_USE_RUST_ABI_DECODER: Control the default backend for decoding.
+    DEGENBOT_USE_RUST_ABI_DECODER: Control the default backend for encode/decode.
         Set to "0", "false", or "no" to use eth_abi backend.
         Set to "1", "true", or "yes" (or leave unset) to use Rust backend.
         Default: Rust backend.
@@ -26,6 +24,7 @@ from eth_abi.exceptions import ParseError as EthAbiParseError
 
 from degenbot.degenbot_rs import decode as rs_decode
 from degenbot.degenbot_rs import decode_single as rs_decode_single
+from degenbot.degenbot_rs import encode as rs_encode
 from degenbot.exceptions.base import DegenbotError
 from degenbot.utils.bytes import HexBytesLike, to_bytes
 
@@ -60,10 +59,6 @@ class AbiEncodeError(DegenbotError):
 
 class AbiDecodeError(DegenbotError):
     """Raised when ABI decoding fails."""
-
-
-class AbiUnsupportedOperation(DegenbotError):
-    """Raised when an operation is not supported by the selected backend."""
 
 
 class AbiAdapter:
@@ -113,19 +108,44 @@ class AbiAdapter:
             args: Values to encode
 
         Returns:
-            ABI-encoded bytes
-
-        Raises:
-            AbiEncodeError: If encoding fails
-            AbiUnsupportedOperation: If using Rust backend (encoding not supported)
+            ABI-encoded bytes. The Rust backend falls back to eth_abi for
+            unsupported types (e.g., fixed-point); encode failures raise
+            `AbiEncodeError` (see `_encode_rust` / `_encode_eth_abi`).
 
         """
         if self._backend == AbiBackend.RUST:
-            raise AbiUnsupportedOperation(
-                message="Encoding is not supported by the Rust backend. "
-                "Switch to AbiBackend.ETH_ABI for encoding operations.",
-            )
+            return self._encode_rust(types, args)
+        return self._encode_eth_abi(types, args)
 
+    def _encode_rust(self, types: Sequence[str], args: Sequence[Any]) -> bytes:
+        """Encode using the Rust backend.
+
+        Returns:
+            The ABI-encoded bytes.
+
+        Raises:
+            AbiEncodeError: See function documentation.
+
+        """
+        try:
+            return rs_encode(types=list(types), values=list(args))
+        except ValueError as e:
+            raise AbiEncodeError(message=f"ABI encoding failed: {e}") from e
+        except NotImplementedError:
+            # Fall back to eth_abi for unsupported types (e.g., fixed-point)
+            return self._encode_eth_abi(types, args)
+
+    @staticmethod
+    def _encode_eth_abi(types: Sequence[str], args: Sequence[Any]) -> bytes:
+        """Encode using the eth_abi backend.
+
+        Returns:
+            The ABI-encoded bytes.
+
+        Raises:
+            AbiEncodeError: See function documentation.
+
+        """
         try:
             return eth_abi.abi.encode(types=list(types), args=list(args))
         except (EthAbiEncodingError, EthAbiParseError) as e:
@@ -273,26 +293,27 @@ class AbiAdapter:
         """Check if the current backend supports encoding.
 
         Returns:
-            The computed boolean value.
+            The computed boolean value. Both backends support encoding; the
+            Rust backend falls back to eth_abi for unsupported types
+            (e.g., fixed-point).
 
         """
-        return self._backend == AbiBackend.ETH_ABI
+        return self._backend in {AbiBackend.RUST, AbiBackend.ETH_ABI}
 
-    def supports_type(self, abi_type: str, operation: str = "decode") -> bool:
+    def supports_type(self, abi_type: str, operation: str = "decode") -> bool:  # noqa: ARG002
         """Check if the current backend supports a specific ABI type.
 
         Args:
             abi_type: ABI type string to check
-            operation: Either "encode" or "decode"
+            operation: Either "encode" or "decode" (both paths share the same
+                       fixed-point exclusion; retained for API symmetry)
 
         Returns:
-            True if the type is supported, False otherwise
+            True if the type is supported, False otherwise.
 
         """
-        if operation == "encode":
-            return self._backend == AbiBackend.ETH_ABI
-
-        # Rust decoder doesn't support fixed-point types
+        # Fixed-point types are not supported by the Rust core for either
+        # encode or decode; the Rust backend falls back to eth_abi for them.
         if "fixed" in abi_type.lower():
             return self._backend == AbiBackend.ETH_ABI
 
@@ -324,15 +345,19 @@ def get_default_backend() -> AbiBackend:
     return _get_default_backend_from_env()
 
 
-def encode(types: Sequence[str], args: Sequence[Any]) -> bytes:
-    """Encode values into ABI-encoded bytes using eth_abi.
-
-    Note: This always uses eth_abi since the Rust backend
-    does not support encoding.
+def encode(
+    types: Sequence[str],
+    args: Sequence[Any],
+    *,
+    backend: AbiBackend | None = None,
+) -> bytes:
+    """Encode values into ABI-encoded bytes.
 
     Args:
         types: ABI type strings
         args: Values to encode
+        backend: Backend to use. If None, uses the default from
+                 DEGENBOT_USE_RUST_ABI_DECODER environment variable.
 
     Returns:
         ABI-encoded bytes
@@ -341,10 +366,25 @@ def encode(types: Sequence[str], args: Sequence[Any]) -> bytes:
         AbiEncodeError: See function documentation.
 
     """
-    try:
-        return eth_abi.abi.encode(types=list(types), args=list(args))
-    except (EthAbiEncodingError, EthAbiParseError) as e:
-        raise AbiEncodeError(message=f"ABI encoding failed: {e}") from e
+    if backend is None:
+        backend = _get_default_backend_from_env()
+
+    if backend == AbiBackend.RUST:
+        try:
+            return rs_encode(types=list(types), values=list(args))
+        except ValueError as e:
+            raise AbiEncodeError(message=f"ABI encoding failed: {e}") from e
+        except NotImplementedError:
+            # Fall back to eth_abi for unsupported types (e.g., fixed-point)
+            backend = AbiBackend.ETH_ABI
+
+    if backend == AbiBackend.ETH_ABI:
+        try:
+            return eth_abi.abi.encode(types=list(types), args=list(args))
+        except (EthAbiEncodingError, EthAbiParseError) as e:
+            raise AbiEncodeError(message=f"ABI encoding failed: {e}") from e
+
+    raise AbiEncodeError(message=f"Unknown backend: {backend}")
 
 
 def decode(
@@ -452,7 +492,6 @@ __all__ = [
     "AbiBackend",
     "AbiDecodeError",
     "AbiEncodeError",
-    "AbiUnsupportedOperation",
     "BytesLike",
     "decode",
     "decode_single",

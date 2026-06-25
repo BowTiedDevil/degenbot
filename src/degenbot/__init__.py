@@ -5,7 +5,6 @@ from .abi_adapter import (
     AbiBackend,
     AbiDecodeError,
     AbiEncodeError,
-    AbiUnsupportedOperation,
     get_default_adapter,
     get_default_backend,
 )
@@ -99,7 +98,6 @@ __all__ = (
     "AbiBackend",
     "AbiDecodeError",
     "AbiEncodeError",
-    "AbiUnsupportedOperation",
     "AerodromeV2Pool",
     "AerodromeV2PoolState",
     "AerodromeV2PoolTracker",
