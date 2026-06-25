@@ -91,8 +91,14 @@ pub struct BlockClock {
     blocks: std::collections::HashMap<u64, BlockState>,
     /// The deepest `Drained` block — the ONLY value `cursor()` may return.
     cursor: Option<u64>,
-    /// The latest block observed (header or log), pre-tombstone.
-    latest_observed: Option<u64>,
+    /// The latest HEADER observed — for stale-header detection only. A header
+    /// does NOT drive the tombstone (ADR-008 D1), so this is NOT the open
+    /// block; it only suppresses duplicate/stale headers.
+    latest_header: Option<u64>,
+    /// The LOG-driven "open block" — the block whose forward logs are
+    /// currently arriving. A forward log for a block > `open_block` tombstones
+    /// `open_block` (D1). Headers do not touch this.
+    open_block: Option<u64>,
     /// Whether the clock is currently in the reorg path (accepting a
     /// contiguous `removed: true` chunk).
     in_reorg: bool,
@@ -111,21 +117,26 @@ impl BlockClock {
         self.cursor
     }
 
-    /// Observe a `newHeads` event. A header alone NEVER advances the cursor.
+    /// Observe a `newHeads` event. A header alone NEVER advances the cursor or
+    /// opens a block for log-arrival — it only records the block's existence +
+    /// metadata and feeds the stale-header + liveness-probe decisions. The
+    /// tombstone is driven by LOGS (D1).
     pub fn observe_header(&mut self, block: u64) -> HeaderDecision {
-        match self.latest_observed {
+        match self.latest_header {
             None => {
                 self.blocks.entry(block).or_insert(BlockState::Observed);
-                self.latest_observed = Some(block);
+                self.latest_header = Some(block);
                 HeaderDecision::OpenNew(block)
             }
             Some(latest) if block <= latest => HeaderDecision::Stale,
-            Some(sealed) => {
-                // A header for a new block, but the previous block hasn't
-                // been tombstoned yet. Record the new block as Observed and
-                // signal the liveness probe — do NOT advance the cursor.
+            Some(_) => {
+                // A header for a new block. The still-open block (logs in
+                // flight, not yet tombstoned) is `open_block`, or — if no log
+                // has arrived yet — the latest header block. Signal the
+                // liveness probe; do NOT advance the cursor / open_block.
+                let sealed = self.open_block.or(self.latest_header).unwrap_or(0);
                 self.blocks.entry(block).or_insert(BlockState::Observed);
-                self.latest_observed = Some(block);
+                self.latest_header = Some(block);
                 HeaderDecision::PendingSuccessor { sealed, pending: block }
             }
         }
@@ -143,36 +154,59 @@ impl BlockClock {
     }
 
     fn handle_forward_log(&mut self, block: u64) -> LogDecision {
-        match self.latest_observed {
-            None => {
-                // A log before any header — open the block as LogsArriving
-                // (the log itself opens it).
-                self.enter_logs_arriving(block);
-                self.latest_observed = Some(block);
-                LogDecision::DispatchForward
-            }
-            Some(latest) if block > latest => {
-                // First forward log for a new block (N+1) — tombstone the
-                // previous block (ADR-008 D1).
-                self.tombstone(latest);
-                self.enter_logs_arriving(block);
-                self.latest_observed = Some(block);
-                LogDecision::TombstonePrevious(latest)
-            }
-            Some(latest) if block == latest => {
-                // Another log for the current block — keep arriving.
-                self.enter_logs_arriving(block);
-                LogDecision::DispatchForward
-            }
-            Some(_) => {
-                // A forward log for a block older than the latest observed.
-                // If that block is tombstoned/drained, this is a late forward
-                // → unreliable WS → panic/shutdown. Otherwise it's a stale
-                // replay against an in-flight block (shouldn't happen under
-                // monotonic WS ordering); treat as late-forward for safety.
+        // The "open block" is the one whose forward logs are currently in
+        // flight. Only LOGS open it — headers do not (ADR-008 D1).
+        match self.open_block {
+            Some(open) if block < open => {
+                // A forward log for a block older than the open block → the
+                // open block has moved past it; this is a late forward on a
+                // tombstoned block → unreliable WS → panic (ADR-008 D3).
                 LogDecision::PanicLateForward(block)
             }
+            Some(open) if block == open => {
+                // Another log for the open block — keep arriving.
+                self.enter_logs_arriving(block);
+                LogDecision::DispatchForward
+            }
+            _ => {
+                // A NEW block (block > open, or open is None). The FIRST log
+                // for it tombstones its predecessor — the latest non-
+                // tombstoned tracked block strictly below it (the open block,
+                // or — if no log has arrived yet — the latest header-observed
+                // block, i.e. an empty block: ADR-008 covers this case).
+                let pred = self.predecessor_block(block);
+                if let Some(p) = pred {
+                    self.tombstone(p);
+                }
+                self.enter_logs_arriving(block);
+                self.open_block = Some(block);
+                match pred {
+                    Some(p) => LogDecision::TombstonePrevious(p),
+                    None => LogDecision::DispatchForward,
+                }
+            }
         }
+    }
+
+    /// The latest non-tombstoned tracked block strictly below `block` — i.e. the
+    /// block a forward log for `block` tombstones. Either the open log block
+    /// (O(1)), or — if no log has arrived yet — the latest header-observed
+    /// non-tombstoned block below `block` (a scan, run only on the very first
+    /// log before `open_block` is set). `None` if `block` is the first block.
+    fn predecessor_block(&self, block: u64) -> Option<u64> {
+        if let Some(open) = self.open_block {
+            return (open < block).then_some(open);
+        }
+        // No log has arrived yet: scan for the latest non-tombstoned tracked
+        // block strictly below `block` (the empty-block predecessor case).
+        self.blocks
+            .iter()
+            .filter(|(b, s)| {
+                **b < block
+                    && matches!(s, BlockState::Observed | BlockState::LogsArriving { .. })
+            })
+            .map(|(b, _)| *b)
+            .max()
     }
 
     fn handle_removed_outside_reorg(&mut self, block: u64) -> LogDecision {
@@ -189,11 +223,13 @@ impl BlockClock {
             LogDecision::ContinueReorg
         } else {
             // First removed:false after entering reorg → window closed.
-            // This block is the new head.
+            // This block is the new head; reopen it as the log-driven open
+            // block (forward tracking resumes monotonically from it).
             self.in_reorg = false;
             self.taint_range_before(block);
             self.enter_logs_arriving(block);
-            self.latest_observed = Some(block);
+            self.open_block = Some(block);
+            self.latest_header = Some(block);
             LogDecision::CloseReorg { new_head: block }
         }
     }
@@ -291,10 +327,11 @@ impl BlockClock {
         self.in_reorg
     }
 
-    /// The latest block observed (header or log).
+    /// The LOG-driven open block — the block whose forward logs are currently
+    /// arriving (the next tombstone target). Headers do not change this.
     #[must_use]
     pub fn latest_observed(&self) -> Option<u64> {
-        self.latest_observed
+        self.open_block
     }
 
     /// Read a block's state (for tests + diagnostics).

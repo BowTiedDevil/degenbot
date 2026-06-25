@@ -43,6 +43,7 @@ use futures_util::{stream, StreamExt};
 use tokio::time::timeout;
 
 use crate::bot_core::{drain_sink::DrainSink, BlockMetadata, Bot};
+use crate::bot_core::{BlockClock, HeaderDecision, LogDecision};
 use degenbot_decoders::v2_sync_decoder::V2_SYNC_TOPIC;
 use degenbot_decoders::v3_mint_burn_decoder::{V3_BURN_TOPIC, V3_MINT_TOPIC};
 use degenbot_decoders::v3_swap_decoder::V3_SWAP_TOPIC;
@@ -406,6 +407,18 @@ impl BlockPump {
         let mut debounce = tokio::time::Instant::now() + Duration::from_millis(DEBOUNCE_MS);
         let mut debounce_active = false;
 
+        // ADR-008 per-block state machine. The clock is the authority for
+        // block completeness (the tombstone) and the cursor; the pump loop is
+        // a thin async driver translating its decisions into sink calls +
+        // backfill + shutdown. A header alone NEVER advances the cursor —
+        // only `advance_to_drained` (after the tombstone) does.
+        let mut clock = BlockClock::new();
+        // Per-block metadata, snapshotted from each block's header. A block's
+        // tombstone (first log for N+1) may arrive AFTER header N+1 overwrote
+        // `current_metadata`, so the result batch that finalizes N must carry
+        // N's OWN metadata, retrieved here (VTWCIG).
+        let mut block_metadata: HashMap<u64, BlockMetadata> = HashMap::new();
+
         // [DIAG]
         let mut diag_header_count: u64 = 0;
         let mut diag_log_count: u64 = 0;
@@ -513,22 +526,34 @@ impl BlockPump {
                     // under-/over-priced backrun txs (VTWCIG). The incoming
                     // metadata (assigned just below) drives the empty-block
                     // send path, which is correctly about the NEW block.
-                    let finished_block_metadata = current_metadata;
-
-                    // Update metadata for the current block
+                    // ADR-008: a header alone NEVER finalizes/drain. The
+                    // clock records the block's metadata (so a later
+                    // tombstone-driven finalize carries the CORRECT block's
+                    // metadata — the tombstone log for N+1 may arrive AFTER
+                    // header N+1, at which point `current_metadata` would
+                    // already hold N+1's). `notify_block` still fires so
+                    // Python's block clock tracks `newHeads`.
                     current_metadata = BlockMetadata {
                         timestamp,
                         base_fee_per_gas,
                         gas_used,
                         gas_limit,
                     };
+                    let header_decision = clock.observe_header(number);
+                    if matches!(header_decision, HeaderDecision::Stale) {
+                        // duplicate/stale header — ignore
+                        continue;
+                    }
+                    // Snapshot this block's metadata so its (deferred)
+                    // tombstone-finalize carries the correct block's metadata.
+                    block_metadata.insert(number, current_metadata);
 
-                    if first_header {
+                    let is_first_header = first_header;
+                    if is_first_header {
                         // First header after backfill. The backfill already
-                        // solved up to this point — just record the anchor
-                        // and skip solving. Set up for normal operation.
+                        // solved up to this point — just record the anchor and
+                        // skip solving. Set up for normal operation.
                         if number > current_block {
-                            // Gap between backfill and this header — backfill it
                             if number > current_block + 1 {
                                 log::info!(
                                     "BlockPump: gap from block {} to {} — backfilling",
@@ -544,31 +569,13 @@ impl BlockPump {
                             }
                             current_block = number;
                             last_solved_block = number;
-                            // Forward the newHeads tick to the block-notification
-                            // channel (epic 6W35AI): Python's block clock tracks
-                            // `newHeads`, not `ResultBatch::solve_block`. Fires
-                            // after `current_block`/`current_metadata` are
-                            // advanced, in lockstep with the block the solver
-                            // solved against. Skipped on the backfill-only path
-                            // below where `number <= current_block`.
                             self.sink.notify_block(current_block, &current_metadata);
                         }
                         first_header = false;
                     } else if number > current_block {
-                        // New block header — finalize the current block.
-                        // Cancel the debounce timer and send immediately.
-                        debounce_active = false;
-                        // VTWCIG: pass the just-finished block's metadata
-                        // (snapshotted before the overwrite above), not the
-                        // incoming header's.
-                        self.finalize_if_dirty(
-                            current_block,
-                            &finished_block_metadata,
-                            &mut last_solved_block,
-                            &mut has_logs_this_block,
-                        );
-
-                        // Check for gap and backfill if needed
+                        // New block header, but the previous block is NOT
+                        // finalized here — only the tombstone (first log for
+                        // N+1) closes it (ADR-008 D1). Gap backfill still runs.
                         if number > current_block + 1 {
                             log::info!(
                                 "BlockPump: gap from block {} to {} — backfilling",
@@ -580,24 +587,11 @@ impl BlockPump {
                         }
 
                         current_block = number;
-                        last_solved_block = number;
-
-                        // Forward the newHeads tick (epic 6W35AI) — see the
-                        // first-header branch for rationale.
                         self.sink.notify_block(current_block, &current_metadata);
-
-                        // For empty blocks (no logs arrived), send an
-                        // empty batch so Python sees the block boundary.
-                        // `process_block_and_send(&[], block, metadata)` decomposed:
-                        // empty logs (no dispatch) + on_drain + on_send.
-                        if !has_logs_this_block {
-                            self.sink.on_drain(current_block, &current_metadata);
-                            self.sink.on_send(&current_metadata);
-                        }
-
-                        has_logs_this_block = false;
                     }
-                    // else: stale/duplicate header — ignore
+                    // The `PendingSuccessor` / `OpenNew` decisions carry no
+                    // pump action beyond the above — the liveness-probe signal
+                    // (dead-logs-sub detection) is handled by the timeout path.
                 }
 
                 // Got a log event from the combined stream — apply eagerly.
@@ -623,51 +617,71 @@ impl BlockPump {
 
                     let log_block = log.block_number.unwrap_or(current_block);
 
-                    if log.removed {
-                        // Reorg signal (ADR-006 slice 7): this log was
-                        // orphaned by a fork at `log_block`. Restore the
-                        // TARGETED pool's state to just before `log_block` via
-                        // `ReorgCoordinator` (per-event, per-pool — replaces
-                        // the bulk `engine.handle_reorg`). The removed log's
-                        // content is unused; its block + pool identity drive
-                        // `ReorgJournal::restore_before_block` (idempotent +
-                        // order-insensitive). The restore fires the SAME
-                        // `on_pool_state_updated(P)` notify as a forward
-                        // update → the engine dirties P + re-solves at the
-                        // next drain tick; the debounce-bounded
-                        // `send_result_batch` emits `expired`/`updated` diffs
-                        // against `delivered` so Python sees the forked paths
-                        // vanish or change.
-                        //
-                        // A too-deep reorg (target at/below the journal's
-                        // earliest delta) returns `Err(NoStatePriorToBlock)`:
-                        // graceful shutdown, NOT panic. The bot cannot safely
-                        // continue with stale state, so set the shutdown flag
-                        // + return; Python observes the pump task exiting.
-                        if let Err(err) = self.reorg_coordinator.dispatch_reorg_log(&log) {
-                            log::error!("BlockPump: too-deep reorg — shutting down. {err:?}");
+                    // ADR-008: route the log via the per-block state machine.
+                    // The clock decides whether this is a forward dispatch, a
+                    // tombstone (first removed:false log for N+1), a reorg
+                    // signal, or an unreliable-WS late forward (→ shutdown).
+                    match clock.observe_log(log_block, log.removed) {
+                        LogDecision::EnterReorg(_) | LogDecision::ContinueReorg => {
+                            // Reorg: per-event per-pool restore via the
+                            // coordinator (ADR-006 slice 7). A too-deep reorg
+                            // → graceful shutdown.
+                            if let Err(err) = self.reorg_coordinator.dispatch_reorg_log(&log) {
+                                log::error!("BlockPump: too-deep reorg — shutting down. {err:?}");
+                                self.shutdown.store(true, Ordering::Relaxed);
+                                return;
+                            }
+                            // Cancel any pending debounce: results accumulated
+                            // from pre-reorg state are invalid.
+                            debounce_active = false;
+                            continue;
+                        }
+                        LogDecision::CloseReorg { new_head } => {
+                            // Reorg window closed — the coordinator restored
+                            // unwound pools per-event; this forward log's block
+                            // is the new head. Resume forward tracking from it.
+                            current_block = new_head;
+                            debounce_active = false;
+                            // Fall through to dispatch this forward log.
+                        }
+                        LogDecision::TombstonePrevious(prev) => {
+                            // First removed:false log for N+1 → tombstone N.
+                            // Finalize N with N's OWN metadata (snapshotted
+                            // when N's header arrived), not current_metadata
+                            // which may now hold N+1's — VTWCIG.
+                            debounce_active = false;
+                            let prev_meta = block_metadata
+                                .get(&prev)
+                                .copied()
+                                .unwrap_or(current_metadata);
+                            self.finalize_if_dirty(
+                                prev,
+                                &prev_meta,
+                                &mut last_solved_block,
+                                &mut has_logs_this_block,
+                            );
+                            clock.advance_to_drained(prev);
+                            if log_block > current_block {
+                                current_block = log_block;
+                            }
+                        }
+                        LogDecision::DispatchForward => {
+                            if log_block > current_block {
+                                current_block = log_block;
+                            }
+                        }
+                        LogDecision::PanicLateForward(b) => {
+                            // A removed:false log on a tombstoned block, NOT
+                            // in a reorg → unreliable WS (out-of-order /
+                            // duplicated forward events). Unrecoverable for
+                            // correctness — shut down (ADR-008 D3).
+                            log::error!(
+                                "BlockPump: ADR-008 D3 late forward log on \
+                                 tombstoned block {b} — unreliable WS, shutting down"
+                            );
                             self.shutdown.store(true, Ordering::Relaxed);
                             return;
                         }
-                        // Cancel any pending debounce: results accumulated
-                        // from pre-reorg state are invalid.
-                        debounce_active = false;
-                        continue;
-                    }
-
-                    // Detect new block via log's block_number
-                    if log_block > current_block {
-                        // New block — finalize the current block first.
-                        // Cancel the debounce timer and send immediately.
-                        debounce_active = false;
-                        self.finalize_if_dirty(
-                            current_block,
-                            &current_metadata,
-                            &mut last_solved_block,
-                            &mut has_logs_this_block,
-                        );
-
-                        current_block = log_block;
                     }
 
                     // Apply the log immediately to engine state (no solve yet).
@@ -675,6 +689,8 @@ impl BlockPump {
                     // apply to BotState → notify EngineSubscriber → dirty the
                     // engine) — NOT `engine.apply_log`.
                     self.bot.dispatch_log(&log);
+                    clock.log_received(log_block);
+                    clock.log_applied(log_block);
 
                     has_logs_this_block = true;
 
@@ -1044,23 +1060,17 @@ mod tests {
 
     #[tokio::test]
     async fn finalize_carries_just_finished_blocks_metadata() {
-        // Contract (VTWCIG): when the header for block N+1 arrives, the result
-        // batch that finalizes block N must carry block N's metadata (held
-        // before the incoming header overwrites `current_metadata`), NOT N+1's.
-        // Python computes `base_fee_next` from this metadata; the previous
-        // ordering sent N+1's metadata with N's batch → systematically
-        // under-/over-priced backrun txs.
+        // Contract (VTWCIG, ADR-008): block N is finalized when the FIRST
+        // `removed: false` LOG for N+1 arrives (the tombstone — NOT a header).
+        // The result batch that finalizes N must carry N's OWN metadata, even
+        // though header N+1 (with distinct metadata) arrived earlier and
+        // overwrote `current_metadata`. Python computes `base_fee_next` from
+        // this metadata; carrying N+1's would systematically mis-price backruns.
         //
-        // Stream: header N (distinct metadata), header N+1 (distinct
-        // metadata), then end. Finalizing N on the N+1 header must pass N's
-        // metadata to `finalize_block(N, &N_metadata, …)`.
+        // Stream: header 101, header 102 (overwrites current_metadata to
+        // meta_102), then a forward log for block 102 (tombstones 101). The
+        // finalize(101) must carry meta_101, NOT meta_102.
         let (mut pump, sink) = pump_for_test(Some(100));
-        // The loop seeds `current_block` from `last_processed_block()` → 100.
-        // Feed header 101 (its arrival finalizes 100) and header 102 (its
-        // arrival finalizes 101). We must NOT skip the first header
-        // (`first_header` anchor logic just sets the cursor — it doesn't
-        // finalize). So: emit 101 → first_header anchor (current_block→101),
-        // then 102 → finalizes 101.
         let meta_101 = BlockMetadata {
             timestamp: 1_700_000_100,
             base_fee_per_gas: Some(1_000_000_001),
@@ -1073,6 +1083,17 @@ mod tests {
             gas_used: 20_000_002,
             gas_limit: 30_000_002,
         };
+        // header(101): first_header anchor → current_block 101.
+        // header(102): new block, current_metadata overwritten to meta_102,
+        //   but NO finalize on header (ADR-008).
+        // log(102, removed=false): tombstones 101 → finalize(101, meta_101).
+        let tombstone_log = make_v2_sync_log(
+            Address::from([0xfcu8; 20]),
+            U256::from(1),
+            U256::from(2),
+            102,
+            false,
+        );
         let events: Vec<WsEvent> = vec![
             WsEvent::BlockHeader {
                 number: 101,
@@ -1088,17 +1109,13 @@ mod tests {
                 gas_used: meta_102.gas_used,
                 gas_limit: meta_102.gas_limit,
             },
+            WsEvent::Log(tombstone_log),
         ];
         let combined = stream::iter(events).boxed();
         pump.run_test_loop(combined, 100).await;
 
-        // The first finalize is for block 101 (finalized when 102's header
-        // arrives). It must carry meta_101, NOT meta_102.
         let finalized = sink.finalized.lock().unwrap().clone();
-        assert!(
-            !finalized.is_empty(),
-            "header 102 should finalize block 101"
-        );
+        assert!(!finalized.is_empty(), "log 102 should tombstone+finalize 101");
         let (block, metadata) = &finalized[0];
         assert_eq!(*block, 101, "first finalize is for block 101");
         assert_eq!(
@@ -1169,16 +1186,15 @@ mod tests {
     /// leans on: passing the REAL subscribe block W (instead of the legacy
     /// hard-coded `0`) means that if the `on_drain(first_block)` anchor were
     /// ever absent, the pump still cold-starts to W — NOT stuck at 0 to be
-    /// jumped out-of-order by the first WS log.
+    /// jumped out-of-order by the first WS log. Under ADR-008 the tombstone is
+    /// a real log for W+1 (not a header).
     #[tokio::test]
     async fn cold_start_anchors_to_first_observed_block() {
         // No prior processed block → `current_block` starts at 0. Pass the
-        // subscribe block W (a "huge" chain-head number) as
-        // `first_observed_block`. The cold-start branch
-        // (`current_block == 0 && first_observed_block > 0`) anchors
-        // `current_block` to W. Then header(W) is the first header (anchor
-        // confirmation, no finalize), and header(W+1) finalizes W in order —
-        // proving we cold-started to W, not 0.
+        // subscribe block W as `first_observed_block`. The cold-start branch
+        // anchors `current_block` to W. header(W) is the first header
+        // (anchor, no finalize); a forward log for W+1 tombstones W →
+        // finalize(W) carrying meta_w. Proves we cold-started to W, not 0.
         let (mut pump, sink) = pump_for_test(None);
         let w = 21_500_000u64; // a "huge" chain-head block number
         let meta_w = BlockMetadata {
@@ -1193,6 +1209,8 @@ mod tests {
             gas_used: 11,
             gas_limit: 12,
         };
+        let tombstone_log =
+            make_v2_sync_log(Address::from([0xfcu8; 20]), U256::from(1), U256::from(2), w + 1, false);
         let events: Vec<WsEvent> = vec![
             WsEvent::BlockHeader {
                 number: w,
@@ -1208,20 +1226,13 @@ mod tests {
                 gas_used: meta_w1.gas_used,
                 gas_limit: meta_w1.gas_limit,
             },
+            WsEvent::Log(tombstone_log),
         ];
         let combined = stream::iter(events).boxed();
         pump.run_test_loop(combined, w).await;
 
-        // header(W+1) finalizes W. Carrying meta_w (the just-finished
-        // block's metadata, held before W+1's header overwrote it — VTWCIG).
-        // The fact W was finalized proves `current_block` cold-started to W
-        // (not 0): had it stayed at 0, header(W) would have been the first
-        // header advancing 0→W, then header(W+1) would finalize W — looks
-        // similar, BUT the cold-start log line + the absence of a jump from
-        // 0 to W via a stray log is the invariant. We assert the finalized
-        // block is W with meta_w (in-order, anchored).
         let finalized = sink.finalized.lock().unwrap().clone();
-        assert!(!finalized.is_empty(), "header w+1 should finalize block w");
+        assert!(!finalized.is_empty(), "log w+1 should tombstone+finalize w");
         assert_eq!(
             finalized[0].0, w,
             "first finalize is for the anchored block w"
@@ -1279,9 +1290,16 @@ mod tests {
             "on_drain(W) must anchor the cursor (mirrors SolveCoordinator)"
         );
 
-        // Resume stream (post-fix: first_observed = W, not 0). header(W+1) is
-        // the first header → first_header anchor advances W→W+1; header(W+2)
-        // finalizes W+1. In-order W→W+1→W+2, no jump from 0.
+        // Resume stream (post-fix: first_observed = W, not 0). header(W+1)
+        // is the first header → first_header anchor advances W→W+1; then a
+        // forward log for W+2 tombstones W+1 → finalize(W+1, meta_w1).
+        let tombstone_log = make_v2_sync_log(
+            Address::from([0xfcu8; 20]),
+            U256::from(1),
+            U256::from(2),
+            w + 2,
+            false,
+        );
         let events: Vec<WsEvent> = vec![
             WsEvent::BlockHeader {
                 number: w + 1,
@@ -1297,18 +1315,16 @@ mod tests {
                 gas_used: meta_w2.gas_used,
                 gas_limit: meta_w2.gas_limit,
             },
+            WsEvent::Log(tombstone_log),
         ];
         let combined = stream::iter(events).boxed();
         pump.run_test_loop(combined, w).await;
 
-        // header(W+2) finalizes W+1 — carrying meta_w1 (just-finished block's
-        // metadata). This proves the anchor held: we advanced W→W+1→W+2 in
-        // order, never jumping from 0.
+        // log(W+2) tombstones W+1 — carrying meta_w1 (W+1's own metadata,
+        // snapshotted when header W+1 arrived). Proves the anchor held: we
+        // advanced W→W+1→W+2 in order, never jumping from 0.
         let finalized = sink.finalized.lock().unwrap().clone();
-        assert!(
-            !finalized.is_empty(),
-            "header w+2 should finalize block w+1"
-        );
+        assert!(!finalized.is_empty(), "log w+2 should tombstone+finalize w+1");
         assert_eq!(finalized[0].0, w + 1, "first finalize is for block w+1");
         assert_eq!(
             finalized[0].1, meta_w1,
