@@ -32,33 +32,7 @@ def to_bytes(data: HexBytesLike) -> bytes:
     return bytes(data)
 
 
-def to_hex(data: HexBytesLike) -> str:
-    """Normalize any hex-bytes type to 0x-prefixed lowercase hex string.
-
-    Args:
-        data: Any of bytes or HexBytes
-
-    Returns:
-        0x-prefixed lowercase hex string
-
-    Example:
-        >>> from degenbot.provider import AlloyProvider
-        >>> provider = AlloyProvider("https://...")
-        >>> result = provider.call("0x...", calldata)
-        >>> hex_str = to_hex(result)  # "0x..."
-
-    """
-    if isinstance(data, bytes | bytearray | memoryview):
-        return "0x" + data.hex()
-    # HexBytes.hex() returns unprefixed (same as bytes.hex())
-    hex_result = data.hex()
-    if not hex_result.startswith("0x"):
-        return "0x" + hex_result
-    return hex_result
-
-
 __all__ = [
     "HexBytesLike",
     "to_bytes",
-    "to_hex",
 ]
