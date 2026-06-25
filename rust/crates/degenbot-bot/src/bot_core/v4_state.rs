@@ -270,9 +270,12 @@ impl V4PoolState {
             journal: ReorgJournal::<V3BlockDelta>::new(journal_depth),
             cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
         };
-        if params.coverage == PoolTickCoverage::Sparse {
-            out.seed_known_bitmap_words();
-        }
+        // Seed the known-bitmap-word set from the tick_data keys for EVERY
+        // coverage (mirrors `sync_tick_data_by_pool_id`). Pre-fix this only ran
+        // for `Sparse`, so a `Tracked` inline seed (ADR-006 race closure)
+        // relied on a later separate `update_tick_data` — the clobber the
+        // closure removes. Seeding here makes the inline seed complete.
+        out.seed_known_bitmap_words();
         out
     }
 

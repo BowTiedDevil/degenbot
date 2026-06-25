@@ -347,6 +347,31 @@ class V4PoolBuilder(V4BuilderBase):
         # Rust is the source of truth. Hook + dynamic-fee admission is enforced
         # in BotState::register_v4_pool (surface exceptions propagate).
         hook_flags = int(hook_address, 16) if hook_address else 0
+        # ADR-006 rolling-start race closure: seed tick_data INLINE in
+        # ``register_v4_pool`` (one BotState write lock) so the pool is never
+        # visible to the live pump (resumed before ``build_paths``) in an
+        # unseeded state — mirrors the V3 builder + the async V4 builder.
+        # Previously the builder registered empty then called
+        # ``update_tick_data`` (a `state.tick_data = …` REPLACE that clobbered
+        # any live ModifyLiquidity in the register→seed window → V4 desync).
+        register_rows: dict[int, tuple[int, int, int]] | None = None
+        coverage = "sparse"
+        if working_tick_data:
+            coverage = "tracked"
+            register_rows = {}
+            for t, info in working_tick_data.items():
+                if isinstance(info, LiquidityAtTick):
+                    register_rows[int(t)] = (
+                        int(info.liquidity_gross),
+                        int(info.liquidity_net),
+                        int(info.block),
+                    )
+                else:
+                    register_rows[int(t)] = (
+                        int(info[0]),
+                        int(info[1]),
+                        int(info[2]) if len(info) > 2 else 0,  # noqa: PLR2004
+                    )
         pool_handle_pool_id = self._py_bot.register_v4_pool(
             pool_manager=pool_manager_address,
             pool_id_hex=pool_id_bytes.to_0x_hex(),
@@ -359,31 +384,14 @@ class V4PoolBuilder(V4BuilderBase):
             liquidity=int(liquidity_val),
             tick=slot0_data.tick,
             block=state_block,
+            tick_data=register_rows,
+            coverage=coverage,
         )
         py_pool_handle = self._py_bot.get_pool(pool_handle_pool_id)
         assert py_pool_handle is not None, "register_v4_pool returned a pool_id with no handle"
-        # Seed the initial tick snapshot (non-empty) into Rust so the
-        # companion starts non-empty (mirrors the V3 builder).
-        if working_tick_data:
-            rows: dict[int, tuple[int, int, int]] = {}
-            for t, info in working_tick_data.items():
-                if isinstance(info, LiquidityAtTick):
-                    rows[int(t)] = (
-                        int(info.liquidity_gross),
-                        int(info.liquidity_net),
-                        int(info.block),
-                    )
-                else:
-                    rows[int(t)] = (
-                        int(info[0]),
-                        int(info[1]),
-                        int(info[2]) if len(info) > 2 else 0,  # noqa: PLR2004
-                    )
-            py_pool_handle.update_tick_data(
-                working_tick_bitmap,
-                rows,
-                int(state_block),
-            )
+        # No separate ``update_tick_data`` — the inline seed is complete (tick
+        # map + known bitmap words, atomically with registration). A separate
+        # REPLACE would clobber live pump events in the now-closed window.
         pool = UniswapV4Pool(
             py_pool_handle,
             pool_id=pool_id_bytes,

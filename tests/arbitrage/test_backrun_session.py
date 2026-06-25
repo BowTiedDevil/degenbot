@@ -181,7 +181,7 @@ class TestBackrunSessionStart:
         assert call["node_ws"] == "ws://localhost:8546"
         assert call["v3_snapshot"] is v3_snap
         assert call["v4_snapshot"] is v4_snap
-        assert call["verify_on_register"] is True
+        assert call["verify_on_register"] is False
         # verify_state_view is the V4 state view constant (non-empty)
         assert call["verify_state_view"].startswith("0x")
 

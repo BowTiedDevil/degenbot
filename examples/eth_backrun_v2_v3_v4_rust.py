@@ -872,13 +872,19 @@ class BackrunSession:
         self.v4_snapshot = v4_snap
 
         # ── Engine pre-resume ritual (subscribe → stream → backfill → verify) ──
+        # ``verify_on_register=False``: a per-pool synchronous verify RPC during
+        # ``build_paths`` makes V4-heavy permutations take 20–50 min (one RPC
+        # round-trip per V4 pool — ~18k pools for V2-V4-V4). The batch
+        # ``verify_liquidity_maps`` (step 3b, run after path discovery) already
+        # verifies every V3/V4 pool against on-chain at a deterministic block,
+        # fail-fast on mismatch — the per-pool check is redundant and slow.
         backfill_target = self.engine_registry.start(
             cfg.node_http,
             cfg.node_ws,
             v3_snapshot=v3_snap,
             v4_snapshot=v4_snap,
             verify_state_view=EthereumMainnetUniswapV4.state_view.address,
-            verify_on_register=True,
+            verify_on_register=False,
         )
         if backfill_target > self.current_block:
             self.current_block = backfill_target

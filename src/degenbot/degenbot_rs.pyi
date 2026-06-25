@@ -1311,7 +1311,9 @@ class UniswapArbEngine:
         block_number: int | None,
     ) -> Coroutine[Any, Any, None]: ...
     def verify_v3_liquidity_maps(
-        self, rpc_url: str, block_number: int | None,
+        self,
+        rpc_url: str,
+        block_number: int | None,
     ) -> Coroutine[Any, Any, None]: ...
     def verify_v4_liquidity_maps(
         self,
@@ -1368,6 +1370,8 @@ class UniswapArbEngine:
         liquidity: int,
         tick: int,
         block: int = 0,
+        tick_data: dict[int, tuple[int, int, int]] | None = None,
+        coverage: str = "sparse",
     ) -> int: ...
     def register_path(self, pool_refs: list[tuple[int, bool]]) -> int: ...
     def register_and_solve_path(self, pool_refs: list[tuple[int, bool]]) -> int: ...
