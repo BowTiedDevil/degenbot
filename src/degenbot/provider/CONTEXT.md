@@ -44,6 +44,8 @@ _Avoid_: (private — avoid referencing outside this module)
 | `call_helpers.py` | `raw_call`, `async_raw_call`, `encode_function_calldata`, `extract_argument_types_from_function_prototype` |
 | `log_fetching.py` | `fetch_logs_retrying`, `fetch_logs_retrying_async` |
 | `block_helpers.py` | `get_number_for_block_identifier`, `get_number_for_block_identifier_async` |
+| `factory.py` | `get_provider_from_config`, `get_async_provider_from_config` — canonical URL→adapter construction (ADR-006 D5), env-gated alloy-vs-web3 backend selection + chain-id enforcement |
+| `alloy_errors.py` | `is_alloy_revert`, `alloy_revert_error` — FFI error-translation seam restoring web3.py-style `ContractLogicError` parity over the flattened Rust `RuntimeError("Provider error: …")` (deliberately Python; a structural `ProviderError::ExecutionReverted` would make it Rust-side) |
 | `__init__.py` | `AlloyProvider` (Python wrapper re-export), public re-exports of adapters and protocols |
 
 ## Relationships
