@@ -48,7 +48,7 @@ pub(crate) use degenbot_bot::bot_core::{RegisterV4PoolParams, V4StateSync, V4Swa
 pub(crate) use degenbot_bot::solvers::uniswap_engine::engine_handle::EngineHandle;
 pub(crate) use degenbot_bot::solvers::uniswap_engine::engine_subscriber::EngineSubscriber;
 
-pub(crate) use degenbot_bot::solvers::uniswap_engine::snapshot_verify::{
+pub(crate) use degenbot_bot::bot_core::snapshot_verify::{
     register_with_cl_buffers, run_cl_verification, SnapshotStore, VerifyError, VerifyRpc,
 };
 pub(crate) use degenbot_bot::solvers::uniswap_engine::{

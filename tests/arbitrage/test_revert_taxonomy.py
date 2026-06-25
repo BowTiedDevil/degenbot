@@ -17,7 +17,7 @@ import eth_abi.abi as eth_abi
 from examples.eth_backrun_helpers import (
     _EXECUTOR_REVERT_SELECTORS,
     _V4_REVERT_SELECTORS,
-    _classify_revert,
+    classify_revert,
     _format_failure_breakdown,
 )
 
@@ -48,7 +48,7 @@ def _encode_panic(code: int) -> bytes:
 def test_classify_v4_currency_not_settled() -> None:
     """CurrencyNotSettled() is the dominant V4 unlock residual-delta revert."""
     data = bytes.fromhex("5212cba1")
-    assert _classify_revert(data) == "CurrencyNotSettled"
+    assert classify_revert(data) == "CurrencyNotSettled"
 
 
 def test_classify_executor_custom_error_strips_params() -> None:
@@ -58,44 +58,44 @@ def test_classify_executor_custom_error_strips_params() -> None:
     param variations tally together rather than fragmenting per amount.
     """
     data = bytes.fromhex("4e88422a") + eth_abi.encode(["uint256", "uint256"], [123, 456])
-    assert _classify_revert(data) == "InsufficientProfit"
+    assert classify_revert(data) == "InsufficientProfit"
 
 
 def test_classify_invalid_callback() -> None:
     # 32-byte address arg (contents don't matter — params are dropped on classify)
     data = bytes.fromhex("b028a63a") + b"\x00" * 31 + b"\xff"
-    assert _classify_revert(data) == "InvalidCallback"
+    assert classify_revert(data) == "InvalidCallback"
 
 
 def test_classify_error_string_message() -> None:
     """``Error(string)`` reverts (e.g. ERC20 transfer-exceeds-balance) bucket by message."""
     data = _encode_error_string("ERC20: transfer amount exceeds balance")
-    assert _classify_revert(data) == "ERC20: transfer amount exceeds balance"
+    assert classify_revert(data) == "ERC20: transfer amount exceeds balance"
 
 
 def test_classify_panic_includes_code() -> None:
     """Panic reverts include the panic code so 0x11 / 0x32 tally separately."""
-    assert _classify_revert(_encode_panic(0x11)) == "Panic(0x11)"
-    assert _classify_revert(_encode_panic(0x32)) == "Panic(0x32)"
+    assert classify_revert(_encode_panic(0x11)) == "Panic(0x11)"
+    assert classify_revert(_encode_panic(0x32)) == "Panic(0x32)"
 
 
 def test_classify_numeric_revert() -> None:
     """A bare 32-byte numeric revert (leading zeros) is its own bucket."""
     # 0x00...00 followed by a small number — Vyper numeric revert shape
     data = bytes(31) + b"\x01"
-    assert _classify_revert(data) == "numeric-revert"
+    assert classify_revert(data) == "numeric-revert"
 
 
 def test_classify_unknown_selector() -> None:
     """Unknown selectors fall back to ``unknown:0x........`` rather than dropping."""
     data = bytes.fromhex("deadbeef") + b"\x00" * 32
-    assert _classify_revert(data) == "unknown:0xdeadbeef"
+    assert classify_revert(data) == "unknown:0xdeadbeef"
 
 
 def test_classify_empty_and_short() -> None:
     """Empty revert data and malformed (<4 byte) data get distinct labels."""
-    assert _classify_revert(b"") == "empty"
-    assert _classify_revert(b"\x01\x02") == "short:0102"
+    assert classify_revert(b"") == "empty"
+    assert classify_revert(b"\x01\x02") == "short:0102"
 
 
 def test_classify_invalid_callback_matches_driver_selector_set() -> None:
@@ -107,9 +107,9 @@ def test_classify_invalid_callback_matches_driver_selector_set() -> None:
     assert "5212cba1" in _V4_REVERT_SELECTORS
     # Every mapped selector classifies to a non-empty label without raising.
     for sel, name in _V4_REVERT_SELECTORS.items():
-        assert _classify_revert(bytes.fromhex(sel)) == name.split("(")[0]
+        assert classify_revert(bytes.fromhex(sel)) == name.split("(")[0]
     for sel, name in _EXECUTOR_REVERT_SELECTORS.items():
-        assert _classify_revert(bytes.fromhex(sel)) == name.split("(")[0]
+        assert classify_revert(bytes.fromhex(sel)) == name.split("(")[0]
 
 
 # ── _format_failure_breakdown ────────────────────────────────────────────

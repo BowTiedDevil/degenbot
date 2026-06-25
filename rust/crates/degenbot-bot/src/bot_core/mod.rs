@@ -26,6 +26,7 @@ pub mod liquidity_verifier;
 pub mod log_dispatcher;
 pub mod reorg_coordinator;
 pub mod solve_coordinator;
+pub mod snapshot_verify;
 pub mod state_history;
 pub mod tick_bitmap;
 pub mod tick_fetch;

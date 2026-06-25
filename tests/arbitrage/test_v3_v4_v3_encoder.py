@@ -17,7 +17,7 @@ V3a's callback runs the V4 unlock, so the unlock sees the deposit.
 
 from web3 import Web3
 
-from contracts.cmd_stream import (
+from examples.cmd_stream import (
     BEGIN_EXECUTION,
     CMD_ERC20_TRANSFER,
     CMD_V3_SWAP_COMPACT,
