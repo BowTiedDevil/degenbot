@@ -10,8 +10,23 @@
 use crate::prelude::*;
 use degenbot_abi::abi_encoder::{encode_rust, encode_single_rust};
 use degenbot_abi::abi_types::AbiValue;
-use pyo3::exceptions::PyValueError;
+use errors::AbiDecodeError;
+use pyo3::exceptions::{PyNotImplementedError, PyValueError};
 use pyo3::types::{PyBytes, PyList};
+
+/// Map an `AbiDecodeError` from the encode path to the appropriate Python
+/// exception.
+///
+/// Fixed-point types map to `NotImplementedError` so the Python adapter can
+/// fall back to `eth_abi` (mirroring the decoder's `map_decode_error`); all other
+/// encode errors map to `ValueError`.
+fn map_encode_error(e: &AbiDecodeError) -> PyErr {
+    if matches!(e, AbiDecodeError::FixedPointNotImplemented) {
+        PyNotImplementedError::new_err(e.to_string())
+    } else {
+        PyValueError::new_err(e.to_string())
+    }
+}
 
 // =============================================================================
 // PyO3-exposed functions (thin wrappers)
@@ -41,7 +56,7 @@ pub fn encode_single<'py>(
     let abi_type_owned = abi_type.to_string();
     let encoded = py
         .detach(|| encode_single_rust(&abi_type_owned, &abi_value))
-        .map_err(|e| PyValueError::new_err(format!("{e}")))?;
+        .map_err(|e| map_encode_error(&e))?;
     Ok(PyBytes::new(py, &encoded))
 }
 
@@ -89,7 +104,7 @@ pub fn encode<'py>(
     let abi_values = abi_values?;
     let encoded = py
         .detach(|| encode_rust(&type_refs, &abi_values))
-        .map_err(|e| PyValueError::new_err(format!("{e}")))?;
+        .map_err(|e| map_encode_error(&e))?;
     Ok(PyBytes::new(py, &encoded))
 }
 
