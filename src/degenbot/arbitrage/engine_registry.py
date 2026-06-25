@@ -89,6 +89,16 @@ class EngineRegistry:
         # Verify config (stashed in start(), consumed by verify_liquidity_maps).
         self._verify_rpc_url: str | None = None
         self._verify_state_view: str | None = None
+        # T1 (ADR-006 D4 + two-step verify prep): the snapshot seed block and
+        # the backfill target block, stashed in start() for the per-pool
+        # two-step verify (T6) to pass to the verify closures — NOT wired into
+        # the orphaned engine.set_verify_*_block setters (deleted in T5).
+        # snapshot_block = min(snap.newest_block) across supplied snapshots;
+        # backfill_block = the subscribe() return (first observed WS block).
+        # Both None when no snapshots were supplied (no seed, no backfill
+        # window) — T6 guards accordingly.
+        self._verify_snapshot_block: int | None = None
+        self._verify_backfill_block: int | None = None
         # NOTE: These Python dicts (_v2_keys, _v3_keys, _v4_keys) are plain
         # dicts — NOT thread-safe. All access is on the single asyncio event loop.
 
@@ -132,6 +142,14 @@ class EngineRegistry:
                 stream_v4_snapshot_to_engine(v4_snapshot, self.engine)
             snapshot_block = min(s.newest_block for s in snapshots)
             self.engine.backfill_from_snapshot(node_http, snapshot_block)
+            # T1: stash the snapshot seed block + the backfill target block
+            # for the per-pool two-step verify (T6). backfill_from_snapshot
+            # applied events from snapshot_block up to backfill_target, so
+            # post-backfill state lives at backfill_target — that's the block
+            # the backfill-verify step compares against. Only set when a
+            # snapshot was supplied (else there's no seed and no backfill).
+            self._verify_snapshot_block = snapshot_block
+            self._verify_backfill_block = backfill_target
 
         # Verify config (consumer-safe: nothing emits yet).
         self.engine.set_verify_rpc_url(node_http)
