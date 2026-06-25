@@ -971,7 +971,7 @@ class BackrunSession:
                 block_ticker=(b["number"] async for b in block_stream),
                 interval=RECURRING_VERIFY_INTERVAL,
                 retry_policy=cfg.verification_retry_policy,
-            )
+            ),
         )
         try:
             await self._result_consumer_task
@@ -1250,12 +1250,16 @@ async def build_paths(
                     retry_verification_call(_retry_policy, engine_registry.register_v2_pool, pool)
                 elif pt == "V3":
                     await retry_verification_call_async(
-                        _retry_policy, engine_registry.register_v3_pool, pool
+                        _retry_policy,
+                        engine_registry.register_v3_pool,
+                        pool,
                     )
                 elif pt == "V4":
                     v4_pool_count += 1
                     await retry_verification_call_async(
-                        _retry_policy, engine_registry.register_v4_pool, pool
+                        _retry_policy,
+                        engine_registry.register_v4_pool,
+                        pool,
                     )
         except VerificationMismatchError as exc:
             # Verification mismatch — on-chain tick state does not match the
@@ -2527,14 +2531,12 @@ async def consume_result_batches(
     if block_stream is None:
         block_stream = engine_registry.engine.block_stream()
     if result_iter is None:
-        result_iter = engine_registry.engine.__aiter__()
+        result_iter = aiter(engine_registry.engine)
 
     # Prime both streams. Each completed future is re-primed unless its stream
     # ended (StopAsyncIteration); the loop exits when both are exhausted.
-    block_fut: asyncio.Task[dict[str, int]] | None = asyncio.ensure_future(block_stream.__anext__())
-    result_fut: asyncio.Task[dict[str, object]] | None = asyncio.ensure_future(
-        result_iter.__anext__()
-    )
+    block_fut: asyncio.Task[dict[str, int]] | None = asyncio.ensure_future(anext(block_stream))
+    result_fut: asyncio.Task[dict[str, object]] | None = asyncio.ensure_future(anext(result_iter))
 
     while block_fut is not None or result_fut is not None:
         pending = {f for f in (block_fut, result_fut) if f is not None}
@@ -2571,7 +2573,7 @@ def _reprime(
         return None
     except BaseException:  # noqa: BLE001 — surfaced via fut.result() in caller
         return None
-    return asyncio.ensure_future(stream.__anext__())  # type: ignore[attr-defined]
+    return asyncio.ensure_future(anext(stream))
 
 
 async def _apply_block_if_ready(
