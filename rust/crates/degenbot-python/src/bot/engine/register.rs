@@ -6,11 +6,9 @@
 //! blocks per type, so each concern file contributes one slice.
 
 use super::{
-    mpsc, Arc,
-    Bot, DynamicFeePoolRejectedError, EngineHandle,
-    EngineSubscriber, HookedPoolRejectedError, PoolHop, PyBot, PyList,
-    PyUniswapArbEngine,
-    ReorgCoordinator, SnapshotStore, SolveCoordinator, UniswapEngine,
+    mpsc, Arc, Bot, DynamicFeePoolRejectedError, EngineHandle, EngineSubscriber,
+    HookedPoolRejectedError, PoolHop, PyBot, PyList, PyUniswapArbEngine, ReorgCoordinator,
+    SnapshotStore, SolveCoordinator, UniswapEngine,
 };
 use crate::prelude::*;
 
@@ -219,7 +217,8 @@ impl PyUniswapArbEngine {
         // ADR-006 D4 (T3): delegates to the shared `PumpState` — the
         // Bot-owned entry point. Kept on the engine for the engine-only test
         // seam; production routes through PyBot::backfill_from_snapshot.
-        self.pump.backfill_from_snapshot(rpc_url, snapshot_block, chunk_size)
+        self.pump
+            .backfill_from_snapshot(rpc_url, snapshot_block, chunk_size)
     }
 
     /// Resume phase: begin normal pump processing.

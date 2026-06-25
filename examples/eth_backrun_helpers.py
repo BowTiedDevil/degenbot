@@ -30,7 +30,7 @@ from cmd_stream import (
     enc_weth_withdraw,
 )
 
-from degenbot.arbitrage import PathInfo, V2HopInfo, V3HopInfo, V4HopInfo
+from degenbot.arbitrage import PathInfo, V2HopInfo, V3HopInfo, V4HopInfo, build_hops_from_pools
 from degenbot.arbitrage.encoding import fits_int128
 from degenbot.arbitrage.verification_retry import VerificationRetryPolicy
 from degenbot.checksum_cache import get_checksum_address

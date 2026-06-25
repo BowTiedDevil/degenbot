@@ -169,7 +169,7 @@ addopts = [
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-pythonpath = ["src", "."]
+pythonpath = ["src", ".", "examples"]
 python_files = "test_*.py"
 testpaths = ["tests", "README.md"]
 norecursedirs = ["archive"]

@@ -21,7 +21,7 @@ use crate::prelude::*;
 /// - `NotConfigured` → `PyRuntimeError` (programmer error)
 ///
 /// ADR-006 D3 (T5): the verify-on-register path that drove this seam is
-/// deleted; the two-step verify (T6) routes through PyBot's batch API. Kept
+/// deleted; the two-step verify (T6) routes through `PyBot`'s batch API. Kept
 /// because `SnapshotStore::insert` (snapshot.rs) still maps its
 /// `VerifyError` through this.
 pub(crate) fn map_verify_err(res: Result<(), VerifyError>) -> PyResult<()> {
@@ -84,7 +84,8 @@ impl PyUniswapArbEngine {
         block_number: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
         // ADR-006 D4 (T4): delegates to the shared `PumpState`.
-        self.pump.verify_v3_liquidity_maps(py, rpc_url, block_number)
+        self.pump
+            .verify_v3_liquidity_maps(py, rpc_url, block_number)
     }
 
     /// Verify V4 liquidity maps only, at a specific block.
@@ -101,7 +102,8 @@ impl PyUniswapArbEngine {
         block_number: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
         // ADR-006 D4 (T4): delegates to the shared `PumpState`.
-        self.pump.verify_v4_liquidity_maps(py, rpc_url, state_view_address, block_number)
+        self.pump
+            .verify_v4_liquidity_maps(py, rpc_url, state_view_address, block_number)
     }
 
     /// Verify a single V3 pool's liquidity map against on-chain state.
@@ -256,7 +258,7 @@ impl PyUniswapArbEngine {
     #[pyo3(signature = (rpc_url))]
     fn set_verify_rpc_url(&self, rpc_url: String) {
         // ADR-006 D4 (T4): delegates to the shared `PumpState`.
-        self.pump.set_verify_rpc_url(rpc_url)
+        self.pump.set_verify_rpc_url(rpc_url);
     }
 
     /// Set the `StateView` contract address for V4 verification during registration.
@@ -266,6 +268,6 @@ impl PyUniswapArbEngine {
     #[pyo3(signature = (state_view_address))]
     fn set_verify_state_view(&self, state_view_address: String) {
         // ADR-006 D4 (T4): delegates to the shared `PumpState`.
-        self.pump.set_verify_state_view(state_view_address)
+        self.pump.set_verify_state_view(state_view_address);
     }
 }

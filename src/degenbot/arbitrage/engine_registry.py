@@ -254,6 +254,7 @@ class EngineRegistry:
                 from the shared BotState snapshot, not the address).
             block: the block to verify against; ``None`` means pending/latest.
             pool_id_hex: required for V4 (the StateView key).
+
         """
         if self._verify_rpc_url is None or self._verify_state_view is None:
             # No verify config — skip, same as batch verify_liquidity_maps.
@@ -272,7 +273,7 @@ class EngineRegistry:
                 block_number=block,
             )
         elif family == "v4":
-            assert pool_id_hex is not None  # noqa: S101
+            assert pool_id_hex is not None
             await self.engine.verify_v4_liquidity_maps(
                 rpc_url=self._verify_rpc_url,
                 state_view_address=self._verify_state_view,
@@ -396,7 +397,10 @@ class EngineRegistry:
         # T6 (ADR-006 D4): fail-fast two-step verify at the drain seam.
         # Step 1: snapshot verify (raw seed vs on-chain @ snapshot block).
         await self._verify_pool_at_block(
-            "v4", pool.address, self._verify_snapshot_block, pool_id_hex=pool_id_hex
+            "v4",
+            pool.address,
+            self._verify_snapshot_block,
+            pool_id_hex=pool_id_hex,
         )
 
         # Drain backfill/pump buffer — same rationale as register_v3_pool.
@@ -404,7 +408,10 @@ class EngineRegistry:
 
         # Step 2: backfill verify (post-drain vs on-chain @ backfill block).
         await self._verify_pool_at_block(
-            "v4", pool.address, self._verify_backfill_block, pool_id_hex=pool_id_hex
+            "v4",
+            pool.address,
+            self._verify_backfill_block,
+            pool_id_hex=pool_id_hex,
         )
 
         self._v4_keys[pool_id_hex] = key

@@ -22,7 +22,6 @@ from degenbot.arbitrage.verification_retry import (
 )
 
 if TYPE_CHECKING:
-    import asyncio
     from collections.abc import AsyncIterator
 
 logger = logging.getLogger(__name__)
@@ -34,16 +33,19 @@ RECURRING_VERIFY_INTERVAL_DEFAULT = 50
 
 @runtime_checkable
 class _Registers(Protocol):
-    """The verify surface ``EngineRegistry`` exposes — a Protocol so this module
-    doesn't import ``engine_registry`` (which imports ``verification_retry``)."""
+    """The verify surface ``EngineRegistry`` exposes.
+
+    A Protocol so this module doesn't import ``engine_registry`` (which
+    imports ``verification_retry``).
+    """
 
     async def verify_liquidity_maps(self, *, block_number: int | None) -> None: ...
 
 
-async def run_recurring_verify_until_done(  # noqa: C901 - linear, not complex
+async def run_recurring_verify_until_done(
     *,
     registry: _Registers,
-    block_ticker: "AsyncIterator[int]",
+    block_ticker: AsyncIterator[int],
     interval: int,
     retry_policy: VerificationRetryPolicy,
 ) -> None:
@@ -64,6 +66,7 @@ async def run_recurring_verify_until_done(  # noqa: C901 - linear, not complex
             accepts them (e.g. the engine's ``block_stream()``).
         interval: verify every N blocks. ``<= 0`` disables recurring verify.
         retry_policy: transient RPC failure retry policy.
+
     """
     async for block in block_ticker:
         if interval <= 0 or block % interval != 0:

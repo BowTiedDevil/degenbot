@@ -653,8 +653,14 @@ class TestSharedStateTopologyV4:
 
     @staticmethod
     def _register_v4(core: PyBot, engine: UniswapArbEngine) -> int:
-        """Register a V4 pool via the engine's shared core; return its handle key."""
-        return engine.register_v4_pool(
+        """Register a V4 pool via the shared core; return its handle key.
+
+        ADR-006 D3 (T5): deleted the unreachable ``engine.register_v4_pool``
+        pyo3 surface — pools enter BotState via the bot's ``PyBot.register_*``
+        (the engine shares the bot's BotState, so registering via ``core`` is
+        equivalent and is the live builder path).
+        """
+        return core.register_v4_pool(
             pool_manager=V4_POOL_MANAGER,
             pool_id_hex=V4_POOL_ID_HEX,
             currency0=TOKEN0,
@@ -665,6 +671,8 @@ class TestSharedStateTopologyV4:
             sqrt_price_x96=V4_SQRT_PRICE,
             liquidity=V4_LIQUIDITY,
             tick=V4_TICK,
+            block=0,
+            coverage="tracked",
         )
 
     def test_v4_handle_apply_swap_is_visible_to_handle_reads(self) -> None:

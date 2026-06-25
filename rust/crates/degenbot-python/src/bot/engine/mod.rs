@@ -39,15 +39,17 @@ pub(crate) use tokio::sync::mpsc;
 pub(crate) use crate::bot::PyBot;
 pub(crate) use degenbot_bot::bot_core::reorg_coordinator::ReorgCoordinator;
 pub(crate) use degenbot_bot::bot_core::solve_coordinator::SolveCoordinator;
-pub(crate) use degenbot_bot::bot_core::{drain_sink::DrainSink, Bot, V3SwapUpdate, V4StateSync, V4SwapUpdate};
+pub(crate) use degenbot_bot::bot_core::{
+    drain_sink::DrainSink, Bot, V3SwapUpdate, V4StateSync, V4SwapUpdate,
+};
 
 pub(crate) use degenbot_bot::solvers::uniswap_engine::engine_handle::EngineHandle;
 pub(crate) use degenbot_bot::solvers::uniswap_engine::engine_subscriber::EngineSubscriber;
 
 pub(crate) use degenbot_bot::bot_core::snapshot_verify::{SnapshotStore, VerifyError};
 pub(crate) use degenbot_bot::solvers::uniswap_engine::{
-    BlockMetadata, BlockNotification, EnginePhase, HopType, MixedPoolRef, PoolHop,
-    ResultBatch, SolvePathResult, UniswapEngine, V3SnapshotData, V4SnapshotData,
+    BlockMetadata, BlockNotification, EnginePhase, HopType, MixedPoolRef, PoolHop, ResultBatch,
+    SolvePathResult, UniswapEngine, V3SnapshotData, V4SnapshotData,
 };
 
 /// Python-facing mixed V2/V3 arbitrage engine.

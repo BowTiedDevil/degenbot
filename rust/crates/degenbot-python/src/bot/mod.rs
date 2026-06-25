@@ -141,15 +141,14 @@ impl PyBot {
     /// Borrow the attached `PumpState`, or error if no engine was constructed
     /// against this bot.
     #[allow(dead_code)] // wired by the pump lifecycle methods (subscribe/
-                       // backfill_from_snapshot/resume) in the #[pymethods] impl
+                        // backfill_from_snapshot/resume) in the #[pymethods] impl
     fn pump_state(&self) -> PyResult<Arc<crate::bot::pump::PumpState>> {
-        self.pump
-            .lock()
-            .clone()
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err(
+        self.pump.lock().clone().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
                 "No engine attached to this Bot. Construct a UniswapArbEngine(py_bot=...) \
-                 before calling pump lifecycle methods on Bot."
-            ))
+                 before calling pump lifecycle methods on Bot.",
+            )
+        })
     }
 }
 
@@ -193,7 +192,8 @@ impl PyBot {
         snapshot_block: u64,
         chunk_size: u64,
     ) -> PyResult<u64> {
-        self.pump_state()?.backfill_from_snapshot(rpc_url, snapshot_block, chunk_size)
+        self.pump_state()?
+            .backfill_from_snapshot(rpc_url, snapshot_block, chunk_size)
     }
 
     /// Resume the pump — begin normal WS processing (ADR-006 D4 T3).
@@ -249,7 +249,8 @@ impl PyBot {
         rpc_url: String,
         block_number: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.pump_state()?.verify_v3_liquidity_maps(py, rpc_url, block_number)
+        self.pump_state()?
+            .verify_v3_liquidity_maps(py, rpc_url, block_number)
     }
 
     /// Verify V4 liquidity maps only (ADR-006 D4 T4).
@@ -262,7 +263,8 @@ impl PyBot {
         state_view_address: String,
         block_number: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.pump_state()?.verify_v4_liquidity_maps(py, rpc_url, state_view_address, block_number)
+        self.pump_state()?
+            .verify_v4_liquidity_maps(py, rpc_url, state_view_address, block_number)
     }
 
     /// Register a V2 pool by contract address.
