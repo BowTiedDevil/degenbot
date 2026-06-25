@@ -256,7 +256,7 @@ impl PyUniswapArbEngine {
     ///
     /// Must be called before enabling `verify_on_register`.
     #[pyo3(signature = (rpc_url))]
-    fn set_verify_rpc_url(&self, rpc_url: String) {
+    fn set_verify_rpc_url(&self, rpc_url: &str) {
         // ADR-006 D4 (T4): delegates to the shared `PumpState`.
         self.pump.set_verify_rpc_url(rpc_url);
     }
@@ -264,9 +264,8 @@ impl PyUniswapArbEngine {
     /// Set the `StateView` contract address for V4 verification during registration.
     ///
     /// Must be called before any V4 pools are registered with verification enabled.
-    #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (state_view_address))]
-    fn set_verify_state_view(&self, state_view_address: String) {
+    fn set_verify_state_view(&self, state_view_address: &str) {
         // ADR-006 D4 (T4): delegates to the shared `PumpState`.
         self.pump.set_verify_state_view(state_view_address);
     }

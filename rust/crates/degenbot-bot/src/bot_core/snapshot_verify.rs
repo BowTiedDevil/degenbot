@@ -3,8 +3,8 @@
 //! Extracted from `py_binding.rs` so the pure-logic core is testable without
 //! `PyO3`. `py_binding.rs` (in `degenbot-python`) keeps the `PyO3` arg-parsing
 //! + I/O (the `AlloyProvider`-based verify pipeline, whose closures capture
-//! on-chain RPC reads + `PyResult`) and delegates to this module, mapping
-//! [`VerifyError`] to `PyRuntimeError`.
+//!   on-chain RPC reads + `PyResult`) and delegates to this module, mapping
+//!   [`VerifyError`] to `PyRuntimeError`.
 //!
 //! ## ADR-006 D4 relocation (this module's home)
 //! These helpers were trapped in `solvers/uniswap_engine` for historical
