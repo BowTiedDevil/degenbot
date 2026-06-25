@@ -62,7 +62,6 @@
 | **StateCache** | A generic temporal state cache (`StateCache[T: CacheableState]`) owning a deque and a lock; replaces per-pool deque+lock+navigation duplication | State cache, pool cache |
 | **CacheableState** | A protocol requiring a `block: int | None` attribute; the type bound for `StateCache`'s type parameter | Cacheable, state protocol |
 | **Caller-holds-lock** | Design where `StateCache` mutation methods are unlocked; the caller (pool) acquires `cache.lock()` for compound operations | External locking, explicit locking |
-| **ConcentratedLiquidityStateManager** | A manager class for V3/V4 that composes with `StateCache` internally, exposing CL-specific convenience properties (`liquidity`, `sqrt_price_x96`, `tick`, etc.) | State manager, CL manager |
 
 ## Relationships
 
@@ -71,7 +70,6 @@
 - A **Pool Tracker** tracks many **Pools** for one **Exchange Deployment**
 - A **Pool State** may be updated via **data_provider** (e.g., Curve pools call `CurveDataProvider` methods on-demand)
 - A **StateCache** stores a temporal sequence of **Pool State** snapshots for one **Pool**
-- A **ConcentratedLiquidityStateManager** wraps a **StateCache** and adds CL-specific read conveniences
 
 ## I/O-Free Architecture Terms
 

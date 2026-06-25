@@ -6,7 +6,6 @@ UniswapV3PoolCalc.
 
 V3 state is significantly different from V2:
 - Concentrated liquidity: tick-based, not reserves-based
-- State managed by ConcentratedLiquidityStateManager
 - Has tick_bitmap and tick_data for the liquidity distribution
 """
 
@@ -27,7 +26,7 @@ class V3PoolState:
     - _tick_spacing: granularity of the tick bitmap
     - _sparse_liquidity_map: whether full tick data was provided at construction
 
-    Mutable state (via ConcentratedLiquidityStateManager):
+    Mutable state (CL scalars + liquidity distribution):
     - liquidity, sqrt_price_x96, tick, tick_bitmap, tick_data
     """
 
