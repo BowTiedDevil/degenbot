@@ -99,6 +99,23 @@ pub enum EnginePhase {
 }
 
 impl EnginePhase {
+    /// Reconstruct a phase from its `u8` discriminant (the inverse of the
+    /// `#[repr(u8)]` representation). Used by `PumpState` (ADR-006 D4) to read
+    /// the phase atomically across PyBot/PyUniswapArbEngine wrappers.
+    /// Unknown discriminants fall back to `Created` (the safest default — any
+    /// phase-gated method will re-validate via `require`/`require_before`).
+    #[must_use]
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::Created,
+            1 => Self::Subscribed,
+            2 => Self::SnapshotLoaded,
+            3 => Self::Backfilled,
+            4 => Self::Resumed,
+            _ => Self::Created,
+        }
+    }
+
     /// Check that the current phase allows the given required phase.
     /// Returns `Err` with a descriptive message if the transition is invalid.
     ///

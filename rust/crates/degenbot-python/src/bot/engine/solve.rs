@@ -23,7 +23,7 @@ impl PyUniswapArbEngine {
     /// Returns `None` if no block has been processed yet (before the first
     /// `on_drain` / before `start`).
     fn last_processed_block(&self) -> Option<u64> {
-        self.coordinator.last_processed_block()
+        self.pump.coordinator.last_processed_block()
     }
 
     /// Set the last processed block manually after Python backfill.
@@ -222,10 +222,10 @@ impl PyUniswapArbEngine {
         };
 
         // 2. Optionally fetch on-chain state and compute diffs.
-        let rpc_url = rpc_url.or_else(|| self.verify_rpc_url.lock().clone());
+        let rpc_url = rpc_url.or_else(|| self.pump.verify_rpc_url.lock().clone());
         if let Some(rpc_url) = rpc_url {
             let runtime = degenbot_core::runtime::get_runtime();
-            let state_view = *self.verify_state_view.lock();
+            let state_view = *self.pump.verify_state_view.lock();
 
             match runtime.block_on(degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)) {
                 Ok(provider) => {

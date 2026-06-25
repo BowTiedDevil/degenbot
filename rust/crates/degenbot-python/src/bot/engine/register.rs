@@ -7,9 +7,9 @@
 
 use super::{
     hex_string_to_pool_id, mpsc, register_with_cl_buffers, run_cl_verification, Address, Arc,
-    BlockPump, Bot, DrainSink, DynamicFeePoolRejectedError, EngineHandle, EnginePhase,
+    Bot, DynamicFeePoolRejectedError, EngineHandle,
     EngineSubscriber, HashMap, HookedPoolRejectedError, PoolHop, PoolTickCoverage, PyBot, PyList,
-    PySubscribeState, PyUniswapArbEngine, RegisterV3PoolParams, RegisterV4PoolParams,
+    PyUniswapArbEngine, RegisterV3PoolParams, RegisterV4PoolParams,
     ReorgCoordinator, SnapshotStore, SolveCoordinator, UniswapEngine, VerifyError, VerifyRpc,
 };
 use crate::prelude::*;
@@ -21,6 +21,7 @@ impl PyUniswapArbEngine {
     #[new]
     #[pyo3(signature = (py_bot=None))]
     fn new(py: Python<'_>, py_bot: Option<Py<PyBot>>) -> Self {
+        let py_bot_ref = py_bot.as_ref();
         let (result_tx, result_rx) = mpsc::unbounded_channel();
         // ADR-006 D1+D4: if a `PyBot` is supplied, adopt its shared
         // `Arc<RwLock<BotState>>` so the engine reads/writes the SAME core that
@@ -29,7 +30,7 @@ impl PyUniswapArbEngine {
         // reads (dissolving the dual-`BotState` split —
         // `rust-owned-bot.md` §17 stale-state root cause). Without one, allocate
         // a standalone core + wrap it in a fresh `Bot` (no-pyo3 / legacy path).
-        let (engine, bot) = if let Some(bot) = py_bot {
+        let (engine, bot) = if let Some(bot) = py_bot_ref {
             let bot = bot.borrow(py).bot_arc();
             (UniswapEngine::with_core(bot.state_arc()), bot)
         } else {
@@ -53,28 +54,21 @@ impl PyUniswapArbEngine {
         let coordinator = Arc::new(SolveCoordinator::new(vec![EngineHandle::arc_dyn(
             Arc::clone(&engine),
         )]));
-        // ADR-006 slice 7: the per-event reorg coordinator. Holds `Arc<Bot>`;
-        // `dispatch_reorg_log` decodes a `removed: true` log, restores the
-        // targeted pool via `BotState::restore_before_block`, then notifies
-        // subscribers (the same path as forward `dispatch_log`).
         let reorg_coordinator = Arc::new(ReorgCoordinator::new(Arc::clone(&bot)));
+        let pump = Arc::new(crate::bot::pump::PumpState::new(
+            Arc::clone(&engine),
+            Arc::clone(&coordinator),
+            Arc::clone(&reorg_coordinator),
+            Arc::clone(&bot),
+        ));
+        if let Some(parent) = py_bot_ref {
+            parent.borrow(py).attach_pump_state(Arc::clone(&pump));
+        }
         Self {
             engine,
-            coordinator,
-            reorg_coordinator,
-            bot,
-            shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            pump_handle: parking_lot::Mutex::new(None),
-            subscribe_state: parking_lot::Mutex::new(None),
+            pump,
             result_rx: Arc::new(parking_lot::Mutex::new(Some(result_rx))),
             block_rx: Arc::new(parking_lot::Mutex::new(Some(block_rx))),
-            verify_on_register: std::sync::atomic::AtomicBool::new(false),
-            verify_rpc_url: parking_lot::Mutex::new(None),
-            verify_provider: parking_lot::Mutex::new(None),
-            verify_state_view: parking_lot::Mutex::new(None),
-            verify_snapshot_block: parking_lot::Mutex::new(None),
-            verify_backfill_block: parking_lot::Mutex::new(None),
-            phase: std::sync::atomic::AtomicU8::new(EnginePhase::Created as u8),
             v3_snapshot: SnapshotStore::new(),
             v4_snapshot: SnapshotStore::new(),
         }
@@ -198,12 +192,11 @@ impl PyUniswapArbEngine {
         );
 
         if is_tracked
-            && self
-                .verify_on_register
+            && self.pump.verify_on_register
                 .load(std::sync::atomic::Ordering::Relaxed)
         {
-            let snapshot_block = *self.verify_snapshot_block.lock();
-            let backfill_block = *self.verify_backfill_block.lock();
+            let snapshot_block = *self.pump.verify_snapshot_block.lock();
+            let backfill_block = *self.pump.verify_backfill_block.lock();
 
             // ADR-006 slice-5 candidate-2: the verify closures shrink to
             // delegate to the `VerifyRpc` trait (the `AlloyProvider` I/O +
@@ -211,8 +204,8 @@ impl PyUniswapArbEngine {
             // impl). The pure orchestrator `run_cl_verification` drives the
             // two phases in order without touching pyo3/tokio at this layer.
             let rpc = EngineVerifyRpc {
-                rpc_url: &self.verify_rpc_url,
-                provider: &self.verify_provider,
+                rpc_url: &self.pump.verify_rpc_url,
+                provider: &self.pump.verify_provider,
             };
             let verify_snapshot =
                 |rpc: &EngineVerifyRpc<'_>, block: u64| -> Result<(), VerifyError> {
@@ -345,19 +338,18 @@ impl PyUniswapArbEngine {
         let key = key?;
 
         if is_tracked
-            && self
-                .verify_on_register
+            && self.pump.verify_on_register
                 .load(std::sync::atomic::Ordering::Relaxed)
         {
-            let state_view = *self.verify_state_view.lock();
-            let snapshot_block = *self.verify_snapshot_block.lock();
-            let backfill_block = *self.verify_backfill_block.lock();
+            let state_view = *self.pump.verify_state_view.lock();
+            let snapshot_block = *self.pump.verify_snapshot_block.lock();
+            let backfill_block = *self.pump.verify_backfill_block.lock();
 
             // ADR-006 slice-5 candidate-2: verify closures shrink to delegate
             // to the `VerifyRpc` trait (same shape as the V3 register path).
             let rpc = EngineVerifyRpc {
-                rpc_url: &self.verify_rpc_url,
-                provider: &self.verify_provider,
+                rpc_url: &self.pump.verify_rpc_url,
+                provider: &self.pump.verify_provider,
             };
             let verify_snapshot =
                 |rpc: &EngineVerifyRpc<'_>, block: u64| -> Result<(), VerifyError> {
@@ -443,7 +435,7 @@ impl PyUniswapArbEngine {
         // idempotent via `HashSet`).
         let subscriber = EngineSubscriber::weak_handle(&self.engine);
         for pool_id in pool_ids {
-            self.bot.attach_engine(pool_id, subscriber.clone());
+            self.pump.bot.attach_engine(pool_id, subscriber.clone());
         }
         Ok(path_id)
     }
@@ -488,7 +480,7 @@ impl PyUniswapArbEngine {
         // ADR-006 D4: subscribe the engine to each pool_id (see `register_path`).
         let subscriber = EngineSubscriber::weak_handle(&self.engine);
         for pool_id in pool_ids {
-            self.bot.attach_engine(pool_id, subscriber.clone());
+            self.pump.bot.attach_engine(pool_id, subscriber.clone());
         }
         Ok(path_id)
     }
@@ -509,50 +501,10 @@ impl PyUniswapArbEngine {
     #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (rpc_url))]
     fn subscribe(&self, rpc_url: String) -> PyResult<u64> {
-        // Phase check: must be Created
-        let phase = self.current_phase();
-        phase
-            .require(EnginePhase::Created, "subscribe")
-            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
-
-        // Ensure we're not already running
-        if self.pump_handle.lock().is_some() {
-            let msg = "Cannot subscribe: pump is already started. Call stop() first.";
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
-        }
-        if self.subscribe_state.lock().is_some() {
-            let msg = "Cannot subscribe: already subscribed. Call resume() first.";
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
-        }
-
-        let bot = Arc::clone(&self.bot);
-        let sink: Arc<dyn DrainSink> = self.coordinator.clone();
-        let reorg_coordinator = Arc::clone(&self.reorg_coordinator);
-        let shutdown = Arc::clone(&self.shutdown);
-
-        // Run the subscribe phase synchronously (blocks Python until first block observed)
-        let runtime = degenbot_core::runtime::get_runtime();
-        let subscribe_result = runtime
-            .block_on(async {
-                BlockPump::subscribe(&rpc_url, bot, sink, reorg_coordinator, shutdown).await
-            })
-            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
-
-        let (pump, state) = subscribe_result;
-
-        // Store the subscribe state for resume()
-        *self.subscribe_state.lock() = Some(PySubscribeState {
-            pump,
-            first_block: state.first_block,
-            combined_stream: state
-                .combined_stream
-                .expect("subscribe() always returns a stream"),
-        });
-
-        // Advance phase
-        self.set_phase(EnginePhase::Subscribed);
-
-        Ok(state.first_block)
+        // ADR-006 D4 (T3): delegates to the shared `PumpState::subscribe` —
+        // the Bot-owned entry point. Kept on the engine for the engine-only
+        // test seam; production routes through PyBot::subscribe.
+        self.pump.subscribe(rpc_url)
     }
 
     /// Backfill Mint/Burn/ModifyLiquidity events from the last DB snapshot
@@ -579,118 +531,10 @@ impl PyUniswapArbEngine {
         snapshot_block: u64,
         chunk_size: u64,
     ) -> PyResult<u64> {
-        // Phase check: must be at least SnapshotLoaded
-        let phase = self.current_phase();
-        phase
-            .require(EnginePhase::SnapshotLoaded, "backfill_from_snapshot")
-            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
-
-        // Ensure no double-backfill
-        phase
-            .require_before(EnginePhase::Backfilled, "backfill_from_snapshot")
-            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
-
-        // Ensure subscribe() was called — we need the first WS block
-        let first_ws_block = {
-            let state_lock = self.subscribe_state.lock();
-            if let Some(s) = state_lock.as_ref() {
-                s.first_block
-            } else {
-                let msg =
-                    "Cannot backfill: subscribe() has not been called. Call subscribe() first.";
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
-            }
-        };
-
-        if snapshot_block == 0 {
-            log::warn!("backfill_from_snapshot: snapshot_block is 0, skipping");
-            return Ok(0);
-        }
-
-        if snapshot_block >= first_ws_block {
-            log::info!(
-                "backfill_from_snapshot: snapshot at {snapshot_block} >= WS block {first_ws_block}, nothing to backfill"
-            );
-            return Ok(0);
-        }
-
-        let from_block = snapshot_block + 1;
-        // Backfill up to (first_ws_block - 1) to avoid overlap with
-        // WS events that the pump already captured during subscribe().
-        let to_block = first_ws_block - 1;
-        let total_blocks = to_block - from_block + 1;
-
-        log::info!(
-            "backfill_from_snapshot: fetching events from block {from_block} to {to_block} ({total_blocks} blocks, chunk_size={chunk_size})"
-        );
-
-        // Create an HTTP provider for eth_getLogs
-        let runtime = degenbot_core::runtime::get_runtime();
-        let provider = runtime.block_on(async {
-            degenbot_rpc::provider::AlloyProvider::new(rpc_url, 3)
-                .await
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!(
-                        "Failed to create provider: {e}"
-                    ))
-                })
-        })?;
-
-        let provider_arc = provider.provider_arc();
-
-        // Fetch and apply logs in paginated chunks
-        let mut total_logs = 0usize;
-        let mut chunk_start = from_block;
-        while chunk_start <= to_block {
-            let chunk_end = (chunk_start + chunk_size - 1).min(to_block);
-
-            let filter =
-                degenbot_bot::bot_core::block_pump::build_backfill_filter(chunk_start, chunk_end);
-
-            let logs = runtime.block_on(async {
-                provider_arc.get_logs(&filter).await.map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!(
-                        "eth_getLogs failed for blocks {chunk_start}-{chunk_end}: {e}"
-                    ))
-                })
-            })?;
-
-            let chunk_log_count = logs.len();
-            total_logs += chunk_log_count;
-
-            // Apply to the engines — process_backfill_logs splits V3/V4
-            {
-                let mut engine = self.engine.lock();
-                engine.process_backfill_logs(&logs, chunk_end);
-            }
-
-            log::info!(
-                "backfill_from_snapshot: blocks {chunk_start}-{chunk_end}: {chunk_log_count} logs applied"
-            );
-
-            chunk_start = chunk_end + 1;
-        }
-
-        log::info!(
-            "backfill_from_snapshot: complete — {total_logs} total logs applied across {total_blocks} blocks"
-        );
-
-        // Capture verification blocks. These are used by verify_on_register
-        // to check tick data at two boundaries:
-        // 1. snapshot_block: raw DB tick_data (before buffer) vs on-chain
-        // 2. backfill block: engine state (after buffer) vs on-chain
-        *self.verify_snapshot_block.lock() = Some(snapshot_block);
-        let backfill_block = self
-            .engine
-            .lock()
-            .last_processed_block()
-            .unwrap_or(to_block);
-        *self.verify_backfill_block.lock() = Some(backfill_block);
-
-        // Advance phase
-        self.set_phase(EnginePhase::Backfilled);
-
-        Ok(total_blocks)
+        // ADR-006 D4 (T3): delegates to the shared `PumpState` — the
+        // Bot-owned entry point. Kept on the engine for the engine-only test
+        // seam; production routes through PyBot::backfill_from_snapshot.
+        self.pump.backfill_from_snapshot(rpc_url, snapshot_block, chunk_size)
     }
 
     /// Resume phase: begin normal pump processing.
@@ -704,55 +548,8 @@ impl PyUniswapArbEngine {
     ///
     /// Raises `RuntimeError` if `subscribe()` has not been called first.
     fn resume(&self, _py: Python<'_>) -> PyResult<()> {
-        // Phase check: must be at least SnapshotLoaded (can skip backfill)
-        let phase = self.current_phase();
-        phase
-            .require(EnginePhase::SnapshotLoaded, "resume")
-            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
-
-        // No double-resume
-        if phase == EnginePhase::Resumed {
-            let msg = "Cannot resume: engine is already in Resumed phase.";
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
-        }
-
-        let subscribe_state = self.subscribe_state.lock().take();
-        let state = subscribe_state.ok_or_else(|| {
-            pyo3::exceptions::PyRuntimeError::new_err(
-                "Cannot resume: subscribe() has not been called. Call subscribe() first.",
-            )
-        })?;
-
-        let mut pump = state.pump;
-        let first_block = state.first_block;
-        let combined_stream = state.combined_stream;
-
-        // ADR-006 slice 6 precondition: all engines are registered before the
-        // pump's WS phase begins (precondition 1) and all engines' snapshot
-        // backfill has completed to a consistent cursor (precondition 2).
-        // `resume()` is the last gate before WS, so assert + seed the
-        // coordinator's `last_drained_block` here. `start()` panics on cursor
-        // divergence — a wiring bug. For the single-engine case today this is
-        // trivially satisfied; for the multi-engine case the precondition is
-        // documented and enforced.
-        self.coordinator.start();
-
-        // Spawn the resume task on the Tokio runtime
-        let handle = degenbot_core::runtime::get_runtime().spawn(async move {
-            let inner_state = degenbot_bot::bot_core::block_pump::SubscribeState {
-                first_block,
-                first_timestamp: 0,
-                combined_stream: Some(combined_stream),
-            };
-            pump.resume_from_subscribe(inner_state).await;
-        });
-
-        *self.pump_handle.lock() = Some(handle);
-
-        // Advance phase
-        self.set_phase(EnginePhase::Resumed);
-
-        Ok(())
+        // ADR-006 D4 (T3): delegates to the shared `PumpState`.
+        self.pump.resume()
     }
 }
 
