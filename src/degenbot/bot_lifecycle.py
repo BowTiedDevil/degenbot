@@ -66,8 +66,12 @@ def release_python_state(bot: _BotLike) -> None:
         if callable(unload_snapshot):
             unload_snapshot()
 
-    # 2. Drop the pool and token registries (Rust owns canonical state)
-    bot.pools._reset()  # type: ignore[attr-defined]  # noqa: SLF001
+    # 2. Drop the pool and token registries (Rust owns canonical state). The
+    # mid-lifecycle handoff keeps the Rust ``BotState`` pools — the live pump
+    # keeps writing V3 Mint/Burn/Swap through the shared core, so we must NOT
+    # unregister (propagate_to_rust=False). Unregistering is end-of-life only
+    # (`close`), where the whole Rust state is torn down alongside the bot.
+    bot.pools._reset(propagate_to_rust=False)  # type: ignore[attr-defined]  # noqa: SLF001
     bot.tokens.reset()  # type: ignore[attr-defined]
 
 

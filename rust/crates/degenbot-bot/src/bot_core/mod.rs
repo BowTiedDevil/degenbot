@@ -966,14 +966,6 @@ impl BotState {
         liquidity_delta: i128,
         block_number: u64,
     ) -> Option<u64> {
-        // TEMP DEBUG: trace the failing pool's liquidity events
-        const DBG: &str = "a6cc3c2531fdaa6ae1a3ca84c2855806728693e8";
-        if format!("{pool_address:x}").eq_ignore_ascii_case(DBG) {
-            let registered = self.pool_addresses.contains_key(&pool_address);
-            log::info!(
-                "[dbg-apply] V3LIQ addr={pool_address} blk={block_number} tl={tick_lower} tu={tick_upper} delta={liquidity_delta} registered={registered}"
-            );
-        }
         let Some(&pool_id) = self.pool_addresses.get(&pool_address) else {
             self.v3_buffer.buffer_pump(
                 pool_address,

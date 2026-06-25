@@ -208,14 +208,24 @@ class PoolRegistry(AddressRegistry["AbstractLiquidityPool"]):
             self._py_bot.unregister_pool(address=pool_address)
         self._remove(chain_id=chain_id, address=pool_address)
 
-    def _reset(self) -> None:
+    def _reset(self, *, propagate_to_rust: bool = True) -> None:
         """Reset both the main registry and the managed pool registry.
 
-        Propagates V2/V3 removal to the Rust ``BotState`` before clearing
-        Python storage (ADR-007). V4 pools are Python-only (engine-side
-        unregister is deferred).
+        When ``propagate_to_rust`` is True (the default — end-of-life
+        teardown), V2/V3 removal is propagated to the Rust ``BotState`` via
+        ``py_bot.unregister_pool`` before clearing Python storage (ADR-007).
+        V4 pools are Python-only (engine-side unregister is deferred).
+
+        When ``propagate_to_rust`` is False (the mid-lifecycle
+        ``release_python_state`` handoff), Rust keeps the pools — the live pump
+        keeps writing V3 Mint/Burn/Swap through the shared ``BotState``, so the
+        release must NOT unregister the very state it is handing canonical
+        ownership to. Unregistering there stranded every live Mint/Burn (the
+        pump routed them to the buffer because ``registered=false``) and
+        dropped every Swap, freezing the tick map (the V3 desync in the
+        permutation run). Only Python storage is dropped; Rust stays canonical.
         """
-        if self._py_bot is not None:
+        if propagate_to_rust and self._py_bot is not None:
             # Iterate storage keys (not pool objects) — the key's second
             # element is the checksummed address; tests may store mocks.
             for _chain_id, address in self._storage():
