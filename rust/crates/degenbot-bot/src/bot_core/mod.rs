@@ -1323,6 +1323,34 @@ impl BotState {
             .collect()
     }
 
+    /// Read the pinned snapshot seed for a V3 pool (CBCH6H). Returns the
+    /// seed if the pool is `Tracked` and the seed has not yet been taken; `None`
+    /// for sparse pools or after `take_v3_snapshot_seed`. The seed is the
+    /// registration-time `tick_data`, immutable across pump Mint/Burn — step-1
+    /// verify compares this against on-chain@snapshot_block (not the
+    /// pump-mutated `tick_data` current).
+    #[must_use]
+    pub fn v3_snapshot_seed(&self, address: Address) -> Option<&HashMap<i32, TickInfo>> {
+        let &pool_id = self.pool_addresses.get(&address)?;
+        let Some(PoolEntry::V3(state)) = self.pools.get(&pool_id) else {
+            return None;
+        };
+        state.snapshot_seed.as_ref()
+    }
+
+    /// Take (move out + clear) the pinned snapshot seed for a V3 pool (CBCH6H).
+    /// Step-1 verify calls this to read+free the seed in one pass — the seed is
+    /// verified exactly once (at the snapshot block during `build_paths`), then
+    /// released to bound memory across 18k pools. Returns `None` for sparse
+    /// pools or if already taken.
+    pub fn take_v3_snapshot_seed(&mut self, address: Address) -> Option<HashMap<i32, TickInfo>> {
+        let &pool_id = self.pool_addresses.get(&address)?;
+        let Some(PoolEntry::V3(state)) = self.pools.get_mut(&pool_id) else {
+            return None;
+        };
+        state.snapshot_seed.take()
+    }
+
     /// Family-dispatching reader for the V3/V4 concentrated-liquidity
     /// families (J63J3N). Returns a trait view over the shared read-only
     /// surface — the mutable scalars (`sqrt_price_x96`/`liquidity`/`tick`/
@@ -3200,6 +3228,35 @@ impl BotState {
         self.v4_pool_ids.get(&(pool_manager, *pool_id)).copied()
     }
 
+    /// Read the pinned snapshot seed for a V4 pool (CBCH6H — V4 twin of
+    /// `v3_snapshot_seed`). Keyed by `(pool_manager, pool_id)`.
+    #[must_use]
+    pub fn v4_snapshot_seed(
+        &self,
+        pool_manager: Address,
+        pool_id: &degenbot_decoders::v4_swap_decoder::PoolId,
+    ) -> Option<&HashMap<i32, TickInfo>> {
+        let pid = self.v4_pool_id_by_key(pool_manager, pool_id)?;
+        let Some(PoolEntry::V4(state)) = self.pools.get(&pid) else {
+            return None;
+        };
+        state.snapshot_seed.as_ref()
+    }
+
+    /// Take (move out + clear) the pinned snapshot seed for a V4 pool (CBCH6H).
+    /// V4 twin of `take_v3_snapshot_seed` — step-1 verify consumes the seed once.
+    pub fn take_v4_snapshot_seed(
+        &mut self,
+        pool_manager: Address,
+        pool_id: &degenbot_decoders::v4_swap_decoder::PoolId,
+    ) -> Option<HashMap<i32, TickInfo>> {
+        let pid = self.v4_pool_id_by_key(pool_manager, pool_id)?;
+        let Some(PoolEntry::V4(state)) = self.pools.get_mut(&pid) else {
+            return None;
+        };
+        state.snapshot_seed.take()
+    }
+
     /// Number of registered V4 pools.
     #[must_use]
     pub fn v4_pool_count(&self) -> usize {
@@ -4719,6 +4776,89 @@ mod tests {
             core.buffered_v3_event_count(&v3_addr),
             0,
             "unregister must discard buffered V3 events for the removed address"
+        );
+    }
+
+    /// CBCH6H: the snapshot seed must be retained separately from the live
+    /// `tick_data` so step-1 verify can compare the *seed* against
+    /// on-chain@snapshot_block, NOT the pump-mutated current. During a rolling
+    /// start (`resume()` precedes `build_paths`) the pump applies Mint/Burn to
+    /// `tick_data`; without a pinned seed, step-1 reads engine-current (seed +
+    /// journal) vs on-chain@snapshot (pre-journal) → false mismatch on every
+    /// active pool (logs/perm-V2-V3-V2.log). The seed is pinned at registration
+    /// and never mutated by `apply_v3_liquidity_update`.
+    #[test]
+    fn v3_snapshot_seed_survives_pump_liquidity_update() {
+        use alloy::primitives::{I256, U128};
+        let mut core = BotState::new();
+        let v3_addr = make_pool_addr();
+
+        // Seed tick_data with one initialized tick (gross=L, net=+L).
+        let liq: u128 = 1_000_000;
+        let liq_u128 = U256::from(liq).to::<U128>();
+        let mut seed = HashMap::new();
+        seed.insert(
+            -60,
+            TickInfo {
+                liquidity_gross: liq_u128,
+                liquidity_net: I256::try_from(i128::try_from(liq).unwrap()).unwrap(),
+                block: 0,
+            },
+        );
+        let seed_clone = seed.clone();
+
+        core.register_v3_pool(&RegisterV3PoolParams {
+            address: v3_addr,
+            token0: make_token0(),
+            token1: make_token1(),
+            fee: 3_000,
+            tick_spacing: 60,
+            factory: make_factory(),
+            sqrt_price_x96: U256::from(1u64) << 96,
+            liquidity: 0,
+            tick: 0,
+            tick_data: seed,
+            update_block: 0,
+            coverage: PoolTickCoverage::Tracked,
+        });
+
+        // The seed is pinned at registration for Tracked (snapshot) pools.
+        assert_eq!(
+            core.v3_snapshot_seed(v3_addr).cloned(),
+            Some(seed_clone.clone()),
+            "Tracked pool must pin its snapshot seed at registration"
+        );
+
+        // Pump applies a Mint at block 1, mutating tick -60's gross.
+        core.apply_v3_liquidity_update(v3_addr, -60, 60, 500_i128, 1);
+
+        // Live tick_data CHANGED (journal applied) ...
+        let live_gross = core
+            .get_v3_pool(core.pool_id_by_address(&v3_addr).unwrap())
+            .and_then(|s| s.tick_data.get(&-60))
+            .map(|t| t.liquidity_gross.to::<u128>());
+        assert_ne!(
+            live_gross,
+            Some(liq),
+            "pump Mint must mutate the live tick_data (precondition)"
+        );
+
+        // ... but the pinned seed is UNCHANGED — step-1 can still verify the
+        // snapshot block against the seed, not the pump-corrupted current.
+        assert_eq!(
+            core.v3_snapshot_seed(v3_addr).cloned(),
+            Some(seed_clone.clone()),
+            "snapshot seed must be immutable across pump Mint/Burn (the rolling-start race fix)"
+        );
+
+        // `take_v3_snapshot_seed` returns the seed once and clears the slot
+        // (memory is freed after step-1 verify; the seed is never needed again).
+        let taken = core.take_v3_snapshot_seed(v3_addr);
+        assert_eq!(taken, Some(seed_clone), "take returns the pinned seed");
+        assert_eq!(
+            core.v3_snapshot_seed(v3_addr),
+            None,
+            "take clears the slot so the seed is verified exactly once"
         );
     }
 
