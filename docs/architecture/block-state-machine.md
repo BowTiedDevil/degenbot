@@ -1,8 +1,9 @@
 # Design note: per-block state machine for the pump's block clock
 
-**Status: accepted (ADR-008).** Design note drafted through interactive review; the accepted
-form is recorded in `docs/adr/ADR-008-block-state-machine.md`. Implementation is a separate
-body of work.
+**Status: implemented (core) — see ADR-008.** Design note drafted through interactive review;
+the accepted form is recorded in `docs/adr/ADR-008-block-state-machine.md`, which carries the
+implementation-status section (what's landed vs deferred). Implementation is a separate body
+of work.
 
 ## The problem this exists to solve
 

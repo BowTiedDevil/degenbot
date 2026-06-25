@@ -1,10 +1,41 @@
 # ADR-008: Per-block state machine for the pump's block clock
 
-**Status: accepted.** Recorded during the block-state-machine review, June 2026. Resolves the
-verify-race class of bugs (V2-V2-V3 crash at block 25397049: a Mint at 25397047 un-applied when
-25397049's `newHeads` advanced the cursor while N's liquidity log was still in-flight). Full
-design note and rationale live in `docs/architecture/block-state-machine.md`; this ADR records
-the settled shape only. Implementation is a separate body of work.
+**Status: implemented (core).** Recorded during the block-state-machine review, June 2026.
+Resolves the verify-race class of bugs (V2-V2-V3 crash at block 25397049: a Mint at 25397047
+un-applied when 25397049's `newHeads` advanced the cursor while N's liquidity log was still
+in-flight). Full design note and rationale live in `docs/architecture/block-state-machine.md`;
+this ADR records the settled shape only.
+
+## Implementation status
+
+Implemented in `rust/crates/degenbot-bot/src/bot_core/` (commits `5673f8ce`, `440b848`,
+`c4d21b1e`, `cdac7363`):
+
+- **D1 (tombstone via successor log)** — `BlockClock` + pump wiring. A `newHeads` header
+  alone never finalizes or drains; only the first `removed: false` log for N+1 tombstones N.
+  The empty-block finalize fast path (`block_pump.rs:593-595`) is deleted. Pinned by
+  `header_alone_does_not_drain_block` + `full_lifecycle_tombstone_via_successor_log_then_drained`.
+- **D2 (LogsQuiesced predicate)** — exposed on the clock (`logs_quiesced`); the in-flight
+  counter is driven per dispatched log. **Deferred:** the pump still publishes via the
+  `DEBOUNCE_MS` wall-clock timer, not solely on `logs_quiesced`. Under the pump's synchronous
+  dispatch, `logs_quiesced` is true between every event, so the debounce timer already
+  approximates the gate (it coalesces a burst until the stream settles = quiesced). Replacing
+  the debounce with `logs_quiesced`-as-sole-trigger matters only if dispatch becomes async;
+  left as a follow-up.
+- **D3 (asymmetric late-event handling)** — clock returns `EnterReorg`/`ContinueReorg`/
+  `CloseReorg`/`PanicLateForward`; the pump routes `removed: true` to `ReorgCoordinator`
+  (per-event restore), closes the reorg window on the first `removed: false` (its block is the
+  new head), and shuts down on a late `removed: false`. Pinned by
+  `reorg_contiguous_chunk_closes_on_first_forward_and_continues` +
+  `late_forward_log_on_tombstoned_block_shuts_down_pump`.
+- **D4 (backfill single-branch)** — `backfill_range` feeds each fetched log through
+  `clock.observe_log` (same SM as live logs; no `Backfilled → Drained` edge). Dead-logs-sub
+  Edge B RPC-budget guard + the dedicated dead-sub detection timeout are **deferred** (the
+  existing 60s inactivity timeout covers the degraded path).
+
+**Deferred to follow-up:** the `[DIAG]` newHeads-stall instrumentation in `run_with_stream`
+(operational logging, retained until a follow-up confirms the SM's liveness paths cover the
+stall scenario); the dead-logs-sub Edge B timeout tuning + RPC budget.
 
 ## Context
 
