@@ -48,13 +48,13 @@ import dotenv
 import eth_abi.abi
 import eth_account
 import web3
-from cmd_stream import mapping_slot, compute_simulation_warmup_slots, pack_expected_balance
+from cmd_stream import compute_simulation_warmup_slots, mapping_slot, pack_expected_balance
 from eth_backrun_helpers import (
     BackrunConfig,
     classify_revert,
-    _format_failure_breakdown,
-    _format_sim_diag_line,
     encode_cmd_stream,
+    format_failure_breakdown,
+    format_sim_diag_line,
     v4_input_is_native,
 )
 from eth_typing import ChainId, ChecksumAddress
@@ -72,10 +72,7 @@ from degenbot.arbitrage import (
     V4HopInfo,
 )
 from degenbot.arbitrage.encoding import fits_int128
-from degenbot.arbitrage.verification_retry import (
-    VerificationRetryPolicy,
-    retry_verification_call,
-)
+from degenbot.arbitrage.verification_retry import VerificationRetryPolicy, retry_verification_call
 from degenbot.calculations.evm_math import next_base_fee
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.constants import WRAPPED_NATIVE_TOKENS
@@ -112,6 +109,10 @@ MULTICALL3_ADDRESS = "0xcA11bde05977b3631167028862bE2a173976CA11"
 # Verified standard ERC-20 intermediates for Ethereum mainnet.
 # Every token here is confirmed to have NO transfer fees and NO rebase.
 ETH_MAINNET_ALLOWED_TOKENS: set[str] = {
+    "0x163f8C2467924be0ae7B5347228CABF260318753",  # WLD
+    "0x6c3ea9036406852006290770BEdFcAbA0e23A0e8",  # PyUSD
+    "0xB8c77482e45F1F44dE1745F52C74426C631bDD52",  # BNB
+    "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",  # LIDO stETH
     "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  # WETH
     "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",  # USDC
     "0xdAC17F958D2ee523a2206206994597C13D831ec7",  # USDT
@@ -1634,7 +1635,7 @@ async def dispatch_profitable_results(
         except Exception as exc:
             bot_logger.debug(f"[sim-diag] engine dump failed for path={path_id}: {exc}")
             return
-        line = _format_sim_diag_line(
+        line = format_sim_diag_line(
             snapshot,
             path_id=path_id,
             path_type=path_type,
@@ -2280,7 +2281,7 @@ async def dispatch_profitable_results(
     sim_ok_count = len(gas_profitable) + len(gas_unprofitable)
     sim_fail_count = len(candidates) - sim_ok_count - exception_count
     best_net = max((r[2] for r in gas_profitable), default=0)
-    _breakdown = _format_failure_breakdown(_fail_buckets)
+    _breakdown = format_failure_breakdown(_fail_buckets)
     bot_logger.info(
         f"[sim] {len(candidates)} candidates: "
         f"{sim_ok_count} ok ({len(gas_profitable)} profitable, "

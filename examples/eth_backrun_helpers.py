@@ -359,7 +359,7 @@ def classify_revert(revert_data: bytes) -> str:
     return f"unknown:0x{selector}"
 
 
-def _format_failure_breakdown(buckets: dict[str, int]) -> str:
+def format_failure_breakdown(buckets: dict[str, int]) -> str:
     """Render a ``name=count`` breakdown, highest count first (name breaks ties).
 
     Returns ``""`` for an empty tally so the caller can skip the suffix when no
@@ -371,7 +371,7 @@ def _format_failure_breakdown(buckets: dict[str, int]) -> str:
     return " ".join(f"{name}={count}" for name, count in ordered)
 
 
-def _format_sim_diag_line(
+def format_sim_diag_line(
     snapshot: dict[str, object],
     *,
     path_id: int,

@@ -241,7 +241,7 @@ def test_format_sim_diag_line_emits_parseable_json_with_required_fields() -> Non
     """
     import json
 
-    from examples.eth_backrun_helpers import _format_sim_diag_line
+    from examples.eth_backrun_helpers import format_sim_diag_line
 
     snapshot = {
         "path_id": 7,
@@ -268,7 +268,7 @@ def test_format_sim_diag_line_emits_parseable_json_with_required_fields() -> Non
         "hop_outputs": ["0x64"],
     }
 
-    line = _format_sim_diag_line(
+    line = format_sim_diag_line(
         snapshot,
         path_id=7,
         path_type="V2-V3-V4",
@@ -302,9 +302,9 @@ def test_format_sim_diag_line_never_raises_on_missing_snapshot_keys() -> None:
     missing keys)."""
     import json
 
-    from examples.eth_backrun_helpers import _format_sim_diag_line
+    from examples.eth_backrun_helpers import format_sim_diag_line
 
-    line = _format_sim_diag_line(
+    line = format_sim_diag_line(
         {},
         path_id=1,
         path_type="V2",

@@ -624,7 +624,7 @@ impl PyUniswapArbEngine {
     ///     enabled: Whether to enable verification on register.
     #[pyo3(signature = (enabled))]
     fn set_verify_on_register(&self, enabled: bool) {
-        self.verify_on_register
+        self.pump.verify_on_register
             .store(enabled, std::sync::atomic::Ordering::Relaxed);
     }
 
@@ -639,13 +639,13 @@ impl PyUniswapArbEngine {
         let runtime = degenbot_core::runtime::get_runtime();
         match runtime.block_on(degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)) {
             Ok(provider) => {
-                *self.verify_provider.lock() = Some(provider);
+                *self.pump.verify_provider.lock() = Some(provider);
             }
             Err(e) => {
                 eprintln!("[warn] Failed to create verification provider: {e}");
             }
         }
-        *self.verify_rpc_url.lock() = Some(rpc_url);
+        *self.pump.verify_rpc_url.lock() = Some(rpc_url);
     }
 
     /// Set the `StateView` contract address for V4 verification during registration.
@@ -655,6 +655,6 @@ impl PyUniswapArbEngine {
     #[pyo3(signature = (state_view_address))]
     fn set_verify_state_view(&self, state_view_address: String) {
         let addr: Address = state_view_address.parse().unwrap_or(Address::ZERO);
-        *self.verify_state_view.lock() = Some(addr);
+        *self.pump.verify_state_view.lock() = Some(addr);
     }
 }

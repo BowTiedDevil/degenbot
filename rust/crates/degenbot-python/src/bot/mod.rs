@@ -7,6 +7,7 @@
 pub mod dex_identity;
 pub mod engine;
 pub mod pool;
+pub mod pump;
 pub mod py_bot_io;
 pub mod token;
 
@@ -109,6 +110,14 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 #[pyclass(skip_from_py_object)]
 pub struct PyBot {
     bot: Arc<Bot>,
+    /// ADR-006 D4 (T3): the pump lifecycle state, shared with the
+    /// `PyUniswapArbEngine` this bot owns. `None` until an engine is
+    /// constructed against this bot (the engine attaches its `Arc<PumpState>`
+    /// back here during `new()`). Once attached, the three pump methods —
+    /// `subscribe`, `backfill_from_snapshot`, `resume` — are drivable from
+    /// `PyBot` (the D4 owner) and read/write the SAME `PumpState` the
+    /// engine's snapshot/solve slices read.
+    pump: parking_lot::Mutex<Option<Arc<crate::bot::pump::PumpState>>>,
 }
 
 /// Crate-internal Rust surface on `PyBot` (not Python-visible).
@@ -119,6 +128,28 @@ impl PyBot {
     #[must_use]
     pub(crate) fn bot_arc(&self) -> Arc<Bot> {
         Arc::clone(&self.bot)
+    }
+
+    /// ADR-006 D4 (T3): attach the pump lifecycle state owned by a
+    /// `PyUniswapArbEngine` constructed against this bot. Called from
+    /// `PyUniswapArbEngine::new` when `py_bot` is supplied. After this, the
+    /// pump methods on `PyBot` drive the same `PumpState` the engine reads.
+    pub(crate) fn attach_pump_state(&self, pump: Arc<crate::bot::pump::PumpState>) {
+        *self.pump.lock() = Some(pump);
+    }
+
+    /// Borrow the attached `PumpState`, or error if no engine was constructed
+    /// against this bot.
+    #[allow(dead_code)] // wired by the pump lifecycle methods (subscribe/
+                       // backfill_from_snapshot/resume) in the #[pymethods] impl
+    fn pump_state(&self) -> PyResult<Arc<crate::bot::pump::PumpState>> {
+        self.pump
+            .lock()
+            .clone()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err(
+                "No engine attached to this Bot. Construct a UniswapArbEngine(py_bot=...) \
+                 before calling pump lifecycle methods on Bot."
+            ))
     }
 }
 
@@ -134,7 +165,41 @@ impl PyBot {
         // `Arc<Bot>` so `BlockPump` clones the same orchestrator (ADR-006 D4).
         Self {
             bot: Arc::new(Bot::new(chain_id)),
+            pump: parking_lot::Mutex::new(None),
         }
+    }
+
+    /// Subscribe to the WS `newHeads` + logs streams (ADR-006 D4 T3).
+    ///
+    /// The Bot-owned pump entry point — delegates to the shared `PumpState`
+    /// attached when a `UniswapArbEngine` was constructed against this bot.
+    /// Blocks (sync, via the shared tokio runtime) until the first block is
+    /// observed, then returns the first WS block number (the backfill target).
+    ///
+    /// # Errors
+    /// `PyRuntimeError` if no engine is attached, the pump is already
+    /// started/subscribed, or the WS subscribe fails.
+    #[pyo3(signature = (rpc_url))]
+    fn subscribe(&self, rpc_url: String) -> PyResult<u64> {
+        self.pump_state()?.subscribe(rpc_url)
+    }
+
+    /// Backfill Mint/Burn/ModifyLiquidity events from the snapshot block to the
+    /// first WS block (ADR-006 D4 T3). Delegates to the shared `PumpState`.
+    #[pyo3(signature = (rpc_url, snapshot_block, chunk_size=2000))]
+    fn backfill_from_snapshot(
+        &self,
+        rpc_url: &str,
+        snapshot_block: u64,
+        chunk_size: u64,
+    ) -> PyResult<u64> {
+        self.pump_state()?.backfill_from_snapshot(rpc_url, snapshot_block, chunk_size)
+    }
+
+    /// Resume the pump — begin normal WS processing (ADR-006 D4 T3).
+    /// Delegates to the shared `PumpState`.
+    fn resume(&self, _py: Python<'_>) -> PyResult<()> {
+        self.pump_state()?.resume()
     }
 
     /// Register a V2 pool by contract address.

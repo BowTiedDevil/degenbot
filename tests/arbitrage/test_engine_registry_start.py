@@ -185,6 +185,24 @@ def test_start_skips_set_verify_state_view_when_none() -> None:
     assert "set_verify_state_view" not in fake.calls
 
 
+def test_pybot_exposes_pump_lifecycle_methods_after_engine_attach() -> None:
+    """T3 (ADR-006 D4): PyBot exposes subscribe/backfill_from_snapshot/resume
+    as delegating entry points once a UniswapArbEngine is constructed against
+    it (which attaches the shared PumpState). The Bot is the D4 pump owner;
+    these methods drive the SAME PumpState the engine reads. Before T3 only
+    the engine had them."""
+    from degenbot.degenbot_rs import PyBot, UniswapArbEngine
+
+    bot = PyBot()
+    # Constructing the engine against the bot attaches the shared PumpState.
+    engine = UniswapArbEngine(py_bot=bot)
+    for method in ("subscribe", "backfill_from_snapshot", "resume"):
+        assert hasattr(bot, method), f"PyBot must expose {method} after engine attach"
+    # The engine still exposes them too (reads the same shared state).
+    for method in ("subscribe", "backfill_from_snapshot", "resume"):
+        assert hasattr(engine, method)
+
+
 def test_start_stashes_snapshot_and_backfill_blocks_for_two_step_verify(monkeypatch) -> None:
     """T1 (ADR-006 D4 + two-step verify prep): start() stashes the snapshot
     block (min newest_block) and the backfill target (from subscribe) on the

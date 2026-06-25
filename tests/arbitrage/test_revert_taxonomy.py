@@ -18,7 +18,7 @@ from examples.eth_backrun_helpers import (
     _EXECUTOR_REVERT_SELECTORS,
     _V4_REVERT_SELECTORS,
     classify_revert,
-    _format_failure_breakdown,
+    format_failure_breakdown,
 )
 
 # ── Fixtures ─────────────────────────────────────────────────────────────
@@ -123,7 +123,7 @@ def test_format_breakdown_sorts_by_count_desc_then_name() -> None:
         "ERC20: transfer amount exceeds balance": 2,
         "rpc-failed": 9,  # tie with CurrencyNotSettled → name breaks tie
     }
-    breakdown = _format_failure_breakdown(buckets)
+    breakdown = format_failure_breakdown(buckets)
     # Ties (9==9) broken by name → "CurrencyNotSettled" before "rpc-failed".
     # Remaining entries ordered by count desc → no-profit(5) before ERC20…(2).
     assert breakdown == (
@@ -133,6 +133,6 @@ def test_format_breakdown_sorts_by_count_desc_then_name() -> None:
 
 def test_format_breakdown_empty() -> None:
     """An empty tally yields the empty string (caller skips the suffix)."""
-    result = _format_failure_breakdown({})
+    result = format_failure_breakdown({})
     assert isinstance(result, str)
     assert len(result) == 0

@@ -37,7 +37,6 @@ pub(crate) use pyo3::types::{PyDict, PyList};
 pub(crate) use tokio::sync::mpsc;
 
 pub(crate) use crate::bot::PyBot;
-pub(crate) use degenbot_bot::bot_core::block_pump::{BlockPump, WsEvent};
 pub(crate) use degenbot_bot::bot_core::reorg_coordinator::ReorgCoordinator;
 pub(crate) use degenbot_bot::bot_core::solve_coordinator::SolveCoordinator;
 pub(crate) use degenbot_bot::bot_core::{
@@ -64,31 +63,14 @@ pub(crate) use degenbot_bot::solvers::uniswap_engine::{
 pub struct PyUniswapArbEngine {
     /// Shared engine state
     engine: Arc<parking_lot::Mutex<UniswapEngine>>,
-    /// The drain-point solve coordinator (ADR-006 D4, slice 6). Holds the
-    /// engine as `Arc<dyn Engine>` (via `EngineHandle`) and fans drain-tick /
-    /// send / finalize / reorg calls to it under a `drain_lock`. `start` and
-    /// `subscribe` pass this to `BlockPump` as `Arc<dyn DrainSink>`, replacing
-    /// slice 5a's `EngineDrainSink` placeholder. Python polls of
-    /// `last_processed_block` route through the coordinator (not the raw
-    /// engine) so they block until in-flight drains complete and return a
-    /// drain-consistent "good" block.
-    coordinator: Arc<SolveCoordinator>,
-    /// The per-event reorg coordinator (ADR-006 slice 7). Owned by the engine
-    /// wrapper; passed to `BlockPump` so its `removed: true` branch routes to
-    /// `dispatch_reorg_log` (per-pool restore + notify) instead of the deleted
-    /// bulk `engine.handle_reorg`.
-    reorg_coordinator: Arc<ReorgCoordinator>,
-    /// The per-chain `Bot` orchestrator (ADR-006 D4). `BlockPump` clones this
-    /// `Arc` so its `dispatch_log` writes flow through to the engine's reads
-    /// (the engine shares the same `BotState` core via `with_core`).
-    bot: Arc<Bot>,
-    /// Shutdown flag for the pump
-    shutdown: Arc<std::sync::atomic::AtomicBool>,
-    /// Handle for the pump task (None until `start()` is called)
-    pump_handle: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>,
-    /// Subscribe state held between `subscribe()` and `resume()` calls.
-    /// Contains the live WS stream and first observed block number.
-    subscribe_state: parking_lot::Mutex<Option<PySubscribeState>>,
+    /// ADR-006 D4 (T3): the pump lifecycle state (coordinator, reorg
+    /// coordinator, bot, shutdown, pump handle, subscribe state, phase) now
+    /// lives in a shared `Arc<PumpState>` co-owned with `PyBot`. The legacy
+    /// individual fields (`coordinator`, `reorg_coordinator`, `bot`, `shutdown`,
+    /// `pump_handle`, `subscribe_state`, `phase`) are reachable through this
+    /// handle — so snapshot.rs/solve.rs keep reading the SAME state while the
+    /// three pump methods also move onto `PyBot`.
+    pump: Arc<crate::bot::pump::PumpState>,
     /// Receiver for the result batch channel.
     /// Created in `new()`, consumed by `__anext__`.
     /// Wrapped in Arc so the async coroutine can share it.
@@ -98,51 +80,12 @@ pub struct PyUniswapArbEngine {
     /// Python consumes this as its block clock (not `ResultBatch::solve_block`).
     /// Consumed by `BlockStream::__anext__`; wrapped in Arc for the coroutine.
     block_rx: Arc<parking_lot::Mutex<Option<mpsc::UnboundedReceiver<BlockNotification>>>>,
-    /// When True, verify each V3/V4 pool's tick data against on-chain state
-    /// immediately after registration. The snapshot is taken while the engine
-    /// lock is held (so the pump can't race), then verification runs via RPC
-    /// after the lock is released. Failures are logged as errors.
-    verify_on_register: std::sync::atomic::AtomicBool,
-    /// Optional HTTP RPC URL for verification during registration.
-    /// Must be set before `verify_on_register` is enabled.
-    verify_rpc_url: parking_lot::Mutex<Option<String>>,
-    /// Cached Alloy provider for verification RPCs.
-    /// Created on first use (or when `set_verify_rpc_url` is called) and reused
-    /// across all verifications to avoid creating a new HTTP client per pool.
-    verify_provider: parking_lot::Mutex<Option<degenbot_rpc::provider::AlloyProvider>>,
-    /// Optional `StateView` contract address for V4 verification.
-    verify_state_view: parking_lot::Mutex<Option<Address>>,
-    /// The snapshot block — the block at which the DB tick data was captured.
-    /// Set automatically by `backfill_from_snapshot()`. Verification compares
-    /// the raw snapshot `tick_data` (before buffer) against on-chain at this block.
-    verify_snapshot_block: parking_lot::Mutex<Option<u64>>,
-    /// The backfill block — the last block processed by backfill, before the
-    /// WS pump starts. Set automatically by `backfill_from_snapshot()`.
-    /// Verification compares engine state (snapshot + backfill buffer) against
-    /// on-chain at this block.
-    verify_backfill_block: parking_lot::Mutex<Option<u64>>,
-    /// Engine lifecycle phase (Plan 098).
-    /// Enforces ordering: Created → Subscribed → `SnapshotLoaded` → Backfilled → Resumed.
-    phase: std::sync::atomic::AtomicU8,
     /// V3 snapshot tick data, loaded via `load_v3_snapshot()` and consumed
     /// at registration time. One-way transfer: `remove()` not `clone()`.
     v3_snapshot: SnapshotStore<Address>,
     /// V4 snapshot tick data, loaded via `load_v4_snapshot()` and consumed
     /// at registration time. One-way transfer: `remove()` not `clone()`.
     v4_snapshot: SnapshotStore<(Address, degenbot_decoders::v4_swap_decoder::PoolId)>,
-}
-
-/// Python-facing subscribe state.
-///
-/// Stores the pump and subscribe results between `subscribe()` and `resume()`
-/// calls so that `resume()` can re-use the same pump instance.
-struct PySubscribeState {
-    /// The pump instance (holds `Arc<Bot>` + `Arc<dyn DrainSink>`, provider, shutdown)
-    pump: BlockPump,
-    /// First block number observed during subscribe
-    first_block: u64,
-    /// Live WS stream for the resume phase
-    combined_stream: futures_util::stream::BoxStream<'static, WsEvent>,
 }
 
 impl PyUniswapArbEngine {
@@ -291,21 +234,12 @@ impl PyUniswapArbEngine {
 
     /// Get the current engine phase.
     pub(crate) fn current_phase(&self) -> EnginePhase {
-        match self.phase.load(std::sync::atomic::Ordering::Relaxed) {
-            0 => EnginePhase::Created,
-            1 => EnginePhase::Subscribed,
-            2 => EnginePhase::SnapshotLoaded,
-            3 => EnginePhase::Backfilled,
-            4 => EnginePhase::Resumed,
-            #[allow(clippy::match_same_arms)]
-            _ => EnginePhase::Created, // fallthrough for corrupt state
-        }
+        self.pump.current_phase()
     }
 
     /// Set the engine phase (advancing only).
     pub(crate) fn set_phase(&self, phase: EnginePhase) {
-        self.phase
-            .store(phase as u8, std::sync::atomic::Ordering::Relaxed);
+        self.pump.set_phase(phase);
     }
 
     /// Deserialize a V3 binary snapshot into `V3SnapshotData`.
