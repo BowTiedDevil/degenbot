@@ -192,6 +192,13 @@ pub struct V4PoolState {
     pub tick_data: HashMap<i32, TickInfo>,
     pub coverage: PoolTickCoverage,
 
+    /// The pinned snapshot seed (CBCH6H — see `V3PoolState::snapshot_seed`).
+    /// A copy of the registration `tick_data`, immutable across pump
+    /// `ModifyLiquidity` events, retained so step-1 verify compares the seed
+    /// vs on-chain@snapshot_block. `Some` only for `Tracked` pools; cleared by
+    /// `take_v4_snapshot_seed` after step-1 verify.
+    pub snapshot_seed: Option<HashMap<i32, TickInfo>>,
+
     /// Tick-bitmap word positions known to be fetched. See
     /// [`V3PoolState::known_bitmap_words`] — V4 shares the same sparse
     /// miss-detection discipline (ADR-005 sparse-map feature parity).
@@ -219,6 +226,9 @@ impl Clone for V4PoolState {
             coverage: self.coverage,
             known_bitmap_words: self.known_bitmap_words.clone(),
             journal: self.journal.clone(),
+            // Clones (e.g. `v4_pools_snapshot()`) do NOT carry the pinned seed
+            // (CBCH6H — see V3PoolState::Clone).
+            snapshot_seed: None,
             cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
         }
     }
@@ -268,6 +278,7 @@ impl V4PoolState {
             coverage: params.coverage,
             known_bitmap_words: HashSet::new(),
             journal: ReorgJournal::<V3BlockDelta>::new(journal_depth),
+            snapshot_seed: None,
             cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
         };
         // Seed the known-bitmap-word set from the tick_data keys for EVERY
@@ -276,6 +287,14 @@ impl V4PoolState {
         // relied on a later separate `update_tick_data` — the clobber the
         // closure removes. Seeding here makes the inline seed complete.
         out.seed_known_bitmap_words();
+        // CBCH6H: pin the snapshot seed for Tracked pools so step-1 verify
+        // compares the seed (not pump-mutated `tick_data`) against
+        // on-chain@snapshot_block. Sparse pools have no complete seed.
+        out.snapshot_seed = if params.coverage == PoolTickCoverage::Tracked {
+            Some(out.tick_data.clone())
+        } else {
+            None
+        };
         out
     }
 

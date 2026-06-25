@@ -141,6 +141,19 @@ pub struct V3PoolState {
     /// Initialized ticks: tick index → (`liquidity_gross`, `liquidity_net`).
     pub tick_data: HashMap<i32, TickInfo>,
 
+    /// The pinned snapshot seed (CBCH6H): a copy of the `tick_data` supplied
+    /// at registration, NEVER mutated by `apply_v3_liquidity_update` /
+    /// `apply_v3_swap`. Retained so step-1 verify can compare the **seed**
+    /// against on-chain@snapshot_block — NOT the pump-mutated `tick_data`
+    /// current. During a rolling start (`resume()` precedes `build_paths`)
+    /// the live pump applies Mint/Burn journals onto `tick_data`; without a
+    /// pinned seed, step-1 would read engine-current (seed + journal) vs
+    /// on-chain@snapshot (pre-journal) → a false mismatch on every active
+    /// pool. `Some` only for `Tracked` (snapshot-seeded) pools; `None` for
+    /// `Sparse` pools (no complete seed to verify). Cleared by
+    /// `take_v3_snapshot_seed` after step-1 verify (verified exactly once).
+    pub snapshot_seed: Option<HashMap<i32, TickInfo>>,
+
     /// Whether the snapshot provided complete tick data for this pool.
     pub coverage: PoolTickCoverage,
 
@@ -183,6 +196,10 @@ impl Clone for V3PoolState {
             // Clones start with no cached ranges — the cache is invalidated on
             // mutation anyway, and a fresh Mutex avoids aliasing the source's.
             journal: self.journal.clone(),
+            // Clones (e.g. `v3_pools_snapshot()`) do NOT carry the pinned seed:
+            // it is only needed for step-1 verify on the live pool, and copying
+            // it into every snapshot clone would waste memory across 18k pools.
+            snapshot_seed: None,
             cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
         }
     }
@@ -252,7 +269,17 @@ impl V3PoolState {
             coverage: params.coverage,
             known_bitmap_words: HashSet::new(),
             journal: ReorgJournal::<V3BlockDelta>::new(journal_depth),
+            snapshot_seed: None,
             cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
+        };
+        // CBCH6H: pin the snapshot seed for Tracked pools so step-1 verify
+        // compares the seed (not pump-mutated `tick_data`) against
+        // on-chain@snapshot_block. Sparse pools have no complete seed. Computed
+        // AFTER the struct literal because `tick_data` is moved into `out` above.
+        out.snapshot_seed = if params.coverage == PoolTickCoverage::Tracked {
+            Some(out.tick_data.clone())
+        } else {
+            None
         };
         // A partial snapshot's tick_data keys are known regions.
         if params.coverage == PoolTickCoverage::Sparse {
@@ -704,6 +731,7 @@ mod tests {
             known_bitmap_words: HashSet::new(),
             journal: ReorgJournal::<V3BlockDelta>::new(8),
             cached_tick_ranges: parking_lot::Mutex::new(super::TickRangeCache::default()),
+            snapshot_seed: None,
         }
     }
 

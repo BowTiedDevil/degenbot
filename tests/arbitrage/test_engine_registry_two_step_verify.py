@@ -58,22 +58,59 @@ class _RecordingVerifyEngine:
     def apply_buffer_v4(self, address: str, pool_id_hex: str) -> None:
         self.calls.append(f"apply_buffer_v4:{pool_id_hex}")
 
-    # the verify seam (async) — batch API on PyBot
+    # the verify seam (async) — batch API on PyBot. CBCH6H: the two-step
+    # verify routes step-1 (snapshot) through the *_snapshot_seed variants
+    # (pinned seed, not engine-current) and step-2 (backfill) through the
+    # current-state *_liquidity_maps variants. Both recorded with a `seed`
+    # flag so assertions can pin which step fired.
+    async def verify_v3_snapshot_seed(
+        self, address: str, rpc_url: str, block_number: int | None
+    ) -> None:
+        self.verify_calls.append(
+            {"phase": "v3", "block": block_number, "rpc": rpc_url, "seed": True}
+        )
+        if self.fail_next == "v3":
+            raise VerificationMismatchError("synthetic V3 seed tick mismatch")
+
     async def verify_v3_liquidity_maps(
         self, rpc_url: str, block_number: int | None
     ) -> None:
-        self.verify_calls.append({"phase": "v3", "block": block_number, "rpc": rpc_url})
-        if self.fail_next == "v3":
-            raise VerificationMismatchError("synthetic V3 seed tick mismatch")
+        self.verify_calls.append(
+            {"phase": "v3", "block": block_number, "rpc": rpc_url, "seed": False}
+        )
+
+    async def verify_v4_snapshot_seed(
+        self,
+        pool_manager_address: str,
+        pool_id_hex: str,
+        rpc_url: str,
+        state_view_address: str,
+        block_number: int | None,
+    ) -> None:
+        self.verify_calls.append(
+            {
+                "phase": "v4",
+                "block": block_number,
+                "rpc": rpc_url,
+                "sv": state_view_address,
+                "seed": True,
+            }
+        )
+        if self.fail_next == "v4":
+            raise VerificationMismatchError("synthetic V4 seed tick mismatch")
 
     async def verify_v4_liquidity_maps(
         self, rpc_url: str, state_view_address: str, block_number: int | None
     ) -> None:
         self.verify_calls.append(
-            {"phase": "v4", "block": block_number, "rpc": rpc_url, "sv": state_view_address}
+            {
+                "phase": "v4",
+                "block": block_number,
+                "rpc": rpc_url,
+                "sv": state_view_address,
+                "seed": False,
+            }
         )
-        if self.fail_next == "v4":
-            raise VerificationMismatchError("synthetic V4 post-drain mismatch")
 
 
 class _FakeSnapshot:
@@ -148,6 +185,12 @@ def test_register_v3_pool_runs_two_step_verify_around_drain(monkeypatch) -> None
     # backfill block (18_000_000) AFTER the drain — the two-step fail-fast.
     blocks = [c["block"] for c in fake.verify_calls]
     assert blocks == [18_000_050, 18_000_000], f"snapshot-then-backfill, got {fake.verify_calls}"
+    # CBCH6H: step-1 (snapshot) routes through the seed-verify (pinned seed,
+    # not engine-current); step-2 (backfill) through the current-state verify.
+    seed_flags = [c["seed"] for c in fake.verify_calls]
+    assert seed_flags == [True, False], (
+        f"step-1 must verify the seed, step-2 the current; got {fake.verify_calls}"
+    )
     drain_idx = next(i for i, c in enumerate(fake.calls) if "apply_buffer_v3" in c)
     # the drain ran exactly once, between the two verify awaits (verify is the
     # only thing appending to verify_calls; the drain is the only thing
@@ -169,6 +212,10 @@ def test_register_v4_pool_runs_two_step_verify_around_drain(monkeypatch) -> None
     assert key == 9
     blocks = [c["block"] for c in fake.verify_calls]
     assert blocks == [18_000_050, 18_000_000], f"snapshot-then-backfill, got {fake.verify_calls}"
+    seed_flags = [c["seed"] for c in fake.verify_calls]
+    assert seed_flags == [True, False], (
+        f"step-1 must verify the seed, step-2 the current; got {fake.verify_calls}"
+    )
     assert sum("apply_buffer_v4" in c for c in fake.calls) == 1
 
 

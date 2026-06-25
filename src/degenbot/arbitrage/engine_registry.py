@@ -231,10 +231,11 @@ class EngineRegistry:
     async def _verify_pool_at_block(
         self,
         family: str,
-        address: str,  # noqa: ARG002
+        address: str,
         block: int | None,
         *,
         pool_id_hex: str | None = None,
+        verify_seed: bool = False,
     ) -> None:
         """T6 (ADR-006 D4): one step of the per-pool two-step verify.
 
@@ -254,6 +255,15 @@ class EngineRegistry:
                 from the shared BotState snapshot, not the address).
             block: the block to verify against; ``None`` means pending/latest.
             pool_id_hex: required for V4 (the StateView key).
+            verify_seed: CBCH6H — when True (step-1 / snapshot block), verify
+                the **pinned snapshot seed** against on-chain@snapshot_block
+                (NOT engine-current). During a rolling start (`resume()`
+                precedes `build_paths`) the live pump applies Mint/Burn onto
+                engine-current; without the seed verify, step-1 would compare
+                engine-current (seed + journal) vs on-chain@snapshot
+                (pre-journal) → a false mismatch on every active pool
+                (logs/perm-V2-V3-V2.log). Step-2 (backfill block) passes
+                ``verify_seed=False`` to verify engine-current after the drain.
 
         """
         if self._verify_rpc_url is None or self._verify_state_view is None:
@@ -268,17 +278,34 @@ class EngineRegistry:
         # API; the engine keeps a thin delegating wrapper — T8 rewires the
         # registry to call ``self.bot`` directly). Async, never block_on.
         if family == "v3":
-            await self.engine.verify_v3_liquidity_maps(
-                rpc_url=self._verify_rpc_url,
-                block_number=block,
-            )
+            if verify_seed:
+                # CBCH6H step-1: verify the pinned seed vs on-chain@snapshot.
+                await self.engine.verify_v3_snapshot_seed(
+                    address=address,
+                    rpc_url=self._verify_rpc_url,
+                    block_number=block,
+                )
+            else:
+                await self.engine.verify_v3_liquidity_maps(
+                    rpc_url=self._verify_rpc_url,
+                    block_number=block,
+                )
         elif family == "v4":
             assert pool_id_hex is not None
-            await self.engine.verify_v4_liquidity_maps(
-                rpc_url=self._verify_rpc_url,
-                state_view_address=self._verify_state_view,
-                block_number=block,
-            )
+            if verify_seed:
+                await self.engine.verify_v4_snapshot_seed(
+                    pool_manager_address=address,
+                    pool_id_hex=pool_id_hex,
+                    rpc_url=self._verify_rpc_url,
+                    state_view_address=self._verify_state_view,
+                    block_number=block,
+                )
+            else:
+                await self.engine.verify_v4_liquidity_maps(
+                    rpc_url=self._verify_rpc_url,
+                    state_view_address=self._verify_state_view,
+                    block_number=block,
+                )
 
     def register_v2_pool(self, pool: LiquidityPool) -> int:  # noqa: D102
         if pool.address in self._v2_keys:
@@ -334,12 +361,19 @@ class EngineRegistry:
         # fail-fast detection the dead `engine.register_v3_pool` +
         # `verify_on_register` gate was meant to provide, now at the method
         # actually called per-pool during `build_paths`. Step 1: snapshot
-        # verify (raw seed vs on-chain @ snapshot block) BEFORE the drain —
-        # catches a bad seed/serialization at the offending pool, not 18k
-        # pools later. V2 has no tick map; V3/V4 only. Async (awaited) —
-        # never `block_on` (the ecf576de tokio deadlock). Gated by verify
-        # config (same posture as batch `verify_liquidity_maps`).
-        await self._verify_pool_at_block("v3", pool.address, self._verify_snapshot_block)
+        # verify (pinned seed vs on-chain @ snapshot block) BEFORE the drain —
+        # catches a bad seed/serialization at the offending pool, not 18k pools
+        # later. CBCH6H: `verify_seed=True` compares the pinned snapshot seed,
+        # NOT engine-current — during a rolling start (`resume()` precedes
+        # `build_paths`) the live pump applies Mint/Burn onto engine-current;
+        # comparing that vs on-chain@snapshot (pre-journal) would false-
+        # mismatch on every active pool. The seed is verified exactly once
+        # (consumed) so memory is bounded. V2 has no tick map; V3/V4 only.
+        # Async (awaited) — never `block_on` (the ecf576de tokio deadlock).
+        # Gated by verify config (same posture as batch `verify_liquidity_maps`).
+        await self._verify_pool_at_block(
+            "v3", pool.address, self._verify_snapshot_block, verify_seed=True
+        )
 
         # Drain the backfill/pump buffer onto the snapshot seed. *(unchanged)*
         self.engine.apply_buffer_v3(pool.address)
@@ -395,12 +429,15 @@ class EngineRegistry:
         key = pool._py_pool.pool_id  # noqa: SLF001
 
         # T6 (ADR-006 D4): fail-fast two-step verify at the drain seam.
-        # Step 1: snapshot verify (raw seed vs on-chain @ snapshot block).
+        # Step 1: snapshot verify (pinned seed vs on-chain @ snapshot block).
+        # CBCH6H: `verify_seed=True` compares the pinned snapshot seed, not
+        # engine-current (rolling-start race fix; see register_v3_pool).
         await self._verify_pool_at_block(
             "v4",
             pool.address,
             self._verify_snapshot_block,
             pool_id_hex=pool_id_hex,
+            verify_seed=True,
         )
 
         # Drain backfill/pump buffer — same rationale as register_v3_pool.
