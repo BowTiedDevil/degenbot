@@ -54,9 +54,6 @@ class FakeEngine:
     def set_verify_state_view(self, addr: str) -> None:
         self.calls.append("set_verify_state_view")
 
-    def set_verify_on_register(self, enabled: bool) -> None:
-        self.calls.append("set_verify_on_register")
-
     def last_processed_block(self) -> int | None:
         return self._last_processed_block
 
@@ -100,7 +97,6 @@ def test_start_no_snapshots_calls_subscribe_then_verify_never_resume() -> None:
     assert fake.calls == [
         "subscribe",
         "set_verify_rpc_url",
-        "set_verify_on_register",
     ]
     assert "resume" not in fake.calls
     assert backfill_target == 18_000_000
@@ -155,7 +151,6 @@ def test_start_derives_snapshot_block_as_min_newest_block(monkeypatch) -> None:
         "stream_v4",
         "backfill",
         "set_verify_rpc_url",
-        "set_verify_on_register",
     ]
     assert "resume" not in fake.calls
 

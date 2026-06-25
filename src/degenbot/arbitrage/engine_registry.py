@@ -110,7 +110,6 @@ class EngineRegistry:
         v3_snapshot: UniswapV3LiquiditySnapshot | None = None,
         v4_snapshot: UniswapV4LiquiditySnapshot | None = None,
         verify_state_view: str | None = None,
-        verify_on_register: bool = True,
     ) -> int:
         """Run the pre-pump startup ritual and stop BEFORE resume().
 
@@ -155,15 +154,12 @@ class EngineRegistry:
         self.engine.set_verify_rpc_url(node_http)
         if verify_state_view is not None:
             self.engine.set_verify_state_view(verify_state_view)
-        self.engine.set_verify_on_register(verify_on_register)
         # Stash the verify RPC + StateView for the post-register batch
-        # verification (verify_liquidity_maps). The per-register verify gate
-        # (engine.register_v3/v4_pool) is architecturally orphaned under the
-        # shared-BotState design: pools enter BotState via the bot builders
-        # (py_bot.register_*) + `PyLiquidityPool.update_tick_data`, never via
-        # the engine's register path that consumes the SnapshotStore — so the
-        # register-gated verify never fires. The batch API reads BotState
-        # directly and is the path that actually runs verification.
+        # verification (verify_liquidity_maps, T6 per-pool two-step, T7
+        # recurring). ADR-006 D3 (T5): the orphaned
+        # engine.register_v2/v3/v4_pool + verify_on_register gate is deleted —
+        # pools enter BotState via the bot builders (py_bot.register_*) and the
+        # verify seam is the registry drain (T6), not the dead register gate.
         self._verify_rpc_url = node_http
         self._verify_state_view = verify_state_view
 
