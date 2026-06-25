@@ -276,6 +276,28 @@ impl BlockClock {
         )
     }
 
+    /// Consume the quiesce signal for `block` (the solver-release gate —
+    /// ADR-008 D2). Returns `true` if the block was quiesced AND the signal
+    /// hadn't been consumed since the last `log_received` (so the pump
+    /// publishes exactly once per quiesce cycle). Resets `ever_quiesced`;
+    /// a straggler log (`log_received` → `in_flight > 0` → `log_applied` →
+    /// `in_flight == 0`) re-arms it for the next publish.
+    ///
+    /// On `LogsApplied`/`Drained` blocks (already tombstoned) this returns
+    /// `false`: the tombstone-driven finalize is the terminal publish, not
+    /// the quiesce gate.
+    pub fn consume_quiesced(&mut self, block: u64) -> bool {
+        if let Some(BlockState::LogsArriving { in_flight: 0, ever_quiesced }) =
+            self.blocks.get_mut(&block)
+        {
+            let was_quiesced = *ever_quiesced;
+            *ever_quiesced = false;
+            was_quiesced
+        } else {
+            false
+        }
+    }
+
     /// Transition `block` from `LogsArriving` to `LogsApplied` (the tombstone).
     fn tombstone(&mut self, block: u64) {
         if let Some(state) = self.blocks.get_mut(&block) {
@@ -503,5 +525,31 @@ mod tests {
 
         clock.log_applied(100); // in_flight=0
         assert!(clock.logs_quiesced(100), "straggler applied → re-quiesce");
+    }
+
+    /// `consume_quiesced` is the solver-release gate (ADR-008 D2): it returns
+    /// `true` ONCE per quiesce cycle, then `false` until a new log re-arms it.
+    /// This is what lets the pump publish exactly once per burst (not once
+    /// per log), and again after a straggler settles.
+    #[test]
+    fn consume_quiesced_publishes_once_per_cycle_and_re_arms_on_straggler() {
+        let mut clock = BlockClock::new();
+        clock.observe_header(100);
+        clock.observe_log(100, false);
+        clock.log_received(100);
+        clock.log_applied(100);
+
+        // First consume → true (publish). Second consume (no new log) → false.
+        assert!(clock.consume_quiesced(100), "first quiesce publishes");
+        assert!(!clock.consume_quiesced(100), "no new log → no re-publish");
+
+        // Straggler log re-arms the gate.
+        clock.observe_log(100, false);
+        clock.log_received(100);
+        assert!(!clock.consume_quiesced(100), "in-flight log → not quiesced");
+        clock.log_applied(100);
+
+        assert!(clock.consume_quiesced(100), "straggler settled → publish again");
+        assert!(!clock.consume_quiesced(100), "second consume dry");
     }
 }

@@ -404,8 +404,14 @@ impl BlockPump {
         // each new log. When it fires, we send the accumulated result batch
         // to Python. This ensures one dispatch per burst of logs rather than
         // one per individual log.
-        let mut debounce = tokio::time::Instant::now() + Duration::from_millis(DEBOUNCE_MS);
-        let mut debounce_active = false;
+        // ADR-008 D2: solver-release gate (see the flush in the Err + Ok(None) arms
+        // below). `publish_pending` is armed when a forward log applies; the
+        // flush fires `on_send` (gated on `consume_quiesced`) at a settle
+        // point — a `DEBOUNCE_MS` window with no new event (coalescing a
+        // same-block burst into one publish at the tail) OR stream exhaustion.
+        // Replaces the wall-clock `DEBOUNCE_MS` send timer: publication is
+        // gated on the truth condition (all dispatched logs applied).
+        let mut publish_pending = false;
 
         // ADR-008 per-block state machine. The clock is the authority for
         // block completeness (the tombstone) and the cursor; the pump loop is
@@ -438,12 +444,13 @@ impl BlockPump {
                 }
             }
 
-            // Check if the debounce timer has expired — if so, send the
-            // accumulated results to Python (one dispatch per log burst).
-            if debounce_active && tokio::time::Instant::now() >= debounce {
-                debounce_active = false;
-                self.sink.on_send(&current_metadata);
-            }
+            // ADR-008 D2: solver-release gate. `publish_pending` is set when a forward
+            // log applies (block becomes quiesced). The flush below fires
+            // `on_send` (gated on `consume_quiesced`) only at a settle point —
+            // a timeout with no new event (coalescing a same-block burst into
+            // one publish at the tail) OR stream exhaustion. This replaces the
+            // wall-clock `DEBOUNCE_MS` send timer: publication is gated on the
+            // truth condition (all dispatched logs applied), not schedule.
 
             // Check shutdown
             if self.shutdown.load(Ordering::Relaxed) {
@@ -451,32 +458,30 @@ impl BlockPump {
                 return;
             }
 
-            // Wait for the next event. Use a shorter timeout when the debounce
-            // timer is active so we can fire it promptly.
-            let wait_timeout = if debounce_active {
-                // Wake up when the debounce timer fires (or earlier on new events)
+            // Wait for the next event. Use a shorter settle window when a publish is
+            // pending so the quiesce-gated flush fires promptly if no new log
+            // arrives (coalescing a same-block burst); otherwise the long
+            // inactivity backfill window. A new event arriving before the
+            // window elapses cancels the flush (the burst is still in flight).
+            let wait_timeout = if publish_pending {
                 Duration::from_millis(DEBOUNCE_MS)
-                    .saturating_sub(debounce.saturating_duration_since(tokio::time::Instant::now()))
             } else {
                 Duration::from_secs(BACKFILL_TIMEOUT_SECS)
             };
             let event = timeout(wait_timeout, combined.next()).await;
 
             match event {
-                // Timeout — check if it's the debounce timer or the backfill timer.
+                // Settle point — no new event in the window. Flush the
+                // quiesce-gated publish, OR (if nothing pending) the 60s
+                // inactivity backfill path.
                 Err(_) => {
-                    if debounce_active {
-                        // The timeout must be from the debounce timer (50ms),
-                        // not the backfill timer (60s). If the debounce has
-                        // expired, send the result batch. If not (due to
-                        // timing precision), just loop back — the next
-                        // iteration will handle it.
-                        if tokio::time::Instant::now() >= debounce {
-                            debounce_active = false;
-                            self.sink.on_send(&current_metadata);
+                    if publish_pending {
+                        if let Some(open) = clock.latest_observed() {
+                            if clock.consume_quiesced(open) {
+                                self.sink.on_send(&current_metadata);
+                            }
                         }
-                        // else: debounce timer hasn't quite expired yet.
-                        // Loop back — the next iteration will pick it up.
+                        publish_pending = false;
                     } else {
                         // No activity for 60s — try to backfill
                         self.handle_timeout_eager(
@@ -485,6 +490,7 @@ impl BlockPump {
                             &mut has_logs_this_block,
                             &mut clock,
                             &mut block_metadata,
+                            &mut publish_pending,
                         )
                         .await;
                     }
@@ -568,6 +574,7 @@ impl BlockPump {
                                     &mut current_block,
                                     &mut clock,
                                     &mut block_metadata,
+                                    &mut publish_pending,
                                 )
                                 .await;
                             }
@@ -592,6 +599,7 @@ impl BlockPump {
                                 &mut current_block,
                                 &mut clock,
                                 &mut block_metadata,
+                                &mut publish_pending,
                             )
                             .await;
                         }
@@ -641,9 +649,9 @@ impl BlockPump {
                                 self.shutdown.store(true, Ordering::Relaxed);
                                 return;
                             }
-                            // Cancel any pending debounce: results accumulated
+                            // Cancel any pending publish: results accumulated
                             // from pre-reorg state are invalid.
-                            debounce_active = false;
+                            publish_pending = false;
                             continue;
                         }
                         LogDecision::CloseReorg { new_head } => {
@@ -651,15 +659,17 @@ impl BlockPump {
                             // unwound pools per-event; this forward log's block
                             // is the new head. Resume forward tracking from it.
                             current_block = new_head;
-                            debounce_active = false;
+                            publish_pending = false;
                             // Fall through to dispatch this forward log.
                         }
                         LogDecision::TombstonePrevious(prev) => {
                             // First removed:false log for N+1 → tombstone N.
                             // Finalize N with N's OWN metadata (snapshotted
                             // when N's header arrived), not current_metadata
-                            // which may now hold N+1's — VTWCIG.
-                            debounce_active = false;
+                            // which may now hold N+1's — VTWCIG. The terminal
+                            // publish (finalize_block) supersedes any pending
+                            // quiesce publish for the open block.
+                            publish_pending = false;
                             let prev_meta = block_metadata
                                 .get(&prev)
                                 .copied()
@@ -704,9 +714,10 @@ impl BlockPump {
 
                     has_logs_this_block = true;
 
-                    // Start or reset the debounce timer
-                    debounce = tokio::time::Instant::now() + Duration::from_millis(DEBOUNCE_MS);
-                    debounce_active = true;
+                    // ADR-008 D2: arm the quiesce-gated publish. The flush
+                    // fires at the next settle point (timeout or stream end)
+                    // if `consume_quiesced` is true — once per quiesce cycle.
+                    publish_pending = true;
 
                     // [DIAG] count logs + emit periodic stats so we can see,
                     // during a freeze, that the pump IS polling logs while
@@ -723,6 +734,16 @@ impl BlockPump {
                 }
 
                 Ok(None) => {
+                    // ADR-008 D2: stream exhausted — final settle point. Flush
+                    // any pending quiesce-gated publish before returning.
+                    if publish_pending {
+                        if let Some(open) = clock.latest_observed() {
+                            if clock.consume_quiesced(open) {
+                                self.sink.on_send(&current_metadata);
+                            }
+                        }
+                        publish_pending = false;
+                    }
                     log::warn!("BlockPump: both subscription streams ended");
                     return;
                 }
@@ -759,6 +780,7 @@ impl BlockPump {
         has_logs_this_block: &mut bool,
         clock: &mut BlockClock,
         block_metadata: &mut HashMap<u64, BlockMetadata>,
+        publish_pending: &mut bool,
     ) {
         log::warn!("BlockPump: no activity for {BACKFILL_TIMEOUT_SECS}s — attempting backfill");
         let latest_block = match self.provider.provider_arc().get_block_number().await {
@@ -771,8 +793,15 @@ impl BlockPump {
 
         if latest_block > *current_block {
             let mut lpb = *current_block;
-            self.backfill_range(*current_block + 1, latest_block, &mut lpb, clock, block_metadata)
-                .await;
+            self.backfill_range(
+                *current_block + 1,
+                latest_block,
+                &mut lpb,
+                clock,
+                block_metadata,
+                publish_pending,
+            )
+            .await;
             *current_block = lpb;
             *last_solved_block = lpb;
             *has_logs_this_block = false;
@@ -795,6 +824,7 @@ impl BlockPump {
         last_processed_block: &mut u64,
         clock: &mut BlockClock,
         block_metadata: &mut HashMap<u64, BlockMetadata>,
+        publish_pending: &mut bool,
     ) {
         if from_block > to_block {
             return;
@@ -878,6 +908,10 @@ impl BlockPump {
             if !block_logs.is_empty() {
                 self.sink.on_drain(block, &BlockMetadata::default());
                 any_processed = true;
+                // ADR-008 D2: arm the quiesce-gated publish so backfilled
+                // solved results flush at the next settle point (the live
+                // loop's on_send), carrying real metadata.
+                *publish_pending = true;
             }
             *last_processed_block = block;
         }
@@ -1668,6 +1702,46 @@ mod tests {
         assert!(
             shutdown.load(Ordering::Relaxed),
             "late removed:false on a tombstoned block must shut the pump down (ADR-008 D3)"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // ADR-008 D2: `LogsQuiesced` solver-release gate.
+    //
+    // The pump must publish (`on_send`) only when the open block is
+    // quiesced (all dispatched logs fully applied), and coalesce a burst of
+    // same-block logs into ONE publish at the burst tail (not once per log).
+    // Re-arm on straggler is covered at the clock level by
+    // `consume_quiesced_publishes_once_per_cycle_and_re_arms_on_straggler`.
+    // -----------------------------------------------------------------
+
+    /// 3 same-block logs in a tight burst → exactly ONE `on_send`, fired at
+    /// the burst tail (after the 3rd log applies + the stream settles), NOT
+    /// 3× (one per log) and NOT zero. RED against the wall-clock timer: with
+    /// `stream::iter` (no delay between events) the 50ms `DEBOUNCE_MS` timer
+    /// never fires before the stream ends, so `on_send` is never called.
+    #[tokio::test]
+    async fn burst_of_logs_publishes_once_at_tail_via_quiesce_gate() {
+        let (mut pump, sink) = pump_for_test(Some(100));
+        let pool_addr = Address::from([0x55u8; 20]);
+        let mk = |r0, r1| {
+            WsEvent::Log(make_v2_sync_log(pool_addr, U256::from(r0), U256::from(r1), 101, false))
+        };
+        // 3 same-block sync logs, then stream exhaustion. Under the wall-clock
+        // debounce the 50ms timer never fires before Ok(None) returns → 0
+        // sends. Under the quiesce gate, after the 3rd log applies the settle
+        // probe (timeout(ZERO) on the exhausted stream) flushes on_send once.
+        let combined = stream::iter(vec![mk(1_500, 2_500), mk(1_600, 2_600), mk(1_700, 2_700)])
+            .boxed();
+        pump.run_test_loop(combined, 100).await;
+
+        let sent = sink.sent.lock().unwrap().clone();
+        assert_eq!(
+            sent.len(),
+            1,
+            "a 3-log burst publishes exactly once at the tail via the quiesce \
+             gate (got {} sends)",
+            sent.len()
         );
     }
 }
