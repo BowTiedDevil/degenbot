@@ -11,16 +11,25 @@ Log dict format (from ``log_to_py_dict`` in ``py_converters.rs``):
 - ``blockNumber``: int | None
 - ``logIndex``: int | None
 
-ABI decoding uses ``eth_abi.decode()`` on the data field.
+ABI decoding routes through the Rust ``degenbot-abi`` core
+(``degenbot_rs.decode`` via ``degenbot.abi_adapter.decode``) — the event
+types here are standard uint/int/bytes (no fixed-point), so the Rust path
+handles all of them. The decode computation lives in Rust; the closure that
+builds the companion update and calls ``pool.external_update`` is inherently
+Python-side (it binds to a Python companion). The Rust pump's hot path
+(``BlockPump`` → ``Bot::dispatch_log`` → ``LogDispatcher`` →
+``degenbot-decoders`` leaf → ``BotState``) is a separate, fully Rust→Rust
+decode+apply path for ``PyBot``-managed pools; this module serves the
+standalone Python ``LogListener`` dispatch path.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from eth_abi import decode as abi_decode
 from hexbytes import HexBytes
 
+from degenbot.abi_adapter import decode as abi_decode
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 from degenbot.uniswap.v3_types import (
     UniswapV3PoolExternalUpdate,
