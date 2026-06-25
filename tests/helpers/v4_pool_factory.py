@@ -55,6 +55,28 @@ def make_v4_pool(
     hook_flags = int(hook_address, 16) if hook_address else 0
     blk = state_block if state_block is not None else 0
 
+    # ADR-006 rolling-start race closure: seed tick_data INLINE in
+    # ``register_v4_pool`` (mirrors ``make_v3_pool`` + the production V4
+    # builders) so the pool is never visible to a live pump unseeded.
+    register_rows: dict[int, tuple[int, int, int]] | None = None
+    coverage = "sparse"
+    if tick_data is not None and len(tick_data) > 0:
+        coverage = "tracked"
+        register_rows = {}
+        for t, info in tick_data.items():
+            if isinstance(info, LiquidityAtTick):
+                register_rows[int(t)] = (
+                    int(info.liquidity_gross),
+                    int(info.liquidity_net),
+                    int(info.block),
+                )
+            else:
+                register_rows[int(t)] = (
+                    int(info[0]),
+                    int(info[1]),
+                    int(info[2]) if len(info) > 2 else blk,
+                )
+
     pool_id_int = bot.register_v4_pool(
         pool_manager=pool_manager_address,
         pool_id_hex=pool_id,
@@ -67,20 +89,14 @@ def make_v4_pool(
         liquidity=liquidity,
         tick=tick,
         block=blk,
+        tick_data=register_rows,
+        coverage=coverage,
     )
     handle = bot.get_pool(pool_id_int)
 
-    # Seed the initial tick snapshot (non-empty tick data) into Rust so the
-    # companion starts non-empty (mirrors `make_v3_pool`).
-    if tick_data is not None and len(tick_data) > 0:
-        rows: dict[int, tuple[int, int, int]] = {}
-        for t, info in tick_data.items():
-            if isinstance(info, LiquidityAtTick):
-                rows[int(t)] = (int(info.liquidity_gross), int(info.liquidity_net), int(info.block))
-            else:
-                rows[int(t)] = (int(info[0]), int(info[1]), int(info[2]) if len(info) > 2 else blk)
-        handle.update_tick_data(tick_bitmap or {}, rows, blk)
-
+    # No separate ``update_tick_data`` — the inline seed is complete (tick
+    # map + known bitmap words, atomically with registration). A separate
+    # REPLACE would clobber live pump events (the pre-fix V4 desync).
     sparse = tick_data is None or len(tick_data) == 0
     pool = UniswapV4Pool(
         handle,

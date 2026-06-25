@@ -467,13 +467,22 @@ impl PyBot {
     /// exceptions (`HookedPoolRejectedError` / `DynamicFeePoolRejectedError`)
     /// so Python classifies by type, not string matching.
     ///
+    /// ADR-006 rolling-start race closure: the snapshot `tick_data` is seeded
+    /// INLINE in `register_v4_pool` (one `BotState` write lock) so the pool is
+    /// never visible to the live pump (resumed before `build_paths`) in an
+    /// unseeded state. Previously the builder registered with empty `tick_data`
+    /// then called `update_tick_data` to seed — a pump `ModifyLiquidity` landing
+    /// between register and seed was applied then CLOBBERED by the seed
+    /// overwrite (lost update → V4 tick-map desync → `verify_liquidity_maps`
+    /// mismatch). Mirrors the V3 closure.
+    ///
     /// Raises:
     ///     `HookedPoolRejectedError`: If `hook_flags & 0xCC != 0`.
     ///     `DynamicFeePoolRejectedError`: If `fee == 0x100000`.
     ///     `ValueError`: If `addresses/pool_id` are malformed or already
     ///         registered.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, sqrt_price_x96, liquidity, tick, block))]
+    #[pyo3(signature = (pool_manager, pool_id_hex, currency0, currency1, fee, tick_spacing, hook_flags, sqrt_price_x96, liquidity, tick, block, tick_data=None, coverage="sparse"))]
     fn register_v4_pool(
         &self,
         pool_manager: &str,
@@ -487,6 +496,8 @@ impl PyBot {
         liquidity: u128,
         tick: i32,
         block: u64,
+        tick_data: Option<Bound<'_, pyo3::types::PyDict>>,
+        coverage: &str,
     ) -> PyResult<u64> {
         let pm = pool_manager.parse::<Address>().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager address: {e}"))
@@ -499,6 +510,45 @@ impl PyBot {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid currency1 address: {e}"))
         })?;
         let sp = crate::conversion::alloy::extract_python_u256(sqrt_price_x96)?;
+        // Convert `{tick: (gross, net, block)}` → `HashMap<i32, TickInfo>` —
+        // mirrors `register_v3_pool` (ADR-006 rolling-start race closure for
+        // V4: seed inline so the pool is never visible to the live pump
+        // unseeded).
+        let rust_tick_data: std::collections::HashMap<i32, degenbot_bot::bot_core::TickInfo> =
+            match tick_data {
+                Some(dict) => {
+                    let parsed: std::collections::HashMap<i32, (u128, i128, u64)> =
+                        dict.extract().map_err(|_| {
+                            pyo3::exceptions::PyTypeError::new_err(
+                                "register_v4_pool: tick_data must be {tick: (gross, net, block)}",
+                            )
+                        })?;
+                    parsed
+                        .into_iter()
+                        .map(|(tick, (gross, net, blk))| {
+                            (
+                                tick,
+                                degenbot_bot::bot_core::TickInfo {
+                                    liquidity_gross: alloy::primitives::U128::from(gross),
+                                    liquidity_net: alloy::primitives::I256::try_from(net)
+                                        .unwrap_or(alloy::primitives::I256::ZERO),
+                                    block: blk,
+                                },
+                            )
+                        })
+                        .collect()
+                }
+                None => std::collections::HashMap::new(),
+            };
+        let cov = match coverage {
+            "tracked" => PoolTickCoverage::Tracked,
+            "sparse" => PoolTickCoverage::Sparse,
+            other => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "register_v4_pool: coverage must be 'tracked' or 'sparse', got {other:?}",
+                )));
+            }
+        };
         self.bot
             .state_arc()
             .write()
@@ -516,9 +566,9 @@ impl PyBot {
                 sqrt_price_x96: sp,
                 liquidity,
                 tick,
-                tick_data: std::collections::HashMap::new(),
+                tick_data: rust_tick_data,
                 update_block: block,
-                coverage: PoolTickCoverage::Sparse,
+                coverage: cov,
             })
             .map_err(map_register_v4_err)
     }
