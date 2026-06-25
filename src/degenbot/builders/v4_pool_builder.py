@@ -250,11 +250,21 @@ class V4PoolBuilder(V4BuilderBase):
         # Fetch initial tick bitmap and tick data
         working_tick_bitmap: dict[int, Any] = {}
         working_tick_data: dict[int, Any] = {}
+        # ``tick_data_complete`` is True ONLY when ``working_tick_data`` holds
+        # EVERY on-chain initialized tick (a full snapshot) — so the Rust dense
+        # swap's ``gen_ticks(tick_data)`` can trust it to propose every crossing
+        # tick. The live single-word RPC fetch path below seeds ONLY the current
+        # tick-bitmap word; swaps that cross into a neighbouring word would
+        # silently walk uninitialized boundary ticks (applying no liquidity_net)
+        # and produce wrong amounts. Such pools MUST register ``coverage=sparse``
+        # + a fetcher so the Rust miss-detection backfills missing words.
+        tick_data_complete = False
 
         # Use provided tick data if given (snapshot or test fixtures)
         if request.tick_bitmap is not None and request.tick_data is not None:
             working_tick_bitmap = dict(request.tick_bitmap)
             working_tick_data = dict(request.tick_data)
+            tick_data_complete = True
         elif request.tick_bitmap is not None or request.tick_data is not None:
             raise DegenbotValueError(message="Provide both tick_bitmap and tick_data, or neither.")
         else:
@@ -356,22 +366,30 @@ class V4PoolBuilder(V4BuilderBase):
         # any live ModifyLiquidity in the register→seed window → V4 desync).
         register_rows: dict[int, tuple[int, int, int]] | None = None
         coverage = "sparse"
-        if working_tick_data:
+        # Seed whatever ticks we have (the current word) INLINE so the pool is
+        # never visible to a live pump unseeded; ``coverage`` is the
+        # completeness contract: ``tracked`` ONLY when the tick map is complete
+        # (full snapshot) — a windowed single-word seed stays ``sparse`` so the
+        # Rust miss-detection backfills neighbouring words on demand.
+        tick_map_is_tracked = bool(working_tick_data) and tick_data_complete
+        if tick_map_is_tracked:
             coverage = "tracked"
-            register_rows = {}
+        if working_tick_data:
+            rows: dict[int, tuple[int, int, int]] = {}
             for t, info in working_tick_data.items():
                 if isinstance(info, LiquidityAtTick):
-                    register_rows[int(t)] = (
+                    rows[int(t)] = (
                         int(info.liquidity_gross),
                         int(info.liquidity_net),
                         int(info.block),
                     )
                 else:
-                    register_rows[int(t)] = (
+                    rows[int(t)] = (
                         int(info[0]),
                         int(info[1]),
                         int(info[2]) if len(info) > 2 else 0,  # noqa: PLR2004
                     )
+            register_rows = rows
         pool_handle_pool_id = self._py_bot.register_v4_pool(
             pool_manager=pool_manager_address,
             pool_id_hex=pool_id_bytes.to_0x_hex(),
@@ -406,7 +424,7 @@ class V4PoolBuilder(V4BuilderBase):
             protocol_fee_zero_for_one=slot0_data.protocol_fee_zero_to_one,
             protocol_fee_one_for_zero=slot0_data.protocol_fee_one_to_zero,
             lp_fee=slot0_data.lp_fee,
-            tick_bitmap=working_tick_bitmap if working_tick_data else None,
+            tick_bitmap=working_tick_bitmap if tick_map_is_tracked else None,
             state_block=state_block,
             tick_data_fetcher=self._make_tick_data_fetcher(
                 pool_id_bytes,
@@ -415,7 +433,7 @@ class V4PoolBuilder(V4BuilderBase):
                 chain_id,
                 io=io,
             ),
-            sparse_liquidity_map=not bool(working_tick_data),
+            sparse_liquidity_map=not tick_map_is_tracked,
         )
 
         # Register pool in managed pool registry
