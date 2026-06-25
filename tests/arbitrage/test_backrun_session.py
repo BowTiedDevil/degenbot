@@ -140,6 +140,38 @@ def _noop_coro():
     return _n()
 
 
+class _BlocksStream:
+    """Async iterator over a fixed list of block dicts, then StopAsyncIteration.
+
+    Stand-in for the once-only `engine.block_stream()` receiver (mimics
+    `BlockStream.__anext__`).
+    """
+
+    def __init__(self, blocks: list[dict[str, int]]) -> None:
+        self._blocks = list(blocks)
+        self._i = 0
+
+    def __aiter__(self) -> "_BlocksStream":
+        return self
+
+    async def __anext__(self) -> dict[str, int]:
+        if self._i >= len(self._blocks):
+            raise StopAsyncIteration
+        b = self._blocks[self._i]
+        self._i += 1
+        return b
+
+
+def _block_dict(number: int) -> dict[str, int]:
+    return {
+        "number": number,
+        "timestamp": 1_700_000_000 + number,
+        "base_fee_per_gas": 1_000_000_000,
+        "gas_used": 15_000_000,
+        "gas_limit": 30_000_000,
+    }
+
+
 class _Recorder:
     """Records call order via an injected events list; returns a no-op coroutine.
 
@@ -297,3 +329,105 @@ class TestBackrunSessionContextManager:
         # the consumer task must have been cancelled by __aexit__
         assert session._result_consumer_task is not None
         assert session._result_consumer_task.cancelled()
+
+
+class TestBackrunSessionRunBlockStreamAcquiredOnce:
+    """Regression: `run()` must acquire `engine.block_stream()` exactly once and
+    fan the blocks to both the result consumer and the T7 recurring-verify
+    ticker via `_tee_block_stream`.
+
+    Pre-fix `run()` called `engine.block_stream()` twice: once consumed inside
+    the real `consume_result_batches` (which self-acquires when
+    `block_stream=None`), and once at run() line 967 for the recurring-verify
+    ticker. The real `PyUniswapArbEngine.block_stream()` is once-only — the
+    second call raised `RuntimeError("block_stream() can only be called once")`
+    entering the main loop, crashing every permutation run. This test uses an
+    engine whose `block_stream()` raises on the second call (mimicking the real
+    once-only seam) and asserts both branches receive every block.
+    """
+
+    async def test_run_acquires_block_stream_once_and_fans_to_both_consumers(
+        self,
+    ) -> None:
+        seen_by_consumer: list[int] = []
+        seen_by_verify: list[int] = []
+
+        class _OnceOnlyEngine:
+            """Mimics the real `block_stream()` once-only receiver semantics."""
+
+            def __init__(self) -> None:
+                self.block_stream_calls = 0
+                self.resumed = False
+
+            def resume(self) -> None:
+                self.resumed = True
+
+            def last_processed_block(self) -> int | None:
+                return 12_345
+
+            def v2_pool_count(self) -> int:
+                return 0
+
+            def v3_pool_count(self) -> int:
+                return 0
+
+            def v4_pool_count(self) -> int:
+                return 0
+
+            def path_count(self) -> int:
+                return 0
+
+            def block_stream(self):
+                self.block_stream_calls += 1
+                if self.block_stream_calls > 1:
+                    raise RuntimeError("block_stream() can only be called once")
+                # Blocks divisible by RECURRING_VERIFY_INTERVAL (50) so the
+                # recurring-verify ticker actually fires at each.
+                return _BlocksStream(
+                    [_block_dict(500), _block_dict(550), _block_dict(600)],
+                )
+
+        class _Registry:
+            def __init__(self) -> None:
+                self.engine = _OnceOnlyEngine()
+
+            def start(self, node_http, node_ws, *, v3_snapshot, v4_snapshot, verify_state_view) -> int:
+                # No backfill target beyond current_block (12_345) — main-loop entry.
+                return 0
+
+            async def verify_liquidity_maps(self, *, block_number=None) -> None:
+                seen_by_verify.append(block_number)
+
+        registry = _Registry()
+
+        async def recording_consumer(*, block_stream=None, **_kw) -> None:
+            async for b in block_stream:
+                seen_by_consumer.append(b["number"])
+
+        session = BackrunSession(
+            _cfg(),
+            bot=_FakeBot(),
+            engine_registry=registry,  # type: ignore[arg-type]
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            path_builder=lambda **_kw: _noop_coro(),
+            consumer=recording_consumer,
+        )
+        await session.start()
+        await session.run()
+
+        # The load-bearing contract: exactly ONE acquisition.
+        assert registry.engine.block_stream_calls == 1, (
+            "run() must acquire engine.block_stream() exactly once (was 2 → crash)"
+        )
+        assert registry.engine.resumed is True
+        # Both branches received every block (fan-out, not a split).
+        assert seen_by_consumer == [500, 550, 600], (
+            "result-consumer branch must receive every block"
+        )
+        # The startup batch verify (run() step 3b, block_number=None → resolves
+        # to last_processed_block) fires first, THEN the recurring-verify
+        # ticker fires at each block divisible by RECURRING_VERIFY_INTERVAL (50).
+        assert seen_by_verify == [None, 500, 550, 600], (
+            "startup batch (None) then recurring-verify at 500/550/600"
+        )

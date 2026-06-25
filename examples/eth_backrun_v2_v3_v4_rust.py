@@ -904,7 +904,18 @@ class BackrunSession:
         cfg = self.cfg
         consumer = self._consumer or consume_result_batches
 
-        # 1. Attach the consumer BEFORE resume (consumer-safety invariant).
+        # 1. Acquire the once-only block_stream EXACTLY ONCE and fan it to two
+        # branches: the result consumer (full block dicts) + the recurring-
+        # verify ticker (block numbers). The pump's `engine.block_stream()`
+        # moves the mpsc receiver out of a Mutex on each call — a second call
+        # raises RuntimeError("block_stream() can only be called once"), which
+        # previously crashed entering the main loop (the consumer self-acquired
+        # one, run() acquired another for recurring-verify). See
+        # `_tee_block_stream` for the full rationale + regression.
+        _block_stream = self.engine_registry.engine.block_stream()
+        _consumer_branch, _verify_branch, _tee_driver = _tee_block_stream(_block_stream)
+
+        # Attach the consumer BEFORE resume (consumer-safety invariant).
         self._result_consumer_task = asyncio.create_task(
             consumer(
                 engine_registry=self.engine_registry,
@@ -914,6 +925,7 @@ class BackrunSession:
                 operator_private_key=cfg.operator_private_key,
                 dispatcher=self.dispatcher,
                 dry_run=cfg.dry_run,
+                block_stream=_consumer_branch,
             ),
             name="result-consumer",
         )
@@ -964,11 +976,10 @@ class BackrunSession:
         # re-checks liquidity maps so post-release / in-loop desyncs surface
         # instead of trading silently. Both complete together.
         assert self._result_consumer_task is not None
-        block_stream = self.engine_registry.engine.block_stream()
         recurring_verify = asyncio.ensure_future(
             run_recurring_verify_until_done(
                 registry=self.engine_registry,
-                block_ticker=(b["number"] async for b in block_stream),
+                block_ticker=(b["number"] async for b in _verify_branch),
                 interval=RECURRING_VERIFY_INTERVAL,
                 retry_policy=cfg.verification_retry_policy,
             ),
@@ -977,8 +988,11 @@ class BackrunSession:
             await self._result_consumer_task
         finally:
             recurring_verify.cancel()
+            _tee_driver.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await recurring_verify
+            with contextlib.suppress(asyncio.CancelledError):
+                await _tee_driver
 
     # ── Actor builders (production path — only used when not injected) ──
     @staticmethod
@@ -2558,6 +2572,60 @@ async def consume_result_batches(
                     operator_private_key,
                     dry_run,
                 )
+
+
+_TEE_SENTINEL: Any = object()
+
+
+def _tee_block_stream(
+    source: "asyncio.AsyncIterator[dict[str, int]]",
+) -> tuple[
+    "asyncio.AsyncIterator[dict[str, int]]",
+    "asyncio.AsyncIterator[dict[str, int]]",
+    asyncio.Task[None],
+]:
+    """Fan a single once-only block stream to two independent async iterators.
+
+    The pump's `engine.block_stream()` is single-consumer: `BlockStream.__anext__`
+    moves the mpsc receiver out of an `Arc<Mutex<Option<rx>>>` per call, so two
+    `async for` loops over one stream object race (the second sees `None` and
+    raises `StopAsyncIteration` immediately). This tee drives the source once and
+    copies each block to two unbounded queues (eth ~1 block/12s — no backpressure
+    deadlock risk), yielding two independent iterators that EACH see every block.
+
+    Regression: `run()` previously called `engine.block_stream()` twice (the real
+    `consume_result_batches` self-acquires when `block_stream=None`; `run()` line
+    ~967 acquired another for the recurring-verify ticker). The real seam is
+    once-only — the second call raised
+    `RuntimeError("block_stream() can only be called once")` entering the main
+    loop, crashing every permutation run. Acquire once + tee fixes it.
+
+    Returns `(branch_a, branch_b, driver_task)`. `branch_a` feeds the result
+    consumer; `branch_b` feeds the recurring-verify ticker. The driver completes
+    when the source exhausts (production: never — the pump runs indefinitely; the
+    driver stays pending on the source and is cancelled by the caller on exit).
+    """
+    q_a: asyncio.Queue[Any] = asyncio.Queue()
+    q_b: asyncio.Queue[Any] = asyncio.Queue()
+
+    async def _driver() -> None:
+        try:
+            async for block in source:
+                await q_a.put(block)
+                await q_b.put(block)
+        finally:
+            await q_a.put(_TEE_SENTINEL)
+            await q_b.put(_TEE_SENTINEL)
+
+    async def _branch(q: asyncio.Queue[Any]) -> "asyncio.AsyncIterator[dict[str, int]]":
+        while True:
+            item = await q.get()
+            if item is _TEE_SENTINEL:
+                return
+            yield item
+
+    driver = asyncio.create_task(_driver(), name="block-stream-tee")
+    return _branch(q_a), _branch(q_b), driver
 
 
 def _reprime(
