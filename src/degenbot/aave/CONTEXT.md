@@ -45,7 +45,7 @@
 - `aave/enrichment/` — Event enrichment pipeline
 - `aave/processors/` — Versioned balance-change processors
 - `aave/analysis/` — Position analysis (I/O-free core + orchestrator seam)
-- `aave/libraries/` — Pure math (WadRayMath, TokenMath, GhoMath, PoolMath)
+- `aave/libraries/` — Pure math (WadRayMath, PercentageMath, TokenMath, GhoMath, PoolMath). Stays Python: the Aave subsystem is a CLI batch extraction/enrichment pipeline, not a per-block bot loop — no library is on a hot path, so the PyO3 bridge overhead isn't justified (no `port-now`; revisit if a real-time per-block Aave loop lands).
 - `aave/deployments.py` — Market deployment addresses
 
 ### Boundary invariant
