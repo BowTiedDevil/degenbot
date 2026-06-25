@@ -39,20 +39,15 @@ pub(crate) use tokio::sync::mpsc;
 pub(crate) use crate::bot::PyBot;
 pub(crate) use degenbot_bot::bot_core::reorg_coordinator::ReorgCoordinator;
 pub(crate) use degenbot_bot::bot_core::solve_coordinator::SolveCoordinator;
-pub(crate) use degenbot_bot::bot_core::{
-    drain_sink::DrainSink, Bot, RegisterV3PoolParams, V3SwapUpdate,
-};
-pub(crate) use degenbot_bot::bot_core::{RegisterV4PoolParams, V4StateSync, V4SwapUpdate};
+pub(crate) use degenbot_bot::bot_core::{drain_sink::DrainSink, Bot, V3SwapUpdate, V4StateSync, V4SwapUpdate};
 
 pub(crate) use degenbot_bot::solvers::uniswap_engine::engine_handle::EngineHandle;
 pub(crate) use degenbot_bot::solvers::uniswap_engine::engine_subscriber::EngineSubscriber;
 
-pub(crate) use degenbot_bot::bot_core::snapshot_verify::{
-    register_with_cl_buffers, run_cl_verification, SnapshotStore, VerifyError, VerifyRpc,
-};
+pub(crate) use degenbot_bot::bot_core::snapshot_verify::{SnapshotStore, VerifyError};
 pub(crate) use degenbot_bot::solvers::uniswap_engine::{
     BlockMetadata, BlockNotification, EnginePhase, HopType, MixedPoolRef, PoolHop,
-    PoolTickCoverage, ResultBatch, SolvePathResult, UniswapEngine, V3SnapshotData, V4SnapshotData,
+    ResultBatch, SolvePathResult, UniswapEngine, V3SnapshotData, V4SnapshotData,
 };
 
 /// Python-facing mixed V2/V3 arbitrage engine.
@@ -481,40 +476,9 @@ mod tests {
     //! `LiquidityVerifyError::Rpc` through `map_liquidity_verify_error` and
     //! `map_verify_err` to a typed Python exception.
 
-    use super::verify::{map_liquidity_verify_error, map_verify_err};
+    use super::verify::map_verify_err;
     use super::*;
-    use degenbot_bot::bot_core::liquidity_verifier::{LiquidityVerifyError, VerificationMismatch};
     use degenbot_bot::solvers::uniswap_engine::snapshot_verify::VerifyError;
-
-    /// `map_liquidity_verify_error` preserves the distinction: `Mismatch` →
-    /// `Snapshot`, `Rpc` → `Rpc` (NOT flattened to `Snapshot`).
-    #[test]
-    fn map_liquidity_verify_error_routes_rpc_separately_from_mismatch() {
-        // Transport failure → Rpc variant, with phase prefix + the verifier's
-        // per-call message.
-        let rpc_err = LiquidityVerifyError::Rpc {
-            message: "tickBitmap(0) RPC call failed: timeout".to_string(),
-        };
-        let mapped = map_liquidity_verify_error(rpc_err, "V3 pool 0x..", "snapshot", 10);
-        assert!(
-            matches!(mapped, VerifyError::Rpc(m) if m.contains("tickBitmap(0) RPC call failed")
-                && m.contains("snapshot block 10")
-                && m.contains("V3 pool 0x..")),
-            "per-call RPC transport failure must map to VerifyError::Rpc, not Snapshot"
-        );
-
-        // Genuine mismatch → Snapshot variant.
-        let mismatch = LiquidityVerifyError::Mismatch(VerificationMismatch {
-            message: "tick 5 lg mismatch".to_string(),
-        });
-        let mapped = map_liquidity_verify_error(mismatch, "V4 pool 0x..", "backfill", 20);
-        assert!(
-            matches!(mapped, VerifyError::Snapshot(m) if m.contains("tick 5 lg mismatch")
-                && m.contains("backfill block 20")
-                && m.contains("V4 pool 0x..")),
-            "genuine on-chain mismatch must map to VerifyError::Snapshot"
-        );
-    }
 
     /// `map_verify_err` (the `PyO3` seam) routes `VerifyError::Rpc` →
     /// `VerificationRpcError` and `VerifyError::Snapshot` →

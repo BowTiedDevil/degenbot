@@ -71,10 +71,8 @@ pub(crate) struct PumpState {
     /// Created → Subscribed → `SnapshotLoaded` → Backfilled → Resumed.
     pub(crate) phase: std::sync::atomic::AtomicU8,
     /// When True, verify each V3/V4 pool's tick data against on-chain state
-    /// immediately after registration (T5 deletes this — the verify gate is
-    /// orphaned; T6 reseats verify at the registry drain seam).
-    pub(crate) verify_on_register: std::sync::atomic::AtomicBool,
-    /// Optional HTTP RPC URL for verification during registration.
+    /// immediately after registration (T5 deletes this — the verify gate moves
+    /// to the registry drain seam in T6).
     pub(crate) verify_rpc_url: Mutex<Option<String>>,
     /// Cached Alloy provider for verification RPCs.
     pub(crate) verify_provider: Mutex<Option<degenbot_rpc::provider::AlloyProvider>>,
@@ -104,7 +102,6 @@ impl PumpState {
             pump_handle: Mutex::new(None),
             subscribe_state: Mutex::new(None),
             phase: std::sync::atomic::AtomicU8::new(EnginePhase::Created as u8),
-            verify_on_register: std::sync::atomic::AtomicBool::new(false),
             verify_rpc_url: Mutex::new(None),
             verify_provider: Mutex::new(None),
             verify_state_view: Mutex::new(None),

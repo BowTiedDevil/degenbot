@@ -868,7 +868,6 @@ class BackrunSession:
             v3_snapshot=v3_snap,
             v4_snapshot=v4_snap,
             verify_state_view=EthereumMainnetUniswapV4.state_view.address,
-            verify_on_register=True,
         )
         if backfill_target > self.current_block:
             self.current_block = backfill_target
