@@ -1546,4 +1546,76 @@ mod tests {
         // `run_test_loop` returned (this assert is reached), proving the pump
         // exited its loop instead of looping forever on a fatal reorg.
     }
+
+    /// ADR-008 D3 pump-level: a contiguous `removed: true` chunk (delivered
+    /// in REVERSE log-index order — nodes may emit reorg events unordered)
+    /// enters + continues the reorg path, restoring the pool per-event via the
+    /// coordinator; the first `removed: false` event after entry closes the
+    /// window, its block becomes the new head, and the pump CONTINUES (no
+    /// shutdown). The forward log at the new head re-applies against the
+    /// restored state.
+    #[tokio::test]
+    async fn reorg_contiguous_chunk_closes_on_first_forward_and_continues() {
+        let pool_addr = Address::from([0x33u8; 20]);
+        // Genesis anchored at block 5: reserves (1000, 2000).
+        let (bot, pool_id, sub) = bot_with_registered_v2(pool_addr, 5);
+        let notify_count = || *sub.notifies.lock().unwrap();
+        let snapshot = || bot.state.read().v2_snapshot(pool_id);
+
+        // Drive 5 -> 7 (forward sync at 7) -> tombstone 7 via a forward sync
+        // at 8 (advance_to_drained(7) follows the tombstone).
+        let (mut pump, _sink, shutdown) = pump_for_test_with_bot(Arc::clone(&bot), Some(5));
+        let s7 = make_v2_sync_log(pool_addr, U256::from(1_500), U256::from(2_500), 7, false);
+        let s8 = make_v2_sync_log(pool_addr, U256::from(1_600), U256::from(2_600), 8, false);
+        let combined = stream::iter(vec![WsEvent::Log(s7), WsEvent::Log(s8)]).boxed();
+        pump.run_test_loop(combined, 5).await;
+        assert_eq!(notify_count(), 2, "two forward syncs applied");
+        assert_eq!(snapshot(), Some((U256::from(1_600), U256::from(2_600), 8)));
+        assert!(!shutdown.load(Ordering::Relaxed));
+
+        // Reorg over blocks 7 and 8: removed logs arrive in REVERSE order
+        // (8 then 7), then the first removed:false at block 9 closes it.
+        let (mut pump, _sink, shutdown) = pump_for_test_with_bot(Arc::clone(&bot), Some(5));
+        let r8 = make_v2_sync_log(pool_addr, U256::from(9), U256::from(9), 8, true);
+        let r7 = make_v2_sync_log(pool_addr, U256::from(9), U256::from(9), 7, true);
+        let s9 = make_v2_sync_log(pool_addr, U256::from(1_700), U256::from(2_700), 9, false);
+        let combined = stream::iter(vec![WsEvent::Log(r8), WsEvent::Log(r7), WsEvent::Log(s9)])
+            .boxed();
+        pump.run_test_loop(combined, 5).await;
+
+        // The reorg unwound 7 and 8 (restore to genesis), then the forward
+        // sync at 9 re-applied -> reserves reflect block 9's values.
+        assert_eq!(snapshot(), Some((U256::from(1_700), U256::from(2_700), 9)));
+        assert!(
+            !shutdown.load(Ordering::Relaxed),
+            "reorg path closed cleanly — pump did NOT shut down"
+        );
+    }
+
+    /// ADR-008 D3 pump-level: a `removed: false` log on a tombstoned block
+    /// (NOT a reorg) means the WS delivered a forward event out-of-order /
+    /// duplicated — unreliable. The pump must shut down rather than silently
+    /// re-apply. Cursor never silently regresses.
+    #[tokio::test]
+    async fn late_forward_log_on_tombstoned_block_shuts_down_pump() {
+        let pool_addr = Address::from([0x44u8; 20]);
+        let (bot, _pool_id, _sub) = bot_with_registered_v2(pool_addr, 5);
+
+        // Single pump session: forward sync(7) opens block 7; forward sync(8)
+        // tombstones 7 (open block becomes 8); THEN a forward (removed:false)
+        // sync at block 7 arrives late — block 7 is tombstoned and the open
+        // block is 8 -> late forward -> unreliable WS -> shutdown.
+        let (mut pump, _sink, shutdown) = pump_for_test_with_bot(Arc::clone(&bot), Some(5));
+        let s7 = make_v2_sync_log(pool_addr, U256::from(1_500), U256::from(2_500), 7, false);
+        let s8 = make_v2_sync_log(pool_addr, U256::from(1_600), U256::from(2_600), 8, false);
+        let late = make_v2_sync_log(pool_addr, U256::from(9_999), U256::from(9_999), 7, false);
+        let combined = stream::iter(vec![WsEvent::Log(s7), WsEvent::Log(s8), WsEvent::Log(late)])
+            .boxed();
+        pump.run_test_loop(combined, 5).await;
+
+        assert!(
+            shutdown.load(Ordering::Relaxed),
+            "late removed:false on a tombstoned block must shut the pump down (ADR-008 D3)"
+        );
+    }
 }
