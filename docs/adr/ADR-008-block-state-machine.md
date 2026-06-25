@@ -9,19 +9,20 @@ this ADR records the settled shape only.
 ## Implementation status
 
 Implemented in `rust/crates/degenbot-bot/src/bot_core/` (commits `5673f8ce`, `440b848`,
-`c4d21b1e`, `cdac7363`):
+`c4d21b1e`, `cdac7363`, `0baed1e`):
 
 - **D1 (tombstone via successor log)** — `BlockClock` + pump wiring. A `newHeads` header
   alone never finalizes or drains; only the first `removed: false` log for N+1 tombstones N.
   The empty-block finalize fast path (`block_pump.rs:593-595`) is deleted. Pinned by
   `header_alone_does_not_drain_block` + `full_lifecycle_tombstone_via_successor_log_then_drained`.
-- **D2 (LogsQuiesced predicate)** — exposed on the clock (`logs_quiesced`); the in-flight
-  counter is driven per dispatched log. **Deferred:** the pump still publishes via the
-  `DEBOUNCE_MS` wall-clock timer, not solely on `logs_quiesced`. Under the pump's synchronous
-  dispatch, `logs_quiesced` is true between every event, so the debounce timer already
-  approximates the gate (it coalesces a burst until the stream settles = quiesced). Replacing
-  the debounce with `logs_quiesced`-as-sole-trigger matters only if dispatch becomes async;
-  left as a follow-up.
+- **D2 (LogsQuiesced solver-release gate)** — the wall-clock `DEBOUNCE_MS` send timer is
+  **replaced** by the `consume_quiesced` predicate. `on_send` fires only when the open block is
+  quiesced (all dispatched logs applied) AND at a settle point (a `DEBOUNCE_MS` window with no
+  new event, coalescing a same-block burst into one publish at the tail, OR stream exhaustion).
+  Publication is gated on state, not schedule. A straggler log re-arms the gate (the one-shot
+  `consume_quiesced` resets; the new log's receive→apply re-sets it). Pinned by
+  `burst_of_logs_publishes_once_at_tail_via_quiesce_gate` (pump) +
+  `consume_quiesced_publishes_once_per_cycle_and_re_arms_on_straggler` (clock).
 - **D3 (asymmetric late-event handling)** — clock returns `EnterReorg`/`ContinueReorg`/
   `CloseReorg`/`PanicLateForward`; the pump routes `removed: true` to `ReorgCoordinator`
   (per-event restore), closes the reorg window on the first `removed: false` (its block is the
@@ -34,8 +35,8 @@ Implemented in `rust/crates/degenbot-bot/src/bot_core/` (commits `5673f8ce`, `44
   existing 60s inactivity timeout covers the degraded path).
 
 **Deferred to follow-up:** the `[DIAG]` newHeads-stall instrumentation in `run_with_stream`
-(operational logging, retained until a follow-up confirms the SM's liveness paths cover the
-stall scenario); the dead-logs-sub Edge B timeout tuning + RPC budget.
+(operational logging, retained until a follow-up confirms the SM's liveness paths cover the stall
+scenario); the dead-logs-sub Edge B timeout tuning + RPC budget.
 
 ## Context
 
