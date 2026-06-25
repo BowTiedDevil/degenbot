@@ -263,7 +263,12 @@ class EngineRegistry:
                 engine-current (seed + journal) vs on-chain@snapshot
                 (pre-journal) → a false mismatch on every active pool
                 (logs/perm-V2-V3-V2.log). Step-2 (backfill block) passes
-                ``verify_seed=False`` to verify engine-current after the drain.
+                ``verify_seed=False`` to verify the **pinned post-drain**
+                tick_data (captured atomically with ``apply_buffer_*``'s final
+                drain, immutable across subsequent pump Mint/Burn) vs
+                on-chain@backfill — NOT engine-current, which would
+                false-mismatch under the same rolling-start race
+                (logs/verify-race-hotloop.log).
 
         """
         if self._verify_rpc_url is None or self._verify_state_view is None:
@@ -274,9 +279,9 @@ class EngineRegistry:
             # nothing to verify at this seam; the batch verify at
             # last_processed_block() still runs post-build_paths.
             return
-        # Use the engine's per-family batch verify (the relocated PyBot verify
-        # API; the engine keeps a thin delegating wrapper — T8 rewires the
-        # registry to call ``self.bot`` directly). Async, never block_on.
+        # Use the engine's per-pool pinned-snapshot verify (the relocated PyBot
+        # verify API; the engine keeps a thin delegating wrapper — T8 rewires
+        # the registry to call ``self.bot`` directly). Async, never block_on.
         if family == "v3":
             if verify_seed:
                 # CBCH6H step-1: verify the pinned seed vs on-chain@snapshot.
@@ -286,7 +291,20 @@ class EngineRegistry:
                     block_number=block,
                 )
             else:
-                await self.engine.verify_v3_liquidity_maps(
+                # Step-2: verify the pinned POST-DRAIN tick_data vs
+                # on-chain@backfill. The pin is captured atomically with
+                # `apply_buffer_v3`'s final drain (single core.write() hold) and
+                # is immutable across subsequent pump Mint/Burn — so the
+                # comparison is drain-state vs on-chain@backfill, NOT
+                # engine-current (drain + pump journal), which under a rolling
+                # start (`resume()` precedes `build_paths`) false-mismatches on
+                # every active pool (logs/verify-race-hotloop.log). The pin is
+                # taken (consumed) once; `None` for sparse/un-drained pools →
+                # no-op Ok (the batch verify at last_processed_block() still
+                # covers them post-build_paths). Per-pool (not the batch
+                # `verify_v3_liquidity_maps`) — faster + races closed.
+                await self.engine.verify_v3_post_drain_snapshot(
+                    address=address,
                     rpc_url=self._verify_rpc_url,
                     block_number=block,
                 )
@@ -301,7 +319,10 @@ class EngineRegistry:
                     block_number=block,
                 )
             else:
-                await self.engine.verify_v4_liquidity_maps(
+                # Step-2 V4 twin: pinned post-drain vs on-chain@backfill.
+                await self.engine.verify_v4_post_drain_snapshot(
+                    pool_manager_address=address,
+                    pool_id_hex=pool_id_hex,
                     rpc_url=self._verify_rpc_url,
                     state_view_address=self._verify_state_view,
                     block_number=block,
@@ -381,10 +402,14 @@ class EngineRegistry:
         # Drain the backfill/pump buffer onto the snapshot seed. *(unchanged)*
         self.engine.apply_buffer_v3(pool.address)
 
-        # Step 2: backfill verify (post-drain state vs on-chain @ backfill
+        # Step 2: backfill verify (pinned post-drain vs on-chain @ backfill
         # block) AFTER the drain — catches a bad buffer-apply (e.g. the V4
-        # register->seed clobber at 292101f) at the offending pool. The backfill
-        # block is when post-backfill state first exists.
+        # register->seed clobber at 292101f) at the offending pool. The
+        # post-drain pin is captured atomically with `apply_buffer_v3`'s final
+        # drain (single core.write() hold) so a pump Mint/Burn landing AFTER
+        # the drain cannot corrupt the comparison (the step-2 rolling-start
+        # race — logs/verify-race-hotloop.log: `update_block=25396803 >
+        # block=25396790`). Per-pool (not batch) + race-free.
         await self._verify_pool_at_block("v3", pool.address, self._verify_backfill_block)
 
         self._v3_keys[pool.address] = key

@@ -58,26 +58,45 @@ class _RecordingVerifyEngine:
     def apply_buffer_v4(self, address: str, pool_id_hex: str) -> None:
         self.calls.append(f"apply_buffer_v4:{pool_id_hex}")
 
-    # the verify seam (async) — batch API on PyBot. CBCH6H: the two-step
-    # verify routes step-1 (snapshot) through the *_snapshot_seed variants
-    # (pinned seed, not engine-current) and step-2 (backfill) through the
-    # current-state *_liquidity_maps variants. Both recorded with a `seed`
-    # flag so assertions can pin which step fired.
+    # the verify seam (async). CBCH6H: the two-step verify routes step-1
+    # (snapshot) through the *_snapshot_seed variants (pinned seed, not
+    # engine-current) and step-2 (backfill) through the *_post_drain_snapshot
+    # variants (pinned post-drain tick_data, not engine-current — the step-2
+    # rolling-start race fix). Both recorded with a `seed` flag so assertions
+    # can pin which step fired.
     async def verify_v3_snapshot_seed(
         self, address: str, rpc_url: str, block_number: int | None
     ) -> None:
-        self.verify_calls.append(
-            {"phase": "v3", "block": block_number, "rpc": rpc_url, "seed": True}
-        )
+        self.verify_calls.append({
+            "phase": "v3",
+            "block": block_number,
+            "rpc": rpc_url,
+            "seed": True,
+            "method": "snapshot_seed",
+        })
         if self.fail_next == "v3":
             raise VerificationMismatchError("synthetic V3 seed tick mismatch")
 
-    async def verify_v3_liquidity_maps(
-        self, rpc_url: str, block_number: int | None
+    async def verify_v3_post_drain_snapshot(
+        self, address: str, rpc_url: str, block_number: int | None
     ) -> None:
-        self.verify_calls.append(
-            {"phase": "v3", "block": block_number, "rpc": rpc_url, "seed": False}
-        )
+        self.verify_calls.append({
+            "phase": "v3",
+            "block": block_number,
+            "rpc": rpc_url,
+            "seed": False,
+            "method": "post_drain",
+        })
+
+    async def verify_v3_liquidity_maps(self, rpc_url: str, block_number: int | None) -> None:
+        # Batch verify (post-build_paths) — not exercised by the two-step
+        # tests, but kept on the fake for API parity.
+        self.verify_calls.append({
+            "phase": "v3-batch",
+            "block": block_number,
+            "rpc": rpc_url,
+            "seed": False,
+        })
 
     async def verify_v4_snapshot_seed(
         self,
@@ -87,30 +106,44 @@ class _RecordingVerifyEngine:
         state_view_address: str,
         block_number: int | None,
     ) -> None:
-        self.verify_calls.append(
-            {
-                "phase": "v4",
-                "block": block_number,
-                "rpc": rpc_url,
-                "sv": state_view_address,
-                "seed": True,
-            }
-        )
+        self.verify_calls.append({
+            "phase": "v4",
+            "block": block_number,
+            "rpc": rpc_url,
+            "sv": state_view_address,
+            "seed": True,
+            "method": "snapshot_seed",
+        })
         if self.fail_next == "v4":
             raise VerificationMismatchError("synthetic V4 seed tick mismatch")
+
+    async def verify_v4_post_drain_snapshot(
+        self,
+        pool_manager_address: str,
+        pool_id_hex: str,
+        rpc_url: str,
+        state_view_address: str,
+        block_number: int | None,
+    ) -> None:
+        self.verify_calls.append({
+            "phase": "v4",
+            "block": block_number,
+            "rpc": rpc_url,
+            "sv": state_view_address,
+            "seed": False,
+            "method": "post_drain",
+        })
 
     async def verify_v4_liquidity_maps(
         self, rpc_url: str, state_view_address: str, block_number: int | None
     ) -> None:
-        self.verify_calls.append(
-            {
-                "phase": "v4",
-                "block": block_number,
-                "rpc": rpc_url,
-                "sv": state_view_address,
-                "seed": False,
-            }
-        )
+        self.verify_calls.append({
+            "phase": "v4-batch",
+            "block": block_number,
+            "rpc": rpc_url,
+            "sv": state_view_address,
+            "seed": False,
+        })
 
 
 class _FakeSnapshot:
@@ -145,9 +178,9 @@ class _FakeV4Pool:
     _py_pool = _PyPool()
 
 
-def _registry_started_with_snapshots(monkeypatch) -> tuple[
-    runner.EngineRegistry, _RecordingVerifyEngine
-]:
+def _registry_started_with_snapshots(
+    monkeypatch,
+) -> tuple[runner.EngineRegistry, _RecordingVerifyEngine]:
     fake = _RecordingVerifyEngine()
     registry = runner.EngineRegistry(bot=None, engine=fake)
     # Stub the stream fns (same as the start tests) — they need a full DB-backed
@@ -191,6 +224,10 @@ def test_register_v3_pool_runs_two_step_verify_around_drain(monkeypatch) -> None
     assert seed_flags == [True, False], (
         f"step-1 must verify the seed, step-2 the current; got {fake.verify_calls}"
     )
+    methods = [c["method"] for c in fake.verify_calls]
+    assert methods == ["snapshot_seed", "post_drain"], (
+        f"step-1 must route through *_snapshot_seed, step-2 through *_post_drain_snapshot (the rolling-start race fix); got {fake.verify_calls}"
+    )
     drain_idx = next(i for i, c in enumerate(fake.calls) if "apply_buffer_v3" in c)
     # the drain ran exactly once, between the two verify awaits (verify is the
     # only thing appending to verify_calls; the drain is the only thing
@@ -215,6 +252,10 @@ def test_register_v4_pool_runs_two_step_verify_around_drain(monkeypatch) -> None
     seed_flags = [c["seed"] for c in fake.verify_calls]
     assert seed_flags == [True, False], (
         f"step-1 must verify the seed, step-2 the current; got {fake.verify_calls}"
+    )
+    methods = [c["method"] for c in fake.verify_calls]
+    assert methods == ["snapshot_seed", "post_drain"], (
+        f"step-1 → *_snapshot_seed, step-2 → *_post_drain_snapshot; got {fake.verify_calls}"
     )
     assert sum("apply_buffer_v4" in c for c in fake.calls) == 1
 

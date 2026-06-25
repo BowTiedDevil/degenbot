@@ -592,6 +592,133 @@ impl PumpState {
             Ok(())
         })
     }
+
+    /// Verify a single V3 pool's **pinned post-drain** `tick_data` against
+    /// on-chain state at the backfill block (step-2 of the two-step verify —
+    /// the rolling-start race fix, twin of `verify_v3_snapshot_seed`).
+    ///
+    /// Reads `take_v3_post_drain_snapshot(address)` (the drain-time
+    /// `tick_data`, captured atomically with `apply_buffer_v3`'s final drain
+    /// and immutable across subsequent pump Mint/Burn) and compares it to
+    /// on-chain via the raw-tick-data `verify_v3_liquidity_map`. Step-2 calls
+    /// this so the comparison is post-drain-vs-on-chain@backfill — NOT
+    /// engine-current (drain + pump journal), which would false-mismatch on
+    /// every active pool during a rolling start (`resume()` precedes
+    /// `build_paths`). The pin is taken (consumed) — verified exactly once;
+    /// `None` for sparse pools, un-drained pools, or already-verified pools
+    /// (no-op Ok; the batch verify at `last_processed_block()` still covers
+    /// the pool post-build_paths).
+    #[allow(clippy::needless_pass_by_value)]
+    pub(crate) fn verify_v3_post_drain_snapshot<'py>(
+        &self,
+        py: Python<'py>,
+        address: String,
+        rpc_url: String,
+        block_number: Option<u64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let pool_addr: alloy::primitives::Address = address.parse().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid V3 address: {e}"))
+        })?;
+        // Take the pin under the engine lock + core write (take mutates the
+        // pool state). Snapshot the blob out so the async RPC runs lock-free.
+        let post_drain = {
+            let engine = self.engine.lock();
+            let mut core = engine.core.write();
+            core.take_v3_post_drain_snapshot(pool_addr)
+        };
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            // No pin (sparse pool, un-drained, or already verified) → nothing
+            // to verify at this seam. The batch verify at
+            // last_processed_block() still covers the pool post-build_paths.
+            let Some(tick_data) = post_drain else {
+                return Ok(());
+            };
+            let provider = degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)
+                .await
+                .map_err(|e| {
+                    crate::bot::engine::VerificationRpcError::new_err(format!(
+                        "verify_v3_post_drain_snapshot: failed to create provider: {e}"
+                    ))
+                })?;
+            let result = degenbot_bot::bot_core::liquidity_verifier::verify_v3_liquidity_map(
+                &provider,
+                pool_addr,
+                &tick_data,
+                block_number.unwrap_or(0),
+            )
+            .await;
+            if let Err(err) = result {
+                return Err(map_liquidity_verify_error(err));
+            }
+            log::info!(
+                "[verify-drain] V3 post-drain snapshot OK for {} at block {}",
+                pool_addr,
+                block_number.unwrap_or(0)
+            );
+            Ok(())
+        })
+    }
+
+    /// Verify a single V4 pool's **pinned post-drain** `tick_data` against
+    /// on-chain state at the backfill block (step-2 of the two-step verify —
+    /// V4 twin of `verify_v3_post_drain_snapshot`). Keyed by
+    /// `(pool_manager, pool_id_hex)`. The pin is taken (consumed) — verified
+    /// exactly once; `None` for sparse / un-drained / already-verified pools.
+    #[allow(clippy::needless_pass_by_value)]
+    pub(crate) fn verify_v4_post_drain_snapshot<'py>(
+        &self,
+        py: Python<'py>,
+        pool_manager_address: String,
+        pool_id_hex: String,
+        rpc_url: String,
+        state_view_address: String,
+        block_number: Option<u64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let pool_manager: alloy::primitives::Address =
+            pool_manager_address.parse().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_manager: {e}"))
+            })?;
+        let state_view: alloy::primitives::Address = state_view_address.parse().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid state_view: {e}"))
+        })?;
+        let pool_id = crate::bot::engine::hex_string_to_pool_id(&pool_id_hex).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid pool_id: {e}"))
+        })?;
+        let post_drain = {
+            let engine = self.engine.lock();
+            let mut core = engine.core.write();
+            core.take_v4_post_drain_snapshot(pool_manager, &pool_id)
+        };
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let Some(tick_data) = post_drain else {
+                return Ok(());
+            };
+            let provider = degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)
+                .await
+                .map_err(|e| {
+                    crate::bot::engine::VerificationRpcError::new_err(format!(
+                        "verify_v4_post_drain_snapshot: failed to create provider: {e}"
+                    ))
+                })?;
+            let result = degenbot_bot::bot_core::liquidity_verifier::verify_v4_liquidity_map(
+                &provider,
+                state_view,
+                pool_id,
+                &tick_data,
+                block_number.unwrap_or(0),
+            )
+            .await;
+            if let Err(err) = result {
+                return Err(map_liquidity_verify_error(err));
+            }
+            log::info!(
+                "[verify-drain] V4 post-drain snapshot OK for pool_id {} at block {}",
+                degenbot_core::hex_utils::encode_hex(&pool_id),
+                block_number.unwrap_or(0)
+            );
+            Ok(())
+        })
+    }
 }
 
 /// Map a `LiquidityVerifyError` (from `liquidity_verifier::verify_v3/v4_pools`)

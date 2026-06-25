@@ -154,6 +154,20 @@ pub struct V3PoolState {
     /// `take_v3_snapshot_seed` after step-1 verify (verified exactly once).
     pub snapshot_seed: Option<HashMap<i32, TickInfo>>,
 
+    /// The pinned **post-drain** `tick_data` (the step-2 rolling-start race fix,
+    /// twin of `snapshot_seed`). Captured atomically with `apply_buffer_v3`'s
+    /// final drain (the single `core.write()` hold that runs the backfill +
+    /// pump drains) by `pin_v3_post_drain_snapshot`, and consumed once by
+    /// `take_v3_post_drain_snapshot` for step-2 verify. Verifying THIS frozen
+    /// blob (not engine-current) against on-chain@backfill is race-free:
+    /// during a rolling start (`resume()` precedes `build_paths`) the live
+    /// pump applies Mint/Burn onto `tick_data` AFTER the drain; reading
+    /// engine-current at step-2 would compare drain+pump-journal vs
+    /// on-chain@backfill (pre-journal) → a false mismatch on every active pool
+    /// (logs/verify-race-hotloop.log). `Some` only for `Tracked` pools
+    /// (Sparse has no complete `tick_data` → `None` → step-2 no-op).
+    pub post_drain_snapshot: Option<HashMap<i32, TickInfo>>,
+
     /// Whether the snapshot provided complete tick data for this pool.
     pub coverage: PoolTickCoverage,
 
@@ -196,10 +210,12 @@ impl Clone for V3PoolState {
             // Clones start with no cached ranges — the cache is invalidated on
             // mutation anyway, and a fresh Mutex avoids aliasing the source's.
             journal: self.journal.clone(),
-            // Clones (e.g. `v3_pools_snapshot()`) do NOT carry the pinned seed:
-            // it is only needed for step-1 verify on the live pool, and copying
-            // it into every snapshot clone would waste memory across 18k pools.
+            // Clones (e.g. `v3_pools_snapshot()`) do NOT carry the pinned seed
+            // or the pinned post-drain snapshot: both are only needed for
+            // step-1/step-2 verify on the live pool, and copying them into
+            // every snapshot clone would waste memory across 18k pools.
             snapshot_seed: None,
+            post_drain_snapshot: None,
             cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
         }
     }
@@ -270,6 +286,7 @@ impl V3PoolState {
             known_bitmap_words: HashSet::new(),
             journal: ReorgJournal::<V3BlockDelta>::new(journal_depth),
             snapshot_seed: None,
+            post_drain_snapshot: None,
             cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
         };
         // CBCH6H: pin the snapshot seed for Tracked pools so step-1 verify
@@ -732,6 +749,7 @@ mod tests {
             journal: ReorgJournal::<V3BlockDelta>::new(8),
             cached_tick_ranges: parking_lot::Mutex::new(super::TickRangeCache::default()),
             snapshot_seed: None,
+            post_drain_snapshot: None,
         }
     }
 

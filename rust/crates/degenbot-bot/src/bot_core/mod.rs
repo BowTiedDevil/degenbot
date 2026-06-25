@@ -1351,6 +1351,44 @@ impl BotState {
         state.snapshot_seed.take()
     }
 
+    /// Pin the **post-drain** `tick_data` for a V3 pool (the step-2 rolling-start
+    /// race fix). Captures a frozen copy of the current `tick_data` — called
+    /// atomically with `apply_buffer_v3`'s final drain (the single
+    /// `core.write()` hold running backfill + pump buffers). Step-2 verify
+    /// then compares THIS pinned blob (via `take_v3_post_drain_snapshot`) to
+    /// on-chain@backfill — NOT engine-current, which under a rolling start
+    /// accumulates pump Mint/Burn journals AFTER the drain (a false mismatch
+    /// on every active pool). `Some` only for `Tracked` pools; `Sparse` stays
+    /// `None` (no complete `tick_data` → step-2 is a no-op). Idempotent if
+    /// called twice (the second pin overwrites; only step-2 consumes it).
+    pub fn pin_v3_post_drain_snapshot(&mut self, address: Address) {
+        let Some(&pool_id) = self.pool_addresses.get(&address) else {
+            return;
+        };
+        let Some(PoolEntry::V3(state)) = self.pools.get_mut(&pool_id) else {
+            return;
+        };
+        if state.coverage == PoolTickCoverage::Tracked {
+            state.post_drain_snapshot = Some(state.tick_data.clone());
+        }
+    }
+
+    /// Take (move out + clear) the pinned post-drain `tick_data` for a V3 pool.
+    /// Step-2 verify calls this to read+free the pin in one pass — the pin is
+    /// verified exactly once (at the backfill block during `build_paths`),
+    /// then released to bound memory. Returns `None` for sparse pools, pools
+    /// with no drain-yet pin, or if already taken (no-op Ok at the seam).
+    pub fn take_v3_post_drain_snapshot(
+        &mut self,
+        address: Address,
+    ) -> Option<HashMap<i32, TickInfo>> {
+        let &pool_id = self.pool_addresses.get(&address)?;
+        let Some(PoolEntry::V3(state)) = self.pools.get_mut(&pool_id) else {
+            return None;
+        };
+        state.post_drain_snapshot.take()
+    }
+
     /// Family-dispatching reader for the V3/V4 concentrated-liquidity
     /// families (J63J3N). Returns a trait view over the shared read-only
     /// surface — the mutable scalars (`sqrt_price_x96`/`liquidity`/`tick`/
@@ -3257,6 +3295,43 @@ impl BotState {
         state.snapshot_seed.take()
     }
 
+    /// Pin the post-drain `tick_data` for a V4 pool (step-2 race fix, V4 twin of
+    /// `pin_v3_post_drain_snapshot`). Captures a frozen copy of the current
+    /// `tick_data` atomically with `apply_buffer_v4`'s final drain. Step-2
+    /// verify compares THIS pin (via `take_v4_post_drain_snapshot`) to
+    /// on-chain@backfill — NOT engine-current (which accumulates pump
+    /// `ModifyLiquidity` journals after the drain). `Tracked` pools only.
+    pub fn pin_v4_post_drain_snapshot(
+        &mut self,
+        pool_manager: Address,
+        pool_id: &degenbot_decoders::v4_swap_decoder::PoolId,
+    ) {
+        let Some(pid) = self.v4_pool_id_by_key(pool_manager, pool_id) else {
+            return;
+        };
+        let Some(PoolEntry::V4(state)) = self.pools.get_mut(&pid) else {
+            return;
+        };
+        if state.coverage == PoolTickCoverage::Tracked {
+            state.post_drain_snapshot = Some(state.tick_data.clone());
+        }
+    }
+
+    /// Take (move out + clear) the V4 post-drain pin. Step-2 verify consumes
+    /// it once (at the backfill block). `None` for sparse / un-drained /
+    /// already-taken pools (no-op Ok at the seam).
+    pub fn take_v4_post_drain_snapshot(
+        &mut self,
+        pool_manager: Address,
+        pool_id: &degenbot_decoders::v4_swap_decoder::PoolId,
+    ) -> Option<HashMap<i32, TickInfo>> {
+        let pid = self.v4_pool_id_by_key(pool_manager, pool_id)?;
+        let Some(PoolEntry::V4(state)) = self.pools.get_mut(&pid) else {
+            return None;
+        };
+        state.post_drain_snapshot.take()
+    }
+
     /// Number of registered V4 pools.
     #[must_use]
     pub fn v4_pool_count(&self) -> usize {
@@ -4862,6 +4937,110 @@ mod tests {
         );
     }
 
+    /// Step-2 (post-drain) twin of `v3_snapshot_seed_survives_pump_liquidity_update`.
+    /// The post-drain pin is captured atomically with `apply_buffer_v3`'s final
+    /// drain and must be IMMUTABLE across a subsequent pump Mint/Burn — otherwise
+    /// step-2 (verify post-drain state vs on-chain@backfill) reads engine-current
+    /// (drain + pump journal) vs on-chain@backfill (pre-journal) → a false
+    /// mismatch on every active pool during a rolling start
+    /// (logs/verify-race-hotloop.log: tick 59940, `update_block=25396803 >
+    /// block=25396790`). The pin is taken once (step-2 verify) then freed.
+    #[test]
+    fn v3_post_drain_snapshot_survives_pump_liquidity_update() {
+        use alloy::primitives::{I256, U128};
+        let mut core = BotState::new();
+        let v3_addr = make_pool_addr();
+
+        let liq: u128 = 1_000_000;
+        let liq_u128 = U256::from(liq).to::<U128>();
+        let mut seed = HashMap::new();
+        seed.insert(
+            -60,
+            TickInfo {
+                liquidity_gross: liq_u128,
+                liquidity_net: I256::try_from(i128::try_from(liq).unwrap()).unwrap(),
+                block: 0,
+            },
+        );
+        let drain_clone = seed.clone();
+
+        core.register_v3_pool(&RegisterV3PoolParams {
+            address: v3_addr,
+            token0: make_token0(),
+            token1: make_token1(),
+            fee: 3_000,
+            tick_spacing: 60,
+            factory: make_factory(),
+            sqrt_price_x96: U256::from(1u64) << 96,
+            liquidity: 0,
+            tick: 0,
+            tick_data: seed,
+            update_block: 0,
+            coverage: PoolTickCoverage::Tracked,
+        });
+
+        // Pin the post-drain state atomically with the drain (no buffer here →
+        // pin == current tick_data == the seed at registration). This is what
+        // `apply_buffer_v3` does inside its single core.write() hold.
+        core.pin_v3_post_drain_snapshot(v3_addr);
+
+        // A pump Mint lands AFTER the drain — mutating the live tick_data.
+        core.apply_v3_liquidity_update(v3_addr, -60, 60, 500_i128, 1);
+
+        // Live tick_data CHANGED (journal applied) ...
+        let live_gross = core
+            .get_v3_pool(core.pool_id_by_address(&v3_addr).unwrap())
+            .and_then(|s| s.tick_data.get(&-60))
+            .map(|t| t.liquidity_gross.to::<u128>());
+        assert_ne!(
+            live_gross,
+            Some(liq),
+            "pump Mint must mutate the live tick_data (precondition)"
+        );
+
+        // ... but the pinned post-drain snapshot is UNCHANGED — step-2 verifies
+        // the drain-time state, not the pump-corrupted current.
+        let taken = core.take_v3_post_drain_snapshot(v3_addr);
+        assert_eq!(
+            taken,
+            Some(drain_clone),
+            "post-drain pin must be frozen at drain time, not pump-mutated current (step-2 race fix)"
+        );
+        assert_eq!(
+            core.take_v3_post_drain_snapshot(v3_addr),
+            None,
+            "take clears the post-drain slot (verified exactly once)"
+        );
+    }
+
+    /// `Sparse` pools have no complete `tick_data` to pin — the post-drain pin
+    /// stays `None` (step-2 verify is a no-op, same as the seed for sparse).
+    #[test]
+    fn v3_post_drain_snapshot_is_none_for_sparse_pools() {
+        let mut core = BotState::new();
+        let v3_addr = make_pool_addr();
+        core.register_v3_pool(&RegisterV3PoolParams {
+            address: v3_addr,
+            token0: make_token0(),
+            token1: make_token1(),
+            fee: 3_000,
+            tick_spacing: 60,
+            factory: make_factory(),
+            sqrt_price_x96: U256::from(1u64) << 96,
+            liquidity: 0,
+            tick: 0,
+            tick_data: HashMap::new(),
+            update_block: 0,
+            coverage: PoolTickCoverage::Sparse,
+        });
+        core.pin_v3_post_drain_snapshot(v3_addr);
+        assert_eq!(
+            core.take_v3_post_drain_snapshot(v3_addr),
+            None,
+            "sparse pools must not pin post-drain (no complete tick_data)"
+        );
+    }
+
     /// OVVLGO: the V4 twin of the rolling-start race regression. The V4 seed
     /// must survive a pump `ModifyLiquidity` event so step-1 (seed-verify at
     /// the snapshot block) is race-free under a rolling start. Mirrors
@@ -4954,6 +5133,134 @@ mod tests {
             core.v4_snapshot_seed(pool_manager, &pool_id_bytes),
             None,
             "take clears the V4 seed slot (verified exactly once)"
+        );
+    }
+
+    /// Step-2 (post-drain) V4 twin of
+    /// `v4_snapshot_seed_survives_pump_modify_liquidity`. The V4 post-drain pin
+    /// is captured atomically with `apply_buffer_v4`'s final drain and must be
+    /// IMMUTABLE across a subsequent pump `ModifyLiquidity` — otherwise step-2
+    /// reads engine-current (drain + pump journal) vs on-chain@backfill
+    /// (pre-journal) → a false mismatch on every active V4 pool during a
+    /// rolling start. Pinned for Tracked pools only (Sparse → None, no-op).
+    #[test]
+    fn v4_post_drain_snapshot_survives_pump_modify_liquidity() {
+        use crate::bot_core::{RegisterV4PoolParams, V4PoolKey};
+        use alloy::primitives::{I256, U128};
+        use degenbot_cl_math as _;
+        let pool_manager = Address::from([0x44u8; 20]);
+        let pool_id_bytes: degenbot_decoders::v4_swap_decoder::PoolId = [0xeeu8; 32];
+        let mut core = BotState::new();
+
+        let gross: u128 = 1_000_000;
+        let liq_u128 = U256::from(gross).to::<U128>();
+        let mut seed = HashMap::new();
+        seed.insert(
+            -60,
+            TickInfo {
+                liquidity_gross: liq_u128,
+                liquidity_net: I256::try_from(i128::try_from(gross).unwrap()).unwrap(),
+                block: 0,
+            },
+        );
+        let drain_clone = seed.clone();
+
+        core.register_v4_pool(&RegisterV4PoolParams {
+            pool_manager,
+            pool_id: pool_id_bytes,
+            pool_key: V4PoolKey {
+                currency0: Address::ZERO,
+                currency1: Address::from([1u8; 20]),
+                fee: 10_000,
+                tick_spacing: 60,
+                hooks: Address::ZERO,
+            },
+            hook_flags: 0,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 0,
+            tick: 0,
+            tick_data: seed,
+            update_block: 0,
+            coverage: PoolTickCoverage::Tracked,
+        })
+        .expect("V4 pool registers");
+
+        // Pin post-drain state atomically with the drain (what apply_buffer_v4
+        // does inside its single core.write() hold).
+        core.pin_v4_post_drain_snapshot(pool_manager, &pool_id_bytes);
+
+        // Pump ModifyLiquidity lands AFTER the drain.
+        core.apply_v4_liquidity_update(
+            pool_manager,
+            pool_id_bytes,
+            -60,
+            60,
+            I256::try_from(500_i128).unwrap(),
+            1,
+        );
+
+        // Live tick_data CHANGED ...
+        let live_gross = {
+            let pid = core
+                .v4_pool_id_by_key(pool_manager, &pool_id_bytes)
+                .expect("registered");
+            core.get_v4_pool(pid)
+                .and_then(|s| s.tick_data.get(&-60))
+                .map(|t| t.liquidity_gross.to::<u128>())
+        };
+        assert_ne!(
+            live_gross,
+            Some(gross),
+            "pump ModifyLiquidity must mutate the live tick_data (precondition)"
+        );
+
+        // ... but the pinned post-drain snapshot is UNCHANGED — step-2 verifies
+        // drain-time state, not pump-corrupted current.
+        let taken = core.take_v4_post_drain_snapshot(pool_manager, &pool_id_bytes);
+        assert_eq!(
+            taken,
+            Some(drain_clone),
+            "V4 post-drain pin must be frozen at drain time (step-2 race fix)"
+        );
+        assert_eq!(
+            core.take_v4_post_drain_snapshot(pool_manager, &pool_id_bytes),
+            None,
+            "take clears the V4 post-drain slot (verified exactly once)"
+        );
+    }
+
+    /// `Sparse` V4 pools have no complete `tick_data` to pin — post-drain pin
+    /// stays `None` (step-2 verify is a no-op, same as the V4 seed for sparse).
+    #[test]
+    fn v4_post_drain_snapshot_is_none_for_sparse_pools() {
+        use crate::bot_core::{RegisterV4PoolParams, V4PoolKey};
+        let pool_manager = Address::from([0x44u8; 20]);
+        let pool_id_bytes: degenbot_decoders::v4_swap_decoder::PoolId = [0xeeu8; 32];
+        let mut core = BotState::new();
+        core.register_v4_pool(&RegisterV4PoolParams {
+            pool_manager,
+            pool_id: pool_id_bytes,
+            pool_key: V4PoolKey {
+                currency0: Address::ZERO,
+                currency1: Address::from([1u8; 20]),
+                fee: 10_000,
+                tick_spacing: 60,
+                hooks: Address::ZERO,
+            },
+            hook_flags: 0,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 0,
+            tick: 0,
+            tick_data: HashMap::new(),
+            update_block: 0,
+            coverage: PoolTickCoverage::Sparse,
+        })
+        .expect("V4 sparse pool registers");
+        core.pin_v4_post_drain_snapshot(pool_manager, &pool_id_bytes);
+        assert_eq!(
+            core.take_v4_post_drain_snapshot(pool_manager, &pool_id_bytes),
+            None,
+            "sparse V4 pools must not pin post-drain"
         );
     }
 
