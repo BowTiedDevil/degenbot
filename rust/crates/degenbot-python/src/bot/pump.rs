@@ -357,7 +357,7 @@ impl PumpState {
             let provider = degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)
                 .await
                 .map_err(|e| {
-                    PyRuntimeError::new_err(format!(
+                    crate::bot::engine::VerificationRpcError::new_err(format!(
                         "verify_liquidity_maps: failed to create provider: {e}"
                     ))
                 })?;
@@ -368,10 +368,8 @@ impl PumpState {
                 block_number,
             )
             .await;
-            if let Err(mismatch) = v3_result {
-                return Err(PyRuntimeError::new_err(format!(
-                    "Liquidity map verification FAILED: {mismatch}"
-                )));
+            if let Err(err) = v3_result {
+                return Err(map_liquidity_verify_error(err));
             }
             let v4_result = degenbot_bot::bot_core::liquidity_verifier::verify_v4_pools(
                 &provider,
@@ -380,10 +378,8 @@ impl PumpState {
                 block_number,
             )
             .await;
-            if let Err(mismatch) = v4_result {
-                return Err(PyRuntimeError::new_err(format!(
-                    "Liquidity map verification FAILED: {mismatch}"
-                )));
+            if let Err(err) = v4_result {
+                return Err(map_liquidity_verify_error(err));
             }
             log::info!(
                 "[verify] V3 + V4 liquidity maps OK at block {}",
@@ -410,7 +406,7 @@ impl PumpState {
             let provider = degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)
                 .await
                 .map_err(|e| {
-                    PyRuntimeError::new_err(format!(
+                    crate::bot::engine::VerificationRpcError::new_err(format!(
                         "verify_v3_liquidity_maps: failed to create provider: {e}"
                     ))
                 })?;
@@ -422,10 +418,8 @@ impl PumpState {
                 block_number,
             )
             .await;
-            if let Err(mismatch) = v3_result {
-                return Err(PyRuntimeError::new_err(format!(
-                    "V3 liquidity map verification FAILED: {mismatch}"
-                )));
+            if let Err(err) = v3_result {
+                return Err(map_liquidity_verify_error(err));
             }
             log::info!(
                 "[verify] V3 liquidity maps OK at block {}",
@@ -456,7 +450,7 @@ impl PumpState {
             let provider = degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)
                 .await
                 .map_err(|e| {
-                    PyRuntimeError::new_err(format!(
+                    crate::bot::engine::VerificationRpcError::new_err(format!(
                         "verify_v4_liquidity_maps: failed to create provider: {e}"
                     ))
                 })?;
@@ -467,10 +461,8 @@ impl PumpState {
                 block_number,
             )
             .await;
-            if let Err(mismatch) = v4_result {
-                return Err(PyRuntimeError::new_err(format!(
-                    "V4 liquidity map verification FAILED: {mismatch}"
-                )));
+            if let Err(err) = v4_result {
+                return Err(map_liquidity_verify_error(err));
             }
             log::info!(
                 "[verify] V4 liquidity maps OK at block {}",
@@ -478,5 +470,86 @@ impl PumpState {
             );
             Ok(())
         })
+    }
+}
+
+/// Map a `LiquidityVerifyError` (from `liquidity_verifier::verify_v3/v4_pools`)
+/// to a typed Python exception, mirroring `engine::verify::map_verify_err`.
+///
+/// - `Mismatch` → `VerificationMismatchError` (fatal — on-chain tick data
+///   disagrees with the engine).
+/// - `Rpc` → `VerificationRpcError` (per-call RPC transport failure — the
+///   caller may retry/backoff; NOT evidence of a mismatch).
+///
+/// Pre-AGVGNH the per-family `verify_v3/v4_liquidity_maps` methods mapped both
+/// variants to a plain `PyRuntimeError`, which `build_paths`' broad
+/// `except RuntimeError` arm silently swallowed as a skipped path — masking
+/// genuine mismatches. Routing through this seam restores fail-fast: a
+/// mismatch surfaces as `VerificationMismatchError`, the fatal arm in
+/// `build_paths`.
+pub(crate) fn map_liquidity_verify_error(err: degenbot_bot::bot_core::liquidity_verifier::LiquidityVerifyError) -> PyErr {
+    use degenbot_bot::bot_core::liquidity_verifier::LiquidityVerifyError;
+    use crate::bot::engine::{VerificationMismatchError, VerificationRpcError};
+    match err {
+        LiquidityVerifyError::Mismatch(m) => {
+            VerificationMismatchError::new_err(m.to_string())
+        }
+        LiquidityVerifyError::Rpc { message } => {
+            VerificationRpcError::new_err(message)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! AGVGNH: pin the per-family verify exception mapping. The
+    //! `verify_v3_liquidity_maps` / `verify_v4_liquidity_maps` methods must
+    //! route `LiquidityVerifyError` through `map_liquidity_verify_error` so
+    //! that a genuine on-chain mismatch surfaces as
+    //! `VerificationMismatchError` (the fatal arm in `build_paths`) and a
+    //! per-call RPC transport failure surfaces as `VerificationRpcError`
+    //! (retryable), NOT a plain `PyRuntimeError` (which the broad
+    //! `except RuntimeError` arm silently swallows as a skipped path).
+    use super::map_liquidity_verify_error;
+    use crate::bot::engine::{VerificationMismatchError, VerificationRpcError};
+    use degenbot_bot::bot_core::liquidity_verifier::{
+        LiquidityVerifyError, VerificationMismatch,
+    };
+
+    #[test]
+    fn mismatch_surfaces_as_verification_mismatch_error() {
+        pyo3::Python::attach(|py| {
+            let err = map_liquidity_verify_error(LiquidityVerifyError::Mismatch(
+                VerificationMismatch {
+                    message: "V3 pool 0x.. block=1: tick 5 liquidityGross mismatch".to_string(),
+                },
+            ));
+            assert!(
+                err.is_instance_of::<VerificationMismatchError>(py),
+                "LiquidityVerifyError::Mismatch must surface as VerificationMismatchError (fatal), not PyRuntimeError"
+            );
+            // Distinct from the RPC-error category.
+            assert!(
+                !err.is_instance_of::<VerificationRpcError>(py),
+                "genuine mismatch is NOT an Rpc error (distinct types)"
+            );
+        });
+    }
+
+    #[test]
+    fn rpc_failure_surfaces_as_verification_rpc_error() {
+        pyo3::Python::attach(|py| {
+            let err = map_liquidity_verify_error(LiquidityVerifyError::Rpc {
+                message: "V3 pool 0x..: tickBitmap(0) RPC call failed: timeout".to_string(),
+            });
+            assert!(
+                err.is_instance_of::<VerificationRpcError>(py),
+                "LiquidityVerifyError::Rpc must surface as VerificationRpcError (retryable), not PyRuntimeError"
+            );
+            assert!(
+                !err.is_instance_of::<VerificationMismatchError>(py),
+                "RPC transport failure is NOT a mismatch (distinct types)"
+            );
+        });
     }
 }
