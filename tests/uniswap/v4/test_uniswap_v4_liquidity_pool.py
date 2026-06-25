@@ -351,20 +351,6 @@ def test_pool_sqrt_price_checks(eth_usdc_v4: UniswapV4Pool):
     ],
     deadline=None,
 )
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "V4 exact-OUTPUT crossing-swap parity is deferred (slice 4 — see "
-        "test_v4_rust_swap_parity.py module docstring). The exact-out path "
-        "matches the on-chain quoter EXACTLY for single-tick swaps; once the "
-        "exact-output swap crosses a tick (~4-5e9 USDC out for ETH/USDC 0.05%, "
-        "fork-state-dependent), calculate_tokens_in_from_tokens_out under-counts "
-        "amount_in by a constant ~2.6e12 per crossing. compute_swap_step_v4, the "
-        "exact-out step accounting, liquidity_net application, and final delta "
-        "assembly all match PoolManager.sol; the residual divergence needs "
-        "tick-by-tick tracing against a V4 reference."
-    ),
-)
 def test_cached_calculations(
     amount: int,
     eth_usdc_v4: UniswapV4Pool,
