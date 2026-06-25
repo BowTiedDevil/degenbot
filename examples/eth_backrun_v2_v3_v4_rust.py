@@ -943,16 +943,20 @@ class BackrunSession:
             retry_policy=cfg.verification_retry_policy,
         )
 
-        # 3b. Verify liquidity maps against on-chain before the hot loop.
-        # Emits [verify] V3 + V4 liquidity maps OK — the line the permutation
-        # analyzer keys on for `verify_basis` ("verified"). With the
-        # shared-BotState design the register-gated verify never fires, so this
-        # batch check is the one that actually runs. ``block_number=None`` (the
-        # default) resolves to the engine's ``last_processed_block()`` — engine-
-        # state@N vs chain@N is deterministic; a pass transitively confirms the
-        # snapshot seed (see EngineRegistry.verify_liquidity_maps). Fail-fast
-        # on mismatch.
-        await self.engine_registry.verify_liquidity_maps()
+        # 3b. STARTUP batch verify REMOVED — redundant with the per-pool two-step
+        # verify and racy at the moving head. Step-1 (seed @ snapshot block) runs
+        # inside build_paths for each Tracked pool and proves the snapshot was
+        # good; step-2 (post-drain @ backfill block) proves the drain/pump
+        # applied buffered events correctly. Re-verifying the whole batch at
+        # `last_processed_block()` (the live head) re-checked what step-1/step-2
+        # just verified AND raced the pump's WS log-application lag: a block's
+        # header can advance `last_processed_block()` past it before its Mint
+        # log is dispatched (V2-V2-V3 crash — Mint at 25397047 unapplied when
+        # 25397049's header advanced the cursor, false-mismatching tick
+        # -887270). The per-pool gates are race-free (frozen-block pin); the
+        # T7 recurring-verify carries in-loop drift detection. The analyzer
+        # now keys `verify_basis` on the per-pool `[verify-seed]`/`[verify-drain]`
+        # lines (see permutation_analyzer._VERIFY_OK_RE).
 
         # 4. Trim redundant Python state — Rust engine owns canonical pool state.
         self.bot.release_python_state()

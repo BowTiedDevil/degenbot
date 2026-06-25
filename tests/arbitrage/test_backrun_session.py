@@ -76,6 +76,7 @@ class _FakeEngineRegistry:
         self.engine = _FakeEngine(events=events)
         self.start_calls: list[dict] = []
         self._backfill_target = backfill_target
+        self.verify_liquidity_maps_calls: int = 0  # step 3b batch verify count
 
     def start(
         self,
@@ -96,6 +97,7 @@ class _FakeEngineRegistry:
         return self._backfill_target
 
     async def verify_liquidity_maps(self, *, block_number=None) -> None:
+        self.verify_liquidity_maps_calls += 1
         self.verify_call = block_number
 
 
@@ -295,6 +297,39 @@ class TestBackrunSessionRun:
         assert session.bot is None
         assert session.engine_registry is engine_registry
 
+    async def test_run_skips_redundant_startup_batch_verify(self) -> None:
+        """Step 3b (the startup batch `verify_liquidity_maps()` at the moving
+        head) is redundant with the per-pool two-step verify: step-1 (seed)
+        proves the snapshot was good; step-2 (post-drain) proves the drain/pump
+        applied events correctly. Re-verifying at `last_processed_block()`
+        also races the pump's WS log-application lag — a block's header can
+        advance `last_processed_block` past it before its Mint log is
+        dispatched (V2-V2-V3 crash: Mint at 25397047 unapplied when 25397049's
+        header advanced the cursor). The per-pool gates (step-1/step-2) are
+        race-free and run inside `build_paths`; this batch gate must NOT run.
+        """
+        bot = _FakeBot()
+        engine_registry = _FakeEngineRegistry()
+        async_w3 = _FakeAsyncW3()
+
+        session = BackrunSession(
+            _cfg(),
+            bot=bot,
+            engine_registry=engine_registry,
+            async_w3=async_w3,
+            snapshots=(None, None, None, None),
+            path_builder=lambda **kw: _noop_coro(),
+            consumer=lambda **kw: _noop_coro(),
+        )
+        await session.start()
+        await session.run()
+
+        assert engine_registry.verify_liquidity_maps_calls == 0, (
+            "run() must NOT call the batch verify_liquidity_maps (step 3b) — "
+            "redundant with the per-pool step-1/step-2 gates and racy at the "
+            "moving head"
+        )
+
 
 class TestBackrunSessionContextManager:
     async def test_aexit_cancels_consumer_when_run_raises(self) -> None:
@@ -425,9 +460,11 @@ class TestBackrunSessionRunBlockStreamAcquiredOnce:
         assert seen_by_consumer == [500, 550, 600], (
             "result-consumer branch must receive every block"
         )
-        # The startup batch verify (run() step 3b, block_number=None → resolves
-        # to last_processed_block) fires first, THEN the recurring-verify
-        # ticker fires at each block divisible by RECURRING_VERIFY_INTERVAL (50).
-        assert seen_by_verify == [None, 500, 550, 600], (
-            "startup batch (None) then recurring-verify at 500/550/600"
+        # The recurring-verify ticker fires at each block divisible by
+        # RECURRING_VERIFY_INTERVAL (50). (Pre-removal, a leading `None` from
+        # the now-removed step-3b startup batch verify_liquidity_maps() appeared
+        # here — that gate is redundant with the per-pool step-1/step-2 gates
+        # and racy at the moving head, so it no longer runs.)
+        assert seen_by_verify == [500, 550, 600], (
+            "recurring-verify ticker must fire at each interval block"
         )

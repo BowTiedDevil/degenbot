@@ -140,7 +140,7 @@ _NO_PROFIT_REASON_RE = re.compile(r"by reason:.*?no-profit=(\d+)")
 _NO_PROFIT_DETAIL_RE = re.compile(r"no-profit=(\d+)")
 _DISPATCH_SIM_RE = re.compile(r"\[dispatch\] simulating (\d+)/")
 _SIM_CANDIDATES_RE = re.compile(r"\[sim\] (\d+) candidates:")
-_VERIFY_OK_RE = re.compile(r"\[verify\].*OK")
+_VERIFY_OK_RE = re.compile(r"\[verify(?:-seed|-drain)?\].*OK")
 _VERIFY_SKIPPED_RE = re.compile(r"verify.*SKIPPED|verification.*skipped", re.IGNORECASE)
 
 

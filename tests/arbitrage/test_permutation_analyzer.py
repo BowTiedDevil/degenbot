@@ -155,6 +155,24 @@ def test_analyze_log_detects_verify_basis_from_startup_log() -> None:
     assert analyze_log(log_none).verify_basis == ""
 
 
+def test_analyze_log_verify_basis_from_per_pool_gates() -> None:
+    """The per-pool two-step gates (step-1 seed + step-2 post-drain) ARE the
+    verification basis — the startup batch verify (step 3b) is redundant with
+    them (step-1 proves the seed good; step-2 proves the drain/pump applied
+    events correctly) and was removed (it raced the pump's WS log-application
+    lag at the moving head: `last_processed_block()` can advance past a block
+    on the header edge before its Mint log is dispatched — V2-V2-V3 crash at
+    block 25397049, Mint at 25397047 unapplied). A log carrying only the
+    per-pool `[verify-seed]`/`[verify-drain]` OK lines must register as
+    verified, replacing the old `[verify] … OK` batch line."""
+    log = (
+        "[verify-seed] V3 snapshot seed OK for 0x88e6…5640 at block 25396501\n"
+        "[verify-drain] V3 post-drain snapshot OK for 0x88e6…5640 at block 25397043\n"
+        "[sim] 1 ok (1), 0 failed\n"
+    )
+    assert analyze_log(log).verify_basis == "verified"
+
+
 def test_tsv_header_has_four_way_columns_no_stale() -> None:
     h = tsv_header()
     assert "Drift" in h and "SolverCalc" in h and "Encoding" in h and "Unknown" in h
