@@ -1707,6 +1707,7 @@ dependencies = [
  "degenbot-bot",
  "degenbot-cl-math",
  "degenbot-core",
+ "degenbot-curve-math",
  "degenbot-decoders",
  "degenbot-rpc",
  "degenbot-uniswap",

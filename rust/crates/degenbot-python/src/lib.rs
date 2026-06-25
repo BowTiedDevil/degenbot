@@ -27,6 +27,8 @@
 pub mod abi;
 #[cfg(feature = "balancer-math")]
 pub mod balancer_math;
+#[cfg(feature = "curve-math")]
+pub mod curve_math;
 #[cfg(feature = "bot")]
 pub mod bot;
 pub mod c_api;

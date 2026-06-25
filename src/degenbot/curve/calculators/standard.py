@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from degenbot.curve.types import CurveStableswapPoolState, DyCalculationInputs, SwapStyle
 
-from degenbot.calculations.stableswap import stableswap_get_y
+from degenbot.degenbot_rs import curve_stableswap_get_y
 from degenbot.exceptions.pool import EVMRevertError
 
 
@@ -109,16 +109,16 @@ class StandardDyCalculator:
 
         # ── Solve invariant ──
         try:
-            y = stableswap_get_y(
+            y = curve_stableswap_get_y(
                 i,
                 j,
-                x=x,
-                xp=xp,
-                amp=inputs.amp,
-                n_coins=inputs.n_coins,
-                a_precision=inputs.a_precision,
-                y_variant=inputs.y_variant,
-                d_variant=inputs.d_variant,
+                x,
+                list(xp),
+                inputs.amp,
+                inputs.n_coins,
+                inputs.a_precision,
+                inputs.y_variant.value,
+                inputs.d_variant.value,
             )
         except ValueError as e:
             raise EVMRevertError(error=str(e)) from e

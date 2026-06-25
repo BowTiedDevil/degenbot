@@ -50,6 +50,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "balancer-math")]
     crate::balancer_math::lib::add_balancer_math_module(m)?;
 
+    // Curve StableSwap math library functions (feature = "curve-math")
+    #[cfg(feature = "curve-math")]
+    crate::curve_math::lib::add_curve_math_module(m)?;
+
     // ABI decoder/encoder functions (feature = "abi")
     #[cfg(feature = "abi")]
     m.add_function(wrap_pyfunction!(crate::abi::decoder::decode, m)?)?;

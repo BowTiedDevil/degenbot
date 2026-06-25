@@ -385,6 +385,38 @@ def balancer_stable_calc_in_given_out(
     token_amount_out: int,
     invariant: int,
 ) -> int: ...
+
+
+# ── Curve StableSwap math (feature = "curve-math"). ──
+# Pure-math wrappers over the degenbot-curve-math leaf (the five iterative
+# solvers the DyCalculator strategy seam invokes). The variant discriminants
+# (`d_variant`/`y_variant`/`yd_variant`) are 1-based `auto()` enum `.value`s
+# matching the Rust `try_from_u8`. Vyper reverts (overflow / non-convergence /
+# index / unsafe-value) all surface as `ValueError` — the shape the Python
+# `DyCalculator` catches and wraps as `EVMRevertError(error=str(e))`.
+def curve_stableswap_get_d(
+    xp: list[int], amp: int, n_coins: int, a_precision: int, d_variant: int
+) -> int: ...
+def curve_stableswap_get_y(
+    i: int,
+    j: int,
+    x: int,
+    xp: list[int],
+    amp: int,
+    n_coins: int,
+    a_precision: int,
+    y_variant: int,
+    d_variant: int,
+) -> int: ...
+def curve_stableswap_get_y_d(
+    amp: int, i: int, xp: list[int], d: int, n_coins: int, a_precision: int, yd_variant: int
+) -> int: ...
+def curve_stableswap_newton_y(
+    ann: int, gamma: int, xp: list[int], d: int, token_index: int, n_coins: int, a_multiplier: int
+) -> int: ...
+def curve_stableswap_reduction_coefficient(
+    x: list[int], fee_gamma: int, n_coins: int
+) -> int: ...
 def get_sqrt_ratio_at_tick(tick: int) -> int:
     """Convert a tick value to its corresponding sqrt price (X96 format).
 
@@ -1578,6 +1610,11 @@ __all__ = [
     "cl_muldiv",
     "cl_muldiv_rounding_up",
     "cl_simple_mul_div",
+    "curve_stableswap_get_d",
+    "curve_stableswap_get_y",
+    "curve_stableswap_get_y_d",
+    "curve_stableswap_newton_y",
+    "curve_stableswap_reduction_coefficient",
     "decode",
     "decode_return_data",
     "decode_single",
