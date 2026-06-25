@@ -188,3 +188,60 @@ class TestBlockClockFromStream:
             "dispatch must key off the block-stream clock, never the batch's "
             "stale solve_block"
         )
+
+
+class TestTeeBlockStream:
+    """Red tests for `_tee_block_stream` — the fan-out that lets `run()` acquire
+    `engine.block_stream()` exactly once and feed BOTH the result consumer and
+    the T7 recurring-verify ticker.
+
+    Regression: `BackrunSession.run()` previously called
+    `engine.block_stream()` twice (the real `consume_result_batches`
+    self-acquires one when `block_stream=None`; `run()` line 967 acquired
+    another for the recurring-verify ticker). The real
+    `PyUniswapArbEngine.block_stream()` is once-only (it moves the mpsc
+    receiver out of a `Mutex<Option<rx>>`), so the second call raised
+    `RuntimeError("block_stream() can only be called once")` entering the main
+    loop — crashing every permutation run after `[startup] State trimmed …`.
+    The pump's block stream is single-consumer; two consumers need a fan-out.
+    """
+
+    async def test_both_branches_receive_every_block(self) -> None:
+        from examples.eth_backrun_v2_v3_v4_rust import _tee_block_stream
+
+        blocks = [_block(101), _block(102), _block(103)]
+        branch_a, branch_b, _driver = _tee_block_stream(_Blocks(blocks))
+
+        seen_a: list[dict[str, int]] = []
+        seen_b: list[dict[str, int]] = []
+
+        async def _drain(branch, sink: list) -> None:
+            async for b in branch:
+                sink.append(b)
+
+        await asyncio.gather(_drain(branch_a, seen_a), _drain(branch_b, seen_b))
+
+        assert seen_a == blocks, "branch A (result consumer) must receive every block"
+        assert seen_b == blocks, "branch B (recurring-verify ticker) must receive every block"
+
+    async def test_branches_are_independent(self) -> None:
+        # The two consumers must not steal from each other: a slow consumer on
+        # one branch must still see every block even after the other branch has
+        # finished draining. The source is consumed once by the tee driver and
+        # each block is copied to both queues (not a round-robin split).
+        from examples.eth_backrun_v2_v3_v4_rust import _tee_block_stream
+
+        blocks = [_block(201), _block(202), _block(203)]
+        branch_a, branch_b, _driver = _tee_block_stream(_Blocks(blocks))
+
+        # Drain branch A fully first; only then drain branch B. Both must still
+        # see every block (no blocks lost to the already-finished branch).
+        seen_a: list[int] = []
+        seen_b: list[int] = []
+        async for b in branch_a:
+            seen_a.append(b["number"])
+        async for b in branch_b:
+            seen_b.append(b["number"])
+
+        assert seen_a == [201, 202, 203], "branch A independent drain"
+        assert seen_b == [201, 202, 203], "branch B must still see every block after A finished"
