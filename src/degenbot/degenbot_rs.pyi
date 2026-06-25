@@ -1146,6 +1146,20 @@ class PyBot:
         state_view_address: str,
         block_number: int | None,
     ) -> Coroutine[Any, Any, None]: ...
+    def verify_v3_snapshot_seed(
+        self,
+        address: str,
+        rpc_url: str,
+        block_number: int | None,
+    ) -> Coroutine[Any, Any, None]: ...
+    def verify_v4_snapshot_seed(
+        self,
+        pool_manager_address: str,
+        pool_id_hex: str,
+        rpc_url: str,
+        state_view_address: str,
+        block_number: int | None,
+    ) -> Coroutine[Any, Any, None]: ...
     def register_curve_pool(
         self,
         address: str,
@@ -1357,6 +1371,20 @@ class UniswapArbEngine:
         self,
         address: str,
         rpc_url: str,
+        block_number: int | None,
+    ) -> Coroutine[Any, Any, None]: ...
+    def verify_v3_snapshot_seed(
+        self,
+        address: str,
+        rpc_url: str,
+        block_number: int | None,
+    ) -> Coroutine[Any, Any, None]: ...
+    def verify_v4_snapshot_seed(
+        self,
+        pool_manager_address: str,
+        pool_id_hex: str,
+        rpc_url: str,
+        state_view_address: str,
         block_number: int | None,
     ) -> Coroutine[Any, Any, None]: ...
     def verify_v4_pool(

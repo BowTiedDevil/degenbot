@@ -372,7 +372,10 @@ class EngineRegistry:
         # Async (awaited) — never `block_on` (the ecf576de tokio deadlock).
         # Gated by verify config (same posture as batch `verify_liquidity_maps`).
         await self._verify_pool_at_block(
-            "v3", pool.address, self._verify_snapshot_block, verify_seed=True
+            "v3",
+            pool.address,
+            self._verify_snapshot_block,
+            verify_seed=True,
         )
 
         # Drain the backfill/pump buffer onto the snapshot seed. *(unchanged)*
