@@ -149,7 +149,7 @@ and the canonical preset. Public-API breakage is accepted (0.x major refactor).
 `pool_type_registry.register(..., variant=, dex_identity=)` is the resolution seam.
 See `docs/migration-guides/dex-subclass-collapse.md` for the migration. A pre-existing
 `get_y_camelot` arity bug in the (dead-code) stable `to_hop_state` branch surfaced
-during the fold — tracked in TODO-7ea2e7d9.
+during the fold — resolved by `7b9cfffc` (was tracked in TODO-7ea2e7d9).
 
 **Precedent set by this ADR's slices.** The `#[pyclass(name = "Pool")]` /
 `name = "Token"` overrides (which exposed the original structs under the bare names
