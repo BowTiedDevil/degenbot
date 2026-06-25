@@ -575,4 +575,141 @@ mod tests {
         // The live subscriber still fires exactly once; the dead one skipped.
         assert_eq!(live_calls.lock().unwrap().len(), 1);
     }
+
+    /// RED-CAPABLE LOOP (V3 tick-map desync, perm logs): a real Mint event for
+    /// pool 0x88e6A0c2 (USDC/ETH 0.05%) at block 25390812 touches tick
+    /// tickLower=201020 (tickUpper=201814) with amount `24_703_323_223_522`.
+    /// On-chain, tick 201020's liquidityGross goes `689_141_000_492_849` →
+    /// `713_844_323_716_371` (exact: seed + amount). In production the engine
+    /// stays FROZEN at the seed across verify at blocks 25390812/38/85 while
+    /// the journal grows (3→4→12) — i.e. events land on the pool but not on
+    /// tick 201020. This test applies the exact Mint log through the real
+    /// `dispatch` path (`with_uniswap_decoders` → `V3MintBurnDecoder`) and
+    /// asserts tick 201020 == seed + amount. Red => the Mint is mis-routed/
+    /// dropped at the decode+apply seam.
+    #[test]
+    fn v3_mint_log_lands_on_decoded_tick_lower() {
+        use crate::bot_core::{PoolTickCoverage, RegisterV3PoolParams, TickInfo};
+        use alloy::primitives::{Address, B256, U256};
+        use std::str::FromStr;
+
+        let pool_addr: Address = "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640"
+            .parse()
+            .unwrap();
+        let block = 25390812u64;
+        const SEED_201020: u128 = 689_141_000_492_849;
+        const SEED_203350: u128 = 1_000_000_000_000;
+        const MINT_AMOUNT: u128 = 24_703_323_223_522;
+
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            201020,
+            TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(SEED_201020),
+                liquidity_net: alloy::primitives::I256::try_from(0).unwrap(),
+                block: 0,
+            },
+        );
+        tick_data.insert(
+            203350,
+            TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(SEED_203350),
+                liquidity_net: alloy::primitives::I256::try_from(0).unwrap(),
+                block: 0,
+            },
+        );
+
+        let state = Arc::new(parking_lot::RwLock::new(BotState::new()));
+        let pool_id = state.write().register_v3_pool(&RegisterV3PoolParams {
+            address: pool_addr,
+            token0: Address::ZERO,
+            token1: Address::ZERO,
+            fee: 500,
+            tick_spacing: 10,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 1_000_000_000,
+            tick: 201020,
+            tick_data,
+            update_block: 0,
+            coverage: PoolTickCoverage::Tracked,
+        });
+
+        // The exact Mint log emitted at block 25390812 (decoded from cast).
+        // topics[1]=owner, topics[2]=tickLower=0x03113c=201020,
+        // topics[3]=tickUpper=0x031a56=201814.
+        let mint_topic =
+            B256::from_str("0x7a53080ba414158be7ec69b987b5fb7d07dee101fe85488f0853ae16239d0bde")
+                .unwrap();
+        let owner_topic =
+            B256::from_str("0x000000000000000000000000c36442b4a4522e871399cd717abdd847ab11fe88")
+                .unwrap();
+        let tick_lower_topic =
+            B256::from_str("0x000000000000000000000000000000000000000000000000000000000003113c")
+                .unwrap();
+        let tick_upper_topic =
+            B256::from_str("0x0000000000000000000000000000000000000000000000000000000000031a56")
+                .unwrap();
+
+        // data = abi.encode(sender address [20B, left-pad], uint128 amount,
+        // uint256 amount0, uint256 amount1) — 128 bytes. Built from the decoded
+        // field values (amount = on-chain delta = 713844323716371 - seed).
+        let mut data: Vec<u8> = Vec::with_capacity(128);
+        // word 0: sender (left-padded 20-byte address)
+        let sender = [
+            0xc3, 0x64, 0x42, 0xb4, 0xa4, 0x52, 0x2e, 0x87, 0x13, 0x99, 0xcd, 0x71, 0x7a, 0xbd,
+            0xd8, 0x47, 0xab, 0x11, 0xfe, 0x88,
+        ];
+        data.extend_from_slice(&[0u8; 12]);
+        data.extend_from_slice(&sender);
+        // word 1: amount (uint128 → 32-byte ABI word = 16 zero bytes + 16 be)
+        data.extend_from_slice(&[0u8; 16]);
+        data.extend_from_slice(&MINT_AMOUNT.to_be_bytes());
+        // word 2: amount0 (uint256, fits in 128 bits)
+        data.extend_from_slice(&[0u8; 16]);
+        data.extend_from_slice(&0x2ab6b07u128.to_be_bytes());
+        // word 3: amount1 (uint256, fits in 128 bits)
+        data.extend_from_slice(&[0u8; 16]);
+        data.extend_from_slice(&0x9442009f44c61du128.to_be_bytes());
+        let data = alloy::primitives::Bytes::from(data);
+        assert_eq!(data.len(), 128, "Mint data must be 4×32 bytes");
+
+        let inner = alloy::primitives::Log::new_unchecked(
+            pool_addr,
+            vec![mint_topic, owner_topic, tick_lower_topic, tick_upper_topic],
+            data,
+        );
+        let log = Log {
+            inner,
+            block_hash: None,
+            block_number: Some(block),
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
+        };
+
+        let dispatcher = LogDispatcher::with_uniswap_decoders();
+        dispatcher.dispatch(&log, &state);
+
+        let s = state.read();
+        let pool = s.get_v3_pool(pool_id).expect("pool registered");
+        let t201020 = pool.tick_data.get(&201020).cloned().expect("tick 201020");
+        let t203350 = pool.tick_data.get(&203350).cloned().expect("tick 203350");
+
+        // On-chain ground truth: tick_lower gross += amount.
+        assert_eq!(
+            t201020.liquidity_gross.to::<u128>(),
+            SEED_201020 + MINT_AMOUNT,
+            "tick 201020 (Mint tickLower) must equal on-chain 713_844_323_716_371 — \
+             red means the Mint was mis-routed or dropped at decode+apply"
+        );
+        // tick_upper gross also += amount (liquidity_gross is bipartisan).
+        assert_eq!(
+            t203350.liquidity_gross.to::<u128>(),
+            SEED_203350 + MINT_AMOUNT,
+            "tick 203350 (Mint tickUpper 0x031a56) must also reflect the Mint amount"
+        );
+    }
 }
