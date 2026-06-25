@@ -483,6 +483,8 @@ impl BlockPump {
                             &mut current_block,
                             &mut last_solved_block,
                             &mut has_logs_this_block,
+                            &mut clock,
+                            &mut block_metadata,
                         )
                         .await;
                     }
@@ -564,6 +566,8 @@ impl BlockPump {
                                     current_block + 1,
                                     number - 1,
                                     &mut current_block,
+                                    &mut clock,
+                                    &mut block_metadata,
                                 )
                                 .await;
                             }
@@ -582,8 +586,14 @@ impl BlockPump {
                                 current_block + 1,
                                 number,
                             );
-                            self.backfill_range(current_block + 1, number - 1, &mut current_block)
-                                .await;
+                            self.backfill_range(
+                                current_block + 1,
+                                number - 1,
+                                &mut current_block,
+                                &mut clock,
+                                &mut block_metadata,
+                            )
+                            .await;
                         }
 
                         current_block = number;
@@ -747,6 +757,8 @@ impl BlockPump {
         current_block: &mut u64,
         last_solved_block: &mut u64,
         has_logs_this_block: &mut bool,
+        clock: &mut BlockClock,
+        block_metadata: &mut HashMap<u64, BlockMetadata>,
     ) {
         log::warn!("BlockPump: no activity for {BACKFILL_TIMEOUT_SECS}s — attempting backfill");
         let latest_block = match self.provider.provider_arc().get_block_number().await {
@@ -759,7 +771,7 @@ impl BlockPump {
 
         if latest_block > *current_block {
             let mut lpb = *current_block;
-            self.backfill_range(*current_block + 1, latest_block, &mut lpb)
+            self.backfill_range(*current_block + 1, latest_block, &mut lpb, clock, block_metadata)
                 .await;
             *current_block = lpb;
             *last_solved_block = lpb;
@@ -776,7 +788,14 @@ impl BlockPump {
     /// Backfill a range of blocks via `eth_getLogs`.
     ///
     /// Processes each block in the range sequentially.
-    async fn backfill_range(&self, from_block: u64, to_block: u64, last_processed_block: &mut u64) {
+    async fn backfill_range(
+        &self,
+        from_block: u64,
+        to_block: u64,
+        last_processed_block: &mut u64,
+        clock: &mut BlockClock,
+        block_metadata: &mut HashMap<u64, BlockMetadata>,
+    ) {
         if from_block > to_block {
             return;
         }
@@ -803,7 +822,12 @@ impl BlockPump {
             }
         }
 
-        // Process each block in order
+        // ADR-008 D4: backfilled logs flow through the SAME state machine as
+        // live WS logs (single branch — no distinguished `Backfilled` edge).
+        // Each log routes via `clock.observe_log`; a tombstoned predecessor is
+        // finalized + drained through the clock, and the backfilled block is
+        // solved via `on_drain` (results piggyback onto the next debounce
+        // `on_send` carrying real metadata).
         let mut any_processed = false;
         for block in from_block..=to_block {
             if self.shutdown.load(Ordering::Relaxed) {
@@ -812,18 +836,46 @@ impl BlockPump {
             }
 
             let block_logs = logs_by_block.remove(&block).unwrap_or_default();
-            if !block_logs.is_empty() {
-                // ADR-006 D4: `process_block(logs, block, metadata)` decomposed —
-                // each log routes through `Bot::dispatch_log` (decode → apply to
-                // BotState → notify EngineSubscriber → dirty the engine), then a
-                // single `on_drain` solves. NOTE: empty metadata here is fine —
-                // `on_drain` solves but does NOT send; accumulated results
-                // piggyback onto the next debounce `on_send(&current_metadata)`
-                // in `run_with_stream`, which carries real metadata (and the
-                // newer block's `results_block`).
-                for log in &block_logs {
-                    self.bot.dispatch_log(log);
+            for log in &block_logs {
+                match clock.observe_log(block, log.removed) {
+                    LogDecision::TombstonePrevious(prev) => {
+                        let prev_meta =
+                            block_metadata.get(&prev).copied().unwrap_or_default();
+                        self.sink.finalize_block(
+                            prev,
+                            &prev_meta,
+                            // backfill has no `last_solved_block`/`has_logs`
+                            // locals to pump; pass throwaways — `on_drain`
+                            // below is the solve trigger for the block itself.
+                            &mut 0,
+                            &mut false,
+                        );
+                        clock.advance_to_drained(prev);
+                        self.bot.dispatch_log(log);
+                        clock.log_received(block);
+                        clock.log_applied(block);
+                    }
+                    LogDecision::DispatchForward => {
+                        self.bot.dispatch_log(log);
+                        clock.log_received(block);
+                        clock.log_applied(block);
+                    }
+                    // Backfilled logs come from an authoritative eth_getLogs
+                    // against the canonical chain. Reorg/late-forward signals
+                    // are not expected here; if one surfaces, skip applying
+                    // this log (the canonical chain doesn't contain it) and let
+                    // the live stream reconcile.
+                    LogDecision::EnterReorg(_)
+                    | LogDecision::ContinueReorg
+                    | LogDecision::CloseReorg { .. }
+                    | LogDecision::PanicLateForward(_) => {
+                        log::warn!(
+                            "BlockPump: backfill saw unexpected decision for block {block}; skipping log"
+                        );
+                    }
                 }
+            }
+            if !block_logs.is_empty() {
                 self.sink.on_drain(block, &BlockMetadata::default());
                 any_processed = true;
             }
