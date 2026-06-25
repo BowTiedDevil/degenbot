@@ -13,6 +13,8 @@ instead of calling ``engine.register_v2_pool``).
 
 from __future__ import annotations
 
+import asyncio
+
 import dataclasses
 
 from degenbot.arbitrage.engine_registry import EngineRegistry
@@ -72,7 +74,7 @@ def test_register_v3_pool_resolves_shared_state_key_without_re_registering() -> 
     bot = _FakeBot(py_bot)
     registry = EngineRegistry(bot=bot)
 
-    key = registry.register_v3_pool(pool)  # type: ignore[arg-type]
+    key = asyncio.run(registry.register_v3_pool(pool))
 
     assert key == pool._py_pool.pool_id
     assert registry._v3_keys[pool.address] == key
@@ -149,7 +151,7 @@ def test_register_v3_pool_drains_backfill_buffer_onto_snapshot_seed() -> None:
     assert engine.debug_v3_tick_data(address)[-201000] == (100, 1000)
 
     # Register via the registry — this is where the drain must happen.
-    registry.register_v3_pool(pool)  # type: ignore[arg-type]
+    asyncio.run(registry.register_v3_pool(pool))
 
     assert engine.debug_v3_buffer_count(address) == 0
     # The burn zeroed gross → tick removed from the map (on-chain semantic).

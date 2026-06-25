@@ -72,7 +72,11 @@ from degenbot.arbitrage import (
     V4HopInfo,
 )
 from degenbot.arbitrage.encoding import fits_int128
-from degenbot.arbitrage.verification_retry import VerificationRetryPolicy, retry_verification_call
+from degenbot.arbitrage.verification_retry import (
+    VerificationRetryPolicy,
+    retry_verification_call,
+    retry_verification_call_async,
+)
 from degenbot.calculations.evm_math import next_base_fee
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.constants import WRAPPED_NATIVE_TOKENS
@@ -1200,10 +1204,14 @@ async def build_paths(
                 if pt == "V2":
                     retry_verification_call(_retry_policy, engine_registry.register_v2_pool, pool)
                 elif pt == "V3":
-                    retry_verification_call(_retry_policy, engine_registry.register_v3_pool, pool)
+                    await retry_verification_call_async(
+                        _retry_policy, engine_registry.register_v3_pool, pool
+                    )
                 elif pt == "V4":
                     v4_pool_count += 1
-                    retry_verification_call(_retry_policy, engine_registry.register_v4_pool, pool)
+                    await retry_verification_call_async(
+                        _retry_policy, engine_registry.register_v4_pool, pool
+                    )
         except VerificationMismatchError as exc:
             # Verification mismatch — on-chain tick state does not match the
             # engine state. This is fatal: trade on stale data = lose money.

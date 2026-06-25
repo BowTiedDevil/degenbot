@@ -22,6 +22,8 @@ These tests pin the shared-state contract against a real ``PyBot`` + real
 
 from __future__ import annotations
 
+import asyncio
+
 import dataclasses
 from typing import TYPE_CHECKING
 
@@ -96,7 +98,7 @@ def test_register_v4_pool_resolves_shared_state_key_without_re_registering() -> 
     # The pool is already in the shared BotState (built by make_v4_pool).
     # Registering with the registry must NOT raise and must return the
     # shared-core pool_id.
-    key = registry.register_v4_pool(pool)  # type: ignore[arg-type]
+    key = asyncio.run(registry.register_v4_pool(pool))
 
     assert key == pool._py_pool.pool_id
     # Cache populated so a second call returns the same key (no re-entry).
@@ -111,7 +113,7 @@ def test_register_v4_pool_idempotent_across_paths() -> None:
     bot = _FakeBot(py_bot)
     registry = EngineRegistry(bot=bot)
 
-    first = registry.register_v4_pool(pool)  # type: ignore[arg-type]
-    second = registry.register_v4_pool(pool)  # type: ignore[arg-type]
+    first = asyncio.run(registry.register_v4_pool(pool))
+    second = asyncio.run(registry.register_v4_pool(pool))
 
     assert first == second == pool._py_pool.pool_id
