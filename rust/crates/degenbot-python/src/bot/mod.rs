@@ -307,6 +307,46 @@ impl PyBot {
         )
     }
 
+    /// Verify a single V3 pool's pinned post-drain `tick_data` against
+    /// on-chain@backfill block (step-2 race fix, twin of
+    /// `verify_v3_snapshot_seed`). Step-2 of the two-step verify routes here.
+    #[allow(clippy::needless_pass_by_value)]
+    #[pyo3(signature = (address, rpc_url, block_number))]
+    fn verify_v3_post_drain_snapshot<'py>(
+        &self,
+        py: Python<'py>,
+        address: String,
+        rpc_url: String,
+        block_number: Option<u64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.pump_state()?
+            .verify_v3_post_drain_snapshot(py, address, rpc_url, block_number)
+    }
+
+    /// Verify a single V4 pool's pinned post-drain `tick_data` against
+    /// on-chain@backfill block (step-2 race fix, V4 twin of
+    /// `verify_v3_post_drain_snapshot`).
+    #[allow(clippy::needless_pass_by_value)]
+    #[pyo3(signature = (pool_manager_address, pool_id_hex, rpc_url, state_view_address, block_number))]
+    fn verify_v4_post_drain_snapshot<'py>(
+        &self,
+        py: Python<'py>,
+        pool_manager_address: String,
+        pool_id_hex: String,
+        rpc_url: String,
+        state_view_address: String,
+        block_number: Option<u64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.pump_state()?.verify_v4_post_drain_snapshot(
+            py,
+            pool_manager_address,
+            pool_id_hex,
+            rpc_url,
+            state_view_address,
+            block_number,
+        )
+    }
+
     /// Register a V2 pool by contract address.
     ///
     /// Returns the auto-assigned pool ID.

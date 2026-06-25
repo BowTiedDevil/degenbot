@@ -199,6 +199,14 @@ pub struct V4PoolState {
     /// `take_v4_snapshot_seed` after step-1 verify.
     pub snapshot_seed: Option<HashMap<i32, TickInfo>>,
 
+    /// The pinned **post-drain** `tick_data` (step-2 rolling-start race fix, V4
+    /// twin of `V3PoolState::post_drain_snapshot`). Captured atomically with
+    /// `apply_buffer_v4`'s final drain by `pin_v4_post_drain_snapshot`,
+    /// consumed once by `take_v4_post_drain_snapshot` for step-2 verify.
+    /// Verifying THIS frozen blob (not engine-current) vs on-chain@backfill is
+    /// race-free under a rolling start. `Some` only for `Tracked` pools.
+    pub post_drain_snapshot: Option<HashMap<i32, TickInfo>>,
+
     /// Tick-bitmap word positions known to be fetched. See
     /// [`V3PoolState::known_bitmap_words`] — V4 shares the same sparse
     /// miss-detection discipline (ADR-005 sparse-map feature parity).
@@ -226,9 +234,11 @@ impl Clone for V4PoolState {
             coverage: self.coverage,
             known_bitmap_words: self.known_bitmap_words.clone(),
             journal: self.journal.clone(),
-            // Clones (e.g. `v4_pools_snapshot()`) do NOT carry the pinned seed
-            // (CBCH6H — see V3PoolState::Clone).
+            // Clones (e.g. `v4_pools_snapshot()`) do NOT carry the pinned seed or
+            // the pinned post-drain snapshot (CBCH6H + step-2 race fix — see
+            // V3PoolState::Clone).
             snapshot_seed: None,
+            post_drain_snapshot: None,
             cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
         }
     }
@@ -279,6 +289,7 @@ impl V4PoolState {
             known_bitmap_words: HashSet::new(),
             journal: ReorgJournal::<V3BlockDelta>::new(journal_depth),
             snapshot_seed: None,
+            post_drain_snapshot: None,
             cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
         };
         // Seed the known-bitmap-word set from the tick_data keys for EVERY

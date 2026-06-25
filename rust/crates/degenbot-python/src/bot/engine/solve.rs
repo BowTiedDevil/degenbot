@@ -91,8 +91,14 @@ impl PyUniswapArbEngine {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid pool address: {e}"))
         })?;
         let engine = self.engine.lock();
-        engine.core.write().apply_backfill_buffer_v3(&addr);
-        engine.core.write().apply_pump_buffer_v3(&addr);
+        // SINGLE core.write() hold across both drains AND the post-drain pin so
+        // a pump Mint/Burn cannot land between the drain and the pin (the
+        // step-2 rolling-start race — see pin_v3_post_drain_snapshot). Pre-fix
+        // two separate write() calls left an inter-drain race window too.
+        let mut core = engine.core.write();
+        core.apply_backfill_buffer_v3(&addr);
+        core.apply_pump_buffer_v3(&addr);
+        core.pin_v3_post_drain_snapshot(addr);
         Ok(())
     }
 
@@ -106,8 +112,12 @@ impl PyUniswapArbEngine {
         })?;
         let pool_id = crate::bot::engine::hex_string_to_pool_id(pool_id_hex)?;
         let engine = self.engine.lock();
-        engine.core.write().apply_backfill_buffer_v4(pm, pool_id);
-        engine.core.write().apply_pump_buffer_v4(pm, pool_id);
+        // Single core.write() hold across both drains + the pin (V4 twin of the
+        // step-2 race fix in apply_buffer_v3).
+        let mut core = engine.core.write();
+        core.apply_backfill_buffer_v4(pm, pool_id);
+        core.apply_pump_buffer_v4(pm, pool_id);
+        core.pin_v4_post_drain_snapshot(pm, &pool_id);
         Ok(())
     }
 
