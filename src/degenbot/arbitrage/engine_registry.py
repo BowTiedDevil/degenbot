@@ -228,6 +228,57 @@ class EngineRegistry:
             block_number=resolved_block,
         )
 
+    async def _verify_pool_at_block(
+        self,
+        family: str,
+        address: str,  # noqa: ARG002
+        block: int | None,
+        *,
+        pool_id_hex: str | None = None,
+    ) -> None:
+        """T6 (ADR-006 D4): one step of the per-pool two-step verify.
+
+        Runs the relocated PyBot verify API
+        (``verify_v3_liquidity_maps`` / ``verify_v4_liquidity_maps``) against
+        the supplied ``block``. The two-step wiring in ``register_v3_pool`` /
+        ``register_v4_pool`` calls this BEFORE the drain (snapshot block) and
+        AFTER the drain (backfill block). Gated by verify config — a no-op
+        when ``start()`` wasn't called with ``verify_state_view`` (mirrors the
+        batch ``verify_liquidity_maps`` posture). A mismatch raises the
+        engine's ``VerificationMismatchError`` at the offending pool — fail-
+        fast, surfacing from ``build_paths``.
+
+        Args:
+            family: ``"v3"`` or ``"v4"`` — selects the verify method.
+            address: the pool address (label only — on-chain state is read
+                from the shared BotState snapshot, not the address).
+            block: the block to verify against; ``None`` means pending/latest.
+            pool_id_hex: required for V4 (the StateView key).
+        """
+        if self._verify_rpc_url is None or self._verify_state_view is None:
+            # No verify config — skip, same as batch verify_liquidity_maps.
+            return
+        if block is None:
+            # No snapshot/backfill block (no snapshot supplied at start()) —
+            # nothing to verify at this seam; the batch verify at
+            # last_processed_block() still runs post-build_paths.
+            return
+        # Use the engine's per-family batch verify (the relocated PyBot verify
+        # API; the engine keeps a thin delegating wrapper — T8 rewires the
+        # registry to call ``self.bot`` directly). Async, never block_on.
+        if family == "v3":
+            await self.engine.verify_v3_liquidity_maps(
+                rpc_url=self._verify_rpc_url,
+                block_number=block,
+            )
+        elif family == "v4":
+            assert pool_id_hex is not None  # noqa: S101
+            await self.engine.verify_v4_liquidity_maps(
+                rpc_url=self._verify_rpc_url,
+                state_view_address=self._verify_state_view,
+                block_number=block,
+            )
+
     def register_v2_pool(self, pool: LiquidityPool) -> int:  # noqa: D102
         if pool.address in self._v2_keys:
             return self._v2_keys[pool.address]
@@ -249,7 +300,7 @@ class EngineRegistry:
         self._v2_keys[pool.address] = key
         return key
 
-    def register_v3_pool(
+    async def register_v3_pool(
         self,
         pool: UniswapV3Pool,
     ) -> int:
@@ -278,23 +329,30 @@ class EngineRegistry:
         # `register_v2_pool` documents the same shared-state invariant.)
         key = pool._py_pool.pool_id  # noqa: SLF001
 
-        # Drain the backfill/pump buffer onto the snapshot seed. Production
-        # ordering (ADR-006): `backfill_from_snapshot` (in `start()`)
-        # buffers V3 Mint/Burn for pools not yet in BotState; `build_paths`
-        # then registers the pool via the builder + seeds tick_data via
-        # `update_tick_data`, and calls this method. The d65c43f6 bypass of
-        # `engine.register_v3_pool` (to avoid the duplicate-address panic)
-        # also skipped its `register_with_cl_buffers` drain — leaving buffered
-        # Mint/Burn undrained and the seed stale (phantom/missing liquidity
-        # that fails on-chain verify). Restore the drain here, on the path
-        # actually used. `apply_buffer_v3` is a no-op if the pool is
-        # unregistered or has no buffered events.
+        # T6 (ADR-006 D4): fail-fast two-step verify at the drain seam — the
+        # fail-fast detection the dead `engine.register_v3_pool` +
+        # `verify_on_register` gate was meant to provide, now at the method
+        # actually called per-pool during `build_paths`. Step 1: snapshot
+        # verify (raw seed vs on-chain @ snapshot block) BEFORE the drain —
+        # catches a bad seed/serialization at the offending pool, not 18k
+        # pools later. V2 has no tick map; V3/V4 only. Async (awaited) —
+        # never `block_on` (the ecf576de tokio deadlock). Gated by verify
+        # config (same posture as batch `verify_liquidity_maps`).
+        await self._verify_pool_at_block("v3", pool.address, self._verify_snapshot_block)
+
+        # Drain the backfill/pump buffer onto the snapshot seed. *(unchanged)*
         self.engine.apply_buffer_v3(pool.address)
+
+        # Step 2: backfill verify (post-drain state vs on-chain @ backfill
+        # block) AFTER the drain — catches a bad buffer-apply (e.g. the V4
+        # register->seed clobber at 292101f) at the offending pool. The backfill
+        # block is when post-backfill state first exists.
+        await self._verify_pool_at_block("v3", pool.address, self._verify_backfill_block)
 
         self._v3_keys[pool.address] = key
         return key
 
-    def register_v4_pool(
+    async def register_v4_pool(
         self,
         pool: UniswapV4Pool,
     ) -> int:
@@ -335,11 +393,19 @@ class EngineRegistry:
         # the builder, not here.
         key = pool._py_pool.pool_id  # noqa: SLF001
 
-        # Drain backfill/pump buffer — same rationale as register_v3_pool: the
-        # d65c43f6 bypass of `engine.register_v4_pool` skipped its drain, so
-        # ModifyLiquidity events buffered during `backfill_from_snapshot`
-        # would sit undrained, leaving the V4 snapshot seed stale.
+        # T6 (ADR-006 D4): fail-fast two-step verify at the drain seam.
+        # Step 1: snapshot verify (raw seed vs on-chain @ snapshot block).
+        await self._verify_pool_at_block(
+            "v4", pool.address, self._verify_snapshot_block, pool_id_hex=pool_id_hex
+        )
+
+        # Drain backfill/pump buffer — same rationale as register_v3_pool.
         self.engine.apply_buffer_v4(pool.address, pool_id_hex)
+
+        # Step 2: backfill verify (post-drain vs on-chain @ backfill block).
+        await self._verify_pool_at_block(
+            "v4", pool.address, self._verify_backfill_block, pool_id_hex=pool_id_hex
+        )
 
         self._v4_keys[pool_id_hex] = key
         return key

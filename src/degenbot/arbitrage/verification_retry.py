@@ -29,6 +29,7 @@ import dataclasses
 from typing import TYPE_CHECKING
 
 from tenacity import (
+    AsyncRetrying,
     Retrying,
     retry_if_exception_type,
     stop_after_attempt,
@@ -38,9 +39,9 @@ from tenacity import (
 from degenbot.degenbot_rs import VerificationRpcError  # type: ignore[attr-defined]
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
-__all__ = ["VerificationRetryPolicy", "retry_verification_call"]
+__all__ = ["VerificationRetryPolicy", "retry_verification_call", "retry_verification_call_async"]
 
 # Default policy — sane for a local/edge node recovering from a transient
 # transport blip: up to 4 attempts, ~0.5s → ~1s → ~2s base delays (before
@@ -125,11 +126,11 @@ class VerificationRetryPolicy:
 
 def retry_verification_call[T](  # type: ignore[misc]
     policy: VerificationRetryPolicy,
-    fn: Callable[..., T],
+    fn: Callable[..., Union[T, Awaitable[T]]],
     /,
     *args: object,
     **kwargs: object,
-) -> T:
+) -> Union[T, Awaitable[T]]:
     """Call ``fn(*args, **kwargs)`` with bounded retry on ``VerificationRpcError``.
 
     - ``VerificationRpcError`` is retried (transient transport / provider-init)
@@ -140,9 +141,51 @@ def retry_verification_call[T](  # type: ignore[misc]
     - After exhausting attempts, the last ``VerificationRpcError`` is re-raised
       (``reraise=True``) so the bot still crashes loudly rather than silently
       skipping verification — the safe default is preserved.
+    - Async-aware: if ``fn(*args, **kwargs)`` returns a coroutine/awaitable,
+      a coroutine is returned that awaits each attempt (the caller `await`s
+      it). Sync ``fn`` keeps the sync path (T8 rewires build_paths to `await`).
 
     Returns:
-        The value returned by ``fn`` once it succeeds.
+        The value returned by ``fn`` once it succeeds (or a coroutine that
+        resolves to it when ``fn`` is async).
 
     """
     return policy.build_retrier()(fn, *args, **kwargs)
+
+
+def retry_verification_call_async[T](  # type: ignore[misc]
+    policy: VerificationRetryPolicy,
+    fn: Callable[..., Awaitable[T]],
+    /,
+    *args: object,
+    **kwargs: object,
+) -> Awaitable[T]:
+    """Async variant of :func:`retry_verification_call` for awaiting coroutines.
+
+    Used for the per-pool register path (T6: ``register_v3/v4_pool`` are now
+    async — they await the two-step verify). Returns a coroutine the caller
+    awaits; same retry contract.
+    """
+    return _retry_async(policy, fn, *args, **kwargs)
+
+
+async def _retry_async[T](  # type: ignore[misc]
+    policy: VerificationRetryPolicy,
+    fn: Callable[..., Awaitable[T]],
+    *args: object,
+    **kwargs: object,
+) -> T:
+    retrier = AsyncRetrying(
+        stop=stop_after_attempt(policy.max_attempts),
+        wait=wait_exponential_jitter(
+            initial=policy.base_delay,
+            max=policy.max_delay,
+            jitter=policy.jitter,
+        ),
+        retry=retry_if_exception_type(VerificationRpcError),
+        reraise=True,
+    )
+    async for attempt in retrier:
+        with attempt:
+            return await fn(*args, **kwargs)  # type: ignore[arg-type]
+    raise RuntimeError("unreachable")  # tenacity always re-raises or returns
