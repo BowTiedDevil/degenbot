@@ -4862,6 +4862,101 @@ mod tests {
         );
     }
 
+    /// OVVLGO: the V4 twin of the rolling-start race regression. The V4 seed
+    /// must survive a pump `ModifyLiquidity` event so step-1 (seed-verify at
+    /// the snapshot block) is race-free under a rolling start. Mirrors
+    /// `v3_snapshot_seed_survives_pump_liquidity_update` for the V4
+    /// `(pool_manager, pool_id)` keying.
+    #[test]
+    fn v4_snapshot_seed_survives_pump_modify_liquidity() {
+        use crate::bot_core::{RegisterV4PoolParams, V4PoolKey};
+        use alloy::primitives::{I256, U128};
+        use degenbot_cl_math as _;
+        let pool_manager = Address::from([0x44u8; 20]);
+        let pool_id_bytes: degenbot_decoders::v4_swap_decoder::PoolId = [0xeeu8; 32];
+        let mut core = BotState::new();
+
+        let gross: u128 = 1_000_000;
+        let liq_u128 = U256::from(gross).to::<U128>();
+        let mut seed = HashMap::new();
+        seed.insert(
+            -60,
+            TickInfo {
+                liquidity_gross: liq_u128,
+                liquidity_net: I256::try_from(i128::try_from(gross).unwrap()).unwrap(),
+                block: 0,
+            },
+        );
+        let seed_clone = seed.clone();
+
+        core.register_v4_pool(&RegisterV4PoolParams {
+            pool_manager,
+            pool_id: pool_id_bytes,
+            pool_key: V4PoolKey {
+                currency0: Address::ZERO,
+                currency1: Address::from([1u8; 20]),
+                fee: 10_000,
+                tick_spacing: 60,
+                hooks: Address::ZERO,
+            },
+            hook_flags: 0,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 0,
+            tick: 0,
+            tick_data: seed,
+            update_block: 0,
+            coverage: PoolTickCoverage::Tracked,
+        })
+        .expect("V4 pool registers");
+
+        assert_eq!(
+            core.v4_snapshot_seed(pool_manager, &pool_id_bytes).cloned(),
+            Some(seed_clone.clone()),
+            "Tracked V4 pool must pin its snapshot seed at registration"
+        );
+
+        // Pump applies a ModifyLiquidity at block 1, mutating tick -60's gross.
+        core.apply_v4_liquidity_update(
+            pool_manager,
+            pool_id_bytes,
+            -60,
+            60,
+            I256::try_from(500_i128).unwrap(),
+            1,
+        );
+
+        // Live tick_data CHANGED (journal applied) ...
+        let live_gross = {
+            let pid = core
+                .v4_pool_id_by_key(pool_manager, &pool_id_bytes)
+                .expect("registered");
+            core.get_v4_pool(pid)
+                .and_then(|s| s.tick_data.get(&-60))
+                .map(|t| t.liquidity_gross.to::<u128>())
+        };
+        assert_ne!(
+            live_gross,
+            Some(gross),
+            "pump ModifyLiquidity must mutate the live tick_data (precondition)"
+        );
+
+        // ... but the pinned seed is UNCHANGED — step-1 verifies seed, not current.
+        assert_eq!(
+            core.v4_snapshot_seed(pool_manager, &pool_id_bytes).cloned(),
+            Some(seed_clone.clone()),
+            "V4 snapshot seed must be immutable across pump ModifyLiquidity (rolling-start race fix)"
+        );
+
+        // take: returns the seed exactly once then clears.
+        let taken = core.take_v4_snapshot_seed(pool_manager, &pool_id_bytes);
+        assert_eq!(taken, Some(seed_clone), "take returns the pinned seed");
+        assert_eq!(
+            core.v4_snapshot_seed(pool_manager, &pool_id_bytes),
+            None,
+            "take clears the V4 seed slot (verified exactly once)"
+        );
+    }
+
     #[test]
     fn unregister_v4_pool_by_tuple_key_discards_buffered_modify_liquidity() {
         use crate::bot_core::{RegisterV4PoolParams, V4PoolKey};
