@@ -269,6 +269,11 @@ PATH_SUPPRESS_THRESHOLD = 10
 # How many blocks between retry attempts for suppressed paths.
 PATH_SUPPRESS_RETRY_INTERVAL = 100
 
+# T7 (ADR-006 D4): how many blocks between recurring liquidity-map verifies
+# in the hot loop. Default 50 bounds RPC cost; a post-release / in-loop desync
+# (e.g. the V3 unregister bug at 3ae6fa04) is caught within this window.
+RECURRING_VERIFY_INTERVAL = 50
+
 # ── Executor code injection via eth_simulateV1 ──────────────────
 # When INJECT_EXECUTOR_CODE=True, we inject the cmd_executor
 # runtime bytecode at a fresh address via stateOverrides.code.
@@ -954,9 +959,26 @@ class BackrunSession:
             f"Entering main loop.",
         )
 
-        # 5. Main loop — runs until the consumer task ends.
+        # 5. Main loop — runs until the consumer task ends. A recurring verify
+        # task (T7) runs alongside: every RECURRING_VERIFY_INTERVAL blocks it
+        # re-checks liquidity maps so post-release / in-loop desyncs surface
+        # instead of trading silently. Both complete together.
         assert self._result_consumer_task is not None
-        await self._result_consumer_task
+        block_stream = self.engine_registry.engine.block_stream()
+        recurring_verify = asyncio.ensure_future(
+            run_recurring_verify_until_done(
+                registry=self.engine_registry,
+                block_ticker=(b["number"] async for b in block_stream),
+                interval=RECURRING_VERIFY_INTERVAL,
+                retry_policy=cfg.verification_retry_policy,
+            )
+        )
+        try:
+            await self._result_consumer_task
+        finally:
+            recurring_verify.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await recurring_verify
 
     # ── Actor builders (production path — only used when not injected) ──
     @staticmethod
@@ -989,6 +1011,29 @@ class BackrunSession:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
+
+
+async def _shim_run_recurring_verify_until_done(
+    *,
+    registry: EngineRegistry,
+    block_ticker: "asyncio.AsyncIterator[int]",
+    interval: int,
+    retry_policy: VerificationRetryPolicy,
+) -> None:
+    """T7: delegate to the library recurring-verify (kept in
+    degenbot.arbitrage.recurring_verify so tests can import it without the
+    example's cmd_stream import chain)."""
+    from degenbot.arbitrage.recurring_verify import run_recurring_verify_until_done
+
+    await run_recurring_verify_until_done(
+        registry=registry,
+        block_ticker=block_ticker,
+        interval=interval,
+        retry_policy=retry_policy,
+    )
+
+
+run_recurring_verify_until_done = _shim_run_recurring_verify_until_done
 
 
 async def build_paths(
