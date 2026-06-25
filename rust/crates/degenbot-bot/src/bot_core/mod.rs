@@ -18,6 +18,7 @@ use degenbot_uniswap::v2_encoding::{encode_v2_swap, EncodedCall};
 
 pub mod balancer_stable_state;
 pub mod balancer_weighted_state;
+pub mod block_clock;
 pub mod block_pump;
 pub mod curve_state;
 pub mod drain_sink;
@@ -57,6 +58,10 @@ pub use v4_state::{
 // in `tick_map.rs`). State structs stay flat; only verifier/apply views are
 // typed-narrowed.
 pub use tick_map::{TickMap, TickMapMut};
+
+// Re-export the ADR-008 per-block state machine core (pure; the pump drives
+// it — see `bot_core/block_clock.rs`).
+pub use block_clock::{BlockClock, BlockState, HeaderDecision, LogDecision};
 
 // ---------------------------------------------------------------------------
 // Pool state types
