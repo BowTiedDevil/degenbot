@@ -198,7 +198,7 @@ class TestSharedStateTopologyV3:
     Mirrors the V2 topology tests but for the V3 family: a pool registered via
     ``PyBot.register_v3_pool`` is read through a ``PyLiquidityPool`` handle the
     engine shares — the V3 scalar state (sqrt_price_x96/liquidity/tick/update_block)
-    lives in ``BotState``, not a Python-side ``ConcentratedLiquidityStateManager``.
+    lives in ``BotState``, not a Python-side state manager.
     """
 
     def test_v3_handle_reads_registered_scalars(self) -> None:
