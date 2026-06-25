@@ -8,7 +8,7 @@ expects.
 
 from web3 import Web3
 
-from contracts.cmd_stream import (
+from examples.cmd_stream import (
     BEGIN_EXECUTION,
     CMD_V2_SWAP_CALC,
     CMD_V2_SWAP_COMPACT,
@@ -279,7 +279,7 @@ def test_format_sim_diag_line_emits_parseable_json_with_required_fields() -> Non
     )
 
     assert line.startswith("[sim-diag] "), "line is prefixed [sim-diag] "
-    payload = json.loads(line[len("[sim-diag] "):])
+    payload = json.loads(line[len("[sim-diag] ") :])
     assert payload["path_id"] == 7
     assert payload["path_type"] == "V2-V3-V4"
     assert payload["solve_block"] == 100
@@ -313,7 +313,7 @@ def test_format_sim_diag_line_never_raises_on_missing_snapshot_keys() -> None:
         age=0,
         revert_info="",
     )
-    payload = json.loads(line[len("[sim-diag] "):])
+    payload = json.loads(line[len("[sim-diag] ") :])
     assert payload["path_id"] == 1
     assert payload["hops"] == []
     assert payload["optimal_input"] is None

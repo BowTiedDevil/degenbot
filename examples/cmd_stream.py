@@ -166,12 +166,7 @@ def pack_config(
     assert 0 <= bribe_bips <= 10_000, msg
     msg = f"bribe_recipient_idx must be 0–31, got {bribe_recipient_idx}"
     assert 0 <= bribe_recipient_idx < MAX_INDEXED_ADDRESSES, msg
-    return (
-        (expected_value << 32)
-        | (bribe_recipient_idx << 24)
-        | (bribe_bips << 8)
-        | check_mode
-    )
+    return (expected_value << 32) | (bribe_recipient_idx << 24) | (bribe_bips << 8) | check_mode
 
 
 def pack_expected_balance(check_mode: int, expected_value: int) -> int:
@@ -896,7 +891,7 @@ def _keccak256(data: bytes) -> bytes:
     return Web3.keccak(data)
 
 
-def _mapping_slot(base_slot: int, key: int) -> int:
+def mapping_slot(base_slot: int, key: int) -> int:
     """Compute Solidity mapping storage slot: keccak256(key . base_slot).
 
     ```. is concatenation, both key and base_slot are 32-byte big-endian.
@@ -918,7 +913,7 @@ def _nested_mapping_slot(base_slot: int, key1: int, key2: int) -> int:
         The computed nested mapping storage slot as an integer.
 
     """
-    return _mapping_slot(_mapping_slot(base_slot, key1), key2)
+    return mapping_slot(mapping_slot(base_slot, key1), key2)
 
 
 def compute_simulation_warmup_slots(
@@ -995,7 +990,7 @@ def compute_simulation_warmup_slots(
     # string), decimals(slot 2, uint8), balanceOf(slot 3, mapping).
     # Note: WETH9 does NOT use 'constant' for name/symbol — they occupy slots.
     weth9_balance_slot = 3
-    weth_balance_slot = _mapping_slot(weth9_balance_slot, executor_int)
+    weth_balance_slot = mapping_slot(weth9_balance_slot, executor_int)
 
     # PoolManager ERC6909 storage layout (verified on mainnet via C3 linearization):
     #   slot 0: owner (Owned)

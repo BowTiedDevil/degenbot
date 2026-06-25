@@ -27,10 +27,6 @@ Startup sequence:
 7. Consumer task continues as the permanent main loop
 """
 
-# _REPO_ROOT = Path(__file__).resolve().parents[1]
-# if str(_REPO_ROOT) not in sys.path:
-#     sys.path.insert(0, str(_REPO_ROOT))
-
 import argparse
 import asyncio
 import contextlib
@@ -52,17 +48,21 @@ import dotenv
 import eth_abi.abi
 import eth_account
 import web3
+from cmd_stream import mapping_slot, compute_simulation_warmup_slots, pack_expected_balance
+from eth_backrun_helpers import (
+    BackrunConfig,
+    classify_revert,
+    _format_failure_breakdown,
+    _format_sim_diag_line,
+    encode_cmd_stream,
+    v4_input_is_native,
+)
 from eth_typing import ChainId, ChecksumAddress
 from hexbytes import HexBytes
 from web3 import AsyncWeb3, Web3
 from web3.exceptions import TransactionNotFound, Web3Exception
 from web3.types import BlockStateCallV1, SimulateV1Payload, StateOverrideParams, TxParams
 
-from contracts.cmd_stream import (
-    _mapping_slot,
-    compute_simulation_warmup_slots,
-    pack_expected_balance,
-)
 from degenbot import Bot, LiquidityPool, UniswapV3Pool, get_checksum_address
 from degenbot.arbitrage import (
     EngineRegistry,
@@ -82,6 +82,7 @@ from degenbot.constants import WRAPPED_NATIVE_TOKENS
 from degenbot.database.models.pools import (
     UniswapV2PoolTableBase,
     UniswapV3PoolTableBase,
+    UniswapV4PoolTable,
     UniswapV4PoolTableBase,
 )
 from degenbot.degenbot_rs import (
@@ -100,14 +101,6 @@ from degenbot.uniswap.v3_snapshot import UniswapV3LiquiditySnapshot
 from degenbot.uniswap.v4_liquidity_pool import NATIVE_CURRENCY_ADDRESS, UniswapV4Pool
 from degenbot.uniswap.v4_snapshot import DatabaseSnapshot as V4DatabaseSnapshot
 from degenbot.uniswap.v4_snapshot import UniswapV4LiquiditySnapshot
-from examples.eth_backrun_helpers import (
-    BackrunConfig,
-    _classify_revert,
-    _format_failure_breakdown,
-    _format_sim_diag_line,
-    encode_cmd_stream,
-    v4_input_is_native,
-)
 
 # ──────────────────────────────────────────────────────────────────
 # Configuration
@@ -483,7 +476,7 @@ def build_simulation_state_overrides(
         # We overwrite the warmup's 1-wei entry with 10 ETH.
 
         WETH_BALANCEOF_MAPPING_SLOT = 3
-        weth_balance_slot = _mapping_slot(WETH_BALANCEOF_MAPPING_SLOT, int(injected_address, 16))
+        weth_balance_slot = mapping_slot(WETH_BALANCEOF_MAPPING_SLOT, int(injected_address, 16))
         overrides[Web3.to_checksum_address(WETH_ADDRESS)]["stateDiff"][
             f"0x{weth_balance_slot:064x}"
         ] = "0x" + (10 * 10**18).to_bytes(32, "big").hex()
@@ -2169,7 +2162,7 @@ async def dispatch_profitable_results(
                     f"block={current_block} age={current_block - solve_block} "
                     f"calldata={_cd}",
                 )
-                _tally_fail(_classify_revert(revert_data))
+                _tally_fail(classify_revert(revert_data))
                 return None
         try:
             weth_before = int.from_bytes(calls[0]["returnData"], byteorder="big")

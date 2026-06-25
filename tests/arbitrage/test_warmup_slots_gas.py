@@ -37,10 +37,8 @@ import pathlib
 import pytest
 from web3 import Web3
 
-from contracts.cmd_stream import (
-    compute_simulation_warmup_slots,
-)
 from degenbot.anvil_fork import AnvilFork
+from examples.cmd_stream import compute_simulation_warmup_slots
 
 # ── Constants ──
 
@@ -267,10 +265,10 @@ def test_weth_slot_matches_existing_code(fork: AnvilFork, w3: Web3):
     (WETH9: name=0, symbol=1, decimals=2, balanceOf=3). Our function
     must use the same slot.
     """
-    from contracts.cmd_stream import _mapping_slot
+    from examples.cmd_stream import mapping_slot
 
     WETH_BALANCEOF_MAPPING_SLOT = 3
-    computed_slot = _mapping_slot(WETH_BALANCEOF_MAPPING_SLOT, int(EXECUTOR_ADDRESS, 16))
+    computed_slot = mapping_slot(WETH_BALANCEOF_MAPPING_SLOT, int(EXECUTOR_ADDRESS, 16))
 
     # Cross-check with the existing backrun script's approach
     existing_slot = int.from_bytes(
@@ -404,7 +402,7 @@ def test_pm_erc6909_slot_at_base_slot_4():
     This is verified on mainnet. The test is a unit test (no fork needed)
     that documents this fact.
     """
-    from contracts.cmd_stream import _nested_mapping_slot
+    from examples.cmd_stream import _nested_mapping_slot
 
     # If we used slot 1 (naive expectation: first mapping in ERC6909),
     # the slot would be WRONG for the deployed PoolManager.

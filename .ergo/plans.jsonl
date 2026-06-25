@@ -350,3 +350,8 @@
 {"type":"link","ts":"2026-06-25T04:13:26.597705468Z","data":{"from_id":"BK55HK","to_id":"PY72UU","type":"depends"}}
 {"type":"claim","ts":"2026-06-25T04:16:14.744473099Z","data":{"id":"3AKFGR","agent_id":"opus@fedora","ts":"2026-06-25T04:16:14.744473099Z"}}
 {"type":"state","ts":"2026-06-25T04:16:14.744473099Z","data":{"id":"3AKFGR","state":"doing","ts":"2026-06-25T04:16:14.744473099Z"}}
+{"type":"result","ts":"2026-06-25T04:18:30.29615843Z","data":{"task_id":"3AKFGR","summary":"src/degenbot/arbitrage/engine_registry.py","path":"src/degenbot/arbitrage/engine_registry.py","sha256_at_attach":"db644e70b9de4e9d22bc5d5164e95c61eac3e005612789a40d097e9b0008ba89","mtime_at_attach":"2026-06-25T04:17:52.488130317Z","git_commit_at_attach":"912c8fb0333543f3cd674aa6ef8559706f41c639","ts":"2026-06-25T04:18:30.29615843Z"}}
+{"type":"state","ts":"2026-06-25T04:18:30.304115357Z","data":{"id":"3AKFGR","state":"done","ts":"2026-06-25T04:18:30.304115357Z"}}
+{"type":"claim","ts":"2026-06-25T04:18:51.879041799Z","data":{"id":"HQ2ROM","agent_id":"opus@fedora","ts":"2026-06-25T04:18:51.879041799Z"}}
+{"type":"state","ts":"2026-06-25T04:18:51.879041799Z","data":{"id":"HQ2ROM","state":"doing","ts":"2026-06-25T04:18:51.879041799Z"}}
+{"type":"state","ts":"2026-06-25T04:27:09.982631607Z","data":{"id":"HQ2ROM","state":"done","ts":"2026-06-25T04:27:09.982631607Z"}}
