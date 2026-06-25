@@ -35,6 +35,38 @@ D3+D4 were completed in a follow-up (ergo epic OP7YLN):
   hot-loop recurring `verify_liquidity_maps` was added so post-release / in-loop
   desyncs surface instead of trading silently.
 
+### Addendum (epic GAYTBA — verify-race + exception-mapping fix)
+
+The two-step verify as originally landed compared engine-*current* tick data
+against on-chain@snapshot_block at step-1. Under the bot's rolling start
+(`EngineRegistry.engine.resume()` runs *before* `build_paths` so paths
+discover against fresh blocks), the live pump applies Mint/Burn journals onto
+engine-current between registration and step-1. Step-1 then read
+(seed + journal) vs on-chain@snapshot (pre-journal) — a **false mismatch on
+every active pool** (`logs/perm-V2-V3-V2.log`: mismatches only at the snapshot
+block, `journal_len=1`, `update_block` postdating the snapshot; never at the
+live/backfill block). Two compounding bugs amplified this:
+
+1. **Per-family exception mapping (AGVGNH).** `Pump::verify_v3/v4_liquidity_maps`
+   mapped `LiquidityVerifyError` to a plain `PyRuntimeError`. `build_paths`'
+   `except RuntimeError` arm silently swallowed genuine mismatches as skipped
+   paths (non-fatal) instead of routing them to the fatal
+   `VerificationMismatchError` arm. Fixed by routing through
+   `map_liquidity_verify_error` (`Mismatch → VerificationMismatchError`,
+   `Rpc → VerificationRpcError`), mirroring the batch path.
+2. **Rolling-start race (CBCH6H).** Step-1 now compares the **pinned snapshot
+   seed** against on-chain@snapshot_block, not engine-current. `V3PoolState`/
+   `V4PoolState` retain `snapshot_seed` (a copy of the registration
+   `tick_data`) for `Tracked` pools, immutable across `apply_*_liquidity_update`.
+   New `PyBot.verify_v3/v4_snapshot_seed` methods take the seed and verify it
+   via the raw-tick-data `verify_v3/v4_liquidity_map` functions; the seed is
+   consumed once (`take_*_snapshot_seed`) so memory is bounded across 18k pools.
+   `EngineRegistry._verify_pool_at_block` routes step-1 (`verify_seed=True`,
+   seed) and step-2 (`verify_seed=False`, engine-current after the drain).
+
+The rolling-start design is preserved (resume still precedes build_paths); the
+fix closes the verify race at its cause rather than reordering startup.
+
 The Rust core `BotCore::register_v2/v3/v4_pool` was kept (the live
 insert at the `BotState` layer, used by the builders via `PyBot.register_v*`);
 D3 deleted only the unreachable pyo3 engine surface.
