@@ -7,14 +7,23 @@ from weakref import WeakSet
 
 from degenbot.balancer.libraries.constants import ONE
 from degenbot.balancer.libraries.scaling_helpers import _compute_scaling_factor
-from degenbot.balancer.libraries.stable_math import (
-    _calc_in_given_out,
-    _calc_out_given_in,
-    _calculate_invariant,
-    _calculate_invariant_deployed,
-)
 from degenbot.balancer.swap_amounts import BalancerV2SwapAmounts
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.degenbot_rs import (
+    balancer_stable_calc_in_given_out as _rs_calc_in_given_out,
+)
+from degenbot.degenbot_rs import (
+    balancer_stable_calc_out_given_in as _rs_calc_out_given_in,
+)
+from degenbot.degenbot_rs import (
+    balancer_stable_calculate_invariant as _rs_calculate_invariant,
+)
+from degenbot.degenbot_rs import (
+    balancer_stable_calculate_invariant_deployed as _rs_calculate_invariant_deployed,
+)
+from degenbot.degenbot_rs import (
+    balancer_weighted_subtract_swap_fee_amount as _rs_subtract_swap_fee_amount,
+)
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import StaleRateResult
 from degenbot.types.abstract import AbstractLiquidityPool
@@ -357,8 +366,7 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
 
         """
         fee_scaled = int(self.fee * self.FEE_DENOMINATOR)
-        fee_amount = (amount * fee_scaled + ONE - 1) // ONE  # mulUp
-        return amount - fee_amount
+        return _rs_subtract_swap_fee_amount(amount, fee_scaled)
 
     def _add_swap_fee_amount(self, amount: int) -> int:
         """Add swap fee to amount (divUp, matches deployed contract).
@@ -421,8 +429,8 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
             balances_for_inv = upscaled_balances
 
         if self.invariant_version == INVARIANT_V1:
-            return _calculate_invariant(self.amp, balances_for_inv)
-        return _calculate_invariant_deployed(self.amp, balances_for_inv, round_up=True)
+            return _rs_calculate_invariant(self.amp, balances_for_inv)
+        return _rs_calculate_invariant_deployed(self.amp, balances_for_inv, round_up=True)
 
     def _skip_bpt_index(self, index: int) -> int:
         """Map a full token list index to the non-BPT index.
@@ -514,7 +522,7 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
 
         invariant = self._compute_invariant(upscaled_balances)
 
-        amount_out_scaled = _calc_out_given_in(
+        amount_out_scaled = _rs_calc_out_given_in(
             self.amp,
             list(inv_balances),
             adjusted_in,
@@ -589,7 +597,7 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
 
         invariant = self._compute_invariant(upscaled_balances)
 
-        amount_in_scaled = _calc_in_given_out(
+        amount_in_scaled = _rs_calc_in_given_out(
             self.amp,
             list(inv_balances),
             adjusted_in,

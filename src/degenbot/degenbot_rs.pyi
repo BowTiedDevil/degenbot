@@ -335,6 +335,56 @@ def cl_min_usable_tick(tick_spacing: int) -> int:
 
     """
 
+# ── Balancer V2 math (feature = "balancer-math"). ──
+# Pure-math wrappers over the degenbot-balancer-math leaf. The `version`
+# discriminant (1=V1, 2=V2) is the bytecode-detected PowVersion; `round_up`
+# is the stable-invariant V1(always-roundDown)/V2(roundUp) axis. Reverts
+# surface as ValueError/OverflowError carrying the Solidity revert tag.
+def balancer_weighted_calculate_invariant(
+    normalized_weights: list[int],
+    balances: list[int],
+    version: int,
+) -> int: ...
+def balancer_weighted_calc_out_given_in(
+    balance_in: int,
+    weight_in: int,
+    balance_out: int,
+    weight_out: int,
+    amount_in: int,
+    version: int,
+) -> int: ...
+def balancer_weighted_calc_in_given_out(
+    balance_in: int,
+    weight_in: int,
+    balance_out: int,
+    weight_out: int,
+    amount_out: int,
+    version: int,
+) -> int: ...
+def balancer_weighted_subtract_swap_fee_amount(amount: int, fee_percentage: int) -> int: ...
+def balancer_weighted_add_swap_fee_amount(amount: int, fee_percentage: int) -> int: ...
+def balancer_stable_calculate_invariant(amp: int, balances: list[int]) -> int: ...
+def balancer_stable_calculate_invariant_deployed(
+    amp: int,
+    balances: list[int],
+    round_up: bool,
+) -> int: ...
+def balancer_stable_calc_out_given_in(
+    amp: int,
+    balances: list[int],
+    token_index_in: int,
+    token_index_out: int,
+    token_amount_in: int,
+    invariant: int,
+) -> int: ...
+def balancer_stable_calc_in_given_out(
+    amp: int,
+    balances: list[int],
+    token_index_in: int,
+    token_index_out: int,
+    token_amount_out: int,
+    invariant: int,
+) -> int: ...
 def get_sqrt_ratio_at_tick(tick: int) -> int:
     """Convert a tick value to its corresponding sqrt price (X96 format).
 
@@ -1502,6 +1552,15 @@ __all__ = [
     "UniswapArbEngine",
     "VerificationMismatchError",
     "VerificationRpcError",
+    "balancer_stable_calc_in_given_out",
+    "balancer_stable_calc_out_given_in",
+    "balancer_stable_calculate_invariant",
+    "balancer_stable_calculate_invariant_deployed",
+    "balancer_weighted_add_swap_fee_amount",
+    "balancer_weighted_calc_in_given_out",
+    "balancer_weighted_calc_out_given_in",
+    "balancer_weighted_calculate_invariant",
+    "balancer_weighted_subtract_swap_fee_amount",
     "cl_add_delta",
     "cl_compute_swap_step_v3",
     "cl_compute_swap_step_v4",
