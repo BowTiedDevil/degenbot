@@ -286,72 +286,15 @@ impl PyUniswapArbEngine {
         state_view_address: String,
         block_number: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        // NOTE: async, not `runtime.block_on`. The sync variant deadlocked the
-        // pump: `block_on` from a foreign (Python) thread, with the pump WS
-        // loop a task on the same shared multi-threaded tokio runtime, parked
-        // every worker on a futex under concurrent lock churn (2026-06-24
-        // diagnosis). Driven via `future_into_py` the verify future runs
-        // concurrently with the pump on the runtime's normal scheduler; the
-        // asyncio loop driving it stays free. Mirrors `verify_v3_pool`.
-        let tick_lens: Address = tick_lens_address.parse().map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Invalid tick_lens address: {e}"))
-        })?;
-        let state_view: Address = state_view_address.parse().map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Invalid state_view address: {e}"))
-        })?;
-
-        let (v3_pools, v4_pools) = {
-            let engine = self.engine.lock();
-            let core = engine.core.read();
-            let v3 = core.v3_pools_snapshot();
-            let v4 = core.v4_pools_snapshot();
-            (v3, v4)
-            // `core` + `engine` dropped here — release lock before async I/O.
-        };
-
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let provider = degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)
-                .await
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!(
-                        "verify_liquidity_maps: failed to create provider: {e}"
-                    ))
-                })?;
-
-            // Verify V3 pools
-            let v3_result = degenbot_bot::bot_core::liquidity_verifier::verify_v3_pools(
-                &provider,
-                tick_lens,
-                &v3_pools,
-                block_number,
-            )
-            .await;
-            if let Err(mismatch) = v3_result {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "Liquidity map verification FAILED: {mismatch}"
-                )));
-            }
-
-            // Verify V4 pools
-            let v4_result = degenbot_bot::bot_core::liquidity_verifier::verify_v4_pools(
-                &provider,
-                state_view,
-                &v4_pools,
-                block_number,
-            )
-            .await;
-            if let Err(mismatch) = v4_result {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "Liquidity map verification FAILED: {mismatch}"
-                )));
-            }
-
-            log::info!(
-                "[verify] V3 + V4 liquidity maps OK at block {}",
-                block_number.unwrap_or_default()
-            );
-            Ok(())
-        })
+        // ADR-006 D4 (T4): delegates to the shared `PumpState` — the
+        // Bot-owned entry point. Production routes through PyBot.
+        self.pump.verify_liquidity_maps(
+            py,
+            rpc_url,
+            tick_lens_address,
+            state_view_address,
+            block_number,
+        )
     }
 
     /// Verify V3 liquidity maps only, at a specific block.
@@ -366,45 +309,8 @@ impl PyUniswapArbEngine {
         rpc_url: String,
         block_number: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        // Async (`future_into_py`), not `runtime.block_on` — see
-        // `verify_liquidity_maps` for the deadlock rationale.
-        let v3_pools = {
-            let engine = self.engine.lock();
-            let v3 = engine.core.read().v3_pools_snapshot();
-            v3
-            // `engine` + read-guard dropped here — release lock before async I/O.
-        };
-
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let provider = degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)
-                .await
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!(
-                        "verify_v3_liquidity_maps: failed to create provider: {e}"
-                    ))
-                })?;
-
-            // TickLens address not used (V3 calls pool.ticks() directly)
-            let tick_lens = Address::ZERO;
-            let v3_result = degenbot_bot::bot_core::liquidity_verifier::verify_v3_pools(
-                &provider,
-                tick_lens,
-                &v3_pools,
-                block_number,
-            )
-            .await;
-            if let Err(mismatch) = v3_result {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "V3 liquidity map verification FAILED: {mismatch}"
-                )));
-            }
-
-            log::info!(
-                "[verify] V3 liquidity maps OK at block {}",
-                block_number.unwrap_or_default()
-            );
-            Ok(())
-        })
+        // ADR-006 D4 (T4): delegates to the shared `PumpState`.
+        self.pump.verify_v3_liquidity_maps(py, rpc_url, block_number)
     }
 
     /// Verify V4 liquidity maps only, at a specific block.
@@ -420,47 +326,8 @@ impl PyUniswapArbEngine {
         state_view_address: String,
         block_number: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        // Async (`future_into_py`), not `runtime.block_on` — see
-        // `verify_liquidity_maps` for the deadlock rationale.
-        let state_view: Address = state_view_address.parse().map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Invalid state_view address: {e}"))
-        })?;
-
-        let v4_pools = {
-            let engine = self.engine.lock();
-            let v4 = engine.core.read().v4_pools_snapshot();
-            v4
-            // `engine` + read-guard dropped here — release lock before async I/O.
-        };
-
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let provider = degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)
-                .await
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!(
-                        "verify_v4_liquidity_maps: failed to create provider: {e}"
-                    ))
-                })?;
-
-            let v4_result = degenbot_bot::bot_core::liquidity_verifier::verify_v4_pools(
-                &provider,
-                state_view,
-                &v4_pools,
-                block_number,
-            )
-            .await;
-            if let Err(mismatch) = v4_result {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "V4 liquidity map verification FAILED: {mismatch}"
-                )));
-            }
-
-            log::info!(
-                "[verify] V4 liquidity maps OK at block {}",
-                block_number.unwrap_or_default()
-            );
-            Ok(())
-        })
+        // ADR-006 D4 (T4): delegates to the shared `PumpState`.
+        self.pump.verify_v4_liquidity_maps(py, rpc_url, state_view_address, block_number)
     }
 
     /// Verify a single V3 pool's liquidity map against on-chain state.
@@ -633,19 +500,8 @@ impl PyUniswapArbEngine {
     /// Must be called before enabling `verify_on_register`.
     #[pyo3(signature = (rpc_url))]
     fn set_verify_rpc_url(&self, rpc_url: String) {
-        // Eagerly create and cache the provider so verification reuses
-        // the same HTTP connection pool instead of creating a new client
-        // per pool registration.
-        let runtime = degenbot_core::runtime::get_runtime();
-        match runtime.block_on(degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)) {
-            Ok(provider) => {
-                *self.pump.verify_provider.lock() = Some(provider);
-            }
-            Err(e) => {
-                eprintln!("[warn] Failed to create verification provider: {e}");
-            }
-        }
-        *self.pump.verify_rpc_url.lock() = Some(rpc_url);
+        // ADR-006 D4 (T4): delegates to the shared `PumpState`.
+        self.pump.set_verify_rpc_url(rpc_url)
     }
 
     /// Set the `StateView` contract address for V4 verification during registration.
@@ -654,7 +510,7 @@ impl PyUniswapArbEngine {
     #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (state_view_address))]
     fn set_verify_state_view(&self, state_view_address: String) {
-        let addr: Address = state_view_address.parse().unwrap_or(Address::ZERO);
-        *self.pump.verify_state_view.lock() = Some(addr);
+        // ADR-006 D4 (T4): delegates to the shared `PumpState`.
+        self.pump.set_verify_state_view(state_view_address)
     }
 }

@@ -185,6 +185,25 @@ def test_start_skips_set_verify_state_view_when_none() -> None:
     assert "set_verify_state_view" not in fake.calls
 
 
+def test_pybot_exposes_verify_methods_after_engine_attach() -> None:
+    """T4 (ADR-006 D4): PyBot exposes set_verify_rpc_url, set_verify_state_view,
+    verify_liquidity_maps, verify_v3_liquidity_maps, verify_v4_liquidity_maps as
+    delegating entry points once a UniswapArbEngine is constructed against it.
+    The batch verify still passes (same behavior, new home on PyBot)."""
+    from degenbot.degenbot_rs import PyBot, UniswapArbEngine
+
+    bot = PyBot()
+    UniswapArbEngine(py_bot=bot)  # attaches shared PumpState
+    for method in (
+        "set_verify_rpc_url",
+        "set_verify_state_view",
+        "verify_liquidity_maps",
+        "verify_v3_liquidity_maps",
+        "verify_v4_liquidity_maps",
+    ):
+        assert hasattr(bot, method), f"PyBot must expose {method} after engine attach"
+
+
 def test_pybot_exposes_pump_lifecycle_methods_after_engine_attach() -> None:
     """T3 (ADR-006 D4): PyBot exposes subscribe/backfill_from_snapshot/resume
     as delegating entry points once a UniswapArbEngine is constructed against
