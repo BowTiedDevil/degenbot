@@ -185,6 +185,51 @@ def test_start_skips_set_verify_state_view_when_none() -> None:
     assert "set_verify_state_view" not in fake.calls
 
 
+def test_start_stashes_snapshot_and_backfill_blocks_for_two_step_verify(monkeypatch) -> None:
+    """T1 (ADR-006 D4 + two-step verify prep): start() stashes the snapshot
+    block (min newest_block) and the backfill target (from subscribe) on the
+    registry, so the per-pool two-step verify (T6) can pass them to the verify
+    closures without re-deriving. These are NOT wired into engine.set_verify_*
+    (that dead path is deleted in T5) — they live on the registry for T6 to read.
+    No behavior change yet beyond setting the fields (T6 reads them)."""
+    fake = FakeEngine()
+    registry = runner.EngineRegistry(bot=None, engine=fake)
+
+    def _noop(snapshot, engine) -> None:  # noqa: ARG001
+        pass
+
+    monkeypatch.setattr(runner, "stream_v3_snapshot_to_engine", _noop)
+    monkeypatch.setattr(runner, "stream_v4_snapshot_to_engine", _noop)
+
+    v3_snap = _FakeSnapshot(newest_block=18_000_100)
+    v4_snap = _FakeSnapshot(newest_block=18_000_050)
+
+    registry.start(
+        "http://node:8545",
+        "ws://node:8546",
+        v3_snapshot=v3_snap,
+        v4_snapshot=v4_snap,
+    )
+
+    # snapshot_block is the min of the supplied newest_blocks; backfill_block
+    # is the subscribe() return (first observed WS block).
+    assert registry._verify_snapshot_block == 18_000_050
+    assert registry._verify_backfill_block == 18_000_000
+
+
+def test_start_stashes_None_blocks_when_no_snapshots() -> None:
+    """With no snapshots, there's no snapshot block to derive and no backfill
+    applied, so both block stashes are None (T6 will guard on None == verify
+    not applicable for this pool)."""
+    fake = FakeEngine()
+    registry = runner.EngineRegistry(bot=None, engine=fake)
+
+    registry.start("http://node:8545", "ws://node:8546")
+
+    assert registry._verify_snapshot_block is None
+    assert registry._verify_backfill_block is None
+
+
 def test_verify_liquidity_maps_raises_when_start_not_called() -> None:
     """Before start() stashes verify config, verify_liquidity_maps is a
     RuntimeError — never a silent skip or an unconfigured-RPC failure deep in

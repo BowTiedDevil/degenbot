@@ -27,26 +27,25 @@ Startup sequence:
 7. Consumer task continues as the permanent main loop
 """
 
-import argparse
-import datetime
-import json
-import sys
-from pathlib import Path
+# _REPO_ROOT = Path(__file__).resolve().parents[1]
+# if str(_REPO_ROOT) not in sys.path:
+#     sys.path.insert(0, str(_REPO_ROOT))
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+import argparse
 import asyncio
 import contextlib
 import dataclasses
+import datetime
 import gc
 import itertools
+import json
 import operator
 import os
 import pathlib
 import time
 import traceback
 from collections import deque
+from pathlib import Path
 from typing import Any
 
 import dotenv
@@ -80,19 +79,12 @@ from degenbot.arbitrage.verification_retry import (
 from degenbot.calculations.evm_math import next_base_fee
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.constants import WRAPPED_NATIVE_TOKENS
-from degenbot.database.models.pools import (  # noqa:F401
-    PancakeswapV2PoolTable,
-    PancakeswapV3PoolTable,
-    SushiswapV2PoolTable,
-    SushiswapV3PoolTable,
-    UniswapV2PoolTable,
+from degenbot.database.models.pools import (
     UniswapV2PoolTableBase,
-    UniswapV3PoolTable,
     UniswapV3PoolTableBase,
-    UniswapV4PoolTable,
     UniswapV4PoolTableBase,
 )
-from degenbot.degenbot_rs import (  # type: ignore[attr-defined]
+from degenbot.degenbot_rs import (
     DynamicFeePoolRejectedError,
     HookedPoolRejectedError,
     VerificationMismatchError,
@@ -872,19 +864,17 @@ class BackrunSession:
         self.v4_snapshot = v4_snap
 
         # ── Engine pre-resume ritual (subscribe → stream → backfill → verify) ──
-        # ``verify_on_register=False``: a per-pool synchronous verify RPC during
-        # ``build_paths`` makes V4-heavy permutations take 20–50 min (one RPC
-        # round-trip per V4 pool — ~18k pools for V2-V4-V4). The batch
-        # ``verify_liquidity_maps`` (step 3b, run after path discovery) already
-        # verifies every V3/V4 pool against on-chain at a deterministic block,
-        # fail-fast on mismatch — the per-pool check is redundant and slow.
+        # Two-step verify_on_register=True: detect snapshot/backfill drift at
+        # the moment a pool is registered (fail-fast), rather than only at the
+        # end-of-discovery batch verify — shortens time-to-first-failure if the
+        # engine/builder has a state bug.
         backfill_target = self.engine_registry.start(
             cfg.node_http,
             cfg.node_ws,
             v3_snapshot=v3_snap,
             v4_snapshot=v4_snap,
             verify_state_view=EthereumMainnetUniswapV4.state_view.address,
-            verify_on_register=False,
+            verify_on_register=True,
         )
         if backfill_target > self.current_block:
             self.current_block = backfill_target
@@ -2495,9 +2485,7 @@ async def consume_result_batches(
 
     # Prime both streams. Each completed future is re-primed unless its stream
     # ended (StopAsyncIteration); the loop exits when both are exhausted.
-    block_fut: asyncio.Task[dict[str, int]] | None = asyncio.ensure_future(
-        block_stream.__anext__()
-    )
+    block_fut: asyncio.Task[dict[str, int]] | None = asyncio.ensure_future(block_stream.__anext__())
     result_fut: asyncio.Task[dict[str, object]] | None = asyncio.ensure_future(
         result_iter.__anext__()
     )
@@ -2513,9 +2501,14 @@ async def consume_result_batches(
             elif fut is result_fut:
                 result_fut = _reprime(result_iter, fut, "result stream")
                 await _apply_result_if_ready(
-                    fut, dispatcher, engine_registry, async_w3,
-                    executor_address, operator_address,
-                    operator_private_key, dry_run,
+                    fut,
+                    dispatcher,
+                    engine_registry,
+                    async_w3,
+                    executor_address,
+                    operator_address,
+                    operator_private_key,
+                    dry_run,
                 )
 
 
@@ -2664,6 +2657,7 @@ async def _apply_result_if_ready(
             dispatcher=dispatcher,
             dry_run=dry_run,
         )
+
 
 async def main() -> None:
     parser = argparse.ArgumentParser()
