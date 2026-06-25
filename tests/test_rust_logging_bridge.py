@@ -22,7 +22,13 @@ import degenbot  # noqa: F401  (import triggers base config)
 RUST_BRIDGE_LOGGER_NAMES = (
     "degenbot_bot",
     "degenbot_core",
-    "degenbot_python",
+    # The PyO3 binding crate lives in ``crates/degenbot-python/`` but its
+    # Cargo ``name`` is ``degenbot_rs`` (set in its ``Cargo.toml``), so every
+    # bare ``log::info!`` in that crate emits under ``degenbot_rs::...`` →
+    # Python logger ``degenbot_rs.<...>``. The directory name ``degenbot_python``
+    # is never a Rust target — using it here drops the ``[verify]`` and
+    # register/snapshot logs.
+    "degenbot_rs",
     "degenbot_rpc",
     "degenbot_decoders",
     "degenbot_uniswap",
