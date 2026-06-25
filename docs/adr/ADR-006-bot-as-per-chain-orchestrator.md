@@ -1,12 +1,43 @@
 # ADR-006: Bot as the per-chain orchestrator (unified state, RPC ownership, Engine-as-EventSink)
 
-**Status: implemented (all 11 slices landed; ADR-006 acceptance verified).** Recorded during the
+**Status: implemented (D1 landed at original slice landing; D2/D5 retained as decided; D3+D4 completed in a follow-up — see Update).** Recorded during the
 unify-the-two-Bots grilling, June 2026. Revises the "Rust Core" enumeration in
 ADR-005 and resolves ADR-005's deferred "UniswapEngine lock unification" item, and
 supersedes the ADR-003 arrangement where the engine held its own `Arc<Mutex<Bot>>`.
 Implementation is a separate body of work; this ADR records the settled shape only.
 The `EventSink` / `on_block` interface signature is intentionally *not* specified here —
 see "Deferred" — only the topology is decided.
+
+## Update (ADR-006 D3+D4 follow-up completion)
+
+The original landing claim ("all 11 slices landed; ADR-006 acceptance verified")
+was incorrect for two sub-decisions: D3 (delete `engine.register_v2/v3/v4_pool`)
+and D4 (relocate `subscribe`/`backfill_from_snapshot`/`resume` + verify plumbing
+onto `Bot`) stalled after D1 (the shared `Arc<RwLock<BotState>>`) landed. The
+consequence: pool registration was rerouted through `PyBot.register_v*` (the
+builders) to avoid the duplicate-address panic D1 made real, stranding the
+`verify_on_register` gate on the unreachable `engine.register_v*` methods — it
+never fired. The only verify that ran was a single end-of-discovery batch.
+
+D3+D4 were completed in a follow-up (ergo epic OP7YLN):
+
+- **D4** — `SnapshotStore`/`register_with_cl_buffers`/`run_cl_verification` moved
+  to `bot_core::snapshot_verify` (generic over the engine type); `subscribe`/
+  `backfill_from_snapshot`/`resume` + `verify_liquidity_maps` and the
+  `set_verify_*` config moved onto `PyBot` via a shared `PumpState` (co-owned by
+  `PyBot` + `PyUniswapArbEngine`); the engine keeps thin delegating wrappers.
+- **D3** — the orphaned `PyUniswapArbEngine::register_v2/v3/v4_pool` + the
+  `verify_on_register` flag + `set_verify_on_register` were deleted (zero
+  production callers; the live registration path is `PyBot.register_v*`).
+- A fail-fast two-step verify (snapshot block + backfill block) was re-seated at
+  `engine_registry.register_v3/v4_pool`'s `apply_buffer_*` drain seam — the
+  detection at the offending pool the dead gate failed to provide — and a
+  hot-loop recurring `verify_liquidity_maps` was added so post-release / in-loop
+  desyncs surface instead of trading silently.
+
+The Rust core `BotCore::register_v2/v3/v4_pool` was kept (the live
+insert at the `BotState` layer, used by the builders via `PyBot.register_v*`);
+D3 deleted only the unreachable pyo3 engine surface.
 
 ## Context
 

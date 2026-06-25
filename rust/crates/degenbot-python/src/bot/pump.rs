@@ -12,7 +12,7 @@
 //! `PumpState` is the lifecycle layer: engine phase, the pump handle, the
 //! subscribe state held between `subscribe` and `resume`, the solve coordinator
 //! + reorg coordinator + shutdown flag. The pure solve core (`Arc<Mutex<UniswapEngine>>`,
-//! BotState, v3/v4 snapshot stores, verify config) stays on
+//! `BotState`, v3/v4 snapshot stores, verify config) stays on
 //! `PyUniswapArbEngine`.
 
 use std::sync::Arc;
@@ -117,15 +117,16 @@ impl PumpState {
 
     /// Advance to `phase` (no ordering check — the caller validates).
     pub(crate) fn set_phase(&self, phase: EnginePhase) {
-        self.phase.store(phase as u8, std::sync::atomic::Ordering::Relaxed);
+        self.phase
+            .store(phase as u8, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Subscribe to the WS `newHeads` + logs streams (ADR-006 D4 T3).
     ///
-    /// This is the Bot-owned pump entry point: PyBot::subscribe delegates here.
+    /// This is the Bot-owned pump entry point: `PyBot::subscribe` delegates here.
     /// The engine's own `subscribe` (kept for the engine-only test seam) also
     /// delegates here. The body touches only `PumpState` fields (bot,
-    /// coordinator, reorg_coordinator, shutdown, pump_handle, subscribe_state,
+    /// coordinator, `reorg_coordinator`, shutdown, `pump_handle`, `subscribe_state`,
     /// phase) — no engine reference — so it lives on the shared state both
     /// wrappers reach.
     ///
@@ -171,7 +172,7 @@ impl PumpState {
 
     /// Backfill Mint/Burn/ModifyLiquidity events from the DB snapshot block to
     /// the first WS block (ADR-006 D4 T3 — relocated onto the shared pump state
-    /// so PyBot::backfill_from_snapshot delegates here).
+    /// so `PyBot::backfill_from_snapshot` delegates here).
     ///
     /// # Errors
     /// `PyRuntimeError` if the phase is wrong, subscribe wasn't called, or an
@@ -216,14 +217,11 @@ impl PumpState {
             "backfill_from_snapshot: fetching events from block {from_block} to {to_block} ({total_blocks} blocks, chunk_size={chunk_size})"
         );
         let runtime = degenbot_core::runtime::get_runtime();
-        let provider = runtime
-            .block_on(async {
-                degenbot_rpc::provider::AlloyProvider::new(rpc_url, 3)
-                    .await
-                    .map_err(|e| {
-                        PyRuntimeError::new_err(format!("Failed to create provider: {e}"))
-                    })
-            })?;
+        let provider = runtime.block_on(async {
+            degenbot_rpc::provider::AlloyProvider::new(rpc_url, 3)
+                .await
+                .map_err(|e| PyRuntimeError::new_err(format!("Failed to create provider: {e}")))
+        })?;
         let provider_arc = provider.provider_arc();
         let mut total_logs = 0usize;
         let mut chunk_start = from_block;
@@ -231,14 +229,13 @@ impl PumpState {
             let chunk_end = (chunk_start + chunk_size - 1).min(to_block);
             let filter =
                 degenbot_bot::bot_core::block_pump::build_backfill_filter(chunk_start, chunk_end);
-            let logs = runtime
-                .block_on(async {
-                    provider_arc.get_logs(&filter).await.map_err(|e| {
-                        PyRuntimeError::new_err(format!(
-                            "eth_getLogs failed for blocks {chunk_start}-{chunk_end}: {e}"
-                        ))
-                    })
-                })?;
+            let logs = runtime.block_on(async {
+                provider_arc.get_logs(&filter).await.map_err(|e| {
+                    PyRuntimeError::new_err(format!(
+                        "eth_getLogs failed for blocks {chunk_start}-{chunk_end}: {e}"
+                    ))
+                })
+            })?;
             let chunk_log_count = logs.len();
             total_logs += chunk_log_count;
             {
@@ -254,7 +251,11 @@ impl PumpState {
             "backfill_from_snapshot: complete — {total_logs} total logs applied across {total_blocks} blocks"
         );
         *self.verify_snapshot_block.lock() = Some(snapshot_block);
-        let backfill_block = self.engine.lock().last_processed_block().unwrap_or(to_block);
+        let backfill_block = self
+            .engine
+            .lock()
+            .last_processed_block()
+            .unwrap_or(to_block);
         *self.verify_backfill_block.lock() = Some(backfill_block);
         self.set_phase(EnginePhase::Backfilled);
         Ok(total_blocks)
@@ -322,8 +323,9 @@ impl PumpState {
 
     /// Set the `StateView` contract address for V4 verification (ADR-006 D4 T4).
     pub(crate) fn set_verify_state_view(&self, state_view_address: String) {
-        let addr: alloy::primitives::Address =
-            state_view_address.parse().unwrap_or(alloy::primitives::Address::ZERO);
+        let addr: alloy::primitives::Address = state_view_address
+            .parse()
+            .unwrap_or(alloy::primitives::Address::ZERO);
         *self.verify_state_view.lock() = Some(addr);
     }
 

@@ -52,6 +52,7 @@ _DEFAULT_MAX_ATTEMPTS = 4
 _DEFAULT_BASE_DELAY = 0.5
 _DEFAULT_MAX_DELAY = 4.0
 _DEFAULT_JITTER = 0.5
+_UNREACHABLE = "unreachable"  # tenacity always re-raises or returns
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -126,11 +127,11 @@ class VerificationRetryPolicy:
 
 def retry_verification_call[T](  # type: ignore[misc]
     policy: VerificationRetryPolicy,
-    fn: Callable[..., Union[T, Awaitable[T]]],
+    fn: Callable[..., T | Awaitable[T]],
     /,
     *args: object,
     **kwargs: object,
-) -> Union[T, Awaitable[T]]:
+) -> T | Awaitable[T]:
     """Call ``fn(*args, **kwargs)`` with bounded retry on ``VerificationRpcError``.
 
     - ``VerificationRpcError`` is retried (transient transport / provider-init)
@@ -165,6 +166,11 @@ def retry_verification_call_async[T](  # type: ignore[misc]
     Used for the per-pool register path (T6: ``register_v3/v4_pool`` are now
     async — they await the two-step verify). Returns a coroutine the caller
     awaits; same retry contract.
+
+    Returns:
+        A coroutine yielding ``fn``'s result (or raising the last
+        ``VerificationRpcError`` after exhausting retries).
+
     """
     return _retry_async(policy, fn, *args, **kwargs)
 
@@ -188,4 +194,4 @@ async def _retry_async[T](  # type: ignore[misc]
     async for attempt in retrier:
         with attempt:
             return await fn(*args, **kwargs)  # type: ignore[arg-type]
-    raise RuntimeError("unreachable")  # tenacity always re-raises or returns
+    raise RuntimeError(_UNREACHABLE)  # tenacity always re-raises or returns

@@ -1112,7 +1112,40 @@ class PyBot:
         liquidity: int,
         tick: int,
         block: int,
+        tick_data: dict[int, tuple[int, int, int]] | None = None,
+        coverage: str = "tracked",
     ) -> int: ...
+
+    # ADR-006 D4 (T3+T4): pump lifecycle + verify plumbing drive the shared
+    # PumpState attached when a UniswapArbEngine(py_bot=...) is constructed.
+    def subscribe(self, rpc_url: str) -> int: ...
+    def backfill_from_snapshot(
+        self,
+        rpc_url: str,
+        snapshot_block: int,
+        chunk_size: int = 2000,
+    ) -> int: ...
+    def resume(self) -> None: ...
+    def set_verify_rpc_url(self, rpc_url: str) -> None: ...
+    def set_verify_state_view(self, state_view_address: str) -> None: ...
+    def verify_liquidity_maps(
+        self,
+        rpc_url: str,
+        tick_lens_address: str,
+        state_view_address: str,
+        block_number: int | None,
+    ) -> Coroutine[Any, Any, None]: ...
+    def verify_v3_liquidity_maps(
+        self,
+        rpc_url: str,
+        block_number: int | None,
+    ) -> Coroutine[Any, Any, None]: ...
+    def verify_v4_liquidity_maps(
+        self,
+        rpc_url: str,
+        state_view_address: str,
+        block_number: int | None,
+    ) -> Coroutine[Any, Any, None]: ...
     def register_curve_pool(
         self,
         address: str,

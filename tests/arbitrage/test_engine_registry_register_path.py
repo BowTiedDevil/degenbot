@@ -89,18 +89,27 @@ def test_bot_none_without_engine_raises() -> None:
 
 
 def test_bot_supplies_py_bot_to_real_engine() -> None:
-    """EngineRegistry(bot=bot) constructs the real engine against bot._py_bot."""
+    """EngineRegistry(bot=bot) constructs the real engine against bot._py_bot.
+
+    ADR-006 D1: the engine shares the bot's BotState. The live registration path
+    is ``PyBot.register_v*`` (ADR-006 D3 deleted the unreachable pyo3 engine
+    ``register_*`` surface); registering a V2 pool against the bot's py_bot must
+    be visible to the engine's ``v2_pool_count``.
+    """
     bot = _FakeBot()
     registry = runner.EngineRegistry(bot=bot)
 
     assert isinstance(registry.engine, UniswapArbEngine)
-    # The engine shares the bot's BotState (ADR-006 D1): registering a V2 pool
-    # against the same py_bot must be visible to the engine's pool_count.
-    registry.engine.register_v2_pool(
+    bot._py_bot.register_v2_pool(
         address="0x0000000000000000000000000000000000000001",
+        token0="0x0000000000000000000000000000000000000002",
+        token1="0x0000000000000000000000000000000000000003",
         reserve0=1_000_000,
         reserve1=1_000_000,
-        gamma_numer=997,
-        fee_denom=1000,
+        gamma_numer0=997,
+        fee_denom0=1000,
+        gamma_numer1=997,
+        fee_denom1=1000,
+        factory="0x0000000000000000000000000000000000000004",
     )
     assert registry.engine.v2_pool_count() == 1

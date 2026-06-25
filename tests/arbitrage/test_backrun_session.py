@@ -63,6 +63,13 @@ class _FakeEngine:
     def path_count(self) -> int:
         return 0
 
+    async def block_stream(self):
+        # T7: the hot loop spawns a recurring-verify task consuming
+        # engine.block_stream(). Test engines never advance blocks, so yield
+        # nothing — the recurring verify task stays idle until cancelled.
+        return
+        yield  # pragma: no cover - makes this an async generator
+
 
 class _FakeEngineRegistry:
     def __init__(self, *, backfill_target: int = 12_000, events: list[str] | None = None) -> None:
@@ -78,7 +85,6 @@ class _FakeEngineRegistry:
         v3_snapshot,
         v4_snapshot,
         verify_state_view,
-        verify_on_register,
     ) -> int:
         self.start_calls.append({
             "node_http": node_http,
@@ -86,7 +92,6 @@ class _FakeEngineRegistry:
             "v3_snapshot": v3_snapshot,
             "v4_snapshot": v4_snapshot,
             "verify_state_view": verify_state_view,
-            "verify_on_register": verify_on_register,
         })
         return self._backfill_target
 
@@ -181,7 +186,6 @@ class TestBackrunSessionStart:
         assert call["node_ws"] == "ws://localhost:8546"
         assert call["v3_snapshot"] is v3_snap
         assert call["v4_snapshot"] is v4_snap
-        assert call["verify_on_register"] is True
         # verify_state_view is the V4 state view constant (non-empty)
         assert call["verify_state_view"].startswith("0x")
 
