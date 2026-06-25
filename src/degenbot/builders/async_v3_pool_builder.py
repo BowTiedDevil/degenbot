@@ -9,6 +9,11 @@ from typing import TYPE_CHECKING, Any, cast
 import eth_abi.abi
 from sqlalchemy import select
 
+from degenbot.builders.tick_data_fetcher import (
+    FetchedTickData,
+    TickDataTypes,
+    make_tick_data_fetcher_from_async_io,
+)
 from degenbot.builders.v3_builder_base import V3BuilderBase
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.pools import LiquidityPoolTable, UniswapV3PoolTableBase
@@ -21,6 +26,8 @@ from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from web3.types import BlockIdentifier
 
     from degenbot.builders.async_context import AsyncBuilderContext
@@ -53,6 +60,39 @@ class AsyncV3PoolBuilder:
         self._managed_pools = ctx.managed_pools
         self._erc20_builder = ctx.erc20_builder
         self._py_bot = ctx.py_bot
+
+    def _make_tick_data_fetcher(
+        self,
+        pool_address: str,
+        chain_id: int,
+        io: AsyncPoolIO,
+    ) -> Callable[[int, int], FetchedTickData | None]:
+        """Create a tick data fetcher for an async-built sparse V3 pool.
+
+        AsyncBot parity counterpart of ``V3PoolBuilder._make_tick_data_fetcher``:
+        wraps the async IO in a daemon-loop sync bridge so the synchronous
+        Rust ``TickWordFetcher`` seam can issue async ``eth_call`` RPCs to
+        backfill neighbouring tick words on a crossing swap.
+
+        Returns:
+            The fetcher callback.
+
+        """
+        return make_tick_data_fetcher_from_async_io(
+            pool_lookup=lambda _block: cast(
+                "UniswapV3Pool | None",
+                self._pools.get(
+                    chain_id=chain_id,
+                    pool_address=get_checksum_address(pool_address),
+                ),
+            ),
+            async_io=io,
+            types=TickDataTypes(
+                bitmap_at_word=BitmapAtWord,
+                liquidity_at_tick=LiquidityAtTick,
+                tick_struct_types=UniswapV3Pool.TICK_STRUCT_TYPES,
+            ),
+        )
 
     async def build(
         self,
@@ -336,7 +376,7 @@ class AsyncV3PoolBuilder:
             chain_id=chain_id,
             deployer_address=deployer,
             init_hash=init_hash,
-            tick_data_fetcher=None,
+            tick_data_fetcher=self._make_tick_data_fetcher(pool_address, chain_id, io=io),
             state_block=int(state_block) if state_block is not None else 0,
             sparse_liquidity_map=not (db_snapshot_loaded and bool(working_tick_data)),
             tick_bitmap_override=working_tick_bitmap or None,
