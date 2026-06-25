@@ -46,13 +46,16 @@ all V2-family DEXes.
 
 ```python
 # Before
-if isinstance(pool, SushiswapV2Pool): ...
+if isinstance(pool, SushiswapV2Pool):
+    ...
 
 # After (identity check)
-if pool.dex is not None and pool.dex.variant == "sushiswap-v2": ...
+if pool.dex is not None and pool.dex.variant == "sushiswap-v2":
+    ...
 
 # After (V2-family check)
-if isinstance(pool, LiquidityPool): ...
+if isinstance(pool, LiquidityPool):
+    ...
 ```
 
 ### `Bot.build_pool` return type
@@ -78,6 +81,7 @@ from degenbot.camelot.pools import CamelotLiquidityPool
 
 # After
 from degenbot.uniswap.liquidity_pool import LiquidityPool
+
 # V3 subclasses are retained:
 from degenbot.sushiswap.pools import SushiswapV3Pool
 from degenbot.pancakeswap.pools import PancakeswapV3Pool
@@ -88,10 +92,12 @@ from degenbot.pancakeswap.pools import PancakeswapV3Pool
 ```python
 # Before
 from degenbot.sushiswap.trackers import SushiswapV2PoolTracker
+
 tracker = SushiswapV2PoolTracker(factory_address=SUSHI_FACTORY, bot=bot)
 
 # After — the generic tracker with the DEX's factory address
 from degenbot.uniswap.trackers import UniswapV2PoolTracker
+
 tracker = UniswapV2PoolTracker(factory_address=SUSHI_FACTORY, bot=bot)
 ```
 
@@ -120,10 +126,13 @@ needs a rewrite under the `LiquidityPool` + `dex.variant` model:
 
 Each is `pytest.skip(..., allow_module_level=True)` at the top, pointing here.
 
-## Known pre-existing bug (surfaced, not caused, by this slice)
+## Known pre-existing bug (surfaced, then resolved, by this slice)
 
 `calc_exact_in_stable` calls `get_y_func(x, xy, y, decimals0, decimals1)` (5
-args) but `get_y_camelot` takes 3 — so Camelot's stable `to_hop_state` branch
-(dead code) always raises `TypeError`. The direct stable CALC path is
-unaffected (it calls `k_camelot`/`get_y_camelot` directly with the right
-arity). Tracked in TODO-7ea2e7d9.
+args) but `get_y_camelot` historically took 3 — so Camelot's stable
+`to_hop_state` branch (dead code) always raised `TypeError`. The direct
+stable CALC path was unaffected (it calls `k_camelot`/`get_y_camelot`
+directly with the right arity). **Resolved by `7b9cfffc`** (aligned
+`get_y_camelot` to the 5-arg contract — `decimals0/1` accepted but unused)
++ guarded by `TestFoldedStableHopSwapFn` value-parity tests. Was tracked in
+TODO-7ea2e7d9.

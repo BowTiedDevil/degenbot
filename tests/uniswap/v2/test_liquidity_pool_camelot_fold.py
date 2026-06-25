@@ -100,9 +100,7 @@ class TestFoldedVolatileCalcUnchanged:
         )
         amount = 10_000_000
         # The Rust handle's direct calc (the slice-5 delegation target).
-        direct = pool._py_pool.calculate_tokens_out(
-            zero_for_one=True, amount_in=amount
-        )
+        direct = pool._py_pool.calculate_tokens_out(zero_for_one=True, amount_in=amount)
         # The folded LiquidityPool.calculate_tokens_out_from_tokens_in (routes
         # via super() → UniswapV2PoolCalc → Rust, when stable_swap=False).
         folded = pool.calculate_tokens_out_from_tokens_in(pool.token0, amount)
@@ -112,10 +110,10 @@ class TestFoldedVolatileCalcUnchanged:
 class TestFoldedStableHopSwapFn:
     """The folded Camelot stable ``to_hop_state`` swap_fn must actually work.
 
-    Pre-fix (TODO-7ea2e7d9): the stable branch passed ``get_y_camelot``
-    (3-arg) to ``calc_exact_in_stable``, which calls ``get_y_func`` with 5
-    args — so the hop's ``swap_fn`` raised ``TypeError`` for every input
-    (dead code). The direct stable calc
+    History (TODO-7ea2e7d9, resolved by ``7b9cfffc``): the stable branch
+    passed ``get_y_camelot`` (3-arg) to ``calc_exact_in_stable``, which calls
+    ``get_y_func`` with 5 args — so the hop's ``swap_fn`` raised ``TypeError``
+    for every input (dead code). The direct stable calc
     (``_calculate_tokens_out_from_tokens_in_stable_swap``) bypasses
     ``calc_exact_in_stable`` and calls ``k_camelot``/``get_y_camelot``
     directly with the right arity, so it is the value-parity reference.
