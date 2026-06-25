@@ -15,20 +15,27 @@ from degenbot.balancer.libraries.scaling_helpers import (
     _upscale,
     _upscale_array,
 )
-from degenbot.balancer.libraries.weighted_math import (
-    _add_swap_fee_amount,
-    _calc_in_given_out,
-    _calc_out_given_in,
-    _subtract_swap_fee_amount,
-)
 from degenbot.balancer.swap_amounts import BalancerV2SwapAmounts
 from degenbot.balancer.types import (
     BalancerV2PoolState,
     BalancerV2PoolStateUpdated,
     BalancerV2WeightedPoolExternalUpdate,
 )
+from degenbot.builders.balancer_builder_base import BalancerBuilderBase
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.degenbot_rs import PyLiquidityPool
+from degenbot.degenbot_rs import (
+    balancer_weighted_add_swap_fee_amount as _rs_add_swap_fee_amount,
+)
+from degenbot.degenbot_rs import (
+    balancer_weighted_calc_in_given_out as _rs_calc_in_given_out,
+)
+from degenbot.degenbot_rs import (
+    balancer_weighted_calc_out_given_in as _rs_calc_out_given_in,
+)
+from degenbot.degenbot_rs import (
+    balancer_weighted_subtract_swap_fee_amount as _rs_subtract_swap_fee_amount,
+)
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
@@ -215,9 +222,9 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
 
         fee_scaled = int(self.fee * self.FEE_DENOMINATOR)
 
-        amount_new = _subtract_swap_fee_amount(
-            amount=token_in_quantity,
-            fee_percentage=fee_scaled,
+        amount_new = _rs_subtract_swap_fee_amount(
+            token_in_quantity,
+            fee_scaled,
         )
 
         if override_state is not None:
@@ -228,13 +235,13 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         _upscale_array(amounts=balances, scaling_factors=self.scaling_factors)
         amount_new = _upscale(amount_new, scaling_factor=self.scaling_factors[token_in_index])
 
-        amount_out = _calc_out_given_in(
-            balance_in=int(balances[token_in_index]),
-            weight_in=self.weights[token_in_index],
-            balance_out=int(balances[token_out_index]),
-            weight_out=self.weights[token_out_index],
-            amount_in=int(amount_new),
-            version=self.pow_version,
+        amount_out = _rs_calc_out_given_in(
+            int(balances[token_in_index]),
+            self.weights[token_in_index],
+            int(balances[token_out_index]),
+            self.weights[token_out_index],
+            int(amount_new),
+            BalancerBuilderBase.pow_version_to_rust(self.pow_version),
         )
 
         return int(
@@ -273,13 +280,13 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
             scaling_factor=self.scaling_factors[token_out_index],
         )
 
-        amount_in = _calc_in_given_out(
-            balance_in=int(balances[token_in_index]),
-            weight_in=self.weights[token_in_index],
-            balance_out=int(balances[token_out_index]),
-            weight_out=self.weights[token_out_index],
-            amount_out=int(amount_out_scaled),
-            version=self.pow_version,
+        amount_in = _rs_calc_in_given_out(
+            int(balances[token_in_index]),
+            self.weights[token_in_index],
+            int(balances[token_out_index]),
+            self.weights[token_out_index],
+            int(amount_out_scaled),
+            BalancerBuilderBase.pow_version_to_rust(self.pow_version),
         )
 
         # Downscale first, then add fee — matching Solidity's onSwap GIVEN_OUT path
@@ -290,10 +297,7 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
             ),
         )
 
-        return _add_swap_fee_amount(
-            amount=amount_in_token,
-            fee_percentage=fee_scaled,
-        )
+        return _rs_add_swap_fee_amount(amount_in_token, fee_scaled)
 
     def simulate_swap(
         self,

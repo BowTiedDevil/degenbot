@@ -46,6 +46,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "cl-math")]
     crate::cl_math::cl_lib::add_cl_lib_module(m)?;
 
+    // Balancer V2 math library functions (feature = "balancer-math")
+    #[cfg(feature = "balancer-math")]
+    crate::balancer_math::lib::add_balancer_math_module(m)?;
+
     // ABI decoder/encoder functions (feature = "abi")
     #[cfg(feature = "abi")]
     m.add_function(wrap_pyfunction!(crate::abi::decoder::decode, m)?)?;

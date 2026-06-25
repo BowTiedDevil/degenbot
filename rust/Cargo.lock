@@ -1703,6 +1703,7 @@ dependencies = [
  "ctor",
  "dashmap",
  "degenbot-abi",
+ "degenbot-balancer-math",
  "degenbot-bot",
  "degenbot-cl-math",
  "degenbot-core",
