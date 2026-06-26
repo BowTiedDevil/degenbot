@@ -317,3 +317,69 @@ def test_format_sim_diag_line_never_raises_on_missing_snapshot_keys() -> None:
     assert payload["path_id"] == 1
     assert payload["hops"] == []
     assert payload["optimal_input"] is None
+
+
+# ── T3: thin-margin profit filter (GTOD23-IKJRGO) ───────────────────────────
+
+from examples.eth_backrun_helpers import (
+    BPS_DENOM,
+    filter_thin_margin_results,
+)
+
+
+def _result(path_id: int, opt_input: int, profit: int) -> tuple:
+    """Build a minimal engine-result row for the filter tests."""
+    return (path_id, opt_input, profit, (), (), 0)
+
+
+def test_filter_disabled_when_bps_zero_keeps_all() -> None:
+    """min_profit_margin_bps=0 disables the filter (backwards-compatible default)."""
+    results = [_result(1, 1_000, 1), _result(2, 1_000, 999)]
+    kept, dropped = filter_thin_margin_results(results, 0)
+    assert kept == results
+    assert dropped == 0
+
+
+def test_filter_drops_sub_threshold_margin_drops_keeps_above() -> None:
+    """A 50 bps threshold drops profit < 0.5% of input, keeps ≥ 0.5%."""
+    # profit = 100 bps of input (1%) → kept.
+    # profit = 10 bps of input (0.1%) → dropped (below 50 bps).
+    # profit = 50 bps exactly (0.5%) → kept (≥ threshold, inclusive).
+    results = [
+        _result(1, 10_000, 100),    # 1.0% — keep
+        _result(2, 10_000, 10),     # 0.1% — drop
+        _result(3, 10_000, 50),     # 0.5% — keep (boundary, inclusive)
+    ]
+    kept, dropped = filter_thin_margin_results(results, 50)
+    kept_ids = [r[0] for r in kept]
+    assert kept_ids == [1, 3]
+    assert dropped == 1
+
+
+def test_filter_uses_integer_math_no_float_rounding() -> None:
+    """The threshold check uses profit*BPS_DENOM >= opt*bps (integer only).
+
+    A result that floats would round wrong at the boundary stays exact.
+    """
+    # opt_input = 3, profit = 1 → 33.33% — way above 50 bps, keep.
+    # opt_input = 3, profit = 0 → 0% — drop.
+    results = [_result(1, 3, 1), _result(2, 3, 0)]
+    kept, dropped = filter_thin_margin_results(results, 50)
+    assert [r[0] for r in kept] == [1]
+    assert dropped == 1
+
+
+def test_filter_handles_zero_opt_input_keeps() -> None:
+    """A result with opt_input=0 (no ratio basis) is kept, not dropped."""
+    results = [_result(1, 0, 5)]
+    kept, dropped = filter_thin_margin_results(results, 50)
+    assert kept == results
+    assert dropped == 0
+
+
+def test_filter_returns_copy_not_alias() -> None:
+    """The kept list is a new list — mutating it doesn't touch the input."""
+    results = [_result(1, 1_000, 100)]
+    kept, _ = filter_thin_margin_results(results, 50)
+    kept.append(_result(2, 1_000, 100))
+    assert len(results) == 1, "original list must not be mutated"

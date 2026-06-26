@@ -53,6 +53,7 @@ from eth_backrun_helpers import (
     BackrunConfig,
     classify_revert,
     encode_cmd_stream,
+    filter_thin_margin_results,
     format_failure_breakdown,
     format_sim_diag_line,
     v4_input_is_native,
@@ -132,6 +133,11 @@ ETH_MAINNET_ALLOWED_TOKENS: set[str] = {
 }
 
 MIN_PROFIT_NET = 1  # was 5 * 10**9 (5 gwei)
+# T3 (GTOD23-IKJRGO): pre-sim profit-margin floor in bps of optimal_input.
+# S1 found the dominant IIA reverts are sub-0.2-bps-margin arb the chain has
+# already arbitraged away. 50 bps (0.5%) drops the bulk without losing genuine
+# arbs. 0 disables. Env-configurable for tuning without code changes.
+MIN_PROFIT_MARGIN_BPS = int(os.environ.get("DEGENBOT_MIN_PROFIT_MARGIN_BPS", "50"))
 FEE_HISTORY_WINDOW = 10
 FEE_PERCENTILES = (10, 50)
 TARGET_PROFIT_RATIO = 1.25
@@ -2298,6 +2304,16 @@ async def dispatch_profitable_results(
     if suppressed_count > 0:
         bot_logger.info(
             f"[dispatch] {suppressed_count}/{pre_filter_count} results filtered by suppression",
+        )
+
+    # T3 (GTOD23-IKJRGO): drop razor-thin arb that can't survive 1-block drift.
+    # S1 found the dominant IIA reverts are sub-0.2-bps-margin arb the chain
+    # has already arbitraged away. Filter pre-sim to save RPC + revert budget.
+    # 0 disables (backwards-compatible default).
+    results, thin_dropped = filter_thin_margin_results(results, MIN_PROFIT_MARGIN_BPS)
+    if thin_dropped > 0:
+        bot_logger.info(
+            f"[filter] dropped {thin_dropped} thin-margin (<{MIN_PROFIT_MARGIN_BPS} bps) candidates",
         )
 
     candidates = results[:MAX_SIMULATE_CONCURRENT]

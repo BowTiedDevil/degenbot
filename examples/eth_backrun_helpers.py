@@ -371,6 +371,55 @@ def format_failure_breakdown(buckets: dict[str, int]) -> str:
     return " ".join(f"{name}={count}" for name, count in ordered)
 
 
+# Basis points denominator (10_000 = 100%).
+BPS_DENOM = 10_000
+
+# A result row from the Rust engine: (path_id, opt_input, profit, hop_outputs,
+# consumed_inputs, solve_block). The filter inspects opt_input + profit only.
+EngineResult = tuple[int, int, int, tuple[int, ...], tuple[int, ...], int]
+
+
+def filter_thin_margin_results(
+    results: list[EngineResult],
+    min_profit_margin_bps: int,
+) -> tuple[list[EngineResult], int]:
+    """Drop solver results whose gross-profit margin is below ``min_profit_margin_bps``
+    basis points of ``optimal_input`` (T3 / GTOD23-IKJRGO).
+
+    S1 found that the dominant IIA reverts in V3/V4-heavy perms are razor-thin
+    arb (gross profit ≈ $0.001 on ≈ $0.06–$1.30 input = sub-0.2 bps margin)
+    that cannot survive 1-block drift. The chain has already arbitraged these
+    away by the time the sim runs. Filtering them pre-sim saves an RPC + a
+    revert per attempt and keeps them out of the TSV ``Reverts`` column.
+
+    ``min_profit_margin_bps`` is in basis points of ``optimal_input``
+    (e.g. ``50`` = 0.5% — a result with profit < 0.5% of its input is dropped).
+    ``0`` disables the filter (keeps all — backwards-compatible default).
+
+    Returns ``(kept, dropped_count)``. A dropped result is a genuine
+    above-zero-profit path the solver found; dropping it trades a missed
+    edge case for a cleaner revert signal + saved sim budget.
+    """
+    if min_profit_margin_bps <= 0 or not results:
+        return list(results), 0
+    threshold_num = min_profit_margin_bps
+    kept: list[EngineResult] = []
+    dropped = 0
+    for row in results:
+        _path_id, opt_input, profit, _ho, _ci, _sb = row
+        # profit ≥ opt_input * bps / BPS_DENOM  ⟺  profit * BPS_DENOM ≥ opt_input * bps
+        # (integer math — no float rounding.)
+        if opt_input > 0 and profit * BPS_DENOM >= opt_input * threshold_num:
+            kept.append(row)
+        elif opt_input == 0:
+            # No input basis to ratio against — keep (the solver's profit is
+            # absolute; a filter can't ratio it). Rare for arb paths.
+            kept.append(row)
+        else:
+            dropped += 1
+    return kept, dropped
+
+
 def format_sim_diag_line(
     snapshot: dict[str, object],
     *,
