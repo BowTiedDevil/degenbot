@@ -23,6 +23,7 @@ from degenbot.uniswap.v2_functions import (
     constant_product_calc_exact_out,
 )
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate, UniswapV2PoolState
+from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 
@@ -32,7 +33,7 @@ _PY_BOT = PyBot()
 def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
     return DegenbotConfig(
         database=DatabaseSettings(path=tmp_path / "test.db"),
-        rpc={1: "https://eth.llamarpc.com/"},
+        rpc={1: ETHEREUM_ARCHIVE_NODE_HTTP_URI},
         default_chain_id=1,
     )
 

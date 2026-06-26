@@ -10,6 +10,7 @@ from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.database.operations import create_new_sqlite_database
 from degenbot.degenbot_rs import PyBot
 from degenbot.erc20 import Erc20Token
+from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.erc20_factory import make_erc20, make_ether_placeholder
 
 _PY_BOT = PyBot()
@@ -18,7 +19,7 @@ _PY_BOT = PyBot()
 def _make_test_config(tmp_path: pathlib.Path) -> DegenbotConfig:
     return DegenbotConfig(
         database=DatabaseSettings(path=tmp_path / "test.db"),
-        rpc={1: "https://eth.llamarpc.com/"},
+        rpc={1: ETHEREUM_ARCHIVE_NODE_HTTP_URI},
         default_chain_id=1,
     )
 
@@ -182,7 +183,7 @@ class TestBotTokenIOMethods:
         # Create a Bot with a mock provider — it should never be called
         config = DegenbotConfig(
             database=DatabaseSettings(path=tmp_path / "test-bot-io"),
-            rpc={1: "https://eth.llamarpc.com/"},
+            rpc={1: ETHEREUM_ARCHIVE_NODE_HTTP_URI},
             default_chain_id=1,
         )
         provider = MagicMock()
@@ -208,7 +209,7 @@ class TestBotTokenIOMethods:
 
         config = DegenbotConfig(
             database=DatabaseSettings(path=tmp_path / "test-bot-io2"),
-            rpc={1: "https://eth.llamarpc.com/"},
+            rpc={1: ETHEREUM_ARCHIVE_NODE_HTTP_URI},
             default_chain_id=1,
         )
         provider = MagicMock()
@@ -241,7 +242,7 @@ class TestBotTokenIOMethods:
 
         config = DegenbotConfig(
             database=DatabaseSettings(path=tmp_path / "test-bot-io3"),
-            rpc={1: "https://eth.llamarpc.com/"},
+            rpc={1: ETHEREUM_ARCHIVE_NODE_HTTP_URI},
             default_chain_id=1,
         )
         provider = MagicMock()
@@ -266,7 +267,7 @@ class TestBotTokenIOMethods:
 
         config = DegenbotConfig(
             database=DatabaseSettings(path=tmp_path / "test-bot-io4"),
-            rpc={1: "https://eth.llamarpc.com/"},
+            rpc={1: ETHEREUM_ARCHIVE_NODE_HTTP_URI},
             default_chain_id=1,
         )
         provider = MagicMock()
