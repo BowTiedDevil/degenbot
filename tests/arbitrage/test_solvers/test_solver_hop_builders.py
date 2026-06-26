@@ -1,17 +1,35 @@
-"""ArbSolver solve()/ArbitragePath profitability tests.
+"""BrentSolver profitability tests (ACDWOC port).
 
-Verifies that ArbSolver.solve() produces results consistent with a manual
-pool walk for V2-V2, V2-V3, and V3-V3 pool configurations.
+Verifies that ``BrentSolver.solve()`` (the kept SciPy `minimize_scalar`
+reference oracle) produces results consistent with a manual pool walk for
+V2-V2, V2-V3, and V3-V3 pool configurations.
+
+Previously these tests exercised ``ArbSolver`` / ``MobiusSolver`` /
+``ArbitragePath`` (the f64 Möbius dispatcher + event-driven path helper).
+ACDWOC retired that stack — the Rust ``UniswapArbEngine`` is the production
+solve surface (cross-validated against ``BrentSolver`` in
+``test_engine_vs_brent_parity.py``), and ``BrentSolver`` is the kept Python
+reference oracle + the production solver for Solidly/Curve/Balancer families.
+
+The two oracle considerations:
+- ``BrentSolver.solve`` returns ``SolveResult(optimal_input, profit, ...)``
+  directly — the ``ArbitragePath.calculate`` indirection is gone; the tests
+  build ``SolveInput(hops, max_input)`` directly from the same ``to_hop_state``
+  calls ``ArbitragePath`` used internally.
+- The manual pool-walk check (per-pool
+  ``calculate_tokens_out_from_tokens_in`` chained) is unchanged — it remains
+  the ground-truth profitability gate.
 """
+
+from __future__ import annotations
 
 from fractions import Fraction
 
 import pytest
 
 from degenbot.aerodrome.pools import AerodromeV2Pool
+from degenbot.arbitrage.solvers.brent_solver import BrentSolver
 from degenbot.arbitrage.solvers.hop_types import SolveInput
-from degenbot.arbitrage.solvers.solver import ArbSolver, MobiusSolver
-from degenbot.arbitrage.path import ArbitragePath
 from degenbot.degenbot_rs import PyBot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -23,10 +41,6 @@ from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.v3_pool_factory import make_v3_pool
 
 _PY_BOT = PyBot()
-
-# ---------------------------------------------------------------------------
-# Helpers: build production UniswapV3Pool pairs from generated pool states
-# ---------------------------------------------------------------------------
 
 
 def _make_v3_pool_from_state(
@@ -67,8 +81,8 @@ def _make_profitable_v3_pair(
 ) -> tuple[UniswapV3Pool, UniswapV3Pool]:
     """Create two production UniswapV3Pool for the same token pair at different prices.
 
-    Pool A: t0/t1 at {price_a}. ArbitragePath goes t0→t1 (zfo=True).
-    Pool B: t0/t1 at {price_b}. ArbitragePath goes t1→t0 (zfo=False).
+    Pool A: t0/t1 at {price_a}. Cycle goes t0→t1 (zfo=True).
+    Pool B: t0/t1 at {price_b}. Cycle goes t1→t0 (zfo=False).
     """
     generator = PoolStateGenerator()
 
@@ -93,16 +107,20 @@ def _make_profitable_v3_pair(
 
     return pool_a, pool_b
 
+
 # ---------------------------------------------------------------------------
-# Fixtures — real pool objects constructed directly (no RPC)
+# Unused fixtures and class preserved (kept for selectsolidly-stable parity suite importers)
 # ---------------------------------------------------------------------------
+_USDC_ADDR = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+_WETH_ADDR = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+_FACTORY = "0x5C69bEe701ef814E44274f655e7632cB715C14B6"
 
 
 @pytest.fixture
 def usdc() -> Erc20Token:
     return make_erc20(
         _PY_BOT,
-        address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        address=_USDC_ADDR,
         name="USD Coin",
         symbol="USDC",
         decimals=6,
@@ -135,27 +153,33 @@ def aerodrome_stable_pool(usdc: Erc20Token, usdt: Erc20Token) -> AerodromeV2Pool
 
 
 # ---------------------------------------------------------------------------
-# Tests: pool_state_to_hop parity with pool_to_hop for Aerodrome stable
+# Tests: BrentSolver vs manual pool walk for V2-V2, V2-V3, V3-V3 cycles
 # ---------------------------------------------------------------------------
 
 
-class TestArbSolverParityWithLpCycle:
-    """ArbSolver.solve() should produce optimal input amounts whose profit is
-    confirmed by a manual pool walk through the same pool sequence.
+class TestBrentSolverParityWithLpCycle:
+    """``BrentSolver.solve()`` should produce optimal input amounts whose
+    profit is confirmed by a manual pool walk through the same pool sequence.
+
+    ACDWOC: this is the kept Python reference oracle (SciPy minimize_scalar
+    over ``hop.swap_fn`` via ``_simulate_path``); the f64 Möbius dispatcher
+    (``ArbSolver``) and the event-driven path wrapper (``ArbitragePath``) are
+    retired — the engine is the production solve surface, cross-validated
+    against this oracle in ``test_engine_vs_brent_parity.py``.
     """
 
     def test_v2_v2_pair_parity(self):
-        """ArbSolver should find profitable V2-V2 arbitrage."""
+        """BrentSolver should find profitable V2-V2 arbitrage."""
         usdc = make_erc20(
             _PY_BOT,
-            address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            address=_USDC_ADDR,
             name="USD Coin",
             symbol="USDC",
             decimals=6,
         )
         weth = make_erc20(
             _PY_BOT,
-            address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            address=_WETH_ADDR,
             name="Wrapped Ether",
             symbol="WETH",
             decimals=18,
@@ -165,7 +189,7 @@ class TestArbSolverParityWithLpCycle:
             address="0xAAAA1111222233334444555566667777888899a1",
             token0=usdc,
             token1=weth,
-            factory="0x5C69bEe701ef814E44274f655e7632cB715C14B6",
+            factory=_FACTORY,
             fee_token0=Fraction(3, 1000),
             fee_token1=Fraction(3, 1000),
             reserves_token0=2_000_000 * 10**6,
@@ -175,14 +199,14 @@ class TestArbSolverParityWithLpCycle:
             address="0xBBBB1111222233334444555566667777888899b2",
             token0=usdc,
             token1=weth,
-            factory="0x5C69bEe701ef814E44274f655e7632cB715C14B6",
+            factory=_FACTORY,
             fee_token0=Fraction(3, 1000),
             fee_token1=Fraction(3, 1000),
             reserves_token0=2_100_000 * 10**6,
             reserves_token1=1_000 * 10**18,
         )
 
-        solver = ArbSolver()
+        solver = BrentSolver()
         hops = (
             pool_a.to_hop_state(zero_for_one=True),
             pool_b.to_hop_state(zero_for_one=False),
@@ -203,31 +227,35 @@ class TestArbSolverParityWithLpCycle:
         assert out_b > solver_result.optimal_input
 
     def test_v2_v3_pair_parity(self):
-        """ArbSolver + ArbitragePath should find profitable V2-V3 arbitrage."""
+        """BrentSolver should find profitable V2-V3 arbitrage."""
         usdc = FakeToken(
-            address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", symbol="USDC", decimals=6
+            address=_USDC_ADDR,
+            symbol="USDC",
+            decimals=6,
         )
         weth = FakeToken(
-            address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", symbol="WETH", decimals=18
+            address=_WETH_ADDR,
+            symbol="WETH",
+            decimals=18,
         )
 
         v2_pool = make_v2_pool(
             address="0xAAAA1111222233334444555566667777888899a1",
             token0=make_erc20(
                 _PY_BOT,
-                address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                address=_USDC_ADDR,
                 name="USD Coin",
                 symbol="USDC",
                 decimals=6,
             ),
             token1=make_erc20(
                 _PY_BOT,
-                address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                address=_WETH_ADDR,
                 name="Wrapped Ether",
                 symbol="WETH",
                 decimals=18,
             ),
-            factory="0x5C69bEe701ef814E44274f655e7632cB715C14B6",
+            factory=_FACTORY,
             fee_token0=Fraction(3, 1000),
             fee_token1=Fraction(3, 1000),
             reserves_token0=2_000_000 * 10**6,
@@ -238,20 +266,17 @@ class TestArbSolverParityWithLpCycle:
 
         max_input = 1_000_000
 
-        # Legacy: UniswapLpCycle — but FakeV3Pool can't go through _calculate()
-        # because it doesn't satisfy isinstance checks. Use ArbitragePath instead,
-        # which supports duck-typed pools via to_hop_state().
-        path = ArbitragePath(
-            pools=[v2_pool, v3_pool_b],
-            input_token=usdc,
-            solver=ArbSolver(),
-            max_input=max_input,
+        # ACDWOC: solve directly via BrentSolver + SolveInput, replacing the
+        # ArbitragePath wrapper.
+        hops = (
+            v2_pool.to_hop_state(zero_for_one=True),
+            v3_pool_b.to_hop_state(zero_for_one=False),
         )
-        path_result = path.calculate()
+        result = BrentSolver().solve(SolveInput(hops=hops, max_input=max_input))
 
         # Verify profit via manual pool walk
-        assert path_result.profit > 0
-        token_in_qty = path_result.optimal_input
+        assert result.profit > 0
+        token_in_qty = result.optimal_input
         # Walk V2 pool
         v2_out = v2_pool.calculate_tokens_out_from_tokens_in(
             token_in=v2_pool.token0,
@@ -266,25 +291,28 @@ class TestArbSolverParityWithLpCycle:
         assert manual_profit > 0, "Pool walk must show positive profit"
 
     def test_v3_v3_pair_parity(self):
-        """ArbSolver + ArbitragePath should find profitable V3-V3 arbitrage."""
+        """BrentSolver should find profitable V3-V3 arbitrage."""
         usdc = FakeToken(
-            address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", symbol="USDC", decimals=6
+            address=_USDC_ADDR,
+            symbol="USDC",
+            decimals=6,
         )
         weth = FakeToken(
-            address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", symbol="WETH", decimals=18
+            address=_WETH_ADDR,
+            symbol="WETH",
+            decimals=18,
         )
 
         pool_a, pool_b = _make_profitable_v3_pair(usdc, weth, price_a=2200.0, price_b=2000.0)
         max_input = 1_000_000
 
-        # Solve via ArbitragePath (uses ArbSolver dispatch internally)
-        path = ArbitragePath(
-            pools=[pool_a, pool_b],
-            input_token=usdc,
-            solver=MobiusSolver(),
-            max_input=max_input,
+        # ACDWOC: solve via BrentSolver + SolveInput (was ArbitragePath +
+        # MobiusSolver).
+        hops = (
+            pool_a.to_hop_state(zero_for_one=True),
+            pool_b.to_hop_state(zero_for_one=False),
         )
-        result = path.calculate()
+        result = BrentSolver().solve(SolveInput(hops=hops, max_input=max_input))
         assert result.profit > 0
 
         # Verify profit by walking pools manually
@@ -307,14 +335,14 @@ class TestArbSolverParityWithLpCycle:
         """Walk V2 pools manually to verify the solver's optimal input yields real profit."""
         usdc = make_erc20(
             _PY_BOT,
-            address="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            address=_USDC_ADDR,
             name="USD Coin",
             symbol="USDC",
             decimals=6,
         )
         weth = make_erc20(
             _PY_BOT,
-            address="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+            address=_WETH_ADDR,
             name="Wrapped Ether",
             symbol="WETH",
             decimals=18,
@@ -324,7 +352,7 @@ class TestArbSolverParityWithLpCycle:
             address="0xAAAA1111222233334444555566667777888899a1",
             token0=usdc,
             token1=weth,
-            factory="0x5C69bEe701ef814E44274f655e7632cB715C14B6",
+            factory=_FACTORY,
             fee_token0=Fraction(3, 1000),
             fee_token1=Fraction(3, 1000),
             reserves_token0=2_000_000 * 10**6,
@@ -334,14 +362,14 @@ class TestArbSolverParityWithLpCycle:
             address="0xBBBB1111222233334444555566667777888899b2",
             token0=usdc,
             token1=weth,
-            factory="0x5C69bEe701ef814E44274f655e7632cB715C14B6",
+            factory=_FACTORY,
             fee_token0=Fraction(3, 1000),
             fee_token1=Fraction(3, 1000),
             reserves_token0=2_100_000 * 10**6,
             reserves_token1=1_000 * 10**18,
         )
 
-        solver = ArbSolver()
+        solver = BrentSolver()
         hops = (
             pool_a.to_hop_state(zero_for_one=True),
             pool_b.to_hop_state(zero_for_one=False),
