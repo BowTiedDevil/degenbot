@@ -73,7 +73,7 @@ from degenbot.config import DegenbotConfig
 bot = degenbot.Bot(
     config=DegenbotConfig(
         default_chain_id=1,
-        rpc={1: "http://node:8545"},
+        rpc={1: "http://host.containers.internal:8545"},
         database={"path": "~/.config/degenbot/degenbot.db"},
     )
 )
@@ -140,7 +140,7 @@ from degenbot.config import DegenbotConfig
 bot = degenbot.Bot(
     config=DegenbotConfig(
         default_chain_id=1,
-        rpc={1: "http://node:8545"},
+        rpc={1: "http://host.containers.internal:8545"},
         database={"path": ":memory:"},
     )
 )
@@ -285,7 +285,7 @@ from degenbot.config import DegenbotConfig
 bot = degenbot.Bot(
     config=DegenbotConfig(
         default_chain_id=1,
-        rpc={1: "http://node:8545"},
+        rpc={1: "http://host.containers.internal:8545"},
         database={"path": ":memory:"},
     )
 )
@@ -973,7 +973,7 @@ bot = degenbot.Bot(
     config=DegenbotConfig(
         default_chain_id=1,
         rpc={
-            1: "http://node:8545",
+            1: "http://host.containers.internal:8545",
         },
         database={"path": "~/.config/degenbot/degenbot.db"},
     )
@@ -1319,12 +1319,12 @@ from degenbot.degenbot_rs import AlloyProvider, Contract
 
 ```python
 # Create provider with connection pooling
-provider = AlloyProvider("http://node:8545")
+provider = AlloyProvider("http://host.containers.internal:8545")
 
 # Contract interaction
 contract = Contract(
     "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-    provider_url="http://node:8545",
+    provider_url="http://host.containers.internal:8545",
 )
 
 # Query blockchain
