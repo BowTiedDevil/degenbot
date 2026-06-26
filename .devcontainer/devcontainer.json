@@ -2,59 +2,40 @@
 //
 // Usage:
 //   1. One-time: set "dev.containers.dockerPath": "podman" in VSCode user settings.
-//   2. Open /home/ralph/code/degenbot in VSCode → "Dev Containers: Reopen in Container".
+//   2. Open this repo in VSCode → "Dev Containers: Reopen in Container".
 //
-// The first build pulls the image + runs features + postCreateCommand (slow).
-// Subsequent starts are instant: VSCode reuses the named container it created.
+// First build builds the Dockerfile (the dnf layer is the slow part), then
+// runs post-create.sh (foundry, pi, venv + uv sync). Subsequent starts
+// reuse the named container VSCode created — instant.
 //
 // Podman note: mounts are plain type=bind (no consistency=cached, which is
 // Docker-Desktop-only). VSCode's podman dockerPath handles the runtime.
 {
   "name": "degenbot",
-  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
-  "remoteUser": "vscode",
-  "workspaceFolder": "/workspaces/degenbot",
-  "features": {
-    // sudo/git plumbing; the base:ubuntu image ships a vscode uid 1000 user,
-    // matching host uid — no updateRemoteUserUID needed.
-    "ghcr.io/devcontainers/features/common-utils:2": {
-      "installZsh": false,
-      "configureZshAsDefaultShell": false
-    },
-    // NOTE: no python feature. The devcontainers python feature installs a
-    // STATIC-only python (no libpython.so) which breaks PyO3 extension
-    // builds. uv manages python 3.12 itself (ships libpython.so) in
-    // post-create.sh. The base image's system python (3.14) remains on PATH
-    // for general scripting.
-    "ghcr.io/devcontainers/features/node:1": {
-      "version": "lts"
-    }
+  "build": {
+    "dockerfile": "Dockerfile"
   },
-  // Bind-mount host state across the container boundary. ${localEnv:HOME}
-  // resolves to the host user's home, so this is portable across machines.
-  // Host uid 1000 matches the vscode container user, so ownership is 
-  // consistent without updateRemoteUserUID.
-  //
-  // Prerequisite: ~/.pi and ~/.agents must exist on the host. Create them
-  // empty (mkdir -p ~/.pi ~/.agents) if this is a fresh machine — otherwise
-  // Podman refuses the bind mount.
+  "remoteUser": "dev",
+  "workspaceFolder": "/workspaces/degenbot",
+  // No devcontainer features — python, rust, node, just, uv, tmux, git are all 
+  // baked into the Dockerfile via dnf (fedora:latest). The only curl-installed 
+  // tool is foundry in post-create.sh — it has no dnf package.
   "mounts": [
-    "source=${localEnv:HOME}/.pi,target=/home/vscode/.pi,type=bind",
-    "source=${localEnv:HOME}/.agents,target=/home/vscode/.agents,type=bind",
+    "source=${localEnv:HOME}/.pi,target=/home/dev/.pi,type=bind",
+    "source=${localEnv:HOME}/.agents,target=/home/dev/.agents,type=bind",
     "source=${localEnv:HOME}/code/shared,target=/shared,type=bind"
   ],
-  // PATH additions for tools installed into ~/.local/bin and ~/.foundry/bin
-  // by post-create.sh. containerEnv covers devcontainer-spawned processes;
-  // remoteEnv surfaces them in VSCode terminals.
+  // PATH additions for the npm-global pi binary (~/.local/bin; npm prefix
+  // in the Dockerfile makes `npm i -g` land there) and foundry
+  // (~/.foundry/bin, curl-installed in post-create.sh). cargo/just/node/
+  // python/uv are in /usr/bin from dnf and already on the default PATH.
   "containerEnv": {
-    "LOCAL_BIN": "/home/vscode/.local/bin",
-    "FOUNDRY_DIR": "/home/vscode/.foundry"
+    "LOCAL_BIN": "/home/dev/.local/bin",
+    "FOUNDRY_DIR": "/home/dev/.foundry"
   },
   "remoteEnv": {
-    "PATH": "/home/vscode/.foundry/bin:/home/vscode/.local/bin:${containerEnv:PATH}"
+    "PATH": "/home/dev/.foundry/bin:/home/dev/.local/bin:${containerEnv:PATH}"
   },
-  // Runs from workspaceFolder automatically — no need to bind-mount the
-  // config dir as in the out-of-repo variant.
   "postCreateCommand": "bash .devcontainer/post-create.sh",
-  "postStartCommand": "echo 'degenbot devcontainer ready. Tools: just, uv, forge, pi. Shared: /shared'"
+  "postStartCommand": "echo 'degenbot devcontainer ready (fedora). Tools: just, uv, forge, pi, cargo, python3. Shared: /shared'"
 }

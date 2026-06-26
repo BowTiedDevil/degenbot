@@ -16,7 +16,9 @@
 # the container via its source image label, not its container name.
 set -euo pipefail
 
-WORKSPACE="/home/ralph/code/degenbot"
+# Resolve the workspace from the script's own location (repo root) rather than
+# a hardcoded path — portable across machines / user homes.
+WORKSPACE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [ "${1:-}" = "rebuild" ]; then
   echo ">>> rebuilding container via devcontainer CLI + podman"
@@ -38,7 +40,7 @@ if [ -z "$name" ]; then
   echo "ERROR: no degenbot devcontainer found." >&2
   echo "Run one of:" >&2
   echo "  $0 rebuild                   # build via devcontainer CLI (needs npm i -g @devcontainers/cli)" >&2
-  echo "  VSCode 'Reopen in Container'  # build via VSCode" >&2
+  echo "  VSCode 'Reopen in Container' # build via VSCode" >&2
   exit 1
 fi
 
@@ -50,5 +52,20 @@ else
   podman start "$name"
 fi
 
+# Drop in as the container's regular user (remoteUser=dev, uid 1000) instead of
+# root, so tmux's socket lands under /home/dev and files we touch are owned by
+# the workspace user.
+USER="dev"
+
+# Propagate the host terminal's color capability through the podman exec
+# boundary. Without this, COLORTERM is dropped and pi falls back to a dim
+# 16-color palette (near-invisible grey, red accents); TERM is also needed so
+# tmux's terminal-overrides match the outer terminal for truecolor pass-through.
+# See .devcontainer/tmux.conf and the README "Terminal colors" section.
+
 # tmux new -A attaches to an existing session or creates a new one.
-exec podman exec -it "$name" tmux new -As pi
+exec podman exec -it --user "$USER" \
+    --env HOME="/home/$USER" \
+    --env TERM="${TERM:-xterm-256color}" \
+    --env COLORTERM="${COLORTERM:-}" \
+    "$name" tmux new -As pi
