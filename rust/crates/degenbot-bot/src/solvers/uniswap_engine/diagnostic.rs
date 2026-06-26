@@ -209,6 +209,88 @@ pub fn recompute_v4_amount_out(
     Some(if zero_for_one { outcome.amount1 } else { outcome.amount0 })
 }
 
+/// Recompute a V3/V4 hop's output from its ON-CHAIN scalar state via a bounded
+/// single-step `compute_swap_step_v3` (T1 / GTOD23-XNWWA3). **Best-effort.**
+///
+/// V3/V4 initialized ticks exist only at multiples of `tick_spacing`, so
+/// liquidity is constant within any one grid step `[tick, tick ± tick_spacing)`.
+/// A swap that exhausts its input before reaching the nearest grid boundary
+/// therefore crosses NO initialized tick — the single-step `compute_swap_step`
+/// against the onchain `slot0` + `liquidity` is EXACT (no tick map needed).
+/// This covers the thin-arb majority S1 identified (`amount_in`/`liquidity` ≤ 1e-4).
+///
+/// Returns `None` (the best-effort limit) when the swap WOULD reach the grid
+/// boundary — that case genuinely needs the full onchain tick map (a heavy
+/// multi-RPC fetch the diagnostic path does not perform) to walk the
+/// liquidity steps past the boundary. The caller surfaces this as
+/// `expected_out_onchain: None` with a clear reason: the single-step reached
+/// the tick-grid boundary and the full tick-map fetch is deferred.
+#[must_use]
+fn recompute_cl_amount_out_onchain(
+    onchain: &DiagnosticPoolState,
+    zero_for_one: bool,
+    amount_in: U256,
+) -> Option<U256> {
+    let (sqrt_price_current, tick, liquidity, tick_spacing, fee) = match onchain {
+        DiagnosticPoolState::V3 {
+            sqrt_price_x96,
+            tick,
+            liquidity,
+            tick_spacing,
+            fee,
+            ..
+        }
+        | DiagnosticPoolState::V4 {
+            sqrt_price_x96,
+            tick,
+            liquidity,
+            tick_spacing,
+            fee,
+            ..
+        } => {
+            let sp = parse_hex_u256(sqrt_price_x96)?;
+            let liq: i128 = parse_hex_u128(liquidity)?.try_into().ok()?;
+            (sp, *tick, liq, *tick_spacing, U256::from(*fee))
+        }
+        DiagnosticPoolState::V2 { .. } => return None,
+    };
+    // Nearest grid boundary in the swap direction. V3/V4 ticks are only
+    // initialized at multiples of tick_spacing, so this is the closest point
+    // at which liquidity COULD change. Clamp to the protocol MIN/MAX tick.
+    let boundary_tick = if zero_for_one {
+        tick.saturating_sub(tick_spacing).max(degenbot_cl_math::cl_lib::tick_math::MIN_TICK)
+    } else {
+        tick.saturating_add(tick_spacing).min(degenbot_cl_math::cl_lib::tick_math::MAX_TICK)
+    };
+    let sqrt_price_target =
+        degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(boundary_tick).ok()?;
+    let sqrt_price_target = U256::from(sqrt_price_target);
+    // V3 conventions: amount_specified > 0 = exact input. `compute_swap_step_v3`
+    // is the shared V3/V4 single-step primitive (V4 sign is handled by the
+    // caller of v4_simulate_swap; here we recompute an exact-in step directly).
+    let amount_specified = I256::try_from(amount_in).ok()?;
+    let step = degenbot_cl_math::cl_lib::swap_math::compute_swap_step_v3(
+        sqrt_price_current,
+        sqrt_price_target,
+        liquidity,
+        amount_specified,
+        fee,
+    )
+    .ok()?;
+    // If the step reached the target price, the swap would cross the grid
+    // boundary — needs the full onchain tick map.
+    if step.sqrt_price_next == sqrt_price_target {
+        return None;
+    }
+    Some(step.amount_out)
+}
+
+/// Parse a `0x`-prefixed hex string into a `u128` (for onchain liquidity).
+fn parse_hex_u128(s: &str) -> Option<u128> {
+    let s = s.strip_prefix("0x").unwrap_or(s);
+    u128::from_str_radix(s, 16).ok()
+}
+
 /// Populate `hop.recompute` for a V2 hop from the solver-reported
 /// `amount_in` (the hop's consumed input) + `solver_out` (the hop's reported
 /// output) (NL2YY3). Recomputes against the engine state AND, when an on-chain
@@ -276,16 +358,53 @@ pub(crate) fn refresh_v2_recompute_onchain(hop: &mut DiagnosticHop) {
     recompute.matches_solver = Some(onchain_recompute == solver_out);
 }
 
-/// Populate a FULL `recompute` for a V3/V4 hop (T1 / GTOD23-XNWWA3). Unlike the
-/// deprecated partial variant, this carries `expected_out_engine` (the
-/// independent `v3_simulate_swap`/`v4_simulate_swap` recompute against the
-/// engine's own state, computed by the caller from the engine's
-/// `V3PoolState`/`V4PoolState`) and `matches_solver` (does that recompute agree
-/// with the solver's reported `solver_out`?). `matches_solver == true` is the
-/// keystone drift discriminant: the engine's math was right given its (possibly
-/// stale) state → the revert is pure drift, not a solver-calc bug.
-/// `expected_out_onchain` stays `None` (onchain recompute needs the full tick
-/// map — a heavy RPC fetch the diagnostic path does not perform). No-op for V2.
+/// After `fetch_onchain` set on-chain state, refresh a V3/V4 hop's existing
+/// `recompute` so `expected_out_onchain` (and `matches_solver`, when the engine
+/// recompute is absent) reflect the chain (T1 / GTOD23-XNWWA3). Uses the bounded
+/// single-step `compute_swap_step_v3` against the onchain scalar state. Leaves
+/// the engine-side recompute untouched — only the on-chain-derived field is
+/// rewritten — so a fetch never clobbers the engine comparison. No-op when the
+/// hop has no `recompute` (no solve result was threaded) or no on-chain state.
+pub(crate) fn refresh_v3v4_recompute_onchain(hop: &mut DiagnosticHop) {
+    let Some(recompute) = hop.recompute.as_mut() else {
+        return;
+    };
+    let Some(onchain) = &hop.onchain_state else {
+        return;
+    };
+    // V3/V4-only: the bounded single-step is only meaningful for a V3/V4
+    // on-chain state. V2 uses `refresh_v2_recompute_onchain`.
+    if matches!(onchain, DiagnosticPoolState::V2 { .. }) {
+        return;
+    }
+    let Some(amount_in) = parse_hex_u256(&recompute.amount_in) else {
+        return;
+    };
+    let Some(solver_out) = parse_hex_u256(&recompute.solver_out) else {
+        return;
+    };
+    let onchain_recompute =
+        recompute_cl_amount_out_onchain(onchain, hop.zero_for_one, amount_in);
+    recompute.expected_out_onchain = onchain_recompute.map(u256_to_hex);
+    // Only re-derive `matches_solver` from the onchain recompute when the
+    // engine recompute is absent (engine remains the preferred basis).
+    if recompute.expected_out_engine.is_none() {
+        recompute.matches_solver = onchain_recompute.map(|o| o == solver_out);
+    }
+}
+
+/// Populate a FULL `recompute` for a V3/V4 hop (T1 / GTOD23-XNWWA3). Carries:
+/// - `expected_out_engine` (the independent `v3_simulate_swap`/`v4_simulate_swap`
+///   recompute against the engine's state, computed by the caller).
+/// - `expected_out_onchain` + `matches_solver` (the bounded single-step
+///   `compute_swap_step_v3` recompute against the ONCHAIN scalar state — best-
+///   effort, exact for non-crossing thin swaps; `None` when the swap reaches the
+///   tick-grid boundary and a full tick-map fetch would be needed).
+///
+/// `matches_solver == true` on the ENGINE recompute is the drift discriminant
+/// (engine math was right given its state → pure drift). The onchain recompute
+/// gives the secondary signal: how much the output actually moved onchain.
+/// No-op for V2 (V2 uses [`populate_v2_recompute`]).
 pub(crate) fn populate_v3v4_recompute_full(
     hop: &mut DiagnosticHop,
     amount_in: U256,
@@ -295,12 +414,24 @@ pub(crate) fn populate_v3v4_recompute_full(
     if matches!(hop.engine_state, DiagnosticPoolState::V2 { .. }) {
         return;
     }
-    let matches_solver = expected_out_engine.map(|e| e == solver_out);
+    let expected_out_onchain = hop
+        .onchain_state
+        .as_ref()
+        .and_then(|oc| recompute_cl_amount_out_onchain(oc, hop.zero_for_one, amount_in));
+    // `matches_solver` keys off the ENGINE recompute (the drift discriminant:
+    // did the solver agree with an independent calc against the engine's
+    // own state?). Falls back to the onchain recompute only when the engine
+    // recompute is unavailable (e.g. sparse tick-map miss).
+    let matches_solver = match (expected_out_engine, expected_out_onchain) {
+        (eng, _) if eng.is_some() => eng.map(|e| e == solver_out),
+        (_, Some(_oc)) => expected_out_onchain.map(|o| o == solver_out),
+        _ => None,
+    };
     hop.recompute = Some(HopRecompute {
         amount_in: u256_to_hex(amount_in),
         solver_out: u256_to_hex(solver_out),
         expected_out_engine: expected_out_engine.map(u256_to_hex),
-        expected_out_onchain: None,
+        expected_out_onchain: expected_out_onchain.map(u256_to_hex),
         matches_solver,
     });
 }
@@ -336,9 +467,11 @@ fn parse_hex_u64(s: &str) -> Option<u64> {
 /// state. `matches_solver == true` is the drift discriminant: the revert is
 /// pure drift, not a solver-calc bug.
 ///
-/// `expected_out_onchain` stays `None`: a genuine onchain recompute needs the
-/// full tick map (heavy RPC, not fetched by the diagnostic path; only scalar
-/// `slot0`/`liquidity` are fetched). The scalar [`DiagnosticHop::drift`] flag
+/// `expected_out_onchain` is best-effort: the bounded single-step
+/// `compute_swap_step_v3` against the onchain scalar `slot0`/`liquidity`
+/// (exact for non-crossing thin swaps; `None` when the swap reaches the
+/// tick-grid boundary — needs the full onchain tick map, a heavy RPC fetch the
+/// diagnostic path does not perform). The scalar [`DiagnosticHop::drift`] flag
 /// (PCG2M3) + the decoded revert reason remain the V3/V4 classification basis.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HopRecompute {
@@ -352,12 +485,17 @@ pub struct HopRecompute {
     /// state can't be looked up or the simulate fails (sparse tick-map miss).
     pub expected_out_engine: Option<String>,
     /// Re-computed output from the ONCHAIN state. V2: populated post-fetch
-    /// (drift detector). V3/V4: `None` (deferred — heavy tick-map fetch).
+    /// (canonical `getAmountOut` against onchain reserves). V3/V4: best-effort
+    /// populated via the bounded single-step `compute_swap_step_v3` against
+    /// the onchain scalar `slot0`/`liquidity` (T1) — exact for non-crossing
+    /// thin swaps (the majority); `None` when the swap reaches the tick-grid
+    /// boundary (needs the full onchain tick map — a heavy RPC fetch the
+    /// diagnostic path does not perform).
     pub expected_out_onchain: Option<String>,
     /// True iff the engine recompute agrees with `solver_out`. V2: populated
     /// (onchain recompute vs `solver_out`). V3/V4: populated (engine recompute
-    /// vs `solver_out` — T1, the drift discriminant); `None` only when the
-    /// engine recompute itself is `None`.
+    /// vs `solver_out` — T1, the drift discriminant); `None` only when no
+    /// recompute basis is available at all.
     pub matches_solver: Option<bool>,
 }
 
@@ -583,6 +721,7 @@ impl DiagnosticPathState {
                     };
                     hop.apply_onchain_fetch(outcome.onchain_state, field_drifts, outcome.messages);
                     refresh_v2_recompute_onchain(hop);
+                    refresh_v3v4_recompute_onchain(hop);
                 }
                 Err(e) => {
                     hop.diff.push(format!("on-chain fetch failed: {e}"));
@@ -1861,7 +2000,7 @@ mod tests {
         );
         assert!(
             recompute.expected_out_onchain.is_none(),
-            "V3/V4 onchain recompute deferred (heavy tick-map fetch) → left None"
+            "no onchain_state on this hop → expected_out_onchain None"
         );
         assert_eq!(
             recompute.matches_solver,
@@ -1889,7 +2028,131 @@ mod tests {
         assert_eq!(
             recompute.matches_solver,
             None,
-            "no recompute basis → matches_solver None"
+            "no recompute basis and no onchain basis → matches_solver None"
+        );
+    }
+
+    /// `populate_v3v4_recompute_full` populates `expected_out_onchain` when an
+    /// onchain state is present, via the bounded single-step
+    /// `compute_swap_step_v3` against the onchain scalar `slot0`/`liquidity`
+    /// (T1). For a thin swap that doesn't reach the tick-grid boundary, the
+    /// single-step is exact — the onchain recompute is the real onchain output.
+    #[test]
+    fn populate_v3v4_recompute_full_populates_onchain_recompute_when_state_present() {
+        // A realistic V3 onchain state: 1:1 price (sqrt_price ≈ 2^96), tick 0,
+        // ample liquidity, tick_spacing 60. A tiny amount_in won't cross the
+        // grid boundary → single-step is exact.
+        let onchain = super::DiagnosticPoolState::V3 {
+            address: String::new(),
+            token0: String::new(),
+            token1: String::new(),
+            fee: 3000,
+            tick_spacing: 60,
+            sqrt_price_x96: format!("0x{}", U256::from(79_228_162_514_264_337_593_543_950_336_u128)),
+            tick: 0,
+            liquidity: format!("0x{:x}", 1_000_000_000_000_000_u128),
+        };
+        let mut hop = super::DiagnosticHop {
+            position: 0,
+            hop_type: "V3".to_string(),
+            zero_for_one: true,
+            engine_state: super::DiagnosticPoolState::V3 {
+                address: String::new(),
+                token0: String::new(),
+                token1: String::new(),
+                fee: 3000,
+                tick_spacing: 60,
+                sqrt_price_x96: format!("0x{}", U256::from(79_228_162_514_264_337_593_543_950_336_u128)),
+                tick: 0,
+                liquidity: format!("0x{:x}", 1_000_000_000_000_000_u128),
+            },
+            onchain_state: Some(onchain),
+            diff: Vec::new(),
+            drift: false,
+            field_drift: Vec::new(),
+            recompute: None,
+        };
+
+        let amount_in = U256::from(1_000_000_000_u64); // tiny vs liquidity → no crossing
+        let solver_out = U256::from(999_u64); // deliberately wrong
+        super::populate_v3v4_recompute_full(&mut hop, amount_in, solver_out, None);
+
+        let recompute = hop.recompute.as_ref().expect("recompute populated");
+        assert!(
+            recompute.expected_out_onchain.is_some(),
+            "onchain state present + non-crossing swap → expected_out_onchain populated"
+        );
+        let onchain_out = super::parse_hex_u256(recompute.expected_out_onchain.as_ref().unwrap()).unwrap();
+        assert!(
+            onchain_out > U256::ZERO,
+            "a real V3 swap must yield a positive output"
+        );
+        // No engine recompute passed → matches_solver falls back to onchain.
+        assert_eq!(
+            recompute.matches_solver,
+            Some(false),
+            "onchain recompute (real output) != solver_out (999) → false"
+        );
+    }
+
+    /// `refresh_v3v4_recompute_onchain` populates `expected_out_onchain` after
+    /// `fetch_onchain` sets on-chain state, leaving the engine-side recompute
+    /// untouched (T1). When the engine recompute IS present, `matches_solver`
+    /// keeps keying off the engine (the drift discriminant); when absent, it
+    /// falls back to the onchain recompute.
+    #[test]
+    fn refresh_v3v4_recompute_onchain_populates_onchain_post_fetch() {
+        let sqrt_p = format!("0x{}", U256::from(79_228_162_514_264_337_593_543_950_336_u128));
+        let liq = format!("0x{:x}", 1_000_000_000_000_000_u128);
+        let v3_state = super::DiagnosticPoolState::V3 {
+            address: String::new(),
+            token0: String::new(),
+            token1: String::new(),
+            fee: 3000,
+            tick_spacing: 60,
+            sqrt_price_x96: sqrt_p.clone(),
+            tick: 0,
+            liquidity: liq.clone(),
+        };
+        // Hop starts with NO onchain state + engine recompute present.
+        let mut hop = super::DiagnosticHop {
+            position: 0,
+            hop_type: "V3".to_string(),
+            zero_for_one: true,
+            engine_state: v3_state.clone(),
+            onchain_state: None,
+            diff: Vec::new(),
+            drift: false,
+            field_drift: Vec::new(),
+            recompute: Some(super::HopRecompute {
+                amount_in: format!("0x{:x}", 1_000_000_000_u64),
+                solver_out: format!("0x{:x}", 42_u64),
+                expected_out_engine: Some(format!("0x{:x}", 42_u64)),
+                expected_out_onchain: None,
+                matches_solver: Some(true),
+            }),
+        };
+
+        // No onchain state yet → no-op.
+        super::refresh_v3v4_recompute_onchain(&mut hop);
+        let r = hop.recompute.as_ref().unwrap();
+        assert!(r.expected_out_onchain.is_none());
+        assert_eq!(r.matches_solver, Some(true), "engine basis untouched");
+
+        // Now set onchain state (matching the engine → no drift) and refresh.
+        hop.onchain_state = Some(v3_state);
+        super::refresh_v3v4_recompute_onchain(&mut hop);
+        let r = hop.recompute.as_ref().unwrap();
+        assert!(
+            r.expected_out_onchain.is_some(),
+            "post-fetch → expected_out_onchain populated via single-step"
+        );
+        // Engine recompute present → matches_solver stays keyed off engine
+        // (unchanged here, NOT re-derived from onchain).
+        assert_eq!(
+            r.matches_solver,
+            Some(true),
+            "engine basis present → matches_solver stays engine-derived, not onchain"
         );
     }
 
