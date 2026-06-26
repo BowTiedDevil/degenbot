@@ -170,8 +170,10 @@ pub fn calc_d(
     n_coins: U256,
     a_precision: U256,
 ) -> Result<U256> {
+    // Python oracle / Vyper order: `(a_nn * s) // a_precision` (multiply first,
+    // then truncate). Dividing `s` first loses up to `a_precision-1` wei.
     let lhs = checked_add(
-        checked_mul(a_nn, div(s, a_precision)?)?,
+        div(checked_mul(a_nn, s)?, a_precision)?,
         checked_mul(d_p, n_coins)?,
     )?;
     let rhs_inner = div(
