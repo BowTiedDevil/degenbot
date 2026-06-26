@@ -74,24 +74,27 @@ def create_new_sqlite_database(db_path: pathlib.Path) -> None:
     engine = create_engine(
         f"sqlite:///{_get_sqlite_db_string(db_path)}",
     )
-    with engine.connect() as connection:
-        assert (
+    try:
+        with engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text("PRAGMA journal_mode=WAL;"),
+                ).scalar()
+                == "wal"
+            )
             connection.execute(
-                text("PRAGMA journal_mode=WAL;"),
-            ).scalar()
-            == "wal"
-        )
-        connection.execute(
-            text("PRAGMA auto_vacuum=FULL;"),
-        )
+                text("PRAGMA auto_vacuum=FULL;"),
+            )
 
-        Base.metadata.create_all(bind=engine)
-        connection.execute(
-            text("VACUUM;"),
-        )
+            Base.metadata.create_all(bind=engine)
+            connection.execute(
+                text("VACUUM;"),
+            )
 
-        logger.info(f"Initialized new SQLite database at {db_path}")
-        command.stamp(get_alembic_config(database_path=db_path), "head")
+            logger.info(f"Initialized new SQLite database at {db_path}")
+            command.stamp(get_alembic_config(database_path=db_path), "head")
+    finally:
+        engine.dispose()
 
 
 def compact_sqlite_database(db_path: pathlib.Path) -> None:
@@ -102,11 +105,14 @@ def compact_sqlite_database(db_path: pathlib.Path) -> None:
     engine = create_engine(
         f"sqlite:///{db_path.absolute()}",
     )
-    with engine.connect() as connection:
-        connection.execute(
-            text("VACUUM;"),
-        )
-        logger.info(f"Compacted SQLite database at {db_path}")
+    try:
+        with engine.connect() as connection:
+            connection.execute(
+                text("VACUUM;"),
+            )
+            logger.info(f"Compacted SQLite database at {db_path}")
+    finally:
+        engine.dispose()
 
 
 def upgrade_existing_sqlite_database(database_path: pathlib.Path) -> None:

@@ -275,6 +275,18 @@ class AnvilFork:
 
     def close(self, timeout: int = 10) -> None:
         """Perform close."""
+        # Close the web3 IPC socket so it is not left for GC to finalize (which raises
+        # a ResourceWarning under strict warning filters).
+        provider = getattr(self, "w3", None)
+        if provider is not None:
+            _socket = getattr(getattr(provider, "provider", None), "_socket", None)
+            sock = getattr(_socket, "sock", None)
+            if sock is not None:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+
         if getattr(self, "_process", None):
             self._process.terminate()
             self._process.wait(timeout)

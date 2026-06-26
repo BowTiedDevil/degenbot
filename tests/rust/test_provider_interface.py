@@ -1,5 +1,7 @@
 """Tests for the provider interface and adapter."""
 
+from typing import Iterator
+
 import pytest
 from hexbytes import HexBytes
 
@@ -16,9 +18,13 @@ WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 
 
 @pytest.fixture
-def alloy_provider(fork_mainnet_full: AnvilFork) -> AlloyProvider:
+def alloy_provider(fork_mainnet_full: AnvilFork) -> Iterator[AlloyProvider]:
     """Create an AlloyProvider from the mainnet fork."""
-    return AlloyProvider(fork_mainnet_full.http_url)
+    provider = AlloyProvider(fork_mainnet_full.http_url)
+    try:
+        yield provider
+    finally:
+        provider.close()
 
 
 class TestProviderAdapter:
