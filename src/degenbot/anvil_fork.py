@@ -244,11 +244,24 @@ class AnvilFork:
         # Log the command being executed for debugging
         logger.debug(f"Launching Anvil with command: {' '.join(anvil_command)}")
 
+        # Under pytest-xdist with many AnvilFork fixtures booting concurrently, each
+        # anvil process holds ~27 pids (threads) against the container's cgroup
+        # ``pids.max``. A burst at fixture setup can exhaust the PID budget, so the
+        # fork(2) inside subprocess.Popen returns EAGAIN -> BlockingIOError. Retry
+        # with backoff: peer forks are concurrently tearing down and free slots.
+        launch_retry = tenacity.Retrying(
+            stop=tenacity.stop_after_delay(timeout),
+            wait=tenacity.wait_exponential_jitter(),
+            retry=tenacity.retry_if_exception_type(BlockingIOError),
+            reraise=True,
+        )
+
         with (
             self.stderr_capture_filename.open("w") as stderr_capture,
             self.stdout_capture_filename.open("w") as stdout_capture,
         ):
-            process = subprocess.Popen(  # noqa: S603
+            process = launch_retry(
+                subprocess.Popen,  # noqa: S603
                 anvil_command,
                 stderr=stderr_capture,
                 stdout=stdout_capture,

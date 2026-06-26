@@ -1,3 +1,5 @@
+import errno
+import subprocess
 from typing import TYPE_CHECKING
 
 import pytest
@@ -5,6 +7,7 @@ import web3.middleware
 from hexbytes import HexBytes
 from pydantic import ValidationError
 
+from degenbot import anvil_fork as anvil_fork_module
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_UINT256, MIN_UINT256
@@ -285,3 +288,34 @@ def test_coinbase_override_in_constructor():
     fork.mine()
     block = fork.w3.eth.get_block("latest")
     assert block["miner"] == fake_coinbase
+
+
+def test_launch_retries_on_pid_budget_exhaustion(monkeypatch):
+    """AnvilFork retries the anvil launch when the cgroup PID budget is transiently exhausted.
+
+    Under ``pytest-xdist --numprocesses auto`` many AnvilFork fixtures boot concurrently;
+    each anvil process holds ~27 pids (threads) against the container's ``pids.max``. A
+    burst at fixture setup can hit the ceiling, so ``subprocess.Popen`` returns
+    ``BlockingIOError(EAGAIN)``. The launch must retry with backoff rather than fail the
+    test, since peer forks are concurrently tearing down and will free slots.
+    """
+    real_popen = subprocess.Popen
+    calls = {"n": 0}
+
+    def flaky_popen(args, *rest, **kwargs):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise BlockingIOError(errno.EAGAIN, "Resource temporarily unavailable")
+        return real_popen(args, *rest, **kwargs)
+
+    monkeypatch.setattr(anvil_fork_module.subprocess, "Popen", flaky_popen)
+
+    fork = AnvilFork(
+        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
+        storage_caching=False,
+    )
+    try:
+        assert fork.w3.eth.block_number > 0
+        assert calls["n"] >= 3
+    finally:
+        fork.close()
