@@ -435,23 +435,32 @@ def format_sim_diag_line(
     The line is one compact, machine-parseable JSON object (``json.loads`` on
     the text after the ``[sim-diag] `` prefix) carrying the per-candidate
     attribution fields the analyzer needs: ``path_id``, ``path_type``,
-    ``solve_block``, ``block``, ``age``, ``revert_info``, ``optimal_input``,
-    ``hop_outputs``, and per-hop ``{engine_state, onchain_state, drift,
-    field_drift, recompute}`` (whatever the snapshot carries — engine-only
-    snapshots yield ``onchain_state: None`` / ``drift: False`` / ``field_drift:
-    []``). Never raises — a malformed snapshot emits a best-effort line with
-    the fields it has, so emission never blocks the revert path.
+    ``solve_block`` (the published-solve block the reverted result was solved
+    for), ``engine_processed_block`` (the engine's last-applied block at
+    diagnostic snapshot time — when GREATER than ``solve_block`` the visible
+    drift is a post-publish snapshot timing artifact, classified
+    ``DriftArtifact``, not real publish-time lag; O5SKZ6), ``onchain_block``
+    (the block the diagnostic's onchain RPC fetch actually hit, when set),
+    ``block``, ``age``, ``revert_info``, ``optimal_input``, ``hop_outputs``, and
+    per-hop ``{engine_state, onchain_state, drift, field_drift, recompute}``
+    (whatever the snapshot carries — engine-only snapshots yield
+    ``onchain_state: None`` / ``drift: False`` / ``field_drift: []``). Never
+    raises — a malformed snapshot emits a best-effort line with the fields it
+    has, so emission never blocks the revert path.
     """
-    hops = snapshot.get("hops", []) if isinstance(snapshot, dict) else []
+    snapshot_dict = snapshot if isinstance(snapshot, dict) else {}
+    hops = snapshot_dict.get("hops", [])
     payload = {
         "path_id": path_id,
         "path_type": path_type,
         "solve_block": solve_block,
+        "engine_processed_block": snapshot_dict.get("engine_processed_block"),
+        "onchain_block": snapshot_dict.get("onchain_block"),
         "block": block,
         "age": age,
         "revert_info": revert_info,
-        "optimal_input": snapshot.get("optimal_input") if isinstance(snapshot, dict) else None,
-        "hop_outputs": snapshot.get("hop_outputs", []) if isinstance(snapshot, dict) else [],
+        "optimal_input": snapshot_dict.get("optimal_input"),
+        "hop_outputs": snapshot_dict.get("hop_outputs", []),
         "hops": hops,
     }
     return "[sim-diag] " + json.dumps(payload, default=str, separators=(",", ":"))

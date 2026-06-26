@@ -296,6 +296,64 @@ def test_format_sim_diag_line_emits_parseable_json_with_required_fields() -> Non
     assert hop["recompute"]["expected_out_engine"] == "0x64"
 
 
+def test_format_sim_diag_line_emits_engine_processed_block_and_onchain_block() -> None:
+    """O5SKZ6: the [sim-diag] line must carry ``engine_processed_block`` (the
+    engine's last-applied block at diagnostic snapshot time) and
+    ``onchain_block`` (the block the diagnostic's onchain RPC fetch hit) so the
+    analyzer can distinguish a post-publish snapshot timing artifact from a
+    real publish-time state lag. When ``engine_processed_block > solve_block``
+    (the engine has advanced past the published solve_block by the time the
+    snapshot is read), the visible drift is the post-publish swap the live
+    engine read includes — a SNAPSHOT ARTIFACT (DriftArtifact), NOT real
+    publish-time drift."""
+    import json
+
+    from examples.eth_backrun_helpers import format_sim_diag_line
+
+    snapshot = {
+        "engine_processed_block": 1001,  # engine has advanced past publish
+        "onchain_block": 1000,
+        "hops": [{"drift": True, "recompute": {"matches_solver": None}}],
+    }
+
+    line = format_sim_diag_line(
+        snapshot,
+        path_id=99,
+        path_type="V4-V4-V3",
+        solve_block=1000,
+        block=1001,
+        age=1,
+        revert_info="0x IIA",
+    )
+    payload = json.loads(line[len("[sim-diag] ") :])
+    assert payload["solve_block"] == 1000
+    assert payload["engine_processed_block"] == 1001
+    assert payload["onchain_block"] == 1000
+    assert payload["engine_processed_block"] > payload["solve_block"]
+
+
+def test_format_sim_diag_line_emits_null_block_metadata_when_absent() -> None:
+    """When the snapshot doesn't carry block metadata (older engine-side
+    snapshots), the line emits nulls — the analyzer treats absent metadata
+    conservatively (real drift, not artifact)."""
+    import json
+
+    from examples.eth_backrun_helpers import format_sim_diag_line
+
+    line = format_sim_diag_line(
+        {"hops": []},
+        path_id=1,
+        path_type="V2-V3",
+        solve_block=42,
+        block=42,
+        age=0,
+        revert_info="0x whatever",
+    )
+    payload = json.loads(line[len("[sim-diag] ") :])
+    assert payload["engine_processed_block"] is None
+    assert payload["onchain_block"] is None
+
+
 def test_format_sim_diag_line_never_raises_on_missing_snapshot_keys() -> None:
     """A taxonomy/emission path must never raise — malformed snapshots emit a
     best-effort line with whatever fields are present (the analyzer tolerates
