@@ -6,7 +6,7 @@
 //! synchronous and does not mutate engine state.
 
 use alloy::dyn_abi::{DynSolType, DynSolValue};
-use alloy::primitives::{Address, Bytes, B256, U256};
+use alloy::primitives::{Address, Bytes, B256, I256, U256};
 use serde::{Deserialize, Serialize};
 
 use super::{HopType, MixedPoolRef, UniswapEngine};
@@ -171,6 +171,44 @@ pub fn recompute_v2_amount_out(state: &DiagnosticPoolState, amount_in: U256) -> 
     crate::solvers::mobius_int::IntHopState::new(ri, ro, gamma_numer, fee_denom).swap(amount_in)
 }
 
+/// Recompute a V3 hop's output from its engine `V3PoolState` + `amount_in`
+/// (ADR-008 D2 / T1). Calls `v3_simulate_swap` — an INDEPENDENT implementation
+/// from the solver's `int_simulate_v3_swap` (U512 reimpl) — so agreement with
+/// `solver_out` confirms the solver's math is consistent given its (possibly
+/// stale) engine state. The discriminant for drift attribution: if
+/// `matches_solver == true`, the revert is pure drift (engine was right given
+/// its state; the chain moved). Returns `None` if the simulate fails (sparse
+/// tick-map miss, pathological input, etc.).
+#[must_use]
+pub fn recompute_v3_amount_out(
+    state: &crate::bot_core::V3PoolState,
+    zero_for_one: bool,
+    amount_in: U256,
+) -> Option<U256> {
+    // V3: amount_specified > 0 = exact INPUT.
+    let amount_specified = I256::try_from(amount_in).ok()?;
+    let limit = crate::bot_core::V3PoolState::default_sqrt_price_limit(zero_for_one);
+    let outcome = crate::bot_core::v3_simulate_swap(state, zero_for_one, amount_specified, limit).ok()?;
+    // zfo: amount0 in, amount1 out. ofz: amount1 in, amount0 out.
+    Some(if zero_for_one { outcome.amount1 } else { outcome.amount0 })
+}
+
+/// Recompute a V4 hop's output from its engine `V4PoolState` + `amount_in`
+/// (ADR-008 D2 / T1). Calls `v4_simulate_swap` — independent of the solver's
+/// `int_simulate_v4_swap`. Same discriminant as `recompute_v3_amount_out`.
+#[must_use]
+pub fn recompute_v4_amount_out(
+    state: &crate::bot_core::V4PoolState,
+    zero_for_one: bool,
+    amount_in: U256,
+) -> Option<U256> {
+    // V4 sign convention (opposite to V3): `amount_specified` < 0 = exact INPUT.
+    let amount_specified = I256::try_from(amount_in).ok()?.saturating_neg();
+    let limit = crate::bot_core::V3PoolState::default_sqrt_price_limit(zero_for_one);
+    let outcome = crate::bot_core::v4_simulate_swap(state, zero_for_one, amount_specified, limit).ok()?;
+    Some(if zero_for_one { outcome.amount1 } else { outcome.amount0 })
+}
+
 /// Populate `hop.recompute` for a V2 hop from the solver-reported
 /// `amount_in` (the hop's consumed input) + `solver_out` (the hop's reported
 /// output) (NL2YY3). Recomputes against the engine state AND, when an on-chain
@@ -238,29 +276,32 @@ pub(crate) fn refresh_v2_recompute_onchain(hop: &mut DiagnosticHop) {
     recompute.matches_solver = Some(onchain_recompute == solver_out);
 }
 
-/// Populate a PARTIAL `recompute` for a V3/V4 hop (4BKMKX) recording only the
-/// solver's reported `amount_in` + `solver_out`. The recompute fields stay
-/// `None`: engine-state recompute is identity (only `degenbot-cl-math` exists —
-/// the solver's own math) and onchain recompute is deferred (needs the full
-/// tick map, a heavy RPC fetch the diagnostic path does not perform). The
-/// scalar `drift` flag (PCG2M3) + decoded revert reason are the V3/V4
-/// classification basis instead. See [`HopRecompute`] docs.
-///
-/// No-op for V2 hops (V2 uses [`populate_v2_recompute`]).
-pub(crate) fn populate_v3v4_recompute_partial(
+/// Populate a FULL `recompute` for a V3/V4 hop (T1 / GTOD23-XNWWA3). Unlike the
+/// deprecated partial variant, this carries `expected_out_engine` (the
+/// independent `v3_simulate_swap`/`v4_simulate_swap` recompute against the
+/// engine's own state, computed by the caller from the engine's
+/// `V3PoolState`/`V4PoolState`) and `matches_solver` (does that recompute agree
+/// with the solver's reported `solver_out`?). `matches_solver == true` is the
+/// keystone drift discriminant: the engine's math was right given its (possibly
+/// stale) state → the revert is pure drift, not a solver-calc bug.
+/// `expected_out_onchain` stays `None` (onchain recompute needs the full tick
+/// map — a heavy RPC fetch the diagnostic path does not perform). No-op for V2.
+pub(crate) fn populate_v3v4_recompute_full(
     hop: &mut DiagnosticHop,
     amount_in: U256,
     solver_out: U256,
+    expected_out_engine: Option<U256>,
 ) {
     if matches!(hop.engine_state, DiagnosticPoolState::V2 { .. }) {
         return;
     }
+    let matches_solver = expected_out_engine.map(|e| e == solver_out);
     hop.recompute = Some(HopRecompute {
         amount_in: u256_to_hex(amount_in),
         solver_out: u256_to_hex(solver_out),
-        expected_out_engine: None,
+        expected_out_engine: expected_out_engine.map(u256_to_hex),
         expected_out_onchain: None,
-        matches_solver: None,
+        matches_solver,
     });
 }
 
@@ -286,19 +327,19 @@ fn parse_hex_u64(s: &str) -> Option<u64> {
 /// reserves, post-`fetch_onchain`). `matches_solver == false` is the
 /// solver-calc-error / drift detector for V2.
 ///
-/// ## V3/V4 (4BKMKX)
-/// Only `amount_in` + `solver_out` are populated (the solver's reported
-/// values). The recompute fields stay `None` by design:
-/// - `expected_out_engine`: identity — the only V3/V4 swap math is
-///   `degenbot-cl-math`, which is what the solver ran, so re-simulating the
-///   engine state reproduces `solver_out` (an internal-consistency check, not
-///   an independent calc check). No clean single-hop simulate primitive exists
-///   independent of the solver's crossing machinery.
-/// - `expected_out_onchain` / `matches_solver`: deferred — a genuine onchain
-///   recompute needs the full tick map (heavy RPC, not fetched by the
-///   diagnostic path; only scalar `slot0`/`liquidity` are fetched). The scalar
-///   [`DiagnosticHop::drift`] flag (PCG2M3) + the decoded revert reason are the
-///   V3/V4 classification basis instead.
+/// ## V3/V4 (4BKMKX + T1 / GTOD23-XNWWA3)
+/// `amount_in` + `solver_out` are populated (the solver's reported values).
+/// `expected_out_engine` + `matches_solver` are populated via the INDEPENDENT
+/// `v3_simulate_swap` / `v4_simulate_swap` (NOT the solver's
+/// `int_simulate_v3_swap` — a separate U512 reimplementation), so agreement
+/// confirms the solver's math was right given its (possibly stale) engine
+/// state. `matches_solver == true` is the drift discriminant: the revert is
+/// pure drift, not a solver-calc bug.
+///
+/// `expected_out_onchain` stays `None`: a genuine onchain recompute needs the
+/// full tick map (heavy RPC, not fetched by the diagnostic path; only scalar
+/// `slot0`/`liquidity` are fetched). The scalar [`DiagnosticHop::drift`] flag
+/// (PCG2M3) + the decoded revert reason remain the V3/V4 classification basis.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HopRecompute {
     /// The hop's consumed input used as the re-compute basis.
@@ -306,13 +347,17 @@ pub struct HopRecompute {
     /// The output the solver reported for this hop.
     pub solver_out: String,
     /// Re-computed output from the ENGINE state. V2: populated (canonical
-    /// `getAmountOut`). V3/V4: `None` (identity — see struct docs).
+    /// `getAmountOut`). V3/V4: populated via the independent
+    /// `v3_simulate_swap`/`v4_simulate_swap` (T1); `None` only when the pool
+    /// state can't be looked up or the simulate fails (sparse tick-map miss).
     pub expected_out_engine: Option<String>,
     /// Re-computed output from the ONCHAIN state. V2: populated post-fetch
     /// (drift detector). V3/V4: `None` (deferred — heavy tick-map fetch).
     pub expected_out_onchain: Option<String>,
-    /// True iff the chosen recompute basis agrees with `solver_out`. V2:
-    /// populated (onchain recompute vs `solver_out`). V3/V4: `None`.
+    /// True iff the engine recompute agrees with `solver_out`. V2: populated
+    /// (onchain recompute vs `solver_out`). V3/V4: populated (engine recompute
+    /// vs `solver_out` — T1, the drift discriminant); `None` only when the
+    /// engine recompute itself is `None`.
     pub matches_solver: Option<bool>,
 }
 
@@ -1053,7 +1098,12 @@ impl UniswapEngine {
             });
         }
 
-        thread_solver_result_and_recompute(&mut snapshot, self.latest_results().0.get(&path_id));
+        thread_solver_result_and_recompute(
+            &mut snapshot,
+            self.latest_results().0.get(&path_id),
+            &core,
+            &path.pools,
+        );
 
         Some(snapshot)
     }
@@ -1061,12 +1111,16 @@ impl UniswapEngine {
 
 /// Thread the solver's reported result (`optimal_input` + per-hop
 /// `hop_outputs` / `consumed_inputs`) onto the snapshot, and populate each V2
-/// hop's `recompute` from the canonical `getAmountOut` (NL2YY3). Recompute via
-/// the on-chain state, when present, is added later by `fetch_onchain`'s
-/// caller; here `matches_solver` stays `None` (no on-chain state yet).
+/// hop's `recompute` from the canonical `getAmountOut` (NL2YY3) + each V3/V4
+/// hop's `recompute` from the independent `v3_simulate_swap`/`v4_simulate_swap`
+/// (T1 / GTOD23-XNWWA3 — the drift discriminant: `matches_solver == true`
+/// means the engine's math was right given its state → pure drift). Onchain
+/// recompute for V3/V4 stays `None` (needs the full tick map — heavy RPC).
 fn thread_solver_result_and_recompute(
     snapshot: &mut DiagnosticPathState,
     solve_result: Option<&super::SolvePathResult>,
+    core: &crate::bot_core::BotState,
+    pool_refs: &[super::MixedPoolRef],
 ) {
     let Some(result) = solve_result else {
         return;
@@ -1081,7 +1135,17 @@ fn thread_solver_result_and_recompute(
             continue;
         };
         populate_v2_recompute(hop, amount_in, solver_out);
-        populate_v3v4_recompute_partial(hop, amount_in, solver_out);
+        // T1: V3/V4 engine-state recompute via the independent simulate path.
+        let expected_out_engine = pool_refs.get(i).and_then(|pool_ref| match pool_ref.hop_type {
+            super::HopType::V3 => core
+                .get_v3_pool(pool_ref.pool_key)
+                .and_then(|state| recompute_v3_amount_out(state, pool_ref.zero_for_one, amount_in)),
+            super::HopType::V4 => core
+                .get_v4_pool(pool_ref.pool_key)
+                .and_then(|state| recompute_v4_amount_out(state, pool_ref.zero_for_one, amount_in)),
+            super::HopType::V2 => None,
+        });
+        populate_v3v4_recompute_full(hop, amount_in, solver_out, expected_out_engine);
     }
 }
 
@@ -1618,7 +1682,12 @@ mod tests {
             consumed_inputs: vec![amount_in, expected_v2_out],
         };
 
-        super::thread_solver_result_and_recompute(&mut snapshot, Some(&solve_result));
+        super::thread_solver_result_and_recompute(
+            &mut snapshot,
+            Some(&solve_result),
+            &crate::bot_core::BotState::default(),
+            &[],
+        );
 
         assert_eq!(
             snapshot.optimal_input.as_deref(),
@@ -1646,21 +1715,30 @@ mod tests {
         assert!(v2_recompute.expected_out_onchain.is_none());
         assert!(v2_recompute.matches_solver.is_none());
 
-        // Non-V2 (V3/V4) hop: PARTIAL recompute — solver values recorded,
-        // recompute fields None (identity/deferred — see HopRecompute docs).
+        // Non-V2 (V3/V4) hop: recompute records solver values; engine recompute
+        // fields are None here because the V3 pool isn't registered in this
+        // synthetic BotState (no pool_ref → lookup misses → None basis). In a
+        // real engine `expected_out_engine` + `matches_solver` are populated
+        // by the independent `v3_simulate_swap` (T1).
         let v3_recompute = snapshot.hops[1]
             .recompute
             .as_ref()
-            .expect("V3/V4 hop gets a partial recompute");
+            .expect("V3/V4 hop gets a recompute (solver values recorded)");
         assert_eq!(
             v3_recompute.amount_in,
             format!("0x{expected_v2_out:x}"),
             "V3 hop amount_in = consumed_inputs[1] = previous hop output"
         );
         assert_eq!(v3_recompute.solver_out, format!("0x{:x}", hop_outputs[1]));
-        assert!(v3_recompute.expected_out_engine.is_none());
+        assert!(
+            v3_recompute.expected_out_engine.is_none(),
+            "unregistered V3 pool → no engine recompute basis → None"
+        );
         assert!(v3_recompute.expected_out_onchain.is_none());
-        assert!(v3_recompute.matches_solver.is_none());
+        assert!(
+            v3_recompute.matches_solver.is_none(),
+            "no engine recompute basis → matches_solver None"
+        );
     }
 
     /// After `fetch_onchain` sets on-chain state, the V2 hop's existing
@@ -1737,8 +1815,15 @@ mod tests {
     /// requires a heavy full-tick-map fetch deferred from the diagnostic path.
     /// The scalar `drift` flag (PCG2M3) and decoded revert reason are the V3/V4
     /// classification basis instead.
+    /// `populate_v3v4_recompute_full` (T1 / GTOD23-XNWWA3) populates
+    /// `expected_out_engine` (the independent recompute passed by the caller)
+    /// and `matches_solver` on a V3 hop — NOT `None` like the old partial
+    /// variant. `expected_out_onchain` stays `None` (deferred — heavy tick-map
+    /// fetch). `matches_solver` is `Some(true)` when the recompute agrees with
+    /// `solver_out`, `Some(false)` when it diverges, and is the drift
+    /// discriminant (engine math right given its state → pure drift).
     #[test]
-    fn populate_v3v4_recompute_partial_records_solver_values_only() {
+    fn populate_v3v4_recompute_full_populates_engine_recompute_and_matches_solver() {
         let v3_state = super::DiagnosticPoolState::V3 {
             address: String::new(),
             token0: String::new(),
@@ -1763,22 +1848,164 @@ mod tests {
 
         let amount_in = U256::from(1_000_000_000_u64);
         let solver_out = U256::from(42_u64);
-        super::populate_v3v4_recompute_partial(&mut hop, amount_in, solver_out);
+        // Caller passes the independent recompute (here, matching solver_out).
+        super::populate_v3v4_recompute_full(&mut hop, amount_in, solver_out, Some(solver_out));
 
-        let recompute = hop.recompute.as_ref().expect("partial recompute populated");
+        let recompute = hop.recompute.as_ref().expect("full recompute populated");
         assert_eq!(recompute.amount_in, format!("0x{amount_in:x}"));
         assert_eq!(recompute.solver_out, format!("0x{solver_out:x}"));
-        assert!(
-            recompute.expected_out_engine.is_none(),
-            "V3/V4 engine recompute is identity → left None"
+        assert_eq!(
+            recompute.expected_out_engine.as_deref(),
+            Some(format!("0x{solver_out:x}").as_str()),
+            "T1: expected_out_engine populated from the independent recompute"
         );
         assert!(
             recompute.expected_out_onchain.is_none(),
             "V3/V4 onchain recompute deferred (heavy tick-map fetch) → left None"
         );
-        assert!(
-            recompute.matches_solver.is_none(),
-            "no recompute basis for V3/V4 → matches_solver left None"
+        assert_eq!(
+            recompute.matches_solver,
+            Some(true),
+            "T1: matches_solver populated — recompute agrees with solver_out"
         );
+
+        // Divergent recompute → matches_solver == Some(false).
+        let divergent = U256::from(999_u64);
+        super::populate_v3v4_recompute_full(&mut hop, amount_in, solver_out, Some(divergent));
+        let recompute = hop.recompute.as_ref().expect("recompute repopulated");
+        assert_eq!(
+            recompute.matches_solver,
+            Some(false),
+            "divergent recompute → matches_solver == Some(false)"
+        );
+
+        // No recompute available (e.g. sparse tick-map miss) → None basis.
+        super::populate_v3v4_recompute_full(&mut hop, amount_in, solver_out, None);
+        let recompute = hop.recompute.as_ref().expect("recompute repopulated");
+        assert!(
+            recompute.expected_out_engine.is_none(),
+            "no recompute basis → expected_out_engine None"
+        );
+        assert_eq!(
+            recompute.matches_solver,
+            None,
+            "no recompute basis → matches_solver None"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // T1: V3/V4 engine-state recompute (ADR-008 D2 / GTOD23-XNWWA3)
+    // -----------------------------------------------------------------
+
+    /// `recompute_v3_amount_out` calls the INDEPENDENT `v3_simulate_swap`
+    /// (not the solver's `int_simulate_v3_swap`) against the engine's own
+    /// `V3PoolState` and returns a non-zero output for a valid swap. This is
+    /// the keystone discriminant: if it agrees with `solver_out`, the
+    /// engine's math was right given its (possibly stale) state → the revert
+    /// is pure drift, not a solver-calc bug.
+    #[test]
+    fn recompute_v3_amount_out_returns_independent_simulate_output() {
+        let engine = UniswapEngine::new();
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            60,
+            crate::bot_core::TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(1_000_000),
+                liquidity_net: alloy::primitives::I256::try_from(1_000_000i128)
+                    .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
+            },
+        );
+        tick_data.insert(
+            -60,
+            crate::bot_core::TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(1_000_000),
+                liquidity_net: alloy::primitives::I256::try_from(-1_000_000i128)
+                    .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
+            },
+        );
+        let v3_state = engine.register_v3_pool(&V3Params {
+            address: Address::from([0x22u8; 20]),
+            token0: Address::from([0u8; 20]),
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
+            liquidity: 1_000_000,
+            tick: 0,
+            tick_data,
+            update_block: 0,
+            coverage: PoolTickCoverage::Tracked,
+        });
+        let core = engine.core.read();
+        let state = core.get_v3_pool(v3_state).expect("registered");
+        // Hold the read guard for the whole referenced-swap simulation below.
+
+        let amount_in = U256::from(1_000_000_000_u64);
+        let out = super::recompute_v3_amount_out(state, true, amount_in)
+            .expect("valid V3 swap should recompute");
+        assert!(out > U256::ZERO, "zfo swap of token0 must yield token1 > 0");
+
+        // Cross-check against `v3_simulate_swap` directly — the recompute wraps it.
+        let limit = crate::bot_core::V3PoolState::default_sqrt_price_limit(true);
+        let spec = alloy::primitives::I256::try_from(amount_in).unwrap();
+        let outcome = crate::bot_core::v3_simulate_swap(state, true, spec, limit)
+            .expect("v3_simulate_swap should succeed");
+        assert_eq!(out, outcome.amount1, "recompute must match v3_simulate_swap.amount1");
+    }
+
+    /// `recompute_v4_amount_out` mirrors the V3 recompute against the engine's
+    /// `V4PoolState`, using V4's sign convention (`amount_specified` < 0 = exact input).
+    #[test]
+    fn recompute_v4_amount_out_returns_independent_simulate_output() {
+        let engine = UniswapEngine::new();
+        let mut tick_data = HashMap::new();
+        tick_data.insert(
+            10,
+            crate::bot_core::TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(2_000_000),
+                liquidity_net: alloy::primitives::I256::try_from(2_000_000i128)
+                    .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
+            },
+        );
+        tick_data.insert(
+            -10,
+            crate::bot_core::TickInfo {
+                liquidity_gross: alloy::primitives::U128::from(2_000_000),
+                liquidity_net: alloy::primitives::I256::try_from(-2_000_000i128)
+                    .unwrap_or(alloy::primitives::I256::ZERO),
+                block: 0,
+            },
+        );
+        let v4_fwd = engine
+            .register_v4_pool(&V4Params {
+                pool_manager: Address::from([0x33u8; 20]),
+                pool_id: [0x44u8; 32],
+                pool_key: V4PoolKey {
+                    currency0: Address::from([2u8; 20]),
+                    currency1: Address::from([3u8; 20]),
+                    fee: 500,
+                    tick_spacing: 10,
+                    hooks: Address::ZERO,
+                },
+                hook_flags: 0,
+                sqrt_price_x96: U256::from(79_228_162_514_264_337_593_543_950_336_u128),
+                liquidity: 2_000_000,
+                tick: 0,
+                tick_data,
+                update_block: 0,
+                coverage: PoolTickCoverage::Tracked,
+            })
+            .expect("V4 registration failed");
+        let core = engine.core.read();
+        let state = core.get_v4_pool(v4_fwd).expect("registered");
+
+        let amount_in = U256::from(1_000_000_000_u64);
+        let out = super::recompute_v4_amount_out(state, true, amount_in)
+            .expect("valid V4 swap should recompute");
+        assert!(out > U256::ZERO, "zfo swap of currency0 must yield currency1 > 0");
     }
 }
