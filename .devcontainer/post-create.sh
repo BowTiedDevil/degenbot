@@ -3,33 +3,20 @@
 # Idempotent: safe to re-run (devcontainer rebuild / --force-rebuild).
 #
 # OS-level tools (python3, rustc/cargo/rustfmt/clippy, nodejs24/npm, just, uv,
-# tmux, git) are baked into the Dockerfile via dnf (fedora:latest). This script
-# installs only the tools with no dnf package, plus project wiring:
-#   - foundry  (foundryup; no dnf path)
-#   - pi       (npm i -g via the dnf npm; lands in ~/.local/bin via npm prefix)
+# tmux, git) AND the curl/npm-installed tools (foundry, pi) are all baked into
+# the Dockerfile image. This script handles only the workspace-dependent wiring
+# that CANNOT be baked into the image (it needs the bind-mounted repo):
 #   - venv + uv sync (builds the degenbot_rs PyO3 extension)
+#   - commitlint git hooks
+# foundry/pi used to live here but were moved into the Dockerfile because the
+# SSH entry point (ssh-attach.sh) does `podman start`+`exec`, which does NOT
+# run postCreateCommand — image-baking them guarantees availability.
 set -euo pipefail
 
-LOCAL_BIN="/home/dev/.local/bin"
-mkdir -p "$LOCAL_BIN"
-
 # PATH for this script: postCreateCommand does not inherit remoteEnv.
-# ~/.local/bin holds pi; ~/.foundry/bin holds foundry. cargo/just/node/python/
-# uv are in /usr/bin from dnf and already on PATH.
-export PATH="$HOME/.foundry/bin:$LOCAL_BIN:$PATH"
-
-echo ">>> installing foundry (foundryup latest; no dnf path)"
-if ! command -v forge >/dev/null 2>&1; then
-  curl -L https://foundry.paradigm.xyz | bash
-  /home/dev/.foundry/bin/foundryup
-fi
-
-echo ">>> installing pi (matches host: @earendil-works/pi-coding-agent)"
-if ! command -v pi >/dev/null 2>&1; then
-  # npm prefix is set to ~/.local in the Dockerfile, so this lands the `pi`
-  # binary in ~/.local/bin and needs no sudo.
-  npm install -g @earendil-works/pi-coding-agent
-fi
+# foundry/pi are in the image under ~/.foundry/bin and ~/.local/bin. cargo/
+# just/node/python/uv are in /usr/bin from dnf.
+export PATH="$HOME/.foundry/bin:$HOME/.local/bin:$PATH"
 
 echo ">>> creating venv from dnf python and syncing project"
 # dnf python (3.14 on fedora:latest) ships libpython.so via python3-devel, so
@@ -43,6 +30,7 @@ fi
 uv sync
 
 echo ">>> enabling commitlint git hooks (optional; needs node)"
+echo ">>> foundry+pi are baked into the image; if either is MISSING in the summary below, the image is stale — rebuild it."
 if [ -f justfile ]; then
   just setup-git-hooks || echo "  (setup-git-hooks skipped or failed — non-fatal)"
 fi
