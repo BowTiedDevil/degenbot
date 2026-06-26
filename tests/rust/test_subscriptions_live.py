@@ -1,16 +1,8 @@
-"""Live WebSocket integration tests for eth_subscribe.
-
-These tests require a live Ethereum node with WebSocket support.
-They are skipped unless the ETHEREUM_ARCHIVE_NODE_WS_URI environment
-variable points to a reachable node (or the default public RPC works).
-
-Run with: just test-rust-python -- tests/rust/test_subscriptions_live.py -v -n0
-"""
+"""Live WebSocket integration tests for eth_subscribe."""
 
 from __future__ import annotations
 
 import asyncio
-import os
 from typing import Any
 
 import pytest
@@ -20,9 +12,7 @@ from degenbot.exceptions import SubscriptionDisconnected, SubscriptionNotSupport
 from degenbot.listener import LogListener
 from degenbot.provider import AsyncProviderAdapter, ProviderAdapter
 from degenbot.provider.subscription import Subscription
-
-# Use a well-known public WS endpoint
-WS_URI = os.environ.get("ETHEREUM_ARCHIVE_NODE_WS_URI", "ws://node:8546")
+from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI, ETHEREUM_ARCHIVE_NODE_WS_URI
 
 
 class TestLiveWSSubscribeBlocks:
@@ -31,7 +21,7 @@ class TestLiveWSSubscribeBlocks:
     @pytest.mark.asyncio
     async def test_subscribe_blocks_yields_headers(self) -> None:
         """Subscribe to block headers and verify we get at least one."""
-        provider = AlloyProvider(WS_URI)
+        provider = AlloyProvider(ETHEREUM_ARCHIVE_NODE_WS_URI)
         sub = provider.subscribe_blocks()
         subscription = Subscription(_inner=sub)
 
@@ -51,7 +41,7 @@ class TestLiveWSSubscribeBlocks:
     @pytest.mark.asyncio
     async def test_unsubscribe_stops_iteration(self) -> None:
         """Unsubscribe should stop the async iteration."""
-        provider = AlloyProvider(WS_URI)
+        provider = AlloyProvider(ETHEREUM_ARCHIVE_NODE_WS_URI)
         sub = provider.subscribe_blocks()
         subscription = Subscription(_inner=sub)
 
@@ -75,7 +65,7 @@ class TestLiveWSHTTPRaises:
 
     def test_http_provider_subscribe_raises(self) -> None:
         """HTTP providers should raise SubscriptionNotSupported."""
-        provider = AlloyProvider("https://eth.llamarpc.com/")
+        provider = AlloyProvider(ETHEREUM_ARCHIVE_NODE_HTTP_URI)
         adapter = ProviderAdapter.from_alloy(provider)
 
         with pytest.raises(SubscriptionNotSupported):
@@ -88,7 +78,7 @@ class TestLiveWSLogsSubscription:
     @pytest.mark.asyncio
     async def test_subscribe_logs_with_no_filter(self) -> None:
         """Subscribe to all logs and verify we get at least one."""
-        provider = AlloyProvider(WS_URI)
+        provider = AlloyProvider(ETHEREUM_ARCHIVE_NODE_WS_URI)
         sub = provider.subscribe_logs()
         subscription = Subscription(_inner=sub)
 
@@ -116,7 +106,7 @@ class TestLiveWSAdapterAndLogListener:
     @pytest.mark.asyncio
     async def test_adapter_subscribe_blocks(self) -> None:
         """AsyncProviderAdapter.subscribe_blocks() yields headers via live WS."""
-        provider = AlloyProvider(WS_URI)
+        provider = AlloyProvider(ETHEREUM_ARCHIVE_NODE_WS_URI)
         adapter = AsyncProviderAdapter.from_alloy(provider)
         sub = await adapter.subscribe_blocks()
 
@@ -133,7 +123,7 @@ class TestLiveWSAdapterAndLogListener:
     @pytest.mark.asyncio
     async def test_subscribe_logs_and_dispatch_via_listener(self) -> None:
         """Subscribe to unfiltered logs, dispatch via LogListener."""
-        provider = AlloyProvider(WS_URI)
+        provider = AlloyProvider(ETHEREUM_ARCHIVE_NODE_WS_URI)
         adapter = AsyncProviderAdapter.from_alloy(provider)
         sub = await adapter.subscribe_logs()
 
