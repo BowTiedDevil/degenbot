@@ -1,4 +1,4 @@
-"""Test CurveStableswapPool integration with ArbitragePath and solvers."""
+"""Test CurveStableswapPool integration with the solver stack."""
 
 import inspect
 from fractions import Fraction

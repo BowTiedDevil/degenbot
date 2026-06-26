@@ -97,8 +97,3 @@ class BrentSolver(Solver):
             method=SolverMethod.BRENT,
             solve_time_ns=elapsed_ns,
         )
-
-
-# ---------------------------------------------------------------------------
-# PiecewiseMobiusSolver — V3 multi-range with tick crossing
-# ---------------------------------------------------------------------------

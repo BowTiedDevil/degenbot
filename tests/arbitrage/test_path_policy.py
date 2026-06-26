@@ -1,8 +1,8 @@
 """Tests for the path-composition rejection predicate (Plan 102, D7KMQO).
 
-A bot can refuse an ``ArbitragePath`` / ``EngineRegistry.register_path``
-candidate by *policy* (token denylist/allowlist, hop-count min/max,
-min-liquidity gate, duplicate-pool guard) — distinct from the Rust core's
+A bot can refuse an ``EngineRegistry.register_path`` candidate by *policy*
+(token denylist/allowlist, hop-count min/max, min-liquidity gate,
+duplicate-pool guard) — distinct from the Rust core's
 pool *admission* floor (``HookedPoolRejectedError`` /
 ``DynamicFeePoolRejectedError``). Policy rejections surface as a typed
 ``PathRejectedError`` family so callers classify by type, mirroring the
