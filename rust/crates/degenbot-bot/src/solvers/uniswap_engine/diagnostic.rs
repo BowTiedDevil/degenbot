@@ -653,6 +653,18 @@ pub struct DiagnosticPathState {
     /// Block number associated with the engine results when the snapshot
     /// was taken. Falls back to `last_processed_block` if no results yet.
     pub solve_block: Option<u64>,
+    /// The engine's last-applied block at the moment this snapshot was taken
+    /// (the engine's `last_processed_block`). Distinct from `solve_block`
+    /// (which is the *published* solve block = `results_block`): when
+    /// `engine_processed_block > solve_block`, the engine has advanced past
+    /// the published solve block by the time `[sim-diag]` reads live
+    /// `engine_state` — so any visible `drift` against an onchain fetch pinned
+    /// to `solve_block` is a SNAPSHOT TIMING ARTIFACT (the post-publish swap
+    /// the live engine read includes but the pinned `solve_block` RPC
+    /// excludes), NOT a real publish-time state lag (O5SKZ6). The analyzer
+    /// classifies this case as `DriftArtifact`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine_processed_block: Option<u64>,
     /// Block number at which on-chain state was fetched, if a fetch was
     /// attempted.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -683,6 +695,7 @@ impl DiagnosticPathState {
             path_id,
             path_type: String::new(),
             solve_block,
+            engine_processed_block: None,
             onchain_block: None,
             hops: Vec::new(),
             optimal_input: None,
@@ -1181,6 +1194,14 @@ impl UniswapEngine {
         };
 
         let mut snapshot = DiagnosticPathState::new(path_id, solve_block);
+        // O5SKZ6: capture the engine's last-applied block alongside the
+        // published `solve_block`. When `engine_processed_block >
+        // solve_block`, the engine has advanced past the published solve block
+        // by the time the snapshot is read, so visible drift against an
+        // onchain fetch pinned to `solve_block` is a SNAPSHOT TIMING ARTIFACT
+        // (post-publish swap included in live engine_state but excluded by the
+        // pinned RPC), not real publish-time lag.
+        snapshot.engine_processed_block = self.last_processed_block;
 
         // ADR-003: V2 state lives in BotState. One core-lock window covers all
         // V2 lookups in this loop; V3/V4 state still reads the per-family
@@ -1504,6 +1525,66 @@ mod tests {
     fn diagnostic_path_state_returns_none_for_unknown_path() {
         let engine = UniswapEngine::new();
         assert!(engine.diagnostic_path_state(1234).is_none());
+    }
+
+    /// O5SKZ6: the snapshot's `engine_processed_block` (the engine's
+    /// last-applied block at snapshot time) MUST be present so the analyzer
+    /// can distinguish post-publish snapshot timing artifacts (engine advanced
+    /// past the published `solve_block`) from real publish-time state lags.
+    /// `solve_dirty(block)` advances `last_processed_block` to `block`
+    /// (event_routing.rs); the snapshot's
+    /// `engine_processed_block == last_processed_block()`.
+    #[test]
+    fn diagnostic_path_state_includes_engine_processed_block() {
+        use crate::bot_core::BlockMetadata;
+
+        let mut engine = UniswapEngine::new();
+        let v2_fwd = engine.register_v2_pool(
+            Address::from([0x11u8; 20]),
+            usdc(1_500_000),
+            weth(800),
+            997,
+            1000,
+        );
+        let path_id = engine
+            .register_path(vec![PoolHop {
+                pool_id: v2_fwd,
+                zero_for_one: true,
+            }])
+            .unwrap();
+
+        // No solve_dirty yet → both `solve_block` and
+        // `engine_processed_block` are `None`.
+        let snap = engine.diagnostic_path_state(path_id).expect("path exists");
+        assert_eq!(snap.engine_processed_block, engine.last_processed_block());
+        assert_eq!(snap.engine_processed_block, None);
+
+        // Drive solve_dirty(123) → last_processed_block = Some(123).
+        // `solve_dirty` also bumps `results_block` to 123 (no affected paths →
+        // solver_dispatch.rs short-circuit), so solve_block advances in
+        // lockstep (123 == 123) here — the post-publish advance case (engine
+        // ahead of solve_block) requires the published solve result to lag
+        // behind continued WS log application, which the analyzer-side test
+        // covers (test_classify_post_publish_advance_drift_is_artifact).
+        engine.solve_dirty(123, &BlockMetadata::default());
+        let snap = engine.diagnostic_path_state(path_id).expect("path exists");
+        assert_eq!(
+            snap.engine_processed_block,
+            engine.last_processed_block(),
+            "engine_processed_block must mirror last_processed_block"
+        );
+        assert_eq!(snap.engine_processed_block, Some(123));
+
+        // Advance: solve_dirty(124) → last_processed_block = Some(124).
+        engine.solve_dirty(124, &BlockMetadata::default());
+        let snap = engine.diagnostic_path_state(path_id).expect("path exists");
+        assert_eq!(snap.engine_processed_block, Some(124));
+
+        // JSON round-trip preserves the field.
+        let json = serde_json::to_string(&snap).expect("serializes");
+        let parsed: DiagnosticPathState =
+            serde_json::from_str(&json).expect("deserializes");
+        assert_eq!(parsed.engine_processed_block, Some(124));
     }
 
     // -----------------------------------------------------------------

@@ -44,6 +44,7 @@ PERMUTATIONS = [
 
 # Verdict labels (kept stable for the TSV columns).
 DRIFT = "Drift"
+DRIFT_ARTIFACT = "DriftArtifact"
 SOLVER_CALC = "SolverCalc"
 ENCODING = "Encoding"
 UNKNOWN = "Unknown"
@@ -88,6 +89,29 @@ def classify_candidate(sim_diag: dict) -> str:
                 all_matches_true = False
 
     if any_drift:
+        # O5SKZ6: a drift visible in the sim-diag can be a SNAPSHOT TIMING
+        # ARTIFACT rather than a real publish-time state lag. ``_emit_sim_diag``
+        # reads the engine's *live* state (post-publish, may have advanced) and
+        # fetches onchain at the snapshot's solve_block (= engine.results_block
+        # at diagnostic time, possibly past the published solve_block). When
+        # the engine has advanced past the published solve_block, or the onchain
+        # RPC was pinned at a block past publish, the visible drift is the
+        # post-publish swap that the live engine read includes but the pinned
+        # onchain snapshot excludes — NOT a real publish-time lag. Only when
+        # both markers align with solve_block is the drift a real publish-time
+        # state disagreement.
+        solve_block = sim_diag.get("solve_block") if isinstance(sim_diag, dict) else None
+        engine_processed_block = (
+            sim_diag.get("engine_processed_block") if isinstance(sim_diag, dict) else None
+        )
+        onchain_block = (
+            sim_diag.get("onchain_block") if isinstance(sim_diag, dict) else None
+        )
+        if isinstance(solve_block, int) and (
+            (isinstance(engine_processed_block, int) and engine_processed_block > solve_block)
+            or (isinstance(onchain_block, int) and onchain_block > solve_block)
+        ):
+            return DRIFT_ARTIFACT
         return DRIFT
     if any_solvercalc:
         return SOLVER_CALC
@@ -122,6 +146,7 @@ class AnalysisResult:
     sim_rate: str
     classification: str
     drift: int = 0
+    drift_artifact: int = 0
     solver_calc: int = 0
     encoding: int = 0
     unknown: int = 0
@@ -175,7 +200,7 @@ def analyze_log(log_text: str, permutation: str = "") -> AnalysisResult:
     if not structured:
         reverts = len(re.findall(r"\[sim-fail\].*revert=0x", log_text))
 
-    counts = {DRIFT: 0, SOLVER_CALC: 0, ENCODING: 0, UNKNOWN: 0}
+    counts = {DRIFT: 0, DRIFT_ARTIFACT: 0, SOLVER_CALC: 0, ENCODING: 0, UNKNOWN: 0}
     for snap in sim_diag_payloads:
         counts[classify_candidate(snap)] += 1
     if not structured:
@@ -223,6 +248,7 @@ def analyze_log(log_text: str, permutation: str = "") -> AnalysisResult:
         sim_rate=pct,
         classification=cls,
         drift=counts[DRIFT],
+        drift_artifact=counts[DRIFT_ARTIFACT],
         solver_calc=counts[SOLVER_CALC],
         encoding=counts[ENCODING],
         unknown=counts[UNKNOWN],
@@ -245,6 +271,7 @@ def tsv_header() -> str:
             "SimRate",
             "Classification",
             "Drift",
+            "DriftArtifact",
             "SolverCalc",
             "Encoding",
             "Unknown",
@@ -266,6 +293,7 @@ def result_to_tsv_row(index: int, r: AnalysisResult) -> str:
             r.sim_rate,
             r.classification,
             r.drift,
+            r.drift_artifact,
             r.solver_calc,
             r.encoding,
             r.unknown,

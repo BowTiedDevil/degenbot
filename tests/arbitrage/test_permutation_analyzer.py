@@ -97,10 +97,94 @@ def test_classify_unknown_when_no_hops_or_malformed() -> None:
     assert classify_candidate(snap) == "Unknown"
 
 # ---------------------------------------------------------------------------
+# DriftArtifact: post-publish-advance snapshot artifact (O5SKZ6)
+# ---------------------------------------------------------------------------
+
+from logs.permutation_analyzer import DRIFT_ARTIFACT
+
+
+def test_classify_post_publish_advance_drift_is_artifact_not_real_lag() -> None:
+    """When the diagnostic's ``engine_processed_block`` (the engine's
+    last-applied block when the snapshot was taken) is GREATER than the
+    published ``solve_block`` (the block the reverted result was solved for),
+    the visible drift is a SNAPSHOT TIMING ARTIFACT — the engine has advanced
+    past the published block by the time ``_emit_sim_diag`` reads live
+    ``engine_state`` against an onchain RPC sometimes pinned to ``solve_block``
+    — NOT a real publish-time state lag.
+
+    Started O5SKZ6. Verified in ``perm-V4-V4-V3.log`` block 25398801: only
+    hop[0] (V4a) drifts and the engine tick is AHEAD of the onchain-fetch tick
+    (the V4a pool had a post-publish swap the live engine read includes but
+    the pinned solve_block RPC excludes). All V4-V4-V3 reverts were the
+    executor-custody ``Comp::_transferTokens`` bug (fixed by WVKFDH), not drift
+    — no evidence of drift-driven onchain failures in any permutation.
+    """
+    snap = _line(
+        {
+            "solve_block": 25398800,
+            "engine_processed_block": 25398801,  # engine advanced past publish
+            "revert_info": "0x6675636b Localization: BLAH",
+            "hops": [_hop(drift=True, matches_solver=None)],
+        }
+    )
+    assert classify_candidate(snap) == DRIFT_ARTIFACT
+
+
+def test_classify_post_publish_advance_via_onchain_block_is_artifact() -> None:
+    """Even without ``engine_processed_block``, when ``onchain_block`` (the
+    block the diagnostic's RPC fetch actually hit) is later than the published
+    ``solve_block``, the drift is a snapshot artifact — the RPC was pinned
+    upstream of the published solve block, not at solve time."""
+    snap = _line(
+        {
+            "solve_block": 25398800,
+            "onchain_block": 25398801,  # RPC fetched at a block past publish
+            "revert_info": "0x IIA",
+            "hops": [_hop(drift=True, matches_solver=None)],
+        }
+    )
+    assert classify_candidate(snap) == DRIFT_ARTIFACT
+
+
+def test_classify_drift_at_published_block_is_real_lag() -> None:
+    """Drift with ``engine_processed_block == solve_block`` (engine hasn't
+    advanced past publish) AND no ``onchain_block`` past publish is a REAL
+    publish-time state lag — classified as ``Drift``, not artifact.
+
+    This is the worst case: the engine's state at publish disagrees with
+    onchain truth at the same block. Means a swap was applied wrong, or the
+    pump published during `LogsArriving` and the WS hasn't delivered the
+    straggler at snapshot time."""
+    snap = _line(
+        {
+            "solve_block": 25398800,
+            "engine_processed_block": 25398800,  # no advance
+            "revert_info": "0x IIA",
+            "hops": [_hop(drift=True, matches_solver=None)],
+        }
+    )
+    assert classify_candidate(snap) == "Drift"
+
+
+def test_classify_drift_with_no_block_metadata_is_real_lag() -> None:
+    """Drift with no ``engine_processed_block`` / ``onchain_block`` metadata
+    (older sim-diag lines predating the O5SKZ6 fix) defaults to ``Drift`` —
+    cannot prove artifact, so attribute conservatively."""
+    snap = _line(
+        {
+            "solve_block": 25398800,
+            "revert_info": "0x IIA",
+            "hops": [_hop(drift=True, matches_solver=None)],
+        }
+    )
+    assert classify_candidate(snap) == "Drift"
+
+
+# ---------------------------------------------------------------------------
 # analyze_log: integration (sim-diag parsing, NoProfit, fallback, verify basis)
 # ---------------------------------------------------------------------------
 
-from logs.permutation_analyzer import analyze_log, tsv_header
+from logs.permutation_analyzer import analyze_log, tsv_header, result_to_tsv_row
 
 
 def test_analyze_log_classifies_reverts_from_sim_diag_lines() -> None:
@@ -225,6 +309,28 @@ def test_classify_v3_no_drift_partial_recompute_is_unknown_not_solvercalc() -> N
         }
     )
     assert classify_candidate(snap) == "Unknown"
+
+
+def test_analyze_log_tallies_drift_artifact_separately() -> None:
+    """O5SKZ6: when the sim-diag line carries ``engine_processed_block > solve_block``
+    (engine advanced past publish), the drift is classified as ``DriftArtifact``
+    (snapshot timing artifact, not real publish-time lag) and tallied in a
+    dedicated column, while real-drift lines still tally under ``Drift``."""
+    log = (
+        "[sim] 2 ok (2), 0 failed, 0 exceptions\n"
+        "[sim-diag] {\"path_id\":1,\"solve_block\":25398800,"
+        "\"engine_processed_block\":25398801,\"revert_info\":\"0x IIA\","
+        "\"hops\":[{\"drift\":true,\"recompute\":{\"matches_solver\":null}}]}\n"
+        "[sim-diag] {\"path_id\":2,\"solve_block\":25398800,\"revert_info\":\"0x IIA\","
+        "\"hops\":[{\"drift\":true,\"recompute\":{\"matches_solver\":null}}]}\n"
+    )
+    r = analyze_log(log, permutation="V4-V4-V3")
+    assert r.drift_artifact == 1
+    assert r.drift == 1
+    h = tsv_header()
+    assert "DriftArtifact" in h
+    row = result_to_tsv_row(1, r)
+    assert "DriftArtifact" in tsv_header()
 
 
 # ---------------------------------------------------------------------------
