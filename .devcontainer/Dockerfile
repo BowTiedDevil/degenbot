@@ -37,10 +37,11 @@ FROM fedora:latest
 RUN dnf install -y \
         gcc gcc-c++ make pkgconf-pkg-config \
         uv python3 python3-devel python3-pip \
-        just rust cargo rustfmt clippy \
+        rust rust-src cargo rustfmt clippy \
         nodejs24 \
         sqlite \
         git \
+        just \
         sudo tmux vim htop procps-ng psmisc \
     && dnf clean all
 
@@ -86,7 +87,12 @@ ENV PATH="/home/${USERNAME}/.foundry/bin:/home/${USERNAME}/.local/bin:${PATH}"
 
 # Configure npm's global prefix to a user-writable dir so `npm i -g` needs no
 # sudo, and the bins land in ~/.local/bin (already on PATH via ENV above).
-RUN mkdir -p "${HOME}/.local/bin" \
+# Pre-create ~/.config as dev-owned so the devcontainer.json bind mount of
+# ~/.config/degenbot finds its parent already present. Otherwise podman
+# auto-creates missing bind-target parents as root:root, which then blocks
+# the dev user from writing sibling dotfile dirs under ~/.config (and leaves
+# the dir as root-owned with a sticky bit).
+RUN mkdir -p "${HOME}/.config" "${HOME}/.local/bin" \
     && npm config set prefix "${HOME}/.local"
 
 # Foundry (forge/cast/anvil/chisel). No dnf package, so curl-install foundryup
