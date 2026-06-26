@@ -33,7 +33,7 @@ V4_POOL_MANAGER = "0x000000000004444c5DC75cB358380D2e3dE08A90"
 def _make_test_config(tmp_path: pathlib.Path, chain_id: int = 1) -> DegenbotConfig:
     return DegenbotConfig(
         database=DatabaseSettings(path=tmp_path / "test.db"),
-        rpc={1: "http://node:8545/"},
+        rpc={1: "http://localhost:8545/"},
         default_chain_id=chain_id,
     )
 

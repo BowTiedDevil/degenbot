@@ -90,8 +90,8 @@ def test_start_no_snapshots_calls_subscribe_then_verify_never_resume() -> None:
     registry = runner.EngineRegistry(bot=None, engine=fake)
 
     backfill_target = registry.start(
-        "http://node:8545",
-        "ws://node:8546",
+        "http://localhost:8545",
+        "ws://localhost:8546",
     )
 
     assert fake.calls == [
@@ -136,14 +136,14 @@ def test_start_derives_snapshot_block_as_min_newest_block(monkeypatch) -> None:
     v4_snap = _FakeSnapshot(newest_block=18_000_050)
 
     registry.start(
-        "http://node:8545",
-        "ws://node:8546",
+        "http://localhost:8545",
+        "ws://localhost:8546",
         v3_snapshot=v3_snap,
         v4_snapshot=v4_snap,
     )
 
     # The derived block is the min of the two newest_blocks.
-    assert fake.backfill_args == [("http://node:8545", 18_000_050)]
+    assert fake.backfill_args == [("http://localhost:8545", 18_000_050)]
     # Streams ran for both snapshots, in order, then backfill, then verify.
     assert fake.calls == [
         "subscribe",
@@ -162,8 +162,8 @@ def test_start_passes_verify_state_view_when_supplied() -> None:
     state_view = "0x0000000000000000000000000000000000000abc"
 
     registry.start(
-        "http://node:8545",
-        "ws://node:8546",
+        "http://localhost:8545",
+        "ws://localhost:8546",
         verify_state_view=state_view,
     )
 
@@ -175,7 +175,7 @@ def test_start_skips_set_verify_state_view_when_none() -> None:
     fake = FakeEngine()
     registry = runner.EngineRegistry(bot=None, engine=fake)
 
-    registry.start("http://node:8545", "ws://node:8546")
+    registry.start("http://localhost:8545", "ws://localhost:8546")
 
     assert "set_verify_state_view" not in fake.calls
 
@@ -237,8 +237,8 @@ def test_start_stashes_snapshot_and_backfill_blocks_for_two_step_verify(monkeypa
     v4_snap = _FakeSnapshot(newest_block=18_000_050)
 
     registry.start(
-        "http://node:8545",
-        "ws://node:8546",
+        "http://localhost:8545",
+        "ws://localhost:8546",
         v3_snapshot=v3_snap,
         v4_snapshot=v4_snap,
     )
@@ -256,7 +256,7 @@ def test_start_stashes_None_blocks_when_no_snapshots() -> None:
     fake = FakeEngine()
     registry = runner.EngineRegistry(bot=None, engine=fake)
 
-    registry.start("http://node:8545", "ws://node:8546")
+    registry.start("http://localhost:8545", "ws://localhost:8546")
 
     assert registry._verify_snapshot_block is None
     assert registry._verify_backfill_block is None
@@ -285,15 +285,15 @@ def test_verify_liquidity_maps_delegates_with_stashed_config() -> None:
     state_view = "0x0000000000000000000000000000000000000abc"
 
     registry.start(
-        "http://node:8545",
-        "ws://node:8546",
+        "http://localhost:8545",
+        "ws://localhost:8546",
         verify_state_view=state_view,
     )
 
     asyncio.run(registry.verify_liquidity_maps())
 
     assert fake.verify_args == {
-        "rpc_url": "http://node:8545",
+        "rpc_url": "http://localhost:8545",
         "tick_lens_address": "0x0000000000000000000000000000000000000000",
         "state_view_address": state_view,
         "block_number": 18_000_042,
@@ -306,8 +306,8 @@ def test_verify_liquidity_maps_explicit_block_overrides_default() -> None:
     fake = FakeEngine()
     registry = runner.EngineRegistry(bot=None, engine=fake)
     registry.start(
-        "http://node:8545",
-        "ws://node:8546",
+        "http://localhost:8545",
+        "ws://localhost:8546",
         verify_state_view="0x0000000000000000000000000000000000000abc",
     )
 
@@ -324,8 +324,8 @@ def test_verify_liquidity_maps_falls_back_to_pending_when_no_block() -> None:
     fake._last_processed_block = None
     registry = runner.EngineRegistry(bot=None, engine=fake)
     registry.start(
-        "http://node:8545",
-        "ws://node:8546",
+        "http://localhost:8545",
+        "ws://localhost:8546",
         verify_state_view="0x0000000000000000000000000000000000000abc",
     )
 
@@ -360,7 +360,7 @@ def test_verify_liquidity_maps_raises_when_state_view_omitted() -> None:
     surface as a config error at verify time, not a silent pass."""
     fake = FakeEngine()
     registry = runner.EngineRegistry(bot=None, engine=fake)
-    registry.start("http://node:8545", "ws://node:8546")  # no state_view
+    registry.start("http://localhost:8545", "ws://localhost:8546")  # no state_view
 
     with pytest.raises(RuntimeError, match="verify config"):
         asyncio.run(registry.verify_liquidity_maps())
