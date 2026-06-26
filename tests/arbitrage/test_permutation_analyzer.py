@@ -173,6 +173,36 @@ def test_analyze_log_verify_basis_from_per_pool_gates() -> None:
     assert analyze_log(log).verify_basis == "verified"
 
 
+def test_analyze_log_verify_basis_recurring_drift_from_rust_mismatch() -> None:
+    """GTOD23-YBEYKY (T4): the recurring in-loop verifier's Python-side
+    ``[verify] (recurring)`` lines were silenced (S2/PB24RX). Its Rust-side
+    mismatch emit survives under ``[dbg-verify] MISMATCH`` — recognize that as
+    "recurring verify ran + detected drift" so the analyzer reports the drift
+    detection instead of reporting no recurring activity."""
+    log = "[dbg-verify] MISMATCH 0x8ad5… tick=203880 block=25398650\n[sim] 1 ok (1), 0 failed\n"
+    assert analyze_log(log).verify_basis == "recurring-drift"
+
+
+def test_analyze_log_verify_basis_recurring_drift_takes_priority_when_ok_also_present() -> None:
+    """When both the per-pool OK AND a recurring mismatch appear, the recurring
+    drift signal takes priority (it caught drift the registration-time two-step
+    didn't)."""
+    log = (
+        "[verify-seed] V3 snapshot seed OK for 0x88e6…5640 at block 25396501\n"
+        "[dbg-verify] MISMATCH 0x8ad5… tick=203880 block=25398650\n"
+        "[sim] 1 ok (1), 0 failed\n"
+    )
+    assert analyze_log(log).verify_basis == "recurring-drift"
+
+
+def test_analyze_log_verify_basis_recurring_python_line_now_visible() -> None:
+    """After T4's logging.py fix, the recurring verifier's own Python ``[verify]
+    (recurring)`` line is no longer silenced — the analyzer recognizes it as
+    recurring-drift signal too (it's the recurring verifier reporting it ran)."""
+    log = "[verify] (recurring) checking at block 25398650\n[sim] 1 ok (1), 0 failed\n"
+    assert analyze_log(log).verify_basis == "recurring-drift"
+
+
 def test_tsv_header_has_four_way_columns_no_stale() -> None:
     h = tsv_header()
     assert "Drift" in h and "SolverCalc" in h and "Encoding" in h and "Unknown" in h
