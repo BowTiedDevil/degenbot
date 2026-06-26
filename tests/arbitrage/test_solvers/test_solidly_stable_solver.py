@@ -18,11 +18,7 @@ import pytest
 
 from degenbot.aerodrome.functions import calc_exact_in_stable
 from degenbot.arbitrage.solvers.hop_types import SolveInput, SolverMethod
-from degenbot.arbitrage.solvers.solidly_stable import _simulate_mixed_path_int
-from degenbot.arbitrage.solvers.solver import (
-    ArbSolver,
-    SolidlyStableSolver,
-)
+from degenbot.arbitrage.solvers.solidly_stable import SolidlyStableSolver, _simulate_mixed_path_int
 from degenbot.exceptions import OptimizationError
 from degenbot.types.hop_types import (
     ConstantProductHop,
@@ -336,67 +332,9 @@ class TestSolidlyStableSolverSolve:
                 f"(ratio={profit_ratio:.4f})"
             )
 
-
-# ---------------------------------------------------------------------------
-# Tests: ArbSolver dispatch with Solidly stable
-# ---------------------------------------------------------------------------
+        # ---------------------------------------------------------------------------
 
 
-class TestArbSolverSolidlyDispatch:
-    """Test that ArbSolver correctly dispatches Solidly stable paths."""
-
-    def test_arb_solver_dispatches_solidly(self):
-        """ArbSolver should use SolidlyStableSolver for Solidly paths."""
-        solver = ArbSolver()
-
-        reserves_usdc = 10_000_000 * 10**6
-        reserves_weth = 5_000 * 10**18
-        fee = Fraction(1, 1000)
-        cheap_stable = SolidlyStableHop(
-            reserve_in=reserves_usdc,
-            reserve_out=reserves_weth,
-            fee=fee,
-            decimals_in=6,
-            decimals_out=18,
-            swap_fn=make_aerodrome_stable_swap_fn(
-                reserves0=reserves_usdc,
-                reserves1=reserves_weth,
-                decimals0=10**6,
-                decimals1=10**18,
-                fee=fee,
-                token_in=0,
-            ),
-        )
-        expensive_v2 = ConstantProductHop(
-            reserve_in=2_000 * 10**18,
-            reserve_out=5_000_000 * 10**6,
-            fee=Fraction(3, 1000),
-        )
-
-        result = solver.solve(SolveInput(hops=(cheap_stable, expensive_v2)))
-        assert result.method == SolverMethod.SOLIDLY_STABLE
-
-    def test_arb_solver_uses_mobius_for_pure_v2(self):
-        """ArbSolver should still use MobiusSolver for pure V2 paths."""
-        solver = ArbSolver()
-
-        hops = (
-            ConstantProductHop(
-                reserve_in=1_000 * 10**18,
-                reserve_out=2_500_000 * 10**6,
-                fee=Fraction(3, 1000),
-            ),
-            ConstantProductHop(
-                reserve_in=1_800_000 * 10**6,
-                reserve_out=800 * 10**18,
-                fee=Fraction(3, 1000),
-            ),
-        )
-        result = solver.solve(SolveInput(hops=hops))
-        assert result.method == SolverMethod.MOBIUS
-
-
-# ---------------------------------------------------------------------------
 # Tests: Asymmetric fees (Camelot)
 # ---------------------------------------------------------------------------
 

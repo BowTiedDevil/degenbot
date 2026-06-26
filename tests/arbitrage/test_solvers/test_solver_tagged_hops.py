@@ -1,22 +1,16 @@
-"""Tests for the tagged union Hop types and PiecewiseMobiusSolver integration.
+"""Tests for the tagged union Hop types and ``SolveInput`` invariant detection.
 
-Validates:
-- PoolInvariant enum and Hop tagged union construction
-- Each hop variant has required fields and is frozen
-- SolveInput detects invariant types correctly
-- PiecewiseMobiusSolver integrates into ArbSolver dispatch
-- pool_to_hop supports Camelot (asymmetric fees)
+ACDWOC: the f64 Möbius dispatch classes (``TestMobiusSolverTaggedHops``,
+``TestPiecewiseMobiusSolver``, ``TestArbSolverTaggedDispatch``) were retired
+along with the deleted solver stack — they tested
+``MobiusSolver``/``PiecewiseMobiusSolver``/``ArbSolver`` internals. The hop
+typed-union coverage is kept; the engine cross-validates V2/V3 against
+``BrentSolver`` in ``tests/arbitrage/test_engine_vs_brent_parity.py``.
 """
 
 import pytest
 
-from degenbot.arbitrage.solvers.hop_types import SolveInput, SolverMethod
-from degenbot.arbitrage.solvers.solver import (
-    ArbSolver,
-    MobiusSolver,
-    PiecewiseMobiusSolver,
-)
-from degenbot.exceptions import OptimizationError
+from degenbot.arbitrage.solvers.hop_types import SolveInput
 from degenbot.types.hop_types import (
     BalancerWeightedHop,
     BoundedProductHop,
@@ -270,7 +264,7 @@ class TestSolveInputTaggedHops:
             hops=(
                 ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
                 ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
-            )
+            ),
         )
         assert inp.all_constant_product
         assert not inp.has_bounded_product
@@ -291,7 +285,7 @@ class TestSolveInputTaggedHops:
                     tick_lower=-100,
                     tick_upper=100,
                 ),
-            )
+            ),
         )
         assert inp.has_bounded_product
         assert not inp.all_constant_product
@@ -308,7 +302,7 @@ class TestSolveInputTaggedHops:
                     decimals_out=18,
                 ),
                 ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
-            )
+            ),
         )
         assert inp.has_solidly_stable
 
@@ -323,7 +317,7 @@ class TestSolveInputTaggedHops:
                     weight_out=500_000_000_000_000_000,
                 ),
                 ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
-            )
+            ),
         )
         assert inp.has_balancer_weighted
 
@@ -342,133 +336,6 @@ class TestSolveInputTaggedHops:
                     precisions=(10**6, 10**6),
                 ),
                 ConstantProductHop(reserve_in=USDC_1_5M, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
-            )
+            ),
         )
         assert inp.has_curve_stableswap
-
-
-# ---------------------------------------------------------------------------
-# Test MobiusSolver with tagged hops
-# ---------------------------------------------------------------------------
-
-
-class TestMobiusSolverTaggedHops:
-    def test_constant_product_hops(self):
-        """MobiusSolver should accept ConstantProductHop and produce same results."""
-        solver = MobiusSolver()
-        inp = SolveInput(
-            hops=(
-                ConstantProductHop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=FEE_0_3_PCT),
-                ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
-            )
-        )
-        result = solver.solve(inp)
-        assert result.method == SolverMethod.MOBIUS
-        assert result.optimal_input > 0
-        assert result.profit > 0
-
-    def test_asymmetric_fee_hops(self):
-        """MobiusSolver should handle ConstantProductHop with asymmetric fees."""
-        solver = MobiusSolver()
-        inp = SolveInput(
-            hops=(
-                ConstantProductHop(
-                    reserve_in=USDC_1_5M,
-                    reserve_out=WETH_800,
-                    fee=FEE_0_3_PCT,
-                    fee_out=FEE_0_5_PCT,
-                ),
-                ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
-            )
-        )
-        result = solver.solve(inp)
-        assert result.method == SolverMethod.MOBIUS
-
-
-# ---------------------------------------------------------------------------
-# Test PiecewiseMobiusSolver
-# ---------------------------------------------------------------------------
-
-
-class TestPiecewiseMobiusSolver:
-    def test_supports_v3_multi_range(self):
-        """PiecewiseMobiusSolver should support paths with V3 hops."""
-        solver = PiecewiseMobiusSolver()
-        inp = SolveInput(
-            hops=(
-                ConstantProductHop(reserve_in=USDC_2M, reserve_out=WETH_1000, fee=FEE_0_3_PCT),
-                BoundedProductHop(
-                    reserve_in=WETH_800,
-                    reserve_out=USDC_1_5M,
-                    fee=FEE_0_3_PCT,
-                    liquidity=10**18,
-                    sqrt_price=2**96,
-                    tick_lower=-100,
-                    tick_upper=100,
-                ),
-            )
-        )
-        # Should support inputs with V3 bounded-product hops
-        assert solver.supports(inp)
-
-
-# ---------------------------------------------------------------------------
-# Test ArbSolver dispatch with new types
-# ---------------------------------------------------------------------------
-
-
-class TestArbSolverTaggedDispatch:
-    def test_v2_path_uses_mobius(self):
-        solver = ArbSolver()
-        inp = SolveInput(
-            hops=(
-                ConstantProductHop(reserve_in=USDC_1_5M, reserve_out=WETH_800, fee=FEE_0_3_PCT),
-                ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
-            )
-        )
-        result = solver.solve(inp)
-        assert result.method == SolverMethod.MOBIUS
-
-    def test_solidly_stable_falls_to_brent(self):
-        """Paths with Solidly stable hops should fall back to Brent until
-        SolidlyStableSolver is implemented.
-        """
-        solver = ArbSolver()
-        inp = SolveInput(
-            hops=(
-                SolidlyStableHop(
-                    reserve_in=USDC_2M,
-                    reserve_out=WETH_1000,
-                    fee=FEE_0_3_PCT,
-                    decimals_in=6,
-                    decimals_out=18,
-                ),
-                ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
-            )
-        )
-        try:
-            result = solver.solve(inp)
-            assert result.method == SolverMethod.BRENT
-        except OptimizationError:
-            pass
-
-    def test_balancer_falls_to_brent(self):
-        """Paths with Balancer hops should fall back to Brent."""
-        solver = ArbSolver()
-        inp = SolveInput(
-            hops=(
-                BalancerWeightedHop(
-                    reserve_in=USDC_2M,
-                    reserve_out=WETH_1000,
-                    fee=FEE_0_3_PCT,
-                    weight_in=500_000_000_000_000_000,
-                    weight_out=500_000_000_000_000_000,
-                ),
-                ConstantProductHop(reserve_in=WETH_1000, reserve_out=USDC_2M, fee=FEE_0_3_PCT),
-            )
-        )
-        try:
-            result = solver.solve(inp)
-            assert result.method == SolverMethod.BRENT
-        except OptimizationError:
-            pass
