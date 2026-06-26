@@ -142,6 +142,12 @@ _DISPATCH_SIM_RE = re.compile(r"\[dispatch\] simulating (\d+)/")
 _SIM_CANDIDATES_RE = re.compile(r"\[sim\] (\d+) candidates:")
 _VERIFY_OK_RE = re.compile(r"\[verify(?:-seed|-drain)?\].*OK")
 _VERIFY_SKIPPED_RE = re.compile(r"verify.*SKIPPED|verification.*skipped", re.IGNORECASE)
+# GTOD23-YBEYKY (T4): the recurring in-loop verifier's Python-side
+# ``[verify] (recurring)`` lines were silenced (S2/PB24RX). Its Rust-side
+# mismatch emit survives under ``[dbg-verify] MISMATCH`` — recognize it as
+# "recurring verify ran + detected drift" so the analyzer reports the
+# drift detection instead of reporting no recurring activity.
+_VERIFY_RECUR_RE = re.compile(r"\[verify\].*\(recurring\)|\[dbg-verify\]\s*MISMATCH")
 
 
 def analyze_log(log_text: str, permutation: str = "") -> AnalysisResult:
@@ -197,6 +203,14 @@ def analyze_log(log_text: str, permutation: str = "") -> AnalysisResult:
     verify_basis = ""
     if _VERIFY_OK_RE.search(log_text):
         verify_basis = "verified"
+        # S2/T4: surface recurring-verify drift detection alongside the
+        # per-pool two-step. ``recurring-drift`` means the in-loop verifier
+        # ran AND mismatched (caught drift the registration-time two-step
+        # didn't, because it only verifies at registration).
+        if _VERIFY_RECUR_RE.search(log_text):
+            verify_basis = "recurring-drift"
+    elif _VERIFY_RECUR_RE.search(log_text):
+        verify_basis = "recurring-drift"
     elif _VERIFY_SKIPPED_RE.search(log_text):
         verify_basis = "skipped"
 

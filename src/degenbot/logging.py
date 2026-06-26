@@ -78,6 +78,21 @@ RUST_BRIDGE_LOGGER_NAMES = (
     "degenbot_uniswap",
 )
 
+#: The Python package-tree root whose descendants include Python-side modules
+#: that log via ``logging.getLogger("degenbot.arbitrage.<module>")`` (e.g. the
+#: recurring verifier ``degenbot.arbitrage.recurring_verify``). These inherit
+#: from the ``degenbot`` package logger — a SIBLING of ``degenbot.logging``
+#: (which has ``propagate = False``), not an ancestor — so without configuring
+#: the ``degenbot`` root here their INFO records fall through to the stdlib
+#: root (WARNING, no handler) and are dropped. S2 (GTOD23-PB24RX) surfaced this:
+#: the recurring verifier ran and detected drift but its ``[verify] (recurring)``
+#: lines never reached stdout, and 0 ``(recurring)`` hits appeared across all 27
+#: permutation runs. Configuring the ``degenbot`` package root with the same
+#: stdout handler + INFO level makes the arbitrage subtree visible.
+PY_PACKAGE_ROOT_LOGGER_NAMES = (
+    "degenbot",
+)
+
 # Attach the same stdout handler + level to each Rust crate-root logger so
 # Rust records are visible through the package's stdout stream/format.
 # ``propagate = False`` mirrors the package-logger convention above: the
@@ -90,6 +105,19 @@ for _name in RUST_BRIDGE_LOGGER_NAMES:
     _rust_logger.setLevel(_LOG_LEVEL)
     _rust_logger.addHandler(_STDOUT_HANDLER)
     _rust_logger.propagate = False
+
+# Configure the Python package root so the ``degenbot.arbitrage.*`` subtree
+# (and any other ``degenbot.<module>`` logger created via
+# ``logging.getLogger("degenbot...")``) is visible at INFO. ``propagate = False``
+# stops records at the ``degenbot`` root so they don't also limp through the
+# stdlib root ``lastResort`` on stderr. ``degenbot.logging`` itself (a child of
+# ``degenbot``) already has ``propagate = False`` + its own handler above, so
+# configuring the shared parent does NOT duplicate its records.
+for _name in PY_PACKAGE_ROOT_LOGGER_NAMES:
+    _pkg_logger = logging.getLogger(_name)
+    _pkg_logger.setLevel(_LOG_LEVEL)
+    _pkg_logger.addHandler(_STDOUT_HANDLER)
+    _pkg_logger.propagate = False
 
 
 def set_log_level(level: int) -> None:
@@ -104,6 +132,8 @@ def set_log_level(level: int) -> None:
     """
     logger.setLevel(level)
     for name in RUST_BRIDGE_LOGGER_NAMES:
+        logging.getLogger(name).setLevel(level)
+    for name in PY_PACKAGE_ROOT_LOGGER_NAMES:
         logging.getLogger(name).setLevel(level)
 
 
