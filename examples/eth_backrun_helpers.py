@@ -2528,18 +2528,23 @@ def _3hop_v3_v3_v4(
 
     forward_b_idx = at.add(hb.token1_address if hb.zfo else hb.token0_address)
 
-    # V4 unlock inner: settle forward_b, V4c swap, V4_TAKE WETH→V3a, settle deltas
+    # V4 unlock inner: settle forward_b, V4c dynamic-swap the actual deposited
+    # forward_b, V4_TAKE_DELTA the actual produced WETH → V3a, settle residual
+    # dust. V4_SWAP_DYNAMIC (not V4_SWAP_COMPACT(out_b)) consumes the ACTUAL USDC
+    # V3b deposited — eliminating the residual USDC delta that caused
+    # "ERC20: transfer amount exceeds balance" when the on-chain V3b output
+    # diverged from the solver's static out_b (UISLED; mirrors V3-V4-V3 +
+    # commit 2e505536). V4_TAKE_DELTA takes the actual produced WETH → V3a.
     v4_inner = enc_v4_settle()
-    v4_inner += enc_v4_swap_compact(
+    v4_inner += enc_v4_swap_dynamic(
         at.add(hc.currency0_address),
         at.add(hc.currency1_address),
         hc.fee,
         hc.tick_spacing,
         zero_idx,
         hc.zfo,
-        out_b,
     )
-    v4_inner += enc_v4_take_compact(weth_idx, v3a_idx, optimal_input)
+    v4_inner += enc_v4_take_delta(weth_idx, v3a_idx)
     v4_inner += enc_v4_settle_all()
 
     # V3a callback: V4 unlock + erc20_transfer WETH→V3a (explicit auto-pay)
@@ -2595,18 +2600,23 @@ def _3hop_v3_v4_v2(
     forward_a_idx = at.add(ha.token1_address if ha.zfo else ha.token0_address)
     forward_b_idx = at.add(hb.currency1_address if hb.zfo else hb.currency0_address)
 
-    # V4 unlock inner: settle forward_a, V4b swap, V4_TAKE forward_b→V2c, settle deltas
+    # V4 unlock inner: settle forward_a, V4b dynamic-swap the actual deposited
+    # forward_a, V4_TAKE_DELTA the actual produced forward_b → V2c, settle
+    # residual dust. V4_SWAP_DYNAMIC (not V4_SWAP_COMPACT(out_a)) consumes the
+    # ACTUAL forward_a V3a deposited — eliminating the residual delta that
+    # caused "ERC20: transfer amount exceeds balance" when the on-chain V3a
+    # output diverged from the solver's static out_a (UISLED; mirrors V3-V3-V4
+    # + V3-V4-V3 + commit 2e505536).
     v4_inner = enc_v4_settle()
-    v4_inner += enc_v4_swap_compact(
+    v4_inner += enc_v4_swap_dynamic(
         at.add(hb.currency0_address),
         at.add(hb.currency1_address),
         hb.fee,
         hb.tick_spacing,
         zero_idx,
         hb.zfo,
-        out_a,
     )
-    v4_inner += enc_v4_take_compact(forward_b_idx, v2c_idx, out_b)
+    v4_inner += enc_v4_take_delta(forward_b_idx, v2c_idx)
     v4_inner += enc_v4_settle_all()
 
     # V3a callback: V4 unlock + V2c swap (forward_b at V2c, auto-pay K-invariant ✓) + pay WETH to V3a
