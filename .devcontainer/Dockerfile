@@ -4,9 +4,16 @@
 # approach. Everything dnf-installable is baked in here at build time, so
 # container starts are fast and post-create.sh stays tiny.
 #
-# On Fedora 44, ONE tool still has no package and is curl-installed in
-# post-create.sh:
+# On Fedora 44, TWO tools have no dnf package and are curl/npm-installed here
+# at BUILD time (baked into the image, not post-create.sh — see below):
 #   - foundry  (foundryup; blockchain toolchain, no dnf path)
+#   - pi       (npm i -g @earendil-works/pi-coding-agent)
+#
+# Why bake into the image rather than post-create.sh: the primary entry point
+# (ssh-attach.sh) does `podman start` + `podman exec`, which does NOT run
+# postCreateCommand. Anything left to post-create would vanish after a
+# container recreate (foundry/pi live in /home/dev, which is NOT bind-mounted)
+# and never come back via the SSH path. Image-baked tools are always present.
 #
 # uv IS packaged by Fedora (unlike Ubuntu) — installed via dnf here.
 #
@@ -29,10 +36,12 @@ FROM fedora:latest
 #   - just, uv, tmux, git, curl, ca-certificates, openssh-clients, less, sudo
 RUN dnf install -y \
         gcc gcc-c++ make pkgconf-pkg-config \
-        python3 python3-devel python3-pip \
-        rust cargo rustfmt clippy \
+        uv python3 python3-devel python3-pip \
+        just rust cargo rustfmt clippy \
         nodejs24 \
-        just uv tmux git curl ca-certificates openssh-clients less sudo \
+        sqlite \
+        git \
+        sudo tmux vim htop procps-ng psmisc \
     && dnf clean all
 
 # Create the dev user (uid 1000 to match host uid — avoids updateRemoteUserUID
@@ -57,13 +66,42 @@ ENV LC_ALL=C.UTF-8
 # extended-keys). Applies to all users; a personal ~/.tmux.conf overrides it.
 COPY --chown=root:root tmux.conf /etc/tmux.conf
 
+# Drop the hostname from the bash prompt. Podman (under VSCode's devcontainer
+# path) strips CAP_SYS_ADMIN, so the container ID is used as the hostname and
+# \h renders as e.g. `e92c9419732a` — unfriendly. /etc/bashrc sets the
+# default `PS1='[\u@\h \W]\\$ '`; this appended line strips the `@\h` segment
+# so the prompt reads `[dev degenbot]$` instead. Runs for both login and
+# non-login interactive shells (tmux sessions, `podman exec`).
+RUN printf '\nPS1="${PS1//@\\\\h/}"\n' >> /etc/bashrc
+
 USER ${USERNAME}
 ENV HOME=/home/${USERNAME}
 
-# Configure npm's global prefix to a user-writable dir so `npm i -g` (used for
-# pi in post-create.sh) needs no sudo, and the bins land in ~/.local/bin —
-# already on PATH via devcontainer.json's remoteEnv.
+# Put foundry (~/.foundry/bin, curl-installed below) and the npm-global pi
+# binary (~/.local/bin) on PATH for EVERY process spawned in the image — not
+# just interactive shells. devcontainer.json's remoteEnv only reaches
+# VSCode-launched shells; non-interactive subshells (e.g. `just`/`cargo`
+# invoked by the agent) inherit image ENV instead, so bake it here.
+ENV PATH="/home/${USERNAME}/.foundry/bin:/home/${USERNAME}/.local/bin:${PATH}"
+
+# Configure npm's global prefix to a user-writable dir so `npm i -g` needs no
+# sudo, and the bins land in ~/.local/bin (already on PATH via ENV above).
 RUN mkdir -p "${HOME}/.local/bin" \
     && npm config set prefix "${HOME}/.local"
+
+# Foundry (forge/cast/anvil/chisel). No dnf package, so curl-install foundryup
+# + run it at BUILD time. Baked into the image (not post-create.sh) because the
+# primary entry point (ssh-attach.sh) does `podman start` + `podman exec`, which
+# does NOT run postCreateCommand — so anything left to post-create would be
+# missing after a container recreate + SSH re-attach. foundryup lands in
+# ~/.foundry/bin, already on PATH via ENV above. Rebuild the image to pick up
+# newer Foundry; pin with `foundryup -v <tag>` if reproducibility matters.
+RUN curl -L https://foundry.paradigm.xyz | bash \
+    && /home/${USERNAME}/.foundry/bin/foundryup
+
+# pi (npm global). Lands in ~/.local/bin via the prefix set above. Baked into
+# the image for the same ssh-attach reason as foundry. Matches host version era;
+# rebuild the image to bump.
+RUN npm install -g @earendil-works/pi-coding-agent
 
 WORKDIR /workspaces/degenbot

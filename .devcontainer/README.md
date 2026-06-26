@@ -95,17 +95,15 @@ time):
 | `tmux`      | `tmux`                                    | baked in (was runtime-installed before)          |
 | git / curl  | `git`, `curl`, `ca-certificates`, ...     |                                                  |
 
-One tool is curl-installed in `post-create.sh` — it has **no dnf package**:
+Two tools have no dnf package and are curl/npm-installed **in the Dockerfile**
+(baked into the image, NOT post-create.sh — the SSH entry point `ssh-attach.sh`
+does `podman start`+`exec`, which does not run `postCreateCommand`, so
+post-create-installed tools went missing after any container recreate):
 
 | Tool    | Source               | Notes                                                                                                          |
 |---------|----------------------|----------------------------------------------------------------------------------------------------------------|
 | Foundry | `foundryup` (latest) | Blockchain toolchain; no dnf path. `forge`, `cast`, `anvil` in `~/.foundry/bin`. Rebuilds pick up newer Foundry — pin (`foundryup -v <tag>`) if reproducibility matters. |
-
-One npm-global tool:
-
-| Tool | Source                                   | Notes                                                                                                            |
-|------|------------------------------------------|------------------------------------------------------------------------------------------------------------------|
-| `pi` | `npm i -g @earendil-works/pi-coding-agent` | npm prefix is set to `~/.local` in the Dockerfile, so the binary lands in `~/.local/bin` with no sudo. Matches host version era. |
+| `pi`    | `npm i -g @earendil-works/pi-coding-agent` | npm prefix is set to `~/.local` in the Dockerfile, so the binary lands in `~/.local/bin` with no sudo. Matches host version era. |
 
 ## Bind mounts (host → container)
 
@@ -132,7 +130,7 @@ exporting coverage HTML, wheel builds, etc.
 |---------------------|--------------------------------------------------------|
 | `Dockerfile`        | `fedora:latest` + dnf layer + `dev` user (uid 1000)  |
 | `devcontainer.json` | build/dockerfile, mounts, env vars, `postCreateCommand` |
-| `post-create.sh`    | installs foundry/pi, `uv sync`, git hooks            |
+| `post-create.sh`    | `uv sync` (venv + PyO3 extension build), git hooks            |
 | `ssh-attach.sh`     | SSH/CLI helper: find + start container, tmux attach  |
 | `tmux.conf`         | truecolor pass-through + extended-keys for pi in tmux |
 | `README.md`         | this file                                            |
