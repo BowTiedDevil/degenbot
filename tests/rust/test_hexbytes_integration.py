@@ -17,9 +17,13 @@ UNISWAP_V3_FACTORY = get_checksum_address("0x1F98431c8aD98523631AE4a59f267346ea3
 
 
 @pytest.fixture
-def ethereum_mainnet_alloy_provider(fork_mainnet_full: AnvilFork) -> AlloyProvider:
+def ethereum_mainnet_alloy_provider(fork_mainnet_full: AnvilFork) -> Iterator[AlloyProvider]:
     """Create an AlloyProvider from the mainnet fork."""
-    return AlloyProvider(fork_mainnet_full.http_url)
+    provider = AlloyProvider(fork_mainnet_full.http_url)
+    try:
+        yield provider
+    finally:
+        provider.close()
 
 
 class TestHexBytesConversion:
