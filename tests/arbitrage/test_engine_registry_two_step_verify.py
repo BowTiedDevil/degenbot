@@ -188,8 +188,8 @@ def _registry_started_with_snapshots(
     monkeypatch.setattr(runner, "stream_v3_snapshot_to_engine", lambda *a, **k: None)
     monkeypatch.setattr(runner, "stream_v4_snapshot_to_engine", lambda *a, **k: None)
     registry.start(
-        "http://node:8545",
-        "ws://node:8546",
+        "http://localhost:8545",
+        "ws://localhost:8546",
         v3_snapshot=_FakeSnapshot(18_000_100),
         v4_snapshot=_FakeSnapshot(18_000_050),
         verify_state_view="0x0000000000000000000000000000000000000abc",
@@ -280,7 +280,7 @@ def test_register_skips_verify_when_config_not_stashed() -> None:
     fake = _RecordingVerifyEngine()
     registry = runner.EngineRegistry(bot=None, engine=fake)
     # start() WITHOUT verify_state_view
-    registry.start("http://node:8545", "ws://node:8546")
+    registry.start("http://localhost:8545", "ws://localhost:8546")
 
     async def _go() -> int:
         return await registry.register_v3_pool(_FakeV3Pool())
