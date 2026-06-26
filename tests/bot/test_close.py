@@ -8,7 +8,7 @@ call. ``__exit__`` never suppresses exceptions.
 """
 
 import pathlib
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -33,13 +33,17 @@ def _fake_provider(chain_id: int = 1) -> ProviderAdapter:
 
 
 class _RecordingDb:
-    """Stand-in for DatabaseSessionManager that records remove() calls."""
+    """Stand-in for DatabaseSessionManager that records remove()/dispose() calls."""
 
     def __init__(self) -> None:
         self.remove_calls = 0
+        self.dispose_calls = 0
 
     def remove(self) -> None:
         self.remove_calls += 1
+
+    def dispose(self) -> None:
+        self.dispose_calls += 1
 
 
 class TestBotContextManager:
@@ -48,7 +52,9 @@ class TestBotContextManager:
         provider = _fake_provider(1)
 
         with Bot(config, provider=provider) as bot:
-            # swap in a recording db so we can observe remove()
+            # swap in a recording db so we can observe remove()/dispose();
+            # dispose the real engine built in __init__ first so it doesn't leak
+            bot.db.dispose()  # type: ignore[attr-defined]
             recording_db = _RecordingDb()
             bot.db = recording_db  # type: ignore[assignment]
             # seed a tracker with caches
@@ -60,9 +66,10 @@ class TestBotContextManager:
             tracker._untracked_pools.add("0xbeef")
             assert len(bot.pools) == 0  # nothing registered yet
 
-        # On exit: provider closed, db removed, python state released
+        # On exit: provider closed, db removed + disposed, python state released
         provider.close.assert_called_once()
         assert recording_db.remove_calls == 1
+        assert recording_db.dispose_calls == 1
         assert tracker._tracked_pools == {}
         assert tracker._untracked_pools == set()
         assert bot._closed is True
@@ -71,6 +78,7 @@ class TestBotContextManager:
         config = _make_test_config(tmp_path)
         provider = _fake_provider(1)
         bot = Bot(config, provider=provider)
+        bot.db.dispose()  # release the real engine before swapping in the stand-in  # type: ignore[attr-defined]
         bot.db = _RecordingDb()  # type: ignore[assignment]
 
         bot.close()
@@ -88,10 +96,50 @@ class TestBotContextManager:
 
         provider.close.assert_called_once()
 
+    def test_close_disposes_real_database_engine(self, tmp_path: pathlib.Path) -> None:
+        """close() must dispose the SQLAlchemy Engine bound by ``__init__``.
+
+        ``db.remove()`` only returns the thread-local Session; the Engine's
+        connection pool keeps the ``sqlite3.Connection`` alive, which surfaces
+        as ``ResourceWarning: unclosed database`` under GC. close() must dispose.
+        """
+        config = _make_test_config(tmp_path)
+        provider = _fake_provider(1)
+        bot = Bot(config, provider=provider)
+        engine = bot.db._engine
+        assert engine is not None
+
+        with patch.object(engine, "dispose", wraps=engine.dispose) as spy:
+            bot.close()
+            spy.assert_called_once_with()
+        assert bot._closed is True  # type: ignore[attr-defined]
+
+    def test_close_tolerates_db_without_dispose(self, tmp_path: pathlib.Path) -> None:
+        """close() must not raise when a custom db stand-in lacks dispose()."""
+
+        class _RemoveOnlyDb:
+            def __init__(self) -> None:
+                self.remove_calls = 0
+
+            def remove(self) -> None:
+                self.remove_calls += 1
+
+        config = _make_test_config(tmp_path)
+        provider = _fake_provider(1)
+        bot = Bot(config, provider=provider)
+        bot.db.dispose()  # release the real engine before swapping in the stand-in  # type: ignore[attr-defined]
+        bot.db = _RemoveOnlyDb()  # type: ignore[assignment]
+
+        bot.close()  # must not raise
+
+        provider.close.assert_called_once()
+        assert bot._closed is True  # type: ignore[attr-defined]
+
     def test_close_composes_release_python_state(self, tmp_path: pathlib.Path) -> None:
         config = _make_test_config(tmp_path)
         provider = _fake_provider(1)
         bot = Bot(config, provider=provider)
+        bot.db.dispose()  # release the real engine before swapping in the stand-in  # type: ignore[attr-defined]
         bot.db = _RecordingDb()  # type: ignore[assignment]
         tracker = bot.add_tracker(
             UniswapV2PoolTracker,

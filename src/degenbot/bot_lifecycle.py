@@ -92,10 +92,19 @@ def close(bot: _BotLike) -> None:
     # 2. Remove the scoped DB session (returns the thread-local session)
     bot.db.remove()  # type: ignore[attr-defined]
 
-    # 3. Close the provider connection if it exposes close()
+    # 3. Dispose the SQLAlchemy Engine so its connection pool (and the
+    # underlying sqlite3.Connection) is actually closed. ``remove()`` alone
+    # only returns the thread-local Session; the Engine survives and would
+    # surface as ``ResourceWarning: unclosed database`` under GC. Defensive:
+    # test stand-ins and MagicMock subs may not expose dispose().
+    dispose = getattr(bot.db, "dispose", None)
+    if callable(dispose):
+        dispose()  # type: ignore[call-arg]
+
+    # 4. Close the provider connection if it exposes close()
     if hasattr(bot._provider, "close"):  # noqa: SLF001
         bot._provider.close()  # type: ignore[attr-defined]  # noqa: SLF001
 
-    # 4. Drop our own references (engine keeps its own PyBot ref)
+    # 5. Drop our own references (engine keeps its own PyBot ref)
     bot._py_bot = None  # type: ignore[attr-defined]  # noqa: SLF001
     bot._provider = None  # type: ignore[attr-defined]  # noqa: SLF001

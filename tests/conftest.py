@@ -8,6 +8,7 @@ from _pytest.nodes import Item
 
 from degenbot.anvil_fork import AnvilFork
 from degenbot.bot import Bot
+from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.logging import set_log_level
 from degenbot.provider import ProviderAdapter
 from tests.helpers.bot_factory import make_bot_with_provider
@@ -85,6 +86,13 @@ def _initialize_and_reset_after_each_test():
     """Before each test, clear/reset global values and singletons"""
     # Global singletons have been removed. Bot-owned connections and registries
     # are scoped to each Bot instance and do not need inter-test resets.
+    yield
+    # Safety net: dispose any SQLAlchemy engine a test left dangling (a Bot or
+    # DatabaseSessionManager constructed inline and never ``close()`` ed). Without
+    # this, the Engine's connection pool keeps the ``sqlite3.Connection`` open and
+    # surfaces as ``ResourceWarning: unclosed database`` when GC eventually runs
+    # (notably at xdist worker teardown).
+    DatabaseSessionManager.dispose_all()
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -180,14 +188,18 @@ def fork_mainnet_full() -> Generator[AnvilFork, None, None]:
 
 
 @pytest.fixture
-def bot_mainnet_full(fork_mainnet_full: AnvilFork) -> Bot:
+def bot_mainnet_full(fork_mainnet_full: AnvilFork) -> Generator[Bot, None, None]:
     """Provide a Bot with the mainnet full fork's provider registered."""
     provider = ProviderAdapter.from_web3(fork_mainnet_full.w3)
-    return make_bot_with_provider(provider)
+    bot = make_bot_with_provider(provider)
+    yield bot
+    bot.close()
 
 
 @pytest.fixture
-def bot_mainnet_archive(fork_mainnet_archive: AnvilFork) -> Bot:
+def bot_mainnet_archive(fork_mainnet_archive: AnvilFork) -> Generator[Bot, None, None]:
     """Provide a Bot with the mainnet archive fork's provider registered."""
     provider = ProviderAdapter.from_web3(fork_mainnet_archive.w3)
-    return make_bot_with_provider(provider)
+    bot = make_bot_with_provider(provider)
+    yield bot
+    bot.close()
