@@ -3240,7 +3240,15 @@ def _3hop_v4_v4_v3(
     forward_b_idx = at.add(hb.currency1_address if hb.zfo else hb.currency0_address)
     v3c_idx = at.add(hc.pool_address)
 
-    c_pay = enc_erc20_transfer(forward_b_idx, v3c_idx, out_b)
+    # V4_TAKE sends forward_b DIRECTLY to V3c (no executor custody) — the V3c
+    # swap's forward_data. During V3c's callback, the take delivers forward_b to
+    # the V3c pool, satisfying V3's optimistic-input check (balance_before +
+    # input <= balance_after, where balance_after includes the take's deposit).
+    # The executor never touches the intermediate token (no-custody design),
+    # eliminating the `Comp::_transferTokens: transfer amount exceeds balance`
+    # revert that occurred when the old executor-custody pattern (TAKE→executor
+    # then ERC20_TRANSFER→V3c) routed forward_b through the executor's balance.
+    c_take = enc_v4_take_compact(forward_b_idx, v3c_idx, out_b)
 
     inner = enc_v4_swap_compact(
         at.add(ha.currency0_address),
@@ -3259,8 +3267,7 @@ def _3hop_v4_v4_v3(
         zero_idx,
         hb.zfo,
     )
-    inner += enc_v4_take_compact(forward_b_idx, executor_idx, out_b)
-    inner += enc_v3_swap_compact(v3c_idx, hc.zfo, out_b, executor_idx, forward_data=c_pay)
+    inner += enc_v3_swap_compact(v3c_idx, hc.zfo, out_b, executor_idx, forward_data=c_take)
     inner += enc_v4_settle_all()
 
     return enc_preamble(at) + enc_v4_unlock(inner)
