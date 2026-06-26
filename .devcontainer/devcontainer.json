@@ -76,6 +76,32 @@
   "remoteEnv": {
     "PATH": "/home/dev/.foundry/bin:/home/dev/.local/bin:${containerEnv:PATH}"
   },
+  // Extensions auto-installed into the container on first launch. The Python
+  // extension pairs with the pinned interpreter in .vscode/settings.json
+  // (.venv/bin/python) — without these the interpreter pin has no effect.
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "bierner.markdown-mermaid",
+        "charliermarsh.ruff",
+        "davidanson.vscode-markdownlint",
+        "huff-language.huff-language",
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-vscode-remote.remote-containers",
+        "ms-vscode-remote.remote-ssh",
+        "ms-vscode-remote.remote-ssh-edit",
+        "ms-vscode.remote-explorer",
+        "pkief.material-icon-theme",
+        "rust-lang.rust-analyzer",
+        "tintinweb.vscode-vyper"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+        "python.venvPath": "${workspaceFolder}/.venv"
+      }
+    }
+  },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "postStartCommand": "echo 'degenbot devcontainer ready (fedora). Tools: just, uv, forge, pi, cargo, python3. Shared: /shared'"
 }
