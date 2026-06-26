@@ -6,6 +6,25 @@ VSCode auto-discovers `devcontainer.json` in this directory.
 `consistency=cached`, which is Docker-Desktop-only). VSCode and the devcontainer
 CLI both need to be pointed at `podman` (see setup below).
 
+**Base image: `fedora:latest`** (currently resolves to Fedora 44). Everything
+dnf-installable is baked into a minimal `Dockerfile` — there are **zero
+devcontainer features**. Only one tool is still curl-installed, because it has
+no Fedora package: `foundry`. (uv, unlike on Ubuntu, IS packaged by Fedora.)
+
+## Why Fedora
+
+`fedora:latest` over the prior `mcr.microsoft.com/devcontainers/base:ubuntu` for
+three reasons:
+
+1. **More tools packaged, newer versions** — Fedora 44 ships rust 1.96 (vs
+   Ubuntu's 1.93), uv directly (Ubuntu has no package), and nodejs24 Active LTS
+   as a clean metapackage.
+2. **Host parity** — the development host runs Fedora, so the container mirrors
+   the host's toolchain versions and behavior.
+3. **No features needed** — on the prior Ubuntu base we relied on the `node`
+   devcontainer feature; on Fedora, `dnf install nodejs24` gives node + npm in
+   one package, so all features disappear.
+
 ## First-time setup
 
 1. Tell VSCode to use Podman (one-time, in `~/.config/Code/User/settings.json`):
@@ -21,15 +40,13 @@ CLI both need to be pointed at `podman` (see setup below).
    mkdir -p ~/.pi ~/.agents ~/code/shared
    ```
 
-3. Build the container once (chose one):
-   - **VSCode:** open `/home/ralph/code/degenbot` → Command Palette →
-     `Dev Containers: Reopen in Container`.
-   - **SSH / CLI:** `devcontainer up --workspace-folder /home/ralph/code/degenbot --docker-path podman`
-     (requires `npm i -g @devcontainers/cli`).
+3. Build the container once (choose one):
+  - **VSCode:** open this repo → Command Palette → `Dev Containers: Reopen in Container`.
+  - **SSH / CLI:** `devcontainer up --workspace-folder <path-to-degenbot> --docker-path podman` (requires `npm i -g @devcontainers/cli`).
 
-   First build is slow (image pull + features + `post-create.sh`). Both paths
-   produce a container named `vsc-degenbot-<hash>` and are interchangeable — a
-   container built by one is found and reused by the other.
+  First build is slow (dnf layer in the Dockerfile + `post-create.sh`). Both
+  paths produce a container named `vsc-degenbot-<hash>` and are interchangeable —
+  a container built by one is found and reused by the other.
 
 ## Entering the container
 
@@ -64,28 +81,44 @@ no state fork.
 
 ## What's inside
 
-| Tool       | Source                                   | Notes                                               |
-|------------|------------------------------------------|-----------------------------------------------------|
-| Rust       | `rustup` from sh.rustup.rs in post-create | `rustup default stable` tracks latest stable      |
-| Python 3.12 | uv-managed (NOT the devcontainers feature) | devcontainers python feature installs a STATIC-only build (no `libpython.so`) which breaks PyO3. uv's own cpython-3.12 ships the shared library, so the PyO3 extension builds. System python on the base image (3.14) stays on PATH for general use. |
-| `uv`       | astral.sh install script                  | latest, in `~/.local/bin/uv`                        |
-| `just`     | prebuilt musl static binary               | latest release, in `~/.local/bin/just`              |
-| Foundry    | `foundryup` (latest)                     | `forge`, `cast`, `anvil` in `~/.foundry/bin`        |
-| Node LTS   | devcontainers/features/node              | for markdownlint + commitlint hooks                 |
-| `pi`       | `npm i -g @earendil-works/pi-coding-agent`| matches host version era                            |
+All of the following come from Fedora's dnf repos via the Dockerfile (so they
+are `dnf upgrade`-able and pinned to whatever `fedora:latest` ships at build
+time):
+
+| Tool        | dnf package(s)                            | Notes                                            |
+|-------------|-------------------------------------------|--------------------------------------------------|
+| Python 3.14 | `python3`, `python3-devel`, `python3-pip` | `python3-devel` ships `libpython3.14.so` in `/usr/lib64` — required by PyO3. |
+| Rust 1.96   | `rust`, `cargo`, `rustfmt`, `clippy`      | No rustup — Fedora's packaged rustc matches stable. Tradeoff: no toolchain switching / `rustup target add`. |
+| Node 24 LTS | `nodejs24`                                | Active LTS (EOL 2028-04). Provides node + npm in one package; satisfies pi's `>=22.19.0` floor. |
+| `just`      | `just`                                    |                                                  |
+| `uv`        | `uv`                                      | Fedora packages uv directly (unlike Ubuntu).     |
+| `tmux`      | `tmux`                                    | baked in (was runtime-installed before)          |
+| git / curl  | `git`, `curl`, `ca-certificates`, ...     |                                                  |
+
+One tool is curl-installed in `post-create.sh` — it has **no dnf package**:
+
+| Tool    | Source               | Notes                                                                                                          |
+|---------|----------------------|----------------------------------------------------------------------------------------------------------------|
+| Foundry | `foundryup` (latest) | Blockchain toolchain; no dnf path. `forge`, `cast`, `anvil` in `~/.foundry/bin`. Rebuilds pick up newer Foundry — pin (`foundryup -v <tag>`) if reproducibility matters. |
+
+One npm-global tool:
+
+| Tool | Source                                   | Notes                                                                                                            |
+|------|------------------------------------------|------------------------------------------------------------------------------------------------------------------|
+| `pi` | `npm i -g @earendil-works/pi-coding-agent` | npm prefix is set to `~/.local` in the Dockerfile, so the binary lands in `~/.local/bin` with no sudo. Matches host version era. |
 
 ## Bind mounts (host → container)
 
-| Host                          | Container                | Purpose                                             |
-|-------------------------------|--------------------------|-----------------------------------------------------|
-| `${HOME}/.pi`                 | `/home/vscode/.pi`       | pi settings, auth, sessions, skill caches, agents    |
-| `${HOME}/.agents`             | `/home/vscode/.agents`    | external skills (`cast` etc.)                       |
-| `${HOME}/code/shared`         | `/shared`               | read-write scratch for copying files across boundary |
-| (repo)                        | `/workspaces/degenbot`    | the repo (default workspace mount)                  |
+| Host                          | Container            | Purpose                                              |
+|-------------------------------|----------------------|------------------------------------------------------|
+| `${HOME}/.pi`                 | `/home/dev/.pi`      | pi settings, auth, sessions, skill caches, agents    |
+| `${HOME}/.agents`             | `/home/dev/.agents`  | external skills (`cast` etc.)                        |
+| `${HOME}/code/shared`         | `/shared`            | read-write scratch for copying files across boundary |
+| (repo)                        | `/workspaces/degenbot` | the repo (default workspace mount)                 |
 
-`${localEnv:HOME}` substitution makes the mounts portable across machines, not
-ralph-hardcoded. Host uid (1000) matches the `vscode` container user, so
-ownership is consistent on all bind mounts.
+`${localEnv:HOME}` substitution makes the mounts portable across machines. Host
+uid (1000) matches the `dev` container user, so ownership is consistent on all
+bind mounts.
 
 ## Cross-boundary file copy
 
@@ -95,43 +128,82 @@ exporting coverage HTML, wheel builds, etc.
 
 ## Files in this directory
 
-| File                     | Purpose                                                |
-|--------------------------|--------------------------------------------------------|
-| `devcontainer.json`      | image, features, mounts, env vars, `postCreateCommand`  |
-| `post-create.sh`         | installs tmux/uv/rust/just/foundry/pi, `uv sync`, hooks |
-| `ssh-attach.sh`          | SSH/CLI helper: find + start container, tmux attach    |
-| `devcontainer-lock.json` | pinned feature digests for reproducibility — commit it |
-| `README.md`              | this file                                              |
+| File                | Purpose                                                |
+|---------------------|--------------------------------------------------------|
+| `Dockerfile`        | `fedora:latest` + dnf layer + `dev` user (uid 1000)  |
+| `devcontainer.json` | build/dockerfile, mounts, env vars, `postCreateCommand` |
+| `post-create.sh`    | installs foundry/pi, `uv sync`, git hooks            |
+| `ssh-attach.sh`     | SSH/CLI helper: find + start container, tmux attach  |
+| `tmux.conf`         | truecolor pass-through + extended-keys for pi in tmux |
+| `README.md`         | this file                                            |
+
+(There is no `devcontainer-lock.json` — it only exists to pin devcontainer
+*features*, and this setup uses none.)
+
+## Terminal colors (grey-text / red-accent fix)
+
+If pi launched inside tmux via `ssh-attach.sh` looks dim (grey text nearly
+invisible, highlights collapsed to red), the cause is a dropped color
+capability across the container/tmux boundary — not pi's theme itself. Three
+things have to line up, all handled by this setup:
+
+1. **`COLORTERM` propagation**: pi reads `$COLORTERM` to decide whether to
+   emit 24-bit RGB (see pi's themes doc). `podman exec` only forwards env vars
+   you name explicitly, so `ssh-attach.sh` passes `--env COLORTERM` (and
+   `TERM`) through from your host terminal. Without it pi falls back to a
+   16-color palette.
+2. **Truecolor pass-through in tmux**: even with COLORTERM set, tmux defaults
+   to quantizing RGB escapes to 256-color. `tmux.conf` (baked to `/etc/tmux.conf`
+   by the Dockerfile) sets `terminal-overrides ",*:Tc"` so tmux forwards 24-bit
+   RGB unmodified to the outer terminal.
+3. **Inner TERM**: tmux already defaults `default-terminal` to `tmux-256color`
+   (256-color), so the inner shell pi runs in advertises at least 256-color.
+
+The `tmux.conf` also enables `extended-keys`/`extended-keys-format csi-u`
+(recommended by pi's `tmux.md`) so `Shift+Enter` / `Ctrl+Enter` / `Alt+Enter`
+forward distinctly instead of collapsing to plain Enter.
+
+If colors are still off, verify the chain inside the container tmux session:
+
+```bash
+echo "TERM=$TERM COLORTERM=$COLORTERM"   # expect tmux-256color + truecolor
+tmux show -gv terminal-overrides         # expect *:Tc present
+```
 
 ## Notes / caveats
 
-- **pi sessions are shared**: the bind-mounted `~/.pi` means in-container pi
-  and host pi see the same sessions/auth. Don't run both against the same
-  session simultaneously — they'd race on the VCC state. Typical workflow:
-  host pi retreats while container pi works, or vice versa.
-- **Container-native `.venv`**: the venv is created inside the container with
-  uv-managed python 3.12 (symlinks point to `/home/vscode/...` paths). These
-  don't exist on the host, so a `.venv` built in the container won't work for
-  host-side development, and vice versa. If you switch environments, remove
-  `.venv` and let the active one recreate it (`uv sync` on host; `uv venv
-  --python 3.12 && uv sync` in container).
-- **PyO3 needs `libpython.so`**: the devcontainers python feature installs a
-  static-only python (no shared library), which breaks the PyO3 extension
-  build. `post-create.sh` installs python 3.12 via `uv` (ships the shared
-  library) and creates the venv explicitly with it. Don't re-add the
-  `ghcr.io/devcontainers/features/python` feature without also ensuring a
-  shared libpython is on the link path.
-- **Rust toolchain auto-updates**: `post-create.sh` installs rustup from
-  sh.rustup.rs and sets `rustup default stable`, so rustc tracks current
-  stable (1.96.0 at time of writing) regardless of the base image.
+- **No devcontainer features**: python, rust, node, just, uv, and tmux are all in
+  the Dockerfile via dnf. If you want to re-add the `python` feature, do NOT
+  do so without also ensuring a shared `libpython.so` is on the link path —
+  the feature installs a static-only build that breaks PyO3. dnf's
+  `python3-devel` is the safe shared-lib variant.
+- **Rust is dnf-managed, not rustup**: you get `rustc`/`cargo`/`rustfmt`/`clippy`
+  but no `rustup`, so `rustup target add ...` / toolchain pinning don't work. If
+  you need cross-compilation targets or pinned toolchains, re-introduce rustup
+  (drop the dnf rust packages) in the Dockerfile.
+- **Python follows `fedora:latest`** (currently 3.14). The project declares
+  `requires-python >= 3.12`, so this is in-spec. `tool.ty.environment
+  python-version = "3.12"` is the type-checker's analysis target only — it
+  does not constrain the runtime.
+- **Node follows `fedora:latest`** via `nodejs24` (Active LTS, EOL 2028-04). pi's
+  `engines.node` floor is `>=22.19.0`; `nodejs24` satisfies it with ~2 years of
+  runway. If pi ever pins a max node, re-check before bumping `fedora:latest`.
+- **pi sessions are shared**: the bind-mounted `~/.pi` means in-container pi and
+  host pi see the same sessions/auth. Don't run both against the same session
+  simultaneously — they'd race on the VCC state. Typical workflow: host pi
+  retreats while container pi works, or vice versa.
+- **Container-native `.venv`**: the venv is created inside the container from
+  dnf python (symlinks point to `/usr/lib64` paths). These don't exist on the
+  host, so a `.venv` built in the container won't work for host-side
+  development, and vice versa. If you switch environments, remove `.venv` and
+  let the active one recreate it (`uv sync`).
+- **PyO3 needs `libpython.so`**: provided by dnf's `python3-devel`. Don't remove
+  `python3-devel` from the Dockerfile or the extension build will fail.
 - **`maturin develop` not run on create**: `uv sync` builds the extension via
   PEP 517 (maturin backend) as the editable install. Run `just dev` only for a
   one-shot rebuild after changing Rust sources without wanting a full sync.
-- **Foundry is "latest"**: `foundryup` runs without a pin, so rebuilds may
-  pick up newer Foundry releases. Re-pin in `post-create.sh`
-  (`foundryup -v <tag>`) if reproducibility matters.
-- **Node version drift**: `pi` is installed against the container's Node LTS.
-  If you bump the host's pi major version, reinstall in-container to match.
+- **Foundry is "latest"**: `foundryup` runs without a pin, so rebuilds may pick
+  up newer Foundry releases.
 - **Podman, not Docker**: mounts are plain `type=bind` (no `consistency=cached`,
   which is Docker-Desktop-only). VSCode's `dev.containers.dockerPath: "podman"`
   setting is required because the devcontainer runtime defaults to Docker.
