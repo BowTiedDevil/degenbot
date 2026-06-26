@@ -172,8 +172,9 @@ asyncio_default_fixture_loop_scope = "function"
 pythonpath = ["src", ".", "examples"]
 python_files = "test_*.py"
 testpaths = ["tests", "README.md"]
-norecursedirs = ["archive"]
+norecursedirs = ["archive", ".hypothesis"]
 filterwarnings = [
+    "error", # Fail on all warnings by default
     "ignore::DeprecationWarning:websockets.legacy",
 ]
 markers = [
