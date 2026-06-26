@@ -29,11 +29,11 @@ class BalancerMultiTokenSolver(Solver):
 
     Usage:
     -----
-    >>> from degenbot.arbitrage.solvers.solver import (
-    ...     BalancerMultiTokenHop,
+    >>> from degenbot.arbitrage.solvers import (
     ...     BalancerMultiTokenSolver,
     ...     SolveInput,
     ... )
+    >>> from degenbot.types.hop_types import BalancerMultiTokenHop
     >>> hop = BalancerMultiTokenHop(
     ...     reserves=(100e18, 2e12, 1e12),  # WETH, USDC, DAI in wei
     ...     weights=(5e17, 25e16, 25e16),  # 50%, 25%, 25%

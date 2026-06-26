@@ -1,21 +1,23 @@
-"""Tests for ArbitragePath construction, validation, and hop state extraction.
+"""Tests for path-building primitives kept after ACDWOC's ArbitragePath retirement.
 
-Uses lightweight production pool objects to avoid blockchain dependencies.
+ACDWOC deleted ``ArbitragePath`` and the f64 Möbius solver stack — the
+construction/validation/calculate/close classes that exercised the deleted
+``ArbitragePath`` API went with it. This file keeps the primitives coverage
+that survives the retirement: ``SwapVector``, pool ``to_hop_state`` /
+``extract_fee``, and ``v3_libraries.functions.v3_virtual_reserves`` integer
+math. The engine is the production solve surface, cross-validated against
+``BrentSolver`` in ``tests/arbitrage/test_engine_vs_brent_parity.py``.
 """
 
 from fractions import Fraction
 
 import pytest
 
-from degenbot.arbitrage.solvers.hop_types import SolveInput, SolveResult
-from degenbot.arbitrage.solvers.solver import ArbSolver, MobiusSolver
-from degenbot.arbitrage.path import ArbitragePath, PathValidationError, SwapVector
+from degenbot.arbitrage.path import SwapVector
 from degenbot.exceptions.arbitrage import IncompatiblePoolInvariant
 from degenbot.types.hop_types import BoundedProductHop, ConstantProductHop
-from degenbot.uniswap.v2_types import UniswapV2PoolState
 from degenbot.uniswap.v3_libraries.constants import Q96
 from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves as _v3_virtual_reserves
-from tests.fakes.subscribers import FakeSubscriber
 
 from .conftest import (
     _make_aerodrome_pool,
@@ -152,237 +154,6 @@ class TestPoolToHopState:
         assert hop_reverse.reserve_out == 1000
 
 
-class TestArbitragePathConstruction:
-    def _make_cyclic_v2_pools(self):
-        t0 = _make_token("0x1111111111111111111111111111111111111111")
-        t1 = _make_token("0x2222222222222222222222222222222222222222")
-        pool0 = _make_v2_pool(
-            t0,
-            t1,
-            reserve0=2_000_000,
-            reserve1=1_000_000_000,
-            address="0x00000000000000000000000000000000000000a0",
-        )
-        pool1 = _make_v2_pool(
-            t1,
-            t0,
-            reserve0=1_500_000,
-            reserve1=800_000_000,
-            address="0x00000000000000000000000000000000000000a1",
-        )
-        return t0, t1, pool0, pool1
-
-    def test_basic_construction(self):
-        t0, t1, pool0, pool1 = self._make_cyclic_v2_pools()
-        solver = MobiusSolver()
-        path = ArbitragePath(
-            pools=[pool0, pool1],
-            input_token=t0,
-            solver=solver,
-        )
-        assert len(path.pools) == 2
-        assert path.input_token == t0
-        assert len(path.swap_vectors) == 2
-        assert path.swap_vectors[0].token_in == t0
-        assert path.swap_vectors[0].token_out == t1
-        assert path.swap_vectors[0].zero_for_one
-        assert path.swap_vectors[1].token_in == t1
-        assert path.swap_vectors[1].token_out == t0
-
-    def test_subscribes_to_pools(self):
-        t0, _t1, pool0, pool1 = self._make_cyclic_v2_pools()
-        solver = MobiusSolver()
-        path = ArbitragePath(
-            pools=[pool0, pool1],
-            input_token=t0,
-            solver=solver,
-        )
-        assert path in pool0._subscribers
-        assert path in pool1._subscribers
-
-    def test_hop_states_extracted(self):
-        t0, _t1, pool0, pool1 = self._make_cyclic_v2_pools()
-        solver = MobiusSolver()
-        path = ArbitragePath(
-            pools=[pool0, pool1],
-            input_token=t0,
-            solver=solver,
-        )
-        assert len(path.hop_states) == 2
-        assert isinstance(path.hop_states[0], ConstantProductHop)
-        assert isinstance(path.hop_states[1], ConstantProductHop)
-
-    def test_calculate_profitable(self):
-        t0, _t1, pool0, pool1 = self._make_cyclic_v2_pools()
-        solver = MobiusSolver()
-        path = ArbitragePath(
-            pools=[pool0, pool1],
-            input_token=t0,
-            solver=solver,
-        )
-        result = path.calculate()
-        assert isinstance(result, SolveResult)
-
-    def test_calculate_updates_last_result(self):
-        t0, _t1, pool0, pool1 = self._make_cyclic_v2_pools()
-        solver = MobiusSolver()
-        path = ArbitragePath(
-            pools=[pool0, pool1],
-            input_token=t0,
-            solver=solver,
-        )
-        assert path.last_result is None
-        path.calculate()
-        assert path.last_result is not None
-
-    def test_max_input_property(self):
-        t0, _t1, pool0, pool1 = self._make_cyclic_v2_pools()
-        solver = MobiusSolver()
-        path = ArbitragePath(
-            pools=[pool0, pool1],
-            input_token=t0,
-            solver=solver,
-            max_input=10**18,
-        )
-        assert path.max_input == 10**18
-
-    def test_max_input_setter(self):
-        t0, _t1, pool0, pool1 = self._make_cyclic_v2_pools()
-        solver = MobiusSolver()
-        path = ArbitragePath(
-            pools=[pool0, pool1],
-            input_token=t0,
-            solver=solver,
-        )
-        path.max_input = 10**15
-        assert path.max_input == 10**15
-
-    def test_set_solver(self):
-        t0, _t1, pool0, pool1 = self._make_cyclic_v2_pools()
-        solver1 = MobiusSolver()
-        path = ArbitragePath(
-            pools=[pool0, pool1],
-            input_token=t0,
-            solver=solver1,
-        )
-        solver2 = MobiusSolver()
-        path.set_solver(solver2)
-        assert path.solver is solver2
-
-
-class TestArbitragePathValidation:
-    def test_rejects_single_pool(self):
-        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-        pool = _make_v2_pool(t0, t1)
-        solver = MobiusSolver()
-        with pytest.raises(PathValidationError, match="at least 2"):
-            ArbitragePath(pools=[pool], input_token=t0, solver=solver)
-
-    def test_rejects_broken_token_chain(self):
-        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-        t2 = _make_token("0xcccccccccccccccccccccccccccccccccccccccc")
-        pool0 = _make_v2_pool(t0, t1, address="0x00000000000000000000000000000000000000a0")
-        pool1 = _make_v2_pool(t1, t2, address="0x00000000000000000000000000000000000000a1")
-        solver = MobiusSolver()
-        with pytest.raises(PathValidationError, match="not cyclic"):
-            ArbitragePath(pools=[pool0, pool1], input_token=t0, solver=solver)
-
-    def test_rejects_input_token_not_in_first_pool(self):
-        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-        t2 = _make_token("0xcccccccccccccccccccccccccccccccccccccccc")
-        pool0 = _make_v2_pool(t0, t1, address="0x00000000000000000000000000000000000000a0")
-        pool1 = _make_v2_pool(t1, t2, address="0x00000000000000000000000000000000000000a1")
-        solver = MobiusSolver()
-        with pytest.raises(PathValidationError):
-            ArbitragePath(
-                pools=[pool0, pool1],
-                input_token=t2,
-                solver=solver,
-            )
-
-    def test_rejects_incompatible_pool(self):
-        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-
-        pool0 = _make_v2_pool(t0, t1, address="0x00000000000000000000000000000000000000a0")
-
-        class _IncompatiblePool:
-            def __init__(self, token0, token1, address):
-                self.token0 = token0
-                self.token1 = token1
-                self.address = address
-
-        pool1 = _IncompatiblePool(t1, t0, "0xpool1")
-        solver = MobiusSolver()
-        with pytest.raises(PathValidationError, match="not Mobius-compatible"):
-            ArbitragePath(
-                pools=[pool0, pool1],
-                input_token=t0,
-                solver=solver,
-            )
-
-
-class TestArbitragePathCalculate:
-    def test_cross_validates_vs_arb_solver(self):
-
-        t0, _t1, pool0, pool1 = TestArbitragePathConstruction._make_cyclic_v2_pools(self)
-        solver = MobiusSolver()
-        path = ArbitragePath(
-            pools=[pool0, pool1],
-            input_token=t0,
-            solver=solver,
-        )
-        new_result = path.calculate()
-
-        old_solver = ArbSolver()
-        old_result = old_solver.solve(
-            SolveInput(
-                hops=(
-                    ConstantProductHop(
-                        reserve_in=2_000_000,
-                        reserve_out=1_000_000_000,
-                        fee=FEE_03,
-                    ),
-                    ConstantProductHop(
-                        reserve_in=1_500_000,
-                        reserve_out=800_000_000,
-                        fee=FEE_03,
-                    ),
-                )
-            )
-        )
-
-        assert new_result.optimal_input == old_result.optimal_input
-        assert new_result.profit == old_result.profit
-
-    def test_calculate_with_state_override(self):
-        t0, _t1, pool0, pool1 = TestArbitragePathConstruction._make_cyclic_v2_pools(self)
-        solver = MobiusSolver()
-        path = ArbitragePath(
-            pools=[pool0, pool1],
-            input_token=t0,
-            solver=solver,
-        )
-
-        original_result = path.calculate()
-
-        override_state = UniswapV2PoolState(
-            address=pool0.address,
-            block=None,
-            reserves_token0=5_000_000,
-            reserves_token1=2_000_000_000,
-        )
-
-        override_result = path.calculate_with_state_override({pool0.address: override_state})
-
-        assert override_result.optimal_input != original_result.optimal_input
-
-        assert path.hop_states[0].reserve_in == 2_000_000
-
-
 class TestV3VirtualReservesIntegerMath:
     def test_price_one_symmetric(self):
 
@@ -439,66 +210,3 @@ class TestV3VirtualReservesIntegerMath:
 
         assert abs(x_int - x_float) <= 1
         assert abs(y_int - y_float) <= 1
-
-
-class TestArbitragePathClose:
-    def test_close_unsubscribes_from_pools(self):
-        t0 = _make_token("0x1111111111111111111111111111111111111111")
-        t1 = _make_token("0x2222222222222222222222222222222222222222")
-        pool0 = _make_v2_pool(
-            t0,
-            t1,
-            reserve0=2_000_000,
-            reserve1=1_000_000_000,
-            address="0x00000000000000000000000000000000000000a0",
-        )
-        pool1 = _make_v2_pool(
-            t1,
-            t0,
-            reserve0=1_500_000,
-            reserve1=800_000_000,
-            address="0x00000000000000000000000000000000000000a1",
-        )
-
-        solver = MobiusSolver()
-        path = ArbitragePath(
-            pools=[pool0, pool1],
-            input_token=t0,
-            solver=solver,
-        )
-
-        subscriber = FakeSubscriber()
-        path.subscribe(subscriber)
-
-        path.close()
-
-        assert path not in pool0._subscribers
-        assert path not in pool1._subscribers
-
-    def test_close_clears_subscribers(self):
-        t0 = _make_token("0x1111111111111111111111111111111111111111")
-        t1 = _make_token("0x2222222222222222222222222222222222222222")
-        pool0 = _make_v2_pool(
-            t0,
-            t1,
-            address="0x00000000000000000000000000000000000000a0",
-        )
-        pool1 = _make_v2_pool(
-            t1,
-            t0,
-            address="0x00000000000000000000000000000000000000a1",
-        )
-
-        solver = MobiusSolver()
-        path = ArbitragePath(
-            pools=[pool0, pool1],
-            input_token=t0,
-            solver=solver,
-        )
-
-        subscriber = FakeSubscriber()
-        path.subscribe(subscriber)
-        assert len(path._subscribers) == 1
-
-        path.close()
-        assert len(path._subscribers) == 0
