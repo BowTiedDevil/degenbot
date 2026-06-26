@@ -36,20 +36,25 @@ def _fake_async_provider(chain_id: int = 1) -> MagicMock:
 class _RecordingDb:
     def __init__(self) -> None:
         self.remove_calls = 0
+        self.dispose_calls = 0
 
     def remove(self) -> None:
         self.remove_calls += 1
 
+    def dispose(self) -> None:
+        self.dispose_calls += 1
+
 
 class TestAsyncBotContextManager:
     async def test_context_manager_releases_all_handles_on_exit(
-        self, tmp_path: pathlib.Path
+        self, tmp_path: pathlib.Path,
     ) -> None:
         config = _make_test_config(tmp_path)
         provider = _fake_async_provider(1)
 
         bot = await AsyncBot.from_provider(config, provider=provider)
-        # swap in a recording db + seed a tracker
+        # swap in a recording db + seed a tracker; dispose the real engine first
+        bot.db.dispose()  # type: ignore[attr-defined]
         recording_db = _RecordingDb()
         bot.db = recording_db  # type: ignore[assignment]
         tracker = bot.add_tracker(
@@ -64,6 +69,7 @@ class TestAsyncBotContextManager:
 
         provider.close.assert_called_once()
         assert recording_db.remove_calls == 1
+        assert recording_db.dispose_calls == 1
         assert tracker._tracked_pools == {}
         assert tracker._untracked_pools == set()
         assert bot._closed is True
@@ -72,6 +78,7 @@ class TestAsyncBotContextManager:
         config = _make_test_config(tmp_path)
         provider = _fake_async_provider(1)
         bot = await AsyncBot.from_provider(config, provider=provider)
+        bot.db.dispose()  # type: ignore[attr-defined]
         bot.db = _RecordingDb()  # type: ignore[assignment]
 
         bot.aclose()
@@ -94,6 +101,7 @@ class TestAsyncBotContextManager:
         config = _make_test_config(tmp_path)
         provider = _fake_async_provider(1)
         bot = await AsyncBot.from_provider(config, provider=provider)
+        bot.db.dispose()  # type: ignore[attr-defined]
         bot.db = _RecordingDb()  # type: ignore[assignment]
         tracker = bot.add_tracker(
             UniswapV2PoolTracker,

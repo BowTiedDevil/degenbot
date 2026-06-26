@@ -69,6 +69,8 @@ class TestV3DatabaseSnapshotExplicitDeps:
         result = snapshot.get_newest_block()
         assert result == 18_000_000
 
+        db.dispose()
+
 
 class TestV4DatabaseSnapshotExplicitDeps:
     """V4 DatabaseSnapshot accepts explicit db and database_path."""
