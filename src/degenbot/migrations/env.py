@@ -13,21 +13,24 @@ from degenbot.database.operations import _get_sqlite_db_string
 # access to the values within the .ini file in use.
 config = context.config
 
-# Database path: requires explicit DEGENBOT_DATABASE_PATH env var
-database_path = os.environ.get("DEGENBOT_DATABASE_PATH")
-if database_path:
-    config.set_main_option(
-        "sqlalchemy.url",
-        f"sqlite:///{database_path}",
-    )
-else:
-    from degenbot.config import _init_config
+# Database path: respect an explicit URL already set on the config (e.g. by
+# get_alembic_config). Otherwise prefer the DEGENBOT_DATABASE_PATH env var,
+# and finally fall back to the default degenbot config.
+if not config.get_main_option("sqlalchemy.url"):
+    database_path = os.environ.get("DEGENBOT_DATABASE_PATH")
+    if database_path:
+        config.set_main_option(
+            "sqlalchemy.url",
+            f"sqlite:///{database_path}",
+        )
+    else:
+        from degenbot.config import _init_config
 
-    degenbot_config = _init_config()
-    config.set_main_option(
-        "sqlalchemy.url",
-        f"sqlite:///{_get_sqlite_db_string(degenbot_config.database.path)}",
-    )
+        degenbot_config = _init_config()
+        config.set_main_option(
+            "sqlalchemy.url",
+            f"sqlite:///{_get_sqlite_db_string(degenbot_config.database.path)}",
+        )
 
 
 # Interpret the config file for Python logging.
