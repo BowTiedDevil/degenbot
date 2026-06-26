@@ -29,6 +29,16 @@
   // in the Dockerfile makes `npm i -g` land there) and foundry
   // (~/.foundry/bin, curl-installed in post-create.sh). cargo/just/node/
   // python/uv are in /usr/bin from dnf and already on the default PATH.
+  // No extraHosts: the host Ethereum node is reached via the built-in
+  // `host.containers.internal` hostname (podman maps it to the host loopback,
+  // where 8545/8546 listen). tests.env points directly at
+  // `host.containers.internal:PORT`. An `extraHosts` alias (`node:host-gateway`)
+  // was tried first but `host-gateway` misresolves to 127.0.0.1 under rootless
+  // podman here, and extraHosts can't take a hostname — only a literal IP or
+  // the token — so the alias approach was dropped in favor of using the
+  // resolved hostname in tests.env. No container recreate is needed for this
+  // (host.containers.internal is wired up by podman on every start, including
+  // the ssh-attach.sh `podman start`+`exec` path that skips lifecycle hooks).
   "containerEnv": {
     "LOCAL_BIN": "/home/dev/.local/bin",
     "FOUNDRY_DIR": "/home/dev/.foundry"
