@@ -1,0 +1,60 @@
+// degenbot devcontainer — committed in-repo. VSCode auto-discovers this file.
+//
+// Usage:
+//   1. One-time: set "dev.containers.dockerPath": "podman" in VSCode user settings.
+//   2. Open /home/ralph/code/degenbot in VSCode → "Dev Containers: Reopen in Container".
+//
+// The first build pulls the image + runs features + postCreateCommand (slow).
+// Subsequent starts are instant: VSCode reuses the named container it created.
+//
+// Podman note: mounts are plain type=bind (no consistency=cached, which is
+// Docker-Desktop-only). VSCode's podman dockerPath handles the runtime.
+{
+  "name": "degenbot",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "remoteUser": "vscode",
+  "workspaceFolder": "/workspaces/degenbot",
+  "features": {
+    // sudo/git plumbing; the base:ubuntu image ships a vscode uid 1000 user,
+    // matching host uid — no updateRemoteUserUID needed.
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": false,
+      "configureZshAsDefaultShell": false
+    },
+    // NOTE: no python feature. The devcontainers python feature installs a
+    // STATIC-only python (no libpython.so) which breaks PyO3 extension
+    // builds. uv manages python 3.12 itself (ships libpython.so) in
+    // post-create.sh. The base image's system python (3.14) remains on PATH
+    // for general scripting.
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "lts"
+    }
+  },
+  // Bind-mount host state across the container boundary. ${localEnv:HOME}
+  // resolves to the host user's home, so this is portable across machines.
+  // Host uid 1000 matches the vscode container user, so ownership is 
+  // consistent without updateRemoteUserUID.
+  //
+  // Prerequisite: ~/.pi and ~/.agents must exist on the host. Create them
+  // empty (mkdir -p ~/.pi ~/.agents) if this is a fresh machine — otherwise
+  // Podman refuses the bind mount.
+  "mounts": [
+    "source=${localEnv:HOME}/.pi,target=/home/vscode/.pi,type=bind",
+    "source=${localEnv:HOME}/.agents,target=/home/vscode/.agents,type=bind",
+    "source=${localEnv:HOME}/code/shared,target=/shared,type=bind"
+  ],
+  // PATH additions for tools installed into ~/.local/bin and ~/.foundry/bin
+  // by post-create.sh. containerEnv covers devcontainer-spawned processes;
+  // remoteEnv surfaces them in VSCode terminals.
+  "containerEnv": {
+    "LOCAL_BIN": "/home/vscode/.local/bin",
+    "FOUNDRY_DIR": "/home/vscode/.foundry"
+  },
+  "remoteEnv": {
+    "PATH": "/home/vscode/.foundry/bin:/home/vscode/.local/bin:${containerEnv:PATH}"
+  },
+  // Runs from workspaceFolder automatically — no need to bind-mount the
+  // config dir as in the out-of-repo variant.
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "postStartCommand": "echo 'degenbot devcontainer ready. Tools: just, uv, forge, pi. Shared: /shared'"
+}
