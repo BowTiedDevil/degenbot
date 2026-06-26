@@ -11,12 +11,13 @@ from pathlib import Path
 from degenbot.config import DatabaseSettings, DegenbotConfig
 from degenbot.provider import get_provider_from_config
 from degenbot.provider.factory import get_provider_from_config as factory_get
+from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 
 
 def _config(chain_id: int | None) -> DegenbotConfig:
     return DegenbotConfig(
         database=DatabaseSettings(path=Path(":memory:")),
-        rpc={1: "https://eth.llamarpc.com/"} if chain_id is not None else {},
+        rpc={1: ETHEREUM_ARCHIVE_NODE_HTTP_URI} if chain_id is not None else {},
         default_chain_id=chain_id,
     )
 

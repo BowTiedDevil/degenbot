@@ -15,13 +15,14 @@ from degenbot.exceptions.pool import TrackerAlreadyInitialized
 from degenbot.provider import ProviderAdapter
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.uniswap.trackers import UniswapV2PoolTracker
+from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 
 
 def _make_test_config(tmp_path: pathlib.Path, chain_id: int = 1) -> DegenbotConfig:
     """Create a DegenbotConfig pointing at a temporary database."""
     return DegenbotConfig(
         database=DatabaseSettings(path=tmp_path / "test.db"),
-        rpc={1: "https://eth.llamarpc.com/"},
+        rpc={1: ETHEREUM_ARCHIVE_NODE_HTTP_URI},
         default_chain_id=chain_id,
     )
 
