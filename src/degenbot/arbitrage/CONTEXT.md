@@ -4,15 +4,15 @@
 
 | Term | Definition | Aliases to avoid |
 | ---- | ---------- | ---------------- |
-| **Arbitrage Cycle** | Retired term. An ordered sequence of pools forming a closed loop — use **Arbitrage Path** instead. | Arb cycle, circular path, cycle |
-| **Arbitrage Path** | An event-driven wrapper around a sequence of pools that validates token flow, subscribes to state updates, and delegates solving; the replacement for the deprecated **Arbitrage Cycle** classes | Arb path, path |
+| **Arbitrage Cycle** | Retired term. An ordered sequence of pools forming a closed loop — use **Arbitrage Path** (the engine's registered path) instead. | Arb cycle, circular path, cycle |
+| **Arbitrage Path** | A directed, cyclic pool sequence registered with the Rust `UniswapArbEngine` via `EngineRegistry.register_path`; the engine owns the solve + block-driven re-solve. *(Legacy Python `ArbitragePath` class wrapper retired in ACDWOC — its event-driven subscriber re-solve + swap-amount planning were superseded by the engine's `subscribe`/`process_logs`/`rebuild_and_solve_affected` + `pool.build_swap_amount` on raw engine outputs.)* | Arb path, path |
 | **Input Token** | The token supplied to the first swap in an arbitrage cycle | Starting token |
 | **Profit Token** | The token in which arbitrage profit is measured (always equals the Input Token for a cycle) | Output token |
 | **Input Amount** | The quantity of Input Token to be swapped into the first pool | Swap amount, trade size |
 | **Profit Amount** | The net token gain after completing all swaps in the cycle (negative = unprofitable) | PnL, gain |
 | **Rate of Exchange** | The ratio of output to input across the entire cycle; values > 1 indicate a profitable opportunity | Exchange rate, arb rate |
 | **Swap Vector** | A directed pair (token_in, token_out) plus a zero_for_one flag describing the direction of a single swap within a path | Swap direction, flow |
-| **Swap Amounts** | The per-pool input/output amounts and parameters needed to execute the swaps in an arbitrage cycle. `input_amount()` / `output_amount()` provide generic extraction; `build_swap_amount()` on pool classes replaces isinstance-chain factory. | Swap details |
+| **Swap Amounts** | The per-pool input/output amounts and parameters needed to execute the swaps in an arbitrage cycle. `input_amount()` / `output_amount()` provide generic extraction; `build_swap_amount()` on pool classes builds the typed payload from the engine's raw `hop_outputs`/`consumed_inputs`. *(The legacy Python `swap_amount_builder.build_swap_amount` wrapper retired in ACDWOC — callers invoke `pool.build_swap_amount(zfo, amount_in, amount_out)` directly on the engine's outputs.)* | Swap details |
 | **Calculation Result** | The complete output of an arbitrage calculation: input amount, profit amount, per-pool swap amounts, and state block | Arb result |
 
 ## Engine Orchestration
@@ -30,7 +30,7 @@
 | ---- | ---------- | ---------------- |
 | **Solver** | An algorithm that finds the optimal **Input Amount** for a single arbitrage path given **Hop States**; operates on one path at a time | finder |
 | **Hop State** | The numerical representation of a single pool's state in a form suitable for solver consumption (e.g., virtual reserves) | Pool state (solver context), solver state |
-| **Mobius Solver** | A solver using the Möbius transformation approach for constant-product and concentrated-liquidity pools | — |
+| **Mobius Solver** *(removed)* | Former Python f64 Möbius-transformation solver for V2/V3 (closed-form `K*x/(M+N*x)` recurrence). Retired in ACDWOC — the Rust `UniswapArbEngine` (`exact_mobius_solve` / `int_solve_cl_path`, U512-exact) is the production solve surface; the kept `BrentSolver` is the Python reference oracle (cross-validated in `test_engine_vs_brent_parity`). `ArbSolver` (the f64 dispatcher), `PiecewiseMobiusSolver`, `NewtonSolver`, `_mobius_math`, `_v3_utils`, and `solver.py` are all gone with it. | — |
 
 ## Pool Adapters
 
@@ -47,13 +47,13 @@
 
 ## Relationships
 
-- An **Arbitrage Cycle** (deprecated) was an ordered sequence of **Pools** that form a closed token loop; replaced by **Arbitrage Path**
-- An **Arbitrage Path** wraps a sequence of pools with a **Solver** and subscribes to **Pool State Messages**
+- An **Arbitrage Cycle** (deprecated) was an ordered sequence of **Pools** that form a closed token loop; replaced by **Arbitrage Path** (now an engine-registered path)
+- An **Arbitrage Path** is a cyclic pool sequence registered with the Rust `UniswapArbEngine`; the engine owns the solve + block-driven re-solve (the legacy Python `ArbitragePath` wrapper retired in ACDWOC)
 - A **Swap Vector** describes the direction of a single hop within an **Arbitrage Path**
 - A **Pool Adapter** translates a **Pool** into a **Hop State** for a **Solver** (implemented by each pool's `to_hop_state()` method)
 - A **Pool Cache Adapter** (removed in ADR-003 Slice 4) formerly subscribed to **Pool State Messages** and auto-registered both orientations in the legacy `RustPoolCache` mirror; that path is deleted
 - **Swap Amounts** self-encode into **EncodedCall**s; `generate_payloads()` wires encoding → **ApprovalStrategy** → **PayloadComposer**
-- **Swap Amounts** provide `input_amount()` / `output_amount()` for generic amount extraction; pool classes implement `build_swap_amount()` from the `ArbitragePathPool` protocol
+- **Swap Amounts** provide `input_amount()` / `output_amount()` for generic amount extraction; pool classes implement `build_swap_amount()` from the `ArbitragePathPool` protocol — callers feed the engine's raw `hop_outputs`/`consumed_inputs` (the legacy `build_swap_amounts` wrapper retired in ACDWOC)
 - A **V4PoolKey** is available to custom **PayloadComposers** for V4's unlock/swap callback dispatch
 - The **Engine Registry** is the single canonical startup orchestrator: it sequences `subscribe` → snapshot stream → `backfill_from_snapshot` → verify config, halting before `resume()` so the consumer attaches safely. **Pool Admission** (hooked/dynamic-fee V4 refusal) is enforced in the Rust core, not as a Python pre-check; rejections surface as `HookedPoolRejectedError` / `DynamicFeePoolRejectedError` for type-safe classification. **Path-Composition Policy** (token/hop/liquidity/duplicate rules) is enforced by an injected `PathCompositionPredicate` in `register_path` BEFORE hop building + engine dispatch; rejections surface as `PathRejectedError` subtypes (`ArbitrageError` hierarchy, distinct from the `ValueError`-based admission floor).
 - **Address table index hygiene**: `AddressTable` deduplicates by checksummed address — see **Encoding footguns** below for the V2 N-hop iteration-variable bug
