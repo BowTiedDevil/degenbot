@@ -37,24 +37,30 @@ BASE_ARCHIVE_NODE_WS_URI: str = env_values.get(
     "BASE_ARCHIVE_NODE_WS_URI",
     "wss://mainnet.base.org",
 )
-BASE_FULL_NODE_HTTP_URI: str = env_values.get("BASE_FULL_NODE_HTTP_URI", "https://mainnet.base.org")
-BASE_FULL_NODE_WS_URI: str = env_values.get("BASE_FULL_NODE_WS_URI", "wss://mainnet.base.org")
+BASE_FULL_NODE_HTTP_URI: str = env_values.get(
+    "BASE_FULL_NODE_HTTP_URI",
+    "https://mainnet.base.org",
+)
+BASE_FULL_NODE_WS_URI: str = env_values.get(
+    "BASE_FULL_NODE_WS_URI",
+    "wss://mainnet.base.org",
+)
 
 ETHEREUM_ARCHIVE_NODE_HTTP_URI: str = env_values.get(
     "ETHEREUM_ARCHIVE_NODE_HTTP_URI",
-    "https://eth.llamarpc.com/",
+    "https://ethereum-rpc.publicnode.com",
 )
 ETHEREUM_ARCHIVE_NODE_WS_URI: str = env_values.get(
     "ETHEREUM_ARCHIVE_NODE_WS_URI",
-    "wss://eth.llamarpc.com/",
+    "wss://ethereum-rpc.publicnode.com",
 )
 ETHEREUM_FULL_NODE_HTTP_URI: str = env_values.get(
     "ETHEREUM_FULL_NODE_HTTP_URI",
-    "https://eth.llamarpc.com/",
+    "https://ethereum-rpc.publicnode.com",
 )
 ETHEREUM_FULL_NODE_WS_URI: str = env_values.get(
     "ETHEREUM_FULL_NODE_WS_URI",
-    "wss://eth.llamarpc.com/",
+    "wss://ethereum-rpc.publicnode.com",
 )
 
 

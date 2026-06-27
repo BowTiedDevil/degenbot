@@ -15,29 +15,32 @@ from degenbot.uniswap.trackers import UniswapV2PoolTracker, UniswapV3PoolTracker
 from degenbot.uniswap.v2_functions import get_v2_pools_from_token_path
 from tests.helpers.bot_factory import make_bot_with_provider
 
+pytestmark = pytest.mark.online_rpc
+
+
 MAINNET_UNISWAP_V2_FACTORY_ADDRESS = get_checksum_address(
-    "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+    "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
 )
 MAINNET_UNISWAP_V3_FACTORY_ADDRESS = get_checksum_address(
-    "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+    "0x1F98431c8aD98523631AE4a59f267346ea31F984",
 )
 MAINNET_SUSHISWAP_V2_FACTORY_ADDRESS = get_checksum_address(
-    "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"
+    "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac",
 )
 MAINNET_SUSHISWAP_V3_FACTORY_ADDRESS = get_checksum_address(
-    "0xbACEB8eC6b9355Dfc0269C18bac9d6E2Bdc29C4F"
+    "0xbACEB8eC6b9355Dfc0269C18bac9d6E2Bdc29C4F",
 )
 
 MAINNET_WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 MAINNET_WBTC_ADDRESS = get_checksum_address("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599")
 MAINNET_SUSHISWAPV2_WETH_WBTC_ADDRESS = get_checksum_address(
-    "0xceff51756c56ceffca006cd410b03ffc46dd3a58"
+    "0xceff51756c56ceffca006cd410b03ffc46dd3a58",
 )
 MAINNET_UNISWAPV2_WETH_WBTC_ADDRESS = get_checksum_address(
-    "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940"
+    "0xBb2b8038a1640196FbE3e38816F3e67Cba72D940",
 )
 MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS = get_checksum_address(
-    "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
+    "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD",
 )
 
 BASE_UNISWAP_V2_FACTORY_ADDRESS = get_checksum_address("0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6")
@@ -45,16 +48,16 @@ BASE_UNISWAP_V3_FACTORY_ADDRESS = get_checksum_address("0x33128a8fC17869897dcE68
 BASE_WETH_ADDRESS = get_checksum_address("0x4200000000000000000000000000000000000006")
 BASE_DEGEN_ADDRESS = get_checksum_address("0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed")
 BASE_UNISWAP_V2_WETH_DEGEN_ADDRESS = get_checksum_address(
-    "0x7C327d692B72f60b28AecEDbcC1BA784712fE7b2"
+    "0x7C327d692B72f60b28AecEDbcC1BA784712fE7b2",
 )
 BASE_UNISWAP_V3_WETH_DEGEN_ADDRESS = get_checksum_address(
-    "0xc9034c3E7F58003E6ae0C8438e7c8f4598d5ACAA"
+    "0xc9034c3E7F58003E6ae0C8438e7c8f4598d5ACAA",
 )
 BASE_PANCAKESWAP_V3_FACTORY_ADDRESS = get_checksum_address(
-    "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865"
+    "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865",
 )
 BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS = get_checksum_address(
-    "0x41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9"
+    "0x41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9",
 )
 BASE_CBETH_WETH_V3_POOL_ADDRESS = get_checksum_address("0x257fcbae4ac6b26a02e4fc5e1a11e4174b5ce395")
 BASE_CBETH_ADDRESS = get_checksum_address("0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22")
@@ -75,18 +78,20 @@ def test_create_base_chain_trackers(fork_base_full: AnvilFork):
 
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_base_full.w3))
     uniswap_v2_pool_tracker = UniswapV2PoolTracker(
-        factory_address=BASE_UNISWAP_V2_FACTORY_ADDRESS, bot=bot
+        factory_address=BASE_UNISWAP_V2_FACTORY_ADDRESS,
+        bot=bot,
     )
     assert uniswap_v2_pool_tracker._factory_address == BASE_UNISWAP_V2_FACTORY_ADDRESS
 
     uniswap_v3_pool_tracker = UniswapV3PoolTracker(
-        factory_address=BASE_UNISWAP_V3_FACTORY_ADDRESS, bot=bot
+        factory_address=BASE_UNISWAP_V3_FACTORY_ADDRESS,
+        bot=bot,
     )
     assert uniswap_v3_pool_tracker._factory_address == BASE_UNISWAP_V3_FACTORY_ADDRESS
 
     # Get known pairs
     uniswap_v2_lp = uniswap_v2_pool_tracker.get_pool_from_tokens(
-        token_addresses=(BASE_WETH_ADDRESS, BASE_DEGEN_ADDRESS)
+        token_addresses=(BASE_WETH_ADDRESS, BASE_DEGEN_ADDRESS),
     )
     uniswap_v3_lp = uniswap_v3_pool_tracker.get_pool_from_tokens_and_fee(
         token_addresses=(BASE_WETH_ADDRESS, BASE_DEGEN_ADDRESS),
@@ -153,13 +158,13 @@ def test_create_mainnet_trackers(fork_mainnet_full: AnvilFork):
         token_addresses=(
             MAINNET_WETH_ADDRESS,
             MAINNET_WBTC_ADDRESS,
-        )
+        ),
     )
     sushiswap_v2_lp = sushiswap_v2_pool_tracker.get_pool_from_tokens(
         token_addresses=(
             MAINNET_WETH_ADDRESS,
             MAINNET_WBTC_ADDRESS,
-        )
+        ),
     )
     uniswap_v3_lp = uniswap_v3_pool_tracker.get_pool_from_tokens_and_fee(
         token_addresses=(
@@ -175,7 +180,8 @@ def test_create_mainnet_trackers(fork_mainnet_full: AnvilFork):
 
     # Calling get_pool at the wrong pool manager should raise an exception
     with pytest.raises(
-        TrackerError, match=f"Pool {uniswap_v2_lp.address} is not associated with this DEX"
+        TrackerError,
+        match=f"Pool {uniswap_v2_lp.address} is not associated with this DEX",
     ):
         sushiswap_v2_pool_tracker.get_pool(pool_address=uniswap_v2_lp.address)
 
@@ -185,7 +191,8 @@ def test_create_mainnet_trackers(fork_mainnet_full: AnvilFork):
         sushiswap_v2_pool_tracker.get_pool(pool_address=uniswap_v2_lp.address)
 
     with pytest.raises(
-        TrackerError, match=f"Pool {sushiswap_v2_lp.address} is not associated with this DEX"
+        TrackerError,
+        match=f"Pool {sushiswap_v2_lp.address} is not associated with this DEX",
     ):
         uniswap_v2_pool_tracker.get_pool(pool_address=sushiswap_v2_lp.address)
     with pytest.raises(PoolNotAssociated):
@@ -233,14 +240,14 @@ def test_pool_remove_and_recreate(fork_mainnet_full: AnvilFork):
         token_addresses=(
             MAINNET_WETH_ADDRESS,
             MAINNET_WBTC_ADDRESS,
-        )
+        ),
     )
 
     new_v2_weth_wbtc_lp = uniswap_v2_pool_tracker.get_pool_from_tokens(
         token_addresses=(
             MAINNET_WETH_ADDRESS,
             MAINNET_WBTC_ADDRESS,
-        )
+        ),
     )
 
     # The pool manager should have found the original pool in AllPools and re-used it
@@ -258,7 +265,7 @@ def test_pool_remove_and_recreate(fork_mainnet_full: AnvilFork):
         token_addresses=(
             MAINNET_WETH_ADDRESS,
             MAINNET_WBTC_ADDRESS,
-        )
+        ),
     )
     assert super_new_v2_weth_wbtc_lp is not new_v2_weth_wbtc_lp
     assert super_new_v2_weth_wbtc_lp is not v2_weth_wbtc_lp
@@ -350,6 +357,6 @@ def test_pools_from_token_path(fork_mainnet_full: AnvilFork) -> None:
         pool_tracker=uniswap_v2_pool_tracker,
     ) == [
         uniswap_v2_pool_tracker.get_pool_from_tokens(
-            token_addresses=(MAINNET_WBTC_ADDRESS, MAINNET_WETH_ADDRESS)
+            token_addresses=(MAINNET_WBTC_ADDRESS, MAINNET_WETH_ADDRESS),
         ),
     ]

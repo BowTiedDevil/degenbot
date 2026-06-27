@@ -144,6 +144,7 @@ def test_erc20token_without_price_feed(weth: Erc20Token):
         _ = weth.price
 
 
+@pytest.mark.online_rpc
 def test_ether_placeholder(fork_mainnet_full: AnvilFork):
     ether = make_ether_placeholder(_PY_BOT, ZERO_ADDRESS)
 

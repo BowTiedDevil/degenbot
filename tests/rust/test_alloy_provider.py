@@ -179,7 +179,8 @@ class TestAlloyProviderBalanceAndNonceMethods:
     def test_get_transaction_count_with_block_returns_int(self, alloy_provider: AlloyProvider):
         """Test get_transaction_count with block returns int."""
         result = alloy_provider.get_transaction_count(
-            "0x742d35Cc6634C0532925a3b8D4C9db96590d6B75", 18000000
+            "0x742d35Cc6634C0532925a3b8D4C9db96590d6B75",
+            18000000,
         )
         assert isinstance(result, int)
         assert result >= 0
@@ -200,6 +201,7 @@ class TestAlloyProviderConnection:
 class TestAlloyProviderContextManager:
     """Test context manager functionality."""
 
+    @pytest.mark.online_rpc
     def test_context_manager_enter_exit(self, fork_mainnet_full: AnvilFork):
         """Test AlloyProvider works as context manager."""
         with AlloyProvider(fork_mainnet_full.http_url) as provider:

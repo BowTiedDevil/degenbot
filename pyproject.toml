@@ -165,7 +165,7 @@ addopts = [
     "--cov", "src/degenbot",
     "--cov-branch",
     "--cov-report", "html",
-    "-m", "not slow and not base",
+    "-m", "not slow and not base and not online_rpc",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
@@ -183,6 +183,7 @@ markers = [
     "ethereum: tests requiring an Ethereum mainnet RPC",
     "slow: tests that are too slow for routine local runs (e.g. pathfinding)",
     "onchain_oracle: on-chain parity test whose oracle truth is read from a golden file (tests/golden); offline in CI — see docs/architecture/golden-onchain-parity.md",
+    "online_rpc: test requiring a live external RPC (mainnet/arbitrum/base archive node) — skipped in CI by default; run on-demand with `-m online_rpc`. See docs/architecture/golden-onchain-parity.md.",
 ]
 
 [dependency-groups]

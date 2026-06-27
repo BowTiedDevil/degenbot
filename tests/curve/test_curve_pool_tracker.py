@@ -111,6 +111,7 @@ def test_curve_pool_tracker_returns_cached_pool() -> None:
     bot.build_pool.assert_called_once()
 
 
+@pytest.mark.online_rpc
 def test_curve_pool_tracker_fork_tripool(fork_mainnet_full: AnvilFork) -> None:
     """Integration test: build tripool via tracker on a forked network."""
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
@@ -127,6 +128,7 @@ def test_curve_pool_tracker_fork_tripool(fork_mainnet_full: AnvilFork) -> None:
     assert same_pool is pool
 
 
+@pytest.mark.online_rpc
 def test_curve_pool_tracker_fork_metapool(fork_mainnet_full: AnvilFork) -> None:
     """Integration test: build metapool via tracker on a forked network."""
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
@@ -139,6 +141,7 @@ def test_curve_pool_tracker_fork_metapool(fork_mainnet_full: AnvilFork) -> None:
     assert pool.base_pool is not None
 
 
+@pytest.mark.online_rpc
 def test_curve_pool_tracker_get_pools_for_token(fork_mainnet_full: AnvilFork) -> None:
     """get_pools_for_token returns pools containing a given token."""
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))

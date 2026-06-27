@@ -23,6 +23,9 @@ from degenbot.provider import ProviderAdapter
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.bot_factory import make_bot_with_provider
 
+pytestmark = pytest.mark.online_rpc
+
+
 if TYPE_CHECKING:
     from web3.contract.contract import Contract
     from web3.types import Timestamp
@@ -78,7 +81,7 @@ def _test_calculations(lp: CurveStableswapPool, w3: Web3):
             except Exception:
                 print(
                     f"Failure simulating swap (in-pool) at block {state_block} for {lp.address}. "
-                    f"Reproduce with test_single_pool @ {lp.address}"
+                    f"Reproduce with test_single_pool @ {lp.address}",
                 )
                 raise
 
@@ -126,7 +129,7 @@ def _test_calculations(lp: CurveStableswapPool, w3: Web3):
                 else:
                     amount = int(
                         amount_multiplier
-                        * lp.base_pool.balances[lp.base_pool.tokens.index(token_in)]
+                        * lp.base_pool.balances[lp.base_pool.tokens.index(token_in)],
                     )
 
                 try:
@@ -340,7 +343,8 @@ def test_base_pool(fork_mainnet_full: AnvilFork):
             token_in_amount = int(amount_multiplier * basepool.balances[token_index])
             print(f"Withdrawing {token_in_amount} {token}")
             calc_amount, *_ = basepool.calc_withdraw_one_coin(
-                _token_amount=token_in_amount, i=token_index
+                _token_amount=token_in_amount,
+                i=token_index,
             )
 
             amount_contract, *_ = eth_abi.abi.decode(
@@ -353,7 +357,7 @@ def test_base_pool(fork_mainnet_full: AnvilFork):
                             types=["uint256", "int128"],
                             args=[token_in_amount, token_index],
                         ),
-                    )
+                    ),
                 ),
             )
             assert calc_amount == amount_contract
@@ -378,13 +382,13 @@ def test_base_pool(fork_mainnet_full: AnvilFork):
                     transaction=TxParams(
                         to=basepool.address,
                         data=Web3.keccak(
-                            text=f"calc_token_amount(uint256[{len(basepool.tokens)}],bool)"
+                            text=f"calc_token_amount(uint256[{len(basepool.tokens)}],bool)",
                         )[:4]
                         + eth_abi.abi.encode(
                             types=[f"uint256[{len(basepool.tokens)}]", "bool"],
                             args=[amount_array, True],
                         ),
-                    )
+                    ),
                 ),
             )
             assert calc_token_amount == calc_token_amount_contract
@@ -393,7 +397,8 @@ def test_base_pool(fork_mainnet_full: AnvilFork):
 def test_factory_stableswap_pools(fork_mainnet_full: AnvilFork):
     """Test the user-deployed pools deployed by the factory"""
     stableswap_factory: Contract = fork_mainnet_full.w3.eth.contract(
-        address=CURVE_V1_FACTORY_ADDRESS, abi=CURVE_V1_FACTORY_ABI
+        address=CURVE_V1_FACTORY_ADDRESS,
+        abi=CURVE_V1_FACTORY_ABI,
     )
     pool_count = stableswap_factory.functions.pool_count().call()
 

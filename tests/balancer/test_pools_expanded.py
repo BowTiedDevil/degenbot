@@ -32,24 +32,27 @@ from degenbot.provider import ProviderAdapter
 from tests.helpers.balancer_pool_factory import make_balancer_weighted_pool
 from tests.helpers.bot_factory import make_bot_with_provider
 
+pytestmark = pytest.mark.online_rpc
+
+
 # ---------- Shared ABIs & Contract Addresses ----------
 
 # Minimal ABI for WeightedPool / WeightedPool2Tokens — enough for construction
 WEIGHTED_POOL_ABI = json.loads(
     """
     [{"inputs":[],"name":"getNormalizedWeights","outputs":[{"internalType":"uint256[]","name":"","type":"uint256[]"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getPoolId","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getVault","outputs":[{"internalType":"contract IVault","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getSwapFeePercentage","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"}]
-    """  # noqa: E501
+    """,  # noqa: E501
 )
 
 BALANCER_V2_VAULT_ABI = json.loads(
     """
     [{"inputs":[{"internalType":"bytes32","name":"poolId","type":"bytes32"}],"name":"getPoolTokens","outputs":[{"internalType":"contract IERC20[]","name":"tokens","type":"address[]"},{"internalType":"uint256[]","name":"balances","type":"uint256[]"},{"internalType":"uint256","name":"lastChangeBlock","type":"uint256"}],"stateMutability":"view","type":"function"}]
-    """  # noqa: E501
+    """,  # noqa: E501
 )
 BALANCERQUERIES_CONTRACT_ABI = json.loads(
     """
     [{"inputs":[{"components":[{"internalType":"bytes32","name":"poolId","type":"bytes32"},{"internalType":"enum IVault.SwapKind","name":"kind","type":"uint8"},{"internalType":"contract IAsset","name":"assetIn","type":"address"},{"internalType":"contract IAsset","name":"assetOut","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"},{"internalType":"bytes","name":"userData","type":"bytes"}],"internalType":"struct IVault.SingleSwap","name":"singleSwap","type":"tuple"},{"components":[{"internalType":"address","name":"sender","type":"address"},{"internalType":"bool","name":"fromInternalBalance","type":"bool"},{"internalType":"address payable","name":"recipient","type":"address"},{"internalType":"bool","name":"toInternalBalance","type":"bool"}],"internalType":"struct IVault.FundManagement","name":"funds","type":"tuple"}],"name":"querySwap","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"nonpayable","type":"function"}]
-    """  # noqa: E501
+    """,  # noqa: E501
 )
 
 VITALIK_ADDRESS = get_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
@@ -204,7 +207,8 @@ def _run_given_in_swaps(
                     swap_directions.append((i, j))
 
     query_contract = fork.w3.eth.contract(
-        address=BALANCERQUERIES_CONTRACT_ADDRESS, abi=BALANCERQUERIES_CONTRACT_ABI
+        address=BALANCERQUERIES_CONTRACT_ADDRESS,
+        abi=BALANCERQUERIES_CONTRACT_ABI,
     )
     vault_contract = fork.w3.eth.contract(
         address=BALANCER_V2_VAULT_ADDRESS,
@@ -256,7 +260,7 @@ def _run_given_in_swaps(
                 else:
                     pytest.skip(
                         f"On-chain reverted but Python returned {result} "
-                        f"(likely on-chain-only check like SWAPS_DISABLED)"
+                        f"(likely on-chain-only check like SWAPS_DISABLED)",
                     )
                 continue
 
@@ -289,7 +293,8 @@ def _run_given_out_swaps(
                     swap_directions.append((i, j))
 
     query_contract = fork.w3.eth.contract(
-        address=BALANCERQUERIES_CONTRACT_ADDRESS, abi=BALANCERQUERIES_CONTRACT_ABI
+        address=BALANCERQUERIES_CONTRACT_ADDRESS,
+        abi=BALANCERQUERIES_CONTRACT_ABI,
     )
     vault_contract = fork.w3.eth.contract(
         address=BALANCER_V2_VAULT_ADDRESS,
@@ -341,7 +346,7 @@ def _run_given_out_swaps(
                 else:
                     pytest.skip(
                         f"On-chain reverted but Python returned {result} "
-                        f"(likely on-chain-only check like SWAPS_DISABLED)"
+                        f"(likely on-chain-only check like SWAPS_DISABLED)",
                     )
                 continue
 

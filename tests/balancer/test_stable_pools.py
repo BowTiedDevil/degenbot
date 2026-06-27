@@ -48,36 +48,39 @@ from degenbot.balancer.libraries.stable_math import (
 )
 from degenbot.checksum_cache import get_checksum_address
 
+pytestmark = pytest.mark.online_rpc
+
+
 # ---------- ABIs ----------
 
 POOL_ABI = json.loads(
     """
     [{"inputs":[],"name":"getAmplificationParameter","outputs":[{"internalType":"uint256","name":"value","type":"uint256"},{"internalType":"bool","name":"isUpdating","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getPoolId","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getSwapFeePercentage","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getScalingFactors","outputs":[{"internalType":"uint256[]","name":"","type":"uint256[]"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getRateProviders","outputs":[{"internalType":"contract IRateProvider[]","name":"","type":"address[]"}],"stateMutability":"view","type":"function"}]
-    """  # noqa: E501
+    """,  # noqa: E501
 )
 
 VAULT_ABI = json.loads(
     """
     [{"inputs":[{"internalType":"bytes32","name":"poolId","type":"bytes32"}],"name":"getPoolTokens","outputs":[{"internalType":"contract IERC20[]","name":"tokens","type":"address[]"},{"internalType":"uint256[]","name":"balances","type":"uint256[]"},{"internalType":"uint256","name":"lastChangeBlock","type":"uint256"}],"stateMutability":"view","type":"function"}]
-    """  # noqa: E501
+    """,  # noqa: E501
 )
 
 QUERIES_ABI = json.loads(
     """
     [{"inputs":[{"components":[{"internalType":"bytes32","name":"poolId","type":"bytes32"},{"internalType":"enum IVault.SwapKind","name":"kind","type":"uint8"},{"internalType":"contract IAsset","name":"assetIn","type":"address"},{"internalType":"contract IAsset","name":"assetOut","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"},{"internalType":"bytes","name":"userData","type":"bytes"}],"internalType":"struct IVault.SingleSwap","name":"singleSwap","type":"tuple"},{"components":[{"internalType":"address","name":"sender","type":"address"},{"internalType":"bool","name":"fromInternalBalance","type":"bool"},{"internalType":"address payable","name":"recipient","type":"address"},{"internalType":"bool","name":"toInternalBalance","type":"bool"}],"internalType":"struct IVault.FundManagement","name":"funds","type":"tuple"}],"name":"querySwap","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"nonpayable","type":"function"}]
-    """  # noqa: E501
+    """,  # noqa: E501
 )
 
 RATE_PROVIDER_ABI = json.loads(
     """
     [{"inputs":[],"name":"getRate","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"}]
-    """
+    """,
 )
 
 ERC20_ABI = json.loads(
     """
     [{"inputs":[],"name":"decimals","outputs":[{"internalType":"uint8","name":"","type":"uint8"}],"stateMutability":"view","type":"function"}]
-    """
+    """,
 )
 
 VITALIK_ADDRESS = get_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
@@ -250,7 +253,12 @@ def _compute_given_in(
 
     # Step 3: Compute out given in
     out_scaled = _calc_out_given_in(
-        amp, list(upscaled), token_in_idx, token_out_idx, amount_in_scaled, inv
+        amp,
+        list(upscaled),
+        token_in_idx,
+        token_out_idx,
+        amount_in_scaled,
+        inv,
     )
 
     # Step 4: Downscale down
@@ -282,7 +290,12 @@ def _compute_given_out(
 
     # Step 2: Compute in given out
     in_scaled = _calc_in_given_out(
-        amp, list(upscaled), token_in_idx, token_out_idx, amount_out_scaled, inv
+        amp,
+        list(upscaled),
+        token_in_idx,
+        token_out_idx,
+        amount_out_scaled,
+        inv,
     )
 
     # Step 3: Downscale up (round up since it's an amount in)
@@ -821,7 +834,12 @@ def _compute_composable_given_in(
     adjusted_out = non_bpt_indices.index(token_out_idx)
 
     out_scaled = _calc_out_given_in(
-        amp, list(upscaled), adjusted_in, adjusted_out, amount_in_scaled, inv
+        amp,
+        list(upscaled),
+        adjusted_in,
+        adjusted_out,
+        amount_in_scaled,
+        inv,
     )
 
     # Step 4: Downscale down
@@ -857,7 +875,12 @@ def _compute_composable_given_out(
     adjusted_out = non_bpt_indices.index(token_out_idx)
 
     in_scaled = _calc_in_given_out(
-        amp, list(upscaled), adjusted_in, adjusted_out, amount_out_scaled, inv
+        amp,
+        list(upscaled),
+        adjusted_in,
+        adjusted_out,
+        amount_out_scaled,
+        inv,
     )
 
     # Step 3: Downscale up
