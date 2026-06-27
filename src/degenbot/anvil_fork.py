@@ -1,17 +1,13 @@
 """Anvil fork management utilities for local test chains."""
 
 import contextlib
-import os
 import pathlib
 import shutil
-import signal
 import socket
 import subprocess  # noqa: S404
 import tempfile
-import time
-import weakref
 from collections.abc import AsyncIterator, Iterable
-from typing import IO, TYPE_CHECKING, Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import tenacity
 from eth_typing import HexAddress, HexStr
@@ -36,24 +32,6 @@ class AnvilNotFound(Exception):
         super().__init__("Anvil path could not be located.")
 
 
-class _AnvilStartupCrash(Exception):
-    """Internal: the anvil subprocess exited before its IPC socket appeared.
-
-    Raised by :meth:`AnvilFork._launch_anvil` when ``process.poll()`` returns
-    non-None during the socket-wait loop — e.g. anvil panicked while installing
-    its Ctrl-C/SIGINT handler under heavy concurrent startup (``EAGAIN``) and
-    exited without ever creating the IPC socket. :meth:`_setup_process` retries
-    the whole launch on this, so it is never surfaced to callers.
-    """
-
-    def __init__(self, *, returncode: int | None) -> None:
-        """Initialize the instance."""
-        self.returncode = returncode
-        super().__init__(
-            f"Anvil process exited (code {returncode}) before its IPC socket appeared.",
-        )
-
-
 type AnvilOptions = list[str]
 
 
@@ -62,14 +40,6 @@ class AnvilFork:
 
     Provides a `Web3` connector to Anvil's IPC socket endpoint at the `.w3` attribute.
     """
-
-    # Every live AnvilFork is tracked here (weakly) so :meth:`close_all` can reap
-    # forks a caller forgot to ``close()`` — mirroring
-    # ``DatabaseSessionManager.dispose_all()``. Without this, direct constructions
-    # in tests defer cleanup to non-deterministic ``__del__``/GC; under xdist
-    # fan-out the deferred anvil subprocesses (each ~27 pids) pile up against the
-    # container ``pids.max`` and crash it.
-    _LIVE: ClassVar["weakref.WeakSet[AnvilFork]"] = weakref.WeakSet()
 
     def __init__(
         self,
@@ -98,7 +68,6 @@ class AnvilFork:
         | None = None,
         ipc_provider_kwargs: dict[str, Any] | None = None,
         anvil_opts: list[str] | None = None,  # Additional options passed to the Anvil command
-        setup_timeout: int = 300,
     ) -> None:
         """Initialize the instance.
 
@@ -153,16 +122,6 @@ class AnvilFork:
         else:
             self.ipc_provider_kwargs = {}
 
-        # Per-launch budget for the anvil subprocess to come up: how long to wait
-        # for the IPC socket file to appear, for the process to respond via IPC,
-        # and how long the crash-retry loop keeps trying. Bumped from 10s because
-        # under heavy ``pytest-xdist`` parallelism (16+ workers each spawning a
-        # remote-forking anvil) a single worker's anvil can take >10s to fetch
-        # initial state from the remote node, *and* anvil can transiently crash
-        # at startup (its Ctrl-C/SIGINT handler returns EAGAIN under contention)
-        # — the retry loop below needs headroom to re-launch.
-        self._setup_timeout = setup_timeout
-
         self.localhost = localhost
         self.port = self._get_free_port_number()
 
@@ -188,8 +147,8 @@ class AnvilFork:
             command.extend(anvil_opts)
 
         self._anvil_command = command
-        self._setup_process(self._anvil_command, timeout=self._setup_timeout)
-        self._setup_w3(timeout=self._setup_timeout)
+        self._setup_process(self._anvil_command)
+        self._setup_w3()
 
         self._fork_url = fork_url
 
@@ -275,132 +234,40 @@ class AnvilFork:
 
         self.w3 = w3
 
-    def _setup_process(self, anvil_command: AnvilOptions, timeout: int = 30) -> None:
+    def _setup_process(self, anvil_command: AnvilOptions, timeout: int = 10) -> None:
         """Launch an Anvil subprocess, waiting for the IPC socket to be created.
 
-        See :meth:`_launch_anvil` for the per-launch contract; this method wraps
-        it in a bounded retry for transient ``BlockingIOError`` / anvil startup
-        crashes.
+        Raises:
+            IPCSocketTimeout: See function documentation.
 
         """
         # Log the command being executed for debugging
         logger.debug(f"Launching Anvil with command: {' '.join(anvil_command)}")
 
-        # Anvil must come up from underneath us in (at least) two transient ways
-        # under high ``pytest-xdist`` parallelism, so retry the whole launch with
-        # backoff rather than failing the test:
-        #
-        #   1. ``subprocess.Popen`` returns ``BlockingIOError(EAGAIN)`` when the
-        #      container's cgroup ``pids.max`` is transiently exhausted (each anvil
-        #      process holds ~27 pids/threads; a burst at fixture setup can hit the
-        #      ceiling). Peer forks are concurrently tearing down and free slots.
-        #
-        #   2. The anvil process spawns successfully but *crashes during its own
-        #      startup* — notably it panics installing its Ctrl-C/SIGINT handler
-        #      (``Error setting Ctrl-C handler: System(... EAGAIN ...)``) under
-        #      contention — and exits before ever creating the IPC socket. The old
-        #      code waited the full ``timeout`` for a socket file that would never
-        #      appear; instead we detect the early death (``poll()`` returns
-        #      non-None) and re-launch.
-        #
-        # The retry is intentionally **bounded by attempt count, not duration**.
-        # Under sustained contention (e.g. the test-suite tail where every xdist
-        # worker is simultaneously launching a remote-forking anvil) a long
-        # duration-budget retry holds each worker for the full budget while it
-        # re-crashes, piling up *more* concurrent launches and deepening the
-        # very contention that caused the crashes — a death spiral that also
-        # drags the suite toward timeout. A small attempt cap with short waits
-        # recovers a single transient crash quickly (anvil exits in milliseconds)
-        # and lets sustained contention fail fast so the worker is released
-        # instead of held.
-        #
-        # The wait is **jittered** rather than fixed: a fixed delay re-collides
-        # — when several workers crash on the same contention burst they all
-        # retry together at +0.25s, re-triggering the burst. Randomised waits
-        # desynchronise the recoveries so concurrent crash-retries don't
-        # re-panick anvil's Ctrl-C handler, which is what fails under EAGAIN.
-        # ``timeout`` still bounds the *per-attempt* IPC socket wait for an anvil
-        # that is alive but slow to finish initialising.
-        boot_retry = tenacity.Retrying(
-            stop=tenacity.stop_after_attempt(6),
-            wait=tenacity.wait_random(min=0.05, max=0.5),
-            retry=tenacity.retry_if_exception_type((BlockingIOError, _AnvilStartupCrash)),
-            reraise=True,
-        )
-
-        # Capture files are opened once and reused across retry attempts so a
-        # crashed anvil's panic trace is preserved in the stderr capture for
-        # debugging rather than truncated by the relaunch.
         with (
             self.stderr_capture_filename.open("w") as stderr_capture,
             self.stdout_capture_filename.open("w") as stdout_capture,
         ):
-            process = boot_retry(
-                self._launch_anvil,
+            process = subprocess.Popen(  # noqa: S603
                 anvil_command,
-                stderr_capture,
-                stdout_capture,
-                timeout,
+                stderr=stderr_capture,
+                stdout=stdout_capture,
+                text=True,
             )
 
-        self._process = process
-        AnvilFork._LIVE.add(self)
-
-    def _launch_anvil(
-        self,
-        anvil_command: AnvilOptions,
-        stderr_capture: IO[str],
-        stdout_capture: IO[str],
-        timeout: int,
-    ) -> subprocess.Popen:
-        """Spawn one anvil process and wait for its IPC socket to appear.
-
-        Returns:
-            The live ``subprocess.Popen`` once the IPC socket exists.
-
-        Raises:
-            _AnvilStartupCrash: if the process exits before creating the
-                socket, so :meth:`_setup_process` retries the whole launch.
-            IPCSocketTimeout: if the socket does not appear within ``timeout``
-                seconds (the process is alive but slow to finish initialising).
-
-        ``BlockingIOError`` may also propagate from ``subprocess.Popen`` when the
-        cgroup pid budget is transiently exhausted; :meth:`_setup_process`
-        retries that upstream.
-
-        """
-        # start_new_session puts anvil in its own process group/session so
-        # close() can reap the entire group; this also prevents anvil from
-        # surviving a SIGKILL'd pytest-xdist worker (which bypasses __del__).
-        process = subprocess.Popen(  # noqa: S603
-            anvil_command,
-            stderr=stderr_capture,
-            stdout=stdout_capture,
-            text=True,
-            start_new_session=True,
-        )
-
-        # Poll for the IPC socket file, but bail out immediately if the process
-        # died (e.g. anvil panicked during Ctrl-C handler setup) instead of
-        # waiting the full ``timeout`` for a file that will never appear. Using
-        # a plain deadline loop (rather than a tenacity closure) keeps the
-        # crash-detection raise at this scope — no nested closure to trip lint —
-        # and lets sustained contention fail fast once the budget elapses.
-        deadline = time.monotonic() + timeout
-        while True:
-            if self.ipc_filename.exists():
-                return process
-            returncode = process.poll()
-            if returncode is not None:
-                # Reap the dead process before relaunching so we don't leak a
-                # zombie or hold the capture fds against the cgroup pid budget.
-                with contextlib.suppress(subprocess.TimeoutExpired):
-                    process.wait(timeout=timeout)
-                raise _AnvilStartupCrash(returncode=returncode)
-            if time.monotonic() >= deadline:
-                process.terminate()
-                raise IPCSocketTimeout(timeout_seconds=timeout)
-            time.sleep(0.01)
+        try:
+            # Storage I/O should be fast, so use a low fixed wait time
+            filename_check_with_retry = tenacity.Retrying(
+                stop=tenacity.stop_after_delay(timeout),
+                wait=tenacity.wait_fixed(0.01),
+                retry=tenacity.retry_if_result(lambda result: result is False),
+            )
+            filename_check_with_retry(fn=self.ipc_filename.exists)
+        except tenacity.RetryError as exc:
+            process.terminate()
+            raise IPCSocketTimeout(timeout_seconds=timeout) from exc
+        else:
+            self._process = process
 
     def __del__(self) -> None:
         """Implement __del__."""
@@ -412,21 +279,16 @@ class AnvilFork:
         # a ResourceWarning under strict warning filters).
         provider = getattr(self, "w3", None)
         if provider is not None:
-            provider_socket = getattr(getattr(provider, "provider", None), "_socket", None)
-            sock = getattr(provider_socket, "sock", None)
+            _socket = getattr(getattr(provider, "provider", None), "_socket", None)
+            sock = getattr(_socket, "sock", None)
             if sock is not None:
-                with contextlib.suppress(OSError):
+                try:
                     sock.close()
+                except OSError:
+                    pass
 
         if getattr(self, "_process", None):
-            # Reap anvil's whole process group (it runs in its own session via
-            # start_new_session). terminate() sends SIGTERM to the leader; if the
-            # group spawned helpers they'd survive a leader-only signal, so also
-            # signal the group explicitly as a fallback before waiting.
-            try:
-                os.killpg(os.getpgid(self._process.pid), signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
-                self._process.terminate()
+            self._process.terminate()
             self._process.wait(timeout)
             self.ipc_filename.unlink(missing_ok=True)
             del self._process
@@ -434,21 +296,6 @@ class AnvilFork:
         if not self.preserve_capture:
             self.stderr_capture_filename.unlink(missing_ok=True)
             self.stdout_capture_filename.unlink(missing_ok=True)
-
-    @classmethod
-    def close_all(cls) -> None:
-        """Close every still-live :class:`AnvilFork`.
-
-        Test-suite safety net (mirrors ``DatabaseSessionManager.dispose_all``):
-        called by the autouse teardown so an AnvilFork constructed inline and
-        never ``close()`` ed is reaped deterministically instead of waiting on
-        non-deterministic ``__del__``/GC. An assertion failure that holds the
-        frame alive defeats GC, so without this the anvil subprocesses pile up
-        under xdist fan-out and exhaust the container ``pids.max``. ``close()``
-        is idempotent, so reaping an already-closed fork is a no-op.
-        """
-        for fork in list(cls._LIVE):
-            fork.close()
 
     def mine(self) -> None:
         """Perform mine.
@@ -552,8 +399,8 @@ class AnvilFork:
             if transaction_hash is not None:
                 self._anvil_command.append(f"--fork-transaction-hash={transaction_hash}")
 
-            self._setup_process(self._anvil_command, timeout=self._setup_timeout)
-            self._setup_w3(timeout=self._setup_timeout)
+            self._setup_process(self._anvil_command)
+            self._setup_w3()
 
         elif block_number is not None:
             # Otherwise, the fork can be reset in place without launching a new process
