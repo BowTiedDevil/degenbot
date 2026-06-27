@@ -1,0 +1,34 @@
+{
+  "chain_id": 1,
+  "block": 24407242,
+  "address": "0x5b1C06c4923DBBa4B27Cfa270FFB2E60Aa286159",
+  "pool_id": "0x5b1c06c4923dbba4b27cfa270ffb2e60aa28615900020000000000000000004a",
+  "vault": "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+  "name": "par_mimo_75_25",
+  "desc": "PAR/MIMO 75/25, 0.15% fee",
+  "tokens": [
+    {
+      "address": "0x68037790A0229e9Ce6EaA8A99ea92964106C4703",
+      "name": "PAR Stablecoin",
+      "symbol": "PAR",
+      "decimals": 18
+    },
+    {
+      "address": "0x90B831fa3Bebf58E9744A14D638E25B4eE06f9Bc",
+      "name": "MIMO Parallel Governance Token",
+      "symbol": "MIMO",
+      "decimals": 18
+    }
+  ],
+  "balances": [
+    4423221659600953803364,
+    815314237820774773073113
+  ],
+  "fee": "3/2000",
+  "weights": [
+    750000000000000000,
+    250000000000000000
+  ],
+  "pow_version": "v1",
+  "n_tokens": 2
+}

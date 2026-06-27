@@ -1,0 +1,50 @@
+{
+  "chain_id": 1,
+  "block": 24407242,
+  "address": "0xd6855F0A3C26A1b1B2785Ba2604758c0878169bC",
+  "pool_id": "0xd6855f0a3c26a1b1b2785ba2604758c0878169bc000100000000000000000317",
+  "vault": "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+  "name": "dai_gp_weth_usdt_4_token",
+  "desc": "DAI/GP/WETH/USDT 17/50/17/17, 0.30% fee, mixed decimals (18/18/18/6)",
+  "tokens": [
+    {
+      "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+      "name": "Dai Stablecoin",
+      "symbol": "DAI",
+      "decimals": 18
+    },
+    {
+      "address": "0xBE1f8B3493570501Cb32BC87Ae3150F4E1a9F0e4",
+      "name": "GonczyPolski",
+      "symbol": "GP",
+      "decimals": 18
+    },
+    {
+      "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "name": "Wrapped Ether",
+      "symbol": "WETH",
+      "decimals": 18
+    },
+    {
+      "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+      "name": "Tether USD",
+      "symbol": "USDT",
+      "decimals": 6
+    }
+  ],
+  "balances": [
+    6097388191404198766,
+    5154410444876220620609058,
+    3028643404121239,
+    6293566
+  ],
+  "fee": "3/1000",
+  "weights": [
+    166600000000000000,
+    500000000000000000,
+    166600000000000000,
+    166800000000000000
+  ],
+  "pow_version": "v1",
+  "n_tokens": 4
+}
