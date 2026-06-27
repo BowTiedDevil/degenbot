@@ -1,0 +1,79 @@
+{
+  "block_number": 46875151,
+  "chain_id": 8453,
+  "entries": {
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|USDbC->WETH|11022810": {
+      "value": 4087322589000854
+    },
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|USDbC->WETH|16534215": {
+      "value": 5256381606233848
+    },
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|USDbC->WETH|2": {
+      "value": 1111490477
+    },
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|USDbC->WETH|22": {
+      "value": 12226384189
+    },
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|USDbC->WETH|220": {
+      "value": 122262746557
+    },
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|USDbC->WETH|2204": {
+      "value": 1224740480481
+    },
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|USDbC->WETH|22045": {
+      "value": 12239196643147
+    },
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|USDbC->WETH|220456": {
+      "value": 121307343799602
+    },
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|USDbC->WETH|2204562": {
+      "value": 1114048598365997
+    },
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|USDbC->WETH|2755702": {
+      "value": 1361683521422365
+    },
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|USDbC->WETH|5511405": {
+      "value": 2451575679945985
+    },
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|WETH->USDbC|12282455": {
+      "value": 0
+    },
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|WETH->USDbC|122824555": {
+      "value": 0
+    },
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|WETH->USDbC|1228245559": {
+      "value": 2
+    },
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|WETH->USDbC|12282455599": {
+      "value": 21
+    },
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|WETH->USDbC|122824555995": {
+      "value": 219
+    },
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|WETH->USDbC|1228245559952": {
+      "value": 2198
+    },
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|WETH->USDbC|12282455599528": {
+      "value": 21968
+    },
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|WETH->USDbC|122824555995288": {
+      "value": 217733
+    },
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|WETH->USDbC|1228245559952888": {
+      "value": 1999591
+    },
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|WETH->USDbC|1535306949941110": {
+      "value": 2444068
+    },
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|WETH->USDbC|3070613899882221": {
+      "value": 4400301
+    },
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|WETH->USDbC|6141227799764442": {
+      "value": 7336282
+    },
+    "0x92363F9817f92a7ae0592A4cb29959A88d885cc8|getAmountsOut|WETH->USDbC|9211841699646664": {
+      "value": 9434611
+    }
+  },
+  "recorded_at": "2026-06-27T06:26:10+00:00"
+}

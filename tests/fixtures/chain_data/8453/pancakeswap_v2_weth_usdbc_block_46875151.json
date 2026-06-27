@@ -1,0 +1,23 @@
+{
+  "chain_id": 8453,
+  "block": 46875151,
+  "pool": "0x92363F9817f92a7ae0592A4cb29959A88d885cc8",
+  "dex": "pancakeswap-v2",
+  "factory": "0x02a84c1b3BBD7401a5f7fa98a384EBC70bB5749E",
+  "fee_numer": 25,
+  "fee_denom": 10000,
+  "token0": {
+    "address": "0x4200000000000000000000000000000000000006",
+    "name": "Wrapped Ether",
+    "symbol": "WETH",
+    "decimals": 18
+  },
+  "token1": {
+    "address": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "name": "USD Base Coin",
+    "symbol": "USDbC",
+    "decimals": 6
+  },
+  "reserves_token0": 12282455599528885,
+  "reserves_token1": 22045620
+}
