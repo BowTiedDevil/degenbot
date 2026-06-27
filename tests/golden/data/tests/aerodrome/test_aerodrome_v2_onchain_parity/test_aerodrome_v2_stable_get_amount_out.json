@@ -1,0 +1,85 @@
+{
+  "block_number": 46875151,
+  "chain_id": 8453,
+  "entries": {
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|DOLA->USDbC|12626453951625367126016": {
+      "value": 11711559442
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|DOLA->USDbC|25252907903250734252032": {
+      "value": 20422836145
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|DOLA->USDbC|37879361854876105572352": {
+      "value": 25812298556
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|DOLA->USDbC|50505815806501": {
+      "value": 49
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|DOLA->USDbC|505058158065014": {
+      "value": 498
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|DOLA->USDbC|50505815806501464": {
+      "value": 49850
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|DOLA->USDbC|505058158065014669312": {
+      "value": 497968085
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|DOLA->USDbC|5050581580650146816": {
+      "value": 4984956
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|DOLA->USDbC|5050581580650147": {
+      "value": 4985
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|DOLA->USDbC|50505815806501470208": {
+      "value": 49844952
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|DOLA->USDbC|505058158065014720": {
+      "value": 498500
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|DOLA->USDbC|5050581580650147479552": {
+      "value": 4908690426
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|DOLA->USDbC|6313226975812683563008": {
+      "value": 6100998841
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|USDbC->DOLA|17864291106": {
+      "value": 17756508337375211479925
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|USDbC->DOLA|26796436659": {
+      "value": 25942341819868759109482
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|USDbC->DOLA|35": {
+      "value": 35354019119091
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|USDbC->DOLA|357": {
+      "value": 359600879945923
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|USDbC->DOLA|3572": {
+      "value": 3598029005454414
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|USDbC->DOLA|35728": {
+      "value": 35981297802640553
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|USDbC->DOLA|357285": {
+      "value": 359816781815458840
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|USDbC->DOLA|3572858": {
+      "value": 3598144158903318837
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|USDbC->DOLA|35728582": {
+      "value": 35979080340799549320
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|USDbC->DOLA|357285822": {
+      "value": 359562580143866724021
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|USDbC->DOLA|3572858221": {
+      "value": 3579409245742378821061
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|USDbC->DOLA|4466072776": {
+      "value": 4470812162332590113040
+    },
+    "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528|getAmountOut|USDbC->DOLA|8932145553": {
+      "value": 8923910922114957031667
+    }
+  },
+  "recorded_at": "2026-06-27T06:23:18+00:00"
+}

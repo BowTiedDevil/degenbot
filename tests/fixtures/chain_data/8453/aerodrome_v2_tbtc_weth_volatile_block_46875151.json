@@ -1,0 +1,22 @@
+{
+  "chain_id": 8453,
+  "block": 46875151,
+  "pool": "0x2722C8f9B5E2aC72D1f225f8e8c990E449ba0078",
+  "dex": "aerodrome-v2-volatile",
+  "stable": false,
+  "fee_raw": 30,
+  "token0": {
+    "address": "0x236aa50979D5f3De3Bd1Eeb40E81137F22ab794b",
+    "name": "tBTC Base",
+    "symbol": "tBTC v2",
+    "decimals": 18
+  },
+  "token1": {
+    "address": "0x4200000000000000000000000000000000000006",
+    "name": "Wrapped Ether",
+    "symbol": "WETH",
+    "decimals": 18
+  },
+  "reserves_token0": 672268485917529554,
+  "reserves_token1": 23978294154411975066
+}
