@@ -137,7 +137,10 @@ impl BlockClock {
                 let sealed = self.open_block.or(self.latest_header).unwrap_or(0);
                 self.blocks.entry(block).or_insert(BlockState::Observed);
                 self.latest_header = Some(block);
-                HeaderDecision::PendingSuccessor { sealed, pending: block }
+                HeaderDecision::PendingSuccessor {
+                    sealed,
+                    pending: block,
+                }
             }
         }
     }
@@ -202,8 +205,7 @@ impl BlockClock {
         self.blocks
             .iter()
             .filter(|(b, s)| {
-                **b < block
-                    && matches!(s, BlockState::Observed | BlockState::LogsArriving { .. })
+                **b < block && matches!(s, BlockState::Observed | BlockState::LogsArriving { .. })
             })
             .map(|(b, _)| *b)
             .max()
@@ -249,8 +251,10 @@ impl BlockClock {
     /// When the in-flight counter first reaches 0, `logs_quiesced(block)`
     /// becomes true (the solver-release gate — ADR-008 D2).
     pub fn log_applied(&mut self, block: u64) {
-        if let Some(BlockState::LogsArriving { in_flight, ever_quiesced }) =
-            self.blocks.get_mut(&block)
+        if let Some(BlockState::LogsArriving {
+            in_flight,
+            ever_quiesced,
+        }) = self.blocks.get_mut(&block)
         {
             if *in_flight > 0 {
                 *in_flight -= 1;
@@ -272,7 +276,13 @@ impl BlockClock {
     pub fn logs_quiesced(&self, block: u64) -> bool {
         matches!(
             self.blocks.get(&block),
-            Some(BlockState::LogsArriving { in_flight: 0, ever_quiesced: true } | BlockState::LogsApplied | BlockState::Drained)
+            Some(
+                BlockState::LogsArriving {
+                    in_flight: 0,
+                    ever_quiesced: true
+                } | BlockState::LogsApplied
+                    | BlockState::Drained
+            )
         )
     }
 
@@ -287,8 +297,10 @@ impl BlockClock {
     /// `false`: the tombstone-driven finalize is the terminal publish, not
     /// the quiesce gate.
     pub fn consume_quiesced(&mut self, block: u64) -> bool {
-        if let Some(BlockState::LogsArriving { in_flight: 0, ever_quiesced }) =
-            self.blocks.get_mut(&block)
+        if let Some(BlockState::LogsArriving {
+            in_flight: 0,
+            ever_quiesced,
+        }) = self.blocks.get_mut(&block)
         {
             let was_quiesced = *ever_quiesced;
             *ever_quiesced = false;
@@ -379,14 +391,25 @@ mod tests {
         let mut clock = BlockClock::new();
         // Observe a block header — opens the block but does NOT drain it.
         assert_eq!(clock.observe_header(100), HeaderDecision::OpenNew(100));
-        assert_eq!(clock.cursor(), None, "a header alone must not set the cursor");
+        assert_eq!(
+            clock.cursor(),
+            None,
+            "a header alone must not set the cursor"
+        );
 
         // Even observing a later header does NOT help — still no log tombstoned 100.
         assert_eq!(
             clock.observe_header(101),
-            HeaderDecision::PendingSuccessor { sealed: 100, pending: 101 },
+            HeaderDecision::PendingSuccessor {
+                sealed: 100,
+                pending: 101
+            },
         );
-        assert_eq!(clock.cursor(), None, "headers alone can never reach Drained");
+        assert_eq!(
+            clock.cursor(),
+            None,
+            "headers alone can never reach Drained"
+        );
     }
 
     /// The full happy path: `Observed → LogsArriving → LogsApplied → Drained`,
@@ -403,7 +426,10 @@ mod tests {
         clock.log_received(100); // in_flight = 1
         assert_eq!(
             clock.state_of(100),
-            Some(BlockState::LogsArriving { in_flight: 1, ever_quiesced: false })
+            Some(BlockState::LogsArriving {
+                in_flight: 1,
+                ever_quiesced: false
+            })
         );
         assert!(!clock.logs_quiesced(100), "in-flight log → not quiesced");
 
@@ -419,7 +445,11 @@ mod tests {
         assert_eq!(clock.cursor(), None, "LogsApplied is not Drained yet");
 
         clock.advance_to_drained(100);
-        assert_eq!(clock.cursor(), Some(100), "Drained is the only cursor source");
+        assert_eq!(
+            clock.cursor(),
+            Some(100),
+            "Drained is the only cursor source"
+        );
         assert_eq!(clock.state_of(100), Some(BlockState::Drained));
     }
 
@@ -484,10 +514,7 @@ mod tests {
         assert_eq!(clock.cursor(), Some(101));
 
         // Reorg: removed:true logs arrive (any order) — enter + continue.
-        assert_eq!(
-            clock.observe_log(101, true),
-            LogDecision::EnterReorg(101),
-        );
+        assert_eq!(clock.observe_log(101, true), LogDecision::EnterReorg(101),);
         assert!(clock.in_reorg());
         assert_eq!(clock.observe_log(100, true), LogDecision::ContinueReorg);
         assert_eq!(clock.observe_log(99, true), LogDecision::ContinueReorg);
@@ -501,7 +528,11 @@ mod tests {
         // Earlier tracked blocks tainted for replay; 103 now LogsArriving.
         assert_eq!(clock.state_of(101), Some(BlockState::Tainted));
         assert_eq!(clock.state_of(100), Some(BlockState::Tainted));
-        assert_eq!(clock.cursor(), Some(101), "drained common ancestor survives");
+        assert_eq!(
+            clock.cursor(),
+            Some(101),
+            "drained common ancestor survives"
+        );
         assert_eq!(clock.latest_observed(), Some(103));
     }
 
@@ -549,7 +580,10 @@ mod tests {
         assert!(!clock.consume_quiesced(100), "in-flight log → not quiesced");
         clock.log_applied(100);
 
-        assert!(clock.consume_quiesced(100), "straggler settled → publish again");
+        assert!(
+            clock.consume_quiesced(100),
+            "straggler settled → publish again"
+        );
         assert!(!clock.consume_quiesced(100), "second consume dry");
     }
 }

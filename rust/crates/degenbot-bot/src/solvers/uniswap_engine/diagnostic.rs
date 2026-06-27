@@ -188,9 +188,14 @@ pub fn recompute_v3_amount_out(
     // V3: amount_specified > 0 = exact INPUT.
     let amount_specified = I256::try_from(amount_in).ok()?;
     let limit = crate::bot_core::V3PoolState::default_sqrt_price_limit(zero_for_one);
-    let outcome = crate::bot_core::v3_simulate_swap(state, zero_for_one, amount_specified, limit).ok()?;
+    let outcome =
+        crate::bot_core::v3_simulate_swap(state, zero_for_one, amount_specified, limit).ok()?;
     // zfo: amount0 in, amount1 out. ofz: amount1 in, amount0 out.
-    Some(if zero_for_one { outcome.amount1 } else { outcome.amount0 })
+    Some(if zero_for_one {
+        outcome.amount1
+    } else {
+        outcome.amount0
+    })
 }
 
 /// Recompute a V4 hop's output from its engine `V4PoolState` + `amount_in`
@@ -205,8 +210,13 @@ pub fn recompute_v4_amount_out(
     // V4 sign convention (opposite to V3): `amount_specified` < 0 = exact INPUT.
     let amount_specified = I256::try_from(amount_in).ok()?.saturating_neg();
     let limit = crate::bot_core::V3PoolState::default_sqrt_price_limit(zero_for_one);
-    let outcome = crate::bot_core::v4_simulate_swap(state, zero_for_one, amount_specified, limit).ok()?;
-    Some(if zero_for_one { outcome.amount1 } else { outcome.amount0 })
+    let outcome =
+        crate::bot_core::v4_simulate_swap(state, zero_for_one, amount_specified, limit).ok()?;
+    Some(if zero_for_one {
+        outcome.amount1
+    } else {
+        outcome.amount0
+    })
 }
 
 /// Recompute a V3/V4 hop's output from its ON-CHAIN scalar state via a bounded
@@ -258,9 +268,11 @@ fn recompute_cl_amount_out_onchain(
     // initialized at multiples of tick_spacing, so this is the closest point
     // at which liquidity COULD change. Clamp to the protocol MIN/MAX tick.
     let boundary_tick = if zero_for_one {
-        tick.saturating_sub(tick_spacing).max(degenbot_cl_math::cl_lib::tick_math::MIN_TICK)
+        tick.saturating_sub(tick_spacing)
+            .max(degenbot_cl_math::cl_lib::tick_math::MIN_TICK)
     } else {
-        tick.saturating_add(tick_spacing).min(degenbot_cl_math::cl_lib::tick_math::MAX_TICK)
+        tick.saturating_add(tick_spacing)
+            .min(degenbot_cl_math::cl_lib::tick_math::MAX_TICK)
     };
     let sqrt_price_target =
         degenbot_cl_math::cl_lib::tick_math::get_sqrt_ratio_at_tick_internal(boundary_tick).ok()?;
@@ -383,8 +395,7 @@ pub(crate) fn refresh_v3v4_recompute_onchain(hop: &mut DiagnosticHop) {
     let Some(solver_out) = parse_hex_u256(&recompute.solver_out) else {
         return;
     };
-    let onchain_recompute =
-        recompute_cl_amount_out_onchain(onchain, hop.zero_for_one, amount_in);
+    let onchain_recompute = recompute_cl_amount_out_onchain(onchain, hop.zero_for_one, amount_in);
     recompute.expected_out_onchain = onchain_recompute.map(u256_to_hex);
     // Only re-derive `matches_solver` from the onchain recompute when the
     // engine recompute is absent (engine remains the preferred basis).
@@ -1296,15 +1307,17 @@ fn thread_solver_result_and_recompute(
         };
         populate_v2_recompute(hop, amount_in, solver_out);
         // T1: V3/V4 engine-state recompute via the independent simulate path.
-        let expected_out_engine = pool_refs.get(i).and_then(|pool_ref| match pool_ref.hop_type {
-            super::HopType::V3 => core
-                .get_v3_pool(pool_ref.pool_key)
-                .and_then(|state| recompute_v3_amount_out(state, pool_ref.zero_for_one, amount_in)),
-            super::HopType::V4 => core
-                .get_v4_pool(pool_ref.pool_key)
-                .and_then(|state| recompute_v4_amount_out(state, pool_ref.zero_for_one, amount_in)),
-            super::HopType::V2 => None,
-        });
+        let expected_out_engine = pool_refs
+            .get(i)
+            .and_then(|pool_ref| match pool_ref.hop_type {
+                super::HopType::V3 => core.get_v3_pool(pool_ref.pool_key).and_then(|state| {
+                    recompute_v3_amount_out(state, pool_ref.zero_for_one, amount_in)
+                }),
+                super::HopType::V4 => core.get_v4_pool(pool_ref.pool_key).and_then(|state| {
+                    recompute_v4_amount_out(state, pool_ref.zero_for_one, amount_in)
+                }),
+                super::HopType::V2 => None,
+            });
         populate_v3v4_recompute_full(hop, amount_in, solver_out, expected_out_engine);
     }
 }
@@ -1582,8 +1595,7 @@ mod tests {
 
         // JSON round-trip preserves the field.
         let json = serde_json::to_string(&snap).expect("serializes");
-        let parsed: DiagnosticPathState =
-            serde_json::from_str(&json).expect("deserializes");
+        let parsed: DiagnosticPathState = serde_json::from_str(&json).expect("deserializes");
         assert_eq!(parsed.engine_processed_block, Some(124));
     }
 
@@ -2107,8 +2119,7 @@ mod tests {
             "no recompute basis → expected_out_engine None"
         );
         assert_eq!(
-            recompute.matches_solver,
-            None,
+            recompute.matches_solver, None,
             "no recompute basis and no onchain basis → matches_solver None"
         );
     }
@@ -2129,7 +2140,10 @@ mod tests {
             token1: String::new(),
             fee: 3000,
             tick_spacing: 60,
-            sqrt_price_x96: format!("0x{}", U256::from(79_228_162_514_264_337_593_543_950_336_u128)),
+            sqrt_price_x96: format!(
+                "0x{}",
+                U256::from(79_228_162_514_264_337_593_543_950_336_u128)
+            ),
             tick: 0,
             liquidity: format!("0x{:x}", 1_000_000_000_000_000_u128),
         };
@@ -2143,7 +2157,10 @@ mod tests {
                 token1: String::new(),
                 fee: 3000,
                 tick_spacing: 60,
-                sqrt_price_x96: format!("0x{}", U256::from(79_228_162_514_264_337_593_543_950_336_u128)),
+                sqrt_price_x96: format!(
+                    "0x{}",
+                    U256::from(79_228_162_514_264_337_593_543_950_336_u128)
+                ),
                 tick: 0,
                 liquidity: format!("0x{:x}", 1_000_000_000_000_000_u128),
             },
@@ -2163,7 +2180,8 @@ mod tests {
             recompute.expected_out_onchain.is_some(),
             "onchain state present + non-crossing swap → expected_out_onchain populated"
         );
-        let onchain_out = super::parse_hex_u256(recompute.expected_out_onchain.as_ref().unwrap()).unwrap();
+        let onchain_out =
+            super::parse_hex_u256(recompute.expected_out_onchain.as_ref().unwrap()).unwrap();
         assert!(
             onchain_out > U256::ZERO,
             "a real V3 swap must yield a positive output"
@@ -2183,7 +2201,10 @@ mod tests {
     /// falls back to the onchain recompute.
     #[test]
     fn refresh_v3v4_recompute_onchain_populates_onchain_post_fetch() {
-        let sqrt_p = format!("0x{}", U256::from(79_228_162_514_264_337_593_543_950_336_u128));
+        let sqrt_p = format!(
+            "0x{}",
+            U256::from(79_228_162_514_264_337_593_543_950_336_u128)
+        );
         let liq = format!("0x{:x}", 1_000_000_000_000_000_u128);
         let v3_state = super::DiagnosticPoolState::V3 {
             address: String::new(),
@@ -2297,7 +2318,10 @@ mod tests {
         let spec = alloy::primitives::I256::try_from(amount_in).unwrap();
         let outcome = crate::bot_core::v3_simulate_swap(state, true, spec, limit)
             .expect("v3_simulate_swap should succeed");
-        assert_eq!(out, outcome.amount1, "recompute must match v3_simulate_swap.amount1");
+        assert_eq!(
+            out, outcome.amount1,
+            "recompute must match v3_simulate_swap.amount1"
+        );
     }
 
     /// `recompute_v4_amount_out` mirrors the V3 recompute against the engine's
@@ -2350,6 +2374,9 @@ mod tests {
         let amount_in = U256::from(1_000_000_000_u64);
         let out = super::recompute_v4_amount_out(state, true, amount_in)
             .expect("valid V4 swap should recompute");
-        assert!(out > U256::ZERO, "zfo swap of currency0 must yield currency1 > 0");
+        assert!(
+            out > U256::ZERO,
+            "zfo swap of currency0 must yield currency1 > 0"
+        );
     }
 }

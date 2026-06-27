@@ -27,14 +27,14 @@
 pub mod abi;
 #[cfg(feature = "balancer-math")]
 pub mod balancer_math;
-#[cfg(feature = "curve-math")]
-pub mod curve_math;
 #[cfg(feature = "bot")]
 pub mod bot;
 pub mod c_api;
 #[cfg(feature = "cl-math")]
 pub mod cl_math;
 pub mod conversion;
+#[cfg(feature = "curve-math")]
+pub mod curve_math;
 pub mod prelude;
 #[cfg(feature = "rpc")]
 pub mod rpc;

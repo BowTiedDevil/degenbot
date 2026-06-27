@@ -40,6 +40,10 @@ class DatabaseSettings(BaseModel):
         get ``expanduser().absolute()`` in ``validate_paths``; the database
         path must do the same. ``:memory:`` databases are unaffected
         (``expanduser()`` is a no-op on them).
+
+        Returns:
+            The path with a leading ``~`` expanded to the home directory.
+
         """
         return path.expanduser()
 
