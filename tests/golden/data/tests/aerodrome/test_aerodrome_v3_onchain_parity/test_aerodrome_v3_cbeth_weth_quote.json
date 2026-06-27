@@ -1,0 +1,10 @@
+{
+  "block_number": 46875151,
+  "chain_id": 8453,
+  "entries": {
+    "0x47cA96Ea59C13F72745928887f84C9F52C3D7348|quoteExactInputSingle|cbETH->WETH|562672230181659840": {
+      "value": 636426317744705999
+    }
+  },
+  "recorded_at": "2026-06-27T06:04:22+00:00"
+}
