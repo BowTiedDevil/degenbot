@@ -26,6 +26,23 @@ class DatabaseSettings(BaseModel):
         PlainSerializer(lambda path: str(path.absolute()), return_type=str),
     ]
 
+    @field_validator("path", mode="after")
+    @classmethod
+    def _expand_user(cls, path: Path) -> Path:
+        """Expand a leading ``~`` to the user's home directory.
+
+        The config file is hand-edited on a user's machine, where
+        ``~/.config/degenbot/degenbot.db`` is the natural thing to write. Left
+        as a literal ``~``, ``Path.absolute()`` (used downstream by the SQLite
+        URL builders) resolves it against the process cwd (e.g.
+        ``<repo>/~/.config/...``) rather than the home directory, so SQLite
+        emits ``unable to open database file``. RPC file-path endpoints already
+        get ``expanduser().absolute()`` in ``validate_paths``; the database
+        path must do the same. ``:memory:`` databases are unaffected
+        (``expanduser()`` is a no-op on them).
+        """
+        return path.expanduser()
+
 
 class DegenbotConfig(BaseSettings):
     """DegenbotConfig class."""
