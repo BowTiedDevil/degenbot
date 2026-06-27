@@ -34,6 +34,10 @@ FROM fedora:latest
 #       switching / `rustup target add`.
 #   - nodejs24                        : provides node + npm for pi (>=22.19)
 #   - just, uv, tmux, git, curl, ca-certificates, openssh-clients, less, sudo
+#   - bash-completion               : sources /etc/bash_completion.d/{cargo,fzf}
+#                                      for git/dnf/systemctl/etc. Without it the
+#                                      cargo/fzf completion scripts dnf drops
+#                                      there are never loaded.
 RUN dnf install -y \
         gcc gcc-c++ make pkgconf-pkg-config \
         uv python3 python3-devel python3-pip \
@@ -45,6 +49,7 @@ RUN dnf install -y \
         just \
         sudo tmux vim htop procps-ng psmisc \
         glibc-langpack-en \
+        bash-completion \
     && dnf clean all
 
 # Create the dev user (uid 1000 to match host uid — avoids updateRemoteUserUID
@@ -120,5 +125,20 @@ RUN curl -L https://foundry.paradigm.xyz | bash \
 # rebuild the image to bump.
 RUN npm install -g @earendil-works/pi-coding-agent
 RUN go install github.com/sandover/ergo/cmd/ergo@latest
+
+# Generate shell completions for the four curl/npm/go-installed CLIs into
+# ~/.bashrc.d/, which ~/.bashrc already loops over and sources at shell
+# startup. Baked into the image (not post-create.sh) for the same ssh-attach
+# reason as foundry/pi: the SSH entry point does `podman start`+`exec` and
+# never runs postCreateCommand, so anything left to post-create would be
+# missing after a recreate + SSH re-attach. /home/dev is on the overlay layer
+# (not bind-mounted), so regenerating here at build time is what makes them
+# survive rebuilds. `bash-completion` (in the dnf layer above) separately
+# sources /etc/bash_completion.d/{cargo,fzf,...} for git/dnf/systemctl/etc.
+RUN mkdir -p "${HOME}/.bashrc.d" \
+    && JUST_COMPLETE=bash just > "${HOME}/.bashrc.d/just-completion.sh" \
+    && uv generate-shell-completion bash > "${HOME}/.bashrc.d/uv-completion.sh" \
+    && ergo completion bash > "${HOME}/.bashrc.d/ergo-completion.sh" \
+    && cast completions bash > "${HOME}/.bashrc.d/cast-completion.sh"
 
 WORKDIR /workspaces/degenbot
