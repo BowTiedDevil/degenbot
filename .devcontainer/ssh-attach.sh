@@ -62,6 +62,22 @@ else
   podman start "$name"
 fi
 
+# Guard against the plain-attach path landing in a container that was created
+# but never had postCreateCommand run. The attach path does podman start + exec
+# — it has no knowledge of devcontainer.json, so postCreateCommand (which runs
+# `uv sync` + `just setup-git-hooks` via post-create.sh) is NOT invoked here.
+# A warm .venv on the bind-mounted repo survives container recreates, so its
+# absence means post-create has never run on any container for this workspace.
+# Warn (don't block — the user may want to inspect) and point at the fix; the
+# rebuild subcommand goes through `devcontainer up`, which DOES run postCreate.
+if [ ! -d "$WORKSPACE/.venv" ]; then
+  echo "⚠️  .venv missing — post-create.sh has not run on this container." >&2
+  echo "    Tests (just test-*) and 'uv run' will fail until the venv + PyO3" >&2
+  echo "    extension are built. Fix with:" >&2
+  echo "      $0 rebuild" >&2
+  echo "    (attaching anyway; Ctrl-b d to detach, then rebuild.)" >&2
+fi
+
 # Drop in as the container's regular user (remoteUser=dev, uid 1000) instead of
 # root, so tmux's socket lands under /home/dev and files we touch are owned by
 # the workspace user.
