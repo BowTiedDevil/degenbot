@@ -566,6 +566,8 @@ def test_calculate_tokens_out_from_tokens_in(
     )
 
 
+@pytest.mark.slow
+@pytest.mark.ethereum
 @hypothesis.given(
     amount=hypothesis.strategies.integers(
         min_value=1,
