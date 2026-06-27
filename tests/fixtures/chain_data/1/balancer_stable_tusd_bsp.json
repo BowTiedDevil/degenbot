@@ -1,0 +1,52 @@
+{
+  "chain_id": 1,
+  "block": 24407242,
+  "address": "0x53BC3cBa3832ebeCBFa002c12023F8ab1AA3a3a0",
+  "name": "tusd_bsp",
+  "pool_id": "0x53bc3cba3832ebecbfa002c12023f8ab1aa3a3a0000000000000000000000411",
+  "vault": "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+  "tokens": [
+    {
+      "address": "0x454Ed96955d04D2f5cDD05E0Fd1C77975bFE5307",
+      "name": "Balancer Aave Boosted Pool (TUSD)",
+      "symbol": "bb-a-TUSD",
+      "decimals": 18
+    },
+    {
+      "address": "0x53BC3cBa3832ebeCBFa002c12023F8ab1AA3a3a0",
+      "name": "Balancer TUSD bb-a-usd Stable",
+      "symbol": "TUSD BSP",
+      "decimals": 18
+    },
+    {
+      "address": "0xA13a9247ea42D743238089903570127DdA72fE44",
+      "name": "Balancer Aave Boosted StablePool",
+      "symbol": "bb-a-USD",
+      "decimals": 18
+    }
+  ],
+  "balances": [
+    9932226138436149651,
+    2596148429267393795453923395287065,
+    10067534331245782107
+  ],
+  "fee": "3/10000",
+  "amp": 600000,
+  "base_scaling_factors": [
+    1000000000000000000,
+    1000000000000000000,
+    1000000000000000000
+  ],
+  "resolved_scaling_factors": [
+    1000000000000000000,
+    1000000000000000000,
+    366332019912307
+  ],
+  "resolved_rates": [
+    1000000000000000000,
+    1000000000000000000,
+    366332019912307
+  ],
+  "bpt_idx": 1,
+  "invariant_version": 1
+}

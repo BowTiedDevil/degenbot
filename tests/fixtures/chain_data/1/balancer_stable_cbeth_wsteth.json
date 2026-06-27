@@ -1,0 +1,42 @@
+{
+  "chain_id": 1,
+  "block": 24407242,
+  "address": "0x9c6d47Ff73e0F5E51BE5FD53236e3F595C5793F2",
+  "name": "cbeth_wsteth",
+  "pool_id": "0x9c6d47ff73e0f5e51be5fd53236e3f595c5793f200020000000000000000042c",
+  "vault": "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+  "tokens": [
+    {
+      "address": "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0",
+      "name": "Wrapped liquid staked Ether 2.0",
+      "symbol": "wstETH",
+      "decimals": 18
+    },
+    {
+      "address": "0xBe9895146f7AF43049ca1c1AE358B0541Ea49704",
+      "name": "Coinbase Wrapped Staked ETH",
+      "symbol": "cbETH",
+      "decimals": 18
+    }
+  ],
+  "balances": [
+    106291575461838404,
+    123633891755633279
+  ],
+  "fee": "1/2500",
+  "amp": 50000,
+  "base_scaling_factors": [
+    1000000000000000000,
+    1000000000000000000
+  ],
+  "resolved_scaling_factors": [
+    1226470562881593452,
+    1122544909959743885
+  ],
+  "resolved_rates": [
+    1226470562881593452,
+    1122544909959743885
+  ],
+  "bpt_idx": null,
+  "invariant_version": 2
+}
