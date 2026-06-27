@@ -2,7 +2,7 @@
 # Attach to the degenbot devcontainer from a plain SSH terminal.
 #
 # Finds the container VSCode or `devcontainer up` created, starts it if
-# stopped, and drops into a tmux session named "pi".
+# stopped, and drops into a tmux session named "dev".
 #
 # Usage:
 #   .devcontainer/ssh-attach.sh          # attach (creates tmux session if absent)
@@ -21,9 +21,19 @@ set -euo pipefail
 WORKSPACE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [ "${1:-}" = "rebuild" ]; then
+  # Rebuild the image + recreate the container + run postCreateCommand via the
+  # devcontainer CLI (the same engine VSCode's "Rebuild Container" uses, so
+  # mounts, containerEnv, postCreate/postStart all apply identically).
+  #
+  # NOT exec'd: `devcontainer up` returns to the host shell once the container
+  # is up — it creates/starts it and runs postCreateCommand but does NOT drop
+  # you inside. VSCode's rebuild lands you in the container; to match that,
+  # fall through to the discovery + start + tmux-attach logic below instead of
+  # replacing this process.
   echo ">>> rebuilding container via devcontainer CLI + podman"
-  exec devcontainer up --workspace-folder "$WORKSPACE" --docker-path podman \
+  devcontainer up --workspace-folder "$WORKSPACE" --docker-path podman \
     --remove-existing-container
+  echo ">>> rebuild complete — attaching"
 fi
 
 # Discover the container by its image name (the devcontainer runtime tags the
@@ -58,12 +68,21 @@ fi
 USER="dev"
 
 # Propagate the host terminal's color capability through the podman exec
-# boundary. Without this, COLORTERM is dropped and pi falls back to a dim
-# 16-color palette (near-invisible grey, red accents); TERM is also needed so
-# tmux's terminal-overrides match the outer terminal for truecolor pass-through.
-# See .devcontainer/tmux.conf and the README "Terminal colors" section.
-
+# boundary. `podman exec` does NOT inherit the caller's env — only vars named
+# via --env are injected into the exec process — so TERM and COLORTERM must be
+# forwarded explicitly:
+#   - TERM      : tmux's terminal-overrides (",*:Tc") wildcard matches whatever
+#                 host TERM is propagated to decide the outer terminal supports
+#                 truecolor pass-through.
+#   - COLORTERM : pi reads it to decide whether to EMIT 24-bit RGB escapes;
+#                 without it pi falls back to a dim 16-color palette (grey text,
+#                 red accents). See tmux.conf + README "Terminal colors".
+# This matches VSCode, whose integrated terminal injects COLORTERM into the
+# in-container shell via the remote server.
+#
 # tmux new -A attaches to an existing session or creates a new one.
 exec podman exec -it --user "$USER" \
     --env HOME="/home/$USER" \
+    --env TERM="${TERM}" \
+    --env COLORTERM="${COLORTERM:-}" \
     "$name" tmux new -As dev
