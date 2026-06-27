@@ -1,0 +1,32 @@
+{
+  "chain_id": 1,
+  "block": 24407242,
+  "address": "0x5c6Ee304399DBdB9C8Ef030aB642B10820DB8F56",
+  "pool_id": "0x5c6ee304399dbdb9c8ef030ab642b10820db8f56000200000000000000000014",
+  "vault": "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+  "name": "weth_bal",
+  "tokens": [
+    {
+      "address": "0xba100000625a3754423978a60c9317c58a424e3D",
+      "name": "Balancer",
+      "symbol": "BAL",
+      "decimals": 18
+    },
+    {
+      "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "name": "Wrapped Ether",
+      "symbol": "WETH",
+      "decimals": 18
+    }
+  ],
+  "balances": [
+    29401141523139759968410400,
+    605007002163317945954
+  ],
+  "fee": "1/100",
+  "weights": [
+    800000000000000000,
+    200000000000000000
+  ],
+  "pow_version": "v1"
+}
