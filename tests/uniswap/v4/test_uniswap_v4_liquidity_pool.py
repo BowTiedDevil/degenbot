@@ -339,6 +339,8 @@ def test_pool_sqrt_price_checks(eth_usdc_v4: UniswapV4Pool):
     assert eth_usdc_v4.sqrt_price_x96 > 0
 
 
+@pytest.mark.slow
+@pytest.mark.ethereum
 @hypothesis.given(
     amount=hypothesis.strategies.integers(
         min_value=1,
