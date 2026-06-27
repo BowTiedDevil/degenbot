@@ -1,0 +1,62 @@
+{
+  "chain_id": 1,
+  "block": 24407242,
+  "address": "0x779d01F939D78a918A3de18cC236ee89221dfd4E",
+  "name": "bb_s_usd",
+  "pool_id": "0x779d01f939d78a918a3de18cc236ee89221dfd4e0000000000000000000004c7",
+  "vault": "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+  "tokens": [
+    {
+      "address": "0x779d01F939D78a918A3de18cC236ee89221dfd4E",
+      "name": "Balancer Sturdy Boosted StablePool",
+      "symbol": "bb-s-USD",
+      "decimals": 18
+    },
+    {
+      "address": "0xbFA413A2ff0F20456d57B643746133F54bFE0cd2",
+      "name": "Balancer Sturdy Boosted Pool (USDC)",
+      "symbol": "bb-s-USDC",
+      "decimals": 18
+    },
+    {
+      "address": "0xDc063deAfcE952160eC112FA382ac206305657e6",
+      "name": "Balancer Sturdy Boosted Pool (USDT)",
+      "symbol": "bb-s-USDT",
+      "decimals": 18
+    },
+    {
+      "address": "0xFD11CCdBdb7AB91Cb9427A6d6BF570C95876d195",
+      "name": "Balancer Sturdy Boosted Pool (DAI)",
+      "symbol": "bb-s-DAI",
+      "decimals": 18
+    }
+  ],
+  "balances": [
+    2596148429267404814265248164610048,
+    3000000000000000000,
+    3000000000000000000,
+    3000000000000000000
+  ],
+  "fee": "1/20000",
+  "amp": 2000000,
+  "base_scaling_factors": [
+    1000000000000000000,
+    1000000000000000000,
+    1000000000000000000,
+    1000000000000000000
+  ],
+  "resolved_scaling_factors": [
+    1000000000000000000,
+    1000000000000000000,
+    1000000000000000000,
+    1000000000000000000
+  ],
+  "resolved_rates": [
+    1000000000000000000,
+    1000000000000000000,
+    1000000000000000000,
+    1000000000000000000
+  ],
+  "bpt_idx": 0,
+  "invariant_version": 1
+}
