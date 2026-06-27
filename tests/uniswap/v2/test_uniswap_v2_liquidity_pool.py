@@ -260,6 +260,14 @@ def test_dunder_methods(
 
 
 def test_calculate_tokens_out_from_ratio_out(fork_mainnet_archive: AnvilFork):
+    # NOTE: deliberately NOT a golden-onchain-parity candidate. This test asserts
+    # with ``pytest.approx(..., rel=1e-3)`` (a 0.1% relative tolerance), not exact
+    # equality — the golden harness records exact on-chain ints, so an approx
+    # assertion has no clean replay form. The ratio-recovery math
+    # (``calculate_tokens_in_from_ratio_out``) is inherently iterative and its
+    # ``1e-3`` floor exists to absorb rounding in the inverse direction; keep it
+    # as a live fork test. See docs/architecture/golden-onchain-parity.md and
+    # plans/golden-onchain-parity.md (T7).
     bot = _make_bot(fork_mainnet_archive)
 
     router_contract = fork_mainnet_archive.w3.eth.contract(
