@@ -1,0 +1,22 @@
+{
+  "chain_id": 8453,
+  "block": 46875151,
+  "pool": "0x0B25c51637c43decd6CC1C1e3da4518D54ddb528",
+  "dex": "aerodrome-v2-stable",
+  "stable": true,
+  "fee_raw": 30,
+  "token0": {
+    "address": "0x4621b7A9c75199271F773Ebd9A499dbd165c3191",
+    "name": "Dola USD Stablecoin",
+    "symbol": "DOLA",
+    "decimals": 18
+  },
+  "token1": {
+    "address": "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
+    "name": "USD Base Coin",
+    "symbol": "USDbC",
+    "decimals": 6
+  },
+  "reserves_token0": 50505815806501471698332,
+  "reserves_token1": 35728582212
+}
