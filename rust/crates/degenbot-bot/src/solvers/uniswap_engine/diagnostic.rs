@@ -1532,7 +1532,7 @@ mod tests {
     /// can distinguish post-publish snapshot timing artifacts (engine advanced
     /// past the published `solve_block`) from real publish-time state lags.
     /// `solve_dirty(block)` advances `last_processed_block` to `block`
-    /// (event_routing.rs); the snapshot's
+    /// (`event_routing.rs`); the snapshot's
     /// `engine_processed_block == last_processed_block()`.
     #[test]
     fn diagnostic_path_state_includes_engine_processed_block() {
