@@ -1,0 +1,10 @@
+{
+  "block_number": 477785000,
+  "chain_id": 42161,
+  "entries": {
+    "0x84652bb2539513BAf36e225c930Fdd8eaa63CE27|getAmountOut|USDC->WETH|1000000000": {
+      "value": 621935256537600932
+    }
+  },
+  "recorded_at": "2026-06-27T05:47:30+00:00"
+}
