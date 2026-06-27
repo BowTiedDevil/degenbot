@@ -31,14 +31,14 @@ ARBITRUM_FULL_NODE_WS_URI: str = env_values.get(
 
 BASE_ARCHIVE_NODE_HTTP_URI: str = env_values.get(
     "BASE_ARCHIVE_NODE_HTTP_URI",
-    "https://base.llamarpc.com/",
+    "https://mainnet.base.org",
 )
 BASE_ARCHIVE_NODE_WS_URI: str = env_values.get(
     "BASE_ARCHIVE_NODE_WS_URI",
-    "wss://base.llamarpc.com/",
+    "wss://mainnet.base.org",
 )
-BASE_FULL_NODE_HTTP_URI: str = env_values.get("BASE_FULL_NODE_HTTP_URI", "http://localhost:8544/")
-BASE_FULL_NODE_WS_URI: str = env_values.get("BASE_FULL_NODE_WS_URI", "ws://localhost:8548/")
+BASE_FULL_NODE_HTTP_URI: str = env_values.get("BASE_FULL_NODE_HTTP_URI", "https://mainnet.base.org")
+BASE_FULL_NODE_WS_URI: str = env_values.get("BASE_FULL_NODE_WS_URI", "wss://mainnet.base.org")
 
 ETHEREUM_ARCHIVE_NODE_HTTP_URI: str = env_values.get(
     "ETHEREUM_ARCHIVE_NODE_HTTP_URI",
