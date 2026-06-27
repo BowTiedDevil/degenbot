@@ -394,7 +394,11 @@ def balancer_stable_calc_in_given_out(
 # index / unsafe-value) all surface as `ValueError` — the shape the Python
 # `DyCalculator` catches and wraps as `EVMRevertError(error=str(e))`.
 def curve_stableswap_get_d(
-    xp: list[int], amp: int, n_coins: int, a_precision: int, d_variant: int,
+    xp: list[int],
+    amp: int,
+    n_coins: int,
+    a_precision: int,
+    d_variant: int,
 ) -> int: ...
 def curve_stableswap_get_y(
     i: int,
@@ -408,10 +412,22 @@ def curve_stableswap_get_y(
     d_variant: int,
 ) -> int: ...
 def curve_stableswap_get_y_d(
-    amp: int, i: int, xp: list[int], d: int, n_coins: int, a_precision: int, yd_variant: int,
+    amp: int,
+    i: int,
+    xp: list[int],
+    d: int,
+    n_coins: int,
+    a_precision: int,
+    yd_variant: int,
 ) -> int: ...
 def curve_stableswap_newton_y(
-    ann: int, gamma: int, xp: list[int], d: int, token_index: int, n_coins: int, a_multiplier: int,
+    ann: int,
+    gamma: int,
+    xp: list[int],
+    d: int,
+    token_index: int,
+    n_coins: int,
+    a_multiplier: int,
 ) -> int: ...
 def curve_stableswap_reduction_coefficient(x: list[int], fee_gamma: int, n_coins: int) -> int: ...
 def get_sqrt_ratio_at_tick(tick: int) -> int:
