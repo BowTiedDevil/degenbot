@@ -1,5 +1,7 @@
 import logging
+import os
 from collections.abc import Generator
+from pathlib import Path
 
 import dotenv
 import pytest
@@ -11,6 +13,7 @@ from degenbot.bot import Bot
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.logging import set_log_level
 from degenbot.provider import ProviderAdapter
+from tests.golden.oracle import GOLDEN_ROOT, GoldenOracle, _nodeid_to_path
 from tests.helpers.bot_factory import make_bot_with_provider
 
 env_file = dotenv.find_dotenv("tests.env")
@@ -18,32 +21,40 @@ env_values = dotenv.dotenv_values(env_file)
 
 
 ARBITRUM_FULL_NODE_HTTP_URI: str = env_values.get(
-    "ARBITRUM_FULL_NODE_HTTP_URI", "https://arbitrum-one-rpc.publicnode.com",
+    "ARBITRUM_FULL_NODE_HTTP_URI",
+    "https://arbitrum-one-rpc.publicnode.com",
 )
 ARBITRUM_FULL_NODE_WS_URI: str = env_values.get(
-    "ARBITRUM_FULL_NODE_WS_URI", "wss://arbitrum-one-rpc.publicnode.com",
+    "ARBITRUM_FULL_NODE_WS_URI",
+    "wss://arbitrum-one-rpc.publicnode.com",
 )
 
 BASE_ARCHIVE_NODE_HTTP_URI: str = env_values.get(
-    "BASE_ARCHIVE_NODE_HTTP_URI", "https://base.llamarpc.com/",
+    "BASE_ARCHIVE_NODE_HTTP_URI",
+    "https://base.llamarpc.com/",
 )
 BASE_ARCHIVE_NODE_WS_URI: str = env_values.get(
-    "BASE_ARCHIVE_NODE_WS_URI", "wss://base.llamarpc.com/",
+    "BASE_ARCHIVE_NODE_WS_URI",
+    "wss://base.llamarpc.com/",
 )
 BASE_FULL_NODE_HTTP_URI: str = env_values.get("BASE_FULL_NODE_HTTP_URI", "http://localhost:8544/")
 BASE_FULL_NODE_WS_URI: str = env_values.get("BASE_FULL_NODE_WS_URI", "ws://localhost:8548/")
 
 ETHEREUM_ARCHIVE_NODE_HTTP_URI: str = env_values.get(
-    "ETHEREUM_ARCHIVE_NODE_HTTP_URI", "https://eth.llamarpc.com/",
+    "ETHEREUM_ARCHIVE_NODE_HTTP_URI",
+    "https://eth.llamarpc.com/",
 )
 ETHEREUM_ARCHIVE_NODE_WS_URI: str = env_values.get(
-    "ETHEREUM_ARCHIVE_NODE_WS_URI", "wss://eth.llamarpc.com/",
+    "ETHEREUM_ARCHIVE_NODE_WS_URI",
+    "wss://eth.llamarpc.com/",
 )
 ETHEREUM_FULL_NODE_HTTP_URI: str = env_values.get(
-    "ETHEREUM_FULL_NODE_HTTP_URI", "https://eth.llamarpc.com/",
+    "ETHEREUM_FULL_NODE_HTTP_URI",
+    "https://eth.llamarpc.com/",
 )
 ETHEREUM_FULL_NODE_WS_URI: str = env_values.get(
-    "ETHEREUM_FULL_NODE_WS_URI", "wss://eth.llamarpc.com/",
+    "ETHEREUM_FULL_NODE_WS_URI",
+    "wss://eth.llamarpc.com/",
 )
 
 
@@ -53,6 +64,24 @@ def pytest_addoption(parser: Parser):
         action="store",
         default="",
         help="Comma-separated list of fixture names to skip",
+    )
+    parser.addoption(
+        "--golden-mode",
+        action="store",
+        default=os.environ.get("DEGENBOT_GOLDEN_MODE", "replay"),
+        choices=("record", "replay"),
+        help=(
+            "Golden-oracle mode for on-chain parity tests (tests/golden). "
+            "'replay' (default, CI) reads recorded ints with no RPC; "
+            "'record' invokes the deferred contract callable against a live fork "
+            "and writes the golden file. See docs/architecture/golden-onchain-parity.md."
+        ),
+    )
+    parser.addoption(
+        "--golden-root",
+        action="store",
+        default=str(Path(__file__).resolve().parent / "golden" / "data"),
+        help="Root directory for golden-oracle JSON files.",
     )
 
 
@@ -104,6 +133,37 @@ def _set_degenbot_logging():
     the test run too.
     """
     set_log_level(logging.DEBUG)
+
+
+@pytest.fixture
+def golden_factory(request: pytest.FixtureRequest):
+    """Factory for :class:`tests.golden.oracle.GoldenOracle` (L2 golden seam).
+
+    Yields a callable ``bind(chain_id, block_number)`` returning a GoldenOracle
+    bound to a per-test JSON file derived from ``request.node.nodeid``. Mode is
+    driven by ``--golden-mode`` (replay by default, record to (re)populate the
+    file against a pinned fork). See ``docs/architecture/golden-onchain-parity.md``.
+
+    Example::
+
+        def test_x(golden_factory):
+            golden = golden_factory(chain_id=1, block_number=17_600_000)
+            res = golden.check("key", contract=lambda: quoter.fn...call())
+            if res.reverted:
+                continue
+            assert calc == res.value
+    """
+    mode: str = request.config.getoption("--golden-mode")
+    root = Path(request.config.getoption("--golden-root"))
+    # When --golden-root is the default, GOLDEN_ROOT already encodes it; honour
+    # an explicit override by rewriting the root anchor too.
+    rel = _nodeid_to_path(request.node.nodeid, GOLDEN_ROOT).relative_to(GOLDEN_ROOT)
+    path = root / rel
+
+    def bind(*, chain_id: int, block_number: int) -> GoldenOracle:
+        return GoldenOracle(path=path, chain_id=chain_id, block_number=block_number, mode=mode)
+
+    return bind
 
 
 @pytest.fixture

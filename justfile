@@ -65,6 +65,16 @@ compile-test-contracts:
 test-python: compile-test-contracts
     uv run pytest --ff -x -q --no-header
 
+# Run only on-chain-oracle parity tests in REPLAY mode (offline, CI-safe, no RPC/secrets).
+test-offline-parity: compile-test-contracts
+    uv run pytest -m onchain_oracle -q --no-header
+
+# Re-populate golden files for on-chain-oracle parity tests. Requires a working
+# fork (tests.env RPC or local node). Pass a nodeid to refresh a single test:
+#   just record-golden -- tests/uniswap/v3/test_uniswap_v3_liquidity_pool.py::test_cached_calculations
+record-golden *args: compile-test-contracts
+    DEGENBOT_GOLDEN_MODE=record uv run pytest -m onchain_oracle -q --no-header {{ args }}
+
 # Run all tests (Rust + Python)
 test-all: test-rust test-python
 

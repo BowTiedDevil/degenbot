@@ -182,6 +182,7 @@ markers = [
     "base: tests requiring a Base mainnet RPC",
     "ethereum: tests requiring an Ethereum mainnet RPC",
     "slow: tests that are too slow for routine local runs (e.g. pathfinding)",
+    "onchain_oracle: on-chain parity test whose oracle truth is read from a golden file (tests/golden); offline in CI — see docs/architecture/golden-onchain-parity.md",
 ]
 
 [dependency-groups]
