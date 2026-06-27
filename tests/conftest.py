@@ -122,6 +122,36 @@ def _initialize_and_reset_after_each_test():
     # surfaces as ``ResourceWarning: unclosed database`` when GC eventually runs
     # (notably at xdist worker teardown).
     DatabaseSessionManager.dispose_all()
+    # NOTE: ``AnvilFork.close_all()`` is intentionally NOT called per-test. It
+    # reaps *every* live fork indiscriminately, which kills module/session-scoped
+    # forks still in use by other tests in the same module — the Anvil process
+    # (and its IPC socket) dies between tests, so the next ``.call()`` raises
+    # ``OSError: [Errno 9] Bad file descriptor``. Leaked inline forks are reaped
+    # by CPython refcounting at test-end via ``__del__``, or — when a failing
+    # assertion holds the traceback frame alive and stalls that — by the
+    # worker-scoped ``_reap_leaked_anvil_forks`` finalizer below. Per-worker
+    # reaping is the right granularity for the PID-budget safety net: each xdist
+    # worker has its own ``_LIVE`` weakset, so this still bounds the anvil
+    # subprocess count per worker without breaking fixture scope.
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _reap_leaked_anvil_forks():
+    """Reap any AnvilFork still live at worker/session exit.
+
+    Safety net for leaked inline constructions (a test that built an AnvilFork
+    directly and never ``close()`` ed it). Under CPython refcounting these are
+    normally reaped by ``__del__`` the instant the test's local goes out of
+    scope; the exception is a failing assertion, which keeps the traceback frame
+    — and its locals — alive until the worker tears down. Without this finalizer
+    those stragglers (each anvil process ~27 pids) accumulate across failed tests
+    under xdist fan-out and can exhaust the container ``pids.max``.
+
+    Runs once per worker (xdist gives each worker its own session) *after* all
+    its tests finish, so it cannot clobber module/session-scoped forks mid-run.
+    """
+    yield
+    AnvilFork.close_all()
 
 
 @pytest.fixture(scope="session", autouse=True)
