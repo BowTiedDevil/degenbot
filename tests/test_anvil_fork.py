@@ -20,6 +20,8 @@ from .conftest import (
     ETHEREUM_FULL_NODE_HTTP_URI,
 )
 
+pytestmark = pytest.mark.online_rpc
+
 if TYPE_CHECKING:
     from web3.providers.ipc import IPCProvider
 

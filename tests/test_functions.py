@@ -51,10 +51,11 @@ def test_encode_function_calldata():
             26535330612692929974,
         ],
     ) == HexBytes(
-        "0xa9059cbb000000000000000000000000a69babef1ca67a37ffaf7a485dfff3382056e78c00000000000000000000000000000000000000000000000170406e9a1f1c4db6"
+        "0xa9059cbb000000000000000000000000a69babef1ca67a37ffaf7a485dfff3382056e78c00000000000000000000000000000000000000000000000170406e9a1f1c4db6",
     )
 
 
+@pytest.mark.online_rpc
 def test_low_level_call_for_factory_address(fork_mainnet_full: AnvilFork):
     provider = ProviderAdapter.from_web3(fork_mainnet_full.w3)
 
@@ -73,7 +74,7 @@ def test_low_level_call_for_factory_address(fork_mainnet_full: AnvilFork):
         return_types=["address"],
     )
     assert get_checksum_address(result) == get_checksum_address(
-        "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+        "0x1F98431c8aD98523631AE4a59f267346ea31F984",
     )
 
 
@@ -124,13 +125,14 @@ def test_create2():
             deployer="0x00000000000000000000000000000000deadbeef",
             salt="0x00000000000000000000000000000000000000000000000000000000cafebabe",
             init_code_hash=keccak(
-                hexstr="0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+                hexstr="0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
             ),
         )
         == "0x1d8bfDC5D46DC4f61D6b6115972536eBE6A8854C"
     )
 
 
+@pytest.mark.online_rpc
 def test_converting_block_identifier_to_int(fork_mainnet_full: AnvilFork):
     """Check that all inputs for web3 type `BlockIdentifier` can be converted to an integer"""
     w3 = fork_mainnet_full.w3
@@ -167,7 +169,8 @@ def test_converting_block_identifier_to_int(fork_mainnet_full: AnvilFork):
     # HexStr
     assert isinstance(
         get_number_for_block_identifier(
-            HexStr("0x" + (128).to_bytes(32, byteorder="big").hex()), provider
+            HexStr("0x" + (128).to_bytes(32, byteorder="big").hex()),
+            provider,
         ),
         BlockNumber.__value__,
     )

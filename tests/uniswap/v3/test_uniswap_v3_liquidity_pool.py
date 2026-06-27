@@ -51,10 +51,10 @@ UNISWAP_V3_FACTORY_ADDRESS = get_checksum_address("0x1F98431c8aD98523631AE4a59f2
 UNISWAP_V3_QUOTER_ADDRESS = get_checksum_address("0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6")
 BASE_CBETH_WETH_V3_POOL_ADDRESS = get_checksum_address("0x257fcbae4ac6b26a02e4fc5e1a11e4174b5ce395")
 BASE_PANCAKESWAP_V3_FACTORY_ADDRESS = get_checksum_address(
-    "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865"
+    "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865",
 )
 BASE_PANCAKESWAP_V3_DEPLOYER_ADDRESS = get_checksum_address(
-    "0x41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9"
+    "0x41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9",
 )
 BASE_PANCAKESWAP_V3_EXCHANGE = UniswapV3ExchangeDeployment(
     name="PancakeSwap V3",
@@ -69,7 +69,7 @@ BASE_PANCAKESWAP_V3_EXCHANGE = UniswapV3ExchangeDeployment(
 UNISWAP_V3_QUOTER_ABI = pydantic_core.from_json(
     """
     [{"inputs":[{"internalType":"address","name":"_factory","type":"address"},{"internalType":"address","name":"_WETH9","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},{"inputs":[],"name":"WETH9","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"factory","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes","name":"path","type":"bytes"},{"internalType":"uint256","name":"amountIn","type":"uint256"}],"name":"quoteExactInput","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"tokenIn","type":"address"},{"internalType":"address","name":"tokenOut","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint160","name":"sqrtPriceLimitX96","type":"uint160"}],"name":"quoteExactInputSingle","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes","name":"path","type":"bytes"},{"internalType":"uint256","name":"amountOut","type":"uint256"}],"name":"quoteExactOutput","outputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"tokenIn","type":"address"},{"internalType":"address","name":"tokenOut","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"uint256","name":"amountOut","type":"uint256"},{"internalType":"uint160","name":"sqrtPriceLimitX96","type":"uint160"}],"name":"quoteExactOutputSingle","outputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"int256","name":"amount0Delta","type":"int256"},{"internalType":"int256","name":"amount1Delta","type":"int256"},{"internalType":"bytes","name":"path","type":"bytes"}],"name":"uniswapV3SwapCallback","outputs":[],"stateMutability":"view","type":"function"}]
-    """
+    """,
 )
 
 TOKEN_AMOUNT_MULTIPLIERS = [
@@ -115,7 +115,7 @@ def wbtc_weth_v3_lp(fork_mainnet_full: AnvilFork) -> UniswapV3Pool:
 @pytest.fixture
 def testing_pools() -> Any:
     pools = pydantic_core.from_json(
-        pathlib.Path("tests/uniswap/v3/first_200_uniswap_v3_pools.json").read_bytes()
+        pathlib.Path("tests/uniswap/v3/first_200_uniswap_v3_pools.json").read_bytes(),
     )
     assert len(pools) == 200
     return pools
@@ -125,8 +125,8 @@ def testing_pools() -> Any:
 def liquidity_snapshot() -> dict[str, Any]:
     snapshot: dict[str, Any] = pydantic_core.from_json(
         pathlib.Path(
-            "tests/uniswap/v3/main_v3_liquidity_snapshot_block_21_123_218.json"
-        ).read_bytes()
+            "tests/uniswap/v3/main_v3_liquidity_snapshot_block_21_123_218.json",
+        ).read_bytes(),
     )
 
     return snapshot
@@ -147,7 +147,8 @@ def test_first_200_pools(
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
 
     quoter = fork_mainnet_full.w3.eth.contract(
-        address=UNISWAP_V3_QUOTER_ADDRESS, abi=UNISWAP_V3_QUOTER_ABI
+        address=UNISWAP_V3_QUOTER_ADDRESS,
+        abi=UNISWAP_V3_QUOTER_ABI,
     )
 
     for pool in testing_pools:
@@ -230,7 +231,8 @@ def test_first_200_pools_with_snapshot(
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_archive.w3))
 
     quoter = fork_mainnet_archive.w3.eth.contract(
-        address=UNISWAP_V3_QUOTER_ADDRESS, abi=UNISWAP_V3_QUOTER_ABI
+        address=UNISWAP_V3_QUOTER_ADDRESS,
+        abi=UNISWAP_V3_QUOTER_ABI,
     )
 
     for pool in testing_pools:
@@ -302,10 +304,12 @@ def test_first_200_pools_with_snapshot(
             assert helper_amount_out == quoter_amount_out
 
 
+@pytest.mark.online_rpc
 def test_pool_creation(bot_mainnet_full: Bot) -> None:
     bot_mainnet_full.build_pool(WBTC_WETH_V3_POOL_ADDRESS)
 
 
+@pytest.mark.online_rpc
 def test_pool_creation_with_liquidity_map(bot_mainnet_full: Bot) -> None:
     # Pools built without explicit tick data have sparse liquidity maps
     pool = bot_mainnet_full.build_pool(WBTC_WETH_V3_POOL_ADDRESS)
@@ -327,6 +331,7 @@ def test_pancake_v3_pool_creation(fork_base_full: AnvilFork) -> None:
     bot.build_pool("0xC07d7737FD8A06359E9C877863119Bf5F6abFb9E")
 
 
+@pytest.mark.online_rpc
 def test_sparse_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
     lp = bot.build_pool(WBTC_WETH_V3_POOL_ADDRESS)
@@ -337,10 +342,12 @@ def test_sparse_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
     # Pools built without tick data can still perform swaps
     # The tick data fetcher will fetch missing data on-demand
     lp.calculate_tokens_out_from_tokens_in(
-        token_in=lp.token0, token_in_quantity=100000 * 10**lp.token0.decimals
+        token_in=lp.token0,
+        token_in_quantity=100000 * 10**lp.token0.decimals,
     )
 
 
+@pytest.mark.online_rpc
 def test_external_update_with_sparse_liquidity_map(fork_mainnet_full: AnvilFork) -> None:
     bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
     lp = bot.build_pool(WBTC_WETH_V3_POOL_ADDRESS)
@@ -367,6 +374,7 @@ def test_external_update_with_sparse_liquidity_map(fork_mainnet_full: AnvilFork)
     [17_600_000],
     indirect=True,
 )
+@pytest.mark.online_rpc
 def test_reorg(
     wbtc_weth_v3_lp_at_historical_block: UniswapV3Pool,
     fork_mainnet_archive: AnvilFork,
@@ -387,7 +395,7 @@ def test_reorg(
     starting_liquidity = lp.liquidity
 
     block_states: dict[int, UniswapV3PoolState] = {
-        wbtc_weth_v3_lp_at_historical_block.update_block: starting_state
+        wbtc_weth_v3_lp_at_historical_block.update_block: starting_state,
     }
 
     number_of_updates = 10
@@ -449,7 +457,7 @@ def test_discard_before_finalized(wbtc_weth_v3_lp_at_historical_block: UniswapV3
     starting_liquidity = lp.liquidity
 
     block_states: dict[int, UniswapV3PoolState] = {
-        wbtc_weth_v3_lp_at_historical_block.update_block: lp.state
+        wbtc_weth_v3_lp_at_historical_block.update_block: lp.state,
     }
 
     for block_number in range(start_block, end_block + 1, 1):
@@ -485,7 +493,8 @@ def test_discard_after_last_update(wbtc_weth_v3_lp_at_historical_block: UniswapV
     lp: UniswapV3Pool = wbtc_weth_v3_lp_at_historical_block
 
     with pytest.raises(
-        NoPoolStateAvailable, match=f"No pool state known prior to block {lp.update_block + 1}"
+        NoPoolStateAvailable,
+        match=f"No pool state known prior to block {lp.update_block + 1}",
     ):
         wbtc_weth_v3_lp_at_historical_block.discard_states_before_block(lp.update_block + 1)
 
@@ -502,15 +511,18 @@ def test_tick_bitmap_equality() -> None:
 def test_tick_data_equality() -> None:
     with pytest.raises(AssertionError):
         assert LiquidityAtTick(liquidity_net=1, liquidity_gross=2) == LiquidityAtTick(
-            liquidity_net=1, liquidity_gross=4
+            liquidity_net=1,
+            liquidity_gross=4,
         )
     with pytest.raises(AssertionError):
         assert LiquidityAtTick(liquidity_net=1, liquidity_gross=2) == LiquidityAtTick(
-            liquidity_net=4, liquidity_gross=2
+            liquidity_net=4,
+            liquidity_gross=2,
         )
 
     assert LiquidityAtTick(liquidity_net=1, liquidity_gross=2) == LiquidityAtTick(
-        liquidity_net=1, liquidity_gross=2
+        liquidity_net=1,
+        liquidity_gross=2,
     )
 
 
@@ -572,7 +584,7 @@ def test_calculate_tokens_out_from_tokens_in(
     amount=hypothesis.strategies.integers(
         min_value=1,
         max_value=MAX_INT256,
-    )
+    ),
 )
 @hypothesis.settings(
     suppress_health_check=[
@@ -923,6 +935,7 @@ def test_swap_for_all(wbtc_weth_v3_lp_at_historical_block: UniswapV3Pool) -> Non
     [17_600_000],
     indirect=True,
 )
+@pytest.mark.online_rpc
 def test_external_update(
     wbtc_weth_v3_lp_at_historical_block: UniswapV3Pool,
     fork_mainnet_archive: AnvilFork,
@@ -1019,7 +1032,7 @@ def test_external_update(
             tick=69,
             sqrt_price_x96=wbtc_weth_v3_lp_at_historical_block.state.sqrt_price_x96,
             liquidity=wbtc_weth_v3_lp_at_historical_block.state.liquidity,
-        )
+        ),
     )
     # Update twice to test branches that check for a no-change update
     wbtc_weth_v3_lp_at_historical_block.external_update(
@@ -1028,7 +1041,7 @@ def test_external_update(
             tick=69,
             sqrt_price_x96=wbtc_weth_v3_lp_at_historical_block.state.sqrt_price_x96,
             liquidity=wbtc_weth_v3_lp_at_historical_block.state.liquidity,
-        )
+        ),
     )
 
 
@@ -1037,6 +1050,7 @@ def test_external_update(
     [20751740],
     indirect=True,
 )
+@pytest.mark.online_rpc
 def test_mint_and_burn_in_empty_word(fork_mainnet_archive: AnvilFork) -> None:
     """Test that minting and burning an equal position inside an empty word results in no net
     liquidity in the mapping, and the removal of the position.
@@ -1062,7 +1076,7 @@ def test_mint_and_burn_in_empty_word(fork_mainnet_archive: AnvilFork) -> None:
             liquidity=69_420,
             tick_lower=lower_tick,
             tick_upper=upper_tick,
-        )
+        ),
     )
     assert lower_tick in lp.tick_data
     assert upper_tick in lp.tick_data
@@ -1075,7 +1089,7 @@ def test_mint_and_burn_in_empty_word(fork_mainnet_archive: AnvilFork) -> None:
             liquidity=-69_420,
             tick_lower=lower_tick,
             tick_upper=upper_tick,
-        )
+        ),
     )
     assert lower_tick not in lp.tick_data
     assert upper_tick not in lp.tick_data
@@ -1086,6 +1100,7 @@ def test_mint_and_burn_in_empty_word(fork_mainnet_archive: AnvilFork) -> None:
     [19619258],
     indirect=True,
 )
+@pytest.mark.online_rpc
 def test_complex_liquidity_transaction_1(fork_mainnet_archive: AnvilFork):
     """Tests transaction 0xcc9b213c730978b096e2b629470c510fb68b32a1cb708ca21bbbbdce4221b00d, which
     executes a complex Burn/Swap/Mint
@@ -1109,7 +1124,7 @@ def test_complex_liquidity_transaction_1(fork_mainnet_archive: AnvilFork):
             liquidity=-32898296636481156,
             tick_lower=-2,
             tick_upper=0,
-        )
+        ),
     )
     lp.external_update(
         # Swap
@@ -1118,7 +1133,7 @@ def test_complex_liquidity_transaction_1(fork_mainnet_archive: AnvilFork):
             liquidity=14421592867765366,
             sqrt_price_x96=79231240136335768538165178627,
             tick=0,
-        )
+        ),
     )
     lp.update_liquidity_map(
         # Mint
@@ -1127,14 +1142,14 @@ def test_complex_liquidity_transaction_1(fork_mainnet_archive: AnvilFork):
             liquidity=32881222444111623,
             tick_lower=-1,
             tick_upper=1,
-        )
+        ),
     )
 
     assert lp.liquidity == 47302815311876989
 
     assert lp.tick_data[-2].liquidity_gross == 2444435478572158
     assert lp.tick_data[-2].liquidity_net == convert_unsigned_integer_to_signed(
-        340282366920938463463373056991514192626
+        340282366920938463463373056991514192626,
     )
 
     assert lp.tick_data[-1].liquidity_gross == 35737394957587036
@@ -1142,12 +1157,12 @@ def test_complex_liquidity_transaction_1(fork_mainnet_archive: AnvilFork):
 
     assert lp.tick_data[0].liquidity_gross == 3908477120807173
     assert lp.tick_data[0].liquidity_net == convert_unsigned_integer_to_signed(
-        340282366920938463463370705564595110629
+        340282366920938463463370705564595110629,
     )
 
     assert lp.tick_data[1].liquidity_gross == 35087990576870618
     assert lp.tick_data[1].liquidity_net == convert_unsigned_integer_to_signed(
-        340282366920938463463340830792807716726
+        340282366920938463463340830792807716726,
     )
 
 
@@ -1156,6 +1171,7 @@ def test_complex_liquidity_transaction_1(fork_mainnet_archive: AnvilFork):
     [19624318],
     indirect=True,
 )
+@pytest.mark.online_rpc
 def test_complex_liquidity_transaction_2(fork_mainnet_archive: AnvilFork):
     """Tests transaction 0xb70e8432d3ee0bcaa0f21ca7c0d0fd496096e9d72f243186dc3880d857114a3b, which
     executes a complex Burn/Swap/Mint
@@ -1182,7 +1198,7 @@ def test_complex_liquidity_transaction_2(fork_mainnet_archive: AnvilFork):
             liquidity=-32832176391550116,
             tick_lower=1,
             tick_upper=3,
-        )
+        ),
     )
     lp.external_update(
         # Swap
@@ -1191,7 +1207,7 @@ def test_complex_liquidity_transaction_2(fork_mainnet_archive: AnvilFork):
             liquidity=14823044070524674,
             sqrt_price_x96=79229207277353295810379307480,
             tick=0,
-        )
+        ),
     )
     lp.update_liquidity_map(
         # Mint
@@ -1200,7 +1216,7 @@ def test_complex_liquidity_transaction_2(fork_mainnet_archive: AnvilFork):
             liquidity=32906745642438587,
             tick_lower=0,
             tick_upper=2,
-        )
+        ),
     )
 
     assert lp.liquidity == 47729789712963261
@@ -1210,17 +1226,17 @@ def test_complex_liquidity_transaction_2(fork_mainnet_archive: AnvilFork):
 
     assert lp.tick_data[1].liquidity_gross == 2206768132758995
     assert lp.tick_data[1].liquidity_net == convert_unsigned_integer_to_signed(
-        340282366920938463463373712015251828349
+        340282366920938463463373712015251828349,
     )
 
     assert lp.tick_data[2].liquidity_gross == 33976822553596059
     assert lp.tick_data[2].liquidity_net == convert_unsigned_integer_to_signed(
-        340282366920938463463340631050012819095
+        340282366920938463463340631050012819095,
     )
 
     assert lp.tick_data[3].liquidity_gross == 996384072015849
     assert lp.tick_data[3].liquidity_net == convert_unsigned_integer_to_signed(
-        340282366920938463463373611250495718043
+        340282366920938463463373611250495718043,
     )
 
 

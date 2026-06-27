@@ -109,6 +109,7 @@ def test_fetch_pool_from_database_snapshot(
         assert base_snapshot_from_database.tick_data(pool) is not None
 
 
+@pytest.mark.online_rpc
 def test_fetch_liquidity_events_first_250_blocks(
     empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,  # noqa: E501
     fork_mainnet_full: AnvilFork,
@@ -126,13 +127,13 @@ def test_fetch_liquidity_events_first_250_blocks(
     ]:
         assert (
             empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870.tick_bitmap(
-                pool
+                pool,
             )
             == {}
         )
         assert (
             empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870.tick_data(
-                pool
+                pool,
             )
             == {}
         )
@@ -149,7 +150,7 @@ def test_fetch_liquidity_events_first_250_blocks(
                     tick_upper=-36720,
                     tx_index=33,
                     log_index=29,
-                )
+                ),
             ]),
             "0x6c6Bc977E13Df9b0de53b251522280BB72383700": deque([
                 UniswapV3LiquidityEvent(
@@ -177,7 +178,7 @@ def test_fetch_liquidity_events_first_250_blocks(
                     tick_upper=198000,
                     tx_index=255,
                     log_index=152,
-                )
+                ),
             ]),
             "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD": deque([
                 UniswapV3LiquidityEvent(
@@ -205,7 +206,7 @@ def test_fetch_liquidity_events_first_250_blocks(
                     tick_upper=-78240,
                     tx_index=85,
                     log_index=67,
-                )
+                ),
             ]),
             "0x7858E59e0C01EA06Df3aF3D20aC7B0003275D4Bf": deque([
                 UniswapV3LiquidityEvent(
@@ -215,12 +216,13 @@ def test_fetch_liquidity_events_first_250_blocks(
                     tick_upper=10,
                     tx_index=43,
                     log_index=11,
-                )
+                ),
             ]),
         }
     )
 
 
+@pytest.mark.online_rpc
 def test_get_new_liquidity_updates(
     empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,  # noqa: E501
     fork_mainnet_full: AnvilFork,
@@ -235,7 +237,7 @@ def test_get_new_liquidity_updates(
         "0x7858E59e0C01EA06Df3aF3D20aC7B0003275D4Bf",
     ]:
         empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870.pending_updates(
-            get_checksum_address(pool_address)
+            get_checksum_address(pool_address),
         )
         assert (
             empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870._liquidity_events[
@@ -245,6 +247,7 @@ def test_get_new_liquidity_updates(
         )
 
 
+@pytest.mark.online_rpc
 def test_apply_update_to_unknown_pool(
     empty_mainnet_snapshot_from_file: UniswapV3LiquiditySnapshot,
     fork_mainnet_full: AnvilFork,
@@ -258,6 +261,7 @@ def test_apply_update_to_unknown_pool(
         )
 
 
+@pytest.mark.online_rpc
 def test_apply_update_to_snapshot(
     empty_mainnet_snapshot_from_file: UniswapV3LiquiditySnapshot,
     fork_mainnet_full: AnvilFork,
@@ -268,16 +272,24 @@ def test_apply_update_to_snapshot(
 
     tick_data = {
         253320: LiquidityAtTick(
-            liquidity_net=34399999543676, liquidity_gross=34399999543676, block=12369821
+            liquidity_net=34399999543676,
+            liquidity_gross=34399999543676,
+            block=12369821,
         ),
         264600: LiquidityAtTick(
-            liquidity_net=-34399999543676, liquidity_gross=34399999543676, block=12369821
+            liquidity_net=-34399999543676,
+            liquidity_gross=34399999543676,
+            block=12369821,
         ),
         255540: LiquidityAtTick(
-            liquidity_net=2154941425, liquidity_gross=2154941425, block=12369846
+            liquidity_net=2154941425,
+            liquidity_gross=2154941425,
+            block=12369846,
         ),
         262440: LiquidityAtTick(
-            liquidity_net=-2154941425, liquidity_gross=2154941425, block=12369846
+            liquidity_net=-2154941425,
+            liquidity_gross=2154941425,
+            block=12369846,
         ),
     }
     tick_bitmap = {
@@ -307,13 +319,13 @@ def test_liquidity_map_is_none_for_missing_pools(
 ):
     assert (
         empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870.tick_bitmap(
-            ZERO_ADDRESS
+            ZERO_ADDRESS,
         )
         is None
     )
     assert (
         empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870.tick_data(
-            ZERO_ADDRESS
+            ZERO_ADDRESS,
         )
         is None
     )
@@ -331,10 +343,10 @@ def test_snapshot_finds_known_pool(
     wbtc_weth_pool = "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD"
 
     empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870.tick_bitmap(
-        wbtc_weth_pool
+        wbtc_weth_pool,
     )
     empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870.tick_data(
-        wbtc_weth_pool
+        wbtc_weth_pool,
     )
     mainnet_snapshot_at_block_12_369_870_from_file.tick_bitmap(wbtc_weth_pool)
     mainnet_snapshot_at_block_12_369_870_from_file.tick_data(wbtc_weth_pool)
@@ -342,6 +354,7 @@ def test_snapshot_finds_known_pool(
     mainnet_snapshot_at_block_12_369_870_from_dir.tick_data(wbtc_weth_pool)
 
 
+@pytest.mark.online_rpc
 def test_pool_manager_applies_snapshot_from_file(
     empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870: UniswapV3LiquiditySnapshot,  # noqa: E501
     fork_mainnet_full: AnvilFork,
@@ -381,7 +394,8 @@ def test_pool_manager_applies_snapshot_from_file(
                         block=12369739,
                     ),
                     -3: BitmapAtWord(
-                        bitmap=91343852333181432387730302044767688728495783936, block=12369739
+                        bitmap=91343852333181432387730302044767688728495783936,
+                        block=12369739,
                     ),
                 }.items():
                     assert pool.tick_bitmap[word] == bitmap
@@ -428,13 +442,15 @@ def test_pool_manager_applies_snapshot_from_file(
                     3: BitmapAtWord(
                         bitmap=6739986679341863419440115299426486514824618937839854009203971588096,
                         block=12369811,
-                    )
+                    ),
                 }.items():
                     assert pool.tick_bitmap[word] == bitmap
             case "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD":
                 assert pool.tick_data == {
                     253320: LiquidityAtTick(
-                        liquidity_net=34399999543676, liquidity_gross=34399999543676, block=12369821
+                        liquidity_net=34399999543676,
+                        liquidity_gross=34399999543676,
+                        block=12369821,
                     ),
                     264600: LiquidityAtTick(
                         liquidity_net=-34399999543676,
@@ -442,15 +458,20 @@ def test_pool_manager_applies_snapshot_from_file(
                         block=12369821,
                     ),
                     255540: LiquidityAtTick(
-                        liquidity_net=2154941425, liquidity_gross=2154941425, block=12369846
+                        liquidity_net=2154941425,
+                        liquidity_gross=2154941425,
+                        block=12369846,
                     ),
                     262440: LiquidityAtTick(
-                        liquidity_net=-2154941425, liquidity_gross=2154941425, block=12369846
+                        liquidity_net=-2154941425,
+                        liquidity_gross=2154941425,
+                        block=12369846,
                     ),
                 }
                 for word, bitmap in {
                     16: BitmapAtWord(
-                        bitmap=11692013098732293937359713277596107809105402396672, block=12369846
+                        bitmap=11692013098732293937359713277596107809105402396672,
+                        block=12369846,
                     ),
                     17: BitmapAtWord(bitmap=288230376155906048, block=12369846),
                 }.items():
@@ -472,13 +493,15 @@ def test_pool_manager_applies_snapshot_from_file(
                     -6: BitmapAtWord(
                         bitmap=6901746346790563787434755862298803523934049033832042530038157389332480,
                         block=12369854,
-                    )
+                    ),
                 }.items():
                     assert pool.tick_bitmap[word] == bitmap
             case "0x7858E59e0C01EA06Df3aF3D20aC7B0003275D4Bf":
                 assert pool.tick_data == {
                     -10: LiquidityAtTick(
-                        liquidity_net=21206360421978, liquidity_gross=21206360421978, block=12369863
+                        liquidity_net=21206360421978,
+                        liquidity_gross=21206360421978,
+                        block=12369863,
                     ),
                     10: LiquidityAtTick(
                         liquidity_net=-21206360421978,
@@ -504,11 +527,12 @@ def test_pool_manager_applies_snapshot_from_file(
     ) in empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870.pools:
         assert not (
             empty_mainnet_snapshot_from_file_with_pending_events_up_to_block_12_369_870.pending_updates(
-                pool_address
+                pool_address,
             )
         )
 
 
+@pytest.mark.online_rpc
 def test_pool_manager_applies_snapshot_from_dir(
     mainnet_snapshot_at_block_12_369_870_from_dir: UniswapV3LiquiditySnapshot,
     fork_mainnet_full: AnvilFork,
@@ -546,7 +570,8 @@ def test_pool_manager_applies_snapshot_from_dir(
                         block=12369739,
                     ),
                     -3: BitmapAtWord(
-                        bitmap=91343852333181432387730302044767688728495783936, block=12369739
+                        bitmap=91343852333181432387730302044767688728495783936,
+                        block=12369739,
                     ),
                 }.items():
                     assert pool.tick_bitmap[word] == bitmap
@@ -593,13 +618,15 @@ def test_pool_manager_applies_snapshot_from_dir(
                     3: BitmapAtWord(
                         bitmap=6739986679341863419440115299426486514824618937839854009203971588096,
                         block=12369811,
-                    )
+                    ),
                 }.items():
                     assert pool.tick_bitmap[word] == bitmap
             case "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD":
                 assert pool.tick_data == {
                     253320: LiquidityAtTick(
-                        liquidity_net=34399999543676, liquidity_gross=34399999543676, block=12369821
+                        liquidity_net=34399999543676,
+                        liquidity_gross=34399999543676,
+                        block=12369821,
                     ),
                     264600: LiquidityAtTick(
                         liquidity_net=-34399999543676,
@@ -607,15 +634,20 @@ def test_pool_manager_applies_snapshot_from_dir(
                         block=12369821,
                     ),
                     255540: LiquidityAtTick(
-                        liquidity_net=2154941425, liquidity_gross=2154941425, block=12369846
+                        liquidity_net=2154941425,
+                        liquidity_gross=2154941425,
+                        block=12369846,
                     ),
                     262440: LiquidityAtTick(
-                        liquidity_net=-2154941425, liquidity_gross=2154941425, block=12369846
+                        liquidity_net=-2154941425,
+                        liquidity_gross=2154941425,
+                        block=12369846,
                     ),
                 }
                 for word, bitmap in {
                     16: BitmapAtWord(
-                        bitmap=11692013098732293937359713277596107809105402396672, block=12369846
+                        bitmap=11692013098732293937359713277596107809105402396672,
+                        block=12369846,
                     ),
                     17: BitmapAtWord(bitmap=288230376155906048, block=12369846),
                 }.items():
@@ -637,13 +669,15 @@ def test_pool_manager_applies_snapshot_from_dir(
                     -6: BitmapAtWord(
                         bitmap=6901746346790563787434755862298803523934049033832042530038157389332480,
                         block=12369854,
-                    )
+                    ),
                 }.items():
                     assert pool.tick_bitmap[word] == bitmap
             case "0x7858E59e0C01EA06Df3aF3D20aC7B0003275D4Bf":
                 assert pool.tick_data == {
                     -10: LiquidityAtTick(
-                        liquidity_net=21206360421978, liquidity_gross=21206360421978, block=12369863
+                        liquidity_net=21206360421978,
+                        liquidity_gross=21206360421978,
+                        block=12369863,
                     ),
                     10: LiquidityAtTick(
                         liquidity_net=-21206360421978,
@@ -676,6 +710,7 @@ def test_pools_property(
     assert len(list(mainnet_snapshot_at_block_12_369_870_from_dir.pools)) == 6
 
 
+@pytest.mark.online_rpc
 def test_fetch_large_range(
     fork_mainnet_full: AnvilFork,
     mainnet_snapshot_at_block_12_369_870_from_dir: UniswapV3LiquiditySnapshot,

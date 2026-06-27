@@ -34,6 +34,9 @@ from degenbot.exceptions.pool import StaleRateResult
 from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 from tests.helpers.erc20_factory import make_erc20
 
+pytestmark = pytest.mark.online_rpc
+
+
 if TYPE_CHECKING:
     from degenbot.erc20.erc20 import Erc20Token
 
@@ -45,31 +48,31 @@ _PY_BOT = PyBot()
 POOL_ABI = json.loads(
     """
     [{"inputs":[],"name":"getAmplificationParameter","outputs":[{"internalType":"uint256","name":"value","type":"uint256"},{"internalType":"bool","name":"isUpdating","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getPoolId","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getSwapFeePercentage","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"getRateProviders","outputs":[{"internalType":"contract IRateProvider[]","name":"","type":"address[]"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"token","type":"address"}],"name":"getTokenRateCache","outputs":[{"internalType":"uint256","name":"rate","type":"uint256"},{"internalType":"uint256","name":"oldRate","type":"uint256"},{"internalType":"uint256","name":"duration","type":"uint256"},{"internalType":"uint256","name":"expires","type":"uint256"}],"stateMutability":"view","type":"function"}]
-    """  # noqa: E501
+    """,  # noqa: E501
 )
 
 VAULT_ABI = json.loads(
     """
     [{"inputs":[{"internalType":"bytes32","name":"poolId","type":"bytes32"}],"name":"getPoolTokens","outputs":[{"internalType":"contract IERC20[]","name":"tokens","type":"address[]"},{"internalType":"uint256[]","name":"balances","type":"uint256[]"},{"internalType":"uint256","name":"lastChangeBlock","type":"uint256"}],"stateMutability":"view","type":"function"}]
-    """  # noqa: E501
+    """,  # noqa: E501
 )
 
 QUERIES_ABI = json.loads(
     """
     [{"inputs":[{"components":[{"internalType":"bytes32","name":"poolId","type":"bytes32"},{"internalType":"enum IVault.SwapKind","name":"kind","type":"uint8"},{"internalType":"contract IAsset","name":"assetIn","type":"address"},{"internalType":"contract IAsset","name":"assetOut","type":"address"},{"internalType":"uint256","name":"amount","type":"uint256"},{"internalType":"bytes","name":"userData","type":"bytes"}],"internalType":"struct IVault.SingleSwap","name":"singleSwap","type":"tuple"},{"components":[{"internalType":"address","name":"sender","type":"address"},{"internalType":"bool","name":"fromInternalBalance","type":"bool"},{"internalType":"address payable","name":"recipient","type":"address"},{"internalType":"bool","name":"toInternalBalance","type":"bool"}],"internalType":"struct IVault.FundManagement","name":"funds","type":"tuple"}],"name":"querySwap","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"nonpayable","type":"function"}]
-    """  # noqa: E501
+    """,  # noqa: E501
 )
 
 RATE_ABI = json.loads(
     """
     [{"inputs":[],"name":"getRate","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"}]
-    """
+    """,
 )
 
 ERC20_ABI = json.loads(
     """
     [{"inputs":[],"name":"decimals","outputs":[{"internalType":"uint8","name":"","type":"uint8"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"symbol","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"name","outputs":[{"internalType":"string","name":"","type":"string"}],"stateMutability":"view","type":"function"}]
-    """
+    """,
 )
 
 VITALIK_ADDRESS = get_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
@@ -124,7 +127,7 @@ class CacheAwareRateProvider:
                 self._rate_contracts.append(None)
             else:
                 self._rate_contracts.append(
-                    w3.eth.contract(address=get_checksum_address(rp), abi=RATE_ABI)
+                    w3.eth.contract(address=get_checksum_address(rp), abi=RATE_ABI),
                 )
         self._token_addresses = token_addresses
 
@@ -136,7 +139,7 @@ class CacheAwareRateProvider:
 
         rates: list[int] = []
         for i, (rp_contract, token_addr) in enumerate(
-            zip(self._rate_contracts, self._token_addresses, strict=True)
+            zip(self._rate_contracts, self._token_addresses, strict=True),
         ):
             if i == self._bpt_idx or rp_contract is None:
                 rates.append(ONE)
@@ -144,7 +147,7 @@ class CacheAwareRateProvider:
 
             try:
                 rate, _old_rate, _duration, expires = self._pool.functions.getTokenRateCache(
-                    get_checksum_address(token_addr)
+                    get_checksum_address(token_addr),
                 ).call(block_identifier=block_identifier)
             except ContractLogicError:
                 # Token doesn't have a rate provider — fall back to getRate()

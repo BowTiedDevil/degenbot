@@ -32,6 +32,9 @@ from degenbot.uniswap.trackers import UniswapV2PoolTracker, UniswapV3PoolTracker
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.helpers.bot_factory import make_bot_with_provider
 
+pytestmark = pytest.mark.online_rpc
+
+
 # =============================================================================
 # Mainnet addresses (chain_id=1)
 # =============================================================================
@@ -58,7 +61,8 @@ class TestV2PoolSubclassSelection:
     """Tests that V2 pool managers return the correct pool subclass."""
 
     def test_uniswap_v2_pool_manager_returns_uniswap_v2_pool(
-        self, fork_mainnet_full: AnvilFork
+        self,
+        fork_mainnet_full: AnvilFork,
     ) -> None:
         """UniswapV2PoolTracker should return LiquidityPool instances."""
         bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
@@ -76,7 +80,8 @@ class TestV2PoolSubclassSelection:
         )
 
     def test_sushiswap_v2_pool_manager_returns_sushiswap_v2_pool(
-        self, fork_mainnet_full: AnvilFork
+        self,
+        fork_mainnet_full: AnvilFork,
     ) -> None:
         """SushiswapV2PoolTracker should return SushiswapV2Pool instances."""
         bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
@@ -104,7 +109,8 @@ class TestV3PoolSubclassSelection:
     """Tests that V3 pool managers return the correct pool subclass."""
 
     def test_uniswap_v3_pool_manager_returns_uniswap_v3_pool(
-        self, fork_mainnet_full: AnvilFork
+        self,
+        fork_mainnet_full: AnvilFork,
     ) -> None:
         """UniswapV3PoolTracker should return UniswapV3Pool instances."""
         bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
@@ -130,7 +136,8 @@ class TestBotBuildPoolSubclassSelection:
     """Tests that Bot.build_pool returns the correct subclass based on factory."""
 
     def test_build_pool_returns_uniswap_v3_for_uniswap_factory(
-        self, fork_mainnet_full: AnvilFork
+        self,
+        fork_mainnet_full: AnvilFork,
     ) -> None:
         """Bot.build_pool should return UniswapV3Pool for Uniswap factory."""
         bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
