@@ -1,4 +1,4 @@
-//! Curve StableSwap math `PyO3` wrappers over the `degenbot-curve-math` pure core.
+//! Curve `StableSwap` math `PyO3` wrappers over the `degenbot-curve-math` pure core.
 //!
 //! Thin binding layer that extracts Python arguments, calls the pure-Rust math
 //! leaf, and converts results back to Python `int`s. Mirrors the `balancer_math`

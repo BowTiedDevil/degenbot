@@ -1,4 +1,4 @@
-//! `PyO3` wrappers for the Curve StableSwap math library.
+//! `PyO3` wrappers for the Curve `StableSwap` math library.
 //!
 //! Thin binding layer that extracts Python arguments, calls the pure Rust core
 //! (`degenbot_curve_math`), and converts results back to Python `int`s. Wraps
@@ -104,7 +104,7 @@ fn curve_err(e: CurveMathError) -> PyErr {
 
 // ─── Iterative solvers ─────────────────────────────────────────────────
 
-/// `stableswap_get_d` — compute the StableSwap invariant D from XP + amp.
+/// `stableswap_get_d` — compute the `StableSwap` invariant D from XP + amp.
 ///
 /// # Errors
 ///
