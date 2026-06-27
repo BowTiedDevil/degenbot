@@ -38,6 +38,7 @@ RUN dnf install -y \
         gcc gcc-c++ make pkgconf-pkg-config \
         uv python3 python3-devel python3-pip \
         rust rust-src cargo rustfmt clippy \
+        golang \
         nodejs24 \
         sqlite \
         git \
@@ -83,7 +84,7 @@ ENV HOME=/home/${USERNAME}
 # just interactive shells. devcontainer.json's remoteEnv only reaches
 # VSCode-launched shells; non-interactive subshells (e.g. `just`/`cargo`
 # invoked by the agent) inherit image ENV instead, so bake it here.
-ENV PATH="/home/${USERNAME}/.foundry/bin:/home/${USERNAME}/.local/bin:${PATH}"
+ENV PATH="/home/${USERNAME}/go/bin:/home/${USERNAME}/.foundry/bin:/home/${USERNAME}/.local/bin:${PATH}"
 
 # Configure npm's global prefix to a user-writable dir so `npm i -g` needs no
 # sudo, and the bins land in ~/.local/bin (already on PATH via ENV above).
@@ -109,5 +110,6 @@ RUN curl -L https://foundry.paradigm.xyz | bash \
 # the image for the same ssh-attach reason as foundry. Matches host version era;
 # rebuild the image to bump.
 RUN npm install -g @earendil-works/pi-coding-agent
+RUN go install github.com/sandover/ergo/cmd/ergo@latest
 
 WORKDIR /workspaces/degenbot
