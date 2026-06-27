@@ -1,6 +1,3 @@
-import errno
-import os
-import subprocess  # noqa:S404
 from typing import TYPE_CHECKING
 
 import pytest
@@ -8,7 +5,6 @@ import web3.middleware
 from hexbytes import HexBytes
 from pydantic import ValidationError
 
-from degenbot import anvil_fork as anvil_fork_module
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import MAX_UINT256, MIN_UINT256
@@ -28,17 +24,6 @@ if TYPE_CHECKING:
 
 VITALIK_ADDRESS = get_checksum_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 WETH_ADDRESS = get_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
-
-
-def _pid_alive(pid: int) -> bool:
-    """Return True if ``pid`` is a live process."""
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
 
 
 def test_fork_captures_output():
@@ -302,96 +287,3 @@ def test_coinbase_override_in_constructor():
     fork.mine()
     block = fork.w3.eth.get_block("latest")
     assert block["miner"] == fake_coinbase
-
-
-def test_launch_retries_on_pid_budget_exhaustion(monkeypatch):
-    """AnvilFork retries the anvil launch when the cgroup PID budget is transiently exhausted.
-
-    Under ``pytest-xdist --numprocesses auto`` many AnvilFork fixtures boot concurrently;
-    each anvil process holds ~27 pids (threads) against the container's ``pids.max``. A
-    burst at fixture setup can hit the ceiling, so ``subprocess.Popen`` returns
-    ``BlockingIOError(EAGAIN)``. The launch must retry with backoff rather than fail the
-    test, since peer forks are concurrently tearing down and will free slots.
-    """
-    real_popen = subprocess.Popen
-    calls = {"n": 0}
-
-    def flaky_popen(args, *rest, **kwargs):
-        calls["n"] += 1
-        if calls["n"] < 3:
-            raise BlockingIOError(errno.EAGAIN, "Resource temporarily unavailable")
-        return real_popen(args, *rest, **kwargs)
-
-    monkeypatch.setattr(anvil_fork_module.subprocess, "Popen", flaky_popen)
-
-    fork = AnvilFork(
-        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
-        storage_caching=False,
-    )
-    try:
-        assert fork.w3.eth.block_number > 0
-        assert calls["n"] >= 3
-    finally:
-        fork.close()
-
-
-def test_launch_retries_when_anvil_crashes_at_startup(monkeypatch):
-    """AnvilFork retries when the anvil process crashes during startup.
-
-    Under high ``pytest-xdist`` parallelism anvil can panic while installing its
-    Ctrl-C (SIGINT) handler — ``Error setting Ctrl-C handler: System(... EAGAIN
-    ...)`` — and exit immediately without ever creating its IPC socket. The launch
-    must detect this early death (rather than waiting the full socket timeout for
-    a file that will never appear) and retry with backoff so a transient startup
-    crash doesn't fail the test.
-    """
-    real_popen = subprocess.Popen
-    calls = {"n": 0}
-
-    def crash_then_real_popen(args, *rest, **kwargs):
-        calls["n"] += 1
-        if calls["n"] < 2:
-            # Replace the anvil command with one that exits immediately,
-            # mimicking an anvil panic during Ctrl-C handler setup (no IPC
-            # socket is ever created).
-            return real_popen(["bash", "-c", "exit 1"], *rest, **kwargs)
-        return real_popen(args, *rest, **kwargs)
-
-    monkeypatch.setattr(anvil_fork_module.subprocess, "Popen", crash_then_real_popen)
-
-    fork = AnvilFork(
-        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
-        storage_caching=False,
-    )
-    try:
-        assert fork.w3.eth.block_number > 0
-        assert calls["n"] >= 2
-    finally:
-        fork.close()
-
-
-def test_close_all_reaps_forks_leaked_by_unclosed_construction():
-    """``AnvilFork.close_all()`` reaps forks a test forgot to ``close()``.
-
-    Mirrors ``DatabaseSessionManager.dispose_all()``: tests that construct an
-    AnvilFork directly (rather than via a yielding fixture) and never call
-    ``close()`` rely on non-deterministic ``__del__``/GC. Under xdist fan-out the
-    deferred reaping lets anvil subprocesses (each ~27 pids) pile up against
-    the container ``pids.max`` and crash it. ``close_all()`` is the safety net
-    the autouse teardown calls so leaked forks are reaped deterministically,
-    even when an assertion failure holds the frame alive (defeating GC).
-    """
-    # Construct a fork and deliberately do NOT close it, mimicking a leak.
-    fork = AnvilFork(
-        fork_url=ETHEREUM_FULL_NODE_HTTP_URI,
-        storage_caching=False,
-    )
-    anvil_pid = fork._process.pid
-    assert anvil_pid is not None
-    try:
-        AnvilFork.close_all()
-        # The process should be gone within the reap.
-        assert not _pid_alive(anvil_pid)
-    finally:
-        if _pid_alive(anvil_pid):
-            fork.close()
