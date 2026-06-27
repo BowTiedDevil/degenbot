@@ -44,6 +44,7 @@ RUN dnf install -y \
         git \
         just \
         sudo tmux vim htop procps-ng psmisc \
+        glibc-langpack-en \
     && dnf clean all
 
 # Create the dev user (uid 1000 to match host uid — avoids updateRemoteUserUID
@@ -59,7 +60,15 @@ RUN groupadd --gid "${USER_GID}" "${USERNAME}" \
         > /etc/sudoers.d/${USERNAME} \
     && chmod 0440 /etc/sudoers.d/${USERNAME}
 
-# UTF-8 locale so Python/tz behave.
+# UTF-8 locale so Python/tz behave. The ``C.UTF-8`` ENV defaults assume only
+# ``C.utf8`` exists; but VSCode's git extension runs on the host with
+# ``LC_ALL=en_US.UTF-8`` and forwards that env into the container when it
+# spawns git. Without the matching locale data installed (above:
+# ``glibc-langpack-en``) glibc's ``setlocale`` fails and every git invocation
+# prints ``cannot change locale (en_US.UTF-8): No such file or directory``.
+# Keeping both the langpack AND the ``C.UTF-8`` default means the container's
+# own processes stay on ``C.UTF-8`` while an injected ``en_US.UTF-8`` resolves
+# instead of warning.
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
