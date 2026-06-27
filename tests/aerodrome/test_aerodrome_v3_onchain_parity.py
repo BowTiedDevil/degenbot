@@ -1,38 +1,38 @@
-"""Aerodrome V3 on-chain parity — golden record/replay (T7 tracer bullet).
+"""Aerodrome V3 on-chain parity — golden record/replay (T7).
 
-First Base-chain proof of the ``GoldenOracle`` harness
-(``docs/architecture/golden-onchain-parity.md``). The Aerodrome V3 cbETH/WETH
-(0.01%) pool's ``quoteExactInputSingle`` is recorded once into a golden file
-(``tests/golden/data/...``), then asserted on replay with **no RPC and no
-secrets**.
+Golden conversion of the Aerodrome V3 ``quoteExactInputSingle`` exact-equality
+parity (``test_aerodrome_v3_pool_calculation`` in ``test_aerodrome_pools.py``).
+One representative pool (cbETH/WETH, 0.01%) with the full 13-multiplier x
+both-directions loop; the broad live loop stays as a live discovery gate.
 
-Unlike the Camelot V2 tracer (reserves-only), a V3 (concentrated-liquidity)
-pool needs tick state to simulate a swap, so the pool is built I/O-free
-(ADR-005) from a **tick-state cassette** recorded at the pinned block —
-``tests/fixtures/chain_data/8453/aerodrome_v3_cbeth_weth_block_46875151.json``
-(scalars ``sqrt_price_x96``/``tick``/``liquidity``/``fee``/``tick_spacing``
-plus 116 initialized ticks). Neither mode needs a fork for *construction*.
+Unlike the V2 tracers (reserves-only), a V3 (concentrated-liquidity) pool
+needs tick state to simulate a swap, so the pool is built I/O-free (ADR-005)
+from a **tick-state cassette** recorded at the pinned block
+(``tests/fixtures/chain_data/8453/aerodrome_v3_cbeth_weth_block_46875151.json``)
+— scalar state (``sqrt_price_x96``/``tick``/``liquidity``/``fee``/
+``tick_spacing``) plus the initialized ticks. The swap-input amounts derive
+from the pool's token balances at the pinned block (also in the cassette), so
+replay reproduces the exact inputs the record run used.
 
-- **Replay mode** (default, CI): reads the recorded int; the deferred
-  ``contract=`` callable is never invoked, so the Anvil fork is never created.
-  Fully offline.
-- **Record mode** (``--golden-mode=record``): the deferred callable spins an
-  Anvil fork of Base at the pinned block and calls the Aerodrome V3 quoter's
-  ``quoteExactInputSingle``; writes the golden file. The test's own ``assert``
-  still runs, so a record run is also a live parity gate.
+- **Replay mode** (default, CI): reads recorded ints; the deferred
+  ``contract=`` callables are never invoked, so no fork is created. Offline.
+- **Record mode** (``--golden-mode=record``): one Anvil fork of Base at the
+  pinned block is shared across the whole loop; each ``quoteExactInputSingle``
+  call is recorded. The test's own ``assert`` runs too — a record run is also a
+  live parity gate. Reverts are recorded as ``reverted`` entries and skipped
+  (the 0.75 x balance cbETH->WETH swap exceeds the pool's available liquidity
+  and reverts in the quoter itself).
 
-Pinned to Base block ``AERODROME_V3_PARITY_BLOCK`` (tip minus 1M), well inside
-``https://mainnet.base.org``'s keyless archive window (it serves deep-archive
-``eth_call`` incl. simulated nonpayable quoter calls; ``base-rpc.publicnode.com``
-prunes history and the keyed ``base.llamarpc.com`` is down). The golden stays
-re-recordable.
+Pinned to Base block 46,875,151 (tip minus ~1M), inside
+``https://mainnet.base.org``'s keyless archive window.
 """
 
 from __future__ import annotations
 
 import json
 import pathlib
-from typing import Any
+from contextlib import AbstractContextManager
+from typing import Any, Self
 
 import pytest
 
@@ -40,12 +40,11 @@ from degenbot.aerodrome.pools import AerodromeV3Pool
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.degenbot_rs import PyBot
-from degenbot.uniswap.v3_libraries.tick_math import MIN_SQRT_RATIO
+from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from tests.aerodrome.test_aerodrome_pools import AERODROME_V3_QUOTER_ABI
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v3_pool_factory import make_v3_pool
 
-# Pinned well inside mainnet.base.org's keyless archive window (tip ~47.8M).
 AERODROME_V3_PARITY_BLOCK = 46_875_151
 BASE_RPC_URI = "https://mainnet.base.org"
 
@@ -69,12 +68,20 @@ _CASSETTE_PATH = (
     / "aerodrome_v3_cbeth_weth_block_46875151.json"
 )
 
-# Amount in = int(0.001 * token0 balance at the pinned block). Recorded as a
-# constant so replay is fully deterministic (the balance is on-chain state).
-_AMOUNT_IN_CBETH = 562_672_230_181_659_840
-
-_ORACLE_KEY = (
-    f"{AERODROME_V3_CBETH_WETH_POOL_ADDRESS}|quoteExactInputSingle|cbETH->WETH|{_AMOUNT_IN_CBETH}"
+_TOKEN_AMOUNT_MULTIPLIERS = (
+    0.000000001,
+    0.00000001,
+    0.0000001,
+    0.000001,
+    0.00001,
+    0.0001,
+    0.001,
+    0.01,
+    0.1,
+    0.125,
+    0.25,
+    0.5,
+    0.75,
 )
 
 _PYBOT = PyBot()
@@ -85,16 +92,10 @@ def _load_cassette() -> dict[str, Any]:
 
 
 def _build_aerodrome_v3_cbeth_weth_io_free() -> AerodromeV3Pool:
-    """Build the Aerodrome V3 cbETH/WETH pool I/O-free from the tick cassette.
-
-    The cassette holds the scalar state + 116 initialized ticks recorded at
-    ``AERODROME_V3_PARITY_BLOCK`` via ``Bot.build_pool``. Both record and
-    replay modes build identically — no fork for construction.
-    """
+    """Build the Aerodrome V3 cbETH/WETH pool I/O-free from the tick cassette."""
     cassette = _load_cassette()
     scalars = cassette["scalars"]
     tick_data = {int(tick): tuple(vals) for tick, vals in cassette["tick_data"].items()}
-
     cbeth = make_erc20(
         _PYBOT,
         _CBETH_ADDRESS,
@@ -128,62 +129,122 @@ def _build_aerodrome_v3_cbeth_weth_io_free() -> AerodromeV3Pool:
     )
 
 
-def _record_quote_exact_input_single() -> int:
-    """Record-mode oracle: spin a pinned Base fork + call the quoter.
+def _parity_cases(
+    lp: AerodromeV3Pool,
+    cassette: dict[str, Any],
+) -> list[tuple[str, Any, Any, int, int]]:
+    """Build ``(key, token_in, token_out, amount_in, sqrt_price_limit)`` cases.
 
-    Replay never invokes this (``golden.check`` returns the recorded int
-    without calling ``contract=``), so the Anvil fork is only ever created
-    under ``--golden-mode=record``.
+    Amounts derive from the pool's recorded token balances at the pinned block.
     """
-    fork = AnvilFork(
-        fork_url=BASE_RPC_URI,
-        fork_block=AERODROME_V3_PARITY_BLOCK,
-        storage_caching=True,
-        anvil_opts=["--accounts=0", "--optimism"],
+    pairs = (
+        (lp.token0, lp.token1, cassette["balance_token0"], MIN_SQRT_RATIO + 1),
+        (lp.token1, lp.token0, cassette["balance_token1"], MAX_SQRT_RATIO - 1),
     )
-    try:
-        quoter = fork.w3.eth.contract(
-            address=AERODROME_V3_QUOTER_ADDRESS,
-            abi=AERODROME_V3_QUOTER_ABI,
-        )
-        amount_out, *_ = quoter.functions.quoteExactInputSingle(
+    cases: list[tuple[str, Any, Any, int, int]] = []
+    for token_in, token_out, balance_in, sqrt_limit in pairs:
+        for mult in _TOKEN_AMOUNT_MULTIPLIERS:
+            amount_in = int(mult * balance_in)
+            if amount_in == 0:
+                continue
+            key = (
+                f"{lp.address}|quoteExactInputSingle|"
+                f"{token_in.symbol}->{token_out.symbol}|{amount_in}"
+            )
+            cases.append((key, token_in, token_out, amount_in, sqrt_limit))
+    return cases
+
+
+class _RecordFork(AbstractContextManager):
+    """One pinned Base fork shared across the test's whole record pass.
+
+    In replay ``fork`` stays ``None`` (no fork is created); the deferred
+    ``contract=`` callables are never invoked.
+    """
+
+    def __init__(self, *, recording: bool) -> None:
+        self._recording = recording
+        self.fork: AnvilFork | None = None
+        self.contract: Any = None
+
+    def __enter__(self) -> Self:
+        if self._recording:
+            self.fork = AnvilFork(
+                fork_url=BASE_RPC_URI,
+                fork_block=AERODROME_V3_PARITY_BLOCK,
+                storage_caching=True,
+                anvil_opts=["--accounts=0", "--optimism"],
+            )
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        if self.fork is not None:
+            self.fork.close()
+
+
+def _quote_callable(
+    contract: Any,
+    amount: int,
+    token_in: str,
+    token_out: str,
+    tick_spacing: int,
+    sqrt_limit: int,
+) -> Any:
+    """Deferred ``contract=`` callable for one ``quoteExactInputSingle`` query.
+
+    Returns ``amounts_out[0]``. In replay ``contract`` is ``None`` and this is
+    never invoked.
+    """
+
+    def _call() -> int:
+        amount_out, *_ = contract.functions.quoteExactInputSingle(
             [
-                _CBETH_ADDRESS,  # tokenIn (cbETH, token0)
-                _WETH_ADDRESS,  # tokenOut (WETH, token1)
-                _AMOUNT_IN_CBETH,  # amountIn
-                1,  # tickSpacing (0.01% tier)
-                MIN_SQRT_RATIO + 1,  # sqrtPriceLimitX96 (full range, zero-for-one)
+                token_in,
+                token_out,
+                amount,
+                tick_spacing,
+                sqrt_limit,
             ],
         ).call()
         return amount_out
-    finally:
-        fork.close()
+
+    return _call
 
 
 @pytest.mark.base
 @pytest.mark.onchain_oracle
 def test_aerodrome_v3_cbeth_weth_quote(golden_factory) -> None:
-    """Aerodrome V3 cbETH/WETH: local calc == golden(= on-chain quoter).
-
-    Pool built I/O-free from the tick cassette (no RPC in either mode). The
-    on-chain truth is the quoter's ``quoteExactInputSingle`` for ~0.056 cbETH
-    -> WETH at the pinned block, recorded into the golden file; replay reads
-    it with no fork.
-    """
-    lp = _build_aerodrome_v3_cbeth_weth_io_free()
-
+    """Aerodrome V3 cbETH/WETH: local calc == golden(quoteExactInputSingle)."""
     golden = golden_factory(chain_id=8453, block_number=AERODROME_V3_PARITY_BLOCK)
-    oracle = golden.check(
-        _ORACLE_KEY,
-        contract=_record_quote_exact_input_single,
-    )
-    if oracle.reverted:
-        pytest.skip(
-            f"on-chain quoteExactInputSingle reverted at record time: {oracle.exception_type}",
-        )
+    cassette = _load_cassette()
+    lp = _build_aerodrome_v3_cbeth_weth_io_free()
+    cases = _parity_cases(lp, cassette)
 
-    calc_amount_out = lp.calculate_tokens_out_from_tokens_in(
-        token_in=lp.token0,
-        token_in_quantity=_AMOUNT_IN_CBETH,
-    )
-    assert calc_amount_out == oracle.value
+    with _RecordFork(recording=golden.is_recording) as ctx:
+        if golden.is_recording:
+            assert ctx.fork is not None
+            ctx.contract = ctx.fork.w3.eth.contract(
+                address=AERODROME_V3_QUOTER_ADDRESS,
+                abi=AERODROME_V3_QUOTER_ABI,
+            )
+        for key, token_in, token_out, amount_in, sqrt_limit in cases:
+            oracle = golden.check(
+                key,
+                contract=_quote_callable(
+                    ctx.contract,
+                    amount_in,
+                    token_in.address,
+                    token_out.address,
+                    lp.tick_spacing,
+                    sqrt_limit,
+                ),
+            )
+            if oracle.reverted:
+                # Mirrors the live test's revert handling: the quoter reverts
+                # on swaps exceeding available liquidity (e.g. 0.75 x balance).
+                continue
+            calc = lp.calculate_tokens_out_from_tokens_in(
+                token_in=token_in,
+                token_in_quantity=amount_in,
+            )
+            assert calc == oracle.value, f"{key}: helper={calc} quoter={oracle.value}"
