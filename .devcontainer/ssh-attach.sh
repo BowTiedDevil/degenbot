@@ -66,6 +66,4 @@ USER="dev"
 # tmux new -A attaches to an existing session or creates a new one.
 exec podman exec -it --user "$USER" \
     --env HOME="/home/$USER" \
-    --env TERM="${TERM:-xterm-256color}" \
-    --env COLORTERM="${COLORTERM:-}" \
-    "$name" tmux new -As pi
+    "$name" tmux new -As dev
