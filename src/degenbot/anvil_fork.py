@@ -275,27 +275,37 @@ class AnvilFork:
 
     def close(self, timeout: int = 10) -> None:
         """Perform close."""
-        # Close the web3 IPC socket so it is not left for GC to finalize (which raises
-        # a ResourceWarning under strict warning filters).
-        provider = getattr(self, "w3", None)
-        if provider is not None:
-            _socket = getattr(getattr(provider, "provider", None), "_socket", None)
-            sock = getattr(_socket, "sock", None)
-            if sock is not None:
-                try:
-                    sock.close()
-                except OSError:
-                    pass
+        self._close_ipc_socket()
 
-        if getattr(self, "_process", None):
-            self._process.terminate()
-            self._process.wait(timeout)
+        process = getattr(self, "_process", None)
+        if process is not None:
+            process.terminate()
+            process.wait(timeout)
             self.ipc_filename.unlink(missing_ok=True)
             del self._process
 
         if not self.preserve_capture:
             self.stderr_capture_filename.unlink(missing_ok=True)
             self.stdout_capture_filename.unlink(missing_ok=True)
+
+    def _close_ipc_socket(self) -> None:
+        """Close the web3 IPC socket so it is not left for GC to finalize.
+
+        A ``__del__``-driven ``close()`` may run against a partially-constructed
+        instance (``__init__`` raised before ``self.w3`` was assigned), so the
+        web3 attribute is read defensively. ``_socket`` is private to
+        :class:`web3.providers.ipc.IPCProvider` (absent from ``BaseProvider``),
+        so it too is read via ``getattr`` rather than a cast.
+        """
+        w3 = getattr(self, "w3", None)
+        if w3 is None:
+            return
+        persistent_socket = getattr(w3.provider, "_socket", None)
+        if persistent_socket is not None:
+            sock = persistent_socket.sock
+            if sock is not None:
+                with contextlib.suppress(OSError):
+                    sock.close()
 
     def mine(self) -> None:
         """Perform mine.
