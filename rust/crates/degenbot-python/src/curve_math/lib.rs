@@ -135,6 +135,7 @@ pub fn curve_stableswap_get_d(
 ///
 /// Returns `ValueError` ("Index out of bounds") if `i == j` or out of range; "Not converged" after 255 iterations; `OverflowError` on overflow.
 #[pyfunction(signature = (i, j, x, xp, amp, n_coins, a_precision, y_variant, d_variant))]
+#[allow(clippy::too_many_arguments)] // mirrors the Vyper contract's 9-arg signature
 pub fn curve_stableswap_get_y(
     i: usize,
     j: usize,
@@ -251,9 +252,6 @@ pub fn add_curve_math_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(curve_stableswap_get_y, m)?)?;
     m.add_function(wrap_pyfunction!(curve_stableswap_get_y_d, m)?)?;
     m.add_function(wrap_pyfunction!(curve_stableswap_newton_y, m)?)?;
-    m.add_function(wrap_pyfunction!(
-        curve_stableswap_reduction_coefficient,
-        m
-    )?)?;
+    m.add_function(wrap_pyfunction!(curve_stableswap_reduction_coefficient, m)?)?;
     Ok(())
 }

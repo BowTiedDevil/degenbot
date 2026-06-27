@@ -89,9 +89,7 @@ RUST_BRIDGE_LOGGER_NAMES = (
 #: lines never reached stdout, and 0 ``(recurring)`` hits appeared across all 27
 #: permutation runs. Configuring the ``degenbot`` package root with the same
 #: stdout handler + INFO level makes the arbitrage subtree visible.
-PY_PACKAGE_ROOT_LOGGER_NAMES = (
-    "degenbot",
-)
+PY_PACKAGE_ROOT_LOGGER_NAMES = ("degenbot",)
 
 # Attach the same stdout handler + level to each Rust crate-root logger so
 # Rust records are visible through the package's stdout stream/format.

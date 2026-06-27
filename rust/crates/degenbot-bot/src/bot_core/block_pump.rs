@@ -869,16 +869,13 @@ impl BlockPump {
             for log in &block_logs {
                 match clock.observe_log(block, log.removed) {
                     LogDecision::TombstonePrevious(prev) => {
-                        let prev_meta =
-                            block_metadata.get(&prev).copied().unwrap_or_default();
+                        let prev_meta = block_metadata.get(&prev).copied().unwrap_or_default();
                         self.sink.finalize_block(
-                            prev,
-                            &prev_meta,
+                            prev, &prev_meta,
                             // backfill has no `last_solved_block`/`has_logs`
                             // locals to pump; pass throwaways — `on_drain`
                             // below is the solve trigger for the block itself.
-                            &mut 0,
-                            &mut false,
+                            &mut 0, &mut false,
                         );
                         clock.advance_to_drained(prev);
                         self.bot.dispatch_log(log);
@@ -1201,7 +1198,10 @@ mod tests {
         pump.run_test_loop(combined, 100).await;
 
         let finalized = sink.finalized.lock().unwrap().clone();
-        assert!(!finalized.is_empty(), "log 102 should tombstone+finalize 101");
+        assert!(
+            !finalized.is_empty(),
+            "log 102 should tombstone+finalize 101"
+        );
         let (block, metadata) = &finalized[0];
         assert_eq!(*block, 101, "first finalize is for block 101");
         assert_eq!(
@@ -1295,8 +1295,13 @@ mod tests {
             gas_used: 11,
             gas_limit: 12,
         };
-        let tombstone_log =
-            make_v2_sync_log(Address::from([0xfcu8; 20]), U256::from(1), U256::from(2), w + 1, false);
+        let tombstone_log = make_v2_sync_log(
+            Address::from([0xfcu8; 20]),
+            U256::from(1),
+            U256::from(2),
+            w + 1,
+            false,
+        );
         let events: Vec<WsEvent> = vec![
             WsEvent::BlockHeader {
                 number: w,
@@ -1410,7 +1415,10 @@ mod tests {
         // snapshotted when header W+1 arrived). Proves the anchor held: we
         // advanced W→W+1→W+2 in order, never jumping from 0.
         let finalized = sink.finalized.lock().unwrap().clone();
-        assert!(!finalized.is_empty(), "log w+2 should tombstone+finalize w+1");
+        assert!(
+            !finalized.is_empty(),
+            "log w+2 should tombstone+finalize w+1"
+        );
         assert_eq!(finalized[0].0, w + 1, "first finalize is for block w+1");
         assert_eq!(
             finalized[0].1, meta_w1,
@@ -1665,8 +1673,8 @@ mod tests {
         let r8 = make_v2_sync_log(pool_addr, U256::from(9), U256::from(9), 8, true);
         let r7 = make_v2_sync_log(pool_addr, U256::from(9), U256::from(9), 7, true);
         let s9 = make_v2_sync_log(pool_addr, U256::from(1_700), U256::from(2_700), 9, false);
-        let combined = stream::iter(vec![WsEvent::Log(r8), WsEvent::Log(r7), WsEvent::Log(s9)])
-            .boxed();
+        let combined =
+            stream::iter(vec![WsEvent::Log(r8), WsEvent::Log(r7), WsEvent::Log(s9)]).boxed();
         pump.run_test_loop(combined, 5).await;
 
         // The reorg unwound 7 and 8 (restore to genesis), then the forward
@@ -1695,8 +1703,8 @@ mod tests {
         let s7 = make_v2_sync_log(pool_addr, U256::from(1_500), U256::from(2_500), 7, false);
         let s8 = make_v2_sync_log(pool_addr, U256::from(1_600), U256::from(2_600), 8, false);
         let late = make_v2_sync_log(pool_addr, U256::from(9_999), U256::from(9_999), 7, false);
-        let combined = stream::iter(vec![WsEvent::Log(s7), WsEvent::Log(s8), WsEvent::Log(late)])
-            .boxed();
+        let combined =
+            stream::iter(vec![WsEvent::Log(s7), WsEvent::Log(s8), WsEvent::Log(late)]).boxed();
         pump.run_test_loop(combined, 5).await;
 
         assert!(
@@ -1725,14 +1733,20 @@ mod tests {
         let (mut pump, sink) = pump_for_test(Some(100));
         let pool_addr = Address::from([0x55u8; 20]);
         let mk = |r0, r1| {
-            WsEvent::Log(make_v2_sync_log(pool_addr, U256::from(r0), U256::from(r1), 101, false))
+            WsEvent::Log(make_v2_sync_log(
+                pool_addr,
+                U256::from(r0),
+                U256::from(r1),
+                101,
+                false,
+            ))
         };
         // 3 same-block sync logs, then stream exhaustion. Under the wall-clock
         // debounce the 50ms timer never fires before Ok(None) returns → 0
         // sends. Under the quiesce gate, after the 3rd log applies the settle
         // probe (timeout(ZERO) on the exhausted stream) flushes on_send once.
-        let combined = stream::iter(vec![mk(1_500, 2_500), mk(1_600, 2_600), mk(1_700, 2_700)])
-            .boxed();
+        let combined =
+            stream::iter(vec![mk(1_500, 2_500), mk(1_600, 2_600), mk(1_700, 2_700)]).boxed();
         pump.run_test_loop(combined, 100).await;
 
         let sent = sink.sent.lock().unwrap().clone();
