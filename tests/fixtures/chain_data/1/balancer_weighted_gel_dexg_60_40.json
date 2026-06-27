@@ -1,0 +1,34 @@
+{
+  "chain_id": 1,
+  "block": 24407242,
+  "address": "0xe8075304A388f2f9B2af61f502741a88Ff21D9A4",
+  "pool_id": "0xe8075304a388f2f9b2af61f502741a88ff21d9a400020000000000000000006b",
+  "vault": "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+  "name": "gel_dexg_60_40",
+  "desc": "GEL/DEXG 60/40, 0.1761% fee",
+  "tokens": [
+    {
+      "address": "0x94EC4e3a7c5068Ae4A035f702f2cd5a6Da9C5cC1",
+      "name": "DEXG Enhanced Liquidity",
+      "symbol": "GEL",
+      "decimals": 18
+    },
+    {
+      "address": "0xB81D70802a816B5DacBA06D708B5acF19DcD436D",
+      "name": "Dextoken Governance",
+      "symbol": "DEXG",
+      "decimals": 18
+    }
+  ],
+  "balances": [
+    105034099075562857610562,
+    183495310306396699229
+  ],
+  "fee": "17609/10000000",
+  "weights": [
+    600000000000000000,
+    400000000000000000
+  ],
+  "pow_version": "v1",
+  "n_tokens": 2
+}

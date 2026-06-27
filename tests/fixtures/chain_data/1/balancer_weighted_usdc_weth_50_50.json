@@ -1,0 +1,34 @@
+{
+  "chain_id": 1,
+  "block": 24407242,
+  "address": "0x96646936b91d6B9D7D0c47C496AfBF3D6ec7B6f8",
+  "pool_id": "0x96646936b91d6b9d7d0c47c496afbf3d6ec7b6f8000200000000000000000019",
+  "vault": "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+  "name": "usdc_weth_50_50",
+  "desc": "USDC/WETH 50/50, 0.30% fee, mixed decimals (6/18)",
+  "tokens": [
+    {
+      "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "name": "USD Coin",
+      "symbol": "USDC",
+      "decimals": 6
+    },
+    {
+      "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "name": "Wrapped Ether",
+      "symbol": "WETH",
+      "decimals": 18
+    }
+  ],
+  "balances": [
+    88868983841,
+    42484865836432363093
+  ],
+  "fee": "3/1000",
+  "weights": [
+    500000000000000000,
+    500000000000000000
+  ],
+  "pow_version": "v1",
+  "n_tokens": 2
+}
