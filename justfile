@@ -66,16 +66,18 @@ test-python: compile-test-contracts
     uv run pytest --ff -x -q --no-header
 
 # Run only on-chain-oracle parity tests in REPLAY mode (offline, CI-safe, no RPC/secrets).
-# Single-process (-n0): parametrized parity tests share one golden file per
-# test function and accumulate keys across params; xdist parallelism would race
-# the shared file (last-writer-wins, losing keys).
+# Replay is read-only (asserts against recorded ints), so xdist parallelism is
+# safe — the shared-golden-file race only affects record mode (see below).
 test-offline-parity: compile-test-contracts
-    uv run pytest -m onchain_oracle -q --no-header -n0
+    uv run pytest -m onchain_oracle -q --no-header
 
 # Re-populate golden files for on-chain-oracle parity tests. Requires a working
 # fork (tests.env RPC or local node). Pass a nodeid to refresh a single test:
 #   just record-golden -- tests/uniswap/v3/test_uniswap_v3_liquidity_pool.py::test_cached_calculations
-# Single-process for the same shared-golden-file reason as test-offline-parity.
+# Single-process (-n0): parametrized parity tests share one golden file per
+# test function and accumulate keys across params; xdist parallelism would race
+# the shared file (last-writer-wins, losing keys). Replay is read-only and safe
+# under xdist, but record accumulates writes.
 record-golden *args: compile-test-contracts
     DEGENBOT_GOLDEN_MODE=record uv run pytest -m onchain_oracle -q --no-header -n0 {{ args }}
 
