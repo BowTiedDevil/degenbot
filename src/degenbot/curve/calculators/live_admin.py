@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 
-from degenbot.calculations.stableswap import stableswap_get_y
+from degenbot.degenbot_rs import curve_stableswap_get_y
 from degenbot.exceptions.pool import EVMRevertError
 
 if TYPE_CHECKING:
@@ -99,16 +99,16 @@ class LiveAdminDynamicDyCalculator:
             x = xp_[i] + dx
 
         try:
-            y = stableswap_get_y(
+            y = curve_stableswap_get_y(
                 i,
                 j,
-                x=x,
-                xp=xp_,
-                amp=inputs.amp,
-                n_coins=inputs.n_coins,
-                a_precision=inputs.a_precision,
-                y_variant=inputs.y_variant,
-                d_variant=inputs.d_variant,
+                x,
+                list(xp_),
+                inputs.amp,
+                inputs.n_coins,
+                inputs.a_precision,
+                inputs.y_variant.value,
+                inputs.d_variant.value,
             )
         except ValueError as e:
             raise EVMRevertError(error=str(e)) from e

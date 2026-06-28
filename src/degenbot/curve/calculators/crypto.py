@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from degenbot.curve.types import CurveStableswapPoolState
 
-from degenbot.calculations.stableswap import stableswap_newton_y, stableswap_reduction_coefficient
 from degenbot.curve.types import DyCalculationInputs, SwapStyle
+from degenbot.degenbot_rs import curve_stableswap_newton_y, curve_stableswap_reduction_coefficient
 from degenbot.exceptions.pool import EVMRevertError
 
 
@@ -75,14 +75,14 @@ class CryptoDyCalculator:
 
         amp = inputs.amp
         try:
-            y = stableswap_newton_y(
+            y = curve_stableswap_newton_y(
                 amp,
                 gamma_val,
-                xp=xp_,
-                d=d,
-                token_index=j,
-                n_coins=n_coins,
-                a_multiplier=inputs.a_precision,
+                list(xp_),
+                d,
+                j,
+                n_coins,
+                inputs.a_precision,
             )
         except ValueError as e:
             raise EVMRevertError(error=str(e)) from e
@@ -93,7 +93,7 @@ class CryptoDyCalculator:
             dy = dy * inputs.PRECISION // price_scale[j - 1]
         dy //= precisions[j]
 
-        f = stableswap_reduction_coefficient(xp_, inputs.fee_gamma, n_coins)
+        f = curve_stableswap_reduction_coefficient(list(xp_), inputs.fee_gamma, n_coins)
         fee_calc = (inputs.mid_fee * f + inputs.out_fee * (10**18 - f)) // 10**18
 
         dy -= fee_calc * dy // 10**10
