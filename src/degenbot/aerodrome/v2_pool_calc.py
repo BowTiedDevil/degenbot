@@ -14,11 +14,11 @@ from __future__ import annotations
 from fractions import Fraction
 from typing import TYPE_CHECKING, Literal
 
-from degenbot.calculations.solidly_stable import (
-    calc_exact_in_stable,
-    calc_exact_in_volatile,
-    calc_k,
-    get_y_solidly,
+from degenbot.degenbot_rs import (
+    solidly_calc_exact_in_stable_solidly as _rs_calc_exact_in_stable_solidly,
+)
+from degenbot.degenbot_rs import (
+    solidly_calc_exact_in_volatile as _rs_calc_exact_in_volatile,
 )
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import (
@@ -268,12 +268,13 @@ class AerodromeV2PoolCalc:
             The computed integer value.
 
         """
-        return calc_exact_in_volatile(
-            amount_in=amount_in,
-            token_in=token_in,
-            reserves0=reserves0,
-            reserves1=reserves1,
-            fee=fee,
+        return _rs_calc_exact_in_volatile(
+            amount_in,
+            token_in,
+            reserves0,
+            reserves1,
+            fee.numerator,
+            fee.denominator,
         )
 
     @staticmethod
@@ -293,16 +294,15 @@ class AerodromeV2PoolCalc:
             The computed integer value.
 
         """
-        return calc_exact_in_stable(
-            amount_in=amount_in,
-            token_in=token_in,
-            reserves0=reserves0,
-            reserves1=reserves1,
-            decimals0=decimals0,
-            decimals1=decimals1,
-            fee=fee,
-            k_func=calc_k,
-            get_y_func=get_y_solidly,
+        return _rs_calc_exact_in_stable_solidly(
+            amount_in,
+            token_in,
+            reserves0,
+            reserves1,
+            decimals0,
+            decimals1,
+            fee.numerator,
+            fee.denominator,
         )
 
     @staticmethod

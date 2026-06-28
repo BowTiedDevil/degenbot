@@ -46,6 +46,9 @@ pub use degenbot_curve_math;
 /// Balancer V2 math (`FixedPoint` / `LogExpMath` / `WeightedMath` / `StableMath` — pure-Rust leaf).
 pub use degenbot_balancer_math;
 
+/// Solidly / Aerodrome / Camelot stable-pool invariant math (pure-Rust leaf).
+pub use degenbot_solidly_math;
+
 /// Concentrated-liquidity math (`cl_lib`, `tick_math`).
 pub use degenbot_cl_math;
 
