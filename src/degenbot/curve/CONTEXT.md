@@ -84,8 +84,8 @@
 - A **Pool** holds a **PerBlockCache** (`_cache`) that owns per-block cache fields with accessor methods (`get_cached_*`) implementing try-cache→call-provider→store→return; on cache miss they delegate to **CurveDataProvider**. `PerBlockCache` is mirror-free — `get_cached_virtual_price()` resolves its own dependencies inline.
 - **DyCalculator** objects are held by **PoolStrategies** and replace dispatch branches in `get_dy()` / `_get_dy_underlying()`
 - **DyCalculationInputs** is constructed by `get_dy()` before calling the **DyCalculator**; all I/O, rate resolution, and cache lookups happen in `get_dy()`, so the calculator receives only pre-resolved data with no private member access
-- Calculators call pure `stableswap_get_y()` and `stableswap_newton_y()` directly from `calculations/stableswap.py`, passing variant enums (`d_variant`, `y_variant`, `yd_variant`) and `a_precision` from `DyCalculationInputs` — no closures, no pool references
-- Pure math functions in `calculations/stableswap.py` raise `ValueError`; pool wrappers catch and re-raise as `EVMRevertError`
+- Calculators call the pure-Rust solvers through `degenbot_rs.curve_stableswap_get_y` / `_newton_y` / `_reduction_coefficient` (the `degenbot-curve-math` leaf), passing variant enums as their `.value` int (`d_variant`, `y_variant`, `yd_variant`) and `a_precision` from `DyCalculationInputs` — no closures, no pool references
+- The Rust leaf raises `ValueError` on non-convergence / overflow; pool + calculator wrappers catch and re-raise as `EVMRevertError`. (The Python `calculations/stableswap.py` oracle retired under §4.3 once every variant — standard/crypto/live_admin/metapool — plus the companion auxiliary helpers `_get_d`/`_get_y`/`_get_y_d`/`_newton_y`/`_reduction_coefficient` — routed through Rust; byte-for-byte parity is covered by the frozen `degenbot-curve-math/tests/oracle_crosscheck.rs` snapshot.)
 - `to_hop_state()` supports **Pair Selection** via `token_in`/`token_out` keyword-only kwargs; when both provided they resolve against `self.tokens` (top-level coins only); metapool-underlying swaps should use `get_dy()` directly
 
 ## Resolved Ambiguities

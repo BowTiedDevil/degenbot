@@ -11,16 +11,15 @@ scope per the leaf's pure-math boundary).
 The leaf is byte-for-byte cross-checked vs the Python oracle by the frozen
 ``oracle_crosscheck.rs`` snapshot at the unit level; this module is the
 orchestration-level gate — it spies on the Rust seam to prove the routed
-solve hits it with the right arguments, and recomputes the solve via the
-Python oracle (the still-live ``calculations/stableswap.stableswap_get_y``)
-to prove byte-equivalence of the routed y.
+solve hits it with the right arguments (§4.5 delegation-detection). The
+Python ``calculations/stableswap.py`` port + its parity recomputation
+retired under §4.3 once all variants routed (only the Rust leaf remains).
 """
 
 from __future__ import annotations
 
 import pytest
 
-from degenbot.calculations.stableswap import stableswap_get_y
 from degenbot.curve.calculators import standard as standard_mod
 from degenbot.curve.calculators.standard import StandardDyCalculator
 from degenbot.curve.types import DVariant, DyCalculationInputs, SwapStyle, YVariant
@@ -100,26 +99,9 @@ class TestStandardDyRouting:
         assert y_variant == YVariant.STANDARD.value
         assert d_variant == DVariant.STANDARD.value
 
-        # Parity: the routed y (recovered from the returned dy) matches the
-        # Python oracle over the SAME solve inputs. Reverse the FEE_THEN_RATE
-        # conversion to recover y: dy = (raw_dy - fee) * PRECISION // rates[j],
-        # with raw_dy = xp[j] - y - 1, fee = fee * raw_dy // FEE_DENOMINATOR,
-        # rates[j] = PRECISION (identity) → dy = raw_dy - fee.
-        y_oracle = stableswap_get_y(
-            i,
-            j,
-            x=x,
-            xp=xp,
-            amp=amp,
-            n_coins=n_coins,
-            a_precision=a_precision,
-            y_variant=YVariant.STANDARD,
-            d_variant=DVariant.STANDARD,
-        )
-        raw_dy = xp[j] - y_oracle - 1
-        fee = inputs.fee * raw_dy // FEE_DENOMINATOR
-        expected_dy = (raw_dy - fee) * PRECISION // PRECISION
-        assert dy == expected_dy
-
-        # And the routed y (the Rust fn over the recorded args) == the Python oracle y.
-        assert curve_stableswap_get_y(*args) == y_oracle
+        # Parity is proven byte-for-byte at the Rust unit level by the
+        # frozen `degenbot-curve-math/tests/oracle_crosscheck.rs` snapshot
+        # (every D/Y/Y_D/Newton-Y/reduction variant). §4.5 mandates the
+        # delegation-detection here — assert the seam was hit with the right
+        # args; the parity recompute against the Python oracle retired with
+        # the Python port (§4.3).

@@ -14,13 +14,6 @@ from weakref import WeakSet
 from eth_typing import ChecksumAddress
 from web3.types import BlockIdentifier
 
-from degenbot.calculations.stableswap import (
-    stableswap_get_d,
-    stableswap_get_y,
-    stableswap_get_y_d,
-    stableswap_newton_y,
-    stableswap_reduction_coefficient,
-)
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.curve.per_block_cache import PerBlockCache
 from degenbot.curve.stableswap_pool_state import StableswapPoolState
@@ -35,7 +28,14 @@ from degenbot.curve.types import (
     SwapStyle,
     YVariant,
 )
-from degenbot.degenbot_rs import PyLiquidityPool
+from degenbot.degenbot_rs import (
+    PyLiquidityPool,
+    curve_stableswap_get_d,
+    curve_stableswap_get_y,
+    curve_stableswap_get_y_d,
+    curve_stableswap_newton_y,
+    curve_stableswap_reduction_coefficient,
+)
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.arbitrage import NoLiquidity
@@ -801,12 +801,12 @@ class CurveStableswapPool(
 
         """
         try:
-            return stableswap_get_d(
-                xp=_xp,
-                amp=_amp,
-                n_coins=len(self._tokens),
-                a_precision=self.A_PRECISION,
-                d_variant=self._strategies.d_variant,
+            return curve_stableswap_get_d(
+                list(_xp),
+                _amp,
+                len(self._tokens),
+                self.A_PRECISION,
+                self._strategies.d_variant.value,
             )
         except ValueError as e:
             raise EVMRevertError(error=str(e)) from e
@@ -831,16 +831,16 @@ class CurveStableswapPool(
             else self._a(timestamp=self._cache.get_cached_block_timestamp(self.update_block))
         )
         try:
-            return stableswap_get_y(
+            return curve_stableswap_get_y(
                 i,
                 j,
-                x=x,
-                xp=xp,
-                amp=amp,
-                n_coins=len(self._tokens),
-                a_precision=self.A_PRECISION,
-                y_variant=self._strategies.y_variant,
-                d_variant=self._strategies.d_variant,
+                x,
+                list(xp),
+                amp,
+                len(self._tokens),
+                self.A_PRECISION,
+                self._strategies.y_variant.value,
+                self._strategies.d_variant.value,
             )
         except ValueError as e:
             raise EVMRevertError(error=str(e)) from e
@@ -858,14 +858,14 @@ class CurveStableswapPool(
 
         """
         try:
-            return stableswap_get_y_d(
+            return curve_stableswap_get_y_d(
                 a,
                 i,
-                xp=xp,
-                d=d,
-                n_coins=len(self._tokens),
-                a_precision=self.A_PRECISION,
-                yd_variant=self._strategies.yd_variant,
+                list(xp),
+                d,
+                len(self._tokens),
+                self.A_PRECISION,
+                self._strategies.yd_variant.value,
             )
         except ValueError as e:
             raise EVMRevertError(error=str(e)) from e
@@ -919,14 +919,14 @@ class CurveStableswapPool(
 
         """
         try:
-            return stableswap_newton_y(
+            return curve_stableswap_newton_y(
                 ann,
                 gamma,
-                xp=xp,
-                d=d,
-                token_index=token_index,
-                n_coins=len(self._tokens),
-                a_multiplier=self.A_PRECISION,
+                list(xp),
+                d,
+                token_index,
+                len(self._tokens),
+                self.A_PRECISION,
             )
         except ValueError as e:
             raise EVMRevertError(
@@ -943,7 +943,7 @@ class CurveStableswapPool(
             The computed integer value.
 
         """
-        return stableswap_reduction_coefficient(x, fee_gamma, n_coins)
+        return curve_stableswap_reduction_coefficient(list(x), fee_gamma, n_coins)
 
     def calculate_tokens_out_from_tokens_in(
         self,
