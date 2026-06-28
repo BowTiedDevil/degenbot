@@ -5,8 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import eth_abi.abi
-
+from degenbot.abi_adapter import decode as abi_decode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 
@@ -82,11 +81,11 @@ class V3BuilderBase:
             The computed value.
 
         """
-        (factory_raw,) = eth_abi.abi.decode(types=["address"], data=factory_result)
-        (token0_raw,) = eth_abi.abi.decode(types=["address"], data=token0_result)
-        (token1_raw,) = eth_abi.abi.decode(types=["address"], data=token1_result)
-        (fee,) = eth_abi.abi.decode(types=["uint24"], data=fee_result)
-        (tick_spacing,) = eth_abi.abi.decode(types=["int24"], data=tick_spacing_result)
+        (factory_raw,) = abi_decode(types=["address"], data=factory_result)
+        (token0_raw,) = abi_decode(types=["address"], data=token0_result)
+        (token1_raw,) = abi_decode(types=["address"], data=token1_result)
+        (fee,) = abi_decode(types=["uint24"], data=fee_result)
+        (tick_spacing,) = abi_decode(types=["int24"], data=tick_spacing_result)
 
         return V3ImmutableData(
             factory=get_checksum_address(factory_raw),
@@ -107,7 +106,7 @@ class V3BuilderBase:
             The computed value.
 
         """
-        sqrt_price_x96, tick, *_ = eth_abi.abi.decode(
+        sqrt_price_x96, tick, *_ = abi_decode(
             types=["uint160", "int24", "uint16", "uint16", "uint16", "uint8", "bool"],
             data=slot0_result,
         )

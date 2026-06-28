@@ -8,13 +8,13 @@ This module centralizes the logic for handling complex liquidation patterns:
 
 from collections.abc import Callable
 
-import eth_abi.abi
 from eth_typing import ChecksumAddress
 
 from degenbot.aave.events import ScaledTokenEventType
 from degenbot.aave.operation_types import OperationType
 from degenbot.aave.operations import Operation, ScaledTokenEvent
 from degenbot.aave.pattern_types import LiquidationGroup, LiquidationPatternContext
+from degenbot.abi_adapter import decode as abi_decode
 from degenbot.contract.decoding import decode_address
 from degenbot.logging import logger
 
@@ -78,7 +78,7 @@ def detect_liquidation_patterns(
             groups[key] = LiquidationGroup(user=user, debt_v_token=debt_v_token)
 
         # Extract debt_to_cover
-        debt_to_cover, _, _, _ = eth_abi.abi.decode(
+        debt_to_cover, _, _, _ = abi_decode(
             types=["uint256", "uint256", "address", "bool"],
             data=op.pool_event["data"],
         )

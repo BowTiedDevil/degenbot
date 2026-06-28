@@ -8,12 +8,12 @@
 from collections.abc import Sequence
 from typing import Any
 
-import eth_abi.abi
 import eth_abi.packed
 from eth_typing import ChecksumAddress
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
+from degenbot.abi_adapter import encode as abi_encode
 from degenbot.calculations.solidly_stable import (
     calc_exact_in_stable as _calc_exact_in_stable,
 )
@@ -100,7 +100,7 @@ def generate_aerodrome_v3_pool_address(
     sorted_token_addresses = sorted([HexBytes(address) for address in token_addresses])
 
     salt = keccak(
-        eth_abi.abi.encode(
+        abi_encode(
             ("address", "address", "int24"),
             [*sorted_token_addresses, tick_spacing],
         ),

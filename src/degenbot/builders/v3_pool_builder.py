@@ -5,9 +5,9 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING, Any, cast
 
-import eth_abi.abi
 from sqlalchemy import select
 
+from degenbot.abi_adapter import decode as abi_decode
 from degenbot.builders.tick_data_fetcher import (
     FetchedTickData,
     TickDataTypes,
@@ -239,7 +239,7 @@ class V3PoolBuilder(V3BuilderBase):
             slot0_data = V3BuilderBase.decode_slot0(slot0_result)
             sqrt_price_x96 = slot0_data.sqrt_price_x96
             tick = slot0_data.tick
-            (liquidity,) = eth_abi.abi.decode(types=["uint128"], data=liquidity_result)
+            (liquidity,) = abi_decode(types=["uint128"], data=liquidity_result)
 
         # Fetch initial tick bitmap and tick data
         db_snapshot_loaded = False
@@ -280,7 +280,7 @@ class V3PoolBuilder(V3BuilderBase):
                 if fetch_tick_bitmap is not None:
                     bitmap_at_word = fetch_tick_bitmap(pool_address, word, block=state_block)
                 else:
-                    (bitmap_at_word,) = eth_abi.abi.decode(
+                    (bitmap_at_word,) = abi_decode(
                         types=["uint256"],
                         data=io.call(
                             to=pool_address,
@@ -309,7 +309,7 @@ class V3PoolBuilder(V3BuilderBase):
                                 data=encode_function_calldata("ticks(int24)", [active_tick]),
                                 block=state_block,
                             )
-                            liquidity_gross, liquidity_net, *_ = eth_abi.abi.decode(
+                            liquidity_gross, liquidity_net, *_ = abi_decode(
                                 types=[
                                     "uint128",
                                     "int128",
@@ -495,7 +495,7 @@ class V3PoolBuilder(V3BuilderBase):
 
             (liquidity,) = cast(
                 "tuple[int]",
-                eth_abi.abi.decode(
+                abi_decode(
                     types=["uint256"],
                     data=io.call(
                         to=pool.address,

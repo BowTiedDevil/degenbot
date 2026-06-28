@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import eth_abi.abi
 from web3 import Web3
 
+from degenbot.abi_adapter import decode as abi_decode
 from degenbot.checksum_cache import get_checksum_address
 
 if TYPE_CHECKING:
@@ -56,7 +56,7 @@ class ChainlinkPriceContract:
                 msg = "ChainlinkPriceContract requires a `bot` to fetch decimals"
                 raise ValueError(msg)
             provider = self._bot.provider
-            (decimals,) = eth_abi.abi.decode(
+            (decimals,) = abi_decode(
                 types=["uint8"],
                 data=provider.call_raw(
                     {"to": self.address, "data": Web3.keccak(text="decimals()")[:4]},
@@ -80,7 +80,7 @@ class ChainlinkPriceContract:
         round_data = provider.call_raw(
             {"to": self.address, "data": Web3.keccak(text="latestRoundData()")[:4]},
         )
-        _round_id, answer, _started_at, _updated_at, _answered_in_round = eth_abi.abi.decode(
+        _round_id, answer, _started_at, _updated_at, _answered_in_round = abi_decode(
             types=["uint80", "int256", "uint256", "uint256", "uint80"],
             data=round_data,
         )

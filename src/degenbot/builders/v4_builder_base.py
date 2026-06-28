@@ -5,8 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import eth_abi.abi
-
+from degenbot.abi_adapter import decode as abi_decode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 
@@ -68,7 +67,7 @@ class V4BuilderBase:
             The computed value.
 
         """
-        price, tick, protocol_fee, lp_fee = eth_abi.abi.decode(
+        price, tick, protocol_fee, lp_fee = abi_decode(
             types=["uint160", "int24", "uint24", "uint24"],
             data=slot0_result,
         )

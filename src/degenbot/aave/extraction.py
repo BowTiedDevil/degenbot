@@ -2,11 +2,11 @@
 
 from collections.abc import Callable
 
-import eth_abi.abi
 from web3.types import LogReceipt
 
 from degenbot.aave.events import AaveV3PoolEvent
 from degenbot.aave.models import EnrichmentError
+from degenbot.abi_adapter import decode as abi_decode
 
 EVENT_EXTRACTORS: dict[AaveV3PoolEvent, Callable[[LogReceipt], int]] = {}
 
@@ -88,7 +88,7 @@ class RawAmountExtractor:
 
         """
         supply_amount: int
-        (_, supply_amount) = eth_abi.abi.decode(
+        (_, supply_amount) = abi_decode(
             types=["address", "uint256"],
             data=event["data"],
         )
@@ -114,7 +114,7 @@ class RawAmountExtractor:
 
         """
         borrow_amount: int
-        (_, borrow_amount, _, _) = eth_abi.abi.decode(
+        (_, borrow_amount, _, _) = abi_decode(
             types=["address", "uint256", "uint8", "uint256"],
             data=event["data"],
         )
@@ -138,7 +138,7 @@ class RawAmountExtractor:
 
         """
         repay_amount: int
-        repay_amount, _ = eth_abi.abi.decode(
+        repay_amount, _ = abi_decode(
             types=["uint256", "bool"],
             data=event["data"],
         )
@@ -161,7 +161,7 @@ class RawAmountExtractor:
 
         """
         withdraw_amount: int
-        (withdraw_amount,) = eth_abi.abi.decode(
+        (withdraw_amount,) = abi_decode(
             types=["uint256"],
             data=event["data"],
         )
@@ -187,7 +187,7 @@ class RawAmountExtractor:
 
         """
         debt_to_cover: int
-        debt_to_cover, _, _, _ = eth_abi.abi.decode(
+        debt_to_cover, _, _, _ = abi_decode(
             types=["uint256", "uint256", "address", "bool"],
             data=event["data"],
         )
@@ -213,7 +213,7 @@ class RawAmountExtractor:
 
         """
         liquidated_collateral: int
-        _, liquidated_collateral, _, _ = eth_abi.abi.decode(
+        _, liquidated_collateral, _, _ = abi_decode(
             types=["uint256", "uint256", "address", "bool"],
             data=event["data"],
         )
