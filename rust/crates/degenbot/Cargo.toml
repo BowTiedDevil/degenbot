@@ -32,6 +32,8 @@ degenbot-abi = { path = "../degenbot-abi" }
 degenbot-uniswap = { path = "../degenbot-uniswap" }
 degenbot-rpc = { path = "../degenbot-rpc" }
 degenbot-decoders = { path = "../degenbot-decoders" }
+degenbot-curve-math = { path = "../degenbot-curve-math" }
+degenbot-balancer-math = { path = "../degenbot-balancer-math" }
 degenbot-bot = { path = "../degenbot-bot" }
 
 [dev-dependencies]

@@ -14,6 +14,8 @@
 //! standalone-consumer gate.
 
 use alloy::primitives::{address, U256};
+use degenbot::degenbot_balancer_math::{mul_down, ONE};
+use degenbot::degenbot_curve_math::{stableswap_get_d, DVariant};
 use degenbot::dex_identity::UNISWAP_V2;
 use degenbot::{BotState, RegisterV2PoolParams};
 
@@ -89,4 +91,37 @@ fn main() {
     );
 
     println!("standalone degenbot consumer OK: pool_id={pool_id} amount_out={amount_out}");
+
+    // 5. Reach the pure-Rust math leaves directly — proves the umbrella
+    //    re-exports the `degenbot-curve-math` / `degenbot-balancer-math`
+    //    leaves (ADR-005 sub-step B' completion) so a standalone consumer
+    //    can call StableSwap / FixedPoint math without `pyo3` in the graph.
+    //
+    // Curve `stableswap_get_d` over a balanced 2-coin pool: D converges to
+    //    sum(xp) = 2e18 when the pool is balanced (the StableSwap invariant
+    //    equals the constant-sum invariant at balance — A amplification perturbs
+    //    D by < 1 unit at the fixed point; the contraction stops within MAX
+    //    loop steps when |d - d_prev| <= 1).
+    let xp = [
+        U256::from(1_000_000_000_000_000_000_u64),
+        U256::from(1_000_000_000_000_000_000_u64),
+    ];
+    let n_coins = U256::from(2u64);
+    let a_precision = U256::from(100u64);
+    let amp = U256::from(2000u64); // A = 20
+    let d = stableswap_get_d(&xp, amp, n_coins, a_precision, DVariant::Standard)
+        .expect("stableswap_get_d converged");
+    let sum = xp[0] + xp[1];
+    // Balanced pool: D ≈ sum(xp) within the convergence tolerance (±1).
+    assert!(
+        d.abs_diff(sum) <= U256::from(1u64),
+        "balanced StableSwap D must ≈ sum(xp): {d} vs {sum}"
+    );
+
+    // Balancer `FixedPoint.mul_down(a, b) = a*b / ONE` (18-dec fixed-point).
+    // Identity check: mul_down(x, ONE) == x for any x ≤ max_fp.
+    let val = U256::from(42_000_000_000_000_000_000_u128); // 42 * 1e18
+    assert_eq!(mul_down(val, ONE).unwrap(), val, "mul_down(x, ONE) == x");
+
+    println!("standalone degenbot consumer OK: curve D={d} balancer fp.mul_down(identity)");
 }
