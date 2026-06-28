@@ -19,6 +19,7 @@ members = [
     "crates/degenbot-cl-math",
     "crates/degenbot-curve-math",
     "crates/degenbot-balancer-math",
+    "crates/degenbot-solidly-math",
     "crates/degenbot-abi",
     "crates/degenbot-rpc",
     "crates/degenbot-bot",
@@ -54,6 +55,8 @@ codegen-units = 16
 [profile.release.package.degenbot-curve-math]
 codegen-units = 16
 [profile.release.package.degenbot-balancer-math]
+codegen-units = 16
+[profile.release.package.degenbot-solidly-math]
 codegen-units = 16
 [profile.release.package.degenbot-abi]
 codegen-units = 16

@@ -1587,6 +1587,7 @@ dependencies = [
  "degenbot-curve-math",
  "degenbot-decoders",
  "degenbot-rpc",
+ "degenbot-solidly-math",
  "degenbot-uniswap",
 ]
 
@@ -1689,6 +1690,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "degenbot-solidly-math"
+version = "0.0.0"
+dependencies = [
+ "alloy",
+ "proptest",
+ "serde_json",
+]
+
+[[package]]
 name = "degenbot-uniswap"
 version = "0.0.0"
 dependencies = [
@@ -1712,6 +1722,7 @@ dependencies = [
  "degenbot-curve-math",
  "degenbot-decoders",
  "degenbot-rpc",
+ "degenbot-solidly-math",
  "degenbot-uniswap",
  "futures-util",
  "log",

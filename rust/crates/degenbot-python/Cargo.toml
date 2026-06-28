@@ -40,6 +40,7 @@ degenbot-abi = { path = "../degenbot-abi", optional = true }
 degenbot-cl-math = { path = "../degenbot-cl-math", optional = true }
 degenbot-balancer-math = { path = "../degenbot-balancer-math", optional = true }
 degenbot-curve-math = { path = "../degenbot-curve-math", optional = true }
+degenbot-solidly-math = { path = "../degenbot-solidly-math", optional = true }
 degenbot-core = { path = "../degenbot-core", features = ["pyo3"] }
 dashmap = { version = "^6.1" }
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
@@ -64,7 +65,7 @@ tokio = { version = "^1.52", features = ["rt-multi-thread", "time", "macros", "s
 # (the engine wrapper references degenbot_rpc::provider::AlloyProvider + degenbot_decoders::PoolId
 # + degenbot_uniswap::dex_identity directly), and `rpc` implies `abi` (rpc/contract wraps
 # crate::abi_types). `async` gates the rpc/ async submodules (no new dep).
-default = ["auto-initialize", "bot", "rpc", "abi", "cl-math", "balancer-math", "curve-math", "uniswap", "async"]
+default = ["auto-initialize", "bot", "rpc", "abi", "cl-math", "balancer-math", "curve-math", "solidly-math", "uniswap", "async"]
 extension-module = ["pyo3/extension-module"]
 auto-initialize = ["pyo3/auto-initialize"]
 bot = ["dep:degenbot-bot", "rpc", "decoders", "uniswap"]
@@ -73,6 +74,7 @@ abi = ["dep:degenbot-abi"]
 cl-math = ["dep:degenbot-cl-math"]
 balancer-math = ["dep:degenbot-balancer-math"]
 curve-math = ["dep:degenbot-curve-math"]
+solidly-math = ["dep:degenbot-solidly-math"]
 uniswap = ["dep:degenbot-uniswap"]
 decoders = ["dep:degenbot-decoders"]
 async = []

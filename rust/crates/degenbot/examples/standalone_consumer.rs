@@ -16,6 +16,7 @@
 use alloy::primitives::{address, U256};
 use degenbot::degenbot_balancer_math::{mul_down, ONE};
 use degenbot::degenbot_curve_math::{stableswap_get_d, DVariant};
+use degenbot::degenbot_solidly_math::{calc_d as solidly_calc_d, calc_f as solidly_calc_f};
 use degenbot::dex_identity::UNISWAP_V2;
 use degenbot::{BotState, RegisterV2PoolParams};
 
@@ -123,5 +124,27 @@ fn main() {
     let val = U256::from(42_000_000_000_000_000_000_u128); // 42 * 1e18
     assert_eq!(mul_down(val, ONE).unwrap(), val, "mul_down(x, ONE) == x");
 
-    println!("standalone degenbot consumer OK: curve D={d} balancer fp.mul_down(identity)");
+    // 6. Solidly-stable math leaf reach: confirm `calc_d(x0, y)` and
+    //    `calc_f(x0, y)` are reachable from the umbrella without `pyo3`.
+    //    The Solidly/Aerodrome deployed-contract `calc_d` evaluates the
+    //    analytic `D = 3*x0*y^2 + x0^3*y` (1e18-scaled); re-derive it in plain
+    //    integer arithmetic for the parity check.
+    let x0 = U256::from(2_000_000_000_000_000_000_u64); // 2 * 1e18
+    let y = U256::from(3_000_000_000_000_000_000_u64); // 3 * 1e18
+    let got_d = solidly_calc_d(x0, y);
+    // D = 3*x0*(y^2 / 1e18) / 1e18 + (((x0^2 / 1e18) * x0) / 1e18)
+    let yy = y * y / ONE;
+    let term1 = U256::from(3u64) * x0 * yy / ONE;
+    let x0x0 = x0 * x0 / ONE;
+    let term2 = x0x0 * x0 / ONE;
+    let expected_d = term1 + term2;
+    assert_eq!(got_d, expected_d, "solidly calc_d direct port");
+    // And `calc_f(x0, y) = x0*y^3 + x0^3*y`:
+    let got_f = solidly_calc_f(x0, y);
+    let a = x0 * y / ONE;
+    let b = x0 * x0 / ONE + y * y / ONE;
+    let expected_f = a * b / ONE;
+    assert_eq!(got_f, expected_f, "solidly calc_f direct port");
+
+    println!("standalone degenbot consumer OK: curve D={d} balancer fp.mul_down(identity) solidly calc_d={got_d}");
 }

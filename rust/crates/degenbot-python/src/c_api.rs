@@ -54,6 +54,11 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "curve-math")]
     crate::curve_math::lib::add_curve_math_module(m)?;
 
+    // Solidly / Aerodrome / Camelot stable-math library functions
+    // (feature = "solidly-math")
+    #[cfg(feature = "solidly-math")]
+    crate::solidly_math::lib::add_solidly_math_module(m)?;
+
     // ABI decoder/encoder functions (feature = "abi")
     #[cfg(feature = "abi")]
     m.add_function(wrap_pyfunction!(crate::abi::decoder::decode, m)?)?;

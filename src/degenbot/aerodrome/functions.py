@@ -1,12 +1,12 @@
 """Aerodrome pool calculations and address generation.
 
-.. deprecated::
-    Calculation functions have been moved to :mod:`degenbot.calculations.solidly_stable`.
-    This module retains address-generation functions and backwards-compatible re-exports.
+Routes the Solidly-stable swap calc through the Rust ``degenbot-solidly-math``
+leaf (via ``degenbot_rs.solidly_calc_exact_in_stable_solidly``) and retains
+address-generation helpers (CREATE2 deterministic pool address).
 """
 
 from collections.abc import Sequence
-from typing import Any
+from fractions import Fraction
 
 import eth_abi.packed
 from eth_typing import ChecksumAddress
@@ -14,33 +14,46 @@ from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
 from degenbot.abi_adapter import encode as abi_encode
-from degenbot.calculations.solidly_stable import (
-    calc_exact_in_stable as _calc_exact_in_stable,
-)
-from degenbot.calculations.solidly_stable import (
-    calc_k as _k_aerodrome,
-)
-from degenbot.calculations.solidly_stable import (
-    get_y_solidly as _get_y_aerodrome,
-)
 from degenbot.contract.addresses import eip_1167_clone_address
+from degenbot.degenbot_rs import solidly_calc_exact_in_stable_solidly
 
 
-def calc_exact_in_stable(*args: Any, **kwargs: Any) -> int:
+def calc_exact_in_stable(
+    *,
+    amount_in: int,
+    token_in: int,
+    reserves0: int,
+    reserves1: int,
+    decimals0: int,
+    decimals1: int,
+    fee: Fraction,
+) -> int:
     """Aerodrome-specific stable exact-in calculation.
 
-    Delegates to :func:`degenbot.calculations.solidly_stable.calc_exact_in_stable`
-    with Aerodrome's k_func and get_y_func.
+    Routes through the Rust ``degenbot-solidly-math`` leaf via
+    :func:`degenbot_rs.solidly_calc_exact_in_stable_solidly`, which wraps the
+    Solidly/Aerodrome pre-baked orchestration
+    (``calc_k`` + ``get_y_solidly``). The Solidly/Camelot invariant math
+    (``calc_d`` / ``calc_k`` / ``calc_f`` / ``get_y_solidly``) is computed in
+    pure Rust (cross-checked by ``degenbot-solidly-math/tests/oracle_crosscheck.rs``).
+
+    The Python ``Fraction`` fee is split into ``numerator`` + ``denominator``
+    integers at the seam (the Rust leaf takes two ``U256``s to avoid pulling
+    ``num-rational`` into the pure-math core).
 
     Returns:
         The computed integer value.
 
     """
-    return _calc_exact_in_stable(
-        *args,
-        **kwargs,
-        k_func=_k_aerodrome,
-        get_y_func=_get_y_aerodrome,
+    return solidly_calc_exact_in_stable_solidly(
+        amount_in,
+        token_in,
+        reserves0,
+        reserves1,
+        decimals0,
+        decimals1,
+        fee.numerator,
+        fee.denominator,
     )
 
 

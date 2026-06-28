@@ -38,6 +38,8 @@ pub mod curve_math;
 pub mod prelude;
 #[cfg(feature = "rpc")]
 pub mod rpc;
+#[cfg(feature = "solidly-math")]
+pub mod solidly_math;
 #[cfg(feature = "uniswap")]
 pub mod uniswap;
 
