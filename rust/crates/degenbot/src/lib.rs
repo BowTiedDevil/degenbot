@@ -40,6 +40,12 @@ pub use degenbot_uniswap::{dex_identity, v2_encoding};
 /// Uniswap V2/V3/V4 event-log decoders (alloy-only leaf).
 pub use degenbot_decoders;
 
+/// Curve `StableSwap` invariant math (Vyper D/Y solvers — pure-Rust leaf).
+pub use degenbot_curve_math;
+
+/// Balancer V2 math (`FixedPoint` / `LogExpMath` / `WeightedMath` / `StableMath` — pure-Rust leaf).
+pub use degenbot_balancer_math;
+
 /// Concentrated-liquidity math (`cl_lib`, `tick_math`).
 pub use degenbot_cl_math;
 
