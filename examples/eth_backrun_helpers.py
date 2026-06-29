@@ -1,6 +1,7 @@
 import dataclasses
 import json
 import typing
+import warnings
 from collections.abc import Mapping
 
 from cmd_stream import (
@@ -30,10 +31,11 @@ from cmd_stream import (
     enc_weth_withdraw,
 )
 
-from degenbot.arbitrage import PathInfo, V2HopInfo, V3HopInfo, V4HopInfo, build_hops_from_pools
+from degenbot.arbitrage import PathInfo, V2HopInfo, V3HopInfo, V4HopInfo, build_hops_from_pools  # noqa: F401  (re-exported for tests)
 from degenbot.arbitrage.encoding import fits_int128
 from degenbot.arbitrage.verification_retry import VerificationRetryPolicy
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.config import resolve_rpc_uris
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
 from degenbot.logging import logger as bot_logger
 from degenbot.uniswap.v4_liquidity_pool import NATIVE_CURRENCY_ADDRESS
@@ -188,18 +190,40 @@ class BackrunConfig:
         *,
         live: bool,
         permutation: str | None,
+        chain_id: int = 1,
+        cli_http: str | None = None,
+        cli_ws: str | None = None,
     ) -> "BackrunConfig":
         """Build a BackrunConfig from a dotenv-style env mapping + CLI flags.
 
-        Reproduces ``main()``'s env-parsing + defaulting exactly:
+        Behavior:
         - operator: live mode requires both OPERATOR_ADDRESS/PRIVATE_KEY
           (raises ValueError); dry-run defaults to ZERO_ADDRESS + a 0x00..00 key.
-        - nodes: missing host/port default to localhost:8545/8546.
+        - nodes: delegated to :func:`degenbot.config.resolve_rpc_uris` so the
+          standard cascade (CLI > OS env ``DEGENBOT_RPC_{HTTP,WS}_CHAINID_{cid}``
+          > caller fallback > config.toml > raise) applies. There is **no
+          ``localhost`` default** — a chain with no configured endpoint in any
+          layer raises :class:`RpcNotConfiguredError`.
         - executor: zero address is a fatal ``ValueError`` (a factory cannot
           return early like ``main()``'s ``return``).
         - inject code: when ``INJECT_EXECUTOR_CODE=="1"``, the executor address
           is overridden to ``INJECTED_EXECUTOR_ADDRESS``.
         - permutation: a CLI string becomes a singleton frozenset; ``None`` stays ``None``.
+
+        Deprecated: ``NODE_HOST_HTTP``/``NODE_PORT_HTTP``/
+        ``NODE_HOST_WEBSOCKET``/``NODE_PORT_WEBSOCKET`` (host+port composition)
+        are rebuilt into full URIs and injected as the resolver *fallback* slot
+        (below OS env, above config.toml), emitting ``DeprecationWarning``. Migrate
+        to ``DEGENBOT_RPC_HTTP_CHAINID_{chain_id}`` / ``..._WS_CHAINID_{cid}``.
+
+        Returns:
+            A frozen ``BackrunConfig`` with cascade-resolved ``node_http``/``node_ws``.
+
+        Raises:
+            ValueError: missing operator in live mode, zero-address executor,
+                or ``RpcNotConfiguredError`` (a ``ValueError`` subclass) when no
+                RPC endpoint is configured for ``chain_id`` in any cascade layer.
+
         """
         # ── Operator ──
         operator_address_raw = env.get("OPERATOR_ADDRESS") or ""
@@ -218,14 +242,37 @@ class BackrunConfig:
             if not operator_address or not operator_private_key:
                 raise ValueError(msg)
 
-        # ── Node URLs (host:port composition lifted verbatim from main()) ──
-        node_http = (
-            f"{env.get('NODE_HOST_HTTP') or 'http://localhost'}:"
-            f"{env.get('NODE_PORT_HTTP') or '8545'}"
-        )
-        node_ws = (
-            f"{env.get('NODE_HOST_WEBSOCKET') or 'ws://localhost'}:"
-            f"{env.get('NODE_PORT_WEBSOCKET') or '8546'}"
+        # ── Node URLs — delegated to the library cascade (resolve_rpc_uris) ──
+        # Legacy NODE_HOST_*/NODE_PORT_* host+port form is rebuilt into a full
+        # URI and passed as the resolver *fallback* slot (below OS env, above
+        # config.toml) so existing mainnet.env users keep working — but it emits
+        # a DeprecationWarning pointing at the chain-id-discriminated envvar.
+        fallback_http: str | None = None
+        fallback_ws: str | None = None
+        legacy_http_host = env.get("NODE_HOST_HTTP")
+        if legacy_http_host:
+            fallback_http = f"{legacy_http_host}:{env.get('NODE_PORT_HTTP') or '8545'}"
+            warnings.warn(
+                f"NODE_HOST_HTTP is deprecated; set DEGENBOT_RPC_HTTP_CHAINID_{chain_id} instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        legacy_ws_host = env.get("NODE_HOST_WEBSOCKET")
+        if legacy_ws_host:
+            fallback_ws = f"{legacy_ws_host}:{env.get('NODE_PORT_WEBSOCKET') or '8546'}"
+            warnings.warn(
+                f"NODE_HOST_WEBSOCKET is deprecated; set "
+                f"DEGENBOT_RPC_WS_CHAINID_{chain_id} instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        node_http, node_ws = resolve_rpc_uris(
+            chain_id,
+            cli_http=cli_http,
+            cli_ws=cli_ws,
+            fallback_http=fallback_http,
+            fallback_ws=fallback_ws,
         )
 
         # ── Executor ──
@@ -504,6 +551,7 @@ def encode_cmd_stream(
             check_mode=2 in the execute() ``config``. See §13 of user guide.
         use_v4_batch: If True, use V4_BATCH instead of individual V4 swap
             commands for pure V4 paths. Saves gas from single PM extcall.
+
     """
     if bribe_bips:
         msg = (
@@ -920,19 +968,18 @@ def _encode_cmd_v4_v4(
                 profit_amount = weth_out - optimal_input
                 if profit_amount > 0:
                     inner += enc_v4_mint_compact(weth_idx, executor_idx, profit_amount)
-            else:
-                # V4_TAKE_DELTA: reads actual positive delta from PM exttload.
-                if not use_v4_batch or output_currency_b not in (
-                    NATIVE_CURRENCY_ADDRESS,
-                    weth_address,
-                ):
-                    if output_currency_b == NATIVE_CURRENCY_ADDRESS:
-                        inner += enc_v4_take_delta(native_idx, executor_idx)
-                    elif output_currency_b == weth_address:
-                        inner += enc_v4_take_delta(weth_idx, executor_idx)
-                    else:
-                        profit_idx = c1_b_idx if hop_b.zfo else c0_b_idx
-                        inner += enc_v4_take_delta(profit_idx, executor_idx)
+            # V4_TAKE_DELTA: reads actual positive delta from PM exttload.
+            elif not use_v4_batch or output_currency_b not in (
+                NATIVE_CURRENCY_ADDRESS,
+                weth_address,
+            ):
+                if output_currency_b == NATIVE_CURRENCY_ADDRESS:
+                    inner += enc_v4_take_delta(native_idx, executor_idx)
+                elif output_currency_b == weth_address:
+                    inner += enc_v4_take_delta(weth_idx, executor_idx)
+                else:
+                    profit_idx = c1_b_idx if hop_b.zfo else c0_b_idx
+                    inner += enc_v4_take_delta(profit_idx, executor_idx)
 
             # Auto-settle all remaining nonzero deltas (handles rounding residuals)
             inner += enc_v4_settle_all()

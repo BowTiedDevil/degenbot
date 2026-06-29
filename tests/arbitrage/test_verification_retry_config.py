@@ -17,15 +17,22 @@ from degenbot.arbitrage.verification_retry import VerificationRetryPolicy
 from examples.eth_backrun_helpers import BackrunConfig
 
 
+@pytest.fixture(autouse=True)
+def _rpc_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Set chain-1 RPC OS envvars so ``from_env`` doesn't raise RpcNotConfiguredError.
+
+    These tests exercise the ``VERIFICATION_RETRY_*`` knobs, not RPC resolution,
+    so the exact endpoint is irrelevant — it only needs to be present.
+    """
+    monkeypatch.setenv("DEGENBOT_RPC_HTTP_CHAINID_1", "https://eth.example.com")
+    monkeypatch.setenv("DEGENBOT_RPC_WS_CHAINID_1", "wss://ws.eth.example.com")
+
+
 def _full_env() -> dict[str, str]:
-    """A complete env dict exercising every field (mirrors test_backrun_config)."""
+    """An operator + executor env dict (RPC is set via the OS-env fixture)."""
     return {
         "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
         "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
-        "NODE_HOST_HTTP": "https://eth.example.com",
-        "NODE_PORT_HTTP": "8545",
-        "NODE_HOST_WEBSOCKET": "wss://ws.eth.example.com",
-        "NODE_PORT_WEBSOCKET": "8546",
         "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
         "INJECT_EXECUTOR_CODE": "0",
         "INJECTED_EXECUTOR_ADDRESS": "0x0D6d4c3cF3BD3b769De1821f2BE0d7d99913E4F1",
