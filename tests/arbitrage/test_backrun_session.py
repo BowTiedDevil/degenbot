@@ -23,14 +23,24 @@ from examples.eth_backrun_helpers import BackrunConfig
 from examples.eth_backrun_v2_v3_v4_rust import BackrunSession
 
 
+@pytest.fixture(autouse=True)
+def _rpc_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Set chain-1 RPC OS envvars for every test in this module.
+
+    The session tests inject fakes for bot/engine_registry/async_w3, so the RPC
+    URIs are never connected — they only need to be *present* on the config so
+    ``BackrunConfig.from_env`` does not raise ``RpcNotConfiguredError``. Keeping
+    them ``http://localhost:8545`` / ``ws://localhost:8546`` preserves the legacy
+    assertions in ``test_start_orchestrates_pre_resume_ritual``.
+    """
+    monkeypatch.setenv("DEGENBOT_RPC_HTTP_CHAINID_1", "http://localhost:8545")
+    monkeypatch.setenv("DEGENBOT_RPC_WS_CHAINID_1", "ws://localhost:8546")
+
+
 def _cfg(**overrides) -> BackrunConfig:
     base = {
         "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
         "OPERATOR_PRIVATE_KEY": "0x" + "a" * 64,
-        "NODE_HOST_HTTP": "http://localhost",
-        "NODE_PORT_HTTP": "8545",
-        "NODE_HOST_WEBSOCKET": "ws://localhost",
-        "NODE_PORT_WEBSOCKET": "8546",
         "EXECUTOR_CONTRACT_ADDRESS": "0x543C7eF4F2368a9411c94A055e7236E6Dc6f99D5",
         "INJECT_EXECUTOR_CODE": "0",
     }

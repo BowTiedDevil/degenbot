@@ -696,7 +696,11 @@ def _make_backrun_config(node_http: str) -> DegenbotConfig:
     """Build a single-chain DegenbotConfig for the backrun session (ADR-006 D5).
 
     The chain identity is Ethereum mainnet (1); the RPC is the caller's
-    ``node_http`` (an env-derived endpoint, not the config.toml ``rpc`` entry).
+    ``node_http`` — the cascade-resolved endpoint from
+    :func:`degenbot.config.resolve_rpc_uris` (CLI > OS env
+    ``DEGENBOT_RPC_HTTP_CHAINID_1`` > legacy ``NODE_HOST_*`` > config.toml
+    ``rpc[1]``). When config.toml was the winning source, ``node_http`` already
+    equals ``rpc[1]``, so the injection here is consistent rather than a bypass.
     The Bot enforces the connected RPC's ``eth_chainId`` matches at construction.
 
     The database path is read from the existing user config at
@@ -1046,7 +1050,8 @@ async def _shim_run_recurring_verify_until_done(
 ) -> None:
     """T7: delegate to the library recurring-verify (kept in
     degenbot.arbitrage.recurring_verify so tests can import it without the
-    example's cmd_stream import chain)."""
+    example's cmd_stream import chain).
+    """
     from degenbot.arbitrage.recurring_verify import run_recurring_verify_until_done
 
     await run_recurring_verify_until_done(
@@ -2795,7 +2800,17 @@ async def _apply_result_if_ready(
         )
 
 
-async def main() -> None:
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """Build the backrun example's argument parser.
+
+    Extracted from ``main()`` so the CLI surface (especially the
+    ``--node-http`` / ``--node-ws`` cascade overrides) is testable without
+    running the full async session.
+
+    Returns:
+        The configured ``ArgumentParser`` (caller invokes ``parse_args``).
+
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--live",
@@ -2812,6 +2827,33 @@ async def main() -> None:
             "Overrides PATH_PERMUTATION_FILTER in the source file."
         ),
     )
+    parser.add_argument(
+        "--node-http",
+        type=str,
+        default=None,
+        help=(
+            "HTTP RPC endpoint for the backrun chain (Ethereum mainnet). "
+            "Highest-priority source in the RPC URI cascade: "
+            "--node-http > DEGENBOT_RPC_HTTP_CHAINID_1 > NODE_HOST_HTTP "
+            "> config.toml rpc[1] > error."
+        ),
+    )
+    parser.add_argument(
+        "--node-ws",
+        type=str,
+        default=None,
+        help=(
+            "WebSocket RPC endpoint for the backrun chain (Ethereum mainnet). "
+            "Highest-priority source in the RPC URI cascade: "
+            "--node-ws > DEGENBOT_RPC_WS_CHAINID_1 > NODE_HOST_WEBSOCKET "
+            "> config.toml ws[1] > error."
+        ),
+    )
+    return parser
+
+
+async def main() -> None:
+    parser = _build_arg_parser()
     args = parser.parse_args()
     dry_run = not args.live
 
@@ -2825,7 +2867,13 @@ async def main() -> None:
 
     env = dotenv.dotenv_values("examples/mainnet.env")
     try:
-        cfg = BackrunConfig.from_env(env, live=not dry_run, permutation=args.permutation)
+        cfg = BackrunConfig.from_env(
+            env,
+            live=not dry_run,
+            permutation=args.permutation,
+            cli_http=args.node_http,
+            cli_ws=args.node_ws,
+        )
     except ValueError as exc:
         bot_logger.error(str(exc))
         return

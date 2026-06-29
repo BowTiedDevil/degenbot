@@ -11,6 +11,9 @@ _Avoid_: State update message, state update
 **Anvil Fork**: A local forked blockchain instance running via Foundry's Anvil client for testing.
 _Avoid_: Fork, local chain
 
+**RPC URI Resolver**: The single cascade for resolving an HTTP/WS RPC endpoint by chain id — `degenbot.config.resolve_rpc_uris`. Precedence (per URI, independently): CLI arg > OS env `DEGENBOT_RPC_HTTP_CHAINID_<cid>` / `DEGENBOT_RPC_WS_CHAINID_<cid>` > caller fallback > config.toml `rpc[cid]`/`ws[cid]` > raise `RpcNotConfiguredError` (no `localhost` default). Used by the library, the `degenbot` CLI, and the backrun example; see [the migration guide](docs/migration-guides/rpc-uri-cascade.md).
+_Avoid_: node URL resolver, RPC finder
+
 ## Module contexts
 
 - [Pool Types & Trackers](src/degenbot/types/CONTEXT.md) — pool types, type resolution, trackers, fee representations, and I/O-free architecture terms
