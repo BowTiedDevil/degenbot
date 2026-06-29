@@ -148,7 +148,10 @@ allow-star-arg-any = true
     "ARG",
     "D",
     "DOC",
+    "ICN001",   # benchmark scripts may import networkx as networkx
+    "INP001",   # benchmark scripts are not part of a package
     "PLC2701",  # tests may need to import private modules
+    "PLC0415",  # benchmark scripts may import conditionally
     "PLR",
     "S301",
     "S311",

@@ -386,3 +386,72 @@ This is a fundamental architecture change: from Python-driven ("call Rust to sol
 
 - `rust/src/optimizers/v2_engine.rs` — V2ArbEngine implementation
 - `tests/perf/bench_v2_engine.py` — Benchmark suite
+
+---
+
+## Pathfinding: NetworkX to Rust Port
+
+**Goal**: Replace the Python/NetworkX-based DFS pathfinding with a pure-Rust
+implementation, eliminating the N+1 per-pool address-resolution queries and
+the NetworkX dependency.
+
+### Architecture
+
+The port follows the ADR-005 three-layer pattern:
+
+1. **Core leaf** (`rust/crates/degenbot-pathfinding/`) — zero-dependency
+   pure Rust. Defines `PathGraph` (HashMap adjacency list), iterative DFS
+   with cycle detection, per-depth pool-type filtering, and lookahead
+   pruning. Independently tested with 17 unit tests.
+2. **PyO3 binding** (`rust/crates/degenbot-python/src/pathfinding/`) — thin
+   translator: extract flat int tuples from Python, build the graph, return a
+   lazy `PathIterator` pyclass.
+3. **Python orchestration** (`src/degenbot/pathfinding.py`) — DB queries,
+   token-ID resolution, traversal-plan computation, address-resolution
+   lookup dicts (bulk-preloaded, eliminating the N+1).
+
+### Lazy Iterator (OOM Fix)
+
+The initial implementation returned `list[list[tuple[int, int]]]` — all paths
+collected eagerly into a `Vec` before returning. For large graphs (e.g.
+3-hop V4 pathfinding with `start_tokens=[WETH, ZERO_ADDRESS]`), this produced
+millions of paths and caused OOM (exit code 137).
+
+**Fix**: Added `OwnedPathFinder` — an owning, stateful lazy iterator that
+yields paths one at a time via `__iter__`/`__next__`. The DFS stack, working
+path, and visited set live inside the iterator struct. Each `__next__` call
+advances the search until one complete path is found. Memory is bounded
+regardless of total path count.
+
+### Results (Algorithm-Only Benchmark)
+
+Benchmark: `tests/perf/bench_pathfinding.py` — synthetic fully-connected
+graphs (no DB queries, pure DFS traversal). All cases match exactly on path
+sets (correctness parity).
+
+| Graph | Tokens | Edges | Depth | Paths | Old (ms) | New (ms) | Speedup |
+|-------|--------|-------|-------|-------|----------|----------|---------|
+| Small | 3 | 6 | 3 | 16 | 0.3 | 0.0 | 13.0x |
+| Medium | 5 | 30 | 3 | 324 | 1.3 | 0.2 | 5.6x |
+| Dense | 6 | 60 | 3 | 1,280 | 4.9 | 1.1 | 4.6x |
+| Depth-4 | 5 | 30 | 4 | 2,808 | 12.4 | 2.8 | 4.4x |
+| Reverse | 5 | 30 | 3 | 648 | 1.3 | 0.3 | 3.9x |
+
+The speedup ranges from **4-13x** for the algorithm alone. In production,
+the speedup is larger because the old implementation also did N+1 SQLAlchemy
+queries per yielded path (one per pool, per path) — the Rust port eliminates
+these entirely with bulk address preloading.
+
+### Files Changed
+
+| File | Changes |
+|---------|---------|
+| `rust/crates/degenbot-pathfinding/src/graph.rs` | `PathGraph`, `PathFinder<'a>`, `OwnedPathFinder`, `PoolKind`, `Edge` types; graph construction, dead-end pruning, node-valid-depths computation, lazy DFS iterator |
+| `rust/crates/degenbot-pathfinding/src/lib.rs` | Exports `PathGraph`, `PathFinder`, `OwnedPathFinder`, `PoolKind` |
+| `rust/crates/degenbot-python/src/pathfinding/mod.rs` | `find_paths_rust` pyfunction returning `PathIterator`; `PathIterator` pyclass with `__iter__`/`__next__` |
+| `rust/crates/degenbot-python/src/c_api.rs` | Register `find_paths_rust` + `PathIterator` |
+| `src/degenbot/pathfinding.py` | Rewritten — Rust-backed DFS, bulk address preloading, `_PreparedGraph` struct; deleted old NetworkX `_dfs`/`_dfs_async`/`_prepare_graph` |
+| `src/degenbot/degenbot_rs.pyi` | Type stub for `find_paths_rust` + `PathIterator` |
+| `pyproject.toml` | Removed `networkx` dependency |
+| `tests/perf/bench_pathfinding.py` | Benchmark comparing old (NetworkX) vs new (Rust) |
+| `.ergo/plans/pathfinding-rust-port.md` | Detailed implementation plan |

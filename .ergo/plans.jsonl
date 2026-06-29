@@ -228,3 +228,7 @@
 {"type":"state","ts":"2026-06-29T09:27:29.774538022Z","data":{"id":"QAPTP2","state":"done","ts":"2026-06-29T09:27:29.774538022Z"}}
 {"type":"claim","ts":"2026-06-29T09:27:37.490158483Z","data":{"id":"DNECAE","agent_id":"t-088b@degenbot","ts":"2026-06-29T09:27:37.490158483Z"}}
 {"type":"state","ts":"2026-06-29T09:27:37.490158483Z","data":{"id":"DNECAE","state":"doing","ts":"2026-06-29T09:27:37.490158483Z"}}
+{"type":"result","ts":"2026-06-29T17:11:14.347122917Z","data":{"task_id":"DNECAE","summary":"src/degenbot/pathfinding.py","path":"src/degenbot/pathfinding.py","sha256_at_attach":"49b4600b998c887014ed415267bdead426a428a7b5f4070d0176b007bab5eb05","mtime_at_attach":"2026-06-29T17:10:22.645206173Z","git_commit_at_attach":"e3e06ab1a274b1ed0c156747b6395cb913190f43","ts":"2026-06-29T17:11:14.347122917Z"}}
+{"type":"state","ts":"2026-06-29T17:11:14.351788318Z","data":{"id":"DNECAE","state":"done","ts":"2026-06-29T17:11:14.351788318Z"}}
+{"type":"result","ts":"2026-06-29T17:14:14.933491607Z","data":{"task_id":"7DDWI3","summary":"tests/perf/bench_pathfinding.py","path":"tests/perf/bench_pathfinding.py","sha256_at_attach":"1d7fa9c2f51bb71e30c8bdb37b7f4aaaf117ee5b97eb3ce4244d642858e85b01","mtime_at_attach":"2026-06-29T17:13:06.858938867Z","git_commit_at_attach":"e3e06ab1a274b1ed0c156747b6395cb913190f43","ts":"2026-06-29T17:14:14.933491607Z"}}
+{"type":"state","ts":"2026-06-29T17:14:14.938516453Z","data":{"id":"7DDWI3","state":"done","ts":"2026-06-29T17:14:14.938516453Z"}}
