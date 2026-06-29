@@ -42,6 +42,11 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m
     )?)?;
 
+    // Solady LibZip (FastLZ) compress/decompress — lives in `degenbot-core`
+    // (always a dependency), so no feature gate.
+    m.add_function(wrap_pyfunction!(crate::solady::libzip::flz_compress, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::solady::libzip::flz_decompress, m)?)?;
+
     // CL math library submodule (feature = "cl-math")
     #[cfg(feature = "cl-math")]
     crate::cl_math::cl_lib::add_cl_lib_module(m)?;

@@ -20,4 +20,5 @@
 pub mod address_utils;
 pub mod errors;
 pub mod hex_utils;
+pub mod libzip;
 pub mod runtime;

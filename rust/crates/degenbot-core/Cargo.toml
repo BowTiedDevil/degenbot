@@ -33,3 +33,6 @@ pyo3 = { version = "^0.29", features = ["abi3-py312", "serde"], optional = true 
 default = []
 # Enables `impl From<degenbot_core::errors::*> for pyo3::PyErr`.
 pyo3 = ["dep:pyo3"]
+
+[dev-dependencies]
+proptest = "^1.10"
