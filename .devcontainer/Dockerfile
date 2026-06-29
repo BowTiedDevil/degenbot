@@ -124,6 +124,10 @@ RUN curl -L https://foundry.paradigm.xyz | bash \
 # the image for the same ssh-attach reason as foundry. Matches host version era;
 # rebuild the image to bump.
 RUN npm install -g @earendil-works/pi-coding-agent
+RUN npm install -g agent-browser
+RUN agent-browser install
+RUN npx skills add vercel-labs/agent-browser -g --agent pi --yes
+
 RUN go install github.com/sandover/ergo/cmd/ergo@latest
 
 # Generate shell completions for the four curl/npm/go-installed CLIs into
