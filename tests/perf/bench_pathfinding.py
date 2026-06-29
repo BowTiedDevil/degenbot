@@ -38,8 +38,9 @@ if TYPE_CHECKING:
     from networkx import MultiGraph
 
 # -- Pool-kind discriminants (must match Rust `PoolKind`) -------------------
-V2V3 = 0  # LiquidityPoolTable
-V4 = 1  # UniswapV4PoolTable
+V2 = 0  # UniswapV2PoolTableBase
+V3 = 1  # UniswapV3PoolTableBase
+V4 = 2  # UniswapV4PoolTable
 
 
 def build_synthetic_edges(n_tokens: int, n_parallel_pools: int) -> list[tuple[int, int, int, int]]:
@@ -57,7 +58,7 @@ def build_synthetic_edges(n_tokens: int, n_parallel_pools: int) -> list[tuple[in
     for i in range(n_tokens):
         for j in range(i + 1, n_tokens):
             for _ in range(n_parallel_pools):
-                edges.append((i, j, pool_id, V2V3))
+                edges.append((i, j, pool_id, V2))
                 pool_id += 1
     return edges
 

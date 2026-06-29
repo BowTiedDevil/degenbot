@@ -7,13 +7,21 @@
 
 use std::collections::{HashMap, HashSet};
 
-/// Discriminant for the two pool-table families.
+/// Discriminant for the three pool-table families.
 ///
-/// `V2V3` corresponds to `LiquidityPoolTable` (Uniswap V2/V3 and
-/// V2-style forks); `V4` corresponds to `UniswapV4PoolTable`.
+/// `V2` corresponds to `UniswapV2PoolTableBase` (Uniswap V2 and V2-style
+/// forks); `V3` corresponds to `UniswapV3PoolTableBase` (Uniswap V3 and
+/// V3-style forks); `V4` corresponds to `UniswapV4PoolTable`.
+///
+/// All V2/V3 subtypes share the `pools` database table (single ID
+/// sequence), so a `pool_id` is unique within V2 and within V3 — no
+/// collision between the two. V4 pools use a separate `managed_pools`
+/// table, so the `PoolKind` discriminant disambiguates V4 IDs from V2/V3
+/// IDs.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum PoolKind {
-    V2V3,
+    V2,
+    V3,
     V4,
 }
 
@@ -22,8 +30,9 @@ impl PoolKind {
     #[must_use]
     pub const fn as_u8(self) -> u8 {
         match self {
-            PoolKind::V2V3 => 0,
-            PoolKind::V4 => 1,
+            PoolKind::V2 => 0,
+            PoolKind::V3 => 1,
+            PoolKind::V4 => 2,
         }
     }
 
@@ -33,8 +42,9 @@ impl PoolKind {
     #[must_use]
     pub const fn from_u8(val: u8) -> Option<Self> {
         match val {
-            0 => Some(PoolKind::V2V3),
-            1 => Some(PoolKind::V4),
+            0 => Some(PoolKind::V2),
+            1 => Some(PoolKind::V3),
+            2 => Some(PoolKind::V4),
             _ => None,
         }
     }
@@ -683,10 +693,10 @@ mod tests {
 
     fn build_fixture_graph() -> PathGraph {
         PathGraph::from_edges(vec![
-            (WETH, A, POOL_WETH_A_1, PoolKind::V2V3),
-            (WETH, A, POOL_WETH_A_2, PoolKind::V2V3),
-            (A, B, POOL_A_B, PoolKind::V2V3),
-            (B, WETH, POOL_B_WETH, PoolKind::V2V3),
+            (WETH, A, POOL_WETH_A_1, PoolKind::V2),
+            (WETH, A, POOL_WETH_A_2, PoolKind::V2),
+            (A, B, POOL_A_B, PoolKind::V2),
+            (B, WETH, POOL_B_WETH, PoolKind::V2),
         ])
     }
 
@@ -719,8 +729,8 @@ mod tests {
         // Build a graph with a dead-end chain: A-B-C where C only connects to B.
         // After pruning, C (degree 1) is removed, then B (now degree 1) is removed.
         let mut graph = PathGraph::from_edges(vec![
-            (A, B, 1, PoolKind::V2V3),
-            (B, 99, 2, PoolKind::V2V3), // 99 is a dead end (degree 1)
+            (A, B, 1, PoolKind::V2),
+            (B, 99, 2, PoolKind::V2), // 99 is a dead end (degree 1)
         ]);
         graph.prune_dead_ends();
         // 99 is removed (degree 1). Then B has degree 1 (only edge to A).
@@ -807,9 +817,9 @@ mod tests {
         // min_depth floor from the filter length, it would leak through.
         let graph = build_fixture_graph();
         let filter = vec![
-            Some(vec![PoolKind::V2V3]),
-            Some(vec![PoolKind::V2V3]),
-            Some(vec![PoolKind::V2V3]),
+            Some(vec![PoolKind::V2]),
+            Some(vec![PoolKind::V2]),
+            Some(vec![PoolKind::V2]),
         ];
         let nvd = graph.compute_node_valid_depths(&filter);
         let _paths = graph.find_paths(
@@ -858,7 +868,7 @@ mod tests {
         // A 2-depth filter with max_depth=3 must not IndexError and must
         // cap at 2-hop paths.
         let graph = build_fixture_graph();
-        let filter = vec![Some(vec![PoolKind::V2V3]), Some(vec![PoolKind::V2V3])];
+        let filter = vec![Some(vec![PoolKind::V2]), Some(vec![PoolKind::V2])];
         let nvd = graph.compute_node_valid_depths(&filter);
         let paths = graph.find_paths(
             WETH,
@@ -882,7 +892,7 @@ mod tests {
     fn test_pool_type_per_depth_with_max_depth_none() {
         // A 2-depth filter with max_depth=None must cap at 2-hop paths.
         let graph = build_fixture_graph();
-        let filter = vec![Some(vec![PoolKind::V2V3]), Some(vec![PoolKind::V2V3])];
+        let filter = vec![Some(vec![PoolKind::V2]), Some(vec![PoolKind::V2])];
         let nvd = graph.compute_node_valid_depths(&filter);
         let paths = graph.find_paths(
             WETH,
@@ -904,14 +914,14 @@ mod tests {
         let graph = build_fixture_graph();
         let filter = vec![None, Some(vec![PoolKind::V4])];
         let nvd = graph.compute_node_valid_depths(&filter);
-        // The fixture has only V2V3 pools, and depth 1 requires V4.
+        // The fixture has only V2 pools, and depth 1 requires V4.
         // So no V4 paths should be found (node_valid_depths will show A and B
         // are invalid at depth 1).
         let paths = graph.find_paths(WETH, WETH, 2, Some(2), false, Some(&filter), Some(&nvd));
         // No V4 pools exist, so no paths match the filter.
         assert!(
             paths.is_empty(),
-            "V4 filter on V2V3-only graph should yield nothing"
+            "V4 filter on V2-only graph should yield nothing"
         );
     }
 
@@ -940,35 +950,37 @@ mod tests {
 
     #[test]
     fn test_poolkind_roundtrip() {
-        assert_eq!(PoolKind::V2V3.as_u8(), 0);
-        assert_eq!(PoolKind::V4.as_u8(), 1);
-        assert_eq!(PoolKind::from_u8(0), Some(PoolKind::V2V3));
-        assert_eq!(PoolKind::from_u8(1), Some(PoolKind::V4));
-        assert_eq!(PoolKind::from_u8(2), None);
+        assert_eq!(PoolKind::V2.as_u8(), 0);
+        assert_eq!(PoolKind::V3.as_u8(), 1);
+        assert_eq!(PoolKind::V4.as_u8(), 2);
+        assert_eq!(PoolKind::from_u8(0), Some(PoolKind::V2));
+        assert_eq!(PoolKind::from_u8(1), Some(PoolKind::V3));
+        assert_eq!(PoolKind::from_u8(2), Some(PoolKind::V4));
+        assert_eq!(PoolKind::from_u8(3), None);
     }
 
     #[test]
     fn test_mixed_pool_kinds() {
-        // Build a graph with both V2V3 and V4 pools.
-        // WETH --V2V3-- A --V4-- B --V2V3-- WETH (3-hop mixed cycle)
+        // Build a graph with both V2 and V4 pools.
+        // WETH --V2-- A --V4-- B --V2-- WETH (3-hop mixed cycle)
         let graph = PathGraph::from_edges(vec![
-            (WETH, A, 1, PoolKind::V2V3),
+            (WETH, A, 1, PoolKind::V2),
             (A, B, 2, PoolKind::V4),
-            (B, WETH, 3, PoolKind::V2V3),
+            (B, WETH, 3, PoolKind::V2),
         ]);
         let filter = vec![
-            Some(vec![PoolKind::V2V3]),
+            Some(vec![PoolKind::V2]),
             Some(vec![PoolKind::V4]),
-            Some(vec![PoolKind::V2V3]),
+            Some(vec![PoolKind::V2]),
         ];
         let nvd = graph.compute_node_valid_depths(&filter);
         let paths = graph.find_paths(WETH, WETH, 3, Some(3), false, Some(&filter), Some(&nvd));
-        assert!(!paths.is_empty(), "Should find a V2V3-V4-V2V3 path");
+        assert!(!paths.is_empty(), "Should find a V2-V4-V2 path");
         for path in &paths {
             assert_eq!(path.len(), 3);
-            assert_eq!(path[0].1, PoolKind::V2V3);
+            assert_eq!(path[0].1, PoolKind::V2);
             assert_eq!(path[1].1, PoolKind::V4);
-            assert_eq!(path[2].1, PoolKind::V2V3);
+            assert_eq!(path[2].1, PoolKind::V2);
         }
     }
 }

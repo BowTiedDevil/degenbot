@@ -63,7 +63,7 @@ pub fn find_paths_rust(
         .map(|(t0, t1, pid, kind_u8)| {
             let kind = PoolKind::from_u8(kind_u8).ok_or_else(|| {
                 PyValueError::new_err(format!(
-                    "pool_kind must be 0 (V2V3) or 1 (V4), got {kind_u8}"
+                    "pool_kind must be 0 (V2), 1 (V3), or 2 (V4), got {kind_u8}"
                 ))
             })?;
             Ok((t0, t1, pid, kind))
@@ -80,7 +80,7 @@ pub fn find_paths_rust(
                             .map(|k| {
                                 PoolKind::from_u8(k).ok_or_else(|| {
                                     PyValueError::new_err(format!(
-                                        "pool_kind must be 0 (V2V3) or 1 (V4), got {k}"
+                                        "pool_kind must be 0 (V2), 1 (V3), or 2 (V4), got {k}"
                                     ))
                                 })
                             })
