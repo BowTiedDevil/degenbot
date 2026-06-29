@@ -498,6 +498,7 @@ def find_paths_rust(
 class PathIterator:
     def __iter__(self) -> PathIterator: ...
     def __next__(self) -> list[tuple[int, int]]: ...
+
 def get_sqrt_ratio_at_tick(tick: int) -> int:
     """Convert a tick value to its corresponding sqrt price (X96 format).
 
