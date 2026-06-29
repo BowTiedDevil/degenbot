@@ -18,14 +18,18 @@ fails at startup with ``liquidityGross mismatch``.
 
 from __future__ import annotations
 
-import pathlib
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 from degenbot.bot import Bot
 from degenbot.config import DatabaseSettings, DegenbotConfig
+from degenbot.degenbot_rs import PyBot
 from degenbot.provider import ProviderAdapter
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v4_pool_factory import make_v4_pool
+
+if TYPE_CHECKING:
+    import pathlib
 
 V4_POOL_MANAGER = "0x000000000004444c5DC75cB358380D2e3dE08A90"
 
@@ -76,10 +80,9 @@ def test_register_v4_pool_seeds_tick_data_inline_without_update_tick_data(
     (one write lock) makes the pool visible to the pump only after seeding,
     closing the window.
     """
-    from degenbot.degenbot_rs import PyBot  # noqa: PLC0415
 
     py_bot = PyBot()
-    weth, usdc = _make_tokens(py_bot)  # noqa: SLF001
+    weth, usdc = _make_tokens(py_bot)
 
     pool = make_v4_pool(
         pool_id="0x4f88f7c99022eace4740c6898f59ce6a2e798a1e64ce54589720b7153eb224a7",
@@ -100,7 +103,7 @@ def test_register_v4_pool_seeds_tick_data_inline_without_update_tick_data(
         tick_data={-201000: (100, 1000, 18_000_000)},
     )
 
-    td = pool._py_pool.tick_data_snapshot()  # noqa: SLF001
+    td = pool._py_pool.tick_data_snapshot()
     assert td is not None, "V4 pool must be registered with tick data inline"
     assert -201000 in td, "the seeded tick must be present without a separate update_tick_data"
     assert td[-201000][0] == 100, "inline seed gross matches"
@@ -115,12 +118,11 @@ def test_release_python_state_keeps_rust_v4_pool_registered(tmp_path: pathlib.Pa
     keeps the pump writing through the shared core, so V4 pools must survive
     release (the engine still solves against them).
     """
-    from degenbot.degenbot_rs import PyBot  # noqa: PLC0415
 
     config = _make_test_config(tmp_path)
     bot = Bot(config, provider=_fake_provider(1))
-    py_bot = bot._py_bot  # noqa: SLF001
-    weth, usdc = _make_tokens(py_bot)  # noqa: SLF001
+    py_bot = bot._py_bot
+    weth, usdc = _make_tokens(py_bot)
 
     pool = make_v4_pool(
         pool_id="0x4f88f7c99022eace4740c6898f59ce6a2e798a1e64ce54589720b7153eb224a7",
@@ -148,7 +150,5 @@ def test_release_python_state_keeps_rust_v4_pool_registered(tmp_path: pathlib.Pa
     bot.release_python_state()
 
     assert py_bot.pool_count() == 1, "V4 pool must stay registered in Rust after release"
-    td = pool._py_pool.tick_data_snapshot()  # noqa: SLF001
-    assert td is not None and -201000 in td, "V4 tick data survives release"
-
-
+    td = pool._py_pool.tick_data_snapshot()
+    assert -201000 in td, "V4 tick data survives release"
