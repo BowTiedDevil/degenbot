@@ -27,8 +27,9 @@ per pool + 18/18 ``calc_withdraw_one_coin``/``calc_token_amount`` matches for
 - **Record mode** (``--golden-mode=record``): one Anvil fork of Ethereum
   mainnet at the pinned block is shared across the whole loop.
 
-Pinned to Ethereum mainnet block 24,407,242 (tip minus ~1M), served by the
-local archive node (``host.containers.internal:8545`` in the devcontainer).
+Pinned to Ethereum mainnet block 24,407,242 (tip minus ~1M), served by a
+local archive node (URI configurable via ``tests.env``; see
+``ETHEREUM_ARCHIVE_NODE_HTTP_URI``).
 """
 
 from __future__ import annotations
@@ -55,6 +56,7 @@ from degenbot.curve.strategies import (
     YVariant,
 )
 from degenbot.degenbot_rs import PyBot
+from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.fakes.curve_data_provider import FakeCurveDataProvider
 from tests.helpers.curve_pool_factory import make_curve_pool
 from tests.helpers.erc20_factory import make_erc20
@@ -62,7 +64,6 @@ from tests.helpers.erc20_factory import make_erc20
 if TYPE_CHECKING:
     from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 
-ETHEREUM_RPC_URI = "http://host.containers.internal:8545/"
 CURVE_PARITY_BLOCK = 24_407_242  # tip minus ~1M
 
 _CASSETTE_DIR = pathlib.Path(__file__).resolve().parents[1] / "fixtures" / "chain_data" / "1"
@@ -234,7 +235,7 @@ class _RecordFork(AbstractContextManager):
     def __enter__(self) -> Self:
         if self._recording:
             self.fork = AnvilFork(
-                fork_url=ETHEREUM_RPC_URI,
+                fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
                 fork_block=self._block,
                 storage_caching=True,
                 anvil_opts=["--accounts=0"],

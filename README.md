@@ -66,6 +66,7 @@ The `Bot` class is the central session object for all degenbot operations. It ma
 <!-- invisible-code-block: python
 import degenbot
 from degenbot.config import DegenbotConfig
+from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
 -->
 
 ```python
@@ -73,7 +74,7 @@ from degenbot.config import DegenbotConfig
 bot = degenbot.Bot(
     config=DegenbotConfig(
         default_chain_id=1,
-        rpc={1: "http://host.containers.internal:8545"},
+        rpc={1: RPC_URL},
         database={"path": "~/.config/degenbot/degenbot.db"},
     )
 )
@@ -132,6 +133,10 @@ Degenbot pools follow an **I/O-free architecture** where on-chain data is fetche
 
 `Bot` is the central session object that owns all runtime state:
 
+<!-- invisible-code-block: python
+from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
+-->
+
 ```python
 import degenbot
 from degenbot.config import DegenbotConfig
@@ -140,7 +145,7 @@ from degenbot.config import DegenbotConfig
 bot = degenbot.Bot(
     config=DegenbotConfig(
         default_chain_id=1,
-        rpc={1: "http://host.containers.internal:8545"},
+        rpc={1: RPC_URL},
         database={"path": ":memory:"},
     )
 )
@@ -285,7 +290,7 @@ from degenbot.config import DegenbotConfig
 bot = degenbot.Bot(
     config=DegenbotConfig(
         default_chain_id=1,
-        rpc={1: "http://host.containers.internal:8545"},
+        rpc={1: RPC_URL},
         database={"path": ":memory:"},
     )
 )
@@ -973,7 +978,7 @@ bot = degenbot.Bot(
     config=DegenbotConfig(
         default_chain_id=1,
         rpc={
-            1: "http://host.containers.internal:8545",
+            1: RPC_URL,
         },
         database={"path": "~/.config/degenbot/degenbot.db"},
     )
@@ -1315,16 +1320,17 @@ The extension includes synchronous and async Ethereum RPC providers:
 
 <!-- invisible-code-block: python
 from degenbot.degenbot_rs import AlloyProvider, Contract
+from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI as RPC_URL
 -->
 
 ```python
 # Create provider with connection pooling
-provider = AlloyProvider("http://host.containers.internal:8545")
+provider = AlloyProvider(RPC_URL)
 
 # Contract interaction
 contract = Contract(
     "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-    provider_url="http://host.containers.internal:8545",
+    provider_url=RPC_URL,
 )
 
 # Query blockchain

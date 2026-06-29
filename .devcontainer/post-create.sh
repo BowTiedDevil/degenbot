@@ -18,15 +18,19 @@ set -euo pipefail
 # just/node/python/uv are in /usr/bin from dnf.
 export PATH="$HOME/.foundry/bin:$HOME/.local/bin:$PATH"
 
-echo ">>> creating venv from dnf python and syncing project"
+echo ">>> creating container-local venv (UV_PROJECT_ENVIRONMENT) and syncing project"
 # dnf python (3.14 on fedora:latest) ships libpython.so via python3-devel, so
 # the PyO3 extension links fine. Use the system python — no uv-managed python
-# install step needed. Create the venv only if absent, so a warm one survives
-# --force-rebuild cycles instead of being wiped each time.
+# install step needed. The venv lives at $UV_PROJECT_ENVIRONMENT (container-
+# local, NOT under the bind-mounted /workspaces) so its pyvenv.cfg and script
+# shebangs bake /home/dev/.venvs/... paths that are never read by the host —
+# eliminating the shared-venv poisoning between /workspaces and /home/btd.
+# `--allow-existing` makes `uv venv` idempotent: a no-op if the venv is already
+# there (warm venv survives a podman stop/start), creates it fresh otherwise
+# (a --remove-existing-container rebuild wipes it). `uv sync` then installs
+# packages (and builds the PyO3 extension) into whichever state it finds.
 cd /workspaces/degenbot
-if [ ! -d .venv ]; then
-  uv venv --python python3
-fi
+uv venv --allow-existing "$UV_PROJECT_ENVIRONMENT"
 uv sync
 
 echo ">>> enabling commitlint git hooks (optional; needs node)"

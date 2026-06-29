@@ -49,16 +49,55 @@
   // points at host.containers.internal:8545/8546. Pod membership and
   // `--network=container:mainnet_node` were both attempted and rejected by
   // podman — details in the runArgs/network comment above.
+  // All environment variables live in containerEnv (baked into the image's
+  // Config.Env, visible to EVERY process including `podman exec` shells from
+  // ssh-attach.sh) rather than remoteEnv (only injected by the VSCode runtime
+  // into shells IT spawns — invisible to podman exec, so useless for the
+  // SSH-only workflow this container serves). PATH augmentation for foundry/pi
+  // is set directly in the Dockerfile via `ENV PATH=...`, not here.
   "containerEnv": {
     "LOCAL_BIN": "/home/dev/.local/bin",
-    "FOUNDRY_DIR": "/home/dev/.foundry"
+    "FOUNDRY_DIR": "/home/dev/.foundry",
+    // UV_PROJECT_ENVIRONMENT points uv at a container-local venv (outside the
+    // bind-mounted repo) instead of the in-repo .venv. This is the fix for the
+    // shared-venv poisoning between host (/home/btd/...) and container
+    // (/workspaces/...): uv bakes the venv's absolute path into pyvenv.cfg and
+    // every console-script shebang (.venv/bin/pytest, etc.), so a single shared
+    // .venv alternates between working and broken as each side runs `uv sync`.
+    // A container-local venv has self-consistent /home/dev/.venvs/... paths and
+    // is never read by the host. It lives in the container's writable layer
+    // (survives podman stop/start, wiped on --remove-existing-container) —
+    // post-create.sh recreates it via `uv sync` on every rebuild.
+    "UV_PROJECT_ENVIRONMENT": "/home/dev/.venvs/degenbot",
+    // PYTHONPYCACHEPREFIX isolates bytecache per environment. Even with separate
+    // venvs (above), the SOURCE TREE (__pycache__ under src/, tests/, conftest
+    // files) is still bind-mounted and shared. CPython bakes the absolute
+    // compile-time path (co_filename) into every .pyc; a pyc built in the
+    // container then loaded on the host carries /workspaces/... paths that break
+    // Sybil's pytest_collect_file (README.md tests vanish) and any tooling that
+    // reads co_filename. Redirecting pycs to a per-environment prefix keeps each
+    // side's bytecache self-consistent while preserving the import-speedup
+    // benefit. The prefix differs from the host's
+    // (/tmp/degenbot-pycache-host, set in the justfile) so the two environments
+    // never share a bytecache.
+    "PYTHONPYCACHEPREFIX": "/tmp/degenbot-pycache-container",
+    // Ethereum RPC URIs. The host's tests.env points these at localhost:8545
+    // (the local anvil node, reachable via pasta port-forwarding). Inside the
+    // container "localhost" is the container's own loopback, not the host's —
+    // so these containerEnv entries override the shared tests.env values to
+    // host.containers.internal:8545, which podman resolves to the host
+    // loopback where anvil listens. Precedence (envvar > tests.env > default)
+    // is implemented in tests/conftest.py:_rpc, so containerEnv always wins
+    // here without editing the bind-mounted tests.env.
+    "ETHEREUM_ARCHIVE_NODE_HTTP_URI": "http://host.containers.internal:8545/",
+    "ETHEREUM_ARCHIVE_NODE_WS_URI": "ws://host.containers.internal:8546/",
+    "ETHEREUM_FULL_NODE_HTTP_URI": "http://host.containers.internal:8545/",
+    "ETHEREUM_FULL_NODE_WS_URI": "ws://host.containers.internal:8546/"
   },
-  "remoteEnv": {
-    "PATH": "/home/dev/.foundry/bin:/home/dev/.local/bin:${containerEnv:PATH}"
-  },
-  // Extensions auto-installed into the container on first launch. The Python
-  // extension pairs with the pinned interpreter in .vscode/settings.json
-  // (.venv/bin/python) — without these the interpreter pin has no effect.
+  // Extensions auto-installed into the container on first launch. The interpreter
+  // is pinned to the container-local venv (UV_PROJECT_ENVIRONMENT above), NOT the
+  // in-repo .venv — .vscode/settings.json pins the host venv; these container
+  // settings override it inside the devcontainer.
   "customizations": {
     "vscode": {
       "extensions": [
@@ -77,8 +116,8 @@
         "tintinweb.vscode-vyper"
       ],
       "settings": {
-        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
-        "python.venvPath": "${workspaceFolder}/.venv"
+        "python.defaultInterpreterPath": "/home/dev/.venvs/degenbot/bin/python",
+        "python.venvPath": "/home/dev/.venvs"
       }
     }
   },
