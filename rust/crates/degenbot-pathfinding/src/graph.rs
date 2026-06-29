@@ -210,12 +210,418 @@ impl PathGraph {
         }
         result
     }
+}
+
+/// A lazy, stateful depth-first search iterator over valid cycles.
+///
+/// This struct holds the DFS stack, working path, and visited set,
+/// yielding one path at a time via [`PathFinder::next_path`]. This avoids
+/// collecting all results into memory at once — essential for large
+/// graphs that produce millions of paths.
+///
+/// Created by [`PathGraph::find_paths_iter`].
+pub struct PathFinder<'a> {
+    graph: &'a PathGraph,
+    end: u64,
+    min_depth: usize,
+    effective_max_depth: Option<usize>,
+    include_reverse: bool,
+    pool_type_per_depth: Option<&'a [Option<Vec<PoolKind>>]>,
+    node_valid_depths: Option<&'a HashMap<u64, Vec<bool>>>,
+    filter_len: usize,
+    stack: Vec<(u64, usize, bool)>,
+    working_path: Vec<EdgeKey>,
+    visited: HashSet<EdgeKey>,
+    pending_reverse: Option<Vec<EdgeKey>>,
+    done: bool,
+}
+
+impl PathFinder<'_> {
+    /// Advance the DFS and return the next complete path, or `None` if
+    /// the search is exhausted.
+    ///
+    /// If `include_reverse` is set, each found cycle yields the forward path
+    /// first, then the reversed path on the next call.
+    #[must_use]
+    pub fn next_path(&mut self) -> Option<Vec<EdgeKey>> {
+        if self.done {
+            return None;
+        }
+
+        // If a reversed path is pending from the last yield, emit it now.
+        if let Some(rev) = self.pending_reverse.take() {
+            return Some(rev);
+        }
+
+        while let Some(frame) = self.stack.last_mut() {
+            let (node, edge_idx, yield_checked) = frame;
+
+            // Check yield condition (once per frame arrival).
+            if !*yield_checked {
+                *yield_checked = true;
+                if *node == self.end && self.working_path.len() >= self.min_depth {
+                    let path = self.working_path.clone();
+                    if self.include_reverse {
+                        let mut rev = self.working_path.clone();
+                        rev.reverse();
+                        self.pending_reverse = Some(rev);
+                    }
+                    return Some(path);
+                }
+            }
+
+            // Stop recursion if the working path has reached the maximum depth.
+            if let Some(emd) = self.effective_max_depth {
+                if self.working_path.len() >= emd {
+                    // Backtrack.
+                    self.stack.pop();
+                    if let Some(popped) = self.working_path.pop() {
+                        self.visited.remove(&popped);
+                    }
+                    continue;
+                }
+            }
+
+            // Find the next valid edge to explore from this node.
+            let neighbors = if let Some(n) = self.graph.adj.get(node) {
+                n.as_slice()
+            } else {
+                // No edges from this node — backtrack.
+                self.stack.pop();
+                continue;
+            };
+
+            let mut found_edge = false;
+            while *edge_idx < neighbors.len() {
+                let edge = &neighbors[*edge_idx];
+                *edge_idx += 1;
+                let edge_key = (edge.pool_id, edge.pool_kind);
+
+                // Cycle detection: skip edges already on the working path.
+                if self.visited.contains(&edge_key) {
+                    continue;
+                }
+
+                // Per-depth pool-type filter.
+                if let Some(filter) = self.pool_type_per_depth {
+                    let depth = self.working_path.len();
+                    // depth < filter_len is guaranteed by effective_max_depth,
+                    // but guard defensively.
+                    if depth >= self.filter_len {
+                        continue;
+                    }
+                    if let Some(allowed_kinds) = &filter[depth] {
+                        if !allowed_kinds.contains(&edge.pool_kind) {
+                            continue;
+                        }
+                    }
+
+                    // Lookahead pruning: skip if the neighbor can't continue
+                    // at the next depth.
+                    let next_depth = depth + 1;
+                    if next_depth < self.filter_len {
+                        if let Some(nvd) = self.node_valid_depths {
+                            if let Some(valid) = nvd.get(&edge.neighbor) {
+                                if !valid[next_depth] {
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Found a valid edge — extend the path and push the neighbor.
+                self.working_path.push(edge_key);
+                self.visited.insert(edge_key);
+                self.stack.push((edge.neighbor, 0, false));
+                found_edge = true;
+                break;
+            }
+
+            if !found_edge {
+                // No more edges to explore from this node — backtrack.
+                self.stack.pop();
+                if let Some(popped) = self.working_path.pop() {
+                    self.visited.remove(&popped);
+                }
+            }
+        }
+
+        // Search exhausted.
+        self.done = true;
+        None
+    }
+}
+
+impl Iterator for PathFinder<'_> {
+    type Item = Vec<EdgeKey>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next_path()
+    }
+}
+
+/// An owning, lazy DFS iterator that owns the graph and filter data.
+///
+/// This is the PyO3-friendly version of [`PathFinder`] — it has no lifetime
+/// parameters, so it can be stored in a `#[pyclass]` and iterated from
+/// Python one path at a time. The graph, filter, and node-valid-depths are
+/// all owned, eliminating self-referential borrow issues.
+pub struct OwnedPathFinder {
+    graph: PathGraph,
+    end: u64,
+    min_depth: usize,
+    effective_max_depth: Option<usize>,
+    include_reverse: bool,
+    pool_type_per_depth: Option<Vec<Option<Vec<PoolKind>>>>,
+    node_valid_depths: Option<HashMap<u64, Vec<bool>>>,
+    filter_len: usize,
+    stack: Vec<(u64, usize, bool)>,
+    working_path: Vec<EdgeKey>,
+    visited: HashSet<EdgeKey>,
+    pending_reverse: Option<Vec<EdgeKey>>,
+    done: bool,
+}
+
+impl OwnedPathFinder {
+    /// Create from owned graph + search parameters.
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub fn new(
+        graph: PathGraph,
+        start: u64,
+        end: u64,
+        min_depth: usize,
+        max_depth: Option<usize>,
+        include_reverse: bool,
+        pool_type_per_depth: Option<Vec<Option<Vec<PoolKind>>>>,
+    ) -> Self {
+        let effective_max_depth: Option<usize> = match &pool_type_per_depth {
+            Some(filter) => {
+                let filter_len = filter.len();
+                match max_depth {
+                    Some(md) => Some(md.min(filter_len)),
+                    None => Some(filter_len),
+                }
+            }
+            None => max_depth,
+        };
+
+        let filter_len = pool_type_per_depth.as_ref().map_or(0, Vec::len);
+
+        let node_valid_depths = pool_type_per_depth
+            .as_ref()
+            .map(|filter| graph.compute_node_valid_depths(filter));
+
+        let stack = if graph.contains_node(start) {
+            vec![(start, 0, false)]
+        } else {
+            Vec::new()
+        };
+        let done = stack.is_empty();
+
+        Self {
+            graph,
+            end,
+            min_depth,
+            effective_max_depth,
+            include_reverse,
+            pool_type_per_depth,
+            node_valid_depths,
+            filter_len,
+            stack,
+            working_path: Vec::new(),
+            visited: HashSet::new(),
+            pending_reverse: None,
+            done,
+        }
+    }
+
+    /// Advance the DFS and return the next complete path, or `None` if
+    /// the search is exhausted.
+    ///
+    /// If `include_reverse` is set, each found cycle yields the forward path
+    /// first, then the reversed path on the next call.
+    #[must_use]
+    pub fn next_path(&mut self) -> Option<Vec<EdgeKey>> {
+        if self.done {
+            return None;
+        }
+
+        // If a reversed path is pending from the last yield, emit it now.
+        if let Some(rev) = self.pending_reverse.take() {
+            return Some(rev);
+        }
+
+        let filter_slice = self.pool_type_per_depth.as_deref();
+        let nvd_ref = self.node_valid_depths.as_ref();
+
+        while let Some(frame) = self.stack.last_mut() {
+            let (node, edge_idx, yield_checked) = frame;
+
+            // Check yield condition (once per frame arrival).
+            if !*yield_checked {
+                *yield_checked = true;
+                if *node == self.end && self.working_path.len() >= self.min_depth {
+                    let path = self.working_path.clone();
+                    if self.include_reverse {
+                        let mut rev = self.working_path.clone();
+                        rev.reverse();
+                        self.pending_reverse = Some(rev);
+                    }
+                    return Some(path);
+                }
+            }
+
+            // Stop recursion if the working path has reached the maximum depth.
+            if let Some(emd) = self.effective_max_depth {
+                if self.working_path.len() >= emd {
+                    // Backtrack.
+                    self.stack.pop();
+                    if let Some(popped) = self.working_path.pop() {
+                        self.visited.remove(&popped);
+                    }
+                    continue;
+                }
+            }
+
+            // Find the next valid edge to explore from this node.
+            let neighbors = if let Some(n) = self.graph.adj.get(node) {
+                n.as_slice()
+            } else {
+                // No edges from this node — backtrack.
+                self.stack.pop();
+                continue;
+            };
+
+            let mut found_edge = false;
+            while *edge_idx < neighbors.len() {
+                let edge = &neighbors[*edge_idx];
+                *edge_idx += 1;
+                let edge_key = (edge.pool_id, edge.pool_kind);
+
+                // Cycle detection: skip edges already on the working path.
+                if self.visited.contains(&edge_key) {
+                    continue;
+                }
+
+                // Per-depth pool-type filter.
+                if let Some(filter) = filter_slice {
+                    let depth = self.working_path.len();
+                    if depth >= self.filter_len {
+                        continue;
+                    }
+                    if let Some(allowed_kinds) = &filter[depth] {
+                        if !allowed_kinds.contains(&edge.pool_kind) {
+                            continue;
+                        }
+                    }
+
+                    // Lookahead pruning.
+                    let next_depth = depth + 1;
+                    if next_depth < self.filter_len {
+                        if let Some(nvd) = nvd_ref {
+                            if let Some(valid) = nvd.get(&edge.neighbor) {
+                                if !valid[next_depth] {
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Found a valid edge — extend the path and push the neighbor.
+                self.working_path.push(edge_key);
+                self.visited.insert(edge_key);
+                self.stack.push((edge.neighbor, 0, false));
+                found_edge = true;
+                break;
+            }
+
+            if !found_edge {
+                // No more edges to explore from this node — backtrack.
+                self.stack.pop();
+                if let Some(popped) = self.working_path.pop() {
+                    self.visited.remove(&popped);
+                }
+            }
+        }
+
+        // Search exhausted.
+        self.done = true;
+        None
+    }
+}
+
+impl Iterator for OwnedPathFinder {
+    type Item = Vec<EdgeKey>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next_path()
+    }
+}
+
+impl PathGraph {
+    /// Create a lazy iterator over all valid paths from `start` back to `end`.
+    ///
+    /// This is a stateful, resumable version of the DFS. The iterator yields
+    /// one path at a time, avoiding the memory cost of collecting all results
+    /// into a `Vec`. Use this when the graph may produce a large number of
+    /// paths.
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub fn find_paths_iter<'a>(
+        &'a self,
+        start: u64,
+        end: u64,
+        min_depth: usize,
+        max_depth: Option<usize>,
+        include_reverse: bool,
+        pool_type_per_depth: Option<&'a [Option<Vec<PoolKind>>]>,
+        node_valid_depths: Option<&'a HashMap<u64, Vec<bool>>>,
+    ) -> PathFinder<'a> {
+        let effective_max_depth: Option<usize> = match pool_type_per_depth {
+            Some(filter) => {
+                let filter_len = filter.len();
+                match max_depth {
+                    Some(md) => Some(md.min(filter_len)),
+                    None => Some(filter_len),
+                }
+            }
+            None => max_depth,
+        };
+
+        let filter_len = pool_type_per_depth.map_or(0, <[Option<Vec<PoolKind>>]>::len);
+
+        let stack = if self.adj.contains_key(&start) {
+            vec![(start, 0, false)]
+        } else {
+            Vec::new()
+        };
+        let done = stack.is_empty();
+
+        PathFinder {
+            graph: self,
+            end,
+            min_depth,
+            effective_max_depth,
+            include_reverse,
+            pool_type_per_depth,
+            node_valid_depths,
+            filter_len,
+            stack,
+            working_path: Vec::new(),
+            visited: HashSet::new(),
+            pending_reverse: None,
+            done,
+        }
+    }
 
     /// Depth-first search for all valid paths from `start` back to `end`.
     ///
-    /// This is an iterative port of the Python `_dfs` generator. It discovers
-    /// all cycles (paths where the last hop returns to `end`) within the depth
-    /// bounds, honoring per-depth pool-type filters and lookahead pruning.
+    /// This is an eager version that collects all results. For large graphs
+    /// that may produce millions of paths, use [`PathGraph::find_paths_iter`]
+    /// instead to avoid excessive memory usage.
     ///
     /// # Arguments
     /// * `start` — The token ID where the search begins.
@@ -243,150 +649,16 @@ impl PathGraph {
         pool_type_per_depth: Option<&[Option<Vec<PoolKind>>]>,
         node_valid_depths: Option<&HashMap<u64, Vec<bool>>>,
     ) -> Vec<Vec<EdgeKey>> {
-        let mut results = Vec::new();
-
-        if !self.adj.contains_key(&start) {
-            return results;
-        }
-
-        // Compute the effective maximum depth. When `pool_type_per_depth` is
-        // provided, it implicitly caps the depth at its length (there are no
-        // allowed pool types beyond its last entry).
-        let effective_max_depth: Option<usize> = match pool_type_per_depth {
-            Some(filter) => {
-                let filter_len = filter.len();
-                match max_depth {
-                    Some(md) => Some(md.min(filter_len)),
-                    None => Some(filter_len),
-                }
-            }
-            None => max_depth,
-        };
-
-        // The filter length, for bounds checking in the loop.
-        let filter_len = pool_type_per_depth.map_or(0, <[Option<Vec<PoolKind>>]>::len);
-
-        // Stack frame: (node, next_edge_index_to_try, yield_checked)
-        let mut stack: Vec<(u64, usize, bool)> = vec![(start, 0, false)];
-        let mut working_path: Vec<EdgeKey> = Vec::new();
-        let mut visited: HashSet<EdgeKey> = HashSet::new();
-
-        while let Some(frame) = stack.last_mut() {
-            let FrameParts {
-                node,
-                edge_idx,
-                yield_checked,
-            } = FrameParts::from_frame(frame);
-
-            // Check yield condition (once per frame arrival).
-            if !*yield_checked {
-                *yield_checked = true;
-                if *node == end && working_path.len() >= min_depth {
-                    results.push(working_path.clone());
-                    if include_reverse {
-                        let mut rev = working_path.clone();
-                        rev.reverse();
-                        results.push(rev);
-                    }
-                }
-            }
-
-            // Stop recursion if the working path has reached the maximum depth.
-            if let Some(emd) = effective_max_depth {
-                if working_path.len() >= emd {
-                    // Backtrack.
-                    stack.pop();
-                    if let Some(popped) = working_path.pop() {
-                        visited.remove(&popped);
-                    }
-                    continue;
-                }
-            }
-
-            // Find the next valid edge to explore from this node.
-            let neighbors = if let Some(n) = self.adj.get(node) {
-                n.as_slice()
-            } else {
-                // No edges from this node — backtrack.
-                stack.pop();
-                continue;
-            };
-
-            let mut found_edge = false;
-            while *edge_idx < neighbors.len() {
-                let edge = &neighbors[*edge_idx];
-                *edge_idx += 1;
-                let edge_key = (edge.pool_id, edge.pool_kind);
-
-                // Cycle detection: skip edges already on the working path.
-                if visited.contains(&edge_key) {
-                    continue;
-                }
-
-                // Per-depth pool-type filter.
-                if let Some(filter) = pool_type_per_depth {
-                    let depth = working_path.len();
-                    // depth < filter_len is guaranteed by effective_max_depth,
-                    // but guard defensively.
-                    if depth >= filter_len {
-                        continue;
-                    }
-                    if let Some(allowed_kinds) = &filter[depth] {
-                        if !allowed_kinds.contains(&edge.pool_kind) {
-                            continue;
-                        }
-                    }
-
-                    // Lookahead pruning: skip if the neighbor can't continue
-                    // at the next depth.
-                    let next_depth = depth + 1;
-                    if next_depth < filter_len {
-                        if let Some(nvd) = node_valid_depths {
-                            if let Some(valid) = nvd.get(&edge.neighbor) {
-                                if !valid[next_depth] {
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Found a valid edge — extend the path and push the neighbor.
-                working_path.push(edge_key);
-                visited.insert(edge_key);
-                stack.push((edge.neighbor, 0, false));
-                found_edge = true;
-                break;
-            }
-
-            if !found_edge {
-                // No more edges to explore from this node — backtrack.
-                stack.pop();
-                if let Some(popped) = working_path.pop() {
-                    visited.remove(&popped);
-                }
-            }
-        }
-
-        results
-    }
-}
-
-/// Helper to destructure the stack frame tuple for clarity.
-struct FrameParts<'a> {
-    node: &'a mut u64,
-    edge_idx: &'a mut usize,
-    yield_checked: &'a mut bool,
-}
-
-impl<'a> FrameParts<'a> {
-    fn from_frame(frame: &'a mut (u64, usize, bool)) -> Self {
-        let (node, edge_idx, yield_checked) = frame;
-        FrameParts {
-            node,
-            edge_idx,
-            yield_checked,
-        }
+        self.find_paths_iter(
+            start,
+            end,
+            min_depth,
+            max_depth,
+            include_reverse,
+            pool_type_per_depth,
+            node_valid_depths,
+        )
+        .collect()
     }
 }
 

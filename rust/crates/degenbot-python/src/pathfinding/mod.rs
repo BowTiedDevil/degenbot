@@ -1,46 +1,43 @@
 //! `PyO3` bindings for the pathfinding graph + DFS.
 //!
 //! Thin translator over `degenbot_pathfinding::graph`. No business logic —
-//! extract args (flat int tuples from Python) → build `PathGraph` → run DFS
-//! (GIL released) → wrap result as nested Python lists.
+//! extract args (flat int tuples from Python) → build `OwnedPathFinder` →
+//! yield paths lazily via the Python iterator protocol.
+
+#![allow(clippy::doc_markdown)]
 
 use crate::prelude::*;
-use degenbot_pathfinding::graph::{EdgeKey, PathGraph, PoolKind};
+use degenbot_pathfinding::graph::{OwnedPathFinder, PoolKind};
 use pyo3::exceptions::PyValueError;
 use pyo3::types::PyList;
 
 /// Find arbitrage paths (cycles) through a liquidity-pool graph.
 ///
 /// This is the Rust-backed DFS that replaces the Python ``networkx``-based
-/// ``_dfs``. The graph is built from a flat edge list and searched in a single
-/// GIL-released call.
+/// ``_dfs``. Returns a **lazy iterator** — paths are yielded one at a time,
+/// so memory usage is bounded even for graphs that produce millions of paths.
 ///
 /// Args:
 ///     edges: A list of ``(token0_id, token1_id, pool_id, pool_kind)`` tuples.
 ///         ``pool_kind`` is ``0`` for V2/V3 pools (``LiquidityPoolTable``) or
 ///         ``1`` for V4 pools (``UniswapV4PoolTable``).
-///     `start_token_id`: The token ID where the search begins.
-///     `end_token_id`: The token ID the path must return to.
-///     `min_depth`: Minimum number of hops in a completed path.
-///     `max_depth`: Maximum number of hops, or ``None`` for no limit.
-///     `include_reverse`: If ``True``, yield each found path again reversed.
-///     `pool_type_per_depth`: Optional per-depth allowed pool kinds. A list where
-///         each element is ``None`` (all kinds allowed) or a set/list of
+///     start_token_id: The token ID where the search begins.
+///     end_token_id: The token ID the path must return to.
+///     min_depth: Minimum number of hops in a completed path.
+///     max_depth: Maximum number of hops, or ``None`` for no limit.
+///     include_reverse: If ``True``, yield each found path again reversed.
+///     pool_type_per_depth: Optional per-depth allowed pool kinds. A list where
+///         each element is ``None`` (all kinds allowed) or a set of
 ///         ``pool_kind`` ints (``0`` = V2V3, ``1`` = V4). Implicitly caps
 ///         ``max_depth`` at its length.
 ///
 /// Returns:
-///     A list of paths, each a list of ``(pool_id, pool_kind)`` tuples.
+///     A ``PathIterator`` — iterate it (``for path in iter: ...``) to lazily
+///     yield paths, each a list of ``(pool_id, pool_kind)`` tuples.
 ///
 /// # Errors
 ///
-/// Returns `PyValueError` if any pool-kind discriminant is not 0 or 1, or
-/// `PyErr` if Python tuple construction fails.
-///
-/// # Panics
-///
-/// This function does not panic. The `into_pyobject` calls return
-/// `Result<_, Infallible>` (they cannot fail).
+/// Returns `PyValueError` if any pool-kind discriminant is not 0 or 1.
 #[allow(clippy::too_many_arguments, clippy::implicit_hasher)]
 #[pyfunction]
 #[pyo3(signature = (
@@ -53,7 +50,6 @@ use pyo3::types::PyList;
     pool_type_per_depth=None,
 ))]
 pub fn find_paths_rust(
-    py: Python<'_>,
     edges: Vec<(u64, u64, u64, u8)>,
     start_token_id: u64,
     end_token_id: u64,
@@ -61,8 +57,7 @@ pub fn find_paths_rust(
     max_depth: Option<usize>,
     include_reverse: bool,
     pool_type_per_depth: Option<Vec<Option<std::collections::HashSet<u8>>>>,
-) -> PyResult<Bound<'_, PyList>> {
-    // Extract all input data into owned Rust types before releasing the GIL.
+) -> PyResult<PathIterator> {
     let rust_edges: Vec<(u64, u64, u64, PoolKind)> = edges
         .into_iter()
         .map(|(t0, t1, pid, kind_u8)| {
@@ -98,37 +93,58 @@ pub fn find_paths_rust(
         None => None,
     };
 
-    let filter_slice: Option<&[Option<Vec<PoolKind>>]> = rust_filter.as_deref();
+    // Build the graph + create a lazy iterator. The graph is pruned and
+    // node-valid-depths are computed inside OwnedPathFinder::new.
+    let mut graph = degenbot_pathfinding::graph::PathGraph::from_edges(rust_edges);
+    graph.prune_dead_ends();
 
-    // Build the graph + run the search with the GIL released.
-    let result: Vec<Vec<EdgeKey>> = py.detach(move || {
-        let mut graph = PathGraph::from_edges(rust_edges);
-        graph.prune_dead_ends();
+    let finder = OwnedPathFinder::new(
+        graph,
+        start_token_id,
+        end_token_id,
+        min_depth,
+        max_depth,
+        include_reverse,
+        rust_filter,
+    );
 
-        let nvd = filter_slice.map(|filter| graph.compute_node_valid_depths(filter));
+    Ok(PathIterator { finder })
+}
 
-        graph.find_paths(
-            start_token_id,
-            end_token_id,
-            min_depth,
-            max_depth,
-            include_reverse,
-            filter_slice,
-            nvd.as_ref(),
-        )
-    });
+/// A lazy Python iterator over arbitrage paths.
+///
+/// Yields ``list[tuple[int, int]]`` — each path is a list of
+/// ``(pool_id, pool_kind_u8)`` tuples. The DFS runs incrementally: each call
+/// to ``__next__`` advances the search until a complete path is found.
+#[pyclass]
+pub struct PathIterator {
+    finder: OwnedPathFinder,
+}
 
-    // Build the nested Python list (GIL held).
-    let outer = PyList::empty(py);
-    for path in &result {
-        let inner = PyList::empty(py);
-        for &(pool_id, pool_kind) in path {
-            let pool_id_py: Bound<'_, PyAny> = pool_id.into_pyobject(py).unwrap().into_any();
-            let kind_py: Bound<'_, PyAny> = pool_kind.as_u8().into_pyobject(py).unwrap().into_any();
-            let tuple = (pool_id_py, kind_py).into_pyobject(py)?;
-            inner.append(tuple)?;
-        }
-        outer.append(inner)?;
+#[pymethods]
+impl PathIterator {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
     }
-    Ok(outer)
+
+    fn __next__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyList>>> {
+        // Run the next DFS step with the GIL released. Each step is cheap
+        // (one edge exploration or one yield), so the GIL is held briefly.
+        let result = py.detach(|| self.finder.next_path());
+
+        match result {
+            None => Ok(None),
+            Some(path) => {
+                let list = PyList::empty(py);
+                for (pool_id, pool_kind) in &path {
+                    let pool_id_py: Bound<'_, PyAny> =
+                        pool_id.into_pyobject(py).unwrap().into_any();
+                    let kind_py: Bound<'_, PyAny> =
+                        pool_kind.as_u8().into_pyobject(py).unwrap().into_any();
+                    list.append((pool_id_py, kind_py).into_pyobject(py)?)?;
+                }
+                Ok(Some(list))
+            }
+        }
+    }
 }

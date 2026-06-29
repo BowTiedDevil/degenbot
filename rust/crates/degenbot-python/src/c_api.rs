@@ -50,6 +50,8 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Pathfinding graph + DFS (feature = "pathfinding")
     #[cfg(feature = "pathfinding")]
     m.add_function(wrap_pyfunction!(crate::pathfinding::find_paths_rust, m)?)?;
+    #[cfg(feature = "pathfinding")]
+    m.add_class::<crate::pathfinding::PathIterator>()?;
 
     // CL math library submodule (feature = "cl-math")
     #[cfg(feature = "cl-math")]
