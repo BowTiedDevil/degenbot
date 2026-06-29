@@ -13,7 +13,13 @@ from sqlalchemy.orm import Session
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.erc20 import Erc20TokenTable
-from degenbot.database.models.pools import LiquidityPoolTable, PoolManagerTable, UniswapV4PoolTable
+from degenbot.database.models.pools import (
+    LiquidityPoolTable,
+    PoolManagerTable,
+    UniswapV2PoolTableBase,
+    UniswapV3PoolTableBase,
+    UniswapV4PoolTable,
+)
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.degenbot_rs import find_paths_rust
 from degenbot.exceptions.base import DegenbotValueError
@@ -24,8 +30,9 @@ type TokenId = int
 
 # Pool-kind discriminants passed to the Rust `find_paths_rust` function.
 # These match the `PoolKind::from_u8` mapping in the Rust core leaf.
-_POOL_KIND_V2V3: int = 0
-_POOL_KIND_V4: int = 1
+_POOL_KIND_V2: int = 0
+_POOL_KIND_V3: int = 1
+_POOL_KIND_V4: int = 2
 
 
 @dataclass(slots=True, frozen=True)
@@ -47,8 +54,12 @@ class Direction(enum.Enum):
 def _pool_kind_for_type(pool_type: type) -> int:
     """Map a pool-table class to its u8 discriminant for the Rust core.
 
+    Checking V3 before V2 is required because both are subclasses of
+    ``LiquidityPoolTable`` — the more specific ``UniswapV3PoolTableBase``
+    must be tested before the general ``LiquidityPoolTable`` fallback.
+
     Returns:
-        0 for V2/V3 pools (``LiquidityPoolTable``), 1 for V4 pools.
+        0 for V2 pools, 1 for V3 pools, 2 for V4 pools.
 
     Raises:
         DegenbotValueError: If ``pool_type`` is not a recognized pool-table class.
@@ -56,8 +67,10 @@ def _pool_kind_for_type(pool_type: type) -> int:
     """
     if issubclass(pool_type, UniswapV4PoolTable):
         return _POOL_KIND_V4
-    if issubclass(pool_type, LiquidityPoolTable):
-        return _POOL_KIND_V2V3
+    if issubclass(pool_type, UniswapV3PoolTableBase):
+        return _POOL_KIND_V3
+    if issubclass(pool_type, UniswapV2PoolTableBase):
+        return _POOL_KIND_V2
     msg = f"Unsupported pool type: {pool_type}"
     raise DegenbotValueError(message=msg)
 
@@ -108,11 +121,21 @@ def _get_tokens_with_min_degree(
 
 @dataclass(slots=True)
 class _PreparedGraph:
-    """The flat edge list + address lookups produced by ``_prepare_graph``."""
+    """The flat edge list + address lookups produced by ``_prepare_graph``.
+
+    Attributes:
+        edges: Flat ``(token0, token1, pool_id, pool_kind_u8)`` tuples for Rust.
+        v2v3_addresses: Maps V2/V3 pool IDs to their on-chain addresses.
+        v4_lookups: Maps V4 pool IDs to ``(manager_address, pool_hash)``.
+        pool_id_to_type: Maps every pool ID to its concrete table class,
+            used to reconstruct ``PathStep.type`` accurately (V2 vs V3).
+
+    """
 
     edges: list[tuple[TokenId, TokenId, PoolId, int]]
     v2v3_addresses: dict[PoolId, ChecksumAddress]
     v4_lookups: dict[PoolId, tuple[ChecksumAddress, str]]
+    pool_id_to_type: dict[PoolId, type[LiquidityPoolTable | UniswapV4PoolTable]]
 
 
 def _prepare_graph(
@@ -154,22 +177,10 @@ def _prepare_graph(
     edges: list[tuple[TokenId, TokenId, PoolId, int]] = []
     v2v3_addresses: dict[PoolId, ChecksumAddress] = {}
     v4_lookups: dict[PoolId, tuple[ChecksumAddress, str]] = {}
+    pool_id_to_type: dict[PoolId, type[LiquidityPoolTable | UniswapV4PoolTable]] = {}
 
     for pool_type in pool_types:
-        if issubclass(pool_type, LiquidityPoolTable):
-            for pool_id, token0_id, token1_id, address in session.execute(
-                sqlalchemy.select(
-                    pool_type.id,
-                    pool_type.token0_id,
-                    pool_type.token1_id,
-                    pool_type.address,
-                ).where(pool_type.chain == chain_id),
-            ).all():
-                if token0_id in candidate_tokens and token1_id in candidate_tokens:
-                    edges.append((token0_id, token1_id, pool_id, _POOL_KIND_V2V3))
-                    v2v3_addresses[pool_id] = address
-
-        elif issubclass(pool_type, UniswapV4PoolTable):
+        if issubclass(pool_type, UniswapV4PoolTable):
             for pool_id, currency0_id, currency1_id, manager_address, pool_hash in session.execute(
                 sqlalchemy
                 .select(
@@ -185,6 +196,22 @@ def _prepare_graph(
                 if currency0_id in candidate_tokens and currency1_id in candidate_tokens:
                     edges.append((currency0_id, currency1_id, pool_id, _POOL_KIND_V4))
                     v4_lookups[pool_id] = (manager_address, pool_hash)
+                    pool_id_to_type[pool_id] = pool_type
+
+        elif issubclass(pool_type, LiquidityPoolTable):
+            pool_kind = _pool_kind_for_type(pool_type)
+            for pool_id, token0_id, token1_id, address in session.execute(
+                sqlalchemy.select(
+                    pool_type.id,
+                    pool_type.token0_id,
+                    pool_type.token1_id,
+                    pool_type.address,
+                ).where(pool_type.chain == chain_id),
+            ).all():
+                if token0_id in candidate_tokens and token1_id in candidate_tokens:
+                    edges.append((token0_id, token1_id, pool_id, pool_kind))
+                    v2v3_addresses[pool_id] = address
+                    pool_id_to_type[pool_id] = pool_type
 
         logger.debug(f"Added edges for pool type {pool_type.__name__}")
 
@@ -192,45 +219,40 @@ def _prepare_graph(
         f"Built graph at +{time.perf_counter() - start:.1f}s: {len(edges)} edges",
     )
 
-    return _PreparedGraph(edges=edges, v2v3_addresses=v2v3_addresses, v4_lookups=v4_lookups)
+    return _PreparedGraph(
+        edges=edges,
+        v2v3_addresses=v2v3_addresses,
+        v4_lookups=v4_lookups,
+        pool_id_to_type=pool_id_to_type,
+    )
 
 
 def _build_path_steps(
     path: list[tuple[PoolId, int]],
     v2v3_addresses: dict[PoolId, ChecksumAddress],
     v4_lookups: dict[PoolId, tuple[ChecksumAddress, str]],
-    pool_types: Sequence[type],
+    pool_id_to_type: dict[PoolId, type[LiquidityPoolTable | UniswapV4PoolTable]],
 ) -> list[PathStep]:
     """Convert a raw Rust path ``(pool_id, pool_kind_u8)`` into ``PathStep`` objects.
 
-    The ``pool_kind_u8`` discriminant only tells us V2V3 vs V4. To recover the
-    exact ``pool_type`` class for each pool, we look it up from the
-    ``pool_types`` sequence passed by the caller — but since all V2/V3
-    subclasses share one table, we can use the first V2/V3 type (or V4 type)
-    from the caller's list.
+    The ``pool_kind_u8`` discriminant tells us V2 / V3 / V4 and selects which
+    address lookup to use. The exact concrete table class for each pool is
+    recovered from ``pool_id_to_type`` — a map built during ``_prepare_graph``
+    that records the specific subclass (e.g. ``SushiswapV3PoolTable``) for
+    every pool ID encountered.
 
     Returns:
         A list of ``PathStep`` objects with resolved addresses + hashes.
 
     """
-    # Find representative pool-type classes for each kind.
-    v2v3_type: type | None = None
-    v4_type: type | None = None
-    for pt in pool_types:
-        if issubclass(pt, UniswapV4PoolTable) and v4_type is None:
-            v4_type = pt
-        elif issubclass(pt, LiquidityPoolTable) and v2v3_type is None:
-            v2v3_type = pt
-
     steps: list[PathStep] = []
     for pool_id, pool_kind_u8 in path:
+        pool_type = pool_id_to_type[pool_id]
         if pool_kind_u8 == _POOL_KIND_V4:
-            assert v4_type is not None
             manager_address, pool_hash = v4_lookups[pool_id]
-            steps.append(PathStep(address=manager_address, hash=pool_hash, type=v4_type))
+            steps.append(PathStep(address=manager_address, hash=pool_hash, type=pool_type))
         else:
-            assert v2v3_type is not None
-            steps.append(PathStep(address=v2v3_addresses[pool_id], type=v2v3_type))
+            steps.append(PathStep(address=v2v3_addresses[pool_id], type=pool_type))
 
     return steps
 
@@ -425,7 +447,7 @@ def find_paths(
                     raw_path,
                     prepared.v2v3_addresses,
                     prepared.v4_lookups,
-                    pool_types,
+                    prepared.pool_id_to_type,
                 )
 
             logger.debug(
