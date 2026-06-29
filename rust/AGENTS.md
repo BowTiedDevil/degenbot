@@ -64,6 +64,7 @@ See [`plans/completed/103-rust-workspace-split.md`](../plans/completed/103-rust-
 | `cl_math/` | `degenbot-cl-math` PyO3 wrappers: `tick_math.rs` / `cl_lib.rs` over `degenbot_cl_math::cl_lib` |
 | `rpc/` | `degenbot-rpc` PyO3 wrappers: `provider.rs` / `contract.rs` / `subscription.rs` (incl. GIL-bound `drain_buffer`/`DrainResult`, absorbed from the pure core in slice 5) + `async_provider.rs` / `async_contract.rs` (async via `pyo3-async-runtimes`) |
 | `uniswap/` | `degenbot-uniswap` PyO3 wrappers: `address.rs` — `#[pyfunction]` over `degenbot_core::address_utils` |
+| `solady/` | `degenbot-core` PyO3 wrappers: `libzip.rs` — `#[pyfunction]`s `flz_compress`/`flz_decompress` over `degenbot_core::libzip` (no feature gate — `degenbot-core` is always a dependency) |
 | `bot/` | `degenbot-bot` PyO3 wrappers: `mod.rs` (`PyBot` — `#[pyclass]` holding `Arc<RwLock<BotState>>` + `PyBot::unregister_pool` ADR-007), `pool.rs` (`PyLiquidityPool`), `token.rs` (`PyErc20Token`), `dex_identity.rs` (`PyDexIdentity`), `py_bot_io.rs` (GIL-bound I/O helpers for `PyBot`) + the `engine/` subdir. Absorbed the GIL-bound `DrainResult`/`convert_item`/`drain_buffer` from `subscription.rs` (slice 5). `pool_id`s are **retired** (not reused; `next_pool_id` only advances) so a stale handle cannot alias to a different pool on recreate. V4 removal is engine-side (deferred). |
 | `bot/engine/` | `PyUniswapArbEngine` (`#[pyclass]`) + the `Verification*Error`/`*RejectedError` `#[create_exception]` types (`errors.rs`) over `degenbot_bot::solvers::uniswap_engine`. Split into per-concern `#[pymethods]` impl blocks (`register`/`snapshot`/`verify`/`solve`/`result_channel`) — PyO3's multiple-`#[pymethods]`-per-type support, mirroring `polars-python/src/expr/`'s 17-file `PyExpr` split and the existing `crates/degenbot-bot/src/solvers/uniswap_engine/` core split. (ergo UG6FKN task 74W2Z6.) The `multiple-pymethods` pyo3 feature is required by this split — do not drop it. |
 
@@ -75,8 +76,9 @@ the error types are foreign to the root cdylib); the root enables it.
 
 | File | Purpose |
 |------|---------|
-| `errors.rs` | Centralized error types with `thiserror` + feature-gated `From<->PyErr` conversions: `TickMathError`, `ClMathError`, `AbiDecodeError`, `AddressError`, `ProviderError` |
+| `errors.rs` | Centralized error types with `thiserror` + feature-gated `From<->PyErr` conversions: `TickMathError`, `ClMathError`, `AbiDecodeError`, `AddressError`, `ProviderError`. Also `LibZipError` living with its type in `libzip.rs` (orphan-rule `From<LibZipError> for PyErr` gated behind the `pyo3` feature) |
 | `hex_utils.rs` | Pure-Rust hex encoding/decoding (`decode_hex`, `encode_hex`) |
+| `libzip.rs` | Solady `LibZip` (`FastLZ`) compress/decompress for EVM bytecode (pure Rust core; `compress`, `decompress`, `LibZipError`). 1:1 port of `degenbot.utils.solady.libzip`; the `#[pyfunction]` wrappers `flz_compress`/`flz_decompress` live in the binding crate's `solady/` dir (no feature gate — `degenbot-core` is always a dependency) |
 | `runtime.rs` | Shared Tokio runtime singleton (multi-threaded, `TOKIO_WORKER_THREADS`-tunable); lazily initialized |
 | `address_utils.rs` | EIP-55 checksummed addresses (pure Rust core; `parse_address`, `to_checksum_address_*`) |
 
