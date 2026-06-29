@@ -78,7 +78,7 @@ the error types are foreign to the root cdylib); the root enables it.
 |------|---------|
 | `errors.rs` | Centralized error types with `thiserror` + feature-gated `From<->PyErr` conversions: `TickMathError`, `ClMathError`, `AbiDecodeError`, `AddressError`, `ProviderError`. Also `LibZipError` living with its type in `libzip.rs` (orphan-rule `From<LibZipError> for PyErr` gated behind the `pyo3` feature) |
 | `hex_utils.rs` | Pure-Rust hex encoding/decoding (`decode_hex`, `encode_hex`) |
-| `libzip.rs` | Solady `LibZip` (`FastLZ`) compress/decompress for EVM bytecode (pure Rust core; `compress`, `decompress`, `LibZipError`). 1:1 port of `degenbot.utils.solady.libzip`; the `#[pyfunction]` wrappers `flz_compress`/`flz_decompress` live in the binding crate's `solady/` dir (no feature gate — `degenbot-core` is always a dependency) |
+| `libzip.rs` | Solady `LibZip` (`FastLZ`) compress/decompress for EVM bytecode (pure Rust core; `compress`, `decompress`, `LibZipError`). 1:1 port of the retired Python `degenbot.utils.solady.libzip`; the `#[pyfunction]` wrappers `flz_compress`/`flz_decompress` live in the binding crate's `solady/` dir (no feature gate — `degenbot-core` is always a dependency). The `#[cfg(test)]` corpus is the regression set; the Python companion is now a thin delegation shim over `degenbot_rs.flz_compress/flz_decompress` (sub-step C routing landed) |
 | `runtime.rs` | Shared Tokio runtime singleton (multi-threaded, `TOKIO_WORKER_THREADS`-tunable); lazily initialized |
 | `address_utils.rs` | EIP-55 checksummed addresses (pure Rust core; `parse_address`, `to_checksum_address_*`) |
 

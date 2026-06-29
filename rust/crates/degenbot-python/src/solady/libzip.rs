@@ -47,6 +47,9 @@ pub fn flz_decompress<'py>(
 }
 
 /// Extract a byte slice from a Python `str` (hex), `bytes`/`bytearray`/`HexBytes`.
+///
+/// `&[u8]` extraction covers `bytes` and `HexBytes` (a `bytes` subclass) but
+/// not `bytearray`, which is handled explicitly via `PyByteArray`.
 fn extract_bytes_or_hex(data: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
     if let Ok(s) = data.extract::<&str>() {
         return degenbot_core::hex_utils::decode_hex(s)
@@ -54,6 +57,9 @@ fn extract_bytes_or_hex(data: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
     }
     if let Ok(bytes) = data.extract::<&[u8]>() {
         return Ok(bytes.to_vec());
+    }
+    if let Ok(ba) = data.cast::<pyo3::types::PyByteArray>() {
+        return Ok(ba.to_vec());
     }
     Err(PyErr::new::<PyTypeError, _>(
         "Data must be a hex string or bytes",
