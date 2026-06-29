@@ -9,7 +9,7 @@
 #   - venv + uv sync (builds the degenbot_rs PyO3 extension)
 #   - commitlint git hooks
 # foundry/pi used to live here but were moved into the Dockerfile because the
-# SSH entry point (ssh-attach.sh) does `podman start`+`exec`, which does NOT
+# entry point (attach.sh) does `podman start`+`exec`, which does NOT
 # run postCreateCommand — image-baking them guarantees availability.
 set -euo pipefail
 
