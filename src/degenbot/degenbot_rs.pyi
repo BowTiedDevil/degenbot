@@ -1306,7 +1306,6 @@ class PyBot:
         self,
         address: str,
         rpc_url: str,
-        block_number: int | None,
     ) -> Coroutine[Any, Any, None]: ...
     def verify_v4_post_drain_snapshot(
         self,
@@ -1314,7 +1313,6 @@ class PyBot:
         pool_id_hex: str,
         rpc_url: str,
         state_view_address: str,
-        block_number: int | None,
     ) -> Coroutine[Any, Any, None]: ...
     def register_curve_pool(
         self,
@@ -1545,7 +1543,6 @@ class UniswapArbEngine:
         self,
         address: str,
         rpc_url: str,
-        block_number: int | None,
     ) -> Coroutine[Any, Any, None]: ...
     def verify_v4_post_drain_snapshot(
         self,
@@ -1553,7 +1550,6 @@ class UniswapArbEngine:
         pool_id_hex: str,
         rpc_url: str,
         state_view_address: str,
-        block_number: int | None,
     ) -> Coroutine[Any, Any, None]: ...
     def verify_v4_pool(
         self,

@@ -92,6 +92,43 @@ permutation emitted a repeating false verify failure during `build_paths`:
 
 The rolling-start design is preserved; the race is closed at its cause.
 
+**Postmortem (2026-06-29): the post-drain pin block race.** The GAYTBA fix
+above closed the step-1 (seed) race but its step-2 (post-drain) arm carried a
+residual invariant it did not enforce: the comparison ran at the start()-time
+`verify_backfill_block` constant. That constant is only correct when the pump
+buffer happens to be empty between `subscribe()` and `register_v3_pool` — i.e.
+it held *by accident* on every pool that didn't see a Mint/Burn in that window,
+masking the latent bug.
+
+For an active pool on a slow `build_paths` the invariant broke: the rolling
+start (`resume()` precedes `build_paths`) let the pump accumulate Mint/Burn
+at blocks PAST the backfill boundary; `apply_buffer_v3` drained those events
+onto the snapshot seed alongside the backfill drain (under one `core.write()`
+hold), advancing `tick_data` to a state matching on-chain at a LATER block.
+The step-2 verify then compared this later-block state against
+on-chain@`verify_backfill_block` (the earlier block) → a false
+`VerificationMismatchError` that crashed the bot mid-`build_paths`. The
+on-chain fingerprint pinned this exactly: tick -82200 on pool
+0x8418…, engine snapshot `30496487158277195724266` matched on-chain at block
+25421704 (a block PAST the verify block 25421675).
+
+**Fix**: the post-drain pin now carries a `(tick_data, block)` pair, captured
+atomically with the drain inside `pin_v3/v4_post_drain_snapshot` (the
+`update_block` at pin time — the last drained backfill OR pump event's block,
+or the registration block if neither buffer had events). Step-2 verify uses
+THE PINNED BLOCK, ignoring the caller-supplied constant; the
+`verify_v3/v4_post_drain_snapshot` Python signature drops `block_number`
+entirely. The (state, block) pair — captured under the same write-lock that
+finished the drain — is self-consistent, so the verify is race-free. This
+closes the class of bug, not just the instance: any future drain hook inherits
+the same race-free contract by pinning the pair.
+
+Live verification: re-run a V3-containing backrun permutation and confirm no
+`VERIFICATION FAILURE — V3 pool … mismatch` lines; step-2 emits
+`[verify-drain] V3 post-drain snapshot OK for … at block <pinned block>` where
+`<pinned block>` is the pump's latest event block for active pools (NOT the
+start()-time `verify_backfill_block`).
+
 **Live verification (pending the operator's run).** Re-run a V3-containing
 permutation (`./logs/test_all_permutations.sh`, or a single `uv run python
 examples/eth_backrun_v2_v3_v4_rust.py --permutation V2-V3-V2`) and confirm:

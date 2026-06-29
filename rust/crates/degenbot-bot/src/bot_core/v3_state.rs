@@ -154,19 +154,33 @@ pub struct V3PoolState {
     /// `take_v3_snapshot_seed` after step-1 verify (verified exactly once).
     pub snapshot_seed: Option<HashMap<i32, TickInfo>>,
 
-    /// The pinned **post-drain** `tick_data` (the step-2 rolling-start race fix,
-    /// twin of `snapshot_seed`). Captured atomically with `apply_buffer_v3`'s
-    /// final drain (the single `core.write()` hold that runs the backfill +
-    /// pump drains) by `pin_v3_post_drain_snapshot`, and consumed once by
-    /// `take_v3_post_drain_snapshot` for step-2 verify. Verifying THIS frozen
-    /// blob (not engine-current) against on-chain@backfill is race-free:
-    /// during a rolling start (`resume()` precedes `build_paths`) the live
-    /// pump applies Mint/Burn onto `tick_data` AFTER the drain; reading
+    /// The pinned **post-drain** `(tick_data, block)` pair (the step-2
+    /// rolling-start race fix, twin of `snapshot_seed`). Captured atomically
+    /// with `apply_buffer_v3`'s final drain (the single `core.write()` hold
+    /// that runs the backfill + pump drains) by `pin_v3_post_drain_snapshot`,
+    /// and consumed once by `take_v3_post_drain_snapshot` for step-2 verify.
+    ///
+    /// The pair carries BOTH the frozen `tick_data` AND the `update_block` it
+    /// was computed at (the last drained event's block, or the registration
+    /// block if no events landed in either buffer). Step-2 verify compares
+    /// this pair against on-chain@**the pinned block** — NOT a start()-time
+    /// `verify_backfill_block` constant. The pin's block is load-bearing: for
+    /// an active pool on a slow `build_paths`, the pump buffer accumulates
+    /// Mint/Burn events at blocks PAST the backfill boundary; draining them
+    /// advances `tick_data` to a state that matches on-chain at a LATER block,
+    /// so verifying against `verify_backfill_block` fabricated a mismatch and
+    /// crashed the bot (2026-06-29). Capturing the block alongside the state
+    /// — under the same write-lock that finished the drain — makes the
+    /// (state, block) pair self-consistent and the verify race-free.
+    ///
+    /// Verifying THIS frozen pair (not engine-current) is also race-free under
+    /// a rolling start (`resume()` precedes `build_paths`): the live pump
+    /// applies Mint/Burn onto `tick_data` AFTER the drain; reading
     /// engine-current at step-2 would compare drain+pump-journal vs
-    /// on-chain@backfill (pre-journal) → a false mismatch on every active pool
-    /// (logs/verify-race-hotloop.log). `Some` only for `Tracked` pools
+    /// on-chain@pinned-block (pre-journal) → a false mismatch on every active
+    /// pool (logs/verify-race-hotloop.log). `Some` only for `Tracked` pools
     /// (Sparse has no complete `tick_data` → `None` → step-2 no-op).
-    pub post_drain_snapshot: Option<HashMap<i32, TickInfo>>,
+    pub post_drain_snapshot: Option<(HashMap<i32, TickInfo>, u64)>,
 
     /// Whether the snapshot provided complete tick data for this pool.
     pub coverage: PoolTickCoverage,

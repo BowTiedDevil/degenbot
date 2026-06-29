@@ -78,11 +78,11 @@ class _RecordingVerifyEngine:
             raise VerificationMismatchError("synthetic V3 seed tick mismatch")
 
     async def verify_v3_post_drain_snapshot(
-        self, address: str, rpc_url: str, block_number: int | None
+        self, address: str, rpc_url: str
     ) -> None:
         self.verify_calls.append({
             "phase": "v3",
-            "block": block_number,
+            "block": None,
             "rpc": rpc_url,
             "seed": False,
             "method": "post_drain",
@@ -123,11 +123,10 @@ class _RecordingVerifyEngine:
         pool_id_hex: str,
         rpc_url: str,
         state_view_address: str,
-        block_number: int | None,
     ) -> None:
         self.verify_calls.append({
             "phase": "v4",
-            "block": block_number,
+            "block": None,
             "rpc": rpc_url,
             "sv": state_view_address,
             "seed": False,
@@ -194,9 +193,14 @@ def _registry_started_with_snapshots(
         v4_snapshot=_FakeSnapshot(18_000_050),
         verify_state_view="0x0000000000000000000000000000000000000abc",
     )
-    # Confirm T1: the blocks were stashed.
+    # Confirm T1: the snapshot seed block was stashed (step-1 compares the
+    # pinned seed vs on-chain@this block). step-2 captures its OWN block via
+    # the post-drain pin, so the registry no longer stashes a backfill-block
+    # constant.
     assert registry._verify_snapshot_block == 18_000_050
-    assert registry._verify_backfill_block == 18_000_000
+    assert not hasattr(registry, "_verify_backfill_block"), (
+        "_verify_backfill_block is dead — step-2 pins its own block"
+    )
     return registry, fake
 
 
@@ -215,9 +219,13 @@ def test_register_v3_pool_runs_two_step_verify_around_drain(monkeypatch) -> None
 
     assert key == 7
     # TWO verify calls: snapshot block (18_000_050) BEFORE the drain, then
-    # backfill block (18_000_000) AFTER the drain — the two-step fail-fast.
+    # step-2 (post-drain) AFTER — the two-step fail-fast. Step-2's block is
+    # NOT supplied by the registry — the engine pins the block atomically with
+    # the drain (the `update_block` at pin time), so `block=None` here (the
+    # registry no longer passes `verify_backfill_block` as a constant — that
+    # fabricated a mismatch on active pools during a slow build_paths).
     blocks = [c["block"] for c in fake.verify_calls]
-    assert blocks == [18_000_050, 18_000_000], f"snapshot-then-backfill, got {fake.verify_calls}"
+    assert blocks == [18_000_050, None], f"snapshot-then-pinned-block, got {fake.verify_calls}"
     # CBCH6H: step-1 (snapshot) routes through the seed-verify (pinned seed,
     # not engine-current); step-2 (backfill) through the current-state verify.
     seed_flags = [c["seed"] for c in fake.verify_calls]
@@ -248,7 +256,9 @@ def test_register_v4_pool_runs_two_step_verify_around_drain(monkeypatch) -> None
 
     assert key == 9
     blocks = [c["block"] for c in fake.verify_calls]
-    assert blocks == [18_000_050, 18_000_000], f"snapshot-then-backfill, got {fake.verify_calls}"
+    # Step-1 (snapshot_seed) carries the registry-supplied snapshot block;
+    # step-2 (post_drain) pins its own block in the engine (None here).
+    assert blocks == [18_000_050, None], f"snapshot-then-pinned-block, got {fake.verify_calls}"
     seed_flags = [c["seed"] for c in fake.verify_calls]
     assert seed_flags == [True, False], (
         f"step-1 must verify the seed, step-2 the current; got {fake.verify_calls}"

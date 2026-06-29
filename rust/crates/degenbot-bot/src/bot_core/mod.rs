@@ -1356,16 +1356,19 @@ impl BotState {
         state.snapshot_seed.take()
     }
 
-    /// Pin the **post-drain** `tick_data` for a V3 pool (the step-2 rolling-start
-    /// race fix). Captures a frozen copy of the current `tick_data` — called
+    /// Pin the **post-drain** `(tick_data, block)` pair for a V3 pool (the step-2
+    /// rolling-start race fix). Captures a frozen copy of the current
+    /// `tick_data` alongside the `update_block` it was computed at — called
     /// atomically with `apply_buffer_v3`'s final drain (the single
-    /// `core.write()` hold running backfill + pump buffers). Step-2 verify
-    /// then compares THIS pinned blob (via `take_v3_post_drain_snapshot`) to
-    /// on-chain@backfill — NOT engine-current, which under a rolling start
-    /// accumulates pump Mint/Burn journals AFTER the drain (a false mismatch
-    /// on every active pool). `Some` only for `Tracked` pools; `Sparse` stays
-    /// `None` (no complete `tick_data` → step-2 is a no-op). Idempotent if
-    /// called twice (the second pin overwrites; only step-2 consumes it).
+    /// `core.write()` hold running backfill + pump buffers). Step-2 verify then
+    /// compares THIS pinned pair (via `take_v3_post_drain_snapshot`) to
+    /// on-chain@**the pinned block** — NOT engine-current (which under a
+    /// rolling start accumulates pump Mint/Burn journals AFTER the drain) and
+    /// NOT a start()-time `verify_backfill_block` constant (which predates the
+    /// pump buffer's drain and would fabricate a mismatch on any active pool
+    /// — the 2026-06-29 crash). `Some` only for `Tracked` pools; `Sparse`
+    /// stays `None` (no complete `tick_data` → step-2 is a no-op). Idempotent
+    /// if called twice (the second pin overwrites; only step-2 consumes it).
     pub fn pin_v3_post_drain_snapshot(&mut self, address: Address) {
         let Some(&pool_id) = self.pool_addresses.get(&address) else {
             return;
@@ -1374,19 +1377,22 @@ impl BotState {
             return;
         };
         if state.coverage == PoolTickCoverage::Tracked {
-            state.post_drain_snapshot = Some(state.tick_data.clone());
+            state.post_drain_snapshot = Some((state.tick_data.clone(), state.update_block));
         }
     }
 
-    /// Take (move out + clear) the pinned post-drain `tick_data` for a V3 pool.
-    /// Step-2 verify calls this to read+free the pin in one pass — the pin is
-    /// verified exactly once (at the backfill block during `build_paths`),
-    /// then released to bound memory. Returns `None` for sparse pools, pools
+    /// Take (move out + clear) the pinned post-drain `(tick_data, block)` pair
+    /// for a V3 pool. Step-2 verify calls this to read+free the pin in one
+    /// pass — the pin is verified exactly once (at the pinned block during
+    /// `build_paths`), then released to bound memory. The returned block is the
+    /// `update_block` captured atomically with the drain; the verify compares
+    /// `tick_data` against on-chain@THIS block, NOT a caller-supplied
+    /// `verify_backfill_block` constant. Returns `None` for sparse pools, pools
     /// with no drain-yet pin, or if already taken (no-op Ok at the seam).
     pub fn take_v3_post_drain_snapshot(
         &mut self,
         address: Address,
-    ) -> Option<HashMap<i32, TickInfo>> {
+    ) -> Option<(HashMap<i32, TickInfo>, u64)> {
         let &pool_id = self.pool_addresses.get(&address)?;
         let Some(PoolEntry::V3(state)) = self.pools.get_mut(&pool_id) else {
             return None;
@@ -3300,12 +3306,15 @@ impl BotState {
         state.snapshot_seed.take()
     }
 
-    /// Pin the post-drain `tick_data` for a V4 pool (step-2 race fix, V4 twin of
-    /// `pin_v3_post_drain_snapshot`). Captures a frozen copy of the current
-    /// `tick_data` atomically with `apply_buffer_v4`'s final drain. Step-2
-    /// verify compares THIS pin (via `take_v4_post_drain_snapshot`) to
-    /// on-chain@backfill — NOT engine-current (which accumulates pump
-    /// `ModifyLiquidity` journals after the drain). `Tracked` pools only.
+    /// Pin the post-drain `(tick_data, block)` pair for a V4 pool (step-2 race
+    /// fix, V4 twin of `pin_v3_post_drain_snapshot`). Captures a frozen copy
+    /// of the current `tick_data` alongside the `update_block` it was computed
+    /// at, atomically with `apply_buffer_v4`'s final drain. Step-2 verify
+    /// compares THIS pin (via `take_v4_post_drain_snapshot`) to on-chain@**the
+    /// pinned block** — NOT engine-current (which accumulates pump
+    /// `ModifyLiquidity` journals after the drain) and NOT a start()-time
+    /// `verify_backfill_block` constant (which predates the pump buffer's drain
+    /// — the 2026-06-29 crash). `Tracked` pools only.
     pub fn pin_v4_post_drain_snapshot(
         &mut self,
         pool_manager: Address,
@@ -3318,18 +3327,21 @@ impl BotState {
             return;
         };
         if state.coverage == PoolTickCoverage::Tracked {
-            state.post_drain_snapshot = Some(state.tick_data.clone());
+            state.post_drain_snapshot = Some((state.tick_data.clone(), state.update_block));
         }
     }
 
-    /// Take (move out + clear) the V4 post-drain pin. Step-2 verify consumes
-    /// it once (at the backfill block). `None` for sparse / un-drained /
-    /// already-taken pools (no-op Ok at the seam).
+    /// Take (move out + clear) the V4 post-drain `(tick_data, block)` pair.
+    /// Step-2 verify consumes it once (at the pinned block). The returned
+    /// block is the `update_block` captured atomically with the drain; the
+    /// verify compares `tick_data` against on-chain@THIS block, NOT a
+    /// caller-supplied `verify_backfill_block` constant. `None` for sparse /
+    /// un-drained / already-taken pools (no-op Ok at the seam).
     pub fn take_v4_post_drain_snapshot(
         &mut self,
         pool_manager: Address,
         pool_id: &degenbot_decoders::v4_swap_decoder::PoolId,
-    ) -> Option<HashMap<i32, TickInfo>> {
+    ) -> Option<(HashMap<i32, TickInfo>, u64)> {
         let pid = self.v4_pool_id_by_key(pool_manager, pool_id)?;
         let Some(PoolEntry::V4(state)) = self.pools.get_mut(&pid) else {
             return None;
@@ -5006,10 +5018,14 @@ mod tests {
         // ... but the pinned post-drain snapshot is UNCHANGED — step-2 verifies
         // the drain-time state, not the pump-corrupted current.
         let taken = core.take_v3_post_drain_snapshot(v3_addr);
+        let (tick_data, pinned_block) = taken.expect("Tracked pool pins post-drain");
         assert_eq!(
-            taken,
-            Some(drain_clone),
+            tick_data, drain_clone,
             "post-drain pin must be frozen at drain time, not pump-mutated current (step-2 race fix)"
+        );
+        assert_eq!(
+            pinned_block, 0,
+            "no buffer events drained → pin's block is the registration update_block (0)"
         );
         assert_eq!(
             core.take_v3_post_drain_snapshot(v3_addr),
@@ -5043,6 +5059,106 @@ mod tests {
             core.take_v3_post_drain_snapshot(v3_addr),
             None,
             "sparse pools must not pin post-drain (no complete tick_data)"
+        );
+    }
+
+    /// Regression (post-drain pin block race, 2026-06-29): the post-drain pin
+    /// must carry the block its `tick_data` was computed at — namely the
+    /// `update_block` at pin time, which reflects the last drained backfill OR
+    /// pump event's block. Pre-fix the pin stored `tick_data` only and the
+    /// step-2 verify compared it against on-chain@`verify_backfill_block`
+    /// (a start()-time constant). For an active pool on a slow `build_paths`,
+    /// the pump buffer accumulated Mint/Burn events at blocks PAST the
+    /// backfill boundary; draining them advanced `tick_data` to a state that
+    /// matched on-chain at a LATER block, so the verify fabricated a mismatch
+    /// and crashed the bot.
+    ///
+    /// This test reproduces the exact shape: a seed at block S, a backfill
+    /// event at S+1 (within the backfill window), and a pump event at block B
+    /// (past `verify_backfill_block`). After draining both buffers + pinning,
+    /// the pin's block must be B (the pump event's block) — the block on-chain
+    /// tick data actually matches at — NOT `verify_backfill_block`.
+    #[test]
+    fn v3_post_drain_snapshot_carries_drained_block_not_backfill_block() {
+        use alloy::primitives::{I256, U128};
+        let mut core = BotState::new();
+        let v3_addr = make_pool_addr();
+
+        // Snapshot block S (the registration `update_block`).
+        let snapshot_block: u64 = 100;
+        // Backfill boundary (start()'s `verify_backfill_block`).
+        let backfill_block: u64 = 150;
+        // Pump event lands at block B, PAST the backfill boundary — the
+        // rolling-start window the bot hit in production (a Mint that fired
+        // between `subscribe()` and this pool's `register_v3_pool`).
+        let pump_block: u64 = backfill_block + 29;
+
+        let seed_liq: u128 = 1_000_000;
+        let liq_u128 = U256::from(seed_liq).to::<U128>();
+        let mut seed = HashMap::new();
+        seed.insert(
+            -60,
+            TickInfo {
+                liquidity_gross: liq_u128,
+                liquidity_net: I256::try_from(i128::try_from(seed_liq).unwrap()).unwrap(),
+                block: 0,
+            },
+        );
+
+        // Pre-registration: buffer a backfill Mint at S+1 (within the
+        // snapshot→backfill window) and a pump Mint at `pump_block` (past the
+        // backfill boundary — the pump was already running during `build_paths`,
+        // so the pool's Mint at `pump_block` landed in the unregistered-pool
+        // pump buffer via `apply_v3_liquidity_update`).
+        core.buffer_backfill_v3_liquidity_update(v3_addr, -60, 60, 500_i128, snapshot_block + 1);
+        core.apply_v3_liquidity_update(v3_addr, -60, 60, 750_i128, pump_block);
+
+        core.register_v3_pool(&RegisterV3PoolParams {
+            address: v3_addr,
+            token0: make_token0(),
+            token1: make_token1(),
+            fee: 3_000,
+            tick_spacing: 60,
+            factory: make_factory(),
+            sqrt_price_x96: U256::from(1u64) << 96,
+            liquidity: 0,
+            tick: 0,
+            tick_data: seed,
+            update_block: snapshot_block,
+            coverage: PoolTickCoverage::Tracked,
+        });
+
+        // Drain both buffers + pin — exactly what `apply_buffer_v3` does
+        // inside its single `core.write()` hold.
+        core.apply_backfill_buffer_v3(&v3_addr);
+        core.apply_pump_buffer_v3(&v3_addr);
+        core.pin_v3_post_drain_snapshot(v3_addr);
+
+        // The pin must carry the pump event's block — the block the drained
+        // `tick_data` actually matches on-chain at. Pre-fix the pin carried no
+        // block at all and the verify used `backfill_block` → false mismatch.
+        let taken = core.take_v3_post_drain_snapshot(v3_addr);
+        let (tick_data, pinned_block) = taken.expect("Tracked pool pins post-drain");
+        assert_eq!(
+            pinned_block, pump_block,
+            "pin's block must be the last drained event's block (the pump Mint at {pump_block}), \
+             not the backfill boundary ({backfill_block}) — pre-fix the verify used the wrong \
+             block and fabricated a mismatch on every active pool during a slow build_paths"
+        );
+
+        // Sanity: the drained tick_data reflects seed + backfill Mint + pump Mint.
+        let t = tick_data.get(&-60).expect("tick -60 present");
+        assert_eq!(
+            t.liquidity_gross,
+            U128::from(seed_liq + 500 + 750),
+            "drained tick_data = seed + backfill Mint + pump Mint"
+        );
+
+        // Idempotent take: second call returns None (verified exactly once).
+        assert_eq!(
+            core.take_v3_post_drain_snapshot(v3_addr),
+            None,
+            "take clears the pin slot (verified exactly once)"
         );
     }
 
@@ -5222,10 +5338,14 @@ mod tests {
         // ... but the pinned post-drain snapshot is UNCHANGED — step-2 verifies
         // drain-time state, not pump-corrupted current.
         let taken = core.take_v4_post_drain_snapshot(pool_manager, &pool_id_bytes);
+        let (tick_data, pinned_block) = taken.expect("Tracked V4 pool pins post-drain");
         assert_eq!(
-            taken,
-            Some(drain_clone),
+            tick_data, drain_clone,
             "V4 post-drain pin must be frozen at drain time (step-2 race fix)"
+        );
+        assert_eq!(
+            pinned_block, 0,
+            "no buffer events drained → pin's block is the registration update_block (0)"
         );
         assert_eq!(
             core.take_v4_post_drain_snapshot(pool_manager, &pool_id_bytes),

@@ -243,23 +243,26 @@ def test_start_stashes_snapshot_and_backfill_blocks_for_two_step_verify(monkeypa
         v4_snapshot=v4_snap,
     )
 
-    # snapshot_block is the min of the supplied newest_blocks; backfill_block
-    # is the subscribe() return (first observed WS block).
+    # snapshot_block is the min of the supplied newest_blocks. The registry
+    # no longer stashes a backfill_block for step-2 — the post-drain pin carries
+    # its OWN block (captured atomically with the drain), so step-2 takes no
+    # `block` argument from the registry (2026-06-29 fix).
     assert registry._verify_snapshot_block == 18_000_050
-    assert registry._verify_backfill_block == 18_000_000
+    assert not hasattr(registry, "_verify_backfill_block")
 
 
 def test_start_stashes_None_blocks_when_no_snapshots() -> None:
     """With no snapshots, there's no snapshot block to derive and no backfill
-    applied, so both block stashes are None (T6 will guard on None == verify
-    not applicable for this pool)."""
+    applied, so the snapshot block stash is None (T6 will guard on None ==
+    verify not applicable for this pool). The registry no longer stashes a
+    backfill_block — step-2 pins its own block."""
     fake = FakeEngine()
     registry = runner.EngineRegistry(bot=None, engine=fake)
 
     registry.start("http://localhost:8545", "ws://localhost:8546")
 
     assert registry._verify_snapshot_block is None
-    assert registry._verify_backfill_block is None
+    assert not hasattr(registry, "_verify_backfill_block")
 
 
 def test_verify_liquidity_maps_raises_when_start_not_called() -> None:
