@@ -12,6 +12,7 @@ from eth_abi.abi import decode as abi_decode
 from eth_typing import ChecksumAddress, HexAddress
 from hexbytes import HexBytes
 from sqlalchemy import select
+from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session, scoped_session
 from web3 import Web3
 from web3.types import LogReceipt
@@ -30,10 +31,7 @@ from degenbot.types.aliases import BlockNumber, ChainId
 from degenbot.types.concrete import KeyedDefaultDict
 from degenbot.uniswap.abi import UNISWAP_V3_POOL_ABI
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
-from degenbot.uniswap.v3_types import (
-    UniswapV3LiquidityEvent,
-    UniswapV3PoolLiquidityMappingUpdate,
-)
+from degenbot.uniswap.v3_types import UniswapV3LiquidityEvent, UniswapV3PoolLiquidityMappingUpdate
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -317,8 +315,6 @@ class DatabaseSnapshot:
             A dict mapping pool addresses to tick data dicts.
 
         """
-        from sqlalchemy import text as sa_text  # noqa: PLC0415
-
         rows = self.session.execute(
             sa_text(
                 """

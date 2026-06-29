@@ -14,16 +14,20 @@ their `variant` ClassVar; `dex` rides alongside as metadata.
 from __future__ import annotations
 
 from fractions import Fraction
+from typing import TYPE_CHECKING
 
 import pytest
 
+from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.degenbot_rs import PyBot, PyDexIdentity, dex_identity
-from degenbot.erc20.erc20 import Erc20Token
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.uniswap.liquidity_pool import LiquidityPool
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
+
+if TYPE_CHECKING:
+    from degenbot.erc20.erc20 import Erc20Token
 
 _PY_BOT = PyBot()
 
@@ -180,9 +184,6 @@ class TestSingletonDexPresets:
         doesn't collapse in slice 7. So get_v2_identity() returns None for it,
         even though get_v2_class() returns AerodromeV2Pool.
         """
-        from degenbot.aerodrome.pools import (  # noqa: PLC0415
-            AerodromeV2Pool,
-        )
 
         aerodrome_factory = "0x420DD381b31aEf6683db6B902084cB0FFECe40Da"
         assert pool_type_registry.get_v2_class(8453, aerodrome_factory) is AerodromeV2Pool

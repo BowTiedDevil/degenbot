@@ -12,6 +12,7 @@ from eth_abi.abi import decode as abi_decode
 from eth_typing import ChecksumAddress, HexAddress, HexStr
 from hexbytes import HexBytes
 from sqlalchemy import select
+from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session, scoped_session
 from web3 import Web3
 from web3.types import LogReceipt
@@ -248,8 +249,6 @@ class DatabaseSnapshot:
             A dict mapping (pm_address, pool_id) tuples to tick data dicts.
 
         """
-        from sqlalchemy import text as sa_text  # noqa: PLC0415
-
         rows = self.session.execute(
             sa_text(
                 """
