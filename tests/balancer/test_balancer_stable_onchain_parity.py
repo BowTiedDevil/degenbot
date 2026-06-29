@@ -35,8 +35,8 @@ offline: 216/216 exact matches (4 pools x all non-BPT directions x multipliers).
 - **Record mode** (``--golden-mode=record``): one Anvil fork of Ethereum
   mainnet at the pinned block is shared across the whole loop.
 
-Pinned to Ethereum mainnet block 24,407,242, served by the local archive node
-(``host.containers.internal:8545`` in the devcontainer).
+Pinned to Ethereum mainnet block 24,407,242, served by a local archive node
+(URI configurable via ``tests.env``; see ``ETHEREUM_ARCHIVE_NODE_HTTP_URI``).
 """
 
 from __future__ import annotations
@@ -61,13 +61,13 @@ from degenbot.balancer.stable_pools import INVARIANT_V1, INVARIANT_V2
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.degenbot_rs import PyBot
 from degenbot.exceptions.pool import EVMRevertError
+from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.balancer_pool_factory import make_balancer_stable_pool
 from tests.helpers.erc20_factory import make_erc20
 
 if TYPE_CHECKING:
     from degenbot.balancer.stable_pools import BalancerV2StablePool
 
-ETHEREUM_RPC_URI = "http://host.containers.internal:8545/"
 BALANCER_PARITY_BLOCK = 24_407_242  # tip minus ~1M
 
 _CASSETTE_DIR = pathlib.Path(__file__).resolve().parents[1] / "fixtures" / "chain_data" / "1"
@@ -215,7 +215,7 @@ class _RecordFork(AbstractContextManager):
     def __enter__(self) -> Self:
         if self._recording:
             self.fork = AnvilFork(
-                fork_url=ETHEREUM_RPC_URI,
+                fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
                 fork_block=BALANCER_PARITY_BLOCK,
                 storage_caching=True,
                 anvil_opts=["--accounts=0"],

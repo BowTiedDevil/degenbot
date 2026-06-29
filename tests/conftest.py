@@ -20,45 +20,57 @@ env_file = dotenv.find_dotenv("tests.env")
 env_values = dotenv.dotenv_values(env_file)
 
 
-ARBITRUM_FULL_NODE_HTTP_URI: str = env_values.get(
+def _rpc(key: str, default: str) -> str:
+    """Resolve an RPC URI with precedence: envvar > tests.env > built-in default.
+
+    ``dotenv.dotenv_values`` reads only the file, so a bare ``env_values.get`` would
+    ignore ``os.environ`` entirely — leaving no way for a user to override an RPC
+    endpoint without editing the (gitignored) ``tests.env``. Checking ``os.environ``
+    first makes ad-hoc overrides (``ETHEREUM_ARCHIVE_NODE_HTTP_URI='…' pytest …``)
+    work across machines and CI without touching any file.
+    """
+    return os.environ.get(key, env_values.get(key, default))
+
+
+ARBITRUM_FULL_NODE_HTTP_URI: str = _rpc(
     "ARBITRUM_FULL_NODE_HTTP_URI",
     "https://arbitrum-one-rpc.publicnode.com",
 )
-ARBITRUM_FULL_NODE_WS_URI: str = env_values.get(
+ARBITRUM_FULL_NODE_WS_URI: str = _rpc(
     "ARBITRUM_FULL_NODE_WS_URI",
     "wss://arbitrum-one-rpc.publicnode.com",
 )
 
-BASE_ARCHIVE_NODE_HTTP_URI: str = env_values.get(
+BASE_ARCHIVE_NODE_HTTP_URI: str = _rpc(
     "BASE_ARCHIVE_NODE_HTTP_URI",
     "https://mainnet.base.org",
 )
-BASE_ARCHIVE_NODE_WS_URI: str = env_values.get(
+BASE_ARCHIVE_NODE_WS_URI: str = _rpc(
     "BASE_ARCHIVE_NODE_WS_URI",
     "wss://mainnet.base.org",
 )
-BASE_FULL_NODE_HTTP_URI: str = env_values.get(
+BASE_FULL_NODE_HTTP_URI: str = _rpc(
     "BASE_FULL_NODE_HTTP_URI",
     "https://mainnet.base.org",
 )
-BASE_FULL_NODE_WS_URI: str = env_values.get(
+BASE_FULL_NODE_WS_URI: str = _rpc(
     "BASE_FULL_NODE_WS_URI",
     "wss://mainnet.base.org",
 )
 
-ETHEREUM_ARCHIVE_NODE_HTTP_URI: str = env_values.get(
+ETHEREUM_ARCHIVE_NODE_HTTP_URI: str = _rpc(
     "ETHEREUM_ARCHIVE_NODE_HTTP_URI",
     "https://ethereum-rpc.publicnode.com",
 )
-ETHEREUM_ARCHIVE_NODE_WS_URI: str = env_values.get(
+ETHEREUM_ARCHIVE_NODE_WS_URI: str = _rpc(
     "ETHEREUM_ARCHIVE_NODE_WS_URI",
     "wss://ethereum-rpc.publicnode.com",
 )
-ETHEREUM_FULL_NODE_HTTP_URI: str = env_values.get(
+ETHEREUM_FULL_NODE_HTTP_URI: str = _rpc(
     "ETHEREUM_FULL_NODE_HTTP_URI",
     "https://ethereum-rpc.publicnode.com",
 )
-ETHEREUM_FULL_NODE_WS_URI: str = env_values.get(
+ETHEREUM_FULL_NODE_WS_URI: str = _rpc(
     "ETHEREUM_FULL_NODE_WS_URI",
     "wss://ethereum-rpc.publicnode.com",
 )

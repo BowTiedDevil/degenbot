@@ -6,10 +6,10 @@
 #
 # Usage:
 #   .devcontainer/ssh-attach.sh          # attach (creates tmux session if absent)
-#   .devcontainer/ssh-attach.sh rebuild  # recreate from scratch via devcontainer CLI
 #
-# Requires: podman. rebuild path also requires `devcontainer` CLI
-# (npm i -g @devcontainers/cli).
+# To rebuild the container first, use .devcontainer/rebuild.sh.
+#
+# Requires: podman.
 #
 # NOTE: VSCode/devcontainer name the IMAGE `vsc-degenbot-<hash>-...` but Podman
 # assigns the CONTAINER a random name (e.g. `priceless_roentgen`). So we find
@@ -19,22 +19,6 @@ set -euo pipefail
 # Resolve the workspace from the script's own location (repo root) rather than
 # a hardcoded path — portable across machines / user homes.
 WORKSPACE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
-if [ "${1:-}" = "rebuild" ]; then
-  # Rebuild the image + recreate the container + run postCreateCommand via the
-  # devcontainer CLI (the same engine VSCode's "Rebuild Container" uses, so
-  # mounts, containerEnv, postCreate/postStart all apply identically).
-  #
-  # NOT exec'd: `devcontainer up` returns to the host shell once the container
-  # is up — it creates/starts it and runs postCreateCommand but does NOT drop
-  # you inside. VSCode's rebuild lands you in the container; to match that,
-  # fall through to the discovery + start + tmux-attach logic below instead of
-  # replacing this process.
-  echo ">>> rebuilding container via devcontainer CLI + podman"
-  devcontainer up --workspace-folder "$WORKSPACE" --docker-path podman \
-    --remove-existing-container
-  echo ">>> rebuild complete — attaching"
-fi
 
 # Discover the container by its image name (the devcontainer runtime tags the
 # image `vsc-degenbot-<hash>-features[-uid]` and the container references it).
@@ -49,8 +33,8 @@ name="$(podman ps -a --format '{{.Names}}' \
 if [ -z "$name" ]; then
   echo "ERROR: no degenbot devcontainer found." >&2
   echo "Run one of:" >&2
-  echo "  $0 rebuild                   # build via devcontainer CLI (needs npm i -g @devcontainers/cli)" >&2
-  echo "  VSCode 'Reopen in Container' # build via VSCode" >&2
+  echo "  .devcontainer/rebuild.sh     # build via devcontainer CLI (needs npm i -g @devcontainers/cli)" >&2
+  echo "  VSCode 'Reopen in Container'  # build via VSCode" >&2
   exit 1
 fi
 
@@ -65,16 +49,17 @@ fi
 # Guard against the plain-attach path landing in a container that was created
 # but never had postCreateCommand run. The attach path does podman start + exec
 # — it has no knowledge of devcontainer.json, so postCreateCommand (which runs
-# `uv sync` + `just setup-git-hooks` via post-create.sh) is NOT invoked here.
-# A warm .venv on the bind-mounted repo survives container recreates, so its
-# absence means post-create has never run on any container for this workspace.
-# Warn (don't block — the user may want to inspect) and point at the fix; the
-# rebuild subcommand goes through `devcontainer up`, which DOES run postCreate.
-if [ ! -d "$WORKSPACE/.venv" ]; then
-  echo "⚠️  .venv missing — post-create.sh has not run on this container." >&2
+# `uv sync` in the container-local venv via post-create.sh) is NOT invoked
+# here. The venv lives at $UV_PROJECT_ENVIRONMENT inside the container's
+# writable layer (not the bind-mounted repo), so we check it via podman exec.
+# Warn (don't block — the user may want to inspect) and point at the fix;
+# .devcontainer/rebuild.sh goes through `devcontainer up`, which DOES run postCreate.
+CONTAINER_VENV="/home/dev/.venvs/degenbot"
+if ! podman exec --user dev "$name" test -d "$CONTAINER_VENV/bin" 2>/dev/null; then
+  echo "⚠️  container venv missing — post-create.sh has not run on this container." >&2
   echo "    Tests (just test-*) and 'uv run' will fail until the venv + PyO3" >&2
   echo "    extension are built. Fix with:" >&2
-  echo "      $0 rebuild" >&2
+  echo "      .devcontainer/rebuild.sh" >&2
   echo "    (attaching anyway; Ctrl-b d to detach, then rebuild.)" >&2
 fi
 

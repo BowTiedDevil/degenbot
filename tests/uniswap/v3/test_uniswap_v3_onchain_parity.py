@@ -35,8 +35,9 @@ reverts.
   call is recorded. The test's own ``assert`` runs too — a record run is also a
   live parity gate.
 
-Pinned to Ethereum mainnet block 24,407,242 (tip minus ~1M), served by the
-local archive node (``host.containers.internal:8545`` in the devcontainer).
+Pinned to Ethereum mainnet block 24,407,242 (tip minus ~1M), served by a
+local archive node (URI configurable via ``tests.env``; see
+``ETHEREUM_ARCHIVE_NODE_HTTP_URI``).
 """
 
 from __future__ import annotations
@@ -55,12 +56,13 @@ from degenbot.degenbot_rs import PyBot
 from degenbot.exceptions.pool import IncompleteSwap
 from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
+
+# RPC URI is overridable via tests.env (see ETHEREUM_ARCHIVE_NODE_HTTP_URI);
+# only contacted in record mode — replay is fully offline.
+from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v3_pool_factory import make_v3_pool
 
-# Local Ethereum archive node (devcontainer host loopback). Only contacted in
-# record mode; replay is fully offline.
-ETHEREUM_RPC_URI = "http://host.containers.internal:8545/"
 UNISWAP_V3_PARITY_BLOCK = 24_407_242  # tip minus ~1M
 
 WBTC_WETH_V3_POOL_ADDRESS = get_checksum_address(
@@ -204,7 +206,7 @@ class _RecordFork(AbstractContextManager):
     def __enter__(self) -> Self:
         if self._recording:
             self.fork = AnvilFork(
-                fork_url=ETHEREUM_RPC_URI,
+                fork_url=ETHEREUM_ARCHIVE_NODE_HTTP_URI,
                 fork_block=UNISWAP_V3_PARITY_BLOCK,
                 storage_caching=True,
                 anvil_opts=["--accounts=0"],

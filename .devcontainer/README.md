@@ -69,7 +69,7 @@ podman exec -it <name> tmux new -As pi
 
 To rebuild from scratch from SSH:
 ```bash
-.devcontainer/ssh-attach.sh rebuild    # needs devcontainer CLI
+.devcontainer/rebuild.sh    # needs devcontainer CLI
 ```
 
 ### B. VSCode
@@ -190,11 +190,13 @@ tmux show -gv terminal-overrides         # expect *:Tc present
   host pi see the same sessions/auth. Don't run both against the same session
   simultaneously — they'd race on the VCC state. Typical workflow: host pi
   retreats while container pi works, or vice versa.
-- **Container-native `.venv`**: the venv is created inside the container from
-  dnf python (symlinks point to `/usr/lib64` paths). These don't exist on the
-  host, so a `.venv` built in the container won't work for host-side
-  development, and vice versa. If you switch environments, remove `.venv` and
-  let the active one recreate it (`uv sync`).
+- **Container-local venv (`UV_PROJECT_ENVIRONMENT`)**: the container's venv
+  lives at `/home/dev/.venvs/degenbot` (container writable layer, NOT the
+  bind-mounted repo), so its `pyvenv.cfg` and script shebangs bake
+  `/home/dev/...` paths that are never read by the host. The host keeps its own
+  in-repo `.venv` with `/home/btd/...` paths. The two venvs never poison each
+  other. A `--remove-existing-container` rebuild wipes the container venv;
+  `post-create.sh` recreates it via `uv sync`.
 - **PyO3 needs `libpython.so`**: provided by dnf's `python3-devel`. Don't remove
   `python3-devel` from the Dockerfile or the extension build will fail.
 - **`maturin develop` not run on create**: `uv sync` builds the extension via
