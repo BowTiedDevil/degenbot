@@ -130,7 +130,7 @@ def test_solady_decompress_invalid_literal_run():
     # Claims 32 literals but only provides a few
     compressed = bytearray([0x1F, 0x41])  # 0x1F = 32 literals, but only 1 byte provided
 
-    with contextlib.suppress(IndexError):
+    with contextlib.suppress(IndexError, ValueError):
         flz_decompress(compressed)
     # Expected - buffer underrun
 

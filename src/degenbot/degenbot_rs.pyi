@@ -477,6 +477,14 @@ def solidly_calc_exact_in_stable_camelot(
     fee_numer: int,
     fee_denom: int,
 ) -> int: ...
+
+# ── Solady LibZip (FastLZ) (degenbot-core, no feature gate). ──
+# Thin wrappers over `degenbot_core::libzip`. Accept a hex string (with
+# optional `0x` prefix), `bytes`, `bytearray`, or `HexBytes`; return `HexBytes`.
+# Truncated/invalid back-references surface as `ValueError`. The Python
+# companion `degenbot.utils.solady.libzip` delegates here (sub-step C routing).
+def flz_compress(uncompressed_data: str | bytes) -> HexBytes: ...
+def flz_decompress(compressed_data: bytes | bytearray | str) -> HexBytes: ...
 def get_sqrt_ratio_at_tick(tick: int) -> int:
     """Convert a tick value to its corresponding sqrt price (X96 format).
 
@@ -1678,6 +1686,8 @@ __all__ = [
     "encode",
     "encode_function_call",
     "encode_single",
+    "flz_compress",
+    "flz_decompress",
     "get_function_selector",
     "get_sqrt_ratio_at_tick",
     "get_tick_at_sqrt_ratio",
