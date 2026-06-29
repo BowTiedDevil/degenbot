@@ -121,6 +121,5 @@
       }
     }
   },
-  "postCreateCommand": "bash .devcontainer/post-create.sh",
-  "postStartCommand": "echo 'degenbot devcontainer ready (fedora). Tools: just, uv, forge, pi, cargo, python3. Shared: /shared'"
+  "postCreateCommand": "bash .devcontainer/post-create.sh"
 }
