@@ -47,6 +47,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(crate::solady::libzip::flz_compress, m)?)?;
     m.add_function(wrap_pyfunction!(crate::solady::libzip::flz_decompress, m)?)?;
 
+    // Pathfinding graph + DFS (feature = "pathfinding")
+    #[cfg(feature = "pathfinding")]
+    m.add_function(wrap_pyfunction!(crate::pathfinding::find_paths_rust, m)?)?;
+
     // CL math library submodule (feature = "cl-math")
     #[cfg(feature = "cl-math")]
     crate::cl_math::cl_lib::add_cl_lib_module(m)?;
