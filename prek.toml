@@ -1,0 +1,33 @@
+# prek hook configuration — https://prek.j178.dev/
+#
+# Run `just setup-git-hooks` once after cloning to install these into git's
+# hooks (pre-commit, commit-msg, pre-push). Hooks can also be run on demand
+# with `uv run prek run` / `uv run prek run --all-files`.
+
+default_install_hook_types = ["pre-commit", "commit-msg", "pre-push"]
+
+[[repos]]
+repo = "local"
+hooks = [
+  # --- pre-commit -----------------------------------------------------------
+  # Lint staged Markdown files (excludes deletions, like the old .githooks
+  # script). Fix with `npx markdownlint-cli2 --fix <file>` if it fails.
+  { id = "markdownlint", name = "Markdown lint", language = "system", entry = "npx --yes markdownlint-cli2", types = ["markdown"], stages = ["pre-commit"] },
+
+  # Forbid `# noqa: ...PLC0415`. This lint is suppressed project-wide by a
+  # shared ruff config; the suppression must never be re-enabled per-line.
+  { id = "forbid-noqa-PLC0415", name = "forbid noqa for PLC0415", language = "pygrep", entry = "noqa:.*PLC0415", types = ["python"], stages = ["pre-commit"] },
+
+  # --- commit-msg -----------------------------------------------------------
+  # Validate the commit message against .commitlintrc.yml. prek appends the
+  # commit-message temp file as the trailing argument to `--edit`.
+  { id = "commitlint", name = "commitlint", language = "system", entry = "npx --yes @commitlint/cli --edit", stages = ["commit-msg"] },
+
+  # --- pre-push -------------------------------------------------------------
+  # Safety net: re-lint every commit message in the outgoing push range, so a
+  # `git commit --no-verify` is caught before it leaves the machine (strictly
+  # earlier than CI). prek's pre-push stage consumes git's push-line stdin and
+  # does not forward it to hooks, so the range is computed from the upstream
+  # tracking ref instead (mirrors `just lint-commits`).
+  { id = "commitlint-push", name = "commitlint (push range)", language = "system", entry = "scripts/hooks/commitlint-push.sh", stages = ["pre-push"], always_run = true, pass_filenames = false },
+]
