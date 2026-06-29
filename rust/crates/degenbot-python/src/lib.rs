@@ -35,6 +35,8 @@ pub mod cl_math;
 pub mod conversion;
 #[cfg(feature = "curve-math")]
 pub mod curve_math;
+#[cfg(feature = "pathfinding")]
+pub mod pathfinding;
 pub mod prelude;
 #[cfg(feature = "rpc")]
 pub mod rpc;
