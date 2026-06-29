@@ -11,6 +11,7 @@ RUN dnf install -y \
         sqlite \
         git \
         just \
+        ripgrep \
         sudo tmux vim htop procps-ng psmisc \
         glibc-langpack-en \
         bash-completion \
