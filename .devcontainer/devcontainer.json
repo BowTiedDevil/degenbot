@@ -27,11 +27,18 @@
   // No devcontainer features — python, rust, node, just, uv, tmux, git are all
   // baked into the Dockerfile via dnf (fedora:latest). foundry (foundryup)
   // and pi (npm i -g) are ALSO baked into the image — they used to live in
-  // post-create.sh but were promoted into the Dockerfile because the SSH
-  // entry point (ssh-attach.sh) does `podman start`+`exec`, which does NOT
+  // post-create.sh but were promoted into the Dockerfile because the 
+  // entry point (attach.sh) does `podman start`+`exec`, which does NOT
   // run postCreateCommand, so post-create-installed tools went missing after
   // any container recreate.
+  // Bind-mount the host's /etc/localtime (read-only) so the container's
+  // timezone matches the host. glibc resolves the zone through this file/
+  // symlink, so every process (date, logs, Python datetime.now()) reports
+  // host-local time without needing a separate TZ env var. The TZ env var
+  // below is also forwarded for tools that prefer it; on hosts without TZ
+  // exported it resolves to empty and falls back to /etc/localtime.
   "mounts": [
+    "source=/etc/localtime,target=/etc/localtime,type=bind,readonly=true",
     "source=${localEnv:HOME}/.agents,target=/home/dev/.agents,type=bind",
     "source=${localEnv:HOME}/.config/degenbot,target=/home/dev/.config/degenbot,type=bind",
     "source=${localEnv:HOME}/.foundry,target=/home/dev/.foundry,type=bind",
@@ -51,9 +58,9 @@
   // podman — details in the runArgs/network comment above.
   // All environment variables live in containerEnv (baked into the image's
   // Config.Env, visible to EVERY process including `podman exec` shells from
-  // ssh-attach.sh) rather than remoteEnv (only injected by the VSCode runtime
+  // attach.sh) rather than remoteEnv (only injected by the VSCode runtime
   // into shells IT spawns — invisible to podman exec, so useless for the
-  // SSH-only workflow this container serves). PATH augmentation for foundry/pi
+  // terminal-only workflow this container serves). PATH augmentation for foundry/pi
   // is set directly in the Dockerfile via `ENV PATH=...`, not here.
   "containerEnv": {
     "LOCAL_BIN": "/home/dev/.local/bin",
@@ -81,6 +88,10 @@
     // (/tmp/degenbot-pycache-host, set in the justfile) so the two environments
     // never share a bytecache.
     "PYTHONPYCACHEPREFIX": "/tmp/degenbot-pycache-container",
+    // Forward host TZ (if exported) for tools that read the env var directly.
+    // Empty on hosts without TZ exported — falls back to bind-mounted
+    // /etc/localtime above.
+    "TZ": "${localEnv:TZ}",
     // Ethereum RPC URIs. The host's tests.env points these at localhost:8545
     // (the local anvil node, reachable via pasta port-forwarding). Inside the
     // container "localhost" is the container's own loopback, not the host's —
@@ -107,10 +118,6 @@
         "huff-language.huff-language",
         "ms-python.python",
         "ms-python.vscode-pylance",
-        "ms-vscode-remote.remote-containers",
-        "ms-vscode-remote.remote-ssh",
-        "ms-vscode-remote.remote-ssh-edit",
-        "ms-vscode.remote-explorer",
         "pkief.material-icon-theme",
         "rust-lang.rust-analyzer",
         "tintinweb.vscode-vyper"

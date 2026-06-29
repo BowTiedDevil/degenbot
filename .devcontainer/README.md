@@ -42,7 +42,7 @@ three reasons:
 
 3. Build the container once (choose one):
   - **VSCode:** open this repo → Command Palette → `Dev Containers: Reopen in Container`.
-  - **SSH / CLI:** `devcontainer up --workspace-folder <path-to-degenbot> --docker-path podman` (requires `npm i -g @devcontainers/cli`).
+  - **CLI:** `devcontainer up --workspace-folder <path-to-degenbot> --docker-path podman` (requires `npm i -g @devcontainers/cli`).
 
   First build is slow (dnf layer in the Dockerfile + `post-create.sh`). Both
   paths produce a container named `vsc-degenbot-<hash>` and are interchangeable —
@@ -50,10 +50,10 @@ three reasons:
 
 ## Entering the container
 
-### A. SSH terminal (your default)
+### A. terminal (your default)
 
 ```bash
-.devcontainer/ssh-attach.sh
+.devcontainer/attach.sh
 ```
 
 This script finds the `vsc-degenbot-*` container, starts it if stopped, and
@@ -67,7 +67,7 @@ podman start <name>
 podman exec -it <name> tmux new -As pi
 ```
 
-To rebuild from scratch from SSH:
+To rebuild from scratch:
 ```bash
 .devcontainer/rebuild.sh    # needs devcontainer CLI
 ```
@@ -96,7 +96,7 @@ time):
 | git / curl  | `git`, `curl`, `ca-certificates`, ...     |                                                  |
 
 Two tools have no dnf package and are curl/npm-installed **in the Dockerfile**
-(baked into the image, NOT post-create.sh — the SSH entry point `ssh-attach.sh`
+(baked into the image, NOT post-create.sh — the entry point `attach.sh`
 does `podman start`+`exec`, which does not run `postCreateCommand`, so
 post-create-installed tools went missing after any container recreate):
 
@@ -131,7 +131,7 @@ exporting coverage HTML, wheel builds, etc.
 | `Dockerfile`        | `fedora:latest` + dnf layer + `dev` user (uid 1000)  |
 | `devcontainer.json` | build/dockerfile, mounts, env vars, `postCreateCommand` |
 | `post-create.sh`    | `uv sync` (venv + PyO3 extension build), git hooks            |
-| `ssh-attach.sh`     | SSH/CLI helper: find + start container, tmux attach  |
+| `attach.sh`         | CLI helper: find + start container, tmux attach  |
 | `tmux.conf`         | truecolor pass-through + extended-keys for pi in tmux |
 | `README.md`         | this file                                            |
 
@@ -140,14 +140,14 @@ exporting coverage HTML, wheel builds, etc.
 
 ## Terminal colors (grey-text / red-accent fix)
 
-If pi launched inside tmux via `ssh-attach.sh` looks dim (grey text nearly
+If pi launched inside tmux via `attach.sh` looks dim (grey text nearly
 invisible, highlights collapsed to red), the cause is a dropped color
 capability across the container/tmux boundary — not pi's theme itself. Three
 things have to line up, all handled by this setup:
 
 1. **`COLORTERM` propagation**: pi reads `$COLORTERM` to decide whether to
    emit 24-bit RGB (see pi's themes doc). `podman exec` only forwards env vars
-   you name explicitly, so `ssh-attach.sh` passes `--env COLORTERM` (and
+   you name explicitly, so `attach.sh` passes `--env COLORTERM` (and
    `TERM`) through from your host terminal. Without it pi falls back to a
    16-color palette.
 2. **Truecolor pass-through in tmux**: even with COLORTERM set, tmux defaults

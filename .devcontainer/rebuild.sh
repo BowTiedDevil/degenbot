@@ -5,7 +5,7 @@
 # hooks) via `devcontainer up` — the same engine VSCode's "Rebuild Container"
 # uses, so mounts, containerEnv, postCreate/postStart all apply identically.
 # Returns to the host shell once the container is up; does NOT attach (use
-# ssh-attach.sh for that).
+# attach.sh for that).
 #
 # Usage:
 #   .devcontainer/rebuild.sh
@@ -20,4 +20,4 @@ WORKSPACE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 echo ">>> rebuilding container via devcontainer CLI + podman"
 devcontainer up --workspace-folder "$WORKSPACE" --docker-path podman \
   --remove-existing-container
-echo ">>> rebuild complete — attach with: .devcontainer/ssh-attach.sh"
+echo ">>> rebuild complete — attach with: .devcontainer/attach.sh"
