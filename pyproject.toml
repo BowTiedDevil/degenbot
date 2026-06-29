@@ -14,7 +14,6 @@ requires-python = ">=3.12"
 dependencies = [
     "alembic ~= 1.18",
     "click ~= 8.4",
-    "networkx ~= 3.6",
     "pydantic ~= 2.13",
     "pydantic-settings ~= 2.14",
     "scipy ~= 1.17",

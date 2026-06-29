@@ -123,7 +123,7 @@ def _prepare_graph(
 ) -> _PreparedGraph:
     """Build the flat edge list + address lookup dicts for the Rust DFS.
 
-    This replaces the old ``networkx.MultiGraph`` construction. The graph is
+    This replaces the old NetworkX ``MultiGraph`` construction. The graph is
     represented as a flat list of ``(token0, token1, pool_id, pool_kind_u8)``
     tuples passed directly to ``find_paths_rust``. Address resolution (the
     former N+1 query bottleneck — one query per pool per yielded path) is
