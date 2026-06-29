@@ -25,6 +25,7 @@ members = [
     "crates/degenbot-bot",
     "crates/degenbot-decoders",
     "crates/degenbot-uniswap",
+    "crates/degenbot-pathfinding",
     "crates/degenbot-python",
     "crates/degenbot",
 ]
@@ -67,6 +68,8 @@ codegen-units = 16
 [profile.release.package.degenbot-decoders]
 codegen-units = 16
 [profile.release.package.degenbot-uniswap]
+codegen-units = 16
+[profile.release.package.degenbot-pathfinding]
 codegen-units = 16
 
 # Dev profile (default for `cargo test` / `just dev`): keep compilation fast.

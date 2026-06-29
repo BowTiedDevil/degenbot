@@ -1,0 +1,18 @@
+[package]
+name = "degenbot-pathfinding"
+description = "Pure-Rust arbitrage pathfinding graph + DFS (zero-dependency leaf; no pyo3/tokio/alloy)."
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"
+pedantic = "warn"
+perf = "warn"
+style = "warn"
+suspicious = "warn"
