@@ -5,7 +5,8 @@ Run with:
 
 Requirements:
     - Anvil on PATH
-    - ETHEREUM_FULL_NODE_HTTP_URI or ETHEREUM_ARCHIVE_NODE_HTTP_URI env var set
+    - An Ethereum RPC URL, resolved via tests/conftest.py precedence
+      (envvar > tests.env > built-in default); no manual env setup needed
 
 What it does:
     1. Spins up an Anvil mainnet fork
@@ -31,7 +32,6 @@ Note on gas testing:
       Total savings: ~48,000–66,000 gas for V4-hybrid paths
 """
 
-import os
 import pathlib
 
 import pytest
@@ -39,6 +39,7 @@ from web3 import Web3
 
 from degenbot.anvil_fork import AnvilFork
 from examples.cmd_stream import compute_simulation_warmup_slots
+from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI, ETHEREUM_FULL_NODE_HTTP_URI
 
 # ── Constants ──
 
@@ -49,10 +50,7 @@ PM_ADDRESS = "0x000000000004444c5dc75cB358380D2e3dE08A90"
 EXECUTOR_OWNER = "0x9C56a29c7231974c269E24F9FB3c29203039089E"
 EXECUTOR_ADDRESS = "0x" + "AA" * 20  # Fresh address for code injection
 
-FORK_URL = os.environ.get(
-    "ETHEREUM_FULL_NODE_HTTP_URI",
-    os.environ.get("ETHEREUM_ARCHIVE_NODE_HTTP_URI", ""),
-)
+FORK_URL = ETHEREUM_FULL_NODE_HTTP_URI or ETHEREUM_ARCHIVE_NODE_HTTP_URI
 
 # Skip entire module if no RPC URL
 pytestmark = pytest.mark.skipif(not FORK_URL, reason="No Ethereum RPC URL configured")
@@ -109,10 +107,7 @@ def _call_initialize(w3: Web3) -> dict:
 @pytest.fixture(scope="module")
 def fork():
     """Create an Anvil mainnet fork at a block where V4 is deployed."""
-    fork_url = os.environ.get(
-        "ETHEREUM_ARCHIVE_NODE_HTTP_URI",
-        os.environ.get("ETHEREUM_FULL_NODE_HTTP_URI", ""),
-    )
+    fork_url = ETHEREUM_ARCHIVE_NODE_HTTP_URI or ETHEREUM_FULL_NODE_HTTP_URI
     if not fork_url:
         pytest.skip("No Ethereum RPC URL configured")
 
