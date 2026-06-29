@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Attach to the degenbot devcontainer from a plain SSH terminal.
+# Attach to the degenbot devcontainer. 
 #
 # Finds the container VSCode or `devcontainer up` created, starts it if
 # stopped, and drops into a tmux session named "dev".
 #
 # Usage:
-#   .devcontainer/ssh-attach.sh          # attach (creates tmux session if absent)
+#   .devcontainer/attach.sh  # attach to an existing tmux session, creating it first if absent
 #
 # To rebuild the container first, use .devcontainer/rebuild.sh.
 #
@@ -39,9 +39,7 @@ if [ -z "$name" ]; then
 fi
 
 state="$(podman inspect -f '{{.State.Status}}' "$name")"
-if [ "$state" = "running" ]; then
-  echo ">>> $name already running"
-else
+if [ "$state" != "running" ]; then
   echo ">>> starting $name"
   podman start "$name"
 fi
@@ -82,8 +80,8 @@ USER="dev"
 # in-container shell via the remote server.
 #
 # tmux new -A attaches to an existing session or creates a new one.
-exec podman exec -it --user "$USER" \
-    --env HOME="/home/$USER" \
+exec podman exec -it \
+    --user "$USER" \
     --env TERM="${TERM}" \
     --env COLORTERM="${COLORTERM:-}" \
     "$name" tmux new -As dev
