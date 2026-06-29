@@ -485,6 +485,19 @@ def solidly_calc_exact_in_stable_camelot(
 # companion `degenbot.utils.solady.libzip` delegates here (sub-step C routing).
 def flz_compress(uncompressed_data: str | bytes) -> HexBytes: ...
 def flz_decompress(compressed_data: bytes | bytearray | str) -> HexBytes: ...
+def find_paths_rust(
+    edges: list[tuple[int, int, int, int]],
+    start_token_id: int,
+    end_token_id: int,
+    min_depth: int,
+    max_depth: int | None,
+    include_reverse: bool,
+    pool_type_per_depth: list[set[int] | None] | None = ...,
+) -> PathIterator: ...
+
+class PathIterator:
+    def __iter__(self) -> PathIterator: ...
+    def __next__(self) -> list[tuple[int, int]]: ...
 def get_sqrt_ratio_at_tick(tick: int) -> int:
     """Convert a tick value to its corresponding sqrt price (X96 format).
 
@@ -1688,6 +1701,7 @@ __all__ = [
     "encode_single",
     "flz_compress",
     "flz_decompress",
+    "find_paths_rust",
     "get_function_selector",
     "get_sqrt_ratio_at_tick",
     "get_tick_at_sqrt_ratio",

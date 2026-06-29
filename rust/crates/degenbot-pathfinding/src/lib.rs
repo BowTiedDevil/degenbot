@@ -28,3 +28,5 @@
 //! (where `SQLAlchemy` lives); the graph algorithm lives here.
 
 pub mod graph;
+
+pub use graph::{Edge, EdgeKey, OwnedPathFinder, PathFinder, PathGraph, PoolKind};
