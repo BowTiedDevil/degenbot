@@ -594,14 +594,26 @@ impl PumpState {
     }
 
     /// Verify a single V3 pool's **pinned post-drain** `tick_data` against
-    /// on-chain state at the backfill block (step-2 of the two-step verify —
+    /// on-chain state at the **pinned block** (step-2 of the two-step verify —
     /// the rolling-start race fix, twin of `verify_v3_snapshot_seed`).
     ///
+    /// The block compared against is the one captured atomically with the
+    /// drain inside `pin_v3_post_drain_snapshot` — the `update_block` at pin
+    /// time (the last drained backfill OR pump event's block, or the
+    /// registration block if neither buffer had events). For an active pool
+    /// on a slow `build_paths`, pump Mint/Burn events land at blocks PAST the
+    /// start()-time `verify_backfill_block`; draining them advances `tick_data`
+    /// to a state matching on-chain at a LATER block, so verifying against
+    /// `verify_backfill_block` fabricated a mismatch and crashed the bot
+    /// (2026-06-29). The pinned (state, block) pair — captured under the same
+    /// write-lock that finished the drain — is self-consistent, so the verify
+    /// is race-free.
+    ///
     /// Reads `take_v3_post_drain_snapshot(address)` (the drain-time
-    /// `tick_data`, captured atomically with `apply_buffer_v3`'s final drain
-    /// and immutable across subsequent pump Mint/Burn) and compares it to
-    /// on-chain via the raw-tick-data `verify_v3_liquidity_map`. Step-2 calls
-    /// this so the comparison is post-drain-vs-on-chain@backfill — NOT
+    /// `(tick_data, block)` pair, immutable across subsequent pump Mint/Burn)
+    /// and compares `tick_data` to on-chain via the raw-tick-data
+    /// `verify_v3_liquidity_map` AT the pinned block. Step-2 calls this so
+    /// the comparison is post-drain-vs-on-chain@pinned-block — NOT
     /// engine-current (drain + pump journal), which would false-mismatch on
     /// every active pool during a rolling start (`resume()` precedes
     /// `build_paths`). The pin is taken (consumed) — verified exactly once;
@@ -614,7 +626,6 @@ impl PumpState {
         py: Python<'py>,
         address: String,
         rpc_url: String,
-        block_number: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let pool_addr: alloy::primitives::Address = address.parse().map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("Invalid V3 address: {e}"))
@@ -630,7 +641,7 @@ impl PumpState {
             // No pin (sparse pool, un-drained, or already verified) → nothing
             // to verify at this seam. The batch verify at
             // last_processed_block() still covers the pool post-build_paths.
-            let Some(tick_data) = post_drain else {
+            let Some((tick_data, pinned_block)) = post_drain else {
                 return Ok(());
             };
             let provider = degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)
@@ -644,26 +655,28 @@ impl PumpState {
                 &provider,
                 pool_addr,
                 &tick_data,
-                block_number.unwrap_or(0),
+                pinned_block,
             )
             .await;
             if let Err(err) = result {
                 return Err(map_liquidity_verify_error(err));
             }
             log::info!(
-                "[verify-drain] V3 post-drain snapshot OK for {} at block {}",
-                pool_addr,
-                block_number.unwrap_or(0)
+                "[verify-drain] V3 post-drain snapshot OK for {pool_addr} at block {pinned_block}"
             );
             Ok(())
         })
     }
 
     /// Verify a single V4 pool's **pinned post-drain** `tick_data` against
-    /// on-chain state at the backfill block (step-2 of the two-step verify —
+    /// on-chain state at the **pinned block** (step-2 of the two-step verify —
     /// V4 twin of `verify_v3_post_drain_snapshot`). Keyed by
-    /// `(pool_manager, pool_id_hex)`. The pin is taken (consumed) — verified
-    /// exactly once; `None` for sparse / un-drained / already-verified pools.
+    /// `(pool_manager, pool_id_hex)`. The block compared against is the
+    /// `update_block` captured atomically with the drain inside
+    /// `pin_v4_post_drain_snapshot` — NOT a caller-supplied constant (see
+    /// `verify_v3_post_drain_snapshot` for the full rationale). The pin is
+    /// taken (consumed) — verified exactly once; `None` for sparse /
+    /// un-drained / already-verified pools.
     #[allow(clippy::needless_pass_by_value)]
     pub(crate) fn verify_v4_post_drain_snapshot<'py>(
         &self,
@@ -672,7 +685,6 @@ impl PumpState {
         pool_id_hex: String,
         rpc_url: String,
         state_view_address: String,
-        block_number: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let pool_manager: alloy::primitives::Address =
             pool_manager_address.parse().map_err(|e| {
@@ -690,7 +702,7 @@ impl PumpState {
             core.take_v4_post_drain_snapshot(pool_manager, &pool_id)
         };
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let Some(tick_data) = post_drain else {
+            let Some((tick_data, pinned_block)) = post_drain else {
                 return Ok(());
             };
             let provider = degenbot_rpc::provider::AlloyProvider::new(&rpc_url, 3)
@@ -705,7 +717,7 @@ impl PumpState {
                 state_view,
                 pool_id,
                 &tick_data,
-                block_number.unwrap_or(0),
+                pinned_block,
             )
             .await;
             if let Err(err) = result {
@@ -714,7 +726,7 @@ impl PumpState {
             log::info!(
                 "[verify-drain] V4 post-drain snapshot OK for pool_id {} at block {}",
                 degenbot_core::hex_utils::encode_hex(&pool_id),
-                block_number.unwrap_or(0)
+                pinned_block
             );
             Ok(())
         })

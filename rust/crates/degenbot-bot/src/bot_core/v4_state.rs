@@ -199,13 +199,17 @@ pub struct V4PoolState {
     /// `take_v4_snapshot_seed` after step-1 verify.
     pub snapshot_seed: Option<HashMap<i32, TickInfo>>,
 
-    /// The pinned **post-drain** `tick_data` (step-2 rolling-start race fix, V4
-    /// twin of `V3PoolState::post_drain_snapshot`). Captured atomically with
-    /// `apply_buffer_v4`'s final drain by `pin_v4_post_drain_snapshot`,
-    /// consumed once by `take_v4_post_drain_snapshot` for step-2 verify.
-    /// Verifying THIS frozen blob (not engine-current) vs on-chain@backfill is
-    /// race-free under a rolling start. `Some` only for `Tracked` pools.
-    pub post_drain_snapshot: Option<HashMap<i32, TickInfo>>,
+    /// The pinned **post-drain** `(tick_data, block)` pair (step-2 rolling-start
+    /// race fix, V4 twin of `V3PoolState::post_drain_snapshot`). Captured
+    /// atomically with `apply_buffer_v4`'s final drain by
+    /// `pin_v4_post_drain_snapshot`, consumed once by
+    /// `take_v4_post_drain_snapshot` for step-2 verify. The pair carries the
+    /// frozen `tick_data` AND the `update_block` it was computed at; step-2
+    /// verify compares against on-chain@**the pinned block**, not a
+    /// start()-time `verify_backfill_block` constant (see
+    /// `V3PoolState::post_drain_snapshot` for the full rationale). `Some` only
+    /// for `Tracked` pools.
+    pub post_drain_snapshot: Option<(HashMap<i32, TickInfo>, u64)>,
 
     /// Tick-bitmap word positions known to be fetched. See
     /// [`V3PoolState::known_bitmap_words`] — V4 shares the same sparse

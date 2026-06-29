@@ -93,12 +93,14 @@ class EngineRegistry:
         # the backfill target block, stashed in start() for the per-pool
         # two-step verify (T6) to pass to the verify closures — NOT wired into
         # the orphaned engine.set_verify_*_block setters (deleted in T5).
-        # snapshot_block = min(snap.newest_block) across supplied snapshots;
-        # backfill_block = the subscribe() return (first observed WS block).
-        # Both None when no snapshots were supplied (no seed, no backfill
-        # window) — T6 guards accordingly.
+        # snapshot_block = min(snap.newest_block) across supplied snapshots.
+        # `None` when no snapshots were supplied (no seed) — T6 guards
+        # accordingly. (Pre-fix the registry also stashed a
+        # `_verify_backfill_block` constant for step-2 to compare against —
+        # removed 2026-06-29: the post-drain pin now carries its OWN block,
+        # captured atomically with the drain, so step-2 takes no `block`
+        # argument from the registry.)
         self._verify_snapshot_block: int | None = None
-        self._verify_backfill_block: int | None = None
         # NOTE: These Python dicts (_v2_keys, _v3_keys, _v4_keys) are plain
         # dicts — NOT thread-safe. All access is on the single asyncio event loop.
 
@@ -141,14 +143,16 @@ class EngineRegistry:
                 stream_v4_snapshot_to_engine(v4_snapshot, self.engine)
             snapshot_block = min(s.newest_block for s in snapshots)
             self.engine.backfill_from_snapshot(node_http, snapshot_block)
-            # T1: stash the snapshot seed block + the backfill target block
-            # for the per-pool two-step verify (T6). backfill_from_snapshot
-            # applied events from snapshot_block up to backfill_target, so
-            # post-backfill state lives at backfill_target — that's the block
-            # the backfill-verify step compares against. Only set when a
-            # snapshot was supplied (else there's no seed and no backfill).
+            # T1: stash the snapshot seed block for the per-pool two-step verify
+            # (T6). step-1 compares the pinned seed against on-chain@this
+            # block. step-2 captures its OWN block atomically with the drain
+            # (the post-drain pin carries `(tick_data, update_block)`), so the
+            # registry stashes no backfill-block constant for step-2 (removed
+            # 2026-06-29: pre-fix it stashed `backfill_target` and passed it to
+            # step-2, fabricating a mismatch on active pools during a slow
+            # `build_paths`). Only set when a snapshot was supplied (else
+            # there's no seed).
             self._verify_snapshot_block = snapshot_block
-            self._verify_backfill_block = backfill_target
 
         # Verify config (consumer-safe: nothing emits yet).
         self.engine.set_verify_rpc_url(node_http)
@@ -228,105 +232,120 @@ class EngineRegistry:
             block_number=resolved_block,
         )
 
-    async def _verify_pool_at_block(
+    async def _verify_pool_seed_at_block(
         self,
         family: str,
         address: str,
         block: int | None,
         *,
         pool_id_hex: str | None = None,
-        verify_seed: bool = False,
     ) -> None:
-        """T6 (ADR-006 D4): one step of the per-pool two-step verify.
+        """T6 step-1: verify the pinned snapshot SEED vs on-chain@``block`` BEFORE the drain.
 
-        Runs the relocated PyBot verify API
-        (``verify_v3_liquidity_maps`` / ``verify_v4_liquidity_maps``) against
-        the supplied ``block``. The two-step wiring in ``register_v3_pool`` /
-        ``register_v4_pool`` calls this BEFORE the drain (snapshot block) and
-        AFTER the drain (backfill block). Gated by verify config — a no-op
-        when ``start()`` wasn't called with ``verify_state_view`` (mirrors the
-        batch ``verify_liquidity_maps`` posture). A mismatch raises the
-        engine's ``VerificationMismatchError`` at the offending pool — fail-
-        fast, surfacing from ``build_paths``.
+        CBCH6H: compares the pinned seed (the registration-time
+        ``tick_data``), NOT engine-current — during a rolling start
+        (``resume()`` precedes ``build_paths``) the live pump applies
+        Mint/Burn onto engine-current; comparing that vs on-chain@snapshot
+        (pre-journal) would false-mismatch on every active pool
+        (logs/perm-V2-V3-V2.log). The seed is consumed once so memory is
+        bounded.
+
+        Gated by verify config — a no-op when ``start()`` wasn't called
+        with ``verify_state_view`` (mirrors the batch
+        ``verify_liquidity_maps`` posture). ``block is None`` (no snapshot
+        supplied at ``start()``) is also a no-op at this seam — the batch
+        verify at ``last_processed_block()`` still covers the pool
+        post-``build_paths``. A mismatch raises the engine's
+        ``VerificationMismatchError`` at the offending pool — fail-fast,
+        surfacing from ``build_paths``.
 
         Args:
             family: ``"v3"`` or ``"v4"`` — selects the verify method.
             address: the pool address (label only — on-chain state is read
                 from the shared BotState snapshot, not the address).
-            block: the block to verify against; ``None`` means pending/latest.
+            block: the snapshot block to verify against; ``None`` (no
+                snapshot supplied) → no-op at this seam.
             pool_id_hex: required for V4 (the StateView key).
-            verify_seed: CBCH6H — when True (step-1 / snapshot block), verify
-                the **pinned snapshot seed** against on-chain@snapshot_block
-                (NOT engine-current). During a rolling start (`resume()`
-                precedes `build_paths`) the live pump applies Mint/Burn onto
-                engine-current; without the seed verify, step-1 would compare
-                engine-current (seed + journal) vs on-chain@snapshot
-                (pre-journal) → a false mismatch on every active pool
-                (logs/perm-V2-V3-V2.log). Step-2 (backfill block) passes
-                ``verify_seed=False`` to verify the **pinned post-drain**
-                tick_data (captured atomically with ``apply_buffer_*``'s final
-                drain, immutable across subsequent pump Mint/Burn) vs
-                on-chain@backfill — NOT engine-current, which would
-                false-mismatch under the same rolling-start race
-                (logs/verify-race-hotloop.log).
 
         """
         if self._verify_rpc_url is None or self._verify_state_view is None:
             # No verify config — skip, same as batch verify_liquidity_maps.
             return
         if block is None:
-            # No snapshot/backfill block (no snapshot supplied at start()) —
-            # nothing to verify at this seam; the batch verify at
+            # No snapshot block (no snapshot supplied at start()) — nothing
+            # to verify at this seam; the batch verify at
             # last_processed_block() still runs post-build_paths.
             return
-        # Use the engine's per-pool pinned-snapshot verify (the relocated PyBot
-        # verify API; the engine keeps a thin delegating wrapper — T8 rewires
-        # the registry to call ``self.bot`` directly). Async, never block_on.
         if family == "v3":
-            if verify_seed:
-                # CBCH6H step-1: verify the pinned seed vs on-chain@snapshot.
-                await self.engine.verify_v3_snapshot_seed(
-                    address=address,
-                    rpc_url=self._verify_rpc_url,
-                    block_number=block,
-                )
-            else:
-                # Step-2: verify the pinned POST-DRAIN tick_data vs
-                # on-chain@backfill. The pin is captured atomically with
-                # `apply_buffer_v3`'s final drain (single core.write() hold) and
-                # is immutable across subsequent pump Mint/Burn — so the
-                # comparison is drain-state vs on-chain@backfill, NOT
-                # engine-current (drain + pump journal), which under a rolling
-                # start (`resume()` precedes `build_paths`) false-mismatches on
-                # every active pool (logs/verify-race-hotloop.log). The pin is
-                # taken (consumed) once; `None` for sparse/un-drained pools →
-                # no-op Ok (the batch verify at last_processed_block() still
-                # covers them post-build_paths). Per-pool (not the batch
-                # `verify_v3_liquidity_maps`) — faster + races closed.
-                await self.engine.verify_v3_post_drain_snapshot(
-                    address=address,
-                    rpc_url=self._verify_rpc_url,
-                    block_number=block,
-                )
+            await self.engine.verify_v3_snapshot_seed(
+                address=address,
+                rpc_url=self._verify_rpc_url,
+                block_number=block,
+            )
         elif family == "v4":
             assert pool_id_hex is not None
-            if verify_seed:
-                await self.engine.verify_v4_snapshot_seed(
-                    pool_manager_address=address,
-                    pool_id_hex=pool_id_hex,
-                    rpc_url=self._verify_rpc_url,
-                    state_view_address=self._verify_state_view,
-                    block_number=block,
-                )
-            else:
-                # Step-2 V4 twin: pinned post-drain vs on-chain@backfill.
-                await self.engine.verify_v4_post_drain_snapshot(
-                    pool_manager_address=address,
-                    pool_id_hex=pool_id_hex,
-                    rpc_url=self._verify_rpc_url,
-                    state_view_address=self._verify_state_view,
-                    block_number=block,
-                )
+            await self.engine.verify_v4_snapshot_seed(
+                pool_manager_address=address,
+                pool_id_hex=pool_id_hex,
+                rpc_url=self._verify_rpc_url,
+                state_view_address=self._verify_state_view,
+                block_number=block,
+            )
+
+    async def _verify_pool_post_drain(
+        self,
+        family: str,
+        address: str,
+        *,
+        pool_id_hex: str | None = None,
+    ) -> None:
+        """T6 step-2: verify the pinned POST-DRAIN pair vs on-chain@pinned block AFTER the drain.
+
+        The block compared against is the one captured atomically with the
+        drain inside ``pin_v3/v4_post_drain_snapshot`` — the ``update_block``
+        at pin time (the last drained backfill OR pump event's block, or the
+        registration block if neither buffer had events). The registry passes
+        NO block: the pin carries its own. Pre-fix the registry passed
+        ``verify_backfill_block`` as a constant, which fabricated a mismatch
+        on active pools during a slow ``build_paths`` (pump Mint/Burn at blocks
+        PAST the backfill boundary advanced the drained state to a later
+        block — 2026-06-29 crash). The ``(state, block)`` pair — captured
+        under the same write-lock that finished the drain — is
+        self-consistent, so the verify is race-free.
+
+        The comparison is drain-state vs on-chain@pinned-block, NOT
+        engine-current (drain + pump journal), which would false-mismatch on
+        every active pool under a rolling start (``resume()`` precedes
+        ``build_paths``). The pin is taken (consumed) once; ``None`` for
+        sparse/un-drained pools → no-op Ok (the batch verify at
+        ``last_processed_block()`` still covers them post-build_paths).
+
+        Gated by verify config — a no-op when ``start()`` wasn't called
+        with ``verify_state_view``.
+
+        Args:
+            family: ``"v3"`` or ``"v4"`` — selects the verify method.
+            address: the pool address (label only — on-chain state is read
+                from the shared BotState snapshot, not the address).
+            pool_id_hex: required for V4 (the StateView key).
+
+        """
+        if self._verify_rpc_url is None or self._verify_state_view is None:
+            # No verify config — skip, same as batch verify_liquidity_maps.
+            return
+        if family == "v3":
+            await self.engine.verify_v3_post_drain_snapshot(
+                address=address,
+                rpc_url=self._verify_rpc_url,
+            )
+        elif family == "v4":
+            assert pool_id_hex is not None
+            await self.engine.verify_v4_post_drain_snapshot(
+                pool_manager_address=address,
+                pool_id_hex=pool_id_hex,
+                rpc_url=self._verify_rpc_url,
+                state_view_address=self._verify_state_view,
+            )
 
     def register_v2_pool(self, pool: LiquidityPool) -> int:  # noqa: D102
         if pool.address in self._v2_keys:
@@ -392,25 +411,30 @@ class EngineRegistry:
         # (consumed) so memory is bounded. V2 has no tick map; V3/V4 only.
         # Async (awaited) — never `block_on` (the ecf576de tokio deadlock).
         # Gated by verify config (same posture as batch `verify_liquidity_maps`).
-        await self._verify_pool_at_block(
+        await self._verify_pool_seed_at_block(
             "v3",
             pool.address,
             self._verify_snapshot_block,
-            verify_seed=True,
         )
 
         # Drain the backfill/pump buffer onto the snapshot seed. *(unchanged)*
         self.engine.apply_buffer_v3(pool.address)
 
-        # Step 2: backfill verify (pinned post-drain vs on-chain @ backfill
-        # block) AFTER the drain — catches a bad buffer-apply (e.g. the V4
-        # register->seed clobber at 292101f) at the offending pool. The
-        # post-drain pin is captured atomically with `apply_buffer_v3`'s final
-        # drain (single core.write() hold) so a pump Mint/Burn landing AFTER
-        # the drain cannot corrupt the comparison (the step-2 rolling-start
-        # race — logs/verify-race-hotloop.log: `update_block=25396803 >
-        # block=25396790`). Per-pool (not batch) + race-free.
-        await self._verify_pool_at_block("v3", pool.address, self._verify_backfill_block)
+        # Step 2: post-drain verify (pinned `(tick_data, block)` pair vs
+        # on-chain @ **the pinned block**) AFTER the drain — catches a bad
+        # buffer-apply (e.g. the V4 register->seed clobber at 292101f) at the
+        # offending pool. The post-drain pin is captured atomically with
+        # `apply_buffer_v3`'s final drain (single core.write() hold) so a pump
+        # Mint/Burn landing AFTER the drain cannot corrupt the comparison (the
+        # step-2 rolling-start race — logs/verify-race-hotloop.log:
+        # `update_block=25396803 > block=25396790`). The pin carries its OWN
+        # block (the `update_block` at drain time) — step-2 takes no `block`
+        # argument (pre-fix the registry passed `verify_backfill_block` as a
+        # constant, which fabricated a mismatch on active pools during a slow
+        # `build_paths`: pump Mint/Burn at blocks PAST the backfill boundary
+        # advanced the drained state to a later block — 2026-06-29 crash).
+        # Per-pool (not batch) + race-free.
+        await self._verify_pool_post_drain("v3", pool.address)
 
         self._v3_keys[pool.address] = key
         return key
@@ -460,22 +484,23 @@ class EngineRegistry:
         # Step 1: snapshot verify (pinned seed vs on-chain @ snapshot block).
         # CBCH6H: `verify_seed=True` compares the pinned snapshot seed, not
         # engine-current (rolling-start race fix; see register_v3_pool).
-        await self._verify_pool_at_block(
+        await self._verify_pool_seed_at_block(
             "v4",
             pool.address,
             self._verify_snapshot_block,
             pool_id_hex=pool_id_hex,
-            verify_seed=True,
         )
 
         # Drain backfill/pump buffer — same rationale as register_v3_pool.
         self.engine.apply_buffer_v4(pool.address, pool_id_hex)
 
-        # Step 2: backfill verify (post-drain vs on-chain @ backfill block).
-        await self._verify_pool_at_block(
+        # Step 2: post-drain verify (pinned `(tick_data, block)` pair vs
+        # on-chain @ the pinned block). Same race-free contract as V3 step-2
+        # (see register_v3_pool) — the pin carries its OWN block; step-2 takes
+        # no `block` argument.
+        await self._verify_pool_post_drain(
             "v4",
             pool.address,
-            self._verify_backfill_block,
             pool_id_hex=pool_id_hex,
         )
 
