@@ -25,6 +25,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 RESULTS_FILE="${SCRIPT_DIR}/permutation_results.tsv"
 LOCK_FILE="${SCRIPT_DIR}/.results.lock"
 JOBS_DIR="${SCRIPT_DIR}/.jobs"
@@ -127,7 +128,7 @@ run_permutation() {
     fi
 
     # Start the bot
-    cd /home/ralph/code/degenbot
+    cd "$PROJECT_ROOT"
     nohup uv run python examples/eth_backrun_v2_v3_v4_rust.py \
         --permutation "$PERM" \
         > "$LOGFILE" 2>&1 &
@@ -170,7 +171,7 @@ run_permutation() {
     # Unknown) from [sim-diag] JSON lines, via the shared analyzer module.
     # Falls back to Unknown for every revert when [sim-diag] is absent (older
     # logs). NoProfit comes from the bot's authoritative 'by reason:' summary.
-    ROW=$(cd /home/ralph/code/degenbot && uv run python3 -c "
+    ROW=$(cd "$PROJECT_ROOT" && uv run python3 -c "
 from logs.permutation_analyzer import analyze_logfile, result_to_tsv_row
 r = analyze_logfile('$LOGFILE', '$PERM')
 print(result_to_tsv_row($i, r))
