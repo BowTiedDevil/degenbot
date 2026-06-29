@@ -30,6 +30,7 @@ degenbot-core = { path = "../degenbot-core" }
 degenbot-cl-math = { path = "../degenbot-cl-math" }
 degenbot-abi = { path = "../degenbot-abi" }
 degenbot-uniswap = { path = "../degenbot-uniswap" }
+degenbot-pathfinding = { path = "../degenbot-pathfinding" }
 degenbot-rpc = { path = "../degenbot-rpc" }
 degenbot-decoders = { path = "../degenbot-decoders" }
 degenbot-curve-math = { path = "../degenbot-curve-math" }

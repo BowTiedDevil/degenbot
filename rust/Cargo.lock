@@ -1586,6 +1586,7 @@ dependencies = [
  "degenbot-core",
  "degenbot-curve-math",
  "degenbot-decoders",
+ "degenbot-pathfinding",
  "degenbot-rpc",
  "degenbot-solidly-math",
  "degenbot-uniswap",
@@ -1673,6 +1674,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "degenbot-pathfinding"
+version = "0.0.0"
+
+[[package]]
 name = "degenbot-rpc"
 version = "0.0.0"
 dependencies = [
@@ -1722,6 +1727,7 @@ dependencies = [
  "degenbot-core",
  "degenbot-curve-math",
  "degenbot-decoders",
+ "degenbot-pathfinding",
  "degenbot-rpc",
  "degenbot-solidly-math",
  "degenbot-uniswap",
