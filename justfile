@@ -187,15 +187,20 @@ ci-full: ci-rust lint-markdown test-python
 
 # ========== Repository Setup ==========
 
-# Install git hooks and configure commit template.
+# Install prek git hooks and configure commit template.
 # Run this once after cloning so commit messages are linted locally at
 # commit time AND pre-push (catches `--no-verify` bypasses before they leave
-# the machine, strictly earlier than CI). For manual range checks: just lint-commits.
+# the machine, strictly earlier than CI). Hooks are declared in prek.toml.
+# For manual range checks: just lint-commits.
 setup-git-hooks:
-    git config core.hooksPath .githooks
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # prek installs into git's effective hooks dir (default .git/hooks). Clear
+    # any stale custom hooksPath from the old .githooks setup so it isn't used.
+    git config --unset core.hooksPath 2>/dev/null || true
     git config commit.template .commit-template
-    chmod +x .githooks/*
-    @echo "✓ Git hooks (commit-msg, pre-commit, pre-push) and commit template configured."
+    uv run prek install
+    echo "✓ prek hooks (pre-commit, commit-msg, pre-push) and commit template configured."
 
 # ========== Documentation ==========
 

@@ -33,7 +33,7 @@ cd /workspaces/degenbot
 uv venv --allow-existing "$UV_PROJECT_ENVIRONMENT"
 uv sync
 
-echo ">>> enabling commitlint git hooks (optional; needs node)"
+echo ">>> enabling git hooks via prek (optional; needs node for commitlint/markdownlint)"
 echo ">>> foundry+pi are baked into the image; if either is MISSING in the summary below, the image is stale — rebuild it."
 if [ -f justfile ]; then
   just setup-git-hooks || echo "  (setup-git-hooks skipped or failed — non-fatal)"

@@ -1,8 +1,0 @@
-repos:
-  - repo: local
-    hooks:
-      - id: forbid-noqa-PLC0415
-        name: forbid noqa for PLC0415
-        entry: 'noqa:.*PLC0415'
-        language: pygrep
-        types: [python]

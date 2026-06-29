@@ -206,6 +206,7 @@ dev = [
     "sybil",
     "ty",
     "vyper",
+    "prek>=0.4.5",
 ]
 
 [tool.ty.environment]
