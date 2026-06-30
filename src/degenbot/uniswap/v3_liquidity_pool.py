@@ -43,7 +43,7 @@ from degenbot.exceptions.pool import (
     NoPoolStateAvailable,
 )
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
-from degenbot.types.aliases import BlockNumber, ChainId
+from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import BoundedProductHop, HopType, V3TickRangeInfo
 from degenbot.types.pool_protocols import SimulationResult
@@ -162,7 +162,6 @@ class UniswapV3Pool(
         factory: str,
         fee: int,
         tick_spacing: int,
-        chain_id: ChainId | None = None,
         deployer_address: str | None = None,
         init_hash: str | None = None,
         tick_data_fetcher: Callable[[int, int], FetchedTickData | None] | None = None,
@@ -176,7 +175,6 @@ class UniswapV3Pool(
         """
         self._py_pool = py_pool
         self.address = get_checksum_address(address)
-        self._chain_id = chain_id if chain_id is not None else token0.chain_id
         self._token0 = token0
         self._token1 = token1
         self.factory = get_checksum_address(factory)
@@ -275,16 +273,6 @@ class UniswapV3Pool(
             fee=self._fee,
             init_hash=self.init_hash,
         )
-
-    @property
-    def chain_id(self) -> int | None:
-        """Return chain id.
-
-        Returns:
-            The chain ID, or None if not set.
-
-        """
-        return self._chain_id
 
     @property
     def liquidity(self) -> int:

@@ -176,7 +176,6 @@ def _make_uniswap_v3_pool() -> UniswapV3Pool:
 
     return make_v3_pool(
         address="0x1d42064Fc4Beb5F8aAF85F4617AE8b3b5B8Bd801",
-        chain_id=1,
         token0=uni,
         token1=weth,
         factory=UNISWAP_V3_FACTORY,
@@ -195,7 +194,6 @@ def _make_sushiswap_v3_pool() -> SushiswapV3Pool:
 
     return make_v3_pool(
         address="0x35644Fb61aFBc458bf92B15AdD6ABc1996Be5014",
-        chain_id=1,
         token0=usdc,
         token1=weth,
         factory=SUSHISWAP_V3_FACTORY,
@@ -215,7 +213,6 @@ def _make_pancakeswap_v3_pool() -> PancakeswapV3Pool:
 
     return make_v3_pool(
         address="0xD9e497BD8f491fE163b42A62c296FB54CaEA74B7",
-        chain_id=1,
         token0=dai,
         token1=usdc,
         factory=PANCAKESWAP_V3_FACTORY,

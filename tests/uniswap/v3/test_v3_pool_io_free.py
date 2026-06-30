@@ -72,7 +72,6 @@ class TestV3PoolIOFreeConstructor:
 
         pool = make_v3_pool(
             address=USDC_WETH_V3_POOL,
-            chain_id=1,
             token0=weth,
             token1=usdc,
             factory=UNISWAP_V3_FACTORY,
@@ -85,7 +84,6 @@ class TestV3PoolIOFreeConstructor:
         )
 
         assert pool.address == get_checksum_address(USDC_WETH_V3_POOL)
-        assert pool.chain_id == 1
         assert pool.token0 is weth
         assert pool.token1 is usdc
         assert pool.factory == get_checksum_address(UNISWAP_V3_FACTORY)
@@ -119,7 +117,6 @@ class TestV3PoolIOFreeConstructor:
 
         pool = make_v3_pool(
             address=USDC_WETH_V3_POOL,
-            chain_id=1,
             token0=weth,
             token1=usdc,
             factory=UNISWAP_V3_FACTORY,
@@ -145,7 +142,6 @@ class TestV3PoolIOFreeConstructor:
 
         pool = make_v3_pool(
             address=USDC_WETH_V3_POOL,
-            chain_id=1,
             token0=weth,
             token1=usdc,
             factory=UNISWAP_V3_FACTORY,
@@ -282,7 +278,6 @@ class TestV3PoolTrackerWithBot:
         usdc = _make_usdc()
         mock_pool = make_v3_pool(
             address=USDC_WETH_V3_POOL,
-            chain_id=1,
             token0=weth,
             token1=usdc,
             factory=factory,

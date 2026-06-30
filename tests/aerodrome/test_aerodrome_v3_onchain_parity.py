@@ -122,7 +122,6 @@ def _build_aerodrome_v3_cbeth_weth_io_free() -> AerodromeV3Pool:
         sqrt_price_x96=scalars["sqrt_price_x96"],
         tick=scalars["tick"],
         liquidity=scalars["liquidity"],
-        chain_id=8453,
         state_block=cassette["block"],
         tick_data=tick_data,
         pool_class=AerodromeV3Pool,
