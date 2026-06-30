@@ -276,3 +276,7 @@
 {"type":"state","ts":"2026-06-30T21:51:01.437465614Z","data":{"id":"YGWL6D","state":"done","ts":"2026-06-30T21:51:01.437465614Z"}}
 {"type":"claim","ts":"2026-06-30T21:51:01.449406115Z","data":{"id":"WN5RS3","agent_id":"agent@t-c28d","ts":"2026-06-30T21:51:01.449406115Z"}}
 {"type":"state","ts":"2026-06-30T21:51:01.449406115Z","data":{"id":"WN5RS3","state":"doing","ts":"2026-06-30T21:51:01.449406115Z"}}
+{"type":"result","ts":"2026-06-30T21:54:01.04311395Z","data":{"task_id":"WN5RS3","summary":"src/degenbot/uniswap/v4_liquidity_pool.py","path":"src/degenbot/uniswap/v4_liquidity_pool.py","sha256_at_attach":"011deb3e6f089b77699e797888cfaed7ebf5d4c6e8a42fe1fc7e7b7cabe24717","mtime_at_attach":"2026-06-30T21:51:26.01837515Z","git_commit_at_attach":"305eded450189aa2c529464d056148e6fa0d12f8","ts":"2026-06-30T21:54:01.04311395Z"}}
+{"type":"state","ts":"2026-06-30T21:54:01.049255585Z","data":{"id":"WN5RS3","state":"done","ts":"2026-06-30T21:54:01.049255585Z"}}
+{"type":"claim","ts":"2026-06-30T21:54:01.060521079Z","data":{"id":"RDR3KL","agent_id":"agent@t-c28d","ts":"2026-06-30T21:54:01.060521079Z"}}
+{"type":"state","ts":"2026-06-30T21:54:01.060521079Z","data":{"id":"RDR3KL","state":"doing","ts":"2026-06-30T21:54:01.060521079Z"}}

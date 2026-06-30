@@ -700,7 +700,6 @@ tripool = make_curve_pool(
     fee=4000000,
     admin_fee=5000000000,
     balances=[29792690991444656395059310, 27440491064, 27440490397],
-    chain_id=1,
     state_block=18900000,
     precision_multipliers=[1000000000000000000, 1000000000000, 1000000000000],
 )
