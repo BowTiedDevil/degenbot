@@ -652,6 +652,14 @@ impl OwnedPathFinder {
                 self.effective_max_depth,
                 Some(emd) if self.working_path.len() + 1 == emd
             );
+            // Penultimate hop (next iteration after this push is the closing
+            // one). Loop-invariant within the inner edge-scan loop below —
+            // working_path.len() only changes on push-after-break — so hoist
+            // the depth comparison out of the per-edge loop.
+            let penultimate_hop = matches!(
+                self.effective_max_depth,
+                Some(emd) if self.working_path.len() + 2 == emd
+            );
 
             let mut found_edge = false;
 
@@ -725,10 +733,7 @@ impl OwnedPathFinder {
                     // valid cycle); conservative (a node whose only end-edges
                     // are visited still passes this check and is pruned only
                     // when the closing loop finds nothing).
-                    if matches!(
-                        self.effective_max_depth,
-                        Some(emd) if self.working_path.len() + 2 == emd
-                    ) {
+                    if penultimate_hop {
                         let neighbor_can_close = self
                             .end_edges
                             .get(edge.neighbor as usize)
