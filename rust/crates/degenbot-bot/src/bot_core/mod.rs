@@ -39,10 +39,12 @@ pub mod v4_state;
 // Re-export the merged V3/V4/Curve state types (ADR-003: BotState owns
 // pool state; Curve is the ADR-003 "third family").
 pub use balancer_stable_state::{
-    BalancerStableBlockDelta, BalancerStablePoolState, RegisterBalancerStablePoolParams,
+    BalancerStableBlockDelta, BalancerStablePoolIdentity, BalancerStablePoolState,
+    RegisterBalancerStablePoolParams,
 };
 pub use balancer_weighted_state::{
-    BalancerWeightedBlockDelta, BalancerWeightedPoolState, RegisterBalancerWeightedPoolParams,
+    BalancerWeightedBlockDelta, BalancerWeightedPoolIdentity, BalancerWeightedPoolState,
+    RegisterBalancerWeightedPoolParams,
 };
 pub use curve_state::{
     CurveBlockDelta, CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams,
@@ -77,8 +79,8 @@ pub enum PoolEntry {
     V3(V3PoolIdentity, V3PoolState),
     V4(V4PoolIdentity, V4PoolState),
     Curve(CurvePoolIdentity, CurvePoolState),
-    BalancerWeighted(BalancerWeightedPoolState),
-    BalancerStable(BalancerStablePoolState),
+    BalancerWeighted(BalancerWeightedPoolIdentity, BalancerWeightedPoolState),
+    BalancerStable(BalancerStablePoolIdentity, BalancerStablePoolState),
 }
 
 /// Read-only surface shared by [`V3PoolState`] and [`V4PoolState`] — the
@@ -527,8 +529,8 @@ impl BotState {
             PoolEntry::V2(..)
             | PoolEntry::V3(..)
             | PoolEntry::V4(..)
-            | PoolEntry::BalancerWeighted(_)
-            | PoolEntry::BalancerStable(_) => None,
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..) => None,
         }
     }
 
@@ -542,8 +544,8 @@ impl BotState {
             PoolEntry::V2(..)
             | PoolEntry::V3(..)
             | PoolEntry::V4(..)
-            | PoolEntry::BalancerWeighted(_)
-            | PoolEntry::BalancerStable(_) => None,
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..) => None,
         }
     }
 
@@ -587,9 +589,10 @@ impl BotState {
         let pool_id = self.next_pool_id;
         self.next_pool_id += 1;
 
-        let state = BalancerWeightedPoolState::from_params(params.clone(), self.journal_depth);
+        let (identity, state) =
+            BalancerWeightedPoolState::from_params(params.clone(), self.journal_depth);
         self.pools
-            .insert(pool_id, PoolEntry::BalancerWeighted(state));
+            .insert(pool_id, PoolEntry::BalancerWeighted(identity, state));
         self.pool_addresses.insert(params.address, pool_id);
 
         pool_id
@@ -616,7 +619,7 @@ impl BotState {
         balances: Vec<U256>,
         block_number: u64,
     ) -> Option<u64> {
-        let Some(PoolEntry::BalancerWeighted(state)) = self.pools.get_mut(&pool_id) else {
+        let Some(PoolEntry::BalancerWeighted(_, state)) = self.pools.get_mut(&pool_id) else {
             return None;
         };
         assert!(
@@ -643,12 +646,30 @@ impl BotState {
     #[must_use]
     pub fn get_balancer_weighted_pool(&self, pool_id: u64) -> Option<&BalancerWeightedPoolState> {
         match self.pools.get(&pool_id)? {
-            PoolEntry::BalancerWeighted(state) => Some(state),
+            PoolEntry::BalancerWeighted(_, state) => Some(state),
             PoolEntry::V2(..)
             | PoolEntry::V3(..)
             | PoolEntry::V4(..)
             | PoolEntry::Curve(..)
-            | PoolEntry::BalancerStable(_) => None,
+            | PoolEntry::BalancerStable(..) => None,
+        }
+    }
+
+    /// Look up a Balancer weighted pool's immutable registration identity
+    /// (address, vault, `pool_id`, tokens, weights, `scaling_factors`, `swap_fee`,
+    /// `pow_version`). Returns `None` if not registered or not a weighted pool.
+    #[must_use]
+    pub fn get_balancer_weighted_identity(
+        &self,
+        pool_id: u64,
+    ) -> Option<&BalancerWeightedPoolIdentity> {
+        match self.pools.get(&pool_id)? {
+            PoolEntry::BalancerWeighted(identity, _) => Some(identity),
+            PoolEntry::V2(..)
+            | PoolEntry::V3(..)
+            | PoolEntry::V4(..)
+            | PoolEntry::Curve(..)
+            | PoolEntry::BalancerStable(..) => None,
         }
     }
 
@@ -700,8 +721,10 @@ impl BotState {
         let pool_id = self.next_pool_id;
         self.next_pool_id += 1;
 
-        let state = BalancerStablePoolState::from_params(params.clone(), self.journal_depth);
-        self.pools.insert(pool_id, PoolEntry::BalancerStable(state));
+        let (identity, state) =
+            BalancerStablePoolState::from_params(params.clone(), self.journal_depth);
+        self.pools
+            .insert(pool_id, PoolEntry::BalancerStable(identity, state));
         self.pool_addresses.insert(params.address, pool_id);
 
         pool_id
@@ -728,7 +751,7 @@ impl BotState {
         balances: Vec<U256>,
         block_number: u64,
     ) -> Option<u64> {
-        let Some(PoolEntry::BalancerStable(state)) = self.pools.get_mut(&pool_id) else {
+        let Some(PoolEntry::BalancerStable(_, state)) = self.pools.get_mut(&pool_id) else {
             return None;
         };
         assert!(
@@ -756,12 +779,31 @@ impl BotState {
     #[must_use]
     pub fn get_balancer_stable_pool(&self, pool_id: u64) -> Option<&BalancerStablePoolState> {
         match self.pools.get(&pool_id)? {
-            PoolEntry::BalancerStable(state) => Some(state),
+            PoolEntry::BalancerStable(_, state) => Some(state),
             PoolEntry::V2(..)
             | PoolEntry::V3(..)
             | PoolEntry::V4(..)
             | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(_) => None,
+            | PoolEntry::BalancerWeighted(..) => None,
+        }
+    }
+
+    /// Look up a Balancer stable pool's immutable registration identity
+    /// (address, vault, `pool_id`, tokens, amp, `scaling_factors`, `swap_fee`,
+    /// `bpt_idx`, `invariant_version`). Returns `None` if not registered or not
+    /// a stable pool.
+    #[must_use]
+    pub fn get_balancer_stable_identity(
+        &self,
+        pool_id: u64,
+    ) -> Option<&BalancerStablePoolIdentity> {
+        match self.pools.get(&pool_id)? {
+            PoolEntry::BalancerStable(identity, _) => Some(identity),
+            PoolEntry::V2(..)
+            | PoolEntry::V3(..)
+            | PoolEntry::V4(..)
+            | PoolEntry::Curve(..)
+            | PoolEntry::BalancerWeighted(..) => None,
         }
     }
 
@@ -867,8 +909,8 @@ impl BotState {
             PoolEntry::V3(..)
             | PoolEntry::V4(..)
             | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(_)
-            | PoolEntry::BalancerStable(_) => None,
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..) => None,
         }
     }
 
@@ -882,8 +924,8 @@ impl BotState {
             PoolEntry::V3(..)
             | PoolEntry::V4(..)
             | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(_)
-            | PoolEntry::BalancerStable(_) => None,
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..) => None,
         }
     }
 
@@ -1175,8 +1217,8 @@ impl BotState {
             }
             PoolEntry::V2(..)
             | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(_)
-            | PoolEntry::BalancerStable(_) => false,
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..) => false,
         }
     }
 
@@ -1379,8 +1421,8 @@ impl BotState {
             PoolEntry::V2(..)
             | PoolEntry::V4(..)
             | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(_)
-            | PoolEntry::BalancerStable(_) => None,
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..) => None,
         }
     }
 
@@ -1394,8 +1436,8 @@ impl BotState {
             PoolEntry::V2(..)
             | PoolEntry::V4(..)
             | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(_)
-            | PoolEntry::BalancerStable(_) => None,
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..) => None,
         }
     }
 
@@ -1412,8 +1454,8 @@ impl BotState {
                 PoolEntry::V2(..)
                 | PoolEntry::V4(..)
                 | PoolEntry::Curve(..)
-                | PoolEntry::BalancerWeighted(_)
-                | PoolEntry::BalancerStable(_) => None,
+                | PoolEntry::BalancerWeighted(..)
+                | PoolEntry::BalancerStable(..) => None,
             })
             .collect()
     }
@@ -1512,8 +1554,8 @@ impl BotState {
             PoolEntry::V4(_, state) => Some(state),
             PoolEntry::V2(..)
             | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(_)
-            | PoolEntry::BalancerStable(_) => None,
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..) => None,
         }
     }
 
@@ -1665,8 +1707,8 @@ impl BotState {
             // "not-yet-Rust-side" sentinel — same as an unregistered pool).
             // Curve ported in 11c; Balancer weighted stable in 12e.
             PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(_)
-            | PoolEntry::BalancerStable(_) => Ok(U256::ZERO),
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..) => Ok(U256::ZERO),
         }
     }
 
@@ -1709,8 +1751,8 @@ impl BotState {
             }
             PoolEntry::V2(..)
             | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(_)
-            | PoolEntry::BalancerStable(_) => false,
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..) => false,
         }
     }
 
@@ -1809,8 +1851,8 @@ impl BotState {
             ),
             PoolEntry::V2(..)
             | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(_)
-            | PoolEntry::BalancerStable(_) => Err(SimulateSwapError::NotComputable),
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..) => Err(SimulateSwapError::NotComputable),
         }
     }
 
@@ -1908,8 +1950,8 @@ impl BotState {
             ),
             PoolEntry::V2(..)
             | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(_)
-            | PoolEntry::BalancerStable(_) => Err(SimulateSwapError::NotComputable),
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..) => Err(SimulateSwapError::NotComputable),
         }
     }
 
@@ -2100,8 +2142,8 @@ impl BotState {
             }
             PoolEntry::V2(..)
             | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(_)
-            | PoolEntry::BalancerStable(_) => None,
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..) => None,
         }
     }
 
@@ -2216,8 +2258,8 @@ impl BotState {
             // `calculate_tokens_out`'s combined arm. Returns 0 (the Python
             // companion handles the calc).
             PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(_)
-            | PoolEntry::BalancerStable(_) => U256::ZERO,
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..) => U256::ZERO,
         }
     }
 
@@ -2416,10 +2458,10 @@ impl BotState {
                 Some(PoolEntry::Curve(_, state)) => {
                     state.journal.newest_block().is_some_and(|b| b >= target)
                 }
-                Some(PoolEntry::BalancerWeighted(state)) => {
+                Some(PoolEntry::BalancerWeighted(_, state)) => {
                     state.journal.newest_block().is_some_and(|b| b >= target)
                 }
-                Some(PoolEntry::BalancerStable(state)) => {
+                Some(PoolEntry::BalancerStable(_, state)) => {
                     state.journal.newest_block().is_some_and(|b| b >= target)
                 }
                 None => false,
@@ -2459,14 +2501,14 @@ impl BotState {
                     // delegated to `curve_restore_before_block`.
                     self.curve_restore_before_block(pool_id, target).is_some()
                 }
-                Some(PoolEntry::BalancerWeighted(_)) => {
+                Some(PoolEntry::BalancerWeighted(..)) => {
                     // Balancer weighted restore: same full-state delta shape
                     // as V2/Curve; delegated to
                     // `balancer_weighted_restore_before_block`.
                     self.balancer_weighted_restore_before_block(pool_id, target)
                         .is_some()
                 }
-                Some(PoolEntry::BalancerStable(_)) => {
+                Some(PoolEntry::BalancerStable(..)) => {
                     // Balancer stable restore: same full-state delta shape as
                     // V2/Curve/BalancerWeighted; delegated to
                     // `balancer_stable_restore_before_block`.
@@ -2550,7 +2592,7 @@ impl BotState {
     #[must_use]
     pub fn balancer_weighted_journal_len(&self, pool_id: u64) -> usize {
         match self.pools.get(&pool_id) {
-            Some(PoolEntry::BalancerWeighted(state)) => state.journal.len(),
+            Some(PoolEntry::BalancerWeighted(_, state)) => state.journal.len(),
             _ => 0,
         }
     }
@@ -2568,7 +2610,7 @@ impl BotState {
         pool_id: u64,
         block: u64,
     ) -> Result<(), JournalError> {
-        let Some(PoolEntry::BalancerWeighted(state)) = self.pools.get_mut(&pool_id) else {
+        let Some(PoolEntry::BalancerWeighted(_, state)) = self.pools.get_mut(&pool_id) else {
             return Ok(());
         };
         state.journal.discard_before_block(block)
@@ -2591,7 +2633,7 @@ impl BotState {
         pool_id: u64,
         block: u64,
     ) -> Option<Result<(Vec<U256>, u64), JournalError>> {
-        let PoolEntry::BalancerWeighted(state) = self.pools.get_mut(&pool_id)? else {
+        let PoolEntry::BalancerWeighted(_, state) = self.pools.get_mut(&pool_id)? else {
             return None;
         };
         let (balances, blk) = match state.journal.restore_balancer_weighted_before_block(block) {
@@ -2611,7 +2653,7 @@ impl BotState {
     #[must_use]
     pub fn balancer_stable_journal_len(&self, pool_id: u64) -> usize {
         match self.pools.get(&pool_id) {
-            Some(PoolEntry::BalancerStable(state)) => state.journal.len(),
+            Some(PoolEntry::BalancerStable(_, state)) => state.journal.len(),
             _ => 0,
         }
     }
@@ -2629,7 +2671,7 @@ impl BotState {
         pool_id: u64,
         block: u64,
     ) -> Result<(), JournalError> {
-        let Some(PoolEntry::BalancerStable(state)) = self.pools.get_mut(&pool_id) else {
+        let Some(PoolEntry::BalancerStable(_, state)) = self.pools.get_mut(&pool_id) else {
             return Ok(());
         };
         state.journal.discard_before_block(block)
@@ -2652,7 +2694,7 @@ impl BotState {
         pool_id: u64,
         block: u64,
     ) -> Option<Result<(Vec<U256>, u64), JournalError>> {
-        let PoolEntry::BalancerStable(state) = self.pools.get_mut(&pool_id)? else {
+        let PoolEntry::BalancerStable(_, state) = self.pools.get_mut(&pool_id)? else {
             return None;
         };
         let (balances, blk) = match state.journal.restore_balancer_stable_before_block(block) {
@@ -2731,10 +2773,10 @@ impl BotState {
             Some(PoolEntry::Curve(..)) => {
                 let _ = self.curve_restore_before_block(pool_id, block);
             }
-            Some(PoolEntry::BalancerWeighted(_)) => {
+            Some(PoolEntry::BalancerWeighted(..)) => {
                 let _ = self.balancer_weighted_restore_before_block(pool_id, block);
             }
-            Some(PoolEntry::BalancerStable(_)) => {
+            Some(PoolEntry::BalancerStable(..)) => {
                 let _ = self.balancer_stable_restore_before_block(pool_id, block);
             }
             None => {}
@@ -2785,14 +2827,14 @@ impl BotState {
                 .is_some_and(|earliest| earliest < block),
             // Balancer weighted carries a genesis delta (mirror of V2/Curve) —
             // ADR-005 slice 12a. Same predicate: `earliest < block`.
-            PoolEntry::BalancerWeighted(state) => state
+            PoolEntry::BalancerWeighted(_, state) => state
                 .journal
                 .earliest_block()
                 .is_some_and(|earliest| earliest < block),
             // Balancer stable carries a genesis delta (mirror of
             // V2/Curve/BalancerWeighted) — ADR-005 slice 12c. Same predicate:
             // `earliest < block`.
-            PoolEntry::BalancerStable(state) => state
+            PoolEntry::BalancerStable(_, state) => state
                 .journal
                 .earliest_block()
                 .is_some_and(|earliest| earliest < block),
@@ -2886,8 +2928,8 @@ impl BotState {
             PoolEntry::V3(..)
             | PoolEntry::V4(..)
             | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(_)
-            | PoolEntry::BalancerStable(_) => None,
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..) => None,
         }
     }
 
@@ -3402,8 +3444,8 @@ impl BotState {
             PoolEntry::V2(..)
             | PoolEntry::V3(..)
             | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(_)
-            | PoolEntry::BalancerStable(_) => None,
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..) => None,
         }
     }
 
@@ -3417,8 +3459,8 @@ impl BotState {
             PoolEntry::V2(..)
             | PoolEntry::V3(..)
             | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(_)
-            | PoolEntry::BalancerStable(_) => None,
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..) => None,
         }
     }
 
@@ -3531,8 +3573,8 @@ impl BotState {
                 PoolEntry::V2(..)
                 | PoolEntry::V3(..)
                 | PoolEntry::Curve(..)
-                | PoolEntry::BalancerWeighted(_)
-                | PoolEntry::BalancerStable(_) => None,
+                | PoolEntry::BalancerWeighted(..)
+                | PoolEntry::BalancerStable(..) => None,
             })
             .collect()
     }
