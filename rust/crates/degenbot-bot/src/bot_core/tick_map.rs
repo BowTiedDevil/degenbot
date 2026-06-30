@@ -26,7 +26,7 @@ use std::collections::HashMap;
 use alloy::primitives::Address;
 
 use crate::bot_core::TickInfo;
-use crate::bot_core::{V3PoolIdentity, V3PoolState, V4PoolState};
+use crate::bot_core::{V3PoolIdentity, V3PoolState, V4PoolIdentity, V4PoolState};
 
 // ---------------------------------------------------------------------------
 // The traits
@@ -106,30 +106,24 @@ impl TickMap for (V3PoolIdentity, V3PoolState) {
     }
 }
 
-impl TickMap for V4PoolState {
+impl TickMap for (V4PoolIdentity, V4PoolState) {
     fn address(&self) -> Address {
         // V4 verification uses `state_view` (a separate contract) for RPC calls,
         // not `pool_manager`; this method exists only for trait conformance on
         // the V4 impl. See ADR-004.
-        self.pool_manager
+        self.0.pool_manager
     }
 
     fn tick_spacing(&self) -> i32 {
-        self.pool_key.tick_spacing
+        self.0.pool_key.tick_spacing
     }
 
     fn active_tick(&self) -> i32 {
-        self.tick
+        self.1.tick
     }
 
     fn tick_data(&self) -> &HashMap<i32, TickInfo> {
-        &self.tick_data
-    }
-}
-
-impl TickMapMut for V4PoolState {
-    fn tick_data_mut(&mut self) -> &mut HashMap<i32, TickInfo> {
-        &mut self.tick_data
+        &self.1.tick_data
     }
 }
 
@@ -146,14 +140,12 @@ mod tests {
         // `items_after_statements` doesn't fire — items exist from the start
         // of the scope anyway, so declaring them up top is clearer.
         fn assert_impls_tickmap<T: TickMap>() {}
-        fn assert_impls_tickmap_mut<T: TickMapMut>() {}
-        // V3 entry-level TickMap is impl'd on the (identity, state) tuple —
-        // the trait projects identity (address/tick_spacing) AND mutable
-        // (tick/tick_data) off the same registry slot.
+        // V3 + V4 entry-level TickMap are impl'd on the (identity, state)
+        // tuple — the trait projects identity (address/tick_spacing) AND
+        // mutable (tick/tick_data) off the same registry slot.
         assert_impls_tickmap::<(V3PoolIdentity, V3PoolState)>();
-        assert_impls_tickmap::<V4PoolState>();
-        // V3 apply path doesn't use TickMapMut (removed when TickMap re-homed
-        // to the tuple). V4 still uses TickMapMut for `tick_data_mut`.
-        assert_impls_tickmap_mut::<V4PoolState>();
+        assert_impls_tickmap::<(V4PoolIdentity, V4PoolState)>();
+        // TickMapMut is unused post-split (the apply path writes through the
+        // pool-entry match, not the trait).
     }
 }

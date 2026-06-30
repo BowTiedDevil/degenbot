@@ -741,7 +741,7 @@ impl PyLiquidityPool {
         let core = self.core.read();
         core.get_v3_identity(self.pool_id)
             .map(|i| i.fee)
-            .or_else(|| core.get_v4_pool(self.pool_id).map(|p| p.pool_key.fee))
+            .or_else(|| core.get_v4_identity(self.pool_id).map(|i| i.pool_key.fee))
             .unwrap_or_default()
     }
 
@@ -752,8 +752,8 @@ impl PyLiquidityPool {
         core.get_v3_identity(self.pool_id)
             .map(|i| i.tick_spacing)
             .or_else(|| {
-                core.get_v4_pool(self.pool_id)
-                    .map(|p| p.pool_key.tick_spacing)
+                core.get_v4_identity(self.pool_id)
+                    .map(|i| i.pool_key.tick_spacing)
             })
             .unwrap_or_default()
     }
@@ -1127,8 +1127,8 @@ impl PyLiquidityPool {
                 .get_v3_identity(self.pool_id)
                 .map(|i| i.tick_spacing)
                 .or_else(|| {
-                    core.get_v4_pool(self.pool_id)
-                        .map(|p| p.pool_key.tick_spacing)
+                    core.get_v4_identity(self.pool_id)
+                        .map(|i| i.pool_key.tick_spacing)
                 })
                 .unwrap_or(1)
                 .max(1);

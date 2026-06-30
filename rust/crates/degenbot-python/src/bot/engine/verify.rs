@@ -286,7 +286,7 @@ impl PyUniswapArbEngine {
             // V4 pools are registered with the actual pool_manager address,
             // not ZERO. Fallback: scan all V4 pools for matching pool_id.
             for (key, pool) in core.v4_pools_snapshot() {
-                if pool.pool_id == pool_id {
+                if pool.0.pool_id == pool_id {
                     return Some(key);
                 }
             }
@@ -295,8 +295,10 @@ impl PyUniswapArbEngine {
 
         let v4_pools = if let Some(fwd_key) = v4_key {
             let mut map = std::collections::HashMap::new();
-            if let Some(pool) = core.get_v4_pool(fwd_key) {
-                map.insert(fwd_key, pool.clone());
+            if let (Some(identity), Some(pool)) =
+                (core.get_v4_identity(fwd_key), core.get_v4_pool(fwd_key))
+            {
+                map.insert(fwd_key, (identity.clone(), pool.clone()));
             }
             map
         } else {
