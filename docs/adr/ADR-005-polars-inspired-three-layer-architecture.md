@@ -83,6 +83,20 @@ construction/encoding parameter, not state. Both the Python `Pool` companion (vi
 `Py*` wrapper) and the standalone Rust consumer read `DexIdentity` presets from
 `degenbot-core`.
 
+> **Clarification (per-pool `DexVariant` tag).** The rule above holds for the
+> *preset* — the level-1 DEX data (factory, deployer, init-hash, default fees,
+> ABI shape) that is shared across many pools and therefore not stored per-pool.
+> A narrower, per-pool echo lives on `PoolEntry::V2` as a `V2PoolDescriptor`:
+> `{ variant: DexVariant, stable_swap: bool, fee_denominator: Option<u64> }`.
+> This is *registration metadata* (which preset constructed this pool, plus the
+> Camelot solidly-stable strategy the builder observed on-chain), not swap-math
+> state. The Python companion recovers it off the `PyLiquidityPool` handle (the
+> Polars `_from_pydf` end state) — `py_pool.dex` resolves the full preset via
+> `preset_for_variant(variant)`, while `py_pool.variant`/`.stable_swap`/
+> `.fee_denominator` carry the per-pool tag. Two Camelot pools share a factory
+> but differ in their variant tag; the tag is how the companion picks the right
+> stable-strategy branch without re-fetching on-chain state.
+
 ### Grounding in Polars
 
 `polars-python`'s `DataFrame` wrapper holds `RwLock<DataFrame>` over `polars-core`;

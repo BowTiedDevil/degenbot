@@ -43,11 +43,14 @@ class LiquidityPool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
 
     variant: ClassVar[str | None] = None
 
-    # Camelot solidly-stable strategy (ADR-005 slice 7 step 4a fold). Default
-    # False for all non-Camelot V2 pools — the stable calc + SolidlyStableHop
-    # branch only fire when a builder flips this (Camelot stable pools).
-    # ``fee_denominator`` carries Camelot's integer fee scaling (used by the
-    # stable math); None for non-Camelot V2 (volatile calc ignores it).
+    # Camelot solidly-stable strategy (ADR-005 slice 7 step 4a fold). The
+    # companion sets these as INSTANCE attrs off the `PyLiquidityPool` handle's
+    # `V2PoolDescriptor` (see `_from_py_pool`) — `stable_swap` selects the
+    # stable calc + SolidlyStableHop branch for Camelot stable pools; False
+    # otherwise. ``fee_denominator`` carries Camelot's integer fee scaling
+    # (used by the stable math); None for non-Camelot V2 (volatile calc ignores
+    # it). The class-level defaults are the read path ONLY for instances that
+    # bypassed `_from_py_pool` (none — the construction guard blocks `__init__`).
     stable_swap: bool = False
     fee_denominator: int | None = None
 
