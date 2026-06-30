@@ -134,7 +134,7 @@ def make_v2_pool(
     py_pool: PyLiquidityPool | None = py_bot.get_pool(pool_id)
     assert py_pool is not None, "register_v2_pool returned a pool_id with no handle"
 
-    return pool_class(
+    return pool_class._from_py_pool(
         py_pool,
         address=address,
         token0=token0,

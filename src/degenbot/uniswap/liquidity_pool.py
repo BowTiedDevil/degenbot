@@ -2,7 +2,7 @@
 
 import dataclasses
 from fractions import Fraction
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Self
 from weakref import WeakSet
 
 from eth_typing import ChecksumAddress
@@ -61,8 +61,36 @@ class LiquidityPool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
         "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
     )
 
-    def __init__(
-        self,
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+        """Direct construction is forbidden.
+
+        ``LiquidityPool`` is a Python companion over a Rust-owned
+        ``PyLiquidityPool`` handle. The handle can only be produced by
+        registering a pool in a ``PyBot`` — there is no way for a caller to
+        hand-build one. Use the registered entry points instead:
+
+        - Production: ``Bot.build_pool(address)``
+        - Tests: ``make_v2_pool(...)``
+
+        Both register the pool in Rust, obtain the ``PyLiquidityPool``
+        handle, and wrap it via :meth:`_from_py_pool` (mirroring Polars'
+        ``_from_pydf`` seam).
+
+        Raises:
+            TypeError: Always. Direct construction is not supported.
+
+        """
+        msg = (
+            f"{type(self).__name__} cannot be constructed directly. "
+            "Use Bot.build_pool(address) (production) or make_v2_pool(...) "
+            "(tests) to register the pool in Rust and obtain the "
+            "PyLiquidityPool handle to wrap."
+        )
+        raise TypeError(msg)
+
+    @classmethod
+    def _from_py_pool(
+        cls,
         py_pool: PyLiquidityPool,
         *,
         address: ChecksumAddress | str,
@@ -75,32 +103,40 @@ class LiquidityPool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
         factory: str | None = None,
         fee_token0: Fraction | None = None,
         fee_token1: Fraction | None = None,
-    ) -> None:
-        """I/O-free companion over a ``PyLiquidityPool`` handle (ADR-005).
+    ) -> Self:
+        """Wrap a Rust-owned ``PyLiquidityPool`` handle as a Python companion.
 
-        Rust owns the mutable state (reserves + reorg journal) as
-        ``V2PoolState``; this companion reads it through ``self._py_pool``
-        (via the atomic ``snapshot()``) and delegates ``external_update``
-        (Sync) / discard / restore to the handle. Immutable identity (tokens,
-        factory, fees) stays Python-side this slice — calc (slice 5) and
-        identity (later) follow.
+        Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). Rust
+        owns the mutable state (reserves + reorg journal) as ``V2PoolState``;
+        this companion reads it through ``self._py_pool`` (via the atomic
+        ``snapshot()``) and delegates ``external_update`` (Sync) / discard /
+        restore to the handle. Immutable identity (tokens, factory, fees)
+        stays Python-side this slice — calc (slice 5) and identity (later)
+        follow.
+
+        Only ``Bot.build_pool()`` (production) and ``make_v2_pool`` (tests)
+        should call this — they have already registered the pool in a
+        ``PyBot`` and obtained the handle. ``cls`` is used so subclasses that
+        only set ClassVars (the documented extension contract) inherit this
+        seam and produce instances of the subclass.
 
         ``dex`` (ADR-005 slice 7 step 3) carries the canonical DexIdentity
         preset: the variant tag, reserves ABI shape, canonical-chain
         factory/init-hash, + default fees. When ``dex`` is provided AND the
-        explicit ``factory``/``init_hash``/``deployer_address``/``fee_token0``/
-        ``fee_token1`` params are ``None``, the preset fills them in. Explicit
-        params always take precedence — so existing callers (which pass all
-        explicit params) are unaffected.
+        explicit ``factory``/``init_hash``/``deployer_address``/
+        ``fee_token0``/``fee_token1`` params are ``None``, the preset fills
+        them in. Explicit params always take precedence — so existing callers
+        (which pass all explicit params) are unaffected.
 
-        Construct via ``Bot.build_pool()`` (which registers in Rust and
-        hands the handle here); tests use ``make_v2_pool``.
+        Returns:
+            A ``cls`` instance wrapping ``py_pool``.
 
         Raises:
             DegenbotValueError: If ``factory`` is not provided explicitly
                 AND not resolvable from ``dex``.
 
         """
+        self = cls.__new__(cls)
         self._py_pool = py_pool
         self.dex = dex
 
@@ -156,6 +192,7 @@ class LiquidityPool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
         self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {fee_string}%)"
 
         self._subscribers: WeakSet[Subscriber] = WeakSet()
+        return self
 
     @property
     def chain_id(self) -> int | None:
