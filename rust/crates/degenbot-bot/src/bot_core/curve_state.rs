@@ -294,6 +294,9 @@ mod tests {
             fee_token1: (997, 1000),
             factory: Address::repeat_byte(0xff),
             update_block: 0,
+            variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+            stable_swap: false,
+            fee_denominator: None,
         });
         let affected = core.apply_curve_balance_update_by_pool_id(v2, vec![U256::from(1_500)], 5);
         assert!(

@@ -3812,6 +3812,9 @@ mod tests {
             fee_token1: FEE_03,
             factory: make_factory(),
             update_block: 0,
+            variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+            stable_swap: false,
+            fee_denominator: None,
         }
     }
 
@@ -3823,6 +3826,23 @@ mod tests {
         // Python reference: constant_product_calc_exact_in(100, 1000, 2000, 3/1000) = 181
         let amount_out = core.calculate_tokens_out(pool_id, true, U256::from(100));
         assert_eq!(amount_out, U256::from(181));
+    }
+
+    #[test]
+    fn v2_descriptor_round_trip() {
+        // The descriptor (variant/stable_swap/fee_denominator) round-trips
+        // through register_v2_pool -> get_v2_descriptor (task EO2SLK).
+        let mut core = BotState::new();
+        let pool_id = core.register_v2_pool(&make_params(U256::from(1000), U256::from(2000)));
+        let desc = core
+            .get_v2_descriptor(pool_id)
+            .expect("registered V2 pool has a descriptor");
+        assert_eq!(
+            desc.variant,
+            degenbot_uniswap::dex_identity::DexVariant::UniswapV2
+        );
+        assert!(!desc.stable_swap);
+        assert_eq!(desc.fee_denominator, None);
     }
 
     #[test]
@@ -3884,6 +3904,9 @@ mod tests {
             fee_token1: FEE_03,
             factory: make_factory(),
             update_block: 0,
+            variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+            stable_swap: false,
+            fee_denominator: None,
         };
         let pool_id = core.register_v2_pool(&params);
 
@@ -3922,6 +3945,9 @@ mod tests {
             fee_token1: (997, 1000),
             factory: Address::from([0x33u8; 20]),
             update_block: 0,
+            variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+            stable_swap: false,
+            fee_denominator: None,
         };
         state.write().register_v2_pool(&params);
 

@@ -7,6 +7,7 @@
 //! Owns no state — property reads and calculation calls cross `PyO3` on every
 //! access, locking the shared `BotState` for reading.
 
+use crate::bot::token::PyErc20Token;
 use crate::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -634,13 +635,12 @@ impl PyLiquidityPool {
     }
 
     /// Camelot solidly-stable strategy flag. `false` for all non-Camelot V2
-    /// and for non-V2 pool_ids.
+    /// and for non-V2 `pool_ids`.
     #[getter]
     fn stable_swap(&self) -> bool {
         let core = self.core.read();
         core.get_v2_descriptor(self.pool_id)
-            .map(|d| d.stable_swap)
-            .unwrap_or(false)
+            .is_some_and(|d| d.stable_swap)
     }
 
     /// Camelot integer fee scaling. `None` for non-Camelot V2 / non-V2.
@@ -661,6 +661,41 @@ impl PyLiquidityPool {
         let variant = core.get_v2_descriptor(self.pool_id)?.variant;
         let ident = degenbot_uniswap::dex_identity::preset_for_variant(variant);
         Some(crate::bot::dex_identity::PyDexIdentity::from_core(&ident))
+    }
+
+    // --- V2 token-recovery getters (ADR-005 identity slice, task EO2SLK) ---
+    // Recover `PyErc20Token` handles for the pool's token0/token1 from the
+    // SAME shared BotState (ADR-006: one Bot per chain owns all assets). The
+    // companion wraps these via `Erc20Token._from_py_token` so the
+    // `_from_py_pool(py_pool)` seam needs no token args — the Polars
+    // `_from_pydf` end state.
+    //
+    // Returns `None` if the pool isn't V2 or the token address isn't
+    // registered in the shared BotState.tokens registry (the failure mode the
+    // test-factory cross-Bot-token fix addresses — production always registers).
+
+    /// `PyErc20Token` handle for token0, or `None` if not registered in the
+    /// shared `BotState`.
+    fn get_token0(&self) -> Option<PyErc20Token> {
+        let core = self.core.read();
+        let state = core.get_v2_pool_state(self.pool_id)?;
+        if core.has_token(&state.token0) {
+            Some(PyErc20Token::new(Arc::clone(&self.core), state.token0))
+        } else {
+            None
+        }
+    }
+
+    /// `PyErc20Token` handle for token1, or `None` if not registered in the
+    /// shared `BotState`.
+    fn get_token1(&self) -> Option<PyErc20Token> {
+        let core = self.core.read();
+        let state = core.get_v2_pool_state(self.pool_id)?;
+        if core.has_token(&state.token1) {
+            Some(PyErc20Token::new(Arc::clone(&self.core), state.token1))
+        } else {
+            None
+        }
     }
 
     // --- V3 state read getters (plan-101 slice 8a) ---

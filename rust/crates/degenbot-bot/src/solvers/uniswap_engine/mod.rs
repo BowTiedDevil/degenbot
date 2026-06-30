@@ -562,6 +562,9 @@ impl UniswapEngine {
             fee_token1: (gamma_numer, fee_denom),
             factory: Address::ZERO,
             update_block: 0,
+            variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+            stable_swap: false,
+            fee_denominator: None,
         };
         self.core.write().register_v2_pool(&params)
     }

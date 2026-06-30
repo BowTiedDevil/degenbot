@@ -504,6 +504,9 @@ mod tests {
                 fee_token1: (997, 1000),
                 factory: alloy::primitives::Address::ZERO,
                 update_block: 0,
+                variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+                stable_swap: false,
+                fee_denominator: None,
             });
 
         let mut dispatcher = LogDispatcher::new();
@@ -547,6 +550,9 @@ mod tests {
                 fee_token1: (997, 1000),
                 factory: alloy::primitives::Address::ZERO,
                 update_block: 0,
+                variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
+                stable_swap: false,
+                fee_denominator: None,
             });
 
         let mut dispatcher = LogDispatcher::new();
