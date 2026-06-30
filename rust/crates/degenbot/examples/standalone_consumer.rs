@@ -49,6 +49,9 @@ fn main() {
         fee_token1: UNISWAP_V2.fee_token1,
         factory: UNISWAP_V2.factory,
         update_block: 19_000_000,
+        variant: UNISWAP_V2.variant,
+        stable_swap: false,
+        fee_denominator: None,
     };
     let pool_id = bot.register_v2_pool(&params);
     assert_eq!(pool_id, 1, "first registered pool gets id 1");
