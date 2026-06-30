@@ -566,7 +566,7 @@ impl PyLiquidityPool {
     #[getter]
     fn address(&self) -> String {
         let core = self.core.read();
-        match core.get_v2_pool_state(self.pool_id) {
+        match core.get_v2_identity(self.pool_id) {
             Some(s) => address_utils::address_to_checksum_string(&s.address),
             None => String::new(),
         }
@@ -576,7 +576,7 @@ impl PyLiquidityPool {
     #[getter]
     fn token0_address(&self) -> String {
         let core = self.core.read();
-        match core.get_v2_pool_state(self.pool_id) {
+        match core.get_v2_identity(self.pool_id) {
             Some(s) => address_utils::address_to_checksum_string(&s.token0),
             None => String::new(),
         }
@@ -586,7 +586,7 @@ impl PyLiquidityPool {
     #[getter]
     fn token1_address(&self) -> String {
         let core = self.core.read();
-        match core.get_v2_pool_state(self.pool_id) {
+        match core.get_v2_identity(self.pool_id) {
             Some(s) => address_utils::address_to_checksum_string(&s.token1),
             None => String::new(),
         }
@@ -596,7 +596,7 @@ impl PyLiquidityPool {
     #[getter]
     fn factory(&self) -> String {
         let core = self.core.read();
-        match core.get_v2_pool_state(self.pool_id) {
+        match core.get_v2_identity(self.pool_id) {
             Some(s) => address_utils::address_to_checksum_string(&s.factory),
             None => String::new(),
         }
@@ -608,7 +608,7 @@ impl PyLiquidityPool {
     #[getter]
     fn fee_token0(&self) -> (u64, u64) {
         let core = self.core.read();
-        core.get_v2_pool_state(self.pool_id)
+        core.get_v2_identity(self.pool_id)
             .map(|s| s.fee_token0)
             .unwrap_or_default()
     }
@@ -618,7 +618,7 @@ impl PyLiquidityPool {
     #[getter]
     fn fee_token1(&self) -> (u64, u64) {
         let core = self.core.read();
-        core.get_v2_pool_state(self.pool_id)
+        core.get_v2_identity(self.pool_id)
             .map(|s| s.fee_token1)
             .unwrap_or_default()
     }
@@ -628,7 +628,7 @@ impl PyLiquidityPool {
     #[getter]
     fn variant(&self) -> String {
         let core = self.core.read();
-        match core.get_v2_descriptor(self.pool_id) {
+        match core.get_v2_identity(self.pool_id) {
             Some(d) => d.variant.as_str().to_string(),
             None => String::new(),
         }
@@ -639,7 +639,7 @@ impl PyLiquidityPool {
     #[getter]
     fn stable_swap(&self) -> bool {
         let core = self.core.read();
-        core.get_v2_descriptor(self.pool_id)
+        core.get_v2_identity(self.pool_id)
             .is_some_and(|d| d.stable_swap)
     }
 
@@ -647,7 +647,7 @@ impl PyLiquidityPool {
     #[getter]
     fn fee_denominator(&self) -> Option<u64> {
         let core = self.core.read();
-        core.get_v2_descriptor(self.pool_id)
+        core.get_v2_identity(self.pool_id)
             .and_then(|d| d.fee_denominator)
     }
 
@@ -658,7 +658,7 @@ impl PyLiquidityPool {
     #[getter]
     fn dex(&self) -> Option<crate::bot::dex_identity::PyDexIdentity> {
         let core = self.core.read();
-        let variant = core.get_v2_descriptor(self.pool_id)?.variant;
+        let variant = core.get_v2_identity(self.pool_id)?.variant;
         let ident = degenbot_uniswap::dex_identity::preset_for_variant(variant);
         Some(crate::bot::dex_identity::PyDexIdentity::from_core(&ident))
     }
@@ -678,9 +678,9 @@ impl PyLiquidityPool {
     /// shared `BotState`.
     fn get_token0(&self) -> Option<PyErc20Token> {
         let core = self.core.read();
-        let state = core.get_v2_pool_state(self.pool_id)?;
-        if core.has_token(&state.token0) {
-            Some(PyErc20Token::new(Arc::clone(&self.core), state.token0))
+        let identity = core.get_v2_identity(self.pool_id)?;
+        if core.has_token(&identity.token0) {
+            Some(PyErc20Token::new(Arc::clone(&self.core), identity.token0))
         } else {
             None
         }
@@ -690,9 +690,9 @@ impl PyLiquidityPool {
     /// shared `BotState`.
     fn get_token1(&self) -> Option<PyErc20Token> {
         let core = self.core.read();
-        let state = core.get_v2_pool_state(self.pool_id)?;
-        if core.has_token(&state.token1) {
-            Some(PyErc20Token::new(Arc::clone(&self.core), state.token1))
+        let identity = core.get_v2_identity(self.pool_id)?;
+        if core.has_token(&identity.token1) {
+            Some(PyErc20Token::new(Arc::clone(&self.core), identity.token1))
         } else {
             None
         }

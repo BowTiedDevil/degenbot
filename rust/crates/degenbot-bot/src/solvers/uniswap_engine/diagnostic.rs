@@ -1332,30 +1332,32 @@ fn build_engine_pool_state(
     pool_ref: &MixedPoolRef,
 ) -> Option<DiagnosticPoolState> {
     match pool_ref.hop_type {
-        HopType::V2 => core.get_v2_pool_state(pool_ref.pool_key).map(|state| {
+        HopType::V2 => {
+            let state = core.get_v2_pool_state(pool_ref.pool_key)?;
+            let identity = core.get_v2_identity(pool_ref.pool_key)?;
             let (reserve_in, reserve_out, gamma_numer, fee_denom) = if pool_ref.zero_for_one {
                 (
                     state.reserve0,
                     state.reserve1,
-                    state.fee_token0.0,
-                    state.fee_token0.1,
+                    identity.fee_token0.0,
+                    identity.fee_token0.1,
                 )
             } else {
                 (
                     state.reserve1,
                     state.reserve0,
-                    state.fee_token1.0,
-                    state.fee_token1.1,
+                    identity.fee_token1.0,
+                    identity.fee_token1.1,
                 )
             };
-            DiagnosticPoolState::V2 {
-                address: fmt_addr(state.address),
+            Some(DiagnosticPoolState::V2 {
+                address: fmt_addr(identity.address),
                 reserve_in: fmt_u256(reserve_in),
                 reserve_out: fmt_u256(reserve_out),
                 fee_denom: format!("0x{fee_denom:x}"),
                 gamma_numer: format!("0x{gamma_numer:x}"),
-            }
-        }),
+            })
+        }
         HopType::V3 => core
             .get_v3_pool(pool_ref.pool_key)
             .map(|state| DiagnosticPoolState::V3 {

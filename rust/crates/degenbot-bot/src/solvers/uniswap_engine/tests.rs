@@ -1423,7 +1423,7 @@ mod tests {
         let v2_addr = engine
             .core
             .read()
-            .get_v2_pool_state(v2_fwd)
+            .get_v2_identity(v2_fwd)
             .map(|p| p.address);
         assert_eq!(v2_addr, Some(Address::from([0x11u8; 20])));
 

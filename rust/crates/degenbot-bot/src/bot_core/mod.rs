@@ -71,7 +71,7 @@ pub use block_clock::{BlockClock, BlockState, HeaderDecision, LogDecision};
 /// A single pool's state. Pool-type-specific fields are in the enum variants.
 #[derive(Clone, Debug)]
 pub enum PoolEntry {
-    V2(V2PoolState, V2PoolDescriptor),
+    V2(V2PoolIdentity, V2PoolState),
     V3(V3PoolState),
     V4(V4PoolState),
     Curve(CurvePoolState),
@@ -151,9 +151,21 @@ impl V3FamilyPool for V4PoolState {
     }
 }
 
-/// State for a Uniswap V2-style constant-product pool.
-#[derive(Clone, Debug)]
-pub struct V2PoolState {
+/// Immutable V2 registration identity (ADR-005 identity slice).
+///
+/// Pure registration data — the pool's permanent identity, set once at
+/// `register_v2_pool` and never mutated. Mirrors [`TokenEntry`] (one immutable
+/// identity struct per registry entry, no mutable half). Distinct from
+/// [`V2PoolState`], which carries only mutable runtime data (reserves +
+/// journal + update block).
+///
+/// This completes the half-done ADR-005 split: the former `V2PoolDescriptor`
+/// (`variant/stable_swap/fee_denominator`) is folded in here, alongside the
+/// level-2 identity (address/tokens/fees/factory) that previously sat on the
+/// mutable `V2PoolState`. The `PyLiquidityPool` handle reads all of this
+/// through [`BotState::get_v2_identity`] — the Polars `_from_pydf` end state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct V2PoolIdentity {
     /// Pool contract address.
     pub address: Address,
     /// Token0 contract address.
@@ -166,39 +178,6 @@ pub struct V2PoolState {
     pub fee_token1: (u64, u64),
     /// Pool factory address.
     pub factory: Address,
-
-    /// Current reserve of token0.
-    pub reserve0: U256,
-    /// Current reserve of token1.
-    pub reserve1: U256,
-    /// Block number of the last update.
-    pub update_block: u64,
-
-    /// Reorg journal — "before" values for rollback.
-    /// V2 is the degenerate case: delta = full state (two reserves).
-    pub journal: ReorgJournal<V2BlockDelta>,
-}
-
-/// Per-pool immutable V2 registration metadata (ADR-005 identity slice).
-///
-/// Builder-set immutable properties that are NOT swap-math state and so
-/// don't belong on [`V2PoolState`]: the DEX variant tag (resolves the
-/// [`degenbot_uniswap::dex_identity::DexIdentity`] preset via
-/// [`degenbot_uniswap::dex_identity::preset_for_variant`] for encoding/
-/// address-derivation), and Camelot's stable-strategy inputs (`stable_swap`
-/// + `fee_denominator`).
-///
-/// Distinct from `V2PoolState` (mutable swap state + the level-2 identity it
-/// already carries: address/tokens/fees/factory) per ADR-005's framing: the
-/// *preset* (level-1 DEX data) is never stored per-pool, but the per-pool
-/// *variant tag* is a narrower registration echo carried here so the
-/// `PyLiquidityPool` handle is self-describing for encoding/identity recovery
-/// (the Polars `_from_pydf` end state).
-///
-/// Retires the post-construction `pool.stable_swap = ...` mutation smell by
-/// routing these through `register_v2_pool`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct V2PoolDescriptor {
     /// The DEX+variant discriminator. Resolves the canonical
     /// [`degenbot_uniswap::dex_identity::DexIdentity`] preset
     /// (factory/deployer/init-hash/default fees/ABI shape) for encoding and
@@ -209,6 +188,25 @@ pub struct V2PoolDescriptor {
     /// Camelot's integer fee scaling (used by the solidly-stable math). `None`
     /// for non-Camelot V2 (the volatile calc ignores it).
     pub fee_denominator: Option<u64>,
+}
+
+/// Mutable runtime state for a Uniswap V2-style constant-product pool.
+///
+/// Pure mutable data — the values that change as reserves are pumped and
+/// rolled back. Immutable identity lives on [`V2PoolIdentity`]; look it up via
+/// [`BotState::get_v2_identity`]. The two are paired in [`PoolEntry::V2`].
+#[derive(Clone, Debug)]
+pub struct V2PoolState {
+    /// Current reserve of token0.
+    pub reserve0: U256,
+    /// Current reserve of token1.
+    pub reserve1: U256,
+    /// Block number of the last update.
+    pub update_block: u64,
+
+    /// Reorg journal — "before" values for rollback.
+    /// V2 is the degenerate case: delta = full state (two reserves).
+    pub journal: ReorgJournal<V2BlockDelta>,
 }
 
 /// Parameters for registering a V2 pool.
@@ -228,7 +226,7 @@ pub struct RegisterV2PoolParams {
     /// on it; pre-slice-4 the journal was empty until the first Sync.
     pub update_block: u64,
     /// DEX+variant discriminator (registration metadata — see
-    /// [`V2PoolDescriptor`]).
+    /// [`V2PoolIdentity`]).
     pub variant: DexVariant,
     /// Camelot solidly-stable strategy flag.
     pub stable_swap: bool,
@@ -390,22 +388,22 @@ impl BotState {
         self.pools.insert(
             pool_id,
             PoolEntry::V2(
-                V2PoolState {
+                V2PoolIdentity {
                     address,
                     token0,
                     token1,
                     fee_token0,
                     fee_token1,
                     factory,
+                    variant,
+                    stable_swap,
+                    fee_denominator,
+                },
+                V2PoolState {
                     reserve0,
                     reserve1,
                     update_block,
                     journal,
-                },
-                V2PoolDescriptor {
-                    variant,
-                    stable_swap,
-                    fee_denominator,
                 },
             ),
         );
@@ -777,7 +775,7 @@ impl BotState {
     ) -> Option<u64> {
         let &pool_id = self.pool_addresses.get(&pool_address)?;
 
-        let Some(PoolEntry::V2(state, _)) = self.pools.get_mut(&pool_id) else {
+        let Some(PoolEntry::V2(_, state)) = self.pools.get_mut(&pool_id) else {
             return None;
         };
 
@@ -830,7 +828,7 @@ impl BotState {
         reserve1: U256,
         block_number: u64,
     ) -> Option<u64> {
-        let Some(PoolEntry::V2(state, _)) = self.pools.get_mut(&pool_id) else {
+        let Some(PoolEntry::V2(_, state)) = self.pools.get_mut(&pool_id) else {
             return None;
         };
         state.journal.push_delta(V2BlockDelta {
@@ -854,7 +852,7 @@ impl BotState {
     #[must_use]
     pub fn get_v2_pool_state(&self, pool_id: u64) -> Option<&V2PoolState> {
         match self.pools.get(&pool_id)? {
-            PoolEntry::V2(state, _) => Some(state),
+            PoolEntry::V2(_, state) => Some(state),
             PoolEntry::V3(_)
             | PoolEntry::V4(_)
             | PoolEntry::Curve(_)
@@ -863,13 +861,13 @@ impl BotState {
         }
     }
 
-    /// Look up a V2 pool's immutable registration descriptor (variant,
-    /// stable-strategy inputs). Returns `None` if the pool is not registered
-    /// or isn't a V2 pool.
+    /// Look up a V2 pool's immutable registration identity (address, tokens,
+    /// fees, factory, variant, stable-strategy inputs). Returns `None` if the
+    /// pool is not registered or isn't a V2 pool.
     #[must_use]
-    pub fn get_v2_descriptor(&self, pool_id: u64) -> Option<&V2PoolDescriptor> {
+    pub fn get_v2_identity(&self, pool_id: u64) -> Option<&V2PoolIdentity> {
         match self.pools.get(&pool_id)? {
-            PoolEntry::V2(_, descriptor) => Some(descriptor),
+            PoolEntry::V2(identity, _) => Some(identity),
             PoolEntry::V3(_)
             | PoolEntry::V4(_)
             | PoolEntry::Curve(_)
@@ -1558,7 +1556,7 @@ impl BotState {
         };
 
         match entry {
-            PoolEntry::V2(state, _) => {
+            PoolEntry::V2(identity, state) => {
                 if amount_in.is_zero() {
                     return Ok(U256::ZERO);
                 }
@@ -1567,15 +1565,15 @@ impl BotState {
                     (
                         state.reserve0,
                         state.reserve1,
-                        state.fee_token0.0,
-                        state.fee_token0.1,
+                        identity.fee_token0.0,
+                        identity.fee_token0.1,
                     )
                 } else {
                     (
                         state.reserve1,
                         state.reserve0,
-                        state.fee_token1.0,
-                        state.fee_token1.1,
+                        identity.fee_token1.0,
+                        identity.fee_token1.1,
                     )
                 };
 
@@ -2047,7 +2045,7 @@ impl BotState {
         };
 
         match entry {
-            PoolEntry::V2(state, _) => {
+            PoolEntry::V2(identity, state) => {
                 if amount_out.is_zero() {
                     return U256::ZERO;
                 }
@@ -2056,15 +2054,15 @@ impl BotState {
                     (
                         state.reserve0,
                         state.reserve1,
-                        state.fee_token0.0,
-                        state.fee_token0.1,
+                        identity.fee_token0.0,
+                        identity.fee_token0.1,
                     )
                 } else {
                     (
                         state.reserve1,
                         state.reserve0,
-                        state.fee_token1.0,
-                        state.fee_token1.1,
+                        identity.fee_token1.0,
+                        identity.fee_token1.1,
                     )
                 };
 
@@ -2255,7 +2253,7 @@ impl BotState {
     #[must_use]
     pub fn v2_journal_len(&self, pool_id: u64) -> usize {
         match self.pools.get(&pool_id) {
-            Some(PoolEntry::V2(state, _)) => state.journal.len(),
+            Some(PoolEntry::V2(_, state)) => state.journal.len(),
             _ => 0,
         }
     }
@@ -2277,7 +2275,7 @@ impl BotState {
         pool_id: u64,
         block: u64,
     ) -> Result<(), JournalError> {
-        let Some(PoolEntry::V2(state, _)) = self.pools.get_mut(&pool_id) else {
+        let Some(PoolEntry::V2(_, state)) = self.pools.get_mut(&pool_id) else {
             return Ok(());
         };
         state.journal.discard_before_block(block)
@@ -2297,7 +2295,7 @@ impl BotState {
         pool_id: u64,
         block: u64,
     ) -> Option<Result<(U256, U256, u64), JournalError>> {
-        let PoolEntry::V2(state, _) = self.pools.get_mut(&pool_id)? else {
+        let PoolEntry::V2(_, state) = self.pools.get_mut(&pool_id)? else {
             return None;
         };
         let (r0, r1, blk) = match state.journal.restore_before_block(block) {
@@ -2329,7 +2327,7 @@ impl BotState {
             // pools with a delta at/after the reorg target need rollback;
             // untouched pools keep their current state (idempotent restore).
             let needs_restore = match self.pools.get(&pool_id) {
-                Some(PoolEntry::V2(state, _)) => {
+                Some(PoolEntry::V2(_, state)) => {
                     state.journal.newest_block().is_some_and(|b| b >= target)
                 }
                 Some(PoolEntry::V3(state)) => {
@@ -2354,7 +2352,7 @@ impl BotState {
             }
 
             let did_restore = match self.pools.get_mut(&pool_id) {
-                Some(PoolEntry::V2(state, _)) => {
+                Some(PoolEntry::V2(_, state)) => {
                     // Landed-at restore: on Ok, apply the landed-at state; on
                     // Err (target at/before registration) skip the pool
                     // (idempotent — a reorg doesn't touch pools that didn't
@@ -2695,7 +2693,7 @@ impl BotState {
             return true;
         };
         match entry {
-            PoolEntry::V2(state, _) => state
+            PoolEntry::V2(_, state) => state
                 .journal
                 .earliest_block()
                 .is_some_and(|earliest| earliest < block),
@@ -2802,9 +2800,9 @@ impl BotState {
     ) -> Option<EncodedCall> {
         let entry = self.pools.get(&pool_id)?;
         match entry {
-            PoolEntry::V2(state, _) => {
+            PoolEntry::V2(identity, _) => {
                 let call =
-                    encode_v2_swap(state.address, zero_for_one, amount_out, recipient).ok()?;
+                    encode_v2_swap(identity.address, zero_for_one, amount_out, recipient).ok()?;
                 Some(call)
             }
             // V3 encoding is not yet implemented
@@ -3829,20 +3827,28 @@ mod tests {
     }
 
     #[test]
-    fn v2_descriptor_round_trip() {
-        // The descriptor (variant/stable_swap/fee_denominator) round-trips
-        // through register_v2_pool -> get_v2_descriptor (task EO2SLK).
+    fn v2_identity_round_trip() {
+        // The identity (address/tokens/fees/factory/variant/stable_swap/
+        // fee_denominator) round-trips through register_v2_pool ->
+        // get_v2_identity. Identity is pure immutable registration data
+        // (mirrors TokenEntry), distinct from the mutable V2PoolState.
         let mut core = BotState::new();
         let pool_id = core.register_v2_pool(&make_params(U256::from(1000), U256::from(2000)));
-        let desc = core
-            .get_v2_descriptor(pool_id)
-            .expect("registered V2 pool has a descriptor");
+        let id = core
+            .get_v2_identity(pool_id)
+            .expect("registered V2 pool has an identity");
+        assert_eq!(id.address, make_pool_addr());
+        assert_eq!(id.token0, make_token0());
+        assert_eq!(id.token1, make_token1());
+        assert_eq!(id.factory, make_factory());
+        assert_eq!(id.fee_token0, FEE_03);
+        assert_eq!(id.fee_token1, FEE_03);
         assert_eq!(
-            desc.variant,
+            id.variant,
             degenbot_uniswap::dex_identity::DexVariant::UniswapV2
         );
-        assert!(!desc.stable_swap);
-        assert_eq!(desc.fee_denominator, None);
+        assert!(!id.stable_swap);
+        assert_eq!(id.fee_denominator, None);
     }
 
     #[test]
