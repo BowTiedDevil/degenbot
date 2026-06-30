@@ -185,7 +185,8 @@ impl PathGraph {
     /// The number of pool edges incident to a token (its degree).
     #[must_use]
     pub fn degree(&self, token: u64) -> Option<usize> {
-        self.compact_index(token).map(|i| self.adj[i as usize].len())
+        self.compact_index(token)
+            .map(|i| self.adj[i as usize].len())
     }
 
     /// Remove nodes with degree ≤ 1, repeating until no such nodes remain.
@@ -279,9 +280,7 @@ impl PathGraph {
                 match allowed {
                     None => valid[d] = true,
                     Some(allowed_kinds) => {
-                        valid[d] = allowed_kinds
-                            .iter()
-                            .any(|k| kinds[k.as_u8() as usize]);
+                        valid[d] = allowed_kinds.iter().any(|k| kinds[k.as_u8() as usize]);
                     }
                 }
             }
