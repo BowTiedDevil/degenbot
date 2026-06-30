@@ -44,7 +44,9 @@ pub use balancer_stable_state::{
 pub use balancer_weighted_state::{
     BalancerWeightedBlockDelta, BalancerWeightedPoolState, RegisterBalancerWeightedPoolParams,
 };
-pub use curve_state::{CurveBlockDelta, CurvePoolState, RegisterCurvePoolParams};
+pub use curve_state::{
+    CurveBlockDelta, CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams,
+};
 pub use v3_state::{
     v3_simulate_swap, BufferedV3LiquidityUpdate, PoolTickCoverage, RegisterV3PoolParams,
     SimulateSwapError, V3PoolIdentity, V3PoolState, V3SwapOutcome, V3SwapUpdate,
@@ -74,7 +76,7 @@ pub enum PoolEntry {
     V2(V2PoolIdentity, V2PoolState),
     V3(V3PoolIdentity, V3PoolState),
     V4(V4PoolIdentity, V4PoolState),
-    Curve(CurvePoolState),
+    Curve(CurvePoolIdentity, CurvePoolState),
     BalancerWeighted(BalancerWeightedPoolState),
     BalancerStable(BalancerStablePoolState),
 }
@@ -466,8 +468,9 @@ impl BotState {
         let pool_id = self.next_pool_id;
         self.next_pool_id += 1;
 
-        let state = CurvePoolState::from_params(params.clone(), self.journal_depth);
-        self.pools.insert(pool_id, PoolEntry::Curve(state));
+        let (identity, state) = CurvePoolState::from_params(params.clone(), self.journal_depth);
+        self.pools
+            .insert(pool_id, PoolEntry::Curve(identity, state));
         self.pool_addresses.insert(params.address, pool_id);
 
         pool_id
@@ -493,7 +496,7 @@ impl BotState {
         balances: Vec<U256>,
         block_number: u64,
     ) -> Option<u64> {
-        let Some(PoolEntry::Curve(state)) = self.pools.get_mut(&pool_id) else {
+        let Some(PoolEntry::Curve(_, state)) = self.pools.get_mut(&pool_id) else {
             return None;
         };
         assert!(
@@ -520,7 +523,22 @@ impl BotState {
     #[must_use]
     pub fn get_curve_pool(&self, pool_id: u64) -> Option<&CurvePoolState> {
         match self.pools.get(&pool_id)? {
-            PoolEntry::Curve(state) => Some(state),
+            PoolEntry::Curve(_, state) => Some(state),
+            PoolEntry::V2(..)
+            | PoolEntry::V3(..)
+            | PoolEntry::V4(..)
+            | PoolEntry::BalancerWeighted(_)
+            | PoolEntry::BalancerStable(_) => None,
+        }
+    }
+
+    /// Look up a Curve pool's immutable registration identity (address,
+    /// tokens, fee, `admin_fee`, `rate_multipliers`, variant enums, `base_pool`).
+    /// Returns `None` if the pool is not registered or isn't a Curve pool.
+    #[must_use]
+    pub fn get_curve_identity(&self, pool_id: u64) -> Option<&CurvePoolIdentity> {
+        match self.pools.get(&pool_id)? {
+            PoolEntry::Curve(identity, _) => Some(identity),
             PoolEntry::V2(..)
             | PoolEntry::V3(..)
             | PoolEntry::V4(..)
@@ -629,7 +647,7 @@ impl BotState {
             PoolEntry::V2(..)
             | PoolEntry::V3(..)
             | PoolEntry::V4(..)
-            | PoolEntry::Curve(_)
+            | PoolEntry::Curve(..)
             | PoolEntry::BalancerStable(_) => None,
         }
     }
@@ -742,7 +760,7 @@ impl BotState {
             PoolEntry::V2(..)
             | PoolEntry::V3(..)
             | PoolEntry::V4(..)
-            | PoolEntry::Curve(_)
+            | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(_) => None,
         }
     }
@@ -848,7 +866,7 @@ impl BotState {
             PoolEntry::V2(_, state) => Some(state),
             PoolEntry::V3(..)
             | PoolEntry::V4(..)
-            | PoolEntry::Curve(_)
+            | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(_)
             | PoolEntry::BalancerStable(_) => None,
         }
@@ -863,7 +881,7 @@ impl BotState {
             PoolEntry::V2(identity, _) => Some(identity),
             PoolEntry::V3(..)
             | PoolEntry::V4(..)
-            | PoolEntry::Curve(_)
+            | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(_)
             | PoolEntry::BalancerStable(_) => None,
         }
@@ -1156,7 +1174,7 @@ impl BotState {
                 true
             }
             PoolEntry::V2(..)
-            | PoolEntry::Curve(_)
+            | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(_)
             | PoolEntry::BalancerStable(_) => false,
         }
@@ -1360,7 +1378,7 @@ impl BotState {
             PoolEntry::V3(_, state) => Some(state),
             PoolEntry::V2(..)
             | PoolEntry::V4(..)
-            | PoolEntry::Curve(_)
+            | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(_)
             | PoolEntry::BalancerStable(_) => None,
         }
@@ -1375,7 +1393,7 @@ impl BotState {
             PoolEntry::V3(identity, _) => Some(identity),
             PoolEntry::V2(..)
             | PoolEntry::V4(..)
-            | PoolEntry::Curve(_)
+            | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(_)
             | PoolEntry::BalancerStable(_) => None,
         }
@@ -1393,7 +1411,7 @@ impl BotState {
                 PoolEntry::V3(identity, state) => Some((*id, (*identity, state.clone()))),
                 PoolEntry::V2(..)
                 | PoolEntry::V4(..)
-                | PoolEntry::Curve(_)
+                | PoolEntry::Curve(..)
                 | PoolEntry::BalancerWeighted(_)
                 | PoolEntry::BalancerStable(_) => None,
             })
@@ -1493,7 +1511,7 @@ impl BotState {
             PoolEntry::V3(_, state) => Some(state),
             PoolEntry::V4(_, state) => Some(state),
             PoolEntry::V2(..)
-            | PoolEntry::Curve(_)
+            | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(_)
             | PoolEntry::BalancerStable(_) => None,
         }
@@ -1646,9 +1664,9 @@ impl BotState {
             // by `to_hop_state`; this Rust core path returns 0 (the
             // "not-yet-Rust-side" sentinel — same as an unregistered pool).
             // Curve ported in 11c; Balancer weighted stable in 12e.
-            PoolEntry::Curve(_) | PoolEntry::BalancerWeighted(_) | PoolEntry::BalancerStable(_) => {
-                Ok(U256::ZERO)
-            }
+            PoolEntry::Curve(..)
+            | PoolEntry::BalancerWeighted(_)
+            | PoolEntry::BalancerStable(_) => Ok(U256::ZERO),
         }
     }
 
@@ -1690,7 +1708,7 @@ impl BotState {
                 true
             }
             PoolEntry::V2(..)
-            | PoolEntry::Curve(_)
+            | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(_)
             | PoolEntry::BalancerStable(_) => false,
         }
@@ -1790,7 +1808,7 @@ impl BotState {
                 sqrt_price_limit,
             ),
             PoolEntry::V2(..)
-            | PoolEntry::Curve(_)
+            | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(_)
             | PoolEntry::BalancerStable(_) => Err(SimulateSwapError::NotComputable),
         }
@@ -1889,7 +1907,7 @@ impl BotState {
                 sqrt_price_limit,
             ),
             PoolEntry::V2(..)
-            | PoolEntry::Curve(_)
+            | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(_)
             | PoolEntry::BalancerStable(_) => Err(SimulateSwapError::NotComputable),
         }
@@ -2081,7 +2099,7 @@ impl BotState {
                 }
             }
             PoolEntry::V2(..)
-            | PoolEntry::Curve(_)
+            | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(_)
             | PoolEntry::BalancerStable(_) => None,
         }
@@ -2197,9 +2215,9 @@ impl BotState {
             // math not ported in their state-port sub-slices; see
             // `calculate_tokens_out`'s combined arm. Returns 0 (the Python
             // companion handles the calc).
-            PoolEntry::Curve(_) | PoolEntry::BalancerWeighted(_) | PoolEntry::BalancerStable(_) => {
-                U256::ZERO
-            }
+            PoolEntry::Curve(..)
+            | PoolEntry::BalancerWeighted(_)
+            | PoolEntry::BalancerStable(_) => U256::ZERO,
         }
     }
 
@@ -2395,7 +2413,7 @@ impl BotState {
                 Some(PoolEntry::V4(_, state)) => {
                     state.journal.newest_block().is_some_and(|b| b >= target)
                 }
-                Some(PoolEntry::Curve(state)) => {
+                Some(PoolEntry::Curve(_, state)) => {
                     state.journal.newest_block().is_some_and(|b| b >= target)
                 }
                 Some(PoolEntry::BalancerWeighted(state)) => {
@@ -2436,7 +2454,7 @@ impl BotState {
                     // priors); delegated to `v4_restore_before_block`.
                     self.v4_restore_before_block(pool_id, target).is_some()
                 }
-                Some(PoolEntry::Curve(_)) => {
+                Some(PoolEntry::Curve(..)) => {
                     // Curve restore: same full-state delta shape as V2;
                     // delegated to `curve_restore_before_block`.
                     self.curve_restore_before_block(pool_id, target).is_some()
@@ -2472,7 +2490,7 @@ impl BotState {
     #[must_use]
     pub fn curve_journal_len(&self, pool_id: u64) -> usize {
         match self.pools.get(&pool_id) {
-            Some(PoolEntry::Curve(state)) => state.journal.len(),
+            Some(PoolEntry::Curve(_, state)) => state.journal.len(),
             _ => 0,
         }
     }
@@ -2491,7 +2509,7 @@ impl BotState {
         pool_id: u64,
         block: u64,
     ) -> Result<(), JournalError> {
-        let Some(PoolEntry::Curve(state)) = self.pools.get_mut(&pool_id) else {
+        let Some(PoolEntry::Curve(_, state)) = self.pools.get_mut(&pool_id) else {
             return Ok(());
         };
         state.journal.discard_before_block(block)
@@ -2512,7 +2530,7 @@ impl BotState {
         pool_id: u64,
         block: u64,
     ) -> Option<Result<(Vec<U256>, u64), JournalError>> {
-        let PoolEntry::Curve(state) = self.pools.get_mut(&pool_id)? else {
+        let PoolEntry::Curve(_, state) = self.pools.get_mut(&pool_id)? else {
             return None;
         };
         let (balances, blk) = match state.journal.restore_curve_before_block(block) {
@@ -2710,7 +2728,7 @@ impl BotState {
             Some(PoolEntry::V4(..)) => {
                 let _ = self.v4_restore_before_block(pool_id, block);
             }
-            Some(PoolEntry::Curve(_)) => {
+            Some(PoolEntry::Curve(..)) => {
                 let _ = self.curve_restore_before_block(pool_id, block);
             }
             Some(PoolEntry::BalancerWeighted(_)) => {
@@ -2761,7 +2779,7 @@ impl BotState {
             PoolEntry::V4(_, state) => !state.journal.is_empty(),
             // Curve carries a genesis delta (mirror of V2) — a target at/before
             // the genesis block is too-deep: `earliest < block`.
-            PoolEntry::Curve(state) => state
+            PoolEntry::Curve(_, state) => state
                 .journal
                 .earliest_block()
                 .is_some_and(|earliest| earliest < block),
@@ -2867,7 +2885,7 @@ impl BotState {
             // V3 encoding is not yet implemented
             PoolEntry::V3(..)
             | PoolEntry::V4(..)
-            | PoolEntry::Curve(_)
+            | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(_)
             | PoolEntry::BalancerStable(_) => None,
         }
@@ -3383,7 +3401,7 @@ impl BotState {
             PoolEntry::V4(_, state) => Some(state),
             PoolEntry::V2(..)
             | PoolEntry::V3(..)
-            | PoolEntry::Curve(_)
+            | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(_)
             | PoolEntry::BalancerStable(_) => None,
         }
@@ -3398,7 +3416,7 @@ impl BotState {
             PoolEntry::V4(identity, _) => Some(identity),
             PoolEntry::V2(..)
             | PoolEntry::V3(..)
-            | PoolEntry::Curve(_)
+            | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(_)
             | PoolEntry::BalancerStable(_) => None,
         }
@@ -3512,7 +3530,7 @@ impl BotState {
                 PoolEntry::V4(identity, state) => Some((*id, (identity.clone(), state.clone()))),
                 PoolEntry::V2(..)
                 | PoolEntry::V3(..)
-                | PoolEntry::Curve(_)
+                | PoolEntry::Curve(..)
                 | PoolEntry::BalancerWeighted(_)
                 | PoolEntry::BalancerStable(_) => None,
             })
