@@ -140,16 +140,14 @@ pub struct RegisterBalancerWeightedPoolParams {
     pub update_block: u64,
 }
 
-/// Balancer V2 weighted pool state owned by [`crate::bot_core::BotState`].
+/// Immutable Balancer V2 weighted pool registration identity (ADR-005
+/// identity slice).
 ///
-/// Carries the immutable config captured at registration + the mutable
-/// `balances`/`update_block` slot + a per-pool reorg journal. The state-port
-/// sub-slice (ADR-005 slice 12a): the Python `BalancerV2Pool` companion
-/// (12b) will read `balances`/`update_block` from this struct via
-/// `PyLiquidityPool` getters and delegate `external_update` to
-/// `apply_balancer_weighted_balance_update_by_pool_id`.
-#[derive(Clone, Debug)]
-pub struct BalancerWeightedPoolState {
+/// Pure registration data — the pool's permanent identity, set once at
+/// `register_balancer_weighted_pool` and never mutated. Mirrors the other
+/// `VxPoolIdentity` structs / `TokenEntry`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BalancerWeightedPoolIdentity {
     /// Pool contract address.
     pub address: Address,
     /// The Balancer V2 singleton Vault address.
@@ -166,7 +164,20 @@ pub struct BalancerWeightedPoolState {
     pub swap_fee: u128,
     /// `PowVersion` discriminator (V1=1 / V2=2; opaque to this sub-slice).
     pub pow_version: u8,
+}
 
+/// Balancer V2 weighted pool state owned by [`crate::bot_core::BotState`].
+///
+/// Carries the mutable `balances`/`update_block` slot + a per-pool reorg
+/// journal. Immutable identity lives on [`BalancerWeightedPoolIdentity`]
+/// (look it up via
+/// [`crate::bot_core::BotState::get_balancer_weighted_identity`]). The
+/// state-port sub-slice (ADR-005 slice 12a): the Python `BalancerV2Pool`
+/// companion (12b) reads `balances`/`update_block` from this struct via
+/// `PyLiquidityPool` getters and delegates `external_update` to
+/// `apply_balancer_weighted_balance_update_by_pool_id`.
+#[derive(Clone, Debug)]
+pub struct BalancerWeightedPoolState {
     // --- Mutable state (authoritative) ---
     /// Current balances (one per token).
     pub balances: Vec<U256>,
@@ -177,12 +188,24 @@ pub struct BalancerWeightedPoolState {
     pub journal: ReorgJournal<BalancerWeightedBlockDelta>,
 }
 
+impl BalancerWeightedPoolIdentity {
+    /// Number of tokens (== number of balances/weights/scaling factors).
+    #[must_use]
+    pub fn n_tokens(&self) -> usize {
+        self.tokens.len()
+    }
+}
+
 impl BalancerWeightedPoolState {
-    /// Construct from registration params with a journal of the given depth.
+    /// Construct the (immutable identity, mutable state) pair from
+    /// registration params, with a journal of the given depth.
     /// Pushes a genesis anchor delta (mirror of V2/Curve's discipline) so
     /// `restore_before_block` can land on the registration state.
     #[must_use]
-    pub fn from_params(params: RegisterBalancerWeightedPoolParams, journal_depth: usize) -> Self {
+    pub fn from_params(
+        params: RegisterBalancerWeightedPoolParams,
+        journal_depth: usize,
+    ) -> (BalancerWeightedPoolIdentity, BalancerWeightedPoolState) {
         let mut journal = ReorgJournal::<BalancerWeightedBlockDelta>::new(journal_depth);
         // Genesis anchor: before == after == registration balances at
         // update_block. The "landed-at" registration point.
@@ -191,7 +214,7 @@ impl BalancerWeightedPoolState {
             balances_before: params.balances.clone(),
             balances_after: params.balances.clone(),
         });
-        Self {
+        let identity = BalancerWeightedPoolIdentity {
             address: params.address,
             vault: params.vault,
             pool_id: params.pool_id,
@@ -200,16 +223,13 @@ impl BalancerWeightedPoolState {
             scaling_factors: params.scaling_factors,
             swap_fee: params.swap_fee,
             pow_version: params.pow_version,
+        };
+        let state = BalancerWeightedPoolState {
             balances: params.balances,
             update_block: params.update_block,
             journal,
-        }
-    }
-
-    /// Number of tokens (== number of balances/weights/scaling factors).
-    #[must_use]
-    pub fn n_tokens(&self) -> usize {
-        self.tokens.len()
+        };
+        (identity, state)
     }
 }
 
@@ -244,7 +264,10 @@ mod tests {
         let s = core
             .get_balancer_weighted_pool(pool_id)
             .expect("balancer weighted pool registered");
-        assert_eq!(s.n_tokens(), 2);
+        let id = core
+            .get_balancer_weighted_identity(pool_id)
+            .expect("balancer weighted identity registered");
+        assert_eq!(id.n_tokens(), 2);
         assert_eq!(s.balances, vec![U256::from(1_000), U256::from(2_000)]);
         assert_eq!(s.update_block, 10);
         // Genesis anchor pushed.

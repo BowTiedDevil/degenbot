@@ -16,7 +16,7 @@ use pyo3::types::{PyDict, PyList};
 
 use crate::bot::journal_err_to_py;
 use degenbot_bot::bot_core::{
-    BalancerStablePoolState, BalancerWeightedPoolState, BotState, CurvePoolIdentity, TickInfo,
+    BalancerStablePoolIdentity, BalancerWeightedPoolIdentity, BotState, CurvePoolIdentity, TickInfo,
 };
 
 /// Encode a byte slice as a lowercase hex string (no "0x" prefix).
@@ -1271,8 +1271,8 @@ impl PyLiquidityPool {
     fn n_balancer_tokens(&self) -> usize {
         self.core
             .read()
-            .get_balancer_weighted_pool(self.pool_id)
-            .map_or(0, BalancerWeightedPoolState::n_tokens)
+            .get_balancer_weighted_identity(self.pool_id)
+            .map_or(0, BalancerWeightedPoolIdentity::n_tokens)
     }
 
     /// Current balances for a Balancer weighted pool (one `U256` per token).
@@ -1364,8 +1364,8 @@ impl PyLiquidityPool {
     fn n_balancer_stable_tokens(&self) -> usize {
         self.core
             .read()
-            .get_balancer_stable_pool(self.pool_id)
-            .map_or(0, BalancerStablePoolState::n_tokens)
+            .get_balancer_stable_identity(self.pool_id)
+            .map_or(0, BalancerStablePoolIdentity::n_tokens)
     }
 
     /// Current balances for a Balancer stable pool (one `U256` per token,
@@ -1399,8 +1399,8 @@ impl PyLiquidityPool {
     fn balancer_bpt_index(&self) -> Option<usize> {
         self.core
             .read()
-            .get_balancer_stable_pool(self.pool_id)
-            .and_then(|s| s.bpt_idx)
+            .get_balancer_stable_identity(self.pool_id)
+            .and_then(|i| i.bpt_idx)
     }
 
     /// Amplification coefficient `amp` for a Balancer stable pool (immutable
@@ -1412,8 +1412,8 @@ impl PyLiquidityPool {
     fn balancer_amp(&self) -> u128 {
         self.core
             .read()
-            .get_balancer_stable_pool(self.pool_id)
-            .map_or(0, |s| s.amp)
+            .get_balancer_stable_identity(self.pool_id)
+            .map_or(0, |i| i.amp)
     }
 
     /// `invariant_version` discriminator (1 = V1 always-roundDown `D_P`
@@ -1425,8 +1425,8 @@ impl PyLiquidityPool {
     fn balancer_invariant_version(&self) -> u8 {
         self.core
             .read()
-            .get_balancer_stable_pool(self.pool_id)
-            .map_or(0, |s| s.invariant_version)
+            .get_balancer_stable_identity(self.pool_id)
+            .map_or(0, |i| i.invariant_version)
     }
 
     /// Snapshot a Balancer stable pool's mutable state as

@@ -173,16 +173,13 @@ pub struct RegisterBalancerStablePoolParams {
     pub update_block: u64,
 }
 
-/// Balancer V2 stable pool state owned by [`crate::bot_core::BotState`].
+/// Immutable Balancer V2 stable pool registration identity (ADR-005
+/// identity slice).
 ///
-/// Carries the immutable config captured at registration + the mutable
-/// `balances`/`update_block` slot + a per-pool reorg journal. The state-port
-/// sub-slice (ADR-005 slice 12c): the Python `BalancerV2StablePool` companion
-/// (12d) will read `balances`/`update_block` from this struct via
-/// `PyLiquidityPool` getters and delegate `external_update` to
-/// `apply_balancer_stable_balance_update_by_pool_id`.
-#[derive(Clone, Debug)]
-pub struct BalancerStablePoolState {
+/// Pure registration data — the pool's permanent identity. Mirrors the
+/// other `VxPoolIdentity` structs / `TokenEntry`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BalancerStablePoolIdentity {
     /// Pool contract address.
     pub address: Address,
     /// The Balancer V2 singleton Vault address.
@@ -202,9 +199,22 @@ pub struct BalancerStablePoolState {
     /// BPT token index (`Some(i)` for Composable, `None` for `MetaStable`).
     pub bpt_idx: Option<usize>,
     /// `invariant_version` discriminator (V1=1 / V2=2; opaque to this
-    /// sub-slice).
+    /// sub-slice). The systematic-1-wei-error guard.
     pub invariant_version: u8,
+}
 
+/// Balancer V2 stable pool state owned by [`crate::bot_core::BotState`].
+///
+/// Carries the mutable `balances`/`update_block` slot + a per-pool reorg
+/// journal. Immutable identity lives on [`BalancerStablePoolIdentity`]
+/// (look it up via
+/// [`crate::bot_core::BotState::get_balancer_stable_identity`]). The
+/// state-port sub-slice (ADR-005 slice 12c): the Python `BalancerV2StablePool`
+/// companion (12d) reads `balances`/`update_block` from this struct via
+/// `PyLiquidityPool` getters and delegates `external_update` to
+/// `apply_balancer_stable_balance_update_by_pool_id`.
+#[derive(Clone, Debug)]
+pub struct BalancerStablePoolState {
     // --- Mutable state (authoritative) ---
     /// Current balances (one per token, including BPT for Composable).
     pub balances: Vec<U256>,
@@ -215,13 +225,26 @@ pub struct BalancerStablePoolState {
     pub journal: ReorgJournal<BalancerStableBlockDelta>,
 }
 
+impl BalancerStablePoolIdentity {
+    /// Number of tokens (== number of balances/scaling factors; includes
+    /// BPT for Composable pools).
+    #[must_use]
+    pub fn n_tokens(&self) -> usize {
+        self.tokens.len()
+    }
+}
+
 impl BalancerStablePoolState {
-    /// Construct from registration params with a journal of the given depth.
+    /// Construct the (immutable identity, mutable state) pair from
+    /// registration params, with a journal of the given depth.
     /// Pushes a genesis anchor delta (mirror of V2/Curve/BalancerWeighted
     /// discipline) so `restore_before_block` can land on the registration
     /// state.
     #[must_use]
-    pub fn from_params(params: RegisterBalancerStablePoolParams, journal_depth: usize) -> Self {
+    pub fn from_params(
+        params: RegisterBalancerStablePoolParams,
+        journal_depth: usize,
+    ) -> (BalancerStablePoolIdentity, BalancerStablePoolState) {
         let mut journal = ReorgJournal::<BalancerStableBlockDelta>::new(journal_depth);
         // Genesis anchor: before == after == registration balances at
         // update_block. The "landed-at" registration point.
@@ -230,7 +253,7 @@ impl BalancerStablePoolState {
             balances_before: params.balances.clone(),
             balances_after: params.balances.clone(),
         });
-        Self {
+        let identity = BalancerStablePoolIdentity {
             address: params.address,
             vault: params.vault,
             pool_id: params.pool_id,
@@ -240,17 +263,13 @@ impl BalancerStablePoolState {
             swap_fee: params.swap_fee,
             bpt_idx: params.bpt_idx,
             invariant_version: params.invariant_version,
+        };
+        let state = BalancerStablePoolState {
             balances: params.balances,
             update_block: params.update_block,
             journal,
-        }
-    }
-
-    /// Number of tokens (== number of balances/scaling factors; includes
-    /// BPT for Composable pools).
-    #[must_use]
-    pub fn n_tokens(&self) -> usize {
-        self.tokens.len()
+        };
+        (identity, state)
     }
 }
 
@@ -297,16 +316,19 @@ mod tests {
         let s = core
             .get_balancer_stable_pool(pool_id)
             .expect("balancer stable pool registered");
-        assert_eq!(s.n_tokens(), 3);
+        let id = core
+            .get_balancer_stable_identity(pool_id)
+            .expect("balancer stable identity registered");
+        assert_eq!(id.n_tokens(), 3);
         assert_eq!(
             s.balances,
             vec![U256::from(1_000), U256::from(2_000), U256::from(3_000)]
         );
         assert_eq!(s.update_block, 10);
         // BPT-index round-trip — Some for Composable.
-        assert_eq!(s.bpt_idx, Some(2));
+        assert_eq!(id.bpt_idx, Some(2));
         // invariant_version round-trip — V1.
-        assert_eq!(s.invariant_version, 1);
+        assert_eq!(id.invariant_version, 1);
         // Genesis anchor pushed.
         assert_eq!(core.balancer_stable_journal_len(pool_id), 1);
     }
@@ -322,11 +344,11 @@ mod tests {
             None,
             2,
         ));
-        let s = core
-            .get_balancer_stable_pool(pool_id)
-            .expect("balancer stable pool registered");
-        assert_eq!(s.bpt_idx, None);
-        assert_eq!(s.invariant_version, 2);
+        let id = core
+            .get_balancer_stable_identity(pool_id)
+            .expect("balancer stable identity registered");
+        assert_eq!(id.bpt_idx, None);
+        assert_eq!(id.invariant_version, 2);
     }
 
     #[test]
