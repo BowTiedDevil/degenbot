@@ -31,11 +31,14 @@ _ZERO_ADDRESS = "0x" + "00" * 20
 _TOKEN1_ADDRESS = "0x" + "11" * 20
 
 
-def _register_sparse_v3_pool(bot: PyBot) -> int:
+def _register_sparse_v3_pool(bot: PyBot, *, tick_data_fetcher=None) -> int:
     """Register a sparse V3 pool at tick 0, ratio 1:1, 0.3% fee, with liquidity.
 
     ``PyBot.register_v3_pool`` always registers sparse with empty ``tick_data``,
     so the starting tick-bitmap word (0) is unknown → the first calc misses.
+    The optional ``tick_data_fetcher`` is stored Rust-side on ``V3PoolState``
+    (ADR-006 I/O trait object) so the fetch+retry loop in
+    ``calculate_tokens_out_with_fetch`` uses it.
     """
     return bot.register_v3_pool(
         _ZERO_ADDRESS,  # address
@@ -47,6 +50,7 @@ def _register_sparse_v3_pool(bot: PyBot) -> int:
         1 << 96,  # sqrt_price_x96 == 1.0 price ratio
         1_000_010_000_000,  # liquidity (~1e13)
         0,  # tick
+        tick_data_fetcher=tick_data_fetcher,
     )
 
 
@@ -62,9 +66,6 @@ def test_sparse_pool_misses_without_fetcher() -> None:
 
 def test_calculate_tokens_out_with_fetch_fills_word_and_retries() -> None:
     bot = PyBot(chain_id=1)
-    pool_id = _register_sparse_v3_pool(bot)
-    pool = bot.get_pool(pool_id)
-
     calls: list[tuple[int, int]] = []
 
     def fake_fetcher(word: int, block: int) -> dict[int, tuple[int, int, int]]:
@@ -74,9 +75,12 @@ def test_calculate_tokens_out_with_fetch_fills_word_and_retries() -> None:
         calls.append((word, block))
         return {}
 
+    pool_id = _register_sparse_v3_pool(bot, tick_data_fetcher=fake_fetcher)
+    pool = bot.get_pool(pool_id)
+
     amount = int(
         pool.calculate_tokens_out_with_fetch(
-            zero_for_one=True, amount_in=1000, block=0, fetcher=fake_fetcher,
+            zero_for_one=True, amount_in=1000, block=0,
         ),
     )
 
@@ -91,17 +95,18 @@ def test_calculate_tokens_out_with_fetch_fills_word_and_retries() -> None:
 
 def test_calculate_tokens_out_with_fetch_failing_fetcher_returns_zero() -> None:
     bot = PyBot(chain_id=1)
-    pool_id = _register_sparse_v3_pool(bot)
-    pool = bot.get_pool(pool_id)
 
     def failing_fetcher(word: int, block: int) -> dict[int, tuple[int, int, int]]:
         raise RuntimeError
+
+    pool_id = _register_sparse_v3_pool(bot, tick_data_fetcher=failing_fetcher)
+    pool = bot.get_pool(pool_id)
 
     # A failing fetcher must give up with 0 rather than panic or propagate.
     assert (
         int(
             pool.calculate_tokens_out_with_fetch(
-                zero_for_one=True, amount_in=1000, block=0, fetcher=failing_fetcher,
+                zero_for_one=True, amount_in=1000, block=0,
             ),
         )
         == 0

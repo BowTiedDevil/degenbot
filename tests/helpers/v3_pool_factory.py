@@ -129,6 +129,7 @@ def make_v3_pool(
         tick_data=rust_rows or None,
         update_block=state_block_int,
         coverage=coverage,
+        tick_data_fetcher=tick_data_fetcher,
     )
     handle: PyLiquidityPool | None = bot.get_pool(pool_id)
     assert handle is not None, "register_v3_pool returned a pool_id with no handle"

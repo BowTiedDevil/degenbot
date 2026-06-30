@@ -70,6 +70,7 @@ mod tests {
             tick_data,
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            fetcher: None,
         });
 
         assert_eq!(engine.v2_pool_count(), 1);
@@ -182,6 +183,7 @@ mod tests {
             tick_data,
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            fetcher: None,
         });
 
         // Mixed V2→V3 path
@@ -222,6 +224,7 @@ mod tests {
             tick_data: HashMap::new(),
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            fetcher: None,
         });
 
         // Reference a non-existent V2 pool — ADR-006 D3: register_path
@@ -954,6 +957,7 @@ mod tests {
             tick_data: tick_data_a,
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            fetcher: None,
         });
 
         // V3 pool B at tick -60 (slightly cheaper token1), high liquidity
@@ -995,6 +999,7 @@ mod tests {
             tick_data: tick_data_b,
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            fetcher: None,
         });
 
         // V3→V3 path: pool A (zfo) → pool B (ofz)
@@ -1062,6 +1067,7 @@ mod tests {
             tick_data,
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            fetcher: None,
         });
 
         // Mixed V2→V3 path
@@ -1123,6 +1129,7 @@ mod tests {
             tick_data,
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            fetcher: None,
         });
 
         // V2 pool
@@ -1235,6 +1242,7 @@ mod tests {
             tick_data: std::collections::HashMap::new(),
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            fetcher: None,
         });
 
         // V4 pool: pool at extreme price (tick -886_983) with massive liquidity
@@ -1264,6 +1272,7 @@ mod tests {
                 tick_data: std::collections::HashMap::new(),
                 update_block: 0,
                 coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+                fetcher: None,
             })
             .expect("V4 registration failed");
         // Register path: V3 (zfo) → V4 (ofz, which will produce huge token0 output)
@@ -1368,6 +1377,7 @@ mod tests {
             tick_data,
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            fetcher: None,
         });
 
         // Register a V4 pool
@@ -1389,6 +1399,7 @@ mod tests {
                 tick_data: HashMap::new(),
                 update_block: 0,
                 coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+                fetcher: None,
             })
             .expect("V4 registration should succeed");
 
@@ -1489,6 +1500,7 @@ mod tests {
             tick_data: make_tick_data(),
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            fetcher: None,
         });
 
         // Pool 2 at tick 0 with different liquidity (price disagreement)
@@ -1505,6 +1517,7 @@ mod tests {
             tick_data: make_tick_data(),
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            fetcher: None,
         });
 
         // Pool 3 at tick 0 with third liquidity level
@@ -1521,6 +1534,7 @@ mod tests {
             tick_data: make_tick_data(),
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            fetcher: None,
         });
 
         assert_eq!(engine.v3_pool_count(), 3);
@@ -1613,6 +1627,7 @@ mod tests {
             tick_data,
             update_block: 0,
             coverage: crate::solvers::uniswap_engine::PoolTickCoverage::Tracked,
+            fetcher: None,
         });
 
         // V2 pool 2: expensive WETH (1000 WETH / 2M USDC)
@@ -1813,6 +1828,7 @@ mod tests {
             tick_data,
             update_block: 0,
             coverage: PoolTickCoverage::Tracked,
+            fetcher: None,
         });
 
         // Capture the registration scalar state.
@@ -2051,6 +2067,7 @@ mod tests {
             tick_data: HashMap::new(),
             update_block: 0,
             coverage: PoolTickCoverage::Tracked,
+            fetcher: None,
         });
 
         // Two swaps at distinct blocks inside one backfill chunk.

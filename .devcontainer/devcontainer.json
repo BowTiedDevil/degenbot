@@ -16,14 +16,14 @@
   "build": {
     "dockerfile": "Dockerfile"
   },
-  // Unlimited PIDs — passed to `podman create`/`podman run` as
-  // --pids-limit=-1, removing the default cgroup PID cap so heavy test
-  // spawning (cargo, pytest, forge) never hits the limit.
   "runArgs": [
+    // Removing the default cgroup PID cap so heavy test spawning 
+    // (cargo, pytest, forge) never hits the limit.
     "--pids-limit=-1"
   ],
   "remoteUser": "dev",
   "workspaceFolder": "/workspaces/degenbot",
+  "shutdownAction": "none", // keep the container running if VSCode disconnects
   // No devcontainer features — python, rust, node, just, uv, tmux, git are all
   // baked into the Dockerfile via dnf (fedora:latest). foundry (foundryup)
   // and pi (npm i -g) are ALSO baked into the image — they used to live in
@@ -115,6 +115,7 @@
         "bierner.markdown-mermaid",
         "charliermarsh.ruff",
         "davidanson.vscode-markdownlint",
+        "github.vscode-github-actions",
         "huff-language.huff-language",
         "ms-python.python",
         "ms-python.vscode-pylance",

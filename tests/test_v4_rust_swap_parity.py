@@ -176,8 +176,8 @@ def test_sparse_mainline_v4_swap_fetch_merge_matches_dense_oracle():
         state_block=0,
         py_bot=py_bot,
         coverage="sparse",
+        tick_data_fetcher=fetcher,
     )
-    sparse._tick_data_fetcher = fetcher
     sparse._sparse_liquidity_map = True
     assert sparse.sparse_liquidity_map, "sparse-registered companion is sparse"
 
@@ -259,10 +259,10 @@ def _build_pool_from_corpus(
         state_block=0,
         py_bot=py_bot,
         coverage="sparse" if sparse else "tracked",
+        tick_data_fetcher=fetcher if sparse else None,
     )
     if sparse:
         pool._sparse_liquidity_map = True
-        pool._tick_data_fetcher = fetcher
     return pool
 
 
@@ -291,7 +291,6 @@ def test_rust_v4_dense_corpus_matches_on_chain_quoter():
         zero_for_one=False,
         amount_in=_V4_DIVERGE_AMOUNT,
         block=0,
-        fetcher=lambda *_: {},
     )
     assert rust_outcome is not None
     rust_out = int(rust_outcome[0])  # ofz: token0 out
@@ -357,7 +356,6 @@ def test_rust_v4_sparse_fetch_corpus_matches_dense():
         zero_for_one=False,
         amount_in=_V4_DIVERGE_AMOUNT,
         block=0,
-        fetcher=full_fetcher,
     )
     assert rust_outcome is not None
     rust_out = int(rust_outcome[0])
@@ -417,7 +415,6 @@ def test_sparse_fetch_reaches_min_tick_via_empty_words_v4():
         zero_for_one=True,  # zfo (token0 in → token1 out, descending → MIN)
         amount_in=amount_in,
         block=0,
-        fetcher=lambda *_: {},
     )
     assert oracle_outcome is not None, "dense oracle must not miss"
     c0, c1, py_sp, py_liq, py_tick = (int(x) for x in oracle_outcome)
@@ -457,9 +454,9 @@ def test_sparse_fetch_reaches_min_tick_via_empty_words_v4():
         lp_fee=_FEE,
         state_block=0,
         py_bot=py_bot,
+        tick_data_fetcher=fetcher,
     )
     sparse._py_pool.update_tick_data({}, {}, 0)
-    sparse._tick_data_fetcher = fetcher
     sparse._sparse_liquidity_map = True
     assert sparse.sparse_liquidity_map, "cleared tick_data ⇒ sparse companion"
 
@@ -467,7 +464,6 @@ def test_sparse_fetch_reaches_min_tick_via_empty_words_v4():
         zero_for_one=True,
         amount_in=amount_in,
         block=0,
-        fetcher=fetcher,
     )
     assert rust_outcome is not None, "sparse V4 swap returned None"
     rust_a0, rust_a1, rust_sp, rust_liq, rust_tick = (int(x) for x in rust_outcome)

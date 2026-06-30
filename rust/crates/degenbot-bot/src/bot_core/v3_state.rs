@@ -17,6 +17,7 @@ use alloy::primitives::{Address, I256, U160, U256};
 
 use crate::bot_core::state_history::{ReorgJournal, V3BlockDelta};
 use crate::bot_core::tick_bitmap::{compute_tick_ranges, gen_ticks, V3TickRangeForSolver};
+use crate::bot_core::tick_fetch::TickWordFetcher;
 use crate::bot_core::TickInfo;
 use crate::solvers::mobius_v3_int::{IntV3TickRangeHop, IntV3TickRangeSequence};
 use degenbot_cl_math::cl_lib::functions::tick_position;
@@ -95,6 +96,12 @@ pub struct RegisterV3PoolParams {
     /// snapshot coverage (`Sparse`). The buffer is always applied — the
     /// snapshot is always stale data from the DB.
     pub coverage: PoolTickCoverage,
+    /// Sparse-tick backfill fetcher (stored on `V3PoolState` at
+    /// registration; `None` for `Tracked` pools or when no Python fetcher
+    /// was supplied). ADR-006 I/O trait object — pyo3-free trait, the
+    /// `PyTickWordFetcher` adapter in `degenbot-python` wraps a Python
+    /// callable.
+    pub fetcher: Option<Arc<dyn TickWordFetcher>>,
 }
 
 /// A pre-decoded V3 Swap update for testing without log decoding.
@@ -213,6 +220,14 @@ pub struct V3PoolState {
     /// fetched-but-empty word is recorded here as `known`).
     pub known_bitmap_words: HashSet<i32>,
 
+    /// The sparse-tick backfill fetcher (ADR-006 I/O trait object). Set once
+    /// at `register_v3_pool`; the fetch+retry loop in
+    /// `calculate_tokens_out_with_fetch` / `simulate_*_with_fetch` clones
+    /// this `Arc` out and calls it on a `MissingTickWord` miss. `None` for
+    /// `Tracked` pools (complete tick data) or when no Python fetcher was
+    /// supplied at registration.
+    pub fetcher: Option<Arc<dyn TickWordFetcher>>,
+
     /// Reorg journal — scalar priors + per-tick priors for rollback.
     pub journal: ReorgJournal<V3BlockDelta>,
 
@@ -232,6 +247,7 @@ impl Clone for V3PoolState {
             tick_data: self.tick_data.clone(),
             coverage: self.coverage,
             known_bitmap_words: self.known_bitmap_words.clone(),
+            fetcher: self.fetcher.clone(),
             // Clones start with no cached ranges — the cache is invalidated on
             // mutation anyway, and a fresh Mutex avoids aliasing the source's.
             journal: self.journal.clone(),
@@ -310,6 +326,7 @@ impl V3PoolState {
             tick_data: params.tick_data,
             coverage: params.coverage,
             known_bitmap_words: HashSet::new(),
+            fetcher: params.fetcher,
             journal: ReorgJournal::<V3BlockDelta>::new(journal_depth),
             snapshot_seed: None,
             post_drain_snapshot: None,
@@ -791,6 +808,7 @@ mod tests {
                 tick_data,
                 coverage: PoolTickCoverage::Tracked,
                 known_bitmap_words: HashSet::new(),
+                fetcher: None,
                 journal: ReorgJournal::<V3BlockDelta>::new(8),
                 cached_tick_ranges: parking_lot::Mutex::new(super::TickRangeCache::default()),
                 snapshot_seed: None,

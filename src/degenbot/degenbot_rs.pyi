@@ -1074,14 +1074,12 @@ class PyLiquidityPool:
         zero_for_one: bool,
         amount_in: int,
         block: int,
-        fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None] | None,
     ) -> int: ...
     def simulate_swap_with_fetch(
         self,
         zero_for_one: bool,
         amount_in: int,
         block: int,
-        fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None] | None,
         sqrt_price_limit_x96: int | None = None,
     ) -> tuple[int, int, int, int, int] | None: ...
     def simulate_swap_with_override(
@@ -1089,7 +1087,6 @@ class PyLiquidityPool:
         zero_for_one: bool,
         amount_in: int,
         block: int,
-        fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None] | None,
         override_sqrt_price_x96: int,
         override_liquidity: int,
         override_tick: int,
@@ -1101,7 +1098,6 @@ class PyLiquidityPool:
         zero_for_one: bool,
         amount_out: int,
         block: int,
-        fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None] | None,
         override_sqrt_price_x96: int,
         override_liquidity: int,
         override_tick: int,
@@ -1113,7 +1109,6 @@ class PyLiquidityPool:
         zero_for_one: bool,
         amount_out: int,
         block: int,
-        fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None] | None,
         sqrt_price_limit_x96: int | None = None,
     ) -> tuple[int, int, int, int, int] | None: ...
     def encode_swap(
@@ -1277,6 +1272,8 @@ class PyBot:
         tick_data: dict[int, tuple[int, int, int]] | None = None,
         update_block: int = 0,
         coverage: str = "sparse",
+        tick_data_fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None]
+        | None = None,
     ) -> int: ...
     def update_v3_pool(
         self,
@@ -1301,6 +1298,8 @@ class PyBot:
         block: int,
         tick_data: dict[int, tuple[int, int, int]] | None = None,
         coverage: str = "tracked",
+        tick_data_fetcher: Callable[[int, int], dict[int, tuple[int, int, int]] | None]
+        | None = None,
     ) -> int: ...
 
     # ADR-006 D4 (T3+T4): pump lifecycle + verify plumbing drive the shared

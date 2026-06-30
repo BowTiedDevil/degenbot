@@ -668,7 +668,6 @@ class UniswapV3Pool(
                 zero_for_one=zero_for_one,
                 amount_in=token_in_quantity,
                 block=self.update_block,
-                fetcher=self._tick_data_fetcher,
                 sqrt_price_limit_x96=sqrt_price_limit_x96,
             )
             if outcome is None:
@@ -702,7 +701,6 @@ class UniswapV3Pool(
                 zero_for_one=zero_for_one,
                 amount_in=token_in_quantity,
                 block=self.update_block,
-                fetcher=self._tick_data_fetcher,
                 override_sqrt_price_x96=override_state.sqrt_price_x96,
                 override_liquidity=override_state.liquidity,
                 override_tick=override_state.tick,
@@ -778,7 +776,6 @@ class UniswapV3Pool(
                 zero_for_one=zero_for_one,
                 amount_out=token_out_quantity,
                 block=self.update_block,
-                fetcher=self._tick_data_fetcher,
                 sqrt_price_limit_x96=sqrt_price_limit_x96,
             )
             if outcome is None:
@@ -810,7 +807,6 @@ class UniswapV3Pool(
                 zero_for_one=zero_for_one,
                 amount_out=token_out_quantity,
                 block=self.update_block,
-                fetcher=self._tick_data_fetcher,
                 override_sqrt_price_x96=override_state.sqrt_price_x96,
                 override_liquidity=override_state.liquidity,
                 override_tick=override_state.tick,

@@ -54,7 +54,7 @@ pub enum FetchTickWordError {
 /// rather than mutating state in place.
 ///
 /// `Send + Sync` so it can live behind an `Arc`/`RwLock` on the engine/pool side.
-pub trait TickWordFetcher: Send + Sync {
+pub trait TickWordFetcher: Send + Sync + std::fmt::Debug {
     /// Fetch the missing tick-bitmap word `word` for pool `pool_id` at `block`.
     ///
     /// Returns the word's initialized ticks (which the caller merges into the
