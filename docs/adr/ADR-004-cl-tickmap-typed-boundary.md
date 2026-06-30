@@ -67,8 +67,12 @@ context.md pass:
   ADR-003 and the `{BotCore}` term both say: *"The standalone `LiquidityMap` generic was
   NOT extracted: the inline-`PoolEntry` + `BotCore::apply_*` pattern suited V2/V3/V4."*
   But these two terms persisted unchanged. Reality: `BotCore` holds
-  `pools: HashMap<u64, PoolEntry>` with `PoolEntry::V3(V3PoolState)` / `V4(V4PoolState)`,
-  and verification is the free functions in `liquidity_verifier.rs`.
+  `pools: HashMap<u64, PoolEntry>` with `PoolEntry::V3(V3PoolIdentity, V3PoolState)`
+  / `V4(V4PoolIdentity, V4PoolState)` (the ADR-005 identity/state split — see that
+  ADR's "Achieved invariant" section; under the split the `TickMap` trait is
+  impl'd on the `(identity, state)` tuple so it reads both immutable
+  `address`/`tick_spacing` AND mutable `tick`/`tick_data`), and verification is
+  the free functions in `liquidity_verifier.rs`.
 
 - **S2 — `{PyPoolCache}` describes deleted code.** `rust/CONTEXT.md` still documents a
   `parking_lot::Mutex<LruCache<u64, IntHopState>>` 10K-entry LRU keyed by pool ID, but

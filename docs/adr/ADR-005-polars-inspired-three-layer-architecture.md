@@ -86,16 +86,22 @@ construction/encoding parameter, not state. Both the Python `Pool` companion (vi
 > **Clarification (per-pool `DexVariant` tag).** The rule above holds for the
 > *preset* — the level-1 DEX data (factory, deployer, init-hash, default fees,
 > ABI shape) that is shared across many pools and therefore not stored per-pool.
-> A narrower, per-pool echo lives on `PoolEntry::V2` as a `V2PoolDescriptor`:
-> `{ variant: DexVariant, stable_swap: bool, fee_denominator: Option<u64> }`.
-> This is *registration metadata* (which preset constructed this pool, plus the
-> Camelot solidly-stable strategy the builder observed on-chain), not swap-math
-> state. The Python companion recovers it off the `PyLiquidityPool` handle (the
-> Polars `_from_pydf` end state) — `py_pool.dex` resolves the full preset via
-> `preset_for_variant(variant)`, while `py_pool.variant`/`.stable_swap`/
-> `.fee_denominator` carry the per-pool tag. Two Camelot pools share a factory
-> but differ in their variant tag; the tag is how the companion picks the right
-> stable-strategy branch without re-fetching on-chain state.
+> Namespace echo lives on the immutable half of `PoolEntry::V2` — a
+> `V2PoolIdentity` (`VxPoolIdentity` per ADR-005 identity slice) holds the
+> permanent per-pool tags `{ variant: DexVariant, stable_swap: bool,
+> fee_denominator: Option<u64> }` (alongside address/tokens/fees/factory).
+> This is *registration metadata* (which preset constructed this pool, plus
+> the Camelot solidly-stable strategy the builder observed on-chain), not
+> swap-math state. The Python companion recovers it off the `PyLiquidityPool`
+> handle (the Polars `_from_pydf` end state) — `py_pool.dex` resolves the full
+> preset via `preset_for_variant(variant)`, while `py_pool.variant`/
+> `.stable_swap`/`.fee_denominator` carry the per-pool tag. Two Camelot pools
+> share a factory but differ in their variant tag; the tag is how the
+> companion picks the right stable-strategy branch without re-fetching
+> on-chain state.
+>
+> See the "Achieved invariant: identity/state split" section below for the
+> full per-variant shape.
 
 ### Grounding in Polars
 
@@ -125,7 +131,7 @@ override drops the prefix.
 | Layer | Name | Example |
 |---|---|---|
 | Rust core (data + state-machine logic, no I/O) | bare noun, no `pyo3` | `Bot`, `DexIdentity` |
-| Rust core internal storage (dispatch key, not public) | terse `<version>PoolState` | `V2PoolState`, `V3PoolState`, `V4PoolState` + `PoolEntry::V2/V3/V4` |
+| Rust core internal storage (dispatch key, not public) | terse `<version>PoolState` | `V2PoolState`, `V3PoolState`, `V4PoolState` + `PoolEntry::V2/V3/V4` (each variant is a `(VxPoolIdentity, VxPoolState)` tuple — see the achieved-invariant section) |
 | PyO3 wrapper (`#[pyclass]`, keeps `Py`) | `Py` + companion name | `PyBot`, `PyLiquidityPool`, `PyErc20Token` |
 | Python companion (orchestration + I/O) | bare noun matching the wrapper minus `Py` | `Bot` ↔ `PyBot`; `Erc20Token` ↔ `PyErc20Token`; `LiquidityPool` ↔ `PyLiquidityPool` |
 | Future Rust I/O struct | `Py` + `*Io`/`*Reader` | `PyBotIo` (stateful, holds provider/DB) |
@@ -135,7 +141,7 @@ override drops the prefix.
 `PyLiquidityPool` (and the standalone-Rust `LiquidityPool` reference), not a
 per-variant `PyV2PoolState`/`PyV3PoolState`/`PyV4PoolState`. The `V2`/`V3`/`V4`
 variant vocabulary lives **only** as internal Rust-core storage dispatch
-(`PoolEntry::V2(V2PoolState)` + the terse `V2PoolState` structs are match-arm targets,
+(`PoolEntry::V2(V2PoolIdentity, V2PoolState)` (+ V3/V4 twins) — the terse `VxPoolState`/`VxPoolIdentity` structs are match-arm targets,
 not a public API surface). This matches degenbot's user-facing ergonomics: a user knows
 they want "a Uniswap V2 pool" (which the frontend shows), not the constant-product
 invariant name; `Bot` investigates the identity under the hood (pool key, address,
@@ -290,3 +296,46 @@ Two targets are deferred, both consequences of this ADR's standalone-core direct
   discipline) and is deferred until the engine's access pattern is ready to give up
   its independent lock. Until then, the Python `Bot`'s `PyBot` and the
   `UniswapEngine`'s `Bot` are separate Rust-owned instances of the same struct.
+
+## Achieved invariant: identity/state split
+
+Every `PoolEntry` variant now carries a `(VxPoolIdentity, VxPoolState)` tuple
+— the ADR-005 identity/state split, completed across all five pool families
+(V2/V3/V4/Curve/Balancer-weighted/Balancer-stable).
+
+- **`VxPoolIdentity`** is pure immutable registration data, set once at
+  `register_<family>_pool` and never mutated. Each mirrors `TokenEntry` (one
+  immutable identity struct per registry entry): the level-2 identity fields
+  (address/tokens/fees/factory or pool_manager/pool_key/vault/pool_id) plus
+  the per-pool variant tags that previously sat on the mutable struct
+  (`V2PoolDescriptor`'s `variant`/`stable_swap`/`fee_denominator`, Curve's
+  variant strategy enums + `base_pool`, Balancer's `pow_version`/`amp`/
+  `bpt_idx`/`invariant_version`). One immutable struct per variant.
+- **`VxPoolState`** is pure mutable runtime — the slot0 head scalars
+  (`sqrt_price_x96`/`liquidity`/`tick` for CL; reserves/balances for the
+  others), `update_block`, the per-tick/balance reorg journal, and (for CL)
+  the pinned verify seeds (`snapshot_seed`/`post_drain_snapshot`) + cached
+  tick ranges.
+- **Accessor convention**: `BotState::get_<family>_identity(pool_id)` borrow
+  the immutable half; `get_<family>_pool(pool_id)` borrow the mutable half.
+  Reads that need both (the V3/V4 swap simulators, the diagnostic arms,
+  `sync_tick_data_by_pool_id`) bind the `PoolEntry::Vx(identity, state)` pair
+  in the match, then read scalars off `identity` (immutable config like
+  `fee`/`tick_spacing`) and mutable fields off `state`.
+- **`V3FamilyPool`** trait (the V3+V4 dyn-accessible reader surface) was
+  slimmed to mutable-only scalars (`sqrt_price_x96`/`liquidity`/`tick`/
+  `update_block`/`tick_data`); the immutable `fee`/`tick_spacing` reads moved
+  off the trait. **`TickMap`** / `TickMapMut` re-homed: the V3/V4 `TickMap`
+  impl is on the `(VxPoolIdentity, VxPoolState)` tuple (the trait projects
+  identity's `address`/`tick_spacing` AND the mutable state's
+  `tick`/`tick_data`); `TickMapMut` has no impls post-split (the apply path
+  writes through the `PoolEntry` match, not the trait).
+
+The split leaves the **post-deregistration identity-cache concern** (`PyLiquidityPool`
+keeping per-pool memoized scalars after `unregister`) the Python companion's
+responsibility by design (ADR-007) — `BotState` no longer retains the
+identity after `unregister_pool` (the whole `PoolEntry`, identity + journal,
+is dropped together), and that is unaffected by the split.
+
+Migration commits: `e138e98` (V2), `7c492b0` (V3), `66e80fbc` (V4),
+`df2ffb9d` (Curve), `030948ed` (Balancer).
