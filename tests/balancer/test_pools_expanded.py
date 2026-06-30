@@ -186,7 +186,6 @@ def _build_pool_from_chain(
         fee=Fraction(swap_fee, 10**18),
         weights=weights,
         pow_version=pow_version,
-        chain_id=1,
     )
 
 

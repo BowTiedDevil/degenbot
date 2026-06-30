@@ -204,7 +204,6 @@ class BalancerBuilder(BalancerBuilderBase):
             fee=ctx.fee,
             weights=weights,
             pow_version=pow_version,
-            chain_id=ctx.chain_id,
             state_block=ctx.state_block,
         )
 
@@ -308,7 +307,6 @@ class BalancerBuilder(BalancerBuilderBase):
             bpt_idx=bpt_idx,
             base_scaling_factors=base_sf,
             invariant_version=invariant_version,
-            chain_id=ctx.chain_id,
             state_block=ctx.state_block,
         )
 

@@ -745,7 +745,6 @@ from degenbot.balancer.libraries.constants import PowVersion
 #     fee=Fraction(1, 1000),  # 0.1% swap fee
 #     weights=[800000000000000000, 200000000000000000],  # 80/20
 #     pow_version=pow_version,
-#     chain_id=1,
 # )
 #
 # # Calculate swaps - pure math, no I/O
@@ -803,7 +802,6 @@ from degenbot.exceptions.pool import StaleRateResult
 #     amp=50000,
 #     scaling_factors=[1100000000000000000, 1000000000000000000],
 #     invariant_version=INVARIANT_V2,
-#     chain_id=1,
 # )
 #
 # # Exact 0-wei matching — no rate provider needed
@@ -826,7 +824,6 @@ from degenbot.exceptions.pool import StaleRateResult
 #     bpt_idx=1,  # BPT is at index 1
 #     rate_provider=my_rate_provider,  # Optional: inject for exact matching
 #     invariant_version=INVARIANT_V1,
-#     chain_id=1,
 # )
 #
 # # Without rate provider: StaleRateResult raised for ComposableStablePools

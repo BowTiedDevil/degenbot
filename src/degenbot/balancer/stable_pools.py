@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     from degenbot.degenbot_rs import PyLiquidityPool
     from degenbot.erc20 import Erc20Token
     from degenbot.types.abstract import AbstractPoolState
-    from degenbot.types.aliases import BlockNumber, ChainId
+    from degenbot.types.aliases import BlockNumber
 
 # Enum for deployed StableMath invariant versions.
 # V1: always-roundDown with D_P accumulation (older ComposableStablePools)
@@ -144,7 +144,6 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
         base_scaling_factors: Sequence[int] | None = None,
         rate_provider: BalancerRateProvider | None = None,
         invariant_version: int = INVARIANT_V2,
-        chain_id: ChainId | None = None,
         state_block: BlockNumber | None = None,
     ) -> None:
         """Initialize the instance.
@@ -180,7 +179,6 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
         self._py_pool = py_pool
         self.address = get_checksum_address(address)
 
-        self._chain_id = chain_id if chain_id not in {None, 0} else tokens[0].chain_id
         state_block = state_block if state_block is not None else 0
 
         self.pool_id = pool_id
@@ -271,11 +269,6 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
         (one U256 per token, including BPT for Composable pools).
         """
         return tuple(self._py_pool.balancer_stable_balances)
-
-    @property
-    def chain_id(self) -> int | None:
-        """Return chain id."""
-        return self._chain_id
 
     @property
     def state(self) -> PoolState:

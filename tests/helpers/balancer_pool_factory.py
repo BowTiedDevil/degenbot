@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from degenbot.balancer.stable_pools import BalancerRateProvider
     from degenbot.degenbot_rs import PyLiquidityPool
     from degenbot.erc20.erc20 import Erc20Token
-    from degenbot.types.aliases import BlockNumber, ChainId
+    from degenbot.types.aliases import BlockNumber
 
 
 def _pool_id_hex(pool_id: bytes) -> str:
@@ -47,7 +47,6 @@ def make_balancer_weighted_pool(
     fee,
     weights: list[int] | tuple[int, ...],
     pow_version: int = 1,
-    chain_id: ChainId | None = None,
     state_block: BlockNumber | None = None,
     py_bot: PyBot | None = None,
     pool_class: type[BalancerV2Pool] = BalancerV2Pool,
@@ -73,7 +72,6 @@ def make_balancer_weighted_pool(
     ``WeightedMath``).
     """
     address_checksum = get_checksum_address(address)
-    resolved_chain_id = chain_id if chain_id is not None else tokens[0].chain_id
     state_block_int = state_block if state_block is not None else 0
 
     bot = py_bot if py_bot is not None else PyBot()
@@ -109,7 +107,6 @@ def make_balancer_weighted_pool(
         fee=fee,
         weights=weights,
         pow_version=pow_version,
-        chain_id=resolved_chain_id,
         state_block=state_block_int,
     )
 
@@ -128,7 +125,6 @@ def make_balancer_stable_pool(
     base_scaling_factors: list[int] | tuple[int, ...] | None = None,
     rate_provider: BalancerRateProvider | None = None,
     invariant_version: int = INVARIANT_V2,
-    chain_id: ChainId | None = None,
     state_block: BlockNumber | None = None,
     py_bot: PyBot | None = None,
     pool_class: type[BalancerV2StablePool] = BalancerV2StablePool,
@@ -152,7 +148,6 @@ def make_balancer_stable_pool(
     here, mirroring on-chain ``_cacheTokenRateIfNecessary``.
     """
     address_checksum = get_checksum_address(address)
-    resolved_chain_id = chain_id if chain_id is not None else tokens[0].chain_id
     state_block_int = state_block if state_block is not None else 0
 
     bot = py_bot if py_bot is not None else PyBot()
@@ -202,7 +197,6 @@ def make_balancer_stable_pool(
         base_scaling_factors=base_sf,
         rate_provider=rate_provider,
         invariant_version=invariant_version,
-        chain_id=resolved_chain_id,
         state_block=state_block_int,
     )
 
