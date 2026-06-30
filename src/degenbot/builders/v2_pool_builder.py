@@ -149,6 +149,15 @@ class V2PoolBuilder(V2BuilderBase):
         # ``gamma_numer`` is the retained POST-FEE fraction (Rust convention per
         # the ``IntHopState`` docs: ``gamma_numer=997`` for 0.3%); the source
         # ``fee_tokenN`` Fraction is the FEE — convert by subtraction.
+        # Descriptor params (ADR-005 slice 7 / FMO2GE): the DEX variant +
+        # Camelot stable strategy flow into Rust as a ``V2PoolDescriptor`` on
+        # the ``PyLiquidityPool`` handle. The companion reads them off the
+        # handle once OGTTCS lands; for now the class-level attrs remain the
+        # read path.
+        variant = dex.variant if dex is not None else "uniswap-v2"
+        stable_swap = camelot.stable_swap if camelot is not None else False
+        fee_denominator = camelot.fee_denominator if camelot is not None else None
+
         pool_id = self._py_bot.register_v2_pool(
             address=common.pool_address,
             token0=common.token0_address,
@@ -161,6 +170,9 @@ class V2PoolBuilder(V2BuilderBase):
             fee_denom1=fee_denom1,
             factory=common.factory,
             update_block=common.state_block,
+            variant=variant,
+            stable_swap=stable_swap,
+            fee_denominator=fee_denominator,
         )
         py_pool = self._py_bot.get_pool(pool_id)
         assert py_pool is not None, "register_v2_pool returned a pool_id with no handle"
@@ -178,13 +190,6 @@ class V2PoolBuilder(V2BuilderBase):
             deployer_address=common.deployer,
             init_hash=common.init_hash,
         )
-
-        # Camelot stable-strategy wiring (folded in slice 7 step 4a): the
-        # ``stable_swap`` flag + ``fee_denominator`` drive the solidly-stable
-        # calc + hop branch on the base ``LiquidityPool``.
-        if camelot is not None:
-            pool.stable_swap = camelot.stable_swap
-            pool.fee_denominator = camelot.fee_denominator
 
         # Register pool
         self._register_pool(pool, chain_id=chain_id)
