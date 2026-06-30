@@ -35,6 +35,7 @@ use degenbot_bot::bot_core::{
     RegisterCurvePoolParams, RegisterV2PoolParams, RegisterV3PoolParams, RegisterV4PoolParams,
     V4PoolKey,
 };
+use degenbot_uniswap::dex_identity::DexVariant;
 use pyo3::types::{PyDict, PyList};
 use pyo3::Bound;
 
@@ -350,7 +351,7 @@ impl PyBot {
     ///
     /// Returns the auto-assigned pool ID.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (address, token0, token1, reserve0, reserve1, gamma_numer0, fee_denom0, gamma_numer1, fee_denom1, factory, update_block=0))]
+    #[pyo3(signature = (address, token0, token1, reserve0, reserve1, gamma_numer0, fee_denom0, gamma_numer1, fee_denom1, factory, update_block=0, variant="uniswap-v2", stable_swap=false, fee_denominator=None))]
     fn register_v2_pool(
         &self,
         address: &str,
@@ -364,6 +365,9 @@ impl PyBot {
         fee_denom1: u64,
         factory: &str,
         update_block: u64,
+        variant: &str,
+        stable_swap: bool,
+        fee_denominator: Option<u64>,
     ) -> PyResult<u64> {
         let addr = parse_address(address)?;
         let t0 = parse_address(token0)?;
@@ -371,6 +375,9 @@ impl PyBot {
         let fac = parse_address(factory)?;
         let r0 = crate::conversion::alloy::extract_python_u256(reserve0)?;
         let r1 = crate::conversion::alloy::extract_python_u256(reserve1)?;
+        let variant_enum = DexVariant::from_kebab(variant).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!("unknown variant: {variant}"))
+        })?;
 
         Ok(self
             .bot
@@ -386,6 +393,9 @@ impl PyBot {
                 fee_token1: (gamma_numer1, fee_denom1),
                 factory: fac,
                 update_block,
+                variant: variant_enum,
+                stable_swap,
+                fee_denominator,
             }))
     }
 

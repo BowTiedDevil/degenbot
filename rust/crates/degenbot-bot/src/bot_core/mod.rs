@@ -14,6 +14,7 @@ use crate::bot_core::state_history::{
     V3RestoreResult,
 };
 use crate::solvers::mobius_int::IntHopState;
+use degenbot_uniswap::dex_identity::DexVariant;
 use degenbot_uniswap::v2_encoding::{encode_v2_swap, EncodedCall};
 
 pub mod balancer_stable_state;
@@ -70,7 +71,7 @@ pub use block_clock::{BlockClock, BlockState, HeaderDecision, LogDecision};
 /// A single pool's state. Pool-type-specific fields are in the enum variants.
 #[derive(Clone, Debug)]
 pub enum PoolEntry {
-    V2(V2PoolState),
+    V2(V2PoolState, V2PoolDescriptor),
     V3(V3PoolState),
     V4(V4PoolState),
     Curve(CurvePoolState),
@@ -178,6 +179,38 @@ pub struct V2PoolState {
     pub journal: ReorgJournal<V2BlockDelta>,
 }
 
+/// Per-pool immutable V2 registration metadata (ADR-005 identity slice).
+///
+/// Builder-set immutable properties that are NOT swap-math state and so
+/// don't belong on [`V2PoolState`]: the DEX variant tag (resolves the
+/// [`degenbot_uniswap::dex_identity::DexIdentity`] preset via
+/// [`degenbot_uniswap::dex_identity::preset_for_variant`] for encoding/
+/// address-derivation), and Camelot's stable-strategy inputs (`stable_swap`
+/// + `fee_denominator`).
+///
+/// Distinct from `V2PoolState` (mutable swap state + the level-2 identity it
+/// already carries: address/tokens/fees/factory) per ADR-005's framing: the
+/// *preset* (level-1 DEX data) is never stored per-pool, but the per-pool
+/// *variant tag* is a narrower registration echo carried here so the
+/// `PyLiquidityPool` handle is self-describing for encoding/identity recovery
+/// (the Polars `_from_pydf` end state).
+///
+/// Retires the post-construction `pool.stable_swap = ...` mutation smell by
+/// routing these through `register_v2_pool`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct V2PoolDescriptor {
+    /// The DEX+variant discriminator. Resolves the canonical
+    /// [`degenbot_uniswap::dex_identity::DexIdentity`] preset
+    /// (factory/deployer/init-hash/default fees/ABI shape) for encoding and
+    /// `_verified_address` derivation.
+    pub variant: DexVariant,
+    /// Camelot solidly-stable strategy flag (false for all non-Camelot V2).
+    pub stable_swap: bool,
+    /// Camelot's integer fee scaling (used by the solidly-stable math). `None`
+    /// for non-Camelot V2 (the volatile calc ignores it).
+    pub fee_denominator: Option<u64>,
+}
+
 /// Parameters for registering a V2 pool.
 #[derive(Clone, Debug)]
 pub struct RegisterV2PoolParams {
@@ -194,6 +227,13 @@ pub struct RegisterV2PoolParams {
     /// registration state at a real block so `restore_before_block` can land
     /// on it; pre-slice-4 the journal was empty until the first Sync.
     pub update_block: u64,
+    /// DEX+variant discriminator (registration metadata — see
+    /// [`V2PoolDescriptor`]).
+    pub variant: DexVariant,
+    /// Camelot solidly-stable strategy flag.
+    pub stable_swap: bool,
+    /// Camelot integer fee scaling (the solidly-stable math's denominator).
+    pub fee_denominator: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -328,6 +368,9 @@ impl BotState {
             fee_token1,
             factory,
             update_block,
+            variant,
+            stable_swap,
+            fee_denominator,
         } = *params;
 
         // Seed the reorg journal with a genesis delta (ADR-005 slice 4): the
@@ -346,18 +389,25 @@ impl BotState {
 
         self.pools.insert(
             pool_id,
-            PoolEntry::V2(V2PoolState {
-                address,
-                token0,
-                token1,
-                fee_token0,
-                fee_token1,
-                factory,
-                reserve0,
-                reserve1,
-                update_block,
-                journal,
-            }),
+            PoolEntry::V2(
+                V2PoolState {
+                    address,
+                    token0,
+                    token1,
+                    fee_token0,
+                    fee_token1,
+                    factory,
+                    reserve0,
+                    reserve1,
+                    update_block,
+                    journal,
+                },
+                V2PoolDescriptor {
+                    variant,
+                    stable_swap,
+                    fee_denominator,
+                },
+            ),
         );
         self.pool_addresses.insert(address, pool_id);
 
@@ -480,7 +530,7 @@ impl BotState {
     pub fn get_curve_pool(&self, pool_id: u64) -> Option<&CurvePoolState> {
         match self.pools.get(&pool_id)? {
             PoolEntry::Curve(state) => Some(state),
-            PoolEntry::V2(_)
+            PoolEntry::V2(..)
             | PoolEntry::V3(_)
             | PoolEntry::V4(_)
             | PoolEntry::BalancerWeighted(_)
@@ -585,7 +635,7 @@ impl BotState {
     pub fn get_balancer_weighted_pool(&self, pool_id: u64) -> Option<&BalancerWeightedPoolState> {
         match self.pools.get(&pool_id)? {
             PoolEntry::BalancerWeighted(state) => Some(state),
-            PoolEntry::V2(_)
+            PoolEntry::V2(..)
             | PoolEntry::V3(_)
             | PoolEntry::V4(_)
             | PoolEntry::Curve(_)
@@ -698,7 +748,7 @@ impl BotState {
     pub fn get_balancer_stable_pool(&self, pool_id: u64) -> Option<&BalancerStablePoolState> {
         match self.pools.get(&pool_id)? {
             PoolEntry::BalancerStable(state) => Some(state),
-            PoolEntry::V2(_)
+            PoolEntry::V2(..)
             | PoolEntry::V3(_)
             | PoolEntry::V4(_)
             | PoolEntry::Curve(_)
@@ -727,7 +777,7 @@ impl BotState {
     ) -> Option<u64> {
         let &pool_id = self.pool_addresses.get(&pool_address)?;
 
-        let Some(PoolEntry::V2(state)) = self.pools.get_mut(&pool_id) else {
+        let Some(PoolEntry::V2(state, _)) = self.pools.get_mut(&pool_id) else {
             return None;
         };
 
@@ -780,7 +830,7 @@ impl BotState {
         reserve1: U256,
         block_number: u64,
     ) -> Option<u64> {
-        let Some(PoolEntry::V2(state)) = self.pools.get_mut(&pool_id) else {
+        let Some(PoolEntry::V2(state, _)) = self.pools.get_mut(&pool_id) else {
             return None;
         };
         state.journal.push_delta(V2BlockDelta {
@@ -804,7 +854,22 @@ impl BotState {
     #[must_use]
     pub fn get_v2_pool_state(&self, pool_id: u64) -> Option<&V2PoolState> {
         match self.pools.get(&pool_id)? {
-            PoolEntry::V2(state) => Some(state),
+            PoolEntry::V2(state, _) => Some(state),
+            PoolEntry::V3(_)
+            | PoolEntry::V4(_)
+            | PoolEntry::Curve(_)
+            | PoolEntry::BalancerWeighted(_)
+            | PoolEntry::BalancerStable(_) => None,
+        }
+    }
+
+    /// Look up a V2 pool's immutable registration descriptor (variant,
+    /// stable-strategy inputs). Returns `None` if the pool is not registered
+    /// or isn't a V2 pool.
+    #[must_use]
+    pub fn get_v2_descriptor(&self, pool_id: u64) -> Option<&V2PoolDescriptor> {
+        match self.pools.get(&pool_id)? {
+            PoolEntry::V2(_, descriptor) => Some(descriptor),
             PoolEntry::V3(_)
             | PoolEntry::V4(_)
             | PoolEntry::Curve(_)
@@ -1098,7 +1163,7 @@ impl BotState {
                 state.invalidate_tick_range_cache();
                 true
             }
-            PoolEntry::V2(_)
+            PoolEntry::V2(..)
             | PoolEntry::Curve(_)
             | PoolEntry::BalancerWeighted(_)
             | PoolEntry::BalancerStable(_) => false,
@@ -1301,7 +1366,7 @@ impl BotState {
     pub fn get_v3_pool(&self, pool_id: u64) -> Option<&V3PoolState> {
         match self.pools.get(&pool_id)? {
             PoolEntry::V3(state) => Some(state),
-            PoolEntry::V2(_)
+            PoolEntry::V2(..)
             | PoolEntry::V4(_)
             | PoolEntry::Curve(_)
             | PoolEntry::BalancerWeighted(_)
@@ -1319,7 +1384,7 @@ impl BotState {
             .iter()
             .filter_map(|(id, e)| match e {
                 PoolEntry::V3(state) => Some((*id, state.clone())),
-                PoolEntry::V2(_)
+                PoolEntry::V2(..)
                 | PoolEntry::V4(_)
                 | PoolEntry::Curve(_)
                 | PoolEntry::BalancerWeighted(_)
@@ -1420,7 +1485,7 @@ impl BotState {
         match self.pools.get(&pool_id)? {
             PoolEntry::V3(state) => Some(state),
             PoolEntry::V4(state) => Some(state),
-            PoolEntry::V2(_)
+            PoolEntry::V2(..)
             | PoolEntry::Curve(_)
             | PoolEntry::BalancerWeighted(_)
             | PoolEntry::BalancerStable(_) => None,
@@ -1493,7 +1558,7 @@ impl BotState {
         };
 
         match entry {
-            PoolEntry::V2(state) => {
+            PoolEntry::V2(state, _) => {
                 if amount_in.is_zero() {
                     return Ok(U256::ZERO);
                 }
@@ -1613,7 +1678,7 @@ impl BotState {
                 state.invalidate_tick_range_cache();
                 true
             }
-            PoolEntry::V2(_)
+            PoolEntry::V2(..)
             | PoolEntry::Curve(_)
             | PoolEntry::BalancerWeighted(_)
             | PoolEntry::BalancerStable(_) => false,
@@ -1699,7 +1764,7 @@ impl BotState {
             PoolEntry::V3(state) => v3_simulate_swap(state, zero_for_one, spec, sqrt_price_limit),
             // V4 sign convention: exact-input is `amountSpecified < 0`.
             PoolEntry::V4(state) => v4_simulate_swap(state, zero_for_one, -spec, sqrt_price_limit),
-            PoolEntry::V2(_)
+            PoolEntry::V2(..)
             | PoolEntry::Curve(_)
             | PoolEntry::BalancerWeighted(_)
             | PoolEntry::BalancerStable(_) => Err(SimulateSwapError::NotComputable),
@@ -1784,7 +1849,7 @@ impl BotState {
             PoolEntry::V3(state) => v3_simulate_swap(state, zero_for_one, -spec, sqrt_price_limit),
             // V4 sign convention: exact-output is `amountSpecified > 0`.
             PoolEntry::V4(state) => v4_simulate_swap(state, zero_for_one, spec, sqrt_price_limit),
-            PoolEntry::V2(_)
+            PoolEntry::V2(..)
             | PoolEntry::Curve(_)
             | PoolEntry::BalancerWeighted(_)
             | PoolEntry::BalancerStable(_) => Err(SimulateSwapError::NotComputable),
@@ -1962,7 +2027,7 @@ impl BotState {
                     }
                 }
             }
-            PoolEntry::V2(_)
+            PoolEntry::V2(..)
             | PoolEntry::Curve(_)
             | PoolEntry::BalancerWeighted(_)
             | PoolEntry::BalancerStable(_) => None,
@@ -1982,7 +2047,7 @@ impl BotState {
         };
 
         match entry {
-            PoolEntry::V2(state) => {
+            PoolEntry::V2(state, _) => {
                 if amount_out.is_zero() {
                     return U256::ZERO;
                 }
@@ -2160,7 +2225,7 @@ impl BotState {
     pub fn v2_pool_count(&self) -> usize {
         self.pools
             .values()
-            .filter(|e| matches!(e, PoolEntry::V2(_)))
+            .filter(|e| matches!(e, PoolEntry::V2(..)))
             .count()
     }
 
@@ -2190,7 +2255,7 @@ impl BotState {
     #[must_use]
     pub fn v2_journal_len(&self, pool_id: u64) -> usize {
         match self.pools.get(&pool_id) {
-            Some(PoolEntry::V2(state)) => state.journal.len(),
+            Some(PoolEntry::V2(state, _)) => state.journal.len(),
             _ => 0,
         }
     }
@@ -2212,7 +2277,7 @@ impl BotState {
         pool_id: u64,
         block: u64,
     ) -> Result<(), JournalError> {
-        let Some(PoolEntry::V2(state)) = self.pools.get_mut(&pool_id) else {
+        let Some(PoolEntry::V2(state, _)) = self.pools.get_mut(&pool_id) else {
             return Ok(());
         };
         state.journal.discard_before_block(block)
@@ -2232,7 +2297,7 @@ impl BotState {
         pool_id: u64,
         block: u64,
     ) -> Option<Result<(U256, U256, u64), JournalError>> {
-        let PoolEntry::V2(state) = self.pools.get_mut(&pool_id)? else {
+        let PoolEntry::V2(state, _) = self.pools.get_mut(&pool_id)? else {
             return None;
         };
         let (r0, r1, blk) = match state.journal.restore_before_block(block) {
@@ -2264,7 +2329,7 @@ impl BotState {
             // pools with a delta at/after the reorg target need rollback;
             // untouched pools keep their current state (idempotent restore).
             let needs_restore = match self.pools.get(&pool_id) {
-                Some(PoolEntry::V2(state)) => {
+                Some(PoolEntry::V2(state, _)) => {
                     state.journal.newest_block().is_some_and(|b| b >= target)
                 }
                 Some(PoolEntry::V3(state)) => {
@@ -2289,7 +2354,7 @@ impl BotState {
             }
 
             let did_restore = match self.pools.get_mut(&pool_id) {
-                Some(PoolEntry::V2(state)) => {
+                Some(PoolEntry::V2(state, _)) => {
                     // Landed-at restore: on Ok, apply the landed-at state; on
                     // Err (target at/before registration) skip the pool
                     // (idempotent — a reorg doesn't touch pools that didn't
@@ -2579,7 +2644,7 @@ impl BotState {
         // V2 returns Result; ignore the Err here (too-deep was pre-checked).
         // V3/V4 return Option (None for unregistered / non-matching family).
         match self.pools.get_mut(&pool_id) {
-            Some(PoolEntry::V2(_)) => {
+            Some(PoolEntry::V2(..)) => {
                 let _ = self.v2_restore_before_block(pool_id, block);
             }
             Some(PoolEntry::V3(_)) => {
@@ -2630,7 +2695,7 @@ impl BotState {
             return true;
         };
         match entry {
-            PoolEntry::V2(state) => state
+            PoolEntry::V2(state, _) => state
                 .journal
                 .earliest_block()
                 .is_some_and(|earliest| earliest < block),
@@ -2737,7 +2802,7 @@ impl BotState {
     ) -> Option<EncodedCall> {
         let entry = self.pools.get(&pool_id)?;
         match entry {
-            PoolEntry::V2(state) => {
+            PoolEntry::V2(state, _) => {
                 let call =
                     encode_v2_swap(state.address, zero_for_one, amount_out, recipient).ok()?;
                 Some(call)
@@ -3259,7 +3324,7 @@ impl BotState {
     pub fn get_v4_pool(&self, pool_id: u64) -> Option<&V4PoolState> {
         match self.pools.get(&pool_id)? {
             PoolEntry::V4(state) => Some(state),
-            PoolEntry::V2(_)
+            PoolEntry::V2(..)
             | PoolEntry::V3(_)
             | PoolEntry::Curve(_)
             | PoolEntry::BalancerWeighted(_)
@@ -3373,7 +3438,7 @@ impl BotState {
             .iter()
             .filter_map(|(id, e)| match e {
                 PoolEntry::V4(state) => Some((*id, state.clone())),
-                PoolEntry::V2(_)
+                PoolEntry::V2(..)
                 | PoolEntry::V3(_)
                 | PoolEntry::Curve(_)
                 | PoolEntry::BalancerWeighted(_)

@@ -48,7 +48,7 @@ pub struct PyDexIdentity {
 
 impl PyDexIdentity {
     /// Build a Python view from a core `DexIdentity` preset.
-    fn from_core(ident: &DexIdentity) -> Self {
+    pub(crate) fn from_core(ident: &DexIdentity) -> Self {
         Self {
             factory: address_to_checksum_string(&ident.factory),
             deployer: address_to_checksum_string(&ident.deployer),

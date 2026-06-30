@@ -554,6 +554,115 @@ impl PyLiquidityPool {
         }
     }
 
+    // --- V2 identity getters (ADR-005 identity slice) ---
+    // Immutable per-pool identity read from V2PoolState (+ the registration
+    // descriptor) so the Python companion's `_from_py_pool(py_pool)` can be
+    // self-describing — the Polars `_from_pydf` end state. These re-export
+    // what V2PoolState already holds; the descriptor (variant/stable_swap/
+    // fee_denominator) + resolved DexIdentity preset are new in this slice.
+
+    /// Pool contract address (EIP-55 checksummed hex). Empty string if not a V2 pool.
+    #[getter]
+    fn address(&self) -> String {
+        let core = self.core.read();
+        match core.get_v2_pool_state(self.pool_id) {
+            Some(s) => address_utils::address_to_checksum_string(&s.address),
+            None => String::new(),
+        }
+    }
+
+    /// Token0 contract address (EIP-55 checksummed hex). Empty string if not a V2 pool.
+    #[getter]
+    fn token0_address(&self) -> String {
+        let core = self.core.read();
+        match core.get_v2_pool_state(self.pool_id) {
+            Some(s) => address_utils::address_to_checksum_string(&s.token0),
+            None => String::new(),
+        }
+    }
+
+    /// Token1 contract address (EIP-55 checksummed hex). Empty string if not a V2 pool.
+    #[getter]
+    fn token1_address(&self) -> String {
+        let core = self.core.read();
+        match core.get_v2_pool_state(self.pool_id) {
+            Some(s) => address_utils::address_to_checksum_string(&s.token1),
+            None => String::new(),
+        }
+    }
+
+    /// Factory contract address (EIP-55 checksummed hex). Empty string if not a V2 pool.
+    #[getter]
+    fn factory(&self) -> String {
+        let core = self.core.read();
+        match core.get_v2_pool_state(self.pool_id) {
+            Some(s) => address_utils::address_to_checksum_string(&s.factory),
+            None => String::new(),
+        }
+    }
+
+    /// `token0→token1` fee parameters: `(gamma_numer, fee_denom)` — the
+    /// retained post-fee fraction (e.g. `(997, 1000)` for 0.3%). `(0, 0)` if
+    /// not a V2 pool.
+    #[getter]
+    fn fee_token0(&self) -> (u64, u64) {
+        let core = self.core.read();
+        core.get_v2_pool_state(self.pool_id)
+            .map(|s| s.fee_token0)
+            .unwrap_or_default()
+    }
+
+    /// `token1→token0` fee parameters: `(gamma_numer, fee_denom)`. `(0, 0)` if
+    /// not a V2 pool.
+    #[getter]
+    fn fee_token1(&self) -> (u64, u64) {
+        let core = self.core.read();
+        core.get_v2_pool_state(self.pool_id)
+            .map(|s| s.fee_token1)
+            .unwrap_or_default()
+    }
+
+    /// The DEX+variant discriminator as a kebab-case string (e.g.
+    /// `"uniswap-v2"`, `"camelot-v2-stable"`). Empty string if not a V2 pool.
+    #[getter]
+    fn variant(&self) -> String {
+        let core = self.core.read();
+        match core.get_v2_descriptor(self.pool_id) {
+            Some(d) => d.variant.as_str().to_string(),
+            None => String::new(),
+        }
+    }
+
+    /// Camelot solidly-stable strategy flag. `false` for all non-Camelot V2
+    /// and for non-V2 pool_ids.
+    #[getter]
+    fn stable_swap(&self) -> bool {
+        let core = self.core.read();
+        core.get_v2_descriptor(self.pool_id)
+            .map(|d| d.stable_swap)
+            .unwrap_or(false)
+    }
+
+    /// Camelot integer fee scaling. `None` for non-Camelot V2 / non-V2.
+    #[getter]
+    fn fee_denominator(&self) -> Option<u64> {
+        let core = self.core.read();
+        core.get_v2_descriptor(self.pool_id)
+            .and_then(|d| d.fee_denominator)
+    }
+
+    /// The resolved `DexIdentity` preset (factory/deployer/init-hash/default
+    /// fees/ABI shape) for this pool's registered variant. `None` if not a V2
+    /// pool. The Python companion reads this to recover deployer/init-hash for
+    /// `_verified_address` derivation without taking constructor args.
+    #[getter]
+    fn dex(&self) -> Option<crate::bot::dex_identity::PyDexIdentity> {
+        let core = self.core.read();
+        let variant = core.get_v2_descriptor(self.pool_id)?.variant;
+        let ident = degenbot_uniswap::dex_identity::preset_for_variant(variant);
+        Some(crate::bot::dex_identity::PyDexIdentity::from_core(&ident))
+    }
+
     // --- V3 state read getters (plan-101 slice 8a) ---
     // Mirror the V2 family but read the V3PoolState entry. All getters take
     // one read guard and return None-defaulted values when the pool_id is not
