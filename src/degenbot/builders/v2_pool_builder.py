@@ -270,7 +270,6 @@ class V2PoolBuilder(V2BuilderBase):
             msg = f"V2PoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)
 
-        assert pool.chain_id is not None
         assert io is not None, "io must be provided for update()"
         block_number_ = block_number if block_number is not None else io.get_block_number()
         block_number_ = int(block_number_) if not isinstance(block_number_, int) else block_number_

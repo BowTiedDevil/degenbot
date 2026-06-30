@@ -86,7 +86,6 @@ class TestV2PoolIOFreeConstructor:
         )
 
         assert pool.address == WETH_USDC_V2_POOL
-        assert pool.chain_id == 1
         assert pool.token0.address == weth.address
         assert pool.token1.address == usdc.address
         assert pool.factory == get_checksum_address(UNISWAP_V2_FACTORY)

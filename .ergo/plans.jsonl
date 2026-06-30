@@ -256,3 +256,4 @@
 {"type":"new_task","ts":"2026-06-30T21:03:48.815750365Z","data":{"id":"5O3AR4","uuid":"99663c95-79d6-4db9-b937-3cbc83cd571f","epic_id":"","state":"todo","title":"Slice 6: docs — record the identity/state split invariant","body":"","created_at":"2026-06-30T21:03:48.815750365Z"}}
 {"type":"claim","ts":"2026-06-30T21:03:52.658305036Z","data":{"id":"5O3AR4","agent_id":"agent@t-c28d","ts":"2026-06-30T21:03:52.658305036Z"}}
 {"type":"state","ts":"2026-06-30T21:03:52.658305036Z","data":{"id":"5O3AR4","state":"doing","ts":"2026-06-30T21:03:52.658305036Z"}}
+{"type":"state","ts":"2026-06-30T21:07:14.895274179Z","data":{"id":"5O3AR4","state":"done","ts":"2026-06-30T21:07:14.895274179Z"}}

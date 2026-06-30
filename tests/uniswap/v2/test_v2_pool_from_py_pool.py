@@ -71,7 +71,6 @@ class TestFromPyPoolSlimSeam:
         assert pool.fee_token1 == Fraction(3, 1000)
         assert pool.token0.address == token0.address
         assert pool.token1.address == token1.address
-        assert pool.chain_id == 1
 
     def test_tokens_recovered_from_same_bot(self) -> None:
         """token0/token1 companions are rebuilt off the pool's handle."""

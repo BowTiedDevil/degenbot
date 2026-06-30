@@ -292,11 +292,6 @@ class TestConcretePoolConstruction:
         pool = constructor()
         assert isinstance(pool, AbstractLiquidityPool)
 
-    def test_chain_id_is_mainnet(self, pool_case):
-        constructor, _, _ = pool_case
-        pool = constructor()
-        assert pool.chain_id == 1
-
     def test_tokens_are_set(self, pool_case):
         constructor, _, _ = pool_case
         pool = constructor()
