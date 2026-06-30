@@ -490,8 +490,24 @@ pub struct OwnedPathFinder {
     stack: Vec<(u32, usize, bool)>,
     working_path: Vec<u32>,
     visited: Vec<bool>,
-    pending_reverse: Option<Vec<EdgeKey>>,
+    /// Whether the reversed form of the most recently yielded cycle is still
+    /// pending emission (used only when `include_reverse` is set). A flag
+    /// rather than an owned `Vec<EdgeKey>` because the working path is still
+    /// intact between yielding a cycle and emitting its reverse — the reversed
+    /// path can be read directly from `working_path` on demand.
+    pending_reverse: bool,
     done: bool,
+}
+
+/// Outcome of one DFS advance: which path form (if any) is ready to yield.
+#[derive(PartialEq, Eq)]
+enum AdvanceOutcome {
+    /// The search is exhausted; no more paths.
+    Exhausted,
+    /// The current `working_path` is a complete cycle ready to yield forward.
+    Forward,
+    /// A pending reverse of the previous cycle is ready to yield.
+    Reversed,
 }
 
 impl OwnedPathFinder {
@@ -549,25 +565,29 @@ impl OwnedPathFinder {
             stack,
             working_path: Vec::with_capacity(16),
             visited: vec![false; n_pools],
-            pending_reverse: None,
+            pending_reverse: false,
             done,
         }
     }
 
-    /// Advance the DFS and return the next complete path, or `None` if
-    /// the search is exhausted.
+    /// Advance the DFS by one yield without materializing the path.
     ///
-    /// If `include_reverse` is set, each found cycle yields the forward path
-    /// first, then the reversed path on the next call.
-    #[must_use]
-    pub fn next_path(&mut self) -> Option<Vec<EdgeKey>> {
+    /// Returns [`AdvanceOutcome::Forward`] when a complete cycle is ready
+    /// (read it from `working_path`), [`AdvanceOutcome::Reversed`] when a
+    /// pending reverse of the previous cycle is ready (read reversed
+    /// `working_path`), or [`AdvanceOutcome::Exhausted`] when the search is
+    /// done. This is the shared DFS core — both [`Self::next_path`] (which
+    /// materializes `EdgeKey`s) and [`Self::next_path_indices_into`] (which
+    /// appends pool indices, avoiding allocation) dispatch through it.
+    fn advance(&mut self) -> AdvanceOutcome {
         if self.done {
-            return None;
+            return AdvanceOutcome::Exhausted;
         }
 
-        // If a reversed path is pending from the last yield, emit it now.
-        if let Some(rev) = self.pending_reverse.take() {
-            return Some(rev);
+        // Emit a pending reversed cycle before doing any further DFS work.
+        if self.pending_reverse {
+            self.pending_reverse = false;
+            return AdvanceOutcome::Reversed;
         }
 
         let filter_slice = self.pool_type_per_depth.as_deref();
@@ -580,12 +600,13 @@ impl OwnedPathFinder {
             if !*yield_checked {
                 *yield_checked = true;
                 if *node == self.end && self.working_path.len() >= self.min_depth {
-                    let path = self.path_to_edge_keys();
                     if self.include_reverse {
-                        let rev = self.reversed_path_to_edge_keys();
-                        self.pending_reverse = Some(rev);
+                        // working_path stays intact until the reverse is
+                        // emitted on the next advance(), so we only need a
+                        // flag — no owned Vec to carry over.
+                        self.pending_reverse = true;
                     }
-                    return Some(path);
+                    return AdvanceOutcome::Forward;
                 }
             }
 
@@ -681,7 +702,56 @@ impl OwnedPathFinder {
 
         // Search exhausted.
         self.done = true;
-        None
+        AdvanceOutcome::Exhausted
+    }
+
+    /// Advance the DFS and return the next complete path, or `None` if
+    /// the search is exhausted.
+    ///
+    /// If `include_reverse` is set, each found cycle yields the forward path
+    /// first, then the reversed path on the next call.
+    #[must_use]
+    pub fn next_path(&mut self) -> Option<Vec<EdgeKey>> {
+        match self.advance() {
+            AdvanceOutcome::Exhausted => None,
+            AdvanceOutcome::Forward => Some(self.path_to_edge_keys()),
+            AdvanceOutcome::Reversed => Some(self.reversed_path_to_edge_keys()),
+        }
+    }
+
+    /// Advance the DFS and append the next path's **pool indices** into `out`,
+    /// returning the number of indices appended (the path length), or `None`
+    /// if the search is exhausted.
+    ///
+    /// This is the allocation-free hot path used by the PyO3 iterator: instead
+    /// of materializing a `Vec<EdgeKey>` per yielded path (96k small
+    /// allocations for a typical search), it appends the compact `u32` pool
+    /// indices into a caller-owned flat buffer. The FFI layer converts
+    /// indices → `(pool_id, kind_u8)` lazily while building Python objects.
+    #[must_use]
+    pub fn next_path_indices_into(&mut self, out: &mut Vec<u32>) -> Option<usize> {
+        match self.advance() {
+            AdvanceOutcome::Exhausted => None,
+            AdvanceOutcome::Forward => {
+                let len = self.working_path.len();
+                out.extend(self.working_path.iter().copied());
+                Some(len)
+            }
+            AdvanceOutcome::Reversed => {
+                let len = self.working_path.len();
+                out.extend(self.working_path.iter().rev().copied());
+                Some(len)
+            }
+        }
+    }
+
+    /// Resolve a compact pool index to its `EdgeKey` `(pool_id, PoolKind)`.
+    ///
+    /// Lets the PyO3 layer convert buffered pool indices to Python tuples
+    /// without exposing the graph's internal `pools` field.
+    #[must_use]
+    pub fn pool_edge_key(&self, pool_idx: u32) -> EdgeKey {
+        self.graph.pools[pool_idx as usize]
     }
 
     /// Convert the current working path (pool indices) to `EdgeKey`s for yielding.
