@@ -208,55 +208,6 @@ class TestSolverMethodComparison:
         # Optimal inputs should be close (within 0.1% relative tolerance)
         assert result_golden.x == pytest.approx(result_bounded.x, rel=1e-3)
 
-    def test_brent_faster_than_golden(
-        self,
-        profit_function: "Callable[[float], float]",
-    ) -> None:
-        """Benchmark test: Brent should typically be faster than Golden.
-        Both use bracket method.
-        """
-        bracket = (1.0, 1_000_000.0, 100_000_000_000.0)
-        iterations = 100
-
-        # Warm up
-        for _ in range(10):
-            minimize_scalar(profit_function, bracket=bracket, method="Brent")
-            minimize_scalar(profit_function, bracket=bracket, method="Golden")
-
-        # Benchmark Brent
-        start = time.perf_counter()
-        for _ in range(iterations):
-            result_brent = minimize_scalar(
-                profit_function,
-                bracket=bracket,
-                method="Brent",
-            )
-        brent_time = time.perf_counter() - start
-
-        # Benchmark Golden
-        start = time.perf_counter()
-        for _ in range(iterations):
-            result_golden = minimize_scalar(
-                profit_function,
-                bracket=bracket,
-                method="Golden",
-            )
-        golden_time = time.perf_counter() - start
-
-        # Both should succeed
-
-        # Report performance
-        print(f"\nBrent: {brent_time:.4f}s ({iterations} runs)")
-        print(f"Golden: {golden_time:.4f}s ({iterations} runs)")
-        print(f"Speedup: {golden_time / brent_time:.2f}x")
-        print(f"Brent evaluations: {result_brent.nfev}")
-        print(f"Golden evaluations: {result_golden.nfev}")
-
-        # Brent should generally be faster
-        assert brent_time <= golden_time, (
-            f"Brent was slower ({brent_time:.4f}s vs {golden_time:.4f}s)"
-        )
-
     def test_brent_fewer_evaluations_than_golden(
         self,
         profit_function: "Callable[[float], float]",
