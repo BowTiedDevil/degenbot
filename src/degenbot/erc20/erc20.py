@@ -17,12 +17,11 @@ from degenbot.exceptions.infrastructure import NoPriceOracle
 from degenbot.provider import ProviderAdapter
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.types.abstract import AbstractErc20Token
+from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import BoundedCache
 
 if TYPE_CHECKING:
     from hexbytes import HexBytes
-
-    from degenbot.types.aliases import BlockNumber
 
 
 def get_token_from_database(
@@ -55,6 +54,17 @@ class Erc20Token(AbstractErc20Token):
     Constructed from pre-fetched data only. Use ``Bot.build_erc20token()`` to fetch from chain.
     Balance, approval, and total supply queries go through ``Bot.get_token_balance()`` etc.
     """
+
+    # Instance attributes set in `_from_py_token` (the only construction seam —
+    # `__init__` raises). Declared at class scope so the type checker tracks
+    # them without inline annotations on the classmethod body (red-knot rejects
+    # `self.x: T = ...` as `invalid-type-form`).
+    _py_token: PyErc20Token
+    _state_cache_depth: int
+    _cached_approval: dict[tuple[int, ChecksumAddress, ChecksumAddress], int]
+    _cached_balance: dict[ChecksumAddress, BoundedCache[BlockNumber, int]]
+    _cached_total_supply: BoundedCache[BlockNumber, int]
+    _price_oracle: ChainlinkPriceContract | None
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
         """Direct construction is forbidden.
@@ -114,9 +124,9 @@ class Erc20Token(AbstractErc20Token):
         self._py_token = py_token
 
         self._state_cache_depth = state_cache_depth
-        self._cached_approval: dict[tuple[int, ChecksumAddress, ChecksumAddress], int] = {}
-        self._cached_balance: dict[ChecksumAddress, BoundedCache[BlockNumber, int]] = {}
-        self._cached_total_supply: BoundedCache[BlockNumber, int] = BoundedCache(
+        self._cached_approval = {}
+        self._cached_balance = {}
+        self._cached_total_supply = BoundedCache(
             max_items=state_cache_depth,
         )
 
