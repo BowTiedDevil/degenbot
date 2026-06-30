@@ -810,7 +810,7 @@ impl OwnedPathFinder {
     /// returning the number of indices appended (the path length), or `None`
     /// if the search is exhausted.
     ///
-    /// This is the allocation-free hot path used by the PyO3 iterator: instead
+    /// This is the allocation-free hot path used by the `PyO3` iterator: instead
     /// of materializing a `Vec<EdgeKey>` per yielded path (96k small
     /// allocations for a typical search), it appends the compact `u32` pool
     /// indices into a caller-owned flat buffer. The FFI layer converts
@@ -834,7 +834,7 @@ impl OwnedPathFinder {
 
     /// Resolve a compact pool index to its `EdgeKey` `(pool_id, PoolKind)`.
     ///
-    /// Lets the PyO3 layer convert buffered pool indices to Python tuples
+    /// Lets the `PyO3` layer convert buffered pool indices to Python tuples
     /// without exposing the graph's internal `pools` field.
     #[must_use]
     pub fn pool_edge_key(&self, pool_idx: u32) -> EdgeKey {
