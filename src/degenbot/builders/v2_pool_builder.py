@@ -165,7 +165,7 @@ class V2PoolBuilder(V2BuilderBase):
         py_pool = self._py_bot.get_pool(pool_id)
         assert py_pool is not None, "register_v2_pool returned a pool_id with no handle"
 
-        pool = pool_class(
+        pool = pool_class._from_py_pool(  # noqa: SLF001
             py_pool,
             address=common.pool_address,
             token0=token0,
