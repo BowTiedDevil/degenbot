@@ -369,6 +369,16 @@ impl PathFinder<'_> {
                 continue;
             };
 
+            // If the next hop reaches the maximum depth, only edges that close
+            // the cycle (reach `end`) can possibly yield — skip the rest
+            // without pushing a dead frame that would just backtrack. This is
+            // the single biggest DFS cost saver: at the closing depth, every
+            // non-`end` neighbor is pure waste.
+            let final_hop = matches!(
+                self.effective_max_depth,
+                Some(emd) if self.working_path.len() + 1 == emd
+            );
+
             let mut found_edge = false;
             while *edge_idx < neighbors.len() {
                 let edge = &neighbors[*edge_idx];
@@ -377,6 +387,11 @@ impl PathFinder<'_> {
 
                 // Cycle detection: skip pools already on the working path.
                 if self.visited[pool_idx as usize] {
+                    continue;
+                }
+
+                // Final-hop restriction: the closing hop must reach `end`.
+                if final_hop && edge.neighbor != self.end {
                     continue;
                 }
 
@@ -595,6 +610,16 @@ impl OwnedPathFinder {
                 continue;
             };
 
+            // If the next hop reaches the maximum depth, only edges that close
+            // the cycle (reach `end`) can possibly yield — skip the rest
+            // without pushing a dead frame that would just backtrack. This is
+            // the single biggest DFS cost saver: at the closing depth, every
+            // non-`end` neighbor is pure waste.
+            let final_hop = matches!(
+                self.effective_max_depth,
+                Some(emd) if self.working_path.len() + 1 == emd
+            );
+
             let mut found_edge = false;
             while *edge_idx < neighbors.len() {
                 let edge = &neighbors[*edge_idx];
@@ -603,6 +628,11 @@ impl OwnedPathFinder {
 
                 // Cycle detection: skip pools already on the working path.
                 if self.visited[pool_idx as usize] {
+                    continue;
+                }
+
+                // Final-hop restriction: the closing hop must reach `end`.
+                if final_hop && edge.neighbor != self.end {
                     continue;
                 }
 
