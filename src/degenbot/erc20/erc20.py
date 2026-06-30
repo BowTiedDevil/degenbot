@@ -1,6 +1,6 @@
 """Erc20Token: on-chain token with metadata, balance, and approval tracking."""
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 
 import eth_abi.abi
 from eth_abi.exceptions import DecodingError
@@ -56,20 +56,61 @@ class Erc20Token(AbstractErc20Token):
     Balance, approval, and total supply queries go through ``Bot.get_token_balance()`` etc.
     """
 
-    def __init__(
-        self,
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+        """Direct construction is forbidden.
+
+        ``Erc20Token`` is a Python companion over a Rust-owned
+        ``PyErc20Token`` handle. The handle can only be produced by
+        registering token metadata in a ``PyBot`` — there is no way for a
+        caller to hand-build one. Use the registered entry points instead:
+
+        - Production: ``Bot.get_token(address)``
+        - Tests: ``make_erc20(...)``
+
+        Both register the token metadata in Rust, obtain the ``PyErc20Token``
+        handle, and wrap it via :meth:`_from_py_token` (mirroring Polars'
+        ``_from_pydf`` seam).
+
+        Raises:
+            TypeError: Always. Direct construction is not supported.
+
+        """
+        msg = (
+            f"{type(self).__name__} cannot be constructed directly. "
+            "Use Bot.get_token(address) (production) or make_erc20(...) "
+            "(tests) to register the token metadata in Rust and obtain the "
+            "PyErc20Token handle to wrap."
+        )
+        raise TypeError(msg)
+
+    @classmethod
+    def _from_py_token(
+        cls,
         py_token: PyErc20Token,
         *,
         oracle_address: str | None = None,
         state_cache_depth: int = 8,
-    ) -> None:
-        """Initialize the Polars-style companion over a ``PyErc20Token`` handle (ADR-005).
+    ) -> Self:
+        """Wrap a Rust-owned ``PyErc20Token`` handle as a Python companion.
 
-        Token metadata (address, name, symbol, decimals, chain_id) is owned by
-        the Rust ``Bot`` and read through the handle on every access — this
-        companion holds no metadata copy. Price oracle + balance/approval/
-        total-supply caches stay Python (I/O constructs that cannot move to Rust).
+        Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). Rust
+        owns the token metadata (address, name, symbol, decimals, chain_id)
+        as a ``TokenEntry``; this companion reads it through ``self._py_token``
+        on every access and holds no metadata copy. Price oracle +
+        balance/approval/total-supply caches stay Python (I/O constructs that
+        cannot move to Rust).
+
+        Only ``Bot.get_token()`` / ``Bot.build_erc20token()`` (production)
+        and ``make_erc20`` (tests) should call this — they have already
+        registered the token metadata in a ``PyBot`` and obtained the handle.
+        ``cls`` is used so subclasses that only set ClassVars inherit this
+        seam and produce instances of the subclass.
+
+        Returns:
+            A ``cls`` instance wrapping ``py_token``.
+
         """
+        self = cls.__new__(cls)
         self._py_token = py_token
 
         self._state_cache_depth = state_cache_depth
@@ -85,6 +126,8 @@ class Erc20Token(AbstractErc20Token):
                 address=oracle_address,
                 chain_id=self.chain_id,
             )
+
+        return self
 
     @property
     def address(self) -> ChecksumAddress:

@@ -2,7 +2,6 @@
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
-from degenbot.degenbot_rs import PyErc20Token
 from degenbot.erc20 import Erc20Token
 
 
@@ -13,19 +12,14 @@ class EtherPlaceholder(Erc20Token):
     (name="Ether Placeholder", symbol="ETH", decimals=18) is registered in the
     Rust ``Bot`` when an ``EtherPlaceholder`` is built; the inherited
     delegating properties read it back through the ``PyErc20Token`` handle.
+
+    Direct construction is forbidden (inherited from :class:`Erc20Token`). Use
+    :meth:`Erc20Token._from_py_token` — which produces an ``EtherPlaceholder``
+    instance when called on the subclass — after registering the metadata in a
+    ``PyBot``.
     """
 
     addresses = (
         ZERO_ADDRESS,
         get_checksum_address("0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE"),
     )
-
-    def __init__(
-        self,
-        py_token: PyErc20Token,
-        *,
-        state_cache_depth: int = 8,
-    ) -> None:
-        """Initialize the instance."""
-        super().__init__(py_token, state_cache_depth=state_cache_depth)
-        self._state_cache_depth = state_cache_depth
