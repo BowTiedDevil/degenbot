@@ -11,7 +11,7 @@ from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
 from degenbot.calculations.camelot import get_y_camelot, k_camelot
 from degenbot.calculations.solidly_stable import calc_exact_in_stable
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.degenbot_rs import PyLiquidityPool
+from degenbot.degenbot_rs import PyDexIdentity, PyLiquidityPool
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import (
@@ -53,6 +53,24 @@ class LiquidityPool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
     # bypassed `_from_py_pool` (none — the construction guard blocks `__init__`).
     stable_swap: bool = False
     fee_denominator: int | None = None
+
+    # Instance attributes set in `_from_py_pool` (the only construction seam —
+    # `__init__` raises). Declared at class scope so the type checker tracks
+    # them without inline annotations on the classmethod body (red-knot
+    # rejects `self.x: T = ...` as `invalid-type-form`).
+    _py_pool: PyLiquidityPool
+    dex: PyDexIdentity
+    address: ChecksumAddress
+    factory: ChecksumAddress
+    _fee_token0: Fraction
+    _fee_token1: Fraction
+    _chain_id: int
+    _token0: Erc20Token
+    _token1: Erc20Token
+    init_hash: str
+    deployer: ChecksumAddress
+    name: str
+    _subscribers: WeakSet[Subscriber]
 
     LOG_HANDLERS: ClassVar[dict[str, Any]] = {
         V2_SYNC_TOPIC: decode_v2_sync,
@@ -187,7 +205,7 @@ class LiquidityPool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
             )
         self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, {fee_string}%)"
 
-        self._subscribers: WeakSet[Subscriber] = WeakSet()
+        self._subscribers = WeakSet()
         return self
 
     @property
