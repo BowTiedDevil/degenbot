@@ -260,7 +260,7 @@ ADR-005 slices 3–15 (ergo `XQ5UX6`, all done) closed the **stateful** topology
 - Slices 4–5 — V2 companion (state + calc delegation) over `PyLiquidityPool`.
 - Slice 6 — `DexIdentity` + DEX presets in `degenbot-uniswap` (Rust core).
 - Slice 7 — V2 DEX subclass collapse (Sushi/Pancake/Swapbased/Camelot hollow
-  subclasses deleted; `LiquidityPool` + `dex.variant`).
+  subclasses deleted; `UniswapV2Pool` + `dex.variant`).
 - Slices 8–9 — V3/V4 companions over `PyLiquidityPool`.
 - Slice 10 — `UniswapEngine` lock unification onto shared `Arc<RwLock<Bot>>`.
 - Slices 11–12 — Curve + Balancer family ports (state + companion + pure-math

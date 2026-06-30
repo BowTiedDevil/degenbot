@@ -40,7 +40,7 @@ from degenbot.provider.factory import get_async_provider_from_config
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolTracker
-from degenbot.uniswap.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
@@ -126,7 +126,7 @@ class AsyncBot:
         self._v4_builder = AsyncV4PoolBuilder(ctx)
 
         self._async_builders: dict[type, AsyncPoolBuilder] = {}
-        self._register_builder(LiquidityPool, self._v2_builder)
+        self._register_builder(UniswapV2Pool, self._v2_builder)
         self._register_builder(UniswapV3Pool, self._v3_builder)
         self._register_builder(UniswapV4Pool, self._v4_builder)
         self._register_builder(AerodromeV2Pool, self._v2_builder)

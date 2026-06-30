@@ -1,9 +1,9 @@
 """ADR-005 slice 7 step 4b — the folded Camelot stable strategy lives on
-``LiquidityPool`` after the subclass collapse (step 4a folded; step 4b deleted
+``UniswapV2Pool`` after the subclass collapse (step 4a folded; step 4b deleted
 ``CamelotLiquidityPool``).
 
 These are the surviving fold regression tests (the 4a PARITY tests — which
-compared a folded ``LiquidityPool`` against a reference
+compared a folded ``UniswapV2Pool`` against a reference
 ``CamelotLiquidityPool`` — were transitional + deleted when the subclass
 went away in step 4b). They cover the structural contract of the fold:
 
@@ -36,7 +36,7 @@ def _make_token(addr: str, *, symbol: str, decimals: int) -> Erc20Token:
 
 
 class TestFoldedToHopState:
-    """The folded LiquidityPool.to_hop_state picks the right hop by stable_swap."""
+    """The folded UniswapV2Pool.to_hop_state picks the right hop by stable_swap."""
 
     def test_volatile_pool_returns_constant_product_hop(self) -> None:
         """stable_swap=False (default) → ConstantProductHop (unchanged base)."""
@@ -52,7 +52,7 @@ class TestFoldedToHopState:
             reserves_token0=1_000_000,
             reserves_token1=2_000_000,
         )
-        # stable_swap defaults to False on a plain LiquidityPool.
+        # stable_swap defaults to False on a plain UniswapV2Pool.
         assert pool.stable_swap is False
         hop = pool.to_hop_state(zero_for_one=True)
         assert isinstance(hop, ConstantProductHop)
@@ -78,7 +78,7 @@ class TestFoldedToHopState:
 
 
 class TestFoldedVolatileCalcUnchanged:
-    """A volatile LiquidityPool (stable_swap=False) still delegates calc to Rust.
+    """A volatile UniswapV2Pool (stable_swap=False) still delegates calc to Rust.
 
     The fold must NOT perturb the slice-5 Rust-delegation hot path for the
     99% case (non-stable V2 pools).
@@ -101,7 +101,7 @@ class TestFoldedVolatileCalcUnchanged:
         amount = 10_000_000
         # The Rust handle's direct calc (the slice-5 delegation target).
         direct = pool._py_pool.calculate_tokens_out(zero_for_one=True, amount_in=amount)
-        # The folded LiquidityPool.calculate_tokens_out_from_tokens_in (routes
+        # The folded UniswapV2Pool.calculate_tokens_out_from_tokens_in (routes
         # via super() → UniswapV2PoolCalc → Rust, when stable_swap=False).
         folded = pool.calculate_tokens_out_from_tokens_in(pool.token0, amount)
         assert folded == direct

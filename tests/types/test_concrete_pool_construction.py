@@ -16,7 +16,7 @@ from degenbot.pancakeswap.pools import PancakeswapV3Pool
 from degenbot.sushiswap.pools import SushiswapV3Pool
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.pool_type import PoolFamily
-from degenbot.uniswap.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from tests.helpers.erc20_factory import make_erc20
@@ -116,7 +116,7 @@ V4_POOL_MANAGER = "0x000000000004444c5dc75cB358380D2e3dE08A90"
 # ---------------------------------------------------------------------------
 
 
-def _make_uniswap_v2_pool() -> LiquidityPool:
+def _make_uniswap_v2_pool() -> UniswapV2Pool:
     weth = _make_weth()
     usdc = _make_usdc()
 
@@ -134,7 +134,7 @@ def _make_uniswap_v2_pool() -> LiquidityPool:
     )
 
 
-def _make_sushiswap_v2_pool() -> LiquidityPool:
+def _make_sushiswap_v2_pool() -> UniswapV2Pool:
     sushi = _make_sushi()
     usdt = _make_usdt()
 
@@ -152,7 +152,7 @@ def _make_sushiswap_v2_pool() -> LiquidityPool:
     )
 
 
-def _make_pancakeswap_v2_pool() -> LiquidityPool:
+def _make_pancakeswap_v2_pool() -> UniswapV2Pool:
     weth = _make_weth()
     usdc = _make_usdc()
 
@@ -253,9 +253,9 @@ def _make_uniswap_v4_pool() -> UniswapV4Pool:
 # ---------------------------------------------------------------------------
 
 MAINNET_POOLS: list[tuple[callable, type, PoolFamily]] = [
-    (_make_uniswap_v2_pool, LiquidityPool, PoolFamily.CONSTANT_PRODUCT),
-    (_make_sushiswap_v2_pool, LiquidityPool, PoolFamily.CONSTANT_PRODUCT),
-    (_make_pancakeswap_v2_pool, LiquidityPool, PoolFamily.CONSTANT_PRODUCT),
+    (_make_uniswap_v2_pool, UniswapV2Pool, PoolFamily.CONSTANT_PRODUCT),
+    (_make_sushiswap_v2_pool, UniswapV2Pool, PoolFamily.CONSTANT_PRODUCT),
+    (_make_pancakeswap_v2_pool, UniswapV2Pool, PoolFamily.CONSTANT_PRODUCT),
     (_make_uniswap_v3_pool, UniswapV3Pool, PoolFamily.CONCENTRATED_LIQUIDITY),
     (_make_sushiswap_v3_pool, SushiswapV3Pool, PoolFamily.CONCENTRATED_LIQUIDITY),
     (_make_pancakeswap_v3_pool, PancakeswapV3Pool, PoolFamily.CONCENTRATED_LIQUIDITY),
@@ -390,8 +390,8 @@ class TestInheritance:
     """Variant pools inherit from the correct base class."""
 
     # ADR-005 slice 7 step 4b: the hollow V2 DEX subclasses are deleted, so the
-    # V2-inherits-LiquidityPool checks are now trivial (they all ARE
-    # LiquidityPool). The V3 subclass checks remain meaningful.
+    # V2-inherits-UniswapV2Pool checks are now trivial (they all ARE
+    # UniswapV2Pool). The V3 subclass checks remain meaningful.
 
     def test_sushiswap_v3_inherits_uniswap_v3(self):
         assert issubclass(SushiswapV3Pool, UniswapV3Pool)
@@ -401,7 +401,7 @@ class TestInheritance:
 
     def test_all_inherit_abstract_liquidity_pool(self):
         for cls in [
-            LiquidityPool,
+            UniswapV2Pool,
             UniswapV3Pool,
             SushiswapV3Pool,
             PancakeswapV3Pool,

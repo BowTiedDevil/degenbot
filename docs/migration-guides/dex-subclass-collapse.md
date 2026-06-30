@@ -6,20 +6,20 @@ standalone features without a backwards compatibility layer."
 ## Summary
 
 The hollow V2 DEX subclass hierarchy is collapsed. The canonical
-`LiquidityPool` companion (ADR-005) is now registered for **every** V2-family
+`UniswapV2Pool` companion (ADR-005) is now registered for **every** V2-family
 DEX factory (Uniswap, SushiSwap, PancakeSwap, Swapbased, Camelot), keyed on a
-canonical `DexIdentity` preset. `Bot.build_pool` returns `LiquidityPool` for
+canonical `DexIdentity` preset. `Bot.build_pool` returns `UniswapV2Pool` for
 all V2-family DEXes.
 
 ### Deleted
 
 | Symbol | Was | Replaced by |
 |--------|-----|-------------|
-| `SushiswapV2Pool` | hollow `LiquidityPool` subclass (only a `variant` ClassVar) | `LiquidityPool` + `dex.variant == "sushiswap-v2"` |
-| `PancakeswapV2Pool` | hollow subclass (`variant` + fee/ABI ClassVars) | `LiquidityPool` + `dex.variant == "pancakeswap-v2"` |
-| `SwapbasedV2Pool` | hollow subclass (`variant`) | `LiquidityPool` + `dex.variant == "swapbased-v2"` |
-| `CamelotLiquidityPool` | subclass + `CamelotPoolCalc` stable-strategy mixin | `LiquidityPool` (stable strategy folded in, step 4a) + `dex.variant == "camelot-v2-volatile"`/`"camelot-v2-stable"` |
-| `CamelotPoolCalc` | stable-strategy calc mixin | folded into `LiquidityPool` (step 4a) |
+| `SushiswapV2Pool` | hollow `UniswapV2Pool` subclass (only a `variant` ClassVar) | `UniswapV2Pool` + `dex.variant == "sushiswap-v2"` |
+| `PancakeswapV2Pool` | hollow subclass (`variant` + fee/ABI ClassVars) | `UniswapV2Pool` + `dex.variant == "pancakeswap-v2"` |
+| `SwapbasedV2Pool` | hollow subclass (`variant`) | `UniswapV2Pool` + `dex.variant == "swapbased-v2"` |
+| `CamelotLiquidityPool` | subclass + `CamelotPoolCalc` stable-strategy mixin | `UniswapV2Pool` (stable strategy folded in, step 4a) + `dex.variant == "camelot-v2-volatile"`/`"camelot-v2-stable"` |
+| `CamelotPoolCalc` | stable-strategy calc mixin | folded into `UniswapV2Pool` (step 4a) |
 | `CamelotBuilder` | Camelot-specific builder | folded into `V2PoolBuilder.build` (Camelot fetches branch on `dex.variant`) |
 | `SushiswapV2PoolTracker`, `PancakeswapV2PoolTracker`, `SwapbasedV2PoolTracker` | per-DEX V2 trackers | `UniswapV2PoolTracker` (generic; pass the DEX's factory address) |
 | Files: `swapbased/pools.py`, `swapbased/trackers.py`, `camelot/pools.py`, `camelot/v2_pool_calc.py`, `builders/camelot_builder.py` | | deleted |
@@ -35,8 +35,8 @@ all V2-family DEXes.
   `"sushiswap-v2"`, `"camelot-v2-volatile"`, …) is resolvable via
   `pool_type_registry.get_v2_identity(chain_id, factory)`.
 - Camelot's **solidly-stable calculation** + the stable `to_hop_state` branch
-  are folded into `LiquidityPool` (gated on `stable_swap`), so Camelot stable
-  pools still calc correctly via `LiquidityPool`.
+  are folded into `UniswapV2Pool` (gated on `stable_swap`), so Camelot stable
+  pools still calc correctly via `UniswapV2Pool`.
 - Aerodrome V2 is **deferred** (TODO-e30504ed) — `AerodromeV2Pool` + its
   builder are unchanged this slice.
 
@@ -54,7 +54,7 @@ if pool.dex is not None and pool.dex.variant == "sushiswap-v2":
     ...
 
 # After (V2-family check)
-if isinstance(pool, LiquidityPool):
+if isinstance(pool, UniswapV2Pool):
     ...
 ```
 
@@ -65,9 +65,9 @@ if isinstance(pool, LiquidityPool):
 pool = bot.build_pool("0x...")
 # type(pool) was SushiswapV2Pool / CamelotLiquidityPool / ...
 
-# After: always LiquidityPool for V2-family
+# After: always UniswapV2Pool for V2-family
 pool = bot.build_pool("0x...")
-assert isinstance(pool, LiquidityPool)
+assert isinstance(pool, UniswapV2Pool)
 # Distinguish DEX via the preset:
 assert pool.dex.variant == "sushiswap-v2"
 ```
@@ -80,7 +80,7 @@ from degenbot.sushiswap.pools import SushiswapV2Pool
 from degenbot.camelot.pools import CamelotLiquidityPool
 
 # After
-from degenbot.uniswap.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 # V3 subclasses are retained:
 from degenbot.sushiswap.pools import SushiswapV3Pool
@@ -112,7 +112,7 @@ precedence. See `tests/helpers/v2_pool_factory.py`.
 
 Four fork-gated (anvil) test files were module-skipped to unblock the offline
 collection — their premises were tied to the deleted subclasses and each
-needs a rewrite under the `LiquidityPool` + `dex.variant` model:
+needs a rewrite under the `UniswapV2Pool` + `dex.variant` model:
 
 - `tests/builders/test_from_chain.py` — Camelot builder tests (now fold
   through `V2PoolBuilder.build`'s Camelot branch).
@@ -120,7 +120,7 @@ needs a rewrite under the `LiquidityPool` + `dex.variant` model:
   deprecated direct-construction pattern; rewrite via `bot.build_pool`).
 - `tests/registry/test_pool_subclass_selection.py` — per-DEX tracker
   subclass selection (premise obsolete: V2 trackers now all return
-  `LiquidityPool`).
+  `UniswapV2Pool`).
 - `tests/uniswap/v2/test_uniswap_v2_liquidity_pool.py` — large V2/pickle
   fixture file (constructs `CamelotLiquidityPool` throughout).
 

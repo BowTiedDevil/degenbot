@@ -64,7 +64,7 @@ from web3 import AsyncWeb3, Web3
 from web3.exceptions import TransactionNotFound, Web3Exception
 from web3.types import BlockStateCallV1, SimulateV1Payload, StateOverrideParams, TxParams
 
-from degenbot import Bot, LiquidityPool, UniswapV3Pool, get_checksum_address
+from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, get_checksum_address
 from degenbot.arbitrage import (
     EngineRegistry,
     HopInfo,
@@ -732,7 +732,7 @@ def _make_backrun_config(node_http: str) -> DegenbotConfig:
 
 
 def resolve_directions(
-    pools: list[LiquidityPool | UniswapV3Pool | UniswapV4Pool],
+    pools: list[UniswapV2Pool | UniswapV3Pool | UniswapV4Pool],
     input_token_address: str,
 ) -> list[bool] | None:
     """Determine zero_for_one for each hop so the cycle closes.
@@ -1176,7 +1176,7 @@ async def build_paths(
                 pool_type_strs.append("")
 
         # Build pools through appropriate constructors
-        pools: list[LiquidityPool | UniswapV3Pool | UniswapV4Pool] = []
+        pools: list[UniswapV2Pool | UniswapV3Pool | UniswapV4Pool] = []
         skip = False
         # V4 admission refusals (hook/dynamic-fee) surface from the builder at
         # `bot.build_managed_pool` time — the Rust core enforces them in

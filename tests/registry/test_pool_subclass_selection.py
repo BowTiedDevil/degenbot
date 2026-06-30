@@ -1,7 +1,7 @@
 # ADR-005 slice 7 step 4b: this fork-gated test imports the deleted hollow V2
 # DEX subclasses (Sushi/Pancake/Swapbased/Camelot) and/or needs anvil. Skipping
 # at module level unblocks the offline collection; pending a full rewrite under
-# anvil to the `LiquidityPool` + `dex.variant` model. See
+# anvil to the `UniswapV2Pool` + `dex.variant` model. See
 # docs/migration-guides/dex-subclass-collapse.md.
 import pytest
 
@@ -13,7 +13,7 @@ pytest.skip(
 """Tests that verify pool managers return the correct pool subclass for each DEX variant.
 
 This ensures that:
-- UniswapV2PoolTracker returns LiquidityPool
+- UniswapV2PoolTracker returns UniswapV2Pool
 - SushiswapV2PoolTracker returns SushiswapV2Pool
 - AerodromeV2PoolTracker returns AerodromeV2Pool
 - UniswapV3PoolTracker returns UniswapV3Pool
@@ -27,7 +27,7 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.provider import ProviderAdapter
 from degenbot.sushiswap.pools import SushiswapV2Pool
 from degenbot.sushiswap.trackers import SushiswapV2PoolTracker
-from degenbot.uniswap.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.trackers import UniswapV2PoolTracker, UniswapV3PoolTracker
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.helpers.bot_factory import make_bot_with_provider
@@ -64,7 +64,7 @@ class TestV2PoolSubclassSelection:
         self,
         fork_mainnet_full: AnvilFork,
     ) -> None:
-        """UniswapV2PoolTracker should return LiquidityPool instances."""
+        """UniswapV2PoolTracker should return UniswapV2Pool instances."""
         bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
         manager = UniswapV2PoolTracker(
             factory_address=MAINNET_UNISWAP_V2_FACTORY,
@@ -73,10 +73,10 @@ class TestV2PoolSubclassSelection:
 
         pool = manager.get_pool(MAINNET_UNISWAP_V2_WETH_WBTC)
 
-        assert isinstance(pool, LiquidityPool), f"Expected LiquidityPool, got {type(pool).__name__}"
+        assert isinstance(pool, UniswapV2Pool), f"Expected UniswapV2Pool, got {type(pool).__name__}"
         # Should NOT be a subclass instance
-        assert type(pool) is LiquidityPool, (
-            f"Expected exact type LiquidityPool, got {type(pool).__name__}"
+        assert type(pool) is UniswapV2Pool, (
+            f"Expected exact type UniswapV2Pool, got {type(pool).__name__}"
         )
 
     def test_sushiswap_v2_pool_manager_returns_sushiswap_v2_pool(

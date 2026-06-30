@@ -45,7 +45,7 @@ from degenbot.provider.factory import get_provider_from_config
 from degenbot.provider.subscription import Subscription  # noqa: TC001
 from degenbot.provider.sync_adapter import ProviderAdapter  # noqa: TC001
 from degenbot.registry import ManagedPoolRegistry, PoolRegistry, TokenRegistry
-from degenbot.uniswap.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from degenbot.version import __version__
@@ -169,7 +169,7 @@ class Bot:
 
         # Async adapter for subscriptions (single chain; created on demand)
         self._async_adapter: AsyncProviderAdapter | None = None
-        self.register_builder(LiquidityPool, self._v2_builder)
+        self.register_builder(UniswapV2Pool, self._v2_builder)
         self.register_builder(UniswapV3Pool, self._v3_builder)
         self.register_builder(UniswapV4Pool, self._v4_builder)
         self.register_builder(CurveStableswapPool, self._curve_builder)
@@ -177,7 +177,7 @@ class Bot:
         self.register_builder(BalancerV2Pool, self._balancer_builder)
         self.register_builder(BalancerV2StablePool, self._balancer_builder)
         # All V2-family DEXes (Uniswap/Sushi/Pancake/Swapbased/Camelot) now
-        # register the canonical ``LiquidityPool`` for their factories
+        # register the canonical ``UniswapV2Pool`` for their factories
         # (ADR-005 slice 7 step 4b) — the single V2 builder handles them.
 
         # Check database migration version
@@ -345,7 +345,7 @@ class Bot:
         instead of isinstance chains to find the right builder.
 
         Args:
-            pool_class: The concrete pool class (e.g. LiquidityPool, AerodromeV2Pool).
+            pool_class: The concrete pool class (e.g. UniswapV2Pool, AerodromeV2Pool).
             builder: The builder instance that handles construction and updates
                 for this pool type.
 
@@ -713,7 +713,7 @@ class Bot:
         if builder is not None:
             return builder
 
-        # Slow path: subclass match (e.g. AerodromeV2Pool subclasses LiquidityPool).
+        # Slow path: subclass match (e.g. AerodromeV2Pool subclasses UniswapV2Pool).
         # Walk the MRO looking for a registered builder.
         for base in type(pool).__mro__:
             builder = self._builders.get(base)

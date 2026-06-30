@@ -11,16 +11,16 @@ from degenbot.pancakeswap.pools import PancakeswapV3Pool
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.sushiswap.pools import SushiswapV3Pool
 from degenbot.uniswap.deployments import BaseAerodromeV2
-from degenbot.uniswap.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 # (Expected (chain_id, factory) → (pool_class, expected_variant, expected_kind)
 SINGLETON_REGISTRATIONS: dict[tuple[int, str], tuple[type, str | None, str]] = {
     # Ethereum Mainnet
-    (1, "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"): (LiquidityPool, None, "uniswap_v2"),
+    (1, "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"): (UniswapV2Pool, None, "uniswap_v2"),
     (1, "0x1F98431c8aD98523631AE4a59f267346ea31F984"): (UniswapV3Pool, None, "uniswap_v3"),
     (1, "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"): (
-        LiquidityPool,
+        UniswapV2Pool,
         "sushiswap",
         "sushiswap_v2",
     ),
@@ -30,7 +30,7 @@ SINGLETON_REGISTRATIONS: dict[tuple[int, str], tuple[type, str | None, str]] = {
         "sushiswap_v3",
     ),
     (1, "0x1097053Fd2ea711dad45caCcc45EfF7548fCB362"): (
-        LiquidityPool,
+        UniswapV2Pool,
         "pancakeswap",
         "pancakeswap_v2",
     ),
@@ -40,10 +40,10 @@ SINGLETON_REGISTRATIONS: dict[tuple[int, str], tuple[type, str | None, str]] = {
         "pancakeswap_v3",
     ),
     # Base
-    (8453, "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6"): (LiquidityPool, None, "uniswap_v2"),
+    (8453, "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6"): (UniswapV2Pool, None, "uniswap_v2"),
     (8453, "0x33128a8fC17869897dcE68Ed026d694621f6FDfD"): (UniswapV3Pool, None, "uniswap_v3"),
     (8453, "0x71524B4f93c58fcbF659783284E38825f0622859"): (
-        LiquidityPool,
+        UniswapV2Pool,
         "sushiswap",
         "sushiswap_v2",
     ),
@@ -53,7 +53,7 @@ SINGLETON_REGISTRATIONS: dict[tuple[int, str], tuple[type, str | None, str]] = {
         "sushiswap_v3",
     ),
     (8453, "0x02a84c1b3BBD7401a5f7fa98a384EBC70bB5749E"): (
-        LiquidityPool,
+        UniswapV2Pool,
         "pancakeswap",
         "pancakeswap_v2",
     ),
@@ -73,14 +73,14 @@ SINGLETON_REGISTRATIONS: dict[tuple[int, str], tuple[type, str | None, str]] = {
         "aerodrome_v2",
     ),
     (8453, "0x04C9f118d21e8B767D2e50C946f0cC9F6C367300"): (
-        LiquidityPool,
+        UniswapV2Pool,
         "swapbased",
         "swapbased_v2",
     ),
     # Arbitrum
     (42161, "0x1F98431c8aD98523631AE4a59f267346ea31F984"): (UniswapV3Pool, None, "uniswap_v3"),
     (42161, "0xc35DADB65012eC5796536bD9864eD8773aBc74C4"): (
-        LiquidityPool,
+        UniswapV2Pool,
         "sushiswap",
         "sushiswap_v2",
     ),
@@ -90,7 +90,7 @@ SINGLETON_REGISTRATIONS: dict[tuple[int, str], tuple[type, str | None, str]] = {
         "sushiswap_v3",
     ),
     (42161, "0x6EcCab422D763aC031210895C81787E87B43A652"): (
-        LiquidityPool,
+        UniswapV2Pool,
         "camelot",
         "camelot_v2",
     ),
@@ -177,8 +177,8 @@ class TestPoolTypeRegistrySingleton:
         assert len(pool_type_registry.registrations) == len(SINGLETON_REGISTRATIONS)
 
     def test_default_v2_class(self) -> None:
-        """LiquidityPool is set as the default V2 class."""
-        assert pool_type_registry.get_v2_class(999, "0x" + "0" * 40) is LiquidityPool
+        """UniswapV2Pool is set as the default V2 class."""
+        assert pool_type_registry.get_v2_class(999, "0x" + "0" * 40) is UniswapV2Pool
 
     def test_default_v3_class(self) -> None:
         """UniswapV3Pool is set as the default V3 class."""

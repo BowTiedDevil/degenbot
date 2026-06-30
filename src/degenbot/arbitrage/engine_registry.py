@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from degenbot import Bot, LiquidityPool
+from degenbot import Bot, UniswapV2Pool
 from degenbot.degenbot_rs import UniswapArbEngine
 from degenbot.logging import logger as bot_logger
 from degenbot.uniswap.snapshot_binary import (
@@ -347,7 +347,7 @@ class EngineRegistry:
                 state_view_address=self._verify_state_view,
             )
 
-    def register_v2_pool(self, pool: LiquidityPool) -> int:  # noqa: D102
+    def register_v2_pool(self, pool: UniswapV2Pool) -> int:  # noqa: D102
         if pool.address in self._v2_keys:
             return self._v2_keys[pool.address]
         # ADR-006 slice 9: with the engine sharing the bot's BotState, the V2
@@ -527,7 +527,7 @@ class EngineRegistry:
 
     def register_path(
         self,
-        pools_and_zfos: Sequence[tuple[LiquidityPool | UniswapV3Pool | UniswapV4Pool, bool]],
+        pools_and_zfos: Sequence[tuple[UniswapV2Pool | UniswapV3Pool | UniswapV4Pool, bool]],
     ) -> int:
         """Register a path from concrete pool objects + per-hop directions.
 
@@ -560,7 +560,7 @@ class EngineRegistry:
         for pool, zfo in pools_and_zfos:
             if isinstance(pool, UniswapV4Pool):
                 key = self._v4_keys.get(pool.pool_id.to_0x_hex())
-            elif isinstance(pool, LiquidityPool):
+            elif isinstance(pool, UniswapV2Pool):
                 key = self._v2_keys.get(pool.address)
             else:  # V3
                 key = self._v3_keys.get(pool.address)

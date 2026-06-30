@@ -133,12 +133,12 @@ override drops the prefix.
 | Rust core (data + state-machine logic, no I/O) | bare noun, no `pyo3` | `Bot`, `DexIdentity` |
 | Rust core internal storage (dispatch key, not public) | terse `<version>PoolState` | `V2PoolState`, `V3PoolState`, `V4PoolState` + `PoolEntry::V2/V3/V4` (each variant is a `(VxPoolIdentity, VxPoolState)` tuple — see the achieved-invariant section) |
 | PyO3 wrapper (`#[pyclass]`, keeps `Py`) | `Py` + companion name | `PyBot`, `PyLiquidityPool`, `PyErc20Token` |
-| Python companion (orchestration + I/O) | bare noun matching the wrapper minus `Py` | `Bot` ↔ `PyBot`; `Erc20Token` ↔ `PyErc20Token`; `LiquidityPool` ↔ `PyLiquidityPool` |
+| Python companion (orchestration + I/O) | bare noun matching the wrapper minus `Py` | `Bot` ↔ `PyBot`; `Erc20Token` ↔ `PyErc20Token`; `UniswapV2Pool` ↔ `PyLiquidityPool` |
 | Future Rust I/O struct | `Py` + `*Io`/`*Reader` | `PyBotIo` (stateful, holds provider/DB) |
 | Stateful Rust free functions | no `Py` prefix | per `rust/AGENTS.md` (`#[pyfunction]`) |
 
 **Generalized wrapper noun, variant is internal.** The wrapper noun is *generalized* —
-`PyLiquidityPool` (and the standalone-Rust `LiquidityPool` reference), not a
+`PyLiquidityPool` (and the standalone-Rust `UniswapV2Pool` reference), not a
 per-variant `PyV2PoolState`/`PyV3PoolState`/`PyV4PoolState`. The `V2`/`V3`/`V4`
 variant vocabulary lives **only** as internal Rust-core storage dispatch
 (`PoolEntry::V2(V2PoolIdentity, V2PoolState)` (+ V3/V4 twins) — the terse `VxPoolState`/`VxPoolIdentity` structs are match-arm targets,
@@ -153,15 +153,15 @@ token pair, fee, factory) and resolves the variant internally. The standalone-Ru
 **Stance B — collapsed DEX companions.** Under stance B, the hollow DEX-class
 hierarchy (`SushiswapV2Pool`, `PancakeswapV2Pool`, `SwapbasedV2Pool`, `CamelotLiquidityPool`
 — all of which added only a `variant` ClassVar + static fee constants, verified during grilling)
-collapses into the generalized `LiquidityPool` companion, with DEX identity carried as
+collapses into the generalized `UniswapV2Pool` companion, with DEX identity carried as
 `DexIdentity` data (stance II — identity is deployment data, not behavior) and DEX
 *behavioral* divergence carried as strategy on the base class (Camelot's solidly-stable
-calc + the stable `to_hop_state` branch were folded into `LiquidityPool` directly in
+calc + the stable `to_hop_state` branch were folded into `UniswapV2Pool` directly in
 slice 7 step 4a; Aerodrome V2's stable path + log decoder remain a separate subclass
 + builder, deferred per TODO-e30504ed — neither earns its own class hierarchy).
 DEX presets live in `degenbot-core` as `pub` values (`UNISWAP_V2`, `SUSHISWAP_V2`,
 `CAMELOT_V2`, etc.), resolvable via `dex_identity(variant)` + passed as the `dex=`
-construction parameter. `Bot.build_pool` returns `LiquidityPool` for every V2-family
+construction parameter. `Bot.build_pool` returns `UniswapV2Pool` for every V2-family
 DEX; the per-factory registration carries `variant="<dex>"` (preserving the DB `kind`)
 and the canonical preset. Public-API breakage is accepted (0.x major refactor).
 

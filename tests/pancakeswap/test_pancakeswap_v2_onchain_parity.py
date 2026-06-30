@@ -3,7 +3,7 @@
 Golden conversion of ``test_pancakeswap_calculations`` (the Pancake V2 router
 ``getAmountsOut`` exact-equality parity). The original module is module-level
 skipped (deleted ``PancakeswapV2Pool`` subclass) — this is the revival under
-the ``LiquidityPool`` + ``dex`` (ADR-005) model, as a golden-gated offline
+the ``UniswapV2Pool`` + ``dex`` (ADR-005) model, as a golden-gated offline
 parity test. One representative pool (WETH/USDbC) with the full
 13-multiplier x both-directions loop; the broad 200-pool live loop stays as a
 ``@pytest.mark.slow`` discovery gate.
@@ -45,7 +45,7 @@ from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 
 if TYPE_CHECKING:
-    from degenbot.uniswap.liquidity_pool import LiquidityPool
+    from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 PANCAKE_V2_PARITY_BLOCK = 46_875_151
 BASE_RPC_URI = "https://mainnet.base.org"
@@ -102,7 +102,7 @@ def _load_cassette() -> dict[str, Any]:
     return json.loads(_CASSETTE_PATH.read_bytes())
 
 
-def _build_pancake_v2_io_free(cassette: dict[str, Any]) -> LiquidityPool:
+def _build_pancake_v2_io_free(cassette: dict[str, Any]) -> UniswapV2Pool:
     """Build the Pancake V2 pool I/O-free from the reserves cassette.
 
     Standard Uniswap V2 constant-product formula; fee passed explicitly
@@ -142,7 +142,7 @@ def _build_pancake_v2_io_free(cassette: dict[str, Any]) -> LiquidityPool:
     )
 
 
-def _parity_cases(lp: LiquidityPool) -> list[tuple[str, Any, Any, int]]:
+def _parity_cases(lp: UniswapV2Pool) -> list[tuple[str, Any, Any, int]]:
     """Build ``(oracle_key, token_in, token_out, amount_in)`` cases.
 
     Amounts derive from the recorded reserves (cassette constants), so replay

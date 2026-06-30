@@ -316,7 +316,7 @@ class CurveStableswapPool(
     def external_update(self, update: CurveStableswapPoolExternalUpdate) -> None:
         """Apply an external state update with new balances.
 
-        Delegates to the Rust core (``Py.LiquidityPool.apply_curve_balance_update``)
+        Delegates to the Rust core (``PyLiquidityPool.apply_curve_balance_update``)
         which journals the prior balances (genesis-anchor V2-style discipline)
         and lands the new balances + ``update_block`` atomically
         (ADR-005 slice 11b). The ``StateCache`` temporal-navigation layer it
