@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from degenbot.curve.curve_stableswap_liquidity_pool import CurveDataProvider
     from degenbot.degenbot_rs import PyLiquidityPool
     from degenbot.erc20.erc20 import Erc20Token
-    from degenbot.types.aliases import BlockNumber, ChainId
+    from degenbot.types.aliases import BlockNumber
 
 
 def _strategies_to_rust_enums(strategies: PoolStrategies) -> tuple[int, int, int, int, int]:
@@ -56,7 +56,6 @@ def make_curve_pool(
     fee: int,
     admin_fee: int,
     balances: list[int] | tuple[int, ...],
-    chain_id: ChainId | None = None,
     state_block: BlockNumber | None = None,
     state_cache_depth: int = 8,
     data_provider: CurveDataProvider | None = None,
@@ -99,7 +98,6 @@ def make_curve_pool(
     same values the companion keeps (consumed by the future Rust ``get_dy``).
     """
     address_checksum = get_checksum_address(address)
-    resolved_chain_id = chain_id if chain_id is not None else tokens[0].chain_id
     state_block_int = state_block if state_block is not None else 0
 
     bot = py_bot if py_bot is not None else PyBot()
@@ -139,7 +137,6 @@ def make_curve_pool(
         a_coefficient=a_coefficient,
         fee=fee,
         admin_fee=admin_fee,
-        chain_id=resolved_chain_id,
         state_block=state_block_int,
         state_cache_depth=state_cache_depth,
         data_provider=data_provider,

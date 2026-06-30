@@ -42,7 +42,7 @@ from degenbot.exceptions.arbitrage import NoLiquidity
 from degenbot.exceptions.pool import EVMRevertError, InvalidSwapInputAmount, MissingCurveData
 from degenbot.logging import logger
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
-from degenbot.types.aliases import BlockNumber, ChainId
+from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import (
     PublisherMixin,
     Subscriber,
@@ -106,7 +106,6 @@ class CurveStableswapPool(
         a_coefficient: int,
         fee: int,
         admin_fee: int,
-        chain_id: ChainId | None = None,
         state_block: BlockNumber | None = None,
         state_cache_depth: int = 8,
         # On-chain data access (replaces 13 individual callback parameters)
@@ -160,7 +159,6 @@ class CurveStableswapPool(
         """
         self._py_pool = py_pool
         self.address = get_checksum_address(address)
-        self._chain_id = chain_id if chain_id is not None else tokens[0].chain_id
 
         self._tokens: tuple[Erc20Token, ...] = tuple(tokens)
         self._a_coefficient = a_coefficient
@@ -255,11 +253,6 @@ class CurveStableswapPool(
         for the mutable ``balances`` slot; this getter returns the live tuple.
         """
         return tuple(self._py_pool.balances)
-
-    @property
-    def chain_id(self) -> int | None:
-        """Return chain id."""
-        return self._chain_id
 
     @property
     def state(self) -> CurveStableswapPoolState:

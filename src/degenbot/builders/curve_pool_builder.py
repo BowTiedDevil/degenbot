@@ -205,7 +205,6 @@ class CurvePoolBuilder:
             a_coefficient=a_coefficient,
             fee=fee,
             admin_fee=admin_fee,
-            chain_id=chain_id,
             state_block=state_block,
             state_cache_depth=request.state_cache_depth,
             initial_a_coefficient=a_ramping.initial_a,
@@ -354,7 +353,6 @@ class CurvePoolBuilder:
             raise TypeError(msg)
 
         assert io is not None
-        assert pool.chain_id is not None
         raw_block_number = block_number if block_number is not None else io.get_block_number()
         block_number_: int = (
             raw_block_number if isinstance(raw_block_number, int) else int(raw_block_number)
