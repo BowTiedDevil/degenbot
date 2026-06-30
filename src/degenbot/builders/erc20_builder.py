@@ -90,7 +90,7 @@ class Erc20Builder:
                 18,
                 chain_id,
             )
-            token: Erc20Token = EtherPlaceholder(py_token)
+            token: Erc20Token = EtherPlaceholder._from_py_token(py_token)  # noqa: SLF001
             self._tokens.add(token_address=token.address, chain_id=chain_id, token=token)
             if not silent:
                 logger.info(f"• {token.symbol} ({token.name})")
@@ -187,7 +187,7 @@ class Erc20Builder:
                     session.commit()
 
         py_token = self._py_bot.register_token(address, name, symbol, decimals, chain_id)
-        token = Erc20Token(py_token)
+        token = Erc20Token._from_py_token(py_token)  # noqa: SLF001
 
         # Register (no self-registration)
         self._tokens.add(token_address=token.address, chain_id=chain_id, token=token)
