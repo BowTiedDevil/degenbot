@@ -373,7 +373,6 @@ class AsyncV3PoolBuilder:
             factory=factory,
             fee=fee,
             tick_spacing=tick_spacing_for_pool,
-            chain_id=chain_id,
             deployer_address=deployer,
             init_hash=init_hash,
             tick_data_fetcher=self._make_tick_data_fetcher(pool_address, chain_id, io=io),
@@ -425,7 +424,6 @@ class AsyncV3PoolBuilder:
             msg = f"AsyncV3PoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)
 
-        assert pool.chain_id is not None
         assert io is not None
 
         raw_block = block_number if block_number is not None else await io.get_block_number()

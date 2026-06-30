@@ -459,7 +459,6 @@ lp = make_v3_pool(
     sqrt_price_x96=34048891009198980752047510166697902,
     tick=259432,
     liquidity=544425151051415575,
-    chain_id=1,
     state_block=24947230,
     tick_bitmap=_tick_bitmap,
     tick_data=_tick_data,

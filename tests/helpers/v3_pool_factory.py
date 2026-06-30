@@ -24,7 +24,7 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
     from degenbot.degenbot_rs import PyLiquidityPool
-    from degenbot.types.aliases import BlockNumber, ChainId
+    from degenbot.types.aliases import BlockNumber
 
 
 def _tick_data_to_rust_rows(
@@ -77,7 +77,6 @@ def make_v3_pool(
     sqrt_price_x96: int,
     tick: int,
     liquidity: int,
-    chain_id: ChainId | None = None,
     deployer_address: str | None = None,
     init_hash: str | None = None,
     state_block: BlockNumber | None = None,
@@ -108,7 +107,6 @@ def make_v3_pool(
     companion is built non-sparse.
     """
     address_checksum = get_checksum_address(address)
-    resolved_chain_id = chain_id if chain_id is not None else token0.chain_id
 
     bot = py_bot if py_bot is not None else PyBot()
     # ADR-006 rolling-start race closure: seed tick_data INLINE in
@@ -156,7 +154,6 @@ def make_v3_pool(
         factory=factory,
         fee=fee,
         tick_spacing=tick_spacing,
-        chain_id=resolved_chain_id,
         deployer_address=deployer_address,
         init_hash=init_hash,
         tick_data_fetcher=tick_data_fetcher,

@@ -151,7 +151,6 @@ def offline_wbtc_weth_v3_pool(offline_adapter: ProviderAdapter) -> UniswapV3Pool
 
     return make_v3_pool(
         address=UNISWAP_V3_WBTC_WETH_POOL,
-        chain_id=1,
         state_block=UNISWAP_V3_WBTC_WETH_BLOCK,
         token0=wbtc,
         token1=weth,

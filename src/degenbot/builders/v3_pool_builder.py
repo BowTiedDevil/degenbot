@@ -418,7 +418,6 @@ class V3PoolBuilder(V3BuilderBase):
             factory=factory,
             fee=fee,
             tick_spacing=tick_spacing_for_pool,
-            chain_id=chain_id,
             deployer_address=deployer,
             init_hash=init_hash,
             tick_data_fetcher=self._make_tick_data_fetcher(pool_address, chain_id, io=io),
@@ -471,7 +470,6 @@ class V3PoolBuilder(V3BuilderBase):
             raise TypeError(msg)
 
         assert io is not None
-        assert pool.chain_id is not None
         raw_block = block_number if block_number is not None else io.get_block_number()
         block_number_ = int(raw_block) if not isinstance(raw_block, int) else raw_block
 
