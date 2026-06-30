@@ -76,14 +76,14 @@ class TestFromPyPoolSlimSeam:
         assert pool.token0.address == token0.address
         assert pool.token1.address == token1.address
 
-    def test_rejects_non_v2_handle_with_variant_error(self) -> None:
-        """A V3-family handle must be rejected with a variant-mismatch error.
+    def test_rejects_non_v2_handle_with_family_error(self) -> None:
+        """A V3-family handle must be rejected with a family-mismatch error.
 
         ``_from_py_pool`` is the V2 companion seam; wrapping a handle whose
         ``PoolEntry`` is not ``V2`` would read empty/default identity (the
         union-handle leak) and later crash with a confusing
         ``ZeroDivisionError`` on ``Fraction(denom - gamma, denom)``. The
-        variant assertion fails fast with a clear message instead.
+        ``pool_family`` assertion fails fast with a clear message instead.
         """
         py_bot = PyBot()
 
@@ -120,7 +120,7 @@ class TestFromPyPoolSlimSeam:
 
         # ``_py_pool`` is the shared ``PyLiquidityPool`` handle type; the V3
         # companion holds the same handle shape, so passing it to the V2 seam
-        # is the misuse the variant assertion must catch.
+        # is the misuse the ``pool_family`` assertion must catch.
         with pytest.raises(DegenbotValueError, match="V2-family"):
             UniswapV2Pool._from_py_pool(v3_pool._py_pool)  # noqa: SLF001
 
