@@ -55,6 +55,9 @@ def make_v2_pool(
     pool_class: type[LiquidityPool] = LiquidityPool,
     dex: PyDexIdentity | None = None,
     py_bot: PyBot | None = None,
+    variant: str | None = None,
+    stable_swap: bool = False,
+    fee_denominator: int | None = None,
 ) -> LiquidityPool:
     """Construct an I/O-free V2-style pool companion over a fresh ``PyLiquidityPool`` handle.
 
@@ -118,6 +121,16 @@ def make_v2_pool(
         gamma_numer1, fee_denom1 = _gamma_complement(fee_token1)
 
     py_bot = py_bot if py_bot is not None else PyBot()
+
+    # Descriptor params (ADR-005 / FMO2GE): ``variant`` defaults from the dex
+    # preset (if provided) or "uniswap-v2". ``stable_swap``/``fee_denominator``
+    # default to False/None — callers building a Camelot stable pool pass them
+    # explicitly. These flow into Rust as a ``V2PoolDescriptor`` on the
+    # ``PyLiquidityPool`` handle.
+    resolved_variant = (
+        variant if variant is not None else (dex.variant if dex is not None else "uniswap-v2")
+    )
+
     pool_id = py_bot.register_v2_pool(
         address=address,
         token0=token0.address,
@@ -130,6 +143,9 @@ def make_v2_pool(
         fee_denom1=fee_denom1,
         factory=factory,
         update_block=state_block,
+        variant=resolved_variant,
+        stable_swap=stable_swap,
+        fee_denominator=fee_denominator,
     )
     py_pool: PyLiquidityPool | None = py_bot.get_pool(pool_id)
     assert py_pool is not None, "register_v2_pool returned a pool_id with no handle"

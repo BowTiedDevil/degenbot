@@ -210,6 +210,12 @@ class AsyncV2PoolBuilder:
         gamma_numer1 = common.fee_token1.denominator - common.fee_token1.numerator
         fee_denom1 = common.fee_token1.denominator
 
+        # Descriptor params (ADR-005 slice 7 / FMO2GE): the DEX variant flows into
+        # Rust as a ``V2PoolDescriptor`` on the ``PyLiquidityPool`` handle. The
+        # async builder has no Camelot branch, so stable_swap/fee_denominator
+        # stay at their defaults.
+        variant = dex.variant if dex is not None else "uniswap-v2"
+
         pool_id = self._py_bot.register_v2_pool(
             address=common.pool_address,
             token0=common.token0_address,
@@ -222,6 +228,9 @@ class AsyncV2PoolBuilder:
             fee_denom1=fee_denom1,
             factory=common.factory,
             update_block=common.state_block,
+            variant=variant,
+            stable_swap=False,
+            fee_denominator=None,
         )
         py_pool = self._py_bot.get_pool(pool_id)
         assert py_pool is not None, "register_v2_pool returned a pool_id with no handle"
