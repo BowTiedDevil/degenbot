@@ -120,7 +120,6 @@ def _build_aerodrome_v2_io_free(cassette: dict[str, Any]) -> AerodromeV2Pool:
         stable=cassette["stable"],
         reserves_token0=cassette["reserves_token0"],
         reserves_token1=cassette["reserves_token1"],
-        chain_id=cassette["chain_id"],
         deployer_address=factory,
         state_block=cassette["block"],
     )
