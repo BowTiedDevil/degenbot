@@ -11,7 +11,7 @@ from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
 from degenbot.calculations.camelot import get_y_camelot, k_camelot
 from degenbot.calculations.solidly_stable import calc_exact_in_stable
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.degenbot_rs import PyDexIdentity, PyLiquidityPool
+from degenbot.degenbot_rs import PyLiquidityPool
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import (
@@ -19,7 +19,7 @@ from degenbot.exceptions.pool import (
     NoPoolStateAvailable,
 )
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
-from degenbot.types.aliases import BlockNumber, ChainId
+from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import ConstantProductHop, HopType, SolidlyStableHop
 from degenbot.types.pool_protocols import SimulationResult
@@ -89,96 +89,89 @@ class LiquidityPool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
         raise TypeError(msg)
 
     @classmethod
-    def _from_py_pool(
-        cls,
-        py_pool: PyLiquidityPool,
-        *,
-        address: ChecksumAddress | str,
-        token0: Erc20Token,
-        token1: Erc20Token,
-        dex: PyDexIdentity | None = None,
-        chain_id: ChainId | None = None,
-        deployer_address: str | None = None,
-        init_hash: str | None = None,
-        factory: str | None = None,
-        fee_token0: Fraction | None = None,
-        fee_token1: Fraction | None = None,
-    ) -> Self:
+    def _from_py_pool(cls, py_pool: PyLiquidityPool) -> Self:
         """Wrap a Rust-owned ``PyLiquidityPool`` handle as a Python companion.
 
-        Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). Rust
-        owns the mutable state (reserves + reorg journal) as ``V2PoolState``;
-        this companion reads it through ``self._py_pool`` (via the atomic
-        ``snapshot()``) and delegates ``external_update`` (Sync) / discard /
-        restore to the handle. Immutable identity (tokens, factory, fees)
-        stays Python-side this slice — calc (slice 5) and identity (later)
-        follow.
+        Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). The
+        handle is self-describing: every identity field (address, factory,
+        fees, tokens, dex preset, stable strategy) is read off it — no
+        identity is passed as constructor args. Rust owns the mutable state
+        (reserves + reorg journal) as ``V2PoolState`` and the immutable
+        registration metadata as ``V2PoolDescriptor``; this companion reads
+        both through ``self._py_pool``.
 
         Only ``Bot.build_pool()`` (production) and ``make_v2_pool`` (tests)
-        should call this — they have already registered the pool in a
-        ``PyBot`` and obtained the handle. ``cls`` is used so subclasses that
-        only set ClassVars (the documented extension contract) inherit this
-        seam and produce instances of the subclass.
-
-        ``dex`` (ADR-005 slice 7 step 3) carries the canonical DexIdentity
-        preset: the variant tag, reserves ABI shape, canonical-chain
-        factory/init-hash, + default fees. When ``dex`` is provided AND the
-        explicit ``factory``/``init_hash``/``deployer_address``/
-        ``fee_token0``/``fee_token1`` params are ``None``, the preset fills
-        them in. Explicit params always take precedence — so existing callers
-        (which pass all explicit params) are unaffected.
+        should call this — they have already registered the pool (and, per
+        ADR-006, its tokens in the same ``Bot``) and obtained the handle.
+        ``cls`` is used so subclasses that only set ClassVars (the documented
+        extension contract) inherit this seam and produce instances of the
+        subclass.
 
         Returns:
             A ``cls`` instance wrapping ``py_pool``.
 
         Raises:
-            DegenbotValueError: If ``factory`` is not provided explicitly
-                AND not resolvable from ``dex``.
+            DegenbotValueError: If the handle has no ``DexIdentity`` preset
+                (the pool was not registered with a variant) or the pool's
+                tokens are not registered in the same ``Bot`` (ADR-006).
 
         """
         self = cls.__new__(cls)
         self._py_pool = py_pool
+
+        # DexIdentity preset — resolved from the registered variant tag by
+        # Rust (``preset_for_variant``). Always present for a V2 pool
+        # registered via ``register_v2_pool`` (which validates the variant).
+        dex = py_pool.dex
+        if dex is None:
+            msg = (
+                "PyLiquidityPool handle has no DexIdentity preset; the pool "
+                "must be registered with a variant via register_v2_pool"
+            )
+            raise DegenbotValueError(message=msg)
         self.dex = dex
 
-        # Fill in None params from the dex preset, if provided (explicit > dex
-        # > class-default precedence). ``dex.fee_tokenN`` is the RETAINED
-        # post-fee fraction ``(gamma_numer, fee_denom)`` (Rust convention); the
-        # Python companion stores the FEE ``Fraction`` (e.g. ``Fraction(3, 1000)``
-        # for 0.3%), so the conversion is ``Fraction(denom - gamma, denom)``.
-        if dex is not None:
-            if factory is None:
-                factory = dex.factory
-            if init_hash is None:
-                init_hash = dex.init_hash
-            if deployer_address is None:
-                deployer_address = dex.deployer
-            if fee_token0 is None:
-                gamma0, denom0 = dex.fee_token0
-                fee_token0 = Fraction(denom0 - gamma0, denom0)
-            if fee_token1 is None:
-                gamma1, denom1 = dex.fee_token1
-                fee_token1 = Fraction(denom1 - gamma1, denom1)
-
-        if factory is None:
-            msg = "factory must be provided explicitly or resolvable from dex"
+        # Recover token companions from the SAME shared BotState (ADR-006):
+        # ``get_token0``/``get_token1`` return ``PyErc20Token`` handles for
+        # tokens registered in the same ``Bot`` as the pool. Production
+        # builders register tokens via the shared ``Erc20Builder`` (same
+        # ``_py_bot``); the test factory registers them explicitly.
+        py_token0 = py_pool.get_token0()
+        py_token1 = py_pool.get_token1()
+        if py_token0 is None or py_token1 is None:
+            msg = (
+                "pool tokens must be registered in the same Bot as the pool "
+                "(ADR-006): get_token0/get_token1 returned None"
+            )
             raise DegenbotValueError(message=msg)
-        assert fee_token0 is not None
-        assert fee_token1 is not None
+        token0 = Erc20Token._from_py_token(py_token0)  # noqa: SLF001
+        token1 = Erc20Token._from_py_token(py_token1)  # noqa: SLF001
 
-        self.address = get_checksum_address(address)
-        self._chain_id = chain_id if chain_id is not None else token0.chain_id
+        self.address = get_checksum_address(py_pool.address)
+        self.factory = get_checksum_address(py_pool.factory)
+
+        # ``fee_tokenN`` on the handle is the RETAINED post-fee fraction
+        # ``(gamma_numer, fee_denom)`` (Rust convention); the companion stores
+        # the FEE ``Fraction`` (e.g. ``Fraction(3, 1000)`` for 0.3%), so the
+        # conversion is ``Fraction(denom - gamma, denom)``.
+        gamma0, denom0 = py_pool.fee_token0
+        gamma1, denom1 = py_pool.fee_token1
+        self._fee_token0 = Fraction(denom0 - gamma0, denom0)
+        self._fee_token1 = Fraction(denom1 - gamma1, denom1)
+
+        self._chain_id = token0.chain_id
         self._token0 = token0
         self._token1 = token1
-        self.factory = get_checksum_address(factory)
-        self._fee_token0 = fee_token0
-        self._fee_token1 = fee_token1
 
-        # Derive deployer/init_hash from constructor args, the dex preset, or
-        # class defaults (in that precedence order).
-        self.init_hash = (
-            init_hash if init_hash is not None else self.UNISWAP_V2_MAINNET_POOL_INIT_HASH
-        )
-        self.deployer = get_checksum_address(deployer_address or self.factory)
+        # Deployer/init_hash come from the dex preset (the only path now —
+        # the handle carries the canonical deployment identity).
+        self.init_hash = dex.init_hash
+        self.deployer = get_checksum_address(dex.deployer)
+
+        # Camelot stable strategy + integer fee scale: read off the handle's
+        # descriptor (no longer class-level attrs mutated by the builder).
+        self.stable_swap = py_pool.stable_swap
+        self.fee_denominator = py_pool.fee_denominator
 
         fee_numerator_0 = 100 * self._fee_token0.numerator / self._fee_token0.denominator
         if self._fee_token0 == self._fee_token1:

@@ -87,8 +87,8 @@ class TestV2PoolIOFreeConstructor:
 
         assert pool.address == WETH_USDC_V2_POOL
         assert pool.chain_id == 1
-        assert pool.token0 is weth
-        assert pool.token1 is usdc
+        assert pool.token0.address == weth.address
+        assert pool.token1.address == usdc.address
         assert pool.factory == get_checksum_address(UNISWAP_V2_FACTORY)
         assert pool.fee_token0 == Fraction(3, 1000)
         assert pool.fee_token1 == Fraction(3, 1000)
@@ -195,10 +195,10 @@ class TestBotBuildV2Pool:
 
         # Pre-register tokens so build_erc20token doesn't need RPC
         weth = make_erc20(
-            _PY_BOT, weth_addr, chain_id=1, name="Wrapped Ether", symbol="WETH", decimals=18
+            bot._py_bot, weth_addr, chain_id=1, name="Wrapped Ether", symbol="WETH", decimals=18
         )
         usdc = make_erc20(
-            _PY_BOT, usdc_addr, chain_id=1, name="USD Coin", symbol="USDC", decimals=6
+            bot._py_bot, usdc_addr, chain_id=1, name="USD Coin", symbol="USDC", decimals=6
         )
         bot.tokens.add(token_address=weth_addr, chain_id=1, token=weth)
         bot.tokens.add(token_address=usdc_addr, chain_id=1, token=usdc)
@@ -331,8 +331,12 @@ class TestV2PoolTrackerWithBot:
         bot = Bot(config, provider=provider)
 
         # Pre-register tokens so build_erc20token doesn't need RPC
-        weth = _make_weth()
-        usdc = _make_usdc()
+        weth = make_erc20(
+            bot._py_bot, weth_addr, chain_id=1, name="Wrapped Ether", symbol="WETH", decimals=18
+        )
+        usdc = make_erc20(
+            bot._py_bot, usdc_addr, chain_id=1, name="USD Coin", symbol="USDC", decimals=6
+        )
         bot.tokens.add(token_address=weth_addr, chain_id=1, token=weth)
         bot.tokens.add(token_address=usdc_addr, chain_id=1, token=usdc)
 

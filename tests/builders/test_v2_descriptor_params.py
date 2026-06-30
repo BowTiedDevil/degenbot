@@ -36,6 +36,14 @@ class _RegisterSpy:
         self.captured_kwargs = dict(kwargs)
         return self._py_bot.register_v2_pool(**kwargs)
 
+    def get_token(self, address: str) -> object:
+        return self._py_bot.get_token(address)
+
+    def register_token(
+        self, address: str, name: str, symbol: str, decimals: int, chain_id: int
+    ) -> object:
+        return self._py_bot.register_token(address, name, symbol, decimals, chain_id)
+
     def get_pool(self, pool_id: int) -> PyLiquidityPool | None:
         return self._py_bot.get_pool(pool_id)
 

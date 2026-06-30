@@ -158,12 +158,14 @@ class TestAsyncBotBuildPoolV2:
         bot = await AsyncBot.from_provider(config, provider=provider)
 
         # Pre-register tokens so async ERC20 builder doesn't need chain calls
-        weth = _make_weth()
-        usdc = _make_usdc()
+        weth = make_erc20(
+            bot._py_bot, WETH_ADDR, chain_id=1, name="Wrapped Ether", symbol="WETH", decimals=18
+        )
+        usdc = make_erc20(
+            bot._py_bot, USDC_ADDR, chain_id=1, name="USD Coin", symbol="USDC", decimals=6
+        )
         bot.tokens.add(chain_id=1, token_address=WETH_ADDR, token=weth)
         bot.tokens.add(chain_id=1, token_address=USDC_ADDR, token=usdc)
-
-        # V2 factory is already registered in pool_type_registry at import time
 
         # Mock responses
         factory_calldata = encode_function_calldata("factory()", None)
