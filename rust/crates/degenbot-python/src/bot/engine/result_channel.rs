@@ -49,14 +49,14 @@ impl PyUniswapArbEngine {
         for pool_ref in &pool_refs {
             match pool_ref.hop_type {
                 HopType::V2 => {
-                    let state = core.get_v2_pool_state(pool_ref.pool_key);
-                    let addr = state.map(|s| format!("{}", s.address));
+                    let identity = core.get_v2_identity(pool_ref.pool_key);
+                    let addr = identity.map(|i| format!("{}", i.address));
                     // V2 fee is `gamma_numer`, orientation-selected (ADR-003).
-                    let gamma_numer = state.map(|s| {
+                    let gamma_numer = identity.map(|i| {
                         if pool_ref.zero_for_one {
-                            s.fee_token0.0
+                            i.fee_token0.0
                         } else {
-                            s.fee_token1.0
+                            i.fee_token1.0
                         }
                     });
                     hops.push(HopInfo {

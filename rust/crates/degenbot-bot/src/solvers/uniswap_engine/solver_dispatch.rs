@@ -362,20 +362,23 @@ impl UniswapEngine {
                     let Some(state) = core.get_v2_pool_state(pool_ref.pool_key) else {
                         return; // Missing pool → invalid
                     };
+                    let Some(identity) = core.get_v2_identity(pool_ref.pool_key) else {
+                        return; // Missing pool → invalid
+                    };
                     let (reserve_in, reserve_out, gamma_numer, fee_denom) = if pool_ref.zero_for_one
                     {
                         (
                             state.reserve0,
                             state.reserve1,
-                            state.fee_token0.0,
-                            state.fee_token0.1,
+                            identity.fee_token0.0,
+                            identity.fee_token0.1,
                         )
                     } else {
                         (
                             state.reserve1,
                             state.reserve0,
-                            state.fee_token1.0,
-                            state.fee_token1.1,
+                            identity.fee_token1.0,
+                            identity.fee_token1.1,
                         )
                     };
                     let hop_state = crate::solvers::mobius_int::IntHopState::new(
