@@ -2,10 +2,20 @@
 //!
 //! This module is the pure-Rust core of the pathfinding algorithm. It
 //! replaces the Python `networkx.MultiGraph` + recursive `_dfs` with a lean
-//! adjacency-list graph and an iterative DFS using a `HashSet` visited-set
+//! adjacency-list graph and an iterative DFS using a `Vec<bool>` visited-set
 //! for O(1) cycle detection.
+//!
+//! # Performance design
+//!
+//! External token IDs (`u64`) are remapped to compact contiguous indices
+//! (`u32`) at construction. The adjacency list is a flat `Vec<Vec<CompactEdge>>`
+//! indexed by compact token index — a direct array lookup with no hashing.
+//! Pools are likewise remapped to compact indices so the visited set is a
+//! `Vec<bool>` (indexed by pool index) instead of a `HashSet`, eliminating
+//! hashing on every edge explored. Each `CompactEdge` is 8 bytes (two `u32`)
+//! versus the 24-byte `Edge`, improving cache density for the hot DFS loop.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Discriminant for the three pool-table families.
 ///
@@ -19,6 +29,7 @@ use std::collections::{HashMap, HashSet};
 /// table, so the `PoolKind` discriminant disambiguates V4 IDs from V2/V3
 /// IDs.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[non_exhaustive]
 pub enum PoolKind {
     V2,
     V3,
@@ -50,10 +61,9 @@ impl PoolKind {
     }
 }
 
-/// A pool edge in the graph: which pool connects a node to its neighbor.
-///
-/// Stored in the adjacency list of the source node; `neighbor` is the
-/// token ID on the other end of the pool.
+/// A pool edge in the external (database) form. Retained for API
+/// compatibility; the internal adjacency list uses the compact [`CompactEdge`]
+/// (8 bytes, two `u32` indices) for cache density.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Edge {
     /// The token ID this edge leads to.
@@ -67,13 +77,36 @@ pub struct Edge {
 /// A key uniquely identifying a pool within a traversal.
 pub type EdgeKey = (u64, PoolKind);
 
+/// Compact internal edge: neighbor is a compact token index, `pool_idx`
+/// identifies the pool in the graph's `pools` table. 8 bytes, cache-dense.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+struct CompactEdge {
+    /// Compact index of the neighbor token (into `PathGraph::adj`).
+    neighbor: u32,
+    /// Compact index of the pool (into `PathGraph::pools`).
+    pool_idx: u32,
+}
+
 /// A multigraph: token IDs are nodes, liquidity pools are edges.
 ///
-/// Stored as an adjacency list (`HashMap<u64, Vec<Edge>>`) that preserves
-/// edge insertion order for deterministic traversal. Parallel edges
-/// (multiple pools connecting the same token pair) are naturally supported.
+/// Stored as a compact adjacency list (`Vec<Vec<CompactEdge>>`) indexed by
+/// remapped contiguous token indices. External token IDs (`u64`) are mapped
+/// to compact indices (`u32`) via `token_index`, so the hot DFS loop does
+/// direct array indexing instead of hashing. Parallel edges (multiple pools
+/// connecting the same token pair) are naturally supported and preserve
+/// insertion order for deterministic traversal.
+///
+/// Pools are also remapped to compact indices; the `pools` table maps each
+/// compact pool index back to its `(pool_id, PoolKind)` for yielding, and the
+/// visited set is an O(1) `Vec<bool>` indexed by pool index.
 pub struct PathGraph {
-    adj: HashMap<u64, Vec<Edge>>,
+    /// Adjacency list indexed by compact token index. Each entry is the list
+    /// of outgoing `CompactEdge`s, in insertion order.
+    adj: Vec<Vec<CompactEdge>>,
+    /// External token ID → compact token index.
+    token_index: HashMap<u64, u32>,
+    /// Compact pool index → `(pool_id, PoolKind)` for yielding results.
+    pools: Vec<(u64, PoolKind)>,
 }
 
 impl PathGraph {
@@ -82,34 +115,77 @@ impl PathGraph {
     /// Each edge is added in both directions (the graph is undirected, like
     /// the `networkx.MultiGraph` it replaces). Edge insertion order within
     /// each node's adjacency list is preserved for deterministic traversal.
+    /// External token IDs are remapped to compact contiguous indices.
     #[must_use]
     pub fn from_edges(edges: Vec<(u64, u64, u64, PoolKind)>) -> Self {
-        let mut adj: HashMap<u64, Vec<Edge>> = HashMap::new();
+        let n = edges.len();
+        let mut token_index: HashMap<u64, u32> = HashMap::with_capacity(n);
+        let mut pools: Vec<(u64, PoolKind)> = Vec::with_capacity(n);
+        let mut adj: Vec<Vec<CompactEdge>> = Vec::new();
+
         for (token0, token1, pool_id, pool_kind) in edges {
-            adj.entry(token0).or_default().push(Edge {
-                neighbor: token1,
-                pool_id,
-                pool_kind,
+            let pool_idx = pools.len() as u32;
+            pools.push((pool_id, pool_kind));
+
+            let idx0 = Self::intern_token(&mut token_index, &mut adj, token0);
+            let idx1 = Self::intern_token(&mut token_index, &mut adj, token1);
+
+            adj[idx0 as usize].push(CompactEdge {
+                neighbor: idx1,
+                pool_idx,
             });
-            adj.entry(token1).or_default().push(Edge {
-                neighbor: token0,
-                pool_id,
-                pool_kind,
+            adj[idx1 as usize].push(CompactEdge {
+                neighbor: idx0,
+                pool_idx,
             });
         }
-        Self { adj }
+
+        Self {
+            adj,
+            token_index,
+            pools,
+        }
+    }
+
+    /// Assign (or look up) the compact index for an external token ID, growing
+    /// the adjacency list if the token is new.
+    fn intern_token(
+        token_index: &mut HashMap<u64, u32>,
+        adj: &mut Vec<Vec<CompactEdge>>,
+        token: u64,
+    ) -> u32 {
+        if let Some(&idx) = token_index.get(&token) {
+            idx
+        } else {
+            let idx = token_index.len() as u32;
+            token_index.insert(token, idx);
+            adj.push(Vec::new());
+            idx
+        }
+    }
+
+    /// Map an external token ID to its compact index, if present.
+    #[must_use]
+    fn compact_index(&self, token: u64) -> Option<u32> {
+        self.token_index.get(&token).copied()
     }
 
     /// Returns `true` if the node exists in the graph.
     #[must_use]
     pub fn contains_node(&self, node: u64) -> bool {
-        self.adj.contains_key(&node)
+        self.token_index.contains_key(&node)
     }
 
     /// The number of nodes (tokens) in the graph.
     #[must_use]
     pub fn node_count(&self) -> usize {
         self.adj.len()
+    }
+
+    /// The number of pool edges incident to a token (its degree).
+    #[must_use]
+    pub fn degree(&self, token: u64) -> Option<usize> {
+        self.compact_index(token).map(|i| self.adj[i as usize].len())
     }
 
     /// Remove nodes with degree ≤ 1, repeating until no such nodes remain.
@@ -119,73 +195,59 @@ impl PathGraph {
     ///     graph.remove_nodes_from(tokens_to_prune)`
     ///
     /// Pruning a node removes all its incident edges, which may reduce other
-    /// nodes' degrees below 2 — hence the iterative fixpoint.
+    /// nodes' degrees below 2 — hence the iterative fixpoint. Removed nodes
+    /// are dropped from `token_index` (so `contains_node` returns `false`)
+    /// and their adjacencies are cleared. Their compact indices are not
+    /// recycled (would require reindexing), but this only wastes a slot — it
+    /// never affects correctness or the hot DFS path.
     pub fn prune_dead_ends(&mut self) {
+        let n = self.adj.len();
+        // Track which compact indices have been removed so we don't re-scan
+        // already-pruned (degree-0) nodes forever.
+        let mut removed = vec![false; n];
         loop {
-            // Collect nodes whose total degree (count of incident edges) is ≤ 1.
-            let to_prune: Vec<u64> = self
-                .adj
-                .iter()
-                .filter_map(
-                    |(&node, edges)| {
-                        if edges.is_empty() {
-                            Some(node)
-                        } else {
-                            None
-                        }
-                    },
-                )
+            // Collect live nodes whose current degree (count of surviving
+            // incident edges) is ≤ 1.
+            let to_prune: Vec<u32> = (0..n)
+                .filter(|&i| !removed[i] && self.adj[i].len() <= 1)
+                .map(|i| i as u32)
                 .collect();
-
-            // Also prune nodes with exactly one edge (degree 1).
-            // Nodes with zero edges shouldn't exist after from_edges (every
-            // node has at least one edge), but prune them defensively.
             if to_prune.is_empty() {
-                // Check for degree-1 nodes
-                let deg_one: Vec<u64> = self
-                    .adj
-                    .iter()
-                    .filter(|(_, edges)| edges.len() == 1)
-                    .map(|(&node, _)| node)
-                    .collect();
-                if deg_one.is_empty() {
-                    break;
-                }
-                self.remove_nodes(&deg_one);
-                // After removal, some nodes may have dropped to degree 0 or 1.
-            } else {
-                self.remove_nodes(&to_prune);
+                break;
             }
+            for &node_idx in &to_prune {
+                removed[node_idx as usize] = true;
+            }
+            self.remove_nodes(&to_prune);
         }
+        // Drop the external token IDs of all pruned nodes so contains_node
+        // reflects the post-prune state.
+        self.token_index
+            .retain(|_, &mut idx| !removed[idx as usize]);
     }
 
     /// Remove a set of nodes and all their incident edges.
-    fn remove_nodes(&mut self, nodes: &[u64]) {
+    fn remove_nodes(&mut self, nodes: &[u32]) {
         // Collect all reverse-edge removals first to avoid borrowing self.adj
         // as both immutable (reading edges) and mutable (removing from neighbors).
-        let mut reverse_removals: Vec<(u64, u64, PoolKind)> = Vec::new();
-        for &node in nodes {
-            if let Some(edges) = self.adj.get(&node) {
-                for edge in edges {
-                    reverse_removals.push((edge.neighbor, edge.pool_id, edge.pool_kind));
-                }
+        let mut reverse_removals: Vec<(u32, u32)> = Vec::new(); // (neighbor, pool_idx)
+        for &node_idx in nodes {
+            for edge in &self.adj[node_idx as usize] {
+                reverse_removals.push((edge.neighbor, edge.pool_idx));
             }
         }
 
         // Apply reverse-edge removals from neighbors.
-        for (neighbor, pool_id, pool_kind) in reverse_removals {
-            if let Some(neighbor_edges) = self.adj.get_mut(&neighbor) {
-                neighbor_edges.retain(|e| !(e.pool_id == pool_id && e.pool_kind == pool_kind));
+        for (neighbor, pool_idx) in reverse_removals {
+            if let Some(neighbor_edges) = self.adj.get_mut(neighbor as usize) {
+                neighbor_edges.retain(|e| e.pool_idx != pool_idx);
             }
         }
 
-        // Remove the nodes themselves.
-        for &node in nodes {
-            self.adj.remove(&node);
+        // Clear the pruned nodes' adjacencies (compact index retained).
+        for &node_idx in nodes {
+            self.adj[node_idx as usize].clear();
         }
-
-        // Remove any nodes that are now empty (lost all their edges to pruned nodes).
-        self.adj.retain(|_, edges| !edges.is_empty());
     }
 
     /// Precompute valid depth positions per node, for lookahead pruning.
@@ -195,28 +257,35 @@ impl PathGraph {
     /// `pool_kind` is in the allowed set at depth `d` (or `allowed[d]` is
     /// `None`, meaning all kinds are allowed).
     ///
-    /// Returns a map from token ID to a `Vec<bool>` where index `d` is `true`
-    /// if the node can participate at depth `d`.
+    /// Returns a `Vec` indexed by compact token index, where entry `i` is a
+    /// `Vec<bool>` whose index `d` is `true` if token `i` can participate at
+    /// depth `d`.
     #[must_use]
     pub fn compute_node_valid_depths(
         &self,
         pool_type_per_depth: &[Option<Vec<PoolKind>>],
-    ) -> HashMap<u64, Vec<bool>> {
-        let mut result = HashMap::new();
-        for (&node, edges) in &self.adj {
-            // Collect all pool kinds this node has edges for.
-            let node_kinds: HashSet<PoolKind> = edges.iter().map(|e| e.pool_kind).collect();
-
+    ) -> Vec<Vec<bool>> {
+        let mut result = Vec::with_capacity(self.adj.len());
+        for edges in &self.adj {
+            // Collect all pool kinds this node has edges for (a node can use
+            // any pool it touches at any depth).
+            let mut kinds = [false; 3];
+            for e in edges {
+                let kind = self.pools[e.pool_idx as usize].1;
+                kinds[kind.as_u8() as usize] = true;
+            }
             let mut valid = vec![false; pool_type_per_depth.len()];
             for (d, allowed) in pool_type_per_depth.iter().enumerate() {
                 match allowed {
                     None => valid[d] = true,
                     Some(allowed_kinds) => {
-                        valid[d] = node_kinds.iter().any(|k| allowed_kinds.contains(k));
+                        valid[d] = allowed_kinds
+                            .iter()
+                            .any(|k| kinds[k.as_u8() as usize]);
                     }
                 }
             }
-            result.insert(node, valid);
+            result.push(valid);
         }
         result
     }
@@ -232,16 +301,16 @@ impl PathGraph {
 /// Created by [`PathGraph::find_paths_iter`].
 pub struct PathFinder<'a> {
     graph: &'a PathGraph,
-    end: u64,
+    end: u32,
     min_depth: usize,
     effective_max_depth: Option<usize>,
     include_reverse: bool,
     pool_type_per_depth: Option<&'a [Option<Vec<PoolKind>>]>,
-    node_valid_depths: Option<&'a HashMap<u64, Vec<bool>>>,
+    node_valid_depths: Option<&'a [Vec<bool>]>,
     filter_len: usize,
-    stack: Vec<(u64, usize, bool)>,
-    working_path: Vec<EdgeKey>,
-    visited: HashSet<EdgeKey>,
+    stack: Vec<(u32, usize, bool)>,
+    working_path: Vec<u32>,
+    visited: Vec<bool>,
     pending_reverse: Option<Vec<EdgeKey>>,
     done: bool,
 }
@@ -270,10 +339,9 @@ impl PathFinder<'_> {
             if !*yield_checked {
                 *yield_checked = true;
                 if *node == self.end && self.working_path.len() >= self.min_depth {
-                    let path = self.working_path.clone();
+                    let path = self.path_to_edge_keys();
                     if self.include_reverse {
-                        let mut rev = self.working_path.clone();
-                        rev.reverse();
+                        let rev = self.reversed_path_to_edge_keys();
                         self.pending_reverse = Some(rev);
                     }
                     return Some(path);
@@ -286,14 +354,14 @@ impl PathFinder<'_> {
                     // Backtrack.
                     self.stack.pop();
                     if let Some(popped) = self.working_path.pop() {
-                        self.visited.remove(&popped);
+                        self.visited[popped as usize] = false;
                     }
                     continue;
                 }
             }
 
             // Find the next valid edge to explore from this node.
-            let neighbors = if let Some(n) = self.graph.adj.get(node) {
+            let neighbors = if let Some(n) = self.graph.adj.get(*node as usize) {
                 n.as_slice()
             } else {
                 // No edges from this node — backtrack.
@@ -305,10 +373,10 @@ impl PathFinder<'_> {
             while *edge_idx < neighbors.len() {
                 let edge = &neighbors[*edge_idx];
                 *edge_idx += 1;
-                let edge_key = (edge.pool_id, edge.pool_kind);
+                let pool_idx = edge.pool_idx;
 
-                // Cycle detection: skip edges already on the working path.
-                if self.visited.contains(&edge_key) {
+                // Cycle detection: skip pools already on the working path.
+                if self.visited[pool_idx as usize] {
                     continue;
                 }
 
@@ -321,7 +389,8 @@ impl PathFinder<'_> {
                         continue;
                     }
                     if let Some(allowed_kinds) = &filter[depth] {
-                        if !allowed_kinds.contains(&edge.pool_kind) {
+                        let kind = self.graph.pools[pool_idx as usize].1;
+                        if !allowed_kinds.contains(&kind) {
                             continue;
                         }
                     }
@@ -331,7 +400,7 @@ impl PathFinder<'_> {
                     let next_depth = depth + 1;
                     if next_depth < self.filter_len {
                         if let Some(nvd) = self.node_valid_depths {
-                            if let Some(valid) = nvd.get(&edge.neighbor) {
+                            if let Some(valid) = nvd.get(edge.neighbor as usize) {
                                 if !valid[next_depth] {
                                     continue;
                                 }
@@ -341,8 +410,8 @@ impl PathFinder<'_> {
                 }
 
                 // Found a valid edge — extend the path and push the neighbor.
-                self.working_path.push(edge_key);
-                self.visited.insert(edge_key);
+                self.working_path.push(pool_idx);
+                self.visited[pool_idx as usize] = true;
                 self.stack.push((edge.neighbor, 0, false));
                 found_edge = true;
                 break;
@@ -352,7 +421,7 @@ impl PathFinder<'_> {
                 // No more edges to explore from this node — backtrack.
                 self.stack.pop();
                 if let Some(popped) = self.working_path.pop() {
-                    self.visited.remove(&popped);
+                    self.visited[popped as usize] = false;
                 }
             }
         }
@@ -360,6 +429,23 @@ impl PathFinder<'_> {
         // Search exhausted.
         self.done = true;
         None
+    }
+
+    /// Convert the current working path (pool indices) to `EdgeKey`s for yielding.
+    fn path_to_edge_keys(&self) -> Vec<EdgeKey> {
+        self.working_path
+            .iter()
+            .map(|&idx| self.graph.pools[idx as usize])
+            .collect()
+    }
+
+    /// Convert the reversed working path to `EdgeKey`s.
+    fn reversed_path_to_edge_keys(&self) -> Vec<EdgeKey> {
+        self.working_path
+            .iter()
+            .rev()
+            .map(|&idx| self.graph.pools[idx as usize])
+            .collect()
     }
 }
 
@@ -379,16 +465,16 @@ impl Iterator for PathFinder<'_> {
 /// all owned, eliminating self-referential borrow issues.
 pub struct OwnedPathFinder {
     graph: PathGraph,
-    end: u64,
+    end: u32,
     min_depth: usize,
     effective_max_depth: Option<usize>,
     include_reverse: bool,
     pool_type_per_depth: Option<Vec<Option<Vec<PoolKind>>>>,
-    node_valid_depths: Option<HashMap<u64, Vec<bool>>>,
+    node_valid_depths: Option<Vec<Vec<bool>>>,
     filter_len: usize,
-    stack: Vec<(u64, usize, bool)>,
-    working_path: Vec<EdgeKey>,
-    visited: HashSet<EdgeKey>,
+    stack: Vec<(u32, usize, bool)>,
+    working_path: Vec<u32>,
+    visited: Vec<bool>,
     pending_reverse: Option<Vec<EdgeKey>>,
     done: bool,
 }
@@ -397,6 +483,7 @@ impl OwnedPathFinder {
     /// Create from owned graph + search parameters.
     #[allow(clippy::too_many_arguments)]
     #[must_use]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn new(
         graph: PathGraph,
         start: u64,
@@ -423,16 +510,21 @@ impl OwnedPathFinder {
             .as_ref()
             .map(|filter| graph.compute_node_valid_depths(filter));
 
-        let stack = if graph.contains_node(start) {
-            vec![(start, 0, false)]
+        // Remap external start/end token IDs to compact indices.
+        let start_idx = graph.compact_index(start);
+        let end_idx = graph.compact_index(end).unwrap_or(0);
+
+        let stack = if let Some(s) = start_idx {
+            vec![(s, 0, false)]
         } else {
             Vec::new()
         };
         let done = stack.is_empty();
+        let n_pools = graph.pools.len();
 
         Self {
             graph,
-            end,
+            end: end_idx,
             min_depth,
             effective_max_depth,
             include_reverse,
@@ -440,8 +532,8 @@ impl OwnedPathFinder {
             node_valid_depths,
             filter_len,
             stack,
-            working_path: Vec::new(),
-            visited: HashSet::new(),
+            working_path: Vec::with_capacity(16),
+            visited: vec![false; n_pools],
             pending_reverse: None,
             done,
         }
@@ -464,7 +556,7 @@ impl OwnedPathFinder {
         }
 
         let filter_slice = self.pool_type_per_depth.as_deref();
-        let nvd_ref = self.node_valid_depths.as_ref();
+        let nvd_ref = self.node_valid_depths.as_deref();
 
         while let Some(frame) = self.stack.last_mut() {
             let (node, edge_idx, yield_checked) = frame;
@@ -473,10 +565,9 @@ impl OwnedPathFinder {
             if !*yield_checked {
                 *yield_checked = true;
                 if *node == self.end && self.working_path.len() >= self.min_depth {
-                    let path = self.working_path.clone();
+                    let path = self.path_to_edge_keys();
                     if self.include_reverse {
-                        let mut rev = self.working_path.clone();
-                        rev.reverse();
+                        let rev = self.reversed_path_to_edge_keys();
                         self.pending_reverse = Some(rev);
                     }
                     return Some(path);
@@ -489,14 +580,14 @@ impl OwnedPathFinder {
                     // Backtrack.
                     self.stack.pop();
                     if let Some(popped) = self.working_path.pop() {
-                        self.visited.remove(&popped);
+                        self.visited[popped as usize] = false;
                     }
                     continue;
                 }
             }
 
             // Find the next valid edge to explore from this node.
-            let neighbors = if let Some(n) = self.graph.adj.get(node) {
+            let neighbors = if let Some(n) = self.graph.adj.get(*node as usize) {
                 n.as_slice()
             } else {
                 // No edges from this node — backtrack.
@@ -508,10 +599,10 @@ impl OwnedPathFinder {
             while *edge_idx < neighbors.len() {
                 let edge = &neighbors[*edge_idx];
                 *edge_idx += 1;
-                let edge_key = (edge.pool_id, edge.pool_kind);
+                let pool_idx = edge.pool_idx;
 
-                // Cycle detection: skip edges already on the working path.
-                if self.visited.contains(&edge_key) {
+                // Cycle detection: skip pools already on the working path.
+                if self.visited[pool_idx as usize] {
                     continue;
                 }
 
@@ -522,7 +613,8 @@ impl OwnedPathFinder {
                         continue;
                     }
                     if let Some(allowed_kinds) = &filter[depth] {
-                        if !allowed_kinds.contains(&edge.pool_kind) {
+                        let kind = self.graph.pools[pool_idx as usize].1;
+                        if !allowed_kinds.contains(&kind) {
                             continue;
                         }
                     }
@@ -531,7 +623,7 @@ impl OwnedPathFinder {
                     let next_depth = depth + 1;
                     if next_depth < self.filter_len {
                         if let Some(nvd) = nvd_ref {
-                            if let Some(valid) = nvd.get(&edge.neighbor) {
+                            if let Some(valid) = nvd.get(edge.neighbor as usize) {
                                 if !valid[next_depth] {
                                     continue;
                                 }
@@ -541,8 +633,8 @@ impl OwnedPathFinder {
                 }
 
                 // Found a valid edge — extend the path and push the neighbor.
-                self.working_path.push(edge_key);
-                self.visited.insert(edge_key);
+                self.working_path.push(pool_idx);
+                self.visited[pool_idx as usize] = true;
                 self.stack.push((edge.neighbor, 0, false));
                 found_edge = true;
                 break;
@@ -552,7 +644,7 @@ impl OwnedPathFinder {
                 // No more edges to explore from this node — backtrack.
                 self.stack.pop();
                 if let Some(popped) = self.working_path.pop() {
-                    self.visited.remove(&popped);
+                    self.visited[popped as usize] = false;
                 }
             }
         }
@@ -560,6 +652,23 @@ impl OwnedPathFinder {
         // Search exhausted.
         self.done = true;
         None
+    }
+
+    /// Convert the current working path (pool indices) to `EdgeKey`s for yielding.
+    fn path_to_edge_keys(&self) -> Vec<EdgeKey> {
+        self.working_path
+            .iter()
+            .map(|&idx| self.graph.pools[idx as usize])
+            .collect()
+    }
+
+    /// Convert the reversed working path to `EdgeKey`s.
+    fn reversed_path_to_edge_keys(&self) -> Vec<EdgeKey> {
+        self.working_path
+            .iter()
+            .rev()
+            .map(|&idx| self.graph.pools[idx as usize])
+            .collect()
     }
 }
 
@@ -588,7 +697,7 @@ impl PathGraph {
         max_depth: Option<usize>,
         include_reverse: bool,
         pool_type_per_depth: Option<&'a [Option<Vec<PoolKind>>]>,
-        node_valid_depths: Option<&'a HashMap<u64, Vec<bool>>>,
+        node_valid_depths: Option<&'a [Vec<bool>]>,
     ) -> PathFinder<'a> {
         let effective_max_depth: Option<usize> = match pool_type_per_depth {
             Some(filter) => {
@@ -603,8 +712,11 @@ impl PathGraph {
 
         let filter_len = pool_type_per_depth.map_or(0, <[Option<Vec<PoolKind>>]>::len);
 
-        let stack = if self.adj.contains_key(&start) {
-            vec![(start, 0, false)]
+        let start_idx = self.compact_index(start);
+        let end_idx = self.compact_index(end).unwrap_or(0);
+
+        let stack = if let Some(s) = start_idx {
+            vec![(s, 0, false)]
         } else {
             Vec::new()
         };
@@ -612,7 +724,7 @@ impl PathGraph {
 
         PathFinder {
             graph: self,
-            end,
+            end: end_idx,
             min_depth,
             effective_max_depth,
             include_reverse,
@@ -620,8 +732,8 @@ impl PathGraph {
             node_valid_depths,
             filter_len,
             stack,
-            working_path: Vec::new(),
-            visited: HashSet::new(),
+            working_path: Vec::with_capacity(16),
+            visited: vec![false; self.pools.len()],
             pending_reverse: None,
             done,
         }
@@ -657,7 +769,7 @@ impl PathGraph {
         max_depth: Option<usize>,
         include_reverse: bool,
         pool_type_per_depth: Option<&[Option<Vec<PoolKind>>]>,
-        node_valid_depths: Option<&HashMap<u64, Vec<bool>>>,
+        node_valid_depths: Option<&[Vec<bool>]>,
     ) -> Vec<Vec<EdgeKey>> {
         self.find_paths_iter(
             start,
@@ -675,6 +787,7 @@ impl PathGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     // Token IDs for the synthetic 4-pool V2 fixture (mirrors the in-memory
     // DB fixture from test_permutation_filter_min_depth.py).
@@ -717,11 +830,9 @@ mod tests {
     fn test_parallel_edges_preserved() {
         let graph = build_fixture_graph();
         // WETH has 3 edges: pool1->A, pool2->A, pool4->B
-        let weth_edges = &graph.adj[&WETH];
-        assert_eq!(weth_edges.len(), 3);
+        assert_eq!(graph.degree(WETH), Some(3));
         // A has 3 edges: pool1->WETH, pool2->WETH, pool3->B
-        let a_edges = &graph.adj[&A];
-        assert_eq!(a_edges.len(), 3);
+        assert_eq!(graph.degree(A), Some(3));
     }
 
     #[test]
