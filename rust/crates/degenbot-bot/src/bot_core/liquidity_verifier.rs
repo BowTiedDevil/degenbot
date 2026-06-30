@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use alloy::dyn_abi::DynSolValue;
 use alloy::primitives::{Address, Bytes, B256, I256, U256};
 
-use crate::bot_core::{TickMap, V3PoolState, V4PoolState};
+use crate::bot_core::{TickMap, V3PoolIdentity, V3PoolState, V4PoolState};
 use degenbot_rpc::provider::AlloyProvider;
 
 // ---------------------------------------------------------------------------
@@ -236,7 +236,7 @@ pub async fn verify_v4_liquidity_map<S: std::hash::BuildHasher>(
 pub async fn verify_v3_pools<S: std::hash::BuildHasher>(
     provider: &AlloyProvider,
     _tick_lens: Address, // Kept for API compatibility; not used
-    pools: &HashMap<u64, V3PoolState, S>,
+    pools: &HashMap<u64, (V3PoolIdentity, V3PoolState), S>,
     block_number: Option<u64>,
 ) -> Result<(), LiquidityVerifyError> {
     for pool in pools.values() {

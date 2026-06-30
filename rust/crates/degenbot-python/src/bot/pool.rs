@@ -738,20 +738,23 @@ impl PyLiquidityPool {
     /// Pool fee (immutable) for a V3/V4 pool. 0 if not V3/V4.
     #[getter]
     fn fee(&self) -> u32 {
-        self.core
-            .read()
-            .get_v3_or_v4_pool(self.pool_id)
-            .map(degenbot_bot::bot_core::V3FamilyPool::fee)
+        let core = self.core.read();
+        core.get_v3_identity(self.pool_id)
+            .map(|i| i.fee)
+            .or_else(|| core.get_v4_pool(self.pool_id).map(|p| p.pool_key.fee))
             .unwrap_or_default()
     }
 
     /// Tick spacing (immutable) for a V3/V4 pool. 0 if not V3/V4.
     #[getter]
     fn tick_spacing(&self) -> i32 {
-        self.core
-            .read()
-            .get_v3_or_v4_pool(self.pool_id)
-            .map(degenbot_bot::bot_core::V3FamilyPool::tick_spacing)
+        let core = self.core.read();
+        core.get_v3_identity(self.pool_id)
+            .map(|i| i.tick_spacing)
+            .or_else(|| {
+                core.get_v4_pool(self.pool_id)
+                    .map(|p| p.pool_key.tick_spacing)
+            })
             .unwrap_or_default()
     }
 
@@ -1120,10 +1123,18 @@ impl PyLiquidityPool {
         // guard, then build the output dict without holding the lock.
         let rows: Vec<(i32, u32, u64)> = {
             let core = self.core.read();
+            let spacing = core
+                .get_v3_identity(self.pool_id)
+                .map(|i| i.tick_spacing)
+                .or_else(|| {
+                    core.get_v4_pool(self.pool_id)
+                        .map(|p| p.pool_key.tick_spacing)
+                })
+                .unwrap_or(1)
+                .max(1);
             let Some(s) = core.get_v3_or_v4_pool(self.pool_id) else {
                 return Ok(pyo3::types::PyDict::new(py).into_any().unbind());
             };
-            let spacing = s.tick_spacing().max(1);
             let update_block = s.update_block();
             // U256 (256 bits per word) — `u128` would overflow for bit positions
             // ≥ 128 (large ticks land in high bits). Mirrors Solidity's uint256.

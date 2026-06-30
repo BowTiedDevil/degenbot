@@ -26,7 +26,7 @@ use std::collections::HashMap;
 use alloy::primitives::Address;
 
 use crate::bot_core::TickInfo;
-use crate::bot_core::{V3PoolState, V4PoolState};
+use crate::bot_core::{V3PoolIdentity, V3PoolState, V4PoolState};
 
 // ---------------------------------------------------------------------------
 // The traits
@@ -81,34 +81,28 @@ pub trait TickMapMut: TickMap {
 // Concrete impls for the two CL pool families (V4 parity — ADR-004)
 // ---------------------------------------------------------------------------
 
-impl TickMap for V3PoolState {
+impl TickMap for (V3PoolIdentity, V3PoolState) {
     fn address(&self) -> Address {
-        self.address
+        self.0.address
     }
 
     fn tick_spacing(&self) -> i32 {
-        self.tick_spacing
+        self.0.tick_spacing
     }
 
     fn active_tick(&self) -> i32 {
-        self.tick
+        self.1.tick
     }
 
     fn tick_data(&self) -> &HashMap<i32, TickInfo> {
-        &self.tick_data
+        &self.1.tick_data
     }
 
     fn dbg_update_block(&self) -> u64 {
-        self.update_block
+        self.1.update_block
     }
     fn dbg_journal_len(&self) -> usize {
-        self.journal.len()
-    }
-}
-
-impl TickMapMut for V3PoolState {
-    fn tick_data_mut(&mut self) -> &mut HashMap<i32, TickInfo> {
-        &mut self.tick_data
+        self.1.journal.len()
     }
 }
 
@@ -153,9 +147,13 @@ mod tests {
         // of the scope anyway, so declaring them up top is clearer.
         fn assert_impls_tickmap<T: TickMap>() {}
         fn assert_impls_tickmap_mut<T: TickMapMut>() {}
-        assert_impls_tickmap::<V3PoolState>();
+        // V3 entry-level TickMap is impl'd on the (identity, state) tuple —
+        // the trait projects identity (address/tick_spacing) AND mutable
+        // (tick/tick_data) off the same registry slot.
+        assert_impls_tickmap::<(V3PoolIdentity, V3PoolState)>();
         assert_impls_tickmap::<V4PoolState>();
-        assert_impls_tickmap_mut::<V3PoolState>();
+        // V3 apply path doesn't use TickMapMut (removed when TickMap re-homed
+        // to the tuple). V4 still uses TickMapMut for `tick_data_mut`.
         assert_impls_tickmap_mut::<V4PoolState>();
     }
 }

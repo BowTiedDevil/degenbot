@@ -220,8 +220,9 @@ impl PyUniswapArbEngine {
                 )));
             };
             let mut map = std::collections::HashMap::new();
-            if let Some(pool) = core.get_v3_pool(key) {
-                map.insert(key, pool.clone());
+            if let (Some(identity), Some(pool)) = (core.get_v3_identity(key), core.get_v3_pool(key))
+            {
+                map.insert(key, (*identity, pool.clone()));
             }
             map
         };
