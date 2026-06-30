@@ -403,7 +403,6 @@ class AsyncV4PoolBuilder:
             tick_spacing=tick_spacing_for_pool,
             hook_address=hook_address,
             state_view_address=state_view_address,
-            chain_id=chain_id,
             protocol_fee_zero_for_one=slot0_data.protocol_fee_zero_to_one,
             protocol_fee_one_for_zero=slot0_data.protocol_fee_one_to_zero,
             lp_fee=slot0_data.lp_fee,
@@ -458,7 +457,6 @@ class AsyncV4PoolBuilder:
             msg = f"AsyncV4PoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)
 
-        assert pool.chain_id is not None
         assert io is not None
 
         raw_block = block_number if block_number is not None else await io.get_block_number()

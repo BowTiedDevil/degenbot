@@ -519,7 +519,6 @@ lp = make_v4_pool(
     fee=500,
     tick_spacing=10,
     state_view_address='0xA3c0c9b65baD0b08107Aa264b0f3dB444b867A71',
-    chain_id=8453,
     sqrt_price_x96=4220772448119892035402666,
     tick=-196812,
     liquidity=60429069420043934,
