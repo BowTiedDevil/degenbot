@@ -16,6 +16,7 @@ Domain terms for Uniswap V2, V3, and V4 liquidity pools and pool trackers.
 | **Factory** | The on-chain contract that creates new pools for a given DEX version | DEX factory |
 | **Pool Init Hash** | The keccak256 hash of pool creation init code, used with CREATE2 to compute pool addresses | Init code hash |
 | **Factory Deployment** | Configuration for a specific DEX factory on a chain (factory address, deployer, pool init hash); stored exclusively in **Pool Type Registry** via `register()` — the former `FACTORY_DEPLOYMENTS` dict has been removed | Exchange deployment |
+| **V2PoolDescriptor** | Per-pool registration metadata on `PoolEntry::V2`: `{ variant: DexVariant, stable_swap: bool, fee_denominator: Option<u64> }`. Distinct from the `DexIdentity` **preset** (level-1 DEX data, shared across pools); the descriptor carries the per-pool tag + Camelot stable strategy the builder observed at registration. The Python companion recovers it off the `PyLiquidityPool` handle (Polars `_from_pydf` end state) — `py_pool.dex` resolves the preset via `preset_for_variant(variant)` | Pool descriptor, pool identity |
 | **PairCreated Event** | The V2 factory event emitted when a new pool is created | Pool creation event |
 | **PoolCreated Event** | The V3 factory event emitted when a new pool is created | V3 pool creation event |
 | **Mint Event** | The V3 pool event emitted when liquidity is added | Add liquidity |
