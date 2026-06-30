@@ -196,7 +196,7 @@ Pools receive state updates via `external_update()` — a pure-logic method that
 from degenbot.degenbot_rs import PyBot
 _PY_BOT = PyBot()
 from tests.helpers.erc20_factory import make_erc20
-from degenbot.uniswap.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 from degenbot.erc20.erc20 import Erc20Token
 from tests.helpers.v2_pool_factory import make_v2_pool
@@ -342,7 +342,7 @@ V2 pools use the constant-product invariant (x·y=k) with directional fees:
 from degenbot.degenbot_rs import PyBot
 _PY_BOT = PyBot()
 from tests.helpers.erc20_factory import make_erc20
-from degenbot.uniswap.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 from degenbot.erc20.erc20 import Erc20Token
 from tests.helpers.v2_pool_factory import make_v2_pool

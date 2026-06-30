@@ -93,7 +93,7 @@ class PoolTypeRegistry:
     1. Subclass a pool shape protocol (``ConstantProductPool``,
        ``ConcentratedLiquidityPool``, or ``StableswapPool``). This is
        typically done by inheriting from an existing pool class that
-       already satisfies the protocol (e.g., ``LiquidityPool``).
+       already satisfies the protocol (e.g., ``UniswapV2Pool``).
 
     2. Add a ``variant: ClassVar[str | None] = "your_dex_name"`` class
        attribute. Use the bare DEX name without a ``_v2``/``_v3`` suffix
@@ -111,10 +111,10 @@ class PoolTypeRegistry:
     Example::
 
         from degenbot.registry import pool_type_registry
-        from degenbot.uniswap.liquidity_pool import LiquidityPool
+        from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 
-        class MyCustomPool(LiquidityPool):
+        class MyCustomPool(UniswapV2Pool):
             variant: ClassVar[str | None] = "my_dex"
 
 
@@ -171,7 +171,7 @@ class PoolTypeRegistry:
                 (``getattr(pool_class, "variant", None)``). Needed for the
                 ADR-005 slice 7 step 4b collapse: when the hollow DEX
                 subclasses (SushiswapV2Pool, etc.) are deleted, the canonical
-                ``LiquidityPool`` (variant=None) is registered for each DEX
+                ``UniswapV2Pool`` (variant=None) is registered for each DEX
                 factory WITH ``variant="sushiswap"`` to preserve the DB
                 ``kind`` (``"sushiswap_v2"``) — keeps existing DB rows
                 resolvable while collapsing the class hierarchy.

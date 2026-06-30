@@ -134,7 +134,7 @@ class TestFakeTokenErc20Interoperability:
 
 
 class TestCanaryV2PoolWithFakeToken:
-    """Canary: LiquidityPool construction with FakeToken."""
+    """Canary: UniswapV2Pool construction with FakeToken."""
 
     def test_construct_v2_pool(self) -> None:  # type: ignore[arg-type]
         token0 = FakeToken(WBTC_ADDRESS, name="Wrapped BTC", symbol="WBTC", decimals=8)

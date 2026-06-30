@@ -18,7 +18,7 @@ from degenbot.constants import ZERO_ADDRESS
 from degenbot.degenbot_rs import PyBot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.provider.call_helpers import encode_function_calldata
-from degenbot.uniswap.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI
@@ -193,7 +193,7 @@ class TestAsyncBotBuildPoolV2:
 
         pool = await bot.build_pool(USDC_WETH_V2_POOL)
 
-        assert isinstance(pool, LiquidityPool)
+        assert isinstance(pool, UniswapV2Pool)
         assert pool.address == get_checksum_address(USDC_WETH_V2_POOL)
 
 

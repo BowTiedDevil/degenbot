@@ -1,7 +1,7 @@
 # ADR-005 slice 7 step 4b: this fork-gated test imports the deleted hollow V2
 # DEX subclasses (Sushi/Pancake/Swapbased/Camelot) and/or needs anvil. Skipping
 # at module level unblocks the offline collection; pending a full rewrite under
-# anvil to the `LiquidityPool` + `dex.variant` model. See
+# anvil to the `UniswapV2Pool` + `dex.variant` model. See
 # docs/migration-guides/dex-subclass-collapse.md.
 import pytest
 
@@ -36,7 +36,7 @@ from degenbot.builders.request import BuildPoolRequest
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.erc20 import Erc20Token
 from degenbot.registry import PoolRegistry, TokenRegistry
-from degenbot.uniswap.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 
 class _MockProviderError(Exception):
@@ -241,7 +241,7 @@ class TestCamelotBuilderConstruction:
         builder = _make_camelot_builder(provider)
         pool = builder.build(self.POOL_ADDRESS, io=io, request=BuildPoolRequest(silent=True))
         assert isinstance(pool, CamelotLiquidityPool)
-        assert isinstance(pool, LiquidityPool)
+        assert isinstance(pool, UniswapV2Pool)
 
     def test_build_camelot_fetches_camelot_specific_state(self) -> None:
         """build() should fetch stableSwap, FEE_DENOMINATOR, and fee percents."""

@@ -1,4 +1,4 @@
-"""LiquidityPool: constant-product AMM with reserve tracking."""
+"""UniswapV2Pool: constant-product AMM with reserve tracking."""
 
 import dataclasses
 from fractions import Fraction
@@ -38,7 +38,7 @@ from degenbot.uniswap.v2_types import (
 )
 
 
-class LiquidityPool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
+class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiquidityPool):
     """A Uniswap V2-based liquidity pool implementing the x*y=k constant function invariant."""
 
     variant: ClassVar[str | None] = None
@@ -84,7 +84,7 @@ class LiquidityPool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
     def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
         """Direct construction is forbidden.
 
-        ``LiquidityPool`` is a Python companion over a Rust-owned
+        ``UniswapV2Pool`` is a Python companion over a Rust-owned
         ``PyLiquidityPool`` handle. The handle can only be produced by
         registering a pool in a ``PyBot`` — there is no way for a caller to
         hand-build one. Use the registered entry points instead:

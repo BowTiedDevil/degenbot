@@ -13,7 +13,7 @@ from degenbot.degenbot_rs import dex_identity
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.registry.pool_type import pool_type_registry
-from degenbot.uniswap.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import UniswapV2PoolExternalUpdate
 
 if TYPE_CHECKING:
@@ -266,7 +266,7 @@ class V2PoolBuilder(V2BuilderBase):
             TypeError: If the operation fails.
 
         """
-        if not isinstance(pool, LiquidityPool):
+        if not isinstance(pool, UniswapV2Pool):
             msg = f"V2PoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)
 

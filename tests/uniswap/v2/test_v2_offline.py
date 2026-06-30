@@ -9,7 +9,7 @@ from fractions import Fraction
 import pytest
 
 from degenbot.exceptions.pool import InvalidSwapInputAmount
-from degenbot.uniswap.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v2_types import (
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
@@ -21,7 +21,7 @@ class TestV2PoolCalculations:
 
     def test_calculate_tokens_out_from_tokens_in(
         self,
-        offline_wbtc_weth_v2_pool: LiquidityPool,
+        offline_wbtc_weth_v2_pool: UniswapV2Pool,
     ):
         """Test token output calculation with known values."""
         pool = offline_wbtc_weth_v2_pool
@@ -40,7 +40,7 @@ class TestV2PoolCalculations:
 
     def test_calculate_tokens_in_from_tokens_out(
         self,
-        offline_wbtc_weth_v2_pool: LiquidityPool,
+        offline_wbtc_weth_v2_pool: UniswapV2Pool,
     ):
         """Test token input calculation with known values."""
         pool = offline_wbtc_weth_v2_pool
@@ -59,7 +59,7 @@ class TestV2PoolCalculations:
 
     def test_calculate_tokens_out_with_override(
         self,
-        offline_wbtc_weth_v2_pool: LiquidityPool,
+        offline_wbtc_weth_v2_pool: UniswapV2Pool,
     ):
         """Test calculation with state override."""
         pool = offline_wbtc_weth_v2_pool
@@ -90,7 +90,7 @@ class TestV2PoolCalculations:
 
     def test_calculate_tokens_in_with_override(
         self,
-        offline_wbtc_weth_v2_pool: LiquidityPool,
+        offline_wbtc_weth_v2_pool: UniswapV2Pool,
     ):
         """Test input calculation with state override."""
         pool = offline_wbtc_weth_v2_pool
@@ -120,7 +120,7 @@ class TestV2PoolCalculations:
 
     def test_simulate_exact_input(
         self,
-        offline_wbtc_weth_v2_pool: LiquidityPool,
+        offline_wbtc_weth_v2_pool: UniswapV2Pool,
     ):
         """Test exact input simulation method."""
         pool = offline_wbtc_weth_v2_pool
@@ -138,7 +138,7 @@ class TestV2PoolCalculations:
 
     def test_simulate_exact_output(
         self,
-        offline_wbtc_weth_v2_pool: LiquidityPool,
+        offline_wbtc_weth_v2_pool: UniswapV2Pool,
     ):
         """Test exact output simulation method."""
         pool = offline_wbtc_weth_v2_pool
@@ -156,7 +156,7 @@ class TestV2PoolCalculations:
 
     def test_swap_for_all(
         self,
-        offline_wbtc_weth_v2_pool: LiquidityPool,
+        offline_wbtc_weth_v2_pool: UniswapV2Pool,
     ):
         """Test swapping for all available liquidity."""
         pool = offline_wbtc_weth_v2_pool
@@ -175,7 +175,7 @@ class TestV2PoolCalculations:
 
     def test_zero_swaps(
         self,
-        offline_wbtc_weth_v2_pool: LiquidityPool,
+        offline_wbtc_weth_v2_pool: UniswapV2Pool,
     ):
         """Test that zero input raises appropriate error."""
         pool = offline_wbtc_weth_v2_pool
@@ -196,7 +196,7 @@ class TestV2PoolProperties:
 
     def test_pool_fees(
         self,
-        offline_wbtc_weth_v2_pool: LiquidityPool,
+        offline_wbtc_weth_v2_pool: UniswapV2Pool,
     ):
         """Test pool fee properties."""
         pool = offline_wbtc_weth_v2_pool
@@ -207,7 +207,7 @@ class TestV2PoolProperties:
 
     def test_pool_tokens(
         self,
-        offline_wbtc_weth_v2_pool: LiquidityPool,
+        offline_wbtc_weth_v2_pool: UniswapV2Pool,
         offline_wbtc,
         offline_weth,
     ):
@@ -225,7 +225,7 @@ class TestV2PoolProperties:
 
     def test_reserves_properties(
         self,
-        offline_wbtc_weth_v2_pool: LiquidityPool,
+        offline_wbtc_weth_v2_pool: UniswapV2Pool,
     ):
         """Test reserve properties."""
         pool = offline_wbtc_weth_v2_pool
@@ -240,7 +240,7 @@ class TestV2PoolProperties:
 
     def test_absolute_price(
         self,
-        offline_wbtc_weth_v2_pool: LiquidityPool,
+        offline_wbtc_weth_v2_pool: UniswapV2Pool,
     ):
         """Test absolute price calculations."""
         pool = offline_wbtc_weth_v2_pool

@@ -1,7 +1,7 @@
 """ADR-005 slice 7 step 3 — additive `dex` plumbing tests.
 
 Non-breaking foundation: the pool type registry gains a `dex_identity`
-field, `LiquidityPool.__init__` gains an additive `dex` param (explicit
+field, `UniswapV2Pool.__init__` gains an additive `dex` param (explicit
 params still take precedence — existing callers unaffected), and `make_v2_pool`
 threads `dex=` through. The DEX `__init__.py` self-registration sites pass
 the canonical preset for each DEX.
@@ -22,7 +22,7 @@ from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.degenbot_rs import PyBot, PyDexIdentity, dex_identity
 from degenbot.registry.pool_type import pool_type_registry
-from degenbot.uniswap.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 
@@ -69,7 +69,7 @@ class TestRegistryDexIdentity:
         uniswap = dex_identity("uniswap-v2")
         assert uniswap is not None
         pool_type_registry.register(
-            LiquidityPool,
+            UniswapV2Pool,
             chain_id=_TEST_CHAIN,
             factory_address=_TEST_FACTORY,
             pool_init_hash=UNISWAP_INIT_HASH,
@@ -87,7 +87,7 @@ class TestRegistryDexIdentity:
     def test_get_v2_identity_returns_none_when_registered_without_preset(self) -> None:
         """A registration without dex_identity → get_v2_identity() returns None."""
         pool_type_registry.register(
-            LiquidityPool,
+            UniswapV2Pool,
             chain_id=_TEST_CHAIN,
             factory_address=_TEST_FACTORY,
         )
@@ -106,14 +106,14 @@ class TestRegistryDexIdentity:
         uniswap = dex_identity("uniswap-v2")
         assert uniswap is not None
         pool_type_registry.register(
-            LiquidityPool,
+            UniswapV2Pool,
             chain_id=_TEST_CHAIN,
             factory_address=_TEST_FACTORY,
             pool_init_hash=UNISWAP_INIT_HASH,
             dex_identity=uniswap,
         )
         try:
-            assert pool_type_registry.get_v2_class(_TEST_CHAIN, _TEST_FACTORY) is LiquidityPool
+            assert pool_type_registry.get_v2_class(_TEST_CHAIN, _TEST_FACTORY) is UniswapV2Pool
             resolved = pool_type_registry.get_v2_identity(_TEST_CHAIN, _TEST_FACTORY)
             assert resolved is uniswap
         finally:

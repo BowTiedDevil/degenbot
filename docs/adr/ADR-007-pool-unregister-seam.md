@@ -16,7 +16,7 @@ topology** — and its Slice 4 implemented what the IESD3L task body called "Opt
 `PyLiquidityPool` handle in a Python companion class:
 
 - V2: `src/degenbot/builders/v2_pool_builder.py:146` calls `self._py_bot.register_v2_pool(...)`,
-  then `self._py_bot.get_pool(pool_id)`, then constructs the Python `LiquidityPool(py_pool, ...)`.
+  then `self._py_bot.get_pool(pool_id)`, then constructs the Python `UniswapV2Pool(py_pool, ...)`.
 - V3 and V4 builders do the same for `UniswapV3Pool` / `UniswapV4Pool`, mirroring
   `Erc20Token`-wraps-`PyToken` (the token-side split ADR-003 recorded).
 - `EngineRegistry.register_v2_pool` (`src/degenbot/arbitrage/engine_registry.py:147-151`) is

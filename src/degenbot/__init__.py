@@ -76,7 +76,7 @@ from .sushiswap import (
     SushiswapV3PoolTracker,
 )
 from .uniswap import (
-    LiquidityPool,
+    UniswapV2Pool,
     UniswapV2PoolExternalUpdate,
     UniswapV2PoolSimulationResult,
     UniswapV2PoolState,
@@ -118,7 +118,6 @@ __all__ = (
     "Erc20Token",
     "EtherPlaceholder",
     "FlatComposer",
-    "LiquidityPool",
     "ManagedPoolRegistry",
     "NoApprovals",
     "PancakeswapV3Pool",
@@ -129,6 +128,7 @@ __all__ = (
     "SushiswapV3Pool",
     "SushiswapV3PoolTracker",
     "TokenRegistry",
+    "UniswapV2Pool",
     "UniswapV2PoolExternalUpdate",
     "UniswapV2PoolSimulationResult",
     "UniswapV2PoolState",

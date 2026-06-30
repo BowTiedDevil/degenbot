@@ -1,7 +1,7 @@
 """SushiSwap pool trackers for event-driven updates.
 
 ADR-005 slice 7 step 4b: ``SushiswapV2PoolTracker`` is deleted (its pool
-class is gone — the canonical ``LiquidityPool`` + ``UniswapV2PoolTracker`` is
+class is gone — the canonical ``UniswapV2Pool`` + ``UniswapV2PoolTracker`` is
 used). ``SushiswapV3PoolTracker`` is retained.
 """
 

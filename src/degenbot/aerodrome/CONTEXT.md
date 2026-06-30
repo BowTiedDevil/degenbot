@@ -2,9 +2,9 @@
 
 > Resolves ergo **WFY235** — "Investigate architecture for Aerodrome-style V2
 > pools (solidly-stable + on-chain fees) in the three-layer model."
-> Decision recorded: **Option A/D (they converge) — strategy-on-`LiquidityPool`
+> Decision recorded: **Option A/D (they converge) — strategy-on-`UniswapV2Pool`
 > companion**, with three surgical generalizations. See
-> [Design decision](#design-decision-option-ad--strategy-on-liquiditypool-companion).
+> [Design decision](#design-decision-option-ad--strategy-on-uniswapv2pool-companion).
 >
 > This doubles as the module's `CONTEXT.md` per `CONTEXT-MAP.md` instructions.
 
@@ -35,7 +35,7 @@
   params `(gamma, 10_000)` with `gamma=0` for stable as the "fetch per-pool"
   sentinel.
 - **Companion** (`PyLiquidityPool`): the ADR-005 three-layer handle where Rust
-  owns mutable reserves + reorg journal and the Python `LiquidityPool` reads
+  owns mutable reserves + reorg journal and the Python `UniswapV2Pool` reads
   them via an atomic `snapshot()`. `UniswapV2Pool`/`CamelotLiquidityPool` were
   converted to companions in slice 4; **Aerodrome was deliberately skipped**
   (no `PyLiquidityPool` handle today, reserves live in Python `StateCache`,
@@ -64,8 +64,8 @@
   `swap_fn: Callable[[int], int]` used by the arbitrage solver for exact
   evaluation. The Rust engine's V2 hop math is constant-product only
   (`IntHopState`); **all solidly-stable math is already solved Python-side**
-  via `swap_fn` — today, by Camelot (`LiquidityPool._camelot_stable_swap_fn`).
-- `LiquidityPool` (slice-7 collapsed class, `uniswap/liquidity_pool.py`)
+  via `swap_fn` — today, by Camelot (`UniswapV2Pool._camelot_stable_swap_fn`).
+- `UniswapV2Pool` (slice-7 collapsed class, `uniswap/v2_liquidity_pool.py`)
   **already supports the solidly-stable strategy** via the
   `stable_swap: bool` class flag + `fee_denominator: int | None` + a
   `SolidlyStableHop` branch in `to_hop_state`
@@ -105,7 +105,7 @@ the follow-up slice, not a structural blocker.
 ## Candidate architectures (evaluated)
 
 - **A. Strategy-on-companion (minimal lift).** Convert Aerodrome to a
-  `PyLiquidityPool` companion like Camelot: `LiquidityPool` carries
+  `PyLiquidityPool` companion like Camelot: `UniswapV2Pool` carries
   `stable: bool` + a resolved per-pool fee as Python-side pool state (set at
   construction from the builder's on-chain `getFee`), wires the solidly-stable
   calc strategy when `stable`. Rust `V2PoolState` keeps the resolved
@@ -130,7 +130,7 @@ strategy-off-stable". D just names the split (immutable `dex` identity vs
 mutable per-pool fee) that A leaves implicit. **The choose-one distinction is
 cosmetic; the implementation is identical.**
 
-## Design decision: Option A/D — strategy-on-`LiquidityPool` companion
+## Design decision: Option A/D — strategy-on-`UniswapV2Pool` companion
 
 Aerodrome is **2-token V2-shaped** (Sync event, reserves0/reserves1, CREATE2
 address). C mis-characterizes it: ADR-003/005's "third family" language refers
@@ -144,18 +144,18 @@ The Rust engine only does constant-product V2 math (`IntHopState`); a Rust
 `SolidlyStableV2` variant would have no consumer. Adding it is pure surface
 with no payoff.
 
-So: **Option A/D**. The existing `LiquidityPool` solidly-stable path, with
+So: **Option A/D**. The existing `UniswapV2Pool` solidly-stable path, with
 three surgical generalizations:
 
 ### 1. Generalize the solidly-stable flavor selector
 
 Replace the hardcoded `k_camelot` / `get_y_camelot` pair in
-`LiquidityPool.to_hop_state` and `_calculate_tokens_out_from_tokens_in_stable_swap`
+`UniswapV2Pool.to_hop_state` and `_calculate_tokens_out_from_tokens_in_stable_swap`
 with a class-level strategy select. Two viable shapes:
 
 - **Class callables** (preferred — mirrors the existing `k_func`/`get_y_func`
-  plumbing in `SolidlyStableHop`): `class LiquidityPool: _stable_k = k_camelot;
-  _stable_get_y = get_y_camelot`. An `AerodromeV2Pool(LiquidityPool)` subclass
+  plumbing in `SolidlyStableHop`): `class UniswapV2Pool: _stable_k = k_camelot;
+  _stable_get_y = get_y_camelot`. An `AerodromeV2Pool(UniswapV2Pool)` subclass
   overrides `_stable_k = calc_k; _stable_get_y = get_y_solidly`.
 - Or a `SolidlyFlavor` enum (`Camelot | Solidly`) dispatched in
   `_calculate_tokens_out_from_tokens_in_stable_swap`.
@@ -167,7 +167,7 @@ new math.
 
 ### 2. Resolved per-pool fee (already supported — no code change)
 
-`LiquidityPool.__init__` already accepts explicit `fee_token0` / `fee_token1`
+`UniswapV2Pool.__init__` already accepts explicit `fee_token0` / `fee_token1`
 that override the `dex` preset (explicit > dex > class-default precedence).
 An Aerodrome companion sets `fee_token0 = fee_token1 = (gamma, 10_000)`,
 where `gamma = 10_000 - fee_raw` is computed from the builder's on-chain
@@ -211,8 +211,8 @@ skipped, not structurally excluded.
 
 ## Relationships
 
-- **Aerodrome V2 ↔ `LiquidityPool`** (slice-7 collapsed class): Aerodrome is
-  a `LiquidityPool` subclass selecting the Solidly flavor of the
+- **Aerodrome V2 ↔ `UniswapV2Pool`** (slice-7 collapsed class): Aerodrome is
+  a `UniswapV2Pool` subclass selecting the Solidly flavor of the
   solidly-stable strategy (Camelot selects the Camelot flavor). The
   `stable_swap`/`fee_denominator` ClassVars + the new `_stable_k`/
   `_stable_get_y` (or `SolidlyFlavor`) class hook are the per-DEX divergence

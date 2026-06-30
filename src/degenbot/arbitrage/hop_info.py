@@ -16,7 +16,7 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING
 
-from degenbot.uniswap.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
@@ -112,7 +112,7 @@ def build_hops_from_pools(
     """
     hops: list[HopInfo] = []
     for pool, zfo in pools_and_zfos:
-        if isinstance(pool, LiquidityPool):
+        if isinstance(pool, UniswapV2Pool):
             hops.append(
                 V2HopInfo(
                     pool_address=pool.address,

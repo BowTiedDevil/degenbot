@@ -2,7 +2,7 @@
 
 from degenbot.degenbot_rs import dex_identity
 from degenbot.registry.pool_type import pool_type_registry
-from degenbot.uniswap.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 from . import (
@@ -61,7 +61,7 @@ def _register_sushiswap_deployments() -> None:
     assert sushiswap_v2_identity is not None, "sushiswap-v2 preset must resolve"
     for chain_id, factory, init_hash, deployer in v2_deployments:
         pool_type_registry.register(
-            LiquidityPool,
+            UniswapV2Pool,
             chain_id=chain_id,
             factory_address=factory,
             pool_init_hash=init_hash,

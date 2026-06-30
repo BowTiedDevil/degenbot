@@ -36,7 +36,7 @@ from degenbot.uniswap.deployments import (
     EthereumMainnetUniswapV3,
     EthereumMainnetUniswapV4,
 )
-from degenbot.uniswap.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 # ---------------------------------------------------------------------------
@@ -72,7 +72,7 @@ def _init_hash(deployment: object) -> str | None:
 REGISTRATIONS: dict[tuple[int, str], tuple[type, object, str | None, str]] = {
     # Ethereum Mainnet (chain_id=1)
     (1, _factory(EthereumMainnetUniswapV2)): (
-        LiquidityPool,
+        UniswapV2Pool,
         EthereumMainnetUniswapV2,
         None,
         "uniswap_v2",
@@ -84,7 +84,7 @@ REGISTRATIONS: dict[tuple[int, str], tuple[type, object, str | None, str]] = {
         "uniswap_v3",
     ),
     (1, _factory(EthereumMainnetSushiswapV2)): (
-        LiquidityPool,
+        UniswapV2Pool,
         EthereumMainnetSushiswapV2,
         "sushiswap",
         "sushiswap_v2",
@@ -96,7 +96,7 @@ REGISTRATIONS: dict[tuple[int, str], tuple[type, object, str | None, str]] = {
         "sushiswap_v3",
     ),
     (1, _factory(EthereumMainnetPancakeswapV2)): (
-        LiquidityPool,
+        UniswapV2Pool,
         EthereumMainnetPancakeswapV2,
         "pancakeswap",
         "pancakeswap_v2",
@@ -107,10 +107,10 @@ REGISTRATIONS: dict[tuple[int, str], tuple[type, object, str | None, str]] = {
         "pancakeswap",
         "pancakeswap_v3",
     ),
-    (8453, _factory(BaseUniswapV2)): (LiquidityPool, BaseUniswapV2, None, "uniswap_v2"),
+    (8453, _factory(BaseUniswapV2)): (UniswapV2Pool, BaseUniswapV2, None, "uniswap_v2"),
     (8453, _factory(BaseUniswapV3)): (UniswapV3Pool, BaseUniswapV3, None, "uniswap_v3"),
     (8453, _factory(BaseSushiswapV2)): (
-        LiquidityPool,
+        UniswapV2Pool,
         BaseSushiswapV2,
         "sushiswap",
         "sushiswap_v2",
@@ -122,7 +122,7 @@ REGISTRATIONS: dict[tuple[int, str], tuple[type, object, str | None, str]] = {
         "sushiswap_v3",
     ),
     (8453, _factory(BasePancakeswapV2)): (
-        LiquidityPool,
+        UniswapV2Pool,
         BasePancakeswapV2,
         "pancakeswap",
         "pancakeswap_v2",
@@ -146,14 +146,14 @@ REGISTRATIONS: dict[tuple[int, str], tuple[type, object, str | None, str]] = {
         "aerodrome_v2",
     ),
     (8453, _factory(BaseSwapbasedV2)): (
-        LiquidityPool,
+        UniswapV2Pool,
         BaseSwapbasedV2,
         "swapbased",
         "swapbased_v2",
     ),
     (42161, _factory(ArbitrumUniswapV3)): (UniswapV3Pool, ArbitrumUniswapV3, None, "uniswap_v3"),
     (42161, _factory(ArbitrumSushiswapV2)): (
-        LiquidityPool,
+        UniswapV2Pool,
         ArbitrumSushiswapV2,
         "sushiswap",
         "sushiswap_v2",
@@ -165,7 +165,7 @@ REGISTRATIONS: dict[tuple[int, str], tuple[type, object, str | None, str]] = {
         "sushiswap_v3",
     ),
     (42161, _factory(ArbitrumCamelotV2)): (
-        LiquidityPool,
+        UniswapV2Pool,
         ArbitrumCamelotV2,
         "camelot",
         "camelot_v2",
@@ -180,7 +180,7 @@ class TestFullRegistration:
     def registry(self) -> PoolTypeRegistry:
         """A fresh registry with all built-in deployments registered."""
         reg = PoolTypeRegistry()
-        reg.set_default_v2_class(LiquidityPool)
+        reg.set_default_v2_class(UniswapV2Pool)
         reg.set_default_v3_class(UniswapV3Pool)
 
         for (chain_id, factory), (pool_class, deployment, variant, _) in REGISTRATIONS.items():
@@ -232,7 +232,7 @@ class TestFullRegistration:
         desc = registry.get_descriptor(chain_id, factory)
         assert desc is not None
 
-        if issubclass(pool_class, (LiquidityPool, AerodromeV2Pool)):
+        if issubclass(pool_class, (UniswapV2Pool, AerodromeV2Pool)):
             assert desc.family == PoolFamily.CONSTANT_PRODUCT
         elif issubclass(pool_class, UniswapV3Pool):
             assert desc.family == PoolFamily.CONCENTRATED_LIQUIDITY
@@ -373,7 +373,7 @@ class TestDefaultFallback:
     @pytest.fixture
     def registry(self) -> PoolTypeRegistry:
         reg = PoolTypeRegistry()
-        reg.set_default_v2_class(LiquidityPool)
+        reg.set_default_v2_class(UniswapV2Pool)
         reg.set_default_v3_class(UniswapV3Pool)
         for (chain_id, factory), (pool_class, deployment, _, _) in REGISTRATIONS.items():
             reg.register(
@@ -386,7 +386,7 @@ class TestDefaultFallback:
         return reg
 
     def test_unknown_v2_factory_falls_back_to_uniswap(self, registry: PoolTypeRegistry) -> None:
-        assert registry.get_v2_class(chain_id=1, factory_address="0x" + "0" * 40) is LiquidityPool
+        assert registry.get_v2_class(chain_id=1, factory_address="0x" + "0" * 40) is UniswapV2Pool
 
     def test_unknown_v3_factory_falls_back_to_uniswap(self, registry: PoolTypeRegistry) -> None:
         assert registry.get_v3_class(chain_id=1, factory_address="0x" + "0" * 40) is UniswapV3Pool

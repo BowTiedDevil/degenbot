@@ -3,7 +3,7 @@
 ADR-005 slice 7 step 4b: ``PancakeswapV2Pool`` (a hollow subclass carrying
 only a ``variant`` ClassVar + V2 fee/ABI constants, both superseded by the
 ``pancakeswap-v2`` DexIdentity preset) is deleted — the canonical
-``LiquidityPool`` is registered for the PancakeSwap V2 factory (see
+``UniswapV2Pool`` is registered for the PancakeSwap V2 factory (see
 ``pancakeswap/__init__.py``). ``PancakeswapV3Pool`` is retained.
 """
 

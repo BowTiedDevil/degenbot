@@ -34,7 +34,7 @@ from degenbot.exceptions import (
     InsufficientLiquidityError,
     TokenDenylistedError,
 )
-from degenbot.uniswap.liquidity_pool import LiquidityPool
+from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
@@ -50,7 +50,7 @@ __all__ = [
 
 #: The concrete pool union ``register_path`` accepts (mirrors
 #: ``hop_info.build_hops_from_pools``'s accepted pool types).
-type ArbPathPool = LiquidityPool | UniswapV3Pool | UniswapV4Pool
+type ArbPathPool = UniswapV2Pool | UniswapV3Pool | UniswapV4Pool
 
 
 @runtime_checkable
