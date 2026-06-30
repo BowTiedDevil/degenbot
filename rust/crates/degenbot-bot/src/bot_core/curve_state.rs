@@ -134,16 +134,13 @@ pub struct RegisterCurvePoolParams {
     pub base_pool: Option<Address>,
 }
 
-/// Curve `StableSwap` pool state owned by [`crate::bot_core::BotState`].
+/// Immutable Curve registration identity (ADR-005 identity slice).
 ///
-/// Carries the immutable config captured at registration + the mutable
-/// `balances`/`update_block` slot + a per-pool reorg journal. The state-port
-/// sub-slice (ADR-005 slice 11a): the Python `CurveStableswapPool` companion
-/// (11b) will read `balances`/`update_block` from this struct via
-/// `PyLiquidityPool` getters and delegate `external_update` to
-/// `apply_curve_balance_update_by_pool_id`.
-#[derive(Clone, Debug)]
-pub struct CurvePoolState {
+/// Pure registration data — the pool's permanent identity, captured at
+/// `register_curve_pool` and never mutated. Mirrors
+/// `V2PoolIdentity`/`V3PoolIdentity`/`V4PoolIdentity`/`TokenEntry`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CurvePoolIdentity {
     /// Pool contract address.
     pub address: Address,
     /// The pool's ERC-20 tokens (2 or more), in canonical Curve coin order.
@@ -156,33 +153,63 @@ pub struct CurvePoolState {
     pub admin_fee: u64,
     /// Rate multipliers (precision-adjusted), one per token.
     pub rate_multipliers: Vec<U256>,
+    // --- Variant strategy enums (opaque to Rust; carried so the future
+    //     Rust get_dy can dispatch on them) ---
+    /// `swap_style` discriminator (standard / `live_admin` / crypto / ...).
+    /// Stored as a raw u8 to keep Rust free of the Python enum surface.
+    pub swap_style: u8,
+    /// `lending_rate_style` discriminator (`NONE` / ...).
+    pub lending_rate_style: u8,
+    /// `d_variant` discriminator (stableswap D-iteration variant).
+    pub d_variant: u8,
+    /// `y_variant` discriminator (stableswap y-iteration variant).
+    pub y_variant: u8,
+    /// `yd_variant` discriminator (stableswap yd-iteration variant).
+    pub yd_variant: u8,
+    // --- Optional metapool wiring ---
+    /// Base pool address for metapools (`None` for plain pools).
+    pub base_pool: Option<Address>,
+}
 
+/// Curve `StableSwap` pool state owned by [`crate::bot_core::BotState`].
+///
+/// Carries the mutable `balances`/`update_block` slot + a per-pool reorg
+/// journal. Immutable identity lives on [`CurvePoolIdentity`] (look it up via
+/// [`crate::bot_core::BotState::get_curve_identity`]). The state-port
+/// sub-slice (ADR-005 slice 11a): the Python `CurveStableswapPool` companion
+/// (11b) reads `balances`/`update_block` from this struct via `PyLiquidityPool`
+/// getters and delegates `external_update` to
+/// `apply_curve_balance_update_by_pool_id`.
+#[derive(Clone, Debug)]
+pub struct CurvePoolState {
     // --- Mutable state (authoritative) ---
     /// Current balances (one per token).
     pub balances: Vec<U256>,
     /// Block number of the last balance update.
     pub update_block: u64,
 
-    // --- Variant strategy enums (opaque to Rust) ---
-    pub swap_style: u8,
-    pub lending_rate_style: u8,
-    pub d_variant: u8,
-    pub y_variant: u8,
-    pub yd_variant: u8,
-
-    // --- Optional metapool wiring ---
-    pub base_pool: Option<Address>,
-
     /// Reorg journal — balance priors for rollback.
     pub journal: ReorgJournal<CurveBlockDelta>,
 }
 
+impl CurvePoolIdentity {
+    /// Number of tokens (== number of balances).
+    #[must_use]
+    pub fn n_coins(&self) -> usize {
+        self.tokens.len()
+    }
+}
+
 impl CurvePoolState {
-    /// Construct from registration params with a journal of the given depth.
+    /// Construct the (immutable identity, mutable state) pair from
+    /// registration params, with a journal of the given depth.
     /// Pushes a genesis anchor delta (mirror of V2's discipline) so
     /// `restore_before_block` can land on the registration state.
     #[must_use]
-    pub fn from_params(params: RegisterCurvePoolParams, journal_depth: usize) -> Self {
+    pub fn from_params(
+        params: RegisterCurvePoolParams,
+        journal_depth: usize,
+    ) -> (CurvePoolIdentity, CurvePoolState) {
         let mut journal = ReorgJournal::<CurveBlockDelta>::new(journal_depth);
         // Genesis anchor: before == after == registration balances at
         // update_block. The "landed-at" registration point.
@@ -191,29 +218,26 @@ impl CurvePoolState {
             balances_before: params.balances.clone(),
             balances_after: params.balances.clone(),
         });
-        Self {
+        let identity = CurvePoolIdentity {
             address: params.address,
             tokens: params.tokens,
             a_coefficient: params.a_coefficient,
             fee: params.fee,
             admin_fee: params.admin_fee,
             rate_multipliers: params.rate_multipliers,
-            balances: params.balances,
-            update_block: params.update_block,
             swap_style: params.swap_style,
             lending_rate_style: params.lending_rate_style,
             d_variant: params.d_variant,
             y_variant: params.y_variant,
             yd_variant: params.yd_variant,
             base_pool: params.base_pool,
+        };
+        let state = CurvePoolState {
+            balances: params.balances,
+            update_block: params.update_block,
             journal,
-        }
-    }
-
-    /// Number of tokens (== number of balances).
-    #[must_use]
-    pub fn n_coins(&self) -> usize {
-        self.tokens.len()
+        };
+        (identity, state)
     }
 }
 
@@ -250,7 +274,10 @@ mod tests {
         let mut core = BotState::new();
         let pool_id = core.register_curve_pool(&three_coin_params(10, &[1_000, 2_000, 3_000]));
         let s = core.get_curve_pool(pool_id).expect("curve pool registered");
-        assert_eq!(s.n_coins(), 3);
+        let id = core
+            .get_curve_identity(pool_id)
+            .expect("curve pool identity registered");
+        assert_eq!(id.n_coins(), 3);
         assert_eq!(
             s.balances,
             vec![U256::from(1_000), U256::from(2_000), U256::from(3_000)]

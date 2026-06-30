@@ -16,7 +16,7 @@ use pyo3::types::{PyDict, PyList};
 
 use crate::bot::journal_err_to_py;
 use degenbot_bot::bot_core::{
-    BalancerStablePoolState, BalancerWeightedPoolState, BotState, CurvePoolState, TickInfo,
+    BalancerStablePoolState, BalancerWeightedPoolState, BotState, CurvePoolIdentity, TickInfo,
 };
 
 /// Encode a byte slice as a lowercase hex string (no "0x" prefix).
@@ -1183,8 +1183,8 @@ impl PyLiquidityPool {
     fn n_coins(&self) -> usize {
         self.core
             .read()
-            .get_curve_pool(self.pool_id)
-            .map_or(0, CurvePoolState::n_coins)
+            .get_curve_identity(self.pool_id)
+            .map_or(0, CurvePoolIdentity::n_coins)
     }
 
     /// Current balances for a Curve pool (one `U256` per token).
