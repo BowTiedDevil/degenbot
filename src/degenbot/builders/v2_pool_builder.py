@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from fractions import Fraction
 from typing import TYPE_CHECKING
 
 import eth_abi.abi
@@ -124,16 +123,12 @@ class V2PoolBuilder(V2BuilderBase):
         # cover. The branch keys on ``dex.variant`` being a Camelot preset;
         # when stable, switch to the ``camelot-v2-stable`` preset.
         camelot: CamelotStateFetch | None = None
-        fee_token0 = common.fee_token0
-        fee_token1 = common.fee_token1
         gamma_numer0 = common.fee_token0.denominator - common.fee_token0.numerator
         fee_denom0 = common.fee_token0.denominator
         gamma_numer1 = common.fee_token1.denominator - common.fee_token1.numerator
         fee_denom1 = common.fee_token1.denominator
         if dex is not None and dex.variant.startswith("camelot-v2"):
             camelot = self._fetch_camelot_state(common.pool_address, io=io, state_block=state_block)
-            fee_token0 = Fraction(camelot.fee_token0, camelot.fee_denominator)
-            fee_token1 = Fraction(camelot.fee_token1, camelot.fee_denominator)
             gamma_numer0 = camelot.fee_denominator - camelot.fee_token0
             fee_denom0 = camelot.fee_denominator
             gamma_numer1 = camelot.fee_denominator - camelot.fee_token1
@@ -177,19 +172,7 @@ class V2PoolBuilder(V2BuilderBase):
         py_pool = self._py_bot.get_pool(pool_id)
         assert py_pool is not None, "register_v2_pool returned a pool_id with no handle"
 
-        pool = pool_class._from_py_pool(  # noqa: SLF001
-            py_pool,
-            address=common.pool_address,
-            token0=token0,
-            token1=token1,
-            dex=dex,
-            chain_id=common.chain_id,
-            factory=common.factory,
-            fee_token0=fee_token0,
-            fee_token1=fee_token1,
-            deployer_address=common.deployer,
-            init_hash=common.init_hash,
-        )
+        pool = pool_class._from_py_pool(py_pool)  # noqa: SLF001
 
         # Register pool
         self._register_pool(pool, chain_id=chain_id)

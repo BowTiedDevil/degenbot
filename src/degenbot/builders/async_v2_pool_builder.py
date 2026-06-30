@@ -235,19 +235,7 @@ class AsyncV2PoolBuilder:
         py_pool = self._py_bot.get_pool(pool_id)
         assert py_pool is not None, "register_v2_pool returned a pool_id with no handle"
 
-        pool = pool_class._from_py_pool(  # noqa: SLF001
-            py_pool,
-            address=common.pool_address,
-            token0=token0,
-            token1=token1,
-            dex=dex,
-            chain_id=common.chain_id,
-            factory=common.factory,
-            fee_token0=common.fee_token0,
-            fee_token1=common.fee_token1,
-            deployer_address=common.deployer,
-            init_hash=common.init_hash,
-        )
+        pool = pool_class._from_py_pool(py_pool)  # noqa: SLF001
 
         # Register pool
         self._pools.add(pool_address=pool.address, chain_id=chain_id, pool=pool)

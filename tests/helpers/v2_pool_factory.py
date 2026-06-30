@@ -19,10 +19,10 @@ from typing import TYPE_CHECKING
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.degenbot_rs import PyBot, PyDexIdentity, PyLiquidityPool
-from degenbot.erc20 import Erc20Token
 from degenbot.uniswap.liquidity_pool import LiquidityPool
 
 if TYPE_CHECKING:
+    from degenbot.erc20 import Erc20Token
     from degenbot.types.aliases import ChainId
 
 
@@ -82,13 +82,7 @@ def make_v2_pool(
     precedence (non-breaking for callers that pass everything explicitly).
     """
     address = get_checksum_address(address)
-    resolved_chain_id = chain_id if chain_id is not None else token0.chain_id
-
-    # Fill in None params from the dex preset (explicit > dex precedence).
-    # ``dex.fee_tokenN`` is the RETAINED post-fee fraction ``(gamma_numer,
-    # fee_denom)`` (Rust convention); convert to the FEE ``Fraction`` for the
-    # companion. For Rust registration, ``gamma_numer`` is read directly from
-    # the preset (no conversion — it's already the retained fraction).
+    # chain_id is recovered off the handle by _from_py_pool (token0.chain_id).
     if dex is not None:
         if factory is None:
             factory = dex.factory
@@ -147,19 +141,20 @@ def make_v2_pool(
         stable_swap=stable_swap,
         fee_denominator=fee_denominator,
     )
+    # ADR-006 (OGTTCS D1): the pool's tokens must live in the SAME Bot as
+    # the pool — ``_from_py_pool`` recovers them via ``py_pool.get_token0``/
+    # ``get_token1``, which look up ``token0_address``/``token1_address`` in
+    # the pool's own ``BotState``. The token companions passed in may have been
+    # built against a different ``PyBot``; re-register their metadata here so
+    # the handle is self-describing. ``register_token`` asserts on duplicates,
+    # so guard with ``get_token``.
+    for tok in (token0, token1):
+        if py_bot.get_token(tok.address) is None:
+            py_bot.register_token(
+                tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id
+            )
+
     py_pool: PyLiquidityPool | None = py_bot.get_pool(pool_id)
     assert py_pool is not None, "register_v2_pool returned a pool_id with no handle"
 
-    return pool_class._from_py_pool(
-        py_pool,
-        address=address,
-        token0=token0,
-        token1=token1,
-        dex=dex,
-        chain_id=resolved_chain_id,
-        deployer_address=deployer_address,
-        init_hash=init_hash,
-        factory=factory,
-        fee_token0=fee_token0,
-        fee_token1=fee_token1,
-    )
+    return pool_class._from_py_pool(py_pool)

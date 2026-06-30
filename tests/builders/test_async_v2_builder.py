@@ -131,13 +131,14 @@ class TestAsyncV2PoolBuilder:
 
         # Builder with mock dependencies — all I/O goes through io=
         erc20_builder = MagicMock(spec=AsyncErc20Builder)
+        py_bot = PyBot()
 
         async def _build_token(address, *, chain_id=None, silent=False, io=None):
             await asyncio.sleep(0)
-            token = MagicMock(spec=Erc20Token)
-            token.address = address
-            token.chain_id = chain_id or 1
-            return token
+            py_token = py_bot.register_token(
+                address, name="TK", symbol="TK", decimals=18, chain_id=chain_id or 1
+            )
+            return Erc20Token._from_py_token(py_token)
 
         erc20_builder.build = _build_token
 
@@ -149,7 +150,7 @@ class TestAsyncV2PoolBuilder:
             pools=MagicMock(spec=PoolRegistry),
             tokens=MagicMock(spec=TokenRegistry),
             erc20_builder=erc20_builder,
-            py_bot=PyBot(),
+            py_bot=py_bot,
             default_chain_id=1,
         )
 
