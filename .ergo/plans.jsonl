@@ -284,3 +284,7 @@
 {"type":"state","ts":"2026-06-30T21:56:17.789949637Z","data":{"id":"RDR3KL","state":"done","ts":"2026-06-30T21:56:17.789949637Z"}}
 {"type":"claim","ts":"2026-06-30T21:56:17.803619831Z","data":{"id":"FOZEH6","agent_id":"agent@t-c28d","ts":"2026-06-30T21:56:17.803619831Z"}}
 {"type":"state","ts":"2026-06-30T21:56:17.803619831Z","data":{"id":"FOZEH6","state":"doing","ts":"2026-06-30T21:56:17.803619831Z"}}
+{"type":"result","ts":"2026-06-30T21:58:51.460021776Z","data":{"task_id":"FOZEH6","summary":"src/degenbot/aerodrome/pools.py","path":"src/degenbot/aerodrome/pools.py","sha256_at_attach":"ec2f19b17667d2b7610ac441331ff68569a790813f6e8f3dcb3042a0f3da760b","mtime_at_attach":"2026-06-30T21:56:47.470693905Z","git_commit_at_attach":"3ec9848680cdf1e613eb039f6a28289ce7132bb4","ts":"2026-06-30T21:58:51.460021776Z"}}
+{"type":"state","ts":"2026-06-30T21:58:51.465806472Z","data":{"id":"FOZEH6","state":"done","ts":"2026-06-30T21:58:51.465806472Z"}}
+{"type":"claim","ts":"2026-06-30T21:58:51.478790639Z","data":{"id":"MTKFH6","agent_id":"agent@t-c28d","ts":"2026-06-30T21:58:51.478790639Z"}}
+{"type":"state","ts":"2026-06-30T21:58:51.478790639Z","data":{"id":"MTKFH6","state":"doing","ts":"2026-06-30T21:58:51.478790639Z"}}

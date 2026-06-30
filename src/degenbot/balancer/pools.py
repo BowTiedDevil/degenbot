@@ -39,7 +39,7 @@ from degenbot.degenbot_rs import (
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
-from degenbot.types.aliases import BlockNumber, ChainId
+from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import BalancerWeightedHop, HopType
 from degenbot.types.pool_protocols import SimulationResult
@@ -90,7 +90,6 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         fee: Fraction,
         weights: Sequence[int],
         pow_version: PowVersion = PowVersion.V1,
-        chain_id: ChainId | None = None,
         state_block: BlockNumber | None = None,
     ) -> None:
         """Initialize a Balancer V2 weighted pool companion over a PyLiquidityPool handle.
@@ -121,7 +120,6 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         self._py_pool = py_pool
         self.address = get_checksum_address(address)
 
-        self._chain_id = chain_id if chain_id is not None else tokens[0].chain_id
         state_block = state_block if state_block is not None else 0
 
         self.pool_id = pool_id
@@ -162,11 +160,6 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
         for the mutable ``balances`` slot; this getter returns the live tuple.
         """
         return tuple(self._py_pool.balancer_balances)
-
-    @property
-    def chain_id(self) -> int | None:
-        """Return chain id."""
-        return self._chain_id
 
     @property
     def state(self) -> PoolState:

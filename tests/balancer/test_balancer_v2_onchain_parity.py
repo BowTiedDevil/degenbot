@@ -163,7 +163,6 @@ def _build_weighted_pool(cassette: dict[str, Any]) -> BalancerV2Pool:
         fee=Fraction(cassette["fee"]),
         weights=cassette["weights"],
         pow_version=PowVersion(cassette["pow_version"]),
-        chain_id=1,
         state_block=cassette["block"],
         py_bot=pybot,
     )

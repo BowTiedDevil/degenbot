@@ -195,7 +195,6 @@ def _build_stable_pool(cassette: dict[str, Any]) -> BalancerV2StablePool:
         bpt_idx=bpt_idx,
         rate_provider=rate_provider,
         invariant_version=invariant_version,
-        chain_id=1,
         state_block=cassette["block"],
         py_bot=pybot,
     )
