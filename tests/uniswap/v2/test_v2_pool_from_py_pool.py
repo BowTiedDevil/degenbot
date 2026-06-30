@@ -10,12 +10,16 @@ was registered.
 import inspect
 from fractions import Fraction
 
+import pytest
+
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.degenbot_rs import PyBot
 from degenbot.erc20 import Erc20Token
+from degenbot.exceptions import DegenbotValueError
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
+from tests.helpers.v3_pool_factory import make_v3_pool
 
 
 class TestFromPyPoolSlimSeam:
@@ -71,6 +75,54 @@ class TestFromPyPoolSlimSeam:
         assert pool.fee_token1 == Fraction(3, 1000)
         assert pool.token0.address == token0.address
         assert pool.token1.address == token1.address
+
+    def test_rejects_non_v2_handle_with_variant_error(self) -> None:
+        """A V3-family handle must be rejected with a variant-mismatch error.
+
+        ``_from_py_pool`` is the V2 companion seam; wrapping a handle whose
+        ``PoolEntry`` is not ``V2`` would read empty/default identity (the
+        union-handle leak) and later crash with a confusing
+        ``ZeroDivisionError`` on ``Fraction(denom - gamma, denom)``. The
+        variant assertion fails fast with a clear message instead.
+        """
+        py_bot = PyBot()
+
+        token0 = make_erc20(
+            py_bot=py_bot,
+            address="0x" + "1" * 40,
+            name="Token0",
+            symbol="T0",
+            decimals=18,
+            chain_id=1,
+        )
+        token1 = make_erc20(
+            py_bot=py_bot,
+            address="0x" + "2" * 40,
+            name="Token1",
+            symbol="T1",
+            decimals=18,
+            chain_id=1,
+        )
+
+        v3_pool = make_v3_pool(
+            address="0x" + "b" * 40,
+            token0=token0,
+            token1=token1,
+            factory="0x" + "f" * 40,
+            fee=3000,
+            tick_spacing=60,
+            sqrt_price_x96=1 << 96,
+            tick=0,
+            liquidity=1_000_000,
+            state_block=18_000_000,
+            py_bot=py_bot,
+        )
+
+        # ``_py_pool`` is the shared ``PyLiquidityPool`` handle type; the V3
+        # companion holds the same handle shape, so passing it to the V2 seam
+        # is the misuse the variant assertion must catch.
+        with pytest.raises(DegenbotValueError, match="V2-family"):
+            UniswapV2Pool._from_py_pool(v3_pool._py_pool)  # noqa: SLF001
 
     def test_tokens_recovered_from_same_bot(self) -> None:
         """token0/token1 companions are rebuilt off the pool's handle."""

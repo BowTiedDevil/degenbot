@@ -131,6 +131,10 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
             A ``cls`` instance wrapping ``py_pool``.
 
         Raises:
+            DegenbotValueError: If the handle is not a V2-family pool
+                (``py_pool.variant`` is empty — the ``PoolEntry`` is not
+                ``V2``), so the union-handle V2 getters would return
+                empty/default identity.
             DegenbotValueError: If the handle has no ``DexIdentity`` preset
                 (the pool was not registered with a variant) or the pool's
                 tokens are not registered in the same ``Bot`` (ADR-006).
@@ -138,6 +142,22 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
         """
         self = cls.__new__(cls)
         self._py_pool = py_pool
+
+        # Variant-family guard: the handle's ``variant`` getter reads the V2
+        # ``PoolEntry`` identity and returns ``""`` for every non-V2 variant
+        # (V3/V4/Curve/Balancer). Wrapping such a handle here would read
+        # empty/default identity off the union handle (the leaky corner) and
+        # later crash with a confusing ``ZeroDivisionError`` on
+        # ``Fraction(denom - gamma, denom)`` when ``fee_tokenN`` yields ``(0, 0)``.
+        # Fail fast with a clear message instead — the uniform precondition
+        # check every ``_from_py_pool`` seam will use.
+        if not py_pool.variant:
+            msg = (
+                "PyLiquidityPool handle is not a V2-family pool "
+                f"(got variant {py_pool.variant!r}); UniswapV2Pool._from_py_pool "
+                "requires a handle registered via register_v2_pool"
+            )
+            raise DegenbotValueError(message=msg)
 
         # DexIdentity preset — resolved from the registered variant tag by
         # Rust (``preset_for_variant``). Always present for a V2 pool
