@@ -716,6 +716,28 @@ impl OwnedPathFinder {
                         continue;
                     }
 
+                    // Penultimate-hop reachability prune (analog of the
+                    // final-hop restriction, one level up): the hop being
+                    // chosen now leads to a node that must make the closing
+                    // hop on the next iteration. If that neighbor has no
+                    // edge to `end`, no cycle through it can close, so skip
+                    // it without pushing a dead frame. Sound (never skips a
+                    // valid cycle); conservative (a node whose only end-edges
+                    // are visited still passes this check and is pruned only
+                    // when the closing loop finds nothing).
+                    if matches!(
+                        self.effective_max_depth,
+                        Some(emd) if self.working_path.len() + 2 == emd
+                    ) {
+                        let neighbor_can_close = self
+                            .end_edges
+                            .get(edge.neighbor as usize)
+                            .is_some_and(|l| !l.is_empty());
+                        if !neighbor_can_close {
+                            continue;
+                        }
+                    }
+
                     // Per-depth pool-type filter.
                     if let Some(filter) = filter_slice {
                         let depth = self.working_path.len();
