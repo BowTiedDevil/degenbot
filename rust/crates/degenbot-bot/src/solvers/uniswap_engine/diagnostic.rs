@@ -213,14 +213,23 @@ pub fn recompute_v3_amount_out(
 #[must_use]
 pub fn recompute_v4_amount_out(
     state: &crate::bot_core::V4PoolState,
+    fee: u32,
+    tick_spacing: i32,
     zero_for_one: bool,
     amount_in: U256,
 ) -> Option<U256> {
     // V4 sign convention (opposite to V3): `amount_specified` < 0 = exact INPUT.
     let amount_specified = I256::try_from(amount_in).ok()?.saturating_neg();
     let limit = crate::bot_core::V3PoolState::default_sqrt_price_limit(zero_for_one);
-    let outcome =
-        crate::bot_core::v4_simulate_swap(state, zero_for_one, amount_specified, limit).ok()?;
+    let outcome = crate::bot_core::v4_simulate_swap(
+        state,
+        fee,
+        tick_spacing,
+        zero_for_one,
+        amount_specified,
+        limit,
+    )
+    .ok()?;
     Some(if zero_for_one {
         outcome.amount1
     } else {
@@ -1330,7 +1339,14 @@ fn thread_solver_result_and_recompute(
                     )
                 }),
                 super::HopType::V4 => core.get_v4_pool(pool_ref.pool_key).and_then(|state| {
-                    recompute_v4_amount_out(state, pool_ref.zero_for_one, amount_in)
+                    let identity = core.get_v4_identity(pool_ref.pool_key)?;
+                    recompute_v4_amount_out(
+                        state,
+                        identity.pool_key.fee,
+                        identity.pool_key.tick_spacing,
+                        pool_ref.zero_for_one,
+                        amount_in,
+                    )
                 }),
                 super::HopType::V2 => None,
             });
@@ -1388,21 +1404,23 @@ fn build_engine_pool_state(
                 liquidity: format!("0x{:x}", state.liquidity),
             })
         }
-        HopType::V4 => core
-            .get_v4_pool(pool_ref.pool_key)
-            .map(|state| DiagnosticPoolState::V4 {
-                pool_manager: fmt_addr(state.pool_manager),
-                pool_id: format!("0x{}", alloy::hex::encode(state.pool_id)),
-                currency0: state.pool_key.currency0.to_checksum(None),
-                currency1: state.pool_key.currency1.to_checksum(None),
-                fee: state.pool_key.fee,
-                tick_spacing: state.pool_key.tick_spacing,
+        HopType::V4 => {
+            let state = core.get_v4_pool(pool_ref.pool_key)?;
+            let identity = core.get_v4_identity(pool_ref.pool_key)?;
+            Some(DiagnosticPoolState::V4 {
+                pool_manager: fmt_addr(identity.pool_manager),
+                pool_id: format!("0x{}", alloy::hex::encode(identity.pool_id)),
+                currency0: identity.pool_key.currency0.to_checksum(None),
+                currency1: identity.pool_key.currency1.to_checksum(None),
+                fee: identity.pool_key.fee,
+                tick_spacing: identity.pool_key.tick_spacing,
                 hook_flags: 0,
-                hooks: state.pool_key.hooks.to_checksum(None),
+                hooks: identity.pool_key.hooks.to_checksum(None),
                 sqrt_price_x96: fmt_u256(state.sqrt_price_x96),
                 tick: state.tick,
                 liquidity: format!("0x{:x}", state.liquidity),
-            }),
+            })
+        }
     }
 }
 
@@ -2406,10 +2424,19 @@ mod tests {
             .expect("V4 registration failed");
         let core = engine.core.read();
         let state = core.get_v4_pool(v4_fwd).expect("registered");
+        let identity = core
+            .get_v4_identity(v4_fwd)
+            .expect("registered pool surfaces an identity");
 
         let amount_in = U256::from(1_000_000_000_u64);
-        let out = super::recompute_v4_amount_out(state, true, amount_in)
-            .expect("valid V4 swap should recompute");
+        let out = super::recompute_v4_amount_out(
+            state,
+            identity.pool_key.fee,
+            identity.pool_key.tick_spacing,
+            true,
+            amount_in,
+        )
+        .expect("valid V4 swap should recompute");
         assert!(
             out > U256::ZERO,
             "zfo swap of currency0 must yield currency1 > 0"

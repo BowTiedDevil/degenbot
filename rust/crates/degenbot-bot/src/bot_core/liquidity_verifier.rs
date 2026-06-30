@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use alloy::dyn_abi::DynSolValue;
 use alloy::primitives::{Address, Bytes, B256, I256, U256};
 
-use crate::bot_core::{TickMap, V3PoolIdentity, V3PoolState, V4PoolState};
+use crate::bot_core::{TickMap, V3PoolIdentity, V3PoolState, V4PoolIdentity, V4PoolState};
 use degenbot_rpc::provider::AlloyProvider;
 
 // ---------------------------------------------------------------------------
@@ -470,14 +470,14 @@ async fn call_state_view_tick_liquidity(
 pub async fn verify_v4_pools<S: std::hash::BuildHasher>(
     provider: &AlloyProvider,
     state_view: Address,
-    pools: &HashMap<u64, V4PoolState, S>,
+    pools: &HashMap<u64, (V4PoolIdentity, V4PoolState), S>,
     block_number: Option<u64>,
 ) -> Result<(), LiquidityVerifyError> {
     // Deduplicate by pool_id — both forward and reverse orientations share the same
     // on-chain state, so we only need to verify each pool_id once.
-    let mut seen_pool_ids: HashMap<[u8; 32], &V4PoolState> = HashMap::new();
+    let mut seen_pool_ids: HashMap<[u8; 32], &(V4PoolIdentity, V4PoolState)> = HashMap::new();
     for pool in pools.values() {
-        seen_pool_ids.entry(pool.pool_id).or_insert(pool);
+        seen_pool_ids.entry(pool.0.pool_id).or_insert(pool);
     }
 
     for (pool_id, pool) in seen_pool_ids {

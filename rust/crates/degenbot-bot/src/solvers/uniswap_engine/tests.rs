@@ -1433,7 +1433,7 @@ mod tests {
             v3_pool.map(|p| p.address),
             Some(Address::from([0x22u8; 20]))
         );
-        let v4_pool = core.get_v4_pool(v4_key);
+        let v4_pool = core.get_v4_identity(v4_key);
         assert_eq!(
             v4_pool.map(|p| p.pool_manager),
             Some(Address::from([0x33u8; 20]))
