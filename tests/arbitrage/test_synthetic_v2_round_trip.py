@@ -163,17 +163,27 @@ async def test_synthetic_v2_round_trip_registers_and_eager_solves(db) -> None:
         )
     ]
     assert discovered, "pathfinder found no WETH-A-WETH cycle in the seeded DB"
-    # Take the 2-hop WETH→A→WETH cycle.
-    cycle = next(p for p in discovered if len(p) == 2)
-    assert len(cycle) == 2
+    # The pathfinder returns BOTH directions of the WETH→A→WETH cycle
+    # (e.g. [pool A, pool B] and [pool B, pool A]); only one is profitable
+    # given the asymmetric reserves. Discovery order is not stable across
+    # pathfinder refactors (DFS iteration order, pruning, batch FFI), so
+    # register every 2-hop cycle and assert the profitable direction surfaces
+    # a result — never the lone first-discovered cycle.
+    cycles = [p for p in discovered if len(p) == 2]
+    assert cycles, "no 2-hop WETH-A-WETH cycle in the seeded DB"
+    assert len(cycles) == 2, f"expected both cycle directions, got {len(cycles)}"
 
-    # Build the discovered pools against the shared bot (reserves from the side
-    # dict, token ordering from the table).
-    pools = []
-    for step in cycle:
-        t0, t1 = token_order[step.address]
-        pools.append(
-            make_v2_pool(
+    # Build each discovered pool once against the shared bot (reserves from the
+    # side dict, token ordering from the table). Both cycle directions share
+    # the same pools, and the shared BotState panics on duplicate registration,
+    # so dedup by address.
+    pools_by_address: dict[str, object] = {}
+    for cycle in cycles:
+        for step in cycle:
+            if step.address in pools_by_address:
+                continue
+            t0, t1 = token_order[step.address]
+            pools_by_address[step.address] = make_v2_pool(
                 address=step.address,
                 token0=t0,
                 token1=t1,
@@ -185,7 +195,6 @@ async def test_synthetic_v2_round_trip_registers_and_eager_solves(db) -> None:
                 state_block=18_000_000,
                 py_bot=shared_py_bot,
             )
-        )
 
     # The engine adopts the shared core (ADR-006 D1). The synthetic test's job
     # is registration/solve, not the bot= production path (covered by VQURUB's
@@ -195,19 +204,30 @@ async def test_synthetic_v2_round_trip_registers_and_eager_solves(db) -> None:
         engine=UniswapArbEngine(py_bot=shared_py_bot),
     )
 
-    # Register the discovered pools (V2 path: just caches the shared pool_id).
-    for pool in pools:
+    # Register the discovered pools once (V2 path: just caches the shared
+    # pool_id).
+    for pool in pools_by_address.values():
         registry.register_v2_pool(pool)
 
-    # Resolve per-hop directions so the cycle closes (WETH→A→WETH).
-    zfo_list = runner.resolve_directions(pools, WETH_ADDR)
-    assert zfo_list is not None, "cycle does not close on WETH"
+    # Register every discovered 2-hop direction; collect each path_id. Only the
+    # profitable direction should eager-solve.
+    path_ids: list[int] = []
+    for cycle in cycles:
+        pools = [pools_by_address[step.address] for step in cycle]
+        zfo_list = runner.resolve_directions(pools, WETH_ADDR)
+        assert zfo_list is not None, "cycle does not close on WETH"
+        path_ids.append(
+            registry.register_path(list(zip(pools, zfo_list, strict=True)))
+        )
 
-    path_id = registry.register_path(list(zip(pools, zfo_list, strict=True)))
-
-    assert registry.engine.path_count() == 1
-    # Eager solve should have surfaced a profitable result. The result tuple is
+    assert registry.engine.path_count() == len(cycles)
+    # Eager solve should have surfaced a profitable result for the profitable
+    # cycle direction. The result tuple is
     # (path_id, optimal_input, profit, hop_outputs, consumed_inputs).
     results, _block = registry.engine.latest_results()
-    path_ids = {entry[0] for entry in results}
-    assert path_id in path_ids, f"eager solve did not surface path {path_id} in results: {results}"
+    result_path_ids = {entry[0] for entry in results}
+    profitable = result_path_ids & set(path_ids)
+    assert profitable, (
+        f"eager solve did not surface a profitable path among {path_ids} in "
+        f"results: {results}"
+    )
