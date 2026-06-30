@@ -150,12 +150,16 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
         # later crash with a confusing ``ZeroDivisionError`` on
         # ``Fraction(denom - gamma, denom)`` when ``fee_tokenN`` yields ``(0, 0)``.
         # Fail fast with a clear message instead — the uniform precondition
-        # check every ``_from_py_pool`` seam will use.
-        if not py_pool.variant:
+        # check every ``_from_py_pool`` seam uses (``pool_family`` dispatches on
+        # the ``PoolEntry`` variant directly, so it is correct for every
+        # registered family; the V2-only ``variant`` getter returns ``""`` for
+        # non-V2 and can't serve as a cross-family guard).
+        if py_pool.pool_family != "v2":
             msg = (
                 "PyLiquidityPool handle is not a V2-family pool "
-                f"(got variant {py_pool.variant!r}); UniswapV2Pool._from_py_pool "
-                "requires a handle registered via register_v2_pool"
+                f"(got pool_family {py_pool.pool_family!r}); "
+                "UniswapV2Pool._from_py_pool requires a handle registered via "
+                "register_v2_pool"
             )
             raise DegenbotValueError(message=msg)
 

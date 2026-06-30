@@ -914,6 +914,27 @@ impl BotState {
         }
     }
 
+    /// Return the pool-family tag for `pool_id` as a kebab-case string
+    /// (`"v2"`, `"v3"`, `"v4"`, `"curve"`, `"balancer-weighted"`,
+    /// `"balancer-stable"`). Returns `""` for an unregistered `pool_id`.
+    ///
+    /// This is the uniform family-guard primitive every `_from_py_pool`
+    /// seam asserts against — dispatches on the `PoolEntry` variant directly,
+    /// so it is correct for every registered family (unlike the V2-only
+    /// `variant` getter on `PyLiquidityPool`, which returns `""` for non-V2).
+    #[must_use]
+    pub fn pool_family(&self, pool_id: u64) -> &'static str {
+        match self.pools.get(&pool_id) {
+            Some(PoolEntry::V2(..)) => "v2",
+            Some(PoolEntry::V3(..)) => "v3",
+            Some(PoolEntry::V4(..)) => "v4",
+            Some(PoolEntry::Curve(..)) => "curve",
+            Some(PoolEntry::BalancerWeighted(..)) => "balancer-weighted",
+            Some(PoolEntry::BalancerStable(..)) => "balancer-stable",
+            None => "",
+        }
+    }
+
     /// Look up a V2 pool's immutable registration identity (address, tokens,
     /// fees, factory, variant, stable-strategy inputs). Returns `None` if the
     /// pool is not registered or isn't a V2 pool.
@@ -3983,6 +4004,123 @@ mod tests {
         );
         assert!(!id.stable_swap);
         assert_eq!(id.fee_denominator, None);
+    }
+
+    #[test]
+    fn pool_family_dispatches_v2_and_unknown() {
+        // `pool_family(pool_id)` returns a kebab-case family tag by matching
+        // on the `PoolEntry` variant. This is the uniform family-guard
+        // primitive every `_from_py_pool` seam asserts against (replacing the
+        // V2-only `variant` getter). Tracer bullet: V2 + unregistered.
+        let mut core = BotState::new();
+        let pool_id = core.register_v2_pool(&make_params(U256::from(1000), U256::from(2000)));
+        assert_eq!(core.pool_family(pool_id), "v2");
+        assert_eq!(core.pool_family(999_999), "");
+    }
+
+    #[test]
+    fn pool_family_dispatches_every_registered_family() {
+        // Each non-V2 `PoolEntry` variant resolves to its own family tag.
+        // Registers one pool of each family with minimal params and asserts
+        // the tag — this is the precondition for every non-V2 `_from_py_pool`
+        // seam's variant-family guard.
+        use crate::bot_core::{
+            RegisterBalancerStablePoolParams, RegisterBalancerWeightedPoolParams,
+            RegisterCurvePoolParams, RegisterV4PoolParams, TickInfo, V4PoolKey,
+        };
+        use alloy::primitives::U128;
+
+        let mut core = BotState::new();
+
+        // V3
+        let v3_id = register_v3(&mut core, 0);
+        assert_eq!(core.pool_family(v3_id), "v3");
+
+        // V4
+        let pool_manager = Address::from([0x44u8; 20]);
+        let pool_id_bytes: degenbot_decoders::v4_swap_decoder::PoolId = [0xeeu8; 32];
+        let v4_id = core
+            .register_v4_pool(&RegisterV4PoolParams {
+                pool_manager,
+                pool_id: pool_id_bytes,
+                pool_key: V4PoolKey {
+                    currency0: Address::ZERO,
+                    currency1: Address::from([0x01u8; 20]),
+                    fee: 500,
+                    tick_spacing: 10,
+                    hooks: Address::ZERO,
+                },
+                hook_flags: 0,
+                sqrt_price_x96: U256::from(1u64) << 96,
+                liquidity: 0,
+                tick: 0,
+                tick_data: HashMap::new(),
+                update_block: 0,
+                coverage: PoolTickCoverage::Sparse,
+            })
+            .expect("V4 registration");
+        assert_eq!(core.pool_family(v4_id), "v4");
+
+        // Curve (2-token plain pool)
+        let curve_id = core.register_curve_pool(&RegisterCurvePoolParams {
+            address: Address::from([0xc0u8; 20]),
+            tokens: vec![Address::ZERO, Address::from([0x01u8; 20])],
+            a_coefficient: 100,
+            fee: 4_000_000,
+            admin_fee: 5_000_000_000,
+            rate_multipliers: vec![U256::from(1u64), U256::from(1u64)],
+            balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
+            update_block: 0,
+            swap_style: 0,
+            lending_rate_style: 0,
+            d_variant: 1,
+            y_variant: 1,
+            yd_variant: 0,
+            base_pool: None,
+        });
+        assert_eq!(core.pool_family(curve_id), "curve");
+
+        // Balancer weighted (2-token)
+        let bal_w_id = core.register_balancer_weighted_pool(&RegisterBalancerWeightedPoolParams {
+            address: Address::from([0xb1u8; 20]),
+            vault: Address::from([0xa0u8; 20]),
+            pool_id: [0x11u8; 32],
+            tokens: vec![Address::ZERO, Address::from([0x01u8; 20])],
+            weights: vec![
+                U256::from(5_000_000_000_000_000_000u128),
+                U256::from(5_000_000_000_000_000_000u128),
+            ],
+            scaling_factors: vec![U256::from(1u64), U256::from(1u64)],
+            swap_fee: 1_000_000_000_000_000,
+            pow_version: 2,
+            balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
+            update_block: 0,
+        });
+        assert_eq!(core.pool_family(bal_w_id), "balancer-weighted");
+
+        // Balancer stable (2-token, MetaStable — bpt_idx=None)
+        let bal_s_id = core.register_balancer_stable_pool(&RegisterBalancerStablePoolParams {
+            address: Address::from([0xb2u8; 20]),
+            vault: Address::from([0xb0u8; 20]),
+            pool_id: [0x22u8; 32],
+            tokens: vec![Address::ZERO, Address::from([0x01u8; 20])],
+            amp: 100,
+            scaling_factors: vec![U256::from(1u64), U256::from(1u64)],
+            swap_fee: 1_000_000_000_000_000,
+            bpt_idx: None,
+            invariant_version: 2,
+            balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
+            update_block: 0,
+        });
+        assert_eq!(core.pool_family(bal_s_id), "balancer-stable");
+
+        // Suppress unused-import warning for TickInfo/U128 when the V4 tick_data
+        // map is empty — kept for parity with sibling V4 tests.
+        let _ = TickInfo {
+            liquidity_gross: U128::ZERO,
+            liquidity_net: alloy::primitives::I256::ZERO,
+            block: 0,
+        };
     }
 
     #[test]

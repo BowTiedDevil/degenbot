@@ -643,6 +643,20 @@ impl PyLiquidityPool {
             .is_some_and(|d| d.stable_swap)
     }
 
+    /// The pool-family tag for this handle's registered pool (`"v2"`,
+    /// `"v3"`, `"v4"`, `"curve"`, `"balancer-weighted"`,
+    /// `"balancer-stable"`). Empty string if unregistered.
+    ///
+    /// This is the uniform family-guard primitive every `_from_py_pool`
+    /// seam asserts against — dispatches on the `PoolEntry` variant
+    /// directly, so it is correct for every registered family (unlike
+    /// `variant`, which is V2-only and returns `""` for non-V2).
+    #[getter]
+    fn pool_family(&self) -> String {
+        let core = self.core.read();
+        core.pool_family(self.pool_id).to_string()
+    }
+
     /// Camelot integer fee scaling. `None` for non-Camelot V2 / non-V2.
     #[getter]
     fn fee_denominator(&self) -> Option<u64> {
