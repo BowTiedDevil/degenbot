@@ -47,7 +47,7 @@ pub use balancer_weighted_state::{
 pub use curve_state::{CurveBlockDelta, CurvePoolState, RegisterCurvePoolParams};
 pub use v3_state::{
     v3_simulate_swap, BufferedV3LiquidityUpdate, PoolTickCoverage, RegisterV3PoolParams,
-    SimulateSwapError, V3PoolState, V3SwapOutcome, V3SwapUpdate,
+    SimulateSwapError, V3PoolIdentity, V3PoolState, V3SwapOutcome, V3SwapUpdate,
 };
 pub use v4_state::RegisterV4PoolError;
 pub use v4_state::{
@@ -72,7 +72,7 @@ pub use block_clock::{BlockClock, BlockState, HeaderDecision, LogDecision};
 #[derive(Clone, Debug)]
 pub enum PoolEntry {
     V2(V2PoolIdentity, V2PoolState),
-    V3(V3PoolState),
+    V3(V3PoolIdentity, V3PoolState),
     V4(V4PoolState),
     Curve(CurvePoolState),
     BalancerWeighted(BalancerWeightedPoolState),
@@ -93,13 +93,18 @@ pub enum PoolEntry {
 /// V2 is intentionally excluded (different state shape — reserves, not
 /// scalars); a V2 `pool_id` yields `None` from the accessor, matching the
 /// prior V3-only contract.
+/// Mutable-reader trait for V3/V4 concentrated-liquidity pools.
+///
+/// Projects only mutable runtime scalars (`sqrt_price_x96`/`liquidity`/`tick`/
+/// `update_block`/`tick_data`) — the values a swap calc consumes. Immutable
+/// config (`fee`/`tick_spacing`) lives on `V3PoolIdentity`/`V4PoolIdentity`;
+/// read it via [`BotState::get_v3_identity`]/[`BotState::get_v4_identity`].
+/// The dyn-dispatch surface is a `&VxPoolState` borrowed from the registry.
 pub trait V3FamilyPool {
     fn sqrt_price_x96(&self) -> U256;
     fn liquidity(&self) -> u128;
     fn tick(&self) -> i32;
     fn update_block(&self) -> u64;
-    fn fee(&self) -> u32;
-    fn tick_spacing(&self) -> i32;
     fn tick_data(&self) -> &HashMap<i32, TickInfo>;
 }
 
@@ -115,12 +120,6 @@ impl V3FamilyPool for V3PoolState {
     }
     fn update_block(&self) -> u64 {
         self.update_block
-    }
-    fn fee(&self) -> u32 {
-        self.fee
-    }
-    fn tick_spacing(&self) -> i32 {
-        self.tick_spacing
     }
     fn tick_data(&self) -> &HashMap<i32, TickInfo> {
         &self.tick_data
@@ -139,12 +138,6 @@ impl V3FamilyPool for V4PoolState {
     }
     fn update_block(&self) -> u64 {
         self.update_block
-    }
-    fn fee(&self) -> u32 {
-        self.pool_key.fee
-    }
-    fn tick_spacing(&self) -> i32 {
-        self.pool_key.tick_spacing
     }
     fn tick_data(&self) -> &HashMap<i32, TickInfo> {
         &self.tick_data
@@ -429,8 +422,8 @@ impl BotState {
         let pool_id = self.next_pool_id;
         self.next_pool_id += 1;
 
-        let state = V3PoolState::from_params(params.clone(), self.journal_depth);
-        self.pools.insert(pool_id, PoolEntry::V3(state));
+        let (identity, state) = V3PoolState::from_params(params.clone(), self.journal_depth);
+        self.pools.insert(pool_id, PoolEntry::V3(identity, state));
         self.pool_addresses.insert(params.address, pool_id);
 
         pool_id
@@ -529,7 +522,7 @@ impl BotState {
         match self.pools.get(&pool_id)? {
             PoolEntry::Curve(state) => Some(state),
             PoolEntry::V2(..)
-            | PoolEntry::V3(_)
+            | PoolEntry::V3(..)
             | PoolEntry::V4(_)
             | PoolEntry::BalancerWeighted(_)
             | PoolEntry::BalancerStable(_) => None,
@@ -634,7 +627,7 @@ impl BotState {
         match self.pools.get(&pool_id)? {
             PoolEntry::BalancerWeighted(state) => Some(state),
             PoolEntry::V2(..)
-            | PoolEntry::V3(_)
+            | PoolEntry::V3(..)
             | PoolEntry::V4(_)
             | PoolEntry::Curve(_)
             | PoolEntry::BalancerStable(_) => None,
@@ -747,7 +740,7 @@ impl BotState {
         match self.pools.get(&pool_id)? {
             PoolEntry::BalancerStable(state) => Some(state),
             PoolEntry::V2(..)
-            | PoolEntry::V3(_)
+            | PoolEntry::V3(..)
             | PoolEntry::V4(_)
             | PoolEntry::Curve(_)
             | PoolEntry::BalancerWeighted(_) => None,
@@ -853,7 +846,7 @@ impl BotState {
     pub fn get_v2_pool_state(&self, pool_id: u64) -> Option<&V2PoolState> {
         match self.pools.get(&pool_id)? {
             PoolEntry::V2(_, state) => Some(state),
-            PoolEntry::V3(_)
+            PoolEntry::V3(..)
             | PoolEntry::V4(_)
             | PoolEntry::Curve(_)
             | PoolEntry::BalancerWeighted(_)
@@ -868,7 +861,7 @@ impl BotState {
     pub fn get_v2_identity(&self, pool_id: u64) -> Option<&V2PoolIdentity> {
         match self.pools.get(&pool_id)? {
             PoolEntry::V2(identity, _) => Some(identity),
-            PoolEntry::V3(_)
+            PoolEntry::V3(..)
             | PoolEntry::V4(_)
             | PoolEntry::Curve(_)
             | PoolEntry::BalancerWeighted(_)
@@ -910,7 +903,7 @@ impl BotState {
             return;
         };
 
-        let Some(PoolEntry::V3(state)) = self.pools.get_mut(&pool_id) else {
+        let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&pool_id) else {
             return;
         };
 
@@ -975,7 +968,7 @@ impl BotState {
         block_number: u64,
         tick_priors: &[(i32, TickInfo)],
     ) -> Option<u64> {
-        let Some(PoolEntry::V3(state)) = self.pools.get_mut(&pool_id) else {
+        let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&pool_id) else {
             return None;
         };
 
@@ -1069,7 +1062,7 @@ impl BotState {
         liquidity_delta: i128,
         block_number: u64,
     ) -> Option<u64> {
-        let Some(PoolEntry::V3(state)) = self.pools.get_mut(&pool_id) else {
+        let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&pool_id) else {
             return None;
         };
 
@@ -1143,12 +1136,13 @@ impl BotState {
             // V3FamilyPool` trait object, but the trait is read-only (no
             // mutable tick_data accessor); the 4-line body is duplicated
             // rather than threading a mutable trait. Slice 9a reuses this for V4.
-            PoolEntry::V3(state) => {
+            PoolEntry::V3(identity, state) => {
                 state.tick_data = tick_data;
                 if update_block > state.update_block {
                     state.update_block = update_block;
                 }
-                state.seed_known_bitmap_words();
+                // tick_spacing read off the entry's identity (no separate lookup).
+                state.seed_known_bitmap_words(identity.tick_spacing);
                 state.invalidate_tick_range_cache();
                 true
             }
@@ -1181,7 +1175,7 @@ impl BotState {
         block_number: u64,
     ) {
         if let Some(&key) = self.pool_addresses.get(&pool_address) {
-            if let Some(PoolEntry::V3(state)) = self.pools.get_mut(&key) {
+            if let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&key) {
                 crate::bot_core::tick_bitmap::apply_liquidity_to_tick_range(
                     &mut state.tick_data,
                     tick_lower,
@@ -1239,7 +1233,7 @@ impl BotState {
             );
         }
         for update in buffered {
-            if let Some(PoolEntry::V3(state)) = self.pools.get_mut(&key) {
+            if let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&key) {
                 // Capture boundary-tick priors before mutation so reorg
                 // rollback can reverse-apply. A tick absent before this update
                 // (newly initialized) gets `liquidity_gross_before: None`
@@ -1300,7 +1294,7 @@ impl BotState {
             log::info!("[dbg-drain] pump addr={address} count={}", buffered.len());
         }
         for update in buffered {
-            if let Some(PoolEntry::V3(state)) = self.pools.get_mut(&key) {
+            if let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&key) {
                 let mut journaled_priors: Vec<(i32, TickBefore)> = Vec::with_capacity(2);
                 for &tick_idx in &[update.tick_lower, update.tick_upper] {
                     let prior = state.tick_data.get(&tick_idx).cloned();
@@ -1363,7 +1357,22 @@ impl BotState {
     #[must_use]
     pub fn get_v3_pool(&self, pool_id: u64) -> Option<&V3PoolState> {
         match self.pools.get(&pool_id)? {
-            PoolEntry::V3(state) => Some(state),
+            PoolEntry::V3(_, state) => Some(state),
+            PoolEntry::V2(..)
+            | PoolEntry::V4(_)
+            | PoolEntry::Curve(_)
+            | PoolEntry::BalancerWeighted(_)
+            | PoolEntry::BalancerStable(_) => None,
+        }
+    }
+
+    /// Look up a V3 pool's immutable registration identity (address, tokens,
+    /// fee, `tick_spacing`, factory). Returns `None` if the pool is not
+    /// registered or isn't a V3 pool.
+    #[must_use]
+    pub fn get_v3_identity(&self, pool_id: u64) -> Option<&V3PoolIdentity> {
+        match self.pools.get(&pool_id)? {
+            PoolEntry::V3(identity, _) => Some(identity),
             PoolEntry::V2(..)
             | PoolEntry::V4(_)
             | PoolEntry::Curve(_)
@@ -1377,11 +1386,11 @@ impl BotState {
     /// Used by `verify_liquidity_maps` so the engine+core locks can be
     /// released before making async RPC calls.
     #[must_use]
-    pub fn v3_pools_snapshot(&self) -> HashMap<u64, V3PoolState> {
+    pub fn v3_pools_snapshot(&self) -> HashMap<u64, (V3PoolIdentity, V3PoolState)> {
         self.pools
             .iter()
             .filter_map(|(id, e)| match e {
-                PoolEntry::V3(state) => Some((*id, state.clone())),
+                PoolEntry::V3(identity, state) => Some((*id, (*identity, state.clone()))),
                 PoolEntry::V2(..)
                 | PoolEntry::V4(_)
                 | PoolEntry::Curve(_)
@@ -1400,7 +1409,7 @@ impl BotState {
     #[must_use]
     pub fn v3_snapshot_seed(&self, address: Address) -> Option<&HashMap<i32, TickInfo>> {
         let &pool_id = self.pool_addresses.get(&address)?;
-        let Some(PoolEntry::V3(state)) = self.pools.get(&pool_id) else {
+        let Some(PoolEntry::V3(_, state)) = self.pools.get(&pool_id) else {
             return None;
         };
         state.snapshot_seed.as_ref()
@@ -1413,7 +1422,7 @@ impl BotState {
     /// pools or if already taken.
     pub fn take_v3_snapshot_seed(&mut self, address: Address) -> Option<HashMap<i32, TickInfo>> {
         let &pool_id = self.pool_addresses.get(&address)?;
-        let Some(PoolEntry::V3(state)) = self.pools.get_mut(&pool_id) else {
+        let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&pool_id) else {
             return None;
         };
         state.snapshot_seed.take()
@@ -1436,7 +1445,7 @@ impl BotState {
         let Some(&pool_id) = self.pool_addresses.get(&address) else {
             return;
         };
-        let Some(PoolEntry::V3(state)) = self.pools.get_mut(&pool_id) else {
+        let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&pool_id) else {
             return;
         };
         if state.coverage == PoolTickCoverage::Tracked {
@@ -1457,7 +1466,7 @@ impl BotState {
         address: Address,
     ) -> Option<(HashMap<i32, TickInfo>, u64)> {
         let &pool_id = self.pool_addresses.get(&address)?;
-        let Some(PoolEntry::V3(state)) = self.pools.get_mut(&pool_id) else {
+        let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&pool_id) else {
             return None;
         };
         state.post_drain_snapshot.take()
@@ -1481,7 +1490,7 @@ impl BotState {
     #[must_use]
     pub fn get_v3_or_v4_pool(&self, pool_id: u64) -> Option<&dyn V3FamilyPool> {
         match self.pools.get(&pool_id)? {
-            PoolEntry::V3(state) => Some(state),
+            PoolEntry::V3(_, state) => Some(state),
             PoolEntry::V4(state) => Some(state),
             PoolEntry::V2(..)
             | PoolEntry::Curve(_)
@@ -1506,7 +1515,7 @@ impl BotState {
         let Some(&key) = self.pool_addresses.get(&pool_address) else {
             return;
         };
-        let Some(PoolEntry::V3(state)) = self.pools.get_mut(&key) else {
+        let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&key) else {
             return;
         };
         state.sqrt_price_x96 = sqrt_price_x96;
@@ -1583,7 +1592,7 @@ impl BotState {
             // V3 concentrated-liquidity math. Exact-input swap: amount_specified
             // > 0 (V3 convention). Output is token1 for zfo, token0 for ofz
             // (matches the V3 Swap callback: zfo pays token0, receives token1).
-            PoolEntry::V3(state) => {
+            PoolEntry::V3(identity, state) => {
                 if amount_in.is_zero() {
                     return Ok(U256::ZERO);
                 }
@@ -1592,6 +1601,8 @@ impl BotState {
                 };
                 let outcome = v3_simulate_swap(
                     state,
+                    identity.fee,
+                    identity.tick_spacing,
                     zero_for_one,
                     spec,
                     V3PoolState::default_sqrt_price_limit(zero_for_one),
@@ -1660,7 +1671,7 @@ impl BotState {
             return false;
         };
         match entry {
-            PoolEntry::V3(state) => {
+            PoolEntry::V3(_, state) => {
                 for (tick, info) in fetched.ticks {
                     state.tick_data.insert(tick, info);
                 }
@@ -1759,7 +1770,14 @@ impl BotState {
             return Err(SimulateSwapError::NotComputable);
         };
         match entry {
-            PoolEntry::V3(state) => v3_simulate_swap(state, zero_for_one, spec, sqrt_price_limit),
+            PoolEntry::V3(identity, state) => v3_simulate_swap(
+                state,
+                identity.fee,
+                identity.tick_spacing,
+                zero_for_one,
+                spec,
+                sqrt_price_limit,
+            ),
             // V4 sign convention: exact-input is `amountSpecified < 0`.
             PoolEntry::V4(state) => v4_simulate_swap(state, zero_for_one, -spec, sqrt_price_limit),
             PoolEntry::V2(..)
@@ -1844,7 +1862,14 @@ impl BotState {
         };
         match entry {
             // V3 sign convention: exact-output is `amountSpecified < 0`.
-            PoolEntry::V3(state) => v3_simulate_swap(state, zero_for_one, -spec, sqrt_price_limit),
+            PoolEntry::V3(identity, state) => v3_simulate_swap(
+                state,
+                identity.fee,
+                identity.tick_spacing,
+                zero_for_one,
+                -spec,
+                sqrt_price_limit,
+            ),
             // V4 sign convention: exact-output is `amountSpecified > 0`.
             PoolEntry::V4(state) => v4_simulate_swap(state, zero_for_one, spec, sqrt_price_limit),
             PoolEntry::V2(..)
@@ -1954,14 +1979,14 @@ impl BotState {
         let spec = I256::try_from(amount).ok()?;
         match entry {
             // V3: exact-input is `amountSpecified > 0`; exact-output is `< 0`.
-            PoolEntry::V3(state) => {
+            PoolEntry::V3(identity, state) => {
                 let params = RegisterV3PoolParams {
-                    address: state.address,
-                    token0: state.token0,
-                    token1: state.token1,
-                    fee: state.fee,
-                    tick_spacing: state.tick_spacing,
-                    factory: state.factory,
+                    address: identity.address,
+                    token0: identity.token0,
+                    token1: identity.token1,
+                    fee: identity.fee,
+                    tick_spacing: identity.tick_spacing,
+                    factory: identity.factory,
                     sqrt_price_x96: override_sqrt_price_x96,
                     liquidity: override_liquidity,
                     tick: override_tick,
@@ -1969,12 +1994,19 @@ impl BotState {
                     update_block: state.update_block,
                     coverage: PoolTickCoverage::Sparse,
                 };
-                let mut override_state = V3PoolState::from_params(params, self.journal_depth);
+                let (override_identity, mut override_state) =
+                    V3PoolState::from_params(params, self.journal_depth);
                 let signed = if exact_output { -spec } else { spec };
                 let mut attempted: HashSet<i32> = HashSet::new();
                 loop {
-                    match v3_simulate_swap(&override_state, zero_for_one, signed, sqrt_price_limit)
-                    {
+                    match v3_simulate_swap(
+                        &override_state,
+                        override_identity.fee,
+                        override_identity.tick_spacing,
+                        zero_for_one,
+                        signed,
+                        sqrt_price_limit,
+                    ) {
                         Ok(o) => return Some(o),
                         Err(SimulateSwapError::NotComputable) => return None,
                         Err(SimulateSwapError::MissingTickWord(word)) => {
@@ -2088,7 +2120,7 @@ impl BotState {
             // V3 concentrated-liquidity math. Exact-output swap: amount_specified
             // < 0 (V3 convention; magnitude = desired output). Input required is
             // token0 for zfo, token1 for ofz (the callback receives the input).
-            PoolEntry::V3(state) => {
+            PoolEntry::V3(identity, state) => {
                 if amount_out.is_zero() {
                     return U256::ZERO;
                 }
@@ -2097,6 +2129,8 @@ impl BotState {
                 };
                 let Ok(outcome) = v3_simulate_swap(
                     state,
+                    identity.fee,
+                    identity.tick_spacing,
                     zero_for_one,
                     -spec,
                     V3PoolState::default_sqrt_price_limit(zero_for_one),
@@ -2214,7 +2248,7 @@ impl BotState {
     pub fn v3_pool_count(&self) -> usize {
         self.pools
             .values()
-            .filter(|e| matches!(e, PoolEntry::V3(_)))
+            .filter(|e| matches!(e, PoolEntry::V3(..)))
             .count()
     }
 
@@ -2330,7 +2364,7 @@ impl BotState {
                 Some(PoolEntry::V2(_, state)) => {
                     state.journal.newest_block().is_some_and(|b| b >= target)
                 }
-                Some(PoolEntry::V3(state)) => {
+                Some(PoolEntry::V3(_, state)) => {
                     state.journal.newest_block().is_some_and(|b| b >= target)
                 }
                 Some(PoolEntry::V4(state)) => {
@@ -2367,7 +2401,7 @@ impl BotState {
                         Err(_) => false,
                     }
                 }
-                Some(PoolEntry::V3(_)) => {
+                Some(PoolEntry::V3(..)) => {
                     // Reuse the existing V3 restore path: scalars + reverse-
                     // applied tick priors + cache invalidation.
                     self.v3_restore_before_block(pool_id, target).is_some()
@@ -2595,7 +2629,7 @@ impl BotState {
     #[must_use]
     pub fn v3_journal_len(&self, pool_id: u64) -> usize {
         match self.pools.get(&pool_id) {
-            Some(PoolEntry::V3(state)) => state.journal.len(),
+            Some(PoolEntry::V3(_, state)) => state.journal.len(),
             _ => 0,
         }
     }
@@ -2614,7 +2648,7 @@ impl BotState {
         pool_id: u64,
         block: u64,
     ) -> Result<(), JournalError> {
-        let Some(PoolEntry::V3(state)) = self.pools.get_mut(&pool_id) else {
+        let Some(PoolEntry::V3(_, state)) = self.pools.get_mut(&pool_id) else {
             return Ok(());
         };
         state.journal.discard_before_block(block)
@@ -2645,7 +2679,7 @@ impl BotState {
             Some(PoolEntry::V2(..)) => {
                 let _ = self.v2_restore_before_block(pool_id, block);
             }
-            Some(PoolEntry::V3(_)) => {
+            Some(PoolEntry::V3(..)) => {
                 let _ = self.v3_restore_before_block(pool_id, block);
             }
             Some(PoolEntry::V4(_)) => {
@@ -2698,7 +2732,7 @@ impl BotState {
                 .earliest_block()
                 .is_some_and(|earliest| earliest < block),
             // No genesis anchor — empty journal is the only too-deep case.
-            PoolEntry::V3(state) => !state.journal.is_empty(),
+            PoolEntry::V3(_, state) => !state.journal.is_empty(),
             PoolEntry::V4(state) => !state.journal.is_empty(),
             // Curve carries a genesis delta (mirror of V2) — a target at/before
             // the genesis block is too-deep: `earliest < block`.
@@ -2731,7 +2765,7 @@ impl BotState {
     ///
     /// Panics if no delta exists before the target block.
     pub fn v3_restore_before_block(&mut self, pool_id: u64, block: u64) -> Option<V3RestoreResult> {
-        let PoolEntry::V3(state) = self.pools.get_mut(&pool_id)? else {
+        let PoolEntry::V3(_, state) = self.pools.get_mut(&pool_id)? else {
             return None;
         };
         let mut result = state.journal.restore_before_block(block);
@@ -2806,7 +2840,7 @@ impl BotState {
                 Some(call)
             }
             // V3 encoding is not yet implemented
-            PoolEntry::V3(_)
+            PoolEntry::V3(..)
             | PoolEntry::V4(_)
             | PoolEntry::Curve(_)
             | PoolEntry::BalancerWeighted(_)
@@ -3323,7 +3357,7 @@ impl BotState {
         match self.pools.get(&pool_id)? {
             PoolEntry::V4(state) => Some(state),
             PoolEntry::V2(..)
-            | PoolEntry::V3(_)
+            | PoolEntry::V3(..)
             | PoolEntry::Curve(_)
             | PoolEntry::BalancerWeighted(_)
             | PoolEntry::BalancerStable(_) => None,
@@ -3437,7 +3471,7 @@ impl BotState {
             .filter_map(|(id, e)| match e {
                 PoolEntry::V4(state) => Some((*id, state.clone())),
                 PoolEntry::V2(..)
-                | PoolEntry::V3(_)
+                | PoolEntry::V3(..)
                 | PoolEntry::Curve(_)
                 | PoolEntry::BalancerWeighted(_)
                 | PoolEntry::BalancerStable(_) => None,
@@ -4025,7 +4059,7 @@ mod tests {
         let landed_update_block;
         let tick_present;
         {
-            let Some(PoolEntry::V3(state)) = core.pools.get(&pool_id) else {
+            let Some(PoolEntry::V3(_, state)) = core.pools.get(&pool_id) else {
                 panic!("pool missing");
             };
             landed_sqrt = state.sqrt_price_x96;
@@ -4053,7 +4087,7 @@ mod tests {
         );
 
         // The landed-at state must survive unchanged.
-        let Some(PoolEntry::V3(state)) = core.pools.get(&pool_id) else {
+        let Some(PoolEntry::V3(_, state)) = core.pools.get(&pool_id) else {
             panic!("pool missing post-restore");
         };
         assert_eq!(
@@ -4686,9 +4720,15 @@ mod tests {
         assert_eq!(view_a.liquidity(), 9_000_000);
         assert_eq!(view_a.tick(), -240);
         assert_eq!(view_a.update_block(), block_b);
-        // Immutable V4 key fields surface from `pool_key`.
-        assert_eq!(view_a.fee(), 500);
-        assert_eq!(view_a.tick_spacing(), 10);
+        // Immutable V4 key fields surface from `pool_key` (the V3FamilyPool
+        // reader trait was slimmed to mutable-only scalars in the V3/V4
+        // identity/state split; identity reads go through the family-specific
+        // getter rather than the dyn-dispatch view).
+        let v4_a = core_a
+            .get_v4_pool(id_a)
+            .expect("registered V4 pool surfaces via get_v4_pool");
+        assert_eq!(v4_a.pool_key.fee, 500);
+        assert_eq!(v4_a.pool_key.tick_spacing, 10);
 
         // AC parity: identical scalar inputs via `apply_v4_swap` produce the
         // same values read through the accessor.

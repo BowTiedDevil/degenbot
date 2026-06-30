@@ -69,12 +69,13 @@ impl PyUniswapArbEngine {
                     });
                 }
                 HopType::V3 => {
-                    let pool = core.get_v3_pool(pool_ref.pool_key);
-                    let (addr, fee, ts) = pool.map_or((None, None, None), |p| {
+                    let pool_id = pool_ref.pool_key;
+                    let identity = core.get_v3_identity(pool_id);
+                    let (addr, fee, ts) = identity.map_or((None, None, None), |i| {
                         (
-                            Some(format!("{}", p.address)),
-                            Some(u64::from(p.fee)),
-                            Some(p.tick_spacing),
+                            Some(format!("{}", i.address)),
+                            Some(u64::from(i.fee)),
+                            Some(i.tick_spacing),
                         )
                     });
                     hops.push(HopInfo {

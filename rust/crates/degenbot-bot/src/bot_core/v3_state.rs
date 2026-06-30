@@ -118,20 +118,37 @@ struct TickRangeCache {
     ofz: Option<Arc<[V3TickRangeForSolver]>>,
 }
 
+/// Immutable V3 registration identity (ADR-005 identity slice).
+///
+/// Pure registration data — permanent pool identity set once at
+/// `register_v3_pool` and never mutated. Mirrors `TokenEntry`/`V2PoolIdentity`.
+/// Distinct from [`V3PoolState`], which carries only mutable runtime data
+/// (`sqrt_price/liquidity/tick/tick_data/journal` + the pinned verify seeds).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct V3PoolIdentity {
+    /// Pool contract address.
+    pub address: Address,
+    /// Token0 contract address.
+    pub token0: Address,
+    /// Token1 contract address.
+    pub token1: Address,
+    /// Pool fee tier (immutable config). `PyLiquidityPool.fee()` reads this.
+    pub fee: u32,
+    /// Tick spacing (immutable config).
+    pub tick_spacing: i32,
+    /// Pool factory address.
+    pub factory: Address,
+}
+
 /// V3 concentrated-liquidity pool state owned by [`crate::bot_core::BotState`].
 ///
 /// Carries authoritative mutable state plus a per-pool reorg journal. Swap
 /// calculations read current mutable fields directly (never touch the journal);
-/// `apply_swap`/`apply_liquidity_update` push reverse-apply deltas.
+/// `apply_swap`/`apply_liquidity_update` push reverse-apply deltas. Immutable
+/// identity lives on [`V3PoolIdentity`]; look it up via
+/// [`crate::bot_core::BotState::get_v3_identity`].
 #[derive(Debug)]
 pub struct V3PoolState {
-    pub address: Address,
-    pub token0: Address,
-    pub token1: Address,
-    pub fee: u32,
-    pub tick_spacing: i32,
-    pub factory: Address,
-
     // --- Mutable state (authoritative) ---
     pub sqrt_price_x96: U256,
     pub liquidity: u128,
@@ -208,12 +225,6 @@ pub struct V3PoolState {
 impl Clone for V3PoolState {
     fn clone(&self) -> Self {
         Self {
-            address: self.address,
-            token0: self.token0,
-            token1: self.token1,
-            fee: self.fee,
-            tick_spacing: self.tick_spacing,
-            factory: self.factory,
             sqrt_price_x96: self.sqrt_price_x96,
             liquidity: self.liquidity,
             tick: self.tick,
@@ -261,11 +272,11 @@ impl V3PoolState {
     /// positions. Called at registration for Sparse pools (the keys a partial
     /// snapshot carries are known); a no-op for Tracked pools (detection is
     /// bypassed when `coverage != Sparse`).
-    pub fn seed_known_bitmap_words(&mut self) {
+    pub fn seed_known_bitmap_words(&mut self, tick_spacing: i32) {
         self.known_bitmap_words = self
             .tick_data
             .keys()
-            .map(|&t| Self::word_of(t, self.tick_spacing))
+            .map(|&t| Self::word_of(t, tick_spacing))
             .collect();
     }
 
@@ -283,14 +294,15 @@ impl V3PoolState {
 
     /// Construct from registration params with a journal of the given depth.
     #[must_use]
-    pub fn from_params(params: RegisterV3PoolParams, journal_depth: usize) -> Self {
-        let mut out = Self {
-            address: params.address,
-            token0: params.token0,
-            token1: params.token1,
-            fee: params.fee,
-            tick_spacing: params.tick_spacing,
-            factory: params.factory,
+    /// Build the (immutable identity, mutable state) pair for `register_v3_pool`
+    /// (ADR-005 identity/state split). Identity carries the immutable config
+    /// (`address/tokens/fee/tick_spacing/factory`); state carries mutable
+    /// runtime + the pinned verify seeds.
+    pub fn from_params(
+        params: RegisterV3PoolParams,
+        journal_depth: usize,
+    ) -> (V3PoolIdentity, V3PoolState) {
+        let mut state = Self {
             sqrt_price_x96: params.sqrt_price_x96,
             liquidity: params.liquidity,
             tick: params.tick,
@@ -303,20 +315,28 @@ impl V3PoolState {
             post_drain_snapshot: None,
             cached_tick_ranges: parking_lot::Mutex::new(TickRangeCache::default()),
         };
+        let identity = V3PoolIdentity {
+            address: params.address,
+            token0: params.token0,
+            token1: params.token1,
+            fee: params.fee,
+            tick_spacing: params.tick_spacing,
+            factory: params.factory,
+        };
         // CBCH6H: pin the snapshot seed for Tracked pools so step-1 verify
         // compares the seed (not pump-mutated `tick_data`) against
         // on-chain@snapshot_block. Sparse pools have no complete seed. Computed
-        // AFTER the struct literal because `tick_data` is moved into `out` above.
-        out.snapshot_seed = if params.coverage == PoolTickCoverage::Tracked {
-            Some(out.tick_data.clone())
+        // AFTER the struct literal because `tick_data` is moved into `state` above.
+        state.snapshot_seed = if params.coverage == PoolTickCoverage::Tracked {
+            Some(state.tick_data.clone())
         } else {
             None
         };
         // A partial snapshot's tick_data keys are known regions.
         if params.coverage == PoolTickCoverage::Sparse {
-            out.seed_known_bitmap_words();
+            state.seed_known_bitmap_words(params.tick_spacing);
         }
-        out
+        (identity, state)
     }
 
     /// Invalidate the cached tick ranges (call after any state mutation).
@@ -328,7 +348,11 @@ impl V3PoolState {
 
     /// Get cached tick ranges for the given direction, computing and caching
     /// if absent. Uses `max_ranges=15` so all callers can slice the result.
-    fn get_cached_tick_ranges(&self, zero_for_one: bool) -> Option<Arc<[V3TickRangeForSolver]>> {
+    fn get_cached_tick_ranges(
+        &self,
+        tick_spacing: i32,
+        zero_for_one: bool,
+    ) -> Option<Arc<[V3TickRangeForSolver]>> {
         {
             let cache = self.cached_tick_ranges.lock();
             let slot = if zero_for_one { &cache.zfo } else { &cache.ofz };
@@ -341,7 +365,7 @@ impl V3PoolState {
         let ranges = compute_tick_ranges(
             &self.tick_data,
             self.tick,
-            self.tick_spacing,
+            tick_spacing,
             self.liquidity,
             zero_for_one,
             15,
@@ -369,13 +393,15 @@ impl V3PoolState {
     #[must_use]
     pub fn build_int_v3_sequence(
         &self,
+        tick_spacing: i32,
+        fee: u32,
         zero_for_one: bool,
         max_ranges: usize,
     ) -> Option<IntV3TickRangeSequence> {
-        let ranges = self.get_cached_tick_ranges(zero_for_one)?;
+        let ranges = self.get_cached_tick_ranges(tick_spacing, zero_for_one)?;
         let use_ranges = ranges.get(..ranges.len().min(max_ranges))?;
 
-        let gamma_numer = u64::from(1_000_000 - self.fee);
+        let gamma_numer = u64::from(1_000_000 - fee);
         let fee_denom = 1_000_000u64;
 
         let mut int_ranges = Vec::with_capacity(use_ranges.len());
@@ -494,6 +520,8 @@ pub enum SimulateSwapError {
 #[allow(clippy::too_many_lines)] // faithful port of V3's `_calculate_swap`; splitting would obscure the loop.
 pub fn v3_simulate_swap(
     state: &V3PoolState,
+    fee: u32,
+    tick_spacing: i32,
     zero_for_one: bool,
     amount_specified: I256,
     sqrt_price_limit: U256,
@@ -510,8 +538,8 @@ pub fn v3_simulate_swap(
     let mut liquidity =
         i128::try_from(state.liquidity).map_err(|_| SimulateSwapError::NotComputable)?;
 
-    let fee_pips = U256::from(state.fee);
-    let tick_spacing = state.tick_spacing;
+    let fee_pips = U256::from(fee);
+    // `tick_spacing` is the immutable-config parameter (threaded from identity).
 
     // Sparse-map miss detection (ADR-005 feature parity). In sparse mode a
     // region is unknown unless its word key is in `known_bitmap_words`. The
@@ -725,7 +753,7 @@ mod tests {
     /// [-60, +60] so the active range bounded by ±60 matches
     /// `make_v3_hop_at_1to1`. The ticks -60 and +60 are initialized with the
     /// position's `liquidity_net` (+L at lower, -L at upper) and matching gross.
-    fn pool_1to1_with_position(liq: u128) -> V3PoolState {
+    fn pool_1to1_with_position(liq: u128) -> (V3PoolIdentity, V3PoolState) {
         let sp_0 = U256::from(1u128) << 96;
         let mut tick_data = HashMap::new();
         // Position [-60, +60] with liquidity `liq`.
@@ -746,25 +774,29 @@ mod tests {
                 block: 0,
             },
         );
-        V3PoolState {
-            address: Address::ZERO,
-            token0: Address::ZERO,
-            token1: Address::ZERO,
-            fee: 3000,
-            tick_spacing: 60,
-            factory: Address::ZERO,
-            sqrt_price_x96: sp_0,
-            liquidity: liq,
-            tick: 0,
-            update_block: 0,
-            tick_data,
-            coverage: PoolTickCoverage::Tracked,
-            known_bitmap_words: HashSet::new(),
-            journal: ReorgJournal::<V3BlockDelta>::new(8),
-            cached_tick_ranges: parking_lot::Mutex::new(super::TickRangeCache::default()),
-            snapshot_seed: None,
-            post_drain_snapshot: None,
-        }
+        (
+            V3PoolIdentity {
+                address: Address::ZERO,
+                token0: Address::ZERO,
+                token1: Address::ZERO,
+                fee: 3000,
+                tick_spacing: 60,
+                factory: Address::ZERO,
+            },
+            V3PoolState {
+                sqrt_price_x96: sp_0,
+                liquidity: liq,
+                tick: 0,
+                update_block: 0,
+                tick_data,
+                coverage: PoolTickCoverage::Tracked,
+                known_bitmap_words: HashSet::new(),
+                journal: ReorgJournal::<V3BlockDelta>::new(8),
+                cached_tick_ranges: parking_lot::Mutex::new(super::TickRangeCache::default()),
+                snapshot_seed: None,
+                post_drain_snapshot: None,
+            },
+        )
     }
 
     #[test]
@@ -775,11 +807,13 @@ mod tests {
         // Why: pins the V3 simulator's first-step behavior against the already-
         // tested swap-step primitive as the oracle (zero hand-computed math).
         let liq = 10_000_000_000_000u128;
-        let state = pool_1to1_with_position(liq);
+        let (identity, state) = pool_1to1_with_position(liq);
         let amount_in = U256::from(1000u64);
 
         let outcome = v3_simulate_swap(
             &state,
+            identity.fee,
+            identity.tick_spacing,
             true,
             I256::try_from(amount_in).unwrap(),
             V3PoolState::default_sqrt_price_limit(true),
@@ -795,7 +829,7 @@ mod tests {
             sp_lower,
             i128::try_from(liq).unwrap(),
             I256::try_from(amount_in).unwrap(),
-            U256::from(state.fee),
+            U256::from(identity.fee),
         )
         .unwrap();
 
@@ -821,11 +855,13 @@ mod tests {
         // Mirrors the zfo test for the one_for_zero direction — oracle target
         // is tick +60's sqrt price (the range upper bound).
         let liq = 10_000_000_000_000u128;
-        let state = pool_1to1_with_position(liq);
+        let (identity, state) = pool_1to1_with_position(liq);
         let amount_in = U256::from(1000u64);
 
         let outcome = v3_simulate_swap(
             &state,
+            identity.fee,
+            identity.tick_spacing,
             false,
             I256::try_from(amount_in).unwrap(),
             V3PoolState::default_sqrt_price_limit(false),
@@ -838,7 +874,7 @@ mod tests {
             sp_upper,
             i128::try_from(liq).unwrap(),
             I256::try_from(amount_in).unwrap(),
-            U256::from(state.fee),
+            U256::from(identity.fee),
         )
         .unwrap();
 
@@ -849,9 +885,11 @@ mod tests {
 
     #[test]
     fn zero_amount_is_not_computable() {
-        let state = pool_1to1_with_position(1_000_000u128);
+        let (identity, state) = pool_1to1_with_position(1_000_000u128);
         let outcome = v3_simulate_swap(
             &state,
+            identity.fee,
+            identity.tick_spacing,
             true,
             I256::ZERO,
             V3PoolState::default_sqrt_price_limit(true),
@@ -867,9 +905,11 @@ mod tests {
     fn output_scales_monotonically_with_input() {
         // Larger exact-input swaps produce larger outputs (within the same
         // tick range, pre-crossing).
-        let state = pool_1to1_with_position(10_000_000_000_000u128);
+        let (identity, state) = pool_1to1_with_position(10_000_000_000_000u128);
         let small = v3_simulate_swap(
             &state,
+            identity.fee,
+            identity.tick_spacing,
             true,
             I256::try_from(U256::from(100u64)).unwrap(),
             V3PoolState::default_sqrt_price_limit(true),
@@ -878,6 +918,8 @@ mod tests {
         .amount1;
         let large = v3_simulate_swap(
             &state,
+            identity.fee,
+            identity.tick_spacing,
             true,
             I256::try_from(U256::from(10_000u64)).unwrap(),
             V3PoolState::default_sqrt_price_limit(true),
@@ -898,12 +940,14 @@ mod tests {
         // the starting word (mirrors Python's `MissingLiquidityData(word=0)`
         // first-step raise), NOT a silently-wrong computed amount.
         let liq = 10_000_000_000_000u128;
-        let mut state = pool_1to1_with_position(liq);
+        let (identity, mut state) = pool_1to1_with_position(liq);
         state.coverage = PoolTickCoverage::Sparse;
         state.known_bitmap_words.clear(); // fully sparse: no regions known
 
         let res = v3_simulate_swap(
             &state,
+            identity.fee,
+            identity.tick_spacing,
             true,
             I256::try_from(1_000u64).unwrap(),
             V3PoolState::default_sqrt_price_limit(true),
@@ -923,13 +967,15 @@ mod tests {
         // compute normally even when `known_bitmap_words` is empty — it never
         // consults the set. Confirms detection is sparse-only.
         let liq = 10_000_000_000_000u128;
-        let mut state = pool_1to1_with_position(liq);
+        let (identity, mut state) = pool_1to1_with_position(liq);
         // Tracked + empty known set — must NOT miss.
         state.known_bitmap_words.clear();
         assert_eq!(state.coverage, PoolTickCoverage::Tracked);
 
         let res = v3_simulate_swap(
             &state,
+            identity.fee,
+            identity.tick_spacing,
             true,
             I256::try_from(1_000u64).unwrap(),
             V3PoolState::default_sqrt_price_limit(true),
@@ -955,7 +1001,7 @@ mod tests {
         // endpoint-in-unknown-word case covered by
         // `sparse_endpoint_in_unknown_word_signals_miss`.)
         let liq = 10_000_000_000_000u128;
-        let mut state = pool_1to1_with_position(liq);
+        let (identity, mut state) = pool_1to1_with_position(liq);
         state.coverage = PoolTickCoverage::Sparse;
         // Word 0 (tick 0, the start) is known; word −1 (containing the tick −60
         // boundary of the position) is NOT known.
@@ -964,6 +1010,8 @@ mod tests {
 
         let res = v3_simulate_swap(
             &state,
+            identity.fee,
+            identity.tick_spacing,
             false,
             I256::try_from(100u64).unwrap(),
             V3PoolState::default_sqrt_price_limit(false),
@@ -988,7 +1036,7 @@ mod tests {
         // tick's word at every step — so Python fetches the endpoint word; Rust
         // must too.
         let liq = 10_000_000_000_000u128;
-        let mut state = pool_1to1_with_position(liq);
+        let (identity, mut state) = pool_1to1_with_position(liq);
         state.coverage = PoolTickCoverage::Sparse;
         state.known_bitmap_words.clear();
         state.known_bitmap_words.insert(0); // word 0 known; word −1 unknown
@@ -996,6 +1044,8 @@ mod tests {
         // zfo drops the price below tick 0 into word −1 (unknown).
         let res = v3_simulate_swap(
             &state,
+            identity.fee,
+            identity.tick_spacing,
             true,
             I256::try_from(100u64).unwrap(),
             V3PoolState::default_sqrt_price_limit(true),
@@ -1013,10 +1063,12 @@ mod tests {
         // ADR-005 slice 3b: the companion's simulate_exact_input_swap builds
         // final_state from the outcome, so v3_simulate_swap must return the
         // post-walk sqrt_price_x96 / liquidity / tick (not just the amounts).
-        let state = pool_1to1_with_position(10_000_000_000_000u128);
+        let (identity, state) = pool_1to1_with_position(10_000_000_000_000u128);
         let amount_in = I256::try_from(1_000u128).unwrap();
         let outcome = v3_simulate_swap(
             &state,
+            identity.fee,
+            identity.tick_spacing,
             true,
             amount_in,
             V3PoolState::default_sqrt_price_limit(true),
@@ -1041,6 +1093,8 @@ mod tests {
         let big = I256::try_from(100_000_000_000_000_000u128).unwrap();
         let crossed = v3_simulate_swap(
             &state,
+            identity.fee,
+            identity.tick_spacing,
             true,
             big,
             V3PoolState::default_sqrt_price_limit(true),

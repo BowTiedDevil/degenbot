@@ -395,9 +395,15 @@ impl UniswapEngine {
                     let Some(pool_state) = core.get_v3_pool(pool_ref.pool_key) else {
                         return; // Missing pool → invalid
                     };
-
-                    let Some(int_seq) = pool_state.build_int_v3_sequence(pool_ref.zero_for_one, 10)
-                    else {
+                    let Some(identity) = core.get_v3_identity(pool_ref.pool_key) else {
+                        return; // Missing pool → invalid
+                    };
+                    let Some(int_seq) = pool_state.build_int_v3_sequence(
+                        identity.tick_spacing,
+                        identity.fee,
+                        pool_ref.zero_for_one,
+                        10,
+                    ) else {
                         return; // No integer sequence → invalid
                     };
 

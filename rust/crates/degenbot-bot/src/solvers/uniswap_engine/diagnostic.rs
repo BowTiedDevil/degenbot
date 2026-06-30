@@ -182,14 +182,23 @@ pub fn recompute_v2_amount_out(state: &DiagnosticPoolState, amount_in: U256) -> 
 #[must_use]
 pub fn recompute_v3_amount_out(
     state: &crate::bot_core::V3PoolState,
+    fee: u32,
+    tick_spacing: i32,
     zero_for_one: bool,
     amount_in: U256,
 ) -> Option<U256> {
     // V3: amount_specified > 0 = exact INPUT.
     let amount_specified = I256::try_from(amount_in).ok()?;
     let limit = crate::bot_core::V3PoolState::default_sqrt_price_limit(zero_for_one);
-    let outcome =
-        crate::bot_core::v3_simulate_swap(state, zero_for_one, amount_specified, limit).ok()?;
+    let outcome = crate::bot_core::v3_simulate_swap(
+        state,
+        fee,
+        tick_spacing,
+        zero_for_one,
+        amount_specified,
+        limit,
+    )
+    .ok()?;
     // zfo: amount0 in, amount1 out. ofz: amount1 in, amount0 out.
     Some(if zero_for_one {
         outcome.amount1
@@ -1311,7 +1320,14 @@ fn thread_solver_result_and_recompute(
             .get(i)
             .and_then(|pool_ref| match pool_ref.hop_type {
                 super::HopType::V3 => core.get_v3_pool(pool_ref.pool_key).and_then(|state| {
-                    recompute_v3_amount_out(state, pool_ref.zero_for_one, amount_in)
+                    let identity = core.get_v3_identity(pool_ref.pool_key)?;
+                    recompute_v3_amount_out(
+                        state,
+                        identity.fee,
+                        identity.tick_spacing,
+                        pool_ref.zero_for_one,
+                        amount_in,
+                    )
                 }),
                 super::HopType::V4 => core.get_v4_pool(pool_ref.pool_key).and_then(|state| {
                     recompute_v4_amount_out(state, pool_ref.zero_for_one, amount_in)
@@ -1358,18 +1374,20 @@ fn build_engine_pool_state(
                 gamma_numer: format!("0x{gamma_numer:x}"),
             })
         }
-        HopType::V3 => core
-            .get_v3_pool(pool_ref.pool_key)
-            .map(|state| DiagnosticPoolState::V3 {
-                address: fmt_addr(state.address),
-                token0: fmt_addr(state.token0),
-                token1: fmt_addr(state.token1),
-                fee: state.fee,
-                tick_spacing: state.tick_spacing,
+        HopType::V3 => {
+            let state = core.get_v3_pool(pool_ref.pool_key)?;
+            let identity = core.get_v3_identity(pool_ref.pool_key)?;
+            Some(DiagnosticPoolState::V3 {
+                address: fmt_addr(identity.address),
+                token0: fmt_addr(identity.token0),
+                token1: fmt_addr(identity.token1),
+                fee: identity.fee,
+                tick_spacing: identity.tick_spacing,
                 sqrt_price_x96: fmt_u256(state.sqrt_price_x96),
                 tick: state.tick,
                 liquidity: format!("0x{:x}", state.liquidity),
-            }),
+            })
+        }
         HopType::V4 => core
             .get_v4_pool(pool_ref.pool_key)
             .map(|state| DiagnosticPoolState::V4 {
@@ -2308,18 +2326,34 @@ mod tests {
         });
         let core = engine.core.read();
         let state = core.get_v3_pool(v3_state).expect("registered");
+        let identity = core
+            .get_v3_identity(v3_state)
+            .expect("registered pool surfaces an identity");
         // Hold the read guard for the whole referenced-swap simulation below.
 
         let amount_in = U256::from(1_000_000_000_u64);
-        let out = super::recompute_v3_amount_out(state, true, amount_in)
-            .expect("valid V3 swap should recompute");
+        let out = super::recompute_v3_amount_out(
+            state,
+            identity.fee,
+            identity.tick_spacing,
+            true,
+            amount_in,
+        )
+        .expect("valid V3 swap should recompute");
         assert!(out > U256::ZERO, "zfo swap of token0 must yield token1 > 0");
 
         // Cross-check against `v3_simulate_swap` directly — the recompute wraps it.
         let limit = crate::bot_core::V3PoolState::default_sqrt_price_limit(true);
         let spec = alloy::primitives::I256::try_from(amount_in).unwrap();
-        let outcome = crate::bot_core::v3_simulate_swap(state, true, spec, limit)
-            .expect("v3_simulate_swap should succeed");
+        let outcome = crate::bot_core::v3_simulate_swap(
+            state,
+            identity.fee,
+            identity.tick_spacing,
+            true,
+            spec,
+            limit,
+        )
+        .expect("v3_simulate_swap should succeed");
         assert_eq!(
             out, outcome.amount1,
             "recompute must match v3_simulate_swap.amount1"

@@ -1428,7 +1428,7 @@ mod tests {
         assert_eq!(v2_addr, Some(Address::from([0x11u8; 20])));
 
         let core = engine.core.read();
-        let v3_pool = core.get_v3_pool(v3_key);
+        let v3_pool = core.get_v3_identity(v3_key);
         assert_eq!(
             v3_pool.map(|p| p.address),
             Some(Address::from([0x22u8; 20]))
