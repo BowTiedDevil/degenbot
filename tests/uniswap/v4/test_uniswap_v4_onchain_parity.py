@@ -138,7 +138,6 @@ def _build_eth_usdc_v4_io_free() -> UniswapV4Pool:
         tick_spacing=scalars["tick_spacing"],
         hook_address=ZERO_ADDRESS,
         state_view_address=get_checksum_address(cassette["state_view"]),
-        chain_id=1,
         sqrt_price_x96=scalars["sqrt_price_x96"],
         tick=scalars["tick"],
         liquidity=scalars["liquidity"],
