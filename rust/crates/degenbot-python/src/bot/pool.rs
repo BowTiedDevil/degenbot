@@ -37,8 +37,19 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 /// dict[int, tuple[int, int, int]] | None`. It must RETURN the fetched tick data
 /// (not write it back via `update_tick_data`) — the Rust loop merges the
 /// returned [`FetchedTickWord`] itself. See [`PyLiquidityPool::calculate_tokens_out_with_fetch`].
+#[derive(Debug)]
 struct PyTickWordFetcher {
     callback: pyo3::Py<pyo3::PyAny>,
+}
+
+/// Wrap a Python callable as a stored `Arc<dyn TickWordFetcher>` for
+/// registration-time storage on `V3PoolState`/`V4PoolState` (ADR-006 I/O trait
+/// object). The callable signature is `fetcher(word, block) -> dict | None`
+/// (same as the per-call path this replaces).
+pub(crate) fn make_tick_fetcher(
+    callback: pyo3::Py<pyo3::PyAny>,
+) -> std::sync::Arc<dyn degenbot_bot::bot_core::tick_fetch::TickWordFetcher> {
+    std::sync::Arc::new(PyTickWordFetcher { callback })
 }
 
 impl degenbot_bot::bot_core::tick_fetch::TickWordFetcher for PyTickWordFetcher {
@@ -112,7 +123,6 @@ impl PyLiquidityPool {
         amount: alloy::primitives::U256,
         exact_output: bool,
         block: u64,
-        fetcher: &Bound<'_, PyAny>,
         override_sqrt_price_x96: &Bound<'_, PyAny>,
         override_liquidity: &Bound<'_, PyAny>,
         override_tick: &Bound<'_, PyAny>,
@@ -138,9 +148,6 @@ impl PyLiquidityPool {
             Some(v) if !v.is_none() => crate::conversion::alloy::extract_python_u256(v)?,
             _ => degenbot_bot::bot_core::V3PoolState::default_sqrt_price_limit(zero_for_one),
         };
-        let adapter = PyTickWordFetcher {
-            callback: fetcher.clone().unbind(),
-        };
         let outcome = {
             let core = self.core.read();
             core.simulate_swap_with_override(
@@ -154,7 +161,6 @@ impl PyLiquidityPool {
                 override_tick,
                 rust_tick_data,
                 block,
-                &adapter,
             )
         };
         Ok(outcome)
@@ -228,28 +234,18 @@ impl PyLiquidityPool {
     /// The fetcher MUST NOT write back into the pool via `update_tick_data`
     /// (the Rust loop merges the returned data itself) — doing so would re-enter
     /// the `BotState` write lock this call holds and deadlock.
-    #[pyo3(signature = (zero_for_one, amount_in, block, fetcher))]
+    #[pyo3(signature = (zero_for_one, amount_in, block))]
     fn calculate_tokens_out_with_fetch(
         &self,
         py: Python<'_>,
         zero_for_one: bool,
         amount_in: &Bound<'_, PyAny>,
         block: u64,
-        fetcher: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyAny>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
-        let adapter = PyTickWordFetcher {
-            callback: fetcher.clone().unbind(),
-        };
         let result = {
             let mut core = self.core.write();
-            core.calculate_tokens_out_with_fetch(
-                self.pool_id,
-                zero_for_one,
-                amount,
-                block,
-                &adapter,
-            )
+            core.calculate_tokens_out_with_fetch(self.pool_id, zero_for_one, amount, block)
         };
         let bound = crate::conversion::alloy::u256_to_py(py, &result)?;
         Ok(bound.unbind())
@@ -262,26 +258,19 @@ impl PyLiquidityPool {
     ///
     /// Returns `(amount0, amount1, sqrt_price_x96, liquidity, tick)` or `None`
     /// (pool not V3/V4, zero amount, fetch failed, or not computable).
-    #[pyo3(signature = (zero_for_one, amount_in, block, fetcher, sqrt_price_limit_x96=None))]
+    #[pyo3(signature = (zero_for_one, amount_in, block, sqrt_price_limit_x96=None))]
     fn simulate_swap_with_fetch(
         &self,
         py: Python<'_>,
         zero_for_one: bool,
         amount_in: &Bound<'_, PyAny>,
         block: u64,
-        fetcher: &Bound<'_, PyAny>,
         sqrt_price_limit_x96: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Option<Py<PyAny>>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_in)?;
-        // Default price-limit bounds mirror the V3/V4 sims: the swap cannot
-        // cross these regardless of amount. A caller-supplied limit caps the
-        // walk short (arbitrage / exact-output limit caps).
         let sqrt_price_limit = match sqrt_price_limit_x96 {
             Some(v) if !v.is_none() => crate::conversion::alloy::extract_python_u256(v)?,
             _ => degenbot_bot::bot_core::V3PoolState::default_sqrt_price_limit(zero_for_one),
-        };
-        let adapter = PyTickWordFetcher {
-            callback: fetcher.clone().unbind(),
         };
         let outcome = {
             let mut core = self.core.write();
@@ -291,7 +280,6 @@ impl PyLiquidityPool {
                 amount,
                 sqrt_price_limit,
                 block,
-                &adapter,
             )
         };
         let Some(outcome) = outcome else {
@@ -316,23 +304,19 @@ impl PyLiquidityPool {
     /// the required input). Mirrors the Python `calculate_tokens_in_from_
     /// tokens_out` / `simulate_exact_output_swap` frozen path; the V3/V4
     /// exact-output sign convention is handled in the core.
-    #[pyo3(signature = (zero_for_one, amount_out, block, fetcher, sqrt_price_limit_x96=None))]
+    #[pyo3(signature = (zero_for_one, amount_out, block, sqrt_price_limit_x96=None))]
     fn simulate_exact_output_swap_with_fetch(
         &self,
         py: Python<'_>,
         zero_for_one: bool,
         amount_out: &Bound<'_, PyAny>,
         block: u64,
-        fetcher: &Bound<'_, PyAny>,
         sqrt_price_limit_x96: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Option<Py<PyAny>>> {
         let amount = crate::conversion::alloy::extract_python_u256(amount_out)?;
         let sqrt_price_limit = match sqrt_price_limit_x96 {
             Some(v) if !v.is_none() => crate::conversion::alloy::extract_python_u256(v)?,
             _ => degenbot_bot::bot_core::V3PoolState::default_sqrt_price_limit(zero_for_one),
-        };
-        let adapter = PyTickWordFetcher {
-            callback: fetcher.clone().unbind(),
         };
         let outcome = {
             let mut core = self.core.write();
@@ -342,7 +326,6 @@ impl PyLiquidityPool {
                 amount,
                 sqrt_price_limit,
                 block,
-                &adapter,
             )
         };
         let Some(outcome) = outcome else {
@@ -372,7 +355,7 @@ impl PyLiquidityPool {
     /// ticks are merged into the TRANSIENT state (NOT registered `BotState`),
     /// and the sim retries. Returns the same 5-tuple as
     /// `simulate_swap_with_fetch`, or `None` if not computable.
-    #[pyo3(signature = (zero_for_one, amount_in, block, fetcher, override_sqrt_price_x96, override_liquidity, override_tick, override_tick_data, sqrt_price_limit_x96=None))]
+    #[pyo3(signature = (zero_for_one, amount_in, block, override_sqrt_price_x96, override_liquidity, override_tick, override_tick_data, sqrt_price_limit_x96=None))]
     #[allow(clippy::too_many_arguments)]
     fn simulate_swap_with_override(
         &self,
@@ -380,7 +363,6 @@ impl PyLiquidityPool {
         zero_for_one: bool,
         amount_in: &Bound<'_, PyAny>,
         block: u64,
-        fetcher: &Bound<'_, PyAny>,
         override_sqrt_price_x96: &Bound<'_, PyAny>,
         override_liquidity: &Bound<'_, PyAny>,
         override_tick: &Bound<'_, PyAny>,
@@ -393,7 +375,6 @@ impl PyLiquidityPool {
             amount,
             false, // exact_input
             block,
-            fetcher,
             override_sqrt_price_x96,
             override_liquidity,
             override_tick,
@@ -408,7 +389,7 @@ impl PyLiquidityPool {
     /// the sim derives the required input. Same 5-tuple return shape as
     /// `simulate_swap_with_override`. Combines the override-state build with
     /// the V3/V4 exact-output sign convention (handled in the core).
-    #[pyo3(signature = (zero_for_one, amount_out, block, fetcher, override_sqrt_price_x96, override_liquidity, override_tick, override_tick_data, sqrt_price_limit_x96=None))]
+    #[pyo3(signature = (zero_for_one, amount_out, block, override_sqrt_price_x96, override_liquidity, override_tick, override_tick_data, sqrt_price_limit_x96=None))]
     #[allow(clippy::too_many_arguments)]
     fn simulate_exact_output_swap_with_override(
         &self,
@@ -416,7 +397,6 @@ impl PyLiquidityPool {
         zero_for_one: bool,
         amount_out: &Bound<'_, PyAny>,
         block: u64,
-        fetcher: &Bound<'_, PyAny>,
         override_sqrt_price_x96: &Bound<'_, PyAny>,
         override_liquidity: &Bound<'_, PyAny>,
         override_tick: &Bound<'_, PyAny>,
@@ -429,7 +409,6 @@ impl PyLiquidityPool {
             amount,
             true, // exact_output
             block,
-            fetcher,
             override_sqrt_price_x96,
             override_liquidity,
             override_tick,

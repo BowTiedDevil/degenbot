@@ -16,6 +16,7 @@ use alloy::primitives::{Address, I256, U160, U256};
 
 use crate::bot_core::state_history::{ReorgJournal, V3BlockDelta};
 use crate::bot_core::tick_bitmap::{compute_tick_ranges, gen_ticks, V3TickRangeForSolver};
+use crate::bot_core::tick_fetch::TickWordFetcher;
 use crate::bot_core::v3_state::{PoolTickCoverage, SimulateSwapError, V3SwapOutcome};
 use crate::bot_core::TickInfo;
 use crate::solvers::liquidity_event_buffer::LiquidityEvent;
@@ -106,6 +107,10 @@ pub struct RegisterV4PoolParams {
     pub tick_data: HashMap<i32, TickInfo>,
     pub update_block: u64,
     pub coverage: PoolTickCoverage,
+    /// Sparse-tick backfill fetcher (stored on `V4PoolState` at registration;
+    /// `None` for `Tracked` pools or when no Python fetcher was supplied).
+    /// ADR-006 I/O trait object — same shape as V3.
+    pub fetcher: Option<Arc<dyn TickWordFetcher>>,
 }
 
 /// Typed rejection from [`crate::bot_core::BotState::register_v4_pool`].
@@ -226,6 +231,14 @@ pub struct V4PoolState {
     /// miss-detection discipline (ADR-005 sparse-map feature parity).
     pub known_bitmap_words: HashSet<i32>,
 
+    /// The sparse-tick backfill fetcher (ADR-006 I/O trait object). Set once
+    /// at `register_v4_pool`; the fetch+retry loop in
+    /// `calculate_tokens_out_with_fetch` / `simulate_*_with_fetch` clones
+    /// this `Arc` out and calls it on a `MissingTickWord` miss. `None` for
+    /// `Tracked` pools (complete tick data) or when no Python fetcher was
+    /// supplied at registration.
+    pub fetcher: Option<Arc<dyn TickWordFetcher>>,
+
     /// Reorg journal — scalar priors + per-tick priors for rollback (V4 uses
     /// the same `V3BlockDelta` shape; `tick_priors` store `ModifyLiquidity` reversal
     /// data).
@@ -244,6 +257,7 @@ impl Clone for V4PoolState {
             tick_data: self.tick_data.clone(),
             coverage: self.coverage,
             known_bitmap_words: self.known_bitmap_words.clone(),
+            fetcher: self.fetcher.clone(),
             journal: self.journal.clone(),
             // Clones (e.g. `v4_pools_snapshot()`) do NOT carry the pinned seed or
             // the pinned post-drain snapshot (CBCH6H + step-2 race fix — see
@@ -299,6 +313,7 @@ impl V4PoolState {
             tick_data: params.tick_data,
             coverage: params.coverage,
             known_bitmap_words: HashSet::new(),
+            fetcher: params.fetcher,
             journal: ReorgJournal::<V3BlockDelta>::new(journal_depth),
             snapshot_seed: None,
             post_drain_snapshot: None,

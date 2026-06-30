@@ -355,6 +355,7 @@ class AsyncV3PoolBuilder:
             tick_data=rust_rows or None,
             update_block=state_block_int,
             coverage="tracked" if db_snapshot_loaded else "sparse",
+            tick_data_fetcher=self._make_tick_data_fetcher(pool_address, chain_id, io=io),
         )
         py_pool_handle = self._py_bot.get_pool(pool_id)
         assert py_pool_handle is not None, "register_v3_pool returned a pool_id with no handle"

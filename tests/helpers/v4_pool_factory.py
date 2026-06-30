@@ -46,6 +46,7 @@ def make_v4_pool(
     state_block: int | None = None,
     py_bot: PyBot | None = None,
     coverage: str | None = None,
+    tick_data_fetcher: Any | None = None,
 ) -> UniswapV4Pool:
     """Construct an I/O-free `UniswapV4Pool` registered in Rust.
 
@@ -102,6 +103,7 @@ def make_v4_pool(
         block=blk,
         tick_data=register_rows,
         coverage=coverage,
+        tick_data_fetcher=tick_data_fetcher,
     )
     handle = bot.get_pool(pool_id_int)
 

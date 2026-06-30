@@ -394,6 +394,7 @@ class V3PoolBuilder(V3BuilderBase):
             tick_data=rust_rows or None,
             update_block=state_block_int,
             coverage="tracked" if db_snapshot_loaded else "sparse",
+            tick_data_fetcher=self._make_tick_data_fetcher(pool_address, chain_id, io=io),
         )
         py_pool_handle = self._py_bot.get_pool(pool_id)
         assert py_pool_handle is not None, "register_v3_pool returned a pool_id with no handle"
@@ -410,6 +411,10 @@ class V3PoolBuilder(V3BuilderBase):
         # The companion's ``_bitmap_override`` is populated by the constructor
         # from ``tick_bitmap_override`` below; it does not depend on a Rust
         # ``update_tick_data`` call.
+        # The tick fetcher is stored Rust-side on V3PoolState at registration
+        # (ADR-006 I/O trait object); the companion still passes it here for the
+        # Python-level `_fetch_tick_bitmap_word` pre-fetch path (deleted in the
+        # V3 seam migration, GYOC6P).
         pool = pool_class(
             py_pool_handle,
             address=pool_address,

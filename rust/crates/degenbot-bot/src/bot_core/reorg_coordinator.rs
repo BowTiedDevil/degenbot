@@ -433,6 +433,7 @@ mod tests {
             tick_data: HashMap::new(),
             update_block,
             coverage: PoolTickCoverage::Sparse,
+            fetcher: None,
         });
         let counting = Arc::new(CountingSubscriber {
             notifies: Mutex::new(0),
@@ -639,6 +640,7 @@ mod tests {
                 tick_data: HashMap::new(),
                 update_block,
                 coverage: PoolTickCoverage::Sparse,
+                fetcher: None,
             })
             .expect("V4 pool registers");
         let counting = Arc::new(CountingSubscriber {

@@ -1780,25 +1780,34 @@ impl BotState {
     /// Fetch+retry exact-input swap for sparse V3/V4 pools (ADR-005 slice 2).
     ///
     /// Loops: compute via [`Self::calculate_tokens_out_miss_aware`]; on
-    /// [`SimulateSwapError::MissingTickWord(word)`] call `fetcher` for `word`,
+    /// [`SimulateSwapError::MissingTickWord(word)`] call the **stored**
+    /// fetcher (registered at `register_v3/v4_pool`) for `word`,
     /// [`merge_tick_word`] the result, and retry. Dedup prevents an infinite
     /// refetch of the same word (a repeated miss returns `U256::ZERO`).
-    /// [`SimulateSwapError::NotComputable`] and a fetcher error return
-    /// `U256::ZERO`.
+    /// [`SimulateSwapError::NotComputable`] and a fetcher error (or no stored
+    /// fetcher) return `U256::ZERO`.
     ///
     /// The fetcher returns the word's data (it must NOT write back into
     /// `BotState` itself — re-entrancy is safe because the calc holds no lock
     /// across `fetch_missing_tick_word`; the caller merged result is applied
     /// here). `block` is forwarded to the fetcher as the fetch context.
     #[must_use]
-    pub fn calculate_tokens_out_with_fetch<F: crate::bot_core::tick_fetch::TickWordFetcher>(
+    pub fn calculate_tokens_out_with_fetch(
         &mut self,
         pool_id: u64,
         zero_for_one: bool,
         amount_in: U256,
         block: u64,
-        fetcher: &F,
     ) -> U256 {
+        // Clone the stored `Arc<dyn TickWordFetcher>` off the V3/V4 state
+        // before the loop (avoids a self-referential borrow: the loop both
+        // calls the fetcher and mutates `self.pools` via `merge_tick_word`).
+        let fetcher: Option<Arc<dyn crate::bot_core::tick_fetch::TickWordFetcher>> =
+            match self.pools.get(&pool_id) {
+                Some(PoolEntry::V3(_, state)) => state.fetcher.clone(),
+                Some(PoolEntry::V4(_, state)) => state.fetcher.clone(),
+                _ => None,
+            };
         let mut attempted: HashSet<i32> = HashSet::new();
         loop {
             match self.calculate_tokens_out_miss_aware(pool_id, zero_for_one, amount_in) {
@@ -1811,6 +1820,9 @@ impl BotState {
                     if !attempted.insert(word) {
                         return U256::ZERO;
                     }
+                    let Some(ref fetcher) = fetcher else {
+                        return U256::ZERO;
+                    };
                     match fetcher.fetch_missing_tick_word(pool_id, word, block) {
                         Ok(data) => {
                             self.merge_tick_word(pool_id, data);
@@ -1886,15 +1898,20 @@ impl BotState {
     /// Returns `None` (not `Result`) for every failure mode by design —
     /// callers cannot distinguish a fetch miss from `NotComputable` here; use
     /// [`Self::simulate_exact_input_swap_miss_aware`] for miss-aware control.
-    pub fn simulate_exact_input_swap_with_fetch<F: crate::bot_core::tick_fetch::TickWordFetcher>(
+    pub fn simulate_exact_input_swap_with_fetch(
         &mut self,
         pool_id: u64,
         zero_for_one: bool,
         amount_in: U256,
         sqrt_price_limit: U256,
         block: u64,
-        fetcher: &F,
     ) -> Option<V3SwapOutcome> {
+        let fetcher: Option<Arc<dyn crate::bot_core::tick_fetch::TickWordFetcher>> =
+            match self.pools.get(&pool_id) {
+                Some(PoolEntry::V3(_, state)) => state.fetcher.clone(),
+                Some(PoolEntry::V4(_, state)) => state.fetcher.clone(),
+                _ => None,
+            };
         let mut attempted: HashSet<i32> = HashSet::new();
         loop {
             match self.simulate_exact_input_swap_miss_aware(
@@ -1909,6 +1926,9 @@ impl BotState {
                     if !attempted.insert(word) {
                         return None;
                     }
+                    let Some(ref fetcher) = fetcher else {
+                        return None;
+                    };
                     match fetcher.fetch_missing_tick_word(pool_id, word, block) {
                         Ok(data) => {
                             self.merge_tick_word(pool_id, data);
@@ -1981,17 +2001,20 @@ impl BotState {
     /// passes the desired `amount_out` + the sim derives the required input.
     /// Returns `None` on any non-computable / fetch-failure mode (same
     /// discipline as the exact-input variant).
-    pub fn simulate_exact_output_swap_with_fetch<
-        F: crate::bot_core::tick_fetch::TickWordFetcher,
-    >(
+    pub fn simulate_exact_output_swap_with_fetch(
         &mut self,
         pool_id: u64,
         zero_for_one: bool,
         amount_out: U256,
         sqrt_price_limit: U256,
         block: u64,
-        fetcher: &F,
     ) -> Option<V3SwapOutcome> {
+        let fetcher: Option<Arc<dyn crate::bot_core::tick_fetch::TickWordFetcher>> =
+            match self.pools.get(&pool_id) {
+                Some(PoolEntry::V3(_, state)) => state.fetcher.clone(),
+                Some(PoolEntry::V4(_, state)) => state.fetcher.clone(),
+                _ => None,
+            };
         let mut attempted: HashSet<i32> = HashSet::new();
         loop {
             match self.simulate_exact_output_swap_miss_aware(
@@ -2006,6 +2029,9 @@ impl BotState {
                     if !attempted.insert(word) {
                         return None;
                     }
+                    let Some(ref fetcher) = fetcher else {
+                        return None;
+                    };
                     match fetcher.fetch_missing_tick_word(pool_id, word, block) {
                         Ok(data) => {
                             self.merge_tick_word(pool_id, data);
@@ -2055,7 +2081,7 @@ impl BotState {
     /// missing a required word the fetcher cannot resolve.
     #[must_use]
     #[allow(clippy::too_many_arguments)]
-    pub fn simulate_swap_with_override<F: crate::bot_core::tick_fetch::TickWordFetcher>(
+    pub fn simulate_swap_with_override(
         &self,
         pool_id: u64,
         zero_for_one: bool,
@@ -2067,13 +2093,19 @@ impl BotState {
         override_tick: i32,
         override_tick_data: HashMap<i32, TickInfo>,
         block: u64,
-        fetcher: &F,
     ) -> Option<V3SwapOutcome> {
         if amount.is_zero() {
             return None;
         }
         let entry = self.pools.get(&pool_id)?;
         let spec = I256::try_from(amount).ok()?;
+        // Clone the stored fetcher off the registered state (the override
+        // state is a transient copy — the fetcher itself is shared via `Arc`).
+        let fetcher: Option<Arc<dyn crate::bot_core::tick_fetch::TickWordFetcher>> = match entry {
+            PoolEntry::V3(_, state) => state.fetcher.clone(),
+            PoolEntry::V4(_, state) => state.fetcher.clone(),
+            _ => None,
+        };
         match entry {
             // V3: exact-input is `amountSpecified > 0`; exact-output is `< 0`.
             PoolEntry::V3(identity, state) => {
@@ -2090,6 +2122,7 @@ impl BotState {
                     tick_data: override_tick_data,
                     update_block: state.update_block,
                     coverage: PoolTickCoverage::Sparse,
+                    fetcher: None,
                 };
                 let (override_identity, mut override_state) =
                     V3PoolState::from_params(params, self.journal_depth);
@@ -2110,6 +2143,9 @@ impl BotState {
                             if !attempted.insert(word) {
                                 return None;
                             }
+                            let Some(ref fetcher) = fetcher else {
+                                return None;
+                            };
                             match fetcher.fetch_missing_tick_word(pool_id, word, block) {
                                 Ok(data) => override_state.merge_tick_word(&data),
                                 Err(_) => return None,
@@ -2133,6 +2169,7 @@ impl BotState {
                     tick_data: override_tick_data,
                     update_block: state.update_block,
                     coverage: PoolTickCoverage::Sparse,
+                    fetcher: None,
                 };
                 let (override_identity, mut override_state) =
                     V4PoolState::from_params(params, self.journal_depth);
@@ -2153,6 +2190,9 @@ impl BotState {
                             if !attempted.insert(word) {
                                 return None;
                             }
+                            let Some(ref fetcher) = fetcher else {
+                                return None;
+                            };
                             match fetcher.fetch_missing_tick_word(pool_id, word, block) {
                                 Ok(data) => override_state.merge_tick_word(&data),
                                 Err(_) => return None,
@@ -4057,6 +4097,7 @@ mod tests {
                 tick_data: HashMap::new(),
                 update_block: 0,
                 coverage: PoolTickCoverage::Sparse,
+                fetcher: None,
             })
             .expect("V4 registration");
         assert_eq!(core.pool_family(v4_id), "v4");
@@ -4254,6 +4295,7 @@ mod tests {
             tick_data: HashMap::new(),
             update_block,
             coverage: PoolTickCoverage::Sparse,
+            fetcher: None,
         })
     }
 
@@ -4378,6 +4420,7 @@ mod tests {
             tick_data,
             update_block,
             coverage: PoolTickCoverage::Sparse,
+            fetcher: None,
         })
     }
 
@@ -4555,6 +4598,7 @@ mod tests {
                 tick_data,
                 update_block: 0,
                 coverage: PoolTickCoverage::Sparse,
+                fetcher: None,
             })
             .expect("V4 pool registers");
 
@@ -4625,6 +4669,7 @@ mod tests {
                 tick_data: HashMap::new(),
                 update_block: 0,
                 coverage: PoolTickCoverage::Sparse,
+                fetcher: None,
             })
             .expect_err("hooked pool must be rejected");
         assert_eq!(
@@ -4659,6 +4704,7 @@ mod tests {
                 tick_data: HashMap::new(),
                 update_block: 0,
                 coverage: PoolTickCoverage::Sparse,
+                fetcher: None,
             })
             .expect_err("dynamic-fee pool must be rejected");
         assert_eq!(
@@ -4696,6 +4742,7 @@ mod tests {
             tick_data: HashMap::new(),
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
+            fetcher: None,
         };
         core.register_v4_pool(&params)
             .expect("first registration ok");
@@ -4747,6 +4794,7 @@ mod tests {
             tick_data: HashMap::new(),
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
+            fetcher: None,
         };
 
         // Twin pools: A updated via the family dispatcher, B via the
@@ -4845,6 +4893,7 @@ mod tests {
             tick_data,
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
+            fetcher: None,
         };
 
         // Twin pools: A via the dispatcher, B via apply_v4_liquidity_update.
@@ -4926,6 +4975,7 @@ mod tests {
             tick_data: HashMap::new(),
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
+            fetcher: None,
         };
 
         // Twin V4 pools: A read via the family accessor after a dispatcher
@@ -5032,6 +5082,7 @@ mod tests {
             tick_data,
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
+            fetcher: None,
         };
 
         // Twin pools: A via the dispatcher, B via apply_v4_liquidity_update.
@@ -5111,6 +5162,7 @@ mod tests {
             tick_data: HashMap::new(),
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
+            fetcher: None,
         });
 
         let block_b = 9u64;
@@ -5228,6 +5280,7 @@ mod tests {
             tick_data: HashMap::new(),
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
+            fetcher: None,
         });
         assert_eq!(
             core.buffered_v3_event_count(&v3_addr),
@@ -5287,6 +5340,7 @@ mod tests {
             tick_data: seed,
             update_block: 0,
             coverage: PoolTickCoverage::Tracked,
+            fetcher: None,
         });
 
         // The seed is pinned at registration for Tracked (snapshot) pools.
@@ -5369,6 +5423,7 @@ mod tests {
             tick_data: seed,
             update_block: 0,
             coverage: PoolTickCoverage::Tracked,
+            fetcher: None,
         });
 
         // Pin the post-drain state atomically with the drain (no buffer here →
@@ -5428,6 +5483,7 @@ mod tests {
             tick_data: HashMap::new(),
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
+            fetcher: None,
         });
         core.pin_v3_post_drain_snapshot(v3_addr);
         assert_eq!(
@@ -5501,6 +5557,7 @@ mod tests {
             tick_data: seed,
             update_block: snapshot_block,
             coverage: PoolTickCoverage::Tracked,
+            fetcher: None,
         });
 
         // Drain both buffers + pin — exactly what `apply_buffer_v3` does
@@ -5581,6 +5638,7 @@ mod tests {
             tick_data: seed,
             update_block: 0,
             coverage: PoolTickCoverage::Tracked,
+            fetcher: None,
         })
         .expect("V4 pool registers");
 
@@ -5678,6 +5736,7 @@ mod tests {
             tick_data: seed,
             update_block: 0,
             coverage: PoolTickCoverage::Tracked,
+            fetcher: None,
         })
         .expect("V4 pool registers");
 
@@ -5754,6 +5813,7 @@ mod tests {
             tick_data: HashMap::new(),
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
+            fetcher: None,
         })
         .expect("V4 sparse pool registers");
         core.pin_v4_post_drain_snapshot(pool_manager, &pool_id_bytes);
@@ -5791,6 +5851,7 @@ mod tests {
                 tick_data: HashMap::new(),
                 update_block: 0,
                 coverage: PoolTickCoverage::Sparse,
+                fetcher: None,
             })
             .expect("V4 pool registers");
         assert_eq!(core.pool_count(), 1);
@@ -5819,6 +5880,7 @@ mod tests {
                 tick_data: HashMap::new(),
                 update_block: 0,
                 coverage: PoolTickCoverage::Sparse,
+                fetcher: None,
             })
             .expect("V4 re-register after unregister must succeed");
         assert_ne!(
@@ -5838,6 +5900,7 @@ mod tests {
         // non-zero (not the miss sentinel).
         use crate::bot_core::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
 
+        #[derive(Debug)]
         struct FakeFetcher;
         impl TickWordFetcher for FakeFetcher {
             fn fetch_missing_tick_word(
@@ -5868,13 +5931,15 @@ mod tests {
             tick_data: HashMap::new(), // fully sparse — word 0 unknown
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
+            fetcher: Some(std::sync::Arc::new(FakeFetcher)),
         });
 
-        // Without fetch: the starting word (0) is unknown → miss → ZERO.
+        // Without the fetch+retry loop: the starting word (0) is unknown →
+        // miss → ZERO (calculate_tokens_out does NOT use the stored fetcher).
         assert_eq!(
             core.calculate_tokens_out(pool_id, true, U256::from(1000u64)),
             U256::ZERO,
-            "sparse pool with unknown starting word must miss → ZERO without a fetcher"
+            "sparse pool with unknown starting word must miss → ZERO without the fetch+retry loop"
         );
         // Miss-aware surfaces the fetchable miss.
         assert_eq!(
@@ -5883,14 +5948,9 @@ mod tests {
             "miss-aware calc must surface MissingTickWord(0), not map it to ZERO"
         );
 
-        // With fetch: fills word 0 (empty/known) + retries → computes.
-        let fetched = core.calculate_tokens_out_with_fetch(
-            pool_id,
-            true,
-            U256::from(1000u64),
-            0,
-            &FakeFetcher,
-        );
+        // With fetch+retry (stored fetcher): fills word 0 (empty/known) +
+        // retries → computes.
+        let fetched = core.calculate_tokens_out_with_fetch(pool_id, true, U256::from(1000u64), 0);
 
         // The fetch+retry result must match the direct no-miss path (word 0
         // now known after the fetch merge — no further miss).
@@ -5919,6 +5979,7 @@ mod tests {
         // spin. Covers the `Err(_)` arm of the fetch+retry loop.
         use crate::bot_core::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
 
+        #[derive(Debug)]
         struct FailingFetcher;
         impl TickWordFetcher for FailingFetcher {
             fn fetch_missing_tick_word(
@@ -5945,18 +6006,82 @@ mod tests {
             tick_data: HashMap::new(),
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
+            fetcher: Some(std::sync::Arc::new(FailingFetcher)),
         });
 
         assert_eq!(
-            core.calculate_tokens_out_with_fetch(
-                pool_id,
-                true,
-                U256::from(1000u64),
-                0,
-                &FailingFetcher,
-            ),
+            core.calculate_tokens_out_with_fetch(pool_id, true, U256::from(1000u64), 0,),
             U256::ZERO,
             "a failing fetcher must give up with ZERO, not panic or spin"
+        );
+    }
+
+    #[test]
+    fn calculate_tokens_out_with_fetch_empty_word_not_refetched() {
+        // A fetcher that returns an empty word (checked-but-empty) marks the
+        // word known in `known_bitmap_words`. A second solve must NOT re-invoke
+        // the fetcher — the empty word survived in the bitmap (ADR-006/005
+        // stored-tick-fetcher task MLJT4V). This is the bitmap empty-word fix
+        // that lets the companion delete `_bitmap_override`.
+        use crate::bot_core::tick_fetch::{FetchTickWordError, FetchedTickWord, TickWordFetcher};
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::Arc;
+
+        #[derive(Debug)]
+        struct CountingFetcher {
+            calls: AtomicU32,
+        }
+        impl TickWordFetcher for CountingFetcher {
+            fn fetch_missing_tick_word(
+                &self,
+                _pool_id: u64,
+                word: i32,
+                _block: u64,
+            ) -> Result<FetchedTickWord, FetchTickWordError> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(FetchedTickWord {
+                    word,
+                    ticks: HashMap::new(),
+                })
+            }
+        }
+
+        let counter = Arc::new(CountingFetcher {
+            calls: AtomicU32::new(0),
+        });
+        let mut core = BotState::new();
+        let pool_id = core.register_v3_pool(&RegisterV3PoolParams {
+            address: Address::ZERO,
+            token0: Address::ZERO,
+            token1: Address::from([1u8; 20]),
+            fee: 3000,
+            tick_spacing: 60,
+            factory: Address::ZERO,
+            sqrt_price_x96: U256::from(1u128) << 96,
+            liquidity: 10_000_000_000_000u128,
+            tick: 0,
+            tick_data: HashMap::new(),
+            update_block: 0,
+            coverage: PoolTickCoverage::Sparse,
+            fetcher: Some(counter.clone() as Arc<dyn TickWordFetcher>),
+        });
+
+        // First solve: misses word 0, fetches (empty), retries → computes.
+        let first = core.calculate_tokens_out_with_fetch(pool_id, true, U256::from(1000u64), 0);
+        let calls_after_first = counter.calls.load(Ordering::SeqCst);
+        assert!(calls_after_first >= 1, "first solve must fetch word 0");
+        assert_eq!(
+            first,
+            core.calculate_tokens_out(pool_id, true, U256::from(1000u64)),
+            "first fetched result must match the no-miss direct path"
+        );
+
+        // Second solve: word 0 is now known → NO fetch should happen.
+        let _second = core.calculate_tokens_out_with_fetch(pool_id, true, U256::from(1000u64), 0);
+        assert_eq!(
+            counter.calls.load(Ordering::SeqCst),
+            calls_after_first,
+            "second solve must NOT re-invoke the fetcher — the empty word survived in known_bitmap_words"
         );
     }
 }

@@ -1486,6 +1486,7 @@ mod tests {
             tick_data,
             update_block: 0,
             coverage: PoolTickCoverage::Tracked,
+            fetcher: None,
         });
 
         // V4 pool
@@ -1517,6 +1518,7 @@ mod tests {
                 tick_data: v4_tick_data,
                 update_block: 0,
                 coverage: PoolTickCoverage::Tracked,
+                fetcher: None,
             })
             .expect("V4 registration failed");
 
@@ -2341,6 +2343,7 @@ mod tests {
             tick_data,
             update_block: 0,
             coverage: PoolTickCoverage::Tracked,
+            fetcher: None,
         });
         let core = engine.core.read();
         let state = core.get_v3_pool(v3_state).expect("registered");
@@ -2420,6 +2423,7 @@ mod tests {
                 tick_data,
                 update_block: 0,
                 coverage: PoolTickCoverage::Tracked,
+                fetcher: None,
             })
             .expect("V4 registration failed");
         let core = engine.core.read();

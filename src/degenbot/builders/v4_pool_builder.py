@@ -404,6 +404,13 @@ class V4PoolBuilder(V4BuilderBase):
             block=state_block,
             tick_data=register_rows,
             coverage=coverage,
+            tick_data_fetcher=self._make_tick_data_fetcher(
+                pool_id_bytes,
+                pool_manager_address,
+                state_view_address,
+                chain_id,
+                io=io,
+            ),
         )
         py_pool_handle = self._py_bot.get_pool(pool_handle_pool_id)
         assert py_pool_handle is not None, "register_v4_pool returned a pool_id with no handle"
