@@ -487,6 +487,12 @@ pub struct OwnedPathFinder {
     pool_type_per_depth: Option<Vec<Option<Vec<PoolKind>>>>,
     node_valid_depths: Option<Vec<Vec<bool>>>,
     filter_len: usize,
+    /// Per-node list of pool indices whose edge reaches `end` (the cycle's
+    /// closing token). Built once per search in [`OwnedPathFinder::new`]: the
+    /// closing hop can only traverse an edge to `end`, so iterating this
+    /// compact list instead of the full adjacency avoids scanning (and
+    /// skipping) every non-`end` neighbor of each penultimate node.
+    end_edges: Vec<Vec<u32>>,
     stack: Vec<(u32, usize, bool)>,
     working_path: Vec<u32>,
     visited: Vec<bool>,
@@ -553,6 +559,20 @@ impl OwnedPathFinder {
         let done = stack.is_empty();
         let n_pools = graph.pools.len();
 
+        // Precompute, per node, the pool indices of edges that reach `end`.
+        // The closing hop only traverses `end`-reaching edges, so iterating
+        // this compact list avoids scanning/skipping every non-`end` neighbor
+        // of each penultimate node. Insertion order is preserved so traversal
+        // order (hence enumeration order) is unchanged.
+        let mut end_edges: Vec<Vec<u32>> = vec![Vec::new(); graph.adj.len()];
+        for (node_idx, edges) in graph.adj.iter().enumerate() {
+            for e in edges {
+                if e.neighbor == end_idx {
+                    end_edges[node_idx].push(e.pool_idx);
+                }
+            }
+        }
+
         Self {
             graph,
             end: end_idx,
@@ -562,6 +582,7 @@ impl OwnedPathFinder {
             pool_type_per_depth,
             node_valid_depths,
             filter_len,
+            end_edges,
             stack,
             working_path: Vec::with_capacity(16),
             visited: vec![false; n_pools],
@@ -622,15 +643,6 @@ impl OwnedPathFinder {
                 }
             }
 
-            // Find the next valid edge to explore from this node.
-            let neighbors = if let Some(n) = self.graph.adj.get(*node as usize) {
-                n.as_slice()
-            } else {
-                // No edges from this node — backtrack.
-                self.stack.pop();
-                continue;
-            };
-
             // If the next hop reaches the maximum depth, only edges that close
             // the cycle (reach `end`) can possibly yield — skip the rest
             // without pushing a dead frame that would just backtrack. This is
@@ -642,53 +654,101 @@ impl OwnedPathFinder {
             );
 
             let mut found_edge = false;
-            while *edge_idx < neighbors.len() {
-                let edge = &neighbors[*edge_idx];
-                *edge_idx += 1;
-                let pool_idx = edge.pool_idx;
 
-                // Cycle detection: skip pools already on the working path.
-                if self.visited[pool_idx as usize] {
-                    continue;
-                }
+            if final_hop {
+                // Closing hop: only `end`-reaching edges can complete the
+                // cycle. Iterate the precomputed compact end-edge list
+                // (instead of scanning + skipping the full adjacency) — this
+                // avoids touching every non-`end` neighbor of each penultimate
+                // node. All edges here reach `end`, so the pushed neighbor is
+                // always `end` and the final-hop skip check is unnecessary.
+                let end_list: &[u32] = self
+                    .end_edges
+                    .get(*node as usize)
+                    .map_or([].as_slice(), Vec::as_slice);
+                while *edge_idx < end_list.len() {
+                    let pool_idx = end_list[*edge_idx];
+                    *edge_idx += 1;
 
-                // Final-hop restriction: the closing hop must reach `end`.
-                if final_hop && edge.neighbor != self.end {
-                    continue;
-                }
-
-                // Per-depth pool-type filter.
-                if let Some(filter) = filter_slice {
-                    let depth = self.working_path.len();
-                    if depth >= self.filter_len {
+                    // Cycle detection: skip pools already on the working path.
+                    if self.visited[pool_idx as usize] {
                         continue;
                     }
-                    if let Some(allowed_kinds) = &filter[depth] {
-                        let kind = self.graph.pools[pool_idx as usize].1;
-                        if !allowed_kinds.contains(&kind) {
-                            continue;
-                        }
-                    }
 
-                    // Lookahead pruning.
-                    let next_depth = depth + 1;
-                    if next_depth < self.filter_len {
-                        if let Some(nvd) = nvd_ref {
-                            if let Some(valid) = nvd.get(edge.neighbor as usize) {
-                                if !valid[next_depth] {
+                    // Per-depth pool-type filter (lookahead never applies at
+                    // the closing hop: next_depth == effective_max_depth is
+                    // never < filter_len).
+                    if let Some(filter) = filter_slice {
+                        let depth = self.working_path.len();
+                        if depth < self.filter_len {
+                            if let Some(allowed_kinds) = &filter[depth] {
+                                let kind = self.graph.pools[pool_idx as usize].1;
+                                if !allowed_kinds.contains(&kind) {
                                     continue;
                                 }
                             }
                         }
                     }
-                }
 
-                // Found a valid edge — extend the path and push the neighbor.
-                self.working_path.push(pool_idx);
-                self.visited[pool_idx as usize] = true;
-                self.stack.push((edge.neighbor, 0, false));
-                found_edge = true;
-                break;
+                    self.working_path.push(pool_idx);
+                    self.visited[pool_idx as usize] = true;
+                    self.stack.push((self.end, 0, false));
+                    found_edge = true;
+                    break;
+                }
+            } else {
+                // Find the next valid edge to explore from this node.
+                let neighbors = if let Some(n) = self.graph.adj.get(*node as usize) {
+                    n.as_slice()
+                } else {
+                    // No edges from this node — backtrack.
+                    self.stack.pop();
+                    continue;
+                };
+
+                while *edge_idx < neighbors.len() {
+                    let edge = &neighbors[*edge_idx];
+                    *edge_idx += 1;
+                    let pool_idx = edge.pool_idx;
+
+                    // Cycle detection: skip pools already on the working path.
+                    if self.visited[pool_idx as usize] {
+                        continue;
+                    }
+
+                    // Per-depth pool-type filter.
+                    if let Some(filter) = filter_slice {
+                        let depth = self.working_path.len();
+                        if depth >= self.filter_len {
+                            continue;
+                        }
+                        if let Some(allowed_kinds) = &filter[depth] {
+                            let kind = self.graph.pools[pool_idx as usize].1;
+                            if !allowed_kinds.contains(&kind) {
+                                continue;
+                            }
+                        }
+
+                        // Lookahead pruning.
+                        let next_depth = depth + 1;
+                        if next_depth < self.filter_len {
+                            if let Some(nvd) = nvd_ref {
+                                if let Some(valid) = nvd.get(edge.neighbor as usize) {
+                                    if !valid[next_depth] {
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Found a valid edge — extend the path and push the neighbor.
+                    self.working_path.push(pool_idx);
+                    self.visited[pool_idx as usize] = true;
+                    self.stack.push((edge.neighbor, 0, false));
+                    found_edge = true;
+                    break;
+                }
             }
 
             if !found_edge {
