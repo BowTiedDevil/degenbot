@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 
     from degenbot.erc20 import Erc20Token
     from degenbot.provider.sync_adapter import ProviderAdapter
-    from degenbot.types.aliases import BlockNumber, ChainId
+    from degenbot.types.aliases import BlockNumber
     from degenbot.uniswap.types import UniswapPoolSwapVector
 
 
@@ -102,7 +102,6 @@ class AerodromeV2Pool(
         stable: bool,
         reserves_token0: int,
         reserves_token1: int,
-        chain_id: ChainId | None = None,
         deployer_address: str | None = None,
         state_block: BlockNumber | None = None,
         state_cache_depth: int = 8,
@@ -110,7 +109,6 @@ class AerodromeV2Pool(
         """Initialize the instance."""
         self.address = get_checksum_address(address)
 
-        self._chain_id = chain_id if chain_id is not None else token0.chain_id
         state_block = state_block if state_block is not None else 0
         self._initial_state_block = state_block
 
@@ -147,11 +145,6 @@ class AerodromeV2Pool(
 
         """
         return f"{self.__class__.__name__}(address={self.address}, token0={self._token0}, token1={self._token1}, stable={self._stable})"  # noqa:E501
-
-    @property
-    def chain_id(self) -> int | None:
-        """Return chain id."""
-        return self._chain_id
 
     @property
     def reserves_token0(self) -> int:

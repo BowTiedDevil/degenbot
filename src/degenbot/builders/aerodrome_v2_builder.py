@@ -118,7 +118,6 @@ class AerodromeV2Builder(V2BuilderBase):
             stable=stable,
             reserves_token0=common.reserves0,
             reserves_token1=common.reserves1,
-            chain_id=common.chain_id,
             deployer_address=common.deployer,
             state_block=common.state_block,
             state_cache_depth=request.state_cache_depth,
@@ -156,7 +155,6 @@ class AerodromeV2Builder(V2BuilderBase):
             msg = f"AerodromeV2Builder cannot update {type(pool).__name__}"
             raise TypeError(msg)
 
-        assert pool.chain_id is not None
         assert io is not None, "io must be provided for update()"
         block_number_ = block_number if block_number is not None else io.get_block_number()
         block_number_ = int(block_number_) if not isinstance(block_number_, int) else block_number_

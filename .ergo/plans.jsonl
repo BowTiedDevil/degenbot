@@ -280,3 +280,7 @@
 {"type":"state","ts":"2026-06-30T21:54:01.049255585Z","data":{"id":"WN5RS3","state":"done","ts":"2026-06-30T21:54:01.049255585Z"}}
 {"type":"claim","ts":"2026-06-30T21:54:01.060521079Z","data":{"id":"RDR3KL","agent_id":"agent@t-c28d","ts":"2026-06-30T21:54:01.060521079Z"}}
 {"type":"state","ts":"2026-06-30T21:54:01.060521079Z","data":{"id":"RDR3KL","state":"doing","ts":"2026-06-30T21:54:01.060521079Z"}}
+{"type":"result","ts":"2026-06-30T21:56:17.784322315Z","data":{"task_id":"RDR3KL","summary":"src/degenbot/curve/curve_stableswap_liquidity_pool.py","path":"src/degenbot/curve/curve_stableswap_liquidity_pool.py","sha256_at_attach":"a3a1839da36c8a8779dba53e07a73d54c81e6c82d68fee29a333d252b3c3e242","mtime_at_attach":"2026-06-30T21:54:23.816195971Z","git_commit_at_attach":"fb7edca269c47250555d8332495613b9c998bb15","ts":"2026-06-30T21:56:17.784322315Z"}}
+{"type":"state","ts":"2026-06-30T21:56:17.789949637Z","data":{"id":"RDR3KL","state":"done","ts":"2026-06-30T21:56:17.789949637Z"}}
+{"type":"claim","ts":"2026-06-30T21:56:17.803619831Z","data":{"id":"FOZEH6","agent_id":"agent@t-c28d","ts":"2026-06-30T21:56:17.803619831Z"}}
+{"type":"state","ts":"2026-06-30T21:56:17.803619831Z","data":{"id":"FOZEH6","state":"doing","ts":"2026-06-30T21:56:17.803619831Z"}}
