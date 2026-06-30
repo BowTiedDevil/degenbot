@@ -7,7 +7,7 @@
 #![allow(clippy::doc_markdown)]
 
 use crate::prelude::*;
-use degenbot_pathfinding::graph::{OwnedPathFinder, PoolKind};
+use degenbot_pathfinding::graph::{EdgeKey, OwnedPathFinder, PoolKind};
 use pyo3::exceptions::PyValueError;
 use pyo3::types::PyList;
 
@@ -108,7 +108,10 @@ pub fn find_paths_rust(
         rust_filter,
     );
 
-    Ok(PathIterator { finder })
+    Ok(PathIterator {
+        finder,
+        buffer: Vec::new(),
+    })
 }
 
 /// A lazy Python iterator over arbitrage paths.
@@ -116,10 +119,24 @@ pub fn find_paths_rust(
 /// Yields ``list[tuple[int, int]]`` — each path is a list of
 /// ``(pool_id, pool_kind_u8)`` tuples. The DFS runs incrementally: each call
 /// to ``__next__`` advances the search until a complete path is found.
+///
+/// To amortize the per-path GIL release cost, the iterator internally
+/// buffers up to [`BATCH_SIZE`] paths per GIL-released span (the DFS advances
+/// while the GIL is released, so other Python threads may run between
+/// batches). Each ``__next__`` serves one path from the buffer, building the
+/// Python list/tuple objects lazily.
 #[pyclass]
 pub struct PathIterator {
     finder: OwnedPathFinder,
+    /// Pre-fetched path buffer (consumed from the back via `pop`). Refilled
+    /// in a single GIL-released span when empty.
+    buffer: Vec<Vec<EdgeKey>>,
 }
+
+/// Number of paths to fetch per GIL-released span. Tuned so a batch is large
+/// enough to amortize the GIL release (~µs) yet small enough to bound memory
+/// (~`BATCH_SIZE` * 3 * 16 B ≈ 400 KB) and give other threads periodic slices.
+const BATCH_SIZE: usize = 8192;
 
 #[pymethods]
 impl PathIterator {
@@ -128,20 +145,29 @@ impl PathIterator {
     }
 
     fn __next__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyList>>> {
-        // Run the next DFS step with the GIL released. Each step is cheap
-        // (one edge exploration or one yield), so the GIL is held briefly.
-        let result = py.detach(|| self.finder.next_path());
+        if self.buffer.is_empty() {
+            // Refill the buffer in one GIL-released span — the DFS advances
+            // while other Python threads may run.
+            let mut batch: Vec<Vec<EdgeKey>> = Vec::with_capacity(BATCH_SIZE);
+            let finder = &mut self.finder;
+            py.detach(|| {
+                while batch.len() < BATCH_SIZE {
+                    match finder.next_path() {
+                        Some(p) => batch.push(p),
+                        None => break,
+                    }
+                }
+            });
+            self.buffer = batch;
+        }
 
-        match result {
+        // Serve one path from the buffer (back-pop is O(1), no shift).
+        match self.buffer.pop() {
             None => Ok(None),
             Some(path) => {
                 let list = PyList::empty(py);
                 for (pool_id, pool_kind) in &path {
-                    let pool_id_py: Bound<'_, PyAny> =
-                        pool_id.into_pyobject(py).unwrap().into_any();
-                    let kind_py: Bound<'_, PyAny> =
-                        pool_kind.as_u8().into_pyobject(py).unwrap().into_any();
-                    list.append((pool_id_py, kind_py).into_pyobject(py)?)?;
+                    list.append((*pool_id, pool_kind.as_u8()))?;
                 }
                 Ok(Some(list))
             }
