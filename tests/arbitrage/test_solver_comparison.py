@@ -208,10 +208,6 @@ class TestSolverMethodComparison:
         # Optimal inputs should be close (within 0.1% relative tolerance)
         assert result_golden.x == pytest.approx(result_bounded.x, rel=1e-3)
 
-    @pytest.mark.xfail(
-        reason="Brent may be slower than Golden in CI due to timing variance",
-        strict=False,
-    )
     def test_brent_faster_than_golden(
         self,
         profit_function: "Callable[[float], float]",
