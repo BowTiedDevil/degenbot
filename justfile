@@ -166,8 +166,8 @@ lint: fmt-check fmt-check-python lint-rust lint-python lint-markdown lint-contex
 
 # Format all code
 format:
-    cargo fmt --manifest-path rust/Cargo.toml --all
     uv run ruff format src/
+    cargo fmt --manifest-path rust/Cargo.toml --all
 
 # ========== Dependency Updates ==========
 
