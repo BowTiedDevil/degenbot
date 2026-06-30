@@ -7,7 +7,7 @@
 #![allow(clippy::doc_markdown)]
 
 use crate::prelude::*;
-use degenbot_pathfinding::graph::{EdgeKey, OwnedPathFinder, PoolKind};
+use degenbot_pathfinding::graph::{OwnedPathFinder, PoolKind};
 use pyo3::exceptions::PyValueError;
 use pyo3::types::PyList;
 
@@ -111,6 +111,7 @@ pub fn find_paths_rust(
     Ok(PathIterator {
         finder,
         buffer: Vec::new(),
+        batch_lens: Vec::new(),
     })
 }
 
@@ -120,22 +121,29 @@ pub fn find_paths_rust(
 /// ``(pool_id, pool_kind_u8)`` tuples. The DFS runs incrementally: each call
 /// to ``__next__`` advances the search until a complete path is found.
 ///
-/// To amortize the per-path GIL release cost, the iterator internally
-/// buffers up to [`BATCH_SIZE`] paths per GIL-released span (the DFS advances
-/// while the GIL is released, so other Python threads may run between
-/// batches). Each ``__next__`` serves one path from the buffer, building the
-/// Python list/tuple objects lazily.
+/// To amortize the per-path FFI cost, the iterator internally buffers up to
+/// [`BATCH_SIZE`] paths per GIL-released span (the DFS advances while the
+/// GIL is released, so other Python threads may run between batches). Paths
+/// are held as **flat compact pool indices** (not `EdgeKey`s) in a single
+/// growable buffer — this avoids the per-path `Vec<EdgeKey>` allocation
+/// (~96k small allocs for a typical search) and only converts indices →
+/// `(pool_id, kind_u8)` lazily when building each Python list.
 #[pyclass]
 pub struct PathIterator {
     finder: OwnedPathFinder,
-    /// Pre-fetched path buffer (consumed from the back via `pop`). Refilled
-    /// in a single GIL-released span when empty.
-    buffer: Vec<Vec<EdgeKey>>,
+    /// Flat pool-index buffer for the current batch. Consume from the back:
+    /// the last `len` indices form the current path (length in
+    /// `batch_lens`), then the buffer is truncated by `len`.
+    buffer: Vec<u32>,
+    /// Path lengths within `buffer`, in insert order; the back entry is the
+    /// next path to serve.
+    batch_lens: Vec<usize>,
 }
 
 /// Number of paths to fetch per GIL-released span. Tuned so a batch is large
 /// enough to amortize the GIL release (~µs) yet small enough to bound memory
-/// (~`BATCH_SIZE` * 3 * 16 B ≈ 400 KB) and give other threads periodic slices.
+/// (`BATCH_SIZE` paths × max-depth × 4 B ≈ 100 KB per batch) and give other
+/// threads periodic slices.
 const BATCH_SIZE: usize = 8192;
 
 #[pymethods]
@@ -145,32 +153,38 @@ impl PathIterator {
     }
 
     fn __next__<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyList>>> {
-        if self.buffer.is_empty() {
-            // Refill the buffer in one GIL-released span — the DFS advances
-            // while other Python threads may run.
-            let mut batch: Vec<Vec<EdgeKey>> = Vec::with_capacity(BATCH_SIZE);
+        if self.batch_lens.is_empty() {
+            // Refill the flat buffer in one GIL-released span — the DFS
+            // advances (appending compact pool indices, no per-path Vec
+            // allocation) while other Python threads may run.
             let finder = &mut self.finder;
+            let buffer = &mut self.buffer;
+            let batch_lens = &mut self.batch_lens;
             py.detach(|| {
-                while batch.len() < BATCH_SIZE {
-                    match finder.next_path() {
-                        Some(p) => batch.push(p),
+                buffer.clear();
+                batch_lens.clear();
+                while batch_lens.len() < BATCH_SIZE {
+                    match finder.next_path_indices_into(buffer) {
+                        Some(len) => batch_lens.push(len),
                         None => break,
                     }
                 }
             });
-            self.buffer = batch;
         }
 
-        // Serve one path from the buffer (back-pop is O(1), no shift).
-        match self.buffer.pop() {
-            None => Ok(None),
-            Some(path) => {
-                let list = PyList::empty(py);
-                for (pool_id, pool_kind) in &path {
-                    list.append((*pool_id, pool_kind.as_u8()))?;
-                }
-                Ok(Some(list))
-            }
+        // Serve one path from the back of the flat buffer.
+        let len = match self.batch_lens.pop() {
+            None => return Ok(None),
+            Some(len) => len,
+        };
+        let start = self.buffer.len() - len;
+        // Resolve indices → (pool_id, kind_u8) via the finder's pools table.
+        let list = PyList::empty(py);
+        for i in start..self.buffer.len() {
+            let (pool_id, pool_kind) = self.finder.pool_edge_key(self.buffer[i]);
+            list.append((pool_id, pool_kind.as_u8()))?;
         }
+        self.buffer.truncate(start);
+        Ok(Some(list))
     }
 }
