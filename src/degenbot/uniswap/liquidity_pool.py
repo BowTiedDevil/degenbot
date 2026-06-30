@@ -64,7 +64,6 @@ class LiquidityPool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
     factory: ChecksumAddress
     _fee_token0: Fraction
     _fee_token1: Fraction
-    _chain_id: int
     _token0: Erc20Token
     _token1: Erc20Token
     init_hash: str
@@ -165,8 +164,8 @@ class LiquidityPool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
                 "(ADR-006): get_token0/get_token1 returned None"
             )
             raise DegenbotValueError(message=msg)
-        token0 = Erc20Token._from_py_token(py_token0)  # noqa: SLF001
-        token1 = Erc20Token._from_py_token(py_token1)  # noqa: SLF001
+        self._token0 = Erc20Token._from_py_token(py_token0)  # noqa: SLF001
+        self._token1 = Erc20Token._from_py_token(py_token1)  # noqa: SLF001
 
         self.address = get_checksum_address(py_pool.address)
         self.factory = get_checksum_address(py_pool.factory)
@@ -179,10 +178,6 @@ class LiquidityPool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
         gamma1, denom1 = py_pool.fee_token1
         self._fee_token0 = Fraction(denom0 - gamma0, denom0)
         self._fee_token1 = Fraction(denom1 - gamma1, denom1)
-
-        self._chain_id = token0.chain_id
-        self._token0 = token0
-        self._token1 = token1
 
         # Deployer/init_hash come from the dex preset (the only path now —
         # the handle carries the canonical deployment identity).
@@ -207,16 +202,6 @@ class LiquidityPool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
 
         self._subscribers = WeakSet()
         return self
-
-    @property
-    def chain_id(self) -> int | None:
-        """Return chain id.
-
-        Returns:
-            The chain ID, or None if not set.
-
-        """
-        return self._chain_id
 
     def __repr__(self) -> str:  # pragma: no cover
         """Return the canonical string representation.

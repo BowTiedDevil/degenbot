@@ -268,8 +268,6 @@ class AsyncV2PoolBuilder:
             msg = f"AsyncV2PoolBuilder cannot update {type(pool).__name__}"
             raise TypeError(msg)
 
-        assert pool.chain_id is not None
-
         raw_block = block_number if block_number is not None else await io.get_block_number()
         block_number_ = int(raw_block) if not isinstance(raw_block, int) else raw_block
 
