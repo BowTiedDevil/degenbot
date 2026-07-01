@@ -132,6 +132,45 @@ pub struct RegisterCurvePoolParams {
     // --- Optional metapool wiring ---
     /// Base pool address for metapools (`None` for plain pools).
     pub base_pool: Option<Address>,
+
+    // --- A-ramping (immutable on-chain config; resolves Python-side at
+    //     calc time via per-block timestamp). `None` for non-ramping pools. ---
+    /// Initial amplification coefficient (A at `initial_a_coefficient_time`).
+    pub initial_a_coefficient: Option<u128>,
+    /// Target amplification coefficient (A at `future_a_coefficient_time`).
+    pub future_a_coefficient: Option<u128>,
+    /// Block timestamp at which ramping starts (`u64`).
+    pub initial_a_coefficient_time: Option<u64>,
+    /// Block timestamp at which ramping ends (`u64`).
+    pub future_a_coefficient_time: Option<u64>,
+    /// Pool deployment timestamp (the ramp anchor; `u64`).
+    pub create_timestamp: Option<u64>,
+
+    // --- Crypto-pool fees (immutable on-chain config; `None` / 0 for
+    //     standard stableswap pools that don't use them). ---
+    /// Crypto-pool `fee_gamma` (`u64`).
+    pub fee_gamma: Option<u64>,
+    /// Crypto-pool `mid_fee` (`u64`).
+    pub mid_fee: Option<u64>,
+    /// Crypto-pool `offpeg_fee_multiplier` (`u64`).
+    pub offpeg_fee_multiplier: Option<u64>,
+    /// Crypto-pool `out_fee` (`u64`).
+    pub out_fee: Option<u64>,
+    /// Crypto-pool `gamma` (`u64`).
+    pub gamma: Option<u64>,
+
+    // --- LP token + lending flags + precision multipliers (immutable
+    //     on-chain config). ---
+    /// Dedicated LP token address (`None` ⇔ the pool token itself IS the
+    /// LP, the common Curve V1 plain-pool case).
+    pub lp_token: Option<Address>,
+    /// Per-token `use_lending` flags (true for lending-backed coins).
+    pub use_lending: Vec<bool>,
+    /// Per-token `precision_multipliers` (distinct from `rate_multipliers`:
+    /// `rate_multipliers` is the precision × rate product consumed by `xp`;
+    /// `precision_multipliers` is `10**(2*PRECISION - decimals)`, the
+    /// pre-rate adjustment). One per token.
+    pub precision_multipliers: Vec<U256>,
 }
 
 /// Immutable Curve registration identity (ADR-005 identity slice).
@@ -169,6 +208,35 @@ pub struct CurvePoolIdentity {
     // --- Optional metapool wiring ---
     /// Base pool address for metapools (`None` for plain pools).
     pub base_pool: Option<Address>,
+    // --- A-ramping (immutable; see [`RegisterCurvePoolParams`]). ---
+    /// Initial amplification coefficient.
+    pub initial_a_coefficient: Option<u128>,
+    /// Target amplification coefficient.
+    pub future_a_coefficient: Option<u128>,
+    /// Ramping start timestamp.
+    pub initial_a_coefficient_time: Option<u64>,
+    /// Ramping end timestamp.
+    pub future_a_coefficient_time: Option<u64>,
+    /// Pool deployment timestamp.
+    pub create_timestamp: Option<u64>,
+    // --- Crypto-pool fees (immutable). ---
+    /// Crypto-pool `fee_gamma`.
+    pub fee_gamma: Option<u64>,
+    /// Crypto-pool `mid_fee`.
+    pub mid_fee: Option<u64>,
+    /// Crypto-pool `offpeg_fee_multiplier`.
+    pub offpeg_fee_multiplier: Option<u64>,
+    /// Crypto-pool `out_fee`.
+    pub out_fee: Option<u64>,
+    /// Crypto-pool `gamma`.
+    pub gamma: Option<u64>,
+    // --- LP token + lending flags + precision multipliers (immutable). ---
+    /// Dedicated LP token address (`None` ⇔ the pool token IS the LP).
+    pub lp_token: Option<Address>,
+    /// Per-token `use_lending` flags.
+    pub use_lending: Vec<bool>,
+    /// Per-token `precision_multipliers`.
+    pub precision_multipliers: Vec<U256>,
 }
 
 /// Curve `StableSwap` pool state owned by [`crate::bot_core::BotState`].
@@ -231,6 +299,19 @@ impl CurvePoolState {
             y_variant: params.y_variant,
             yd_variant: params.yd_variant,
             base_pool: params.base_pool,
+            initial_a_coefficient: params.initial_a_coefficient,
+            future_a_coefficient: params.future_a_coefficient,
+            initial_a_coefficient_time: params.initial_a_coefficient_time,
+            future_a_coefficient_time: params.future_a_coefficient_time,
+            create_timestamp: params.create_timestamp,
+            fee_gamma: params.fee_gamma,
+            mid_fee: params.mid_fee,
+            offpeg_fee_multiplier: params.offpeg_fee_multiplier,
+            out_fee: params.out_fee,
+            gamma: params.gamma,
+            lp_token: params.lp_token,
+            use_lending: params.use_lending,
+            precision_multipliers: params.precision_multipliers,
         };
         let state = CurvePoolState {
             balances: params.balances,
@@ -266,6 +347,19 @@ mod tests {
             y_variant: 0,
             yd_variant: 0,
             base_pool: None,
+            initial_a_coefficient: None,
+            future_a_coefficient: None,
+            initial_a_coefficient_time: None,
+            future_a_coefficient_time: None,
+            create_timestamp: None,
+            fee_gamma: None,
+            mid_fee: None,
+            offpeg_fee_multiplier: None,
+            out_fee: None,
+            gamma: None,
+            lp_token: None,
+            use_lending: vec![false; 3],
+            precision_multipliers: vec![U256::from(1u64); 3],
         }
     }
 
@@ -374,5 +468,92 @@ mod tests {
             res.is_err(),
             "restoring to the registration block must error"
         );
+    }
+
+    #[test]
+    fn a_ramp_crypto_fees_lp_lending_precision_round_trip() {
+        // Every new identity field (A-ramp + crypto fees + lp_token +
+        // use_lending + precision_multipliers) round-trips through
+        // register/get — the BOMDRK acceptance criterion. Covers the
+        // crypto-pool case where every field is populated.
+        let mut core = BotState::new();
+        let lp = Address::repeat_byte(0x99);
+        let params = RegisterCurvePoolParams {
+            address: Address::repeat_byte(0xc2),
+            tokens: vec![Address::repeat_byte(0x01), Address::repeat_byte(0x02)],
+            a_coefficient: 40,
+            fee: 2_000_000,
+            admin_fee: 5_000_000_000,
+            rate_multipliers: vec![U256::from(10u64).pow(U256::from(18u64)); 2],
+            balances: vec![U256::from(1_000), U256::from(2_000)],
+            update_block: 0,
+            swap_style: 2,
+            lending_rate_style: 0,
+            d_variant: 0,
+            y_variant: 0,
+            yd_variant: 0,
+            base_pool: None,
+            initial_a_coefficient: Some(40),
+            future_a_coefficient: Some(80),
+            initial_a_coefficient_time: Some(1_700_000_000),
+            future_a_coefficient_time: Some(1_710_000_000),
+            create_timestamp: Some(1_690_000_000),
+            fee_gamma: Some(5_000_000_000),
+            mid_fee: Some(2_600_000),
+            offpeg_fee_multiplier: Some(2_000_000_000),
+            out_fee: Some(3_000_000),
+            gamma: Some(7_000_000_000),
+            lp_token: Some(lp),
+            use_lending: vec![true, false],
+            precision_multipliers: vec![U256::from(1u64), U256::from(100u64)],
+        };
+        let pool_id = core.register_curve_pool(&params);
+        let id = core
+            .get_curve_identity(pool_id)
+            .expect("curve identity present");
+
+        // A-ramp.
+        assert_eq!(id.initial_a_coefficient, Some(40));
+        assert_eq!(id.future_a_coefficient, Some(80));
+        assert_eq!(id.initial_a_coefficient_time, Some(1_700_000_000));
+        assert_eq!(id.future_a_coefficient_time, Some(1_710_000_000));
+        assert_eq!(id.create_timestamp, Some(1_690_000_000));
+        // Crypto fees.
+        assert_eq!(id.fee_gamma, Some(5_000_000_000));
+        assert_eq!(id.mid_fee, Some(2_600_000));
+        assert_eq!(id.offpeg_fee_multiplier, Some(2_000_000_000));
+        assert_eq!(id.out_fee, Some(3_000_000));
+        assert_eq!(id.gamma, Some(7_000_000_000));
+        // LP token + lending + precision.
+        assert_eq!(id.lp_token, Some(lp));
+        assert_eq!(id.use_lending, vec![true, false]);
+        assert_eq!(
+            id.precision_multipliers,
+            vec![U256::from(1u64), U256::from(100u64)]
+        );
+    }
+
+    #[test]
+    fn plain_pool_defaults_none_for_optional_identity() {
+        // A non-ramping standard pool passes `None` for the new optional
+        // fields; the identity round-trips them as `None` (the default
+        // fallback shape other slices rely on).
+        let mut core = BotState::new();
+        let pool_id = core.register_curve_pool(&three_coin_params(10, &[1_000, 2_000, 3_000]));
+        let id = core
+            .get_curve_identity(pool_id)
+            .expect("curve identity present");
+        assert_eq!(id.initial_a_coefficient, None);
+        assert_eq!(id.future_a_coefficient, None);
+        assert_eq!(id.create_timestamp, None);
+        assert_eq!(id.fee_gamma, None);
+        assert_eq!(id.mid_fee, None);
+        assert_eq!(id.gamma, None);
+        assert_eq!(id.lp_token, None);
+        assert!(id.use_lending.iter().all(|&b| !b));
+        assert!(id
+            .precision_multipliers
+            .iter()
+            .all(|x| *x == U256::from(1u64)));
     }
 }

@@ -1626,6 +1626,97 @@ impl PyLiquidityPool {
         Ok(Some(tuple.into_any().unbind()))
     }
 
+    // --- Curve identity getters (ADR-005 identity extension, BOMDRK) ---
+
+    /// Curve A-ramping: `(initial_a, future_a, initial_a_time,
+    /// future_a_time, create_timestamp)` — all `None` for non-ramping pools.
+    /// Returns `None` for a non-Curve handle.
+    ///
+    /// Each element is the option value so a non-ramping pool reports `None`
+    /// for every field instead of a sentinel zero.
+    fn curve_a_ramp(
+        &self,
+    ) -> Option<(
+        Option<u128>,
+        Option<u128>,
+        Option<u64>,
+        Option<u64>,
+        Option<u64>,
+    )> {
+        let core = self.core.read();
+        let id = core.get_curve_identity(self.pool_id)?;
+        Some((
+            id.initial_a_coefficient,
+            id.future_a_coefficient,
+            id.initial_a_coefficient_time,
+            id.future_a_coefficient_time,
+            id.create_timestamp,
+        ))
+    }
+
+    /// Curve crypto-pool fees: `(fee_gamma, mid_fee, offpeg_fee_multiplier,
+    /// out_fee, gamma)` — `None` for standard stableswap pools. Returns `None`
+    /// for a non-Curve handle.
+    fn curve_crypto_fees(
+        &self,
+    ) -> Option<(
+        Option<u64>,
+        Option<u64>,
+        Option<u64>,
+        Option<u64>,
+        Option<u64>,
+    )> {
+        let core = self.core.read();
+        let id = core.get_curve_identity(self.pool_id)?;
+        Some((
+            id.fee_gamma,
+            id.mid_fee,
+            id.offpeg_fee_multiplier,
+            id.out_fee,
+            id.gamma,
+        ))
+    }
+
+    /// Curve dedicated LP token address (EIP-55 checksummed) — `None` when the
+    /// pool token itself is the LP. Returns `None` for a non-Curve handle.
+    fn curve_lp_token(&self) -> Option<Option<String>> {
+        let core = self.core.read();
+        let id = core.get_curve_identity(self.pool_id)?;
+        Some(
+            id.lp_token
+                .map(|a| address_utils::address_to_checksum_string(&a)),
+        )
+    }
+
+    /// Curve per-token `use_lending` flags. Empty list for a non-Curve pool
+    /// or when none were registered.
+    #[getter]
+    fn curve_use_lending(&self) -> Vec<bool> {
+        let core = self.core.read();
+        match core.get_curve_identity(self.pool_id) {
+            Some(i) => i.use_lending.clone(),
+            None => Vec::new(),
+        }
+    }
+
+    /// Curve per-token `precision_multipliers` (one `U256` per token). Empty
+    /// list for a non-Curve pool.
+    #[getter]
+    fn curve_precision_multipliers(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let pms: Vec<alloy::primitives::U256> = {
+            let core = self.core.read();
+            match core.get_curve_identity(self.pool_id) {
+                Some(i) => i.precision_multipliers.clone(),
+                None => Vec::new(),
+            }
+        };
+        let py_pms: Vec<Py<PyAny>> = pms
+            .iter()
+            .map(|b| crate::conversion::alloy::u256_to_py(py, b).map(pyo3::Bound::unbind))
+            .collect::<PyResult<_>>()?;
+        Ok(pyo3::types::PyList::new(py, py_pms)?.into_any().unbind())
+    }
+
     /// Apply a Curve `external_update` (new balances from an `Exchange` event).
     ///
     /// Journals the prior balances then lands the new balances + `update_block`.

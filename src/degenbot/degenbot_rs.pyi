@@ -1181,6 +1181,17 @@ class PyLiquidityPool:
     def balances(self) -> list[int]: ...
     def snapshot_curve(self) -> tuple[list[int], int] | None: ...
     def apply_curve_balance_update(self, balances: list[int], block_number: int) -> bool: ...
+    def curve_a_ramp(
+        self,
+    ) -> tuple[int | None, int | None, int | None, int | None, int | None] | None: ...
+    def curve_crypto_fees(
+        self,
+    ) -> tuple[int | None, int | None, int | None, int | None, int | None] | None: ...
+    def curve_lp_token(self) -> str | None: ...
+    @property
+    def curve_use_lending(self) -> list[bool]: ...
+    @property
+    def curve_precision_multipliers(self) -> list[int]: ...
     @property
     def n_balancer_tokens(self) -> int: ...
     @property
@@ -1423,6 +1434,19 @@ class PyBot:
         y_variant: int = 0,
         yd_variant: int = 0,
         base_pool: str | None = None,
+        initial_a_coefficient: int | None = None,
+        future_a_coefficient: int | None = None,
+        initial_a_coefficient_time: int | None = None,
+        future_a_coefficient_time: int | None = None,
+        create_timestamp: int | None = None,
+        fee_gamma: int | None = None,
+        mid_fee: int | None = None,
+        offpeg_fee_multiplier: int | None = None,
+        out_fee: int | None = None,
+        gamma: int | None = None,
+        lp_token: str | None = None,
+        use_lending: list[bool] | None = None,
+        precision_multipliers: list[int] | None = None,
     ) -> int: ...
     def register_balancer_weighted_pool(
         self,
