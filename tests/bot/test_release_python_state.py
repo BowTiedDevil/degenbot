@@ -163,7 +163,7 @@ class TestReleasePythonState:
         bot = Bot(config, provider=_fake_provider(1))
         py_bot = bot._py_bot
 
-        address = get_checksum_address("0x11b815efB8f58119D17b5fc9880b1e1a29B7dC33")
+        address = get_checksum_address("0x88e6A0c2dDD26FEEb64F039a2c41296Fcb3F5640")
         py_bot.register_v3_pool(
             address=address,
             token0="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
@@ -211,7 +211,7 @@ class TestReleasePythonState:
         py_bot = bot._py_bot
         engine = UniswapArbEngine(py_bot=py_bot)
 
-        address = get_checksum_address("0x11b815efB8f58119D17b5fc9880b1e1a29B7dC33")
+        address = get_checksum_address("0x88e6A0c2dDD26FEEb64F039a2c41296Fcb3F5640")
         py_bot.register_v3_pool(
             address=address,
             token0="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",

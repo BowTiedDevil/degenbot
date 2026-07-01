@@ -268,7 +268,7 @@ impl std::fmt::Display for AddressMismatch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "pool address {{expected}} does not match CREATE2 for chain {} \
+            "pool address does not match CREATE2 for chain {} \
              factory {}: deployer={}, init_hash={:#x}, \
              expected={:#x}, computed={:#x}",
             self.chain_id,
