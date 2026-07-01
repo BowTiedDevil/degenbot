@@ -1576,7 +1576,7 @@ checksum = "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8"
 
 [[package]]
 name = "degenbot"
-version = "0.0.0"
+version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
  "degenbot-abi",
@@ -1594,7 +1594,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-abi"
-version = "0.0.0"
+version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
  "degenbot-core",
@@ -1606,7 +1606,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-balancer-math"
-version = "0.0.0"
+version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
  "proptest",
@@ -1614,7 +1614,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-bot"
-version = "0.0.0"
+version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
  "dashmap",
@@ -1638,7 +1638,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-cl-math"
-version = "0.0.0"
+version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
  "degenbot-core",
@@ -1648,7 +1648,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-core"
-version = "0.0.0"
+version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
  "log",
@@ -1660,7 +1660,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-curve-math"
-version = "0.0.0"
+version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
  "proptest",
@@ -1668,18 +1668,18 @@ dependencies = [
 
 [[package]]
 name = "degenbot-decoders"
-version = "0.0.0"
+version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
 ]
 
 [[package]]
 name = "degenbot-pathfinding"
-version = "0.0.0"
+version = "0.6.0-alpha.3"
 
 [[package]]
 name = "degenbot-rpc"
-version = "0.0.0"
+version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
  "dashmap",
@@ -1697,7 +1697,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-solidly-math"
-version = "0.0.0"
+version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
  "proptest",
@@ -1706,7 +1706,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot-uniswap"
-version = "0.0.0"
+version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
  "degenbot-abi",
@@ -1717,7 +1717,7 @@ dependencies = [
 
 [[package]]
 name = "degenbot_rs"
-version = "0.0.0"
+version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
  "ctor",

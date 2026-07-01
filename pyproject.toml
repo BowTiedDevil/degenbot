@@ -4,7 +4,12 @@ build-backend = "maturin"
 
 [project]
 name = "degenbot"
-version = "0.6.0a3"
+# Version is supplied by maturin at build time from the `degenbot_rs` binding
+# crate's [package].version, which is inherited from [workspace.package] in
+# rust/Cargo.toml (ADR-009 single-source-of-truth versioning). The single
+# literal lives on the Rust side; maturin bridges it into the wheel and
+# normalizes the semver form to PEP 440 (e.g. 0.6.0-alpha.3 -> 0.6.0a3).
+dynamic = ["version"]
 authors = [
     { name="BowTiedDevil", email="devil@bowtieddevil.com" },
 ]

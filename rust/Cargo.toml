@@ -12,6 +12,19 @@
 # core's `pyo3` feature so the `From<Error> for PyErr` conversions are available
 # at the binding layer. Verify with `just check-no-pyo3-in-cores`.
 
+# Shared package metadata inherited by every member crate via `<field>.workspace
+# = true` (ADR-009 single-source-of-truth versioning). The version literal here
+# is the *only* version in the Rust tree; the binding crate `degenbot_rs`
+# (`crates/degenbot-python/`) inherits it, and maturin reads that crate's
+# version to set the published wheel's — so one edit moves both halves.
+[workspace.package]
+version = "0.6.0-alpha.3"
+edition = "2021"
+license = "MIT"
+publish = false
+repository = "https://github.com/BowTiedDevil/degenbot"
+authors = ["BowTiedDevil <devil@bowtieddevil.com>"]
+
 [workspace]
 resolver = "2"
 members = [

@@ -1,11 +1,12 @@
 [package]
-authors = ["BowTiedDevil <devil@bowtieddevil.com>"]
 name = "degenbot_rs"
 description = "Rust implementations used by the degenbot Python package."
-edition = "2021"
-publish = false
-repository = "https://github.com/BowTiedDevil/degenbot"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
 
 [lints.rust]
 warnings = "deny"
