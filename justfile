@@ -81,6 +81,15 @@ test-offline-parity: compile-test-contracts
 record-golden *args: compile-test-contracts
     DEGENBOT_GOLDEN_MODE=record uv run pytest -m onchain_oracle -q --no-header -n0 {{ args }}
 
+# Verify every shipped deployment address is actually deployed on-chain (cast).
+# Tier 1 (bytecode presence) by default; escalate via the env var:
+#   DEGENBOT_VERIFY_DEPLOYMENTS=2 just verify-deployments   # +selector fingerprint
+#   DEGENBOT_VERIFY_DEPLOYMENTS=3 ETHERSCAN_API_KEY=... just verify-deployments  # +Etherscan source
+# Requires a reachable RPC per chain (tests.env / env vars). Deselected from the
+# default `test-python` run (online_rpc marker) — run on demand only.
+verify-deployments *args:
+    DEGENBOT_VERIFY_DEPLOYMENTS=${DEGENBOT_VERIFY_DEPLOYMENTS:-1} uv run pytest -m online_rpc -q --no-header -p no:randomly {{ args }} tests/registry/test_deployment_onchain_verification.py
+
 # Run all tests (Rust + Python)
 test-all: test-rust test-python
 
