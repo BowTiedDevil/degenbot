@@ -21,6 +21,7 @@ from degenbot.registry.deployment_loader import (
     POOL_TYPE_MAP,
     DeploymentRecord,
     load_deployments,
+    register_from_deployments,
 )
 from degenbot.registry.pool_type import pool_type_registry
 
@@ -219,3 +220,62 @@ class TestOverlayMerge:
         assert {(r.chain_id, r.factory) for r in records} == {
             (r.chain_id, r.factory) for r in shipped
         }
+
+
+class TestRegisterFromDeployments:
+    """``register_from_deployments`` populates a fresh registry from records."""
+
+    def test_registers_every_record(self) -> None:
+        """Every DeploymentRecord produces a registration in the target registry."""
+        from degenbot.registry.pool_type import PoolTypeRegistry
+
+        reg = PoolTypeRegistry()
+        records = load_deployments()
+        register_from_deployments(records, reg)
+        assert len(reg.registrations) == len(records)
+
+    def test_keys_match_records(self) -> None:
+        """The registry keys are exactly the records' (chain_id, factory)."""
+        from degenbot.registry.pool_type import PoolTypeRegistry
+
+        reg = PoolTypeRegistry()
+        register_from_deployments(load_deployments(), reg)
+        record_keys = {(r.chain_id, r.factory) for r in load_deployments()}
+        assert set(reg.registrations) == record_keys
+
+    def test_fresh_registry_reproduces_singleton(self) -> None:
+        """A fresh registry fed by the loader matches the live singleton field-for-field."""
+        from degenbot.registry.pool_type import PoolTypeRegistry, pool_type_registry
+
+        fresh = PoolTypeRegistry()
+        fresh.set_default_v2_class(
+            pool_type_registry.get_v2_class(1, "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")  # type: ignore[arg-type]
+        )
+        register_from_deployments(load_deployments(), fresh)
+        # Same keyset.
+        assert set(fresh.registrations) == set(pool_type_registry.registrations)
+        # Same pool_class for every key.
+        for key in fresh.registrations:
+            assert fresh.registrations[key][0] is pool_type_registry.registrations[key][0]
+
+    def test_balancer_family_override_resolves(self) -> None:
+        """The Balancer weighted-pool family string → PoolFamily.WEIGHTED."""
+        from degenbot.registry.pool_type import PoolTypeRegistry
+        from degenbot.types.pool_type import PoolFamily
+
+        reg = PoolTypeRegistry()
+        register_from_deployments(load_deployments(), reg)
+        weighted_factory = "0x8e9AA87E45e92BAD7D5F7F9dd794cEa12f21707B"
+        desc = reg.get_descriptor(1, weighted_factory)
+        assert desc is not None
+        assert desc.family == PoolFamily.WEIGHTED
+
+    def test_dex_identity_resolved_for_uniswap_v2(self) -> None:
+        """The uniswap-v2 dex_variant resolves to a non-None PyDexIdentity."""
+        from degenbot.registry.pool_type import PoolTypeRegistry
+
+        reg = PoolTypeRegistry()
+        register_from_deployments(load_deployments(), reg)
+        identity = reg.get_v2_identity(1, "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f")
+        assert identity is not None
+        assert identity.variant == "uniswap-v2"
