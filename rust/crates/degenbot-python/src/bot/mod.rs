@@ -5,6 +5,7 @@
 //! (ergo UG6FKN task WXHGOH.)
 
 pub mod dex_identity;
+pub mod deployments;
 pub mod engine;
 pub mod pool;
 pub mod pump;

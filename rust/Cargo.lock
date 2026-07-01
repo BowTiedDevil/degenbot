@@ -1711,6 +1711,8 @@ dependencies = [
  "alloy",
  "degenbot-abi",
  "degenbot-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
