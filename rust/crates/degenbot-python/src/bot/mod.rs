@@ -385,6 +385,15 @@ impl PyBot {
         // shipped JSON — preserves the manual/ad-hoc registration path.
         crate::bot::deployments::verify_v2(self.bot.chain_id(), fac, addr, t0, t1)?;
 
+        // Resolve the JSON-sourced CREATE2 deployer + init hash (Fork A,
+        // NSAZ4X). Stored on the V2 identity so the `dex` getter merges the
+        // per-(chain,factory) deployer/init_hash into the protocol preset
+        // (replacing the canonical-mainnet preset values). Non-JSON pools
+        // default to factory-as-deployer + the V2 mainnet fallback init hash.
+        let chain_id = self.bot.chain_id();
+        let deployer = degenbot_uniswap::deployments::resolve_deployer(chain_id, fac);
+        let init_hash_b256 = degenbot_uniswap::deployments::resolve_v2_init_hash(chain_id, fac);
+
         Ok(self
             .bot
             .state_arc()
@@ -398,6 +407,8 @@ impl PyBot {
                 fee_token0: (gamma_numer0, fee_denom0),
                 fee_token1: (gamma_numer1, fee_denom1),
                 factory: fac,
+                deployer,
+                init_hash: init_hash_b256,
                 update_block,
                 variant: variant_enum,
                 stable_swap,

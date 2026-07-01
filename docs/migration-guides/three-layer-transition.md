@@ -271,12 +271,36 @@ ADR-005 slices 3–15 (ergo `XQ5UX6`, all done) closed the **stateful** topology
   the Python `SyncPoolIO` stays as parity gate).
 - Slice 15 — pickle multiprocessing retired + Rust-side parallel solve fan-out.
 
-BLocked: ADR-003 `Bot`=state + engine=solving split; ADR-006 one `Bot` per
+Blocked: ADR-003 `Bot`=state + engine=solving split; ADR-006 one `Bot` per
 chain; ADR-007 unregister seam.
 
 The remaining work is the **stateless leaves not yet wired** (math/decode/
 encode) and **dead Python mirrors** of now-Rust-owned state — that is the
 sweep this guide serves.
+
+### Fork A — JSON deployment identity → Rust builder → handle (ergo `AWGOXL`)
+
+The per-(chain,factory) CREATE2 deployer + init_hash moved from Python
+`ClassVar`s + the pool-type registry into the Rust builder.
+
+- **Single source.** `registry/deployments.json` ships every factory row;
+  `degenbot-uniswap::deployments` embeds it via `include_str!` and exposes a
+  `(chain_id, factory)`-keyed `lookup`. The Python registry loads the same JSON
+  for `pool_type` → companion-class resolution.
+- **Store-on-identity (P62DKO/NSAZ4X).** `register_v2/v3_pool` resolves the
+  effective deployer (with `deployer=null -> factory`, covering PancakeSwap
+  V3's **separate deployer**) + init_hash and stores the verified pair on
+  `V2PoolIdentity`/`V3PoolIdentity`. The `PyLiquidityPool` handle exposes them
+  via `.deployer` / `.init_hash`; the V2 `dex` getter merges them into the
+  protocol-const `DexIdentity` preset (factory/deployer/init_hash off the
+  identity; fees/ABI shape off the variant preset). Non-JSON pools fall back to
+  a Rust `const` (`UNISWAP_V2/V3_MAINNET_INIT_HASH`) — the retired Python
+  `ClassVar`s' documented default.
+- **Verification at registration (JC6OFG).** The builder recomputes the CREATE2
+  address and rejects mismatches — a Rust-only `Bot` verifies pool addresses
+  with no Python (D4-friendly). Ad-hoc/non-JSON registration is skipped.
+- **ClassVars + `_verified_address` retired.** The Python companions read the
+  verified identity off the handle; no Python mirror remains.
 
 ## 7. Anti-patterns to avoid
 

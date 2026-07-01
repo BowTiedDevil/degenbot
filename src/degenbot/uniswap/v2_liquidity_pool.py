@@ -69,10 +69,6 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
 
     type PoolState = UniswapV2PoolState
 
-    UNISWAP_V2_MAINNET_POOL_INIT_HASH = (
-        "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
-    )
-
     def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
         """Direct construction is forbidden.
 

@@ -507,6 +507,7 @@ mod tests {
                 variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
                 stable_swap: false,
                 fee_denominator: None,
+                ..Default::default()
             });
 
         let mut dispatcher = LogDispatcher::new();
@@ -553,6 +554,7 @@ mod tests {
                 variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
                 stable_swap: false,
                 fee_denominator: None,
+                ..Default::default()
             });
 
         let mut dispatcher = LogDispatcher::new();

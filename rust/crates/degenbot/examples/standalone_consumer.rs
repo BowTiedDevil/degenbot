@@ -52,6 +52,7 @@ fn main() {
         variant: UNISWAP_V2.variant,
         stable_swap: false,
         fee_denominator: None,
+        ..Default::default()
     };
     let pool_id = bot.register_v2_pool(&params);
     assert_eq!(pool_id, 1, "first registered pool gets id 1");

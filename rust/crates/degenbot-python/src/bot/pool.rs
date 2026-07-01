@@ -989,14 +989,15 @@ impl PyLiquidityPool {
             .unwrap_or_default()
     }
 
-    /// The CREATE2 deployer this pool's address was verified against (Fork A,
-    /// P62DKO). The JSON row's `deployer` (or the factory for ``null``),
-    /// resolved at registration. Only V3 pools carry this today; V2 returns an
-    /// empty string until NSAZ4X merges V2 identity.
+    /// The CREATE2 deployer this pool's address was verified against (Fork A).
+    /// The JSON row's `deployer` (or the factory for ``null``), resolved at
+    /// registration. V2 and V3 pools carry this; other pool families return an
+    /// empty string.
     #[getter]
     fn deployer(&self) -> String {
         let core = self.core.read();
         let addr = match core.pool_family(self.pool_id) {
+            "v2" => core.get_v2_identity(self.pool_id).map(|i| i.deployer),
             "v3" => core.get_v3_identity(self.pool_id).map(|i| i.deployer),
             _ => None,
         };
@@ -1005,13 +1006,14 @@ impl PyLiquidityPool {
     }
 
     /// The CREATE2 init code hash this pool's address was verified against
-    /// (Fork A, P62DKO). The JSON row's `init_hash` when shipped, else the
-    /// Uniswap V3 mainnet fallback. Only V3 pools carry this today; V2 returns
-    /// an empty string until NSAZ4X merges V2 identity.
+    /// (Fork A). The JSON row's `init_hash` when shipped, else the Uniswap
+    /// mainnet fallback (V2 or V3 const). V2 and V3 pools carry this; other
+    /// pool families return an empty string.
     #[getter]
     fn init_hash(&self) -> String {
         let core = self.core.read();
         let h = match core.pool_family(self.pool_id) {
+            "v2" => core.get_v2_identity(self.pool_id).map(|i| i.init_hash),
             "v3" => core.get_v3_identity(self.pool_id).map(|i| i.init_hash),
             _ => None,
         };
@@ -1088,15 +1090,21 @@ impl PyLiquidityPool {
             .and_then(|d| d.fee_denominator)
     }
 
-    /// The resolved `DexIdentity` preset (factory/deployer/init-hash/default
-    /// fees/ABI shape) for this pool's registered variant. `None` if not a V2
-    /// pool. The Python companion reads this to recover deployer/init-hash for
-    /// `_verified_address` derivation without taking constructor args.
+    /// The resolved `DexIdentity` for this pool's registered variant, with the
+    /// JSON-sourced deployer + init_hash merged in (Fork A, NSAZ4X). `None` if
+    /// not a V2 pool. The Python companion reads this to recover deployer /
+    /// init-hash without taking constructor args. Protocol-const fields
+    /// (fees/ABI shape) come from the variant preset; `factory`/`deployer` /
+    /// `init_hash` come from the identity (the verified values stored at
+    /// registration).
     #[getter]
     fn dex(&self) -> Option<crate::bot::dex_identity::PyDexIdentity> {
         let core = self.core.read();
-        let variant = core.get_v2_identity(self.pool_id)?.variant;
-        let ident = degenbot_uniswap::dex_identity::preset_for_variant(variant);
+        let id = core.get_v2_identity(self.pool_id)?;
+        let mut ident = degenbot_uniswap::dex_identity::preset_for_variant(id.variant);
+        ident.factory = id.factory;
+        ident.deployer = id.deployer;
+        ident.init_hash = id.init_hash;
         Some(crate::bot::dex_identity::PyDexIdentity::from_core(&ident))
     }
 

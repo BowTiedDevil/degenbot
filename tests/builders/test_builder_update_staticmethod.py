@@ -249,7 +249,7 @@ class TestV2BuilderUpdateBehavior:
             reserves_token1=2000,
             state_block=1,
             deployer_address="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
-            init_hash=UniswapV2Pool.UNISWAP_V2_MAINNET_POOL_INIT_HASH,
+            init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
         )
 
         builder = V2PoolBuilder(_fake_builder_context())
@@ -278,7 +278,7 @@ class TestV2BuilderUpdateBehavior:
             reserves_token1=2000,
             state_block=1,
             deployer_address="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
-            init_hash=UniswapV2Pool.UNISWAP_V2_MAINNET_POOL_INIT_HASH,
+            init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
         )
 
         builder = V2PoolBuilder(_fake_builder_context())
@@ -305,7 +305,7 @@ class TestV2BuilderUpdateBehavior:
             reserves_token1=2000,
             state_block=1,
             deployer_address="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
-            init_hash=UniswapV2Pool.UNISWAP_V2_MAINNET_POOL_INIT_HASH,
+            init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
         )
 
         # Class-level call — no builder instance needed
@@ -339,7 +339,7 @@ class TestAsyncV2BuilderUpdateBehavior:
             reserves_token1=2000,
             state_block=1,
             deployer_address="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
-            init_hash=UniswapV2Pool.UNISWAP_V2_MAINNET_POOL_INIT_HASH,
+            init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
         )
 
         ctx = _fake_async_builder_context()
@@ -370,7 +370,7 @@ class TestAsyncV2BuilderUpdateBehavior:
             reserves_token1=2000,
             state_block=1,
             deployer_address="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
-            init_hash=UniswapV2Pool.UNISWAP_V2_MAINNET_POOL_INIT_HASH,
+            init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
         )
 
         ctx = _fake_async_builder_context()
@@ -399,7 +399,7 @@ class TestAsyncV2BuilderUpdateBehavior:
             reserves_token1=2000,
             state_block=1,
             deployer_address="0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
-            init_hash=UniswapV2Pool.UNISWAP_V2_MAINNET_POOL_INIT_HASH,
+            init_hash="0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
         )
 
         # Class-level call — no builder instance needed

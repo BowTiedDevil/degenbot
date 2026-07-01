@@ -123,7 +123,6 @@ class AsyncV2PoolBuilder:
         deployer, resolved_init_hash = V2BuilderBase.resolve_deployer_and_init_hash(
             chain_id=chain_id,
             factory=factory,
-            default_init_hash=UniswapV2Pool.UNISWAP_V2_MAINNET_POOL_INIT_HASH,
         )
 
         return V2CommonData(
