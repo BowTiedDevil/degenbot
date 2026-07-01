@@ -195,17 +195,7 @@ class BalancerBuilder(BalancerBuilderBase):
             "register_balancer_weighted_pool returned a pool_id with no handle"
         )
 
-        pool = BalancerV2Pool(
-            py_pool,
-            address=ctx.address,
-            pool_id=ctx.pool_id,
-            vault=BALANCER_V2_VAULT_ADDRESS,
-            tokens=tokens,
-            fee=ctx.fee,
-            weights=weights,
-            pow_version=pow_version,
-            state_block=ctx.state_block,
-        )
+        pool = BalancerV2Pool._from_py_pool(py_pool)  # noqa: SLF001
 
         self._pools.add(pool, chain_id=ctx.chain_id, pool_address=pool.address)
         return pool

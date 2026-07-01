@@ -98,17 +98,13 @@ def make_balancer_weighted_pool(
     handle: PyLiquidityPool | None = bot.get_pool(pool_id_int)
     assert handle is not None, "register_balancer_weighted_pool returned a pool_id with no handle"
 
-    return pool_class(
-        handle,
-        address=address_checksum,
-        pool_id=pool_id,
-        vault=vault,
-        tokens=tokens,
-        fee=fee,
-        weights=weights,
-        pow_version=pow_version,
-        state_block=state_block_int,
-    )
+    # ADR-005 sealed seam: register tokens in the same Bot as the pool.
+    for tok in tokens:
+        if bot.get_token(tok.address) is None:
+            bot.register_token(
+                tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id
+            )
+    return pool_class._from_py_pool(handle)  # noqa: SLF001
 
 
 def make_balancer_stable_pool(
