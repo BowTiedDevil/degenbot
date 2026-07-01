@@ -292,3 +292,74 @@ fn test_py_balancer_rate_provider_delegates() {
             * alloy::primitives::U256::from(10u64).pow(alloy::primitives::U256::from(18u64))
     );
 }
+
+/// Test the `PyCurveDataProvider` adapter: a Python object exposing the
+/// CurveDataProvider read interface is wrapped as a stored
+/// `Arc<dyn CurveDataProvider>` and the reads delegate to Python
+/// (ADR-005 JFGCHJ I/O trait object).
+#[test]
+fn test_py_curve_data_provider_delegates() {
+    use degenbot_rs::bot::pool::make_curve_data_provider;
+
+    let provider = with_python(|py| {
+        let src = pyo3::ffi::c_str!(
+            "class _Cdp:\n    def __init__(self):\n        self.calls = []\n    def block_number(self):\n        return 18000000\n    def block_timestamp(self, block_number):\n        self.calls.append(('block_timestamp', block_number))\n        return 1700000000 + block_number\n    def token_balance(self, token_address, holder_address, block_number):\n        self.calls.append(('token_balance', token_address, holder_address, block_number))\n        return 12345\n    def token_total_supply(self, token_address, block_number):\n        return 98765\n    def lending_rates(self, block_number):\n        return (10**18, 2 * 10**18)\n    def d(self, block_number):\n        return 42000\n    def gamma(self, block_number):\n        return 7 * 10**9\n    def price_scale(self, block_number):\n        return (10**18, 10**18)\n    def admin_balances(self, block_number):\n        return (0, 0)\n    def redemption_price(self, block_number):\n        return 10**18\n    def base_cache_updated(self, block_number):\n        return 17999000\n    def base_virtual_price(self, block_number):\n        return 1010 * 10**15\n    def virtual_price(self, block_number):\n        return 1020 * 10**15\n_Cdp"
+        );
+        py.run(src, None, None).unwrap();
+        let instance = py.eval(pyo3::ffi::c_str!("_Cdp()"), None, None).unwrap();
+        make_curve_data_provider(instance.into())
+    });
+    // Delegate to Python: every read crosses the FFI boundary.
+    assert_eq!(provider.block_number().unwrap(), 18_000_000);
+    assert_eq!(
+        provider.block_timestamp(1_700_000_000).unwrap(),
+        3_400_000_000
+    );
+    assert_eq!(
+        provider
+            .token_balance(
+                alloy::primitives::Address::ZERO,
+                alloy::primitives::Address::ZERO,
+                18_000_000
+            )
+            .unwrap(),
+        alloy::primitives::U256::from(12_345_u64)
+    );
+    assert_eq!(
+        provider
+            .token_total_supply(alloy::primitives::Address::ZERO, 18_000_000)
+            .unwrap(),
+        alloy::primitives::U256::from(98_765_u64)
+    );
+    assert_eq!(
+        provider.lending_rates(18_000_000).unwrap(),
+        vec![
+            alloy::primitives::U256::from(10u64).pow(alloy::primitives::U256::from(18u64)),
+            alloy::primitives::U256::from(2u64)
+                * alloy::primitives::U256::from(10u64).pow(alloy::primitives::U256::from(18u64))
+        ]
+    );
+    assert_eq!(
+        provider.d(18_000_000).unwrap(),
+        alloy::primitives::U256::from(42_000_u64)
+    );
+    assert_eq!(
+        provider.gamma(18_000_000).unwrap(),
+        alloy::primitives::U256::from(7_000_000_000_u64)
+    );
+    assert_eq!(provider.price_scale(18_000_000).unwrap().len(), 2);
+    assert_eq!(provider.admin_balances(18_000_000).unwrap().len(), 2);
+    assert_eq!(
+        provider.redemption_price(18_000_000).unwrap(),
+        alloy::primitives::U256::from(10u64).pow(alloy::primitives::U256::from(18u64))
+    );
+    assert_eq!(provider.base_cache_updated(18_000_000).unwrap(), 17_999_000);
+    assert_eq!(
+        provider.base_virtual_price(18_000_000).unwrap(),
+        alloy::primitives::U256::from(1_010_000_000_000_000_000_u128)
+    );
+    assert_eq!(
+        provider.virtual_price(18_000_000).unwrap(),
+        alloy::primitives::U256::from(1_020_000_000_000_000_000_u128)
+    );
+}

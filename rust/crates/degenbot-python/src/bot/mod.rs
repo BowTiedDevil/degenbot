@@ -841,7 +841,8 @@ impl PyBot {
         gamma=None,
         lp_token=None,
         use_lending=None,
-        precision_multipliers=None
+        precision_multipliers=None,
+        data_provider=None
     ))]
     fn register_curve_pool(
         &self,
@@ -872,6 +873,7 @@ impl PyBot {
         lp_token: Option<&str>,
         use_lending: Option<&Bound<'_, PyList>>,
         precision_multipliers: Option<&Bound<'_, PyList>>,
+        data_provider: Option<Bound<'_, PyAny>>,
     ) -> PyResult<u64> {
         let addr = parse_address(address)?;
         let token_addrs = parse_address_list(tokens)?;
@@ -925,6 +927,8 @@ impl PyBot {
                 lp_token: lp,
                 use_lending: use_lend,
                 precision_multipliers: prec_mults,
+                data_provider: data_provider
+                    .map(|b| crate::bot::pool::make_curve_data_provider(b.unbind())),
             }))
     }
 

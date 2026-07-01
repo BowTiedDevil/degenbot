@@ -37,7 +37,9 @@
 //! Everything else is immutable config set at registration.
 
 use alloy::primitives::{Address, U256};
+use std::sync::Arc;
 
+use crate::bot_core::curve_data_provider::CurveDataProvider;
 use crate::bot_core::state_history::{BlockDelta, ReorgJournal};
 
 // ---------------------------------------------------------------------------
@@ -171,6 +173,14 @@ pub struct RegisterCurvePoolParams {
     /// `precision_multipliers` is `10**(2*PRECISION - decimals)`, the
     /// pre-rate adjustment). One per token.
     pub precision_multipliers: Vec<U256>,
+
+    // --- I/O trait object (layer-2 design; the on-chain-state reader). ---
+    /// Off-chain data provider (ADR-005 JFGCHJ). `None` ⇔ no I/O path — a
+    /// pure-Rust fixture test or a pool whose calc doesn't need per-block
+    /// on-chain lookups. When `Some`, the (future, seam task) Python
+    /// companion delegates reads here instead of holding a Python
+    /// `CurveDataProvider`.
+    pub data_provider: Option<Arc<dyn CurveDataProvider>>,
 }
 
 /// Immutable Curve registration identity (ADR-005 identity slice).
@@ -258,6 +268,12 @@ pub struct CurvePoolState {
 
     /// Reorg journal — balance priors for rollback.
     pub journal: ReorgJournal<CurveBlockDelta>,
+
+    /// Off-chain data provider (ADR-005 JFGCHJ). `None` ⇔ no I/O path.
+    /// Stored on state (not immutable identity) because the provider is an
+    /// I/O shim, not pool identity; the companion reads through the handle
+    /// at calc time.
+    pub data_provider: Option<Arc<dyn CurveDataProvider>>,
 }
 
 impl CurvePoolIdentity {
@@ -317,6 +333,7 @@ impl CurvePoolState {
             balances: params.balances,
             update_block: params.update_block,
             journal,
+            data_provider: params.data_provider,
         };
         (identity, state)
     }
@@ -360,6 +377,7 @@ mod tests {
             lp_token: None,
             use_lending: vec![false; 3],
             precision_multipliers: vec![U256::from(1u64); 3],
+            data_provider: None,
         }
     }
 
@@ -506,6 +524,7 @@ mod tests {
             lp_token: Some(lp),
             use_lending: vec![true, false],
             precision_multipliers: vec![U256::from(1u64), U256::from(100u64)],
+            data_provider: None,
         };
         let pool_id = core.register_curve_pool(&params);
         let id = core
