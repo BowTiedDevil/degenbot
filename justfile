@@ -85,6 +85,7 @@ record-golden *args: compile-test-contracts
 # Tier 1 (bytecode presence) by default; escalate via the env var:
 #   DEGENBOT_VERIFY_DEPLOYMENTS=2 just verify-deployments   # +selector fingerprint
 #   DEGENBOT_VERIFY_DEPLOYMENTS=3 ETHERSCAN_API_KEY=... just verify-deployments  # +Etherscan source
+#   DEGENBOT_VERIFY_DEPLOYMENTS=4 just verify-deployments   # +init_code_hash reproduces pool address
 # Requires a reachable RPC per chain (tests.env / env vars). Deselected from the
 # default `test-python` run (online_rpc marker) — run on demand only.
 verify-deployments *args:
