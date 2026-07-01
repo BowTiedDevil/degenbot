@@ -1099,6 +1099,54 @@ impl PyLiquidityPool {
         }
     }
 
+    // --- Aerodrome V2 reorg journal ---
+
+    /// Discard Aerodrome reorg journal deltas earlier than `block`.
+    ///
+    /// Raises:
+    ///     `ValueError`: If the target is past the newest delta.
+    #[pyo3(signature = (block))]
+    fn discard_aerodrome_before_block(&self, block: u64) -> PyResult<()> {
+        self.core
+            .write()
+            .aerodrome_discard_before_block(self.pool_id, block)
+            .map_err(journal_err_to_py)
+    }
+
+    /// Restore the Aerodrome pool to the landed-at state just before `block`.
+    ///
+    /// Returns `(reserve0, reserve1, block)` as Python ints, or `None` if the
+    /// pool ID is not registered / not an Aerodrome pool.
+    ///
+    /// Raises:
+    ///     `ValueError`: If `block` is at or before the registration block.
+    #[pyo3(signature = (block))]
+    fn restore_aerodrome_before_block(
+        &self,
+        py: Python<'_>,
+        block: u64,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        let result = {
+            let mut core = self.core.write();
+            core.aerodrome_restore_before_block(self.pool_id, block)
+        };
+        match result {
+            None => Ok(None),
+            Some(Err(e)) => Err(journal_err_to_py(e)),
+            Some(Ok((r0, r1, blk))) => {
+                let tuple = pyo3::types::PyTuple::new(
+                    py,
+                    [
+                        crate::conversion::alloy::u256_to_py(py, &r0)?.unbind(),
+                        crate::conversion::alloy::u256_to_py(py, &r1)?.unbind(),
+                        blk.into_pyobject(py)?.into_any().unbind(),
+                    ],
+                )?;
+                Ok(Some(tuple.into_any().unbind()))
+            }
+        }
+    }
+
     // --- V3 mutations (plan-101 slice 8a) ---
     // Pool-id-keyed — the handle already holds the canonical pool_id, so no
     // address resolution is needed (single lock, single lookup).

@@ -45,6 +45,7 @@ from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.degenbot_rs import PyBot
+from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
 from tests.helpers.erc20_factory import make_erc20
 
 # Pinned well inside mainnet.base.org's keyless archive window (tip ~47.8M).
@@ -111,7 +112,7 @@ def _build_aerodrome_v2_io_free(cassette: dict[str, Any]) -> AerodromeV2Pool:
     )
     pool_address = get_checksum_address(cassette["pool"])
     factory = get_checksum_address(cassette.get("factory", AERODROME_V2_FACTORY_ADDRESS))
-    return AerodromeV2Pool(
+    return make_aerodrome_v2_pool(
         address=pool_address,
         token0=tok0,
         token1=tok1,
@@ -122,6 +123,7 @@ def _build_aerodrome_v2_io_free(cassette: dict[str, Any]) -> AerodromeV2Pool:
         reserves_token1=cassette["reserves_token1"],
         deployer_address=factory,
         state_block=cassette["block"],
+        py_bot=_PYBOT,
     )
 
 

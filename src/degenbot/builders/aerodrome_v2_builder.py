@@ -109,19 +109,27 @@ class AerodromeV2Builder(V2BuilderBase):
             msg = f"No V2 pool class registered for chain {chain_id}, factory {common.factory}"
             raise ValueError(msg)
 
-        pool = pool_class(
+        # Register in the shared Rust BotState. The handle is self-describing:
+        # _from_py_pool reads address/tokens/factory/fee/stable/variant off it.
+        variant = "aerodrome-v2-stable" if stable else "aerodrome-v2-volatile"
+        pool_id = self._py_bot.register_aerodrome_pool(
             address=pool_address,
-            token0=token0,
-            token1=token1,
+            token0=token0.address,
+            token1=token1.address,
             factory=common.factory,
-            fee=fee,
+            variant=variant,
             stable=stable,
-            reserves_token0=common.reserves0,
-            reserves_token1=common.reserves1,
-            deployer_address=common.deployer,
-            state_block=common.state_block,
-            state_cache_depth=request.state_cache_depth,
+            fee_numer=fee.numerator,
+            fee_denom=fee.denominator,
+            reserve0=common.reserves0,
+            reserve1=common.reserves1,
+            update_block=common.state_block,
         )
+        py_pool = self._py_bot.get_pool(pool_id)
+        assert py_pool is not None, "register_aerodrome_pool returned a pool_id with no handle"
+
+        pool = pool_class._from_py_pool(py_pool)  # noqa: SLF001
+        pool.deployer_address = common.deployer
         assert isinstance(pool, AerodromeV2Pool)
 
         self._register_pool(pool, chain_id=chain_id)

@@ -36,6 +36,7 @@ from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.arbitrage.generator.pool_generator import PoolStateGenerator
 from tests.arbitrage.generator.types import V3PoolGenerationConfig
 from tests.fakes.tokens import FakeToken
+from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v2_pool_factory import make_v2_pool
 from tests.helpers.v3_pool_factory import make_v3_pool
@@ -140,7 +141,7 @@ def usdt() -> Erc20Token:
 
 @pytest.fixture
 def aerodrome_stable_pool(usdc: Erc20Token, usdt: Erc20Token) -> AerodromeV2Pool:
-    return AerodromeV2Pool(
+    return make_aerodrome_v2_pool(
         address="0x1234567890123456789012345678901234567890",
         token0=usdc,
         token1=usdt,

@@ -35,6 +35,7 @@ import degenbot.aerodrome.v2_pool_calc as calc_mod
 from degenbot.aerodrome.functions import calc_exact_in_stable
 from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.degenbot_rs import PyBot
+from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
 from tests.helpers.erc20_factory import make_erc20
 
 
@@ -67,7 +68,7 @@ def stable_pool():
         symbol="DOLA",
         decimals=18,
     )
-    return AerodromeV2Pool(
+    return make_aerodrome_v2_pool(
         address="0x" + "c3" * 20,
         token0=t0,
         token1=t1,
@@ -76,6 +77,7 @@ def stable_pool():
         stable=True,
         reserves_token0=1_000_000_000_000,  # 1M USDC
         reserves_token1=1_000_000_000_000_000_000,  # 1.0 DOLA (1e18)
+        py_bot=bot,
     )
 
 
@@ -96,7 +98,7 @@ def volatile_pool():
         symbol="USDC",
         decimals=6,
     )
-    return AerodromeV2Pool(
+    return make_aerodrome_v2_pool(
         address="0x" + "f6" * 20,
         token0=t0,
         token1=t1,
@@ -105,6 +107,7 @@ def volatile_pool():
         stable=False,
         reserves_token0=1_000_000_000_000_000_000,  # 1.0 WETH
         reserves_token1=3_000_000_000_000,  # 3000 USDC
+        py_bot=bot,
     )
 
 
