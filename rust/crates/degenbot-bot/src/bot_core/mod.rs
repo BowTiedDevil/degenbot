@@ -4304,6 +4304,19 @@ mod tests {
             y_variant: 1,
             yd_variant: 0,
             base_pool: None,
+            initial_a_coefficient: None,
+            future_a_coefficient: None,
+            initial_a_coefficient_time: None,
+            future_a_coefficient_time: None,
+            create_timestamp: None,
+            fee_gamma: None,
+            mid_fee: None,
+            offpeg_fee_multiplier: None,
+            out_fee: None,
+            gamma: None,
+            lp_token: None,
+            use_lending: vec![false, false],
+            precision_multipliers: vec![U256::from(1u64), U256::from(1u64)],
         });
         assert_eq!(core.pool_family(curve_id), "curve");
 

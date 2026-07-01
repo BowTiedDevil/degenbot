@@ -828,7 +828,20 @@ impl PyBot {
         d_variant=0,
         y_variant=0,
         yd_variant=0,
-        base_pool=None
+        base_pool=None,
+        initial_a_coefficient=None,
+        future_a_coefficient=None,
+        initial_a_coefficient_time=None,
+        future_a_coefficient_time=None,
+        create_timestamp=None,
+        fee_gamma=None,
+        mid_fee=None,
+        offpeg_fee_multiplier=None,
+        out_fee=None,
+        gamma=None,
+        lp_token=None,
+        use_lending=None,
+        precision_multipliers=None
     ))]
     fn register_curve_pool(
         &self,
@@ -846,6 +859,19 @@ impl PyBot {
         y_variant: u8,
         yd_variant: u8,
         base_pool: Option<&str>,
+        initial_a_coefficient: Option<u128>,
+        future_a_coefficient: Option<u128>,
+        initial_a_coefficient_time: Option<u64>,
+        future_a_coefficient_time: Option<u64>,
+        create_timestamp: Option<u64>,
+        fee_gamma: Option<u64>,
+        mid_fee: Option<u64>,
+        offpeg_fee_multiplier: Option<u64>,
+        out_fee: Option<u64>,
+        gamma: Option<u64>,
+        lp_token: Option<&str>,
+        use_lending: Option<&Bound<'_, PyList>>,
+        precision_multipliers: Option<&Bound<'_, PyList>>,
     ) -> PyResult<u64> {
         let addr = parse_address(address)?;
         let token_addrs = parse_address_list(tokens)?;
@@ -854,6 +880,18 @@ impl PyBot {
         let base = match base_pool {
             Some(s) => Some(parse_address(s)?),
             None => None,
+        };
+        let lp = match lp_token {
+            Some(s) => Some(parse_address(s)?),
+            None => None,
+        };
+        let use_lend: Vec<bool> = match use_lending {
+            Some(l) => l.extract()?,
+            None => Vec::new(),
+        };
+        let prec_mults: Vec<alloy::primitives::U256> = match precision_multipliers {
+            Some(l) => extract_u256_list(l)?,
+            None => Vec::new(),
         };
         Ok(self
             .bot
@@ -874,6 +912,19 @@ impl PyBot {
                 y_variant,
                 yd_variant,
                 base_pool: base,
+                initial_a_coefficient,
+                future_a_coefficient,
+                initial_a_coefficient_time,
+                future_a_coefficient_time,
+                create_timestamp,
+                fee_gamma,
+                mid_fee,
+                offpeg_fee_multiplier,
+                out_fee,
+                gamma,
+                lp_token: lp,
+                use_lending: use_lend,
+                precision_multipliers: prec_mults,
             }))
     }
 
