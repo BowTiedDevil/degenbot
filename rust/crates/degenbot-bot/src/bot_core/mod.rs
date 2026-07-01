@@ -17,6 +17,7 @@ use crate::solvers::mobius_int::IntHopState;
 use degenbot_uniswap::dex_identity::DexVariant;
 use degenbot_uniswap::v2_encoding::{encode_v2_swap, EncodedCall};
 
+pub mod aerodrome_v2_state;
 pub mod balancer_stable_state;
 pub mod balancer_weighted_state;
 pub mod block_clock;
@@ -38,6 +39,9 @@ pub mod v4_state;
 
 // Re-export the merged V3/V4/Curve state types (ADR-003: BotState owns
 // pool state; Curve is the ADR-003 "third family").
+pub use aerodrome_v2_state::{
+    AerodromeV2PoolIdentity, AerodromeV2PoolState, RegisterAerodromeV2PoolParams,
+};
 pub use balancer_stable_state::{
     BalancerStableBlockDelta, BalancerStablePoolIdentity, BalancerStablePoolState,
     RegisterBalancerStablePoolParams,
@@ -81,6 +85,7 @@ pub enum PoolEntry {
     Curve(CurvePoolIdentity, CurvePoolState),
     BalancerWeighted(BalancerWeightedPoolIdentity, BalancerWeightedPoolState),
     BalancerStable(BalancerStablePoolIdentity, BalancerStablePoolState),
+    AerodromeV2(AerodromeV2PoolIdentity, AerodromeV2PoolState),
 }
 
 /// Read-only surface shared by [`V3PoolState`] and [`V4PoolState`] — the
@@ -531,6 +536,7 @@ impl BotState {
             | PoolEntry::V4(..)
             | PoolEntry::BalancerWeighted(..)
             | PoolEntry::BalancerStable(..) => None,
+            PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -546,6 +552,7 @@ impl BotState {
             | PoolEntry::V4(..)
             | PoolEntry::BalancerWeighted(..)
             | PoolEntry::BalancerStable(..) => None,
+            PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -652,6 +659,7 @@ impl BotState {
             | PoolEntry::V4(..)
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerStable(..) => None,
+            PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -670,6 +678,7 @@ impl BotState {
             | PoolEntry::V4(..)
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerStable(..) => None,
+            PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -785,6 +794,7 @@ impl BotState {
             | PoolEntry::V4(..)
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..) => None,
+            PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -804,6 +814,7 @@ impl BotState {
             | PoolEntry::V4(..)
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..) => None,
+            PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -911,6 +922,7 @@ impl BotState {
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
             | PoolEntry::BalancerStable(..) => None,
+            PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -931,6 +943,7 @@ impl BotState {
             Some(PoolEntry::Curve(..)) => "curve",
             Some(PoolEntry::BalancerWeighted(..)) => "balancer-weighted",
             Some(PoolEntry::BalancerStable(..)) => "balancer-stable",
+            Some(PoolEntry::AerodromeV2(..)) => "aerodrome-v2",
             None => "",
         }
     }
@@ -947,6 +960,7 @@ impl BotState {
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
             | PoolEntry::BalancerStable(..) => None,
+            PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -1240,6 +1254,7 @@ impl BotState {
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
             | PoolEntry::BalancerStable(..) => false,
+            PoolEntry::AerodromeV2(..) => false,
         }
     }
 
@@ -1444,6 +1459,7 @@ impl BotState {
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
             | PoolEntry::BalancerStable(..) => None,
+            PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -1459,6 +1475,7 @@ impl BotState {
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
             | PoolEntry::BalancerStable(..) => None,
+            PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -1477,6 +1494,7 @@ impl BotState {
                 | PoolEntry::Curve(..)
                 | PoolEntry::BalancerWeighted(..)
                 | PoolEntry::BalancerStable(..) => None,
+                PoolEntry::AerodromeV2(..) => None,
             })
             .collect()
     }
@@ -1577,6 +1595,7 @@ impl BotState {
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
             | PoolEntry::BalancerStable(..) => None,
+            PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -1730,6 +1749,7 @@ impl BotState {
             PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
             | PoolEntry::BalancerStable(..) => Ok(U256::ZERO),
+            PoolEntry::AerodromeV2(..) => Ok(U256::ZERO),
         }
     }
 
@@ -1774,6 +1794,7 @@ impl BotState {
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
             | PoolEntry::BalancerStable(..) => false,
+            PoolEntry::AerodromeV2(..) => false,
         }
     }
 
@@ -1886,6 +1907,7 @@ impl BotState {
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
             | PoolEntry::BalancerStable(..) => Err(SimulateSwapError::NotComputable),
+            PoolEntry::AerodromeV2(..) => Err(SimulateSwapError::NotComputable),
         }
     }
 
@@ -1993,6 +2015,7 @@ impl BotState {
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
             | PoolEntry::BalancerStable(..) => Err(SimulateSwapError::NotComputable),
+            PoolEntry::AerodromeV2(..) => Err(SimulateSwapError::NotComputable),
         }
     }
 
@@ -2205,6 +2228,7 @@ impl BotState {
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
             | PoolEntry::BalancerStable(..) => None,
+            PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -2321,6 +2345,7 @@ impl BotState {
             PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
             | PoolEntry::BalancerStable(..) => U256::ZERO,
+            PoolEntry::AerodromeV2(..) => U256::ZERO,
         }
     }
 
@@ -2525,6 +2550,9 @@ impl BotState {
                 Some(PoolEntry::BalancerStable(_, state)) => {
                     state.journal.newest_block().is_some_and(|b| b >= target)
                 }
+                Some(PoolEntry::AerodromeV2(_, state)) => {
+                    state.journal.newest_block().is_some_and(|b| b >= target)
+                }
                 None => false,
             };
             if !needs_restore {
@@ -2575,6 +2603,19 @@ impl BotState {
                     // `balancer_stable_restore_before_block`.
                     self.balancer_stable_restore_before_block(pool_id, target)
                         .is_some()
+                }
+                Some(PoolEntry::AerodromeV2(_, state)) => {
+                    // Aerodrome restore: V2-shaped delta (two reserves);
+                    // mirror the V2 inline path.
+                    match state.journal.restore_before_block(target) {
+                        Ok((r0, r1, blk)) => {
+                            state.reserve0 = r0;
+                            state.reserve1 = r1;
+                            state.update_block = blk;
+                            true
+                        }
+                        Err(_) => false,
+                    }
                 }
                 None => false,
             };
@@ -2767,6 +2808,135 @@ impl BotState {
         Some(Ok((balances, blk)))
     }
 
+    // --- Aerodrome V2 journal + registration methods ---
+
+    /// Register an Aerodrome V2 pool by contract address (ADR-005 Aerodrome
+    /// state port).
+    ///
+    /// Stores immutable identity (`address`, `token0`, `token1`, `factory`,
+    /// `variant`, `stable`, unidirectional `fee`) + the registration reserves
+    /// + a genesis reorg-journal anchor (mirror of V2's discipline). Returns
+    /// the auto-assigned pool ID.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the pool address is already registered.
+    pub fn register_aerodrome_pool(&mut self, params: &RegisterAerodromeV2PoolParams) -> u64 {
+        assert!(
+            !self.pool_addresses.contains_key(&params.address),
+            "pool already registered: {}",
+            params.address
+        );
+        let pool_id = self.next_pool_id;
+        self.next_pool_id += 1;
+        let (identity, state) =
+            AerodromeV2PoolState::from_params(params.clone(), self.journal_depth);
+        self.pools
+            .insert(pool_id, PoolEntry::AerodromeV2(identity, state));
+        self.pool_addresses.insert(params.address, pool_id);
+        pool_id
+    }
+
+    /// Apply an Aerodrome V2 `Sync` event by `pool_id`: journals the prior
+    /// reserves, then lands the new reserves + `update_block`. Returns the
+    /// affected `pool_id`, or `None` if not registered / not an Aerodrome pool.
+    #[must_use]
+    pub fn apply_aerodrome_sync_by_pool_id(
+        &mut self,
+        pool_id: u64,
+        reserve0: U256,
+        reserve1: U256,
+        block_number: u64,
+    ) -> Option<u64> {
+        let Some(PoolEntry::AerodromeV2(_, state)) = self.pools.get_mut(&pool_id) else {
+            return None;
+        };
+        state.journal.push_delta(V2BlockDelta {
+            block: block_number,
+            reserve0_before: state.reserve0,
+            reserve1_before: state.reserve1,
+            reserve0_after: reserve0,
+            reserve1_after: reserve1,
+        });
+        state.reserve0 = reserve0;
+        state.reserve1 = reserve1;
+        state.update_block = block_number;
+        Some(pool_id)
+    }
+
+    /// Look up an Aerodrome V2 pool's immutable registration identity. Returns
+    /// `None` if not registered or not an Aerodrome pool.
+    #[must_use]
+    pub fn get_aerodrome_identity(&self, pool_id: u64) -> Option<&AerodromeV2PoolIdentity> {
+        match self.pools.get(&pool_id)? {
+            PoolEntry::AerodromeV2(identity, _) => Some(identity),
+            PoolEntry::V2(..)
+            | PoolEntry::V3(..)
+            | PoolEntry::V4(..)
+            | PoolEntry::Curve(..)
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..) => None,
+        }
+    }
+
+    /// Read a registered Aerodrome V2 pool's state by `pool_id` (reserves +
+    /// `update_block` + the reorg journal).
+    #[must_use]
+    pub fn get_aerodrome_pool(&self, pool_id: u64) -> Option<&AerodromeV2PoolState> {
+        match self.pools.get(&pool_id)? {
+            PoolEntry::AerodromeV2(_, state) => Some(state),
+            PoolEntry::V2(..)
+            | PoolEntry::V3(..)
+            | PoolEntry::V4(..)
+            | PoolEntry::Curve(..)
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::BalancerStable(..) => None,
+        }
+    }
+
+    /// Discard Aerodrome reorg journal deltas earlier than the given block.
+    /// No-op if not registered / not an Aerodrome pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(JournalError::NoStateAtOrAfterBlock)` if the target is past
+    /// the newest delta.
+    pub fn aerodrome_discard_before_block(
+        &mut self,
+        pool_id: u64,
+        block: u64,
+    ) -> Result<(), JournalError> {
+        let Some(PoolEntry::AerodromeV2(_, state)) = self.pools.get_mut(&pool_id) else {
+            return Ok(());
+        };
+        state.journal.discard_before_block(block)
+    }
+
+    /// Restore Aerodrome pool state prior to a target block (V2-shaped delta —
+    /// two reserves). Pops journal deltas at/after the target and restores the
+    /// landed-at state into the current mutable fields.
+    ///
+    /// Returns `Some(Ok((reserve0, reserve1, block)))` on success, `Some(Err)`
+    /// if the target is at/before registration (no state before it), or `None`
+    /// if the pool ID is not registered / not an Aerodrome pool.
+    pub fn aerodrome_restore_before_block(
+        &mut self,
+        pool_id: u64,
+        block: u64,
+    ) -> Option<Result<(U256, U256, u64), JournalError>> {
+        let PoolEntry::AerodromeV2(_, state) = self.pools.get_mut(&pool_id)? else {
+            return None;
+        };
+        let (r0, r1, blk) = match state.journal.restore_before_block(block) {
+            Ok(v) => v,
+            Err(e) => return Some(Err(e)),
+        };
+        state.reserve0 = r0;
+        state.reserve1 = r1;
+        state.update_block = blk;
+        Some(Ok((r0, r1, blk)))
+    }
+
     // --- V3 journal methods ---
 
     /// Get the number of deltas in the reorg journal for a V3 pool.
@@ -2840,6 +3010,9 @@ impl BotState {
             Some(PoolEntry::BalancerStable(..)) => {
                 let _ = self.balancer_stable_restore_before_block(pool_id, block);
             }
+            Some(PoolEntry::AerodromeV2(..)) => {
+                let _ = self.aerodrome_restore_before_block(pool_id, block);
+            }
             None => {}
         }
     }
@@ -2896,6 +3069,12 @@ impl BotState {
             // V2/Curve/BalancerWeighted) — ADR-005 slice 12c. Same predicate:
             // `earliest < block`.
             PoolEntry::BalancerStable(_, state) => state
+                .journal
+                .earliest_block()
+                .is_some_and(|earliest| earliest < block),
+            // Aerodrome carries a genesis delta (mirror of V2/Curve/Balancer)
+            // — ADR-005 Aerodrome slice. Same predicate: `earliest < block`.
+            PoolEntry::AerodromeV2(_, state) => state
                 .journal
                 .earliest_block()
                 .is_some_and(|earliest| earliest < block),
@@ -2991,6 +3170,7 @@ impl BotState {
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
             | PoolEntry::BalancerStable(..) => None,
+            PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -3507,6 +3687,7 @@ impl BotState {
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
             | PoolEntry::BalancerStable(..) => None,
+            PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -3522,6 +3703,7 @@ impl BotState {
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
             | PoolEntry::BalancerStable(..) => None,
+            PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -3636,6 +3818,7 @@ impl BotState {
                 | PoolEntry::Curve(..)
                 | PoolEntry::BalancerWeighted(..)
                 | PoolEntry::BalancerStable(..) => None,
+                PoolEntry::AerodromeV2(..) => None,
             })
             .collect()
     }
@@ -4065,8 +4248,9 @@ mod tests {
         // the tag — this is the precondition for every non-V2 `_from_py_pool`
         // seam's variant-family guard.
         use crate::bot_core::{
-            RegisterBalancerStablePoolParams, RegisterBalancerWeightedPoolParams,
-            RegisterCurvePoolParams, RegisterV4PoolParams, TickInfo, V4PoolKey,
+            RegisterAerodromeV2PoolParams, RegisterBalancerStablePoolParams,
+            RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams, RegisterV4PoolParams,
+            TickInfo, V4PoolKey,
         };
         use alloy::primitives::U128;
 
@@ -4162,6 +4346,91 @@ mod tests {
             liquidity_net: alloy::primitives::I256::ZERO,
             block: 0,
         };
+
+        // Aerodrome V2 (volatile mode; stable=false)
+        let aero_id = core.register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+            address: Address::from([0xaeu8; 20]),
+            token0: Address::ZERO,
+            token1: Address::from([0x01u8; 20]),
+            factory: Address::from([0xafu8; 20]),
+            variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
+            stable: false,
+            fee: (3, 1000),
+            reserve0: U256::from(1_000_000u64),
+            reserve1: U256::from(2_000_000u64),
+            update_block: 0,
+        });
+        assert_eq!(core.pool_family(aero_id), "aerodrome-v2");
+    }
+
+    #[test]
+    fn aerodrome_reserve_mutation_and_reorg_rollback() {
+        // Aerodrome V2 reserves + reorg journal live in Rust (ADR-005
+        // Aerodrome state port): `apply_aerodrome_sync_by_pool_id` journals
+        // the prior reserves then lands the new; `aerodrome_restore_before_block`
+        // pops back to the landed-at state at the target block.
+        use crate::bot_core::RegisterAerodromeV2PoolParams;
+
+        let mut core = BotState::new();
+        let pool_id = core.register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+            address: Address::from([0xaeu8; 20]),
+            token0: Address::ZERO,
+            token1: Address::from([0x01u8; 20]),
+            factory: Address::from([0xafu8; 20]),
+            variant: degenbot_uniswap::dex_identity::DexVariant::AerodromeV2Volatile,
+            stable: false,
+            fee: (3, 1000),
+            reserve0: U256::from(1_000u64),
+            reserve1: U256::from(2_000u64),
+            update_block: 10,
+        });
+
+        // Identity survives.
+        let identity = core
+            .get_aerodrome_identity(pool_id)
+            .expect("aerodrome identity");
+        assert_eq!(identity.fee, (3, 1000));
+        assert!(!identity.stable);
+
+        // Initial registration state (genesis anchor at block 10).
+        let state = core.get_aerodrome_pool(pool_id).expect("aerodrome state");
+        assert_eq!(state.reserve0, U256::from(1_000u64));
+        assert_eq!(state.reserve1, U256::from(2_000u64));
+        assert_eq!(state.update_block, 10);
+        assert_eq!(state.journal.len(), 1);
+
+        // Apply a Sync at block 20 (journals prior reserves, lands new).
+        let applied = core.apply_aerodrome_sync_by_pool_id(
+            pool_id,
+            U256::from(1_500u64),
+            U256::from(2_500u64),
+            20,
+        );
+        assert_eq!(applied, Some(pool_id));
+        let state = core.get_aerodrome_pool(pool_id).expect("aerodrome state");
+        assert_eq!(state.reserve0, U256::from(1_500u64));
+        assert_eq!(state.reserve1, U256::from(2_500u64));
+        assert_eq!(state.update_block, 20);
+        assert_eq!(state.journal.len(), 2);
+
+        // Reorg to before block 20 → restores registration state (genesis at 10).
+        let restored = core.aerodrome_restore_before_block(pool_id, 20);
+        let (r0, r1, blk) = restored.expect("restore returns Some").expect("Ok");
+        assert_eq!(r0, U256::from(1_000u64));
+        assert_eq!(r1, U256::from(2_000u64));
+        assert_eq!(blk, 10);
+        let state = core.get_aerodrome_pool(pool_id).expect("aerodrome state");
+        assert_eq!(state.reserve0, U256::from(1_000u64));
+        assert_eq!(state.reserve1, U256::from(2_000u64));
+        assert_eq!(state.update_block, 10);
+
+        // A non-Aerodrome pool_id is a silent no-op for apply + restore.
+        let v2_id = core.register_v2_pool(&make_params(U256::from(100), U256::from(200)));
+        assert_eq!(
+            core.apply_aerodrome_sync_by_pool_id(v2_id, U256::ZERO, U256::ZERO, 99),
+            None
+        );
+        assert_eq!(core.aerodrome_restore_before_block(v2_id, 1), None);
     }
 
     #[test]
