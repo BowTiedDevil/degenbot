@@ -148,14 +148,9 @@ def make_balancer_stable_pool(
 
     bot = py_bot if py_bot is not None else PyBot()
 
-    # Base scaling factors: 10^(18 - token_decimals) per token — the
-    # decimal-adjustment-only scaling factors (no rate). When not provided,
-    # derive from the canonical ``_compute_scaling_factor`` lookup (matches
-    # the builder + the companion's ``__init__`` fallback).
-    if base_scaling_factors is not None:
-        base_sf = list(base_scaling_factors)
-    else:
-        base_sf = [_compute_scaling_factor(token) for token in tokens]
+    # The sealed seam ignores ``base_scaling_factors`` (the companion derives
+    # base SF from token decimals in ``_from_py_pool``); retained on the
+    # factory signature for API compatibility with callers that pass it.
 
     # encode the Fraction fee the Python-side companion keeps, target-perfect
     # as ``int(fee * FEE_DENOMINATOR)`` (1e18 denominator), mirroring on-chain
@@ -163,6 +158,15 @@ def make_balancer_stable_pool(
     # 12e) ``StableMath`` port; the companion also re-derives it from
     # ``self.fee`` per-call (single source of truth: the Python Fraction).
     fee_scaled_int = int(fee * BalancerV2StablePool.FEE_DENOMINATOR)
+
+    # ADR-006: tokens must be in the same Bot as the pool (the sealed seam
+    # resolves PyErc20Token companions off the handle via
+    # get_balancer_stable_tokens, which requires registered tokens).
+    for tok in tokens:
+        if bot.get_token(tok.address) is None:
+            bot.register_token(
+                tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id
+            )
 
     pool_id_int = bot.register_balancer_stable_pool(
         address=address_checksum,
@@ -176,25 +180,12 @@ def make_balancer_stable_pool(
         invariant_version=invariant_version,
         balances=list(balances),
         update_block=state_block_int,
+        rate_provider=rate_provider,
     )
     handle: PyLiquidityPool | None = bot.get_pool(pool_id_int)
     assert handle is not None, "register_balancer_stable_pool returned a pool_id with no handle"
 
-    return pool_class(
-        handle,
-        address=address_checksum,
-        pool_id=pool_id,
-        vault=vault,
-        tokens=tokens,
-        fee=fee,
-        amp=amp,
-        scaling_factors=scaling_factors,
-        bpt_idx=bpt_idx,
-        base_scaling_factors=base_sf,
-        rate_provider=rate_provider,
-        invariant_version=invariant_version,
-        state_block=state_block_int,
-    )
+    return pool_class._from_py_pool(handle)  # noqa: SLF001
 
 
 __all__ = [

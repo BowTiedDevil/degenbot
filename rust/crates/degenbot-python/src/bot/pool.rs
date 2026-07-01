@@ -1849,6 +1849,133 @@ impl PyLiquidityPool {
         Ok(Some(tuple.into_any().unbind()))
     }
 
+    // --- Balancer stable identity getters (ADR-005 sealed seam, MBWSGP) ---
+
+    /// Balancer V2 stable pool's Vault singleton (EIP-55 checksummed). Empty
+    /// string if not a Balancer stable pool.
+    #[getter]
+    fn balancer_stable_vault(&self) -> String {
+        let core = self.core.read();
+        core.get_balancer_stable_identity(self.pool_id)
+            .map(|i| address_utils::address_to_checksum_string(&i.vault))
+            .unwrap_or_default()
+    }
+
+    /// Balancer V2 stable pool ID (32-byte hex, ``0x``-prefixed). Empty string
+    /// if not a Balancer stable pool.
+    #[getter]
+    fn balancer_stable_pool_id_hex(&self) -> String {
+        let core = self.core.read();
+        match core.get_balancer_stable_identity(self.pool_id) {
+            Some(i) => format!("0x{}", bytes_to_hex(&i.pool_id)),
+            None => String::new(),
+        }
+    }
+
+    /// Balancer stable token addresses (EIP-55 checksummed hex). Empty list
+    /// if not a Balancer stable pool.
+    #[getter]
+    fn balancer_stable_token_addresses(&self) -> Vec<String> {
+        let core = self.core.read();
+        match core.get_balancer_stable_identity(self.pool_id) {
+            Some(i) => i
+                .tokens
+                .iter()
+                .map(address_utils::address_to_checksum_string)
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// Balancer stable ``PyErc20Token`` companions (one per token, including
+    /// BPT for Composable). Includes only tokens registered in this pool's
+    /// Bot; unregistered tokens are skipped (the caller pre-registers them
+    /// via ``Bot.register_token``). ``None`` if not a Balancer stable pool.
+    fn get_balancer_stable_tokens(&self) -> Option<Vec<PyErc20Token>> {
+        let core = self.core.read();
+        let id = core.get_balancer_stable_identity(self.pool_id)?;
+        let mut out = Vec::with_capacity(id.tokens.len());
+        for token_addr in &id.tokens {
+            if !core.has_token(token_addr) {
+                return None;
+            }
+            out.push(PyErc20Token::new(Arc::clone(&self.core), *token_addr));
+        }
+        Some(out)
+    }
+
+    /// Balancer stable scaling factors (one ``U256`` per token,
+    /// rate-multiplied). Empty list if not a Balancer stable pool.
+    #[getter]
+    fn balancer_stable_scaling_factors(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let sfs: Vec<alloy::primitives::U256> = {
+            let core = self.core.read();
+            match core.get_balancer_stable_identity(self.pool_id) {
+                Some(i) => i.scaling_factors.clone(),
+                None => Vec::new(),
+            }
+        };
+        let py_sfs: Vec<Py<PyAny>> = sfs
+            .iter()
+            .map(|b| crate::conversion::alloy::u256_to_py(py, b).map(pyo3::Bound::unbind))
+            .collect::<PyResult<_>>()?;
+        Ok(pyo3::types::PyList::new(py, py_sfs)?.into_any().unbind())
+    }
+
+    /// Balancer stable swap fee (fraction of `FEE_DENOMINATOR=1e18`). 0 if
+    /// not a Balancer stable pool.
+    #[getter]
+    fn balancer_stable_swap_fee(&self) -> u128 {
+        let core = self.core.read();
+        core.get_balancer_stable_identity(self.pool_id)
+            .map_or(0, |i| i.swap_fee)
+    }
+
+    /// Whether the stored Balancer stable rate provider is static (performs
+    /// no I/O). ``True`` when no provider was registered (the static
+    /// ``1e18`` fallback). Drives the Python companion's
+    /// ``requires_io_at_calculation_time`` / ``_should_warn_stale_rates``
+    /// flags. ``False`` if not a Balancer stable pool — a dynamic provider
+    /// is the more conservative default.
+    #[getter]
+    fn balancer_stable_rate_provider_is_static(&self) -> bool {
+        let core = self.core.read();
+        match core.get_balancer_stable_pool(self.pool_id) {
+            Some(s) => s.rate_provider.as_ref().is_none_or(|p| p.is_static()),
+            None => false,
+        }
+    }
+
+    /// Fetch rates from the stored Balancer stable rate provider at
+    /// ``block_identifier`` (``None`` ⇔ latest). Returns the static
+    /// ``1e18`` fallback (one per token) when no provider was registered.
+    /// Returns ``None`` if not a Balancer stable pool.
+    ///
+    /// Raises:
+    ///     `ValueError`: If the dynamic provider fetch failed.
+    fn fetch_balancer_stable_rates(
+        &self,
+        block_identifier: Option<u64>,
+    ) -> PyResult<Option<Vec<u128>>> {
+        let provider = {
+            let core = self.core.read();
+            let Some(s) = core.get_balancer_stable_pool(self.pool_id) else {
+                return Ok(None);
+            };
+            s.rate_provider.clone()
+        };
+        let Some(provider) = provider else {
+            // Static 1e18 fallback — one per token.
+            let n = self.n_balancer_stable_tokens();
+            return Ok(Some(vec![1_000_000_000_000_000_000u128; n]));
+        };
+        let rates = provider
+            .get_rates(block_identifier)
+            .map_err(|_e| pyo3::exceptions::PyValueError::new_err("rate provider fetch failed"))?;
+        let out: Vec<u128> = rates.into_iter().map(|r| r.to::<u128>()).collect();
+        Ok(Some(out))
+    }
+
     /// Apply a Balancer stable `external_update` (new balances from a Vault
     /// `PoolBalanceChanged` event).
     ///
