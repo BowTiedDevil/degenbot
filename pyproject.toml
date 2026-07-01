@@ -216,6 +216,7 @@ dev = [
 
 [tool.ty.environment]
 python-version = "3.12"
+extra-paths = ["examples"]
 
 [tool.uv]
 exclude-newer = "14 days"
