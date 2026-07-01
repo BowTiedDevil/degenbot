@@ -71,6 +71,19 @@ from .registry import (
     TokenRegistry,
     pool_type_registry,
 )
+
+# Populate the pool-type registry from the shipped deployments JSON
+# (single source of DEX deployment data — ADR-005). This replaces the
+# per-module `_register_*_deployments()` inline tuples that previously
+# lived in each DEX `__init__.py`. Runs once after all DEX classes are
+# imported. A user overlay may be declared in ``[deployments]`` in
+# ``~/.config/degenbot/config.toml``.
+from .registry.deployment_loader import (
+    load_deployments as _load_deployments,
+)
+from .registry.deployment_loader import (
+    register_from_deployments as _register_from_deployments,
+)
 from .sushiswap import (
     SushiswapV3Pool,
     SushiswapV3PoolTracker,
@@ -92,6 +105,8 @@ from .uniswap import (
     UniswapV4PoolExternalUpdate,
     UniswapV4PoolState,
 )
+
+_register_from_deployments(_load_deployments(), pool_type_registry)
 
 __all__ = (
     "AbiAdapter",

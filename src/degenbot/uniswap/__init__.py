@@ -1,6 +1,10 @@
 """Uniswap V2/V3/V4 pool type registration and exports."""
 
-from degenbot.degenbot_rs import dex_identity
+# Set default pool classes — UniswapV2Pool and UniswapV3Pool serve as the
+# fallback when no factory-specific registration exists.
+# Deployment data (chain_id, factory → deployer / init_hash / variant /
+# dex_identity) is loaded from the shipped deployments.json by the top-level
+# `degenbot` package init via `register_from_deployments(load_deployments())`.
 from degenbot.registry.pool_type import pool_type_registry
 
 from . import (
@@ -26,73 +30,9 @@ from .v4_liquidity_pool import UniswapV4Pool
 from .v4_snapshot import UniswapV4LiquiditySnapshot
 from .v4_types import UniswapV4PoolExternalUpdate, UniswapV4PoolState, UniswapV4PoolStateUpdated
 
-# Register default pool classes — UniswapV2Pool and UniswapV3Pool serve as the
-# fallback when no factory-specific registration exists.
 pool_type_registry.set_default_v2_class(UniswapV2Pool)
 pool_type_registry.set_default_v3_class(UniswapV3Pool)
 
-
-def _register_uniswap_deployments() -> None:
-    # Deployment data previously sourced from FACTORY_DEPLOYMENTS.
-    # Now hardcoded directly — pool_type_registry is the sole source of truth.
-    v2_deployments = [
-        (
-            1,
-            "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
-            "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
-            None,
-        ),
-        (
-            8453,
-            "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6",
-            "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f",
-            None,
-        ),
-    ]
-    v3_deployments = [
-        (
-            1,
-            "0x1F98431c8aD98523631AE4a59f267346ea31F984",
-            "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
-            None,
-        ),
-        (
-            8453,
-            "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
-            "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
-            None,
-        ),
-        (
-            42161,
-            "0x1F98431c8aD98523631AE4a59f267346ea31F984",
-            "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54",
-            None,
-        ),
-    ]
-
-    uniswap_v2_identity = dex_identity("uniswap-v2")
-    assert uniswap_v2_identity is not None, "uniswap-v2 preset must resolve"
-    for chain_id, factory, init_hash, deployer in v2_deployments:
-        pool_type_registry.register(
-            UniswapV2Pool,
-            chain_id=chain_id,
-            factory_address=factory,
-            pool_init_hash=init_hash,
-            deployer=deployer,
-            dex_identity=uniswap_v2_identity,
-        )
-
-    for chain_id, factory, init_hash, deployer in v3_deployments:
-        pool_type_registry.register(
-            UniswapV3Pool,
-            chain_id=chain_id,
-            factory_address=factory,
-            pool_init_hash=init_hash,
-            deployer=deployer,
-        )
-
-
-_register_uniswap_deployments()
 
 __all__ = (
     "UniswapV2Pool",

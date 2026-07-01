@@ -8,8 +8,6 @@ from degenbot.balancer.types import (
     BalancerV2StablePoolExternalUpdate,
     BalancerV2WeightedPoolExternalUpdate,
 )
-from degenbot.registry.pool_type import pool_type_registry
-from degenbot.types.pool_type import PoolFamily
 
 __all__ = [
     "INVARIANT_V1",
@@ -25,27 +23,10 @@ __all__ = [
 # Self-register Balancer V2 factory addresses in the pool type registry.
 # These registrations enable Bot.build_pool() to automatically resolve
 # Balancer pools from factory addresses.
-
-# Balancer V2 Weighted Pool Factory (v3) on Ethereum mainnet
-pool_type_registry.register(
-    BalancerV2Pool,
-    chain_id=1,
-    factory_address="0x8e9AA87E45e92BAD7D5F7F9dd794cEa12f21707B",
-    family=PoolFamily.WEIGHTED,  # Override: _derive_family returns STABLESWAP
-)
-
-# Balancer V2 Stable Pool Factory (v1) on Ethereum mainnet
-pool_type_registry.register(
-    BalancerV2StablePool,
-    chain_id=1,
-    factory_address="0x8519f5a4A85678e0e03395586e2e223D70E9e09B",
-    family=PoolFamily.STABLESWAP,
-)
-
-# ComposableStablePool Factory (v2) on Ethereum mainnet
-pool_type_registry.register(
-    BalancerV2StablePool,
-    chain_id=1,
-    factory_address="0xA8936f4824B2E6407fC0e94133909aEf7D48E876",
-    family=PoolFamily.STABLESWAP,
-)
+#
+# Deployment data (chain_id, factory → deployer / init_hash / family) is
+# loaded from the shipped deployments.json by the top-level degenbot package
+# init via register_from_deployments(load_deployments()) (ADR-005). The
+# Balancer factories require a `family` override (their classes lack
+# `fee_token0`, so _derive_family would misclassify) — carried as a JSON
+# field rather than inline here.
