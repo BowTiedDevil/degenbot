@@ -232,6 +232,21 @@ impl PyUniswapArbEngine {
         // ADR-006 D4 (T3): delegates to the shared `PumpState`.
         self.pump.resume()
     }
+
+    /// Stop the pump and signal the Rust core to clean up (ADR-006 D4).
+    ///
+    /// The symmetric teardown half of `resume()`: sets the shutdown flag and
+    /// aborts the spawned pump task so a Ctrl-C exits promptly — the pump loop
+    /// otherwise blocks up to `BACKFILL_TIMEOUT_SECS` (60s) on a silent WS
+    /// stream before re-checking its shutdown flag, and indefinitely if the WS
+    /// subscription never delivers a final frame. Aborting unblocks the
+    /// `combined.next().await` immediately and drops the WS subscription
+    /// futures (closing the transport). Idempotent — safe from both the
+    /// session teardown path and a signal handler. Delegates to the shared
+    /// `PumpState`.
+    fn stop(&self, _py: Python<'_>) -> PyResult<()> {
+        self.pump.stop()
+    }
 }
 
 // --- V4 registration error mapping (free helper) ---

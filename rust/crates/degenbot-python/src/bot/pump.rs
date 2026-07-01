@@ -298,6 +298,54 @@ impl PumpState {
         Ok(())
     }
 
+    /// Stop the pump and signal the Rust core to clean up (ADR-006 D4).
+    ///
+    /// The cooperative path (`subscribe` → `backfill_from_snapshot` → `resume`)
+    /// has no symmetric teardown — a `keyboard interrupt` in Python leaves the
+    /// `BlockPump` task blocking on the WS stream, so process exit blocks for
+    /// up to `BACKFILL_TIMEOUT_SECS` (60s) of idle before the loop re-checks
+    /// its `shutdown` flag (and indefinitely if the WS subscription never
+    /// delivers a final frame). `stop()` closes that gap: it sets the flag so
+    /// any in-flight loop visit notices, *then* aborts the spawned task so the
+    /// `combined.next().await` unblocks immediately — dropping the WS
+    /// subscription futures (which closes the transport) and all pump-held
+    /// resources before returning. Idempotent — dropping the `pump_handle`
+    /// (taken on the first call) makes a second call a no-op `Ok(())`.
+    ///
+    /// Aborting mid-`on_drain`/`on_send` is safe: those acquire internal
+    /// `parking_lot` locks (non-poisoning) which release on cancellation, and
+    /// `shutdown` is already `true` so no further drain tick matters. Mirror of
+    /// the legacy `PyV2ArbEngine::stop()` (sets the shutdown flag and aborts
+    /// the pump task).
+    ///
+    /// # Errors
+    /// Currently always returns `Ok(())` — the abort + `JoinHandle` await
+    /// never fails in a way the caller can recover from. Typed `PyResult` keeps
+    /// the surface symmetric with `subscribe`/`resume` and leaves room for a
+    /// future timed-join error.
+    pub(crate) fn stop(&self) -> PyResult<()> {
+        self.shutdown
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let handle = self.pump_handle.lock().take();
+        if let Some(handle) = handle {
+            handle.abort();
+            // Drive the cancelled task to completion so its held resources
+            // (WS subscription futures, `Arc<dyn DrainSink>` clones) drop
+            // before Python tears the runtime down. `block_on` on the shared
+            // runtime matches the existing `subscribe`/`backfill_from_snapshot`
+            // sync discipline; the aborted task completes promptly.
+            let _ = degenbot_core::runtime::get_runtime().block_on(handle);
+            log::info!("[shutdown] BlockPump task aborted");
+        } else {
+            log::info!("[shutdown] BlockPump not running (no pump handle to abort)");
+        }
+        // Drop half-built subscribe state so a later `subscribe()` is allowed
+        // (the phase guard + the `subscribe_state.is_some()` check would
+        // otherwise reject it).
+        *self.subscribe_state.lock() = None;
+        Ok(())
+    }
+
     // -- Verify config + batch verification (ADR-006 D4 T4) ------------------
     //
     // The batch verify methods read `self.engine` (BotState snapshots) + emit
@@ -806,5 +854,150 @@ mod tests {
                 "RPC transport failure is NOT a mismatch (distinct types)"
             );
         });
+    }
+
+    // ── PumpState::stop() contract tests ─────────────────────────────
+    //
+    // A `stop()` is the symmetric teardown half of `subscribe()`/`resume()`:
+    // it must set the shutdown flag (the cooperative signal the pump loop
+    // checks each iteration), abort the spawned pump task (so the
+    // `combined.next().await` — which would otherwise block up to 60s —
+    // unblocks immediately), and be idempotent (a second call is a no-op
+    // `Ok(())` because the handle is `take()`n on the first). Building a
+    // real `PumpState` mirrors the standalone (no-`py_bot`) path of
+    // `PyUniswapArbEngine::new` — a fresh `Bot`/`BotState`/`UniswapEngine`/
+    // `SolveCoordinator`/`ReorgCoordinator`. No WS connection is opened;
+    // the running-handle test installs a never-completing dummy task so
+    // `stop()`'s abort path is exercised without the real pump.
+
+    use super::PumpState;
+    use degenbot_bot::bot_core::reorg_coordinator::ReorgCoordinator;
+    use degenbot_bot::bot_core::solve_coordinator::SolveCoordinator;
+    use degenbot_bot::bot_core::{Bot, BotState};
+    use degenbot_bot::solvers::uniswap_engine::engine_handle::EngineHandle;
+    use degenbot_bot::solvers::uniswap_engine::UniswapEngine;
+    use parking_lot::RwLock;
+    use tokio::sync::mpsc;
+
+    fn pump_state_for_test() -> std::sync::Arc<PumpState> {
+        let core = std::sync::Arc::new(RwLock::new(BotState::new()));
+        let bot = std::sync::Arc::new(Bot::with_core(std::sync::Arc::clone(&core)));
+        let mut engine = UniswapEngine::with_core(core);
+        let (result_tx, _result_rx) = mpsc::unbounded_channel();
+        let (block_tx, _block_rx) = mpsc::unbounded_channel();
+        engine.set_result_channel(result_tx);
+        engine.set_block_channel(block_tx);
+        let engine = std::sync::Arc::new(parking_lot::Mutex::new(engine));
+        let coordinator = std::sync::Arc::new(SolveCoordinator::new(vec![EngineHandle::arc_dyn(
+            std::sync::Arc::clone(&engine),
+        )]));
+        let reorg_coordinator =
+            std::sync::Arc::new(ReorgCoordinator::new(std::sync::Arc::clone(&bot)));
+        std::sync::Arc::new(PumpState::new(engine, coordinator, reorg_coordinator, bot))
+    }
+
+    #[test]
+    fn stop_pre_resume_sets_shutdown_flag_and_clears_subscribe_state() {
+        // Red-first: with no pump running (pre-`resume()`), `stop()` must
+        // still flip the cooperative shutdown flag and clear any
+        // half-built subscribe state, returning `Ok(())`. The pump handle
+        // is `None` so the abort path is skipped — the flag is the only
+        // observable effect.
+        let pump = pump_state_for_test();
+        assert!(
+            pump.pump_handle.lock().is_none(),
+            "pre-resume: no pump task spawned"
+        );
+        assert!(
+            !pump.shutdown.load(std::sync::atomic::Ordering::Relaxed),
+            "shutdown flag starts false"
+        );
+
+        pyo3::Python::attach(|_| {
+            pump.stop().expect("stop() before resume must not error");
+        });
+
+        assert!(
+            pump.shutdown.load(std::sync::atomic::Ordering::Relaxed),
+            "stop() must set the shutdown flag"
+        );
+        assert!(
+            pump.pump_handle.lock().is_none(),
+            "stop() must leave pump_handle None"
+        );
+        assert!(
+            pump.subscribe_state.lock().is_none(),
+            "stop() must clear subscribe_state"
+        );
+    }
+
+    #[test]
+    fn stop_is_idempotent() {
+        // Calling stop() twice must not panic or error — the handle is
+        // `take()`n on the first call so the second is a bare flag store +
+        // no-op. This is the contract the Python `__aexit__` /
+        // KeyboardInterrupt handler relies on (both may call stop()).
+        let pump = pump_state_for_test();
+        pyo3::Python::attach(|_| {
+            pump.stop().expect("first stop() must not error");
+            pump.stop().expect("second stop() must be a no-op Ok");
+        });
+        assert!(
+            pump.shutdown.load(std::sync::atomic::Ordering::Relaxed),
+            "shutdown flag stayed set across both calls"
+        );
+    }
+
+    #[test]
+    fn stop_aborts_a_running_pump_handle() {
+        // The pump loop blocks on `combined.next().await`, which can hang up
+        // to `BACKFILL_TIMEOUT_SECS` (60s) idle before the loop revisits its
+        // shutdown check. `stop()` must abort the spawned task so the await
+        // unblocks immediately, not wait for the flag to be observed at the
+        // next loop iteration. We install a never-completing dummy task (a
+        // pending oneshot receiver) as the `pump_handle`, then assert stop()
+        // resolves it and returns promptly — a regression guard for the
+        // "Ctrl-C hangs for a minute" bug.
+        let pump = pump_state_for_test();
+        let runtime = degenbot_core::runtime::get_runtime();
+        let (_tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let handle = runtime.spawn(async move {
+            // Never receives — only an abort unblocks this. Mirrors a pump
+            // blocked on a silent WS subscription.
+            let _ = rx.await;
+        });
+        *pump.pump_handle.lock() = Some(handle);
+        assert!(
+            pump.pump_handle.lock().is_some(),
+            "fixture installed a pump handle"
+        );
+
+        // Run stop() on a worker thread (mirrors production: Python calls it
+        // from the main thread, NOT inside a `block_on` — nesting block_on on
+        // the same runtime would panic). A join timeout surfaces a regression
+        // (forgot abort → stop() blocks on the pump task) as a test failure
+        // instead of an indefinite hang.
+        let pump_clone = std::sync::Arc::clone(&pump);
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<pyo3::PyResult<()>>();
+        std::thread::spawn(move || {
+            pyo3::Python::attach(|_| {
+                let _ = done_tx.send(pump_clone.stop());
+            });
+        });
+        let stop_result = done_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect(
+                "stop() must return within 5s (abort must unblock the pump task) — it timed out",
+            );
+        stop_result.expect("stop() with a running handle must not error");
+
+        assert!(
+            pump.shutdown.load(std::sync::atomic::Ordering::Relaxed),
+            "stop() set the shutdown flag"
+        );
+        assert!(
+            pump.pump_handle.lock().is_none(),
+            "stop() must consume the pump handle"
+        );
     }
 }

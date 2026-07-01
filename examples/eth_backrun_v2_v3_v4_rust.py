@@ -1030,15 +1030,54 @@ class BackrunSession:
     async def __aexit__(self, *exc: object) -> None:
         """Best-effort cleanup; never suppresses.
 
-        If ``run()`` raised before awaiting the consumer task, cancel it so the
-        hanging background task doesn't outlive the session. The bot is already
-        released (or never built) — nothing to close there.
+        Signals the Rust pump to stop, then cancels the consumer task so no
+        hanging background task outlives the session. ``shutdown()`` is
+        best-effort: it swallows any error from the Rust ``stop()`` so a
+        torn-down engine during a partial startup can't mask the original
+        exception (the one this ``__aexit__`` is unwinding).
+
+        Ordering rationale: the pump must be stopped BEFORE the consumer task
+        is cancelled. The consumer awaits ``engine.__anext__()`` which blocks
+        on the pump's result channel; cancelling the consumer first leaves the
+        pump's WS task running on the shared tokio runtime, blocking process
+        exit until the WS subscription closes itself (up to 60s on a silent
+        stream). Stopping the pump first closes the channels → the consumer's
+        next ``__anext__`` raises ``StopAsyncIteration`` → the consumer task
+        ends cleanly, and the ``await task`` below returns without needing the
+        ``CancelledError`` path in the common case.
         """
+        await self.shutdown()
         task = self._result_consumer_task
         if task is not None and not task.done():
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
+
+    async def shutdown(self) -> None:
+        """Signal the Rust core to stop the pump (best-effort).
+
+        Safe to call at any point in the lifecycle — before ``start()`` finished
+        (``engine_registry`` may be ``None``), after ``run()`` exited, or from a
+        ``SIGINT``/``KeyboardInterrupt`` handler. Mirrors the Rust ``stop()``
+        contract: idempotent, sets the shutdown flag + aborts the pump task so
+        the WS stream's ``combined.next().await`` unblocks immediately (60s
+        cold-shutdown otherwise). Any exception is swallowed and logged so a
+        partial-startup teardown can't mask the original in-flight exception.
+
+        This is the one place that closes the Rust core's pump — the
+        ``KeyboardInterrupt``-exits-slowly bug was the pump task (spawned on the
+        shared tokio runtime, decoupled from the asyncio loop) blocking on a
+        silent WS subscription, which ``asyncio.run``'s teardown did not reach
+        until the OS closed the socket.
+        """
+        registry = getattr(self, "engine_registry", None)
+        engine = getattr(registry, "engine", None) if registry is not None else None
+        if engine is None:
+            return
+        try:
+            engine.stop()
+        except Exception as exc:  # noqa: BLE001 — best-effort teardown
+            bot_logger.warning(f"[shutdown] engine.stop() failed: {exc!r}")
 
 
 async def _shim_run_recurring_verify_until_done(
@@ -2887,8 +2926,19 @@ async def main() -> None:
     # The early release inside run() preserves the hot-loop memory profile:
     # the loop keeps only engine_registry + async_w3 + dispatcher once the
     # Rust engine owns canonical pool state.
-    async with BackrunSession(cfg) as session:
-        await session.run()
+    #
+    # Ctrl-C handling: a SIGINT during ``await session.run()`` unwinds through
+    # ``BackrunSession.__aexit__`` → ``shutdown()`` (calls ``engine.stop()``,
+    # which aborts the Rust pump task so it doesn't block process exit on a
+    # silent WS stream). The KeyboardInterrupt is then caught here so the
+    # operator sees a single clean line instead of a traceback. ``CancelledError``
+    # is caught too: some asyncio versions surface SIGINT inside the awaited
+    # coroutine as a cancelled task.
+    try:
+        async with BackrunSession(cfg) as session:
+            await session.run()
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        bot_logger.info("[shutdown] interrupted — Rust pump stopped, exiting.")
 
 
 if __name__ == "__main__":
