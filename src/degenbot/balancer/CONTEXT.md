@@ -51,10 +51,10 @@
 | Term | Definition | Aliases to avoid |
 |------|------------|------------------|
 | **BROKEN_BALANCER_V2_POOLS** | A frozenset of pool addresses where on-chain swaps are disabled or the pool is otherwise broken (e.g., BAL#327 SWAPS_DISABLED). Pools in this set should be skipped during discovery and testing | Broken pools, disabled pools |
-| **deployments.py** | Module centralizing contract addresses and broken pool addresses for Balancer V2, following the same pattern as `curve/deployments.py` | Addresses module |
-| **Weighted Pool Factory** | `0x8e9AA87E45e92BAD7D5F7F9dd794cEa12f21707B` — deploys `WeightedPool` and `WeightedPool2Tokens` contracts on Ethereum mainnet | V3 factory |
-| **Stable Pool Factory** | `0x8519f5a4A85678e0e03395586e2e223D70E9e09B` — deploys `MetaStablePool` contracts on Ethereum mainnet | V1 factory |
-| **ComposableStablePool Factory** | `0xA8936f4824B2E6407fC0e94133909aEf7D48E876` — deploys `ComposableStablePool` contracts on Ethereum mainnet | V2 factory |
+| **deployments.py** | Module centralizing contract addresses and broken pool addresses for Balancer V2, following the same pattern as `curve/deployments.py`. The full versioned factory set lives in `registry/deployments.json`; this module pins the latest revision of each family as a convenience constant | Addresses module |
+| **Weighted Pool Factory** | The `WeightedPoolFactory` contract family on Ethereum mainnet, deployed across revisions rev1–rev4 (latest rev4 = `0x897888115Ada5773E02aA29F775430BFB5F34c51`). Also the parallel `WeightedPool2TokensFactory` (`0xA5bf2ddF098bb0Ef6d120C98217dD6B141c74EE0`) for 2-token pools. All revisions deploy `WeightedPool` contracts simulated by `BalancerV2Pool` | V3 factory |
+| **Stable Pool Factory** | The `StablePoolFactory` contract family on Ethereum mainnet, revisions rev1–rev2 (latest rev2 = `0x8df6EfEc5547e31B0eb7d1291B511FF8a2bf987c`). Deploys `StablePool`/`MetaStablePool` contracts | V1 factory |
+| **ComposableStablePool Factory** | The `ComposableStablePoolFactory` contract family on Ethereum mainnet, revisions rev1–rev6 (latest rev6 = `0x5B42eC6D40f7B7965BE5308c70e2603c0281C1E9`). Deploys `ComposableStablePool` contracts simulated by `BalancerV2StablePool` | V2 factory |
 
 ## Stable Pool Semantics
 

@@ -94,18 +94,72 @@ SINGLETON_REGISTRATIONS: dict[tuple[int, str], tuple[type, str | None, str]] = {
         "camelot",
         "camelot_v2",
     ),
-    # Balancer V2 (Ethereum Mainnet)
-    (1, "0x8e9AA87E45e92BAD7D5F7F9dd794cEa12f21707B"): (
+    # Balancer V2 (Ethereum Mainnet) — all factory revisions. The rev tag
+    # lives in the JSON ``name`` field only; ``variant`` stays null so all
+    # Weighted revisions share the ``balancer_weighted`` kind and all
+    # Stable/Composable revisions share ``balancer_stable`` (the revisions
+    # simulate identically — the factory address is the discriminator).
+    (1, "0x8E9aa87E45e92bad84D5F8DD1bff34Fb92637dE9"): (  # Weighted rev1
         BalancerV2Pool,
         "balancer_weighted",
         "balancer_weighted",
     ),
-    (1, "0x8519f5a4A85678e0e03395586e2e223D70E9e09B"): (
+    (1, "0xcC508a455F5b0073973107Db6a878DdBDab957bC"): (  # Weighted rev2
+        BalancerV2Pool,
+        "balancer_weighted",
+        "balancer_weighted",
+    ),
+    (1, "0x5Dd94Da3644DDD055fcf6B3E1aa310Bb7801EB8b"): (  # Weighted rev3
+        BalancerV2Pool,
+        "balancer_weighted",
+        "balancer_weighted",
+    ),
+    (1, "0x897888115Ada5773E02aA29F775430BFB5F34c51"): (  # Weighted rev4
+        BalancerV2Pool,
+        "balancer_weighted",
+        "balancer_weighted",
+    ),
+    (1, "0xA5bf2ddF098bb0Ef6d120C98217dD6B141c74EE0"): (  # Weighted 2 Tokens
+        BalancerV2Pool,
+        "balancer_weighted",
+        "balancer_weighted",
+    ),
+    (1, "0xc66Ba2B6595D3613CCab350C886aCE23866EDe24"): (  # Stable rev1
         BalancerV2StablePool,
         "balancer_stable",
         "balancer_stable",
     ),
-    (1, "0xA8936f4824B2E6407fC0e94133909aEf7D48E876"): (
+    (1, "0x8df6EfEc5547e31B0eb7d1291B511FF8a2bf987c"): (  # Stable rev2
+        BalancerV2StablePool,
+        "balancer_stable",
+        "balancer_stable",
+    ),
+    (1, "0xf9ac7B9dF2b3454E841110CcE5550bD5AC6f875F"): (  # ComposableStable rev1
+        BalancerV2StablePool,
+        "balancer_stable",
+        "balancer_stable",
+    ),
+    (1, "0x85a80afee867aDf27B50BdB7b76DA70f1E853062"): (  # ComposableStable rev2
+        BalancerV2StablePool,
+        "balancer_stable",
+        "balancer_stable",
+    ),
+    (1, "0xdba127fBc23fb20F5929C546af220A991b5C6e01"): (  # ComposableStable rev3
+        BalancerV2StablePool,
+        "balancer_stable",
+        "balancer_stable",
+    ),
+    (1, "0xfADa0f4547AB2de89D1304A668C39B3E09Aa7c76"): (  # ComposableStable rev4
+        BalancerV2StablePool,
+        "balancer_stable",
+        "balancer_stable",
+    ),
+    (1, "0xDB8d758BCb971e482B2C45f7F8a7740283A1bd3A"): (  # ComposableStable rev5
+        BalancerV2StablePool,
+        "balancer_stable",
+        "balancer_stable",
+    ),
+    (1, "0x5B42eC6D40f7B7965BE5308c70e2603c0281C1E9"): (  # ComposableStable rev6
         BalancerV2StablePool,
         "balancer_stable",
         "balancer_stable",
