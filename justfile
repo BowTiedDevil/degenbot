@@ -160,7 +160,7 @@ lint-context-maps:
 # Lint Python files
 lint-python:
     uv run ruff check --fix src/ 
-    uv run ty check --no-progress src/
+    uv run ty check --fix --no-progress src/
 
 # Check Python formatting (read-only; fails on drift). Run `just format` to fix.
 fmt-check-python:
