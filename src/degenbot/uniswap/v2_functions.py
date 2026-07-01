@@ -4,10 +4,8 @@ See: contract_reference/uniswap/V2/UniswapV2Factory.sol
 (UniswapV2Pair, UniswapV2Factory, Math, UQ112x112)
 """
 
-import itertools
 from collections.abc import Iterable
 from fractions import Fraction
-from typing import TYPE_CHECKING
 
 import eth_abi.packed
 from eth_typing import ChecksumAddress
@@ -15,10 +13,6 @@ from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
 from degenbot.contract.addresses import create2_address
-
-if TYPE_CHECKING:
-    from degenbot.uniswap.trackers import UniswapV2PoolTracker
-    from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 
 def generate_v2_pool_address(
