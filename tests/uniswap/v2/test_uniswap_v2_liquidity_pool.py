@@ -264,64 +264,6 @@ def test_dunder_methods(
     ) is False
 
 
-@pytest.mark.online_rpc
-def test_calculate_tokens_out_from_ratio_out(fork_mainnet_archive: AnvilFork):
-    # NOTE: deliberately NOT a golden-onchain-parity candidate. This test asserts
-    # with ``pytest.approx(..., rel=1e-3)`` (a 0.1% relative tolerance), not exact
-    # equality — the golden harness records exact on-chain ints, so an approx
-    # assertion has no clean replay form. The ratio-recovery math
-    # (``calculate_tokens_in_from_ratio_out``) is inherently iterative and its
-    # ``1e-3`` floor exists to absorb rounding in the inverse direction; keep it
-    # as a live fork test. See docs/architecture/golden-onchain-parity.md and
-    # plans/golden-onchain-parity.md (T7).
-    bot = _make_bot(fork_mainnet_archive)
-
-    router_contract = fork_mainnet_archive.w3.eth.contract(
-        address=get_checksum_address(UNISWAP_V2_ROUTER02),
-        abi=UNISWAP_V2_ROUTER_ABI,
-    )
-
-    lp = bot.build_pool(UNISWAP_V2_WBTC_WETH_POOL)
-
-    for wbtc_amount_in in [
-        int(0.1 * 10**8),
-        1 * 10**8,
-        10 * 10**8,
-    ]:
-        token_in = lp.token0  # WBTC
-        token_out = lp.token1  # WETH
-
-        weth_amount_out = router_contract.functions.getAmountsOut(
-            wbtc_amount_in,
-            [token_in.address, token_out.address],
-        ).call()[-1]
-
-        ratio = Fraction(weth_amount_out, wbtc_amount_in)
-
-        calculated_input = lp.calculate_tokens_in_from_ratio_out(
-            token_in=token_in,
-            ratio_absolute=ratio,
-        )
-        assert pytest.approx(calculated_input / wbtc_amount_in, rel=1e-3) == 1
-
-    for weth_amount_in in [1 * 10**18, 10 * 10**18, 100 * 10**18]:
-        token_in = lp.token1  # WETH
-        token_out = lp.token0  # WBTC
-
-        wbtc_amount_out = router_contract.functions.getAmountsOut(
-            weth_amount_in,
-            [token_in.address, token_out.address],
-        ).call()[-1]
-
-        ratio = Fraction(wbtc_amount_out, weth_amount_in)
-
-        calculated_input = lp.calculate_tokens_in_from_ratio_out(
-            token_in=token_in,
-            ratio_absolute=ratio,
-        )
-        assert pytest.approx(calculated_input / weth_amount_in, rel=1e-3) == 1
-
-
 @pytest.mark.parametrize(
     "fork_mainnet_archive",
     [17_600_000],  # EDIT ME

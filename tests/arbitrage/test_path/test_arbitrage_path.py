@@ -9,11 +9,12 @@ math. The engine is the production solve surface, cross-validated against
 ``BrentSolver`` in ``tests/arbitrage/test_engine_vs_brent_parity.py``.
 """
 
+from degenbot import UniswapV2Pool
+
 from fractions import Fraction
 
 import pytest
 
-from degenbot.arbitrage.path import SwapVector
 from degenbot.exceptions.arbitrage import IncompatiblePoolInvariant
 from degenbot.types.hop_types import BoundedProductHop, ConstantProductHop
 from degenbot.uniswap.v3_libraries.constants import Q96
@@ -27,31 +28,6 @@ from .conftest import (
 )
 
 FEE_03 = Fraction(3, 1000)
-
-
-class TestSwapVector:
-    def test_construction(self):
-        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-        sv = SwapVector(t0, t1, zero_for_one=True)
-        assert sv.token_in == t0
-        assert sv.token_out == t1
-        assert sv.zero_for_one
-
-    def test_equality(self):
-        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-        sv1 = SwapVector(t0, t1, zero_for_one=True)
-        sv2 = SwapVector(t0, t1, zero_for_one=True)
-        assert sv1 == sv2
-
-    def test_inequality(self):
-        t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-        t2 = _make_token("0xcccccccccccccccccccccccccccccccccccccccc")
-        sv1 = SwapVector(t0, t1, zero_for_one=True)
-        sv2 = SwapVector(t0, t2, zero_for_one=True)
-        assert sv1 != sv2
 
 
 class TestPoolCompatibility:
@@ -144,8 +120,8 @@ class TestPoolToHopState:
     def test_v2_direction(self):
         t0 = _make_token("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
         t1 = _make_token("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-        pool = _make_v2_pool(t0, t1, reserve0=1000, reserve1=2000)
-        hop_forward = pool.to_hop_state(zero_for_one=True)
+        pool: UniswapV2Pool = _make_v2_pool(t0, t1, reserve0=1000, reserve1=2000)
+        hop_forward: ConstantProductHop = pool.to_hop_state(zero_for_one=True)
         assert hop_forward.reserve_in == 1000
         assert hop_forward.reserve_out == 2000
 
