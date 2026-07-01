@@ -55,7 +55,7 @@ fn init_hash_for(chain_id: u64, factory: &str) -> PyResult<Option<String>> {
 /// `factory` itself (the `null → factory` convention). Returns the
 /// EIP-55 checksummed address, or `None` for an unregistered
 /// ``(chain, factory)``. This is the load-bearing helper for the
-/// separate-deployer case (PancakeSwap V3 uses a deployer distinct from
+/// separate-deployer case (`PancakeSwap` V3 uses a deployer distinct from
 /// its factory).
 ///
 /// # Errors
@@ -83,7 +83,7 @@ fn resolve_deployer(chain_id: u64, factory: &str) -> PyResult<String> {
 /// Resolve the CREATE2 init code hash for a V3 ``(chain_id, factory)`` pair,
 /// with a documented fallback. Returns the JSON row's `init_hash` when shipped
 /// with a CREATE2 init hash; otherwise the Uniswap V3 mainnet fallback (the
-/// retired Python ClassVar's default for non-JSON V3 pools) (Fork A, P62DKO).
+/// retired Python `ClassVar`'s default for non-JSON V3 pools) (Fork A, P62DKO).
 #[pyfunction]
 fn resolve_v3_init_hash(chain_id: u64, factory: &str) -> PyResult<String> {
     let addr = parse_address(factory)
@@ -97,7 +97,7 @@ fn resolve_v3_init_hash(chain_id: u64, factory: &str) -> PyResult<String> {
 /// Resolve the CREATE2 init code hash for a V2 ``(chain_id, factory)`` pair,
 /// with a documented fallback. Returns the JSON row's `init_hash` when shipped
 /// with a CREATE2 init hash; otherwise the Uniswap V2 mainnet fallback (the
-/// retired Python ClassVar's default for non-JSON V2 pools) (Fork A, NSAZ4X).
+/// retired Python `ClassVar`'s default for non-JSON V2 pools) (Fork A, NSAZ4X).
 #[pyfunction]
 fn resolve_v2_init_hash(chain_id: u64, factory: &str) -> PyResult<String> {
     let addr = parse_address(factory)
@@ -133,7 +133,7 @@ pub(crate) fn add_deployments(m: &Bound<'_, PyModule>) -> PyResult<()> {
 // enforced.
 
 fn map_mismatch(m: AddressMismatch) -> pyo3::PyErr {
-    pyo3::exceptions::PyValueError::new_err(m.to_string()).into()
+    pyo3::exceptions::PyValueError::new_err(m.to_string())
 }
 
 /// Verify a V2 pool registration's declared address against the JSON-sourced
