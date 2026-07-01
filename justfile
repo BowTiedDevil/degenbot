@@ -199,7 +199,12 @@ setup-git-hooks:
     # any stale custom hooksPath from the old .githooks setup so it isn't used.
     git config --unset core.hooksPath 2>/dev/null || true
     git config commit.template .commit-template
-    uv run prek install
+    # prek is installed as a global uv tool (~/.local/bin/prek) so the hooks
+    # it generates do NOT pin a throwaway venv path — they fall back to `prek`
+    # on PATH, which survives venv recreations and is reproducible across
+    # host/container installs. Install on demand if missing (host first run).
+    command -v prek >/dev/null 2>&1 || uv tool install prek
+    prek install
     echo "✓ prek hooks (pre-commit, commit-msg, pre-push) and commit template configured."
 
 # ========== Documentation ==========

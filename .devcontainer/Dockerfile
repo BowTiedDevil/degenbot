@@ -95,6 +95,15 @@ RUN npx skills add vercel-labs/agent-browser -g --agent pi --yes
 
 RUN go install github.com/sandover/ergo/cmd/ergo@latest
 
+# prek (git hook runner) as a global uv tool. Lands in ~/.local/bin via the
+# uv tool bin dir (already on PATH via ENV above). Baked into the image for
+# the same attach reason as foundry/pi/ergo: attach.sh does `podman start` +
+# `podman exec`, which does NOT run postCreateCommand — so `just
+# setup-git-hooks` (run by post-create.sh) needs prek already on PATH. Using
+# the global uv tool (not the project venv) keeps the hooks prek generates
+# from pinning a throwaway .venv path; they fall back to `prek` on PATH.
+RUN uv tool install prek
+
 # Generate shell completions for the four curl/npm/go-installed CLIs into
 # ~/.bashrc.d/, which ~/.bashrc already loops over and sources at shell
 # startup. Baked into the image (not post-create.sh) for the same attach
