@@ -555,28 +555,34 @@ impl PyLiquidityPool {
             .unwrap_or_default()
     }
 
-    /// Token0 contract address (EIP-55 checksummed hex). Empty string if not a
-    /// V2/V3 pool.
+    /// Token0 contract address (EIP-55 checksummed hex). Empty string if not
+    /// a V2/V3/V4 pool.
     #[getter]
     fn token0_address(&self) -> String {
         let core = self.core.read();
         let addr = match core.pool_family(self.pool_id) {
             "v2" => core.get_v2_identity(self.pool_id).map(|i| i.token0),
             "v3" => core.get_v3_identity(self.pool_id).map(|i| i.token0),
+            "v4" => core
+                .get_v4_identity(self.pool_id)
+                .map(|i| i.pool_key.currency0),
             _ => None,
         };
         addr.map(|a| address_utils::address_to_checksum_string(&a))
             .unwrap_or_default()
     }
 
-    /// Token1 contract address (EIP-55 checksummed hex). Empty string if not a
-    /// V2/V3 pool.
+    /// Token1 contract address (EIP-55 checksummed hex). Empty string if not
+    /// a V2/V3/V4 pool.
     #[getter]
     fn token1_address(&self) -> String {
         let core = self.core.read();
         let addr = match core.pool_family(self.pool_id) {
             "v2" => core.get_v2_identity(self.pool_id).map(|i| i.token1),
             "v3" => core.get_v3_identity(self.pool_id).map(|i| i.token1),
+            "v4" => core
+                .get_v4_identity(self.pool_id)
+                .map(|i| i.pool_key.currency1),
             _ => None,
         };
         addr.map(|a| address_utils::address_to_checksum_string(&a))
@@ -690,6 +696,9 @@ impl PyLiquidityPool {
         let token_addr = match core.pool_family(self.pool_id) {
             "v2" => core.get_v2_identity(self.pool_id).map(|i| i.token0),
             "v3" => core.get_v3_identity(self.pool_id).map(|i| i.token0),
+            "v4" => core
+                .get_v4_identity(self.pool_id)
+                .map(|i| i.pool_key.currency0),
             _ => None,
         }?;
         if core.has_token(&token_addr) {
@@ -706,6 +715,9 @@ impl PyLiquidityPool {
         let token_addr = match core.pool_family(self.pool_id) {
             "v2" => core.get_v2_identity(self.pool_id).map(|i| i.token1),
             "v3" => core.get_v3_identity(self.pool_id).map(|i| i.token1),
+            "v4" => core
+                .get_v4_identity(self.pool_id)
+                .map(|i| i.pool_key.currency1),
             _ => None,
         }?;
         if core.has_token(&token_addr) {
@@ -772,6 +784,40 @@ impl PyLiquidityPool {
                 core.get_v4_identity(self.pool_id)
                     .map(|i| i.pool_key.tick_spacing)
             })
+            .unwrap_or_default()
+    }
+
+    // --- V4 identity getters (ADR-005 sealed seam) ---
+    // Read off V4PoolIdentity so UniswapV4Pool._from_py_pool is self-describing.
+
+    /// Pool manager contract address (EIP-55 checksummed hex). Empty string if
+    /// not a V4 pool.
+    #[getter]
+    fn pool_manager_address(&self) -> String {
+        let core = self.core.read();
+        core.get_v4_identity(self.pool_id)
+            .map(|i| address_utils::address_to_checksum_string(&i.pool_manager))
+            .unwrap_or_default()
+    }
+
+    /// On-chain V4 pool ID (32-byte hex, ``0x``-prefixed). Empty string if not
+    /// a V4 pool.
+    #[getter]
+    fn pool_id_hex(&self) -> String {
+        let core = self.core.read();
+        match core.get_v4_identity(self.pool_id) {
+            Some(i) => format!("0x{}", bytes_to_hex(&i.pool_id)),
+            None => String::new(),
+        }
+    }
+
+    /// Hook contract address (EIP-55 checksummed hex). Empty string if not a
+    /// V4 pool.
+    #[getter]
+    fn hook_address(&self) -> String {
+        let core = self.core.read();
+        core.get_v4_identity(self.pool_id)
+            .map(|i| address_utils::address_to_checksum_string(&i.pool_key.hooks))
             .unwrap_or_default()
     }
 
