@@ -366,21 +366,12 @@ class AsyncV3PoolBuilder:
                 tick=int(tick),
                 block_number=state_block_int,
             )
-        pool = pool_class(
-            py_pool_handle,
-            address=pool_address,
-            token0=token0,
-            token1=token1,
-            factory=factory,
-            fee=fee,
-            tick_spacing=tick_spacing_for_pool,
-            deployer_address=deployer,
-            init_hash=init_hash,
-            tick_data_fetcher=self._make_tick_data_fetcher(pool_address, chain_id, io=io),
-            state_block=int(state_block) if state_block is not None else 0,
-            sparse_liquidity_map=not (db_snapshot_loaded and bool(working_tick_data)),
-            tick_bitmap_override=working_tick_bitmap or None,
-        )
+        pool = pool_class._from_py_pool(py_pool_handle)  # noqa: SLF001
+        pool._sparse_liquidity_map = not (db_snapshot_loaded and bool(working_tick_data))  # noqa: SLF001
+        # Deployer / init-hash: the seam defaults to factory + class constant.
+        # Override with registry-resolved values if they differ.
+        pool.deployer_address = get_checksum_address(deployer)
+        pool.init_hash = init_hash
 
         # Register pool
         self._pools.add(

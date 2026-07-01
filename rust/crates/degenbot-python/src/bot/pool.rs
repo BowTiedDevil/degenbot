@@ -541,44 +541,60 @@ impl PyLiquidityPool {
     // what V2PoolState already holds; the descriptor (variant/stable_swap/
     // fee_denominator) + resolved DexIdentity preset are new in this slice.
 
-    /// Pool contract address (EIP-55 checksummed hex). Empty string if not a V2 pool.
+    /// Pool contract address (EIP-55 checksummed hex). Empty string if not a
+    /// V2/V3 pool.
     #[getter]
     fn address(&self) -> String {
         let core = self.core.read();
-        match core.get_v2_identity(self.pool_id) {
-            Some(s) => address_utils::address_to_checksum_string(&s.address),
-            None => String::new(),
-        }
+        let addr = match core.pool_family(self.pool_id) {
+            "v2" => core.get_v2_identity(self.pool_id).map(|i| i.address),
+            "v3" => core.get_v3_identity(self.pool_id).map(|i| i.address),
+            _ => None,
+        };
+        addr.map(|a| address_utils::address_to_checksum_string(&a))
+            .unwrap_or_default()
     }
 
-    /// Token0 contract address (EIP-55 checksummed hex). Empty string if not a V2 pool.
+    /// Token0 contract address (EIP-55 checksummed hex). Empty string if not a
+    /// V2/V3 pool.
     #[getter]
     fn token0_address(&self) -> String {
         let core = self.core.read();
-        match core.get_v2_identity(self.pool_id) {
-            Some(s) => address_utils::address_to_checksum_string(&s.token0),
-            None => String::new(),
-        }
+        let addr = match core.pool_family(self.pool_id) {
+            "v2" => core.get_v2_identity(self.pool_id).map(|i| i.token0),
+            "v3" => core.get_v3_identity(self.pool_id).map(|i| i.token0),
+            _ => None,
+        };
+        addr.map(|a| address_utils::address_to_checksum_string(&a))
+            .unwrap_or_default()
     }
 
-    /// Token1 contract address (EIP-55 checksummed hex). Empty string if not a V2 pool.
+    /// Token1 contract address (EIP-55 checksummed hex). Empty string if not a
+    /// V2/V3 pool.
     #[getter]
     fn token1_address(&self) -> String {
         let core = self.core.read();
-        match core.get_v2_identity(self.pool_id) {
-            Some(s) => address_utils::address_to_checksum_string(&s.token1),
-            None => String::new(),
-        }
+        let addr = match core.pool_family(self.pool_id) {
+            "v2" => core.get_v2_identity(self.pool_id).map(|i| i.token1),
+            "v3" => core.get_v3_identity(self.pool_id).map(|i| i.token1),
+            _ => None,
+        };
+        addr.map(|a| address_utils::address_to_checksum_string(&a))
+            .unwrap_or_default()
     }
 
-    /// Factory contract address (EIP-55 checksummed hex). Empty string if not a V2 pool.
+    /// Factory contract address (EIP-55 checksummed hex). Empty string if not a
+    /// V2/V3 pool.
     #[getter]
     fn factory(&self) -> String {
         let core = self.core.read();
-        match core.get_v2_identity(self.pool_id) {
-            Some(s) => address_utils::address_to_checksum_string(&s.factory),
-            None => String::new(),
-        }
+        let addr = match core.pool_family(self.pool_id) {
+            "v2" => core.get_v2_identity(self.pool_id).map(|i| i.factory),
+            "v3" => core.get_v3_identity(self.pool_id).map(|i| i.factory),
+            _ => None,
+        };
+        addr.map(|a| address_utils::address_to_checksum_string(&a))
+            .unwrap_or_default()
     }
 
     /// `token0→token1` fee parameters: `(gamma_numer, fee_denom)` — the
@@ -671,9 +687,13 @@ impl PyLiquidityPool {
     /// shared `BotState`.
     fn get_token0(&self) -> Option<PyErc20Token> {
         let core = self.core.read();
-        let identity = core.get_v2_identity(self.pool_id)?;
-        if core.has_token(&identity.token0) {
-            Some(PyErc20Token::new(Arc::clone(&self.core), identity.token0))
+        let token_addr = match core.pool_family(self.pool_id) {
+            "v2" => core.get_v2_identity(self.pool_id).map(|i| i.token0),
+            "v3" => core.get_v3_identity(self.pool_id).map(|i| i.token0),
+            _ => None,
+        }?;
+        if core.has_token(&token_addr) {
+            Some(PyErc20Token::new(Arc::clone(&self.core), token_addr))
         } else {
             None
         }
@@ -683,9 +703,13 @@ impl PyLiquidityPool {
     /// shared `BotState`.
     fn get_token1(&self) -> Option<PyErc20Token> {
         let core = self.core.read();
-        let identity = core.get_v2_identity(self.pool_id)?;
-        if core.has_token(&identity.token1) {
-            Some(PyErc20Token::new(Arc::clone(&self.core), identity.token1))
+        let token_addr = match core.pool_family(self.pool_id) {
+            "v2" => core.get_v2_identity(self.pool_id).map(|i| i.token1),
+            "v3" => core.get_v3_identity(self.pool_id).map(|i| i.token1),
+            _ => None,
+        }?;
+        if core.has_token(&token_addr) {
+            Some(PyErc20Token::new(Arc::clone(&self.core), token_addr))
         } else {
             None
         }

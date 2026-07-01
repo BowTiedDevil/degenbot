@@ -411,25 +411,18 @@ class V3PoolBuilder(V3BuilderBase):
         # The companion's ``_bitmap_override`` is populated by the constructor
         # from ``tick_bitmap_override`` below; it does not depend on a Rust
         # ``update_tick_data`` call.
-        # The tick fetcher is stored Rust-side on V3PoolState at registration
-        # (ADR-006 I/O trait object); the companion still passes it here for the
-        # Python-level `_fetch_tick_bitmap_word` pre-fetch path (deleted in the
-        # V3 seam migration, GYOC6P).
-        pool = pool_class(
-            py_pool_handle,
-            address=pool_address,
-            token0=token0,
-            token1=token1,
-            factory=factory,
-            fee=fee,
-            tick_spacing=tick_spacing_for_pool,
-            deployer_address=deployer,
-            init_hash=init_hash,
-            tick_data_fetcher=self._make_tick_data_fetcher(pool_address, chain_id, io=io),
-            state_block=int(state_block) if state_block is not None else 0,
-            sparse_liquidity_map=not (db_snapshot_loaded and bool(working_tick_data)),
-            tick_bitmap_override=working_tick_bitmap or None,
-        )
+        # ADR-005 sealed seam: the companion reads ALL identity off the handle
+        # via `_from_py_pool` (no identity kwargs). The tick fetcher was stored
+        # Rust-side at registration above (task MLJT4V).
+        pool = pool_class._from_py_pool(py_pool_handle)  # noqa: SLF001
+        # Sparse-liquidity-map flag: the companion infers from tick_data_snapshot,
+        # but the builder knows the true coverage from the DB snapshot. Override
+        # if the builder has more info.
+        pool._sparse_liquidity_map = not (db_snapshot_loaded and bool(working_tick_data))  # noqa: SLF001
+        # Deployer / init-hash: the seam defaults to factory + class constant.
+        # Override with DB/registry-resolved values if they differ.
+        pool.deployer_address = get_checksum_address(deployer)
+        pool.init_hash = init_hash
 
         # Register pool
         self._pools.add(

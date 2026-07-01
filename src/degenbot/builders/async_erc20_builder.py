@@ -73,6 +73,16 @@ class AsyncErc20Builder:
 
         # Check registry first
         if (existing := self._tokens.get(token_address=address, chain_id=chain_id)) is not None:
+            # ADR-006: ensure the token is registered in the shared PyBot
+            # (Rust BotState.tokens) — see erc20_builder.py for rationale.
+            if self._py_bot.get_token(address) is None:
+                self._py_bot.register_token(
+                    address,
+                    existing.name,
+                    existing.symbol,
+                    existing.decimals,
+                    chain_id,
+                )
             return existing
 
         # Check for Ether placeholder

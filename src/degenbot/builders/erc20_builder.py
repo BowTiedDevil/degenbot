@@ -79,6 +79,19 @@ class Erc20Builder:
 
         # Check registry first
         if (existing := self._tokens.get(token_address=address, chain_id=chain_id)) is not None:
+            # ADR-006: ensure the token is registered in the shared PyBot
+            # (Rust BotState.tokens) — a token pre-registered in the Python
+            # registry might not be in the PyBot yet. Pool companions recover
+            # tokens via py_pool.get_token0/get_token1, which look up the
+            # identity's token address in the Rust BotState.tokens registry.
+            if self._py_bot.get_token(address) is None:
+                self._py_bot.register_token(
+                    address,
+                    existing.name,
+                    existing.symbol,
+                    existing.decimals,
+                    chain_id,
+                )
             return existing
 
         # Check for Ether placeholder

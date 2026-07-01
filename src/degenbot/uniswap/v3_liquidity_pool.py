@@ -25,14 +25,12 @@ sparse-map concept at all.
 """
 
 import dataclasses
-from collections.abc import Callable
-from typing import Any, ClassVar, TypedDict
+from typing import Any, ClassVar, Self, TypedDict
 from weakref import WeakSet
 
 from eth_typing import ChecksumAddress
 
 from degenbot.arbitrage.types import UniswapV3PoolSwapAmounts
-from degenbot.builders.tick_data_fetcher import FetchedTickData
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.degenbot_rs import PyLiquidityPool
 from degenbot.erc20 import Erc20Token
@@ -129,6 +127,25 @@ class UniswapV3Pool(
 
     type PoolState = UniswapV3PoolState
 
+    # Instance attributes set in `_from_py_pool` (the only construction seam —
+    # `__init__` raises). Declared at class scope so the type checker tracks
+    # them without inline annotations on the classmethod body.
+    _py_pool: PyLiquidityPool
+    address: ChecksumAddress
+    factory: ChecksumAddress
+    _fee: int
+    _tick_spacing: int
+    _token0: Erc20Token
+    _token1: Erc20Token
+    init_hash: str
+    deployer_address: ChecksumAddress
+    name: str
+    _initial_state_block: int
+    _sparse_liquidity_map: bool
+    _bitmap_override: dict[int, BitmapAtWord]
+    _tick_data_fetcher: Any
+    _subscribers: WeakSet[Subscriber]
+
     UNISWAP_V3_MAINNET_POOL_INIT_HASH = (
         "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"
     )
@@ -152,95 +169,115 @@ class UniswapV3Pool(
         "bool",
     )
 
-    def __init__(
-        self,
-        py_pool: PyLiquidityPool,
-        *,
-        address: ChecksumAddress | str,
-        token0: Erc20Token,
-        token1: Erc20Token,
-        factory: str,
-        fee: int,
-        tick_spacing: int,
-        deployer_address: str | None = None,
-        init_hash: str | None = None,
-        tick_data_fetcher: Callable[[int, int], FetchedTickData | None] | None = None,
-        state_block: BlockNumber | None = None,
-        sparse_liquidity_map: bool | None = None,
-        tick_bitmap_override: dict[int, Any] | None = None,
-    ) -> None:
-        """Initialize the instance over a ``PyLiquidityPool`` handle.
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+        """Direct construction is forbidden.
 
-        Construction is purely in-memory (no I/O, no failure modes).
+        ``UniswapV3Pool`` is a Python companion over a Rust-owned
+        ``PyLiquidityPool`` handle. The handle can only be produced by
+        registering a pool in a ``PyBot`` — there is no way for a caller to
+        hand-build one. Use the registered entry points instead:
+
+        - Production: ``Bot.build_pool(address)``
+        - Tests: ``make_v3_pool(...)``
+
+        Both register the pool in Rust, obtain the ``PyLiquidityPool``
+        handle, and wrap it via :meth:`_from_py_pool` (mirroring Polars'
+        ``_from_pydf`` seam).
+
+        Raises:
+            TypeError: Always. Direct construction is not supported.
+
         """
+        msg = (
+            f"{type(self).__name__} cannot be constructed directly. "
+            "Use Bot.build_pool(address) (production) or make_v3_pool(...) "
+            "(tests) to register the pool in Rust and obtain the "
+            "PyLiquidityPool handle to wrap."
+        )
+        raise TypeError(msg)
+
+    @classmethod
+    def _from_py_pool(cls, py_pool: PyLiquidityPool) -> Self:
+        """Wrap a Rust-owned ``PyLiquidityPool`` handle as a Python companion.
+
+        Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). The
+        handle is self-describing: every identity field (address, factory,
+        fee, tick_spacing, tokens) is read off it — no identity is passed as
+        constructor args. Rust owns the mutable state (slot0 + tick_data +
+        reorg journal) as ``V3PoolState`` and the immutable registration
+        metadata as ``V3PoolIdentity``; this companion reads both through
+        ``self._py_pool``.
+
+        The sparse-tick fetcher is stored Rust-side on ``V3PoolState``
+        (ADR-006 I/O trait object, task MLJT4V) — not a constructor arg.
+        The companion-side ``_bitmap_override`` cache is deleted (the Rust
+        bitmap representation is faithful: empty-but-checked words survive in
+        ``known_bitmap_words``).
+
+        Returns:
+            A ``cls`` instance wrapping ``py_pool``.
+
+        Raises:
+            DegenbotValueError: If the handle is not a V3-family pool
+                (``py_pool.pool_family`` is not ``"v3"``).
+
+        """
+        self = cls.__new__(cls)
         self._py_pool = py_pool
-        self.address = get_checksum_address(address)
-        self._token0 = token0
-        self._token1 = token1
-        self.factory = get_checksum_address(factory)
-        self._fee = fee
-        self._tick_spacing = tick_spacing
 
-        # The block of the registration snapshot (the genesis journal delta).
-        # Used to gate early-block liquidity updates (matches the pre-companion
-        # ``_initial_state_block`` rule: liquidity events prior to the
-        # registration snapshot bypass the in-range active-liquidity
-        # adjustment so historical replay doesn't trip the invariant).
-        self._initial_state_block = (
-            state_block if state_block is not None else self._py_pool.update_block
-        )
+        # Variant-family guard (uniform precondition every seam uses).
+        if py_pool.pool_family != "v3":
+            msg = (
+                "PyLiquidityPool handle is not a V3-family pool "
+                f"(got pool_family {py_pool.pool_family!r}); "
+                "UniswapV3Pool._from_py_pool requires a handle "
+                "registered via register_v3_pool"
+            )
+            raise DegenbotValueError(message=msg)
 
-        # Derive deployer/init_hash from constructor args or class defaults.
-        self.deployer_address = (
-            get_checksum_address(deployer_address) if deployer_address is not None else self.factory
-        )
-        self.init_hash = (
-            init_hash if init_hash is not None else self.UNISWAP_V3_MAINNET_POOL_INIT_HASH
-        )
+        # Identity — all read off the handle (no shadow kwargs).
+        self.address = get_checksum_address(py_pool.address)
+        self.factory = get_checksum_address(py_pool.factory)
+        self._fee = py_pool.fee
+        self._tick_spacing = py_pool.tick_spacing
+
+        py_token0 = py_pool.get_token0()
+        py_token1 = py_pool.get_token1()
+        if py_token0 is None or py_token1 is None:
+            msg = (
+                "pool tokens must be registered in the same Bot as the pool "
+                "(ADR-006): get_token0/get_token1 returned None"
+            )
+            raise DegenbotValueError(message=msg)
+        self._token0 = Erc20Token._from_py_token(py_token0)  # noqa: SLF001
+        self._token1 = Erc20Token._from_py_token(py_token1)  # noqa: SLF001
+
+        # Deployer / init-hash: V3 defaults (the factory-derived deployer +
+        # the mainnet init hash). A subclass may override the ClassVar for a
+        # non-mainnet DEX.
+        self.deployer_address = self.factory
+        self.init_hash = self.UNISWAP_V3_MAINNET_POOL_INIT_HASH
+
+        # The block of the registration snapshot (genesis journal delta).
+        self._initial_state_block = self._py_pool.update_block
 
         self.name = (
             f"{self._token0}-{self._token1} ({self.__class__.__name__}, "
             f"{100 * self._fee / self.FEE_DENOMINATOR:.2f}%)"
         )
 
-        # Sparse-map detection: a pool is "sparse" when no tick data has been
-        # seeded yet (the fetcher backfills on demand). The companion infers
-        # sparseness from the Rust-side tick map unless the builder explicitly
-        # overrides it.
-        self._sparse_liquidity_map = (
-            sparse_liquidity_map
-            if sparse_liquidity_map is not None
-            else len(self._py_pool.tick_data_snapshot()) == 0
-        )
+        # Sparse-map detection: inferred from the Rust-side tick map.
+        self._sparse_liquidity_map = len(self._py_pool.tick_data_snapshot()) == 0
 
-        # Track tick-data-fetcher-checked words client-side so a "checked but
-        # empty" word (on-chain ``tickBitmap(word) == 0``) appears in the
-        # bitmap the simulator sees as present-but-zero rather than missing —
-        # otherwise the sparse-map fetch loop re-fetches the same word forever
-        # (Rust derives the bitmap from ``tick_data`` KEYS only, so a word with
-        # no initialized ticks vanishes from the derived bitmap). Mirrors the
-        # pre-companion StateManager which stored the bitmap dict explicitly.
-        self._bitmap_override: dict[int, BitmapAtWord] = {}
-        if tick_bitmap_override is not None:
-            for word, bitmap_at_word in tick_bitmap_override.items():
-                if isinstance(bitmap_at_word, BitmapAtWord):
-                    self._bitmap_override[int(word)] = bitmap_at_word
-                elif isinstance(bitmap_at_word, dict):
-                    self._bitmap_override[int(word)] = BitmapAtWord(
-                        bitmap=int(bitmap_at_word.get("bitmap", 0)),
-                        block=int(bitmap_at_word.get("block", 0)),
-                    )
-                else:
-                    self._bitmap_override[int(word)] = BitmapAtWord(
-                        bitmap=int(bitmap_at_word[0]),
-                        block=int(bitmap_at_word[1]) if len(bitmap_at_word) > 1 else 0,
-                    )
+        # The tick fetcher is stored Rust-side (ADR-006 I/O trait object,
+        # task MLJT4V). The companion-side fetcher + bitmap-override caches
+        # are deleted — the Rust fetch+retry loop + faithful bitmap
+        # representation handle sparse misses.
+        self._bitmap_override = {}
+        self._tick_data_fetcher = None
 
-        # Tick data fetcher for sparse liquidity maps (rare simulation
-        # backfill path; the engine owns tick data in the production path).
-        self._tick_data_fetcher = tick_data_fetcher
-
-        self._subscribers: WeakSet[Subscriber] = WeakSet()
+        self._subscribers = WeakSet()
+        return self
 
     def __repr__(self) -> str:  # pragma: no cover
         """Return the canonical string representation.

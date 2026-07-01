@@ -84,8 +84,8 @@ class TestV3PoolIOFreeConstructor:
         )
 
         assert pool.address == get_checksum_address(USDC_WETH_V3_POOL)
-        assert pool.token0 is weth
-        assert pool.token1 is usdc
+        assert pool.token0.address == weth.address
+        assert pool.token1.address == usdc.address
         assert pool.factory == get_checksum_address(UNISWAP_V3_FACTORY)
         assert pool.fee == V3_FEE
         assert pool.tick_spacing == V3_TICK_SPACING
@@ -183,9 +183,15 @@ class TestBotBuildV3Pool:
         provider.get_block_number.return_value = 18_000_000
         bot = Bot(config, provider=provider)
 
-        # Pre-register tokens
+        # Pre-register tokens (ADR-006: tokens must be in the same PyBot as the
+        # pool — _from_py_pool recovers them via py_pool.get_token0/get_token1).
         weth = _make_weth()
         usdc = _make_usdc()
+        for tok in (weth, usdc):
+            if bot._py_bot.get_token(tok.address) is None:  # noqa: SLF001
+                bot._py_bot.register_token(  # noqa: SLF001
+                    tok.address, tok.name, tok.symbol, tok.decimals, 1
+                )
         bot.tokens.add(token_address=weth_addr, chain_id=1, token=weth)
         bot.tokens.add(token_address=usdc_addr, chain_id=1, token=usdc)
 
