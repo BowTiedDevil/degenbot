@@ -1,6 +1,16 @@
-"""Arbitrage path construction, swap encoding, and solver integration."""
+"""Arbitrage path construction, swap encoding, and solver integration.
 
-import importlib
+The engine-facing orchestrator (:mod:`.engine_registry`), hop descriptors
+(:mod:`.hop_info`), and path policies (:mod:`.policy`) are intentionally NOT
+re-exported here: they import concrete pool classes that, during
+``import degenbot``, are first pulled in *before* this package finishes
+initializing (pool modules import :mod:`degenbot.arbitrage.types` at load
+time, creating a cycle). Import them directly from their submodules instead:
+
+    from degenbot.arbitrage.engine_registry import EngineRegistry
+    from degenbot.arbitrage.hop_info import HopInfo, PathInfo, V2HopInfo, ...
+    from degenbot.arbitrage.policy import PathPolicy, ...
+"""
 
 from .encoding import (
     ApprovalStrategy,
@@ -12,53 +22,13 @@ from .encoding import (
 )
 from .types import ArbitrageCalculationResult, V4PoolKey
 
-# Engine-facing orchestrator + hop descriptors (Plan 102): lazily imported so
-# `import degenbot` (which eagerly pulls in `.arbitrage` before `Bot` is
-# defined) doesn't trigger their top-level `from degenbot import Bot` — and so
-# the heavy snapshot/builder modules they pull in aren't loaded for callers
-# that only want `ApprovalStrategy` etc. Resolved on first attribute access
-# via `__getattr__` below.
-_LAZY = {
-    "EngineRegistry": ".engine_registry",
-    "HopInfo": ".hop_info",
-    "NoOpPathPredicate": ".policy",
-    "PathCompositionPredicate": ".policy",
-    "PathInfo": ".hop_info",
-    "PathPolicy": ".policy",
-    "V2HopInfo": ".hop_info",
-    "V3HopInfo": ".hop_info",
-    "V4HopInfo": ".hop_info",
-    "build_hops_from_pools": ".hop_info",
-    "touched_tokens": ".policy",
-}
-
-
-def __getattr__(name: str) -> object:
-    if name in _LAZY:
-        module = importlib.import_module(_LAZY[name], package=__name__)
-        return getattr(module, name)
-    msg = f"module {__name__!r} has no attribute {name!r}"
-    raise AttributeError(msg)
-
-
 __all__ = (
     "ApprovalStrategy",
     "ArbitrageCalculationResult",
     "EncodedCall",
-    "EngineRegistry",  # noqa: F822
     "FlatComposer",
-    "HopInfo",  # noqa: F822
     "NoApprovals",
-    "NoOpPathPredicate",  # noqa: F822
-    "PathCompositionPredicate",  # noqa: F822
-    "PathInfo",  # noqa: F822
-    "PathPolicy",  # noqa: F822
     "PayloadComposer",
-    "V2HopInfo",  # noqa: F822
-    "V3HopInfo",  # noqa: F822
-    "V4HopInfo",  # noqa: F822
     "V4PoolKey",
-    "build_hops_from_pools",  # noqa: F822
     "generate_payloads",
-    "touched_tokens",  # noqa: F822
 )

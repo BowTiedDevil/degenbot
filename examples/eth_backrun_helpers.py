@@ -1,8 +1,11 @@
+# ruff: noqa: DOC201
+
 import dataclasses
 import json
 import typing
 import warnings
 from collections.abc import Mapping
+from typing import cast
 
 from cmd_stream import (
     SENTINEL_NATIVE,
@@ -31,8 +34,14 @@ from cmd_stream import (
     enc_weth_withdraw,
 )
 
-from degenbot.arbitrage import PathInfo, V2HopInfo, V3HopInfo, V4HopInfo, build_hops_from_pools  # noqa: F401  (re-exported for tests)
 from degenbot.arbitrage.encoding import fits_int128
+from degenbot.arbitrage.hop_info import (  # noqa: F401  (re-exported for tests)
+    PathInfo,
+    V2HopInfo,
+    V3HopInfo,
+    V4HopInfo,
+    build_hops_from_pools,
+)
 from degenbot.arbitrage.verification_retry import VerificationRetryPolicy
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.config import resolve_rpc_uris
@@ -709,6 +718,7 @@ def _encode_cmd_v2_n_hop(
     for hop in path_info.hops:
         if not isinstance(hop, V2HopInfo):
             return None
+    v2_hops = cast("list[V2HopInfo]", path_info.hops)
 
     if any(o <= 0 for o in hop_outputs):
         return None
@@ -721,16 +731,16 @@ def _encode_cmd_v2_n_hop(
         executor_idx = SENTINEL_SELF
 
         # Register all pool addresses (preserves insertion order)
-        pool_indices = [at.add(h.pool_address) for h in path_info.hops]
+        pool_indices = [at.add(h.pool_address) for h in v2_hops]
 
         # Forward token from pool A (the intermediate sent to pool B)
-        hop_a = path_info.hops[0]
+        hop_a = v2_hops[0]
         zfo_a = hop_a.zfo
         forward_addr = hop_a.token1_address if zfo_a else hop_a.token0_address
         forward_idx = at.add(forward_addr)
 
         # WETH repayment token — the input token to pool A (output of last pool)
-        hop_last = path_info.hops[-1]
+        hop_last = v2_hops[-1]
         weth_addr = hop_last.token1_address if hop_last.zfo else hop_last.token0_address
         weth_idx = at.add(weth_addr)
 
@@ -740,7 +750,7 @@ def _encode_cmd_v2_n_hop(
 
         # 2..N. V2_SWAP_CALC for each subsequent pool
         for i in range(1, num_hops):
-            hop = path_info.hops[i]
+            hop = v2_hops[i]
             # Intermediate pools → next pool (direct custody); last pool → executor
             recipient_idx = pool_indices[i + 1] if i < num_hops - 1 else executor_idx
             callback_cmds += enc_v2_swap_calc(
@@ -807,6 +817,9 @@ def _encode_cmd_v4_v4(
     """
     hop_a = path_info.hops[0]
     hop_b = path_info.hops[1]
+
+    if not (isinstance(hop_a, V4HopInfo) and isinstance(hop_b, V4HopInfo)):
+        return None
     if not isinstance(hop_a, V4HopInfo) or not isinstance(hop_b, V4HopInfo):
         return None
 
@@ -1028,6 +1041,9 @@ def _encode_cmd_v4_v3(
     """
     hop_v4 = path_info.hops[0]
     hop_v3 = path_info.hops[1]
+
+    if not (isinstance(hop_v4, V4HopInfo) and isinstance(hop_v3, V3HopInfo)):
+        return None
     if not isinstance(hop_v4, V4HopInfo) or not isinstance(hop_v3, V3HopInfo):
         return None
 
@@ -1157,6 +1173,9 @@ def _encode_cmd_v3_v4(
     """
     hop_v3 = path_info.hops[0]
     hop_v4 = path_info.hops[1]
+
+    if not (isinstance(hop_v3, V3HopInfo) and isinstance(hop_v4, V4HopInfo)):
+        return None
     if not isinstance(hop_v3, V3HopInfo) or not isinstance(hop_v4, V4HopInfo):
         return None
 
@@ -1307,6 +1326,9 @@ def _encode_cmd_v4_v2(
     """
     hop_v4 = path_info.hops[0]
     hop_v2 = path_info.hops[1]
+
+    if not (isinstance(hop_v4, V4HopInfo) and isinstance(hop_v2, V2HopInfo)):
+        return None
     if not isinstance(hop_v4, V4HopInfo) or not isinstance(hop_v2, V2HopInfo):
         return None
 
@@ -1439,6 +1461,9 @@ def _encode_cmd_v2_v4(
     """
     hop_v2 = path_info.hops[0]
     hop_v4 = path_info.hops[1]
+
+    if not (isinstance(hop_v2, V2HopInfo) and isinstance(hop_v4, V4HopInfo)):
+        return None
     if not isinstance(hop_v2, V2HopInfo) or not isinstance(hop_v4, V4HopInfo):
         return None
 
@@ -1583,6 +1608,9 @@ def _encode_cmd_v3_v3(
     """
     hop_a = path_info.hops[0]
     hop_b = path_info.hops[1]
+
+    if not (isinstance(hop_a, V3HopInfo) and isinstance(hop_b, V3HopInfo)):
+        return None
     if not isinstance(hop_a, V3HopInfo) or not isinstance(hop_b, V3HopInfo):
         return None
 
@@ -1657,6 +1685,9 @@ def _encode_cmd_v2_v3(
     """
     hop_a = path_info.hops[0]
     hop_b = path_info.hops[1]
+
+    if not (isinstance(hop_a, V2HopInfo) and isinstance(hop_b, V3HopInfo)):
+        return None
     if not isinstance(hop_a, V2HopInfo) or not isinstance(hop_b, V3HopInfo):
         return None
 
@@ -1746,6 +1777,9 @@ def _encode_cmd_v3_v2(
     """
     hop_a = path_info.hops[0]
     hop_b = path_info.hops[1]
+
+    if not (isinstance(hop_a, V3HopInfo) and isinstance(hop_b, V2HopInfo)):
+        return None
     if not isinstance(hop_a, V3HopInfo) or not isinstance(hop_b, V2HopInfo):
         return None
 
@@ -1872,6 +1906,9 @@ def _3hop_v2_v2_v2(
 ) -> bytes | None:
     """Reverse-order flash borrow: V2c first, V2a→V2b via V2_SWAP_CALC."""
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V2HopInfo) and isinstance(hb, V2HopInfo) and isinstance(hc, V2HopInfo)):
+        return None
     _out_a, _out_b, out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -1915,6 +1952,9 @@ def _3hop_v2_v2_v3(
 ) -> bytes | None:
     """Reverse-order: V3c fires first, V2a→V2b via V2_SWAP_CALC."""
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V2HopInfo) and isinstance(hb, V2HopInfo) and isinstance(hc, V3HopInfo)):
+        return None
     _out_a, out_b, _out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -1962,6 +2002,9 @@ def _3hop_v2_v2_v4(
     when solver hop_outputs are stale/rounded relative to chain state.
     """
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V2HopInfo) and isinstance(hb, V2HopInfo) and isinstance(hc, V4HopInfo)):
+        return None
     _out_a, _out_b, _out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -2018,6 +2061,9 @@ def _3hop_v2_v3_v2(
 ) -> bytes | None:
     """Reverse-order from V2c: V3b(to=V2c), V2a→V3b during V3b callback (IIA ✓)."""
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V2HopInfo) and isinstance(hb, V3HopInfo) and isinstance(hc, V2HopInfo)):
+        return None
     out_a, _out_b, out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -2061,6 +2107,9 @@ def _3hop_v2_v3_v3(
 ) -> bytes | None:
     """V3c outermost, V2a inside V3b callback (to=V3b, IIA ✓)."""
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V2HopInfo) and isinstance(hb, V3HopInfo) and isinstance(hc, V3HopInfo)):
+        return None
     out_a, out_b, _out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -2101,6 +2150,9 @@ def _3hop_v2_v3_v4(
 ) -> bytes | None:
     """V3b outermost, V2a inside V3b callback, V3b→PM + V4 unlock."""
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V2HopInfo) and isinstance(hb, V3HopInfo) and isinstance(hc, V4HopInfo)):
+        return None
     out_a, out_b, out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -2157,6 +2209,9 @@ def _3hop_v2_v4_v2(
 ) -> bytes | None:
     """Reverse-order from V2c, V2a→PM delta netting."""
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V2HopInfo) and isinstance(hb, V4HopInfo) and isinstance(hc, V2HopInfo)):
+        return None
     out_a, out_b, out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -2216,6 +2271,9 @@ def _3hop_v2_v4_v3(
 ) -> bytes | None:
     """V3c reverse, V2a→PM inside unlock, V4_TAKE forward→V3c."""
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V2HopInfo) and isinstance(hb, V4HopInfo) and isinstance(hc, V3HopInfo)):
+        return None
     out_a, out_b, _out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -2273,6 +2331,9 @@ def _3hop_v2_v4_v4(
 ) -> bytes | None:
     """V4_TAKE WETH→V2a (excess), V2a→PM, delta netting, V4_TAKE profit."""
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V2HopInfo) and isinstance(hb, V4HopInfo) and isinstance(hc, V4HopInfo)):
+        return None
     out_a, out_b, out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -2330,6 +2391,9 @@ def _3hop_v3_v2_v2(
 ) -> bytes | None:
     """V3a outermost: sends USDC→V2b, V2b→V2c direct + WETH→V3a."""
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V3HopInfo) and isinstance(hb, V2HopInfo) and isinstance(hc, V2HopInfo)):
+        return None
     _out_a, out_b, out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -2368,6 +2432,9 @@ def _3hop_v3_v2_v3(
 ) -> bytes | None:
     """Reverse-order from V3c: V3a→V2b, V2b→V3c direct + explicit WETH→V3a."""
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V3HopInfo) and isinstance(hb, V2HopInfo) and isinstance(hc, V3HopInfo)):
+        return None
     _out_a, out_b, _out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -2414,6 +2481,9 @@ def _3hop_v3_v2_v4(
     erc20_transfer with the deterministic optimal_input.
     """
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V3HopInfo) and isinstance(hb, V2HopInfo) and isinstance(hc, V4HopInfo)):
+        return None
     out_a, out_b, out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -2475,6 +2545,9 @@ def _3hop_v3_v3_v2(
 ) -> bytes | None:
     """Reverse-order from V2c: V3a→V3b direct, V2c V2_SWAP_DIRECT + WETH→V3a."""
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V3HopInfo) and isinstance(hb, V3HopInfo) and isinstance(hc, V2HopInfo)):
+        return None
     out_a, _out_b, out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -2519,6 +2592,9 @@ def _3hop_v3_v3_v3(
 ) -> bytes | None:
     """Reverse-order direct custody, WETH auto-pay (no explicit ERC20 transfers)."""
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V3HopInfo) and isinstance(hb, V3HopInfo) and isinstance(hc, V3HopInfo)):
+        return None
     out_a, out_b, _out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -2564,6 +2640,9 @@ def _3hop_v3_v3_v4(
     (IIA ✓). sync(forward_b) before V3b swap, settle inside V4 unlock.
     """
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V3HopInfo) and isinstance(hb, V3HopInfo) and isinstance(hc, V4HopInfo)):
+        return None
     out_a, out_b, out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -2635,6 +2714,9 @@ def _3hop_v3_v4_v2(
     (V2 K-invariant ✓ for excess balance), V2c V2_SWAP_DIRECT.
     """
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V3HopInfo) and isinstance(hb, V4HopInfo) and isinstance(hc, V2HopInfo)):
+        return None
     out_a, out_b, out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -2718,6 +2800,9 @@ def _3hop_v3_v4_v3(
     survive at unlock-end. Mirrors the V2-V2-V4 fix (commit 2e505536).
     """
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V3HopInfo) and isinstance(hb, V4HopInfo) and isinstance(hc, V3HopInfo)):
+        return None
     _out_a, _out_b, _out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -2788,6 +2873,9 @@ def _3hop_v3_v4_v4(
     V4b and V4c deltas net: forward_a cancels, leaving WETH take + settle.
     """
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V3HopInfo) and isinstance(hb, V4HopInfo) and isinstance(hc, V4HopInfo)):
+        return None
     out_a, out_b, out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -2857,6 +2945,9 @@ def _3hop_v4_v2_v2(
 ) -> bytes | None:
     """V4_TAKE→V2b direct, V2b→V2c V2_SWAP_DIRECT chain."""
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V4HopInfo) and isinstance(hb, V2HopInfo) and isinstance(hc, V2HopInfo)):
+        return None
     out_a, out_b, out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -2908,6 +2999,9 @@ def _3hop_v4_v2_v3(
 ) -> bytes | None:
     """V3c-reverse: V4_TAKE→V2b, V2b→V3c direct (IIA ✓ during V3c callback)."""
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V4HopInfo) and isinstance(hb, V2HopInfo) and isinstance(hc, V3HopInfo)):
+        return None
     out_a, out_b, _out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -2969,6 +3063,9 @@ def _3hop_v4_v2_v4(
     V4_SETTLE_DELTA for remaining currencies.
     """
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V4HopInfo) and isinstance(hb, V2HopInfo) and isinstance(hc, V4HopInfo)):
+        return None
     out_a, out_b, _out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -3026,6 +3123,9 @@ def _3hop_v4_v3_v2(
 ) -> bytes | None:
     """V4_TAKE USDC→V3b (IIA ✓), V3b→V2c + WETH→V3b."""
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V4HopInfo) and isinstance(hb, V3HopInfo) and isinstance(hc, V2HopInfo)):
+        return None
     out_a, _out_b, out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -3082,6 +3182,9 @@ def _3hop_v4_v3_v3(
 ) -> bytes | None:
     """V3c→V3b reverse + V4_TAKE USDC→V3b (IIA ✓), auto-settle WETH delta."""
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V4HopInfo) and isinstance(hb, V3HopInfo) and isinstance(hc, V3HopInfo)):
+        return None
     out_a, out_b, _out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -3154,6 +3257,9 @@ def _3hop_v4_v3_v4(
     V4_TAKE WETH profit, settle remaining deltas.
     """
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V4HopInfo) and isinstance(hb, V3HopInfo) and isinstance(hc, V4HopInfo)):
+        return None
     out_a, out_b, out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -3219,6 +3325,9 @@ def _3hop_v4_v4_v2(
 ) -> bytes | None:
     """Delta netting V4a↔V4b, V4_TAKE→V2c direct."""
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V4HopInfo) and isinstance(hb, V4HopInfo) and isinstance(hc, V2HopInfo)):
+        return None
     out_a, out_b, out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -3277,6 +3386,9 @@ def _3hop_v4_v4_v3(
 ) -> bytes | None:
     """Delta netting V4a↔V4b, V4_TAKE forward→exec, ERC20 forward→V3c (IIA ✓)."""
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V4HopInfo) and isinstance(hb, V4HopInfo) and isinstance(hc, V3HopInfo)):
+        return None
     out_a, out_b, _out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None
@@ -3359,6 +3471,9 @@ def _3hop_v4_v4_v4(
         )
         return None
     ha, hb, hc = path_info.hops
+
+    if not (isinstance(ha, V4HopInfo) and isinstance(hb, V4HopInfo) and isinstance(hc, V4HopInfo)):
+        return None
     out_a, out_b, out_c = hop_outputs
     if any(x <= 0 for x in hop_outputs):
         return None

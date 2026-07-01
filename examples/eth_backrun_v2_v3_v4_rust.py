@@ -38,11 +38,13 @@ import json
 import operator
 import os
 import pathlib
+import signal
 import time
 import traceback
 from collections import deque
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import dotenv
 import eth_abi.abi
@@ -62,17 +64,21 @@ from eth_typing import ChainId, ChecksumAddress
 from hexbytes import HexBytes
 from web3 import AsyncWeb3, Web3
 from web3.exceptions import TransactionNotFound, Web3Exception
-from web3.types import BlockStateCallV1, SimulateV1Payload, StateOverrideParams, TxParams
+from web3.types import (
+    BlockNumber,
+    BlockStateCallV1,
+    HexStr,
+    Nonce,
+    SimulateV1Payload,
+    StateOverride,
+    TxParams,
+    Wei,
+)
 
 from degenbot import Bot, UniswapV2Pool, UniswapV3Pool, get_checksum_address
-from degenbot.arbitrage import (
-    EngineRegistry,
-    HopInfo,
-    V2HopInfo,
-    V3HopInfo,
-    V4HopInfo,
-)
 from degenbot.arbitrage.encoding import fits_int128
+from degenbot.arbitrage.engine_registry import EngineRegistry
+from degenbot.arbitrage.hop_info import HopInfo, V2HopInfo, V3HopInfo, V4HopInfo
 from degenbot.arbitrage.verification_retry import (
     VerificationRetryPolicy,
     retry_verification_call,
@@ -412,7 +418,7 @@ def build_simulation_state_overrides(
     executor_owner: str,
     inject_code: bool = False,
     injected_address: str | None = None,
-) -> dict[ChecksumAddress, StateOverrideParams]:
+) -> StateOverride:
     """Build the stateOverrides dict for eth_simulateV1.
 
     All fields (code, balance, nonce, state, stateDiff) go under
@@ -435,24 +441,24 @@ def build_simulation_state_overrides(
     When inject_code=False:
       - Only funds the executor owner with ETH for gas
     """
-    overrides: dict[ChecksumAddress, StateOverrideParams] = {}
+    overrides: dict[str, dict[str, Any]] = {}
 
     # Fund executor owner with ETH for gas
-    overrides[get_checksum_address(executor_owner)] = StateOverrideParams(balance=100 * 10**18)
+    overrides[get_checksum_address(executor_owner)] = {"balance": cast("Wei", 100 * 10**18)}
 
     if inject_code and injected_address:
         # Inject executor runtime bytecode at the fresh address.
         # CBOR metadata must remain intact — see IMPORTANT note in the
         # docstring and contracts/recompile.py.
         runtime_code = _load_executor_runtime_bytecode()
-        overrides[get_checksum_address(injected_address)] = StateOverrideParams(
-            code=runtime_code,
+        overrides[get_checksum_address(injected_address)] = {
+            "code": cast("HexStr", runtime_code),
             # Fund the injected executor with ETH for V4 settlement and
             # V3 callback WETH payments (the deployed contract wraps 10 ETH
             # at construction; code injection skips this, so we must set
             # the balance explicitly).
-            balance=10 * 10**18,
-        )
+            "balance": cast("Wei", 10 * 10**18),
+        }
 
         # Pre-warm ERC6909 and WETH storage slots to avoid cold SSTORE
         # penalties. compute_simulation_warmup_slots() returns stateDiff
@@ -493,11 +499,11 @@ def build_simulation_state_overrides(
 
         WETH_BALANCEOF_MAPPING_SLOT = 3
         weth_balance_slot = mapping_slot(WETH_BALANCEOF_MAPPING_SLOT, int(injected_address, 16))
-        overrides[Web3.to_checksum_address(WETH_ADDRESS)]["stateDiff"][
+        overrides[get_checksum_address(WETH_ADDRESS)]["stateDiff"][
             f"0x{weth_balance_slot:064x}"
-        ] = "0x" + (10 * 10**18).to_bytes(32, "big").hex()
+        ] = cast("HexStr", "0x" + (10 * 10**18).to_bytes(32, "big").hex())
 
-    return overrides
+    return cast("StateOverride", overrides)
 
 
 class PathSuppression:
@@ -582,7 +588,7 @@ class Dispatcher:
     """
 
     pending_nonces: set[int] = dataclasses.field(default_factory=set)
-    pending_pools: set[int] = dataclasses.field(default_factory=set)
+    pending_pools: set[str] = dataclasses.field(default_factory=set)
     active_tasks: set[asyncio.Task] = dataclasses.field(default_factory=set)
     current_block_ref: list[int] = dataclasses.field(default_factory=lambda: [0])
     block_times: deque[tuple[int, int]] = dataclasses.field(
@@ -615,15 +621,15 @@ class Dispatcher:
         self.pending_nonces.discard(nonce)
 
     # ── pool mutual exclusion ────────────────────────────────────
-    def reserve_pools(self, path_pools: set[int]) -> None:
+    def reserve_pools(self, path_pools: set[str]) -> None:
         """Mark Rust pool keys as locked by an in-flight tx."""
         self.pending_pools.update(path_pools)
 
-    def release_pools(self, pools: set[int]) -> None:
+    def release_pools(self, pools: set[str]) -> None:
         """Release Rust pool keys when a tx confirms or expires."""
         self.pending_pools.difference_update(pools)
 
-    def is_path_blocked(self, path_pools: set[int], committed_pools: set[int]) -> bool:
+    def is_path_blocked(self, path_pools: set[str], committed_pools: set[str]) -> bool:
         """True iff any path pool is already locked (pending) or committed this batch."""
         return bool(path_pools & (self.pending_pools | committed_pools))
 
@@ -680,7 +686,7 @@ def _hop_display_addr(hop: HopInfo) -> str:
     return hop.pool_id_hex
 
 
-def _hop_token_summary(hops: tuple[HopInfo, ...]) -> str:
+def _hop_token_summary(hops: list[HopInfo] | tuple[HopInfo, ...]) -> str:
     """One-line summary of hop input→output tokens for sim-fail diagnostics."""
     parts: list[str] = []
     for h in hops:
@@ -715,13 +721,13 @@ def _make_backrun_config(node_http: str) -> DegenbotConfig:
         # the database path (and any other settings) from the config file.
         return DegenbotConfig(
             database=base.database,
-            rpc={1: node_http},
+            rpc={1: cast("Any", node_http)},
             default_chain_id=1,
         )
 
     return DegenbotConfig(
         database=DatabaseSettings(path=Path("~/.config/degenbot/degenbot.db").expanduser()),
-        rpc={1: node_http},
+        rpc={1: cast("Any", node_http)},
         default_chain_id=1,
     )
 
@@ -819,6 +825,7 @@ class BackrunSession:
         snapshots: tuple[Any, Any, Any, Any] | None = None,
         path_builder: Any = None,
         consumer: Any = None,
+        install_sigint: bool = True,
     ) -> None:
         self.cfg = cfg
         self._injected_bot = bot
@@ -838,6 +845,17 @@ class BackrunSession:
         self._started = False
         # Created in run():
         self._result_consumer_task: asyncio.Task | None = None
+        # SIGINT handler installed by `start()`, restored by `__aexit__`.
+        # Stores the previous handler so teardown restores it (the default
+        # SIGINT → KeyboardInterrupt machinery) rather than leaving a
+        # process-wide handler bound after the session ends.
+        self._previous_sigint_handler: object = signal.SIG_DFL
+        self._sigint_installed = False
+        # Production (main()) installs the SIGINT→engine.stop() handler so a
+        # Ctrl-C during the synchronous find_paths section stops the pump
+        # immediately. Tests pass install_sigint=False to avoid binding a
+        # process-global handler (signal.signal pollutes across tests).
+        self._install_sigint = install_sigint
 
     # ── Phase A: pre-resume startup ─────────────────────────────────
     async def start(self) -> "BackrunSession":
@@ -892,6 +910,7 @@ class BackrunSession:
             self.current_block = backfill_target
             self.dispatcher.advance_block(backfill_target)
 
+        self._install_sigint_handler()
         return self
 
     # ── Phase B: the rolling-start main loop ──────────────────────────
@@ -1027,6 +1046,70 @@ class BackrunSession:
         await self.start()
         return self
 
+    def _install_sigint_handler(self) -> None:
+        """Bind a SIGINT handler that stops the Rust pump *immediately*.
+
+        The ``__aexit__`` → ``shutdown()`` → ``engine.stop()`` path only fires
+        once the awaited coroutine unwinds — and during ``build_paths`` the
+        main thread is blocked inside the synchronous ``find_paths`` graph
+        prep / the Rust ``find_paths_rust`` DFS. Python's default SIGINT →
+        raise ``KeyboardInterrupt`` mechanism is *deferred* until that section
+        yields control to the eval loop, so the first Ctrl-C appeared to be
+        swallowed: the pump (on the shared tokio runtime, a separate thread)
+        kept running, the operator pressed Ctrl-C again, and only when
+        ``find_paths`` finally returned did the deferred exception unwind to
+        ``__aexit__`` and stop the pump.
+
+        Installing this handler closes the gap: the moment SIGINT arrives,
+        ``engine.stop()`` runs (it just sets the shutdown flag + aborts the
+        pump task — cheap, GIL-only, idempotent) regardless of what the main
+        thread is doing. The Rust ``find_paths_rust`` DFS releases the GIL via
+        ``py.detach()``, so the handler *can* run even mid-DFS. We then
+        re-raise so the normal ``KeyboardInterrupt`` unwind proceeds to
+        ``__aexit__`` (which runs ``shutdown()`` again — a no-op — for the
+        consumer cancellation).
+
+        Idempotent: if already installed (or if ``signal`` can't bind — e.g. a
+        non-main thread), it's a no-op so the call site in ``start()`` is safe
+        to re-enter.
+        """
+        if self._sigint_installed or not self._install_sigint:
+            return
+        engine = self.engine_registry.engine if self.engine_registry is not None else None
+        if engine is None:
+            return
+        try:
+            self._previous_sigint_handler = signal.getsignal(signal.SIGINT)
+        except ValueError:
+            # `signal.signal` only works on the main thread; if start() is
+            # ever driven off-thread there is nothing to bind — rely on
+            # __aexit__'s shutdown() alone.
+            return
+
+        def _on_sigint(_signum: int, _frame: object) -> None:
+            # Stop the pump first — fires even while the main thread is
+            # blocked in find_paths (Rust DFS released the GIL). Wrapped
+            # because the engine may have been torn down concurrently.
+            try:
+                engine.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            # Re-raise KeyboardInterrupt so the awaiting coroutine unwinds
+            # through __aexit__ → shutdown() (idempotent) + consumer cancel.
+            raise KeyboardInterrupt
+
+        signal.signal(signal.SIGINT, _on_sigint)
+        self._sigint_installed = True
+
+    def _restore_sigint_handler(self) -> None:
+        if not self._sigint_installed:
+            return
+        try:
+            signal.signal(signal.SIGINT, cast("Any", self._previous_sigint_handler))
+        except (ValueError, TypeError):
+            pass
+        self._sigint_installed = False
+
     async def __aexit__(self, *exc: object) -> None:
         """Best-effort cleanup; never suppresses.
 
@@ -1047,6 +1130,7 @@ class BackrunSession:
         ``CancelledError`` path in the common case.
         """
         await self.shutdown()
+        self._restore_sigint_handler()
         task = self._result_consumer_task
         if task is not None and not task.done():
             task.cancel()
@@ -1083,7 +1167,7 @@ class BackrunSession:
 async def _shim_run_recurring_verify_until_done(
     *,
     registry: EngineRegistry,
-    block_ticker: "asyncio.AsyncIterator[int]",
+    block_ticker: AsyncIterator[int],
     interval: int,
     retry_policy: VerificationRetryPolicy,
 ) -> None:
@@ -1171,7 +1255,7 @@ async def build_paths(
     v4_hook_rejected = 0
     v4_dynamic_fee_rejected = 0
     other_exc_count = 0
-    registered_path_sigs: set[tuple[str, ...]] = set()
+    registered_path_sigs: set[tuple[str | bool, ...]] = set()
 
     start = time.perf_counter()
 
@@ -1302,7 +1386,7 @@ async def build_paths(
             else:
                 skip = True
                 break
-            pools.append(pool)
+            pools.append(cast("UniswapV2Pool | UniswapV3Pool | UniswapV4Pool", pool))
 
         if skip:
             # V4 admission refusals have their own dedicated counters; don't
@@ -1533,7 +1617,7 @@ def _compute_priority_fee(
 class SubmittedTx:
     tx_hash: HexBytes
     nonce: int
-    pools: set[int]  # Rust pool keys
+    pools: set[str]  # Rust pool keys (V4 pool_id_hex / V2-V3 pool_address)
     submission_block: int
 
 
@@ -1621,7 +1705,7 @@ async def dispatch_profitable_results(
     _state_dump_keys: set[tuple[int, int]] = set()
 
     _executor_contract = async_w3.eth.contract(
-        address=executor_address,
+        address=cast("ChecksumAddress", executor_address),
         abi=EXECUTOR_ABI,
     )
 
@@ -1662,7 +1746,7 @@ async def dispatch_profitable_results(
     results.sort(key=operator.itemgetter(2), reverse=True)
 
     # ── Slice 4: Mutual exclusivity — pools already claimed by this dispatch ──
-    committed_pools: set[int] = set()
+    committed_pools: set[str] = set()
 
     # ── Slice 1: Parallel simulation ──────────────────────────────────────
     # Budget for INFO-level logging of simulation failures (same pattern as
@@ -1777,7 +1861,7 @@ async def dispatch_profitable_results(
         hop_outputs: tuple[int, ...],
         consumed_inputs: tuple[int, ...],
         solve_block: int,
-    ) -> tuple[int, int, int, int, dict, Any] | None:
+    ) -> tuple[int, int, int, int, TxParams, Any] | None:
         """Simulate a single path. Returns (path_id, gross_profit, net_profit, gas_used, tx_params, path_info) or None."""
         path_info = engine_registry.paths.get(path_id)
         if path_info is None:
@@ -1841,34 +1925,37 @@ async def dispatch_profitable_results(
             _dumped_path_types.add(dump_type)
             if dump_type == "V4-V2":
                 hop_v4, hop_v2 = path_info.hops[0], path_info.hops[1]
-                bot_logger.info(
-                    f"[sim-dump] V4-V2 path={path_id} "
-                    f"v4_c0={hop_v4.currency0_address} v4_c1={hop_v4.currency1_address} "
-                    f"v4_zfo={hop_v4.zfo} v2_zfo={hop_v2.zfo} v2_pool={hop_v2.pool_address} "
-                    f"input={optimal_input} fwd={hop_outputs[0]} out={hop_outputs[1]} "
-                    f"cmd_len={len(cmd_bytes)}",
-                )
+                if isinstance(hop_v4, V4HopInfo) and isinstance(hop_v2, (V2HopInfo, V3HopInfo)):
+                    bot_logger.info(
+                        f"[sim-dump] V4-V2 path={path_id} "
+                        f"v4_c0={hop_v4.currency0_address} v4_c1={hop_v4.currency1_address} "
+                        f"v4_zfo={hop_v4.zfo} v2_zfo={hop_v2.zfo} v2_pool={hop_v2.pool_address} "
+                        f"input={optimal_input} fwd={hop_outputs[0]} out={hop_outputs[1]} "
+                        f"cmd_len={len(cmd_bytes)}",
+                    )
             elif dump_type == "V2-V4":
                 hop_v2, hop_v4 = path_info.hops[0], path_info.hops[1]
-                v4_in_native = v4_input_is_native(hop_v4)
-                bot_logger.info(
-                    f"[sim-dump] V2-V4 path={path_id} "
-                    f"v4_c0={hop_v4.currency0_address} v4_c1={hop_v4.currency1_address} "
-                    f"v4_zfo={hop_v4.zfo} v2_zfo={hop_v2.zfo} v2_pool={hop_v2.pool_address} "
-                    f"v4_native_in={v4_in_native} input={optimal_input} fwd={hop_outputs[0]} out={hop_outputs[1]} "
-                    f"cmd_len={len(cmd_bytes)}",
-                )
+                if isinstance(hop_v2, (V2HopInfo, V3HopInfo)) and isinstance(hop_v4, V4HopInfo):
+                    v4_in_native = v4_input_is_native(hop_v4)
+                    bot_logger.info(
+                        f"[sim-dump] V2-V4 path={path_id} "
+                        f"v4_c0={hop_v4.currency0_address} v4_c1={hop_v4.currency1_address} "
+                        f"v4_zfo={hop_v4.zfo} v2_zfo={hop_v2.zfo} v2_pool={hop_v2.pool_address} "
+                        f"v4_native_in={v4_in_native} input={optimal_input} fwd={hop_outputs[0]} out={hop_outputs[1]} "
+                        f"cmd_len={len(cmd_bytes)}",
+                    )
             elif dump_type == "V4-V4":
                 hop_a, hop_b = path_info.hops[0], path_info.hops[1]
-                bot_logger.info(
-                    f"[sim-dump] V4-V4 path={path_id} "
-                    f"a_c0={hop_a.currency0_address} a_c1={hop_a.currency1_address} "
-                    f"a_zfo={hop_a.zfo} a_fee={hop_a.fee} "
-                    f"b_c0={hop_b.currency0_address} b_c1={hop_b.currency1_address} "
-                    f"b_zfo={hop_b.zfo} b_fee={hop_b.fee} "
-                    f"input={optimal_input} fwd={hop_outputs[0]} out={hop_outputs[1]} "
-                    f"cmd_len={len(cmd_bytes)}",
-                )
+                if isinstance(hop_a, V4HopInfo) and isinstance(hop_b, V4HopInfo):
+                    bot_logger.info(
+                        f"[sim-dump] V4-V4 path={path_id} "
+                        f"a_c0={hop_a.currency0_address} a_c1={hop_a.currency1_address} "
+                        f"a_zfo={hop_a.zfo} a_fee={hop_a.fee} "
+                        f"b_c0={hop_b.currency0_address} b_c1={hop_b.currency1_address} "
+                        f"b_zfo={hop_b.zfo} b_fee={hop_b.fee} "
+                        f"input={optimal_input} fwd={hop_outputs[0]} out={hop_outputs[1]} "
+                        f"cmd_len={len(cmd_bytes)}",
+                    )
             else:
                 # Generic dump for all other path types (V3-V3-V3 etc.)
                 _hop_parts = []
@@ -1908,11 +1995,11 @@ async def dispatch_profitable_results(
             data=calldata,
             chainId=1,
             type=2,
-            value=0,
+            value=cast("Wei", 0),
             gas=5_000_000,  # Generous gas for V3 tick-crossing swaps
-            maxFeePerGas=0,
-            maxPriorityFeePerGas=0,
-            nonce=0,
+            maxFeePerGas=cast("Wei", 0),
+            maxPriorityFeePerGas=cast("Wei", 0),
+            nonce=cast("Nonce", 0),
         )
         tx_params["from"] = get_checksum_address(EXECUTOR_OWNER)
 
@@ -2380,8 +2467,8 @@ async def dispatch_profitable_results(
     # ── Categorize simulation results ────────────────────────────────
     # Separate into gas-profitable (net >= MIN_PROFIT_NET) and
     # onchain-valid but gas-unprofitable (gross > 0, net below threshold).
-    gas_profitable: list[tuple[int, int, int, int, dict, Any]] = []
-    gas_unprofitable: list[tuple[int, int, int, int, dict, Any]] = []
+    gas_profitable: list[tuple[int, int, int, int, TxParams, Any]] = []
+    gas_unprofitable: list[tuple[int, int, int, int, TxParams, Any]] = []
     exception_count = 0
     _exc_log_limit = 5
     for result in sim_results:
@@ -2405,11 +2492,14 @@ async def dispatch_profitable_results(
             continue
         if result is None:
             continue
-        path_id, gross_profit, net_profit, gas_used, tx_params, path_info = result
+        path_id, gross_profit, net_profit, gas_used, tx_params, path_info = cast(
+            "tuple[int, int, int, int, TxParams, Any]", result
+        )
+        sim_result = cast("tuple[int, int, int, int, TxParams, Any]", result)
         if net_profit >= MIN_PROFIT_NET:
-            gas_profitable.append(result)
+            gas_profitable.append(sim_result)
         else:
-            gas_unprofitable.append(result)
+            gas_unprofitable.append(sim_result)
 
     # ── Summary log ──────────────────────────────────────────────────
     sim_ok_count = len(gas_profitable) + len(gas_unprofitable)
@@ -2530,9 +2620,9 @@ async def dispatch_profitable_results(
 
         # Submit
         nonce = dispatcher.claim_nonce(operator_nonce)
-        tx_params["nonce"] = nonce
-        tx_params["maxPriorityFeePerGas"] = priority_fee
-        tx_params["maxFeePerGas"] = int(1.5 * base_fee_next) + priority_fee
+        tx_params["nonce"] = cast("Nonce", nonce)
+        tx_params["maxPriorityFeePerGas"] = cast("Wei", priority_fee)
+        tx_params["maxFeePerGas"] = cast("Wei", int(1.5 * base_fee_next) + priority_fee)
 
         # Access list was computed during simulation. Re-compute with
         # updated nonce/fees for accuracy.
@@ -2582,8 +2672,8 @@ async def consume_result_batches(
     dispatcher: Dispatcher,
     dry_run: bool,
     *,
-    block_stream: "asyncio.AsyncIterator[dict[str, int]] | None" = None,
-    result_iter: "asyncio.AsyncIterator[dict[str, object]] | None" = None,
+    block_stream: AsyncIterator[dict[str, int]] | None = None,
+    result_iter: AsyncIterator[dict[str, object]] | None = None,
 ) -> None:
     """Consume the block stream (clock) + result batches (dispatch) in parallel.
 
@@ -2613,8 +2703,8 @@ async def consume_result_batches(
 
     # Prime both streams. Each completed future is re-primed unless its stream
     # ended (StopAsyncIteration); the loop exits when both are exhausted.
-    block_fut: asyncio.Task[dict[str, int]] | None = asyncio.ensure_future(anext(block_stream))
-    result_fut: asyncio.Task[dict[str, object]] | None = asyncio.ensure_future(anext(result_iter))
+    block_fut = cast("asyncio.Task[dict[str, int]] | None", asyncio.ensure_future(anext(block_stream)))
+    result_fut = cast("asyncio.Task[dict[str, object]] | None", asyncio.ensure_future(anext(result_iter)))
 
     while block_fut is not None or result_fut is not None:
         pending = {f for f in (block_fut, result_fut) if f is not None}
@@ -2622,10 +2712,10 @@ async def consume_result_batches(
 
         for fut in done:
             if fut is block_fut:
-                block_fut = _reprime(block_stream, fut, "block stream")
+                block_fut = cast("asyncio.Task[dict[str, int]] | None", _reprime(block_stream, fut, "block stream"))
                 await _apply_block_if_ready(fut, dispatcher, async_w3)
             elif fut is result_fut:
-                result_fut = _reprime(result_iter, fut, "result stream")
+                result_fut = cast("asyncio.Task[dict[str, object]] | None", _reprime(result_iter, fut, "result stream"))
                 await _apply_result_if_ready(
                     fut,
                     dispatcher,
@@ -2642,10 +2732,10 @@ _TEE_SENTINEL: Any = object()
 
 
 def _tee_block_stream(
-    source: "asyncio.AsyncIterator[dict[str, int]]",
+    source: AsyncIterator[dict[str, int]],
 ) -> tuple[
-    "asyncio.AsyncIterator[dict[str, int]]",
-    "asyncio.AsyncIterator[dict[str, int]]",
+    AsyncIterator[dict[str, int]],
+    AsyncIterator[dict[str, int]],
     asyncio.Task[None],
 ]:
     """Fan a single once-only block stream to two independent async iterators.
@@ -2681,7 +2771,7 @@ def _tee_block_stream(
             await q_a.put(_TEE_SENTINEL)
             await q_b.put(_TEE_SENTINEL)
 
-    async def _branch(q: asyncio.Queue[Any]) -> "asyncio.AsyncIterator[dict[str, int]]":
+    async def _branch(q: asyncio.Queue[Any]) -> AsyncIterator[dict[str, int]]:
         while True:
             item = await q.get()
             if item is _TEE_SENTINEL:
@@ -2693,10 +2783,10 @@ def _tee_block_stream(
 
 
 def _reprime(
-    stream: object,
-    fut: asyncio.Task[object],
+    stream: AsyncIterator[Any],
+    fut: asyncio.Task[Any],
     label: str,
-) -> asyncio.Task[object] | None:
+) -> asyncio.Task[Any] | None:
     """If `fut`'s stream ended, return None; else schedule the next pull."""
     try:
         fut.result()
@@ -2741,7 +2831,7 @@ async def _apply_block_if_ready(
     try:
         fee_history = await async_w3.eth.fee_history(
             block_count=1,
-            newest_block=block_number,
+            newest_block=cast("BlockNumber", block_number),
             reward_percentiles=[float(p) for p in FEE_PERCENTILES],
         )
         reward = fee_history.get("reward", [[]])
@@ -2791,11 +2881,11 @@ async def _apply_result_if_ready(
         return
 
     current_block = dispatcher.current_block
-    operator_nonce = await async_w3.eth.get_transaction_count(operator_address)
-    solve_block = int(batch["solve_block"])  # per-result age metadata, not the clock
+    operator_nonce = await async_w3.eth.get_transaction_count(cast("ChecksumAddress", operator_address))
+    solve_block = int(cast("Any", batch["solve_block"]))  # per-result age metadata, not the clock
 
     results: list[tuple[int, int, int, tuple[int, ...], tuple[int, ...], int]] = []
-    for item in batch["fresh"]:
+    for item in cast("Any", batch["fresh"]):
         path_id, opt_input, profit, hop_outs, consumed_ins = item
         results.append((
             int(path_id),
@@ -2805,7 +2895,7 @@ async def _apply_result_if_ready(
             tuple(int(c) for c in consumed_ins),
             solve_block,
         ))
-    for item in batch["updated"]:
+    for item in cast("Any", batch["updated"]):
         path_id, opt_input, profit, hop_outs, consumed_ins = item
         results.append((
             int(path_id),
@@ -2816,7 +2906,7 @@ async def _apply_result_if_ready(
             solve_block,
         ))
 
-    for path_id in batch["removed"]:
+    for path_id in cast("Any", batch["removed"]):
         dispatcher.path_suppression.discard(int(path_id))
 
     if results:
@@ -2828,9 +2918,9 @@ async def _apply_result_if_ready(
             operator_address=operator_address,
             operator_private_key=operator_private_key,
             base_fee_next=next_base_fee(
-                parent_base_fee=int(batch.get("base_fee_per_gas") or 0),
-                parent_gas_used=int(batch["gas_used"]),
-                parent_gas_limit=int(batch["gas_limit"]),
+                parent_base_fee=int(cast("Any", batch.get("base_fee_per_gas") or 0)),
+                parent_gas_used=int(cast("Any", batch["gas_used"])),
+                parent_gas_limit=int(cast("Any", batch["gas_limit"])),
             ),
             current_block=current_block,
             operator_nonce=operator_nonce,
