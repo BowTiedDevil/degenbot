@@ -204,6 +204,18 @@ impl PyBot {
         self.pump_state()?.resume()
     }
 
+    /// Stop the pump and signal the Rust core to clean up (ADR-006 D4).
+    ///
+    /// The symmetric teardown half of the `subscribe` → `backfill_from_snapshot`
+    /// → `resume` lifecycle. Sets the shutdown flag and aborts the spawned
+    /// pump task so a Ctrl-C exits promptly (the pump loop otherwise blocks
+    /// up to 60s on a silent WS stream). Idempotent — safe to call from both
+    /// the `__aexit__` path and a signal handler. Delegates to the shared
+    /// `PumpState`.
+    fn stop(&self, _py: Python<'_>) -> PyResult<()> {
+        self.pump_state()?.stop()
+    }
+
     /// Set the HTTP RPC URL used for verification (ADR-006 D4 T4).
     /// Delegates to the shared `PumpState`.
     #[pyo3(signature = (rpc_url))]

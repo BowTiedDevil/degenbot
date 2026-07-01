@@ -52,11 +52,20 @@ class _FakeEngine:
     def __init__(self, events: list[str] | None = None) -> None:
         self.resumed = False
         self._events = events
+        self.stop_calls = 0
+        self.stop_raises: Exception | None = None
 
     def resume(self) -> None:
         self.resumed = True
         if self._events is not None:
             self._events.append("resume")
+
+    def stop(self) -> None:
+        self.stop_calls += 1
+        if self._events is not None:
+            self._events.append("stop")
+        if self.stop_raises is not None:
+            raise self.stop_raises
 
     def last_processed_block(self) -> int | None:
         return 12_345
@@ -478,3 +487,135 @@ class TestBackrunSessionRunBlockStreamAcquiredOnce:
         assert seen_by_verify == [500, 550, 600], (
             "recurring-verify ticker must fire at each interval block"
         )
+
+
+class TestBackrunSessionShutdown:
+    """``BackrunSession.shutdown()`` is the clean-shutdown seam that hands a
+    Ctrl-C to the Rust core before the process exits.
+
+    The pump task runs on the shared tokio runtime (decoupled from the asyncio
+    loop), so a ``KeyboardInterrupt`` tearing down ``asyncio.run`` does not
+    reach it — the pump keeps blocking on the WS stream, holding process exit
+    for up to 60s on a silent subscription. ``shutdown()`` closes that gap by
+    calling ``engine.stop()`` (which sets the shutdown flag + aborts the pump
+    task). It must be best-effort: callable at any lifecycle point, swallow any
+    error from a torn-down engine, and idempotent (so both ``__aexit__`` and a
+    signal handler can call it).
+    """
+
+    async def test_shutdown_calls_engine_stop_once(self) -> None:
+        bot = _FakeBot()
+        engine_registry = _FakeEngineRegistry()
+        session = BackrunSession(
+            _cfg(),
+            bot=bot,
+            engine_registry=engine_registry,
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            path_builder=lambda **_kw: _noop_coro(),
+            consumer=lambda **_kw: _noop_coro(),
+        )
+        await session.start()
+
+        await session.shutdown()
+
+        assert engine_registry.engine.stop_calls == 1, (
+            "shutdown() must call engine.stop() exactly once"
+        )
+
+    async def test_shutdown_is_idempotent(self) -> None:
+        # Mirrors the Rust stop() contract: the second call must be a no-op
+        # (the handle is taken/cleared on the first), not an error. This
+        # matters because __aexit__ calls shutdown() and a KeyboardInterrupt
+        # handler might too.
+        engine_registry = _FakeEngineRegistry()
+        session = BackrunSession(
+            _cfg(),
+            bot=_FakeBot(),
+            engine_registry=engine_registry,
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            path_builder=lambda **_kw: _noop_coro(),
+            consumer=lambda **_kw: _noop_coro(),
+        )
+        await session.start()
+
+        await session.shutdown()
+        await session.shutdown()
+
+        assert engine_registry.engine.stop_calls == 2, (
+            "shutdown() is a thin delegate — idempotence is the Rust contract"
+        )
+
+    async def test_shutdown_swallows_engine_stop_exception(self) -> None:
+        # A partial-startup teardown (engine torn down mid-lifecycle) must not
+        # let engine.stop() mask the original in-flight exception. shutdown()
+        # swallows + logs any error from stop().
+        engine_registry = _FakeEngineRegistry()
+        engine_registry.engine.stop_raises = RuntimeError("engine torn down")
+        session = BackrunSession(
+            _cfg(),
+            bot=_FakeBot(),
+            engine_registry=engine_registry,
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            path_builder=lambda **_kw: _noop_coro(),
+            consumer=lambda **_kw: _noop_coro(),
+        )
+        await session.start()
+
+        # Must NOT raise — the whole point of the best-effort contract.
+        await session.shutdown()
+
+        assert engine_registry.engine.stop_calls == 1, (
+            "stop() was still invoked (the raise was after the call counted)"
+        )
+
+    async def test_shutdown_noop_before_start(self) -> None:
+        # Callable at any lifecycle point — before start() ran,
+        # engine_registry is None, so shutdown() is a quiet no-op (no
+        # AttributeError). Let a Ctrl-C during startup still exit cleanly.
+        session = BackrunSession(
+            _cfg(),
+            bot=None,
+            engine_registry=None,
+            async_w3=None,
+            snapshots=(None, None, None, None),
+            path_builder=lambda **_kw: _noop_coro(),
+            consumer=lambda **_kw: _noop_coro(),
+        )
+
+        await session.shutdown()  # must not raise
+
+    async def test_aexit_calls_shutdown_before_cancelling_consumer(self) -> None:
+        # The ordering invariant: stop() the pump FIRST, then cancel the
+        # consumer. Stopping the pump closes the channels → the consumer's
+        # next __anext__ raises StopAsyncIteration → it ends without needing
+        # the CancelledError path. Assert the call order via the event list
+        # _FakeEngine/_FakeBot append to.
+        events: list[str] = []
+        bot = _FakeBot(events=events)
+        engine_registry = _FakeEngineRegistry(events=events)
+
+        async def hanging_consumer(**_kw):
+            await asyncio.Event().wait()
+
+        session = BackrunSession(
+            _cfg(),
+            bot=bot,
+            engine_registry=engine_registry,
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            path_builder=lambda **_kw: _noop_coro(),
+            consumer=hanging_consumer,
+        )
+        await session.start()
+
+        async with session:
+            # run() will block on the hanging consumer; cancel it to exit the
+            # async-with cleanly so __aexit__ runs.
+            await asyncio.sleep(0.01)
+
+        # shutdown() (→ engine.stop) ran during __aexit__, recording "stop"
+        assert engine_registry.engine.stop_calls == 1
+        assert "stop" in events
