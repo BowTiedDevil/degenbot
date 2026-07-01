@@ -1436,6 +1436,7 @@ class PyBot:
         invariant_version: int,
         balances: list[int],
         update_block: int,
+        rate_provider: Any = None,  # noqa: ANN401 — pyo3 accepts PyAny
     ) -> int: ...
     def register_aerodrome_pool(
         self,

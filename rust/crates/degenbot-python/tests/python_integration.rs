@@ -250,3 +250,45 @@ fn test_python_string_non_address() {
     });
     assert_eq!(result, AbiValue::String("Hello, World!".to_string()));
 }
+
+/// Test the `PyBalancerRateProvider` adapter: a Python object exposing
+/// `get_rates(block_identifier)` is wrapped as a stored
+/// `Arc<dyn BalancerRateProvider>` and the `is_static()` / `get_rates()`
+/// calls delegate to Python (ADR-005 slice 12c I/O trait object).
+#[test]
+fn test_py_balancer_rate_provider_delegates() {
+    use degenbot_rs::bot::pool::make_balancer_rate_provider;
+
+    let provider = with_python(|py| {
+        // A Python class that records its `get_rates` call args and returns
+        // a fixed tuple of ints.
+        py
+            .run(pyo3::ffi::c_str!(
+                "class _Rates:\n    def __init__(self, rates):\n        self.rates = tuple(rates)\n        self.calls = []\n    def get_rates(self, block_identifier=None):\n        self.calls.append(block_identifier)\n        return self.rates\n_Rates"
+            ), None, None)
+            .unwrap();
+        let () = ();
+        let instance = py
+            .eval(
+                pyo3::ffi::c_str!("_Rates([10**18, 2 * 10**18])"),
+                None,
+                None,
+            )
+            .unwrap();
+        make_balancer_rate_provider(instance.into())
+    });
+    // Dynamic provider → not static.
+    assert!(!provider.is_static());
+    // Delegate to Python: returns the construction-time tuple as U256s.
+    let rates = provider.get_rates(Some(42)).unwrap();
+    assert_eq!(rates.len(), 2);
+    assert_eq!(
+        rates[0],
+        alloy::primitives::U256::from(10u64).pow(alloy::primitives::U256::from(18u64))
+    );
+    assert_eq!(
+        rates[1],
+        alloy::primitives::U256::from(2u64)
+            * alloy::primitives::U256::from(10u64).pow(alloy::primitives::U256::from(18u64))
+    );
+}

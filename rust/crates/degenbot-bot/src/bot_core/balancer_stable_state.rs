@@ -65,7 +65,10 @@
 
 use alloy::primitives::{Address, U256};
 
+use crate::bot_core::rate_provider::BalancerRateProvider;
 use crate::bot_core::state_history::{BlockDelta, ReorgJournal};
+
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Block delta
@@ -171,6 +174,13 @@ pub struct RegisterBalancerStablePoolParams {
     /// Block number of the registration state — seeds the genesis reorg
     /// journal delta (ADR-005 slice 4).
     pub update_block: u64,
+
+    /// Off-chain rate provider (ADR-005 slice 12c I/O trait object). `None`
+    /// is equivalent to a static provider returning `1e18` for every token
+    /// (no rate-multiplied scaling). When `Some`, the (future, 12d) Python
+    /// companion delegates `scaling_factors` refresh to it; the pure-Rust
+    /// `StaticRateProvider` is the no-I/O fallback.
+    pub rate_provider: Option<Arc<dyn BalancerRateProvider>>,
 }
 
 /// Immutable Balancer V2 stable pool registration identity (ADR-005
@@ -223,6 +233,12 @@ pub struct BalancerStablePoolState {
 
     /// Reorg journal — balance priors for rollback.
     pub journal: ReorgJournal<BalancerStableBlockDelta>,
+
+    /// Off-chain rate provider (ADR-005 slice 12c I/O trait object). `None`
+    /// ⇔ static `1e18` rates. Stored so the (future, 12d) companion can
+    /// refresh scaling factors at calc time without re-entering Python for
+    /// the static fallback.
+    pub rate_provider: Option<Arc<dyn BalancerRateProvider>>,
 }
 
 impl BalancerStablePoolIdentity {
@@ -268,6 +284,7 @@ impl BalancerStablePoolState {
             balances: params.balances,
             update_block: params.update_block,
             journal,
+            rate_provider: params.rate_provider,
         };
         (identity, state)
     }
@@ -301,6 +318,7 @@ mod tests {
             invariant_version,
             balances: balances.iter().map(|&b| U256::from(b)).collect(),
             update_block: block,
+            rate_provider: None,
         }
     }
 

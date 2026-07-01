@@ -27,6 +27,7 @@ pub mod drain_sink;
 pub mod engine;
 pub mod liquidity_verifier;
 pub mod log_dispatcher;
+pub mod rate_provider;
 pub mod reorg_coordinator;
 pub mod snapshot_verify;
 pub mod solve_coordinator;
@@ -53,6 +54,7 @@ pub use balancer_weighted_state::{
 pub use curve_state::{
     CurveBlockDelta, CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams,
 };
+pub use rate_provider::{BalancerRateProvider, RateProviderError, StaticRateProvider};
 pub use v3_state::{
     v3_simulate_swap, BufferedV3LiquidityUpdate, PoolTickCoverage, RegisterV3PoolParams,
     SimulateSwapError, V3PoolIdentity, V3PoolState, V3SwapOutcome, V3SwapUpdate,
@@ -4336,6 +4338,7 @@ mod tests {
             invariant_version: 2,
             balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
             update_block: 0,
+            rate_provider: None,
         });
         assert_eq!(core.pool_family(bal_s_id), "balancer-stable");
 

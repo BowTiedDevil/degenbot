@@ -99,7 +99,74 @@ impl degenbot_bot::bot_core::tick_fetch::TickWordFetcher for PyTickWordFetcher {
     }
 }
 
-/// A thin Python handle to a pool registered in `BotState`.
+// ---------------------------------------------------------------------------
+// Balancer rate-provider Py adapter (ADR-005 slice 12c I/O trait object).
+// ---------------------------------------------------------------------------
+
+/// `PyO3` adapter wrapping a Python rate-provider callable (or any object
+/// exposing `get_rates(block_identifier) -> tuple[int, ...]`) as a stored
+/// `Arc<dyn BalancerRateProvider>` for registration-time storage on
+/// `BalancerStablePoolState`.
+///
+/// The callable signature is `get_rates(block_identifier: int | None) ->
+/// tuple[int, ...]` (one rate per token, `1e18` for tokens without a rate
+/// provider). Mirrors [`PyTickWordFetcher`]'s GIL re-entry discipline: the
+/// provider re-enters via `Python::attach`, holds no `BotState` lock across
+/// the call, and returns the rates for the caller to merge.
+#[derive(Debug)]
+pub(crate) struct PyBalancerRateProvider {
+    callback: pyo3::Py<pyo3::PyAny>,
+}
+
+/// Wrap a Python rate-provider object as a stored
+/// `Arc<dyn BalancerRateProvider>`. `None` should be passed through (not
+/// wrapped) to keep the static `1e18` fallback.
+#[must_use]
+pub fn make_balancer_rate_provider(
+    callback: pyo3::Py<pyo3::PyAny>,
+) -> Arc<dyn degenbot_bot::bot_core::rate_provider::BalancerRateProvider> {
+    Arc::new(PyBalancerRateProvider { callback })
+}
+
+impl degenbot_bot::bot_core::rate_provider::BalancerRateProvider for PyBalancerRateProvider {
+    fn get_rates(
+        &self,
+        block_identifier: Option<u64>,
+    ) -> Result<
+        Vec<alloy::primitives::U256>,
+        degenbot_bot::bot_core::rate_provider::RateProviderError,
+    > {
+        use degenbot_bot::bot_core::rate_provider::RateProviderError;
+        pyo3::Python::attach(|py| {
+            let py_none = pyo3::types::PyNone::get(py);
+            let result = match block_identifier {
+                Some(b) => self
+                    .callback
+                    .call_method1(py, "get_rates", (b,))
+                    .map_err(|_| RateProviderError::FetchFailed),
+                None => self
+                    .callback
+                    .call_method1(py, "get_rates", (py_none,))
+                    .map_err(|_| RateProviderError::FetchFailed),
+            }?;
+            let bound = result.bind(py);
+            // Accept any iterable of ints; the length check is the caller's
+            // responsibility (it knows the token count).
+            let rates: Vec<alloy::primitives::U256> = bound
+                .try_iter()
+                .map_err(|_| RateProviderError::FetchFailed)?
+                .map(|item| {
+                    let v: u128 = item
+                        .map_err(|_| RateProviderError::FetchFailed)?
+                        .extract()
+                        .map_err(|_| RateProviderError::FetchFailed)?;
+                    Ok(alloy::primitives::U256::from(v))
+                })
+                .collect::<Result<_, _>>()?;
+            Ok(rates)
+        })
+    }
+}
 ///
 /// Does not own any state — all data lives in Rust inside `BotState`.
 #[pyclass(skip_from_py_object)]
