@@ -41,12 +41,16 @@ from degenbot.balancer.deployments import (
     BALANCERQUERIES_CONTRACT_ADDRESS,
 )
 from degenbot.balancer.libraries.fixed_point import ONE
-from degenbot.balancer.libraries.stable_math import (
-    _calc_in_given_out,
-    _calc_out_given_in,
-    _calculate_invariant_deployed,
-)
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.degenbot_rs import (
+    balancer_stable_calc_in_given_out as _calc_in_given_out,
+)
+from degenbot.degenbot_rs import (
+    balancer_stable_calc_out_given_in as _calc_out_given_in,
+)
+from degenbot.degenbot_rs import (
+    balancer_stable_calculate_invariant_deployed as _calculate_invariant_deployed,
+)
 
 pytestmark = pytest.mark.online_rpc
 
