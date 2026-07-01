@@ -971,7 +971,8 @@ impl PyBot {
         bpt_idx,
         invariant_version,
         balances,
-        update_block
+        update_block,
+        rate_provider=None
     ))]
     fn register_balancer_stable_pool(
         &self,
@@ -986,6 +987,7 @@ impl PyBot {
         invariant_version: u8,
         balances: &Bound<'_, PyList>,
         update_block: u64,
+        rate_provider: Option<Bound<'_, PyAny>>,
     ) -> PyResult<u64> {
         let addr = parse_address(address)?;
         let vault_addr = parse_address(vault)?;
@@ -993,6 +995,8 @@ impl PyBot {
         let token_addrs = parse_address_list(tokens)?;
         let scaling_vals = extract_u256_list(scaling_factors)?;
         let bal_vals = extract_u256_list(balances)?;
+        let provider =
+            rate_provider.map(|b| crate::bot::pool::make_balancer_rate_provider(b.unbind()));
         Ok(self.bot.state_arc().write().register_balancer_stable_pool(
             &RegisterBalancerStablePoolParams {
                 address: addr,
@@ -1006,6 +1010,7 @@ impl PyBot {
                 invariant_version,
                 balances: bal_vals,
                 update_block,
+                rate_provider: provider,
             },
         ))
     }
