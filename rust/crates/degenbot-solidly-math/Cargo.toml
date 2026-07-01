@@ -1,10 +1,12 @@
 [package]
 name = "degenbot-solidly-math"
 description = "Pure-Rust ports of Solidly / Aerodrome / Camelot stable-pool invariant math."
-version = "0.0.0"
-edition = "2021"
-publish = false
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
 
 [lints.rust]
 warnings = "deny"

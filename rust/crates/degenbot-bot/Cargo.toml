@@ -1,10 +1,12 @@
 [package]
 name = "degenbot-bot"
 description = "Rust-owned bot state (BotState) + Möbius solvers + unified Uniswap V2/V3/V4 engine."
-version = "0.0.0"
-edition = "2021"
-publish = false
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
 
 [lints.rust]
 warnings = "deny"

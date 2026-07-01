@@ -5,6 +5,19 @@
 default:
     @just --list
 
+# Print the project's single source-of-truth version (the [workspace.package]
+# literal in rust/Cargo.toml, inherited by every crate + bridged into the wheel
+# by maturin — ADR-009).
+version:
+    #!/usr/bin/env python3
+    import json, subprocess
+    meta = subprocess.check_output(
+        ["cargo", "metadata", "--format-version", "1",
+         "--manifest-path", "rust/Cargo.toml", "--no-deps"]
+    )
+    pkgs = json.loads(meta)["packages"]
+    print(next(p["version"] for p in pkgs if p["name"] == "degenbot_rs"))
+
 # ========== Rust Development ==========
 
 # Run Rust tests
