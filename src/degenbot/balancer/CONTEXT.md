@@ -24,7 +24,7 @@
 |------|------------|------------------|
 | **FixedPoint** | 18-decimal fixed-point arithmetic library (`fixed_point.py`) providing `mul_down`, `mul_up`, `div_down`, `div_up`, `pow_down`, `pow_up`, `complement` | FP, fixed math |
 | **LogExpMath** | Natural logarithm and exponentiation via Taylor series (`log_exp_math.py`) — the core approximation engine for `pow` | Log-exp, Ln/pow |
-| **WeightedMath** | Invariant and swap calculation formulas for weighted pools (`weighted_math.py`) | WM, weighted calculations |
+| **WeightedMath** | Invariant and swap calculation formulas for weighted pools (retired — Rust core via `degenbot_rs.balancer_*`) | WM, weighted calculations |
 | **ScalingHelpers** | Fixed-point scaling for tokens with non-18 decimals (`scaling_helpers.py`) — `_upscale`, `_downscale_down`, `_downscale_up`, `_compute_scaling_factor` | Scaling, decimal helpers |
 | **InputHelpers** | Validation helpers for swap input amounts (`input_helpers.py`) | Validators |
 | **Helpers** | Shared helper functions (`helpers.py`) | Utility functions |
@@ -123,7 +123,7 @@ balancer/
 │   ├── log_exp_math.py  (ln, pow via Taylor series with _truncated_div)
 │   ├── scaling_helpers.py (_upscale, _downscale_down/up, _compute_scaling_factor)
 │   ├── stable_math.py  (StableMath: invariant, outGivenIn, inGivenOut, BPT functions)
-│   └── weighted_math.py (calculate_invariant, _calc_out_given_in, _calc_in_given_in)
+│   └── (weighted_math.py retired — Rust core via degenbot_rs.balancer_*)
 ├── pair_view.py        (BalancerPairView — N-token to 2-token adapter with subscription relay)
 ├── pools.py            (BalancerV2Pool class, detect_pow_version, external_update, to_hop_state, build_swap_amount)
 ├── stable_pools.py     (BalancerV2StablePool class, external_update, to_hop_state, build_swap_amount)

@@ -69,7 +69,7 @@ class BalancerBuilderBase:
         12a) carries ``PowVersion`` as an opaque ``u8`` (V1=1 / V2=2) for the
         future Rust ``WeightedMath`` port (ADR-005 slice 12e). Not consumed by
         slice 12b's companion — the Python companion keeps its own
-        ``PowVersion`` for the Python calc path through ``weighted_math.py``.
+        ``PowVersion`` for legacy builder compatibility.
 
         Returns:
             The computed value.
