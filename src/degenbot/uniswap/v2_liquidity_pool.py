@@ -8,10 +8,11 @@ from weakref import WeakSet
 from eth_typing import ChecksumAddress
 
 from degenbot.arbitrage.types import UniswapV2PoolSwapAmounts
-from degenbot.calculations.camelot import get_y_camelot, k_camelot
-from degenbot.calculations.solidly_stable import calc_exact_in_stable
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.degenbot_rs import PyDexIdentity, PyLiquidityPool
+from degenbot.degenbot_rs import (
+    solidly_calc_exact_in_stable_camelot as _rs_calc_exact_in_stable_camelot,
+)
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import ExternalUpdateError
@@ -526,67 +527,38 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
     ) -> int:
         """Camelot solidly-stable swap calculation (folded from CamelotPoolCalc).
 
-        Uses Camelot's own k + get_y functions (``k_camelot``/``get_y_camelot``)
-        instead of the standard Solidly ones. ``fee_denominator`` scales the
-        integer fee numerator; ``fee_tokenN`` is the FEE ``Fraction``.
+        Routes through the Rust ``degenbot-solidly-math`` core
+        (``solidly_calc_exact_in_stable_camelot``), which bakes in Camelot's
+        ``k_camelot``/``get_y_camelot`` variant (ADR-005 slice 7).
+
+        ``fee_tokenN`` is the FEE ``Fraction`` (e.g. ``Fraction(3, 1000)``).
 
         Returns:
             The computed integer value.
 
         """
-        if override_state is not None:  # pragma: no cover
-            pass
-
-        # ``stable_swap=True`` (set by the builder) implies the builder also
-        # set ``fee_denominator`` (Camelot's integer fee scale). Narrow for
-        # the typed math below.
-        assert self.fee_denominator is not None
-        fee_denominator = self.fee_denominator
-
         precision_multiplier_token0: int = 10**self.token0.decimals
         precision_multiplier_token1: int = 10**self.token1.decimals
 
-        fee_percent = fee_denominator * (
-            self.fee_token0 if token_in == self.token0 else self.fee_token1
-        )
+        fee = self.fee_token0 if token_in == self.token0 else self.fee_token1
+        token_in_index = 0 if token_in == self.token0 else 1
 
-        reserves_token0 = (
-            override_state.reserves_token0 if override_state is not None else self.reserves_token0
-        )
-        reserves_token1 = (
-            override_state.reserves_token1 if override_state is not None else self.reserves_token1
-        )
+        if override_state is not None:
+            reserves_token0 = override_state.reserves_token0
+            reserves_token1 = override_state.reserves_token1
+        else:
+            reserves_token0 = self.reserves_token0
+            reserves_token1 = self.reserves_token1
 
-        # Remove fee from amount received
-        token_in_quantity -= token_in_quantity * fee_percent // fee_denominator
-        xy = k_camelot(
-            balance_0=reserves_token0,
-            balance_1=reserves_token1,
-            decimals_0=precision_multiplier_token0,
-            decimals_1=precision_multiplier_token1,
-        )
-        reserves_token0 = reserves_token0 * 10**18 // precision_multiplier_token0
-        reserves_token1 = reserves_token1 * 10**18 // precision_multiplier_token1
-        reserve_a, reserve_b = (
-            (reserves_token0, reserves_token1)
-            if token_in == self.token0
-            else (reserves_token1, reserves_token0)
-        )
-        token_in_quantity = (
-            token_in_quantity * 10**18 // precision_multiplier_token0
-            if token_in == self.token0
-            else token_in_quantity * 10**18 // precision_multiplier_token1
-        )
-        y = reserve_b - get_y_camelot(token_in_quantity + reserve_a, xy, reserve_b)
-
-        return (
-            y
-            * (
-                precision_multiplier_token1
-                if token_in == self.token0
-                else precision_multiplier_token0
-            )
-            // 10**18
+        return _rs_calc_exact_in_stable_camelot(
+            token_in_quantity,
+            token_in_index,
+            reserves_token0,
+            reserves_token1,
+            precision_multiplier_token0,
+            precision_multiplier_token1,
+            fee.numerator,
+            fee.denominator,
         )
 
     def to_hop_state(
@@ -632,16 +604,15 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
                 _fee: Fraction = fee_in,
                 _token_in: int = 0 if zero_for_one else 1,
             ) -> int:
-                return calc_exact_in_stable(
-                    amount_in=amount_in,
-                    token_in=_token_in,
-                    reserves0=_reserves0,
-                    reserves1=_reserves1,
-                    decimals0=_decimals0,
-                    decimals1=_decimals1,
-                    fee=_fee,
-                    k_func=k_camelot,
-                    get_y_func=get_y_camelot,
+                return _rs_calc_exact_in_stable_camelot(
+                    amount_in,
+                    _token_in,
+                    _reserves0,
+                    _reserves1,
+                    _decimals0,
+                    _decimals1,
+                    _fee.numerator,
+                    _fee.denominator,
                 )
 
             return SolidlyStableHop(
