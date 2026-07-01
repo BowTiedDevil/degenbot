@@ -1,8 +1,7 @@
 """Balancer V2 weighted pool implementation."""
 
-from collections.abc import Sequence
 from fractions import Fraction
-from typing import ClassVar
+from typing import Any, ClassVar, Self
 from weakref import WeakSet
 
 from eth_typing import ChecksumAddress
@@ -39,7 +38,6 @@ from degenbot.degenbot_rs import (
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
-from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import BalancerWeightedHop, HopType
 from degenbot.types.pool_protocols import SimulationResult
@@ -79,59 +77,92 @@ class BalancerV2Pool(PublisherMixin, AbstractLiquidityPool):
     type PoolState = BalancerV2PoolState
     FEE_DENOMINATOR = 1 * 10**18
 
-    def __init__(
-        self,
-        py_pool: PyLiquidityPool,
-        *,
-        address: ChecksumAddress | str,
-        pool_id: bytes,
-        vault: str,
-        tokens: Sequence[Erc20Token],
-        fee: Fraction,
-        weights: Sequence[int],
-        pow_version: PowVersion = PowVersion.V1,
-        state_block: BlockNumber | None = None,
-    ) -> None:
-        """Initialize a Balancer V2 weighted pool companion over a PyLiquidityPool handle.
+    # Instance attributes set in `_from_py_pool` (the only construction seam).
+    _py_pool: PyLiquidityPool
+    address: ChecksumAddress
+    pool_id: bytes
+    pool_specialization: int
+    vault: ChecksumAddress
+    _tokens: tuple[Erc20Token, ...]
+    scaling_factors: tuple[int, ...]
+    fee: Fraction
+    weights: tuple[int, ...]
+    pow_version: PowVersion
+    _subscribers: WeakSet[Subscriber]
 
-        A companion over a ``PyLiquidityPool`` handle (ADR-005 slice 12b):
-        Rust ``BotState`` owns the mutable ``balances`` / ``update_block`` slot +
-        the reorg journal; this companion reads them through ``self._py_pool``
-        (``snapshot_balancer_weighted()`` for an atomic ``(balances, block)``
-        tuple, ``balancer_balances`` / ``update_block`` getters) and delegates
-        ``external_update`` to ``apply_balancer_weighted_balance_update``.
-        Immutable config (vault, pool_id, tokens, weights, scaling_factors,
-        fee, pow_version) stays Python-side — matches V3/V4/Curve.
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+        """Direct construction is forbidden.
 
-        The companion is constructed AFTER ``register_balancer_weighted_pool``
-        has landed the registration ``balances`` / ``update_block`` into Rust,
-        so this constructor takes no balance argument — read live from the
-        handle on demand.
+        ``BalancerV2Pool`` is a Python companion over a Rust-owned
+        ``PyLiquidityPool`` handle. Use the registered entry points instead:
 
-        Constructed from pre-fetched data only. Use ``Bot.build_pool()`` to
-        fetch from chain; tests use ``make_balancer_weighted_pool``.
+        - Production: ``Bot.build_pool(address)``
+        - Tests: ``make_balancer_weighted_pool(...)``
 
-        I/O boundary:
-            Construction and calculation are I/O-free — all immutable
-            parameters (fee, weights, tokens, pow_version) are provided by the
-            builder/factory. No rate providers for weighted pools (the scaling
-            factors come purely from token decimals, computed at registration).
+        Both register the pool in Rust, obtain the ``PyLiquidityPool``
+        handle, and wrap it via :meth:`_from_py_pool`.
+
+        Raises:
+            TypeError: Always. Direct construction is not supported.
+
         """
+        msg = (
+            f"{type(self).__name__} cannot be constructed directly. "
+            "Use Bot.build_pool(address) (production) or "
+            "make_balancer_weighted_pool(...) (tests) to register the pool "
+            "in Rust and obtain the PyLiquidityPool handle to wrap."
+        )
+        raise TypeError(msg)
+
+    @classmethod
+    def _from_py_pool(cls, py_pool: PyLiquidityPool) -> Self:
+        """Wrap a Rust-owned ``PyLiquidityPool`` handle as a Python companion.
+
+        Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). Every
+        identity field (vault, pool_id, tokens, weights, scaling_factors,
+        swap_fee, pow_version, address) is read off the handle.
+
+        Returns:
+            A ``cls`` instance wrapping ``py_pool``.
+
+        Raises:
+            DegenbotValueError: If the handle is not a Balancer weighted pool
+                or any token is not registered.
+
+        """
+        self = cls.__new__(cls)
         self._py_pool = py_pool
-        self.address = get_checksum_address(address)
 
-        state_block = state_block if state_block is not None else 0
+        if py_pool.pool_family != "balancer-weighted":
+            msg = (
+                "PyLiquidityPool handle is not a Balancer weighted pool "
+                f"(got pool_family {py_pool.pool_family!r})"
+            )
+            raise DegenbotValueError(message=msg)
 
-        self.pool_id = pool_id
+        self.address = get_checksum_address(py_pool.balancer_address)
+        self.pool_id = bytes.fromhex(py_pool.balancer_pool_id_hex.removeprefix("0x"))
         self.pool_specialization = int.from_bytes(self.pool_id[20:22], byteorder="big")
-        self.vault = get_checksum_address(vault)
-        self._tokens = tuple(tokens)
-        self.scaling_factors = tuple(_compute_scaling_factor(token) for token in self._tokens)
-        self.fee = fee
-        self.weights = tuple(weights)
-        self.pow_version = pow_version
+        self.vault = get_checksum_address(py_pool.balancer_vault)
 
-        self._subscribers: WeakSet[Subscriber] = WeakSet()
+        py_tokens = py_pool.get_balancer_tokens()
+        if py_tokens is None:
+            msg = (
+                "pool tokens must be registered in the same Bot as the pool "
+                "(ADR-006): get_balancer_tokens returned None"
+            )
+            raise DegenbotValueError(message=msg)
+        self._tokens = tuple(
+            Erc20Token._from_py_token(t)  # noqa: SLF001
+            for t in py_tokens
+        )
+        self.scaling_factors = tuple(_compute_scaling_factor(t) for t in self._tokens)
+        self.fee = Fraction(py_pool.balancer_swap_fee, cls.FEE_DENOMINATOR)
+        self.weights = tuple(py_pool.balancer_weights)
+        self.pow_version = PowVersion.V1 if py_pool.balancer_pow_version == 1 else PowVersion.V2
+
+        self._subscribers = WeakSet()
+        return self
 
     def __repr__(self) -> str:  # pragma: no cover
         """Return the canonical string representation.

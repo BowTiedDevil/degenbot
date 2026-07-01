@@ -727,6 +727,19 @@ impl PyLiquidityPool {
         }
     }
 
+    fn get_balancer_tokens(&self) -> Option<Vec<PyErc20Token>> {
+        let core = self.core.read();
+        let identity = core.get_balancer_weighted_identity(self.pool_id)?;
+        let mut out = Vec::with_capacity(identity.tokens.len());
+        for token_addr in &identity.tokens {
+            if !core.has_token(token_addr) {
+                return None;
+            }
+            out.push(PyErc20Token::new(Arc::clone(&self.core), *token_addr));
+        }
+        Some(out)
+    }
+
     // --- V3 state read getters (plan-101 slice 8a) ---
     // Mirror the V2 family but read the V3PoolState entry. All getters take
     // one read guard and return None-defaulted values when the pool_id is not
@@ -818,6 +831,110 @@ impl PyLiquidityPool {
         let core = self.core.read();
         core.get_v4_identity(self.pool_id)
             .map(|i| address_utils::address_to_checksum_string(&i.pool_key.hooks))
+            .unwrap_or_default()
+    }
+
+    // --- Balancer weighted identity getters (ADR-005 sealed seam) ---
+
+    /// Balancer V2 pool contract address (EIP-55 checksummed hex).
+    /// Empty string if not a Balancer weighted pool.
+    #[getter]
+    fn balancer_address(&self) -> String {
+        let core = self.core.read();
+        core.get_balancer_weighted_identity(self.pool_id)
+            .map(|i| address_utils::address_to_checksum_string(&i.address))
+            .unwrap_or_default()
+    }
+
+    /// Balancer V2 vault contract address (EIP-55 checksummed hex).
+    /// Empty string if not a Balancer weighted pool.
+    #[getter]
+    fn balancer_vault(&self) -> String {
+        let core = self.core.read();
+        core.get_balancer_weighted_identity(self.pool_id)
+            .map(|i| address_utils::address_to_checksum_string(&i.vault))
+            .unwrap_or_default()
+    }
+
+    /// Balancer V2 pool ID (32-byte hex, ``0x``-prefixed). Empty string if
+    /// not a Balancer weighted pool.
+    #[getter]
+    fn balancer_pool_id_hex(&self) -> String {
+        let core = self.core.read();
+        match core.get_balancer_weighted_identity(self.pool_id) {
+            Some(i) => format!("0x{}", bytes_to_hex(&i.pool_id)),
+            None => String::new(),
+        }
+    }
+
+    /// Balancer weighted token addresses (EIP-55 checksummed hex). Empty list
+    /// if not a Balancer weighted pool.
+    #[getter]
+    fn balancer_token_addresses(&self) -> Vec<String> {
+        let core = self.core.read();
+        match core.get_balancer_weighted_identity(self.pool_id) {
+            Some(i) => i
+                .tokens
+                .iter()
+                .map(address_utils::address_to_checksum_string)
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// Balancer weighted denormalized weights (one `U256` per token).
+    /// Empty list if not a Balancer weighted pool.
+    #[getter]
+    fn balancer_weights(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let weights: Vec<alloy::primitives::U256> = self
+            .core
+            .read()
+            .get_balancer_weighted_identity(self.pool_id)
+            .map(|i| i.weights.clone())
+            .unwrap_or_default();
+        let py_w: Vec<Py<PyAny>> = weights
+            .iter()
+            .map(|w| crate::conversion::alloy::u256_to_py(py, w).map(pyo3::Bound::unbind))
+            .collect::<PyResult<_>>()?;
+        Ok(pyo3::types::PyList::new(py, py_w)?.into_any().unbind())
+    }
+
+    /// Balancer weighted scaling factors (one `U256` per token). Empty list
+    /// if not a Balancer weighted pool.
+    #[getter]
+    fn balancer_scaling_factors(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let sf: Vec<alloy::primitives::U256> = self
+            .core
+            .read()
+            .get_balancer_weighted_identity(self.pool_id)
+            .map(|i| i.scaling_factors.clone())
+            .unwrap_or_default();
+        let py_sf: Vec<Py<PyAny>> = sf
+            .iter()
+            .map(|s| crate::conversion::alloy::u256_to_py(py, s).map(pyo3::Bound::unbind))
+            .collect::<PyResult<_>>()?;
+        Ok(pyo3::types::PyList::new(py, py_sf)?.into_any().unbind())
+    }
+
+    /// Balancer weighted swap fee (fixed-point, 1e18 scale). 0 if not a
+    /// Balancer weighted pool.
+    #[getter]
+    fn balancer_swap_fee(&self) -> u128 {
+        self.core
+            .read()
+            .get_balancer_weighted_identity(self.pool_id)
+            .map(|i| i.swap_fee)
+            .unwrap_or_default()
+    }
+
+    /// Balancer weighted Math pool implementation version (1 or 2). 0 if not
+    /// a Balancer weighted pool.
+    #[getter]
+    fn balancer_pow_version(&self) -> u8 {
+        self.core
+            .read()
+            .get_balancer_weighted_identity(self.pool_id)
+            .map(|i| i.pow_version)
             .unwrap_or_default()
     }
 
