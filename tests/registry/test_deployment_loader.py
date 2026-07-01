@@ -265,7 +265,7 @@ class TestRegisterFromDeployments:
 
         reg = PoolTypeRegistry()
         register_from_deployments(load_deployments(), reg)
-        weighted_factory = "0x8e9AA87E45e92BAD7D5F7F9dd794cEa12f21707B"
+        weighted_factory = "0x8E9aa87E45e92bad84D5F8DD1bff34Fb92637dE9"  # rev1
         desc = reg.get_descriptor(1, weighted_factory)
         assert desc is not None
         assert desc.family == PoolFamily.WEIGHTED
