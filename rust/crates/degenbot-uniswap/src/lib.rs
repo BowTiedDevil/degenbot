@@ -26,8 +26,11 @@
 //!
 //! - [`dex_identity`] — `DexIdentity` / `DexVariant` / `ReservesAbi` value
 //!   objects + `pub const` per-DEX presets.
+//! - [`deployments`] — `(chain, factory)`-keyed CREATE2 identity lookup over
+//!   the embedded canonical `deployments.json` (init hash + deployer).
 //! - [`v2_encoding`] — V2 `swap(uint256,uint256,address,bytes)` callldata
 //!   encoding (`EncodedCall`, `V2_SWAP_SELECTOR`, `encode_v2_swap`).
 
+pub mod deployments;
 pub mod dex_identity;
 pub mod v2_encoding;

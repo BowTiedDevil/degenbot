@@ -141,6 +141,11 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "bot")]
     crate::bot::dex_identity::add_dex_identity(m)?;
 
+    // Deployment-identity lookup over the embedded deployments.json
+    // (Fork A, 7FA5EZ) (feature = "bot")
+    #[cfg(feature = "bot")]
+    crate::bot::deployments::add_deployments(m)?;
+
     // Async modules (feature = "async")
     #[cfg(feature = "async")]
     m.add_class::<crate::rpc::async_provider::PyAsyncAlloyProvider>()?;
