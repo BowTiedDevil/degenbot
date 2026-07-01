@@ -14,20 +14,13 @@ from degenbot.checksum_cache import get_checksum_address
 from degenbot.degenbot_rs import PyDexIdentity, PyLiquidityPool
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
-from degenbot.exceptions.pool import (
-    ExternalUpdateError,
-    NoPoolStateAvailable,
-)
+from degenbot.exceptions.pool import ExternalUpdateError
 from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import ConstantProductHop, HopType, SolidlyStableHop
 from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.log_decoders import V2_SYNC_TOPIC, decode_v2_sync
-from degenbot.uniswap.types import UniswapPoolSwapVector
-from degenbot.uniswap.v2_functions import (
-    generate_v2_pool_address,
-)
 from degenbot.uniswap.v2_pool_calc import UniswapV2PoolCalc
 from degenbot.uniswap.v2_pool_state import V2PoolState
 from degenbot.uniswap.v2_types import (
@@ -56,8 +49,7 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
 
     # Instance attributes set in `_from_py_pool` (the only construction seam —
     # `__init__` raises). Declared at class scope so the type checker tracks
-    # them without inline annotations on the classmethod body (red-knot
-    # rejects `self.x: T = ...` as `invalid-type-form`).
+    # them without inline annotations on the classmethod body
     _py_pool: PyLiquidityPool
     dex: PyDexIdentity
     address: ChecksumAddress
@@ -140,7 +132,7 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
                 tokens are not registered in the same ``Bot`` (ADR-006).
 
         """
-        self = cls.__new__(cls)
+        self: Self = cls.__new__(cls)
         self._py_pool = py_pool
 
         # Variant-family guard: the handle's ``variant`` getter reads the V2
@@ -167,7 +159,7 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
         # Rust (``preset_for_variant``). Always present for a V2 pool
         # registered via ``register_v2_pool`` (which validates the variant).
         dex = py_pool.dex
-        if dex is None:
+        if dex is None:  # pragma: no cover
             msg = (
                 "PyLiquidityPool handle has no DexIdentity preset; the pool "
                 "must be registered with a variant via register_v2_pool"
@@ -182,7 +174,7 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
         # ``_py_bot``); the test factory registers them explicitly.
         py_token0 = py_pool.get_token0()
         py_token1 = py_pool.get_token1()
-        if py_token0 is None or py_token1 is None:
+        if py_token0 is None or py_token1 is None:  # pragma: no cover
             msg = (
                 "pool tokens must be registered in the same Bot as the pool "
                 "(ADR-006): get_token0/get_token1 returned None"
@@ -235,19 +227,6 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
 
         """
         return f"{self.__class__.__name__}(address={self.address}, token0={self._token0}, token1={self._token1})"  # noqa: E501
-
-    def _verified_address(self) -> ChecksumAddress:
-        """Compute the deterministic pool address via CREATE2.
-
-        Returns:
-            The checksummed address that should match this pool's address.
-
-        """
-        return generate_v2_pool_address(
-            deployer_address=self.deployer,
-            token_addresses=(self._token0.address, self._token1.address),
-            init_hash=self.init_hash,
-        )
 
     @property
     def update_block(self) -> BlockNumber:
@@ -305,21 +284,6 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
             block=block,
         )
 
-    @staticmethod
-    def swap_is_viable(
-        state: PoolState,
-        vector: UniswapPoolSwapVector,
-    ) -> bool:
-        """Swap is viable.
-
-        Returns:
-            True if a swap can proceed with the given state, False otherwise.
-
-        """
-        if state.reserves_token0 == 0 or state.reserves_token1 == 0:
-            return False
-        return state.reserves_token1 > 1 if vector.zero_for_one else state.reserves_token0 > 1
-
     def external_update(
         self,
         update: UniswapV2PoolExternalUpdate,
@@ -335,15 +299,6 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
                 message=f"Rejected update for block {update.block_number} in the past, current update block is {self.update_block}",  # noqa: E501
             )
 
-        if (
-            update.reserves_token0,
-            update.reserves_token1,
-        ) == (
-            self.reserves_token0,
-            self.reserves_token1,
-        ):
-            return
-
         self._py_pool.sync_reserves(
             reserve0=update.reserves_token0,
             reserve1=update.reserves_token1,
@@ -352,37 +307,6 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
         self._notify_subscribers(
             message=UniswapV2PoolStateUpdated(self.state),
         )
-
-    def discard_states_before_block(
-        self,
-        block: BlockNumber,
-    ) -> None:
-        """Discard cached states earlier than the given block.
-
-        Raises:
-            NoPoolStateAvailable: If the target is past the newest delta.
-
-        """
-        try:
-            self._py_pool.discard_before_block(block)
-        except ValueError as e:
-            raise NoPoolStateAvailable(block=block) from e
-
-    def restore_state_before_block(
-        self,
-        block: BlockNumber,
-    ) -> None:
-        """Restore the last pool state recorded prior to a target block.
-
-        Raises:
-            NoPoolStateAvailable: If no state exists prior to the target block.
-
-        """
-        try:
-            self._py_pool.restore_before_block(block)
-        except ValueError as e:
-            raise NoPoolStateAvailable(block=block) from e
-        self._notify_subscribers(message=UniswapV2PoolStateUpdated(self.state))
 
     def simulate_add_liquidity(
         self,
@@ -561,49 +485,6 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
         )
         zero_for_one = token_in_obj == self._token0
         amount_out = -result.amount1_delta if zero_for_one else -result.amount0_delta
-        return SimulationResult(
-            amount_in=amount_in,
-            amount_out=amount_out,
-            initial_state=result.initial_state,
-            final_state=result.final_state,
-        )
-
-    def simulate_swap_for_output(
-        self,
-        token_in: ChecksumAddress,
-        token_out: ChecksumAddress,
-        amount_out: int,
-        state_override: UniswapV2PoolState | None = None,
-    ) -> SimulationResult:
-        """Simulate swap for output.
-
-        Returns:
-            The simulation result with amounts and state transitions.
-
-        Raises:
-            DegenbotValueError: If tokens are unknown or mismatched.
-
-        """
-        if token_out == self._token0.address:
-            token_out_obj = self._token0
-            expected_token_in = self._token1.address
-        elif token_out == self._token1.address:
-            token_out_obj = self._token1
-            expected_token_in = self._token0.address
-        else:
-            raise DegenbotValueError(message=f"token_out {token_out} not in pool")
-
-        if token_in != expected_token_in:
-            msg = f"token_in {token_in} does not match expected {expected_token_in}"
-            raise DegenbotValueError(message=msg)
-
-        result = self.simulate_exact_output_swap(
-            token_out=token_out_obj,
-            token_out_quantity=amount_out,
-            override_state=state_override,
-        )
-        zero_for_one = token_out_obj == self._token1
-        amount_in = result.amount0_delta if zero_for_one else result.amount1_delta
         return SimulationResult(
             amount_in=amount_in,
             amount_out=amount_out,

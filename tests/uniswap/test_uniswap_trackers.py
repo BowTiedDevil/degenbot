@@ -12,7 +12,6 @@ from degenbot.uniswap.deployments import (
     UniswapV3ExchangeDeployment,
 )
 from degenbot.uniswap.trackers import UniswapV2PoolTracker, UniswapV3PoolTracker
-from degenbot.uniswap.v2_functions import get_v2_pools_from_token_path
 from tests.helpers.bot_factory import make_bot_with_provider
 
 pytestmark = pytest.mark.online_rpc
@@ -342,21 +341,3 @@ def test_get_pool_with_kwargs(fork_mainnet_full: AnvilFork):
         bot=bot,
     )
     uniswap_v3_pool_tracker.get_pool(MAINNET_UNISWAPV3_WETH_WBTC_ADDRESS)
-
-
-def test_pools_from_token_path(fork_mainnet_full: AnvilFork) -> None:
-
-    bot = make_bot_with_provider(ProviderAdapter.from_web3(fork_mainnet_full.w3))
-    uniswap_v2_pool_tracker = UniswapV2PoolTracker(
-        factory_address=MAINNET_UNISWAP_V2_FACTORY_ADDRESS,
-        bot=bot,
-    )
-
-    assert get_v2_pools_from_token_path(
-        tx_path=[MAINNET_WBTC_ADDRESS, MAINNET_WETH_ADDRESS],
-        pool_tracker=uniswap_v2_pool_tracker,
-    ) == [
-        uniswap_v2_pool_tracker.get_pool_from_tokens(
-            token_addresses=(MAINNET_WBTC_ADDRESS, MAINNET_WETH_ADDRESS),
-        ),
-    ]

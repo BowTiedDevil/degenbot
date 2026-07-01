@@ -53,28 +53,6 @@ def generate_v2_pool_address(
     )
 
 
-def get_v2_pools_from_token_path(
-    tx_path: Iterable[ChecksumAddress | str],
-    pool_tracker: "UniswapV2PoolTracker",
-) -> list["UniswapV2Pool"]:
-    """Return v2 pools from token path.
-
-    Returns:
-        A list of V2 pool instances for each consecutive token pair.
-
-    """
-    result: list[UniswapV2Pool] = []
-    for token_addresses in itertools.pairwise(tx_path):
-        pool = pool_tracker.get_pool_from_tokens(
-            token_addresses=token_addresses,
-            silent=True,
-        )
-        if TYPE_CHECKING:
-            assert isinstance(pool, UniswapV2Pool)
-        result.append(pool)
-    return result
-
-
 def constant_product_calc_exact_in(
     amount_in: int,
     reserves_in: int,
