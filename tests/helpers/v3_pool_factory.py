@@ -147,21 +147,18 @@ def make_v3_pool(
         )
 
     sparse = tick_data is None or len(tick_data) == 0
-    pool = pool_class(
-        handle,
-        address=address_checksum,
-        token0=token0,
-        token1=token1,
-        factory=factory,
-        fee=fee,
-        tick_spacing=tick_spacing,
-        deployer_address=deployer_address,
-        init_hash=init_hash,
-        tick_data_fetcher=tick_data_fetcher,
-        state_block=state_block_int,
-        sparse_liquidity_map=sparse,
-        tick_bitmap_override=tick_bitmap,
-    )
+    # ADR-006 (OGTTCS D1): the pool's tokens must live in the SAME Bot as
+    # the pool — ``_from_py_pool`` recovers them via ``py_pool.get_token0``/
+    # ``get_token1``, which look up ``token0_address``/``token1_address`` in
+    # the pool's own ``BotState``. The token companions passed in may have been
+    # built against a different ``PyBot``; re-register their metadata here.
+    for tok in (token0, token1):
+        if bot.get_token(tok.address) is None:
+            bot.register_token(
+                tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id
+            )
+    pool = pool_class._from_py_pool(handle)  # noqa: SLF001
+    pool._sparse_liquidity_map = sparse  # noqa: SLF001
     return pool
 
 

@@ -112,6 +112,7 @@
   "customizations": {
     "vscode": {
       "extensions": [
+        "astral-sh.ty",
         "bierner.markdown-mermaid",
         "charliermarsh.ruff",
         "davidanson.vscode-markdownlint",
