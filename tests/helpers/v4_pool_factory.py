@@ -12,11 +12,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.degenbot_rs import PyBot
 from degenbot.erc20 import Erc20Token
-from degenbot.uniswap.concentrated.types import LiquidityAtTick
-from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
+from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
+from degenbot.uniswap.v4_liquidity_pool import ProtocolFee, UniswapV4Pool
 
 # No shared PyBot — V4 tests frequently reuse the same pool_id (V4 pool_id is
 # derived from the pool_key, so tests sharing a pool_key collide on a shared
@@ -110,24 +111,30 @@ def make_v4_pool(
     # No separate ``update_tick_data`` — the inline seed is complete (tick
     # map + known bitmap words, atomically with registration). A separate
     # REPLACE would clobber live pump events (the pre-fix V4 desync).
+    # ADR-006: tokens must be in the same Bot as the pool.
+    for tok in (token0, token1):
+        if bot.get_token(tok.address) is None:
+            bot.register_token(
+                tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id
+            )
     sparse = tick_data is None or len(tick_data) == 0
-    pool = UniswapV4Pool(
-        handle,
-        pool_id=pool_id,
-        pool_manager_address=pool_manager_address,
-        token0=token0,
-        token1=token1,
-        fee=fee,
-        tick_spacing=tick_spacing,
-        hook_address=hook_address or ZERO_ADDRESS,
-        state_view_address=state_view_address,
-        protocol_fee_zero_for_one=protocol_fee_zero_for_one,
-        protocol_fee_one_for_zero=protocol_fee_one_for_zero,
-        lp_fee=lp_fee,
-        tick_bitmap=tick_bitmap,
-        state_block=state_block,
-        sparse_liquidity_map=sparse,
+    pool = UniswapV4Pool._from_py_pool(handle)  # noqa: SLF001
+    # Builder-supplied values the seam defaults; override from test args.
+    pool._state_view_address = get_checksum_address(state_view_address) if state_view_address else ZERO_ADDRESS  # noqa: SLF001
+    pool.protocol_fee = ProtocolFee(
+        zero_for_one=protocol_fee_zero_for_one,
+        one_for_zero=protocol_fee_one_for_zero,
     )
+    pool.lp_fee = lp_fee
+    if tick_bitmap is not None:
+        for word, bitmap_at_word in tick_bitmap.items():
+            if isinstance(bitmap_at_word, BitmapAtWord):
+                pool._bitmap_override[int(word)] = bitmap_at_word
+            elif isinstance(bitmap_at_word, dict):
+                pool._bitmap_override[int(word)] = BitmapAtWord(**bitmap_at_word)
+            else:
+                pool._bitmap_override[int(word)] = bitmap_at_word
+    pool._sparse_liquidity_map = sparse  # noqa: SLF001
     return pool
 
 

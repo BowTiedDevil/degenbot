@@ -27,9 +27,8 @@ a fetcher-checked empty word is seen as present-but-zero.
 """
 
 import dataclasses
-from collections.abc import Callable
 from enum import Enum
-from typing import Any, ClassVar, Final
+from typing import Any, ClassVar, Self
 from weakref import WeakSet
 
 import eth_abi.abi
@@ -38,7 +37,6 @@ from hexbytes import HexBytes
 from web3 import Web3
 
 from degenbot.arbitrage.types import UniswapV4PoolSwapAmounts, V4PoolKey
-from degenbot.builders.tick_data_fetcher import FetchedTickData
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS
 from degenbot.degenbot_rs import PyLiquidityPool
@@ -204,63 +202,118 @@ class UniswapV4Pool(
         "int128",  # liquidityNet
     )
 
-    def __init__(
-        self,
-        py_pool: PyLiquidityPool,
-        *,
-        pool_id: bytes | str,
-        pool_manager_address: str,
-        token0: Erc20Token,
-        token1: Erc20Token,
-        fee: Pip,
-        tick_spacing: int,
-        hook_address: str | None = None,
-        state_view_address: str | None = None,
-        protocol_fee_zero_for_one: int,
-        protocol_fee_one_for_zero: int,
-        lp_fee: int,
-        tick_bitmap: dict[int, Any] | None = None,
-        state_block: BlockNumber | int | None = None,
-        tick_data_fetcher: Callable[[int, int], FetchedTickData | None] | None = None,
-        sparse_liquidity_map: bool | None = None,
-    ) -> None:
-        """Initialize the instance over a ``PyLiquidityPool`` handle.
+    # Instance attributes set in `_from_py_pool` (the only construction seam).
+    _py_pool: PyLiquidityPool
+    _pool_id: HexBytes
+    _pool_manager_address: ChecksumAddress
+    hook_address: ChecksumAddress
+    _state_view_address: ChecksumAddress
+    active_hooks: frozenset["Hooks"]
+    _token0: Erc20Token
+    _token1: Erc20Token
+    _pool_key: UniswapV4PoolKey
+    name: str
+    protocol_fee: ProtocolFee
+    lp_fee: int
+    _initial_state_block: int
+    _sparse_liquidity_map: bool
+    _bitmap_override: dict[int, Any]
+    _tick_data_fetcher: Any
+    _subscribers: WeakSet[Subscriber]
 
-        The companion holds the V4 identity (pool_id, pool_manager, pool_key,
-        hooks, protocol_fee, lp_fee, state_view_address) + the
-        ``PyLiquidityPool`` handle; mutable scalars + tick data + the reorg
-        journal live in Rust (seeded before this companion is constructed).
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+        """Direct construction is forbidden.
+
+        ``UniswapV4Pool`` is a Python companion over a Rust-owned
+        ``PyLiquidityPool`` handle. The handle can only be produced by
+        registering a pool in a ``PyBot`` — there is no way for a caller to
+        hand-build one. Use the registered entry points instead:
+
+        - Production: ``Bot.build_pool(address)``
+        - Tests: ``make_v4_pool(...)``
+
+        Both register the pool in Rust, obtain the ``PyLiquidityPool``
+        handle, and wrap it via :meth:`_from_py_pool` (mirroring Polars'
+        ``_from_pydf`` seam).
+
+        Raises:
+            TypeError: Always. Direct construction is not supported.
+
         """
+        msg = (
+            f"{type(self).__name__} cannot be constructed directly. "
+            "Use Bot.build_pool(address) (production) or make_v4_pool(...) "
+            "(tests) to register the pool in Rust and obtain the "
+            "PyLiquidityPool handle to wrap."
+        )
+        raise TypeError(msg)
+
+    @classmethod
+    def _from_py_pool(cls, py_pool: PyLiquidityPool) -> Self:
+        """Wrap a Rust-owned ``PyLiquidityPool`` handle as a Python companion.
+
+        Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). The
+        handle is self-describing: every identity field (pool_manager,
+        pool_id, pool_key, hooks, tokens, fee, tick_spacing) is read off it
+        — no identity is passed as constructor args. Rust owns the mutable
+        state (slot0 + tick_data + reorg journal) as ``V4PoolState`` and the
+        immutable registration metadata as ``V4PoolIdentity``; this companion
+        reads both through ``self._py_pool``.
+
+        Protocol fee / LP fee / state_view_address are builder-supplied
+        values the seam defaults; the builder overrides them after
+        ``_from_py_pool`` (matches V3's deployer/init_hash override).
+
+        Returns:
+            A ``cls`` instance wrapping ``py_pool``.
+
+        Raises:
+            DegenbotValueError: If the handle is not a V4-family pool.
+
+        """
+        self = cls.__new__(cls)
         self._py_pool = py_pool
-        self._pool_manager_address = get_checksum_address(pool_manager_address)
-        self._pool_id: Final[HexBytes] = HexBytes(pool_id)
 
-        state_block_int = state_block if state_block is not None else 0
-        self._initial_state_block = state_block_int or self._py_pool.update_block
+        # Variant-family guard.
+        if py_pool.pool_family != "v4":
+            msg = (
+                "PyLiquidityPool handle is not a V4-family pool "
+                f"(got pool_family {py_pool.pool_family!r}); "
+                "UniswapV4Pool._from_py_pool requires a handle "
+                "registered via register_v4_pool"
+            )
+            raise DegenbotValueError(message=msg)
 
-        self._token0: Final[Erc20Token] = token0
-        self._token1: Final[Erc20Token] = token1
-        self.hook_address = (
-            get_checksum_address(hook_address) if hook_address is not None else ZERO_ADDRESS
-        )
-        self._state_view_address = (
-            get_checksum_address(state_view_address)
-            if state_view_address is not None
-            else ZERO_ADDRESS
-        )
-        self.active_hooks: frozenset[Hooks] = frozenset(
+        # Identity — all read off the handle (no shadow kwargs).
+        self._pool_id = HexBytes(bytes.fromhex(py_pool.pool_id_hex.removeprefix("0x")))
+        self._pool_manager_address = get_checksum_address(py_pool.pool_manager_address)
+        raw_hook = py_pool.hook_address
+        self.hook_address = get_checksum_address(raw_hook) if raw_hook else ZERO_ADDRESS
+        self._state_view_address = ZERO_ADDRESS
+        self.active_hooks = frozenset(
             hook for hook in Hooks if int(self.hook_address, 16) & hook.value != 0
         )
+
+        py_token0 = py_pool.get_token0()
+        py_token1 = py_pool.get_token1()
+        if py_token0 is None or py_token1 is None:
+            msg = (
+                "pool tokens must be registered in the same Bot as the pool "
+                "(ADR-006): get_token0/get_token1 returned None"
+            )
+            raise DegenbotValueError(message=msg)
+        self._token0 = Erc20Token._from_py_token(py_token0)  # noqa: SLF001
+        self._token1 = Erc20Token._from_py_token(py_token1)  # noqa: SLF001
 
         self._pool_key = UniswapV4PoolKey(
             currency0=self._token0.address,
             currency1=self._token1.address,
-            fee=fee,
-            tick_spacing=tick_spacing,
+            fee=py_pool.fee,
+            tick_spacing=py_pool.tick_spacing,
             hooks=self.hook_address,
         )
 
-        # Verify pool ID — correctness floor mirrors the pre-companion assert.
+        # Verify pool ID — the handle's pool_id is authoritative (Rust-stored).
         assert self.pool_id == (
             calculated_id := Web3.keccak(
                 eth_abi.abi.encode(
@@ -280,35 +333,18 @@ class UniswapV4Pool(
 
         self.name = f"{self._token0}-{self._token1} ({self.__class__.__name__}, id={self.pool_id.to_0x_hex()})"  # noqa:E501
 
-        self.protocol_fee = ProtocolFee(
-            zero_for_one=protocol_fee_zero_for_one,
-            one_for_zero=protocol_fee_one_for_zero,
-        )
-        self.lp_fee = lp_fee
+        # Protocol fee / LP fee / initial state block — builder-supplied values
+        # the seam defaults; the builder overrides after _from_py_pool.
+        self.protocol_fee = ProtocolFee(zero_for_one=0, one_for_zero=0)
+        self.lp_fee = self.pool_key.fee
+        self._initial_state_block = self._py_pool.update_block
 
-        # Sparse detection: inferred from the Rust-side tick map unless the
-        # builder explicitly overrides it.
-        self._sparse_liquidity_map = (
-            sparse_liquidity_map
-            if sparse_liquidity_map is not None
-            else len(self._py_pool.tick_data_snapshot()) == 0
-        )
+        self._sparse_liquidity_map = len(self._py_pool.tick_data_snapshot()) == 0
 
-        # Verbatim bitmap override — mirrors the V3 companion. See
-        # v3_liquidity_pool.py for the full rationale (snapshot verbatim
-        # preservation + fetcher-checked-empty-word).
-        self._bitmap_override: dict[int, BitmapAtWord] = {}
-        if tick_bitmap is not None:
-            for word, bitmap_at_word in tick_bitmap.items():
-                if isinstance(bitmap_at_word, BitmapAtWord):
-                    self._bitmap_override[int(word)] = bitmap_at_word
-                elif isinstance(bitmap_at_word, dict):
-                    self._bitmap_override[int(word)] = BitmapAtWord(**bitmap_at_word)
-                else:
-                    self._bitmap_override[int(word)] = bitmap_at_word
-
-        self._tick_data_fetcher = tick_data_fetcher
-        self._subscribers: WeakSet[Subscriber] = WeakSet()
+        self._bitmap_override = {}
+        self._tick_data_fetcher = None
+        self._subscribers = WeakSet()
+        return self
 
     def __eq__(self, other: object) -> bool:
         """Check equality with another object.

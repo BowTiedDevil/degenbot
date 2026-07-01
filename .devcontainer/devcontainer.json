@@ -42,8 +42,7 @@
     "source=${localEnv:HOME}/.agents,target=/home/dev/.agents,type=bind",
     "source=${localEnv:HOME}/.config/degenbot,target=/home/dev/.config/degenbot,type=bind",
     "source=${localEnv:HOME}/.foundry,target=/home/dev/.foundry,type=bind",
-    "source=${localEnv:HOME}/.pi,target=/home/dev/.pi,type=bind",
-    "source=${localEnv:HOME}/code/shared,target=/shared,type=bind"
+    "source=${localEnv:HOME}/.pi,target=/home/dev/.pi,type=bind"
   ],
   // PATH additions for the npm-global pi binary (~/.local/bin; npm prefix
   // in the Dockerfile makes `npm i -g` land there) and foundry
