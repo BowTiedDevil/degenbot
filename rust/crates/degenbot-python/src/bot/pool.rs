@@ -167,6 +167,265 @@ impl degenbot_bot::bot_core::rate_provider::BalancerRateProvider for PyBalancerR
         })
     }
 }
+
+// ---------------------------------------------------------------------------
+// Curve data-provider Py adapter (ADR-005 JFGCHJ I/O trait object).
+// ---------------------------------------------------------------------------
+
+/// `PyO3` adapter wrapping a Python `CurveDataProvider` as a stored
+/// `Arc<dyn CurveDataProvider>`. Each read re-enters via `Python::attach` and
+/// calls the matching Python method by name; the return is converted to the
+/// Rust type. Caching stays in the Python `PerBlockCache` / the adapter — the
+/// trait is the *read* interface (see the task note).
+#[derive(Debug)]
+pub(crate) struct PyCurveDataProvider {
+    callback: pyo3::Py<pyo3::PyAny>,
+}
+
+/// Wrap a Python `CurveDataProvider` object as a stored
+/// `Arc<dyn CurveDataProvider>` for registration-time storage on
+/// `CurvePoolState`.
+#[must_use]
+pub fn make_curve_data_provider(
+    callback: pyo3::Py<pyo3::PyAny>,
+) -> Arc<dyn degenbot_bot::bot_core::curve_data_provider::CurveDataProvider> {
+    Arc::new(PyCurveDataProvider { callback })
+}
+
+impl degenbot_bot::bot_core::curve_data_provider::CurveDataProvider for PyCurveDataProvider {
+    fn block_number(
+        &self,
+    ) -> Result<u64, degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError> {
+        use degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError;
+        pyo3::Python::attach(|py| {
+            let result = self
+                .callback
+                .call_method0(py, "block_number")
+                .map_err(|_| CurveDataProviderError::FetchFailed)?;
+            let v: u64 = result
+                .extract(py)
+                .map_err(|_| CurveDataProviderError::FetchFailed)?;
+            Ok(v)
+        })
+    }
+
+    fn block_timestamp(
+        &self,
+        block_number: u64,
+    ) -> Result<u64, degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError> {
+        use degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError;
+        pyo3::Python::attach(|py| {
+            let result = self
+                .callback
+                .call_method1(py, "block_timestamp", (block_number,))
+                .map_err(|_| CurveDataProviderError::FetchFailed)?;
+            let v: u64 = result
+                .extract(py)
+                .map_err(|_| CurveDataProviderError::FetchFailed)?;
+            Ok(v)
+        })
+    }
+
+    fn token_balance(
+        &self,
+        token_address: alloy::primitives::Address,
+        holder_address: alloy::primitives::Address,
+        block_number: u64,
+    ) -> Result<
+        alloy::primitives::U256,
+        degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError,
+    > {
+        use degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError;
+        pyo3::Python::attach(|py| {
+            let tok = address_utils::address_to_checksum_string(&token_address);
+            let holder = address_utils::address_to_checksum_string(&holder_address);
+            let result = self
+                .callback
+                .call_method1(py, "token_balance", (tok, holder, block_number))
+                .map_err(|_| CurveDataProviderError::FetchFailed)?;
+            let v: u128 = result
+                .extract(py)
+                .map_err(|_| CurveDataProviderError::FetchFailed)?;
+            Ok(alloy::primitives::U256::from(v))
+        })
+    }
+
+    fn token_total_supply(
+        &self,
+        token_address: alloy::primitives::Address,
+        block_number: u64,
+    ) -> Result<
+        alloy::primitives::U256,
+        degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError,
+    > {
+        use degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError;
+        pyo3::Python::attach(|py| {
+            let tok = address_utils::address_to_checksum_string(&token_address);
+            let result = self
+                .callback
+                .call_method1(py, "token_total_supply", (tok, block_number))
+                .map_err(|_| CurveDataProviderError::FetchFailed)?;
+            let v: u128 = result
+                .extract(py)
+                .map_err(|_| CurveDataProviderError::FetchFailed)?;
+            Ok(alloy::primitives::U256::from(v))
+        })
+    }
+
+    fn lending_rates(
+        &self,
+        block_number: u64,
+    ) -> Result<
+        Vec<alloy::primitives::U256>,
+        degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError,
+    > {
+        self.read_u256_vec("lending_rates", block_number)
+    }
+
+    fn d(
+        &self,
+        block_number: u64,
+    ) -> Result<
+        alloy::primitives::U256,
+        degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError,
+    > {
+        self.read_u256("d", block_number)
+    }
+
+    fn gamma(
+        &self,
+        block_number: u64,
+    ) -> Result<
+        alloy::primitives::U256,
+        degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError,
+    > {
+        self.read_u256("gamma", block_number)
+    }
+
+    fn price_scale(
+        &self,
+        block_number: u64,
+    ) -> Result<
+        Vec<alloy::primitives::U256>,
+        degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError,
+    > {
+        self.read_u256_vec("price_scale", block_number)
+    }
+
+    fn admin_balances(
+        &self,
+        block_number: u64,
+    ) -> Result<
+        Vec<alloy::primitives::U256>,
+        degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError,
+    > {
+        self.read_u256_vec("admin_balances", block_number)
+    }
+
+    fn redemption_price(
+        &self,
+        block_number: u64,
+    ) -> Result<
+        alloy::primitives::U256,
+        degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError,
+    > {
+        self.read_u256("redemption_price", block_number)
+    }
+
+    fn base_cache_updated(
+        &self,
+        block_number: u64,
+    ) -> Result<u64, degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError> {
+        use degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError;
+        pyo3::Python::attach(|py| {
+            let result = self
+                .callback
+                .call_method1(py, "base_cache_updated", (block_number,))
+                .map_err(|_| CurveDataProviderError::FetchFailed)?;
+            let v: u64 = result
+                .extract(py)
+                .map_err(|_| CurveDataProviderError::FetchFailed)?;
+            Ok(v)
+        })
+    }
+
+    fn base_virtual_price(
+        &self,
+        block_number: u64,
+    ) -> Result<
+        alloy::primitives::U256,
+        degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError,
+    > {
+        self.read_u256("base_virtual_price", block_number)
+    }
+
+    fn virtual_price(
+        &self,
+        block_number: u64,
+    ) -> Result<
+        alloy::primitives::U256,
+        degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError,
+    > {
+        self.read_u256("virtual_price", block_number)
+    }
+}
+
+impl PyCurveDataProvider {
+    /// Call a `(&self, block_number) -> int` Python method → `U256`.
+    fn read_u256(
+        &self,
+        method: &str,
+        block_number: u64,
+    ) -> Result<
+        alloy::primitives::U256,
+        degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError,
+    > {
+        use degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError;
+        pyo3::Python::attach(|py| {
+            let result = self
+                .callback
+                .call_method1(py, method, (block_number,))
+                .map_err(|_| CurveDataProviderError::FetchFailed)?;
+            let v: u128 = result
+                .extract(py)
+                .map_err(|_| CurveDataProviderError::FetchFailed)?;
+            Ok(alloy::primitives::U256::from(v))
+        })
+    }
+
+    /// Call a `(&self, block_number) -> iterable[int]` Python method → `Vec<U256>`.
+    fn read_u256_vec(
+        &self,
+        method: &str,
+        block_number: u64,
+    ) -> Result<
+        Vec<alloy::primitives::U256>,
+        degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError,
+    > {
+        use degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError;
+        pyo3::Python::attach(|py| {
+            let result = self
+                .callback
+                .call_method1(py, method, (block_number,))
+                .map_err(|_| CurveDataProviderError::FetchFailed)?;
+            let bound = result.bind(py);
+            let rates: Vec<alloy::primitives::U256> = bound
+                .try_iter()
+                .map_err(|_| CurveDataProviderError::FetchFailed)?
+                .map(|item| {
+                    let v: u128 = item
+                        .map_err(|_| CurveDataProviderError::FetchFailed)?
+                        .extract()
+                        .map_err(|_| CurveDataProviderError::FetchFailed)?;
+                    Ok(alloy::primitives::U256::from(v))
+                })
+                .collect::<Result<_, _>>()?;
+            Ok(rates)
+        })
+    }
+}
+
+/// A thin Python handle to a pool registered in `BotState`.
 ///
 /// Does not own any state — all data lives in Rust inside `BotState`.
 #[pyclass(skip_from_py_object)]
@@ -1715,6 +1974,18 @@ impl PyLiquidityPool {
             .map(|b| crate::conversion::alloy::u256_to_py(py, b).map(pyo3::Bound::unbind))
             .collect::<PyResult<_>>()?;
         Ok(pyo3::types::PyList::new(py, py_pms)?.into_any().unbind())
+    }
+
+    /// Whether a Curve data-provider I/O trait object is stored on this
+    /// pool's state (ADR-005 JFGCHJ). `False` for non-Curve pools or Curve
+    /// pools registered without a provider (the no-I/O fixture case).
+    #[getter]
+    fn curve_has_data_provider(&self) -> bool {
+        let core = self.core.read();
+        match core.get_curve_pool(self.pool_id) {
+            Some(s) => s.data_provider.is_some(),
+            None => false,
+        }
     }
 
     /// Apply a Curve `external_update` (new balances from an `Exchange` event).

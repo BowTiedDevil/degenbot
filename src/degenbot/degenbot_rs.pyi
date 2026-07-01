@@ -1193,6 +1193,8 @@ class PyLiquidityPool:
     @property
     def curve_precision_multipliers(self) -> list[int]: ...
     @property
+    def curve_has_data_provider(self) -> bool: ...
+    @property
     def n_balancer_tokens(self) -> int: ...
     @property
     def balancer_balances(self) -> list[int]: ...
@@ -1447,6 +1449,7 @@ class PyBot:
         lp_token: str | None = None,
         use_lending: list[bool] | None = None,
         precision_multipliers: list[int] | None = None,
+        data_provider: Any = None,  # noqa: ANN401 — pyo3 accepts PyAny
     ) -> int: ...
     def register_balancer_weighted_pool(
         self,

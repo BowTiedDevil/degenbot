@@ -22,6 +22,7 @@ pub mod balancer_stable_state;
 pub mod balancer_weighted_state;
 pub mod block_clock;
 pub mod block_pump;
+pub mod curve_data_provider;
 pub mod curve_state;
 pub mod drain_sink;
 pub mod engine;
@@ -51,6 +52,7 @@ pub use balancer_weighted_state::{
     BalancerWeightedBlockDelta, BalancerWeightedPoolIdentity, BalancerWeightedPoolState,
     RegisterBalancerWeightedPoolParams,
 };
+pub use curve_data_provider::{CurveDataProvider, CurveDataProviderError};
 pub use curve_state::{
     CurveBlockDelta, CurvePoolIdentity, CurvePoolState, RegisterCurvePoolParams,
 };
@@ -4317,6 +4319,7 @@ mod tests {
             lp_token: None,
             use_lending: vec![false, false],
             precision_multipliers: vec![U256::from(1u64), U256::from(1u64)],
+            data_provider: None,
         });
         assert_eq!(core.pool_family(curve_id), "curve");
 
