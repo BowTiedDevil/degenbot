@@ -2,16 +2,17 @@
 
 from fractions import Fraction
 
-from degenbot.calculations.camelot import f_camelot, get_y_camelot, k_camelot
-from degenbot.calculations.solidly_stable import (
-    calc_d,
-    calc_exact_in_stable,
-    calc_exact_in_volatile,
-    calc_f,
-    calc_k,
-    get_y_solidly,
+from degenbot.degenbot_rs import camelot_f as f_camelot
+from degenbot.degenbot_rs import camelot_get_y_camelot as get_y_camelot
+from degenbot.degenbot_rs import camelot_k as k_camelot
+from degenbot.degenbot_rs import solidly_calc_d as calc_d
+from degenbot.degenbot_rs import (
+    solidly_calc_exact_in_stable_solidly as calc_exact_in_stable_solidly,
 )
-from degenbot.calculations.solidly_stable import calc_k as solidly_calc_k
+from degenbot.degenbot_rs import solidly_calc_exact_in_volatile as calc_exact_in_volatile
+from degenbot.degenbot_rs import solidly_calc_f as calc_f
+from degenbot.degenbot_rs import solidly_calc_k as calc_k
+from degenbot.degenbot_rs import solidly_get_y_solidly as get_y_solidly
 from degenbot.uniswap.v2_functions import constant_product_calc_exact_in
 
 # ── constant_product tests ──
@@ -202,11 +203,12 @@ class TestSolidlyCalcExactInVolatile:
     def test_standard_fee(self):
         """Volatile swap with token_in=0, matching constant product result."""
         result = calc_exact_in_volatile(
-            amount_in=1_000_000,
-            token_in=0,
-            reserves0=10_000_000_000,
-            reserves1=10_000_000_000,
-            fee=Fraction(3, 1000),
+            1_000_000,
+            0,
+            10_000_000_000,
+            10_000_000_000,
+            3,
+            1000,
         )
         assert result == 996900
 
@@ -217,24 +219,28 @@ class TestSolidlyCalcExactInVolatile:
         r0 = 10_000_000_000
         r1 = 10_000_000_000
         cp_result = constant_product_calc_exact_in(amount_in, r0, r1, fee)
-        solidly_result = calc_exact_in_volatile(amount_in, 0, r0, r1, fee)
+        solidly_result = calc_exact_in_volatile(
+            amount_in, 0, r0, r1, fee.numerator, fee.denominator
+        )
         assert cp_result == solidly_result
 
     def test_token_in_1(self):
         """Swapping token 1 should use reserves1 as input reserves."""
         result_0 = calc_exact_in_volatile(
-            amount_in=1_000_000,
-            token_in=0,
-            reserves0=10_000_000_000,
-            reserves1=5_000_000_000,
-            fee=Fraction(3, 1000),
+            1_000_000,
+            0,
+            10_000_000_000,
+            5_000_000_000,
+            3,
+            1000,
         )
         result_1 = calc_exact_in_volatile(
-            amount_in=1_000_000,
-            token_in=1,
-            reserves0=5_000_000_000,
-            reserves1=10_000_000_000,
-            fee=Fraction(3, 1000),
+            1_000_000,
+            1,
+            5_000_000_000,
+            10_000_000_000,
+            3,
+            1000,
         )
         assert result_0 == result_1
 
@@ -244,33 +250,30 @@ class TestSolidlyCalcExactInStable:
 
     def test_nonzero_output(self):
         """Exact computed output for symmetric 1e18 reserves with 0.3% fee."""
-        result = calc_exact_in_stable(
-            amount_in=1_000_000,
-            token_in=0,
-            reserves0=1_000_000_000_000_000_000,
-            reserves1=1_000_000_000_000_000_000,
-            decimals0=10**18,
-            decimals1=10**18,
-            fee=Fraction(3, 1000),
-            k_func=calc_k,
-            get_y_func=get_y_solidly,
+        result = calc_exact_in_stable_solidly(
+            1_000_000,
+            0,
+            1_000_000_000_000_000_000,
+            1_000_000_000_000_000_000,
+            10**18,
+            10**18,
+            3,
+            1000,
         )
         assert result == 996999
 
     def test_symmetric_reserves_forward_and_reverse(self):
         """Forward and reverse swaps on symmetric reserves should give equal outputs."""
-        kwargs = {
-            "amount_in": 1_000_000_000_000_000_000,
-            "reserves0": 5_000_000_000_000_000_000,
-            "reserves1": 5_000_000_000_000_000_000,
-            "decimals0": 10**18,
-            "decimals1": 10**18,
-            "fee": Fraction(3, 1000),
-            "k_func": calc_k,
-            "get_y_func": get_y_solidly,
-        }
-        forward = calc_exact_in_stable(token_in=0, **kwargs)
-        reverse = calc_exact_in_stable(token_in=1, **kwargs)
+        common = (
+            5_000_000_000_000_000_000,
+            5_000_000_000_000_000_000,
+            10**18,
+            10**18,
+            3,
+            1000,
+        )
+        forward = calc_exact_in_stable_solidly(1_000_000_000_000_000_000, 0, *common)
+        reverse = calc_exact_in_stable_solidly(1_000_000_000_000_000_000, 1, *common)
         assert forward == reverse
 
 
@@ -327,7 +330,7 @@ class TestCamelot:
         b0 = 1_000_000_000_000_000_000
         b1 = 2_000_000_000_000_000_000
         d0 = d1 = 10**18
-        assert k_camelot(b0, b1, d0, d1) == solidly_calc_k(b0, b1, d0, d1)
+        assert k_camelot(b0, b1, d0, d1) == calc_k(b0, b1, d0, d1)
 
     def test_get_y_camelot_converges(self):
         """get_y_camelot should return a y that approximately preserves the invariant."""
