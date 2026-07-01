@@ -4,7 +4,6 @@ This module is intentionally minimal — the bulk of concentrated liquidity math
 already lives in well-organized DEX-specific libraries:
 
 - ``degenbot.uniswap.v3_libraries/`` — tick_math, full_math, tick_bitmap
-- ``degenbot.uniswap.v4_libraries/`` — V4 sibling libraries
 
 Those libraries are standalone pure functions and don't need to move here.
 This module exists for any cross-DEX shared utilities that emerge.
