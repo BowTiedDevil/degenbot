@@ -200,6 +200,7 @@ dev = [
     "hypothesis",
     "maturin",
     "pre-commit",
+    "prek",
     "pytest-asyncio",
     "pytest-cov",
     "pytest-order",
@@ -211,7 +212,6 @@ dev = [
     "sybil",
     "ty",
     "vyper",
-    "prek>=0.4.5",
 ]
 
 [tool.ty.environment]
