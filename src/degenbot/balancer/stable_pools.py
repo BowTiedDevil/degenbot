@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar, Protocol, runtime_checkable
+from fractions import Fraction
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Self, runtime_checkable
 from weakref import WeakSet
 
 from degenbot.balancer.libraries.constants import ONE
@@ -24,6 +25,7 @@ from degenbot.degenbot_rs import (
 from degenbot.degenbot_rs import (
     balancer_weighted_subtract_swap_fee_amount as _rs_subtract_swap_fee_amount,
 )
+from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import StaleRateResult
 from degenbot.types.abstract import AbstractLiquidityPool
@@ -41,14 +43,11 @@ _MAX_TWO_TOKEN_COUNT = 2
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from fractions import Fraction
 
     from eth_typing import ChecksumAddress
 
     from degenbot.degenbot_rs import PyLiquidityPool
-    from degenbot.erc20 import Erc20Token
     from degenbot.types.abstract import AbstractPoolState
-    from degenbot.types.aliases import BlockNumber
 
 # Enum for deployed StableMath invariant versions.
 # V1: always-roundDown with D_P accumulation (older ComposableStablePools)
@@ -93,6 +92,33 @@ class _StaticRateProvider:
         return self._rates
 
 
+class _HandleRateProviderAdapter:
+    """Thin Python shim that delegates to the stored Rust rate-provider trait object.
+
+    Returned by ``BalancerV2StablePool.rate_provider`` when the stored
+    provider is dynamic (the sealed seam keeps the provider in Rust, not on
+    the companion). Exposes the ``get_rates`` surface so callers that hold a
+    reference to ``pool.rate_provider`` keep working; the canonical read path
+    is ``_resolve_scaling_factors`` (which calls the handle directly).
+    """
+
+    def __init__(self, py_pool: PyLiquidityPool) -> None:
+        self._py_pool = py_pool
+
+    def get_rates(self, block_identifier: int | str | None = None) -> tuple[int, ...]:
+        """Fetch rates via the handle (delegates to the Rust trait object).
+
+        Returns:
+            The per-token rates at the requested block.
+
+        """
+        block_opt = block_identifier if isinstance(block_identifier, int) else None
+        rates = self._py_pool.fetch_balancer_stable_rates(block_opt)
+        if rates is None:  # pragma: no cover — rate_provider is non-None
+            return ()
+        return tuple(rates)
+
+
 class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
     """Balancer V2 Stable Pool (MetaStablePool or ComposableStablePool).
 
@@ -129,112 +155,134 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
     type PoolState = BalancerV2PoolState
     FEE_DENOMINATOR = 1 * 10**18
 
-    def __init__(
-        self,
-        py_pool: PyLiquidityPool,
-        *,
-        address: ChecksumAddress | str,
-        pool_id: bytes,
-        vault: str,
-        tokens: Sequence[Erc20Token],
-        fee: Fraction,
-        amp: int,
-        scaling_factors: Sequence[int],
-        bpt_idx: int | None = None,
-        base_scaling_factors: Sequence[int] | None = None,
-        rate_provider: BalancerRateProvider | None = None,
-        invariant_version: int = INVARIANT_V2,
-        state_block: BlockNumber | None = None,
-    ) -> None:
-        """Initialize the instance.
+    # Class-scope instance-attribute declarations (red-knot): `_from_py_pool`
+    # assigns these on `Self`; declare them at class scope so attribute reads
+    # in helper methods resolve (mirrors the weighted companion).
+    address: ChecksumAddress
+    pool_id: bytes
+    pool_specialization: int
+    vault: ChecksumAddress
+    _py_pool: PyLiquidityPool
+    _tokens: tuple[Erc20Token, ...]
+    scaling_factors: tuple[int, ...]
+    fee: Fraction
+    amp: int
+    bpt_idx: int | None
+    invariant_version: int
+    _base_scaling_factors: tuple[int, ...]
+    _non_bpt_indices: tuple[int, ...]
+    _rate_provider_is_static: bool
+    _subscribers: WeakSet[Subscriber]
 
-        A companion over a ``PyLiquidityPool`` handle (ADR-005 slice 12d):
-        Rust ``BotState`` owns the mutable ``balances`` / ``update_block`` slot
-        + the reorg journal; this companion reads them through
-        ``self._py_pool`` (``snapshot_balancer_stable()`` for an atomic
-        ``(balances, block)`` tuple, ``balancer_stable_balances`` /
-        ``update_block`` getters) and delegates ``external_update`` to
-        ``apply_balancer_stable_balance_update``. Immutable config (vault,
-        pool_id, tokens, amp, scaling_factors, swap_fee, bpt_idx,
-        invariant_version, base_scaling_factors, rate_provider) stays
-        Python-side — matches V3/V4/Curve/Weighted.
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+        """Direct construction is forbidden.
 
-        The companion is constructed AFTER
-        ``register_balancer_stable_pool`` has landed the registration
-        ``balances`` / ``update_block`` into Rust, so this constructor takes
-        no balance argument — read live from the handle on demand.
-        Constructed from pre-fetched data only. Use ``Bot.build_pool()`` to
-        fetch from chain; tests use ``make_balancer_stable_pool``.
+        ``BalancerV2StablePool`` is a Python companion over a Rust-owned
+        ``PyLiquidityPool`` handle. Use the registered entry points instead:
 
-        I/O boundary:
-            Construction is I/O-free — all immutable parameters (amp, fee,
-            tokens, scaling_factors, bpt_idx, invariant_version,
-            rate_provider) are provided by the builder/factory. Calculation is
-            I/O-free for static-rate pools; ComposableStablePools with a
-            non-static ``rate_provider`` may call into it during
-            ``calculate_tokens_out_from_tokens_in`` /
-            ``calculate_tokens_in_from_tokens_out`` (the
-            ``requires_io_at_calculation_time`` property flags this).
+        - Production: ``Bot.build_pool(address)``
+        - Tests: ``make_balancer_stable_pool(...)``
+
+        Both register the pool in Rust (including the optional rate provider
+        as the stored I/O trait object), obtain the ``PyLiquidityPool``
+        handle, and wrap it via :meth:`_from_py_pool`.
+
+        Raises:
+            TypeError: Always. Direct construction is not supported.
+
         """
+        msg = (
+            f"{type(self).__name__} cannot be constructed directly. "
+            "Use Bot.build_pool(address) (production) or "
+            "make_balancer_stable_pool(...) (tests) to register the pool in "
+            "Rust and obtain the PyLiquidityPool handle to wrap."
+        )
+        raise TypeError(msg)
+
+    @classmethod
+    def _from_py_pool(cls, py_pool: PyLiquidityPool) -> Self:
+        """Wrap a Rust-owned ``PyLiquidityPool`` handle as a Python companion.
+
+        Internal seam (ADR-005, Polars-style ``_from_pydf`` pattern). Every
+        identity field (vault, pool_id, tokens, amp, scaling_factors,
+        swap_fee, bpt_idx, invariant_version) is read off the handle; the rate
+        provider is the stored I/O trait object (queried via
+        ``fetch_balancer_stable_rates`` / ``balancer_stable_rate_provider_is_static``);
+        base scaling factors are derived from token decimals.
+
+        Returns:
+            A ``cls`` instance wrapping ``py_pool``.
+
+        Raises:
+            DegenbotValueError: If the handle is not a Balancer stable pool
+                or any token is not registered.
+
+        """
+        self = cls.__new__(cls)
         self._py_pool = py_pool
-        self.address = get_checksum_address(address)
 
-        state_block = state_block if state_block is not None else 0
+        if py_pool.pool_family != "balancer-stable":
+            msg = (
+                "PyLiquidityPool handle is not a Balancer stable pool "
+                f"(got pool_family {py_pool.pool_family!r})"
+            )
+            raise DegenbotValueError(message=msg)
 
-        self.pool_id = pool_id
+        self.address = get_checksum_address(py_pool.balancer_stable_vault)
+        # The vault IS the address book entry; the pool address is encoded
+        # in the pool_id. Resolve the pool address off the pool_id.
+        self.vault = get_checksum_address(py_pool.balancer_stable_vault)
+
+        pool_id_hex = py_pool.balancer_stable_pool_id_hex.removeprefix("0x")
+        self.pool_id = bytes.fromhex(pool_id_hex)
         self.pool_specialization = int.from_bytes(self.pool_id[20:22], byteorder="big")
-        self.vault = get_checksum_address(vault)
-        self._tokens = tuple(tokens)
-        self.fee = fee
-        self.amp = amp
-        self.bpt_idx = bpt_idx
-        self.invariant_version = invariant_version
+        # Pool address = first 20 bytes of the pool_id.
+        self.address = get_checksum_address("0x" + self.pool_id[:20].hex())
 
-        # Base scaling factors: 10^(18 - token_decimals) for each token.
-        # Base = decimal-adjustment-only scaling factors (no rate). Used
-        # alongside the ``rate_provider`` rates to compute full scaling
-        # factors as ``base_sf * rate // ONE`` (mulDown, matching the deployed
-        # contract) during ``_resolve_scaling_factors``.
-        if base_scaling_factors is not None:
-            self._base_scaling_factors = tuple(base_scaling_factors)
-        else:
-            # Fallback: if base_scaling_factors not provided, derive them
-            # from the per-token decimal lookup (the canonical source of
-            # truth, shared with the weighted companion).
-            self._base_scaling_factors = tuple(
-                _compute_scaling_factor(token) for token in self._tokens
+        py_tokens = py_pool.get_balancer_stable_tokens()
+        if py_tokens is None:
+            msg = (
+                "pool tokens must be registered in the same Bot as the pool "
+                "(ADR-006): get_balancer_stable_tokens returned None"
             )
+            raise DegenbotValueError(message=msg)
+        self._tokens = tuple(
+            Erc20Token._from_py_token(t)  # noqa: SLF001
+            for t in py_tokens
+        )
 
-        # Construction-time scaling factors (``base_sf * rate // ONE``).
-        # Stored immutably; the rate-cache-aware ``rate_provider`` refreshes
-        # them per-block via ``_resolve_scaling_factors``.
-        self.scaling_factors = tuple(scaling_factors)
+        self.amp = py_pool.balancer_amp
+        self.bpt_idx = py_pool.balancer_bpt_index
+        self.invariant_version = py_pool.balancer_invariant_version
 
-        # Rate provider for per-block rate resolution. If not provided, a
-        # static provider wraps the construction-time rates — this drives
-        # ``requires_io_at_calculation_time`` (False for the static case) and
-        # ``_should_warn_stale_rates`` (True for Composable with a static
-        # provider, the ``StaleRateResult`` sentinel that swap callers can
-        # unwrap).
-        if rate_provider is not None:
-            self._rate_provider = rate_provider
+        swap_fee_scaled = py_pool.balancer_stable_swap_fee
+        self.fee = (
+            Fraction(swap_fee_scaled, self.FEE_DENOMINATOR)
+            if self.FEE_DENOMINATOR != 0
+            else Fraction(0)
+        )
+
+        # Full scaling factors (rate-multiplied) live on the Rust identity;
+        # read under one lock as ints.
+        self.scaling_factors = tuple(int(x) for x in py_pool.balancer_stable_scaling_factors)
+
+        # Base scaling factors: decimal-adjustment-only (10^(18-dec)).
+        self._base_scaling_factors = tuple(_compute_scaling_factor(token) for token in self._tokens)
+
+        # Rate provider: the stored I/O trait object. The companion never
+        # holds a direct Python reference — it queries the handle (which
+        # re-enters the Py adapter for dynamic providers, returns the static
+        # 1e18 fallback for the no-provider case).
+        self._rate_provider_is_static = py_pool.balancer_stable_rate_provider_is_static
+
+        # Precompute non-BPT index mapping for ComposableStablePool.
+        if self.bpt_idx is not None:
+            self._non_bpt_indices = tuple(i for i in range(len(self._tokens)) if i != self.bpt_idx)
         else:
-            # Extract construction-time rates from scaling_factors.
-            # ``rate = sf * ONE // base_sf`` per token.
-            construction_rates = tuple(
-                sf * ONE // bsf
-                for sf, bsf in zip(scaling_factors, self._base_scaling_factors, strict=True)
-            )
-            self._rate_provider = _StaticRateProvider(construction_rates)
+            self._non_bpt_indices = tuple(range(len(self._tokens)))
 
-        # Precompute non-BPT index mapping for ComposableStablePool — the
-        # BPT-drop index used by ``_skip_bpt_index`` + invariant calc.
-        if bpt_idx is not None:
-            self._non_bpt_indices = tuple(i for i in range(len(tokens)) if i != bpt_idx)
-        else:
-            self._non_bpt_indices = tuple(range(len(tokens)))
-
-        self._subscribers: WeakSet[Subscriber] = WeakSet()
+        self._subscribers = WeakSet()
+        return self
 
     def __repr__(self) -> str:  # pragma: no cover
         """Return the canonical string representation.
@@ -304,11 +352,15 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
 
     @property
     def rate_provider(self) -> BalancerRateProvider | None:
-        """The rate provider for per-block rate resolution, if available."""
-        prov = self._rate_provider
-        if isinstance(prov, _StaticRateProvider):
+        """The rate provider for per-block rate resolution, if available.
+
+        With the sealed seam (ADR-005 MBWSGP) the provider is the stored Rust
+        I/O trait object, queried via the handle. This property returns
+        ``None`` when the stored provider is static (the no-I/O fallback).
+        """
+        if self._rate_provider_is_static:
             return None
-        return prov
+        return _HandleRateProviderAdapter(self._py_pool)
 
     @property
     def requires_io_at_calculation_time(self) -> bool:
@@ -319,7 +371,7 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
         MetaStablePools and for pools with only a static rate provider.
         """
         # ComposableStablePools always need fresh rates for exact matching
-        return self.bpt_idx is not None and not isinstance(self._rate_provider, _StaticRateProvider)
+        return self.bpt_idx is not None and not self._rate_provider_is_static
 
     @staticmethod
     def _upscale(amount: int, scaling_factor: int) -> int:
@@ -386,11 +438,21 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
         Returns:
             The computed value.
 
+        Raises:
+            DegenbotValueError: If no rate provider is available on the
+                handle.
+
         """
-        if isinstance(self._rate_provider, _StaticRateProvider):
+        if self._rate_provider_is_static:
             return self.scaling_factors
 
-        rates = self._rate_provider.get_rates(block_identifier)
+        # Resolve block_identifier → Option<u64> for the Rust trait object.
+        # A str ("latest") or None maps to None (latest); an int maps to Some.
+        block_opt = block_identifier if isinstance(block_identifier, int) else None
+        rates = self._py_pool.fetch_balancer_stable_rates(block_opt)
+        if rates is None:
+            msg = "no Balancer stable rate provider available"
+            raise DegenbotValueError(message=msg)
         return tuple(
             bsf * rate // ONE for bsf, rate in zip(self._base_scaling_factors, rates, strict=True)
         )
@@ -455,7 +517,7 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
             # MetaStablePool: rates are near-static, no warning needed
             return False
         # ComposableStablePool: warn if using static (stale) rates
-        return isinstance(self._rate_provider, _StaticRateProvider)
+        return self.bpt_idx is not None and self._rate_provider_is_static
 
     def calculate_tokens_out_from_tokens_in(
         self,

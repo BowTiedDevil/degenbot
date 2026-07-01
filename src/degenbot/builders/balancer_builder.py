@@ -285,20 +285,7 @@ class BalancerBuilder(BalancerBuilderBase):
             "register_balancer_stable_pool returned a pool_id with no handle"
         )
 
-        pool = BalancerV2StablePool(
-            py_pool,
-            address=ctx.address,
-            pool_id=ctx.pool_id,
-            vault=BALANCER_V2_VAULT_ADDRESS,
-            tokens=tokens,
-            fee=ctx.fee,
-            amp=amp,
-            scaling_factors=scaling_factors,
-            bpt_idx=bpt_idx,
-            base_scaling_factors=base_sf,
-            invariant_version=invariant_version,
-            state_block=ctx.state_block,
-        )
+        pool = BalancerV2StablePool._from_py_pool(py_pool)  # noqa: SLF001
 
         self._pools.add(pool, chain_id=ctx.chain_id, pool_address=pool.address)
         return pool
