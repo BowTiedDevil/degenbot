@@ -40,7 +40,7 @@ class PerBlockCache:
         address: ChecksumAddress,
         *,
         base_pool_is_set: bool,
-        state_cache_depth: int,
+        state_cache_depth: int = 8,
     ) -> None:
         """Initialise PerBlockCache with a data provider and cache depth."""
         self._data_provider = data_provider

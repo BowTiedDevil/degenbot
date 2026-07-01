@@ -102,7 +102,7 @@ def make_curve_pool(
 
     bot = py_bot if py_bot is not None else PyBot()
 
-    rate_multipliers, _ = _compute_rate_and_precision_multipliers(
+    rate_multipliers, precision_mults = _compute_rate_and_precision_multipliers(
         tokens, precision_multipliers, CurveStableswapPool.PRECISION_DECIMALS
     )
 
@@ -110,6 +110,22 @@ def make_curve_pool(
     swap_style, lending_rate_style, d_variant, y_variant, yd_variant = _strategies_to_rust_enums(
         resolved_strategies
     )
+
+    # Pre-register the pool's tokens (and underlying / LP tokens) in the
+    # factory's bot so the handle resolves PyErc20Token companions off them
+    # via get_curve_tokens / get_curve_tokens_underlying / get_curve_lp_token
+    # (mirror of the Balancer stable factory + ADR-006).
+    def _ensure_token(tok: Erc20Token) -> None:
+        if bot.get_token(tok.address) is None:
+            bot.register_token(tok.address, tok.name, tok.symbol, tok.decimals, tok.chain_id)
+
+    for tok in tokens:
+        _ensure_token(tok)
+    if tokens_underlying is not None:
+        for tok in tokens_underlying:
+            _ensure_token(tok)
+    if lp_token is not None:
+        _ensure_token(lp_token)
 
     pool_id = bot.register_curve_pool(
         address=address_checksum,
@@ -126,25 +142,6 @@ def make_curve_pool(
         y_variant=y_variant,
         yd_variant=yd_variant,
         base_pool=(base_pool.address if base_pool is not None else None),
-    )
-    handle: PyLiquidityPool | None = bot.get_pool(pool_id)
-    assert handle is not None, "register_curve_pool returned a pool_id with no handle"
-
-    return pool_class(
-        handle,
-        address=address_checksum,
-        tokens=tokens,
-        a_coefficient=a_coefficient,
-        fee=fee,
-        admin_fee=admin_fee,
-        state_block=state_block_int,
-        state_cache_depth=state_cache_depth,
-        data_provider=data_provider,
-        base_pool=base_pool,
-        tokens_underlying=tokens_underlying,
-        lp_token=lp_token,
-        use_lending=use_lending,
-        precision_multipliers=precision_multipliers,
         initial_a_coefficient=initial_a_coefficient,
         future_a_coefficient=future_a_coefficient,
         initial_a_coefficient_time=initial_a_coefficient_time,
@@ -152,11 +149,25 @@ def make_curve_pool(
         create_timestamp=create_timestamp,
         fee_gamma=fee_gamma,
         mid_fee=mid_fee,
+        offpeg_fee_multiplier=offpeg_fee_multiplier,
         out_fee=out_fee,
         gamma=gamma,
-        offpeg_fee_multiplier=offpeg_fee_multiplier,
-        strategies=resolved_strategies,
+        lp_token=(lp_token.address if lp_token is not None else None),
+        use_lending=list(use_lending) if use_lending is not None else None,
+        precision_multipliers=(
+            list(precision_mults) if precision_mults else None
+        ),
+        tokens_underlying=(
+            [t.address for t in tokens_underlying] if tokens_underlying is not None else None
+        ),
+        metapool_rate_style=resolved_strategies.metapool_rate_style.value,
+        metapool_underlying_style=resolved_strategies.metapool_underlying_style.value,
+        data_provider=data_provider,
     )
+    handle: PyLiquidityPool | None = bot.get_pool(pool_id)
+    assert handle is not None, "register_curve_pool returned a pool_id with no handle"
+
+    return pool_class._from_py_pool(handle)  # noqa: SLF001
 
 
 __all__ = [

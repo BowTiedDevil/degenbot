@@ -21,7 +21,7 @@ from degenbot.curve.detection.crypto_detector import detect_crypto_params
 from degenbot.curve.detection.lending_detector import detect_lending_tokens
 from degenbot.curve.detection.lp_token import find_lp_token
 from degenbot.curve.detection.metapool_detector import detect_metapool
-from degenbot.curve.types import CurveStableswapPoolExternalUpdate
+from degenbot.curve.types import CurveDataProvider, CurveStableswapPoolExternalUpdate
 from degenbot.exceptions.pool import BrokenPool
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata
@@ -187,7 +187,7 @@ class CurvePoolBuilder:
             precision_multipliers=precision_multipliers_list,
             rate_multipliers=rate_multipliers,
         )
-        pool = CurveStableswapPool(
+        pool = CurveStableswapPool._from_py_pool(  # noqa: SLF001
             self._register_handle(
                 address=pool_address,
                 tokens=tokens,
@@ -199,31 +199,21 @@ class CurvePoolBuilder:
                 precision_multipliers=lending.precision_multipliers,
                 strategies=strategies,
                 base_pool=base_pool,
-            ),
-            address=pool_address,
-            tokens=tokens,
-            a_coefficient=a_coefficient,
-            fee=fee,
-            admin_fee=admin_fee,
-            state_block=state_block,
-            state_cache_depth=request.state_cache_depth,
-            initial_a_coefficient=a_ramping.initial_a,
-            future_a_coefficient=a_ramping.future_a,
-            initial_a_coefficient_time=a_ramping.initial_a_time,
-            future_a_coefficient_time=a_ramping.future_a_time,
-            create_timestamp=create_timestamp,
-            lp_token=lp_token,
-            base_pool=base_pool,
-            tokens_underlying=tokens_underlying,
-            use_lending=lending.use_lending,
-            precision_multipliers=lending.precision_multipliers,
-            fee_gamma=crypto.fee_gamma,
-            mid_fee=crypto.mid_fee,
-            out_fee=crypto.out_fee,
-            gamma=crypto.gamma,
-            offpeg_fee_multiplier=crypto.offpeg_fee_multiplier,
-            data_provider=data_provider,
-            strategies=strategies,
+                initial_a_coefficient=a_ramping.initial_a,
+                future_a_coefficient=a_ramping.future_a,
+                initial_a_coefficient_time=a_ramping.initial_a_time,
+                future_a_coefficient_time=a_ramping.future_a_time,
+                create_timestamp=create_timestamp,
+                lp_token=lp_token,
+                tokens_underlying=tokens_underlying,
+                use_lending=lending.use_lending,
+                fee_gamma=crypto.fee_gamma,
+                mid_fee=crypto.mid_fee,
+                out_fee=crypto.out_fee,
+                gamma=crypto.gamma,
+                offpeg_fee_multiplier=crypto.offpeg_fee_multiplier,
+                data_provider=data_provider,
+            )
         )
 
         # Register pool
@@ -251,6 +241,20 @@ class CurvePoolBuilder:
         precision_multipliers: Sequence[int] | None,
         strategies: PoolStrategies,
         base_pool: CurveStableswapPool | None,
+        initial_a_coefficient: int | None,
+        future_a_coefficient: int | None,
+        initial_a_coefficient_time: int | None,
+        future_a_coefficient_time: int | None,
+        create_timestamp: int | None,
+        lp_token: Erc20Token | None,
+        tokens_underlying: tuple[Erc20Token, ...] | None,
+        use_lending: Sequence[bool] | None,
+        fee_gamma: int | None,
+        mid_fee: int | None,
+        out_fee: int | None,
+        gamma: int | None,
+        offpeg_fee_multiplier: int | None,
+        data_provider: CurveDataProvider | None,
     ) -> PyLiquidityPool:
         """Register the Curve pool in the Rust core + return its handle.
 
@@ -258,13 +262,15 @@ class CurvePoolBuilder:
         Derives ``rate_multipliers`` via the shared helper (single source of
         truth with the companion) + maps the ``PoolStrategies`` enums to the
         ``u8`` discriminants Rust stores, then calls
-        ``PyBot.register_curve_pool`` + ``get_pool``.
+        ``PyBot.register_curve_pool`` + ``get_pool``. Every identity field is
+        stored in Rust so the single-arg ``_from_py_pool`` seam can read it
+        back off the handle.
 
         Returns:
             The ``PyLiquidityPool`` handle for the registered pool.
 
         """
-        rate_multipliers, _ = _compute_rate_and_precision_multipliers(
+        rate_multipliers, precision_mults = _compute_rate_and_precision_multipliers(
             tokens,
             precision_multipliers,
             CurveStableswapPool.PRECISION_DECIMALS,
@@ -284,6 +290,25 @@ class CurvePoolBuilder:
             y_variant=strategies.y_variant.value,
             yd_variant=strategies.yd_variant.value,
             base_pool=(base_pool.address if base_pool is not None else None),
+            initial_a_coefficient=initial_a_coefficient,
+            future_a_coefficient=future_a_coefficient,
+            initial_a_coefficient_time=initial_a_coefficient_time,
+            future_a_coefficient_time=future_a_coefficient_time,
+            create_timestamp=create_timestamp,
+            fee_gamma=fee_gamma,
+            mid_fee=mid_fee,
+            offpeg_fee_multiplier=offpeg_fee_multiplier,
+            out_fee=out_fee,
+            gamma=gamma,
+            lp_token=(lp_token.address if lp_token is not None else None),
+            use_lending=list(use_lending) if use_lending is not None else None,
+            precision_multipliers=(list(precision_mults) if precision_mults else None),
+            tokens_underlying=(
+                [t.address for t in tokens_underlying] if tokens_underlying is not None else None
+            ),
+            metapool_rate_style=strategies.metapool_rate_style.value,
+            metapool_underlying_style=strategies.metapool_underlying_style.value,
+            data_provider=data_provider,
         )
         handle = self._py_bot.get_pool(pool_id)
         assert handle is not None, "register_curve_pool returned a pool_id with no handle"
