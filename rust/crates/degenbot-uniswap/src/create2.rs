@@ -35,7 +35,11 @@ use alloy::primitives::{keccak256, Address, B256};
 /// `sorted([HexBytes(a), HexBytes(b)])` — `Address::Ord` compares the
 /// big-endian numeric value, equivalent to byte-wise lexicographic order).
 fn sorted_pair(a: Address, b: Address) -> (Address, Address) {
-    if a <= b { (a, b) } else { (b, a) }
+    if a <= b {
+        (a, b)
+    } else {
+        (b, a)
+    }
 }
 
 /// The EIP-1014 CREATE2 address derivation.
@@ -143,8 +147,7 @@ mod tests {
     const UNISWAP_V3_INIT_HASH: B256 =
         b256!("e34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54");
     // PancakeSwap V3's separate deployer (the load-bearing case).
-    const PANCAKESWAP_V3_DEPLOYER: Address =
-        address!("41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9");
+    const PANCAKESWAP_V3_DEPLOYER: Address = address!("41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9");
 
     #[test]
     fn token_order_is_irrelevant_v2() {

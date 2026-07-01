@@ -47,13 +47,54 @@ use degenbot_core::address_utils;
 
 use crate::create2;
 
+/// The canonical Uniswap V3 mainnet CREATE2 init code hash — the fallback
+/// for non-`JSON` V3 pools (the documented default the retired Python `ClassVar`
+/// `UNISWAP_V3_MAINNET_POOL_INIT_HASH` carried).
+///
+/// Used only when `register_v3_pool` is called for a `(chain, factory)` that is
+/// NOT in the shipped `deployments.json` (test/ad-hoc pools). JSON-registered
+/// pools read the per-row verified init hash from the deployment record
+/// (covering the `PancakeSwap` V3 separate-deployer case). Keeping this as a
+/// Rust `const` retires the second Python copy without dropping the fallback
+/// semantics non-JSON pools rely on (P62DKO).
+pub const UNISWAP_V3_MAINNET_INIT_HASH: alloy::primitives::B256 =
+    alloy::primitives::b256!("e34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54");
+
+/// Resolve the effective CREATE2 deployer for a `(chain_id, factory)` pair,
+/// with the `None -> factory` convention applied.
+///
+/// Returns the factory itself when the `(chain, factory)` is not in the
+/// shipped JSON (non-JSON pools default to factory as deployer). This is the
+/// value the builder stores on the pool identity at registration (Fork A,
+/// P62DKO) so the companion reads it off the handle with no runtime
+/// `chain_id` plumbing.
+#[must_use]
+pub fn resolve_deployer(chain_id: u64, factory: Address) -> Address {
+    lookup(chain_id, factory).map_or(factory, DeploymentRecord::effective_deployer)
+}
+
+/// Resolve the CREATE2 init code hash for a V3 `(chain_id, factory)` pair,
+/// with a documented fallback.
+///
+/// Returns the JSON row's `init_hash` when the `(chain, factory)` shipped with
+/// a CREATE2 init hash; otherwise [`UNISWAP_V3_MAINNET_INIT_HASH`] (the
+/// retired Python `ClassVar`'s documented default for non-`JSON` V3 pools). This
+/// is the value the V3 builder stores on the identity; the companion reads it
+/// off the handle (P62DKO).
+#[must_use]
+pub fn resolve_v3_init_hash(chain_id: u64, factory: Address) -> alloy::primitives::B256 {
+    match lookup(chain_id, factory) {
+        Some(rec) => rec.init_hash.unwrap_or(UNISWAP_V3_MAINNET_INIT_HASH),
+        None => UNISWAP_V3_MAINNET_INIT_HASH,
+    }
+}
+
 /// The canonical deployment data file, embedded at compile time.
 ///
 /// Resolves to `src/degenbot/registry/deployments.json` — the single source the
 /// Python `deployment_loader` loader and `pool_type_registry` consume (see
 /// `src/degenbot/registry/deployment_loader.py`).
-const DEPLOYMENTS_JSON: &str =
-    include_str!("../../../../src/degenbot/registry/deployments.json");
+const DEPLOYMENTS_JSON: &str = include_str!("../../../../src/degenbot/registry/deployments.json");
 
 /// The raw JSON record shape (mirrors the Python loader's schema).
 ///
@@ -205,7 +246,11 @@ impl std::fmt::Display for AddressMismatch {
             "pool address {{expected}} does not match CREATE2 for chain {} \
              factory {}: deployer={}, init_hash={:#x}, \
              expected={:#x}, computed={:#x}",
-            self.chain_id, self.factory, self.deployer, self.init_hash, self.expected,
+            self.chain_id,
+            self.factory,
+            self.deployer,
+            self.init_hash,
+            self.expected,
             self.computed
         )
     }
@@ -342,7 +387,11 @@ mod tests {
         // Acceptance criterion: every row parses (no serde panic at first
         // access). The table is built lazily; touching it here forces the parse.
         let t = table();
-        assert!(t.len() >= 32, "expected at least 32 shipped rows, got {}", t.len());
+        assert!(
+            t.len() >= 32,
+            "expected at least 32 shipped rows, got {}",
+            t.len()
+        );
     }
 
     #[test]
@@ -406,8 +455,7 @@ mod tests {
     const UNISWAP_V3_MAINNET_FACTORY: Address =
         address!("1F98431c8aD98523631AE4a59f267346ea31F984");
     const V2_DAI_WETH_ADDR: Address = address!("A478c2975Ab1Ea89e8196811F51A7B7Ade33eB11");
-    const V3_UNI_USDC_WETH_500: Address =
-        address!("88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640");
+    const V3_UNI_USDC_WETH_500: Address = address!("88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640");
     const V3_PCS_USDC_WETH_500_SEPARATE: Address =
         address!("1ac1A8FEaAEa1900C4166dEeed0C11cC10669D36");
     const V3_PCS_USDC_WETH_500_FACTORY: Address =
@@ -416,9 +464,11 @@ mod tests {
     #[test]
     fn verify_v2_uniswap_mainnet_round_trips() {
         // Uniswap V2 (factory deployer) — verified CREATE2 round-trip.
-        assert!(verify_v2_pool_address(1, UNISWAP_V2_MAINNET_FACTORY, V2_DAI_WETH_ADDR, WETH, DAI)
-            .is_ok(),
-            "Uniswap V2 DAI/WETH mainnet must verify");
+        assert!(
+            verify_v2_pool_address(1, UNISWAP_V2_MAINNET_FACTORY, V2_DAI_WETH_ADDR, WETH, DAI)
+                .is_ok(),
+            "Uniswap V2 DAI/WETH mainnet must verify"
+        );
     }
 
     #[test]
@@ -496,5 +546,15 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("chain 1"), "error must mention chain: {msg}");
         assert!(msg.contains("CREATE2"), "error must mention CREATE2: {msg}");
+    }
+
+    #[test]
+    fn uniswap_v3_mainnet_init_hash_const_matches_json() {
+        // The fallback const equals the JSON row's init hash for the Uniswap
+        // V3 mainnet factory — so non-`JSON` V3 pools default to the same value
+        // JSON-registered Uniswap V3 pools verify against.
+        let rec = lookup(1, address!("1F98431c8aD98523631AE4a59f267346ea31F984"))
+            .expect("Uniswap V3 mainnet present");
+        assert_eq!(rec.init_hash, Some(UNISWAP_V3_MAINNET_INIT_HASH));
     }
 }

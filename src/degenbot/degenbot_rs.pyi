@@ -1019,6 +1019,32 @@ def dex_identity(variant: str) -> PyDexIdentity | None:
     Case-insensitive. Returns `None` for an unrecognized variant.
     """
 
+def init_hash_for(chain_id: int, factory: str) -> str | None:
+    """JSON-sourced CREATE2 init code hash for a `(chain_id, factory)` pair.
+
+    Returns `None` if the pair is not in the shipped JSON.
+    """
+
+def deployer_for(chain_id: int, factory: str) -> str | None:
+    """JSON-sourced effective CREATE2 deployer for a `(chain_id, factory)` pair.
+
+    Returns `None` if the pair is not in the shipped JSON.
+    """
+
+def resolve_deployer(chain_id: int, factory: str) -> str:
+    """Resolve the effective CREATE2 deployer for a `(chain_id, factory)` pair.
+
+    Applies the `None -> factory` convention; returns the factory itself for
+    non-JSON pools (Fork A, P62DKO).
+    """
+
+def resolve_v3_init_hash(chain_id: int, factory: str) -> str:
+    """Resolve the CREATE2 init code hash for a V3 `(chain_id, factory)` pair.
+
+    Returns the JSON row's init hash when shipped, else the Uniswap V3
+    mainnet fallback (Fork A, P62DKO).
+    """
+
 class PyLiquidityPool:
     """Thin PyO3 handle to a pool registered in the Rust `Bot`.
 
@@ -1033,6 +1059,10 @@ class PyLiquidityPool:
     def address(self) -> str: ...
     @property
     def factory(self) -> str: ...
+    @property
+    def deployer(self) -> str: ...
+    @property
+    def init_hash(self) -> str: ...
     @property
     def fee_token0(self) -> tuple[int, int]: ...
     @property

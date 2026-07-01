@@ -301,15 +301,9 @@ class AsyncV3PoolBuilder:
                     block=state_block,
                 )
 
-        # Determine deployer and init_hash
-        deployer = factory
-        init_hash = UniswapV3Pool.UNISWAP_V3_MAINNET_POOL_INIT_HASH
-        registry_deployment = pool_type_registry.get_deployment(chain_id, factory)
-        if registry_deployment is not None:
-            if registry_deployment.pool_init_hash is not None:
-                init_hash = registry_deployment.pool_init_hash
-            if registry_deployment.deployer is not None:
-                deployer = get_checksum_address(registry_deployment.deployer)
+        # Deployer / init-hash are resolved off the Rust handle by _from_py_pool
+        # (Fork A, P62DKO) — the builder no longer needs to compute them from
+        # the pool type registry.
 
         # Only pass tick data if we have a complete DB snapshot.
         # Map factory addresses to pool classes for V3 variants
@@ -368,10 +362,12 @@ class AsyncV3PoolBuilder:
             )
         pool = pool_class._from_py_pool(py_pool_handle)  # noqa: SLF001
         pool._sparse_liquidity_map = not (db_snapshot_loaded and bool(working_tick_data))  # noqa: SLF001
-        # Deployer / init-hash: the seam defaults to factory + class constant.
-        # Override with registry-resolved values if they differ.
-        pool.deployer_address = get_checksum_address(deployer)
-        pool.init_hash = init_hash
+        # Deployer / init-hash: read off the Rust handle (Fork A, P62DKO).
+        # The builder resolved the JSON-sourced deployer + init_hash at
+        # registration; the companion already carries the verified values, so
+        # no registry override is needed here.
+        # pool.deployer_address / pool.init_hash are set by _from_py_pool from
+        # the handle.
 
         # Register pool
         self._pools.add(

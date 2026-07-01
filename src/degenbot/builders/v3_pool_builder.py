@@ -141,7 +141,6 @@ class V3PoolBuilder(V3BuilderBase):
             token1_address = db_values.token1_address
             fee = db_values.fee
             tick_spacing_for_pool = db_values.tick_spacing
-            db_deployer = db_values.deployer_address
         else:
             # ADR-005 slice 14f: when io is a PyBotIo (Bot's build path),
             # delegate the 5-call immutable RPC choreography to Rust. SyncPoolIO
@@ -333,19 +332,8 @@ class V3PoolBuilder(V3BuilderBase):
                     block=state_block,
                 )
 
-        # Determine deployer and init_hash from DB (if available) or pool type registry
-        deployer = factory
-        init_hash = UniswapV3Pool.UNISWAP_V3_MAINNET_POOL_INIT_HASH
-        db_deployer = locals().get("db_deployer")  # Set if pool was found in DB
-        if db_deployer is not None:
-            deployer = get_checksum_address(db_deployer)
-        else:
-            registry_deployment = pool_type_registry.get_deployment(chain_id, factory)
-            if registry_deployment is not None:
-                if registry_deployment.pool_init_hash is not None:
-                    init_hash = registry_deployment.pool_init_hash
-                if registry_deployment.deployer is not None:
-                    deployer = get_checksum_address(registry_deployment.deployer)
+        # Deployer / init-hash are resolved off the Rust handle by _from_py_pool
+        # (Fork A, P62DKO) — the builder no longer computes them.
 
         # Only pass tick data if we have a complete DB snapshot.
         # Map factory addresses to pool classes for V3 variants
@@ -419,10 +407,13 @@ class V3PoolBuilder(V3BuilderBase):
         # but the builder knows the true coverage from the DB snapshot. Override
         # if the builder has more info.
         pool._sparse_liquidity_map = not (db_snapshot_loaded and bool(working_tick_data))  # noqa: SLF001
-        # Deployer / init-hash: the seam defaults to factory + class constant.
-        # Override with DB/registry-resolved values if they differ.
-        pool.deployer_address = get_checksum_address(deployer)
-        pool.init_hash = init_hash
+        # Deployer / init-hash: read off the Rust handle (Fork A, P62DKO).
+        # The builder resolved the JSON-sourced deployer (effective deployer,
+        # covering PancakeSwap V3's separate deployer) + init_hash at
+        # registration; the companion already carries the verified values, so
+        # no DB/registry override is needed here.
+        # pool.deployer_address / pool.init_hash are set by _from_py_pool from
+        # the handle.
 
         # Register pool
         self._pools.add(
