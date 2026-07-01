@@ -31,9 +31,9 @@ use crate::bot::token::PyErc20Token;
 use degenbot_bot::bot_core::state_history::JournalError;
 use degenbot_bot::bot_core::PoolTickCoverage;
 use degenbot_bot::bot_core::{
-    Bot, RegisterBalancerStablePoolParams, RegisterBalancerWeightedPoolParams,
-    RegisterCurvePoolParams, RegisterV2PoolParams, RegisterV3PoolParams, RegisterV4PoolParams,
-    V4PoolKey,
+    Bot, RegisterAerodromeV2PoolParams, RegisterBalancerStablePoolParams,
+    RegisterBalancerWeightedPoolParams, RegisterCurvePoolParams, RegisterV2PoolParams,
+    RegisterV3PoolParams, RegisterV4PoolParams, V4PoolKey,
 };
 use degenbot_uniswap::dex_identity::DexVariant;
 use pyo3::types::{PyDict, PyList};
@@ -1008,6 +1008,61 @@ impl PyBot {
                 update_block,
             },
         ))
+    }
+
+    /// Register an Aerodrome V2 pool by contract address (ADR-005 Aerodrome
+    /// state port).
+    ///
+    /// Stores immutable identity (address, tokens, factory, variant, stable
+    /// flag, unidirectional fee) + the registration reserves + a genesis
+    /// reorg-journal anchor (mirror of V2's discipline). Returns the
+    /// auto-assigned pool ID. Call `get_pool(id)` after this to obtain the
+    /// `PyLiquidityPool` handle.
+    ///
+    /// Raises:
+    ///     `ValueError`: If an address is malformed, the pool is already
+    ///         registered, or `variant` is not a recognized Aerodrome variant.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (address, token0, token1, factory, variant, stable, fee_numer, fee_denom, reserve0, reserve1, update_block=0))]
+    fn register_aerodrome_pool(
+        &self,
+        address: &str,
+        token0: &str,
+        token1: &str,
+        factory: &str,
+        variant: &str,
+        stable: bool,
+        fee_numer: u64,
+        fee_denom: u64,
+        reserve0: &Bound<'_, PyAny>,
+        reserve1: &Bound<'_, PyAny>,
+        update_block: u64,
+    ) -> PyResult<u64> {
+        let addr = parse_address(address)?;
+        let t0 = parse_address(token0)?;
+        let t1 = parse_address(token1)?;
+        let fac = parse_address(factory)?;
+        let r0 = crate::conversion::alloy::extract_python_u256(reserve0)?;
+        let r1 = crate::conversion::alloy::extract_python_u256(reserve1)?;
+        let variant_enum = DexVariant::from_kebab(variant).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!("unknown variant: {variant}"))
+        })?;
+        Ok(self
+            .bot
+            .state_arc()
+            .write()
+            .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+                address: addr,
+                token0: t0,
+                token1: t1,
+                factory: fac,
+                variant: variant_enum,
+                stable,
+                fee: (fee_numer, fee_denom),
+                reserve0: r0,
+                reserve1: r1,
+                update_block,
+            }))
     }
 
     /// Update a V3 pool's state from a Swap event.

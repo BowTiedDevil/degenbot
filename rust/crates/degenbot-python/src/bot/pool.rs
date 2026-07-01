@@ -549,6 +549,7 @@ impl PyLiquidityPool {
         let addr = match core.pool_family(self.pool_id) {
             "v2" => core.get_v2_identity(self.pool_id).map(|i| i.address),
             "v3" => core.get_v3_identity(self.pool_id).map(|i| i.address),
+            "aerodrome-v2" => core.get_aerodrome_identity(self.pool_id).map(|i| i.address),
             _ => None,
         };
         addr.map(|a| address_utils::address_to_checksum_string(&a))
@@ -566,6 +567,7 @@ impl PyLiquidityPool {
             "v4" => core
                 .get_v4_identity(self.pool_id)
                 .map(|i| i.pool_key.currency0),
+            "aerodrome-v2" => core.get_aerodrome_identity(self.pool_id).map(|i| i.token0),
             _ => None,
         };
         addr.map(|a| address_utils::address_to_checksum_string(&a))
@@ -583,6 +585,7 @@ impl PyLiquidityPool {
             "v4" => core
                 .get_v4_identity(self.pool_id)
                 .map(|i| i.pool_key.currency1),
+            "aerodrome-v2" => core.get_aerodrome_identity(self.pool_id).map(|i| i.token1),
             _ => None,
         };
         addr.map(|a| address_utils::address_to_checksum_string(&a))
@@ -597,6 +600,7 @@ impl PyLiquidityPool {
         let addr = match core.pool_family(self.pool_id) {
             "v2" => core.get_v2_identity(self.pool_id).map(|i| i.factory),
             "v3" => core.get_v3_identity(self.pool_id).map(|i| i.factory),
+            "aerodrome-v2" => core.get_aerodrome_identity(self.pool_id).map(|i| i.factory),
             _ => None,
         };
         addr.map(|a| address_utils::address_to_checksum_string(&a))
@@ -629,9 +633,16 @@ impl PyLiquidityPool {
     #[getter]
     fn variant(&self) -> String {
         let core = self.core.read();
-        match core.get_v2_identity(self.pool_id) {
-            Some(d) => d.variant.as_str().to_string(),
-            None => String::new(),
+        match core.pool_family(self.pool_id) {
+            "v2" => core
+                .get_v2_identity(self.pool_id)
+                .map(|d| d.variant.as_str().to_string())
+                .unwrap_or_default(),
+            "aerodrome-v2" => core
+                .get_aerodrome_identity(self.pool_id)
+                .map(|d| d.variant.as_str().to_string())
+                .unwrap_or_default(),
+            _ => String::new(),
         }
     }
 
@@ -699,6 +710,7 @@ impl PyLiquidityPool {
             "v4" => core
                 .get_v4_identity(self.pool_id)
                 .map(|i| i.pool_key.currency0),
+            "aerodrome-v2" => core.get_aerodrome_identity(self.pool_id).map(|i| i.token0),
             _ => None,
         }?;
         if core.has_token(&token_addr) {
@@ -718,6 +730,7 @@ impl PyLiquidityPool {
             "v4" => core
                 .get_v4_identity(self.pool_id)
                 .map(|i| i.pool_key.currency1),
+            "aerodrome-v2" => core.get_aerodrome_identity(self.pool_id).map(|i| i.token1),
             _ => None,
         }?;
         if core.has_token(&token_addr) {
@@ -832,6 +845,85 @@ impl PyLiquidityPool {
         core.get_v4_identity(self.pool_id)
             .map(|i| address_utils::address_to_checksum_string(&i.pool_key.hooks))
             .unwrap_or_default()
+    }
+
+    // --- Aerodrome V2 identity getters (ADR-005 Aerodrome state port) ---
+
+    /// Aerodrome V2 Solidly stable-invariant flag. `false` for volatile mode
+    /// or non-Aerodrome pools.
+    #[getter]
+    fn aerodrome_stable(&self) -> bool {
+        let core = self.core.read();
+        core.get_aerodrome_identity(self.pool_id)
+            .is_some_and(|d| d.stable)
+    }
+
+    /// Aerodrome V2 unidirectional fee as `(fee_numer, fee_denom)`. `(0, 0)` if
+    /// not an Aerodrome pool.
+    #[getter]
+    fn aerodrome_fee(&self) -> (u64, u64) {
+        let core = self.core.read();
+        core.get_aerodrome_identity(self.pool_id)
+            .map(|d| d.fee)
+            .unwrap_or_default()
+    }
+
+    /// Aerodrome V2 reserve of token0. Read via the
+    /// `AerodromeV2PoolState` entry (one read guard). 0 if not an Aerodrome
+    /// pool.
+    #[getter]
+    fn aerodrome_reserve0(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let v = {
+            let core = self.core.read();
+            core.get_aerodrome_pool(self.pool_id)
+                .map(|s| s.reserve0)
+                .unwrap_or_default()
+        };
+        Ok(crate::conversion::alloy::u256_to_py(py, &v)?.unbind())
+    }
+
+    /// Aerodrome V2 reserve of token1. 0 if not an Aerodrome pool.
+    #[getter]
+    fn aerodrome_reserve1(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let v = {
+            let core = self.core.read();
+            core.get_aerodrome_pool(self.pool_id)
+                .map(|s| s.reserve1)
+                .unwrap_or_default()
+        };
+        Ok(crate::conversion::alloy::u256_to_py(py, &v)?.unbind())
+    }
+
+    /// Snapshot an Aerodrome V2 pool's mutable state as
+    /// `(reserve0, reserve1, update_block)`. Returns `None` for non-Aerodrome
+    /// pools.
+    fn snapshot_aerodrome(&self) -> Option<(u64, u64, u64)> {
+        self.core.read().get_aerodrome_pool(self.pool_id).map(|s| {
+            (
+                s.reserve0.to::<u64>(),
+                s.reserve1.to::<u64>(),
+                s.update_block,
+            )
+        })
+    }
+
+    /// Apply an Aerodrome V2 `Sync` event: journals the prior reserves, then
+    /// lands the new reserves + `block_number`. Equivalent to
+    /// `PyBot.update_aerodrome_pool(...)` but keyed by the handle's `pool_id`.
+    #[pyo3(signature = (reserve0, reserve1, block_number))]
+    fn apply_aerodrome_sync(
+        &self,
+        reserve0: &Bound<'_, PyAny>,
+        reserve1: &Bound<'_, PyAny>,
+        block_number: u64,
+    ) -> PyResult<()> {
+        let r0 = crate::conversion::alloy::extract_python_u256(reserve0)?;
+        let r1 = crate::conversion::alloy::extract_python_u256(reserve1)?;
+        let _ =
+            self.core
+                .write()
+                .apply_aerodrome_sync_by_pool_id(self.pool_id, r0, r1, block_number);
+        Ok(())
     }
 
     // --- Balancer weighted identity getters (ADR-005 sealed seam) ---
