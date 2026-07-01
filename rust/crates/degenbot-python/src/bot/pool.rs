@@ -440,6 +440,61 @@ impl PyLiquidityPool {
         Self { core, pool_id }
     }
 
+    /// Clone-out the stored `CurveDataProvider` (if any) for this handle's
+    /// Curve state, releasing the read guard before a (potentially
+    /// re-entrant) provider call.
+    fn curve_provider(
+        &self,
+    ) -> Option<std::sync::Arc<dyn degenbot_bot::bot_core::curve_data_provider::CurveDataProvider>>
+    {
+        let core = self.core.read();
+        core.get_curve_pool(self.pool_id)?.data_provider.clone()
+    }
+
+    /// Read a `Vec<U256>` from the stored Curve data provider via `f`,
+    /// converting to a Python list. Empty list ⇔ no provider / error.
+    fn read_provider_vec(
+        &self,
+        py: Python<'_>,
+        f: impl Fn(
+            &std::sync::Arc<dyn degenbot_bot::bot_core::curve_data_provider::CurveDataProvider>,
+        ) -> Result<
+            Vec<alloy::primitives::U256>,
+            degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError,
+        >,
+    ) -> PyResult<Py<PyAny>> {
+        let Some(provider) = self.curve_provider() else {
+            return Ok(pyo3::types::PyList::empty(py).into_any().unbind());
+        };
+        let values = f(&provider).unwrap_or_default();
+        let py_vals: Vec<Py<PyAny>> = values
+            .iter()
+            .map(|b| crate::conversion::alloy::u256_to_py(py, b).map(pyo3::Bound::unbind))
+            .collect::<PyResult<_>>()?;
+        Ok(pyo3::types::PyList::new(py, py_vals)?.into_any().unbind())
+    }
+
+    /// Read a single `U256` from the stored Curve data provider via `f`,
+    /// converting to a Python int. `None` ⇔ no provider / error.
+    fn read_provider_opt(
+        &self,
+        py: Python<'_>,
+        f: impl Fn(
+            &std::sync::Arc<dyn degenbot_bot::bot_core::curve_data_provider::CurveDataProvider>,
+        ) -> Result<
+            alloy::primitives::U256,
+            degenbot_bot::bot_core::curve_data_provider::CurveDataProviderError,
+        >,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        let Some(provider) = self.curve_provider() else {
+            return Ok(None);
+        };
+        match f(&provider) {
+            Ok(v) => Ok(Some(crate::conversion::alloy::u256_to_py(py, &v)?.unbind())),
+            Err(_) => Ok(None),
+        }
+    }
+
     /// Shared override-sim inner: extracts Python args, builds the fetcher
     /// adapter, locks the core, calls `simulate_swap_with_override`.
     #[allow(clippy::too_many_arguments)]
@@ -876,6 +931,7 @@ impl PyLiquidityPool {
             "v2" => core.get_v2_identity(self.pool_id).map(|i| i.address),
             "v3" => core.get_v3_identity(self.pool_id).map(|i| i.address),
             "aerodrome-v2" => core.get_aerodrome_identity(self.pool_id).map(|i| i.address),
+            "curve" => core.get_curve_identity(self.pool_id).map(|i| i.address),
             _ => None,
         };
         addr.map(|a| address_utils::address_to_checksum_string(&a))
@@ -1986,6 +2042,310 @@ impl PyLiquidityPool {
             Some(s) => s.data_provider.is_some(),
             None => false,
         }
+    }
+
+    // --- Curve identity getters (ADR-005 BQM2OA identity-from-handle) ---
+
+    /// Curve amplification coefficient `A` (raw). 0 for a non-Curve handle.
+    #[getter]
+    fn curve_a_coefficient(&self) -> u128 {
+        let core = self.core.read();
+        core.get_curve_identity(self.pool_id)
+            .map_or(0, |i| i.a_coefficient)
+    }
+
+    /// Curve swap fee (`FEE_DENOMINATOR` units). 0 for a non-Curve handle.
+    #[getter]
+    fn curve_fee(&self) -> u64 {
+        let core = self.core.read();
+        core.get_curve_identity(self.pool_id).map_or(0, |i| i.fee)
+    }
+
+    /// Curve admin-fee share (`FEE_DENOMINATOR` units). 0 for a non-Curve handle.
+    #[getter]
+    fn curve_admin_fee(&self) -> u64 {
+        let core = self.core.read();
+        core.get_curve_identity(self.pool_id)
+            .map_or(0, |i| i.admin_fee)
+    }
+
+    /// Curve rate multipliers (one `U256` per token). Empty for a non-Curve pool.
+    #[getter]
+    fn curve_rate_multipliers(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let rms: Vec<alloy::primitives::U256> = {
+            let core = self.core.read();
+            match core.get_curve_identity(self.pool_id) {
+                Some(i) => i.rate_multipliers.clone(),
+                None => Vec::new(),
+            }
+        };
+        let py_rms: Vec<Py<PyAny>> = rms
+            .iter()
+            .map(|b| crate::conversion::alloy::u256_to_py(py, b).map(pyo3::Bound::unbind))
+            .collect::<PyResult<_>>()?;
+        Ok(pyo3::types::PyList::new(py, py_rms)?.into_any().unbind())
+    }
+
+    /// Curve `swap_style` discriminant (`PoolStrategies.swap_style.value`).
+    /// 0 for a non-Curve handle.
+    #[getter]
+    fn curve_swap_style(&self) -> u8 {
+        let core = self.core.read();
+        core.get_curve_identity(self.pool_id)
+            .map_or(0, |i| i.swap_style)
+    }
+
+    /// Curve `lending_rate_style` discriminant. 0 for a non-Curve handle.
+    #[getter]
+    fn curve_lending_rate_style(&self) -> u8 {
+        let core = self.core.read();
+        core.get_curve_identity(self.pool_id)
+            .map_or(0, |i| i.lending_rate_style)
+    }
+
+    /// Curve `d_variant` discriminant. 0 for a non-Curve handle.
+    #[getter]
+    fn curve_d_variant(&self) -> u8 {
+        let core = self.core.read();
+        core.get_curve_identity(self.pool_id)
+            .map_or(0, |i| i.d_variant)
+    }
+
+    /// Curve `y_variant` discriminant. 0 for a non-Curve handle.
+    #[getter]
+    fn curve_y_variant(&self) -> u8 {
+        let core = self.core.read();
+        core.get_curve_identity(self.pool_id)
+            .map_or(0, |i| i.y_variant)
+    }
+
+    /// Curve `yd_variant` discriminant. 0 for a non-Curve handle.
+    #[getter]
+    fn curve_yd_variant(&self) -> u8 {
+        let core = self.core.read();
+        core.get_curve_identity(self.pool_id)
+            .map_or(0, |i| i.yd_variant)
+    }
+
+    /// Curve `metapool_rate_style` discriminant. 0 for a non-Curve handle.
+    #[getter]
+    fn curve_metapool_rate_style(&self) -> u8 {
+        let core = self.core.read();
+        core.get_curve_identity(self.pool_id)
+            .map_or(0, |i| i.metapool_rate_style)
+    }
+
+    /// Curve `metapool_underlying_style` discriminant. 0 for a non-Curve handle.
+    #[getter]
+    fn curve_metapool_underlying_style(&self) -> u8 {
+        let core = self.core.read();
+        core.get_curve_identity(self.pool_id)
+            .map_or(0, |i| i.metapool_underlying_style)
+    }
+
+    /// Curve base-pool address (EIP-55 checksummed). `None` for plain pools.
+    /// `None` for a non-Curve handle.
+    fn curve_base_pool_address(&self) -> Option<Option<String>> {
+        let core = self.core.read();
+        let id = core.get_curve_identity(self.pool_id)?;
+        Some(
+            id.base_pool
+                .map(|a| address_utils::address_to_checksum_string(&a)),
+        )
+    }
+
+    /// The Curve pool's token companion handles, resolved via the shared
+    /// `BotState` token registry. `None` if this is not a Curve pool or any
+    /// token isn't registered (mirror of `get_balancer_tokens`). The companion
+    /// wraps each via `Erc20Token._from_py_token`.
+    fn get_curve_tokens(&self) -> Option<Vec<PyErc20Token>> {
+        let core = self.core.read();
+        let identity = core.get_curve_identity(self.pool_id)?;
+        let mut out = Vec::with_capacity(identity.tokens.len());
+        for token_addr in &identity.tokens {
+            if !core.has_token(token_addr) {
+                return None;
+            }
+            out.push(PyErc20Token::new(Arc::clone(&self.core), *token_addr));
+        }
+        Some(out)
+    }
+
+    /// The Curve pool's *underlying* token companion handles (metapool coins
+    /// beneath the base-pool intermediaries). `None` for plain pools, or if
+    /// this isn't a Curve pool, or any underlying token isn't registered.
+    fn get_curve_tokens_underlying(&self) -> Option<Vec<PyErc20Token>> {
+        let core = self.core.read();
+        let identity = core.get_curve_identity(self.pool_id)?;
+        let underlying = identity.tokens_underlying.clone()?;
+        let mut out = Vec::with_capacity(underlying.len());
+        for token_addr in &underlying {
+            if !core.has_token(token_addr) {
+                return None;
+            }
+            out.push(PyErc20Token::new(Arc::clone(&self.core), *token_addr));
+        }
+        Some(out)
+    }
+
+    /// The Curve pool's dedicated LP-token companion handle. `None` ⇔ the
+    /// pool token is itself the LP (the common plain-pool case; the companion
+    /// falls back to `tokens[0]`). Returns `None` (outer) for a non-Curve pool
+    /// or if the LP token isn't registered.
+    fn get_curve_lp_token(&self) -> Option<PyErc20Token> {
+        let core = self.core.read();
+        let identity = core.get_curve_identity(self.pool_id)?;
+        let lp = identity.lp_token?;
+        if !core.has_token(&lp) {
+            return None;
+        }
+        Some(PyErc20Token::new(Arc::clone(&self.core), lp))
+    }
+
+    /// **The go-between (BQM2OA).** A `PyLiquidityPool` handle over this
+    /// metapool's *base pool*, sharing the same `BotState` core. Resolves the
+    /// stored `base_pool` address through the existing `pool_id_by_address`
+    /// index — no Python registry needed. `None` for plain pools, non-Curve
+    /// handles, or when the base pool isn't registered. The companion recurses:
+    /// `CurveStableswapPool._from_py_pool(handle.curve_base_pool())`.
+    fn curve_base_pool(&self) -> Option<PyLiquidityPool> {
+        let core = self.core.read();
+        let id = core.get_curve_identity(self.pool_id)?;
+        let base_addr = id.base_pool?;
+        let base_id = core.pool_id_by_address(&base_addr)?;
+        // Construct a handle over the base pool's id, sharing this core.
+        drop(core);
+        Some(PyLiquidityPool::new(Arc::clone(&self.core), base_id))
+    }
+
+    // --- Curve data-provider read-throughs (so the companion's PerBlockCache
+    //     reads through the stored trait object via a handle adapter,
+    //     mirroring the Balancer `_HandleRateProviderAdapter`). Each returns
+    //     `None`/empty ⇔ no provider stored or not a Curve pool; provider
+    //     errors also surface as `None`/empty so the Python calc path raises
+    //     the `MissingCurveData` it already expects. ---
+
+    fn fetch_curve_block_number(&self) -> Option<u64> {
+        let core = self.core.read();
+        let provider = core.get_curve_pool(self.pool_id)?.data_provider.clone()?;
+        drop(core);
+        provider.block_number().ok()
+    }
+
+    fn fetch_curve_block_timestamp(&self, block_number: u64) -> Option<u64> {
+        let core = self.core.read();
+        let provider = core.get_curve_pool(self.pool_id)?.data_provider.clone()?;
+        drop(core);
+        provider.block_timestamp(block_number).ok()
+    }
+
+    fn fetch_curve_token_balance(
+        &self,
+        py: Python<'_>,
+        token_address: &str,
+        holder_address: &str,
+        block_number: u64,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        let provider = {
+            let core = self.core.read();
+            let Some(s) = core.get_curve_pool(self.pool_id) else {
+                return Ok(None);
+            };
+            let Some(p) = s.data_provider.clone() else {
+                return Ok(None);
+            };
+            p
+        };
+        let tok = match address_utils::parse_address(token_address) {
+            Ok(a) => a,
+            Err(_) => return Ok(None),
+        };
+        let holder = match address_utils::parse_address(holder_address) {
+            Ok(a) => a,
+            Err(_) => return Ok(None),
+        };
+        match provider.token_balance(tok, holder, block_number) {
+            Ok(v) => Ok(Some(crate::conversion::alloy::u256_to_py(py, &v)?.unbind())),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn fetch_curve_token_total_supply(
+        &self,
+        py: Python<'_>,
+        token_address: &str,
+        block_number: u64,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        let provider = {
+            let core = self.core.read();
+            let Some(s) = core.get_curve_pool(self.pool_id) else {
+                return Ok(None);
+            };
+            let Some(p) = s.data_provider.clone() else {
+                return Ok(None);
+            };
+            p
+        };
+        let tok = match address_utils::parse_address(token_address) {
+            Ok(a) => a,
+            Err(_) => return Ok(None),
+        };
+        match provider.token_total_supply(tok, block_number) {
+            Ok(v) => Ok(Some(crate::conversion::alloy::u256_to_py(py, &v)?.unbind())),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn fetch_curve_lending_rates(&self, py: Python<'_>, block_number: u64) -> PyResult<Py<PyAny>> {
+        let rates = self.read_provider_vec(py, |p| p.lending_rates(block_number))?;
+        Ok(rates)
+    }
+
+    fn fetch_curve_d(&self, py: Python<'_>, block_number: u64) -> PyResult<Option<Py<PyAny>>> {
+        self.read_provider_opt(py, |p| p.d(block_number))
+    }
+
+    fn fetch_curve_gamma(&self, py: Python<'_>, block_number: u64) -> PyResult<Option<Py<PyAny>>> {
+        self.read_provider_opt(py, |p| p.gamma(block_number))
+    }
+
+    fn fetch_curve_price_scale(&self, py: Python<'_>, block_number: u64) -> PyResult<Py<PyAny>> {
+        self.read_provider_vec(py, |p| p.price_scale(block_number))
+    }
+
+    fn fetch_curve_admin_balances(&self, py: Python<'_>, block_number: u64) -> PyResult<Py<PyAny>> {
+        self.read_provider_vec(py, |p| p.admin_balances(block_number))
+    }
+
+    fn fetch_curve_redemption_price(
+        &self,
+        py: Python<'_>,
+        block_number: u64,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        self.read_provider_opt(py, |p| p.redemption_price(block_number))
+    }
+
+    fn fetch_curve_base_cache_updated(&self, block_number: u64) -> Option<u64> {
+        let core = self.core.read();
+        let provider = core.get_curve_pool(self.pool_id)?.data_provider.clone()?;
+        drop(core);
+        provider.base_cache_updated(block_number).ok()
+    }
+
+    fn fetch_curve_base_virtual_price(
+        &self,
+        py: Python<'_>,
+        block_number: u64,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        self.read_provider_opt(py, |p| p.base_virtual_price(block_number))
+    }
+
+    fn fetch_curve_virtual_price(
+        &self,
+        py: Python<'_>,
+        block_number: u64,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        self.read_provider_opt(py, |p| p.virtual_price(block_number))
     }
 
     /// Apply a Curve `external_update` (new balances from an `Exchange` event).

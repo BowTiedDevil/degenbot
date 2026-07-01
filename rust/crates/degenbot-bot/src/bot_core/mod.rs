@@ -4319,6 +4319,9 @@ mod tests {
             lp_token: None,
             use_lending: vec![false, false],
             precision_multipliers: vec![U256::from(1u64), U256::from(1u64)],
+            tokens_underlying: None,
+            metapool_rate_style: 1,
+            metapool_underlying_style: 1,
             data_provider: None,
         });
         assert_eq!(core.pool_family(curve_id), "curve");

@@ -10,9 +10,12 @@ from degenbot.types.abstract import AbstractPoolState
 from degenbot.types.concrete import PoolStateMessage
 
 if TYPE_CHECKING:
-    from eth_typing import ChecksumAddress, HexAddress
+    from collections.abc import Sequence
 
-    from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
+    from eth_typing import ChecksumAddress, HexAddress
+    from web3.types import BlockIdentifier
+
+    from degenbot.erc20 import Erc20Token
     from degenbot.types.aliases import BlockNumber
 
 
@@ -119,6 +122,67 @@ class LendingRateStyle(Enum):
     ORACLE = auto()  # On-chain oracle bitmask
 
 
+@runtime_checkable
+class BasePoolPort(Protocol):
+    """The slice of the base-pool surface the metapool ``DyCalculator`` needs.
+
+    Names the *real* interface behind the lazy go-between (ADR-005 BQM2OA): a
+    metapool's calc paths call exactly these six members on its base pool —
+    ``tokens`` / ``balances`` / ``fee`` for metadata, and
+    ``calc_token_amount`` / ``get_dy`` / ``calc_withdraw_one_coin`` for
+    delegated computation. Two adapters satisfy it: the production
+    ``_LazyBasePool`` (handle → base companion, memoised) and a canned
+    ``StubBasePool`` for calculator unit tests (which previously couldn't
+    exercise ``.calculate()`` without standing up a full pool).
+    """
+
+    @property
+    def tokens(self) -> tuple[Erc20Token, ...]:
+        """Base-pool coin companions."""
+        ...
+
+    @property
+    def balances(self) -> tuple[int, ...]:
+        """Base-pool balances."""
+        ...
+
+    @property
+    def fee(self) -> int:
+        """Base-pool swap fee (``FEE_DENOMINATOR`` units)."""
+        ...
+
+    def calc_token_amount(
+        self,
+        *,
+        amounts: Sequence[int],
+        deposit: bool,
+        block_identifier: BlockIdentifier | None = None,
+        override_state: CurveStableswapPoolState | None = None,
+    ) -> int:
+        """Deposit/withdraw token amount (slippage-adjusted)."""
+        ...
+
+    def get_dy(
+        self,
+        i: int,
+        j: int,
+        dx: int,
+        block_identifier: BlockIdentifier | None = None,
+        override_state: CurveStableswapPoolState | None = None,
+    ) -> int:
+        """Output ``dy`` for swapping ``dx`` of coin ``i`` → coin ``j``."""
+        ...
+
+    def calc_withdraw_one_coin(
+        self,
+        _token_amount: int,
+        i: int,
+        block_identifier: BlockIdentifier | None = None,
+    ) -> tuple[int, ...]:
+        """Withdraw a single coin from a deposit."""
+        ...
+
+
 @dataclasses.dataclass(slots=True, frozen=True)
 class DyCalculationInputs:
     """Pre-resolved data for a single dy calculation.
@@ -169,7 +233,7 @@ class DyCalculationInputs:
     # ── I/O results for metapool pools ──
     virtual_price: int | None = None
     scaled_redemption_price: int | None = None
-    base_pool: CurveStableswapPool | None = None
+    base_pool: BasePoolPort | None = None
 
     # ── Pre-resolved variant enums for pure invariant solving ──
     d_variant: DVariant = DVariant.STANDARD

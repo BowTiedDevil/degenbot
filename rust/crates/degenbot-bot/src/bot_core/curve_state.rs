@@ -174,6 +174,20 @@ pub struct RegisterCurvePoolParams {
     /// pre-rate adjustment). One per token.
     pub precision_multipliers: Vec<U256>,
 
+    // --- Metapool underlying-token addresses (immutable on-chain config). ---
+    /// Underlying ERC20 coin addresses for a metapool (the coins beneath the
+    /// base-pool intermediary coins; `None` for non-metapools). One entry per
+    /// underlying coin. The companion resolves these to `PyErc20Token`
+    /// handles for swap routing — they are NOT the base pool's tokens.
+    pub tokens_underlying: Option<Vec<Address>>,
+
+    // --- Metapool strategy discriminants (immutable; the two
+    //     `PoolStrategies` enums the BOMDRK extension did not carry). ---
+    /// `metapool_rate_style` discriminant (auto()-based `MetapoolRateStyle`).
+    pub metapool_rate_style: u8,
+    /// `metapool_underlying_style` discriminant (`MetapoolUnderlyingStyle`).
+    pub metapool_underlying_style: u8,
+
     // --- I/O trait object (layer-2 design; the on-chain-state reader). ---
     /// Off-chain data provider (ADR-005 JFGCHJ). `None` ⇔ no I/O path — a
     /// pure-Rust fixture test or a pool whose calc doesn't need per-block
@@ -247,6 +261,14 @@ pub struct CurvePoolIdentity {
     pub use_lending: Vec<bool>,
     /// Per-token `precision_multipliers`.
     pub precision_multipliers: Vec<U256>,
+    // --- Metapool underlying-token addresses (immutable). ---
+    /// Underlying ERC20 coin addresses for a metapool (`None` for plain).
+    pub tokens_underlying: Option<Vec<Address>>,
+    // --- Metapool strategy discriminants (immutable). ---
+    /// `metapool_rate_style` discriminant.
+    pub metapool_rate_style: u8,
+    /// `metapool_underlying_style` discriminant.
+    pub metapool_underlying_style: u8,
 }
 
 /// Curve `StableSwap` pool state owned by [`crate::bot_core::BotState`].
@@ -328,6 +350,9 @@ impl CurvePoolState {
             lp_token: params.lp_token,
             use_lending: params.use_lending,
             precision_multipliers: params.precision_multipliers,
+            tokens_underlying: params.tokens_underlying,
+            metapool_rate_style: params.metapool_rate_style,
+            metapool_underlying_style: params.metapool_underlying_style,
         };
         let state = CurvePoolState {
             balances: params.balances,
@@ -377,6 +402,9 @@ mod tests {
             lp_token: None,
             use_lending: vec![false; 3],
             precision_multipliers: vec![U256::from(1u64); 3],
+            tokens_underlying: None,
+            metapool_rate_style: 1,
+            metapool_underlying_style: 1,
             data_provider: None,
         }
     }
@@ -524,6 +552,9 @@ mod tests {
             lp_token: Some(lp),
             use_lending: vec![true, false],
             precision_multipliers: vec![U256::from(1u64), U256::from(100u64)],
+            tokens_underlying: None,
+            metapool_rate_style: 1,
+            metapool_underlying_style: 1,
             data_provider: None,
         };
         let pool_id = core.register_curve_pool(&params);

@@ -370,11 +370,17 @@ def _build_metapool_io_free(
     the metapool's cached base_virtual_price), then the metapool over it. The
     RAI redemption price + base_cache_updated are seeded via the data provider
     so ``get_dy``/``get_dy_underlying`` run fully offline.
+
+    The base pool + metapool share a single local ``PyBot`` so the metapool
+    handle's go-between (``curve_base_pool()``) resolves the base pool within
+    the same ``BotState`` (ADR-005 BQM2OA). A fresh bot per call keeps each
+    build isolated (the multiblock parity test rebuilds per block).
     """
+    bot = PyBot()
     bc = imm["base_pool"]
     btoks = [
         make_erc20(
-            _PYBOT,
+            bot,
             t["address"],
             name=t["name"],
             symbol=t["symbol"],
@@ -384,7 +390,7 @@ def _build_metapool_io_free(
         for t in bc["tokens"]
     ]
     blp_tok = make_erc20(
-        _PYBOT,
+        bot,
         bc["lp_token"]["address"],
         name=bc["lp_token"]["name"],
         symbol=bc["lp_token"]["symbol"],
@@ -413,10 +419,11 @@ def _build_metapool_io_free(
         create_timestamp=bc["create_timestamp"],
         strategies=_strategies_from_cassette(bc),
         lp_token=blp_tok,
+        py_bot=bot,
     )
     mtoks = [
         make_erc20(
-            _PYBOT,
+            bot,
             t["address"],
             name=t["name"],
             symbol=t["symbol"],
@@ -426,7 +433,7 @@ def _build_metapool_io_free(
         for t in imm["tokens"]
     ]
     mlp_tok = make_erc20(
-        _PYBOT,
+        bot,
         imm["lp_token"]["address"],
         name=imm["lp_token"]["name"],
         symbol=imm["lp_token"]["symbol"],
@@ -435,7 +442,7 @@ def _build_metapool_io_free(
     )
     underlying_toks = [
         make_erc20(
-            _PYBOT,
+            bot,
             t["address"],
             name=t["name"],
             symbol=t["symbol"],
@@ -471,6 +478,7 @@ def _build_metapool_io_free(
         lp_token=mlp_tok,
         base_pool=base_io,
         tokens_underlying=underlying_toks,
+        py_bot=bot,
     )
 
 

@@ -842,6 +842,9 @@ impl PyBot {
         lp_token=None,
         use_lending=None,
         precision_multipliers=None,
+        tokens_underlying=None,
+        metapool_rate_style=1,
+        metapool_underlying_style=1,
         data_provider=None
     ))]
     fn register_curve_pool(
@@ -873,6 +876,9 @@ impl PyBot {
         lp_token: Option<&str>,
         use_lending: Option<&Bound<'_, PyList>>,
         precision_multipliers: Option<&Bound<'_, PyList>>,
+        tokens_underlying: Option<&Bound<'_, PyList>>,
+        metapool_rate_style: u8,
+        metapool_underlying_style: u8,
         data_provider: Option<Bound<'_, PyAny>>,
     ) -> PyResult<u64> {
         let addr = parse_address(address)?;
@@ -894,6 +900,10 @@ impl PyBot {
         let prec_mults: Vec<alloy::primitives::U256> = match precision_multipliers {
             Some(l) => extract_u256_list(l)?,
             None => Vec::new(),
+        };
+        let tokens_under = match tokens_underlying {
+            Some(l) => Some(parse_address_list(l)?),
+            None => None,
         };
         Ok(self
             .bot
@@ -927,6 +937,9 @@ impl PyBot {
                 lp_token: lp,
                 use_lending: use_lend,
                 precision_multipliers: prec_mults,
+                tokens_underlying: tokens_under,
+                metapool_rate_style,
+                metapool_underlying_style,
                 data_provider: data_provider
                     .map(|b| crate::bot::pool::make_curve_data_provider(b.unbind())),
             }))
