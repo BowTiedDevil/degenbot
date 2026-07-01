@@ -1,6 +1,9 @@
 # AGENTS.md
 
-## Architectural Vision (read first)
+## Coordinating With Other Agents
+When you begin a session, use `link_list` to check for other agents working in this project. Announce yourself with a brief description of your task using `link_send`. Send messages to coordinate concurrent work and avoid making contradictory changes.
+
+## Architectural Vision
 
 **Long-term goal: a set of first-class standalone Rust crates that together form a complete, functional MEV bot — no Python required.**
 
@@ -62,7 +65,7 @@ Commit messages must follow the project convention enforced by `commitlint`. Git
 - Unless directed otherwise, design standalone features without a backwards compatibility layer.
 
 ## Architecture & Domain Knowledge
-**Start with the [Architectural Vision](#architectural-vision-read-first) above** — it states the long-term goal and the canonical references for the three-layer architecture. This section is the index into the remaining focused docs; read the relevant one before naming, editing, or extending a module.
+**Start with the [Architectural Vision](#architectural-vision) above** — it states the long-term goal and the canonical references for the three-layer architecture. This section is the index into the remaining focused docs; read the relevant one before naming, editing, or extending a module.
 - **[`CONTEXT-MAP.md`](CONTEXT-MAP.md)** — ubiquitous-language index + per-module `CONTEXT.md` pointers. Read the relevant module context before naming variables, classes, or docstrings.
 - **[ADR records](docs/adr/)** — ADR-001 I/O-free pools, ADR-002 pool-type registry singleton, ADR-003 Bot as state owner, ADR-004 CL tickmap typed boundary, ADR-005 Polars-inspired three-layer FFI, ADR-006 per-chain bot orchestrator, ADR-007 pool unregister seam, ADR-008 block state machine, ADR-009 single-source-of-truth versioning
 - **[`docs/architecture/`](docs/architecture/)** — long-form architecture
