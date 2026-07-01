@@ -42,6 +42,28 @@ def _register_v3(bot: PyBot, address: str, factory: str) -> int:
     )
 
 
+UNISWAP_V2_FACTORY = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+UNISWAP_V2_INIT_HASH = "0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f"
+# A known Uniswap V2 mainnet pool (WETH/USDC 0.3%).
+V2_UNI_WETH_USDC = "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc"
+
+
+def _register_v2(bot: PyBot, address: str, factory: str) -> int:
+    return bot.register_v2_pool(
+        address=address,
+        token0=USDC,
+        token1=WETH,
+        reserve0=1,
+        reserve1=1,
+        gamma_numer0=997,
+        fee_denom0=1000,
+        gamma_numer1=997,
+        fee_denom1=1000,
+        factory=factory,
+        variant="uniswap-v2",
+    )
+
+
 def _py_pool(bot: PyBot, pool_id: int):
     pool = bot.get_pool(pool_id)
     assert pool is not None, "pool must be registered to build a handle"
@@ -76,4 +98,38 @@ class TestV3HandleIdentity:
         pool = _py_pool(bot, pid)
         assert pool.init_hash == UNISWAP_V3_INIT_HASH
         # Non-JSON -> deployer defaults to factory.
+        assert pool.deployer == ad_hoc_factory
+
+
+class TestV2HandleIdentity:
+    """`PyLiquidityPool` exposes the verified V2 deployer + init_hash, and the
+    `dex` getter merges the per-(chain,factory) JSON identity."""
+
+    def test_uniswap_v2_init_hash_off_handle(self) -> None:
+        bot = PyBot(chain_id=1)
+        pid = _register_v2(bot, V2_UNI_WETH_USDC, UNISWAP_V2_FACTORY)
+        pool = _py_pool(bot, pid)
+        assert pool.init_hash == UNISWAP_V2_INIT_HASH
+        # Uniswap V2 has null deployer in JSON -> effective = factory.
+        assert pool.deployer == UNISWAP_V2_FACTORY
+
+    def test_dex_getter_merges_json_identity(self) -> None:
+        """`dex` carries the per-(chain,factory) deployer/init_hash, not the
+        canonical-mainnet preset values."""
+        bot = PyBot(chain_id=1)
+        pid = _register_v2(bot, V2_UNI_WETH_USDC, UNISWAP_V2_FACTORY)
+        pool = _py_pool(bot, pid)
+        dex = pool.dex
+        assert dex is not None
+        assert dex.init_hash == UNISWAP_V2_INIT_HASH
+        assert dex.deployer == UNISWAP_V2_FACTORY
+        # factory is the JSON factory, not a preset canonical.
+        assert dex.factory == UNISWAP_V2_FACTORY
+
+    def test_non_json_v2_pool_falls_back_to_mainnet_init_hash(self) -> None:
+        bot = PyBot(chain_id=1)
+        ad_hoc_factory = "0x" + "77" * 20
+        pid = _register_v2(bot, "0x" + "88" * 20, ad_hoc_factory)
+        pool = _py_pool(bot, pid)
+        assert pool.init_hash == UNISWAP_V2_INIT_HASH
         assert pool.deployer == ad_hoc_factory

@@ -7,13 +7,12 @@ from threading import Lock
 from typing import TYPE_CHECKING
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.degenbot_rs import resolve_deployer, resolve_v3_init_hash
+from degenbot.degenbot_rs import resolve_deployer, resolve_v2_init_hash, resolve_v3_init_hash
 from degenbot.exceptions.pool import (
     LiquidityPoolError,
     PoolCreationFailed,
     PoolNotAssociated,
 )
-from degenbot.logging import logger
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.types.abstract import AbstractPoolTracker
 from degenbot.uniswap.v2_functions import generate_v2_pool_address
@@ -54,14 +53,10 @@ class AbstractUniswapV2PoolTracker[Pool: UniswapV2Pool](AbstractPoolTracker[Pool
             deployer_address = deployment.deployer
             pool_init_hash = deployment.pool_init_hash
         else:
-            if pool_init_hash is None:  # pragma: no branch
-                logger.info("Pool init hash is unknown. Using Uniswap V3 mainnet default.")
-                pool_init_hash = UniswapV2Pool.UNISWAP_V2_MAINNET_POOL_INIT_HASH
-            deployer_address = (
-                get_checksum_address(deployer_address)
-                if deployer_address is not None
-                else factory_address
-            )
+            # Non-JSON V2: the Rust resolver gives the factory deployer + the
+            # Uniswap V2 mainnet fallback init hash (Fork A, NSAZ4X).
+            deployer_address = resolve_deployer(chain_id, factory_address)
+            pool_init_hash = resolve_v2_init_hash(chain_id, factory_address)
 
         self._lock = Lock()
         self._chain_id = chain_id

@@ -618,7 +618,6 @@ wheels = [
 
 [[package]]
 name = "degenbot"
-version = "0.6.0a3"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },

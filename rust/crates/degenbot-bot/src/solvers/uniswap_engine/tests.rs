@@ -1931,6 +1931,7 @@ mod tests {
             variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
             stable_swap: false,
             fee_denominator: None,
+            ..Default::default()
         };
         let _pool_id = core.write().register_v2_pool(&params);
 
@@ -1970,6 +1971,7 @@ mod tests {
             variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
             stable_swap: false,
             fee_denominator: None,
+            ..Default::default()
         });
 
         let mut engine = UniswapEngine::with_core(Arc::clone(&core));

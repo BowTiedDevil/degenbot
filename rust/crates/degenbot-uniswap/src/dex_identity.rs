@@ -45,9 +45,10 @@ use alloy::primitives::{address, b256, Address, B256};
 ///
 /// Stable kebab-case string form (via [`DexVariant::as_str`]) is the canonical
 /// lookup key for the Python seam (`dex_identity(variant="camelot-v2-stable")`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum DexVariant {
     /// Uniswap V2 (canonical: Ethereum mainnet, chain 1).
+    #[default]
     UniswapV2,
     /// `SushiSwap` V2 (canonical: Ethereum mainnet, chain 1).
     SushiswapV2,

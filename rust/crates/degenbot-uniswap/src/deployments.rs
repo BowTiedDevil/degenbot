@@ -60,6 +60,31 @@ use crate::create2;
 pub const UNISWAP_V3_MAINNET_INIT_HASH: alloy::primitives::B256 =
     alloy::primitives::b256!("e34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54");
 
+/// The canonical Uniswap V2 mainnet CREATE2 init code hash — the fallback for
+/// non-`JSON` V2 pools (the retired Python `ClassVar`
+/// `UNISWAP_V2_MAINNET_POOL_INIT_HASH`). Used only when `register_v2_pool` is
+/// called for a `(chain, factory)` NOT in the shipped `deployments.json`
+/// (test/ad-hoc pools). JSON-registered pools read the per-row verified init
+/// hash from the deployment record. Rust `const` retires the Python copy
+/// (NSAZ4X).
+pub const UNISWAP_V2_MAINNET_INIT_HASH: alloy::primitives::B256 =
+    alloy::primitives::b256!("96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f");
+
+/// Resolve the CREATE2 init code hash for a V2 `(chain_id, factory)` pair,
+/// with a documented fallback.
+///
+/// Returns the JSON row's `init_hash` when shipped with a CREATE2 init hash;
+/// otherwise [`UNISWAP_V2_MAINNET_INIT_HASH`] (the retired Python `ClassVar`'s
+/// documented default for non-`JSON` V2 pools). The V2 builder stores this on
+/// the identity; the `dex` getter merges it (NSAZ4X).
+#[must_use]
+pub fn resolve_v2_init_hash(chain_id: u64, factory: Address) -> alloy::primitives::B256 {
+    match lookup(chain_id, factory) {
+        Some(rec) => rec.init_hash.unwrap_or(UNISWAP_V2_MAINNET_INIT_HASH),
+        None => UNISWAP_V2_MAINNET_INIT_HASH,
+    }
+}
+
 /// Resolve the effective CREATE2 deployer for a `(chain_id, factory)` pair,
 /// with the `None -> factory` convention applied.
 ///

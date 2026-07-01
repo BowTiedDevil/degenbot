@@ -12,11 +12,10 @@ from sqlalchemy import select
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.pools import LiquidityPoolTable, UniswapFeeMixin
+from degenbot.degenbot_rs import resolve_deployer, resolve_v2_init_hash
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata
-from degenbot.registry.pool_type import pool_type_registry
-from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 
 if TYPE_CHECKING:
     from eth_typing import ChecksumAddress
@@ -115,22 +114,15 @@ class V2BuilderBase:
         *,
         chain_id: ChainId,
         factory: ChecksumAddress,
-        default_init_hash: str,
     ) -> tuple[str, str]:
-        """Resolve deployer address and init hash from the pool type registry.
+        """Resolve deployer address and init hash from the Rust JSON resolver.
 
         Returns:
             The computed value.
 
         """
-        deployer = factory
-        resolved_init_hash = default_init_hash
-        registry_deployment = pool_type_registry.get_deployment(chain_id, factory)
-        if registry_deployment is not None:
-            if registry_deployment.pool_init_hash is not None:
-                resolved_init_hash = registry_deployment.pool_init_hash
-            if registry_deployment.deployer is not None:
-                deployer = get_checksum_address(registry_deployment.deployer)
+        deployer = resolve_deployer(chain_id, factory)
+        resolved_init_hash = resolve_v2_init_hash(chain_id, factory)
 
         return deployer, resolved_init_hash
 
@@ -228,11 +220,9 @@ class V2BuilderBase:
                 data=reserves_result,
             )
 
-        # Determine deployer and init_hash from pool type registry
         deployer, resolved_init_hash = V2BuilderBase.resolve_deployer_and_init_hash(
             chain_id=chain_id,
             factory=factory,
-            default_init_hash=UniswapV2Pool.UNISWAP_V2_MAINNET_POOL_INIT_HASH,
         )
 
         return V2CommonData(

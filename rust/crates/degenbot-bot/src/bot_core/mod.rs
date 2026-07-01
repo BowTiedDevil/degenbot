@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use alloy::primitives::{Address, I256, U256};
+use alloy::primitives::{Address, B256, I256, U256};
 
 use crate::bot_core::state_history::{
     JournalError, ReorgJournal, ScalarPriors, TickBefore, V2BlockDelta, V3BlockDelta,
@@ -184,6 +184,15 @@ pub struct V2PoolIdentity {
     pub fee_token1: (u64, u64),
     /// Pool factory address.
     pub factory: Address,
+    /// The CREATE2 deployer this pool's address was verified against (Fork A,
+    /// NSAZ4X). The JSON row's `deployer` (or `factory` for null), or the
+    /// factory itself for non-JSON pools. The `dex` getter merges this per-
+    /// (chain,factory) deployer into the protocol preset (replacing the
+    /// canonical-mainnet preset deployer).
+    pub deployer: Address,
+    /// The CREATE2 init code hash (Fork A, NSAZ4X). The JSON row's `init_hash`,
+    /// or the V2 mainnet fallback const for non-JSON pools.
+    pub init_hash: B256,
     /// The DEX+variant discriminator. Resolves the canonical
     /// [`degenbot_uniswap::dex_identity::DexIdentity`] preset
     /// (factory/deployer/init-hash/default fees/ABI shape) for encoding and
@@ -216,7 +225,7 @@ pub struct V2PoolState {
 }
 
 /// Parameters for registering a V2 pool.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct RegisterV2PoolParams {
     pub address: Address,
     pub token0: Address,
@@ -226,6 +235,17 @@ pub struct RegisterV2PoolParams {
     pub fee_token0: (u64, u64),
     pub fee_token1: (u64, u64),
     pub factory: Address,
+    /// The CREATE2 deployer the Rust builder verified this pool's address
+    /// against (Fork A, NSAZ4X). Equals the JSON row's `deployer`, or
+    /// `factory` when the row had `null` (the `None -> factory` convention).
+    /// For non-JSON pools, the factory itself. Stored on the identity so the
+    /// `dex` getter merges the per-(chain,factory) deployer (no getter-time
+    /// `chain_id` lookup).
+    pub deployer: Address,
+    /// The CREATE2 init code hash the builder verified against (Fork A,
+    /// NSAZ4X). The JSON row's `init_hash`; the V2 mainnet fallback const
+    /// for non-JSON pools.
+    pub init_hash: B256,
     /// Block number of the registration state — seeds the genesis reorg
     /// journal delta (ADR-005 slice 4). The landed-at journal must anchor the
     /// registration state at a real block so `restore_before_block` can land
@@ -371,10 +391,13 @@ impl BotState {
             fee_token0,
             fee_token1,
             factory,
+            deployer,
+            init_hash,
             update_block,
             variant,
             stable_swap,
             fee_denominator,
+            ..
         } = *params;
 
         // Seed the reorg journal with a genesis delta (ADR-005 slice 4): the
@@ -401,6 +424,8 @@ impl BotState {
                     fee_token0,
                     fee_token1,
                     factory,
+                    deployer,
+                    init_hash,
                     variant,
                     stable_swap,
                     fee_denominator,
@@ -4197,6 +4222,7 @@ mod tests {
             variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
             stable_swap: false,
             fee_denominator: None,
+            ..Default::default()
         }
     }
 
@@ -4519,6 +4545,7 @@ mod tests {
             variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
             stable_swap: false,
             fee_denominator: None,
+            ..Default::default()
         };
         let pool_id = core.register_v2_pool(&params);
 
@@ -4560,6 +4587,7 @@ mod tests {
             variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
             stable_swap: false,
             fee_denominator: None,
+            ..Default::default()
         };
         state.write().register_v2_pool(&params);
 

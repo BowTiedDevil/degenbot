@@ -565,6 +565,7 @@ impl UniswapEngine {
             variant: degenbot_uniswap::dex_identity::DexVariant::UniswapV2,
             stable_swap: false,
             fee_denominator: None,
+            ..Default::default()
         };
         self.core.write().register_v2_pool(&params)
     }

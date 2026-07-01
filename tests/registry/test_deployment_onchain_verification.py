@@ -146,6 +146,7 @@ def _skip_if_unreachable(chain_id: int) -> str | None:
 # cast helpers
 # ---------------------------------------------------------------------------
 
+
 def _cast(*args: str, timeout: int = 30) -> str:
     """Run ``cast`` with the given args, return stdout, raising on failure."""
     result = subprocess.run(  # noqa: S603 — trusted binary, args list, no shell
@@ -240,9 +241,7 @@ def _is_zero_address(addr: str) -> bool:
     return not cleaned or int(cleaned, 16) == 0
 
 
-def _onchain_pool_address(
-    factory: str, known: tuple[str, str, str, int], rpc_url: str
-) -> str:
+def _onchain_pool_address(factory: str, known: tuple[str, str, str, int], rpc_url: str) -> str:
     """Query the factory on-chain for the known pair's address.
 
     Returns:
@@ -254,18 +253,27 @@ def _onchain_pool_address(
     kind, t0, t1, fee = known
     if kind == "v2":
         return _cast(
-            "call", factory, "getPair(address,address)(address)",
-            t0, t1, "--rpc-url", rpc_url,
+            "call",
+            factory,
+            "getPair(address,address)(address)",
+            t0,
+            t1,
+            "--rpc-url",
+            rpc_url,
         )
     return _cast(
-        "call", factory, "getPool(address,address,uint24)(address)",
-        t0, t1, str(fee), "--rpc-url", rpc_url,
+        "call",
+        factory,
+        "getPool(address,address,uint24)(address)",
+        t0,
+        t1,
+        str(fee),
+        "--rpc-url",
+        rpc_url,
     )
 
 
-def _compute_pool_address(
-    deployer: str, init_hash: str, known: tuple[str, str, str, int]
-) -> str:
+def _compute_pool_address(deployer: str, init_hash: str, known: tuple[str, str, str, int]) -> str:
     """Recompute the CREATE2 pool address in-process from deployer + init_hash.
 
     Uses the codebase's own auditable ``generate_v2/v3_pool_address`` (which
@@ -368,9 +376,7 @@ EXPECTED_CONTRACT_NAME: dict[str, str | None] = {
 _RECORDS: list[DeploymentRecord] = load_deployments()
 """All shipped deployments, loaded once at collection time."""
 
-_RECORD_IDS = [
-    f"{r.chain_id}-{r.factory[:10]}…-{r.name}" for r in _RECORDS
-]
+_RECORD_IDS = [f"{r.chain_id}-{r.factory[:10]}…-{r.name}" for r in _RECORDS]
 
 
 pytestmark = pytest.mark.online_rpc
@@ -424,9 +430,7 @@ class TestDeploymentOnchainVerification:
             pytest.skip(skip)
         expected = EXPECTED_FACTORY_SELECTORS.get(record.pool_type)
         if expected is None:
-            pytest.skip(
-                f"no selector fingerprint defined for pool_type={record.pool_type!r}"
-            )
+            pytest.skip(f"no selector fingerprint defined for pool_type={record.pool_type!r}")
         rpc_url = _CHAIN_RPC[record.chain_id]
         deployed = _cast_selectors(_cast_code(record.factory, rpc_url))
         missing = expected - deployed
@@ -454,13 +458,9 @@ class TestDeploymentOnchainVerification:
         name = _etherscan_source_name(record.chain_id, record.factory)
         expected_substring = EXPECTED_CONTRACT_NAME.get(record.pool_type)
         if expected_substring is None:
-            pytest.skip(
-                f"no expected ContractName defined for pool_type={record.pool_type!r}"
-            )
+            pytest.skip(f"no expected ContractName defined for pool_type={record.pool_type!r}")
         if not name:
-            pytest.skip(
-                f"{record.name} ({record.factory}) source not verified on Etherscan"
-            )
+            pytest.skip(f"{record.name} ({record.factory}) source not verified on Etherscan")
         assert expected_substring.lower() in name.lower(), (
             f"{record.name} ({record.factory}, chain {record.chain_id}) "
             f"Etherscan ContractName={name!r} does not contain "
@@ -470,9 +470,7 @@ class TestDeploymentOnchainVerification:
     # --- Tier 4: init_code_hash reproduces pool address ----------------
 
     @pytest.mark.skipif(not _tier(4), reason="Tier 4 needs DEGENBOT_VERIFY_DEPLOYMENTS>=4")
-    def test_tier4_init_hash_reproduces_pool_address(
-        self, record: DeploymentRecord
-    ) -> None:
+    def test_tier4_init_hash_reproduces_pool_address(self, record: DeploymentRecord) -> None:
         """Tier 4: the stored CREATE2 ``init_code_hash`` reproduces a real pool.
 
         Recomputes the CREATE2 address of a *known deployed* pair/pool
@@ -498,17 +496,32 @@ class TestDeploymentOnchainVerification:
                 "add one to KNOWN_PAIRS to cover it"
             )
         rpc_url = _CHAIN_RPC[record.chain_id]
-        deployer = record.deployer or record.factory
+        # Source deployer + init_hash from the Rust resolver — the runtime
+        # value pools consume (Fork A, NSAZ4X). The JSON-sourced values now
+        # live on the pool identity (stored at registration); this tier
+        # verifies THAT runtime value reproduces ground truth. The Python
+        # record is the lookup key only.
+        from degenbot.degenbot_rs import (
+            resolve_deployer,
+            resolve_v2_init_hash,
+            resolve_v3_init_hash,
+        )
+
+        deployer = resolve_deployer(record.chain_id, record.factory)
+        if "v3" in record.pool_type:
+            init_hash = resolve_v3_init_hash(record.chain_id, record.factory)
+        else:
+            init_hash = resolve_v2_init_hash(record.chain_id, record.factory)
         on_chain = _onchain_pool_address(record.factory, known, rpc_url)
         if _is_zero_address(on_chain):
             pytest.skip(
                 f"{record.name}: getPair/getPool returned zero — "
                 "the known pair is not deployed on this chain/factory"
             )
-        computed = _compute_pool_address(deployer, record.init_hash, known)
+        computed = _compute_pool_address(deployer, init_hash, known)
         assert computed == on_chain, (
             f"{record.name} ({record.factory}, chain {record.chain_id}): "
-            f"CREATE2 with stored init_hash produced {computed}, but the "
+            f"CREATE2 with runtime-sourced init_hash produced {computed}, but the "
             f"factory reports {on_chain} for the known pair. The stored "
             f"init_code_hash does not reproduce ground truth."
         )

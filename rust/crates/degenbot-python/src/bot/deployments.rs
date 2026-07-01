@@ -94,6 +94,20 @@ fn resolve_v3_init_hash(chain_id: u64, factory: &str) -> PyResult<String> {
     ))
 }
 
+/// Resolve the CREATE2 init code hash for a V2 ``(chain_id, factory)`` pair,
+/// with a documented fallback. Returns the JSON row's `init_hash` when shipped
+/// with a CREATE2 init hash; otherwise the Uniswap V2 mainnet fallback (the
+/// retired Python ClassVar's default for non-JSON V2 pools) (Fork A, NSAZ4X).
+#[pyfunction]
+fn resolve_v2_init_hash(chain_id: u64, factory: &str) -> PyResult<String> {
+    let addr = parse_address(factory)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+    Ok(format!(
+        "{:#x}",
+        deployments::resolve_v2_init_hash(chain_id, addr)
+    ))
+}
+
 /// Register the `init_hash_for` / `deployer_for` free functions on the
 /// top-level `degenbot_rs` module.
 pub(crate) fn add_deployments(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -101,6 +115,7 @@ pub(crate) fn add_deployments(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(deployer_for, m)?)?;
     m.add_function(wrap_pyfunction!(resolve_deployer, m)?)?;
     m.add_function(wrap_pyfunction!(resolve_v3_init_hash, m)?)?;
+    m.add_function(wrap_pyfunction!(resolve_v2_init_hash, m)?)?;
     Ok(())
 }
 
