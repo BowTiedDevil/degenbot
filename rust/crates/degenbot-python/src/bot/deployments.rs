@@ -26,7 +26,7 @@
 use crate::prelude::*;
 
 use address_utils::{address_to_checksum_string, parse_address};
-use degenbot_uniswap::deployments;
+use degenbot_uniswap::deployments::{self, AddressMismatch};
 
 /// Resolve the CREATE2 init code hash for a ``(chain_id, factory)`` pair from
 /// the embedded canonical `deployments.json`.
@@ -73,4 +73,50 @@ pub(crate) fn add_deployments(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(init_hash_for, m)?)?;
     m.add_function(wrap_pyfunction!(deployer_for, m)?)?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Registration-time verification wrappers (Fork A, JC6OFG)
+// ---------------------------------------------------------------------------
+//
+// Thin `PyResult` wrappers over the pure `degenbot_uniswap::deployments::
+// verify_{v2,v3}_pool_address` checks. Called from the `register_v2_pool` /
+// `register_v3_pool` Python seams: before registering, recomputes the CREATE2
+// address from the JSON-sourced deployer + init hash and rejects a mismatch
+// with a clear `ValueError`. Verification is skipped (returns `Ok(())`) when
+// the `(chain, factory)` is not in the shipped JSON (manual/ad-hoc
+// registration) or the row has no CREATE2 — so only JSON-registered pools are
+// enforced.
+
+fn map_mismatch(m: AddressMismatch) -> pyo3::PyErr {
+    pyo3::exceptions::PyValueError::new_err(m.to_string()).into()
+}
+
+/// Verify a V2 pool registration's declared address against the JSON-sourced
+/// CREATE2 deployer + init hash. `Ok(())` if it matches or is not applicable;
+/// `Err(PyValueError)` on a verified mismatch.
+pub(crate) fn verify_v2(
+    chain_id: u64,
+    factory: alloy::primitives::Address,
+    expected: alloy::primitives::Address,
+    token0: alloy::primitives::Address,
+    token1: alloy::primitives::Address,
+) -> PyResult<()> {
+    deployments::verify_v2_pool_address(chain_id, factory, expected, token0, token1)
+        .map_err(map_mismatch)
+}
+
+/// Verify a V3 pool registration's declared address against the JSON-sourced
+/// CREATE2 deployer + init hash (the V3 salt includes the fee). `Ok(())` if it
+/// matches or is not applicable; `Err(PyValueError)` on a verified mismatch.
+pub(crate) fn verify_v3(
+    chain_id: u64,
+    factory: alloy::primitives::Address,
+    expected: alloy::primitives::Address,
+    token0: alloy::primitives::Address,
+    token1: alloy::primitives::Address,
+    fee: u32,
+) -> PyResult<()> {
+    deployments::verify_v3_pool_address(chain_id, factory, expected, token0, token1, fee)
+        .map_err(map_mismatch)
 }

@@ -30,7 +30,10 @@
 //!   the embedded canonical `deployments.json` (init hash + deployer).
 //! - [`v2_encoding`] — V2 `swap(uint256,uint256,address,bytes)` callldata
 //!   encoding (`EncodedCall`, `V2_SWAP_SELECTOR`, `encode_v2_swap`).
+//! - [`create2`] — CREATE2 pool-address derivation (pure-Rust mirror of the
+//!   Python `generate_v2/v3_pool_address`).
 
+pub mod create2;
 pub mod deployments;
 pub mod dex_identity;
 pub mod v2_encoding;

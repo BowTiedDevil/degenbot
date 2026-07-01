@@ -380,6 +380,17 @@ impl PyBot {
             pyo3::exceptions::PyValueError::new_err(format!("unknown variant: {variant}"))
         })?;
 
+        // Verify the pool address against the JSON-sourced CREATE2 deployer +
+        // init hash (Fork A, JC6OFG). Skipped if (chain, factory) is not in the
+        // shipped JSON — preserves the manual/ad-hoc registration path.
+        crate::bot::deployments::verify_v2(
+            self.bot.chain_id(),
+            fac,
+            addr,
+            t0,
+            t1,
+        )?;
+
         Ok(self
             .bot
             .state_arc()
@@ -658,6 +669,18 @@ impl PyBot {
                 )));
             }
         };
+
+        // Verify the pool address against the JSON-sourced CREATE2 deployer +
+        // init hash (Fork A, JC6OFG). Skipped if (chain, factory) is not in the
+        // shipped JSON — preserves the manual/ad-hoc registration path.
+        crate::bot::deployments::verify_v3(
+            self.bot.chain_id(),
+            fac,
+            addr,
+            t0,
+            t1,
+            fee,
+        )?;
 
         Ok(self
             .bot

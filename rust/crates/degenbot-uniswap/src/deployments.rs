@@ -45,6 +45,8 @@ use std::sync::OnceLock;
 use alloy::primitives::{Address, B256};
 use degenbot_core::address_utils;
 
+use crate::create2;
+
 /// The canonical deployment data file, embedded at compile time.
 ///
 /// Resolves to `src/degenbot/registry/deployments.json` — the single source the
@@ -174,6 +176,155 @@ pub fn lookup(chain_id: u64, factory: Address) -> Option<&'static DeploymentReco
     table().get(&(chain_id, factory))
 }
 
+/// A CREATE2 address mismatch reported by [`verify_v2_pool_address`] /
+/// [`verify_v3_pool_address`].
+///
+/// Carries enough context to render a clear error:
+/// "address does not match CREATE2(deployer, salt, `init_hash`) for chain X
+/// factory F: expected E, computed C".
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AddressMismatch {
+    /// The chain id used for the deployment lookup.
+    pub chain_id: u64,
+    /// The factory looked up.
+    pub factory: Address,
+    /// The effective CREATE2 deployer (JSON `deployer` or `factory`).
+    pub deployer: Address,
+    /// The CREATE2 init code hash used.
+    pub init_hash: B256,
+    /// The declared (expected) pool address.
+    pub expected: Address,
+    /// The recomputed CREATE2 address.
+    pub computed: Address,
+}
+
+impl std::fmt::Display for AddressMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "pool address {{expected}} does not match CREATE2 for chain {} \
+             factory {}: deployer={}, init_hash={:#x}, \
+             expected={:#x}, computed={:#x}",
+            self.chain_id, self.factory, self.deployer, self.init_hash, self.expected,
+            self.computed
+        )
+    }
+}
+
+impl std::error::Error for AddressMismatch {}
+
+/// Recompute the V2 CREATE2 address for a pool registration against the
+/// JSON-sourced deployer + init hash.
+///
+/// `Ok(())` if the address matches, OR if verification is not applicable:
+/// the `(chain_id, factory)` is not in the shipped JSON (manual/ad-hoc
+/// registration — verification skipped), or the row carries no CREATE2 init
+/// hash (Balancer — not a CREATE2 pool). `Err(AddressMismatch)` if the JSON
+/// has the row with a CREATE2 init hash but the recomputed address differs
+/// from `expected`.
+///
+/// This is the load-bearing guard covering the `PancakeSwap` V3
+/// separate-deployer case: the deployer is resolved per `(chain, factory)`,
+/// not from the variant preset's canonical mainnet factory.
+///
+/// # Errors
+///
+/// Returns `Err(AddressMismatch)` only when the `(chain_id, factory)` is in
+/// the shipped JSON with a CREATE2 `init_hash` AND the recomputed address
+/// differs from `expected`. Returns `Ok(())` (no error) for non-applicable
+/// cases (not in JSON / no CREATE2 row).
+#[must_use = "the verification result must be checked before registration proceeds"]
+pub fn verify_v2_pool_address(
+    chain_id: u64,
+    factory: Address,
+    expected: Address,
+    token0: Address,
+    token1: Address,
+) -> Result<(), AddressMismatch> {
+    let Some(rec) = lookup(chain_id, factory) else {
+        return Ok(()); // not in JSON → skip (ad-hoc registration preserved)
+    };
+    let Some(init_hash) = rec.init_hash else {
+        return Ok(()); // row has no CREATE2 (e.g. Balancer) → skip
+    };
+    let deployer = rec.effective_deployer();
+    let computed = create2::compute_v2_address(deployer, token0, token1, init_hash);
+    if computed == expected {
+        Ok(())
+    } else {
+        Err(AddressMismatch {
+            chain_id,
+            factory,
+            deployer,
+            init_hash,
+            expected,
+            computed,
+        })
+    }
+}
+
+/// Recompute the V3 CREATE2 address for a pool registration against the
+/// JSON-sourced deployer + init hash. Mirrors [`verify_v2_pool_address`] with
+/// the V3 salt (tokens + fee).
+///
+/// `Ok(())` on match or not-applicable (see [`verify_v2_pool_address`]);
+/// `Err(AddressMismatch)` on a verified mismatch.
+///
+/// # Errors
+///
+/// Returns `Err(AddressMismatch)` only when the `(chain_id, factory)` is in
+/// the shipped JSON with a CREATE2 `init_hash` AND the recomputed address
+/// differs from `expected`. Returns `Ok(())` for non-applicable cases.
+#[must_use = "the verification result must be checked before registration proceeds"]
+pub fn verify_v3_pool_address(
+    chain_id: u64,
+    factory: Address,
+    expected: Address,
+    token0: Address,
+    token1: Address,
+    fee: u32,
+) -> Result<(), AddressMismatch> {
+    let Some(rec) = lookup(chain_id, factory) else {
+        return Ok(()); // not in JSON → skip (ad-hoc registration preserved)
+    };
+    let Some(init_hash) = rec.init_hash else {
+        return Ok(()); // row has no CREATE2 → skip
+    };
+    let deployer = rec.effective_deployer();
+    let computed = create2::compute_v3_address(deployer, token0, token1, fee, init_hash);
+    if computed == expected {
+        Ok(())
+    } else {
+        Err(AddressMismatch {
+            chain_id,
+            factory,
+            deployer,
+            init_hash,
+            expected,
+            computed,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Registration-time verification (Fork A, JC6OFG)
+// ---------------------------------------------------------------------------
+//
+// The Rust builder recomputes the CREATE2 address from the JSON-sourced
+// deployer + init hash + the pool's registration params (tokens / fee) and
+// asserts it equals the declared pool address. This is the single correctness
+// guard that (a) uses the right deployer per (chain, factory) — covering the
+// PancakeSwap V3 separate-deployer case — and (b) retires the per-class
+// `_verified_address` second copy.
+//
+// Semantics:
+// - `Ok(())` if the (chain, factory) is in the JSON AND the recomputed CREATE2
+//   matches; OR the (chain, factory) is NOT in the JSON (verification skipped —
+//   preserves the manual/ad-hoc registration path); OR the row has no CREATE2
+//   (init_hash is null, e.g. Balancer — not a CREATE2 pool).
+// - `Err(AddressMismatch)` if the (chain, factory) is in the JSON with a
+//   CREATE2 init hash but the recomputed address != expected.
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,5 +391,110 @@ mod tests {
         let balancer = address!("8E9aa87E45e92bad84D5F8DD1bff34Fb92637dE9");
         let rec = lookup(1, balancer).expect("Balancer weighted mainnet present");
         assert!(rec.init_hash.is_none());
+    }
+
+    // --- Registration-time verification (JC6OFG) ----------------------------
+    // Cross-checked addresses (Python `generate_v2/v3_pool_address` reference):
+    //   V2 DAI/WETH mainnet:            0xA478c2975Ab1Ea89e8196811F51A7B7Ade33eB11
+    //   V3 UNI USDC/WETH 500 mainnet:   0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640
+    //   V3 PCS USDC/WETH 500 (sep dep): 0x1ac1A8FEaAEa1900C4166dEeed0C11cC10669D36
+    //   V3 PCS USDC/WETH 500 (factory): 0xc1CaD0F6b1Cc9124D71DE161a7F133da6aF93c0D
+
+    const WETH: Address = address!("C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    const DAI: Address = address!("6B175474E89094C44Da98b954EedeAC495271d0F");
+    const USDC: Address = address!("A0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48");
+    const UNISWAP_V3_MAINNET_FACTORY: Address =
+        address!("1F98431c8aD98523631AE4a59f267346ea31F984");
+    const V2_DAI_WETH_ADDR: Address = address!("A478c2975Ab1Ea89e8196811F51A7B7Ade33eB11");
+    const V3_UNI_USDC_WETH_500: Address =
+        address!("88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640");
+    const V3_PCS_USDC_WETH_500_SEPARATE: Address =
+        address!("1ac1A8FEaAEa1900C4166dEeed0C11cC10669D36");
+    const V3_PCS_USDC_WETH_500_FACTORY: Address =
+        address!("c1CaD0F6b1Cc9124D71DE161a7F133da6aF93c0D");
+
+    #[test]
+    fn verify_v2_uniswap_mainnet_round_trips() {
+        // Uniswap V2 (factory deployer) — verified CREATE2 round-trip.
+        assert!(verify_v2_pool_address(1, UNISWAP_V2_MAINNET_FACTORY, V2_DAI_WETH_ADDR, WETH, DAI)
+            .is_ok(),
+            "Uniswap V2 DAI/WETH mainnet must verify");
+    }
+
+    #[test]
+    fn verify_v2_wrong_address_is_rejected() {
+        // A deliberately-wrong address must fail registration with a mismatch.
+        let wrong = address!("0000000000000000000000000000000000000001");
+        let err = verify_v2_pool_address(1, UNISWAP_V2_MAINNET_FACTORY, wrong, WETH, DAI)
+            .expect_err("wrong V2 address must fail verification");
+        assert_eq!(err.expected, wrong);
+        assert_eq!(err.chain_id, 1);
+        assert_eq!(err.factory, UNISWAP_V2_MAINNET_FACTORY);
+        // Deployer is the factory (null in JSON → effective = factory).
+        assert_eq!(err.deployer, UNISWAP_V2_MAINNET_FACTORY);
+    }
+
+    #[test]
+    fn verify_v3_pancakeswap_separate_deployer_passes() {
+        // PancakeSwap V3 (separate deployer) — the correct address verifies.
+        assert!(verify_v3_pool_address(
+            1,
+            PANCAKESWAP_V3_MAINNET_FACTORY,
+            V3_PCS_USDC_WETH_500_SEPARATE,
+            USDC,
+            WETH,
+            500
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn verify_v3_pancakeswap_factory_as_deployer_is_rejected() {
+        // The load-bearing case: computing with the factory substituted as the
+        // deployer yields a DIFFERENT address — so the factory-derived address
+        // must FAIL verification (the JSON row specifies the separate deployer).
+        let err = verify_v3_pool_address(
+            1,
+            PANCAKESWAP_V3_MAINNET_FACTORY,
+            V3_PCS_USDC_WETH_500_FACTORY,
+            USDC,
+            WETH,
+            500,
+        )
+        .expect_err("the factory-derived address must mismatch the separate-deployer row");
+        assert_eq!(err.computed, V3_PCS_USDC_WETH_500_SEPARATE);
+        assert_eq!(err.deployer, PANCAKESWAP_V3_MAINNET_DEPLOYER);
+    }
+
+    #[test]
+    fn verify_v3_uniswap_mainnet_round_trips() {
+        assert!(verify_v3_pool_address(
+            1,
+            UNISWAP_V3_MAINNET_FACTORY,
+            V3_UNI_USDC_WETH_500,
+            USDC,
+            WETH,
+            500
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn verify_skips_when_factory_not_in_json() {
+        // Ad-hoc / non-JSON registration must still work (verification skipped).
+        let ad_hoc_factory = address!("1234567890123456789012345678901234567890");
+        let ad_hoc_addr = address!("0000000000000000000000000000000000000000");
+        assert!(verify_v2_pool_address(1, ad_hoc_factory, ad_hoc_addr, WETH, DAI).is_ok());
+        assert!(verify_v3_pool_address(1, ad_hoc_factory, ad_hoc_addr, WETH, DAI, 500).is_ok());
+    }
+
+    #[test]
+    fn verify_v2_mismatch_error_renders_context() {
+        let wrong = address!("deaddeaddeaddeaddeaddeaddeaddeaddeaddead");
+        let err = verify_v2_pool_address(1, UNISWAP_V2_MAINNET_FACTORY, wrong, WETH, DAI)
+            .expect_err("must mismatch");
+        let msg = err.to_string();
+        assert!(msg.contains("chain 1"), "error must mention chain: {msg}");
+        assert!(msg.contains("CREATE2"), "error must mention CREATE2: {msg}");
     }
 }
