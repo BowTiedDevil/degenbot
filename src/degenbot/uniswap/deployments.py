@@ -106,9 +106,7 @@ def _record(chain_id: int, factory: str, constant_name: str) -> DeploymentRecord
     return record
 
 
-def _factory(
-    chain_id: int, factory: str, constant_name: str
-) -> UniswapFactoryDeployment:
+def _factory(chain_id: int, factory: str, constant_name: str) -> UniswapFactoryDeployment:
     """Build a :class:`UniswapFactoryDeployment` from the JSON record.
 
     ``deployer`` and ``pool_init_hash`` are read from the record (``None`` /

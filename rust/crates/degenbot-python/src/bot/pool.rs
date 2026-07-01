@@ -1091,7 +1091,7 @@ impl PyLiquidityPool {
     }
 
     /// The resolved `DexIdentity` for this pool's registered variant, with the
-    /// JSON-sourced deployer + init_hash merged in (Fork A, NSAZ4X). `None` if
+    /// JSON-sourced deployer + `init_hash` merged in (Fork A, NSAZ4X). `None` if
     /// not a V2 pool. The Python companion reads this to recover deployer /
     /// init-hash without taking constructor args. Protocol-const fields
     /// (fees/ABI shape) come from the variant preset; `factory`/`deployer` /
