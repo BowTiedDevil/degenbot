@@ -35,6 +35,33 @@ D3+D4 were completed in a follow-up (ergo epic OP7YLN):
   hot-loop recurring `verify_liquidity_maps` was added so post-release / in-loop
   desyncs surface instead of trading silently.
 
+### Addendum (ergo epic BQM2OA / JFGCHJ / 4UBHP6 / MLJT4V — sealed seam + stored trait-object I/O)
+
+The D4 "Bot is the per-chain orchestrator" framing is reinforced by the
+completion of the sealed `_from_py_pool` seam across **every** pool family
+(V2/V3/V4/Balancer-weighted/Balancer-stable/Aerodrome/Curve). Two D4-load-bearing
+consequences now hold:
+
+- **I/O callables live on the Rust core as pyo3-free trait objects**, not as
+  Python callbacks held by the companions. Each per-family read surface the
+  companion previously held is a stored `Arc<dyn Trait>` on the `VxPoolState`,
+  with a Py-adapter in `degenbot-python`: the V3/V4 tick fetcher (`MLJT4V`),
+  the Curve data provider (`JFGCHJ`), the Balancer rate provider (`4UBHP6`).
+  The companion reads through the handle; the trait object is the I/O seam a
+  standalone-Rust consumer (`examples/standalone_consumer.rs`) drives directly
+  with no Python — the strong-form standalone target of D4.
+- **Cross-pool references resolve within the shared `BotState`.** The Curve
+  metapool's base-pool dependency — the one case that broke single-arg
+  construction — resolves through the existing `pool_id_by_address` index on
+  `BotState` (the go-between `curve_base_pool()` constructs a handle over the
+  base pool_id sharing the same `Arc<RwLock<BotState>>`). No Python registry;
+  the D1 shared-core topology is the *enabler* of single-arg construction.
+
+Companion identity is now fully handle-readable (the Polars `_from_pydf` end
+state); direct `__init__` is forbidden on every companion. See ADR-005's
+"sealed `_from_py_pool` seam" footer for the per-family commits + the
+`BasePoolPort` go-between design (BQM2OA).
+
 ### Addendum (epic GAYTBA — verify-race + exception-mapping fix)
 
 The two-step verify as originally landed compared engine-*current* tick data

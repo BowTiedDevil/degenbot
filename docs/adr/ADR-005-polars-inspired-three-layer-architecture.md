@@ -339,3 +339,70 @@ is dropped together), and that is unaffected by the split.
 
 Migration commits: `e138e98` (V2), `7c492b0` (V3), `66e80fbc` (V4),
 `df2ffb9d` (Curve), `030948ed` (Balancer).
+
+## Achieved invariant: the sealed `_from_py_pool` seam (Polars `_from_pydf` end state)
+
+The identity/state split made every identity field handle-readable; the
+**sealed `_from_py_pool` seam** closes the loop by making the handle the
+*single constructor argument*. Every companion — V2 (first, as the template),
+V3, V4, Balancer-weighted, Balancer-stable, Aerodrome, Curve — now constructs
+via `cls._from_py_pool(py_pool) -> Self`, reading every identity field off the
+handle. Direct `__init__` is forbidden (`TypeError`) on every companion;
+`Erc20Token` followed with its `_from_py_token`. This is the Polars
+`_from_pydf` end state: the companion holds nothing an external caller can
+mutate, and the only paths to a pool instance are the ones that wire a handle
+(`Bot.build_pool()` / the test factories).
+
+- **Variant-family guard.** `_from_py_pool` asserts the handle's
+  `pool_family()` (the `755d1c7b` discriminator) before reading identity — a
+  V2 handle passed to `UniswapV3Pool._from_py_pool` raises
+  `DegenbotValueError`, not a wrong-field crash. The guard is the seam's
+  integrity rule across a registry that indexes all families by `pool_id`.
+- **I/O callables are stored pyo3-free trait objects on `VxPoolState`** (not
+  Python callbacks). The per-family read surfaces the companion previously
+  held as 13 individual callbacks are now a single stored trait object on the
+  Rust state, read through a Py-adapter on the handle:
+  - **V3/V4 tick fetcher** (`bb2ee538`, `MLJT4V`) — the `TickMap`
+    lazy/invalidated reads go through a stored `Arc<dyn TickFetcher>`.
+  - **Curve data provider** (`5b832a99`, `JFGCHJ`) — the 13-method
+    `CurveDataProvider` trait object lives on `CurvePoolState`; the companion
+    reads it through `_HandleCurveDataProviderAdapter` (BQM2OA), mirroring the
+    Balancer rate-provider adapter.
+  - **Balancer rate provider** (`3dbf2f49`, `4UBHP6`) — the weighted/stable
+    rate-provider trait object lives on the Balancer state; the companion
+    reads it through `_HandleRateProviderAdapter` (MBWSGP).
+  Each is a pyo3-free `Arc<dyn Trait>` on the Rust core with a Py-adapter in
+  `degenbot-python` — the FFI rule of ADR-005 (no pyo3 in core crates) holds.
+- **The Curve cross-pool go-between.** Curve metapools break single-arg by
+  depending on a *second pool* (the base pool) whose calc methods they invoke.
+  Resolved by a ~6-line Rust go-between (`curve_base_pool()`): the metapool's
+  stored `base_pool: Option<Address>` resolves through the existing
+  `pool_id_by_address` index to a base-pool `PyLiquidityPool` sharing the same
+  `BotState` core — no Python registry. The companion wraps it in a
+  `_LazyBasePool` (memoised; zero cost if the base swap path is never taken).
+- **`BasePoolPort` — the named interface behind the go-between (BQM2OA).**
+  The metapool `DyCalculator` calls exactly six members on its base pool
+  (`tokens`/`balances`/`fee` + `calc_token_amount`/`get_dy`/
+  `calc_withdraw_one_coin`), not the ~50-symbol companion. That surface is now
+  a `Protocol` at the calculator boundary
+  (`DyCalculationInputs.base_pool: BasePoolPort | None`). **Two real
+  adapters** satisfy it (the codebase-design seam gate): the production
+  `_LazyBasePool` + a canned `StubBasePool`, the latter finally letting
+  metapool math be unit-tested without standing up a full pool.
+- **Deletion test applied to `state_cache_depth`.** Never non-default for
+  Curve (verified at task time), so the knob was deleted from the Curve
+  companion path (default-8 retained on `PerBlockCache`, shared with other
+  families via `BuildPoolRequest`).
+
+Seam commits (per family): `15a8e2a5` + `f167db11` (V2, the template),
+`7ec458ad` (V3), `7bc78962` (V4), `11ead76a` (Balancer-weighted),
+`798247fd` (Balancer-stable), `1411a960` (Aerodrome), `938fb4d3` (Curve).
+Rust foundation commits: `755d1c7b` (pool_family discriminator),
+`bb2ee538` (tick fetcher trait), `5b832a99` (Curve data-provider trait),
+`3dbf2f49` (Balancer rate-provider trait).
+
+The companion-to-handle migration is **complete for every pool family**. The
+follow-up epic (layer-3: pump-decode per-block Curve/Balancer state directly
+into `BotState` slots, eliminating the data_provider/rate_provider callables
+for on-chain feeds) is recorded in
+`docs/migration-guides/sealed-pool-seam.md`.
