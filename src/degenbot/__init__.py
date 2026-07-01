@@ -29,9 +29,6 @@ from .version import __version__
 from . import (
     camelot as camelot,
 )
-from . import (
-    swapbased as swapbased,
-)
 from .aerodrome import (
     AerodromeV2Pool,
     AerodromeV2PoolState,
