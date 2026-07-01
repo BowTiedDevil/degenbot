@@ -434,6 +434,7 @@ mod tests {
             update_block,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
+            ..Default::default()
         });
         let counting = Arc::new(CountingSubscriber {
             notifies: Mutex::new(0),

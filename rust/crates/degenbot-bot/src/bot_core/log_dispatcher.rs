@@ -642,6 +642,7 @@ mod tests {
             update_block: 0,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
+            ..Default::default()
         });
 
         // The exact Mint log emitted at block 25390812 (decoded from cast).

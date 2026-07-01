@@ -4,8 +4,8 @@
 //! relocates the other `bot` / `bot::pool` wrappers alongside.
 //! (ergo UG6FKN task WXHGOH.)
 
-pub mod dex_identity;
 pub mod deployments;
+pub mod dex_identity;
 pub mod engine;
 pub mod pool;
 pub mod pump;
@@ -383,13 +383,7 @@ impl PyBot {
         // Verify the pool address against the JSON-sourced CREATE2 deployer +
         // init hash (Fork A, JC6OFG). Skipped if (chain, factory) is not in the
         // shipped JSON — preserves the manual/ad-hoc registration path.
-        crate::bot::deployments::verify_v2(
-            self.bot.chain_id(),
-            fac,
-            addr,
-            t0,
-            t1,
-        )?;
+        crate::bot::deployments::verify_v2(self.bot.chain_id(), fac, addr, t0, t1)?;
 
         Ok(self
             .bot
@@ -673,14 +667,16 @@ impl PyBot {
         // Verify the pool address against the JSON-sourced CREATE2 deployer +
         // init hash (Fork A, JC6OFG). Skipped if (chain, factory) is not in the
         // shipped JSON — preserves the manual/ad-hoc registration path.
-        crate::bot::deployments::verify_v3(
-            self.bot.chain_id(),
-            fac,
-            addr,
-            t0,
-            t1,
-            fee,
-        )?;
+        crate::bot::deployments::verify_v3(self.bot.chain_id(), fac, addr, t0, t1, fee)?;
+
+        // Resolve the JSON-sourced CREATE2 deployer + init hash for this
+        // (chain, factory) (Fork A, P62DKO). Stored on the pool identity so the
+        // Python companion reads it off the handle (retired ClassVar / no
+        // per-class `_verified_address`). Non-JSON pools default to
+        // factory-as-deployer + the Uniswap V3 mainnet fallback init hash.
+        let chain_id = self.bot.chain_id();
+        let deployer = degenbot_uniswap::deployments::resolve_deployer(chain_id, fac);
+        let init_hash_b256 = degenbot_uniswap::deployments::resolve_v3_init_hash(chain_id, fac);
 
         Ok(self
             .bot
@@ -693,6 +689,8 @@ impl PyBot {
                 fee,
                 tick_spacing,
                 factory: fac,
+                deployer,
+                init_hash: init_hash_b256,
                 sqrt_price_x96: spx,
                 liquidity: liq,
                 tick,

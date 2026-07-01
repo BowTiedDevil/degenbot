@@ -55,7 +55,7 @@ from degenbot.uniswap.log_decoders import (
     decode_v3_swap,
 )
 from degenbot.uniswap.types import UniswapPoolSwapVector
-from degenbot.uniswap.v3_functions import generate_v3_pool_address, get_tick_word_and_bit_position
+from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves
 from degenbot.uniswap.v3_libraries.tick_bitmap import gen_ticks
 from degenbot.uniswap.v3_libraries.tick_math import (
@@ -146,9 +146,6 @@ class UniswapV3Pool(
     _tick_data_fetcher: Any
     _subscribers: WeakSet[Subscriber]
 
-    UNISWAP_V3_MAINNET_POOL_INIT_HASH = (
-        "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"
-    )
     TICK_STRUCT_TYPES = (
         "uint128",
         "int128",
@@ -252,11 +249,14 @@ class UniswapV3Pool(
         self._token0 = Erc20Token._from_py_token(py_token0)  # noqa: SLF001
         self._token1 = Erc20Token._from_py_token(py_token1)  # noqa: SLF001
 
-        # Deployer / init-hash: V3 defaults (the factory-derived deployer +
-        # the mainnet init hash). A subclass may override the ClassVar for a
-        # non-mainnet DEX.
-        self.deployer_address = self.factory
-        self.init_hash = self.UNISWAP_V3_MAINNET_POOL_INIT_HASH
+        # Deployer / init-hash: read off the Rust handle (Fork A, P62DKO).
+        # The builder resolved the JSON-sourced deployer (effective deployer,
+        # covering PancakeSwap V3's separate-deployer case) + init_hash at
+        # registration; the companion reads them here instead of the retired
+        # `UNISWAP_V3_MAINNET_POOL_INIT_HASH` ClassVar. Non-JSON V3 pools get
+        # the factory as deployer + the mainnet fallback init hash.
+        self.deployer_address = self._py_pool.deployer or self.factory
+        self.init_hash = self._py_pool.init_hash
 
         # The block of the registration snapshot (genesis journal delta).
         self._initial_state_block = self._py_pool.update_block
@@ -296,20 +296,6 @@ class UniswapV3Pool(
 
         """
         return self.name
-
-    def _verified_address(self) -> ChecksumAddress:
-        """Compute the deterministic V3 pool address via CREATE2.
-
-        Returns:
-            The checksummed address that should match this pool's address.
-
-        """
-        return generate_v3_pool_address(
-            deployer_address=self.deployer_address,
-            token_addresses=(self._token0.address, self._token1.address),
-            fee=self._fee,
-            init_hash=self.init_hash,
-        )
 
     @property
     def liquidity(self) -> int:

@@ -2143,6 +2143,8 @@ impl BotState {
                     fee: identity.fee,
                     tick_spacing: identity.tick_spacing,
                     factory: identity.factory,
+                    deployer: identity.deployer,
+                    init_hash: identity.init_hash,
                     sqrt_price_x96: override_sqrt_price_x96,
                     liquidity: override_liquidity,
                     tick: override_tick,
@@ -4587,6 +4589,7 @@ mod tests {
             update_block,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
+            ..Default::default()
         })
     }
 
@@ -4712,6 +4715,7 @@ mod tests {
             update_block,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
+            ..Default::default()
         })
     }
 
@@ -5454,6 +5458,7 @@ mod tests {
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
+            ..Default::default()
         });
 
         let block_b = 9u64;
@@ -5572,6 +5577,7 @@ mod tests {
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
+            ..Default::default()
         });
         assert_eq!(
             core.buffered_v3_event_count(&v3_addr),
@@ -5632,6 +5638,7 @@ mod tests {
             update_block: 0,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
+            ..Default::default()
         });
 
         // The seed is pinned at registration for Tracked (snapshot) pools.
@@ -5715,6 +5722,7 @@ mod tests {
             update_block: 0,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
+            ..Default::default()
         });
 
         // Pin the post-drain state atomically with the drain (no buffer here →
@@ -5775,6 +5783,7 @@ mod tests {
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
             fetcher: None,
+            ..Default::default()
         });
         core.pin_v3_post_drain_snapshot(v3_addr);
         assert_eq!(
@@ -5849,6 +5858,7 @@ mod tests {
             update_block: snapshot_block,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
+            ..Default::default()
         });
 
         // Drain both buffers + pin — exactly what `apply_buffer_v3` does
@@ -6223,6 +6233,7 @@ mod tests {
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
             fetcher: Some(std::sync::Arc::new(FakeFetcher)),
+            ..Default::default()
         });
 
         // Without the fetch+retry loop: the starting word (0) is unknown →
@@ -6298,6 +6309,7 @@ mod tests {
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
             fetcher: Some(std::sync::Arc::new(FailingFetcher)),
+            ..Default::default()
         });
 
         assert_eq!(
@@ -6355,6 +6367,7 @@ mod tests {
             update_block: 0,
             coverage: PoolTickCoverage::Sparse,
             fetcher: Some(counter.clone() as Arc<dyn TickWordFetcher>),
+            ..Default::default()
         });
 
         // First solve: misses word 0, fetches (empty), retries → computes.

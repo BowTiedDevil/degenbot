@@ -1487,6 +1487,7 @@ mod tests {
             update_block: 0,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
+            ..Default::default()
         });
 
         // V4 pool
@@ -2344,6 +2345,7 @@ mod tests {
             update_block: 0,
             coverage: PoolTickCoverage::Tracked,
             fetcher: None,
+            ..Default::default()
         });
         let core = engine.core.read();
         let state = core.get_v3_pool(v3_state).expect("registered");

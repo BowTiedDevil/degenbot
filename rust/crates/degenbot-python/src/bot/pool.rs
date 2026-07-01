@@ -989,6 +989,35 @@ impl PyLiquidityPool {
             .unwrap_or_default()
     }
 
+    /// The CREATE2 deployer this pool's address was verified against (Fork A,
+    /// P62DKO). The JSON row's `deployer` (or the factory for ``null``),
+    /// resolved at registration. Only V3 pools carry this today; V2 returns an
+    /// empty string until NSAZ4X merges V2 identity.
+    #[getter]
+    fn deployer(&self) -> String {
+        let core = self.core.read();
+        let addr = match core.pool_family(self.pool_id) {
+            "v3" => core.get_v3_identity(self.pool_id).map(|i| i.deployer),
+            _ => None,
+        };
+        addr.map(|a| address_utils::address_to_checksum_string(&a))
+            .unwrap_or_default()
+    }
+
+    /// The CREATE2 init code hash this pool's address was verified against
+    /// (Fork A, P62DKO). The JSON row's `init_hash` when shipped, else the
+    /// Uniswap V3 mainnet fallback. Only V3 pools carry this today; V2 returns
+    /// an empty string until NSAZ4X merges V2 identity.
+    #[getter]
+    fn init_hash(&self) -> String {
+        let core = self.core.read();
+        let h = match core.pool_family(self.pool_id) {
+            "v3" => core.get_v3_identity(self.pool_id).map(|i| i.init_hash),
+            _ => None,
+        };
+        h.map(|b| format!("{b:#x}")).unwrap_or_default()
+    }
+
     /// `token0→token1` fee parameters: `(gamma_numer, fee_denom)` — the
     /// retained post-fee fraction (e.g. `(997, 1000)` for 0.3%). `(0, 0)` if
     /// not a V2 pool.

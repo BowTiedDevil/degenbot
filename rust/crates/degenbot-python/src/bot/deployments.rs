@@ -42,9 +42,10 @@ use degenbot_uniswap::deployments::{self, AddressMismatch};
 fn init_hash_for(chain_id: u64, factory: &str) -> PyResult<Option<String>> {
     let addr = parse_address(factory)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-    Ok(deployments::lookup(chain_id, addr).and_then(|rec| {
-        rec.init_hash.map(|h| format!("{h:#x}"))
-    }))
+    Ok(
+        deployments::lookup(chain_id, addr)
+            .and_then(|rec| rec.init_hash.map(|h| format!("{h:#x}"))),
+    )
 }
 
 /// Resolve the *effective* CREATE2 deployer for a ``(chain_id, factory)``
@@ -67,11 +68,39 @@ fn deployer_for(chain_id: u64, factory: &str) -> PyResult<Option<String>> {
         .map(|rec| address_to_checksum_string(&rec.effective_deployer())))
 }
 
+/// Resolve the effective CREATE2 deployer for a ``(chain_id, factory)`` pair,
+/// with the `None -> factory` convention applied. Returns the factory itself
+/// when the ``(chain, factory)`` is not in the shipped JSON (Fork A, P62DKO).
+#[pyfunction]
+fn resolve_deployer(chain_id: u64, factory: &str) -> PyResult<String> {
+    let addr = parse_address(factory)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+    Ok(address_to_checksum_string(&deployments::resolve_deployer(
+        chain_id, addr,
+    )))
+}
+
+/// Resolve the CREATE2 init code hash for a V3 ``(chain_id, factory)`` pair,
+/// with a documented fallback. Returns the JSON row's `init_hash` when shipped
+/// with a CREATE2 init hash; otherwise the Uniswap V3 mainnet fallback (the
+/// retired Python ClassVar's default for non-JSON V3 pools) (Fork A, P62DKO).
+#[pyfunction]
+fn resolve_v3_init_hash(chain_id: u64, factory: &str) -> PyResult<String> {
+    let addr = parse_address(factory)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+    Ok(format!(
+        "{:#x}",
+        deployments::resolve_v3_init_hash(chain_id, addr)
+    ))
+}
+
 /// Register the `init_hash_for` / `deployer_for` free functions on the
 /// top-level `degenbot_rs` module.
 pub(crate) fn add_deployments(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(init_hash_for, m)?)?;
     m.add_function(wrap_pyfunction!(deployer_for, m)?)?;
+    m.add_function(wrap_pyfunction!(resolve_deployer, m)?)?;
+    m.add_function(wrap_pyfunction!(resolve_v3_init_hash, m)?)?;
     Ok(())
 }
 

@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use alloy::primitives::{Address, I256, U160, U256};
+use alloy::primitives::{Address, B256, I256, U160, U256};
 
 use crate::bot_core::state_history::{ReorgJournal, V3BlockDelta};
 use crate::bot_core::tick_bitmap::{compute_tick_ranges, gen_ticks, V3TickRangeForSolver};
@@ -39,9 +39,10 @@ use degenbot_cl_math::cl_lib::tick_math::{
 ///
 /// Moved from `solvers/uniswap_engine/mod.rs` to live with V3 state under
 /// ADR-003; re-exported from `uniswap_engine` for back-compat with callers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PoolTickCoverage {
     /// Snapshot provided complete tick data. Solver results are trustworthy.
+    #[default]
     Tracked,
     /// No snapshot data exists. Solver results may be inaccurate.
     Sparse,
@@ -79,7 +80,7 @@ impl crate::solvers::liquidity_event_buffer::LiquidityEvent for BufferedV3Liquid
 /// Parameters for registering a V3 pool with `BotState`.
 ///
 /// Bundles all fields to satisfy `clippy::too_many_arguments`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct RegisterV3PoolParams {
     pub address: Address,
     pub token0: Address,
@@ -102,6 +103,19 @@ pub struct RegisterV3PoolParams {
     /// `PyTickWordFetcher` adapter in `degenbot-python` wraps a Python
     /// callable.
     pub fetcher: Option<Arc<dyn TickWordFetcher>>,
+    /// The CREATE2 deployer the Rust builder verified this pool's address
+    /// against (Fork A, P62DKO). Equals the JSON row's `deployer`, or `factory`
+    /// when the row had `null` (the `None -> factory` convention). For non-JSON
+    /// pools, the factory (no lookup). Stored on the identity so a Python
+    /// companion reads the verified deployer off the handle (no `chain_id`
+    /// plumbing needed).
+    pub deployer: Address,
+    /// The CREATE2 init code hash the Rust builder verified this pool's
+    /// address against (Fork A, P62DKO). The JSON row's `init_hash` when the
+    /// `(chain, factory)` shipped, else the [`degenbot_uniswap::deployments`]
+    /// `UNISWAP_V3_MAINNET_INIT_HASH` fallback (the retired Python `ClassVar`'s
+    /// documented default for non-JSON V3 pools).
+    pub init_hash: B256,
 }
 
 /// A pre-decoded V3 Swap update for testing without log decoding.
@@ -145,6 +159,15 @@ pub struct V3PoolIdentity {
     pub tick_spacing: i32,
     /// Pool factory address.
     pub factory: Address,
+    /// The CREATE2 deployer the pool's address was verified against (Fork A,
+    /// P62DKO). The JSON row's `deployer` (or `factory` for null), or the
+    /// factory itself for non-JSON pools. Stored on the identity so the
+    /// companion reads it off the handle.
+    pub deployer: Address,
+    /// The CREATE2 init code hash (Fork A, P62DKO). The JSON row's `init_hash`
+    /// when shipped, else the Uniswap V3 mainnet fallback const. Off the
+    /// handle, not the retired Python `ClassVar`.
+    pub init_hash: B256,
 }
 
 /// V3 concentrated-liquidity pool state owned by [`crate::bot_core::BotState`].
@@ -339,6 +362,8 @@ impl V3PoolState {
             fee: params.fee,
             tick_spacing: params.tick_spacing,
             factory: params.factory,
+            deployer: params.deployer,
+            init_hash: params.init_hash,
         };
         // CBCH6H: pin the snapshot seed for Tracked pools so step-1 verify
         // compares the seed (not pump-mutated `tick_data`) against
@@ -799,6 +824,8 @@ mod tests {
                 fee: 3000,
                 tick_spacing: 60,
                 factory: Address::ZERO,
+                deployer: Address::ZERO,
+                init_hash: alloy::primitives::B256::ZERO,
             },
             V3PoolState {
                 sqrt_price_x96: sp_0,
