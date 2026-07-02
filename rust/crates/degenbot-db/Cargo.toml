@@ -26,6 +26,7 @@ suspicious = "warn"
 # pyo3-free under default features by `just check-no-pyo3-in-cores`.
 [dependencies]
 alloy = { version = "^2.0" }
+degenbot-pathfinding = { path = "../degenbot-pathfinding" }
 parking_lot = { version = "^0.12" }
 rusqlite = { version = "^0.31", features = ["bundled", "backup"] }
 thiserror = { version = "^2.0" }
