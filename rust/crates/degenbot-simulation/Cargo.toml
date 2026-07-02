@@ -1,0 +1,24 @@
+[package]
+name = "degenbot-simulation"
+description = "Pure-Rust eth_simulateV1 stateOverrides construction — code injection + ETH/WETH funding + warmup-slot integration + WETH9 balanceOf override (pyo3-free core leaf)."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"
+pedantic = "warn"
+perf = "warn"
+style = "warn"
+suspicious = "warn"
+
+[dependencies]
+alloy = { version = "^2.0" }
+degenbot-executor = { path = "../degenbot-executor" }

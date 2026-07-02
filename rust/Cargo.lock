@@ -1605,6 +1605,7 @@ dependencies = [
  "degenbot-pathfinding",
  "degenbot-price",
  "degenbot-rpc",
+ "degenbot-simulation",
  "degenbot-solidly-math",
  "degenbot-submission",
  "degenbot-uniswap",
@@ -1759,6 +1760,14 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "degenbot-simulation"
+version = "0.6.0-alpha.3"
+dependencies = [
+ "alloy",
+ "degenbot-executor",
 ]
 
 [[package]]
