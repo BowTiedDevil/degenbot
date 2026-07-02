@@ -1769,6 +1769,7 @@ dependencies = [
  "alloy",
  "degenbot-abi",
  "degenbot-core",
+ "degenbot-decoders",
  "degenbot-executor",
  "degenbot-rpc",
  "serde_json",

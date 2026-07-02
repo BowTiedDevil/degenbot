@@ -72,10 +72,23 @@ pub mod payload;
 /// [`dispatch::BlockPriorityFees`].
 pub mod dispatch;
 
+/// The `simulate_one` per-path async orchestration (C1 capstone) + the
+/// gross/net profit arithmetic (C2) + the market-aware age-decay priority
+/// fee (C4) + the int128 guard (C3) + the `_tally_fail` revert-bucket
+/// accumulator. Consumes the sibling A (TCTUAW) / B (PGA5S3) leaves + the
+/// WWC4DL encode (YQORTM) + the WWC4DL revert taxonomy (SYI3PG).
+pub mod simulate_one;
+
 // Re-export the most-used types at the crate root for ergonomic access
 // (mirrors how `degenbot_executor` surfaces `WarmupSlots` / `mapping_slot`).
 pub use dispatch::{BlockPriorityFees, SimulatedCall, SimulationResult};
 pub use payload::{build_simulate_payload, SimulationParams, SIM_CALL_COUNT};
+pub use simulate_one::{
+    compute_priority_fee, fits_int128, simulate_one, FailBuckets, SimResult, SimulateContext,
+    SimulatePath, AGE_DECAY_CONSTANT, EXECUTE_CONFIG, GAS_SAFETY_MARGIN, INITIAL_EXECUTE_GAS,
+    INT128_MAX, INT128_MIN, MAX_PRIORITY_FEE_PERCENTILE, MIN_PRIORITY_FEE_PERCENTILE,
+    TARGET_PROFIT_RATIO,
+};
 
 /// Operational funding amounts + the warmup 1-wei touch value.
 ///

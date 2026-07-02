@@ -25,6 +25,7 @@ degenbot-executor = { path = "../degenbot-executor" }
 degenbot-abi = { path = "../degenbot-abi" }
 degenbot-rpc = { path = "../degenbot-rpc" }
 degenbot-core = { path = "../degenbot-core" }
+degenbot-decoders = { path = "../degenbot-decoders" }
 
 [dev-dependencies]
 serde_json = { version = "^1.0" }
