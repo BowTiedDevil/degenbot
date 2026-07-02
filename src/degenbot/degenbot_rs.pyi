@@ -359,7 +359,8 @@ def cl_apply_liquidity_mapping_update(
 
     Args:
         tick_bitmap: Word → ``{"bitmap": int, "block": int}`` (or models)
-        tick_data: Tick → ``{"liquidity_net": int, "liquidity_gross": int, "block": int}`` (or models)
+        tick_data: Tick → ``{"liquidity_net": int,
+            "liquidity_gross": int, "block": int}`` (or models)
         tick_spacing: Tick spacing
         tick: Active tick (for the in-range check)
         liquidity: Active in-range liquidity (uint128)
