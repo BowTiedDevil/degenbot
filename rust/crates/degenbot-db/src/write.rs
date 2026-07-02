@@ -611,6 +611,85 @@ impl DegenbotDb {
         )?;
         Ok(conn.last_insert_rowid())
     }
+
+    /// Apply a `UserEModeSet` event to the user's `aave_v3_users.e_mode`
+    /// column. Port of `_process_user_e_mode_set_event` (L688-L715). The user
+    /// row must already exist (the Python path `get_or_create_user`s first;
+    /// the driver passes the existing `user_id` here). Returns the row `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure.
+    pub fn apply_user_e_mode_set(&self, user_id: i64, e_mode: i64) -> Result<i64, DbError> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE aave_v3_users SET e_mode = ?1 WHERE id = ?2",
+            params![e_mode, user_id],
+        )?;
+        Ok(user_id)
+    }
+
+    /// Apply a `PriceOracleUpdated` event: register the new `PRICE_ORACLE`
+    /// `aave_v3_contracts` row for `market_id`. Port of
+    /// `_process_price_oracle_updated_event` (L1080-L1126). The Python path
+    /// asserts no existing `PRICE_ORACLE` row (a fresh insert); this Rust fn
+    /// upserts — if a `PRICE_ORACLE` row exists it `UPDATE`s the address,
+    /// else it inserts (defensive vs the Python `assert existing_oracle is
+    /// None`). Returns the row `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure.
+    pub fn apply_price_oracle_updated(
+        &self,
+        market_id: i64,
+        new_oracle_address: &str,
+    ) -> Result<i64, DbError> {
+        let conn = self.conn.lock();
+        if let Some(id) = conn
+            .query_row::<i64, _, _>(
+                "SELECT id FROM aave_v3_contracts \
+                 WHERE market_id = ?1 AND name = 'PRICE_ORACLE'",
+                params![market_id],
+                |r| r.get(0),
+            )
+            .optional()?
+        {
+            conn.execute(
+                "UPDATE aave_v3_contracts SET address = ?1 WHERE id = ?2",
+                params![new_oracle_address, id],
+            )?;
+            return Ok(id);
+        }
+        conn.execute(
+            "INSERT INTO aave_v3_contracts (market_id, name, address, revision) \
+             VALUES (?1, 'PRICE_ORACLE', ?2, NULL)",
+            params![market_id, new_oracle_address],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Apply an `AssetSourceUpdated` event: set the asset's
+    /// `aave_v3_assets.price_source` column. Port of
+    /// `_process_asset_source_updated_event` (L1128-L1166). The `asset_id`
+    /// must already exist (the Python `assert asset is not None`). Returns the
+    /// row `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure.
+    pub fn apply_asset_source_updated(
+        &self,
+        asset_id: i64,
+        source_address: &str,
+    ) -> Result<i64, DbError> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE aave_v3_assets SET price_source = ?1 WHERE id = ?2",
+            params![source_address, asset_id],
+        )?;
+        Ok(asset_id)
+    }
 }
 
 /// The shared `get_or_create_position` body for collateral + debt (the Python
@@ -1335,5 +1414,67 @@ mod tests {
             )
             .unwrap();
         assert!(!enabled);
+    }
+
+    #[test]
+    fn apply_user_e_mode_set_updates_e_mode() {
+        let db = write_db_with_market();
+        let user = seed_user(&db, "0xuserE");
+        db.apply_user_e_mode_set(user, 3).unwrap();
+        let conn = db.conn.lock();
+        let e_mode: i64 = conn
+            .query_row(
+                "SELECT e_mode FROM aave_v3_users WHERE id = ?1",
+                params![user],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(e_mode, 3);
+    }
+
+    #[test]
+    fn apply_price_oracle_updated_inserts_then_updates() {
+        let db = write_db_with_market();
+        let id = db.apply_price_oracle_updated(1, "0xoracle1").unwrap();
+        let conn = db.conn.lock();
+        let (name, addr, rev): (String, String, Option<i64>) = conn
+            .query_row(
+                "SELECT name, address, revision FROM aave_v3_contracts WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "PRICE_ORACLE");
+        assert_eq!(addr, "0xoracle1");
+        assert!(rev.is_none());
+        drop(conn);
+
+        let id2 = db.apply_price_oracle_updated(1, "0xoracle2").unwrap();
+        assert_eq!(id, id2);
+        let conn = db.conn.lock();
+        let addr: String = conn
+            .query_row(
+                "SELECT address FROM aave_v3_contracts WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(addr, "0xoracle2");
+    }
+
+    #[test]
+    fn apply_asset_source_updated_sets_price_source() {
+        let db = write_db_with_market();
+        let asset = seed_asset(&db);
+        db.apply_asset_source_updated(asset, "0xsource").unwrap();
+        let conn = db.conn.lock();
+        let ps: Option<String> = conn
+            .query_row(
+                "SELECT price_source FROM aave_v3_assets WHERE id = ?1",
+                params![asset],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(ps.as_deref(), Some("0xsource"));
     }
 }
