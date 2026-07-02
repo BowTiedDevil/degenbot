@@ -9,8 +9,8 @@ mod tests {
     use crate::bot_core::RegisterV4PoolParams;
     use crate::solvers::uniswap_engine::ResolvedMixedPath;
     use crate::solvers::uniswap_engine::{
-        BlockMetadata, HopType, PoolHop, ResolvedHop, SolvePathResult, UniswapEngine, INT128_MAX,
-        SolidlyHopState,
+        BlockMetadata, HopType, PoolHop, ResolvedHop, SolidlyHopState, SolvePathResult,
+        UniswapEngine, INT128_MAX,
     };
     use degenbot_uniswap::dex_identity::DexVariant;
 
@@ -2563,23 +2563,25 @@ mod tests {
     #[test]
     fn resolved_solidly_hop_round_trips_via_as_solidly_state() {
         let state = SolidlyHopState {
-            reserve_in: U256::from(1_000_000u64),
-            reserve_out: U256::from(1_000_000u64),
-            decimals_in: U256::from(6u64),
-            decimals_out: U256::from(18u64),
+            reserves_0: U256::from(1_000_000u64),
+            reserves_1: U256::from(1_000_000u64),
+            decimals_0: U256::from(10u64).pow(U256::from(6u64)),
+            decimals_1: U256::from(10u64).pow(U256::from(18u64)),
+            token_in: 0,
             fee_numer: U256::from(3u64),
             fee_denom: U256::from(1000u64),
             stable: true,
             variant: DexVariant::AerodromeV2Stable,
-            zero_for_one: true,
         };
-        let hop = ResolvedHop::SolidlyStable { state: state.clone() };
+        let hop = ResolvedHop::SolidlyStable {
+            state: state.clone(),
+        };
 
         // The new accessor returns the state.
         let got = hop
             .as_solidly_state()
             .expect("Solidly hop should yield its state");
-        assert_eq!(got.reserve_in, state.reserve_in);
+        assert_eq!(got.reserves_0, state.reserves_0);
         assert_eq!(got.variant, DexVariant::AerodromeV2Stable);
         assert!(got.stable);
 
@@ -2590,5 +2592,555 @@ mod tests {
         // existing dispatch arms must not pick it up.
         assert!(hop.as_v2_state().is_none());
         assert!(hop.as_int_sequence().is_none());
+    }
+
+    // -----------------------------------------------------------------
+    // resolve_path Solidly arm (task 2OWLDL): the engine reads Aerodrome
+    // stable + Camelot stable_swap pools out of `BotState` and builds
+    // `SolidlyHopState` in the math leaf's contract shape (un-oriented
+    // reserves + token_in flag, decimals as `10^decimals` scale, fee as a
+    // fee fraction).
+    // -----------------------------------------------------------------
+    #[test]
+    fn resolve_path_builds_solidly_hop_from_aerodrome_stable_pool() {
+        use crate::bot_core::{BotState, RegisterAerodromeV2PoolParams};
+        use std::sync::Arc;
+
+        let core = Arc::new(parking_lot::RwLock::new(BotState::new()));
+
+        // Tokens: 6-decimal USDC, 18-decimal WETH.
+        core.write().register_token(
+            Address::from([0x01u8; 20]),
+            "USD Coin".into(),
+            "USDC".into(),
+            6,
+            1,
+        );
+        core.write().register_token(
+            Address::from([0x02u8; 20]),
+            "Wrapped Ether".into(),
+            "WETH".into(),
+            18,
+            1,
+        );
+
+        // Aerodrome STABLE pool, token0=USDC token1=WETH, unidirectional
+        // 0.03% fee stored directly as the fee fraction (3, 1000).
+        let aero_id = core
+            .write()
+            .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+                address: Address::from([0xaeu8; 20]),
+                token0: Address::from([0x01u8; 20]),
+                token1: Address::from([0x02u8; 20]),
+                factory: Address::from([0xafu8; 20]),
+                variant: DexVariant::AerodromeV2Stable,
+                stable: true,
+                fee: (3, 1000),
+                reserve0: U256::from(1_000_000u64),
+                reserve1: U256::from(2_000_000u64),
+                update_block: 0,
+            });
+
+        // A second identical Aerodrome stable pool — register_path requires
+        // >= 2 hops. Reversed direction (token1→token0).
+        let aero_id2 = core
+            .write()
+            .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+                address: Address::from([0xb1u8; 20]),
+                token0: Address::from([0x01u8; 20]),
+                token1: Address::from([0x02u8; 20]),
+                factory: Address::from([0xafu8; 20]),
+                variant: DexVariant::AerodromeV2Stable,
+                stable: true,
+                fee: (3, 1000),
+                reserve0: U256::from(1_100_000u64),
+                reserve1: U256::from(1_800_000u64),
+                update_block: 0,
+            });
+
+        let mut engine = UniswapEngine::with_core(Arc::clone(&core));
+        let path_id = engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: aero_id,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: aero_id2,
+                    zero_for_one: false,
+                },
+            ])
+            .expect("aerodrome-stable path registers");
+
+        let resolved = engine
+            .path_resolved
+            .get(&path_id)
+            .expect("path resolved eagerly");
+        assert!(resolved.valid, "all-Solidly path is valid post-resolve");
+        assert_eq!(resolved.hops.len(), 2);
+
+        // Hop 0: token0→token1 (zero_for_one=true)
+        let hop0 = resolved.hops[0]
+            .as_solidly_state()
+            .expect("hop 0 is SolidlyStable");
+        assert_eq!(hop0.variant, DexVariant::AerodromeV2Stable);
+        assert!(hop0.stable);
+        assert_eq!(hop0.reserves_0, U256::from(1_000_000u64));
+        assert_eq!(hop0.reserves_1, U256::from(2_000_000u64));
+        assert_eq!(hop0.decimals_0, U256::from(10u64).pow(U256::from(6u64)));
+        assert_eq!(hop0.decimals_1, U256::from(10u64).pow(U256::from(18u64)));
+        assert_eq!(hop0.token_in, 0, "zero_for_one=true → token_in=0");
+        assert_eq!(hop0.fee_numer, U256::from(3u64));
+        assert_eq!(hop0.fee_denom, U256::from(1000u64));
+
+        // Hop 1: token1→token0 (zero_for_one=false)
+        let hop1 = resolved.hops[1]
+            .as_solidly_state()
+            .expect("hop 1 is SolidlyStable");
+        assert_eq!(hop1.token_in, 1, "zero_for_one=false → token_in=1");
+        assert_eq!(hop1.reserves_0, U256::from(1_100_000u64));
+        assert_eq!(hop1.fee_numer, U256::from(3u64));
+        assert_eq!(hop1.fee_denom, U256::from(1000u64));
+        // resolving hop1 reads the SAME pair's decimals (token0/token1) —
+        // un-oriented, so decimals_0 is still token0's scale.
+        assert_eq!(hop1.decimals_0, U256::from(10u64).pow(U256::from(6u64)));
+    }
+
+    #[test]
+    fn resolve_path_builds_solidly_hop_from_camelot_stable_swap_pool() {
+        // Camelot stable_swap lives in `PoolEntry::V2` (V2PoolIdentity with
+        // `stable_swap=true`). Its fee is stored as the RETAINED fraction
+        // `(gamma, denom)`; the resolve arm must invert it to the fee
+        // fraction `(denom - gamma, denom)` that the solidly math expects.
+        use crate::bot_core::{BotState, RegisterV2PoolParams};
+        use std::sync::Arc;
+
+        let core = Arc::new(parking_lot::RwLock::new(BotState::new()));
+        core.write().register_token(
+            Address::from([0x01u8; 20]),
+            "USD Coin".into(),
+            "USDC".into(),
+            6,
+            1,
+        );
+        core.write().register_token(
+            Address::from([0x02u8; 20]),
+            "Tether".into(),
+            "USDT".into(),
+            6,
+            1,
+        );
+
+        // Camelot stable_swap pool: gamma=9970 of 10000 retained (0.3% fee).
+        let camelot_id = core.write().register_v2_pool(&RegisterV2PoolParams {
+            address: Address::from([0xc1u8; 20]),
+            token0: Address::from([0x01u8; 20]),
+            token1: Address::from([0x02u8; 20]),
+            reserve0: U256::from(1_000_000u64),
+            reserve1: U256::from(2_000_000u64),
+            fee_token0: (9970, 10000),
+            fee_token1: (9970, 10000),
+            factory: Address::from([0xfau8; 20]),
+            update_block: 0,
+            variant: degenbot_uniswap::dex_identity::DexVariant::CamelotV2Stable,
+            stable_swap: true,
+            fee_denominator: Some(10000),
+            ..Default::default()
+        });
+        let camelot_id2 = core.write().register_v2_pool(&RegisterV2PoolParams {
+            address: Address::from([0xc2u8; 20]),
+            token0: Address::from([0x01u8; 20]),
+            token1: Address::from([0x02u8; 20]),
+            reserve0: U256::from(1_100_000u64),
+            reserve1: U256::from(1_900_000u64),
+            fee_token0: (9970, 10000),
+            fee_token1: (9970, 10000),
+            factory: Address::from([0xfau8; 20]),
+            update_block: 0,
+            variant: degenbot_uniswap::dex_identity::DexVariant::CamelotV2Stable,
+            stable_swap: true,
+            fee_denominator: Some(10000),
+            ..Default::default()
+        });
+
+        let mut engine = UniswapEngine::with_core(Arc::clone(&core));
+        let path_id = engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: camelot_id,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: camelot_id2,
+                    zero_for_one: false,
+                },
+            ])
+            .expect("camelot-stable path registers");
+
+        let resolved = engine.path_resolved.get(&path_id).expect("resolved");
+        assert!(resolved.valid);
+        let hop0 = resolved.hops[0]
+            .as_solidly_state()
+            .expect("hop0 SolidlyStable");
+        assert_eq!(
+            hop0.variant,
+            degenbot_uniswap::dex_identity::DexVariant::CamelotV2Stable
+        );
+        assert!(hop0.stable);
+        assert_eq!(hop0.token_in, 0);
+        // gamma 9970/10000 retained → fee = (10000-9970, 10000) = (30, 10000).
+        assert_eq!(hop0.fee_numer, U256::from(30u64));
+        assert_eq!(hop0.fee_denom, U256::from(10000u64));
+        // hop1 (token1→token0): same gamma in fee_token1; identical inverted fee.
+        let hop1 = resolved.hops[1]
+            .as_solidly_state()
+            .expect("hop1 SolidlyStable");
+        assert_eq!(hop1.token_in, 1);
+        assert_eq!(hop1.fee_numer, U256::from(30u64));
+        assert_eq!(hop1.fee_denom, U256::from(10000u64));
+    }
+
+    #[test]
+    fn resolve_path_solidly_hop_missing_token_entry_invalidates() {
+        // If a token entry is absent from the registry, the Solidly hop
+        // cannot know its decimals scale → path is invalid (same as missing
+        // pool).
+        use crate::bot_core::{BotState, RegisterAerodromeV2PoolParams};
+        use std::sync::Arc;
+
+        let core = Arc::new(parking_lot::RwLock::new(BotState::new()));
+        // NOTE: NO register_token calls.
+        let aero_id = core
+            .write()
+            .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+                address: Address::from([0xaeu8; 20]),
+                token0: Address::from([0x01u8; 20]),
+                token1: Address::from([0x02u8; 20]),
+                factory: Address::from([0xafu8; 20]),
+                variant: DexVariant::AerodromeV2Stable,
+                stable: true,
+                fee: (3, 1000),
+                reserve0: U256::from(1_000_000u64),
+                reserve1: U256::from(2_000_000u64),
+                update_block: 0,
+            });
+        let aero_id2 = core
+            .write()
+            .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+                address: Address::from([0xb1u8; 20]),
+                token0: Address::from([0x01u8; 20]),
+                token1: Address::from([0x02u8; 20]),
+                factory: Address::from([0xafu8; 20]),
+                variant: DexVariant::AerodromeV2Stable,
+                stable: true,
+                fee: (3, 1000),
+                reserve0: U256::from(1_100_000u64),
+                reserve1: U256::from(1_900_000u64),
+                update_block: 0,
+            });
+
+        let mut engine = UniswapEngine::with_core(Arc::clone(&core));
+        let path_id = engine
+            .register_path(vec![
+                PoolHop {
+                    pool_id: aero_id,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: aero_id2,
+                    zero_for_one: false,
+                },
+            ])
+            .expect("path registers even if resolve invalidates");
+        let resolved = engine.path_resolved.get(&path_id).expect("resolved");
+        assert!(!resolved.valid, "missing token entry → invalid path");
+    }
+
+    // -----------------------------------------------------------------
+    // solve_solidly_path_int (task DMPSNG) — the two-stage Möbius precheck +
+    // golden-section search. Tests cover all four AC cases: (1) all-Solidly
+    // 2-hop, (2) V2+Solidly mixed, (3) unprofitable → None (precheck),
+    // (4) Solidly+CL → None (scope rejection).
+    // -----------------------------------------------------------------
+    fn solidly_arb_engine() -> (UniswapEngine, u64, u64) {
+        // Two Aerodrome-stable pools with the same token pair but divergent
+        // reserves — a profitable arb cycle. Reserves use "wei magnitude"
+        // (1e18 == 1 token of an 18-dec token) so the solidly math's
+        // calc_d (which divides intermediate products by 1e18) does not
+        // underflow to zero (small-magnitude reserves would panic on
+        // divide-by-zero in get_y_solidly).
+        use crate::bot_core::{BotState, RegisterAerodromeV2PoolParams};
+        use std::sync::Arc;
+
+        fn tokens(n: u64) -> U256 {
+            U256::from(n) * U256::from(10u64).pow(U256::from(18u64))
+        }
+
+        let core = Arc::new(parking_lot::RwLock::new(BotState::new()));
+        core.write().register_token(
+            Address::from([0x01u8; 20]),
+            "Token0".into(),
+            "T0".into(),
+            18,
+            1,
+        );
+        core.write().register_token(
+            Address::from([0x02u8; 20]),
+            "Token1".into(),
+            "T1".into(),
+            18,
+            1,
+        );
+        let aero_a = core.write().register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+            address: Address::from([0xa1u8; 20]),
+            token0: Address::from([0x01u8; 20]),
+            token1: Address::from([0x02u8; 20]),
+            factory: Address::from([0xfau8; 20]),
+            variant: DexVariant::AerodromeV2Stable,
+            stable: true,
+            fee: (3, 1000),
+            reserve0: tokens(1000),
+            reserve1: tokens(100),
+            update_block: 0,
+        });
+        let aero_b = core.write().register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+            address: Address::from([0xa2u8; 20]),
+            token0: Address::from([0x01u8; 20]),
+            token1: Address::from([0x02u8; 20]),
+            factory: Address::from([0xfau8; 20]),
+            variant: DexVariant::AerodromeV2Stable,
+            stable: true,
+            fee: (3, 1000),
+            // Pool B holds the SAME pair but with twice the token0 — its
+            // token1→token0 price (reserve0 / reserve1) is 2x Pool A's, so a
+            // token0→token1→token0 cycle is profitable (the V2-equivalent
+            // Möbius optimal input is non-trivial).
+            reserve0: tokens(2000),
+            reserve1: tokens(100),
+            update_block: 0,
+        });
+        let engine = UniswapEngine::with_core(Arc::clone(&core));
+        (engine, aero_a, aero_b)
+    }
+
+    #[test]
+    fn solve_solidly_2hop_all_solidly_matches_grid_scan() {
+        let (mut engine, aero_a, aero_b) = solidly_arb_engine();
+        let path_id = engine
+            .register_path(vec![
+                PoolHop { pool_id: aero_a, zero_for_one: true },
+                PoolHop { pool_id: aero_b, zero_for_one: false },
+            ])
+            .expect("path registers");
+        let resolved = engine.path_resolved.get(&path_id).expect("resolved");
+        assert!(resolved.valid);
+        let result = UniswapEngine::solve_path(resolved).expect("profitable path solves");
+        assert!(!result.optimal_input.is_zero());
+        assert!(!result.profit.is_zero());
+        assert_eq!(result.hop_outputs.len(), 2);
+        assert_eq!(result.consumed_inputs.len(), 2);
+        assert_eq!(result.consumed_inputs[0], result.optimal_input);
+        assert_eq!(result.consumed_inputs[1], result.hop_outputs[0]);
+        // profit = final output − optimal_input.
+        assert_eq!(
+            result.profit,
+            result.hop_outputs[1].saturating_sub(result.optimal_input)
+        );
+
+        // Golden-section must not miss the global optimum: scan a fine grid
+        // (1-token steps) and assert the solver's profit is within one grid
+        // step of the grid max (±3 verification radius tolerance).
+        let max_reserve = U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64));
+        let grid_step = U256::from(10u64).pow(U256::from(18u64)); // 1 token
+        let mut grid_best_profit = U256::ZERO;
+        let mut x = U256::from(1u64);
+        while x <= max_reserve {
+            let out = UniswapEngine::simulate_solidly_path(x, &resolved.hops);
+            let profit = out.saturating_sub(x);
+            if profit > grid_best_profit {
+                grid_best_profit = profit;
+            }
+            x += grid_step;
+        }
+        assert!(
+            result.profit + grid_step >= grid_best_profit,
+            "solver profit {} should be within one grid step of grid max {}",
+            result.profit,
+            grid_best_profit
+        );
+        assert!(
+            result.profit >= grid_best_profit.saturating_sub(grid_step),
+            "solver profit {} must not fall more than one grid step below grid max {}",
+            result.profit,
+            grid_best_profit
+        );
+    }
+
+    #[test]
+    fn solve_solidly_mixed_v2_and_solidly_matches_grid_scan() {
+        use crate::bot_core::{BotState, RegisterAerodromeV2PoolParams, RegisterV2PoolParams};
+        use std::sync::Arc;
+
+        fn tokens(n: u64) -> U256 {
+            U256::from(n) * U256::from(10u64).pow(U256::from(18u64))
+        }
+
+        let core = Arc::new(parking_lot::RwLock::new(BotState::new()));
+        core.write().register_token(
+            Address::from([0x01u8; 20]),
+            "Token0".into(),
+            "T0".into(),
+            18,
+            1,
+        );
+        core.write().register_token(
+            Address::from([0x02u8; 20]),
+            "Token1".into(),
+            "T1".into(),
+            18,
+            1,
+        );
+        // Mixed path: Solidly hop0 (token0→token1), V2 hop1 (token1→token0).
+        // Mirrors the profitable all-Solidly fixture but with the second hop
+        // as V2 constant-product (more slippage than Solidly, but the cycle
+        // is still profitable because Solidly hop0 emits ample token1).
+        let aero_id = core.write().register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+            address: Address::from([0xb1u8; 20]),
+            token0: Address::from([0x01u8; 20]),
+            token1: Address::from([0x02u8; 20]),
+            factory: Address::from([0xfau8; 20]),
+            variant: DexVariant::AerodromeV2Stable,
+            stable: true,
+            fee: (3, 1000),
+            reserve0: tokens(1000),
+            reserve1: tokens(100),
+            update_block: 0,
+        });
+        let v2_id = core.write().register_v2_pool(&RegisterV2PoolParams {
+            address: Address::from([0xb2u8; 20]),
+            token0: Address::from([0x01u8; 20]),
+            token1: Address::from([0x02u8; 20]),
+            reserve0: tokens(2000),
+            reserve1: tokens(100),
+            fee_token0: (997, 1000),
+            fee_token1: (997, 1000),
+            factory: Address::from([0xfbu8; 20]),
+            update_block: 0,
+            variant: DexVariant::UniswapV2,
+            stable_swap: false,
+            fee_denominator: None,
+            ..Default::default()
+        });
+        let mut engine = UniswapEngine::with_core(Arc::clone(&core));
+        let path_id = engine
+            .register_path(vec![
+                PoolHop { pool_id: aero_id, zero_for_one: true },
+                PoolHop { pool_id: v2_id, zero_for_one: false },
+            ])
+            .expect("mixed V2+Solidly path registers");
+        let resolved = engine.path_resolved.get(&path_id).expect("resolved");
+        assert!(resolved.valid);
+        let result =
+            UniswapEngine::solve_path(resolved).expect("profitable mixed path solves");
+        assert!(!result.profit.is_zero());
+
+        // Grid scan parity check (Solidly hop uses the integer leaf, V2 hop
+        // uses IntHopState::swap).
+        let max_reserve = tokens(1000);
+        let grid_step = tokens(1);
+        let mut grid_best = U256::ZERO;
+        let mut x = U256::from(1u64);
+        while x <= max_reserve {
+            let profit =
+                UniswapEngine::simulate_solidly_path(x, &resolved.hops).saturating_sub(x);
+            if profit > grid_best {
+                grid_best = profit;
+            }
+            x += grid_step;
+        }
+        assert!(
+            result.profit + grid_step >= grid_best,
+            "mixed-path profit {} within one grid step of grid max {}",
+            result.profit,
+            grid_best
+        );
+    }
+
+    #[test]
+    fn solve_solidly_unprofitable_path_returns_none() {
+        let (mut engine, aero_a, _aero_b) = solidly_arb_engine();
+        // A round-trip through the SAME pool (token0→token1 then token1→token0)
+        // is always unprofitable after fees — the Möbius precheck must early-out.
+        let path_id = engine
+            .register_path(vec![
+                PoolHop { pool_id: aero_a, zero_for_one: true },
+                PoolHop { pool_id: aero_a, zero_for_one: false },
+            ])
+            .expect("path registers");
+        let resolved = engine.path_resolved.get(&path_id).expect("resolved");
+        assert!(resolved.valid);
+        assert!(
+            UniswapEngine::solve_path(resolved).is_none(),
+            "round-trip through one pool is unprofitable"
+        );
+    }
+
+    #[test]
+    fn solve_solidly_plus_cl_path_rejected_by_scope() {
+        use crate::bot_core::{BotState, RegisterAerodromeV2PoolParams, RegisterV3PoolParams};
+        use std::sync::Arc;
+
+        let core = Arc::new(parking_lot::RwLock::new(BotState::new()));
+        core.write().register_token(
+            Address::from([0x01u8; 20]),
+            "Token0".into(),
+            "T0".into(),
+            18,
+            1,
+        );
+        core.write().register_token(
+            Address::from([0x02u8; 20]),
+            "Token1".into(),
+            "T1".into(),
+            18,
+            1,
+        );
+        let aero = core.write().register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+            address: Address::from([0xa1u8; 20]),
+            token0: Address::from([0x01u8; 20]),
+            token1: Address::from([0x02u8; 20]),
+            factory: Address::from([0xfau8; 20]),
+            variant: DexVariant::AerodromeV2Stable,
+            stable: true,
+            fee: (3, 1000),
+            reserve0: U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64)),
+            reserve1: U256::from(100u64) * U256::from(10u64).pow(U256::from(18u64)),
+            update_block: 0,
+        });
+        // Register a minimal V3 pool for the second hop using the same
+        // ..Default::default() pattern as the existing V3 tests.
+        let v3_id = core.write().register_v3_pool(&RegisterV3PoolParams {
+            address: Address::from([0xc1u8; 20]),
+            token0: Address::from([0x02u8; 20]),
+            token1: Address::from([0x01u8; 20]),
+            fee: 500,
+            tick_spacing: 10,
+            sqrt_price_x96: U256::from(1u64) << 96,
+            tick: 0,
+            liquidity: 1_000_000,
+            tick_data: HashMap::new(),
+            update_block: 0,
+            ..Default::default()
+        });
+        let mut engine = UniswapEngine::with_core(Arc::clone(&core));
+        let path_id = engine
+            .register_path(vec![
+                PoolHop { pool_id: aero, zero_for_one: true },
+                PoolHop { pool_id: v3_id, zero_for_one: false },
+            ])
+            .expect("path registers (resolve is per-arm)");
+        let resolved = engine.path_resolved.get(&path_id).expect("resolved");
+        // Solidly + CL is out of scope (p): solve_path returns None.
+        assert!(UniswapEngine::solve_path(resolved).is_none());
     }
 }

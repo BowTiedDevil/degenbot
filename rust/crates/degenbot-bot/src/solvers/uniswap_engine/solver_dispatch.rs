@@ -1,11 +1,11 @@
 //! Path resolution, solver dispatch, and rebuild logic.
 
-use alloy::primitives::U256;
+use alloy::primitives::{U256, U512};
 use rayon::prelude::*;
 
 use super::{
     BlockMetadata, HashMap, HashSet, HopType, MixedPoolRef, ResolvedHop, ResolvedMixedPath,
-    SolvePathResult, UniswapEngine, INT128_MAX,
+    SolidlyHopState, SolvePathResult, UniswapEngine, INT128_MAX,
 };
 
 impl UniswapEngine {
@@ -148,6 +148,14 @@ impl UniswapEngine {
             .iter()
             .all(|h| matches!(h, ResolvedHop::V2 { .. }));
         let all_cl = resolved.hops.iter().all(|h| h.as_int_sequence().is_some());
+        let has_solidly = resolved
+            .hops
+            .iter()
+            .any(|h| matches!(h, ResolvedHop::SolidlyStable { .. }));
+        let all_v2_or_solidly = resolved
+            .hops
+            .iter()
+            .all(|h| matches!(h, ResolvedHop::V2 { .. } | ResolvedHop::SolidlyStable { .. }));
 
         let result = if all_v2 {
             let int_hops: Vec<_> = resolved
@@ -218,6 +226,16 @@ impl UniswapEngine {
             } else {
                 None
             }
+        } else if all_v2_or_solidly && has_solidly {
+            // All-V2-or-Solidly with ≥1 Solidly hop — the two-stage Möbius
+            // precheck + golden-section solve (task DMPSNG). Scope (p):
+            // Solidly mixed with CL is rejected below.
+            Self::solve_solidly_path_int(resolved)
+        } else if has_solidly {
+            // A Solidly hop alongside a CL hop — out of scope (p). The
+            // Solidly solve is a per-hop `swap_fn` walk incompatible with
+            // CL tick-range enumeration; Python rejects these too.
+            None
         } else {
             // Mixed V2 + CL (V3 or V4)
             Self::solve_mixed_path_int(resolved)
@@ -333,6 +351,269 @@ impl UniswapEngine {
         })
     }
 
+    /// Solve an all-V2-or-Solidly (no CL hops, ≥1 Solidly) path using the
+    /// two-stage Solidly solve: a V2-equivalent Möbius precheck narrows the
+    /// golden-section bracket around the Möbius optimum (±5x), then 25
+    /// golden-section iterations refine the optimum, then integer
+    /// verification scans ±3 candidates and picks the max-profit input.
+    ///
+    /// Faithful port of `arbitrage.solvers.solidly_stable.SolidlyStableSolver`
+    /// (the `_solve_golden_section` branch with `swap_fn` set). The Möbius
+    /// precheck early-outs unprofitable paths before the expensive search.
+    fn solve_solidly_path_int(resolved: &ResolvedMixedPath) -> Option<SolvePathResult> {
+        use crate::solvers::mobius_int::{compute_int_mobius_coefficients, IntHopState};
+        use crate::solvers::mobius_int_exact::compute_exact_optimal_input_from_coeffs;
+
+        let hops = &resolved.hops;
+        if hops.len() < 2 {
+            return None;
+        }
+
+        // V2-equivalent IntHopState per hop: Solidly hops orient reserves by
+        // `token_in` and convert the fee (SolidlyHopState stores the fee
+        // fraction `fee_numer/fee_denom`; IntHopState wants the retained
+        // fraction `gamma_numer/fee_denom`, so `gamma_numer = fee_denom -
+        // fee_numer`). V2 hops pass through unchanged.
+        let v2_equiv: Vec<IntHopState> = hops
+            .iter()
+            .map(Self::solidly_hop_v2_equiv)
+            .collect::<Option<Vec<_>>>()?;
+
+        // --- Profitability precheck (V2-equivalent Möbius) ---
+        let coeffs = compute_int_mobius_coefficients(&v2_equiv).ok()?;
+        if !coeffs.is_profitable {
+            return None;
+        }
+        let x_mobius = compute_exact_optimal_input_from_coeffs(&coeffs);
+
+        // --- Bracket: [1, max_reserve], narrowed around the Möbius optimum ---
+        let one = U256::from(1u64);
+        let five = U256::from(5u64);
+        let max_reserve = v2_equiv
+            .iter()
+            .map(|h| h.reserve_in)
+            .max()
+            .unwrap_or(U256::ZERO);
+        if max_reserve.is_zero() {
+            return None;
+        }
+        let mut x_low = one;
+        let mut x_high = max_reserve;
+        if !x_mobius.is_zero() {
+            let x_center = x_mobius.min(x_high);
+            x_low = x_low.max(x_center / five);
+            x_high = x_high.min(x_center.saturating_mul(five));
+        }
+        if x_high <= x_low {
+            // Degenerate bracket — fall back to a single-point verification.
+            return Self::solidly_brute_force_best(hops, x_low);
+        }
+
+        // --- Golden-section search (25 iterations) ---
+        // `phi = (sqrt(5) - 1) / 2` ≈ 0.6180339887498949, approximated as the
+        // U256 fraction `phi_num / phi_den` and applied to the bracket span in
+        // U512 (the span may approach U256 magnitude; the product does not fit
+        // in U256 so the multiply is done in U512 then truncated back).
+        let phi_num = U256::from(6_180_339_887_498_949u64); // phi * 1e16
+        let phi_den = U256::from(10_000_000_000_000_000u64); // 1e16
+        let phi_span = |lo: U256, hi: U256| -> U256 {
+            let d = U512::from(hi - lo);
+            let scaled = d * U512::from(phi_num) / U512::from(phi_den);
+            crate::solvers::mobius_int_exact::u512_to_u256_internal(scaled)
+        };
+        let mut x1 = x_high - phi_span(x_low, x_high);
+        let mut x2 = x_low + phi_span(x_low, x_high);
+        let mut p1 = Self::simulate_solidly_path(x1, hops).saturating_sub(x1);
+        let mut p2 = Self::simulate_solidly_path(x2, hops).saturating_sub(x2);
+
+        for _ in 0..Self::SOLIDLY_GOLDEN_SECTION_ITERATIONS {
+            if p1 < p2 {
+                x_low = x1;
+                x1 = x2;
+                p1 = p2;
+                x2 = x_low + phi_span(x_low, x_high);
+                p2 = Self::simulate_solidly_path(x2, hops).saturating_sub(x2);
+            } else {
+                x_high = x2;
+                x2 = x1;
+                p2 = p1;
+                x1 = x_high - phi_span(x_low, x_high);
+                p1 = Self::simulate_solidly_path(x1, hops).saturating_sub(x1);
+            }
+        }
+
+        let x_opt = (x_low + x_high) / U256::from(2u64);
+        Self::solidly_brute_force_best(hops, x_opt)
+    }
+
+    /// Number of golden-section refinement iterations (mirrors Python's
+    /// `SolidlyStableSolver.GOLDEN_SECTION_ITERATIONS`).
+    const SOLIDLY_GOLDEN_SECTION_ITERATIONS: usize = 25;
+
+    /// Integer verification: scan `±SOLIDLY_INTEGER_SEARCH_RADIUS` candidates
+    /// around `center` (plus one past the upper edge) and pick the max-profit
+    /// input. Mirrors Python's `search_radius = 3` sweep. Returns `None` when
+    /// no candidate is profitable.
+    fn solidly_brute_force_best(
+        hops: &[ResolvedHop],
+        center: U256,
+    ) -> Option<SolvePathResult> {
+        const SEARCH_RADIUS: u64 = 3;
+        let one = U256::from(1u64);
+        let start = center.saturating_sub(U256::from(SEARCH_RADIUS)).max(one);
+        let end = center + U256::from(SEARCH_RADIUS) + one;
+
+        let mut best_input = U256::ZERO;
+        let mut best_profit = U256::ZERO;
+        let mut cand = start;
+        while cand <= end {
+            let output = Self::simulate_solidly_path(cand, hops);
+            let profit = output.saturating_sub(cand);
+            if profit > best_profit {
+                best_profit = profit;
+                best_input = cand;
+            }
+            if cand == U256::MAX {
+                break;
+            }
+            cand += one;
+        }
+
+        if best_profit.is_zero() {
+            return None;
+        }
+
+        // Re-simulate at best_input to record per-hop outputs.
+        let hop_outputs = Self::simulate_solidly_path_outputs(best_input, hops);
+        let mut consumed_inputs = Vec::with_capacity(hop_outputs.len());
+        consumed_inputs.push(best_input);
+        for i in 1..hop_outputs.len() {
+            consumed_inputs.push(hop_outputs[i - 1]);
+        }
+        Some(SolvePathResult {
+            optimal_input: best_input,
+            profit: best_profit,
+            hop_outputs,
+            consumed_inputs,
+        })
+    }
+
+    /// Build the V2-equivalent [`IntHopState`] for a hop in a Solidly solve
+    /// path. Solidly hops orient reserves by `token_in` and convert the fee
+    /// (fee fraction → retained fraction); V2 hops pass through unchanged.
+    /// Returns `None` for any non-V2/non-Solidly hop or when the Solidly fee
+    /// pair overflows `u64` (the path is then unsolvable here).
+    fn solidly_hop_v2_equiv(hop: &ResolvedHop) -> Option<crate::solvers::mobius_int::IntHopState> {
+        use crate::solvers::mobius_int::IntHopState;
+        match hop {
+            ResolvedHop::V2 { state } => Some(state.clone()),
+            ResolvedHop::SolidlyStable { state } => {
+                let (reserve_in, reserve_out) = if state.token_in == 0 {
+                    (state.reserves_0, state.reserves_1)
+                } else {
+                    (state.reserves_1, state.reserves_0)
+                };
+                // SolidlyHopState fee = fee fraction (fee_numer/fee_denom).
+                // IntHopState fee = retained fraction (gamma_numer/fee_denom).
+                let gamma_numer = state.fee_denom.saturating_sub(state.fee_numer);
+                let gn: u64 = gamma_numer.try_into().ok()?;
+                let fd: u64 = state.fee_denom.try_into().ok()?;
+                Some(IntHopState::new(reserve_in, reserve_out, gn, fd))
+            }
+            _ => None,
+        }
+    }
+
+    /// Simulate a Solidly-or-V2 path, returning only the final output.
+    /// Per-hop dispatch: Solidly hops call the `degenbot-solidly-math` leaf
+    /// selected by `(variant, stable)`; V2 hops reuse `IntHopState::swap`.
+    #[must_use]
+    pub(crate) fn simulate_solidly_path(x: U256, hops: &[ResolvedHop]) -> U256 {
+        Self::simulate_solidly_path_outputs(x, hops)
+            .last()
+            .copied()
+            .unwrap_or(U256::ZERO)
+    }
+
+    /// Simulate a Solidly-or-V2 path, returning per-hop outputs.
+    /// `hop_outputs[i]` = output of hop `i` given `hop_outputs[i-1]` as input
+    /// (or `x` for `i==0`). Returns `U256::ZERO` per hop once the chain breaks
+    /// at a zero amount (matching the Python `_simulate_mixed_path_int`'s
+    /// early-out).
+    #[must_use]
+    fn simulate_solidly_path_outputs(x: U256, hops: &[ResolvedHop]) -> Vec<U256> {
+        let mut amount = x;
+        let mut outputs = Vec::with_capacity(hops.len());
+        for hop in hops {
+            if amount.is_zero() {
+                outputs.push(U256::ZERO);
+                continue;
+            }
+            let out = match hop {
+                ResolvedHop::V2 { state } => state.swap(amount),
+                ResolvedHop::SolidlyStable { state } => Self::simulate_solidly_hop(amount, state),
+                // Non-V2/Solidly hops can't reach here — the solve dispatch
+                // rejects Solidly+CL paths before calling this.
+                _ => U256::ZERO,
+            };
+            outputs.push(out);
+            amount = out;
+        }
+        outputs
+    }
+
+    /// Evaluate a single Solidly hop's output via the `degenbot-solidly-math`
+    /// leaf, selected by `(variant, stable)`. Returns `U256::ZERO` on
+    /// overflow / invalid `token_in` (the leaf's `Err` variants), matching the
+    /// Python `_simulate_mixed_path_int`'s defensive fallback.
+    fn simulate_solidly_hop(amount_in: U256, hop: &SolidlyHopState) -> U256 {
+        use degenbot_solidly_math::{
+            calc_exact_in_stable_camelot, calc_exact_in_stable_solidly, calc_exact_in_volatile,
+        };
+        use degenbot_uniswap::dex_identity::DexVariant;
+        if amount_in.is_zero() {
+            return U256::ZERO;
+        }
+        let out = match (hop.variant, hop.stable) {
+            (DexVariant::AerodromeV2Stable | DexVariant::AerodromeV2Volatile, true) => {
+                calc_exact_in_stable_solidly(
+                    amount_in,
+                    hop.token_in,
+                    hop.reserves_0,
+                    hop.reserves_1,
+                    hop.decimals_0,
+                    hop.decimals_1,
+                    hop.fee_numer,
+                    hop.fee_denom,
+                )
+            }
+            (DexVariant::CamelotV2Stable | DexVariant::CamelotV2Volatile, true) => {
+                calc_exact_in_stable_camelot(
+                    amount_in,
+                    hop.token_in,
+                    hop.reserves_0,
+                    hop.reserves_1,
+                    hop.decimals_0,
+                    hop.decimals_1,
+                    hop.fee_numer,
+                    hop.fee_denom,
+                )
+            }
+            (_, false) => calc_exact_in_volatile(
+                amount_in,
+                hop.token_in,
+                hop.reserves_0,
+                hop.reserves_1,
+                hop.fee_numer,
+                hop.fee_denom,
+            ),
+            // A non-Solidly variant with `stable=true` is impossible — these
+            // DEXes have no stable pool family. Falls back to zero output.
+            _ => return U256::ZERO,
+        };
+        out.unwrap_or(U256::ZERO)
+    }
+
     /// Resolve a path's pool refs into hop states and tick-range sequences.
     ///
     /// `core` is the locked [`BotState`] snapshot to read V2 state from
@@ -428,12 +709,78 @@ impl UniswapEngine {
 
                     resolved.hops.push(ResolvedHop::V4 { int_seq });
                 }
-                // Solidly-stable resolve lands in task 2OWLDL. Until then,
-                // a Solidly hop short-circuits the path to invalid (the
-                // variant exists so registration/typing compiles, but paths
-                // containing it are not yet resolvable).
+                // Solidly-stable (Aerodrome stable / Camelot stable_swap) resolve. Reads
+                // reserves + identity off the per-family `PoolEntry` arm, then
+                // fetches token decimals via the token registry (never stored
+                // on the identity — ADR-003 single source of truth).
                 HopType::SolidlyStable => {
-                    return;
+                    if let Some(id) = core.get_aerodrome_identity(pool_ref.pool_key) {
+                        let Some(state) = core.get_aerodrome_pool(pool_ref.pool_key) else {
+                            return; // Missing pool → invalid
+                        };
+                        let (decimals_0, decimals_1) =
+                            match (core.token_entry(&id.token0), core.token_entry(&id.token1)) {
+                                (Some(t0), Some(t1)) => (
+                                    U256::from(10u64).pow(U256::from(t0.decimals)),
+                                    U256::from(10u64).pow(U256::from(t1.decimals)),
+                                ),
+                                _ => return, // Missing token entry → invalid
+                            };
+                        // Aerodrome fee is stored as the fee fraction directly
+                        // (cf. Camelot below).
+                        resolved.hops.push(ResolvedHop::SolidlyStable {
+                            state: SolidlyHopState {
+                                reserves_0: state.reserve0,
+                                reserves_1: state.reserve1,
+                                decimals_0,
+                                decimals_1,
+                                token_in: u8::from(!pool_ref.zero_for_one),
+                                fee_numer: U256::from(id.fee.0),
+                                fee_denom: U256::from(id.fee.1),
+                                stable: id.stable,
+                                variant: id.variant,
+                            },
+                        });
+                    } else if let Some(id) = core.get_v2_identity(pool_ref.pool_key) {
+                        // Camelot stable_swap path (V2PoolIdentity with
+                        // `stable_swap=true`).
+                        let Some(state) = core.get_v2_pool_state(pool_ref.pool_key) else {
+                            return; // Missing pool → invalid
+                        };
+                        let (decimals_0, decimals_1) =
+                            match (core.token_entry(&id.token0), core.token_entry(&id.token1)) {
+                                (Some(t0), Some(t1)) => (
+                                    U256::from(10u64).pow(U256::from(t0.decimals)),
+                                    U256::from(10u64).pow(U256::from(t1.decimals)),
+                                ),
+                                _ => return, // Missing token entry → invalid
+                            };
+                        // Camelot stores the per-direction RETAINED fraction
+                        // `(gamma_numer, fee_denom)`; the solidly math takes the
+                        // FEE fraction, so invert: `fee_numer = denom - gamma`,
+                        // `fee_denom = denom`. Selected by `zero_for_one`
+                        // (token0 in → fee_token0; token1 in → fee_token1).
+                        let (gamma, denom) = if pool_ref.zero_for_one {
+                            id.fee_token0
+                        } else {
+                            id.fee_token1
+                        };
+                        resolved.hops.push(ResolvedHop::SolidlyStable {
+                            state: SolidlyHopState {
+                                reserves_0: state.reserve0,
+                                reserves_1: state.reserve1,
+                                decimals_0,
+                                decimals_1,
+                                token_in: u8::from(!pool_ref.zero_for_one),
+                                fee_numer: U256::from(denom.saturating_sub(gamma)),
+                                fee_denom: U256::from(denom),
+                                stable: id.stable_swap,
+                                variant: id.variant,
+                            },
+                        });
+                    } else {
+                        return; // Not an Aerodrome/Camelot pool → invalid
+                    }
                 }
             }
         }

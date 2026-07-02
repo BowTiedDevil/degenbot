@@ -59,7 +59,15 @@ Uses `just` (see justfile) and `uv` as the package runner. Key commands:
 - `just format` - Run formatters (Rust + Python)
 
 ## Git Commits
-Commit messages must follow the project convention enforced by `commitlint`. Git hooks are managed by [`prek`](https://prek.j178.dev/) and declared in [`prek.toml`](prek.toml). Run `just setup-git-hooks` once after cloning to install the hooks (`pre-commit` Markdown lint + noqa guard, `commit-msg` commitlint, `pre-push` commit-message range re-lint as a safety net for `--no-verify` bypasses) and the editor template. Run hooks on demand with `uv run prek run` / `uv run prek run --all-files`. For manual commit-message range checks: `just lint-commits` (default: unpushed commits) or `just lint-commits main..HEAD`.
+Commit messages must follow the project convention enforced by `commitlint`. Git hooks are managed by [`prek`](https://prek.j178.dev/) and declared in [`prek.toml`](prek.toml). Run `just setup-git-hooks` once after cloning to install the hooks and the editor template. The hooks are:
+
+- **`pre-commit`** — staged-file Markdown lint + `# noqa: PLC0415` guard (fast, file-scoped).
+- **`commit-msg`** — commitlint against `.commitlintrc.yml`.
+- **`pre-push`** — two concerns, both running strictly earlier than GitHub Actions:
+  1. **commit-message re-lint** of the outgoing push range (safety net for `git commit --no-verify`); see `scripts/hooks/commitlint-push.sh`.
+  2. **CI mirror** — every lint, build, and test the `ci.yml` workflow runs, in the same job order, on the full repo. The lint hooks use the check-only `*-check` just recipes (no `--fix`) so they cannot dirty committed files and are stricter than CI. Bypass with `git push --no-verify` (CI still runs), or re-run a subset with `prek run --hook-stage pre-push --skip rust-test` etc.
+
+Run hooks on demand with `uv run prek run` / `uv run prek run --all-files`. For manual commit-message range checks: `just lint-commits` (default: unpushed commits) or `just lint-commits main..HEAD`.
 
 ## Backwards Compatibility
 - Unless directed otherwise, design standalone features without a backwards compatibility layer.

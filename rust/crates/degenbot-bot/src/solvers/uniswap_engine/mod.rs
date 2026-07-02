@@ -235,28 +235,36 @@ pub struct MixedPath {
 
 /// Resolved state for a Solidly/Aerodrome/Camelot hop, ready for the
 /// Solidly solve branch. Carries everything the `degenbot-solidly-math`
-/// leaf needs: oriented reserves, token decimals, the fee fraction, the
-/// stable-vs-volatile flag, and the `DexVariant` that selects the math
-/// entrypoint (solidly vs camelot).
+/// leaf needs in the leaf's own contract shape: **un-oriented**
+/// `reserves_0`/`reserves_1` + a `token_in` direction flag (matching
+/// [`degenbot_solidly_math::calc_exact_in_stable_solidly`] etc. 1:1).
 ///
 /// `variant` + `stable` together dispatch the math:
 /// - `(AerodromeV2Stable, true)` → `calc_exact_in_stable_solidly`
 /// - `(CamelotV2Stable, true)` → `calc_exact_in_stable_camelot`
 /// - `(_, false)` → `calc_exact_in_volatile`
 ///
-/// Orientation (`zero_for_one`) is baked in: `reserve_in`/`decimals_in`
-/// are already the input-side values, matching `IntHopState`'s convention.
+/// Decimals are carried as the **scale** (`10^decimals`, e.g. `1_000_000`
+/// for a 6-decimal token) — what `calc_k` divides by. The `fee` pair is the
+/// **fee fraction** (`amount_in_after_fee = amount_in - amount_in *
+/// fee_numer / fee_denom`); the resolve arm converts each family's stored
+/// fee shape into this convention (Aerodrome stores it directly as the fee
+/// fraction; Camelot stores the retained-fraction gamma and the arm inverts
+/// it).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SolidlyHopState {
-    /// Input reserve (oriented by `zero_for_one`).
-    pub reserve_in: U256,
-    /// Output reserve (oriented by `zero_for_one`).
-    pub reserve_out: U256,
-    /// Decimals of the input token (e.g. 6 for USDC).
-    pub decimals_in: U256,
-    /// Decimals of the output token (e.g. 18 for WETH).
-    pub decimals_out: U256,
-    /// Fee numerator (the fee fraction is `fee_numer / fee_denom`).
+    /// Reserve of token0 (un-oriented).
+    pub reserves_0: U256,
+    /// Reserve of token1 (un-oriented).
+    pub reserves_1: U256,
+    /// Decimals scale of token0 (`10^decimals`, e.g. `1_000_000`).
+    pub decimals_0: U256,
+    /// Decimals scale of token1 (`10^decimals`, e.g. `1_000_000`).
+    pub decimals_1: U256,
+    /// Direction flag: `0` swaps token0→token1, `1` swaps token1→token0.
+    /// Mirrors `token_in` in [`degenbot_solidly_math::calc_exact_in_stable_solidly`].
+    pub token_in: u8,
+    /// Fee numerator — the fee fraction is `fee_numer / fee_denom`.
     pub fee_numer: U256,
     /// Fee denominator.
     pub fee_denom: U256,
@@ -265,8 +273,6 @@ pub struct SolidlyHopState {
     pub stable: bool,
     /// DEX+variant discriminator — selects the solidly vs camelot math leaf.
     pub variant: degenbot_uniswap::dex_identity::DexVariant,
-    /// Swap direction: `true` = token0→token1.
-    pub zero_for_one: bool,
 }
 
 /// Resolved state for a single hop in a mixed path.
