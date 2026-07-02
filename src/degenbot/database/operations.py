@@ -94,13 +94,17 @@ def compact_sqlite_database(db_path: pathlib.Path) -> None:
     logger.info(f"Compacted SQLite database at {db_path}")
 
 
-def upgrade_existing_sqlite_database(database_path: pathlib.Path) -> None:
+def upgrade_existing_sqlite_database(database_path: pathlib.Path) -> str:
     """Ensure the SQLite database is at the latest schema.
 
     Delegates to the Rust core (``degenbot_rs.db_upgrade_database``): a no-op
     if already at the Alembic head, or applies the head DDL + stamp on an empty
     file. A stale Alembic DB raises ``ValueError`` (run
     ``alembic upgrade head`` from Python to cross migration revisions).
+
+    Returns:
+        The Rust outcome string (e.g. ``"already_at_head"``).
+
     """
     outcome = db_upgrade_database(str(database_path))
     logger.info(f"Updated existing SQLite database at {database_path} ({outcome}).")
