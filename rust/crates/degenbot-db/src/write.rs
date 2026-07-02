@@ -355,6 +355,262 @@ impl DegenbotDb {
     pub fn get_or_create_debt_position(&self, user_id: i64, asset_id: i64) -> Result<i64, DbError> {
         get_or_create_position(self, user_id, asset_id, "aave_v3_debt_positions")
     }
+
+    // ── the per-event apply fns (built on the upsert substrate) ──────────
+
+    /// Apply a `CollateralConfigurationChanged` event's decoded config
+    /// bitmap to the asset's `aave_v3_asset_configs` row. Port of
+    /// `event_handlers.py::_process_collateral_configuration_changed_event`
+    /// (L40-L131), minus the RPC fetch of the bitmap (the Python path
+    /// `raw_call`s `Pool.getConfiguration(address)`; the driver passes the
+    /// fetched bitmap here — the RPC fetch is `stays-python`).
+    ///
+    /// Decodes the bitmap via [`decode_reserve_configuration_bitmap`] then
+    /// upserts the `asset_config` row: on a new row, inserts every decoded
+    /// field; on an existing row, `UPDATE`s every field (matching the Python create vs
+    /// mutate-then-`session.add` trajectory — `stable_borrowing_enabled` is
+    /// NOT in the bitmap, left `false` on create, untouched on update, the
+    /// Python path). Returns the row `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure (a write on a
+    /// read-only handle surfaces the readonly error).
+    pub fn apply_collateral_configuration_changed(
+        &self,
+        asset_id: i64,
+        config_bitmap: U256,
+    ) -> Result<i64, DbError> {
+        let decoded = decode_reserve_configuration_bitmap(config_bitmap);
+        let conn = self.conn.lock();
+        if let Some(id) = existing_asset_config(&conn, asset_id)? {
+            // UPDATE every bitmap-sourced field (matches the Python mutate path).
+            conn.execute(
+                "UPDATE aave_v3_asset_configs SET \
+                    ltv = ?1, liquidation_threshold = ?2, liquidation_bonus = ?3, \
+                    borrowing_enabled = ?4, flash_loan_enabled = ?5, \
+                    borrowable_in_isolation = ?6, isolation_mode = ?7, \
+                    debt_ceiling = ?8, e_mode_category_id = ?9 \
+                 WHERE asset_id = ?10",
+                params![
+                    i64::try_from(decoded.ltv).unwrap_or(i64::MAX),
+                    i64::try_from(decoded.liquidation_threshold).unwrap_or(i64::MAX),
+                    i64::try_from(decoded.liquidation_bonus).unwrap_or(i64::MAX),
+                    decoded.borrowing_enabled,
+                    decoded.flash_loan_enabled,
+                    decoded.borrowable_in_isolation,
+                    decoded.isolation_mode,
+                    decoded.debt_ceiling.to_string(),
+                    decoded.e_mode_category_id,
+                    asset_id,
+                ],
+            )?;
+            return Ok(id);
+        }
+        // CREATE — matches the Python `AaveV3AssetConfig(...)` constructor:
+        // every decoded field + stable_borrowing_enabled=False (NOT in the
+        // bitmap; the Python create path hard-codes it False).
+        conn.execute(
+            "INSERT INTO aave_v3_asset_configs \
+                (asset_id, ltv, liquidation_threshold, liquidation_bonus, \
+                 e_mode_category_id, borrowing_enabled, stable_borrowing_enabled, \
+                 flash_loan_enabled, isolation_mode, borrowable_in_isolation, debt_ceiling) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8, ?9, ?10)",
+            params![
+                asset_id,
+                i64::try_from(decoded.ltv).unwrap_or(i64::MAX),
+                i64::try_from(decoded.liquidation_threshold).unwrap_or(i64::MAX),
+                i64::try_from(decoded.liquidation_bonus).unwrap_or(i64::MAX),
+                decoded.e_mode_category_id,
+                decoded.borrowing_enabled,
+                decoded.flash_loan_enabled,
+                decoded.isolation_mode,
+                decoded.borrowable_in_isolation,
+                decoded.debt_ceiling.to_string(),
+            ],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Apply an `EModeCategoryAdded` event's decoded fields to the
+    /// `aave_v3_emode_categories` row. Port of
+    /// `event_handlers.py::_process_e_mode_category_added_event` (L216-L277).
+    ///
+    /// On create, inserts `(label, ltv, liquidation_threshold, liquidation_bonus,
+    /// price_source)`; on existing, `UPDATE`s the same five fields (matching
+    /// the Python create-vs-mutate trajectory). `price_source` is the
+    /// checksummed oracle address (`None` when zero). Returns the row `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure.
+    #[allow(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
+    pub fn apply_e_mode_category_added(
+        &self,
+        market_id: i64,
+        category_id: i64,
+        ltv: u64,
+        liquidation_threshold: u64,
+        liquidation_bonus: u64,
+        price_source: Option<&str>,
+        label: &str,
+    ) -> Result<i64, DbError> {
+        let conn = self.conn.lock();
+        if let Some(id) = existing_emode_category(&conn, market_id, category_id)? {
+            conn.execute(
+                "UPDATE aave_v3_emode_categories SET \
+                    label = ?1, ltv = ?2, liquidation_threshold = ?3, \
+                    liquidation_bonus = ?4, price_source = ?5 \
+                 WHERE id = ?6",
+                params![
+                    label,
+                    i64::try_from(ltv).unwrap_or(i64::MAX),
+                    i64::try_from(liquidation_threshold).unwrap_or(i64::MAX),
+                    i64::try_from(liquidation_bonus).unwrap_or(i64::MAX),
+                    price_source,
+                    id,
+                ],
+            )?;
+            return Ok(id);
+        }
+        conn.execute(
+            "INSERT INTO aave_v3_emode_categories \
+                (market_id, category_id, label, ltv, liquidation_threshold, liquidation_bonus, price_source) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                market_id,
+                category_id,
+                label,
+                i64::try_from(ltv).unwrap_or(i64::MAX),
+                i64::try_from(liquidation_threshold).unwrap_or(i64::MAX),
+                i64::try_from(liquidation_bonus).unwrap_or(i64::MAX),
+                price_source,
+            ],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Apply an `EModeAssetCategoryChanged` event's category assignment to
+    /// the asset's `aave_v3_asset_configs` row's `e_mode_category_id`.
+    /// Port of `_process_emode_asset_category_changed_event` (L279-L347) —
+    /// the older Aave variant. Unconditionally sets `e_mode_category_id` to
+    /// the new category (`None` when the category id is `0`). Returns the row
+    /// `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure.
+    pub fn apply_emode_asset_category_changed(
+        &self,
+        asset_id: i64,
+        new_category_id: i64,
+    ) -> Result<i64, DbError> {
+        let new_value = (new_category_id > 0).then_some(new_category_id);
+        self.set_asset_emode_category(asset_id, new_value)
+    }
+
+    /// Apply an `AssetCollateralInEModeChanged` event's category assignment
+    /// to the asset's `aave_v3_asset_configs` row's `e_mode_category_id`.
+    /// Port of `_process_asset_collateral_in_emode_changed_event`
+    /// (L349-L420) — the newer Aave v3.4+ variant. Sets `e_mode_category_id`
+    /// to the category ONLY when `is_collateral && category_id > 0`; when
+    /// `is_collateral` is false the row is LEFT UNCHANGED (the Python `elif`
+    /// branch does nothing on removal). Returns the row `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure.
+    pub fn apply_asset_collateral_in_emode_changed(
+        &self,
+        asset_id: i64,
+        category_id: i64,
+        is_collateral: bool,
+    ) -> Result<i64, DbError> {
+        if is_collateral && category_id > 0 {
+            self.set_asset_emode_category(asset_id, Some(category_id))
+        } else {
+            // the Python elif branch: removal (is_collateral=false) or
+            // category_id=0 leaves the row's e_mode_category_id unchanged.
+            // If there's no existing row, create one with the None category
+            // (matching the Python create-time `is_collateral && category_id
+            // > 0` gate evaluating to None here).
+            let conn = self.conn.lock();
+            if let Some(id) = existing_asset_config(&conn, asset_id)? {
+                Ok(id)
+            } else {
+                drop(conn);
+                self.set_asset_emode_category(asset_id, None)
+            }
+        }
+    }
+
+    /// The shared set-e_mode_category_id seam for the two emode variants.
+    /// Get-or-create the `asset_config` row, setting `e_mode_category_id` to
+    /// `new_value` (`None` clears). On a new row, the row uses the all-default
+    /// substrate columns + `new_value`. On an existing row, `UPDATE` the
+    /// single column.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure.
+    fn set_asset_emode_category(
+        &self,
+        asset_id: i64,
+        new_value: Option<i64>,
+    ) -> Result<i64, DbError> {
+        let conn = self.conn.lock();
+        if let Some(id) = existing_asset_config(&conn, asset_id)? {
+            conn.execute(
+                "UPDATE aave_v3_asset_configs SET e_mode_category_id = ?1 \
+                 WHERE asset_id = ?2",
+                params![new_value, asset_id],
+            )?;
+            return Ok(id);
+        }
+        conn.execute(
+            "INSERT INTO aave_v3_asset_configs \
+                (asset_id, ltv, liquidation_threshold, liquidation_bonus, \
+                 e_mode_category_id, borrowing_enabled, stable_borrowing_enabled, \
+                 flash_loan_enabled, isolation_mode, borrowable_in_isolation, debt_ceiling) \
+             VALUES (?1, 0, 0, 0, ?2, 0, 0, 0, 0, 0, NULL)",
+            params![asset_id, new_value],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Apply a `ReserveUsedAsCollateralEnabled`/`Disabled` event to the
+    /// `aave_v3_user_collateral_configs` row's `enabled` flag. Ports
+    /// `_process_reserve_used_as_collateral_enabled_event` (L422-L483) AND
+    /// `_process_reserve_used_as_collateral_disabled_event` (L485-L547):
+    /// both collapse to setting `enabled` (`true` for enabled, `false` for
+    /// disabled). On create, inserts with the given `enabled` value; on
+    /// existing, `UPDATE`s the flag. Returns the row `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure.
+    pub fn apply_reserve_used_as_collateral(
+        &self,
+        user_id: i64,
+        asset_id: i64,
+        enabled: bool,
+    ) -> Result<i64, DbError> {
+        let conn = self.conn.lock();
+        if let Some(id) = existing_user_collateral_config(&conn, user_id, asset_id)? {
+            conn.execute(
+                "UPDATE aave_v3_user_collateral_configs SET enabled = ?1 \
+                 WHERE user_id = ?2 AND asset_id = ?3",
+                params![enabled, user_id, asset_id],
+            )?;
+            return Ok(id);
+        }
+        conn.execute(
+            "INSERT INTO aave_v3_user_collateral_configs (user_id, asset_id, enabled) \
+             VALUES (?1, ?2, ?3)",
+            params![user_id, asset_id, enabled],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
 }
 
 /// The shared `get_or_create_position` body for collateral + debt (the Python
@@ -803,5 +1059,281 @@ mod tests {
         assert!(clast.is_none());
         assert_eq!(dbalance, "0");
         assert!(dlast.is_none());
+    }
+
+    // ── the per-event apply fns ──────────────────────────────────────────
+
+    #[test]
+    fn apply_collateral_configuration_changed_creates_then_updates() {
+        let db = write_db_with_market();
+        let asset = seed_asset(&db);
+
+        // a bitmap with ltv=7500, lt=8000, bonus=10500, decimals=6, active,
+        // borrowing_enabled, flash_loan, isolation, borrowable_in_isolation,
+        // e_mode_category=7, debt_ceiling=999.
+        let mut b = U256::ZERO;
+        b |= U256::from(7500_u64);
+        b |= U256::from(8000_u64) << 16;
+        b |= U256::from(10500_u64) << 32;
+        b |= U256::from(6_u64) << 48;
+        b |= U256::from(1_u64) << 56; // active
+        b |= U256::from(1_u64) << 58; // borrowing_enabled
+        b |= U256::from(1_u64) << 61; // borrowable_in_isolation
+        b |= U256::from(1_u64) << 62; // isolation_mode
+        b |= U256::from(1_u64) << 63; // flash_loan
+        b |= U256::from(7_u64) << 168; // e_mode byte (also unbacked mint cap low)
+        b |= U256::from(999_u64) << 212; // debt_ceiling
+
+        let id = db.apply_collateral_configuration_changed(asset, b).unwrap();
+        // created row has the decoded fields; stable_borrowing_enabled=False
+        let conn = db.conn.lock();
+        let (ltv, lt, bonus, borr, stable, flash, iso, borr_iso, dc, emode): (
+            i64,
+            i64,
+            i64,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            String,
+            Option<i64>,
+        ) = conn
+            .query_row(
+                "SELECT ltv, liquidation_threshold, liquidation_bonus, borrowing_enabled, \
+                 stable_borrowing_enabled, flash_loan_enabled, isolation_mode, \
+                 borrowable_in_isolation, debt_ceiling, e_mode_category_id \
+                 FROM aave_v3_asset_configs WHERE id = ?1",
+                params![id],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                        r.get(7)?,
+                        r.get(8)?,
+                        r.get(9)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(ltv, 7500);
+        assert_eq!(lt, 8000);
+        assert_eq!(bonus, 10500);
+        assert!(borr);
+        assert!(!stable); // NOT in the bitmap → left False on create
+        assert!(flash);
+        assert!(iso);
+        assert!(borr_iso);
+        assert_eq!(dc, "999");
+        assert_eq!(emode, Some(7));
+        drop(conn);
+
+        // update path — a new bitmap with different ltv flips fields
+        let mut b2 = U256::ZERO;
+        b2 |= U256::from(8000_u64); // ltv=8000
+        b2 |= U256::from(1_u64) << 57; // frozen (bit 57)
+        let id2 = db
+            .apply_collateral_configuration_changed(asset, b2)
+            .unwrap();
+        assert_eq!(id, id2, "update returns the existing row id");
+        let conn = db.conn.lock();
+        let (ltv, is_frozen): (i64, bool) = conn
+            .query_row(
+                "SELECT ltv, isolation_mode FROM aave_v3_asset_configs WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(ltv, 8000);
+        // note: isolation_mode is bit 62, not 57 — bit 57 is frozen (not stored
+        // on asset_config; the Python handler doesn't persist `is_frozen` to
+        // asset_config). So isolation_mode is False here.
+        assert!(!is_frozen);
+    }
+
+    #[test]
+    fn apply_e_mode_category_added_creates_then_updates() {
+        let db = write_db_with_market();
+        let id = db
+            .apply_e_mode_category_added(1, 3, 9000, 9500, 10000, Some("0xoracle"), "ETH")
+            .unwrap();
+        let id2 = db
+            .apply_e_mode_category_added(1, 3, 9100, 9600, 10100, Some("0xoracle2"), "ETH-v2")
+            .unwrap();
+        assert_eq!(id, id2, "update returns the existing row id");
+        let conn = db.conn.lock();
+        let (label, ltv, lt, bonus, ps): (String, i64, i64, i64, Option<String>) = conn
+            .query_row(
+                "SELECT label, ltv, liquidation_threshold, liquidation_bonus, price_source \
+                 FROM aave_v3_emode_categories WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .unwrap();
+        assert_eq!(label, "ETH-v2");
+        assert_eq!((ltv, lt, bonus), (9100, 9600, 10100));
+        assert_eq!(ps.as_deref(), Some("0xoracle2"));
+    }
+
+    #[test]
+    fn apply_e_mode_category_added_zero_oracle_is_none() {
+        let db = write_db_with_market();
+        let id = db
+            .apply_e_mode_category_added(1, 1, 0, 0, 0, None, "")
+            .unwrap();
+        let conn = db.conn.lock();
+        let ps: Option<String> = conn
+            .query_row(
+                "SELECT price_source FROM aave_v3_emode_categories WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(ps.is_none());
+    }
+
+    #[test]
+    fn apply_emode_asset_category_changed_unconditional_set() {
+        let db = write_db_with_market();
+        let asset = seed_asset(&db);
+
+        // no existing config → create with e_mode_category_id = Some(5)
+        let id = db.apply_emode_asset_category_changed(asset, 5).unwrap();
+        let conn = db.conn.lock();
+        let emode: Option<i64> = conn
+            .query_row(
+                "SELECT e_mode_category_id FROM aave_v3_asset_configs WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(emode, Some(5));
+        drop(conn);
+
+        // new_category_id=0 → clear to None (the `> 0` gate)
+        db.apply_emode_asset_category_changed(asset, 0).unwrap();
+        let conn = db.conn.lock();
+        let emode: Option<i64> = conn
+            .query_row(
+                "SELECT e_mode_category_id FROM aave_v3_asset_configs WHERE asset_id = ?1",
+                params![asset],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(emode.is_none());
+        drop(conn);
+
+        // re-set to 7
+        db.apply_emode_asset_category_changed(asset, 7).unwrap();
+        let conn = db.conn.lock();
+        let emode: Option<i64> = conn
+            .query_row(
+                "SELECT e_mode_category_id FROM aave_v3_asset_configs WHERE asset_id = ?1",
+                params![asset],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(emode, Some(7));
+    }
+
+    #[test]
+    fn apply_asset_collateral_in_emode_changed_gated_set() {
+        let db = write_db_with_market();
+        let asset = seed_asset(&db);
+
+        // is_collateral=true, category=3 → set
+        db.apply_asset_collateral_in_emode_changed(asset, 3, true)
+            .unwrap();
+        // is_collateral=false → leave UNCHANGED (the Python elif gap), even
+        // though category=9
+        db.apply_asset_collateral_in_emode_changed(asset, 9, false)
+            .unwrap();
+        let conn = db.conn.lock();
+        let emode: Option<i64> = conn
+            .query_row(
+                "SELECT e_mode_category_id FROM aave_v3_asset_configs WHERE asset_id = ?1",
+                params![asset],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            emode,
+            Some(3),
+            "is_collateral=false leaves the category unchanged"
+        );
+        drop(conn);
+
+        // category_id=0 + is_collateral=true → leave unchanged (the `> 0` gate)
+        db.apply_asset_collateral_in_emode_changed(asset, 0, true)
+            .unwrap();
+        let conn = db.conn.lock();
+        let emode: Option<i64> = conn
+            .query_row(
+                "SELECT e_mode_category_id FROM aave_v3_asset_configs WHERE asset_id = ?1",
+                params![asset],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            emode,
+            Some(3),
+            "category_id=0 leaves the category unchanged"
+        );
+        drop(conn);
+
+        // is_collateral=true, category=4 → set
+        db.apply_asset_collateral_in_emode_changed(asset, 4, true)
+            .unwrap();
+        let conn = db.conn.lock();
+        let emode: Option<i64> = conn
+            .query_row(
+                "SELECT e_mode_category_id FROM aave_v3_asset_configs WHERE asset_id = ?1",
+                params![asset],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(emode, Some(4));
+    }
+
+    #[test]
+    fn apply_reserve_used_as_collateral_enable_then_disable() {
+        let db = write_db_with_market();
+        let asset = seed_asset(&db);
+        let user = seed_user(&db, "0xuserC");
+
+        // enable → create with enabled=true
+        let id = db
+            .apply_reserve_used_as_collateral(user, asset, true)
+            .unwrap();
+        let conn = db.conn.lock();
+        let enabled: bool = conn
+            .query_row(
+                "SELECT enabled FROM aave_v3_user_collateral_configs WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(enabled);
+        drop(conn);
+
+        // disable → update existing to false
+        let id2 = db
+            .apply_reserve_used_as_collateral(user, asset, false)
+            .unwrap();
+        assert_eq!(id, id2, "update returns the existing row id");
+        let conn = db.conn.lock();
+        let enabled: bool = conn
+            .query_row(
+                "SELECT enabled FROM aave_v3_user_collateral_configs WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(!enabled);
     }
 }
