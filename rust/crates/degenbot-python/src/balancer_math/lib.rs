@@ -228,6 +228,65 @@ pub fn balancer_weighted_add_swap_fee_amount(
     u256_to_py_obj(py, result)
 }
 
+// ─── Fixed-point (shared by weighted + stable math) ─────────────────
+
+/// `FixedPoint._mul_down(a, b) = a * b / ONE`, rounding down.
+///
+/// Uses `widening_mul` + truncation (mirrors Solidity's `uint256` return for
+/// over-large-but-unreachable inputs); the deployed contract reverts on
+/// `a * b > MAX_UINT256` — observable only for adversarial inputs the bot
+/// never feeds in normal swap math. C8d: routes `scaling_helpers` off the
+/// pure-Python `fixed_point.py` port.
+///
+/// # Errors
+///
+/// Never reverts (differs from the Python port's `MUL_OVERFLOW` check,
+/// which is unreachable for valid scaling factors).
+#[pyfunction(signature = (a, b))]
+pub fn balancer_fixed_point_mul_down(
+    a: &Bound<'_, PyAny>,
+    b: &Bound<'_, PyAny>,
+) -> PyResult<PyObject> {
+    let py = a.py();
+    let result = degenbot_balancer_math::fixed_point::mul_down(extract_u256(a)?, extract_u256(b)?)
+        .map_err(bal_err)?;
+    u256_to_py_obj(py, result)
+}
+
+/// `FixedPoint._div_down(a, b) = a * ONE / b`, rounding down.
+///
+/// # Errors
+///
+/// Returns `ValueError` (`ZERO_DIVISION`) on `b == 0`; `OverflowError`
+/// (`DIV_INTERNAL`) when `a * ONE` exceeds `MAX_UINT256`.
+#[pyfunction(signature = (a, b))]
+pub fn balancer_fixed_point_div_down(
+    a: &Bound<'_, PyAny>,
+    b: &Bound<'_, PyAny>,
+) -> PyResult<PyObject> {
+    let py = a.py();
+    let result = degenbot_balancer_math::fixed_point::div_down(extract_u256(a)?, extract_u256(b)?)
+        .map_err(bal_err)?;
+    u256_to_py_obj(py, result)
+}
+
+/// `FixedPoint._div_up(a, b) = (a * ONE - 1) / b + 1`, rounding up.
+///
+/// # Errors
+///
+/// Returns `ValueError` (`ZERO_DIVISION`) on `b == 0`; `OverflowError`
+/// (`DIV_INTERNAL`) when `a * ONE` exceeds `MAX_UINT256`.
+#[pyfunction(signature = (a, b))]
+pub fn balancer_fixed_point_div_up(
+    a: &Bound<'_, PyAny>,
+    b: &Bound<'_, PyAny>,
+) -> PyResult<PyObject> {
+    let py = a.py();
+    let result = degenbot_balancer_math::fixed_point::div_up(extract_u256(a)?, extract_u256(b)?)
+        .map_err(bal_err)?;
+    u256_to_py_obj(py, result)
+}
+
 // ─── Stable math ───────────────────────────────────────────────────────
 
 /// `StableSwap` invariant (`StableMath._calculate_invariant`, V1 always-roundDown `D_P`).
@@ -339,6 +398,9 @@ pub fn add_balancer_math_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m
     )?)?;
     m.add_function(wrap_pyfunction!(balancer_weighted_add_swap_fee_amount, m)?)?;
+    m.add_function(wrap_pyfunction!(balancer_fixed_point_mul_down, m)?)?;
+    m.add_function(wrap_pyfunction!(balancer_fixed_point_div_down, m)?)?;
+    m.add_function(wrap_pyfunction!(balancer_fixed_point_div_up, m)?)?;
     m.add_function(wrap_pyfunction!(balancer_stable_calculate_invariant, m)?)?;
     m.add_function(wrap_pyfunction!(
         balancer_stable_calculate_invariant_deployed,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fractions import Fraction
+from itertools import starmap
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Self, runtime_checkable
 from weakref import WeakSet
 
@@ -10,6 +11,15 @@ from degenbot.balancer.libraries.constants import ONE
 from degenbot.balancer.libraries.scaling_helpers import _compute_scaling_factor
 from degenbot.balancer.swap_amounts import BalancerV2SwapAmounts
 from degenbot.checksum_cache import get_checksum_address
+from degenbot.degenbot_rs import (
+    balancer_fixed_point_div_down as _rs_div_down,
+)
+from degenbot.degenbot_rs import (
+    balancer_fixed_point_div_up as _rs_div_up,
+)
+from degenbot.degenbot_rs import (
+    balancer_fixed_point_mul_down as _rs_mul_down,
+)
 from degenbot.degenbot_rs import (
     balancer_stable_calc_in_given_out as _rs_calc_in_given_out,
 )
@@ -381,7 +391,7 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
             The computed integer value.
 
         """
-        return amount * scaling_factor // ONE
+        return _rs_mul_down(amount, scaling_factor)
 
     @staticmethod
     def _downscale_down(amount: int, scaling_factor: int) -> int:
@@ -391,7 +401,7 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
             The computed integer value.
 
         """
-        return amount * ONE // scaling_factor
+        return _rs_div_down(amount, scaling_factor)
 
     @staticmethod
     def _downscale_up(amount: int, scaling_factor: int) -> int:
@@ -401,7 +411,7 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
             The computed integer value.
 
         """
-        return (amount * ONE + scaling_factor - 1) // scaling_factor
+        return _rs_div_up(amount, scaling_factor)
 
     def _subtract_swap_fee_amount(self, amount: int) -> int:
         """Subtract swap fee from amount (mulUp for fee, matches deployed contract).
@@ -421,9 +431,7 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
 
         """
         fee_scaled = int(self.fee * self.FEE_DENOMINATOR)
-        numerator = amount * ONE
-        denominator = ONE - fee_scaled
-        return numerator // denominator + (1 if numerator % denominator > 0 else 0)
+        return _rs_div_up(amount, ONE - fee_scaled)
 
     def _resolve_scaling_factors(
         self,
@@ -453,9 +461,7 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
         if rates is None:
             msg = "no Balancer stable rate provider available"
             raise DegenbotValueError(message=msg)
-        return tuple(
-            bsf * rate // ONE for bsf, rate in zip(self._base_scaling_factors, rates, strict=True)
-        )
+        return tuple(starmap(_rs_mul_down, zip(self._base_scaling_factors, rates, strict=True)))
 
     @staticmethod
     def _upscale_balances(balances: Sequence[int], scaling_factors: Sequence[int]) -> list[int]:
@@ -465,7 +471,7 @@ class BalancerV2StablePool(PublisherMixin, AbstractLiquidityPool):
             A list of results.
 
         """
-        return [b * sf // ONE for b, sf in zip(balances, scaling_factors, strict=False)]
+        return list(starmap(_rs_mul_down, zip(balances, scaling_factors, strict=False)))
 
     def _compute_invariant(self, upscaled_balances: list[int]) -> int:
         """Compute invariant using the pool's deployed StableMath version.

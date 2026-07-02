@@ -4,7 +4,11 @@ from collections.abc import Sequence
 from typing import cast
 
 from degenbot.balancer.libraries.constants import ONE
-from degenbot.balancer.libraries.fixed_point import div_down, div_up, mul_down
+from degenbot.degenbot_rs import (
+    balancer_fixed_point_div_down as _rs_div_down,
+    balancer_fixed_point_div_up as _rs_div_up,
+    balancer_fixed_point_mul_down as _rs_mul_down,
+)
 from degenbot.erc20 import Erc20Token
 
 # To simplify Pool logic, all token balances and amounts are normalized to behave as if the token
@@ -23,7 +27,7 @@ def _upscale(
     # only place where we round in the same direction for all amounts, as the impact of this
     # rounding is expected to be minimal.
 
-    return mul_down(amount, scaling_factor)
+    return _rs_mul_down(amount, scaling_factor)
 
 
 def _downscale_down(
@@ -38,7 +42,7 @@ def _downscale_down(
         The computed integer value.
 
     """
-    return div_down(amount, scaling_factor)
+    return _rs_div_down(amount, scaling_factor)
 
 
 def _downscale_up(
@@ -53,13 +57,13 @@ def _downscale_up(
         The computed integer value.
 
     """
-    return div_up(amount, scaling_factor)
+    return _rs_div_up(amount, scaling_factor)
 
 
 def _upscale_array(amounts: list[int], scaling_factors: Sequence[int]) -> None:
     """Upscale an entire array in-place, equivalent to ``_upscale`` per element."""
     for i in range(len(amounts)):
-        amounts[i] = mul_down(amounts[i], scaling_factors[i])
+        amounts[i] = _rs_mul_down(amounts[i], scaling_factors[i])
 
 
 def _downscale_down_array(amounts: list[int], scaling_factors: list[int]) -> None:
@@ -68,7 +72,7 @@ def _downscale_down_array(amounts: list[int], scaling_factors: list[int]) -> Non
     in-place.
     """
     for i in range(len(amounts)):
-        amounts[i] = div_down(amounts[i], scaling_factors[i])
+        amounts[i] = _rs_div_down(amounts[i], scaling_factors[i])
 
 
 def _downscale_up_array(amounts: list[int], scaling_factors: list[int]) -> None:
@@ -77,7 +81,7 @@ def _downscale_up_array(amounts: list[int], scaling_factors: list[int]) -> None:
     in-place.
     """
     for i in range(len(amounts)):
-        amounts[i] = div_up(amounts[i], scaling_factors[i])
+        amounts[i] = _rs_div_up(amounts[i], scaling_factors[i])
 
 
 def _compute_scaling_factor(token: Erc20Token) -> int:

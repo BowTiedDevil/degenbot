@@ -22,9 +22,9 @@
 
 | Term | Definition | Aliases to avoid |
 |------|------------|------------------|
-| **FixedPoint** | 18-decimal fixed-point arithmetic library (`fixed_point.py`) — trimmed to the three live fns `mul_down`, `div_down`, `div_up` consumed by `ScalingHelpers`. The dead leaves (`add`, `sub`, `complement`, `mul_up`, `pow_down`, `pow_up`) + `log_exp_math.py` were retired: their Rust counterparts live in `degenbot-balancer-math` (`fixed_point.rs` / `log_exp_math.rs`) with their own `#[cfg(test)]` corpora. The remaining three fns retire under Candidate 4 (route `ScalingHelpers` through the Rust leaf once exposed via `#[pyfunction]`) | FP, fixed math |
+| **FixedPoint** | 18-decimal fixed-point arithmetic — routed through the Rust core (`degenbot-balancer-math` `fixed_point.rs`) via the `degenbot_rs.balancer_fixed_point_{mul_down,div_down,div_up}` PyO3 seam. The pure-Python `fixed_point.py` mirror was retired (Candidate 4 / C8d); its `#[cfg(test)]` corpus + the frozen `oracle_crosscheck.rs` snapshot cover the math. Error contract matches `bal_err`: `ZERO_DIVISION` → `ValueError`, `DIV_INTERNAL` → `OverflowError` (Solidity revert tags, not `EVMRevertError`) | FP, fixed math |
 | **WeightedMath** | Invariant and swap calculation formulas for weighted pools (retired — Rust core via `degenbot_rs.balancer_*`) | WM, weighted calculations |
-| **ScalingHelpers** | Fixed-point scaling for tokens with non-18 decimals (`scaling_helpers.py`) — `_upscale`, `_downscale_down`, `_downscale_up`, `_compute_scaling_factor` | Scaling, decimal helpers |
+| **ScalingHelpers** | Fixed-point scaling for tokens with non-18 decimals (`scaling_helpers.py`) — `_upscale`, `_downscale_down`, `_downscale_up`, `_compute_scaling_factor`; the three arithmetic leaves now delegate to `degenbot_rs.balancer_fixed_point_*` (orchestration stays Python; the math leaf is Rust) | Scaling, decimal helpers |
 
 ## PowVersion
 
@@ -115,8 +115,7 @@ balancer/
 ├── libraries/
 │   ├── constants.py    (ONE, TWO, FOUR, MAX_POW_RELATIVE_ERROR, PowVersion)
 │   ├── constants.py    (ONE, TWO, FOUR, MAX_POW_RELATIVE_ERROR, PowVersion)
-│   ├── fixed_point.py  (mul_down, div_down/up — live; pow_*/complement/add/sub retired to Rust)
-│   ├── scaling_helpers.py (_upscale, _downscale_down/up, _compute_scaling_factor)
+│   ├── scaling_helpers.py (_upscale, _downscale_down/up, _compute_scaling_factor — arithmetic delegated to balancer_fixed_point_* Rust seam)
 │   ├── stable_math.py  (retired — Rust core via degenbot_rs.balancer_stable_*)
 │   └── (log_exp_math.py + helpers.py retired — Rust core; weighted_math.py retired — Rust core via degenbot_rs.balancer_*)
 ├── pair_view.py        (BalancerPairView — N-token to 2-token adapter with subscription relay)
