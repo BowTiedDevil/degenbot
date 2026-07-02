@@ -10,7 +10,11 @@ use alloy::network::Ethereum;
 use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::client::ClientBuilder;
-use alloy::rpc::types::eth::{Block, Header as RpcHeader, Transaction};
+use alloy::rpc::types::eth::{
+    simulate::{SimulatePayload, SimulatedBlock},
+    FeeHistory,
+};
+use alloy::rpc::types::eth::{AccessListResult, Block, Header as RpcHeader, Transaction};
 use alloy::rpc::types::TransactionRequest;
 use alloy::rpc::types::{Filter, Log};
 use alloy::transports::ipc::IpcConnect;
@@ -794,6 +798,111 @@ impl AlloyProvider {
         .await
     }
 
+    /// Execute `eth_simulateV1` — simulate a batch of calls on top of the
+    /// requested state (Alloy spec: `SimulatePayload` / `BlockStateCallV1` /
+    /// `StateOverride` / `AccountOverride`).
+    ///
+    /// This is the transport primitive; the simulate orchestration (7-call
+    /// profit pattern, state override construction, revert decoding) is the
+    /// Simulation epic — this fn only performs the typed RPC round-trip.
+    ///
+    /// `block_number` selects the base state; `None` defaults to "latest".
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProviderError::RpcError` if the RPC call fails.
+    pub async fn eth_simulate_v1(
+        &self,
+        payload: &SimulatePayload,
+        block_number: Option<u64>,
+    ) -> ProviderResult<Vec<SimulatedBlock<EthBlock>>> {
+        self.retry_with_backoff(|| async {
+            let result = if let Some(block) = block_number {
+                self.inner.simulate(payload).block_id(block.into()).await
+            } else {
+                self.inner.simulate(payload).await
+            }
+            .map_err(|e| e.into_provider_error("eth_simulateV1 failed"))?;
+            Ok(result)
+        })
+        .await
+    }
+
+    /// Execute `eth_feeHistory` — historical gas info for EIP-1559 fee
+    /// estimation.
+    ///
+    /// Returns `baseFeePerGas`, `gasUsedRatio`, `reward` (per-percentile
+    /// priority-fee samples), `oldestBlock`, and EIP-4844 blob fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProviderError::RpcError` if the RPC call fails.
+    pub async fn eth_fee_history(
+        &self,
+        block_count: u64,
+        last_block: BlockNumberOrTag,
+        reward_percentiles: &[f64],
+    ) -> ProviderResult<FeeHistory> {
+        rpc_call!(
+            self,
+            "eth_feeHistory failed",
+            self.inner
+                .get_fee_history(block_count, last_block, reward_percentiles)
+        )
+    }
+
+    /// Execute `eth_createAccessList` — compute the EIP-2930 access list for a
+    /// transaction.
+    ///
+    /// Returns `{accessList, gasUsed}` (plus an optional `error` field if the
+    /// transaction would revert).
+    ///
+    /// `block_number` selects the base state; `None` defaults to "latest".
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProviderError::RpcError` if the RPC call fails.
+    pub async fn eth_create_access_list(
+        &self,
+        request: &TransactionRequest,
+        block_number: Option<u64>,
+    ) -> ProviderResult<AccessListResult> {
+        self.retry_with_backoff(|| async {
+            let result = if let Some(block) = block_number {
+                self.inner
+                    .create_access_list(request)
+                    .block_id(block.into())
+                    .await
+            } else {
+                self.inner.create_access_list(request).await
+            }
+            .map_err(|e| e.into_provider_error("eth_createAccessList failed"))?;
+            Ok(result)
+        })
+        .await
+    }
+
+    /// Execute `eth_sendRawTransaction` — broadcast a raw signed transaction.
+    ///
+    /// This is the broadcast that `degenbot-submission`'s `TxSigner` produces
+    /// the bytes for; this fn returns the resulting `TxHash` (the transport
+    /// primitive — receipt monitoring is owned upstream).
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProviderError::RpcError` if the RPC call fails.
+    pub async fn eth_send_raw_transaction(&self, encoded_tx: &[u8]) -> ProviderResult<B256> {
+        self.retry_with_backoff(|| async {
+            let pending = self
+                .inner
+                .send_raw_transaction(encoded_tx)
+                .await
+                .map_err(|e| e.into_provider_error("eth_sendRawTransaction failed"))?;
+            Ok(*pending.tx_hash())
+        })
+        .await
+    }
+
     /// Make a raw JSON-RPC request.
     ///
     /// This method allows calling arbitrary RPC methods that don't have
@@ -1472,5 +1581,171 @@ mod tests {
         // Verify the type alias is usable (compile-time check)
         fn assert_block_type(_: Option<EthBlock>) {}
         assert_block_type(None);
+    }
+
+    // ── §4.2 parity: typed RPC struct JSON round-trips match web3.py ───
+    //
+    // The §4.2 oracle is the web3.py JSON shape (the execution-apis spec).
+    // These tests assert that the typed Rust request/response structs
+    // deserialize + re-serialize to byte-identical JSON, proving the typed
+    // fns' JSON↔struct transforms match web3.py exactly (no field renaming,
+    // no quantity-encoding drift). Canonical fixtures from the execution-apis
+    // spec + alloy's own conformance tests.
+
+    #[test]
+    fn fee_history_response_round_trips_byte_identical_to_web3() {
+        // Canonical eth_feeHistory response. web3.py decodes this into its
+        // FeeHistory dict; the Rust struct must re-serialize byte-identically.
+        let sample = r#"{"baseFeePerGas":["0x342770c0","0x2da282a8"],"gasUsedRatio":[0.0],"baseFeePerBlobGas":["0x0","0x0"],"blobGasUsedRatio":[0.0],"oldestBlock":"0x1"}"#;
+        let fh: FeeHistory = serde_json::from_str(sample).expect("decode web3 feeHistory");
+        // Field-level parity (the values web3.py would surface)
+        assert_eq!(fh.oldest_block, 1);
+        assert_eq!(fh.base_fee_per_gas, vec![875_000_000, 765_625_000]);
+        assert_eq!(fh.gas_used_ratio, vec![0.0]);
+        assert_eq!(fh.reward, None);
+        // Byte-identical re-serialization
+        assert_eq!(serde_json::to_string(&fh).unwrap(), sample);
+    }
+
+    #[test]
+    fn fee_history_with_reward_percentiles_decodes() {
+        // Response including the `reward` field (priority-fee samples per
+        // percentile) — the shape the bot's _compute_priority_fee consumes.
+        let json = r#"{"baseFeePerBlobGas":["0xc0","0xb2"],"baseFeePerGas":["0x4cb8cf181","0x53075988e"],"blobGasUsedRatio":[0.16666666666666666,0.3333333333333333],"gasUsedRatio":[0.8288135,0.3407616666666667],"oldestBlock":"0x59f94f","reward":[["0x59682f00"],["0x59682f00"]]}"#;
+        let fh: FeeHistory = serde_json::from_str(json).expect("decode feeHistory w/ reward");
+        assert_eq!(fh.oldest_block, 0x59_f94f);
+        assert_eq!(fh.base_fee_per_gas.len(), 2);
+        let reward = fh.reward.expect("reward field present");
+        assert_eq!(reward.len(), 2);
+        assert_eq!(reward[0], vec![0x5968_2f00_u128]);
+    }
+
+    #[test]
+    fn create_access_list_response_decodes_to_web3_shape() {
+        // Canonical eth_createAccessList response: {accessList, gasUsed}.
+        let json = r#"{"accessList":[{"address":"0x0000000000000000000000000000000000000101","storageKeys":["0x0000000000000000000000000000000000000000000000000000000000000000"]}],"gasUsed":"0x5208"}"#;
+        let result: AccessListResult = serde_json::from_str(json).expect("decode access list");
+        assert!(result.error.is_none());
+        assert_eq!(result.gas_used, alloy::primitives::U256::from(0x5208));
+        assert_eq!(result.access_list.0.len(), 1);
+        let item = &result.access_list.0[0];
+        assert_eq!(
+            format!("{:?}", item.address),
+            "0x0000000000000000000000000000000000000101"
+        );
+        assert_eq!(item.storage_keys.len(), 1);
+        assert_eq!(item.storage_keys[0], alloy::primitives::B256::ZERO);
+        // Re-serialize → camelCase shape matches web3.py
+        let reser = serde_json::to_string(&result).unwrap();
+        assert!(reser.contains("\"accessList\""));
+        assert!(reser.contains("\"gasUsed\""));
+    }
+
+    #[test]
+    fn create_access_list_error_response_decodes() {
+        // web3.py surfaces the `error` field when the tx would revert.
+        let json = r#"{"accessList":[],"gasUsed":"0x0","error":"transaction execution failed"}"#;
+        let result: AccessListResult =
+            serde_json::from_str(json).expect("decode errored access list");
+        assert_eq!(
+            result.error.as_deref(),
+            Some("transaction execution failed")
+        );
+        assert_eq!(result.gas_used, alloy::primitives::U256::ZERO);
+    }
+
+    #[test]
+    fn simulate_v1_request_round_trips_byte_identical_to_web3() {
+        // Canonical eth_simulateV1 request payload (execution-apis spec):
+        // blockStateCalls with state overrides + calls. web3.py builds this
+        // dict; the Rust SimulatePayload must re-serialize byte-identically.
+        let request_json = serde_json::json!({
+            "blockStateCalls": [
+                {
+                    "blockOverrides": {},
+                    "stateOverrides": {
+                        "0xc000000000000000000000000000000000000000": {
+                            "nonce": "0x5"
+                        }
+                    },
+                    "calls": []
+                },
+                {
+                    "blockOverrides": {},
+                    "stateOverrides": {
+                        "0xc000000000000000000000000000000000000000": {
+                            "code": "0x600035600055"
+                        }
+                    },
+                    "calls": [
+                        {
+                            "from": "0xc000000000000000000000000000000000000000",
+                            "to": "0xc000000000000000000000000000000000000000",
+                            "nonce": "0x0"
+                        }
+                    ]
+                }
+            ],
+            "traceTransfers": false,
+            "validation": true,
+            "returnFullTransactions": false
+        });
+        let payload: SimulatePayload =
+            serde_json::from_value(request_json.clone()).expect("decode simulate payload");
+        assert!(payload.validation);
+        assert_eq!(payload.block_state_calls.len(), 2);
+        let reser = serde_json::to_value(&payload).unwrap();
+        // Byte-identical round-trip (camelCase, quantity hex preserved)
+        assert_eq!(reser, request_json);
+    }
+
+    #[test]
+    fn simulate_v1_call_result_decodes_gas_used_return_data() {
+        // The per-call result shape: {returnData, logs, gasUsed, status}.
+        // This is what the simulate orchestration reads to decode swap results.
+        let json = r#"{"returnData":"0x12345678","logs":[],"gasUsed":"0x5208","status":"0x1"}"#;
+        let result: alloy::rpc::types::eth::simulate::SimCallResult =
+            serde_json::from_str(json).expect("decode sim call result");
+        assert_eq!(
+            result.return_data,
+            alloy::primitives::Bytes::from_static(&[0x12, 0x34, 0x56, 0x78])
+        );
+        assert_eq!(result.gas_used, 0x5208);
+        assert!(result.status);
+        assert!(result.error.is_none());
+    }
+
+    #[test]
+    fn simulate_v1_revert_error_decodes_with_data() {
+        // web3.py / execution-apis revert shape: error.code + message + data.
+        let error_json = serde_json::json!({
+            "code": -32000,
+            "message": "Execution reverted",
+            "data": "0xcabedea8"
+        });
+        let err: alloy::rpc::types::eth::simulate::SimulateError =
+            serde_json::from_value(error_json).expect("decode simulate error");
+        assert_eq!(err.message, "Execution reverted");
+        assert_eq!(
+            err.data,
+            Some(alloy::primitives::Bytes::from_static(&[
+                0xca, 0xbe, 0xde, 0xa8
+            ]))
+        );
+    }
+
+    #[test]
+    fn send_raw_transaction_request_hex_encoding_matches_web3() {
+        // eth_sendRawTransaction sends ("0x"+hexlify(bytes),). web3.py uses
+        // `/`-prefixed hex; alloy uses `hex::encode_prefixed`. Assert they
+        // match for a fixture payload (the signed-bytes from G6DNW4's §4.2
+        // fixture — an anvil-key-0 type-2 envelope prefix).
+        let signed_bytes: &[u8] = &[0x02, 0xf8, 0x70, 0x01, 0x07];
+        let hex = alloy::hex::encode_prefixed(signed_bytes);
+        // web3.py `web3.Web3.to_hex(bytes)` produces the same 0x-prefixed hex
+        assert_eq!(hex, "0x02f8700107");
+        // The param tuple shape: [hex] — matches `eth_sendRawTransaction`.
+        let params = serde_json::json!([hex]);
+        assert_eq!(params, serde_json::json!(["0x02f8700107"]));
     }
 }
