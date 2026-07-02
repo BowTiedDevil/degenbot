@@ -1,7 +1,13 @@
 # AGENTS.md
 
 ## Coordinating With Other Agents
-When you begin a session, use `link_list` to check for other agents working in this project. Announce yourself with a brief description of your task using `link_send`. Send messages to coordinate concurrent work and avoid making contradictory changes.
+When you begin a session, Read the 'pi-link-coordination' skill. Then use `link_list` to identify all agents working in this project. Announce yourself with a brief description of your task using `link_send`. Send messages to coordinate concurrent work and avoid making contradictory changes.
+
+Messages you receive on `link` will have this format: 
+```markdown
+⚡ [agent_id] <Message>
+```
+**Respond directly to the sending agent**
 
 ## Architectural Vision
 
