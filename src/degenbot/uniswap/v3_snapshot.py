@@ -319,8 +319,7 @@ class DatabaseSnapshot:
                 int(word): BitmapAtWord(**entry) for word, entry in raw["tick_bitmap"].items()
             },
             tick_data={
-                int(tick): LiquidityAtTick(**entry)
-                for tick, entry in raw["tick_data"].items()
+                int(tick): LiquidityAtTick(**entry) for tick, entry in raw["tick_data"].items()
             },
         )
 
