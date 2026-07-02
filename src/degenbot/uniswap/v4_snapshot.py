@@ -11,17 +11,14 @@ import tqdm.asyncio
 from eth_abi.abi import decode as abi_decode
 from eth_typing import ChecksumAddress, HexAddress, HexStr
 from hexbytes import HexBytes
-from sqlalchemy import select
-from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session, scoped_session
 from web3 import Web3
 from web3.types import LogReceipt
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.database.models.base import ExchangeTable
-from degenbot.database.models.pools import PoolManagerTable, UniswapV4PoolTable
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
+from degenbot.degenbot_rs import PyDatabaseSnapshot
 from degenbot.exceptions.pool import UnknownPoolId
 from degenbot.logging import logger
 from degenbot.provider.async_adapter import AsyncProviderAdapter
@@ -168,9 +165,12 @@ class MonolithicJsonFileSnapshot:
 
 
 class DatabaseSnapshot:
-    """Snapshot source backed by built-in SQLite database using the ORM abstractions defined.
+    """Snapshot source backed by built-in SQLite database.
 
-    in `degenbot.database`.
+    Routes every read through the Rust `degenbot-db` core crate via the
+    `PyDatabaseSnapshot` PyO3 seam (ADR-005 three-layer architecture). The
+    `session` / `database_path` are retained for explicit-deps construction +
+    migration tooling; reads no longer use the SQLAlchemy session.
     """
 
     storage_kind = "db"
@@ -200,6 +200,41 @@ class DatabaseSnapshot:
             self.database_path = database_path
 
         self.chain_id = chain_id
+        # Lazily-constructed Rust read handle (opened on first read so a
+        # `db=-only` construction with no resolvable path doesn't fail until
+        # a read is actually attempted).
+        self._rust_snapshot: PyDatabaseSnapshot | None = None
+
+    def _rust_db_path(self) -> pathlib.Path:
+        """Resolve the SQLite file path the Rust reader will open.
+
+        Prefer an explicit `database_path`; fall back to the bound engine's
+        file URL (the `db=bot.db` case where no path was passed).
+
+        Returns:
+            The resolved database file path.
+
+        Raises:
+            ValueError: If no file path can be resolved (e.g. an in-memory engine).
+
+        """
+        if self.database_path and self.database_path.name:
+            return self.database_path
+        engine = getattr(self.session, "_engine", None)
+        if engine is not None:
+            db_path = engine.url.database
+            if db_path and db_path != ":memory:":
+                return pathlib.Path(db_path)
+        msg = "database_path is required for Rust-backed snapshot reads"
+        raise ValueError(msg)
+
+    def _rust(self) -> PyDatabaseSnapshot:
+        if self._rust_snapshot is None:
+            self._rust_snapshot = PyDatabaseSnapshot(
+                chain_id=self.chain_id,
+                database_path=str(self._rust_db_path()),
+            )
+        return self._rust_snapshot
 
     def get_liquidity_map(
         self,
@@ -212,65 +247,35 @@ class DatabaseSnapshot:
             The liquidity map for the pool, or None if not found in the database.
 
         """
-        pool_in_db = self.session.scalar(
-            select(UniswapV4PoolTable)
-            .join(UniswapV4PoolTable.manager)
-            .where(
-                UniswapV4PoolTable.pool_hash == HexBytes(pool_id).to_0x_hex(),
-                PoolManagerTable.address == pool_manager,
-            ),
-        )
-        if pool_in_db is None:
+        raw = self._rust().get_liquidity_map_v4(get_checksum_address(pool_manager), pool_id)
+        if raw is None:
             return None
-
         return LiquidityMap(
             tick_bitmap={
-                int(initialization_map.word): BitmapAtWord(bitmap=initialization_map.bitmap)
-                for initialization_map in pool_in_db.initialization_maps
+                int(word): BitmapAtWord(**entry) for word, entry in raw["tick_bitmap"].items()
             },
             tick_data={
-                int(liquidity_position.tick): LiquidityAtTick(
-                    liquidity_gross=liquidity_position.liquidity_gross,
-                    liquidity_net=liquidity_position.liquidity_net,
-                )
-                for liquidity_position in pool_in_db.liquidity_positions
+                int(tick): LiquidityAtTick(**entry)
+                for tick, entry in raw["tick_data"].items()
             },
         )
 
     def get_all_liquidity_maps(
         self,
     ) -> dict[tuple[ChecksumAddress, str], dict[int, tuple[int, int]]]:
-        """Return all V4 tick data as plain dicts using a single raw SQL query.
+        """Return all V4 tick data as plain dicts.
 
-        Returns {(pm_address, pool_id_hex): {tick_index: (liquidity_gross, liquidity_net)}}
-        with no Pydantic model overhead.
+        Delegates the bulk read to the Rust core (GIL released during the
+        SQLite scan). Returns {(pm_address, pool_id_hex): {tick_index:
+        (liquidity_gross, liquidity_net)}}.
 
         Returns:
             A dict mapping (pm_address, pool_id) tuples to tick data dicts.
 
         """
-        rows = self.session.execute(
-            sa_text(
-                """
-                SELECT pm.address, v4.pool_hash, lp.tick, lp.liquidity_gross, lp.liquidity_net
-                FROM pool_managers pm
-                JOIN managed_pools mp ON mp.manager_id = pm.id
-                JOIN uniswap_v4_pools v4 ON v4.managed_pool_id = mp.id
-                JOIN managed_pool_liquidity_positions lp ON lp.managed_pool_id = mp.id
-                WHERE pm.chain = :chain_id AND mp.kind = 'uniswap_v4'
-                ORDER BY pm.address, v4.pool_hash, lp.tick
-                """,
-            ),
-            {"chain_id": self.chain_id},
-        ).all()
-
         result: dict[tuple[ChecksumAddress, str], dict[int, tuple[int, int]]] = {}
-        for pm_address, pool_hash, tick, liquidity_gross, liquidity_net in rows:
-            pm_addr = get_checksum_address(pm_address)
-            key = (pm_addr, pool_hash)
-            if key not in result:
-                result[key] = {}
-            result[key][int(tick)] = (int(liquidity_gross), int(liquidity_net))
+        for (pm_address, pool_hash), ticks in self._rust().get_all_liquidity_maps_v4().items():
+            result[get_checksum_address(pm_address), pool_hash] = ticks
         return result
 
     def get_newest_block(self) -> BlockNumber | None:
@@ -280,24 +285,7 @@ class DatabaseSnapshot:
             The block number of the newest update, or None if unavailable.
 
         """
-        with self.session() as session:
-            last_update_blocks = set(
-                session.scalars(
-                    select(ExchangeTable.last_update_block).where(
-                        ExchangeTable.chain_id == self.chain_id,
-                        ExchangeTable.name.like("%!_v4", escape="!"),
-                    ),
-                ).all(),
-            )
-
-        if not last_update_blocks or None in last_update_blocks:
-            return None
-
-        return max(
-            last_update_block
-            for last_update_block in last_update_blocks
-            if isinstance(last_update_block, int)
-        )
+        return self._rust().get_newest_block_v4()
 
     def get_pools(self) -> set[PoolId]:
         """Return pools.
@@ -306,7 +294,7 @@ class DatabaseSnapshot:
             Set of pool IDs stored in the database.
 
         """
-        return set(self.session.scalars(select(UniswapV4PoolTable.pool_hash)).all())
+        return set(self._rust().get_pools_v4())
 
 
 class UniswapV4LiquiditySnapshot:

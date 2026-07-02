@@ -3,7 +3,7 @@
 import asyncio
 import pathlib
 from collections import defaultdict, deque
-from typing import TYPE_CHECKING, Any, Protocol, TypedDict
+from typing import Any, Protocol, TypedDict
 
 import pydantic_core
 import tqdm
@@ -11,17 +11,14 @@ import tqdm.asyncio
 from eth_abi.abi import decode as abi_decode
 from eth_typing import ChecksumAddress, HexAddress
 from hexbytes import HexBytes
-from sqlalchemy import select
-from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session, scoped_session
 from web3 import Web3
 from web3.types import LogReceipt
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.database.models.base import ExchangeTable
-from degenbot.database.models.pools import LiquidityPoolTable, UniswapV3PoolTableBase
 from degenbot.database.operations import get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
+from degenbot.degenbot_rs import PyDatabaseSnapshot
 from degenbot.exceptions.pool import UnknownPool
 from degenbot.logging import logger
 from degenbot.provider.async_adapter import AsyncProviderAdapter
@@ -32,9 +29,6 @@ from degenbot.types.concrete import KeyedDefaultDict
 from degenbot.uniswap.abi import UNISWAP_V3_POOL_ABI
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.v3_types import UniswapV3LiquidityEvent, UniswapV3PoolLiquidityMappingUpdate
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 
 class LiquidityMap(TypedDict):
@@ -241,7 +235,10 @@ class IndividualJsonFileSnapshot:
 class DatabaseSnapshot:
     """Snapshot source backed by built-in SQLite database.
 
-    Uses the ORM abstractions defined in `degenbot.database`.
+    Routes every read through the Rust `degenbot-db` core crate via the
+    `PyDatabaseSnapshot` PyO3 seam (ADR-005 three-layer architecture). The
+    `session` / `database_path` are retained for explicit-deps construction +
+    migration tooling; reads no longer use the SQLAlchemy session.
     """
 
     storage_kind = "db"
@@ -271,6 +268,41 @@ class DatabaseSnapshot:
             self.database_path = database_path
 
         self.chain_id = chain_id
+        # Lazily-constructed Rust read handle (opened on first read so a
+        # `db=-only` construction with no resolvable path doesn't fail until
+        # a read is actually attempted).
+        self._rust_snapshot: PyDatabaseSnapshot | None = None
+
+    def _rust_db_path(self) -> pathlib.Path:
+        """Resolve the SQLite file path the Rust reader will open.
+
+        Prefer an explicit `database_path`; fall back to the bound engine's
+        file URL (the `db=bot.db` case where no path was passed).
+
+        Returns:
+            The resolved database file path.
+
+        Raises:
+            ValueError: If no file path can be resolved (e.g. an in-memory engine).
+
+        """
+        if self.database_path and self.database_path.name:
+            return self.database_path
+        engine = getattr(self.session, "_engine", None)
+        if engine is not None:
+            db_path = engine.url.database
+            if db_path and db_path != ":memory:":
+                return pathlib.Path(db_path)
+        msg = "database_path is required for Rust-backed snapshot reads"
+        raise ValueError(msg)
+
+    def _rust(self) -> PyDatabaseSnapshot:
+        if self._rust_snapshot is None:
+            self._rust_snapshot = PyDatabaseSnapshot(
+                chain_id=self.chain_id,
+                database_path=str(self._rust_db_path()),
+            )
+        return self._rust_snapshot
 
     def get_liquidity_map(self, pool_address: ChecksumAddress) -> LiquidityMap | None:
         """Return liquidity map.
@@ -279,63 +311,33 @@ class DatabaseSnapshot:
             The liquidity map for the pool, or None if not found.
 
         """
-        pool_in_db = self.session.scalar(
-            select(LiquidityPoolTable).where(LiquidityPoolTable.address == pool_address),
-        )
-        if pool_in_db is None:
+        raw = self._rust().get_liquidity_map_v3(get_checksum_address(pool_address))
+        if raw is None:
             return None
-
-        if not isinstance(pool_in_db, UniswapV3PoolTableBase):
-            return None
-
-        if TYPE_CHECKING:
-            assert isinstance(pool_in_db, UniswapV3PoolTableBase)
-
         return LiquidityMap(
             tick_bitmap={
-                int(initialization_map.word): BitmapAtWord(bitmap=initialization_map.bitmap)
-                for initialization_map in pool_in_db.initialization_maps
+                int(word): BitmapAtWord(**entry) for word, entry in raw["tick_bitmap"].items()
             },
             tick_data={
-                int(liquidity_position.tick): LiquidityAtTick(
-                    liquidity_gross=liquidity_position.liquidity_gross,
-                    liquidity_net=liquidity_position.liquidity_net,
-                )
-                for liquidity_position in pool_in_db.liquidity_positions
+                int(tick): LiquidityAtTick(**entry)
+                for tick, entry in raw["tick_data"].items()
             },
         )
 
     def get_all_liquidity_maps(self) -> dict[ChecksumAddress, dict[int, tuple[int, int]]]:
-        """Return all V3 tick data as plain dicts using a single raw SQL query.
+        """Return all V3 tick data as plain dicts.
 
-        Returns {pool_address: {tick_index: (liquidity_gross, liquidity_net)}}
-        with no Pydantic model overhead.
+        Delegates the bulk read to the Rust core (GIL released during the
+        SQLite scan). Returns {pool_address: {tick_index: (liquidity_gross, liquidity_net)}}.
 
         Returns:
             A dict mapping pool addresses to tick data dicts.
 
         """
-        rows = self.session.execute(
-            sa_text(
-                """
-                SELECT p.address, lp.tick, lp.liquidity_gross, lp.liquidity_net
-                FROM pools p
-                JOIN liquidity_positions lp ON lp.pool_id = p.id
-                WHERE p.chain = :chain_id
-                  AND p.kind IN ('uniswap_v3', 'sushiswap_v3', 'pancakeswap_v3', 'aerodrome_v3')
-                ORDER BY p.address, lp.tick
-                """,
-            ),
-            {"chain_id": self.chain_id},
-        ).all()
-
-        result: dict[ChecksumAddress, dict[int, tuple[int, int]]] = {}
-        for pool_address, tick, liquidity_gross, liquidity_net in rows:
-            addr = get_checksum_address(pool_address)
-            if addr not in result:
-                result[addr] = {}
-            result[addr][int(tick)] = (int(liquidity_gross), int(liquidity_net))
-        return result
+        return {
+            get_checksum_address(addr): ticks
+            for addr, ticks in self._rust().get_all_liquidity_maps_v3().items()
+        }
 
     def get_newest_block(self) -> BlockNumber | None:
         """Return newest block.
@@ -344,22 +346,7 @@ class DatabaseSnapshot:
             The newest block number across all V3 exchanges, or None if unavailable.
 
         """
-        with self.session() as session:
-            last_update_blocks: Sequence[int | None] = session.scalars(
-                select(ExchangeTable.last_update_block).where(
-                    ExchangeTable.chain_id == self.chain_id,
-                    ExchangeTable.name.like("%!_v3", escape="!"),
-                ),
-            ).all()
-
-        if not last_update_blocks or None in last_update_blocks:
-            return None
-
-        return max(
-            last_update_block
-            for last_update_block in last_update_blocks
-            if isinstance(last_update_block, int)
-        )
+        return self._rust().get_newest_block_v3()
 
     def get_pools(self) -> set[ChecksumAddress]:
         """Return pools.
@@ -368,10 +355,7 @@ class DatabaseSnapshot:
             The set of V3 pool addresses from the database.
 
         """
-        return {
-            get_checksum_address(pool)
-            for pool in self.session.scalars(select(UniswapV3PoolTableBase.address)).all()
-        }
+        return {get_checksum_address(p) for p in self._rust().get_pools_v3()}
 
 
 class UniswapV3LiquiditySnapshot:

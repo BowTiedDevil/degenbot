@@ -7,10 +7,8 @@ instead of importing module-level singletons.
 import pathlib
 from unittest.mock import MagicMock
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import scoped_session, sessionmaker
-
-from degenbot.database.models.base import Base, ExchangeTable
+from degenbot.database.models.base import ExchangeTable
+from degenbot.database.operations import create_new_sqlite_database, get_scoped_sqlite_session
 from degenbot.database.session_manager import DatabaseSessionManager
 from degenbot.uniswap.v3_snapshot import DatabaseSnapshot as V3DatabaseSnapshot
 from degenbot.uniswap.v4_snapshot import DatabaseSnapshot as V4DatabaseSnapshot
@@ -38,36 +36,36 @@ class TestV3DatabaseSnapshotExplicitDeps:
         assert snapshot.chain_id == 1
 
     def test_get_newest_block_uses_self_session(self, tmp_path: pathlib.Path) -> None:
-        """get_newest_block uses self.session() instead of module-level db_session."""
-        engine = create_engine("sqlite:///:memory:")
+        """get_newest_block reads via the Rust seam from the file DB.
 
-        Base.metadata.create_all(engine)
+        The snapshot is no longer SQLAlchemy-backed for reads; this constructs
+        a real Alembic-stamped file DB, inserts an exchange via the ORM session,
+        then asserts the Rust-backed `get_newest_block` reads it.
+        """
+        db_path = tmp_path / "test.db"
+        create_new_sqlite_database(db_path)
+        scoped = get_scoped_sqlite_session(db_path)
 
-        local_sessionmaker = sessionmaker(bind=engine)
-        session = local_sessionmaker()
+        with scoped() as s:
+            exchange = ExchangeTable(
+                chain_id=1,
+                name="uniswap_v3",
+                last_update_block=18_000_000,
+                active=True,
+                factory="0x1F98431c8aD98523631AE4a59f267346ea31F984",
+            )
+            s.add(exchange)
+            s.commit()
 
-        # Insert a test exchange with a last_update_block
-        exchange = ExchangeTable(
-            chain_id=1,
-            name="uniswap_v3",
-            last_update_block=18_000_000,
-            active=True,
-            factory="0x1F98431c8aD98523631AE4a59f267346ea31F984",
-        )
-        session.add(exchange)
-        session.commit()
-
-        scoped = scoped_session(local_sessionmaker)
         db = DatabaseSessionManager(scoped)
 
         snapshot = V3DatabaseSnapshot(
             chain_id=1,
             db=db,
-            database_path=tmp_path / "test.db",
+            database_path=db_path,
         )
 
-        result = snapshot.get_newest_block()
-        assert result == 18_000_000
+        assert snapshot.get_newest_block() == 18_000_000
 
         db.dispose()
 

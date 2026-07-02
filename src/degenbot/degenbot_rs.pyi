@@ -604,6 +604,29 @@ def db_upgrade_database(path: str) -> str:
 
     """
 
+class PyDatabaseSnapshot:
+    """Read-only V3/V4 snapshot handle over a degenbot SQLite DB file.
+
+    Opens its own connection (WAL, ``query_only=on``) from ``database_path``;
+    the Python ``DatabaseSnapshot`` shell constructs one per chain and
+    delegates every read to it.
+
+    """
+
+    def __init__(self, chain_id: int, database_path: str) -> None: ...
+    def get_liquidity_map_v3(self, pool_address: str) -> dict[str, Any] | None: ...
+    def get_liquidity_map_v4(
+        self, pool_manager: str, pool_id: bytes | str
+    ) -> dict[str, Any] | None: ...
+    def get_all_liquidity_maps_v3(self) -> dict[str, dict[int, tuple[int, int]]]: ...
+    def get_all_liquidity_maps_v4(
+        self,
+    ) -> dict[tuple[str, str], dict[int, tuple[int, int]]]: ...
+    def get_newest_block_v3(self) -> int | None: ...
+    def get_newest_block_v4(self) -> int | None: ...
+    def get_pools_v3(self) -> set[str]: ...
+    def get_pools_v4(self) -> set[str]: ...
+
 class PathIterator:
     def __iter__(self) -> PathIterator: ...
     def __next__(self) -> list[tuple[int, int]]: ...
@@ -2018,6 +2041,7 @@ __all__ = [
     "LogFilter",
     "PyBot",
     "PyBotIo",
+    "PyDatabaseSnapshot",
     "PyErc20Token",
     "PyLiquidityPool",
     "TransactionData",
