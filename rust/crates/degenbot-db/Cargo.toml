@@ -27,7 +27,7 @@ suspicious = "warn"
 [dependencies]
 alloy = { version = "^2.0" }
 parking_lot = { version = "^0.12" }
-rusqlite = { version = "^0.31", features = ["bundled"] }
+rusqlite = { version = "^0.31", features = ["bundled", "backup"] }
 thiserror = { version = "^2.0" }
 
 [dev-dependencies]
