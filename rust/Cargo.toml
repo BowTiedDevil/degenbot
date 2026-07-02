@@ -33,12 +33,15 @@ members = [
     "crates/degenbot-curve-math",
     "crates/degenbot-balancer-math",
     "crates/degenbot-solidly-math",
+    "crates/degenbot-evm-math",
     "crates/degenbot-abi",
     "crates/degenbot-rpc",
     "crates/degenbot-bot",
     "crates/degenbot-decoders",
     "crates/degenbot-uniswap",
     "crates/degenbot-pathfinding",
+    "crates/degenbot-db",
+    "crates/degenbot-executor",
     "crates/degenbot-python",
     "crates/degenbot",
 ]
@@ -72,6 +75,8 @@ codegen-units = 16
 codegen-units = 16
 [profile.release.package.degenbot-solidly-math]
 codegen-units = 16
+[profile.release.package.degenbot-evm-math]
+codegen-units = 16
 [profile.release.package.degenbot-abi]
 codegen-units = 16
 [profile.release.package.degenbot-rpc]
@@ -83,6 +88,10 @@ codegen-units = 16
 [profile.release.package.degenbot-uniswap]
 codegen-units = 16
 [profile.release.package.degenbot-pathfinding]
+codegen-units = 16
+[profile.release.package.degenbot-db]
+codegen-units = 16
+[profile.release.package.degenbot-executor]
 codegen-units = 16
 
 # Dev profile (default for `cargo test` / `just dev`): keep compilation fast.
