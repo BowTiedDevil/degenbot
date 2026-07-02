@@ -36,6 +36,7 @@ pub mod connection;
 pub mod error;
 pub mod migrate;
 pub mod ops;
+pub mod pathfinding;
 pub mod read;
 pub mod rows;
 pub mod schema;
@@ -47,6 +48,7 @@ pub use migrate::SchemaState;
 pub use ops::{
     backup_database, compact_database, create_new_database, upgrade_database, UpgradeOutcome,
 };
+pub use pathfinding::{PathEdge, PathGraphData};
 pub use read::ExchangeFamily;
 pub use rows::{
     InitializationMapRow, LiquidityPoolRow, LiquidityPositionRow, ManagedLiquidityPoolRow,
