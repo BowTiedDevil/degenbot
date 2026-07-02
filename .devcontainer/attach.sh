@@ -66,6 +66,91 @@ fi
 # the workspace user.
 USER="dev"
 
+# ---------------------------------------------------------------------------
+# Timezone: forward the HOST's timezone into the container.
+#
+# attach.sh does `podman start` + `podman exec` — it has no knowledge of
+# devcontainer.json, so the `mounts` entry (bind-mount host /etc/localtime)
+# and the `containerEnv` TZ = ${localEnv:TZ} declared there are NEVER applied
+# on this launch path. (They only take effect when the container is created via
+# VSCode's 'Reopen in Container' or `devcontainer up` — see rebuild.sh.) Worse,
+# `podman exec` does not inherit the caller's env, so even an exported host TZ
+# wouldn't reach the exec'd shell without --env forwarding (same reason TERM and
+# COLORTERM are forwarded below).
+#
+# So we resolve the host's current zone here — preferring an exported TZ, then
+# reading the host's /etc/localtime symlink — and do two things with it:
+#   1. Self-heal the container's /etc/localtime to match (a plain `podman start`
+#      reuses whatever /etc/localtime the container was CREATED with, which on
+#      this launch path is the image's default Etc/UTC; a travel/rebuild can
+#      leave them out of sync). Self-healing means every attach is correct
+#      without a rebuild, and picks up a changed host zone (laptop travel).
+#   2. Forward TZ=... on the `podman exec` so tools that read the env var
+#      directly (date, some loggers) are correct even before/without the
+#      symlink, and so the inner shell has TZ set for child processes.
+#
+# Guard: only override if the resolved zone maps to a real file under
+# /usr/share/zoneinfo/. If the host has no TZ exported and /etc/localtime isn't
+# a zoneinfo symlink (e.g. a copied POSIX tz file, or missing entirely), we
+# SKIP entirely and let the container keep its image default (Etc/UTC). Per the
+# design decision in AGENTS discussion: default to UTC, only override when the
+# host zone is positively resolvable. Making the override *conditional* on a
+# resolvable zone is what makes the travel case (Q3) work: a host that moves
+# to a new zone just updates its /etc/localtime, and the next attach picks it
+# up; a host whose zone can't be resolved at all degrades safely to UTC
+# instead of forwarding garbage.
+host_zone=""
+# Prefer an exported TZ (validates it resolves to a zone file before trusting).
+if [ -n "${TZ:-}" ]; then
+  if [ -f "/usr/share/zoneinfo/${TZ}" ]; then
+    host_zone="$TZ"
+  fi
+fi
+# Otherwise read the host's /etc/localtime symlink. readlink -f follows the
+# chain to the final target; if it ends under .../zoneinfo/<name>, <name> is a
+# valid IANA zone (e.g. America/Los_Angeles). A regular (non-symlink) file or a
+# broken link yields nothing here -> skip, fall back to UTC.
+if [ -z "$host_zone" ]; then
+  lt="$(readlink -f /etc/localtime 2>/dev/null || true)"
+  case "$lt" in
+    */zoneinfo/*)
+      z="${lt##*/zoneinfo/}"
+      [ -n "$z" ] && [ -f "/usr/share/zoneinfo/${z}" ] && host_zone="$z"
+      ;;
+  esac
+fi
+
+if [ -n "$host_zone" ]; then
+  # 1. Self-heal the container's /etc/localtime if it doesn't already match the
+  #    host zone. Done as root (--user 0); the symlink target lives in the
+  #    read-only image layer so it's safe and idempotent. Cheap: one inspect +
+  #    one exec only when the target differs, which is rare (mostly the first
+  #    attach after a create/rebuild/travel).
+  #
+  #    Guard against /etc/localtime being a MOUNT POINT: on the rebuild.sh
+  #    path, `devcontainer up` applies the devcontainer.json mounts entry that
+  #    bind-mounts the host's /etc/localtime read-only. That bind is already
+  #    correct (it IS the host zone), so self-healing is unnecessary; and
+  #    `ln -sf` over a read-only bind would fail noisily. We detect a mount
+  #    point via `findmnt` (mounted) and skip the self-heal entirely in that
+  #    case — the bind already carries the right zone. Only when /etc/localtime
+  #    is NOT a mount point (the plain podman-start path, image's own file) do
+  #    we rewrite the symlink.
+  want="/usr/share/zoneinfo/${host_zone}"
+  is_mount="$(podman exec --user 0 "$name" findmnt -n -o TARGET /etc/localtime 2>/dev/null || true)"
+  if [ -z "$is_mount" ]; then
+    cur="$(podman exec --user 0 "$name" readlink -f /etc/localtime 2>/dev/null || true)"
+    if [ "$cur" != "$want" ]; then
+      podman exec --user 0 "$name" ln -sf "$want" /etc/localtime >/dev/null 2>&1 || \
+        echo "⚠️  could not set container /etc/localtime to ${host_zone} (logs above)" >&2
+    fi
+  fi
+  TZ_FWD="$host_zone"
+else
+  # Unresolvable -> don't forward TZ; container keeps its image default (UTC).
+  TZ_FWD=""
+fi
+
 # Propagate the host terminal's color capability through the podman exec
 # boundary. `podman exec` does NOT inherit the caller's env — only vars named
 # via --env are injected into the exec process — so TERM and COLORTERM must be
@@ -84,4 +169,5 @@ exec podman exec -it \
     --user "$USER" \
     --env TERM="${TERM}" \
     --env COLORTERM="${COLORTERM:-}" \
+    --env TZ="${TZ_FWD}" \
     "$name" tmux new -As dev
