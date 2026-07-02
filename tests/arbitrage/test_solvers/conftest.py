@@ -8,7 +8,7 @@ from degenbot.uniswap.v3_libraries import get_sqrt_ratio_at_tick
 # solver stack (the `brent_solve_hops` / `make_v3_tick_range` helpers used
 # `_mobius_math.simulate_path` + `MobiusFloatHop` / `V3TickRangeHop` types).
 # The realistic-decimal reserve + fee constants below stay — they're shared by
-# the kept tag-union tests + SolidlyStableSolver suite.
+# the kept tag-union tests.
 
 # ==============================================================================
 # Shared constants — realistic reserve magnitudes with correct decimals
