@@ -335,6 +335,48 @@ def cl_min_usable_tick(tick_spacing: int) -> int:
 
     """
 
+def cl_apply_liquidity_mapping_update(
+    tick_bitmap: dict[int, dict[str, int]],
+    tick_data: dict[int, dict[str, int]],
+    tick_spacing: int,
+    tick: int,
+    liquidity: int,
+    initial_state_block: int,
+    update_block: int,
+    tick_lower: int,
+    tick_upper: int,
+    liquidity_delta: int,
+) -> dict[str, Any]:
+    """Apply a liquidity-mapping update (mint/burn) to the tick bitmap & data.
+
+    A thin PyO3 wrapper over the pure-Rust
+    ``degenbot_cl_math::cl_lib::liquidity_mapping::apply_liquidity_mapping_update``.
+    Mirrors ``degenbot.calculations.concentrated_liquidity.apply_liquidity_mapping_update``.
+    Values may be plain dicts or pydantic ``BitmapAtWord`` / ``LiquidityAtTick``
+    models (the seam reads by key or attribute). ``initial_state_block`` values
+    exceeding ``u64::MAX`` (e.g. ``MAX_UINT256`` used to disable the in-range
+    adjustment) are clamped to ``u64::MAX``, preserving the skip behavior.
+
+    Args:
+        tick_bitmap: Word → ``{"bitmap": int, "block": int}`` (or models)
+        tick_data: Tick → ``{"liquidity_net": int, "liquidity_gross": int, "block": int}`` (or models)
+        tick_spacing: Tick spacing
+        tick: Active tick (for the in-range check)
+        liquidity: Active in-range liquidity (uint128)
+        initial_state_block: State block at which the active liquidity was last settled
+        update_block: Block of this liquidity event
+        tick_lower: Position lower tick
+        tick_upper: Position upper tick
+        liquidity_delta: Signed delta (mint positive, burn negative)
+
+    Returns:
+        ``{"tick_bitmap": {...}, "tick_data": {...}, "liquidity": int}``
+
+    Raises:
+        ValueError: On invalid input types, non-uint128 liquidity, or non-i32 ticks
+
+    """
+
 # ── Balancer V2 math (feature = "balancer-math"). ──
 # Pure-math wrappers over the degenbot-balancer-math leaf. The `version`
 # discriminant (1=V1, 2=V2) is the bytecode-detected PowVersion; `round_up`
@@ -1890,6 +1932,7 @@ __all__ = [
     "balancer_weighted_calculate_invariant",
     "balancer_weighted_subtract_swap_fee_amount",
     "cl_add_delta",
+    "cl_apply_liquidity_mapping_update",
     "cl_compute_swap_step_v3",
     "cl_compute_swap_step_v4",
     "cl_div_rounding_up",
