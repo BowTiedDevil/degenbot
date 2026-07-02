@@ -11,6 +11,79 @@
 //
 // Podman note: mounts are plain type=bind (no consistency=cached, which is
 // Docker-Desktop-only). VSCode's podman dockerPath handles the runtime.
+//
+// ─────────────────────────────────────────────────────────────────────────
+// LAUNCH-PATH COVERAGE — which fields apply when the container is STARTED vs
+// when it was CREATED. Not all fields below apply on every entry point:
+//
+//   • VSCode 'Reopen in Container' / .devcontainer/rebuild.sh — this whole
+//     file is honored: build, runArgs, mounts, containerEnv, remoteEnv (if
+//     any), the vscode customizations, AND the lifecycle hooks
+//     (postCreateCommand etc.).
+//
+//   • .devcontainer/attach.sh — does plain `podman start` + `podman exec`.
+//     It has no knowledge of this file at RUN time, but it is NOT barren,
+//     because two field classes are BAKED into the container config at
+//     create time and survive stop/start:
+//
+//       CREATE-TIME fields (baked once at `devcontainer up`; reused on every
+//       `podman start`, so attach.sh DOES see them):
+//         - build.dockerfile            (the image itself; always honored)
+//         - runArgs                     (e.g. --pids-limit=-1 is live)
+//         - mounts                      (the ~/.agents, ~/.config/degenbot,
+//                                        ~/.foundry, ~/.pi bind mounts)
+//         - containerEnv                (LOCAL_BIN, FOUNDRY_DIR,
+//                                        UV_PROJECT_ENVIRONMENT,
+//                                        PYTHONPYCACHEPREFIX, the RPC URIs,
+//                                        TZ). This is why containerEnv is used
+//                                        instead of remoteEnv — containerEnv
+//                                        is baked into Config.Env and visible
+//                                        to `podman exec` shells; remoteEnv is
+//                                        only injected by the VSCode runtime
+//                                        into shells IT spawns, so it is
+//                                        invisible to attach.sh (useless for
+//                                        the terminal-only workflow).
+//         - remoteUser                  (attach.sh redundantly also passes
+//                                        --user dev)
+//
+//       ATTACH/RUNTIME-TIME fields (re-applied by the VSCode runtime on EVERY
+//       attach; attach.sh NEVER gets them):
+//         - postCreateCommand           (runs ONCE at create via devcontainer;
+//                                        `podman start` does NOT re-fire it.
+//                                        attach.sh warns if the resulting
+//                                        venv — created by post-create.sh — is
+//                                        missing. If you add/repair something
+//                                        here, a rebuild via rebuild.sh is
+//                                        required to run it.)
+//         - postStartCommand / postAttachCommand  (not declared; if added,
+//                                        attach.sh would similarly miss them)
+//         - remoteEnv                   (not declared, intentionally — see the
+//                                        containerEnv comment above)
+//         - customizations.vscode.*     (editor-only: extension auto-install
+//                                        and in-editor settings. attach.sh is a
+//                                        plain terminal session and ignores
+//                                        these; they're irrelevant to it)
+//         - workspaceFolder              (tells VSCode which folder to open;
+//                                        attach.sh lands in the exec user's
+//                                        home instead. Not a bug — just unused)
+//         - shutdownAction              (VSCode-disconnect behavior; attach.sh
+//                                        doesn't trigger it. Net effect here
+//                                        is the same: container keeps running
+//                                        after detach, since attach.sh does
+//                                        `podman start` which left it running)
+//
+//   EDIT-DRIFT WARNING (the subtle trap): create-time fields are frozen at
+//   whatever THIS FILE said at the moment of the last `devcontainer up`. An
+//   edit to mounts / runArgs / containerEnv / build committed AFTER the last
+//   rebuild is invisible on the attach path until rebuild.sh is run. Example:
+//   the /etc/localtime bind-mount entry was added in a later commit than the
+//   container was created, so it was never baked — the attach path stayed on
+//   Etc/UTC. attach.sh carries its own host-zone resolution / self-heal /
+//   --env TZ forwarding precisely to cover this gap (see the timezone block
+//   in attach.sh). Any future create-time edit should be pair-reviewed with
+//   "does the attach path need a rebuild to see this, and is there an
+//   attach.sh-side fallback in the meantime?"
+// ─────────────────────────────────────────────────────────────────────────
 {
   "name": "degenbot",
   "build": {
@@ -90,6 +163,14 @@
     // Forward host TZ (if exported) for tools that read the env var directly.
     // Empty on hosts without TZ exported — falls back to bind-mounted
     // /etc/localtime above.
+    //
+    // NOTE: this containerEnv + the /etc/localtime mount entry above ONLY apply
+    // when the container is created via VSCode's 'Reopen in Container' or
+    // `devcontainer up` (rebuild.sh). The primary attach path (.devcontainer/
+    // attach.sh) does `podman start` + `podman exec`, which never reads this
+    // file — so neither the mount nor this TZ forward takes effect there.
+    // attach.sh carries its own host-zone resolution + self-heal + --env TZ
+    // forwarding to cover that path; see the timezone block in attach.sh.
     "TZ": "${localEnv:TZ}",
     // Ethereum RPC URIs. The host's tests.env points these at localhost:8545
     // (the local anvil node, reachable via pasta port-forwarding). Inside the
