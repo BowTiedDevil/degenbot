@@ -42,6 +42,7 @@ pub mod read;
 pub mod rows;
 pub mod schema;
 pub mod snapshot;
+pub mod write;
 
 pub use aave::{AaveCollateralPositionRecord, AaveDebtPositionRecord, AaveUserRecord};
 pub use connection::DegenbotDb;
@@ -59,3 +60,4 @@ pub use rows::{
 };
 pub use schema::ALEMBIC_HEAD;
 pub use snapshot::{BitmapAtWord, LiquidityAtTick, LiquidityMap, PoolKey};
+pub use write::{decode_reserve_configuration_bitmap, ReserveConfiguration};
