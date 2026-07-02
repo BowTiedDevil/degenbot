@@ -40,7 +40,7 @@ from degenbot.aerodrome.pools import AerodromeV3Pool
 from degenbot.anvil_fork import AnvilFork
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.degenbot_rs import PyBot
-from degenbot.uniswap.v3_libraries.tick_math import MAX_SQRT_RATIO, MIN_SQRT_RATIO
+from degenbot.uniswap.v3_libraries import MAX_SQRT_RATIO, MIN_SQRT_RATIO
 from tests.aerodrome.test_aerodrome_pools import AERODROME_V3_QUOTER_ABI
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v3_pool_factory import make_v3_pool

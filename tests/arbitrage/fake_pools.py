@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
-from degenbot.uniswap.v3_libraries.tick_math import get_sqrt_ratio_at_tick
+from degenbot.uniswap.v3_libraries import get_sqrt_ratio_at_tick
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from tests.helpers.v3_pool_factory import make_v3_pool
 

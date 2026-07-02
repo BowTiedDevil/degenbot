@@ -37,6 +37,22 @@ def _rpc_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DEGENBOT_RPC_WS_CHAINID_1", "ws://localhost:8546")
 
 
+@pytest.fixture(autouse=True)
+def _restore_sigint() -> None:
+    """Restore the default SIGINT handler after each test.
+
+    ``BackrunSession.start()`` binds a SIGINT→``engine.stop()`` handler on the
+    production path (``install_sigint=True``). Tests that call ``start()`` then
+    ``run()`` directly (without ``async with``) never reach ``__aexit__``, so
+    the handler would leak across tests and pollute ``signal.getsignal``
+    assertions. This fixture restores ``SIG_DFL`` after each test unconditionally.
+    """
+    yield
+    import signal as _signal
+
+    _signal.signal(_signal.SIGINT, _signal.SIG_DFL)
+
+
 def _cfg(**overrides) -> BackrunConfig:
     base = {
         "OPERATOR_ADDRESS": "0x9C56a29c7231974c269E24F9FB3c29203039089E",
@@ -619,3 +635,123 @@ class TestBackrunSessionShutdown:
         # shutdown() (→ engine.stop) ran during __aexit__, recording "stop"
         assert engine_registry.engine.stop_calls == 1
         assert "stop" in events
+
+
+class TestBackrunSessionSigintHandler:
+    """The SIGINT→``engine.stop()`` handler closes the "first Ctrl-C swallowed"
+    gap.
+
+    During ``build_paths`` the main thread is blocked inside the synchronous
+    ``find_paths`` graph prep / the Rust ``find_paths_rust`` DFS. Python's
+    default SIGINT → ``KeyboardInterrupt`` is deferred until that section
+    yields to the eval loop, so the first Ctrl-C appeared swallowed: the pump
+    (on the shared tokio runtime) kept running and the operator pressed again.
+    ``start()`` binds a handler that calls ``engine.stop()`` *immediately* the
+    moment the signal arrives (the Rust DFS releases the GIL, so the handler
+    runs mid-DFS). These tests verify the binding lifecycle without sending a
+    real SIGINT (which is unsafe in a pytest worker).
+    """
+
+    async def test_install_binds_custom_handler_after_start(self) -> None:
+        import signal
+
+        prev = signal.getsignal(signal.SIGINT)
+        engine_registry = _FakeEngineRegistry()
+        session = BackrunSession(
+            _cfg(),
+            bot=_FakeBot(),
+            engine_registry=engine_registry,
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            path_builder=lambda **_kw: _noop_coro(),
+            consumer=lambda **_kw: _noop_coro(),
+            install_sigint=True,
+        )
+        await session.start()
+
+        bound = signal.getsignal(signal.SIGINT)
+        assert bound is not prev, "start() must bind the custom SIGINT handler"
+        assert bound != signal.SIG_DFL, "custom handler must replace the default"
+
+    async def test_aexit_restores_previous_handler(self) -> None:
+        import signal
+
+        baseline = signal.getsignal(signal.SIGINT)
+        engine_registry = _FakeEngineRegistry()
+        session = BackrunSession(
+            _cfg(),
+            bot=_FakeBot(),
+            engine_registry=engine_registry,
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            path_builder=lambda **_kw: _noop_coro(),
+            consumer=lambda **_kw: _noop_coro(),
+            install_sigint=True,
+        )
+        await session.start()
+        assert signal.getsignal(signal.SIGINT) is not baseline
+
+        async with session:
+            await asyncio.sleep(0.01)
+
+        # __aexit__ restored the previous handler (whatever it was — typically
+        # asyncio.run's Runner handler, not SIG_DFL).
+        assert signal.getsignal(signal.SIGINT) is baseline, (
+            "__aexit__ must restore the SIGINT handler to the pre-start value"
+        )
+
+    async def test_install_sigint_false_does_not_bind(self) -> None:
+        import signal
+
+        baseline = signal.getsignal(signal.SIGINT)
+        engine_registry = _FakeEngineRegistry()
+        session = BackrunSession(
+            _cfg(),
+            bot=_FakeBot(),
+            engine_registry=engine_registry,
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            path_builder=lambda **_kw: _noop_coro(),
+            consumer=lambda **_kw: _noop_coro(),
+            install_sigint=False,
+        )
+        await session.start()
+
+        # Handler untouched — tests use this to avoid process-global pollution.
+        assert signal.getsignal(signal.SIGINT) is baseline, (
+            "install_sigint=False must not bind a handler"
+        )
+
+    async def test_handler_closure_calls_engine_stop(self) -> None:
+        # The bound handler, when invoked, must call engine.stop() so the pump
+        # is killed the instant SIGINT arrives — not deferred until find_paths
+        # yields. We invoke the handler directly (not via OS signal, which is
+        # unsafe under pytest) — same callable Python would call.
+        import signal
+
+        engine_registry = _FakeEngineRegistry()
+        session = BackrunSession(
+            _cfg(),
+            bot=_FakeBot(),
+            engine_registry=engine_registry,
+            async_w3=_FakeAsyncW3(),
+            snapshots=(None, None, None, None),
+            path_builder=lambda **_kw: _noop_coro(),
+            consumer=lambda **_kw: _noop_coro(),
+            install_sigint=True,
+        )
+        await session.start()
+
+        handler = signal.getsignal(signal.SIGINT)
+        assert handler is not signal.SIG_DFL
+
+        # Invoking the handler must stop the engine. It also re-raises
+        # KeyboardInterrupt (mirroring the default handler) — that's the
+        # mechanism by which `await session.run()` unwinds to __aexit__.
+        with pytest.raises(KeyboardInterrupt):
+            handler(signal.SIGINT, None)
+
+        assert engine_registry.engine.stop_calls == 1, (
+            "the SIGINT handler must call engine.stop() so the pump dies "
+            "immediately, even while the main thread is blocked in find_paths"
+        )

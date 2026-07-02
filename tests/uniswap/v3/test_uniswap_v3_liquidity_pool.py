@@ -28,7 +28,7 @@ from degenbot.uniswap.deployments import (
     UniswapV3ExchangeDeployment,
 )
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
-from degenbot.uniswap.v3_libraries.tick_math import (
+from degenbot.uniswap.v3_libraries import (
     MAX_SQRT_RATIO,
     MAX_TICK,
     MIN_SQRT_RATIO,

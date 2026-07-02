@@ -35,6 +35,9 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m
     )?)?;
 
+    #[cfg(feature = "cl-math")]
+    register_tick_math_constants(m)?;
+
     // Address utilities (feature = "uniswap")
     #[cfg(feature = "uniswap")]
     m.add_function(wrap_pyfunction!(
@@ -156,5 +159,30 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "rpc")]
     m.add_class::<crate::rpc::subscription::PyAlloySubscription>()?;
 
+    Ok(())
+}
+
+/// Register the four TickMath boundary constants on the Python module.
+///
+/// ADR-005 single-source-of-truth: the canonical home is the
+/// `degenbot-cl-math` core; the PyO3 seam surfaces them so Python
+/// companions and a standalone Rust consumer share one source. The
+/// `v3_libraries/__init__` package re-exports these names; the now-retired
+/// pure-Python `tick_math.py` constant definitions are gone (C8 task CM2YQ4).
+#[cfg(feature = "cl-math")]
+fn register_tick_math_constants(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    use crate::cl_lib::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
+    let py = m.py();
+    m.add("MIN_TICK", MIN_TICK)?;
+    m.add("MAX_TICK", MAX_TICK)?;
+    // U160 widens to U256 for the alloy → Python-int conversion helper.
+    m.add(
+        "MIN_SQRT_RATIO",
+        crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(MIN_SQRT_RATIO))?,
+    )?;
+    m.add(
+        "MAX_SQRT_RATIO",
+        crate::conversion::alloy::u256_to_py(py, &alloy::primitives::U256::from(MAX_SQRT_RATIO))?,
+    )?;
     Ok(())
 }
