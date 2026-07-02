@@ -541,6 +541,69 @@ def find_paths_rust(
     pool_type_per_depth: list[set[int] | None] | None = ...,
 ) -> PathIterator: ...
 
+# ------------------------------------------------------------------
+# SQLite file operations (feature = "db").
+# ------------------------------------------------------------------
+# Thin PyO3 wrappers over `degenbot_db::ops`. The CLI (`degenbot.cli.database`)
+# delegates here; the GIL is released during file I/O. Raise `ValueError` on
+# any connection / DDL / backup / integrity-check failure.
+# `db_upgrade_database` returns a discriminant string.
+
+def db_create_new_database(path: str) -> None:
+    """Create a fresh degenbot SQLite DB: WAL + head DDL + VACUUM + Alembic stamp.
+
+    Args:
+        path: Filesystem path for the new database (created if absent)
+
+    Raises:
+        ValueError: On any connection / PRAGMA / DDL / stamp failure
+
+    """
+
+def db_backup_database(src: str, dst: str) -> None:
+    """Back up one SQLite DB into another via online backup.
+
+    Asserts `PRAGMA integrity_check == "ok"` on both source (before) and
+    destination (after). `dst` is created if absent and overwritten if present.
+
+    Args:
+        src: Source database path
+        dst: Destination database path (created/overwritten)
+
+    Raises:
+        ValueError: On an open / backup / integrity-check failure
+
+    """
+
+def db_compact_database(path: str) -> None:
+    """Compact a SQLite database via `VACUUM` (no-op for `:memory:`).
+
+    Args:
+        path: Database path
+
+    Raises:
+        ValueError: On a connection / VACUUM failure
+
+    """
+
+def db_upgrade_database(path: str) -> str:
+    """Ensure the database is at the Alembic schema head.
+
+    Returns ``"already_at_head"`` if the DB was current (no-op), or
+    ``"created_fresh"`` if an empty file was brought up to head. A stale
+    Alembic DB raises ``ValueError`` (run ``alembic upgrade head`` from Python).
+
+    Args:
+        path: Database path
+
+    Returns:
+        ``"already_at_head"`` or ``"created_fresh"``
+
+    Raises:
+        ValueError: On a stale / unrecognized schema, or an I/O failure
+
+    """
+
 class PathIterator:
     def __iter__(self) -> PathIterator: ...
     def __next__(self) -> list[tuple[int, int]]: ...
@@ -793,6 +856,44 @@ class Contract:
         Returns:
             List of decoded return values as strings
 
+        """
+
+class PyChainlinkPriceFeed:
+    """Typed Chainlink aggregator price-feed reader."""
+
+    def __init__(
+        self,
+        address: str,
+        provider: AlloyProvider,
+        chain_id: int | None = None,
+    ) -> None: ...
+    @property
+    def address(self) -> str: ...
+    @property
+    def chain_id(self) -> int | None: ...
+    def decimals(self) -> int:
+        """Call ``decimals()`` and return the feed's decimal places (``uint8``)."""
+    def latest_round_data(self) -> tuple[int, int, int, int, int]:
+        """Call ``latestRoundData()``; return
+        ``(round_id, answer, started_at, updated_at, answered_in_round)``
+        as Python ints (``answer`` is the raw ``int256`` in feed decimals)."""
+    def price(self) -> int:
+        """Decimal-corrected whole-unit price as an int
+        (``int(answer // 10**decimals)``; negative clamps to 0)."""
+
+class PyAavePriceOracle:
+    """Typed Aave price-oracle reader."""
+
+    def __init__(self, oracle_address: str, provider: AlloyProvider) -> None: ...
+    @property
+    def address(self) -> str: ...
+    def get_asset_price(self, asset_address: str) -> int:
+        """Call ``getAssetPrice(asset)`` and return the ``uint256`` price."""
+    def fetch(self, asset_addresses: list[str]) -> dict[str, int]:
+        """Fetch prices for a batch of assets, tolerantly.
+
+        A failure on one asset is logged and skipped; successfully-fetched
+        prices are returned keyed by checksummed asset address.
         """
 
 class LogFilter:
@@ -1955,6 +2056,10 @@ __all__ = [
     "curve_stableswap_get_y_d",
     "curve_stableswap_newton_y",
     "curve_stableswap_reduction_coefficient",
+    "db_backup_database",
+    "db_compact_database",
+    "db_create_new_database",
+    "db_upgrade_database",
     "decode",
     "decode_return_data",
     "decode_single",

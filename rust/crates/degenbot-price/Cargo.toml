@@ -26,3 +26,15 @@ degenbot-abi = { path = "../degenbot-abi" }
 degenbot-rpc = { path = "../degenbot-rpc" }
 log = { version = "^0.4" }
 thiserror = { version = "^2.0" }
+
+# Gated (not default) so pure-Rust consumers build without pulling pyo3.
+# Enables `impl From<degenbot_price::PriceError> for pyo3::PyErr` so the
+# `degenbot-python` binding layer can `?`-propagate reader errors as a
+# `PyErr` (mirrors `degenbot-core`/`degenbot-rpc`'s `pyo3` feature).
+pyo3 = { version = "^0.29", features = ["abi3-py312", "serde"], optional = true }
+
+[features]
+default = []
+# Enables `impl From<PriceError> for pyo3::PyErr`. Enabled by the
+# `degenbot-python` binding crate; never enabled by the umbrella.
+pyo3 = ["dep:pyo3"]

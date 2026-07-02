@@ -8,6 +8,11 @@
 
 use degenbot_core::errors::{AddressError, ProviderError};
 
+#[cfg(feature = "pyo3")]
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
+#[cfg(feature = "pyo3")]
+use pyo3::PyErr;
+
 /// Errors raised by the Chainlink / Aave price readers.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -29,3 +34,15 @@ pub enum PriceError {
 
 /// Convenience alias used throughout the crate.
 pub type PriceResult<T> = Result<T, PriceError>;
+
+#[cfg(feature = "pyo3")]
+impl From<PriceError> for PyErr {
+    fn from(err: PriceError) -> Self {
+        match err {
+            PriceError::Address(_) | PriceError::Decode(_) => {
+                PyValueError::new_err(err.to_string())
+            }
+            PriceError::Provider(_) => PyRuntimeError::new_err(err.to_string()),
+        }
+    }
+}

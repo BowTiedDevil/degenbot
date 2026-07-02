@@ -11,7 +11,6 @@ from eth_typing import ChecksumAddress
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 from web3 import Web3
-from web3.exceptions import ContractLogicError
 
 from degenbot.aave.analysis.core import (
     CollateralPositionRecord,
@@ -29,8 +28,8 @@ from degenbot.database.models.aave import (
     AaveV3User,
     AaveV3UserCollateralConfig,
 )
+from degenbot.degenbot_rs import PyAavePriceOracle
 from degenbot.logging import logger
-from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 from degenbot.provider.sync_adapter import ProviderAdapter
 
 # Contract name for price oracle in aave_v3_contracts table
@@ -257,7 +256,16 @@ def _convert_debt_position(pos: AaveV3DebtPosition) -> DebtPositionRecord:
 
 
 class OraclePriceFetcher:
-    """PriceFetcher implementation using the Aave oracle contract."""
+    """PriceFetcher implementation using the Aave oracle contract.
+
+    Delegating shell over the Rust ``PyAavePriceOracle`` reader (the
+    ``degenbot-price`` core crate, ADR-005). The inline ``raw_call`` /
+    ``encode_function_calldata`` loop is retired — ``getAssetPrice(address)``
+    ``eth_call`` + ``uint256`` decode now run in Rust, with the same tolerant
+    per-asset skip-on-error behavior (the Rust core logs + skips reverts /
+    decode failures, matching the prior ``ContractLogicError`` / ``ValueError``
+    catch).
+    """
 
     def __init__(self, provider: ProviderAdapter, oracle_address: ChecksumAddress) -> None:
         """Initialize the instance."""
@@ -271,26 +279,16 @@ class OraclePriceFetcher:
             The computed value.
 
         """
-        prices: dict[ChecksumAddress, int] = {}
-
-        for asset_address in asset_addresses:
-            try:
-                (price,) = raw_call(
-                    provider=self._provider,
-                    address=self._oracle_address,
-                    calldata=encode_function_calldata(
-                        function_prototype="getAssetPrice(address)",
-                        function_arguments=[asset_address],
-                    ),
-                    return_types=["uint256"],
-                )
-                prices[asset_address] = price
-            except (ContractLogicError, ValueError) as e:
-                logger.warning(f"Failed to fetch price for {asset_address}: {e}")
-                continue
-
-        logger.info(f"Fetched prices for {len(prices)}/{len(asset_addresses)} assets")
-        return prices
+        py_oracle = PyAavePriceOracle(
+            self._oracle_address,
+            self._provider.to_alloy_provider(),
+        )
+        # The Rust reader returns EIP-55 checksummed string keys; the inputs
+        # were already checksummed ``ChecksumAddress`` values, so each input
+        # key is present verbatim — preserve the input keys exactly (matching
+        # the prior Python ``prices[asset_address] = price`` shape).
+        fetched = py_oracle.fetch(list(asset_addresses))
+        return {addr: fetched[addr] for addr in asset_addresses if addr in fetched}
 
 
 class PositionAnalysisService:
