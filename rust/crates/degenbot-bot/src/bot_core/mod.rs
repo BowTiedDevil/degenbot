@@ -564,8 +564,8 @@ impl BotState {
             | PoolEntry::V3(..)
             | PoolEntry::V4(..)
             | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..) => None,
-            PoolEntry::AerodromeV2(..) => None,
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -580,8 +580,8 @@ impl BotState {
             | PoolEntry::V3(..)
             | PoolEntry::V4(..)
             | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..) => None,
-            PoolEntry::AerodromeV2(..) => None,
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -687,8 +687,8 @@ impl BotState {
             | PoolEntry::V3(..)
             | PoolEntry::V4(..)
             | PoolEntry::Curve(..)
-            | PoolEntry::BalancerStable(..) => None,
-            PoolEntry::AerodromeV2(..) => None,
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -706,8 +706,8 @@ impl BotState {
             | PoolEntry::V3(..)
             | PoolEntry::V4(..)
             | PoolEntry::Curve(..)
-            | PoolEntry::BalancerStable(..) => None,
-            PoolEntry::AerodromeV2(..) => None,
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -822,8 +822,8 @@ impl BotState {
             | PoolEntry::V3(..)
             | PoolEntry::V4(..)
             | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(..) => None,
-            PoolEntry::AerodromeV2(..) => None,
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -842,8 +842,8 @@ impl BotState {
             | PoolEntry::V3(..)
             | PoolEntry::V4(..)
             | PoolEntry::Curve(..)
-            | PoolEntry::BalancerWeighted(..) => None,
-            PoolEntry::AerodromeV2(..) => None,
+            | PoolEntry::BalancerWeighted(..)
+            | PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -950,8 +950,8 @@ impl BotState {
             | PoolEntry::V4(..)
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..) => None,
-            PoolEntry::AerodromeV2(..) => None,
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -988,8 +988,8 @@ impl BotState {
             | PoolEntry::V4(..)
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..) => None,
-            PoolEntry::AerodromeV2(..) => None,
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -1282,8 +1282,8 @@ impl BotState {
             PoolEntry::V2(..)
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..) => false,
-            PoolEntry::AerodromeV2(..) => false,
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => false,
         }
     }
 
@@ -1487,8 +1487,8 @@ impl BotState {
             | PoolEntry::V4(..)
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..) => None,
-            PoolEntry::AerodromeV2(..) => None,
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -1503,8 +1503,8 @@ impl BotState {
             | PoolEntry::V4(..)
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..) => None,
-            PoolEntry::AerodromeV2(..) => None,
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -1522,8 +1522,8 @@ impl BotState {
                 | PoolEntry::V4(..)
                 | PoolEntry::Curve(..)
                 | PoolEntry::BalancerWeighted(..)
-                | PoolEntry::BalancerStable(..) => None,
-                PoolEntry::AerodromeV2(..) => None,
+                | PoolEntry::BalancerStable(..)
+                | PoolEntry::AerodromeV2(..) => None,
             })
             .collect()
     }
@@ -1623,8 +1623,8 @@ impl BotState {
             PoolEntry::V2(..)
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..) => None,
-            PoolEntry::AerodromeV2(..) => None,
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -1777,8 +1777,8 @@ impl BotState {
             // Curve ported in 11c; Balancer weighted stable in 12e.
             PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..) => Ok(U256::ZERO),
-            PoolEntry::AerodromeV2(..) => Ok(U256::ZERO),
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => Ok(U256::ZERO),
         }
     }
 
@@ -1822,8 +1822,8 @@ impl BotState {
             PoolEntry::V2(..)
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..) => false,
-            PoolEntry::AerodromeV2(..) => false,
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => false,
         }
     }
 
@@ -1935,8 +1935,8 @@ impl BotState {
             PoolEntry::V2(..)
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..) => Err(SimulateSwapError::NotComputable),
-            PoolEntry::AerodromeV2(..) => Err(SimulateSwapError::NotComputable),
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => Err(SimulateSwapError::NotComputable),
         }
     }
 
@@ -1977,9 +1977,7 @@ impl BotState {
                     if !attempted.insert(word) {
                         return None;
                     }
-                    let Some(ref fetcher) = fetcher else {
-                        return None;
-                    };
+                    let fetcher = fetcher.as_ref()?;
                     match fetcher.fetch_missing_tick_word(pool_id, word, block) {
                         Ok(data) => {
                             self.merge_tick_word(pool_id, data);
@@ -2043,8 +2041,8 @@ impl BotState {
             PoolEntry::V2(..)
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..) => Err(SimulateSwapError::NotComputable),
-            PoolEntry::AerodromeV2(..) => Err(SimulateSwapError::NotComputable),
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => Err(SimulateSwapError::NotComputable),
         }
     }
 
@@ -2081,9 +2079,7 @@ impl BotState {
                     if !attempted.insert(word) {
                         return None;
                     }
-                    let Some(ref fetcher) = fetcher else {
-                        return None;
-                    };
+                    let fetcher = fetcher.as_ref()?;
                     match fetcher.fetch_missing_tick_word(pool_id, word, block) {
                         Ok(data) => {
                             self.merge_tick_word(pool_id, data);
@@ -2133,6 +2129,7 @@ impl BotState {
     /// missing a required word the fetcher cannot resolve.
     #[must_use]
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_lines)]
     pub fn simulate_swap_with_override(
         &self,
         pool_id: u64,
@@ -2197,9 +2194,7 @@ impl BotState {
                             if !attempted.insert(word) {
                                 return None;
                             }
-                            let Some(ref fetcher) = fetcher else {
-                                return None;
-                            };
+                            let fetcher = fetcher.as_ref()?;
                             match fetcher.fetch_missing_tick_word(pool_id, word, block) {
                                 Ok(data) => override_state.merge_tick_word(&data),
                                 Err(_) => return None,
@@ -2244,9 +2239,7 @@ impl BotState {
                             if !attempted.insert(word) {
                                 return None;
                             }
-                            let Some(ref fetcher) = fetcher else {
-                                return None;
-                            };
+                            let fetcher = fetcher.as_ref()?;
                             match fetcher.fetch_missing_tick_word(pool_id, word, block) {
                                 Ok(data) => override_state.merge_tick_word(&data),
                                 Err(_) => return None,
@@ -2258,8 +2251,8 @@ impl BotState {
             PoolEntry::V2(..)
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..) => None,
-            PoolEntry::AerodromeV2(..) => None,
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -2375,8 +2368,8 @@ impl BotState {
             // companion handles the calc).
             PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..) => U256::ZERO,
-            PoolEntry::AerodromeV2(..) => U256::ZERO,
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => U256::ZERO,
         }
     }
 
@@ -2847,7 +2840,7 @@ impl BotState {
     /// Stores immutable identity (`address`, `token0`, `token1`, `factory`,
     /// `variant`, `stable`, unidirectional `fee`) + the registration reserves
     /// + a genesis reorg-journal anchor (mirror of V2's discipline). Returns
-    /// the auto-assigned pool ID.
+    ///   the auto-assigned pool ID.
     ///
     /// # Panics
     ///
@@ -2860,8 +2853,7 @@ impl BotState {
         );
         let pool_id = self.next_pool_id;
         self.next_pool_id += 1;
-        let (identity, state) =
-            AerodromeV2PoolState::from_params(params.clone(), self.journal_depth);
+        let (identity, state) = AerodromeV2PoolState::from_params(params, self.journal_depth);
         self.pools
             .insert(pool_id, PoolEntry::AerodromeV2(identity, state));
         self.pool_addresses.insert(params.address, pool_id);
@@ -3200,8 +3192,8 @@ impl BotState {
             | PoolEntry::V4(..)
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..) => None,
-            PoolEntry::AerodromeV2(..) => None,
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -3717,8 +3709,8 @@ impl BotState {
             | PoolEntry::V3(..)
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..) => None,
-            PoolEntry::AerodromeV2(..) => None,
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -3733,8 +3725,8 @@ impl BotState {
             | PoolEntry::V3(..)
             | PoolEntry::Curve(..)
             | PoolEntry::BalancerWeighted(..)
-            | PoolEntry::BalancerStable(..) => None,
-            PoolEntry::AerodromeV2(..) => None,
+            | PoolEntry::BalancerStable(..)
+            | PoolEntry::AerodromeV2(..) => None,
         }
     }
 
@@ -3848,8 +3840,8 @@ impl BotState {
                 | PoolEntry::V3(..)
                 | PoolEntry::Curve(..)
                 | PoolEntry::BalancerWeighted(..)
-                | PoolEntry::BalancerStable(..) => None,
-                PoolEntry::AerodromeV2(..) => None,
+                | PoolEntry::BalancerStable(..)
+                | PoolEntry::AerodromeV2(..) => None,
             })
             .collect()
     }
@@ -4274,6 +4266,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn pool_family_dispatches_every_registered_family() {
         // Each non-V2 `PoolEntry` variant resolves to its own family tag.
         // Registers one pool of each family with minimal params and asserts
@@ -4355,25 +4348,26 @@ mod tests {
         assert_eq!(core.pool_family(curve_id), "curve");
 
         // Balancer weighted (2-token)
-        let bal_w_id = core.register_balancer_weighted_pool(&RegisterBalancerWeightedPoolParams {
-            address: Address::from([0xb1u8; 20]),
-            vault: Address::from([0xa0u8; 20]),
-            pool_id: [0x11u8; 32],
-            tokens: vec![Address::ZERO, Address::from([0x01u8; 20])],
-            weights: vec![
-                U256::from(5_000_000_000_000_000_000u128),
-                U256::from(5_000_000_000_000_000_000u128),
-            ],
-            scaling_factors: vec![U256::from(1u64), U256::from(1u64)],
-            swap_fee: 1_000_000_000_000_000,
-            pow_version: 2,
-            balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
-            update_block: 0,
-        });
-        assert_eq!(core.pool_family(bal_w_id), "balancer-weighted");
+        let bal_weighted_id =
+            core.register_balancer_weighted_pool(&RegisterBalancerWeightedPoolParams {
+                address: Address::from([0xb1u8; 20]),
+                vault: Address::from([0xa0u8; 20]),
+                pool_id: [0x11u8; 32],
+                tokens: vec![Address::ZERO, Address::from([0x01u8; 20])],
+                weights: vec![
+                    U256::from(5_000_000_000_000_000_000u128),
+                    U256::from(5_000_000_000_000_000_000u128),
+                ],
+                scaling_factors: vec![U256::from(1u64), U256::from(1u64)],
+                swap_fee: 1_000_000_000_000_000,
+                pow_version: 2,
+                balances: vec![U256::from(1_000_000u64), U256::from(1_000_000u64)],
+                update_block: 0,
+            });
+        assert_eq!(core.pool_family(bal_weighted_id), "balancer-weighted");
 
         // Balancer stable (2-token, MetaStable — bpt_idx=None)
-        let bal_s_id = core.register_balancer_stable_pool(&RegisterBalancerStablePoolParams {
+        let bal_stable_id = core.register_balancer_stable_pool(&RegisterBalancerStablePoolParams {
             address: Address::from([0xb2u8; 20]),
             vault: Address::from([0xb0u8; 20]),
             pool_id: [0x22u8; 32],
@@ -4387,7 +4381,7 @@ mod tests {
             update_block: 0,
             rate_provider: None,
         });
-        assert_eq!(core.pool_family(bal_s_id), "balancer-stable");
+        assert_eq!(core.pool_family(bal_stable_id), "balancer-stable");
 
         // Suppress unused-import warning for TickInfo/U128 when the V4 tick_data
         // map is empty — kept for parity with sibling V4 tests.

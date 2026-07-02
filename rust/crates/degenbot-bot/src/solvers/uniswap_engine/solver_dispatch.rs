@@ -152,10 +152,12 @@ impl UniswapEngine {
             .hops
             .iter()
             .any(|h| matches!(h, ResolvedHop::SolidlyStable { .. }));
-        let all_v2_or_solidly = resolved
-            .hops
-            .iter()
-            .all(|h| matches!(h, ResolvedHop::V2 { .. } | ResolvedHop::SolidlyStable { .. }));
+        let all_v2_or_solidly = resolved.hops.iter().all(|h| {
+            matches!(
+                h,
+                ResolvedHop::V2 { .. } | ResolvedHop::SolidlyStable { .. }
+            )
+        });
 
         let result = if all_v2 {
             let int_hops: Vec<_> = resolved
@@ -454,10 +456,7 @@ impl UniswapEngine {
     /// around `center` (plus one past the upper edge) and pick the max-profit
     /// input. Mirrors Python's `search_radius = 3` sweep. Returns `None` when
     /// no candidate is profitable.
-    fn solidly_brute_force_best(
-        hops: &[ResolvedHop],
-        center: U256,
-    ) -> Option<SolvePathResult> {
+    fn solidly_brute_force_best(hops: &[ResolvedHop], center: U256) -> Option<SolvePathResult> {
         const SEARCH_RADIUS: u64 = 3;
         let one = U256::from(1u64);
         let start = center.saturating_sub(U256::from(SEARCH_RADIUS)).max(one);
@@ -619,6 +618,7 @@ impl UniswapEngine {
     /// `core` is the locked [`BotState`] snapshot to read V2 state from
     /// (ADR-003). V3/V4 hops still read the per-family block engines; their
     /// state migrates into `core` in Slices 2/3.
+    #[allow(clippy::too_many_lines)]
     pub fn resolve_path(
         core: &crate::bot_core::BotState,
         pool_refs: &[MixedPoolRef],

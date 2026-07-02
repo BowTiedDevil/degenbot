@@ -248,7 +248,7 @@ pub fn lookup(chain_id: u64, factory: Address) -> Option<&'static DeploymentReco
 /// Carries enough context to render a clear error:
 /// "address does not match CREATE2(deployer, salt, `init_hash`) for chain X
 /// factory F: expected E, computed C".
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AddressMismatch {
     /// The chain id used for the deployment lookup.
     pub chain_id: u64,

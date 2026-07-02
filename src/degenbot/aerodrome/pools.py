@@ -193,7 +193,7 @@ class AerodromeV2Pool(
         """Update block."""
         if TYPE_CHECKING:
             assert self.state.block is not None
-        return cast("BlockNumber", self.state.block)
+        return self.state.block
 
     @staticmethod
     def swap_is_viable(

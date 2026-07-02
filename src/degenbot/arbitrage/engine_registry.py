@@ -378,6 +378,10 @@ class EngineRegistry:
         engine derives the Solidly hop family from the ``BotState`` identity at
         ``register_path`` time, so no engine-side pre-registration carries a
         family tag).
+
+        Returns:
+            The registered pool's engine ``pool_id``.
+
         """
         if pool.address in self._v2_keys:
             return self._v2_keys[pool.address]
