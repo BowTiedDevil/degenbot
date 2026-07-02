@@ -40,7 +40,7 @@ from degenbot.balancer.deployments import (
     BALANCER_V2_VAULT_ADDRESS,
     BALANCERQUERIES_CONTRACT_ADDRESS,
 )
-from degenbot.balancer.libraries.fixed_point import ONE
+from degenbot.balancer.libraries.constants import ONE
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.degenbot_rs import (
     balancer_stable_calc_in_given_out as _calc_in_given_out,

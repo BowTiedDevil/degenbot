@@ -162,10 +162,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-/// Register the four TickMath boundary constants on the Python module.
+/// Register the four `TickMath` boundary constants on the Python module.
 ///
 /// ADR-005 single-source-of-truth: the canonical home is the
-/// `degenbot-cl-math` core; the PyO3 seam surfaces them so Python
+/// `degenbot-cl-math` core; the `PyO3` seam surfaces them so Python
 /// companions and a standalone Rust consumer share one source. The
 /// `v3_libraries/__init__` package re-exports these names; the now-retired
 /// pure-Python `tick_math.py` constant definitions are gone (C8 task CM2YQ4).
