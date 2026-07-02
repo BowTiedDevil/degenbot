@@ -113,3 +113,53 @@ def test_bot_supplies_py_bot_to_real_engine() -> None:
         factory="0x0000000000000000000000000000000000000004",
     )
     assert registry.engine.v2_pool_count() == 1
+
+
+def test_register_path_dispatches_aerodrome_solidly_hop() -> None:
+    """An Aerodrome stable pool routes its shared-core key as a Solidly hop.
+
+    register_aerodrome_pool caches the pool_id (the engine's derive_hop_type
+    classifies it as HopType::SolidlyStable at register_path time, so no engine-
+    side tag passes through the (key, zfo) tuple). The stored PathInfo's hop is
+    a SolidlyHopInfo with variant 'aerodrome-v2-stable' and stable=True.
+    """
+    from fractions import Fraction
+
+    from degenbot.aerodrome.pools import AerodromeV2Pool
+    from examples.eth_backrun_helpers import SolidlyHopInfo
+    from tests.helpers.aerodrome_pool_factory import make_aerodrome_v2_pool
+    from tests.types.test_concrete_pool_construction import _make_usdc, _make_weth
+
+    fake = FakeUniswapArbEngine()
+    registry = runner.EngineRegistry(bot=None, engine=fake)
+
+    usdc = _make_usdc()
+    weth = _make_weth()
+    aero = make_aerodrome_v2_pool(
+        address="0xAE7FFAe65eC9eA34741B0FbA1E5dBc4F0eC5Ea6F",
+        token0=usdc,
+        token1=weth,
+        factory="0x9008d19f58aabd9ed0d60971565aa8510560ab41",
+        fee=Fraction(3, 1000),
+        stable=True,
+        reserves_token0=1_000_000 * 10 ** 6,
+        reserves_token1=1000 * 10 ** 18,
+    )
+    # register_aerodrome_pool caches the shared-core pool_id.
+    aero_key = registry.register_aerodrome_pool(aero)
+    assert aero_key == aero._py_pool.pool_id  # noqa: SLF001
+
+    path_id = registry.register_path([(aero, False)])
+
+    # The fake engine received the shared-core key + direction (no Solidly tag
+    # — the engine derives the family from the BotState identity).
+    assert fake.calls == [[(aero_key, False)]]
+    # The stored PathInfo's hop is a SolidlyHopInfo.
+    hops = registry.paths[path_id].hops
+    assert len(hops) == 1
+    hop = hops[0]
+    assert isinstance(hop, SolidlyHopInfo)
+    assert isinstance(aero, AerodromeV2Pool)  # sanity check
+    assert hop.stable is True
+    assert hop.variant == "aerodrome-v2-stable"
+    assert hop.zfo is False

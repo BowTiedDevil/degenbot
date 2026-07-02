@@ -37,6 +37,7 @@ from cmd_stream import (
 from degenbot.arbitrage.encoding import fits_int128
 from degenbot.arbitrage.hop_info import (  # noqa: F401  (re-exported for tests)
     PathInfo,
+    SolidlyHopInfo,
     V2HopInfo,
     V3HopInfo,
     V4HopInfo,
