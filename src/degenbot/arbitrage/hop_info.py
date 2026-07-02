@@ -16,17 +16,20 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING
 
+from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v4_liquidity_pool import UniswapV4Pool
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from fractions import Fraction
     from typing import Any
 
 __all__ = [
     "HopInfo",
     "PathInfo",
+    "SolidlyHopInfo",
     "V2HopInfo",
     "V3HopInfo",
     "V4HopInfo",
@@ -70,7 +73,33 @@ class V4HopInfo:
     zfo: bool
 
 
-HopInfo = V2HopInfo | V3HopInfo | V4HopInfo
+@dataclasses.dataclass(frozen=True)
+class SolidlyHopInfo:
+    """Engine-facing descriptor for a Solidly/Aerodrome/Camelot hop.
+
+    Aerodrome V2 pools (stable or volatile) and Camelot V2 pools in
+    ``stable_swap`` mode route to the Solidly solve branch. The Rust engine's
+    ``derive_hop_type`` discriminates by reading the ``BotState`` pool identity
+    at ``register_path`` time, so this descriptor is **informational** for the
+    encoder / ``path_type`` — the engine's pool key lookup goes through the
+    same ``register_path`` ``(pool_id, zero_for_one)`` tuple path as V2/V3/V4.
+    """
+
+    pool_address: str
+    token0_address: str
+    token1_address: str
+    # Per-direction fee as a Fraction (Solidly fees use arbitrary
+    # denominators, so bips-of-10000 — V2HopInfo's convention — don't fit).
+    fee: Fraction
+    # True for the stable (x³y + xy³) invariant, False for volatile.
+    stable: bool
+    # Kebab-case DexVariant (``aerodrome-v2-stable``, ``camelot-v2-stable``
+    # etc.) — selects the solidly-math leaf at solve time.
+    variant: str
+    zfo: bool
+
+
+HopInfo = V2HopInfo | V3HopInfo | V4HopInfo | SolidlyHopInfo
 
 
 @dataclasses.dataclass
@@ -90,6 +119,8 @@ class PathInfo:
                 type_names.append("V3")
             elif isinstance(h, V4HopInfo):
                 type_names.append("V4")
+            elif isinstance(h, SolidlyHopInfo):
+                type_names.append("Solidly")
         return "-".join(type_names)
 
 
@@ -112,16 +143,50 @@ def build_hops_from_pools(
     """
     hops: list[HopInfo] = []
     for pool, zfo in pools_and_zfos:
-        if isinstance(pool, UniswapV2Pool):
+        # Aerodrome V2 pools (any stable/volatile mode) route to the Solidly
+        # solve branch — checked before the V2 branch since AerodromeV2Pool is
+        # NOT a UniswapV2Pool subclass.
+        if isinstance(pool, AerodromeV2Pool):
             hops.append(
-                V2HopInfo(
+                SolidlyHopInfo(
                     pool_address=pool.address,
                     token0_address=pool.token0.address,
                     token1_address=pool.token1.address,
-                    fee=int((pool.fee_token0 if zfo else pool.fee_token1) * 10000),
+                    fee=pool.fee_token0 if zfo else pool.fee_token1,
+                    stable=pool.stable,
+                    variant=(
+                        "aerodrome-v2-stable"
+                        if pool.stable
+                        else "aerodrome-v2-volatile"
+                    ),
                     zfo=zfo,
                 ),
             )
+        elif isinstance(pool, UniswapV2Pool):
+            # Camelot ``stable_swap`` mode routes to the Solidly solve branch;
+            # regular V2 (and Camelot volatile) stays V2 (constant-product).
+            if getattr(pool, "stable_swap", False):
+                hops.append(
+                    SolidlyHopInfo(
+                        pool_address=pool.address,
+                        token0_address=pool.token0.address,
+                        token1_address=pool.token1.address,
+                        fee=pool.fee_token0 if zfo else pool.fee_token1,
+                        stable=True,
+                        variant="camelot-v2-stable",
+                        zfo=zfo,
+                    ),
+                )
+            else:
+                hops.append(
+                    V2HopInfo(
+                        pool_address=pool.address,
+                        token0_address=pool.token0.address,
+                        token1_address=pool.token1.address,
+                        fee=int((pool.fee_token0 if zfo else pool.fee_token1) * 10000),
+                        zfo=zfo,
+                    ),
+                )
         elif isinstance(pool, UniswapV3Pool):
             hops.append(
                 V3HopInfo(

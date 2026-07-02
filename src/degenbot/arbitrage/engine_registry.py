@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from degenbot import Bot, UniswapV2Pool
+from degenbot.aerodrome.pools import AerodromeV2Pool
 from degenbot.degenbot_rs import UniswapArbEngine
 from degenbot.logging import logger as bot_logger
 from degenbot.uniswap.snapshot_binary import (
@@ -368,6 +369,22 @@ class EngineRegistry:
         self._v2_keys[pool.address] = key
         return key
 
+    def register_aerodrome_pool(self, pool: AerodromeV2Pool) -> int:
+        """Register an Aerodrome V2 pool's shared-core key.
+
+        Mirrors :meth:`register_v2_pool` — the pool is already registered in
+        the shared ``BotState`` by ``aerodrome_v2_builder``'s call to
+        ``py_bot.register_aerodrome_pool``. Cache the ``pool_id`` (the
+        engine derives the Solidly hop family from the ``BotState`` identity at
+        ``register_path`` time, so no engine-side pre-registration carries a
+        family tag).
+        """
+        if pool.address in self._v2_keys:
+            return self._v2_keys[pool.address]
+        key = pool._py_pool.pool_id  # noqa: SLF001
+        self._v2_keys[pool.address] = key
+        return key
+
     async def register_v3_pool(
         self,
         pool: UniswapV3Pool,
@@ -560,6 +577,13 @@ class EngineRegistry:
         for pool, zfo in pools_and_zfos:
             if isinstance(pool, UniswapV4Pool):
                 key = self._v4_keys.get(pool.pool_id.to_0x_hex())
+            elif isinstance(pool, AerodromeV2Pool):
+                # Aerodrome shares the same address→pool_id map as V2 (pool
+                # contract addresses are globally unique). The engine's
+                # ``derive_hop_type`` reads the Aerodrome identity off the
+                # shared ``BotState`` and classifies a stable pool as the
+                # Solidly hop family.
+                key = self._v2_keys.get(pool.address)
             elif isinstance(pool, UniswapV2Pool):
                 key = self._v2_keys.get(pool.address)
             else:  # V3
