@@ -49,6 +49,12 @@ pub use degenbot_balancer_math;
 /// Solidly / Aerodrome / Camelot stable-pool invariant math (pure-Rust leaf).
 pub use degenbot_solidly_math;
 
+/// EVM arithmetic — EIP-1559 base-fee math and gas calculations (pure-Rust leaf).
+pub use degenbot_evm_math;
+
+/// cmd-executor domain — simulation warmup-slot storage math (pure-Rust leaf).
+pub use degenbot_executor;
+
 /// Concentrated-liquidity math (`cl_lib`, `tick_math`).
 pub use degenbot_cl_math;
 
@@ -58,6 +64,11 @@ pub use degenbot_abi;
 /// RPC provider/contract/subscription seams (the pure core; `pyo3` is an
 /// optional feature the umbrella never enables).
 pub use degenbot_rpc;
+
+/// `SQLite` persistence substrate — read handle + Alembic-aware schema gate +
+/// typed rows + read fns (pyo3-free leaf; `rusqlite` with the `bundled`
+/// feature; see `rust/CONTEXT.md` "degenbot-db substrate").
+pub use degenbot_db;
 
 // ---------------------------------------------------------------------------
 // Convenience top-level re-exports of the most-used types (mirrors how the

@@ -335,6 +335,23 @@ volatile pools and Camelot `stable_swap` pools — moved from the Python
   and panicked on overflow for reserves ≥18 tokens of 18-dec; matched
   `snapshot_v2`'s U256 return shape so the manual pool-walk parity oracle can
   read live Aerodrome state.
+- **§4.3 oracle retirement (task `3VGIDY`).** Now that the `FEMZJC` parity
+  gate was green, the Python `SolidlyStableSolver` parity oracle was retired
+  per the §4.3 delete-with-its-tests protocol: `solidly_stable.py`, its
+  `solvers/__init__.py` re-export, `test_engine_vs_solidly_parity.py`, and the
+  dedicated `test_solidly_stable_solver.py` suite were deleted together. The
+  generic mixed-path simulators (`_simulate_mixed_path` /
+  `_simulate_mixed_path_int`, plus the Solidly float fallback
+  `_solidly_swap_output_float`) moved to `_solver_utils.py` because two kept
+  Curve tests (`test_fake_curve_pool.py`, `test_curve_legacy_equivalence.py`)
+  reuse them as generic sim helpers — they are NOT Solidly-specific.
+  `SolidlyStableHop` (the hop type, constructed in `aerodrome/pools.py` +
+  `v2_liquidity_pool.py` with a `swap_fn`) is untouched live production code.
+  The engine's `solve_solidly_path_int` is the sole Solidly solve path; the
+  disposition line "parity oracle only" above is the historical record.
+  Rust `solver_dispatch.rs` retains the "Faithful port of
+  `arbitrage.solvers.solidly_stable.SolidlyStableSolver`" comment as
+  historical port provenance (the Python source it now points to is removed).
 
 ## 7. Anti-patterns to avoid
 
