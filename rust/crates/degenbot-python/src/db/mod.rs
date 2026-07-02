@@ -11,6 +11,7 @@
 //! `command.upgrade` bodies in `src/degenbot/database/operations.py` are
 //! retired in favor of these Rust-backed wrappers.
 
+pub mod aave;
 pub mod snapshot;
 
 use std::path::PathBuf;
@@ -19,6 +20,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
 
+pub use aave::PyDatabasePositionQuery;
 use degenbot_db::ops::{self, UpgradeOutcome};
 pub use snapshot::PyDatabaseSnapshot;
 
@@ -92,5 +94,6 @@ pub fn add_db_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(db_compact_database, m)?)?;
     m.add_function(wrap_pyfunction!(db_upgrade_database, m)?)?;
     m.add_class::<snapshot::PyDatabaseSnapshot>()?;
+    m.add_class::<aave::PyDatabasePositionQuery>()?;
     Ok(())
 }

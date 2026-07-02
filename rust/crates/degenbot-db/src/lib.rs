@@ -32,6 +32,7 @@
 //! (`write.rs` + `upsert_*`) are deferred to Epic AZGJUN (Phase 3) until the
 //! Rust writer is parity-tested; this crate ships read fns only.
 
+pub mod aave;
 pub mod connection;
 pub mod error;
 pub mod migrate;
@@ -42,6 +43,7 @@ pub mod rows;
 pub mod schema;
 pub mod snapshot;
 
+pub use aave::{AaveCollateralPositionRecord, AaveDebtPositionRecord, AaveUserRecord};
 pub use connection::DegenbotDb;
 pub use error::DbError;
 pub use migrate::SchemaState;

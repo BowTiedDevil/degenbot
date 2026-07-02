@@ -5,7 +5,7 @@ used by the degenbot Python package.
 """
 
 from collections.abc import Callable, Coroutine
-from typing import Any, Literal, overload
+from typing import Any, Literal, TypeAlias, overload
 
 from hexbytes import HexBytes
 from web3.types import BlockData as Web3BlockData
@@ -604,6 +604,76 @@ def db_upgrade_database(path: str) -> str:
 
     """
 
+# ------------------------------------------------------------------
+# Command-stream executor seam (feature = "executor").
+# ------------------------------------------------------------------
+# Thin PyO3 wrappers over `degenbot_executor` (the cmd-executor core).
+# The Python encoder (`examples/eth_backrun_helpers.py::encode_cmd_stream` +
+# `examples/cmd_stream.py`) was deleted in the §4.3 oracle-retirement cutover;
+# byte-for-byte parity (§4.2) is pinned by golden-file tests in
+# `cargo test -p degenbot-executor`. The GIL is released during the encode /
+# warmup-slot compute.
+
+# PathInfo is imported from `degenbot.arbitrage.hop_info`.
+from degenbot.arbitrage.hop_info import PathInfo
+
+BytesOrNone: TypeAlias = bytes | None
+WarmupDict: TypeAlias = dict[str, dict[str, Any]]
+
+@overload
+def encode_cmd_stream(
+    path_info: PathInfo,
+    optimal_input: int,
+    hop_outputs: list[int],
+    executor_address: str,
+    pool_manager_address: str,
+    weth_address: str,
+    *,
+    erc6909_profit: bool = ...,
+    use_v4_batch: bool = ...,
+) -> BytesOrNone: ...
+def compute_simulation_warmup_slots(
+    executor_address: str,
+    weth_address: str,
+    pool_manager_address: str,
+) -> WarmupDict:
+    """Compute the ``eth_simulateV1`` ``stateDiff`` overrides replicating
+    ``cmd_executor.initialize()``'s three warmed storage slots.
+
+    Args:
+        executor_address: The cmd_executor contract address.
+        weth_address: The WETH9 contract address.
+        pool_manager_address: The Uniswap V4 PoolManager address.
+
+    Returns:
+        A dict keyed by checksummed contract addresses, with ``stateDiff``
+        sub-dicts mapping slot hex to 1-wei value hex, plus the executor's
+        residual balance entry.
+    """
+
+def pack_config(
+    check_mode: int = ...,
+    expected_value: int = ...,
+    bribe_bips: int = ...,
+    bribe_recipient_idx: int = ...,
+) -> int:
+    """Pack the ``execute(commands, config)`` ABI ``config`` uint256."""
+
+def pack_expected_balance(check_mode: int, expected_value: int) -> int:
+    """Deprecated alias for ``pack_config`` with ``bribe_bips=0`` / ``bribe_recipient_idx=0``."""
+
+def mapping_slot(base_slot: int, key: int) -> int:
+    """Compute a Solidity mapping storage slot (``keccak256(pad(key,32) || pad(base,32))``)."""
+
+def nested_mapping_slot(base_slot: int, key1: int, key2: int) -> int:
+    """Compute a nested Solidity mapping storage slot."""
+
+def v4_input_is_native(hop: Any) -> bool:
+    """True if the V4 hop's input currency is native ETH (address(0))."""
+
+def v4_output_is_native(hop: Any) -> bool:
+    """True if the V4 hop's output currency is native ETH (address(0))."""
+
 class PyDatabaseSnapshot:
     """Read-only V3/V4 snapshot handle over a degenbot SQLite DB file.
 
@@ -626,6 +696,25 @@ class PyDatabaseSnapshot:
     def get_newest_block_v4(self) -> int | None: ...
     def get_pools_v3(self) -> set[str]: ...
     def get_pools_v4(self) -> set[str]: ...
+
+class PyDatabasePositionQuery:
+    """Read-only Aave V3 position-query handle over a degenbot SQLite DB file.
+
+    Opens its own connection (WAL, ``query_only=on``) from ``database_path``;
+    the Python ``DatabasePositionQuery`` shell constructs one and delegates
+    every read to it.
+
+    """
+
+    def __init__(self, database_path: str) -> None: ...
+    def get_users_with_debt(
+        self, market_id: int, limit: int | None = None
+    ) -> list[dict[str, Any]]: ...
+    def get_collateral_positions(self, user_id: int) -> list[dict[str, Any]]: ...
+    def get_debt_positions(self, user_id: int) -> list[dict[str, Any]]: ...
+    def get_collateral_config_map(self, user_id: int) -> dict[int, bool]: ...
+    def get_oracle_address(self, market_id: int) -> str | None: ...
+    def get_asset_addresses(self, market_id: int) -> list[str]: ...
 
 class PathIterator:
     def __iter__(self) -> PathIterator: ...
@@ -2042,6 +2131,7 @@ __all__ = [
     "PyBot",
     "PyBotIo",
     "PyDatabaseSnapshot",
+    "PyDatabasePositionQuery",
     "PyErc20Token",
     "PyLiquidityPool",
     "TransactionData",
@@ -2093,13 +2183,21 @@ __all__ = [
     "decode_single",
     "dex_identity",
     "encode",
+    "encode_cmd_stream",
     "encode_function_call",
     "encode_single",
+    "compute_simulation_warmup_slots",
     "find_paths_rust",
     "flz_compress",
     "flz_decompress",
     "get_function_selector",
     "get_sqrt_ratio_at_tick",
     "get_tick_at_sqrt_ratio",
+    "mapping_slot",
+    "nested_mapping_slot",
+    "pack_config",
+    "pack_expected_balance",
     "to_checksum_address",
+    "v4_input_is_native",
+    "v4_output_is_native",
 ]
