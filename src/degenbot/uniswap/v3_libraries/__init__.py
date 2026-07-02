@@ -41,23 +41,17 @@ from degenbot.degenbot_rs import (
     cl_get_next_sqrt_price_from_output as get_next_sqrt_price_from_output,
 )
 from degenbot.degenbot_rs import (
-    cl_least_significant_bit as least_significant_bit,
-)
-from degenbot.degenbot_rs import (
     cl_max_usable_tick as max_usable_tick,
 )
 from degenbot.degenbot_rs import (
     cl_min_usable_tick as min_usable_tick,
 )
-from degenbot.degenbot_rs import (
-    cl_most_significant_bit as most_significant_bit,
-)
-from degenbot.degenbot_rs import (
-    cl_muldiv as muldiv,
-)
-from degenbot.degenbot_rs import (
-    cl_muldiv_rounding_up as muldiv_rounding_up,
-)
+
+# `muldiv`/`muldiv_rounding_up`/`least_significant_bit`/`most_significant_bit`
+# are NOT re-exported here: the wrapped companions in `.full_math` / `.bit_math`
+# are the canonical Solidity-matching surface (they raise `EVMRevertError`.
+# The raw `cl_*` re-exports that previously lived here collided by name and had
+# zero package-level consumers — consumers reach the leaf submodule directly.
 
 __all__ = [
     "MAX_SQRT_RATIO",
@@ -75,10 +69,6 @@ __all__ = [
     "get_next_sqrt_price_from_output",
     "get_sqrt_ratio_at_tick",
     "get_tick_at_sqrt_ratio",
-    "least_significant_bit",
     "max_usable_tick",
     "min_usable_tick",
-    "most_significant_bit",
-    "muldiv",
-    "muldiv_rounding_up",
 ]
