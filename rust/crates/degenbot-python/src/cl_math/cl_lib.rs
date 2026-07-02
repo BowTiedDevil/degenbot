@@ -8,7 +8,7 @@
 //! overhead.
 
 use crate::prelude::*;
-use alloy::primitives::{aliases::I256, U256};
+use alloy::primitives::{aliases::I256, U128, U256};
 use pyo3::{exceptions::PyValueError, types::PyAny, PyTypeInfo};
 
 // PyObject alias for pyo3 0.28+
@@ -16,6 +16,7 @@ type PyObject = pyo3::Py<pyo3::PyAny>;
 
 use crate::cl_lib::bit_math;
 use crate::cl_lib::full_math;
+use crate::cl_lib::liquidity_mapping::{self, BitmapAtWord, LiquidityAtTick};
 use crate::cl_lib::liquidity_math;
 use crate::cl_lib::sqrt_price_math;
 use crate::cl_lib::swap_math;
@@ -460,6 +461,155 @@ pub fn cl_min_usable_tick(tick_spacing: i32) -> i32 {
     tick_math::min_usable_tick(tick_spacing)
 }
 
+// ─── LiquidityMapping (tick-bitmap + apply_liquidity_mapping_update) ────
+
+/// Retrieve a field from a Python mapping or pydantic model, by key or attr.
+/// Accepts dicts (`obj[key]`) and attribute-bearing objects (`obj.attr`) so the
+/// seam works whether the values are plain dicts or `BitmapAtWord`/`LiquidityAtTick`
+/// pydantic models.
+fn field<'py>(obj: &Bound<'py, PyAny>, name: &str) -> PyResult<Bound<'py, PyAny>> {
+    obj.getattr(name).or_else(|_| obj.get_item(name))
+}
+
+/// Extract a Python int as `u64`, clamping large sentinels to `u64::MAX`.
+///
+/// `cli/pool.py` sets `initial_state_block = MAX_UINT256` to skip the in-range
+/// liquidity adjustment (the `state_block > initial_state_block` guard). Since a
+/// real uint256 cannot fit `u64`, sentinel values beyond `u64::MAX` are clamped
+/// to `u64::MAX`, which preserves the skip behavior for any real `update_block`.
+fn extract_u64_clamped(obj: &Bound<'_, PyAny>) -> PyResult<u64> {
+    let big = extract_u256(obj)?;
+    let max = U256::from(u64::MAX);
+    if big > max {
+        Ok(u64::MAX)
+    } else {
+        Ok(big.to::<u64>())
+    }
+}
+
+/// Widen a `U128` big-endian bytes representation to a Python int via `U256`.
+fn u128_to_py_obj(py: Python<'_>, v: U128) -> PyResult<PyObject> {
+    let mut full = [0u8; 32];
+    full[16..32].copy_from_slice(&v.to_be_bytes::<16>());
+    u256_to_py_obj(py, U256::from_be_bytes::<32>(full))
+}
+
+/// Apply a liquidity-mapping update (mint/burn at `tick_lower`..`tick_upper`)
+/// to the tick bitmap and tick data, returning the next state plus the updated
+/// active liquidity.
+///
+/// Mirrors `degenbot.calculations.concentrated_liquidity.apply_liquidity_mapping_update`.
+/// Inputs are dicts of `{bitmap, block}` / `{liquidity_net, liquidity_gross, block}`
+/// (or pydantic `BitmapAtWord`/`LiquidityAtTick` models); the result is a plain
+/// dict with `tick_bitmap`, `tick_data`, `liquidity` keys.
+///
+/// # Errors
+///
+/// Returns `PyValueError` on invalid input types, non-uint128 liquidity, or
+/// non-i32 ticks.
+#[allow(clippy::too_many_arguments, clippy::similar_names)]
+#[pyfunction]
+pub fn cl_apply_liquidity_mapping_update(
+    tick_bitmap: &Bound<'_, PyAny>,
+    tick_data: &Bound<'_, PyAny>,
+    tick_spacing: i32,
+    tick: i32,
+    liquidity: &Bound<'_, PyAny>,
+    initial_state_block: &Bound<'_, PyAny>,
+    update_block: &Bound<'_, PyAny>,
+    tick_lower: i32,
+    tick_upper: i32,
+    liquidity_delta: &Bound<'_, PyAny>,
+) -> PyResult<PyObject> {
+    let py = tick_bitmap.py();
+
+    // Build the Rust bitmap map.
+    let mut rb: std::collections::HashMap<i32, BitmapAtWord> = std::collections::HashMap::new();
+    if !tick_bitmap.is_none() {
+        for k in tick_bitmap.try_iter()? {
+            let k = k?;
+            let word: i32 = k.extract()?;
+            let v = tick_bitmap.get_item(&k)?;
+            rb.insert(
+                word,
+                BitmapAtWord {
+                    bitmap: extract_u256(&field(&v, "bitmap")?)?,
+                    block: extract_u64_clamped(&field(&v, "block")?)?,
+                },
+            );
+        }
+    }
+
+    // Build the Rust tick_data map.
+    let mut rd: std::collections::HashMap<i32, LiquidityAtTick> = std::collections::HashMap::new();
+    if !tick_data.is_none() {
+        for k in tick_data.try_iter()? {
+            let k = k?;
+            let t: i32 = k.extract()?;
+            let v = tick_data.get_item(&k)?;
+            let gross_u256 = extract_u256(&field(&v, "liquidity_gross")?)?;
+            let gross_bytes = gross_u256.to_be_bytes::<32>();
+            let low: [u8; 16] = gross_bytes[16..32]
+                .try_into()
+                .map_err(|_| PyValueError::new_err("liquidity_gross byte slice"))?;
+            rd.insert(
+                t,
+                LiquidityAtTick {
+                    liquidity_net: extract_i256(&field(&v, "liquidity_net")?)?,
+                    liquidity_gross: U128::from_be_bytes(low),
+                    block: extract_u64_clamped(&field(&v, "block")?)?,
+                },
+            );
+        }
+    }
+
+    // Active liquidity: uint128.
+    let liq_u256 = extract_u256(liquidity)?;
+    let liq_bytes = liq_u256.to_be_bytes::<32>();
+    let liq_low: [u8; 16] = liq_bytes[16..32]
+        .try_into()
+        .map_err(|_| PyValueError::new_err("liquidity byte slice"))?;
+    let liq_u128 = U128::from_be_bytes(liq_low);
+
+    let result = liquidity_mapping::apply_liquidity_mapping_update(
+        rb,
+        rd,
+        tick_spacing,
+        tick,
+        liq_u128,
+        extract_u64_clamped(initial_state_block)?,
+        extract_u64_clamped(update_block)?,
+        tick_lower,
+        tick_upper,
+        extract_i256(liquidity_delta)?,
+    );
+
+    // Convert the result back to plain Python dicts.
+    let out_bitmap = pyo3::types::PyDict::new(py);
+    for (word, bw) in &result.tick_bitmap {
+        let inner = pyo3::types::PyDict::new(py);
+        inner.set_item("bitmap", u256_to_py_obj(py, bw.bitmap)?)?;
+        inner.set_item("block", bw.block)?;
+        out_bitmap.set_item(*word, inner)?;
+    }
+    let out_data = pyo3::types::PyDict::new(py);
+    for (t, lv) in &result.tick_data {
+        let inner = pyo3::types::PyDict::new(py);
+        inner.set_item(
+            "liquidity_net",
+            alloy_py::i256_to_py(py, &lv.liquidity_net)?,
+        )?;
+        inner.set_item("liquidity_gross", u128_to_py_obj(py, lv.liquidity_gross)?)?;
+        inner.set_item("block", lv.block)?;
+        out_data.set_item(*t, inner)?;
+    }
+    let out = pyo3::types::PyDict::new(py);
+    out.set_item("tick_bitmap", out_bitmap)?;
+    out.set_item("tick_data", out_data)?;
+    out.set_item("liquidity", u128_to_py_obj(py, result.liquidity)?)?;
+    Ok(out.into_any().unbind())
+}
+
 // ─── Register all CL math functions ────────────────────────────────────
 
 /// Add all concentrated-liquidity math functions to the Python module.
@@ -504,6 +654,9 @@ pub fn add_cl_lib_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // TickMath (additional helpers beyond the existing get_sqrt_ratio/tick functions)
     m.add_function(wrap_pyfunction!(cl_max_usable_tick, m)?)?;
     m.add_function(wrap_pyfunction!(cl_min_usable_tick, m)?)?;
+
+    // LiquidityMapping
+    m.add_function(wrap_pyfunction!(cl_apply_liquidity_mapping_update, m)?)?;
 
     Ok(())
 }
