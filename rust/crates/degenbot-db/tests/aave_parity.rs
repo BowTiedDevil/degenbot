@@ -32,8 +32,7 @@ fn fixture_expected() -> Expected {
 }
 
 fn open_db() -> DegenbotDb {
-    let (db, state) =
-        DegenbotDb::open(&fixture_db_path()).expect("open aave_parity.db fixture");
+    let (db, state) = DegenbotDb::open(&fixture_db_path()).expect("open aave_parity.db fixture");
     assert!(
         matches!(state, SchemaState::AlembicCurrent),
         "fixture DB should be AlembicCurrent, got {state:?}"
@@ -107,11 +106,15 @@ fn fetch_users_with_debt_matches_python() {
         assert_eq!(got.market_id, exp.market_id);
         assert_eq!(got.e_mode, exp.e_mode);
         assert_eq!(got.is_isolation_mode, exp.is_isolation_mode);
-        assert_eq!(got.isolation_mode_debt, parse_u256(&exp.isolation_mode_debt));
+        assert_eq!(
+            got.isolation_mode_debt,
+            parse_u256(&exp.isolation_mode_debt)
+        );
         assert_eq!(
             got.isolation_debt_ceiling,
             exp.isolation_debt_ceiling.as_deref().map(parse_u256),
-            "isolation_debt_ceiling for user {}", got.id
+            "isolation_debt_ceiling for user {}",
+            got.id
         );
     }
 }
@@ -126,7 +129,10 @@ fn fetch_users_with_debt_filters_users_without_debt() {
         .fetch_aave_users_with_debt(expected.market_id, None)
         .expect("fetch users");
     let ids: Vec<i64> = users.iter().map(|u| u.id).collect();
-    assert!(!ids.contains(&3), "user 3 (no debt) leaked through: {ids:?}");
+    assert!(
+        !ids.contains(&3),
+        "user 3 (no debt) leaked through: {ids:?}"
+    );
 }
 
 #[test]
@@ -137,7 +143,12 @@ fn fetch_collateral_positions_matches_python() {
         let rows = db
             .fetch_aave_collateral_positions(u.id)
             .expect("fetch collateral");
-        assert_eq!(rows.len(), u.collateral.len(), "collateral count user {}", u.id);
+        assert_eq!(
+            rows.len(),
+            u.collateral.len(),
+            "collateral count user {}",
+            u.id
+        );
         for (got, exp) in rows.iter().zip(&u.collateral) {
             assert_eq!(got.asset_id, exp.asset_id);
             assert_eq!(got.balance, parse_u256(&exp.balance));
