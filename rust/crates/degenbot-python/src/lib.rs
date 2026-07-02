@@ -37,6 +37,8 @@ pub mod conversion;
 pub mod curve_math;
 #[cfg(feature = "db")]
 pub mod db;
+#[cfg(feature = "executor")]
+pub mod executor;
 #[cfg(feature = "pathfinding")]
 pub mod pathfinding;
 pub mod prelude;

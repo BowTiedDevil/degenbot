@@ -5,7 +5,7 @@ used by the degenbot Python package.
 """
 
 from collections.abc import Callable, Coroutine
-from typing import Any, Literal, TypeAlias, overload
+from typing import Any, Literal, overload
 
 from hexbytes import HexBytes
 from web3.types import BlockData as Web3BlockData
@@ -615,12 +615,11 @@ def db_upgrade_database(path: str) -> str:
 # warmup-slot compute.
 
 # PathInfo is imported from `degenbot.arbitrage.hop_info`.
-from degenbot.arbitrage.hop_info import PathInfo
+from degenbot.arbitrage.hop_info import PathInfo  # noqa: E402
 
-BytesOrNone: TypeAlias = bytes | None
-WarmupDict: TypeAlias = dict[str, dict[str, Any]]
+type BytesOrNone = bytes | None
+type WarmupDict = dict[str, dict[str, Any]]
 
-@overload
 def encode_cmd_stream(
     path_info: PathInfo,
     optimal_input: int,
@@ -637,8 +636,9 @@ def compute_simulation_warmup_slots(
     weth_address: str,
     pool_manager_address: str,
 ) -> WarmupDict:
-    """Compute the ``eth_simulateV1`` ``stateDiff`` overrides replicating
-    ``cmd_executor.initialize()``'s three warmed storage slots.
+    """Compute ``eth_simulateV1`` ``stateDiff`` overrides.
+
+    Replicates ``cmd_executor.initialize()``'s three warmed storage slots.
 
     Args:
         executor_address: The cmd_executor contract address.
@@ -649,6 +649,7 @@ def compute_simulation_warmup_slots(
         A dict keyed by checksummed contract addresses, with ``stateDiff``
         sub-dicts mapping slot hex to 1-wei value hex, plus the executor's
         residual balance entry.
+
     """
 
 def pack_config(
@@ -660,7 +661,10 @@ def pack_config(
     """Pack the ``execute(commands, config)`` ABI ``config`` uint256."""
 
 def pack_expected_balance(check_mode: int, expected_value: int) -> int:
-    """Deprecated alias for ``pack_config`` with ``bribe_bips=0`` / ``bribe_recipient_idx=0``."""
+    """Return a deprecated alias for ``pack_config``.
+
+    Uses ``bribe_bips=0`` / ``bribe_recipient_idx=0``.
+    """
 
 def mapping_slot(base_slot: int, key: int) -> int:
     """Compute a Solidity mapping storage slot (``keccak256(pad(key,32) || pad(base,32))``)."""
@@ -668,11 +672,11 @@ def mapping_slot(base_slot: int, key: int) -> int:
 def nested_mapping_slot(base_slot: int, key1: int, key2: int) -> int:
     """Compute a nested Solidity mapping storage slot."""
 
-def v4_input_is_native(hop: Any) -> bool:
-    """True if the V4 hop's input currency is native ETH (address(0))."""
+def v4_input_is_native(hop: object) -> bool:
+    """Return whether the V4 hop's input currency is native ETH (address(0))."""
 
-def v4_output_is_native(hop: Any) -> bool:
-    """True if the V4 hop's output currency is native ETH (address(0))."""
+def v4_output_is_native(hop: object) -> bool:
+    """Return whether the V4 hop's output currency is native ETH (address(0))."""
 
 class PyDatabaseSnapshot:
     """Read-only V3/V4 snapshot handle over a degenbot SQLite DB file.
@@ -2130,8 +2134,8 @@ __all__ = [
     "LogFilter",
     "PyBot",
     "PyBotIo",
-    "PyDatabaseSnapshot",
     "PyDatabasePositionQuery",
+    "PyDatabaseSnapshot",
     "PyErc20Token",
     "PyLiquidityPool",
     "TransactionData",
@@ -2169,6 +2173,7 @@ __all__ = [
     "cl_muldiv",
     "cl_muldiv_rounding_up",
     "cl_simple_mul_div",
+    "compute_simulation_warmup_slots",
     "curve_stableswap_get_d",
     "curve_stableswap_get_y",
     "curve_stableswap_get_y_d",
@@ -2186,7 +2191,6 @@ __all__ = [
     "encode_cmd_stream",
     "encode_function_call",
     "encode_single",
-    "compute_simulation_warmup_slots",
     "find_paths_rust",
     "flz_compress",
     "flz_decompress",
