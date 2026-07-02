@@ -68,6 +68,7 @@
 pub mod dispatcher;
 pub mod error;
 pub mod fee;
+pub mod monitor;
 pub mod params;
 pub mod signer;
 
@@ -81,4 +82,8 @@ pub use signer::TxSigner;
 pub use dispatcher::{
     CommittedTx, Dispatcher, PathSuppression, PoolKey, BLOCK_TIMES_WINDOW, FEE_HISTORY_WINDOW,
     PATH_SUPPRESS_RETRY_INTERVAL, PATH_SUPPRESS_THRESHOLD,
+};
+pub use monitor::{
+    monitor_pending_transaction, monitor_pending_transaction_default, MonitorOutcome, ReceiptProbe,
+    SubmittedTx, BLOCKS_BEFORE_NONCE_EXPIRES, MONITOR_POLL_INTERVAL,
 };
