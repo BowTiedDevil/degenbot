@@ -1853,6 +1853,10 @@ class DynamicFeePoolRejectedError(ValueError):
     """
 
 __all__ = [
+    "MAX_SQRT_RATIO",
+    "MAX_TICK",
+    "MIN_SQRT_RATIO",
+    "MIN_TICK",
     "AlloyProvider",
     "AlloySubscription",
     "AsyncAlloyProvider",
@@ -1873,6 +1877,9 @@ __all__ = [
     "UniswapArbEngine",
     "VerificationMismatchError",
     "VerificationRpcError",
+    "balancer_fixed_point_div_down",
+    "balancer_fixed_point_div_up",
+    "balancer_fixed_point_mul_down",
     "balancer_stable_calc_in_given_out",
     "balancer_stable_calc_out_given_in",
     "balancer_stable_calculate_invariant",
@@ -1882,9 +1889,6 @@ __all__ = [
     "balancer_weighted_calc_out_given_in",
     "balancer_weighted_calculate_invariant",
     "balancer_weighted_subtract_swap_fee_amount",
-    "balancer_fixed_point_mul_down",
-    "balancer_fixed_point_div_down",
-    "balancer_fixed_point_div_up",
     "cl_add_delta",
     "cl_compute_swap_step_v3",
     "cl_compute_swap_step_v4",
@@ -1920,9 +1924,5 @@ __all__ = [
     "get_function_selector",
     "get_sqrt_ratio_at_tick",
     "get_tick_at_sqrt_ratio",
-    "MAX_SQRT_RATIO",
-    "MAX_TICK",
-    "MIN_SQRT_RATIO",
-    "MIN_TICK",
-    "to_checksum_address,
+    "to_checksum_address",
 ]
