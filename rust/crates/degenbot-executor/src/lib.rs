@@ -35,6 +35,8 @@
 
 use alloy::primitives::{keccak256, Address, U256};
 
+pub mod encoders;
+
 /// The WETH9 `balanceOf` mapping storage slot (`name`@0, `symbol`@1,
 /// `decimals`@2, `balanceOf`@3).
 pub const WETH9_BALANCE_OF_SLOT: u64 = 3;
