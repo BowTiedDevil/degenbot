@@ -1624,6 +1624,7 @@ dependencies = [
  "degenbot-core",
  "degenbot-decoders",
  "degenbot-rpc",
+ "degenbot-solidly-math",
  "degenbot-uniswap",
  "futures-util",
  "log",

@@ -27,6 +27,7 @@ degenbot-cl-math = { path = "../degenbot-cl-math" }
 degenbot-core = { path = "../degenbot-core" }
 degenbot-decoders = { path = "../degenbot-decoders" }
 degenbot-rpc = { path = "../degenbot-rpc" }
+degenbot-solidly-math = { path = "../degenbot-solidly-math" }
 degenbot-uniswap = { path = "../degenbot-uniswap" }
 futures-util = { version = "^0.3", default-features = false, features = ["async-await", "std"] }
 log = { version = "^0.4" }

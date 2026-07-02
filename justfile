@@ -35,6 +35,12 @@ test-rust-python:
 lint-rust:
     cargo clippy --fix --all-targets --all-features --fix --allow-dirty --manifest-path rust/Cargo.toml -- --deny warnings
 
+# Lint Rust (check-only; non-mutating). Mirrors the clippy gate CI runs,
+# minus `--fix`, so a pre-push run cannot dirty committed files. Stricter than
+# CI's `lint-rust`: fails on any warning `--fix` would have auto-applied.
+lint-rust-check:
+    cargo clippy --all-targets --all-features --manifest-path rust/Cargo.toml -- --deny warnings
+
 # Check Rust formatting (read-only; fails on drift). Run `just format` to fix.
 fmt-check:
     cargo fmt --manifest-path rust/Cargo.toml --all -- --check
@@ -162,6 +168,13 @@ lint-python:
     uv run ruff check --fix src/ 
     uv run ty check --fix --no-progress src/
 
+# Lint Python (check-only; non-mutating). Mirrors the ruff+ty gate CI runs,
+# minus `--fix`, so a pre-push run cannot dirty committed files. Stricter than
+# CI's `lint-python`: fails on any issue `--fix` would have auto-applied.
+lint-python-check:
+    uv run ruff check src/
+    uv run ty check --no-progress src/
+
 # Check Python formatting (read-only; fails on drift). Run `just format` to fix.
 fmt-check-python:
     uv run ruff format --check src/
@@ -228,7 +241,14 @@ setup-git-hooks:
     # host/container installs. Install on demand if missing (host first run).
     command -v prek >/dev/null 2>&1 || uv tool install prek
     prek install
-    echo "✓ prek hooks (pre-commit, commit-msg, pre-push) and commit template configured."
+    echo "✓ prek hooks installed:"
+    echo "    pre-commit : Markdown lint + PLC0415 noqa guard (staged files)"
+    echo "    commit-msg : commitlint"
+    echo "    pre-push   : commitlint push-range re-lint + full CI mirror"
+    echo "                 (rust fmt/clippy/build/test, markdown lint,"
+    echo "                  python build/fmt/lint/test)"
+    echo "    Bypass: git push --no-verify (CI still runs)."
+    echo "✓ commit template configured."
 
 # ========== Documentation ==========
 

@@ -14,9 +14,29 @@ impl UniswapEngine {
     /// the engine never constructs pools, so it learns each hop's family
     /// from the `BotState` that owns it).
     fn derive_hop_type(core: &BotState, pool_id: u64) -> Option<HopType> {
-        if core.get_v2_pool_state(pool_id).is_some() {
-            Some(HopType::V2)
-        } else if core.get_v3_pool(pool_id).is_some() {
+        // Aerodrome stable pools route to the Solidly solve branch; volatile
+        // Aerodrome is constant-product and routes to the V2 (Möbius) branch
+        // (matching the Python `arbitrage.solvers.solidly_stable` classification:
+        // `AerodromeV2Pool(stable=True)` → `SolidlyStableHop`, else
+        // `ConstantProductHop`).
+        if let Some(id) = core.get_aerodrome_identity(pool_id) {
+            return Some(if id.stable {
+                HopType::SolidlyStable
+            } else {
+                HopType::V2
+            });
+        }
+        // Camelot stable_swap pools route to the Solidly solve branch;
+        // volatile Camelot is constant-product (V2). Same Python-faithful
+        // classification as Aerodrome.
+        if let Some(id) = core.get_v2_identity(pool_id) {
+            return Some(if id.stable_swap {
+                HopType::SolidlyStable
+            } else {
+                HopType::V2
+            });
+        }
+        if core.get_v3_pool(pool_id).is_some() {
             Some(HopType::V3)
         } else if core.get_v4_pool(pool_id).is_some() {
             Some(HopType::V4)
