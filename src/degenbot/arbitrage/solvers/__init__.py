@@ -10,19 +10,16 @@ cover the families the engine doesn't:
 - ``BrentSolver`` — SciPy ``minimize_scalar`` over a universal
   ``hop.swap_fn`` simulator (reference oracle for engine cross-validation +
   the production solver for Solidly/Curve/Balancer).
-- ``SolidlyStableSolver`` — Solidly stable-invariant pools.
 - ``BalancerMultiTokenSolver`` — N-token Balancer weighted-basket arb.
 """
 
 from degenbot.arbitrage.solvers.balancer_multi_token_solver import BalancerMultiTokenSolver
 from degenbot.arbitrage.solvers.brent_solver import BrentSolver
 from degenbot.arbitrage.solvers.hop_types import SolveInput, SolveResult, SolverMethod
-from degenbot.arbitrage.solvers.solidly_stable import SolidlyStableSolver
 
 __all__ = [
     "BalancerMultiTokenSolver",
     "BrentSolver",
-    "SolidlyStableSolver",
     "SolveInput",
     "SolveResult",
     "SolverMethod",
