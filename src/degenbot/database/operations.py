@@ -5,7 +5,7 @@ import sqlite3
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import URL, Engine, create_engine, text
+from sqlalchemy import URL, Engine, create_engine, event, text
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
 
 from degenbot.database.models import Base
@@ -124,18 +124,35 @@ def upgrade_existing_sqlite_database(database_path: pathlib.Path) -> None:
 def get_scoped_sqlite_session(database_path: pathlib.Path) -> scoped_session[Session]:
     """Return scoped sqlite session.
 
+    Concurrency note: every pooled connection is opened with WAL journal mode,
+    a 5s ``busy_timeout``, and ``synchronous=NORMAL`` via a ``"connect"`` event
+    listener. WAL is file-persistent once set (cheap to re-assert); the
+    per-connection ``busy_timeout`` and ``synchronous`` must be re-asserted on
+    each pooled connection so concurrent readers/writers degrade gracefully to
+    a retry-with-timeout instead of an immediate ``SQLITE_BUSY``.
+
     Returns:
         The computed value.
 
     """
+    engine = create_engine(
+        URL.create(
+            drivername="sqlite",
+            database=_get_sqlite_db_string(database_path),
+        ),
+    )
+
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragmas(dbapi_connection, _connection_record) -> None:  # noqa: ANN001
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        cursor.execute("PRAGMA busy_timeout=5000;")
+        cursor.execute("PRAGMA synchronous=NORMAL;")
+        cursor.close()
+
     return scoped_session(
         session_factory=sessionmaker(
-            bind=create_engine(
-                URL.create(
-                    drivername="sqlite",
-                    database=_get_sqlite_db_string(database_path),
-                ),
-            ),
+            bind=engine,
         ),
     )
 
