@@ -1,4 +1,4 @@
-# ruff: noqa: DOC201
+# ruff: noqa: DOC201,D100
 
 import dataclasses
 import json
@@ -439,8 +439,7 @@ def filter_thin_margin_results(
     results: list[EngineResult],
     min_profit_margin_bps: int,
 ) -> tuple[list[EngineResult], int]:
-    """Drop solver results whose gross-profit margin is below ``min_profit_margin_bps``
-    basis points of ``optimal_input`` (T3 / GTOD23-IKJRGO).
+    """Drop solver results whose gross-profit margin is too low.
 
     S1 found that the dominant IIA reverts in V3/V4-heavy perms are razor-thin
     arb (gross profit ≈ $0.001 on ≈ $0.06–$1.30 input = sub-0.2 bps margin)

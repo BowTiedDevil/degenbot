@@ -513,6 +513,15 @@ def get_sqrt_ratio_at_tick(tick: int) -> int:
 
     """
 
+#: Minimum Uniswap V3 tick. Canonical source: ``degenbot-cl-math`` core.
+MIN_TICK: int
+#: Maximum Uniswap V3 tick. Canonical source: ``degenbot-cl-math`` core.
+MAX_TICK: int
+#: Minimum sqrt price ratio (X96). Canonical source: ``degenbot-cl-math`` core.
+MIN_SQRT_RATIO: int
+#: Maximum sqrt price ratio (X96). Canonical source: ``degenbot-cl-math`` core.
+MAX_SQRT_RATIO: int
+
 @overload
 def get_tick_at_sqrt_ratio(sqrt_price_x96: int) -> int: ...
 @overload
@@ -1905,5 +1914,9 @@ __all__ = [
     "get_function_selector",
     "get_sqrt_ratio_at_tick",
     "get_tick_at_sqrt_ratio",
-    "to_checksum_address",
+    "MAX_SQRT_RATIO",
+    "MAX_TICK",
+    "MIN_SQRT_RATIO",
+    "MIN_TICK",
+    "to_checksum_address,
 ]

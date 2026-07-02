@@ -16,7 +16,7 @@ import pytest
 
 from degenbot.degenbot_rs import PyBot
 from degenbot.uniswap.concentrated.types import LiquidityAtTick
-from degenbot.uniswap.v3_libraries.tick_math import MIN_SQRT_RATIO
+from degenbot.uniswap.v3_libraries import MIN_SQRT_RATIO
 from tests.helpers.erc20_factory import make_erc20
 from tests.helpers.v3_pool_factory import make_v3_pool
 

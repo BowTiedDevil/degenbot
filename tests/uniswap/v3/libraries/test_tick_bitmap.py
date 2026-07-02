@@ -10,7 +10,7 @@ from degenbot.uniswap.v3_libraries.tick_bitmap import (
     next_initialized_tick_within_one_word,
     position,
 )
-from degenbot.uniswap.v3_libraries.tick_math import MAX_TICK, MIN_TICK
+from degenbot.uniswap.v3_libraries import MAX_TICK, MIN_TICK
 
 # Tests adapted from Typescript tests on Uniswap V3 Github repo
 # ref: https://github.com/Uniswap/v3-core/blob/main/test/TickBitmap.spec.ts

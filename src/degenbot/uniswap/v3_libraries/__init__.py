@@ -6,6 +6,14 @@ input validation, ``lru_cache`` memoization, and ``EVMRevertError`` conversion.
 """
 
 from degenbot.degenbot_rs import (
+    MAX_SQRT_RATIO,
+    MAX_TICK,
+    MIN_SQRT_RATIO,
+    MIN_TICK,
+    get_sqrt_ratio_at_tick,
+    get_tick_at_sqrt_ratio,
+)
+from degenbot.degenbot_rs import (
     cl_add_delta as add_delta,
 )
 from degenbot.degenbot_rs import (
@@ -49,17 +57,6 @@ from degenbot.degenbot_rs import (
 )
 from degenbot.degenbot_rs import (
     cl_muldiv_rounding_up as muldiv_rounding_up,
-)
-from degenbot.degenbot_rs import (
-    get_sqrt_ratio_at_tick,
-    get_tick_at_sqrt_ratio,
-)
-
-from .tick_math import (
-    MAX_SQRT_RATIO,
-    MAX_TICK,
-    MIN_SQRT_RATIO,
-    MIN_TICK,
 )
 
 __all__ = [
