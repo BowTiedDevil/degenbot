@@ -37,6 +37,7 @@ members = [
     "crates/degenbot-price",
     "crates/degenbot-executor",
     "crates/degenbot-submission",
+    "crates/degenbot-simulation",
     "crates/degenbot-abi",
     "crates/degenbot-rpc",
     "crates/degenbot-bot",

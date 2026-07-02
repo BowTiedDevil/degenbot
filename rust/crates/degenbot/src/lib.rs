@@ -60,6 +60,11 @@ pub use degenbot_price;
 pub use degenbot_executor;
 pub use degenbot_submission;
 
+/// `eth_simulateV1` `stateOverrides` construction — code injection + ETH/WETH
+/// funding + warmup-slot integration + WETH9 `balanceOf` override
+/// (pure-Rust leaf).
+pub use degenbot_simulation;
+
 /// Concentrated-liquidity math (`cl_lib`, `tick_math`).
 pub use degenbot_cl_math;
 
