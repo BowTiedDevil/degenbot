@@ -1,14 +1,25 @@
-"""Database session helpers and Alembic configuration."""
+"""Database session helpers and Alembic configuration.
+
+The SQLite **file operations** (`create_new_sqlite_database`,
+`backup_sqlite_database`, `compact_sqlite_database`,
+`upgrade_existing_sqlite_database`) are now thin delegating shells over the
+Rust core (`degenbot_rs.db_*`), per ADR-005 / the three-layer architecture
+(ergo `OP23QV`). The Alembic-config/session helpers stay Python (config +
+session orchestration are shell concerns — rubric §2.1).
+"""
 
 import pathlib
-import sqlite3
 
-from alembic import command
 from alembic.config import Config
-from sqlalchemy import URL, Engine, create_engine, event, text
+from sqlalchemy import URL, Engine, create_engine, event
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
 
-from degenbot.database.models import Base
+from degenbot.degenbot_rs import (
+    db_backup_database,
+    db_compact_database,
+    db_create_new_database,
+    db_upgrade_database,
+)
 from degenbot.exceptions.infrastructure import BackupExists
 from degenbot.logging import logger
 
@@ -20,7 +31,12 @@ def backup_sqlite_database(
     suffix: str | None = None,
     skip_confirmation: bool = False,
 ) -> None:
-    """Backup sqlite database.
+    """Back up the SQLite database to a ``.db.bak`` sibling.
+
+    The backup + integrity-check now run in the Rust core
+    (``degenbot_rs.db_backup_database``); this shell resolves the path,
+    applies the optional ``prefix``/``suffix`` stem decoration, and honors the
+    ``BackupExists`` guard (CLI orchestration concern — rubric §2.1).
 
     Raises:
         BackupExists: See function documentation.
@@ -30,7 +46,8 @@ def backup_sqlite_database(
     assert isinstance(session_engine, Engine)
     assert session_engine.url.database is not None
 
-    backup_path = pathlib.Path(session_engine.url.database).absolute()
+    source_path = pathlib.Path(session_engine.url.database).absolute()
+    backup_path = source_path
 
     if prefix is not None:
         backup_path = backup_path.with_stem(f"{prefix}-{backup_path.stem}")
@@ -42,19 +59,8 @@ def backup_sqlite_database(
     if backup_path.exists() and not skip_confirmation:
         raise BackupExists(path=backup_path)
 
-    # Get the underlying DBAPI connection for backup
-    with sqlite3.connect(backup_path) as backup_connection:
-        raw_conn = session.connection().connection.driver_connection
-        assert isinstance(raw_conn, sqlite3.Connection)
-        raw_conn.backup(target=backup_connection)
-
-        # Verify integrity of underlying database
-        [(result,)] = raw_conn.execute("PRAGMA integrity_check;").fetchall()
-        assert result == "ok", f"Backup integrity check failed: {result=}"
-
-        # Verify backup integrity
-        [(result,)] = backup_connection.execute("PRAGMA integrity_check;").fetchall()
-        assert result == "ok", f"Backup integrity check failed: {result=}"
+    db_backup_database(str(source_path), str(backup_path))
+    logger.info(f"Backed up SQLite database to {backup_path}")
 
 
 def _get_sqlite_db_string(db_path: pathlib.Path) -> str:
@@ -70,55 +76,35 @@ def _get_sqlite_db_string(db_path: pathlib.Path) -> str:
 
 
 def create_new_sqlite_database(db_path: pathlib.Path) -> None:
-    """Create new sqlite database."""
-    engine = create_engine(
-        f"sqlite:///{_get_sqlite_db_string(db_path)}",
-    )
-    try:
-        with engine.connect() as connection:
-            assert (
-                connection.execute(
-                    text("PRAGMA journal_mode=WAL;"),
-                ).scalar()
-                == "wal"
-            )
-            connection.execute(
-                text("PRAGMA auto_vacuum=FULL;"),
-            )
+    """Create a new SQLite database stamped at the Alembic head.
 
-            Base.metadata.create_all(bind=engine)
-            connection.execute(
-                text("VACUUM;"),
-            )
-
-            logger.info(f"Initialized new SQLite database at {db_path}")
-            command.stamp(get_alembic_config(database_path=db_path), "head")
-    finally:
-        engine.dispose()
+    Delegates to the Rust core (``degenbot_rs.db_create_new_database``):
+    WAL mode + the full head DDL + ``VACUUM`` + an Alembic ``head`` stamp.
+    """
+    db_create_new_database(str(db_path))
+    logger.info(f"Initialized new SQLite database at {db_path}")
 
 
 def compact_sqlite_database(db_path: pathlib.Path) -> None:
-    """Perform compact sqlite database."""
-    # Skip compacting in-memory databases
-    if db_path.name == ":memory:":
-        return
-    engine = create_engine(
-        f"sqlite:///{db_path.absolute()}",
-    )
-    try:
-        with engine.connect() as connection:
-            connection.execute(
-                text("VACUUM;"),
-            )
-            logger.info(f"Compacted SQLite database at {db_path}")
-    finally:
-        engine.dispose()
+    """Compact the SQLite database via ``VACUUM``.
+
+    Delegates to the Rust core (``degenbot_rs.db_compact_database").
+    """
+    db_compact_database(str(db_path))
+    logger.info(f"Compacted SQLite database at {db_path}")
 
 
 def upgrade_existing_sqlite_database(database_path: pathlib.Path) -> None:
-    """Perform upgrade existing sqlite database."""
-    command.upgrade(get_alembic_config(database_path=database_path), "head")
-    logger.info("Updated existing SQLite database.")
+    """Ensure the SQLite database is at the latest schema.
+
+    Delegates to the Rust core (``degenbot_rs.db_upgrade_database``): a no-op
+    if already at the Alembic head, or applies the head DDL + stamp on an empty
+    file. A stale Alembic DB raises ``ValueError`` (run
+    ``alembic upgrade head`` from Python to cross migration revisions).
+    """
+    outcome = db_upgrade_database(str(database_path))
+    logger.info(f"Updated existing SQLite database at {database_path} ({outcome}).")
+    return outcome
 
 
 def get_scoped_sqlite_session(database_path: pathlib.Path) -> scoped_session[Session]:

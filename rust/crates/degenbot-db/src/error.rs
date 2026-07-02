@@ -37,6 +37,12 @@ pub enum DbError {
         "unrecognized database schema (not a degenbot Alembic DB and not a fresh standalone DB)"
     )]
     UnrecognizedSchema,
+
+    /// `PRAGMA integrity_check` returned a value other than `"ok"` — mirrors the
+    /// Python `backup_sqlite_database` post-backup assertion. The inner string is
+    /// the verbatim `SQLite` message.
+    #[error("sqlite integrity check failed: {0}")]
+    IntegrityCheckFailed(String),
 }
 
 /// Convert a [`DbError`] into a [`rusqlite::Error`] so row-decode closures

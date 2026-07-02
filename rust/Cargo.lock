@@ -1718,6 +1718,8 @@ name = "degenbot-executor"
 version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
+ "degenbot-abi",
+ "degenbot-core",
  "proptest",
 ]
 
@@ -1734,6 +1736,7 @@ dependencies = [
  "degenbot-core",
  "degenbot-rpc",
  "log",
+ "pyo3",
  "thiserror",
 ]
 
@@ -1788,8 +1791,10 @@ dependencies = [
  "degenbot-cl-math",
  "degenbot-core",
  "degenbot-curve-math",
+ "degenbot-db",
  "degenbot-decoders",
  "degenbot-pathfinding",
+ "degenbot-price",
  "degenbot-rpc",
  "degenbot-solidly-math",
  "degenbot-uniswap",
