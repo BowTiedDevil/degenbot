@@ -50,7 +50,7 @@ use crate::migrate::{ensure_schema, SchemaState};
 /// slice 14c) will hold an `Arc<DegenbotDb>` on `PyBotIo.db` in place of
 /// today's `Option<Py<PyAny>>`.
 pub struct DegenbotDb {
-    conn: Mutex<Connection>,
+    pub(crate) conn: Mutex<Connection>,
 }
 
 /// The per-connection PRAGMAs the open path always sets (binding #3): the
@@ -111,10 +111,73 @@ impl DegenbotDb {
         ))
     }
 
+    /// Open a file-backed **write-capable** handle (RQXEKH writer substrate).
+    /// Same `PRE_SCHEMA_PRAGMAS` + [`ensure_schema`] sequence as [`Self::open`],
+    /// but `query_only` is **NEVER** set — the connection can `INSERT`/`UPDATE`.
+    ///
+    /// This does NOT violate SLHSM4 binding #2 ("every **read** connection
+    /// opened by degenbot-db MUST set `query_only=on`"): the *read* constructors
+    /// ([`Self::open`] / [`Self::open_in_memory`]) stay read-only; this is the
+    /// explicit opt-in writer path used by the Aave writer substrate
+    /// ([`crate::write`]) + the `PyO3` seam's write-through path. Called on a
+    /// read handle, the writer methods ([`crate::write::DegenbotDb`]
+    /// `get_or_create_*` / `process_*`) fail at the `SQLite` layer
+    /// (`attempt to write a readonly database`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] if the connection/PRAGMA/DDL setup fails,
+    /// [`DbError::AlembicStale`] / [`DbError::UnrecognizedSchema`] for
+    /// unrecognized files.
+    pub fn open_for_writes(path: &Path) -> Result<(Self, SchemaState), DbError> {
+        let conn = if path == Path::new(":memory:") {
+            Connection::open_in_memory()?
+        } else {
+            Connection::open(path)?
+        };
+        let state = Self::finish_open_for_writes(&conn)?;
+        Ok((
+            Self {
+                conn: Mutex::new(conn),
+            },
+            state,
+        ))
+    }
+
+    /// Open an in-memory **write-capable** handle (for writer-substrate tests).
+    /// Like [`Self::open_in_memory`] but `query_only` is never set.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a connection/PRAGMA/DDL failure.
+    pub fn open_in_memory_for_writes() -> Result<(Self, SchemaState), DbError> {
+        let conn = Connection::open_in_memory()?;
+        let state = Self::finish_open_for_writes(&conn)?;
+        Ok((
+            Self {
+                conn: Mutex::new(conn),
+            },
+            state,
+        ))
+    }
+
     /// The shared tail of [`Self::open`] / [`Self::open_in_memory`]: the
     /// PRAGMA sequence + [`ensure_schema`] + the post-schema `query_only=on`.
     /// Refuses (returns [`DbError`]) on stale/unrecognized schemas.
     fn finish_open(conn: &Connection) -> Result<SchemaState, DbError> {
+        Self::finish_open_inner(conn, /* set_query_only */ true)
+    }
+
+    /// The shared tail of [`Self::open_for_writes`] /
+    /// [`Self::open_in_memory_for_writes`]: the PRAGMA sequence +
+    /// [`ensure_schema`] but `query_only` is NOT set (write-capable).
+    fn finish_open_for_writes(conn: &Connection) -> Result<SchemaState, DbError> {
+        Self::finish_open_inner(conn, /* set_query_only */ false)
+    }
+
+    /// The full shared open tail: PRAGMAs + [`ensure_schema`] + optional
+    /// `query_only=on` + the stale/unrecognized refuse check.
+    fn finish_open_inner(conn: &Connection, set_query_only: bool) -> Result<SchemaState, DbError> {
         // Concurrency PRAGMAs first (binding #3: before ensure_schema).
         conn.execute_batch(PRE_SCHEMA_PRAGMAS)?;
 
@@ -123,11 +186,11 @@ impl DegenbotDb {
         // Alembic branches it writes nothing.
         let state = ensure_schema(conn)?;
 
-        // Now lock down: the load-bearing read-safety guarantee (binding #2).
-        // After open() returns, EVERY connection is read-only. Set this before
-        // the refuse check too so a refused connection is still read-only
-        // while it's being dropped.
-        conn.pragma_update(None, "query_only", "on")?;
+        // Read handles lock down here (binding #2). Writer handles skip this so
+        // the upsert substrate can INSERT/UPDATE.
+        if set_query_only {
+            conn.pragma_update(None, "query_only", "on")?;
+        }
 
         match state {
             SchemaState::AlembicStale { head, expected } => {
