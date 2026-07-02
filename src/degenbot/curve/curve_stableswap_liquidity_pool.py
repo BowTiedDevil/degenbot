@@ -8,7 +8,7 @@ import contextlib
 import dataclasses
 from collections.abc import Iterable, Sequence
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any, ClassVar, Self
+from typing import TYPE_CHECKING, Any, Self
 from weakref import WeakSet
 
 from eth_typing import ChecksumAddress
@@ -202,8 +202,6 @@ class CurveStableswapPool(
     """CurveStableswapPool class."""
 
     type PoolState = CurveStableswapPoolState
-
-    LOG_HANDLERS: ClassVar[dict[str, Any]] = {}  # Curve stays on polling
 
     # Constants from contract
     # ref: https://github.com/curvefi/curve-contract/blob/master/contracts/pool-templates/base/SwapTemplateBase.vy
