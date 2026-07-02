@@ -10,7 +10,6 @@ from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.curve.curve_stableswap_liquidity_pool import CurveStableswapPool
 from degenbot.pancakeswap.pools import PancakeswapV3Pool
 from degenbot.registry.pool_type import _derive_family
-from degenbot.sushiswap.pools import SushiswapV3Pool
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.pool_type import PoolFamily
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
@@ -79,9 +78,9 @@ class TestConcretePoolsSatisfyProtocols:
         assert issubclass(PancakeswapV3Pool, AbstractLiquidityPool)
         assert hasattr(PancakeswapV3Pool, "sqrt_price_x96")
 
-    def test_sushiswap_v3_pool_satisfies_concentrated_liquidity(self):
-        assert issubclass(SushiswapV3Pool, AbstractLiquidityPool)
-        assert hasattr(SushiswapV3Pool, "sqrt_price_x96")
+    # C8b: SushiswapV3Pool collapsed — the sushiswap-v3 factory yields a plain
+    # UniswapV3Pool (no ABI override), so its ABC check is now the
+    # UniswapV3Pool check above; dropped the tautology.
 
     def test_curve_pool_satisfies_base_abc(self):
         assert issubclass(CurveStableswapPool, AbstractLiquidityPool)

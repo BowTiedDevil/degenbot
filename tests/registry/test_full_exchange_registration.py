@@ -11,7 +11,6 @@ import pytest
 from degenbot.aerodrome.pools import AerodromeV2Pool, AerodromeV3Pool
 from degenbot.pancakeswap.pools import PancakeswapV3Pool
 from degenbot.registry.pool_type import PoolTypeRegistry
-from degenbot.sushiswap.pools import SushiswapV3Pool
 from degenbot.types.pool_type import PoolFamily
 from degenbot.uniswap.deployments import (
     ArbitrumCamelotV2,
@@ -90,7 +89,7 @@ REGISTRATIONS: dict[tuple[int, str], tuple[type, object, str | None, str]] = {
         "sushiswap_v2",
     ),
     (1, _factory(EthereumMainnetSushiswapV3)): (
-        SushiswapV3Pool,
+        UniswapV3Pool,
         EthereumMainnetSushiswapV3,
         "sushiswap",
         "sushiswap_v3",
@@ -116,7 +115,7 @@ REGISTRATIONS: dict[tuple[int, str], tuple[type, object, str | None, str]] = {
         "sushiswap_v2",
     ),
     (8453, _factory(BaseSushiswapV3)): (
-        SushiswapV3Pool,
+        UniswapV3Pool,
         BaseSushiswapV3,
         "sushiswap",
         "sushiswap_v3",
@@ -159,7 +158,7 @@ REGISTRATIONS: dict[tuple[int, str], tuple[type, object, str | None, str]] = {
         "sushiswap_v2",
     ),
     (42161, _factory(ArbitrumSushiswapV3)): (
-        SushiswapV3Pool,
+        UniswapV3Pool,
         ArbitrumSushiswapV3,
         "sushiswap",
         "sushiswap_v3",
