@@ -65,6 +65,7 @@
 //!   hands it to the Rust signer ONCE).
 //! - The `SubmittedTx` monitor / dispatcher state — sibling tasks in the epic.
 
+pub mod dispatcher;
 pub mod error;
 pub mod fee;
 pub mod params;
@@ -76,3 +77,8 @@ pub use error::{SubmissionError, SubmissionResult};
 pub use fee::{compute_max_fee, finalize_fees, MAX_FEE_HEADROOM};
 pub use params::TxParams;
 pub use signer::TxSigner;
+
+pub use dispatcher::{
+    CommittedTx, Dispatcher, PathSuppression, PoolKey, BLOCK_TIMES_WINDOW, FEE_HISTORY_WINDOW,
+    PATH_SUPPRESS_RETRY_INTERVAL, PATH_SUPPRESS_THRESHOLD,
+};
