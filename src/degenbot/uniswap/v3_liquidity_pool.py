@@ -46,14 +46,6 @@ from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import BoundedProductHop, HopType, V3TickRangeInfo
 from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
-from degenbot.uniswap.log_decoders import (
-    V3_BURN_TOPIC,
-    V3_MINT_TOPIC,
-    V3_SWAP_TOPIC,
-    decode_v3_burn,
-    decode_v3_mint,
-    decode_v3_swap,
-)
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves
@@ -118,12 +110,6 @@ class UniswapV3Pool(
     """
 
     variant: ClassVar[str | None] = None
-
-    LOG_HANDLERS: ClassVar[dict[str, Any]] = {
-        V3_SWAP_TOPIC: decode_v3_swap,
-        V3_MINT_TOPIC: decode_v3_mint,
-        V3_BURN_TOPIC: decode_v3_burn,
-    }
 
     type PoolState = UniswapV3PoolState
 

@@ -21,7 +21,6 @@ from degenbot.types.aliases import BlockNumber
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import ConstantProductHop, HopType, SolidlyStableHop
 from degenbot.types.pool_protocols import SimulationResult
-from degenbot.uniswap.log_decoders import V2_SYNC_TOPIC, decode_v2_sync
 from degenbot.uniswap.v2_pool_calc import UniswapV2PoolCalc
 from degenbot.uniswap.v2_pool_state import V2PoolState
 from degenbot.uniswap.v2_types import (
@@ -63,10 +62,6 @@ class UniswapV2Pool(PublisherMixin, V2PoolState, UniswapV2PoolCalc, AbstractLiqu
     deployer: ChecksumAddress
     name: str
     _subscribers: WeakSet[Subscriber]
-
-    LOG_HANDLERS: ClassVar[dict[str, Any]] = {
-        V2_SYNC_TOPIC: decode_v2_sync,
-    }
 
     type PoolState = UniswapV2PoolState
 

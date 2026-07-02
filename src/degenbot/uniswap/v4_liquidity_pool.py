@@ -28,7 +28,7 @@ a fetcher-checked empty word is seen as present-but-zero.
 
 import dataclasses
 from enum import Enum
-from typing import Any, ClassVar, Self
+from typing import Any, Self
 from weakref import WeakSet
 
 import eth_abi.abi
@@ -55,12 +55,6 @@ from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import BoundedProductHop, HopType, V3TickRangeInfo
 from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
-from degenbot.uniswap.log_decoders import (
-    V4_MODIFY_LIQUIDITY_TOPIC,
-    V4_SWAP_TOPIC,
-    decode_v4_modify_liquidity,
-    decode_v4_swap,
-)
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves
@@ -183,11 +177,6 @@ class UniswapV4Pool(
     """
 
     _state_mgr: Any  # removed; retained as Any for type-checker compat only
-
-    LOG_HANDLERS: ClassVar[dict[str, Any]] = {
-        V4_SWAP_TOPIC: decode_v4_swap,
-        V4_MODIFY_LIQUIDITY_TOPIC: decode_v4_modify_liquidity,
-    }
 
     type PoolState = UniswapV4PoolState
 

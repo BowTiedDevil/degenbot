@@ -9,7 +9,6 @@ import pytest
 
 from degenbot.degenbot_rs import AlloyProvider
 from degenbot.exceptions import SubscriptionDisconnected, SubscriptionNotSupported
-from degenbot.listener import LogListener
 from degenbot.provider import AsyncProviderAdapter, ProviderAdapter
 from degenbot.provider.subscription import Subscription
 from tests.conftest import ETHEREUM_ARCHIVE_NODE_HTTP_URI, ETHEREUM_ARCHIVE_NODE_WS_URI
@@ -100,8 +99,8 @@ class TestLiveWSLogsSubscription:
             subscription._inner.unsubscribe()
 
 
-class TestLiveWSAdapterAndLogListener:
-    """Test the AsyncProviderAdapter + LogListener pipeline."""
+class TestLiveWSAdapterLogSubscription:
+    """Test the AsyncProviderAdapter WS log subscription path."""
 
     @pytest.mark.asyncio
     async def test_adapter_subscribe_blocks(self) -> None:
@@ -121,36 +120,36 @@ class TestLiveWSAdapterAndLogListener:
             await sub.unsubscribe()
 
     @pytest.mark.asyncio
-    async def test_subscribe_logs_and_dispatch_via_listener(self) -> None:
-        """Subscribe to unfiltered logs, dispatch via LogListener."""
+    async def test_subscribe_logs_yields_log_dicts(self) -> None:
+        """Subscribe to unfiltered logs; verify the WS subscription yields log dicts."""
         provider = AlloyProvider(ETHEREUM_ARCHIVE_NODE_WS_URI)
         adapter = AsyncProviderAdapter.from_alloy(provider)
         sub = await adapter.subscribe_logs()
 
-        listener = LogListener()
         all_logs: list[dict] = []
 
-        def capture_log(log: dict) -> None:
-            all_logs.append(log)
-
-        # Register a catch-all handler for a well-known event
-        # (V2 Sync on WETH/USDC or similar)
-        listener.register(
-            "0xabcdef1234567890abcdef1234567890abcdef12",  # unlikely address
-            "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1",  # V2 Sync
-            capture_log,
-        )
-
         try:
-            # Drain for a short while
+            # Drain for a short while — collect logs directly off the
+            # subscription (the pump's production path decodes via the Rust
+            # `degenbot-decoders` leaf; the dispatch-registry indirection
+            # the LogListener provided was redundant and is retired).
             async def _collect() -> None:
                 async for log in sub:
-                    listener.dispatch(log)
+                    all_logs.append(log)
                     if len(all_logs) >= 1:
                         break
 
             await asyncio.wait_for(_collect(), timeout=30)
         except (TimeoutError, SubscriptionDisconnected):
-            pass  # Normal — may not see matching log in time
+            pass  # Normal — may not see a log in time
         finally:
             await sub.unsubscribe()
+
+        if all_logs:
+            log = all_logs[0]
+            assert isinstance(log, dict)
+            # Log dicts (from `log_to_py_dict` in `py_converters.rs`) carry
+            # these keys.
+            assert "address" in log
+            assert "topics" in log
+            assert "data" in log

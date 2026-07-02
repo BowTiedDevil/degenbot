@@ -32,7 +32,6 @@ from degenbot.types.abstract import AbstractLiquidityPool, AbstractPoolState
 from degenbot.types.concrete import PublisherMixin, Subscriber
 from degenbot.types.hop_types import ConstantProductHop, HopType, SolidlyStableHop
 from degenbot.types.pool_protocols import SimulationResult
-from degenbot.uniswap.log_decoders import V2_SYNC_TOPIC, get_block_number, get_log_data_bytes
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 
 if TYPE_CHECKING:
@@ -44,33 +43,6 @@ if TYPE_CHECKING:
     from degenbot.uniswap.types import UniswapPoolSwapVector
 
 
-def _decode_aerodrome_v2_sync(log: dict) -> Any:  # noqa: ANN401
-    """Decode a V2 Sync event for Aerodrome pools.
-
-    Same format as Uniswap V2 Sync, but creates an AerodromeV2PoolExternalUpdate.
-
-    Returns:
-        The computed value.
-
-    """
-    reserve0, reserve1 = abi_decode(
-        ["uint112", "uint112"],
-        get_log_data_bytes(log),
-    )
-    block_number = get_block_number(log)
-
-    update = AerodromeV2PoolExternalUpdate(
-        block_number=block_number,
-        reserves_token0=reserve0,
-        reserves_token1=reserve1,
-    )
-
-    def apply(pool: AerodromeV2Pool) -> None:  # type: ignore[name-defined]
-        pool.external_update(update)
-
-    return apply
-
-
 class AerodromeV2Pool(
     PublisherMixin,
     AerodromeV2PoolStateMixin,
@@ -80,10 +52,6 @@ class AerodromeV2Pool(
     """AerodromeV2Pool class."""
 
     variant: ClassVar[str | None] = "aerodrome"
-
-    LOG_HANDLERS: ClassVar[dict[str, Any]] = {
-        V2_SYNC_TOPIC: _decode_aerodrome_v2_sync,
-    }
 
     type PoolState = AerodromeV2PoolState
 
