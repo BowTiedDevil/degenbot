@@ -11,9 +11,6 @@ V3 fork has a byte-identical slot0/tick layout, so no ABI override is
 needed). The ``sushiswap`` DB-kind variant is carried in ``deployments.json``.
 """
 
-from . import (
-    abi as abi,
-)  # excluded from __all__ so it doesn't bubble back up to the top level package namespace
 from .trackers import SushiswapV3PoolTracker
 
 __all__ = ("SushiswapV3PoolTracker",)

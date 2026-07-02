@@ -9,7 +9,6 @@ ProviderAdapter facade with the factory methods that construct each backend.
 
 from __future__ import annotations
 
-import warnings
 from typing import TYPE_CHECKING, Any, Literal, Self
 
 from web3 import Web3
@@ -432,21 +431,6 @@ class ProviderAdapter(SyncSubscriptionSupport):
     def provider_type(self) -> Literal["web3", "alloy", "offline"]:
         """Get the type of the underlying provider."""
         return self._provider_type
-
-    @property
-    def underlying(self) -> AlloyProvider | OfflineProvider | Web3 | None:
-        """Get the underlying provider instance.
-
-        .. deprecated:: 0.x
-            This escape hatch will be removed in a future release.
-            Use ProviderAdapter methods directly instead.
-        """
-        warnings.warn(
-            "ProviderAdapter.underlying is deprecated — use ProviderAdapter methods directly.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self._raw_provider
 
     @property
     def provider(self) -> AlloyProvider | OfflineProvider | Web3 | None:

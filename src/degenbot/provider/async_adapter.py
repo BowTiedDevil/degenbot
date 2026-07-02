@@ -6,7 +6,6 @@ Contains the async subscription support mixin, private backend adapters
 
 from __future__ import annotations
 
-import warnings
 from typing import TYPE_CHECKING, Any, Literal, Self
 
 from web3 import AsyncWeb3
@@ -362,24 +361,6 @@ class AsyncProviderAdapter:
     def provider_type(self) -> Literal["web3", "alloy"]:
         """Get the type of the underlying provider."""
         return self._provider_type
-
-    @property
-    def underlying(
-        self,
-    ) -> AsyncWeb3[Any] | AlloyProvider | AsyncAlloyProvider | None:
-        """Get the underlying provider instance.
-
-        .. deprecated:: 0.x
-            This escape hatch will be removed in a future release.
-            Use AsyncProviderAdapter methods directly instead.
-        """
-        warnings.warn(
-            "AsyncProviderAdapter.underlying is deprecated "
-            "— use AsyncProviderAdapter methods directly.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self._raw_provider
 
     def as_web3(self) -> AsyncWeb3[Any] | None:
         """Return the underlying provider as AsyncWeb3, or None if not a Web3 provider.
