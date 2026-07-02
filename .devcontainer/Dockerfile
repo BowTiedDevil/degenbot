@@ -119,4 +119,21 @@ RUN mkdir -p "${HOME}/.bashrc.d" \
     && ergo completion bash > "${HOME}/.bashrc.d/ergo-completion.sh" \
     && cast completions bash > "${HOME}/.bashrc.d/cast-completion.sh"
 
+# Auto-connect interactive `pi` sessions to pi-link on startup. pi-link is
+# off by default; only `--link`/`--link-name`/`pi-link`/`/link-connect` opt in
+# (see the pi-link README "Configuration" section). The function in pi-link.sh
+# prepends `--link` to plain interactive launches (`pi`, `pi "do X"`, `pi
+# --resume`, ...) and passes through pi's print-and-exit subcommands (install,
+# remove, uninstall, update, list, config) and the --help/-h/--version/-v
+# flags untouched, where connecting would be pointless. Sourced from ~/.bashrc
+# (which loops over ~/.bashrc.d/*.sh at interactive startup); bash functions
+# are unavailable in non-interactive shells, so scripted/`podman exec` `pi`
+# calls are unaffected. COPY'd from the build context (= .devcontainer/) so the
+# live source of truth is the file in the repo, not an inline printf. Baked
+# into the image for the same attach reason as the ~/.bashrc.d completions
+# above: attach.sh does `podman start`+`exec` and never runs postCreateCommand,
+# and /home/dev is overlay (not bind-mounted), so a runtime write would not
+# survive a rebuild.
+COPY --chown=${USERNAME}:${USERNAME} pi-link.sh /home/${USERNAME}/.bashrc.d/pi-link.sh
+
 WORKDIR /workspaces/degenbot
