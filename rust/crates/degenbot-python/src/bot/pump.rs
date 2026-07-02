@@ -323,6 +323,7 @@ impl PumpState {
     /// never fails in a way the caller can recover from. Typed `PyResult` keeps
     /// the surface symmetric with `subscribe`/`resume` and leaves room for a
     /// future timed-join error.
+    #[allow(clippy::unnecessary_wraps)]
     pub(crate) fn stop(&self) -> PyResult<()> {
         self.shutdown
             .store(true, std::sync::atomic::Ordering::Relaxed);

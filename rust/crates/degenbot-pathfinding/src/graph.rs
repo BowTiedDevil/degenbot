@@ -116,6 +116,12 @@ impl PathGraph {
     /// the `networkx.MultiGraph` it replaces). Edge insertion order within
     /// each node's adjacency list is preserved for deterministic traversal.
     /// External token IDs are remapped to compact contiguous indices.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the number of distinct pools or tokens exceeds `u32::MAX`
+    /// (compact index overflow). This is an architectural bound of the
+    /// compact-index representation and unreachable in practice.
     #[must_use]
     pub fn from_edges(edges: Vec<(u64, u64, u64, PoolKind)>) -> Self {
         let n = edges.len();
@@ -124,7 +130,7 @@ impl PathGraph {
         let mut adj: Vec<Vec<CompactEdge>> = Vec::new();
 
         for (token0, token1, pool_id, pool_kind) in edges {
-            let pool_idx = pools.len() as u32;
+            let pool_idx = u32::try_from(pools.len()).expect("pool count exceeds u32::MAX");
             pools.push((pool_id, pool_kind));
 
             let idx0 = Self::intern_token(&mut token_index, &mut adj, token0);
@@ -157,7 +163,7 @@ impl PathGraph {
         if let Some(&idx) = token_index.get(&token) {
             idx
         } else {
-            let idx = token_index.len() as u32;
+            let idx = u32::try_from(token_index.len()).expect("token count exceeds u32::MAX");
             token_index.insert(token, idx);
             adj.push(Vec::new());
             idx
@@ -201,6 +207,12 @@ impl PathGraph {
     /// and their adjacencies are cleared. Their compact indices are not
     /// recycled (would require reindexing), but this only wastes a slot — it
     /// never affects correctness or the hot DFS path.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the number of nodes exceeds `u32::MAX` when mapping a
+    /// compact index (architectural bound of the index type; unreachable in
+    /// practice).
     pub fn prune_dead_ends(&mut self) {
         let n = self.adj.len();
         // Track which compact indices have been removed so we don't re-scan
@@ -211,7 +223,7 @@ impl PathGraph {
             // incident edges) is ≤ 1.
             let to_prune: Vec<u32> = (0..n)
                 .filter(|&i| !removed[i] && self.adj[i].len() <= 1)
-                .map(|i| i as u32)
+                .map(|i| u32::try_from(i).expect("node index exceeds u32::MAX"))
                 .collect();
             if to_prune.is_empty() {
                 break;
@@ -599,6 +611,7 @@ impl OwnedPathFinder {
     /// done. This is the shared DFS core — both [`Self::next_path`] (which
     /// materializes `EdgeKey`s) and [`Self::next_path_indices_into`] (which
     /// appends pool indices, avoiding allocation) dispatch through it.
+    #[allow(clippy::too_many_lines)]
     fn advance(&mut self) -> AdvanceOutcome {
         if self.done {
             return AdvanceOutcome::Exhausted;

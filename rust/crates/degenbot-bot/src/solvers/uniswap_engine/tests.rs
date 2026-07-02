@@ -1468,6 +1468,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn solve_3hop_v3_v3_v3_path() {
         let mut engine = UniswapEngine::new();
 
@@ -2891,34 +2892,38 @@ mod tests {
             18,
             1,
         );
-        let aero_a = core.write().register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
-            address: Address::from([0xa1u8; 20]),
-            token0: Address::from([0x01u8; 20]),
-            token1: Address::from([0x02u8; 20]),
-            factory: Address::from([0xfau8; 20]),
-            variant: DexVariant::AerodromeV2Stable,
-            stable: true,
-            fee: (3, 1000),
-            reserve0: tokens(1000),
-            reserve1: tokens(100),
-            update_block: 0,
-        });
-        let aero_b = core.write().register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
-            address: Address::from([0xa2u8; 20]),
-            token0: Address::from([0x01u8; 20]),
-            token1: Address::from([0x02u8; 20]),
-            factory: Address::from([0xfau8; 20]),
-            variant: DexVariant::AerodromeV2Stable,
-            stable: true,
-            fee: (3, 1000),
-            // Pool B holds the SAME pair but with twice the token0 — its
-            // token1→token0 price (reserve0 / reserve1) is 2x Pool A's, so a
-            // token0→token1→token0 cycle is profitable (the V2-equivalent
-            // Möbius optimal input is non-trivial).
-            reserve0: tokens(2000),
-            reserve1: tokens(100),
-            update_block: 0,
-        });
+        let aero_a = core
+            .write()
+            .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+                address: Address::from([0xa1u8; 20]),
+                token0: Address::from([0x01u8; 20]),
+                token1: Address::from([0x02u8; 20]),
+                factory: Address::from([0xfau8; 20]),
+                variant: DexVariant::AerodromeV2Stable,
+                stable: true,
+                fee: (3, 1000),
+                reserve0: tokens(1000),
+                reserve1: tokens(100),
+                update_block: 0,
+            });
+        let aero_b = core
+            .write()
+            .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+                address: Address::from([0xa2u8; 20]),
+                token0: Address::from([0x01u8; 20]),
+                token1: Address::from([0x02u8; 20]),
+                factory: Address::from([0xfau8; 20]),
+                variant: DexVariant::AerodromeV2Stable,
+                stable: true,
+                fee: (3, 1000),
+                // Pool B holds the SAME pair but with twice the token0 — its
+                // token1→token0 price (reserve0 / reserve1) is 2x Pool A's, so a
+                // token0→token1→token0 cycle is profitable (the V2-equivalent
+                // Möbius optimal input is non-trivial).
+                reserve0: tokens(2000),
+                reserve1: tokens(100),
+                update_block: 0,
+            });
         let engine = UniswapEngine::with_core(Arc::clone(&core));
         (engine, aero_a, aero_b)
     }
@@ -2928,8 +2933,14 @@ mod tests {
         let (mut engine, aero_a, aero_b) = solidly_arb_engine();
         let path_id = engine
             .register_path(vec![
-                PoolHop { pool_id: aero_a, zero_for_one: true },
-                PoolHop { pool_id: aero_b, zero_for_one: false },
+                PoolHop {
+                    pool_id: aero_a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: aero_b,
+                    zero_for_one: false,
+                },
             ])
             .expect("path registers");
         let resolved = engine.path_resolved.get(&path_id).expect("resolved");
@@ -3004,18 +3015,20 @@ mod tests {
         // Mirrors the profitable all-Solidly fixture but with the second hop
         // as V2 constant-product (more slippage than Solidly, but the cycle
         // is still profitable because Solidly hop0 emits ample token1).
-        let aero_id = core.write().register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
-            address: Address::from([0xb1u8; 20]),
-            token0: Address::from([0x01u8; 20]),
-            token1: Address::from([0x02u8; 20]),
-            factory: Address::from([0xfau8; 20]),
-            variant: DexVariant::AerodromeV2Stable,
-            stable: true,
-            fee: (3, 1000),
-            reserve0: tokens(1000),
-            reserve1: tokens(100),
-            update_block: 0,
-        });
+        let aero_id = core
+            .write()
+            .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+                address: Address::from([0xb1u8; 20]),
+                token0: Address::from([0x01u8; 20]),
+                token1: Address::from([0x02u8; 20]),
+                factory: Address::from([0xfau8; 20]),
+                variant: DexVariant::AerodromeV2Stable,
+                stable: true,
+                fee: (3, 1000),
+                reserve0: tokens(1000),
+                reserve1: tokens(100),
+                update_block: 0,
+            });
         let v2_id = core.write().register_v2_pool(&RegisterV2PoolParams {
             address: Address::from([0xb2u8; 20]),
             token0: Address::from([0x01u8; 20]),
@@ -3034,14 +3047,19 @@ mod tests {
         let mut engine = UniswapEngine::with_core(Arc::clone(&core));
         let path_id = engine
             .register_path(vec![
-                PoolHop { pool_id: aero_id, zero_for_one: true },
-                PoolHop { pool_id: v2_id, zero_for_one: false },
+                PoolHop {
+                    pool_id: aero_id,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v2_id,
+                    zero_for_one: false,
+                },
             ])
             .expect("mixed V2+Solidly path registers");
         let resolved = engine.path_resolved.get(&path_id).expect("resolved");
         assert!(resolved.valid);
-        let result =
-            UniswapEngine::solve_path(resolved).expect("profitable mixed path solves");
+        let result = UniswapEngine::solve_path(resolved).expect("profitable mixed path solves");
         assert!(!result.profit.is_zero());
 
         // Grid scan parity check (Solidly hop uses the integer leaf, V2 hop
@@ -3051,8 +3069,7 @@ mod tests {
         let mut grid_best = U256::ZERO;
         let mut x = U256::from(1u64);
         while x <= max_reserve {
-            let profit =
-                UniswapEngine::simulate_solidly_path(x, &resolved.hops).saturating_sub(x);
+            let profit = UniswapEngine::simulate_solidly_path(x, &resolved.hops).saturating_sub(x);
             if profit > grid_best {
                 grid_best = profit;
             }
@@ -3073,8 +3090,14 @@ mod tests {
         // is always unprofitable after fees — the Möbius precheck must early-out.
         let path_id = engine
             .register_path(vec![
-                PoolHop { pool_id: aero_a, zero_for_one: true },
-                PoolHop { pool_id: aero_a, zero_for_one: false },
+                PoolHop {
+                    pool_id: aero_a,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: aero_a,
+                    zero_for_one: false,
+                },
             ])
             .expect("path registers");
         let resolved = engine.path_resolved.get(&path_id).expect("resolved");
@@ -3105,18 +3128,20 @@ mod tests {
             18,
             1,
         );
-        let aero = core.write().register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
-            address: Address::from([0xa1u8; 20]),
-            token0: Address::from([0x01u8; 20]),
-            token1: Address::from([0x02u8; 20]),
-            factory: Address::from([0xfau8; 20]),
-            variant: DexVariant::AerodromeV2Stable,
-            stable: true,
-            fee: (3, 1000),
-            reserve0: U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64)),
-            reserve1: U256::from(100u64) * U256::from(10u64).pow(U256::from(18u64)),
-            update_block: 0,
-        });
+        let aero = core
+            .write()
+            .register_aerodrome_pool(&RegisterAerodromeV2PoolParams {
+                address: Address::from([0xa1u8; 20]),
+                token0: Address::from([0x01u8; 20]),
+                token1: Address::from([0x02u8; 20]),
+                factory: Address::from([0xfau8; 20]),
+                variant: DexVariant::AerodromeV2Stable,
+                stable: true,
+                fee: (3, 1000),
+                reserve0: U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64)),
+                reserve1: U256::from(100u64) * U256::from(10u64).pow(U256::from(18u64)),
+                update_block: 0,
+            });
         // Register a minimal V3 pool for the second hop using the same
         // ..Default::default() pattern as the existing V3 tests.
         let v3_id = core.write().register_v3_pool(&RegisterV3PoolParams {
@@ -3135,8 +3160,14 @@ mod tests {
         let mut engine = UniswapEngine::with_core(Arc::clone(&core));
         let path_id = engine
             .register_path(vec![
-                PoolHop { pool_id: aero, zero_for_one: true },
-                PoolHop { pool_id: v3_id, zero_for_one: false },
+                PoolHop {
+                    pool_id: aero,
+                    zero_for_one: true,
+                },
+                PoolHop {
+                    pool_id: v3_id,
+                    zero_for_one: false,
+                },
             ])
             .expect("path registers (resolve is per-arm)");
         let resolved = engine.path_resolved.get(&path_id).expect("resolved");

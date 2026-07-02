@@ -98,7 +98,7 @@ impl AerodromeV2PoolState {
     /// on the registration state — the same anchor discipline as V2/Curve.
     #[must_use]
     pub fn from_params(
-        params: RegisterAerodromeV2PoolParams,
+        params: &RegisterAerodromeV2PoolParams,
         journal_depth: usize,
     ) -> (AerodromeV2PoolIdentity, AerodromeV2PoolState) {
         let identity = AerodromeV2PoolIdentity {

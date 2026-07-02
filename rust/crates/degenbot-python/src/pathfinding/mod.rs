@@ -173,9 +173,8 @@ impl PathIterator {
         }
 
         // Serve one path from the back of the flat buffer.
-        let len = match self.batch_lens.pop() {
-            None => return Ok(None),
-            Some(len) => len,
+        let Some(len) = self.batch_lens.pop() else {
+            return Ok(None);
         };
         let start = self.buffer.len() - len;
         // Resolve indices → (pool_id, kind_u8) via the finder's pools table.

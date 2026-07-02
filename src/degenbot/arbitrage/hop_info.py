@@ -154,11 +154,7 @@ def build_hops_from_pools(
                     token1_address=pool.token1.address,
                     fee=pool.fee_token0 if zfo else pool.fee_token1,
                     stable=pool.stable,
-                    variant=(
-                        "aerodrome-v2-stable"
-                        if pool.stable
-                        else "aerodrome-v2-volatile"
-                    ),
+                    variant=("aerodrome-v2-stable" if pool.stable else "aerodrome-v2-volatile"),
                     zfo=zfo,
                 ),
             )

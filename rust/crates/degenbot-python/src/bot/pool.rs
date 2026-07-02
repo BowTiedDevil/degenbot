@@ -1319,13 +1319,12 @@ impl PyLiquidityPool {
     /// Aerodrome reserves commonly exceed `u64::MAX` in raw wei (e.g. `5_000`
     /// WETH = 5e21), so the prior `to::<u64>()` conversion panicked on
     /// overflow.
-    fn snapshot_aerodrome(
-        &self,
-        py: Python<'_>,
-    ) -> PyResult<Option<Py<PyAny>>> {
-        let snap = self.core.read().get_aerodrome_pool(self.pool_id).map(
-            |s| (s.reserve0, s.reserve1, s.update_block),
-        );
+    fn snapshot_aerodrome(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        let snap = self
+            .core
+            .read()
+            .get_aerodrome_pool(self.pool_id)
+            .map(|s| (s.reserve0, s.reserve1, s.update_block));
         match snap {
             None => Ok(None),
             Some((reserve0, reserve1, block)) => {
@@ -2002,6 +2001,8 @@ impl PyLiquidityPool {
     ///
     /// Each element is the option value so a non-ramping pool reports `None`
     /// for every field instead of a sentinel zero.
+    // The nested-`Option` tuple mirrors the Python-facing Curve ramp shape.
+    #[allow(clippy::type_complexity)]
     fn curve_a_ramp(
         &self,
     ) -> Option<(
@@ -2025,6 +2026,8 @@ impl PyLiquidityPool {
     /// Curve crypto-pool fees: `(fee_gamma, mid_fee, offpeg_fee_multiplier,
     /// out_fee, gamma)` — `None` for standard stableswap pools. Returns `None`
     /// for a non-Curve handle.
+    // The nested-`Option` tuple mirrors the Python-facing Curve fee shape.
+    #[allow(clippy::type_complexity)]
     fn curve_crypto_fees(
         &self,
     ) -> Option<(
@@ -2047,6 +2050,8 @@ impl PyLiquidityPool {
 
     /// Curve dedicated LP token address (EIP-55 checksummed) — `None` when the
     /// pool token itself is the LP. Returns `None` for a non-Curve handle.
+    // `Option<Option<_>>` distinguishes no-pool / pool-no-lp-token / has-token.
+    #[allow(clippy::option_option)]
     fn curve_lp_token(&self) -> Option<Option<String>> {
         let core = self.core.read();
         let id = core.get_curve_identity(self.pool_id)?;
@@ -2198,6 +2203,8 @@ impl PyLiquidityPool {
 
     /// Curve base-pool address (EIP-55 checksummed). `None` for plain pools.
     /// `None` for a non-Curve handle.
+    // `Option<Option<_>>` distinguishes no-pool / pool-no-base / has-base.
+    #[allow(clippy::option_option)]
     fn curve_base_pool_address(&self) -> Option<Option<String>> {
         let core = self.core.read();
         let id = core.get_curve_identity(self.pool_id)?;
@@ -2309,13 +2316,11 @@ impl PyLiquidityPool {
             };
             p
         };
-        let tok = match address_utils::parse_address(token_address) {
-            Ok(a) => a,
-            Err(_) => return Ok(None),
+        let Ok(tok) = address_utils::parse_address(token_address) else {
+            return Ok(None);
         };
-        let holder = match address_utils::parse_address(holder_address) {
-            Ok(a) => a,
-            Err(_) => return Ok(None),
+        let Ok(holder) = address_utils::parse_address(holder_address) else {
+            return Ok(None);
         };
         match provider.token_balance(tok, holder, block_number) {
             Ok(v) => Ok(Some(crate::conversion::alloy::u256_to_py(py, &v)?.unbind())),
@@ -2339,9 +2344,8 @@ impl PyLiquidityPool {
             };
             p
         };
-        let tok = match address_utils::parse_address(token_address) {
-            Ok(a) => a,
-            Err(_) => return Ok(None),
+        let Ok(tok) = address_utils::parse_address(token_address) else {
+            return Ok(None);
         };
         match provider.token_total_supply(tok, block_number) {
             Ok(v) => Ok(Some(crate::conversion::alloy::u256_to_py(py, &v)?.unbind())),

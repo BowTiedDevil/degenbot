@@ -57,8 +57,6 @@ from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.types import UniswapPoolSwapVector
 from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
-from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves
-from degenbot.uniswap.v3_libraries.tick_bitmap import gen_ticks
 from degenbot.uniswap.v3_libraries import (
     MAX_SQRT_RATIO,
     MAX_TICK,
@@ -66,6 +64,8 @@ from degenbot.uniswap.v3_libraries import (
     MIN_TICK,
     get_sqrt_ratio_at_tick,
 )
+from degenbot.uniswap.v3_libraries.functions import v3_virtual_reserves
+from degenbot.uniswap.v3_libraries.tick_bitmap import gen_ticks
 from degenbot.uniswap.v4_pool_calc import UniswapV4PoolCalc
 from degenbot.uniswap.v4_pool_state import V4PoolState
 from degenbot.uniswap.v4_types import (
