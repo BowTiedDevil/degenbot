@@ -58,6 +58,25 @@ use alloy::primitives::{
 use alloy::rpc::types::eth::state::{AccountOverride, StateOverride};
 use degenbot_executor::WarmupSlots;
 
+/// Balance-call calldata builders (B1): WETH9 `balanceOf`, Multicall3
+/// `getEthBalance`, PoolManager ERC6909 `balanceOf`.
+pub mod calldata;
+
+/// The `eth_simulateV1` `SimulatePayload` 7-call builder (B2).
+pub mod payload;
+
+/// The typed RPC dispatch leaf (B3/B4/B5): `eth_simulateV1` /
+/// `eth_createAccessList` / `eth_feeHistory` over the typed
+/// `degenbot_rpc::AlloyProvider` surfaces (the ZUZANP leaf), with the
+/// response parse into typed [`dispatch::SimulationResult`] /
+/// [`dispatch::BlockPriorityFees`].
+pub mod dispatch;
+
+// Re-export the most-used types at the crate root for ergonomic access
+// (mirrors how `degenbot_executor` surfaces `WarmupSlots` / `mapping_slot`).
+pub use dispatch::{BlockPriorityFees, SimulatedCall, SimulationResult};
+pub use payload::{build_simulate_payload, SimulationParams, SIM_CALL_COUNT};
+
 /// Operational funding amounts + the warmup 1-wei touch value.
 ///
 /// All come straight from the Python oracle's literals: the owner gets 100 ETH
