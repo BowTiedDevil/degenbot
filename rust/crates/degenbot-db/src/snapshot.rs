@@ -338,4 +338,55 @@ impl DegenbotDb {
             }
         }
     }
+
+    /// All V3-family pool addresses for a chain (mirrors Python
+    /// `DatabaseSnapshot.get_pools` V3 — `select(UniswapV3PoolTableBase.address)`).
+    ///
+    /// The Python oracle does NOT filter by chain; this Rust port adds the
+    /// chain filter (the snapshot is per-chain — chain-scoping is the
+    /// standalone-correct shape + tightens the Python oversight). On the
+    /// single-chain parity fixture the result is identical.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::Decode`]
+    /// on a malformed address column.
+    pub fn fetch_v3_pool_addresses(&self, chain_id: i64) -> Result<Vec<Address>, DbError> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT address FROM pools WHERE chain = ?1 AND kind IN \
+             ('uniswap_v3', 'sushiswap_v3', 'pancakeswap_v3', 'aerodrome_v3')",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![chain_id], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for addr_s in rows {
+            out.push(decode_address(&addr_s?)?);
+        }
+        Ok(out)
+    }
+
+    /// All V4 `pool_hash` hex strings for a chain (mirrors Python
+    /// `DatabaseSnapshot.get_pools` V4 — `select(UniswapV4PoolTable.pool_hash)`).
+    ///
+    /// As with [`Self::fetch_v3_pool_addresses`], adds the chain filter the
+    /// Python oracle omits (per-chain snapshot + standalone-correct).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure.
+    pub fn fetch_v4_pool_hashes(&self, chain_id: i64) -> Result<Vec<String>, DbError> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT v4.pool_hash FROM uniswap_v4_pools v4 \
+             JOIN managed_pools mp ON mp.id = v4.managed_pool_id \
+             JOIN pool_managers pm ON pm.id = mp.manager_id \
+             WHERE pm.chain = ?1",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![chain_id], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for h in rows {
+            out.push(h?);
+        }
+        Ok(out)
+    }
 }

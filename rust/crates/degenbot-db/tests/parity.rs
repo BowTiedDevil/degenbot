@@ -359,6 +359,35 @@ fn fetch_pools_for_chain_matches_python_v3_pools() {
 }
 
 #[test]
+fn fetch_v3_pool_addresses_matches_python() {
+    let (db, _state) = DegenbotDb::open(&fixture_db_path()).unwrap();
+    let exp = fixture_expected();
+    let mut v3: Vec<String> = db
+        .fetch_v3_pool_addresses(exp.chain_id)
+        .unwrap()
+        .into_iter()
+        .map(|a| a.to_checksum(None))
+        .collect();
+    v3.sort();
+    assert_eq!(
+        v3, exp.v3_pools,
+        "V3 pool addresses should match Python get_pools"
+    );
+}
+
+#[test]
+fn fetch_v4_pool_hashes_matches_python() {
+    let (db, _state) = DegenbotDb::open(&fixture_db_path()).unwrap();
+    let exp = fixture_expected();
+    let mut v4: Vec<String> = db.fetch_v4_pool_hashes(exp.chain_id).unwrap();
+    v4.sort();
+    assert_eq!(
+        v4, exp.v4_pools,
+        "V4 pool hashes should match Python get_pools"
+    );
+}
+
+#[test]
 fn query_only_blocks_writes_on_parity_db() {
     // Asserts binding #2 in-context: the parity connection is read-only.
     let (db, _state) = DegenbotDb::open(&fixture_db_path()).unwrap();
