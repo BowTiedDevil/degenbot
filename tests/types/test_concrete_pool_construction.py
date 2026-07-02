@@ -13,7 +13,6 @@ from degenbot.constants import ZERO_ADDRESS
 from degenbot.degenbot_rs import PyBot
 from degenbot.erc20.erc20 import Erc20Token
 from degenbot.pancakeswap.pools import PancakeswapV3Pool
-from degenbot.sushiswap.pools import SushiswapV3Pool
 from degenbot.types.abstract import AbstractLiquidityPool
 from degenbot.types.pool_type import PoolFamily
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
@@ -188,7 +187,7 @@ def _make_uniswap_v3_pool() -> UniswapV3Pool:
     )
 
 
-def _make_sushiswap_v3_pool() -> SushiswapV3Pool:
+def _make_sushiswap_v3_pool() -> UniswapV3Pool:
     weth = _make_weth()
     usdc = _make_usdc()
 
@@ -203,7 +202,7 @@ def _make_sushiswap_v3_pool() -> SushiswapV3Pool:
         tick=-76020,
         liquidity=9876543210,
         state_block=18_000_000,
-        pool_class=SushiswapV3Pool,
+        pool_class=UniswapV3Pool,
     )
 
 
@@ -257,7 +256,7 @@ MAINNET_POOLS: list[tuple[callable, type, PoolFamily]] = [
     (_make_sushiswap_v2_pool, UniswapV2Pool, PoolFamily.CONSTANT_PRODUCT),
     (_make_pancakeswap_v2_pool, UniswapV2Pool, PoolFamily.CONSTANT_PRODUCT),
     (_make_uniswap_v3_pool, UniswapV3Pool, PoolFamily.CONCENTRATED_LIQUIDITY),
-    (_make_sushiswap_v3_pool, SushiswapV3Pool, PoolFamily.CONCENTRATED_LIQUIDITY),
+    (_make_sushiswap_v3_pool, UniswapV3Pool, PoolFamily.CONCENTRATED_LIQUIDITY),
     (_make_pancakeswap_v3_pool, PancakeswapV3Pool, PoolFamily.CONCENTRATED_LIQUIDITY),
     (_make_uniswap_v4_pool, UniswapV4Pool, PoolFamily.CONCENTRATED_LIQUIDITY),
 ]
@@ -391,10 +390,10 @@ class TestInheritance:
 
     # ADR-005 slice 7 step 4b: the hollow V2 DEX subclasses are deleted, so the
     # V2-inherits-UniswapV2Pool checks are now trivial (they all ARE
-    # UniswapV2Pool). The V3 subclass checks remain meaningful.
-
-    def test_sushiswap_v3_inherits_uniswap_v3(self):
-        assert issubclass(SushiswapV3Pool, UniswapV3Pool)
+    # UniswapV2Pool). C8b likewise collapsed the hollow SushiswapV3Pool — the
+    # sushiswap-v3 factory now yields a plain UniswapV3Pool (byte-identical
+    # slot0/tick layout, no ABI override needed). Only Pancakeswap/Aerodrome V3
+    # remain meaningful subclass checks (real SLOT0/TICK overrides).
 
     def test_pancakeswap_v3_inherits_uniswap_v3(self):
         assert issubclass(PancakeswapV3Pool, UniswapV3Pool)
@@ -403,7 +402,6 @@ class TestInheritance:
         for cls in [
             UniswapV2Pool,
             UniswapV3Pool,
-            SushiswapV3Pool,
             PancakeswapV3Pool,
             UniswapV4Pool,
         ]:

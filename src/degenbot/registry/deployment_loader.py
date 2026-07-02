@@ -71,7 +71,6 @@ from degenbot.config import CONFIG_FILE
 from degenbot.degenbot_rs import PyDexIdentity, dex_identity
 from degenbot.logging import logger
 from degenbot.pancakeswap.pools import PancakeswapV3Pool
-from degenbot.sushiswap.pools import SushiswapV3Pool
 from degenbot.types.pool_type import PoolFamily
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -106,7 +105,7 @@ POOL_TYPE_MAP: dict[str, type[AbstractLiquidityPool]] = {
     "uniswap-v2": UniswapV2Pool,
     "uniswap-v3": UniswapV3Pool,
     "pancakeswap-v3": PancakeswapV3Pool,
-    "sushiswap-v3": SushiswapV3Pool,
+    "sushiswap-v3": UniswapV3Pool,
     "aerodrome-v2": AerodromeV2Pool,
     "aerodrome-v3": AerodromeV3Pool,
     "balancer-weighted": BalancerV2Pool,

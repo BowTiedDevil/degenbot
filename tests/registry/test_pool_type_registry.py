@@ -14,7 +14,6 @@ import pytest
 from degenbot.aerodrome.pools import AerodromeV3Pool
 from degenbot.pancakeswap.pools import PancakeswapV3Pool
 from degenbot.registry.pool_type import PoolTypeRegistry
-from degenbot.sushiswap.pools import SushiswapV3Pool
 from degenbot.types.pool_type import PoolFamily
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -81,12 +80,13 @@ class TestKindDerivation:
         assert desc.kind == "sushiswap_v2"
 
     def test_variant_v3_kind(self) -> None:
-        """variant='sushiswap' → kind='sushiswap_v3' (V3 keeps its class)."""
+        """variant='sushiswap' → kind='sushiswap_v3' (C8b: variant passed explicitly)."""
         registry = PoolTypeRegistry()
         registry.register(
-            SushiswapV3Pool,
+            UniswapV3Pool,
             chain_id=1,
             factory_address=SUSHI_V3_MAINNET,
+            variant="sushiswap",
         )
         desc = registry.get_descriptor(chain_id=1, factory_address=SUSHI_V3_MAINNET)
         assert desc is not None
@@ -128,7 +128,7 @@ class TestInvariantDerivation:
     def test_v3_subclass_is_concentrated_liquidity(self) -> None:
         registry = PoolTypeRegistry()
         registry.register(
-            SushiswapV3Pool,
+            UniswapV3Pool,
             chain_id=1,
             factory_address=SUSHI_V3_MAINNET,
         )
@@ -185,16 +185,22 @@ class TestVariantFromRegistration:
         assert desc.variant == "sushiswap"
 
     def test_variant_falls_back_to_class_attribute_when_no_override(self) -> None:
-        """V3 subclasses still derive variant from the class attribute."""
+        """V3 subclasses with a class-level ``variant`` derive variant from it.
+
+        C8b: ``SushiswapV3Pool`` is collapsed (its variant now comes from the
+        explicit ``deployments.json`` field), so this class-attr-fallback path
+        is exercised by ``PancakeswapV3Pool`` (which carries a real
+        ``SLOT0_STRUCT_TYPES`` override + ``variant='pancakeswap'`` class attr).
+        """
         registry = PoolTypeRegistry()
         registry.register(
-            SushiswapV3Pool,
+            PancakeswapV3Pool,
             chain_id=1,
-            factory_address=SUSHI_V3_MAINNET,
+            factory_address=PANCAKE_V3_MAINNET,
         )
-        desc = registry.get_descriptor(chain_id=1, factory_address=SUSHI_V3_MAINNET)
+        desc = registry.get_descriptor(chain_id=1, factory_address=PANCAKE_V3_MAINNET)
         assert desc is not None
-        assert desc.variant == "sushiswap"
+        assert desc.variant == "pancakeswap"
 
 
 # --- Registration and lookup ---
@@ -423,9 +429,10 @@ class TestKindReverseLookup:
             variant="sushiswap",
         )
         registry.register(
-            SushiswapV3Pool,
+            UniswapV3Pool,
             chain_id=1,
             factory_address=SUSHI_V3_MAINNET,
+            variant="sushiswap",
         )
         registry.register(
             UniswapV2Pool,

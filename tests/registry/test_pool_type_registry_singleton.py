@@ -9,7 +9,6 @@ from degenbot.balancer.pools import BalancerV2Pool
 from degenbot.balancer.stable_pools import BalancerV2StablePool
 from degenbot.pancakeswap.pools import PancakeswapV3Pool
 from degenbot.registry.pool_type import pool_type_registry
-from degenbot.sushiswap.pools import SushiswapV3Pool
 from degenbot.uniswap.deployments import BaseAerodromeV2
 from degenbot.uniswap.v2_liquidity_pool import UniswapV2Pool
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
@@ -25,7 +24,7 @@ SINGLETON_REGISTRATIONS: dict[tuple[int, str], tuple[type, str | None, str]] = {
         "sushiswap_v2",
     ),
     (1, "0xbACEB8eC6b9355Dfc0269C18bac9d6E2Bdc29C4F"): (
-        SushiswapV3Pool,
+        UniswapV3Pool,
         "sushiswap",
         "sushiswap_v3",
     ),
@@ -48,7 +47,7 @@ SINGLETON_REGISTRATIONS: dict[tuple[int, str], tuple[type, str | None, str]] = {
         "sushiswap_v2",
     ),
     (8453, "0xc35DADB65012eC5796536bD9864eD8773aBc74C4"): (
-        SushiswapV3Pool,
+        UniswapV3Pool,
         "sushiswap",
         "sushiswap_v3",
     ),
@@ -85,7 +84,7 @@ SINGLETON_REGISTRATIONS: dict[tuple[int, str], tuple[type, str | None, str]] = {
         "sushiswap_v2",
     ),
     (42161, "0x1af415a1EbA07a4986a52B6f2e7dE7003D82231e"): (
-        SushiswapV3Pool,
+        UniswapV3Pool,
         "sushiswap",
         "sushiswap_v3",
     ),

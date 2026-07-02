@@ -82,7 +82,6 @@ from .registry.deployment_loader import (
     register_from_deployments as _register_from_deployments,
 )
 from .sushiswap import (
-    SushiswapV3Pool,
     SushiswapV3PoolTracker,
 )
 from .uniswap import (
@@ -137,7 +136,6 @@ __all__ = (
     "PayloadComposer",
     "PoolRegistry",
     "PoolTypeRegistry",
-    "SushiswapV3Pool",
     "SushiswapV3PoolTracker",
     "TokenRegistry",
     "UniswapV2Pool",
