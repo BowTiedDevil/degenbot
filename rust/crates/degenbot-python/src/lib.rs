@@ -47,6 +47,8 @@ pub mod rpc;
 pub mod solady;
 #[cfg(feature = "solidly-math")]
 pub mod solidly_math;
+#[cfg(feature = "submission")]
+pub mod submission;
 #[cfg(feature = "uniswap")]
 pub mod uniswap;
 

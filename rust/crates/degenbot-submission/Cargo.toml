@@ -1,0 +1,40 @@
+[package]
+name = "degenbot-submission"
+description = "Pure-Rust EIP-1559 transaction signing + fee finalization — operator-key holding LocalSigner + TxEnvelope/Typed2718 type-2 encoding."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"
+pedantic = "warn"
+perf = "warn"
+style = "warn"
+suspicious = "warn"
+
+[dependencies]
+alloy = { version = "^2.0", features = ["full", "signer-local", "network"] }
+degenbot-core = { path = "../degenbot-core" }
+thiserror = { version = "^2.0" }
+
+# Gated (not default) so pure-Rust consumers build without pulling pyo3.
+# Enables `impl From<degenbot_submission::SubmissionError> for pyo3::PyErr` so
+# the `degenbot-python` binding layer can `?`-propagate signing/fee errors as a
+# `PyErr` (mirrors `degenbot-core`/`degenbot-price`'s `pyo3` feature).
+pyo3 = { version = "^0.29", features = ["abi3-py312", "serde"], optional = true }
+
+[dev-dependencies]
+proptest = "^1.10"
+
+[features]
+default = []
+# Enables `impl From<SubmissionError> for pyo3::PyErr`. Enabled by the
+# `degenbot-python` binding crate; never enabled by the umbrella.
+pyo3 = ["dep:pyo3"]

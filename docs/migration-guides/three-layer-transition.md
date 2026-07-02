@@ -322,6 +322,55 @@ including the non-whole fractional case, with no live RPC; the existing
 `test_chainlink_price_feed.py` + `tests/erc20/test_erc20_token.py` pass against
 the real AnvilFork (web3-backed bot).
 
+### Fork D — EIP-1559 signing + fee finalization → Rust `degenbot-submission` (ergo `G6DNW4`)
+
+The **transaction-submission signing mechanism** moved to a new pyo3-free core
+leaf `degenbot-submission` (task `G6DNW4`): `signer::TxSigner` holds the
+operator private key ONCE via `alloy-signer-local::PrivateKeySigner` (a
+`LocalSigner<k256 SigningKey>`), constructed from Python-provided key
+bytes/hex — the key never round-trips back into Python per-tx (the prior
+`eth_account.Account.sign_transaction(..., private_key=...)` path crossed the
+key on every submit — a security smell).
+
+`fee::finalize_fees` sets `maxFeePerGas = int(1.5 * base_fee_next) +
+priority_fee` + `maxPriorityFeePerGas = priority_fee` — the Python oracle's
+inline fee computation (`examples/eth_backrun_v2_v3_v4_rust.py` L2623–L2624),
+including the **float→int truncate boundary** documented on the `fee` module
+(the same convention as `_compute_priority_fee`). `signer::TxSigner::sign_eip1559`
+builds a type-2 `TxEip1559` `TxEnvelope` from `params::TxParams` and signs
+synchronously via the `TxSignerSync` trait (RFC 6979 deterministic ECDSA —
+`eth_account`-parity), returning the raw `Typed2718` bytes ready for
+`eth_sendRawTransaction`. `chain_id` lives on the signer (replay-protection
+context), not in `TxParams` — no duplicated-state smell.
+
+**PyO3 seam** (`degenbot-python/src/submission/`): `PyTxSigner` (constructed
+from key hex/bytes + chain id; the held `PrivateKeySigner` lives in Rust) +
+`PyTxParams` (holds the EIP-1559 field set; the web3-shape access list is
+parsed in the wrapper) + the `finalize_fees` pyfunction. `sign_eip1559`
+releases the GIL around the synchronous ECDSA via `py.detach` (CPU-bound, no
+network — unlike the price readers' async `eth_call`, signing needs no runtime
++ no `block_on`).
+
+**Cross-epic boundary (REFERENCE, no hard edge):** the `priority_fee` is
+CONSUMED from `YL2MTH`'s `_compute_priority_fee` (Simulation, not started);
+submission does NOT sequence-depend on it — it reads the already-computed fee
+off `tx_params`, and for §4.2 parity uses a fixture value. `base_fee_next`
+comes from `JTLWA3`'s `next_base_fee` (committed crate, consumed). The
+broadcast (`eth_sendRawTransaction` `bytes → TxHash`) is `ZUZANP` (carved out
+— `degenbot-rpc` owns only the byte-broadcast; this task owns the SIGNING
+producing those bytes).
+
+**§4.2 HARD gate:** because both `eth_account` and `alloy-signer-local` use
+RFC 6979 deterministic ECDSA over secp256k1, a pinned key + `tx_params`
+produces **byte-for-byte identical** raw signed bytes in Rust and Python.
+`tests/test_submission_seam_parity.py` (9 tests) pins the anvil-key-0 fixture
+(byte-exact vs `eth_account`), the round-trip signer-recovery, chain-id
+replay-protection (different chain → different bytes, same recovered
+address), fee-math parity vs Python `int(1.5 * bf) + pf`, and an
+`eth_account` version-drift guard; the Rust core `signed_bytes_match_eth_account_oracle_byte_for_byte`
+test pins the same hash. The Python cutover (replacing the example's
+`eth_account.sign_transaction` call) is a sibling downstream task.
+
 ### Fork A — JSON deployment identity → Rust builder → handle (ergo `AWGOXL`)
 
 The per-(chain,factory) CREATE2 deployer + init_hash moved from Python

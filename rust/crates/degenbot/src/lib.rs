@@ -58,6 +58,7 @@ pub use degenbot_price;
 
 /// cmd-executor domain — simulation warmup-slot storage math (pure-Rust leaf).
 pub use degenbot_executor;
+pub use degenbot_submission;
 
 /// Concentrated-liquidity math (`cl_lib`, `tick_math`).
 pub use degenbot_cl_math;

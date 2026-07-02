@@ -166,6 +166,9 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Price-reader seam (feature = "price")
     crate::price::add_price_module(m)?;
 
+    // Submission seam (feature = "submission")
+    crate::submission::add_submission_module(m)?;
+
     Ok(())
 }
 
