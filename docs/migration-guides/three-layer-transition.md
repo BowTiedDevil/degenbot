@@ -302,6 +302,40 @@ The per-(chain,factory) CREATE2 deployer + init_hash moved from Python
 - **ClassVars + `_verified_address` retired.** The Python companions read the
   verified identity off the handle; no Python mirror remains.
 
+### Fork B — Solidly solve → Rust engine (ergo `RXWRJU`)
+
+The Solidly stable invariant (`x³y + xy³ ≥ k`) solve — Aerodrome stable /
+volatile pools and Camelot `stable_swap` pools — moved from the Python
+`SolidlyStableSolver` (Möbius compose + Newton outer over the existing
+`degenbot-solidly-math` integer leaf) into the Rust `UniswapArbEngine`.
+
+- **Two-tier solver (`DMPSNG`).** `solve_solidly_path_int` runs a Möbius
+  precheck on a V2-equivalent approximation of the Solidly curve to bracket
+  the optimum, then a 25-iteration golden-section search over the integer
+  leaf (`calc_exact_in_stable_solidly` / `calc_exact_in_stable_camelot`, via
+  `get_y_solidly` / `get_y_camelot` — EVM-exact against on-chain Solidity),
+  with an integer verification confirming the profit. Returns
+  `(optimal_input, profit)` as `U256`.
+- **Auto-derivation (`BFIWUG` + `2OWLDL`).** `HopType::SolidlyStable` is
+  auto-derived from the `BotState` pool identity at `register_path` time
+  (`derive_hop_type` reads the `AerodromeV2` variant's `stable` flag, or the
+  `V2` variant's `stable_swap` for Camelot) — the PyO3 `register_path` seam
+  takes only `(pool_id, zero_for_one)`; no Solidly tag is threaded through FFI.
+- **Python plumbing (`WCT5KR`).** `SolidlyHopInfo` is the engine-facing hop
+  descriptor (informational — `PathInfo.path_type` emits `Solidly`);
+  `EngineRegistry.register_aerodrome_pool` + the Aerodrome branch of
+  `register_path` route the shared-core pool_id through, mirroring V2.
+- **Disposition.** `SolidlyStableSolver` moves from `stays-python` →
+  **parity oracle only** (`FEMZJC` cross-validates the engine against it and
+  `BrentSolver` at `1e-6` / `1e-4` relative — SolidlyStableSolver is the
+  integer-exact same-algorithm tight oracle; BrentSolver is the looser f64-outer
+  oracle). The Python solver package's `SolidlyStable` row in
+  `src/degenbot/arbitrage/CONTEXT.md` records the disposition.
+- **Bugfix on the path.** `snapshot_aerodrome` was returning `(u64, u64, u64)`
+  and panicked on overflow for reserves ≥18 tokens of 18-dec; matched
+  `snapshot_v2`'s U256 return shape so the manual pool-walk parity oracle can
+  read live Aerodrome state.
+
 ## 7. Anti-patterns to avoid
 
 - **Keeping a Python mirror of Rust-owned state** "for the tests." Rewrite the
