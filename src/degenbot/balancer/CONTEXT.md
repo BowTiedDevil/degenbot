@@ -22,12 +22,9 @@
 
 | Term | Definition | Aliases to avoid |
 |------|------------|------------------|
-| **FixedPoint** | 18-decimal fixed-point arithmetic library (`fixed_point.py`) providing `mul_down`, `mul_up`, `div_down`, `div_up`, `pow_down`, `pow_up`, `complement` | FP, fixed math |
-| **LogExpMath** | Natural logarithm and exponentiation via Taylor series (`log_exp_math.py`) — the core approximation engine for `pow` | Log-exp, Ln/pow |
+| **FixedPoint** | 18-decimal fixed-point arithmetic library (`fixed_point.py`) — trimmed to the three live fns `mul_down`, `div_down`, `div_up` consumed by `ScalingHelpers`. The dead leaves (`add`, `sub`, `complement`, `mul_up`, `pow_down`, `pow_up`) + `log_exp_math.py` were retired: their Rust counterparts live in `degenbot-balancer-math` (`fixed_point.rs` / `log_exp_math.rs`) with their own `#[cfg(test)]` corpora. The remaining three fns retire under Candidate 4 (route `ScalingHelpers` through the Rust leaf once exposed via `#[pyfunction]`) | FP, fixed math |
 | **WeightedMath** | Invariant and swap calculation formulas for weighted pools (retired — Rust core via `degenbot_rs.balancer_*`) | WM, weighted calculations |
 | **ScalingHelpers** | Fixed-point scaling for tokens with non-18 decimals (`scaling_helpers.py`) — `_upscale`, `_downscale_down`, `_downscale_up`, `_compute_scaling_factor` | Scaling, decimal helpers |
-| **InputHelpers** | Validation helpers for swap input amounts (`input_helpers.py`) | Validators |
-| **Helpers** | Shared helper functions (`helpers.py`) | Utility functions |
 
 ## PowVersion
 
@@ -41,7 +38,7 @@
 
 | Term | Definition | Aliases to avoid |
 |------|------------|------------------|
-| **Truncated Division** | Solidity's `/` operator truncates toward zero for negative operands, unlike Python's `//` which floors toward -∞. Implemented via `_truncated_div` in `log_exp_math.py` | Floor division, integer division (ambiguous) |
+| **Truncated Division** | Solidity's `/` operator truncates toward zero for negative operands, unlike Python's `//` which floors toward -∞. Lives in the Rust `degenbot-balancer-math` core (`log_exp_math.rs`); the Python `_truncated_div` helper retired with `log_exp_math.py` | Floor division, integer division (ambiguous) |
 | **Rounding Direction** | Down for GIVEN_IN (seller gets less), up for GIVEN_OUT (buyer pays more). Applied consistently through `_calc_out_given_in` (round down) and `_calc_in_given_out` (round up) | Rounding mode |
 | **Fee Ordering (GIVEN_OUT)** | Solidity's onSwap path: downscale up first, then add swap fee amount. Python must match this order exactly or the accumulated rounding differs | Fee application order |
 | **Scaling Factor** | Computed as `ONE * 10**decimalsDifference` where `decimalsDifference = 18 - token_decimals`. Tokens with < 18 decimals have scaling factors > ONE; tokens with 18 decimals have scaling factor == ONE | Decimal factor, normalization factor |
@@ -60,7 +57,7 @@
 
 | Term | Definition | Aliases to avoid |
 |------|------------|------------------|
-| **StableMath** | Library implementing the StableSwap invariant and swap calculations (`libraries/stable_math.py`) | Stable math, curve math (wrong DEX) |
+| **StableMath** | StableSwap invariant and swap calculations — retired to the Rust core (`degenbot-balancer-math` via `degenbot_rs.balancer_stable_*`); the Python `stable_math.py` oracle was deleted in `eb01239a` after the on-chain parity test migrated to the Rust fns | Stable math, curve math (wrong DEX) |
 | **MetaStablePool** | A 2-token stable pool with rate providers. Uses `BaseMinimalSwapInfoPool` (specialization=1). `_cacheTokenRatesIfNecessary()` is called inside `_onSwapGivenIn` AFTER upscaling | Meta stable, stable v1 |
 | **ComposableStablePool** | A multi-token stable pool that includes its own BPT token. Uses `BaseGeneralPool` (specialization=0). Overrides `_beforeSwapJoinExit()` to call `_cacheTokenRatesIfNecessary()` BEFORE reading `_scalingFactors()` | Composable, phantom stable |
 | **BPT Index** | In ComposableStablePools, the BPT token's position in the token list. Must be dropped before invariant and swap calculations. `bpt_idx` parameter distinguishes MetaStable (`None`) from Composable (`int`) | Phantom token index |
@@ -117,13 +114,11 @@ balancer/
 ├── deployments.py     (contract addresses, broken pool set, factory addresses)
 ├── libraries/
 │   ├── constants.py    (ONE, TWO, FOUR, MAX_POW_RELATIVE_ERROR, PowVersion)
-│   ├── fixed_point.py  (mul_down/up, div_down/up, pow_down/up, complement)
-│   ├── helpers.py      (shared helpers)
-│   ├── input_helpers.py (validation)
-│   ├── log_exp_math.py  (ln, pow via Taylor series with _truncated_div)
+│   ├── constants.py    (ONE, TWO, FOUR, MAX_POW_RELATIVE_ERROR, PowVersion)
+│   ├── fixed_point.py  (mul_down, div_down/up — live; pow_*/complement/add/sub retired to Rust)
 │   ├── scaling_helpers.py (_upscale, _downscale_down/up, _compute_scaling_factor)
-│   ├── stable_math.py  (StableMath: invariant, outGivenIn, inGivenOut, BPT functions)
-│   └── (weighted_math.py retired — Rust core via degenbot_rs.balancer_*)
+│   ├── stable_math.py  (retired — Rust core via degenbot_rs.balancer_stable_*)
+│   └── (log_exp_math.py + helpers.py retired — Rust core; weighted_math.py retired — Rust core via degenbot_rs.balancer_*)
 ├── pair_view.py        (BalancerPairView — N-token to 2-token adapter with subscription relay)
 ├── pools.py            (BalancerV2Pool class, detect_pow_version, external_update, to_hop_state, build_swap_amount)
 ├── stable_pools.py     (BalancerV2StablePool class, external_update, to_hop_state, build_swap_amount)
@@ -135,17 +130,16 @@ balancer/
 
 ### Weighted Pool Chain
 
-- **BalancerV2Pool** delegates all math to **WeightedMath** functions, which in turn delegate exponentiation to **FixedPoint.pow_down/pow_up**
-- **FixedPoint.pow_down/pow_up** accept a `version: PowVersion` kwarg that controls whether fast paths for y == ONE/TWO/FOUR are active; the version is detected from bytecode at construction time and stored on the pool instance
-- **ScalingHelpers** are called directly by **BalancerV2Pool** — upscale before calculation, downscale after
-- **LogExpMath** is a private implementation detail of **FixedPoint** — no other module should import it directly
+- **BalancerV2Pool** delegates all math to Rust core functions (`degenbot_rs.balancer_*`) from the retired **WeightedMath**; exponentiation (`pow_down`/`pow_up`) now lives wholly in Rust (`degenbot-balancer-math`)
+- **ScalingHelpers** are called directly by **BalancerV2Pool** — upscale before calculation, downscale after; the three live `FixedPoint` fns (`mul_down`/`div_down`/`div_up`) back scaling-only and retire to Rust under Candidate 4
+- The `PowVersion` bytecode detection result is stored on the pool instance and exposed via the `balancer_pow_version` handle getter; the Rust core selects the V1 (general) vs V2 (fast-path) implementation internally
 - **BROKEN_BALANCER_V2_POOLS** in **deployments.py** is used by pool discovery and testing to filter out pools where on-chain swaps are disabled
 
 ### Stable Pool Chain
 
 - **BalancerV2StablePool** delegates all math to **StableMath** functions via `_calc_out_given_in`, `_calc_in_given_out`, and either `_calculate_invariant` (V1) or `_calculate_invariant_deployed` (V2), selected by `invariant_version`
 - **BalancerV2StablePool** handles BPT dropping internally — `bpt_idx=None` for MetaStablePool, `bpt_idx=int` for ComposableStablePool
-- **StableMath** (`stable_math.py`) provides both monorepo (`_calculate_invariant`, always roundDown, D_P accumulation — used for V1) and deployed-contract (`_calculate_invariant_deployed`, with `round_up` param, P_D accumulation — used for V2) versions. The `_calc_out_given_in` function includes `.sub(1)` matching the deployed contract; `_calc_in_given_out` includes `.add(1)`
+- **StableMath** now lives in the Rust core (`degenbot-balancer-math` via `degenbot_rs.balancer_stable_*`), providing the monorepo V1 (always-roundDown, D_P accumulation) and deployed-contract V2 (with `round_up` param, P_D accumulation) invariant paths selected by `invariant_version`; the Python `stable_math.py` oracle was deleted in `eb01239a` after the on-chain parity test migrated to the Rust fns. The `.sub(1)`/`.add(1)` deployed-contract correction lives in the Rust port
 - Scaling factor computation is the builder's responsibility: fresh rates from rate providers for ComposableStablePools, cached rates for MetaStablePools
 - Both pool classes share **BalancerV2PoolState** from `types.py`
 
