@@ -1603,6 +1603,7 @@ dependencies = [
  "degenbot-evm-math",
  "degenbot-executor",
  "degenbot-pathfinding",
+ "degenbot-price",
  "degenbot-rpc",
  "degenbot-solidly-math",
  "degenbot-uniswap",
@@ -1723,6 +1724,18 @@ dependencies = [
 [[package]]
 name = "degenbot-pathfinding"
 version = "0.6.0-alpha.3"
+
+[[package]]
+name = "degenbot-price"
+version = "0.6.0-alpha.3"
+dependencies = [
+ "alloy",
+ "degenbot-abi",
+ "degenbot-core",
+ "degenbot-rpc",
+ "log",
+ "thiserror",
+]
 
 [[package]]
 name = "degenbot-rpc"
