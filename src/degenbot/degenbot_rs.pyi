@@ -540,6 +540,7 @@ def find_paths_rust(
     include_reverse: bool,
     pool_type_per_depth: list[set[int] | None] | None = ...,
 ) -> PathIterator: ...
+
 # ------------------------------------------------------------------
 # SQLite file operations (feature = "db").
 # ------------------------------------------------------------------
@@ -855,6 +856,48 @@ class Contract:
         Returns:
             List of decoded return values as strings
 
+        """
+
+class PyChainlinkPriceFeed:
+    """Typed Chainlink aggregator price-feed reader."""
+
+    def __init__(
+        self,
+        address: str,
+        provider: AlloyProvider,
+        chain_id: int | None = None,
+    ) -> None: ...
+    @property
+    def address(self) -> str: ...
+    @property
+    def chain_id(self) -> int | None: ...
+    def decimals(self) -> int:
+        """Call ``decimals()`` and return the feed's decimal places (``uint8``)."""
+    def latest_round_data(self) -> tuple[int, int, int, int, int]:
+        """Call ``latestRoundData()`` and return the round tuple.
+
+        ``(round_id, answer, started_at, updated_at, answered_in_round)``
+        as Python ints (``answer`` is the raw ``int256`` in feed decimals).
+        """
+    def price(self) -> int:
+        """Decimal-corrected whole-unit price as an int.
+
+        ``int(answer // 10**decimals)``; negative clamps to 0.
+        """
+
+class PyAavePriceOracle:
+    """Typed Aave price-oracle reader."""
+
+    def __init__(self, oracle_address: str, provider: AlloyProvider) -> None: ...
+    @property
+    def address(self) -> str: ...
+    def get_asset_price(self, asset_address: str) -> int:
+        """Call ``getAssetPrice(asset)`` and return the ``uint256`` price."""
+    def fetch(self, asset_addresses: list[str]) -> dict[str, int]:
+        """Fetch prices for a batch of assets, tolerantly.
+
+        A failure on one asset is logged and skipped; successfully-fetched
+        prices are returned keyed by checksummed asset address.
         """
 
 class LogFilter:
