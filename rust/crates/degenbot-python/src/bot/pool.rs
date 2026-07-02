@@ -1315,15 +1315,31 @@ impl PyLiquidityPool {
 
     /// Snapshot an Aerodrome V2 pool's mutable state as
     /// `(reserve0, reserve1, update_block)`. Returns `None` for non-Aerodrome
-    /// pools.
-    fn snapshot_aerodrome(&self) -> Option<(u64, u64, u64)> {
-        self.core.read().get_aerodrome_pool(self.pool_id).map(|s| {
-            (
-                s.reserve0.to::<u64>(),
-                s.reserve1.to::<u64>(),
-                s.update_block,
-            )
-        })
+    /// pools. Reserves are returned as `U256` (matching `snapshot` for V2):
+    /// Aerodrome reserves commonly exceed `u64::MAX` in raw wei (e.g. `5_000`
+    /// WETH = 5e21), so the prior `to::<u64>()` conversion panicked on
+    /// overflow.
+    fn snapshot_aerodrome(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        let snap = self.core.read().get_aerodrome_pool(self.pool_id).map(
+            |s| (s.reserve0, s.reserve1, s.update_block),
+        );
+        match snap {
+            None => Ok(None),
+            Some((reserve0, reserve1, block)) => {
+                let tuple = pyo3::types::PyTuple::new(
+                    py,
+                    [
+                        crate::conversion::alloy::u256_to_py(py, &reserve0)?.unbind(),
+                        crate::conversion::alloy::u256_to_py(py, &reserve1)?.unbind(),
+                        block.into_pyobject(py)?.into_any().unbind(),
+                    ],
+                )?;
+                Ok(Some(tuple.into_any().unbind()))
+            }
+        }
     }
 
     /// Apply an Aerodrome V2 `Sync` event: journals the prior reserves, then
