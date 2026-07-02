@@ -77,6 +77,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "db")]
     crate::db::add_db_module(m)?;
 
+    // Command-stream encoding seam (feature = "executor")
+    #[cfg(feature = "executor")]
+    crate::executor::add_executor_module(m)?;
+
     // ABI decoder/encoder functions (feature = "abi")
     #[cfg(feature = "abi")]
     m.add_function(wrap_pyfunction!(crate::abi::decoder::decode, m)?)?;

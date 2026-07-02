@@ -50,15 +50,13 @@ import dotenv
 import eth_abi.abi
 import eth_account
 import web3
-from cmd_stream import compute_simulation_warmup_slots, mapping_slot, pack_expected_balance
+from degenbot import degenbot_rs
 from eth_backrun_helpers import (
     BackrunConfig,
     classify_revert,
-    encode_cmd_stream,
     filter_thin_margin_results,
     format_failure_breakdown,
     format_sim_diag_line,
-    v4_input_is_native,
 )
 from eth_typing import ChainId, ChecksumAddress
 from hexbytes import HexBytes
@@ -466,7 +464,7 @@ def build_simulation_state_overrides(
         #   1. WETH9.balanceOf[executor] = 1 wei (mapping slot 3)
         #   2. PM.erc6909_balanceOf[executor][weth_id] = 1 (slot 4)
         #   3. PM.erc6909_balanceOf[executor][native_id] = 1 (slot 4)
-        warmup = compute_simulation_warmup_slots(
+        warmup = degenbot_rs.compute_simulation_warmup_slots(
             executor_address=injected_address,
             weth_address=WETH_ADDRESS,
             pool_manager_address=UNISWAP_V4_POOL_MANAGER_ADDRESS,
@@ -498,7 +496,9 @@ def build_simulation_state_overrides(
         # We overwrite the warmup's 1-wei entry with 10 ETH.
 
         WETH_BALANCEOF_MAPPING_SLOT = 3
-        weth_balance_slot = mapping_slot(WETH_BALANCEOF_MAPPING_SLOT, int(injected_address, 16))
+        weth_balance_slot = degenbot_rs.mapping_slot(
+            WETH_BALANCEOF_MAPPING_SLOT, int(injected_address, 16)
+        )
         overrides[get_checksum_address(WETH_ADDRESS)]["stateDiff"][
             f"0x{weth_balance_slot:064x}"
         ] = cast("HexStr", "0x" + (10 * 10**18).to_bytes(32, "big").hex())
@@ -1901,7 +1901,7 @@ async def dispatch_profitable_results(
                     return None
 
         # Encode as cmd_executor command stream
-        cmd_bytes = encode_cmd_stream(
+        cmd_bytes = degenbot_rs.encode_cmd_stream(
             path_info,
             optimal_input,
             hop_outputs,
@@ -1936,7 +1936,7 @@ async def dispatch_profitable_results(
             elif dump_type == "V2-V4":
                 hop_v2, hop_v4 = path_info.hops[0], path_info.hops[1]
                 if isinstance(hop_v2, (V2HopInfo, V3HopInfo)) and isinstance(hop_v4, V4HopInfo):
-                    v4_in_native = v4_input_is_native(hop_v4)
+                    v4_in_native = degenbot_rs.v4_input_is_native(hop_v4)
                     bot_logger.info(
                         f"[sim-dump] V2-V4 path={path_id} "
                         f"v4_c0={hop_v4.currency0_address} v4_c1={hop_v4.currency1_address} "
@@ -1981,7 +1981,7 @@ async def dispatch_profitable_results(
         # config=0 (check_mode=0, no bribe): skip on-chain profit check,
         # operator verifies profitability off-chain via the pre/post balance reads.
         # For bribes or on-chain checks, build config via pack_config().
-        config = pack_expected_balance(check_mode=0, expected_value=0)
+        config = degenbot_rs.pack_expected_balance(check_mode=0, expected_value=0)
         selector = web3.Web3.keccak(text="execute(bytes,uint256)")[:4]
         calldata = selector + eth_abi.abi.encode(
             types=["bytes", "uint256"],
@@ -2703,8 +2703,12 @@ async def consume_result_batches(
 
     # Prime both streams. Each completed future is re-primed unless its stream
     # ended (StopAsyncIteration); the loop exits when both are exhausted.
-    block_fut = cast("asyncio.Task[dict[str, int]] | None", asyncio.ensure_future(anext(block_stream)))
-    result_fut = cast("asyncio.Task[dict[str, object]] | None", asyncio.ensure_future(anext(result_iter)))
+    block_fut = cast(
+        "asyncio.Task[dict[str, int]] | None", asyncio.ensure_future(anext(block_stream))
+    )
+    result_fut = cast(
+        "asyncio.Task[dict[str, object]] | None", asyncio.ensure_future(anext(result_iter))
+    )
 
     while block_fut is not None or result_fut is not None:
         pending = {f for f in (block_fut, result_fut) if f is not None}
@@ -2712,10 +2716,16 @@ async def consume_result_batches(
 
         for fut in done:
             if fut is block_fut:
-                block_fut = cast("asyncio.Task[dict[str, int]] | None", _reprime(block_stream, fut, "block stream"))
+                block_fut = cast(
+                    "asyncio.Task[dict[str, int]] | None",
+                    _reprime(block_stream, fut, "block stream"),
+                )
                 await _apply_block_if_ready(fut, dispatcher, async_w3)
             elif fut is result_fut:
-                result_fut = cast("asyncio.Task[dict[str, object]] | None", _reprime(result_iter, fut, "result stream"))
+                result_fut = cast(
+                    "asyncio.Task[dict[str, object]] | None",
+                    _reprime(result_iter, fut, "result stream"),
+                )
                 await _apply_result_if_ready(
                     fut,
                     dispatcher,
@@ -2881,7 +2891,9 @@ async def _apply_result_if_ready(
         return
 
     current_block = dispatcher.current_block
-    operator_nonce = await async_w3.eth.get_transaction_count(cast("ChecksumAddress", operator_address))
+    operator_nonce = await async_w3.eth.get_transaction_count(
+        cast("ChecksumAddress", operator_address)
+    )
     solve_block = int(cast("Any", batch["solve_block"]))  # per-result age metadata, not the clock
 
     results: list[tuple[int, int, int, tuple[int, ...], tuple[int, ...], int]] = []

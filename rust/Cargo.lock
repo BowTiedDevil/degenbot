@@ -1723,6 +1723,7 @@ dependencies = [
  "degenbot-abi",
  "degenbot-core",
  "proptest",
+ "thiserror",
 ]
 
 [[package]]
@@ -1778,6 +1779,7 @@ dependencies = [
  "proptest",
  "pyo3",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -1806,6 +1808,7 @@ dependencies = [
  "degenbot-curve-math",
  "degenbot-db",
  "degenbot-decoders",
+ "degenbot-executor",
  "degenbot-pathfinding",
  "degenbot-price",
  "degenbot-rpc",
