@@ -179,6 +179,10 @@ pub enum HopType {
     V3,
     /// V4 concentrated-liquidity hop (same math as V3, different settlement)
     V4,
+    /// Solidly/Aerodrome/Camelot stable or volatile hop. Owns its own solve
+    /// branch (Möbius precheck + golden-section over the
+    /// `degenbot-solidly-math` leaf) — not concentrated-liquidity.
+    SolidlyStable,
 }
 
 impl HopType {
@@ -229,6 +233,42 @@ pub struct MixedPath {
     pub pools: Vec<MixedPoolRef>,
 }
 
+/// Resolved state for a Solidly/Aerodrome/Camelot hop, ready for the
+/// Solidly solve branch. Carries everything the `degenbot-solidly-math`
+/// leaf needs: oriented reserves, token decimals, the fee fraction, the
+/// stable-vs-volatile flag, and the `DexVariant` that selects the math
+/// entrypoint (solidly vs camelot).
+///
+/// `variant` + `stable` together dispatch the math:
+/// - `(AerodromeV2Stable, true)` → `calc_exact_in_stable_solidly`
+/// - `(CamelotV2Stable, true)` → `calc_exact_in_stable_camelot`
+/// - `(_, false)` → `calc_exact_in_volatile`
+///
+/// Orientation (`zero_for_one`) is baked in: `reserve_in`/`decimals_in`
+/// are already the input-side values, matching `IntHopState`'s convention.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SolidlyHopState {
+    /// Input reserve (oriented by `zero_for_one`).
+    pub reserve_in: U256,
+    /// Output reserve (oriented by `zero_for_one`).
+    pub reserve_out: U256,
+    /// Decimals of the input token (e.g. 6 for USDC).
+    pub decimals_in: U256,
+    /// Decimals of the output token (e.g. 18 for WETH).
+    pub decimals_out: U256,
+    /// Fee numerator (the fee fraction is `fee_numer / fee_denom`).
+    pub fee_numer: U256,
+    /// Fee denominator.
+    pub fee_denom: U256,
+    /// `true` for the stable (x³y + xy³) invariant, `false` for volatile
+    /// (constant-product).
+    pub stable: bool,
+    /// DEX+variant discriminator — selects the solidly vs camelot math leaf.
+    pub variant: degenbot_uniswap::dex_identity::DexVariant,
+    /// Swap direction: `true` = token0→token1.
+    pub zero_for_one: bool,
+}
+
 /// Resolved state for a single hop in a mixed path.
 ///
 /// Each variant bundles only the data its hop type needs — no parallel
@@ -253,6 +293,10 @@ pub enum ResolvedHop {
     V4 {
         int_seq: crate::solvers::mobius_v3_int::IntV3TickRangeSequence,
     },
+    /// Solidly/Aerodrome/Camelot stable or volatile hop. Owns its own solve
+    /// branch — NOT concentrated-liquidity, so `as_int_sequence()` returns
+    /// `None`. See [`SolidlyHopState`].
+    SolidlyStable { state: SolidlyHopState },
 }
 
 impl ResolvedHop {
@@ -264,6 +308,7 @@ impl ResolvedHop {
             Self::V2 { .. } => HopType::V2,
             Self::V3 { .. } => HopType::V3,
             Self::V4 { .. } => HopType::V4,
+            Self::SolidlyStable { .. } => HopType::SolidlyStable,
         }
     }
 
@@ -283,7 +328,16 @@ impl ResolvedHop {
     ) -> Option<&crate::solvers::mobius_v3_int::IntV3TickRangeSequence> {
         match self {
             Self::V3 { int_seq, .. } | Self::V4 { int_seq, .. } => Some(int_seq),
-            Self::V2 { .. } => None,
+            Self::V2 { .. } | Self::SolidlyStable { .. } => None,
+        }
+    }
+
+    /// The [`SolidlyHopState`], if this is a Solidly/Aerodrome/Camelot hop.
+    #[must_use]
+    pub const fn as_solidly_state(&self) -> Option<&SolidlyHopState> {
+        match self {
+            Self::SolidlyStable { state, .. } => Some(state),
+            _ => None,
         }
     }
 }

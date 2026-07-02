@@ -1244,6 +1244,7 @@ impl UniswapEngine {
                 HopType::V2 => "V2",
                 HopType::V3 => "V3",
                 HopType::V4 => "V4",
+                HopType::SolidlyStable => "Solidly",
             })
             .collect();
         snapshot.path_type = type_tags.join("-");
@@ -1348,7 +1349,7 @@ fn thread_solver_result_and_recompute(
                         amount_in,
                     )
                 }),
-                super::HopType::V2 => None,
+                super::HopType::V2 | super::HopType::SolidlyStable => None,
             });
         populate_v3v4_recompute_full(hop, amount_in, solver_out, expected_out_engine);
     }
@@ -1421,6 +1422,11 @@ fn build_engine_pool_state(
                 liquidity: format!("0x{:x}", state.liquidity),
             })
         }
+        // Solidly-stable diagnostics land with the resolve+solve wiring
+        // (task 2OWLDL/DMPSNG). Until then, a Solidly hop records a
+        // "not yet wired" placeholder — the path is still solvable via
+        // the other hops' diagnostic data.
+        HopType::SolidlyStable => None,
     }
 }
 

@@ -428,6 +428,13 @@ impl UniswapEngine {
 
                     resolved.hops.push(ResolvedHop::V4 { int_seq });
                 }
+                // Solidly-stable resolve lands in task 2OWLDL. Until then,
+                // a Solidly hop short-circuits the path to invalid (the
+                // variant exists so registration/typing compiles, but paths
+                // containing it are not yet resolvable).
+                HopType::SolidlyStable => {
+                    return;
+                }
             }
         }
 

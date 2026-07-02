@@ -106,6 +106,20 @@ impl PyUniswapArbEngine {
                         tick_spacing: ts,
                     });
                 }
+                // Solidly hop-info lands with the build/register plumbing
+                // (task WCT5KR). Until then, a Solidly hop emits a minimal
+                // HopInfo so the result-channel match is exhaustive; the
+                // resolve short-circuit means no Solidly hop reaches a solve.
+                HopType::SolidlyStable => {
+                    hops.push(HopInfo {
+                        hop_type: "Solidly".to_string(),
+                        address: None,
+                        pool_id: None,
+                        zero_for_one: pool_ref.zero_for_one,
+                        fee: None,
+                        tick_spacing: None,
+                    });
+                }
             }
         }
 
