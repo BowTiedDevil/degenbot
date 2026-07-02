@@ -590,4 +590,77 @@ mod tests {
         assert!(!signed.is_negative());
         assert_eq!(signed.into_raw(), v);
     }
+
+    // Numerical-accuracy ports from the retired Python parity oracle
+    // (`tests/balancer/libraries/test_log_exp_math.py`). These cover the
+    // branches the error-path corpus above does not: the `ln_36`
+    // near-one path, `log` round-trips, and fractional `pow`/`ln` values
+    // against `math.log` approximations.
+
+    #[test]
+    fn ln_uses_ln_36_for_near_one_above() {
+        // ln(1.05) ≈ 0.04879016417 — exercises the high-precision ln_36
+        // branch (0.9e18 < arg < 1.1e18).
+        let result = ln(U256::from(1_050_000_000_000_000_000u128)).unwrap();
+        let expected = I256::try_from(48_790_164_169_043_000i64).unwrap(); // 0.04879e18 (approx)
+        let delta = (result - expected).abs();
+        assert!(delta <= I256::try_from(100_000_000_000_000i64).unwrap()); // 1e-4 tolerance
+    }
+
+    #[test]
+    fn ln_uses_ln_36_for_near_one_below() {
+        // ln(0.95) ≈ -0.05129329439 — exercises the ln_36 branch below ONE.
+        let result = ln(U256::from(950_000_000_000_000_000u128)).unwrap();
+        let expected = I256::try_from(-51_293_294_387_550_500i64).unwrap();
+        let delta = (result - expected).abs();
+        assert!(delta <= I256::try_from(100_000_000_000_000i64).unwrap());
+    }
+
+    #[test]
+    fn ln_of_e_is_one() {
+        // ln(e) ≈ 1.0.
+        let e_fp = U256::from(2_718_281_828_459_045_235u128); // math.e * 1e18, truncated
+        let result = ln(e_fp).unwrap();
+        let one = ONE_18_I;
+        let delta = (result - one).abs();
+        // ~1e-9 relative tolerance (the Taylor-series precision floor).
+        assert!(delta <= I256::try_from(1_000_000_000i64).unwrap());
+    }
+
+    #[test]
+    fn log_base_2_of_8() {
+        // log_2(8) = 3.
+        let result = log(U256::from(8u64) * ONE_18, U256::from(2u64) * ONE_18).unwrap();
+        let three = I256::try_from(3_000_000_000_000_000_000i64).unwrap();
+        let delta = (result - three).abs();
+        assert!(delta <= I256::try_from(1_000_000_000_000_000i64).unwrap()); // 1e-3 tolerance
+    }
+
+    #[test]
+    fn log_base_10_of_100() {
+        // log_10(100) = 2.
+        let result = log(U256::from(100u64) * ONE_18, U256::from(10u64) * ONE_18).unwrap();
+        let two = I256::try_from(2_000_000_000_000_000_000i64).unwrap();
+        let delta = (result - two).abs();
+        assert!(delta <= I256::try_from(1_000_000_000_000_000i64).unwrap());
+    }
+
+    #[test]
+    fn pow_two_to_the_two_is_four() {
+        // pow(2, 2) ≈ 4. Exercises the general path with a fractional-less
+        // but pow-level fp multiplication (not the V2 fast path — that lives
+        // in `fixed_point::pow_down`/`pow_up`).
+        let result = pow(
+            U256::from(2u64) * ONE_18,
+            I256::try_from(2_000_000_000_000_000_000i64).unwrap(),
+        )
+        .unwrap();
+        let four = U256::from(4u64) * ONE_18;
+        let delta = if result >= four {
+            result - four
+        } else {
+            four - result
+        };
+        assert!(delta * U256::from(10_000u64) <= four);
+    }
 }

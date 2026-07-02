@@ -1,45 +1,25 @@
-"""Balancer V2 FixedPoint arithmetic helpers."""
+"""Balancer V2 FixedPoint arithmetic helpers.
 
-from degenbot.balancer.libraries import log_exp_math
-from degenbot.balancer.libraries.constants import FOUR, MAX_POW_RELATIVE_ERROR, ONE, TWO, PowVersion
+Trimmed to the three live fns consumed by ``scaling_helpers.py``:
+``div_down``, ``div_up``, ``mul_down``. The dead leaves (``add``,
+``sub``, ``complement``, ``mul_up``, ``pow_down``, ``pow_up``) were
+retired alongside ``log_exp_math.py``: their Rust counterparts live in
+``degenbot-balancer-math`` (``fixed_point.rs`` / ``log_exp_math.rs``)
+with their own ``#[cfg(test)]`` corpora, and the Python parity oracle
+had zero src consumers after the ``stable_math.py`` retirement. The
+remaining three fns retire under Candidate 4 (route ``scaling_helpers``
+through the Rust leaf once it is exposed via ``#[pyfunction]``).
+"""
+
+from degenbot.balancer.libraries.constants import ONE
 from degenbot.constants import MAX_UINT256
 from degenbot.exceptions.pool import EVMRevertError
 
 _ZERO = 0
 
 
-def add(a: int, b: int) -> int:
-    """Return add.
-
-    Returns:
-        The computed integer value.
-
-    Raises:
-        EVMRevertError: See function documentation.
-
-    """
-    if a + b > MAX_UINT256:
-        raise EVMRevertError(error="ADD_OVERFLOW")
-    return a + b
-
-
-def sub(a: int, b: int) -> int:
-    """Return sub.
-
-    Returns:
-        The computed integer value.
-
-    Raises:
-        EVMRevertError: See function documentation.
-
-    """
-    if b > a:
-        raise EVMRevertError(error="SUB_OVERFLOW")
-    return a - b
-
-
 def mul_down(a: int, b: int) -> int:
-    """Return mul down.
+    """Return ``a * b / ONE``, rounding down.
 
     Returns:
         The computed integer value.
@@ -54,28 +34,8 @@ def mul_down(a: int, b: int) -> int:
     return product // ONE
 
 
-def mul_up(a: int, b: int) -> int:
-    """Return mul up.
-
-    Returns:
-        The computed integer value.
-
-    Raises:
-        EVMRevertError: See function documentation.
-
-    """
-    product = a * b
-
-    if product == 0:
-        return _ZERO
-    if product > MAX_UINT256:
-        raise EVMRevertError(error="MUL_OVERFLOW")
-
-    return (product - 1) // ONE + 1
-
-
 def div_down(a: int, b: int) -> int:
-    """Return div down.
+    """Return ``a * ONE / b``, rounding down.
 
     Returns:
         The computed integer value.
@@ -98,7 +58,7 @@ def div_down(a: int, b: int) -> int:
 
 
 def div_up(a: int, b: int) -> int:
-    """Return div up.
+    """Return ``a * ONE / b``, rounding up.
 
     Returns:
         The computed integer value.
@@ -118,72 +78,3 @@ def div_up(a: int, b: int) -> int:
         raise EVMRevertError(error="DIV_INTERNAL")
 
     return ((a_inflated - 1) // b) + 1
-
-
-def pow_down(x: int, y: int, *, version: PowVersion = PowVersion.V1) -> int:
-    """Return x^y for fixed-point numbers, rounding down.
-
-    The result is guaranteed not to be above the true value
-    (that is, the error function expected - actual is always positive).
-
-    The `version` parameter controls which deployed contract implementation to match:
-    - V1: General path only (no fast paths). Used by WeightedPool2Tokens and other older contracts.
-    - V2: Includes fast paths for y == ONE, TWO, FOUR. Used by newer WeightedPool contracts.
-
-    Returns:
-        The computed integer value.
-
-    """
-    if version == PowVersion.V2:
-        if y == ONE:
-            return x
-        if y == TWO:
-            return mul_down(x, x)
-        if y == FOUR:
-            square = mul_down(x, x)
-            return mul_down(square, square)
-
-    raw = log_exp_math.pow(x, y)
-    max_error = add(mul_up(raw, MAX_POW_RELATIVE_ERROR), 1)
-    if raw < max_error:
-        return 0
-
-    return sub(raw, max_error)
-
-
-def pow_up(x: int, y: int, *, version: PowVersion = PowVersion.V1) -> int:
-    """Return x^y for fixed-point numbers, rounding up.
-
-    The result is guaranteed not to be below the true value
-    (that is, the error function expected - actual is always negative).
-
-    The `version` parameter controls which deployed contract implementation to match:
-    - V1: General path only (no fast paths). Used by WeightedPool2Tokens and other older contracts.
-    - V2: Includes fast paths for y == ONE, TWO, FOUR. Used by newer WeightedPool contracts.
-
-    Returns:
-        The computed integer value.
-
-    """
-    if version == PowVersion.V2:
-        if y == ONE:
-            return x
-        if y == TWO:
-            return mul_up(x, x)
-        if y == FOUR:
-            square = mul_up(x, x)
-            return mul_up(square, square)
-
-    raw = log_exp_math.pow(x, y)
-    max_error = add(mul_up(raw, MAX_POW_RELATIVE_ERROR), 1)
-    return add(raw, max_error)
-
-
-def complement(x: int) -> int:
-    """Return complement.
-
-    Returns:
-        The computed integer value.
-
-    """
-    return ONE - x if x < ONE else _ZERO

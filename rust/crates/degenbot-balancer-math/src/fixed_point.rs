@@ -237,4 +237,82 @@ mod tests {
             mul_down(sq, sq).unwrap()
         );
     }
+
+    // Numerical-accuracy ports from the retired Python parity oracle
+    // (`tests/balancer/libraries/test_fixed_point.py`). These cover the
+    // branches the error-path/fast-path corpus above does not: the V1
+    // general path (via `log_exp_math::pow` + `MAX_POW_RELATIVE_ERROR`
+    // correction), `pow_up`, fractional exponents, and `complement`
+    // mid-range values. The V2 fast paths and error bounds are already
+    // covered above + transitively by `stable_math`/`weighted_math`.
+
+    #[test]
+    fn pow_down_v1_rounds_below_exact_square() {
+        // x^2 via V1 (general path) must be <= the exact x*x (rounds down).
+        let x = U256::from(3u64) * ONE;
+        let result = pow_down(x, TWO, PowVersion::V1).unwrap();
+        let exact = mul_down(x, x).unwrap();
+        assert!(result <= exact);
+    }
+
+    #[test]
+    fn pow_down_v1_rounds_below_exact_fourth() {
+        // x^4 via V1 must be <= the exact x^4 (rounds down).
+        let x = U256::from(3u64) * ONE;
+        let result = pow_down(x, FOUR, PowVersion::V1).unwrap();
+        let square = mul_down(x, x).unwrap();
+        let exact = mul_down(square, square).unwrap();
+        assert!(result <= exact);
+    }
+
+    #[test]
+    fn pow_up_v1_rounds_above_exact_square() {
+        // x^2 via V1 must be >= the exact x*x (rounds up).
+        let x = U256::from(3u64) * ONE;
+        let result = pow_up(x, TWO, PowVersion::V1).unwrap();
+        let exact = mul_up(x, x).unwrap();
+        assert!(result >= exact);
+    }
+
+    #[test]
+    fn pow_up_v1_rounds_above_exact_fourth() {
+        // x^4 via V1 must be >= the exact x^4 (rounds up).
+        let x = U256::from(3u64) * ONE;
+        let result = pow_up(x, FOUR, PowVersion::V1).unwrap();
+        let square = mul_up(x, x).unwrap();
+        let exact = mul_up(square, square).unwrap();
+        assert!(result >= exact);
+    }
+
+    #[test]
+    fn pow_down_fractional_exponent_sqrt() {
+        // 4^0.5 = 2, rounded down. Exercises the general path with a
+        // fractional exponent (the V2 fast paths only handle ONE/TWO/FOUR).
+        let half = U256::from(5u64) * U256::from(10u64).pow(U256::from(17u64));
+        let result = pow_down(U256::from(4u64) * ONE, half, PowVersion::V2).unwrap();
+        let two = U256::from(2u64) * ONE;
+        // The general-path correction introduces a small relative error;
+        // assert within 0.01% (the `MAX_POW_RELATIVE_ERROR` bound is 1e9).
+        let delta = if result >= two {
+            result - two
+        } else {
+            two - result
+        };
+        assert!(delta * U256::from(10_000u64) <= two);
+    }
+
+    #[test]
+    fn complement_half() {
+        // complement(0.5) = 0.5.
+        let half = U256::from(5u64) * U256::from(10u64).pow(U256::from(17u64));
+        assert_eq!(complement(half), half);
+    }
+
+    #[test]
+    fn complement_small() {
+        // complement(0.01) = 0.99.
+        let one_pct = U256::from(10u64).pow(U256::from(16u64));
+        let ninety_nine_pct = U256::from(99u64) * U256::from(10u64).pow(U256::from(16u64));
+        assert_eq!(complement(one_pct), ninety_nine_pct);
+    }
 }
