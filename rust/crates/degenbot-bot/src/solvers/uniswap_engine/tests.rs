@@ -10,7 +10,9 @@ mod tests {
     use crate::solvers::uniswap_engine::ResolvedMixedPath;
     use crate::solvers::uniswap_engine::{
         BlockMetadata, HopType, PoolHop, ResolvedHop, SolvePathResult, UniswapEngine, INT128_MAX,
+        SolidlyHopState,
     };
+    use degenbot_uniswap::dex_identity::DexVariant;
 
     fn usdc(amount: u64) -> U256 {
         U256::from(amount) * U256::from(10u64).pow(U256::from(6))
@@ -1774,6 +1776,10 @@ mod tests {
                 HopType::V4 => {
                     engine.dirty_v4.insert(pool_key);
                 }
+                HopType::SolidlyStable => {
+                    // No dirty set for Solidly until the pump wires it
+                    // (task 2OWLDL/DMPSNG); matches the resolve short-circuit.
+                }
             }
         }
         engine.solve_dirty(5, &BlockMetadata::default());
@@ -2541,5 +2547,48 @@ mod tests {
             block_rx.try_recv().is_err(),
             "exactly one notification per call"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // HopType::SolidlyStable + ResolvedHop::SolidlyStable variant (Plan: Port
+    // Solidly solve into the Rust engine — task BFIWUG).
+    // -----------------------------------------------------------------
+    #[test]
+    fn solidly_hop_variant_is_not_v2_and_not_cl() {
+        // The new variant must be excluded from the existing all-V2 and
+        // all-CL dispatch branches — otherwise solve_path would mis-dispatch.
+        assert!(!HopType::SolidlyStable.is_concentrated_liquidity());
+    }
+
+    #[test]
+    fn resolved_solidly_hop_round_trips_via_as_solidly_state() {
+        let state = SolidlyHopState {
+            reserve_in: U256::from(1_000_000u64),
+            reserve_out: U256::from(1_000_000u64),
+            decimals_in: U256::from(6u64),
+            decimals_out: U256::from(18u64),
+            fee_numer: U256::from(3u64),
+            fee_denom: U256::from(1000u64),
+            stable: true,
+            variant: DexVariant::AerodromeV2Stable,
+            zero_for_one: true,
+        };
+        let hop = ResolvedHop::SolidlyStable { state: state.clone() };
+
+        // The new accessor returns the state.
+        let got = hop
+            .as_solidly_state()
+            .expect("Solidly hop should yield its state");
+        assert_eq!(got.reserve_in, state.reserve_in);
+        assert_eq!(got.variant, DexVariant::AerodromeV2Stable);
+        assert!(got.stable);
+
+        // hop_type() maps to the new variant.
+        assert_eq!(hop.hop_type(), HopType::SolidlyStable);
+
+        // The Solidly hop is excluded from the V2 + CL accessors — the
+        // existing dispatch arms must not pick it up.
+        assert!(hop.as_v2_state().is_none());
+        assert!(hop.as_int_sequence().is_none());
     }
 }
