@@ -24,7 +24,10 @@
 //! - [`v3_mint_burn_decoder`] — V3 `Mint` / `Burn` (both → tick-range liquidity delta).
 //! - [`v4_swap_decoder`] — V4 `Swap` (from `PoolManager`).
 //! - [`v4_modify_liquidity_decoder`] — V4 `ModifyLiquidity` (signed delta; replaces V3 Mint/Burn).
+//! - [`revert`] — revert-data taxonomy (`classify_revert`): bytes → stable
+//!   label for the `[sim]` summary + engine revert tallies.
 
+pub mod revert;
 pub mod v2_sync_decoder;
 pub mod v3_mint_burn_decoder;
 pub mod v3_swap_decoder;
