@@ -4174,6 +4174,29 @@ impl Bot {
         self.dispatcher.subscribe(pool_id, engine);
     }
 
+    /// Subscribe any [`PoolStateSubscriber`] (the engine adapter OR a Python-
+    /// bridge adapter) to `pool_id`'s state updates (ZBD4MS).
+    ///
+    /// The honest generic surface: [`attach_engine`](Self::attach_engine) is
+    /// the engine-specific convenience wrapping the same `dispatcher.subscribe`
+    /// call. A Python `#[pyclass]` subscriber registers through the
+    /// `PySubscriberAdapter` (a `PoolStateSubscriber` holding a
+    /// `Py<PyAny>` callback) — it routes here via the `PyO3` seam so Rust-owned
+    /// `BotState` mutations notify Rust AND Python subscribers through ONE
+    /// `LogDispatcher` fan-out path (replacing the parallel Python
+    /// `PublisherMixin._notify_subscribers` once the pool consumers cut over).
+    ///
+    /// `subscriber` is a `Weak` so a dropped adapter is silently skipped by
+    /// `LogDispatcher::notify`'s `Weak::upgrade` (no leak, no panic) — mirrors
+    /// the engine-adapter lifecycle.
+    pub fn subscribe_pool_state_change(
+        &self,
+        pool_id: u64,
+        subscriber: std::sync::Weak<dyn log_dispatcher::PoolStateSubscriber>,
+    ) {
+        self.dispatcher.subscribe(pool_id, subscriber);
+    }
+
     /// Start the block pump. Placeholder — the `BlockPump` wiring lands in
     /// ADR-006 slice 5; until then this panics to make the unwired state loud.
     pub fn start(&self) {

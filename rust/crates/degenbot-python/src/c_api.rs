@@ -175,6 +175,11 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "submission")]
     crate::submission::add_submission_module(m)?;
 
+    // Pub/sub seam: register a Python callback as a `PoolStateSubscriber`
+    // against the Rust `LogDispatcher` fan-out (ZBD4MS) (feature = "bot")
+    #[cfg(feature = "bot")]
+    crate::bot::subscriber::add_subscriber_module(m)?;
+
     Ok(())
 }
 
