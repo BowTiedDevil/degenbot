@@ -10,6 +10,7 @@ pub mod engine;
 pub mod pool;
 pub mod pump;
 pub mod py_bot_io;
+pub mod subscriber;
 pub mod token;
 
 // === PyBot (moved from the former root `py_bot.rs`) ===
