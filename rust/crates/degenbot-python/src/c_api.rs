@@ -163,6 +163,9 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "rpc")]
     m.add_class::<crate::rpc::subscription::PyAlloySubscription>()?;
 
+    // Price-reader seam (feature = "price")
+    crate::price::add_price_module(m)?;
+
     Ok(())
 }
 

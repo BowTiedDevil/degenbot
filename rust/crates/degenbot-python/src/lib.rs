@@ -40,6 +40,8 @@ pub mod db;
 #[cfg(feature = "pathfinding")]
 pub mod pathfinding;
 pub mod prelude;
+#[cfg(feature = "price")]
+pub mod price;
 #[cfg(feature = "rpc")]
 pub mod rpc;
 pub mod solady;
