@@ -24,6 +24,17 @@
 
 ## Known issues
 
-### Bot dependency for RPC access
+### Bot dependency for RPC access (resolved by the PyO3 cutover, task `3O2ZPN`)
 
-`ChainlinkPriceContract` takes `bot: Bot | None` and reads `self._bot.provider` directly in its `decimals` and `price` properties. This bypasses the I/O-free architecture used by pool classes (which receive all data through builders and `external_update()`). A future refactoring should replace the `bot` parameter with a `ProviderAdapter` or `PoolIO` parameter, making the class testable without a live `Bot` instance.
+`ChainlinkPriceContract` retains its `bot: Bot | None` parameter for caller
+compatibility, but its `decimals` and `price` properties now delegate to the
+Rust `PyChainlinkPriceFeed` reader (the `degenbot-price` core crate, ADR-005).
+The shell builds the Rust reader lazily via `bot.provider.to_alloy_provider()`
+(`ProviderAdapter.to_alloy_provider` resolves the held `AlloyProvider` directly
+for alloy-backed bots, or builds one from the underlying web3 IPC path / HTTP
+endpoint), so `eth_call` + canonical ABI decode run in Rust with no Python
+`provider.call_raw` / `abi_decode` round-trip. The float `price` stays Python
+(display layer: `float(answer) / 10**decimals`), preserving the prior
+float-exact behavior. The prior I/O-free-architecture concern is addressed —
+the mechanism is Rust-owned; the `bot` parameter is now a thin handle to the
+provider, not a direct RPC coupling.

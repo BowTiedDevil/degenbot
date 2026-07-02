@@ -73,6 +73,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "solidly-math")]
     crate::solidly_math::lib::add_solidly_math_module(m)?;
 
+    // SQLite file operations (feature = "db")
+    #[cfg(feature = "db")]
+    crate::db::add_db_module(m)?;
+
     // ABI decoder/encoder functions (feature = "abi")
     #[cfg(feature = "abi")]
     m.add_function(wrap_pyfunction!(crate::abi::decoder::decode, m)?)?;
@@ -158,6 +162,9 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Subscription module (feature = "rpc")
     #[cfg(feature = "rpc")]
     m.add_class::<crate::rpc::subscription::PyAlloySubscription>()?;
+
+    // Price-reader seam (feature = "price")
+    crate::price::add_price_module(m)?;
 
     Ok(())
 }

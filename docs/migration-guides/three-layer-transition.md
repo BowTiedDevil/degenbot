@@ -278,6 +278,50 @@ The remaining work is the **stateless leaves not yet wired** (math/decode/
 encode) and **dead Python mirrors** of now-Rust-owned state — that is the
 sweep this guide serves.
 
+### Fork C — Price readers → Rust `degenbot-price` (ergo `Y2MI3F` + `3O2ZPN`)
+
+The on-chain **price-reader mechanism** moved to a new pyo3-free core leaf
+`degenbot-price` (task `Y2MI3F`): `ChainlinkPriceFeed` (ports
+`ChainlinkPriceContract` — `decimals()` / `latest_round_data()` /
+decimal-corrected `price()` over `latestRoundData` + `decimals` eth_calls) and
+`AavePriceOracle` (ports `OraclePriceFetcher` — `get_asset_price(address)` /
+tolerant `fetch_prices` batch over `getAssetPrice`). Both route `eth_call`
+through `degenbot_rpc::Contract::call_typed` (the RPC primitive is already
+Rust-owned). The §4.2 parity is pinned byte-exact against canonical ABI-decoded
+return bytes.
+
+Task `3O2ZPN` added the **PyO3 seam** (`PyChainlinkPriceFeed` /
+`PyAavePriceOracle` in `degenbot-python/src/price/`) and cut the Python
+readers over to delegating shells: `ChainlinkPriceContract` (and
+`chainlink/__init__.py`) delegates `decimals` / `latest_round_data` to the
+Rust reader and computes the float `price` = `float(answer) / 10**decimals` in
+the display layer (preserving the prior float-exact behavior including the
+fractional part — the Rust `price()` truncates to whole units); the inline
+`provider.call_raw` / `abi_decode` bodies are deleted. `OraclePriceFetcher.fetch`
+delegates to `PyAavePriceOracle` (the inline `raw_call` /
+`encode_function_calldata` loop deleted); the tolerant per-asset
+skip-on-error behavior now lives in the Rust core (matching the prior
+`ContractLogicError` / `ValueError` catch). `Erc20Token._price_oracle`
+(type `ChainlinkPriceContract`) is unchanged as a public surface — the shell
+kept its full API, so callers (`Erc20Token.price`, `PositionAnalysisService`)
+are unchanged.
+
+The web3→alloy provider seam: `ProviderAdapter.to_alloy_provider()` resolves
+the held `AlloyProvider` directly for alloy-backed adapters, or builds (and
+caches) one from the underlying web3 IPC path / HTTP endpoint — so the Rust
+readers can `eth_call` against a web3-backed `Bot` (the AnvilFork test
+fixtures use `ProviderAdapter.from_web3(fork.w3)` over IPC; the seam bridges
+this without forcing the whole bot onto alloy). `okAve` oracle-address
+resolution from the DB (`OKKMG5`, Epic `AZGJUN`) is **not** a hard dependency —
+the seam consumes a resolved `Address` passed in by the caller.
+
+Validation: `tests/test_price_seam_parity.py` (8 tests) drives the full pyclass
+→ Rust core → `eth_call` → ABI decode → shell path through a local in-process
+JSON-RPC mock returning canned ABI-encoded bytes — value-exact §4.2 parity
+including the non-whole fractional case, with no live RPC; the existing
+`test_chainlink_price_feed.py` + `tests/erc20/test_erc20_token.py` pass against
+the real AnvilFork (web3-backed bot).
+
 ### Fork A — JSON deployment identity → Rust builder → handle (ergo `AWGOXL`)
 
 The per-(chain,factory) CREATE2 deployer + init_hash moved from Python
