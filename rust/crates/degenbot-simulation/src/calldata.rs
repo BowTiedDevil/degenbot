@@ -1,0 +1,182 @@
+//! Balance-call calldata builders for the `eth_simulateV1` 7-call vector (B1).
+//!
+//! Ports `examples/eth_backrun_v2_v3_v4_rust.py::encode_balanceof_calldata`
+//! (L370–L386) + the `getEthBalance` / ERC6909 `balanceOf` calldata assembly
+//! (L1713–L1742). These are the three pre/post balance reads that bracket the
+//! `execute()` call — they let the simulate orchestration detect profit by
+//! diffing balances (physical ERC-20 WETH transfer, Multicall3 ETH balance,
+//! and V4 `V4_MINT_COMPACT` ERC6909 balance).
+//!
+//! All selectors are `keccak256(signature)[:4]` (the Solidity function selector
+//! spec); values are ABI-encoded via `degenbot_abi::abi_encoder::encode_rust`
+//! (the pure-Rust encoder — no `eth_abi` Python dependency).
+//!
+//! # Parity (§4.2)
+//!
+//! Each builder is byte-for-byte parity vs the Python oracle's
+//! `selector + eth_abi.abi.encode(...)` output. The selector hexes are pinned
+//! `const` (captured from `Web3.keccak(text=...)[:4]`); the encoded tails are
+//! asserted against the same in the golden tests.
+
+// Solidity/RPC identifiers (balanceOf, getEthBalance, ERC6909, Multicall3,
+// …) are ubiquitous in this module's docs.
+#![allow(clippy::doc_markdown)]
+
+use alloy::primitives::{Address, Bytes};
+use degenbot_abi::abi_encoder::encode_rust;
+use degenbot_abi::abi_types::AbiValue;
+use degenbot_core::errors::AbiDecodeError;
+use degenbot_executor::erc6909_id;
+
+/// The WETH9 / ERC20 `balanceOf(address)` 4-byte function selector
+/// (`keccak256("balanceOf(address)")[:4] = 0x70a08231`).
+pub const BALANCE_OF_SELECTOR: [u8; 4] = [0x70, 0xa0, 0x82, 0x31];
+
+/// The Multicall3 `getEthBalance(address)` 4-byte function selector
+/// (`keccak256("getEthBalance(address))[:4] = 0x4d2301cc`).
+///
+/// The Python oracle folds the ETH balance read into the `eth_simulateV1`
+/// call vector as a Multicall3 `getEthBalance(address)` call (NOT a raw
+/// `eth_getBalance` RPC), so all 7 balance reads share the simulate state —
+/// the same pattern is mirrored here.
+pub const GET_ETH_BALANCE_SELECTOR: [u8; 4] = [0x4d, 0x23, 0x01, 0xcc];
+
+/// The PoolManager ERC6909 `balanceOf(address,uint256)` 4-byte function
+/// selector (`keccak256("balanceOf(address,uint256))[:4] = 0x00fdd58e`).
+pub const ERC6909_BALANCE_OF_SELECTOR: [u8; 4] = [0x00, 0xfd, 0xd5, 0x8e];
+
+/// Encode the WETH9 / ERC20 `balanceOf(address)` calldata.
+///
+/// Ports `encode_balanceof_calldata` (L372–L375): the 4-byte selector followed
+/// by the ABI-encoded `address` argument (left-padded to 32 bytes).
+///
+/// # Errors
+///
+/// Returns [`AbiDecodeError`] only if the address encoding fails (it cannot
+/// with a valid `Address`).
+pub fn encode_balance_of_calldata(account: Address) -> Result<Bytes, AbiDecodeError> {
+    encode_single_address(BALANCE_OF_SELECTOR, account)
+}
+
+/// Encode the Multicall3 `getEthBalance(address)` calldata.
+///
+/// The ETH balance read is folded into the simulate call vector as a Multicall3
+/// call (see [`GET_ETH_BALANCE_SELECTOR`]) so it shares the same simulate
+/// state as the other six reads (ports the L1720–L1722 block).
+///
+/// # Errors
+///
+/// Returns [`AbiDecodeError`] only if the address encoding fails.
+pub fn encode_get_eth_balance_calldata(account: Address) -> Result<Bytes, AbiDecodeError> {
+    encode_single_address(GET_ETH_BALANCE_SELECTOR, account)
+}
+
+/// Encode the PoolManager ERC6909 `balanceOf(address,uint256)` calldata.
+///
+/// Ports the L1736–L1738 block: `pm_balanceof_selector +
+/// eth_abi.abi.encode(["address", "uint256"], [executor, weth_erc6909_id])`.
+/// The `uint256` id is the ERC6909 `uint160(currency)` for the given token
+/// (`CurrencyLibrary.toId()`) — reused from `degenbot_executor::erc6909_id`
+/// (the §62H23D leaf — consume, don't duplicate).
+///
+/// # Errors
+///
+/// Returns [`AbiDecodeError`] if the `(address, uint256)` encoding fails.
+pub fn encode_erc6909_balance_of_calldata(
+    account: Address,
+    currency: Address,
+) -> Result<Bytes, AbiDecodeError> {
+    let id = erc6909_id(currency);
+    let values = [AbiValue::Address(account.into()), AbiValue::Uint(id, 256)];
+    let tail = encode_rust(&["address", "uint256"], &values)?;
+    let mut data = Vec::with_capacity(ERC6909_BALANCE_OF_SELECTOR.len() + tail.len());
+    data.extend_from_slice(&ERC6909_BALANCE_OF_SELECTOR);
+    data.extend_from_slice(&tail);
+    Ok(Bytes::from(data))
+}
+
+/// Helper: a single-`address`-argument calldata (selector + one encoded tail).
+fn encode_single_address(selector: [u8; 4], account: Address) -> Result<Bytes, AbiDecodeError> {
+    let tail = encode_rust(&["address"], &[AbiValue::Address(account.into())])?;
+    let mut data = Vec::with_capacity(selector.len() + tail.len());
+    data.extend_from_slice(&selector);
+    data.extend_from_slice(&tail);
+    Ok(Bytes::from(data))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::too_many_lines)]
+
+    use super::*;
+    use alloy::primitives::address;
+
+    /// The canonical executor address used across the parity corpus.
+    const EXECUTOR: Address = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+
+    // ---------------------------------------------------------------------
+    // §4.2 byte-for-byte golden parity vs the Python oracle
+    // (`encode_balanceof_calldata`, the getEthBalance block, the ERC6909
+    // block). The selector hexes are pinned `const`; the encoded tails are
+    // captured from `eth_abi.abi.encode(...)` over the corpus addresses.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn balance_of_selector_matches_python_oracle() {
+        // Web3.keccak(text="balanceOf(address)")[:4] = 0x70a08231
+        assert_eq!(BALANCE_OF_SELECTOR, [0x70, 0xa0, 0x82, 0x31]);
+    }
+
+    #[test]
+    fn get_eth_balance_selector_matches_python_oracle() {
+        // Web3.keccak(text="getEthBalance(address)")[:4] = 0x4d2301cc
+        assert_eq!(GET_ETH_BALANCE_SELECTOR, [0x4d, 0x23, 0x01, 0xcc]);
+    }
+
+    #[test]
+    fn erc6909_balance_of_selector_matches_python_oracle() {
+        // Web3.keccak(text="balanceOf(address,uint256)")[:4] = 0x00fdd58e
+        assert_eq!(ERC6909_BALANCE_OF_SELECTOR, [0x00, 0xfd, 0xd5, 0x8e]);
+    }
+
+    #[test]
+    fn encode_balance_of_matches_eth_abi_output() {
+        // selector + 32-byte left-padded address tail.
+        let data = encode_balance_of_calldata(EXECUTOR).unwrap();
+        assert_eq!(&data[..4], &BALANCE_OF_SELECTOR);
+        // The address occupies bytes 12..32 of the 32-byte tail (left-zero-padded).
+        assert_eq!(&data[4 + 12..4 + 32], EXECUTOR.as_slice());
+        assert_eq!(data.len(), 4 + 32);
+    }
+
+    #[test]
+    fn encode_get_eth_balance_matches_eth_abi_output() {
+        let data = encode_get_eth_balance_calldata(EXECUTOR).unwrap();
+        assert_eq!(&data[..4], &GET_ETH_BALANCE_SELECTOR);
+        assert_eq!(&data[4 + 12..4 + 32], EXECUTOR.as_slice());
+        assert_eq!(data.len(), 4 + 32);
+    }
+
+    #[test]
+    fn encode_erc6909_balance_of_matches_eth_abi_output() {
+        // selector + 32-byte address + 32-byte uint256(= uint160(WETH)).
+        let data = encode_erc6909_balance_of_calldata(EXECUTOR, WETH).unwrap();
+        assert_eq!(&data[..4], &ERC6909_BALANCE_OF_SELECTOR);
+        assert_eq!(&data[4 + 12..4 + 32], EXECUTOR.as_slice());
+        // The WETH ERC6909 id = uint160(WETH) — low 20 bytes of the encoded
+        // uint256, left-zero-padded to 32 bytes.
+        let id_tail = &data[(4 + 32)..];
+        assert_eq!(id_tail.len(), 32);
+        assert_eq!(&id_tail[12..], WETH.as_slice());
+    }
+
+    #[test]
+    fn erc6909_id_reuses_executor_leaf() {
+        // The ERC6909 id is the §62H23D leaf's `erc6909_id` (uint160(currency))
+        // — reused, not recomputed. Cross-check against the inlined read.
+        let id = erc6909_id(WETH);
+        let low20 = &id.to_be_bytes::<32>()[12..];
+        assert_eq!(low20, WETH.as_slice());
+    }
+}

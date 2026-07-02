@@ -22,3 +22,15 @@ suspicious = "warn"
 [dependencies]
 alloy = { version = "^2.0" }
 degenbot-executor = { path = "../degenbot-executor" }
+degenbot-abi = { path = "../degenbot-abi" }
+degenbot-rpc = { path = "../degenbot-rpc" }
+degenbot-core = { path = "../degenbot-core" }
+
+[dev-dependencies]
+serde_json = { version = "^1.0" }
+tokio = { version = "^1.52", features = ["macros", "rt"] }
+# `test-utils` gates `AlloyProvider::from_provider` (the mock-transport
+# constructor) so the §4.2 wire-shape tests can drive the typed dispatch
+# without a live RPC. Production builds (the umbrella, the cdylib) never
+# enable this feature.
+degenbot-rpc = { path = "../degenbot-rpc", features = ["test-utils"] }

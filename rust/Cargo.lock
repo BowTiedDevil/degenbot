@@ -1767,7 +1767,12 @@ name = "degenbot-simulation"
 version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
+ "degenbot-abi",
+ "degenbot-core",
  "degenbot-executor",
+ "degenbot-rpc",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
