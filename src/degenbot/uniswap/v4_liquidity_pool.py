@@ -176,8 +176,6 @@ class UniswapV4Pool(
     typed exceptions — so this companion never holds a hooked/dynamic-fee pool.
     """
 
-    _state_mgr: Any  # removed; retained as Any for type-checker compat only
-
     type PoolState = UniswapV4PoolState
 
     SLOT0_STRUCT_TYPES = (
