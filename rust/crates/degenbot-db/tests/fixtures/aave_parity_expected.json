@@ -1,0 +1,121 @@
+{
+  "asset_addresses": [
+    "0x4200000000000000000000000000000000000006",
+    "0x50C5725949a6f0C72e6c4a64177C497b4751a5Dc",
+    "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+  ],
+  "chain_id": 8453,
+  "market_id": 1,
+  "oracle_address": "0x595a7E11c2c2c2C5b5d5E5F5A5B5c5D5e5F5A5B5",
+  "users": [
+    {
+      "address": "0x1111111111111111111111111111111111111111",
+      "collateral": [
+        {
+          "asset_id": 1,
+          "asset_lt": 8250,
+          "asset_ltv": 8000,
+          "balance": "1180591620717411303424",
+          "e_mode_category_id": 1,
+          "emode_lt": 9500,
+          "emode_ltv": 9300,
+          "liquidity_index": "1000000000000000000000000000",
+          "underlying_address": "0x4200000000000000000000000000000000000006",
+          "underlying_symbol": "WETH"
+        }
+      ],
+      "collateral_config_map": {
+        "1": true,
+        "2": false
+      },
+      "debt": [
+        {
+          "asset_id": 2,
+          "balance": "1000",
+          "borrow_index": "1000000000000000000000001000",
+          "e_mode_category_id": null,
+          "underlying_address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+          "underlying_symbol": "USDC"
+        }
+      ],
+      "e_mode": 0,
+      "id": 1,
+      "is_isolation_mode": false,
+      "isolation_debt_ceiling": null,
+      "isolation_mode_debt": "0",
+      "market_id": 1
+    },
+    {
+      "address": "0x2222222222222222222222222222222222222222",
+      "collateral": [
+        {
+          "asset_id": 3,
+          "asset_lt": 7700,
+          "asset_ltv": 7500,
+          "balance": "2361183241434822606848",
+          "e_mode_category_id": null,
+          "emode_lt": null,
+          "emode_ltv": null,
+          "liquidity_index": "1000000000000000000000000000",
+          "underlying_address": "0x50C5725949a6f0C72e6c4a64177C497b4751a5Dc",
+          "underlying_symbol": "DAI"
+        }
+      ],
+      "collateral_config_map": {
+        "3": true
+      },
+      "debt": [
+        {
+          "asset_id": 3,
+          "balance": "1000",
+          "borrow_index": "1000000000000000000000000000",
+          "e_mode_category_id": null,
+          "underlying_address": "0x50C5725949a6f0C72e6c4a64177C497b4751a5Dc",
+          "underlying_symbol": "DAI"
+        }
+      ],
+      "e_mode": 0,
+      "id": 2,
+      "is_isolation_mode": true,
+      "isolation_debt_ceiling": "1180591620717411303424",
+      "isolation_mode_debt": "1180591620717411303424",
+      "market_id": 1
+    },
+    {
+      "address": "0x4444444444444444444444444444444444444444",
+      "collateral": [
+        {
+          "asset_id": 1,
+          "asset_lt": 8250,
+          "asset_ltv": 8000,
+          "balance": "1180591620717411303424",
+          "e_mode_category_id": 1,
+          "emode_lt": 9500,
+          "emode_ltv": 9300,
+          "liquidity_index": "1000000000000000000000000000",
+          "underlying_address": "0x4200000000000000000000000000000000000006",
+          "underlying_symbol": "WETH"
+        }
+      ],
+      "collateral_config_map": {
+        "1": true
+      },
+      "debt": [
+        {
+          "asset_id": 2,
+          "balance": "1000",
+          "borrow_index": "1000000000000000000000001000",
+          "e_mode_category_id": null,
+          "underlying_address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+          "underlying_symbol": "USDC"
+        }
+      ],
+      "e_mode": 1,
+      "id": 4,
+      "is_isolation_mode": false,
+      "isolation_debt_ceiling": null,
+      "isolation_mode_debt": "0",
+      "market_id": 1
+    }
+  ]
+}

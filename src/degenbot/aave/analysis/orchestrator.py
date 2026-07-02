@@ -6,11 +6,11 @@ them to core.
 """
 
 from collections.abc import Sequence
+from typing import Any
 
 from eth_typing import ChecksumAddress
-from sqlalchemy import select
-from sqlalchemy.orm import Session, joinedload
-from web3 import Web3
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session
 
 from degenbot.aave.analysis.core import (
     CollateralPositionRecord,
@@ -20,32 +20,55 @@ from degenbot.aave.analysis.core import (
     analyze_user_position,
 )
 from degenbot.aave.analysis.protocols import PositionQuery, PriceFetcher
-from degenbot.database.models.aave import (
-    AaveV3Asset,
-    AaveV3CollateralPosition,
-    AaveV3Contract,
-    AaveV3DebtPosition,
-    AaveV3User,
-    AaveV3UserCollateralConfig,
-)
-from degenbot.degenbot_rs import PyAavePriceOracle
+from degenbot.checksum_cache import get_checksum_address
+from degenbot.degenbot_rs import PyAavePriceOracle, PyDatabasePositionQuery
 from degenbot.logging import logger
 from degenbot.provider.sync_adapter import ProviderAdapter
 
-# Contract name for price oracle in aave_v3_contracts table
-ORACLE_CONTRACT_NAME = "PRICE_ORACLE"
-
 
 class DatabasePositionQuery:
-    """PositionQuery implementation backed by SQLAlchemy.
+    """PositionQuery implementation backed by the Rust `degenbot-db` core.
 
-    Converts ORM objects to flat records at the query boundary.
-    Core never sees ORM objects.
+    Routes every read through the `PyDatabasePositionQuery` PyO3 seam (ADR-005
+    three-layer architecture). The `session` is retained for explicit-deps
+    construction + resolving the DB file path + the `AaveV3Market` lookup (the
+    market id is an I/O detail resolved at the CLI boundary); reads no longer
+    use the SQLAlchemy session.
     """
 
     def __init__(self, session: Session) -> None:
-        """Initialize the instance."""
+        """Initialize the instance.
+
+        Args:
+            session: A SQLAlchemy session (used to resolve the database file
+                path + look up the `AaveV3Market` id at the CLI boundary).
+
+        """
         self._session = session
+        self._rust: PyDatabasePositionQuery | None = None
+
+    def _db_path(self) -> str:
+        """Resolve the SQLite file path the Rust reader opens.
+
+        Returns:
+            The resolved database file path.
+
+        Raises:
+            ValueError: If no file path can be resolved (e.g. an in-memory engine).
+
+        """
+        engine = self._session.get_bind()
+        if isinstance(engine, Engine):
+            db_path = engine.url.database
+            if db_path and db_path != ":memory:":
+                return db_path
+        msg = "a file-backed database is required for Rust-backed position reads"
+        raise ValueError(msg)
+
+    def _handle(self) -> PyDatabasePositionQuery:
+        if self._rust is None:
+            self._rust = PyDatabasePositionQuery(self._db_path())
+        return self._rust
 
     def get_users_with_debt(self, market_id: int, limit: int | None = None) -> Sequence[UserRecord]:
         """Get all users with debt positions in a market, as flat records.
@@ -54,26 +77,8 @@ class DatabasePositionQuery:
             The computed value.
 
         """
-        users_orm = (
-            self._session
-            .scalars(
-                select(AaveV3User)
-                .where(AaveV3User.market_id == market_id)
-                .options(
-                    joinedload(AaveV3User.debt_positions),
-                ),
-            )
-            .unique()
-            .all()
-        )
-
-        # Filter to users with actual debt
-        users_with_debt = [u for u in users_orm if len(u.debt_positions) > 0]
-
-        if limit is not None:
-            users_with_debt = users_with_debt[:limit]
-
-        return [_convert_user(u) for u in users_with_debt]
+        rows = self._handle().get_users_with_debt(market_id, limit)
+        return [UserRecord(**_checksum_user(r)) for r in rows]
 
     def get_collateral_positions(self, user_id: int) -> Sequence[CollateralPositionRecord]:
         """Get collateral positions for a user, as flat records.
@@ -82,17 +87,8 @@ class DatabasePositionQuery:
             The computed value.
 
         """
-        positions = self._session.scalars(
-            select(AaveV3CollateralPosition)
-            .where(AaveV3CollateralPosition.user_id == user_id)
-            .options(
-                joinedload(AaveV3CollateralPosition.asset).joinedload(AaveV3Asset.underlying_token),
-                joinedload(AaveV3CollateralPosition.asset).joinedload(AaveV3Asset.asset_config),
-                joinedload(AaveV3CollateralPosition.asset).joinedload(AaveV3Asset.e_mode_category),
-            ),
-        ).all()
-
-        return [_convert_collateral_position(p) for p in positions]
+        rows = self._handle().get_collateral_positions(user_id)
+        return [CollateralPositionRecord(**_checksum_collateral(r)) for r in rows]
 
     def get_debt_positions(self, user_id: int) -> Sequence[DebtPositionRecord]:
         """Get debt positions for a user, as flat records.
@@ -101,28 +97,17 @@ class DatabasePositionQuery:
             The computed value.
 
         """
-        positions = self._session.scalars(
-            select(AaveV3DebtPosition)
-            .where(AaveV3DebtPosition.user_id == user_id)
-            .options(
-                joinedload(AaveV3DebtPosition.asset).joinedload(AaveV3Asset.underlying_token),
-                joinedload(AaveV3DebtPosition.asset).joinedload(AaveV3Asset.e_mode_category),
-            ),
-        ).all()
-
-        return [_convert_debt_position(p) for p in positions]
+        rows = self._handle().get_debt_positions(user_id)
+        return [DebtPositionRecord(**_checksum_debt(r)) for r in rows]
 
     def get_collateral_config_map(self, user_id: int) -> dict[int, bool]:
-        """Get map of asset_id -> enabled status for a user.
+        """Get map of asset_id to enabled status for a user.
 
         Returns:
             The computed value.
 
         """
-        configs = self._session.scalars(
-            select(AaveV3UserCollateralConfig).where(AaveV3UserCollateralConfig.user_id == user_id),
-        ).all()
-        return {cfg.asset_id: cfg.enabled for cfg in configs}
+        return self._handle().get_collateral_config_map(user_id)
 
     def get_oracle_address(self, market_id: int) -> ChecksumAddress | None:
         """Get the price oracle address for a market.
@@ -131,13 +116,8 @@ class DatabasePositionQuery:
             The computed value.
 
         """
-        contract = self._session.scalar(
-            select(AaveV3Contract).where(
-                AaveV3Contract.market_id == market_id,
-                AaveV3Contract.name == ORACLE_CONTRACT_NAME,
-            ),
-        )
-        return contract.address if contract else None
+        addr = self._handle().get_oracle_address(market_id)
+        return get_checksum_address(addr) if addr is not None else None
 
     def get_asset_addresses(self, market_id: int) -> set[ChecksumAddress]:
         """Get all unique underlying asset addresses for a market.
@@ -146,113 +126,43 @@ class DatabasePositionQuery:
             The computed value.
 
         """
-        assets = (
-            self._session
-            .scalars(
-                select(AaveV3Asset)
-                .where(AaveV3Asset.market_id == market_id)
-                .options(
-                    joinedload(AaveV3Asset.underlying_token),
-                ),
-            )
-            .unique()
-            .all()
-        )
-
-        addresses: set[ChecksumAddress] = set()
-        for asset in assets:
-            if asset.underlying_token is not None:
-                addresses.add(asset.underlying_token.address)
-
-        return addresses
+        return {get_checksum_address(a) for a in self._handle().get_asset_addresses(market_id)}
 
 
-def _convert_user(user: AaveV3User) -> UserRecord:
-    """Convert ORM AaveV3User to flat UserRecord.
+def _checksum_user(row: dict[str, Any]) -> dict[str, Any]:
+    """Normalize the user address to a ``ChecksumAddress``.
 
     Returns:
-        The computed value.
+        The row with its ``address`` field EIP-55 checksummed.
 
     """
-    isolation_debt_ceiling = None
-    if user.is_isolation_mode and user.isolation_collateral_asset is not None:
-        asset_config = user.isolation_collateral_asset.asset_config
-        if asset_config is not None:
-            isolation_debt_ceiling = asset_config.debt_ceiling
-
-    return UserRecord(
-        id=user.id,
-        address=user.address,
-        market_id=user.market_id,
-        e_mode=user.e_mode,
-        is_isolation_mode=user.is_isolation_mode,
-        isolation_mode_debt=user.isolation_mode_debt,
-        isolation_debt_ceiling=isolation_debt_ceiling,
-    )
+    row = dict(row)
+    row["address"] = get_checksum_address(row["address"])
+    return row
 
 
-def _convert_collateral_position(pos: AaveV3CollateralPosition) -> CollateralPositionRecord:
-    """Convert ORM AaveV3CollateralPosition to flat CollateralPositionRecord.
+def _checksum_collateral(row: dict[str, Any]) -> dict[str, Any]:
+    """Normalize the underlying address to a ``ChecksumAddress``.
 
     Returns:
-        The computed value.
+        The row with its ``underlying_address`` field EIP-55 checksummed.
 
     """
-    asset = pos.asset
-    emode_cat_id = asset.e_mode_category_id or None
-
-    emode_lt = None
-    emode_ltv = None
-    if asset.e_mode_category is not None:
-        emode_lt = asset.e_mode_category.liquidation_threshold
-        emode_ltv = asset.e_mode_category.ltv
-
-    asset_lt = 0
-    asset_ltv = 0
-    if asset.asset_config is not None:
-        asset_lt = asset.asset_config.liquidation_threshold
-        asset_ltv = asset.asset_config.ltv
-
-    zero_addr = ChecksumAddress(Web3.to_checksum_address("0x" + "0" * 40))
-    underlying_address = asset.underlying_token.address if asset.underlying_token else zero_addr
-    underlying_symbol = asset.underlying_token.symbol if asset.underlying_token else None
-
-    return CollateralPositionRecord(
-        asset_id=pos.asset_id,
-        balance=pos.balance,
-        underlying_address=underlying_address,
-        underlying_symbol=underlying_symbol,
-        liquidity_index=asset.liquidity_index,
-        e_mode_category_id=emode_cat_id,
-        asset_lt=asset_lt,
-        asset_ltv=asset_ltv,
-        emode_lt=emode_lt,
-        emode_ltv=emode_ltv,
-    )
+    row = dict(row)
+    row["underlying_address"] = get_checksum_address(row["underlying_address"])
+    return row
 
 
-def _convert_debt_position(pos: AaveV3DebtPosition) -> DebtPositionRecord:
-    """Convert ORM AaveV3DebtPosition to flat DebtPositionRecord.
+def _checksum_debt(row: dict[str, Any]) -> dict[str, Any]:
+    """Normalize the underlying address to a ``ChecksumAddress``.
 
     Returns:
-        The computed value.
+        The row with its ``underlying_address`` field EIP-55 checksummed.
 
     """
-    asset = pos.asset
-    emode_cat_id = asset.e_mode_category_id or None
-
-    zero_addr = ChecksumAddress(Web3.to_checksum_address("0x" + "0" * 40))
-    underlying_address = asset.underlying_token.address if asset.underlying_token else zero_addr
-    underlying_symbol = asset.underlying_token.symbol if asset.underlying_token else None
-
-    return DebtPositionRecord(
-        asset_id=pos.asset_id,
-        balance=pos.balance,
-        underlying_address=underlying_address,
-        underlying_symbol=underlying_symbol,
-        borrow_index=asset.borrow_index,
-        e_mode_category_id=emode_cat_id,
-    )
+    row = dict(row)
+    row["underlying_address"] = get_checksum_address(row["underlying_address"])
+    return row
 
 
 class OraclePriceFetcher:
