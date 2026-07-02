@@ -35,6 +35,8 @@ members = [
     "crates/degenbot-solidly-math",
     "crates/degenbot-evm-math",
     "crates/degenbot-price",
+    "crates/degenbot-executor",
+    "crates/degenbot-submission",
     "crates/degenbot-abi",
     "crates/degenbot-rpc",
     "crates/degenbot-bot",
@@ -95,6 +97,8 @@ codegen-units = 16
 [profile.release.package.degenbot-db]
 codegen-units = 16
 [profile.release.package.degenbot-executor]
+codegen-units = 16
+[profile.release.package.degenbot-submission]
 codegen-units = 16
 
 # Dev profile (default for `cargo test` / `just dev`): keep compilation fast.

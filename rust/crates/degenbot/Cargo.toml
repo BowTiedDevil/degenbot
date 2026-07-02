@@ -41,6 +41,7 @@ degenbot-solidly-math = { path = "../degenbot-solidly-math" }
 degenbot-evm-math = { path = "../degenbot-evm-math" }
 degenbot-price = { path = "../degenbot-price" }
 degenbot-executor = { path = "../degenbot-executor" }
+degenbot-submission = { path = "../degenbot-submission" }
 degenbot-bot = { path = "../degenbot-bot" }
 degenbot-db = { path = "../degenbot-db" }
 
