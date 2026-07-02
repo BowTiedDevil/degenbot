@@ -29,9 +29,12 @@
 // and the dispatch API is wide (8 args) to match the Python oracle's kwargs.
 #![allow(
     clippy::used_underscore_binding,
+    clippy::no_effect_underscore_binding,
     clippy::too_many_arguments,
     clippy::similar_names,
-    clippy::needless_late_init
+    clippy::needless_late_init,
+    unused_variables,
+    unreachable_patterns
 )]
 
 use crate::encoders::{
@@ -196,7 +199,7 @@ pub struct EncodeOptions {
 /// * all-V2 hops (≥2): [`encode_cmd_v2_n_hop`]
 /// * 2-hop V4-V4 / V4-V3 / V3-V4 / V4-V2 / V2-V4 / V3-V3 / V2-V3 / V3-V2:
 ///   the corresponding `encode_cmd_*` two-hop composer
-/// * 3-hop: not supported here (sibling task) → `None`
+/// * 3-hop: [`encode_cmd_3_hop`] (all 27 V2/V3/V4 combinations)
 #[must_use]
 pub fn encode_cmd_stream(
     path_info: &PathInfo,
@@ -300,8 +303,18 @@ pub fn encode_cmd_stream(
             // 2-hop Solidly / mixed-V2-V3-with-Solidly: not supported.
             _ => None,
         }
+    } else if num_hops == 3 {
+        encode_cmd_3_hop(
+            path_info,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            pool_manager_address,
+            weth_address,
+            opts,
+        )
     } else {
-        // 3-hop (sibling task) and other unsupported arities → None.
+        // 4+ hops and other unsupported arities → None.
         None
     }
 }
@@ -2033,4 +2046,2157 @@ impl CmdExecutorComposer {
         out.append(&mut commands);
         Some(out)
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 3-hop composers
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Encode a 3-hop arbitrage path as a `cmd_executor` command stream.
+///
+/// Dispatches to one of the 27 `_3hop_*` pattern functions based on the
+/// hop-type combination. Mirrors `eth_backrun_helpers::_encode_cmd_3_hop`.
+///
+/// Returns `None` for an unknown combination or if any `enc_*` step fails
+/// (the Python oracle returns `None` via `try/except`).
+#[allow(clippy::too_many_lines)]
+#[doc(hidden)]
+#[must_use]
+pub fn encode_cmd_3_hop(
+    path_info: &PathInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    pool_manager_address: Address,
+    weth_address: Address,
+    opts: EncodeOptions,
+) -> Option<Vec<u8>> {
+    let hops = &path_info.hops;
+    if hops.len() != 3 {
+        return None;
+    }
+    match (&hops[0], &hops[1], &hops[2]) {
+        (HopInfo::V2(a), HopInfo::V2(b), HopInfo::V2(c)) => three_hop_v2_v2_v2(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            weth_address,
+        ),
+        (HopInfo::V2(a), HopInfo::V2(b), HopInfo::V3(c)) => three_hop_v2_v2_v3(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            weth_address,
+        ),
+        (HopInfo::V2(a), HopInfo::V2(b), HopInfo::V4(c)) => three_hop_v2_v2_v4(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            pool_manager_address,
+            weth_address,
+        ),
+        (HopInfo::V2(a), HopInfo::V3(b), HopInfo::V2(c)) => three_hop_v2_v3_v2(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            weth_address,
+        ),
+        (HopInfo::V2(a), HopInfo::V3(b), HopInfo::V3(c)) => three_hop_v2_v3_v3(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            weth_address,
+        ),
+        (HopInfo::V2(a), HopInfo::V3(b), HopInfo::V4(c)) => three_hop_v2_v3_v4(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            pool_manager_address,
+            weth_address,
+        ),
+        (HopInfo::V2(a), HopInfo::V4(b), HopInfo::V2(c)) => three_hop_v2_v4_v2(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            pool_manager_address,
+            weth_address,
+        ),
+        (HopInfo::V2(a), HopInfo::V4(b), HopInfo::V3(c)) => three_hop_v2_v4_v3(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            pool_manager_address,
+            weth_address,
+        ),
+        (HopInfo::V2(a), HopInfo::V4(b), HopInfo::V4(c)) => three_hop_v2_v4_v4(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            pool_manager_address,
+            weth_address,
+        ),
+        (HopInfo::V3(a), HopInfo::V2(b), HopInfo::V2(c)) => three_hop_v3_v2_v2(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            weth_address,
+        ),
+        (HopInfo::V3(a), HopInfo::V2(b), HopInfo::V3(c)) => three_hop_v3_v2_v3(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            weth_address,
+        ),
+        (HopInfo::V3(a), HopInfo::V2(b), HopInfo::V4(c)) => three_hop_v3_v2_v4(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            pool_manager_address,
+            weth_address,
+        ),
+        (HopInfo::V3(a), HopInfo::V3(b), HopInfo::V2(c)) => three_hop_v3_v3_v2(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            weth_address,
+        ),
+        (HopInfo::V3(a), HopInfo::V3(b), HopInfo::V3(c)) => three_hop_v3_v3_v3(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            weth_address,
+        ),
+        (HopInfo::V3(a), HopInfo::V3(b), HopInfo::V4(c)) => three_hop_v3_v3_v4(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            pool_manager_address,
+            weth_address,
+        ),
+        (HopInfo::V3(a), HopInfo::V4(b), HopInfo::V2(c)) => three_hop_v3_v4_v2(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            pool_manager_address,
+            weth_address,
+        ),
+        (HopInfo::V3(a), HopInfo::V4(b), HopInfo::V3(c)) => three_hop_v3_v4_v3(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            pool_manager_address,
+            weth_address,
+        ),
+        (HopInfo::V3(a), HopInfo::V4(b), HopInfo::V4(c)) => three_hop_v3_v4_v4(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            pool_manager_address,
+            weth_address,
+            opts,
+        ),
+        (HopInfo::V4(a), HopInfo::V2(b), HopInfo::V2(c)) => three_hop_v4_v2_v2(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            pool_manager_address,
+            weth_address,
+        ),
+        (HopInfo::V4(a), HopInfo::V2(b), HopInfo::V3(c)) => three_hop_v4_v2_v3(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            pool_manager_address,
+            weth_address,
+        ),
+        (HopInfo::V4(a), HopInfo::V2(b), HopInfo::V4(c)) => three_hop_v4_v2_v4(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            pool_manager_address,
+            weth_address,
+        ),
+        (HopInfo::V4(a), HopInfo::V3(b), HopInfo::V2(c)) => three_hop_v4_v3_v2(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            pool_manager_address,
+            weth_address,
+        ),
+        (HopInfo::V4(a), HopInfo::V3(b), HopInfo::V3(c)) => three_hop_v4_v3_v3(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            pool_manager_address,
+            weth_address,
+        ),
+        (HopInfo::V4(a), HopInfo::V3(b), HopInfo::V4(c)) => three_hop_v4_v3_v4(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            pool_manager_address,
+            weth_address,
+        ),
+        (HopInfo::V4(a), HopInfo::V4(b), HopInfo::V2(c)) => three_hop_v4_v4_v2(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            pool_manager_address,
+            weth_address,
+        ),
+        (HopInfo::V4(a), HopInfo::V4(b), HopInfo::V3(c)) => three_hop_v4_v4_v3(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            pool_manager_address,
+            weth_address,
+        ),
+        (HopInfo::V4(a), HopInfo::V4(b), HopInfo::V4(c)) => three_hop_v4_v4_v4(
+            a,
+            b,
+            c,
+            optimal_input,
+            hop_outputs,
+            executor_address,
+            pool_manager_address,
+            weth_address,
+            opts,
+        ),
+        _ => None,
+    }
+}
+
+/// Shared helper: encode a V4 swap with amount=0 (caller overrides amount).
+/// Mirrors `_enc_v4_swap`. Unused by any 3-hop pattern but ported for
+/// completeness — the Python oracle defines it as a shared helper.
+#[allow(dead_code)]
+fn enc_v4_swap_zero(hop: &V4HopInfo, at: &mut AddressTable) -> Option<Vec<u8>> {
+    let c0_idx = at.add(hop.currency0_address).ok()?;
+    let c1_idx = at.add(hop.currency1_address).ok()?;
+    let fee = u16::try_from(hop.fee).ok()?;
+    let ts = i16::try_from(hop.tick_spacing).ok()?;
+    let hooks_idx = SENTINEL_NATIVE;
+    encoders::enc_v4_swap_compact(c0_idx, c1_idx, fee, ts, hooks_idx, hop.zfo, 0).ok()
+}
+
+// ── V2-V2-V2 ──────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v2_v2_v2(
+    ha: &V2HopInfo,
+    hb: &V2HopInfo,
+    hc: &V2HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let _out_a = hop_outputs[0];
+    let _out_b = hop_outputs[1];
+    let out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(Some(weth_address), Some(executor_address), None);
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let v2a_idx = at.add(ha.pool_address).ok()?;
+    let v2b_idx = at.add(hb.pool_address).ok()?;
+    let v2c_idx = at.add(hc.pool_address).ok()?;
+
+    // Inside V2c callback: WETH→V2a (creates excess), V2a→V2b, V2b→V2c.
+    let mut c_fwd = encoders::enc_erc20_transfer(weth_idx, v2a_idx, optimal_input).ok()?;
+    c_fwd.extend_from_slice(&encoders::enc_v2_swap_calc(
+        v2a_idx, ha.zfo, v2b_idx, ha.fee,
+    ));
+    c_fwd.extend_from_slice(&encoders::enc_v2_swap_calc(
+        v2b_idx, hb.zfo, v2c_idx, hb.fee,
+    ));
+
+    let commands =
+        encoders::enc_v2_swap_compact(v2c_idx, hc.zfo, out_c, executor_idx, hc.fee, &c_fwd).ok()?;
+
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V2-V2-V3 ──────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v2_v2_v3(
+    ha: &V2HopInfo,
+    hb: &V2HopInfo,
+    hc: &V3HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let _out_a = hop_outputs[0];
+    let out_b = hop_outputs[1];
+    let _out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(Some(weth_address), Some(executor_address), None);
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let v2a_idx = at.add(ha.pool_address).ok()?;
+    let v2b_idx = at.add(hb.pool_address).ok()?;
+    let v3c_idx = at.add(hc.pool_address).ok()?;
+
+    let mut c_fwd = encoders::enc_erc20_transfer(weth_idx, v2a_idx, optimal_input).ok()?;
+    c_fwd.extend_from_slice(&encoders::enc_v2_swap_calc(
+        v2a_idx, ha.zfo, v2b_idx, ha.fee,
+    ));
+    c_fwd.extend_from_slice(&encoders::enc_v2_swap_calc(
+        v2b_idx, hb.zfo, v3c_idx, hb.fee,
+    ));
+
+    let commands =
+        encoders::enc_v3_swap_compact(v3c_idx, hc.zfo, out_b, executor_idx, &c_fwd).ok()?;
+
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V2-V2-V4 ──────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v2_v2_v4(
+    ha: &V2HopInfo,
+    hb: &V2HopInfo,
+    hc: &V4HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    pool_manager_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth_address),
+        Some(executor_address),
+        Some(pool_manager_address),
+    );
+    let pm_idx = at.add(pool_manager_address).ok()?;
+    let weth_idx = SENTINEL_WETH;
+    let _executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE;
+    let v2a_idx = at.add(ha.pool_address).ok()?;
+    let v2b_idx = at.add(hb.pool_address).ok()?;
+    let c0_idx = at.add(hc.currency0_address).ok()?;
+    let c1_idx = at.add(hc.currency1_address).ok()?;
+
+    let forward_b_addr = if hb.zfo {
+        hb.token1_address
+    } else {
+        hb.token0_address
+    };
+    let forward_b_idx = at.add(forward_b_addr).ok()?;
+
+    let fee_c = u16::try_from(hc.fee).ok()?;
+    let ts_c = i16::try_from(hc.tick_spacing).ok()?;
+
+    let mut inner = encoders::enc_v4_sync(forward_b_idx);
+    inner.extend_from_slice(&encoders::enc_v4_take_compact(weth_idx, v2a_idx, optimal_input).ok()?);
+    inner.extend_from_slice(&encoders::enc_v2_swap_calc(
+        v2a_idx, ha.zfo, v2b_idx, ha.fee,
+    ));
+    inner.extend_from_slice(&encoders::enc_v2_swap_calc(v2b_idx, hb.zfo, pm_idx, hb.fee));
+    inner.extend_from_slice(&encoders::enc_v4_settle());
+    inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
+        c0_idx, c1_idx, fee_c, ts_c, zero_idx, hc.zfo,
+    ));
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+
+    let commands = encoders::enc_v4_unlock(&inner).ok()?;
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V2-V3-V2 ──────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v2_v3_v2(
+    ha: &V2HopInfo,
+    hb: &V3HopInfo,
+    hc: &V2HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let out_a = hop_outputs[0];
+    let _out_b = hop_outputs[1];
+    let out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(Some(weth_address), Some(executor_address), None);
+    let weth_idx = SENTINEL_WETH;
+    let _usdc_idx = at
+        .add(if ha.zfo {
+            ha.token1_address
+        } else {
+            ha.token0_address
+        })
+        .ok()?;
+    let executor_idx = SENTINEL_SELF;
+    let v2a_idx = at.add(ha.pool_address).ok()?;
+    let v2c_idx = at.add(hc.pool_address).ok()?;
+    let v3b_idx = at.add(hb.pool_address).ok()?;
+
+    let mut b_fwd = encoders::enc_erc20_transfer(weth_idx, v2a_idx, optimal_input).ok()?;
+    b_fwd.extend_from_slice(&encoders::enc_v2_swap_direct(v2a_idx, ha.zfo, out_a, v3b_idx).ok()?);
+
+    let c_fwd = encoders::enc_v3_swap_compact(v3b_idx, hb.zfo, out_a, v2c_idx, &b_fwd).ok()?;
+
+    let commands =
+        encoders::enc_v2_swap_compact(v2c_idx, hc.zfo, out_c, executor_idx, hc.fee, &c_fwd).ok()?;
+
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V2-V3-V3 ───────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v2_v3_v3(
+    ha: &V2HopInfo,
+    hb: &V3HopInfo,
+    hc: &V3HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let out_a = hop_outputs[0];
+    let out_b = hop_outputs[1];
+    let _out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(Some(weth_address), Some(executor_address), None);
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let v2a_idx = at.add(ha.pool_address).ok()?;
+    let v3b_idx = at.add(hb.pool_address).ok()?;
+    let v3c_idx = at.add(hc.pool_address).ok()?;
+
+    let mut v3b_fwd = encoders::enc_erc20_transfer(weth_idx, v2a_idx, optimal_input).ok()?;
+    v3b_fwd.extend_from_slice(&encoders::enc_v2_swap_direct(v2a_idx, ha.zfo, out_a, v3b_idx).ok()?);
+
+    let v3c_fwd = encoders::enc_v3_swap_compact(v3b_idx, hb.zfo, out_a, v3c_idx, &v3b_fwd).ok()?;
+
+    let commands =
+        encoders::enc_v3_swap_compact(v3c_idx, hc.zfo, out_b, executor_idx, &v3c_fwd).ok()?;
+
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V2-V3-V4 ───────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v2_v3_v4(
+    ha: &V2HopInfo,
+    hb: &V3HopInfo,
+    hc: &V4HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    pool_manager_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let out_a = hop_outputs[0];
+    let out_b = hop_outputs[1];
+    let out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth_address),
+        Some(executor_address),
+        Some(pool_manager_address),
+    );
+    let pm_idx = at.add(pool_manager_address).ok()?;
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE;
+    let v2a_idx = at.add(ha.pool_address).ok()?;
+    let v3b_idx = at.add(hb.pool_address).ok()?;
+    let c0_idx = at.add(hc.currency0_address).ok()?;
+    let c1_idx = at.add(hc.currency1_address).ok()?;
+
+    let forward_b_addr = if hb.zfo {
+        hb.token1_address
+    } else {
+        hb.token0_address
+    };
+    let forward_b_idx = at.add(forward_b_addr).ok()?;
+
+    let fee_c = u16::try_from(hc.fee).ok()?;
+    let ts_c = i16::try_from(hc.tick_spacing).ok()?;
+
+    let mut v4_inner = encoders::enc_v4_settle();
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(c0_idx, c1_idx, fee_c, ts_c, zero_idx, hc.zfo, out_b)
+            .ok()?,
+    );
+    v4_inner
+        .extend_from_slice(&encoders::enc_v4_take_compact(weth_idx, v2a_idx, optimal_input).ok()?);
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_take_compact(weth_idx, executor_idx, out_c - optimal_input).ok()?,
+    );
+    v4_inner.extend_from_slice(&encoders::enc_v4_sync(weth_idx));
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle());
+
+    let mut b_fwd = encoders::enc_v4_unlock(&v4_inner).ok()?;
+    b_fwd.extend_from_slice(&encoders::enc_v2_swap_direct(v2a_idx, ha.zfo, out_a, v3b_idx).ok()?);
+
+    let mut commands = encoders::enc_v4_sync(forward_b_idx);
+    commands.extend_from_slice(
+        &encoders::enc_v3_swap_compact(v3b_idx, hb.zfo, out_a, pm_idx, &b_fwd).ok()?,
+    );
+
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V2-V4-V2 ───────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v2_v4_v2(
+    ha: &V2HopInfo,
+    hb: &V4HopInfo,
+    hc: &V2HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    pool_manager_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let out_a = hop_outputs[0];
+    let out_b = hop_outputs[1];
+    let out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth_address),
+        Some(executor_address),
+        Some(pool_manager_address),
+    );
+    let pm_idx = at.add(pool_manager_address).ok()?;
+    let weth_idx = SENTINEL_WETH;
+    let forward_a_idx = at
+        .add(if ha.zfo {
+            ha.token1_address
+        } else {
+            ha.token0_address
+        })
+        .ok()?;
+    let forward_b_idx = at
+        .add(if hb.zfo {
+            hb.currency1_address
+        } else {
+            hb.currency0_address
+        })
+        .ok()?;
+    let executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE;
+    let v2a_idx = at.add(ha.pool_address).ok()?;
+    let v2c_idx = at.add(hc.pool_address).ok()?;
+
+    let fee_b = u16::try_from(hb.fee).ok()?;
+    let ts_b = i16::try_from(hb.tick_spacing).ok()?;
+    let c0_b_idx = at.add(hb.currency0_address).ok()?;
+    let c1_b_idx = at.add(hb.currency1_address).ok()?;
+
+    let mut v4_inner = encoders::enc_v4_sync(forward_a_idx);
+    v4_inner.extend_from_slice(&encoders::enc_v2_swap_calc(v2a_idx, ha.zfo, pm_idx, ha.fee));
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle());
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo, out_a)
+            .ok()?,
+    );
+    v4_inner.extend_from_slice(&encoders::enc_v4_take_compact(forward_b_idx, v2c_idx, out_b).ok()?);
+
+    let mut c_fwd = encoders::enc_erc20_transfer(weth_idx, v2a_idx, optimal_input).ok()?;
+    c_fwd.extend_from_slice(&encoders::enc_v4_unlock(&v4_inner).ok()?);
+
+    let commands =
+        encoders::enc_v2_swap_compact(v2c_idx, hc.zfo, out_c, executor_idx, hc.fee, &c_fwd).ok()?;
+
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V2-V4-V3 ───────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v2_v4_v3(
+    ha: &V2HopInfo,
+    hb: &V4HopInfo,
+    hc: &V3HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    pool_manager_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let out_a = hop_outputs[0];
+    let out_b = hop_outputs[1];
+    let _out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth_address),
+        Some(executor_address),
+        Some(pool_manager_address),
+    );
+    let pm_idx = at.add(pool_manager_address).ok()?;
+    let weth_idx = SENTINEL_WETH;
+    let forward_a_idx = at
+        .add(if ha.zfo {
+            ha.token1_address
+        } else {
+            ha.token0_address
+        })
+        .ok()?;
+    let forward_b_idx = at
+        .add(if hb.zfo {
+            hb.currency1_address
+        } else {
+            hb.currency0_address
+        })
+        .ok()?;
+    let executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE;
+    let v2a_idx = at.add(ha.pool_address).ok()?;
+    let v3c_idx = at.add(hc.pool_address).ok()?;
+
+    let fee_b = u16::try_from(hb.fee).ok()?;
+    let ts_b = i16::try_from(hb.tick_spacing).ok()?;
+    let c0_b_idx = at.add(hb.currency0_address).ok()?;
+    let c1_b_idx = at.add(hb.currency1_address).ok()?;
+
+    let mut v4_inner = encoders::enc_v4_sync(forward_a_idx);
+    v4_inner.extend_from_slice(&encoders::enc_v2_swap_calc(v2a_idx, ha.zfo, pm_idx, ha.fee));
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle());
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo, out_a)
+            .ok()?,
+    );
+    v4_inner.extend_from_slice(&encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, out_b).ok()?);
+
+    let mut c_fwd = encoders::enc_erc20_transfer(weth_idx, v2a_idx, optimal_input).ok()?;
+    c_fwd.extend_from_slice(&encoders::enc_v4_unlock(&v4_inner).ok()?);
+
+    let commands =
+        encoders::enc_v3_swap_compact(v3c_idx, hc.zfo, out_b, executor_idx, &c_fwd).ok()?;
+
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V2-V4-V4 ───────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v2_v4_v4(
+    ha: &V2HopInfo,
+    hb: &V4HopInfo,
+    hc: &V4HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    pool_manager_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let out_a = hop_outputs[0];
+    let out_b = hop_outputs[1];
+    let _out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth_address),
+        Some(executor_address),
+        Some(pool_manager_address),
+    );
+    let pm_idx = at.add(pool_manager_address).ok()?;
+    let weth_idx = SENTINEL_WETH;
+    let forward_a_idx = at
+        .add(if ha.zfo {
+            ha.token1_address
+        } else {
+            ha.token0_address
+        })
+        .ok()?;
+    let executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE;
+
+    let fee_b = u16::try_from(hb.fee).ok()?;
+    let ts_b = i16::try_from(hb.tick_spacing).ok()?;
+    let fee_c = u16::try_from(hc.fee).ok()?;
+    let ts_c = i16::try_from(hc.tick_spacing).ok()?;
+
+    let c0_b_idx = at.add(hb.currency0_address).ok()?;
+    let c1_b_idx = at.add(hb.currency1_address).ok()?;
+    let c0_c_idx = at.add(hc.currency0_address).ok()?;
+    let c1_c_idx = at.add(hc.currency1_address).ok()?;
+
+    let v2a_idx = at.add(ha.pool_address).ok()?;
+
+    let mut v4_inner = encoders::enc_v4_sync(forward_a_idx);
+    v4_inner
+        .extend_from_slice(&encoders::enc_v4_take_compact(weth_idx, v2a_idx, optimal_input).ok()?);
+    v4_inner.extend_from_slice(&encoders::enc_v2_swap_calc(v2a_idx, ha.zfo, pm_idx, ha.fee));
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle());
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo, out_a)
+            .ok()?,
+    );
+    v4_inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
+        c0_c_idx, c1_c_idx, fee_c, ts_c, zero_idx, hc.zfo,
+    ));
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
+
+    let commands = encoders::enc_v4_unlock(&v4_inner).ok()?;
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V3-V2-V2 ───────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v3_v2_v2(
+    ha: &V3HopInfo,
+    hb: &V2HopInfo,
+    hc: &V2HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let _out_a = hop_outputs[0];
+    let out_b = hop_outputs[1];
+    let out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(Some(weth_address), Some(executor_address), None);
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let v2b_idx = at.add(hb.pool_address).ok()?;
+    let v2c_idx = at.add(hc.pool_address).ok()?;
+    let v3a_idx = at.add(ha.pool_address).ok()?;
+
+    let mut a_fwd = encoders::enc_v2_swap_direct(v2b_idx, hb.zfo, out_b, v2c_idx).ok()?;
+    a_fwd.extend_from_slice(
+        &encoders::enc_v2_swap_direct(v2c_idx, hc.zfo, out_c, executor_idx).ok()?,
+    );
+    a_fwd.extend_from_slice(&encoders::enc_erc20_transfer(weth_idx, v3a_idx, optimal_input).ok()?);
+
+    let commands =
+        encoders::enc_v3_swap_compact(v3a_idx, ha.zfo, optimal_input, v2b_idx, &a_fwd).ok()?;
+
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V3-V2-V3 ───────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v3_v2_v3(
+    ha: &V3HopInfo,
+    hb: &V2HopInfo,
+    hc: &V3HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let _out_a = hop_outputs[0];
+    let out_b = hop_outputs[1];
+    let _out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(Some(weth_address), Some(executor_address), None);
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let v2b_idx = at.add(hb.pool_address).ok()?;
+    let v3a_idx = at.add(ha.pool_address).ok()?;
+    let v3c_idx = at.add(hc.pool_address).ok()?;
+
+    let mut v3a_fwd = encoders::enc_v2_swap_direct(v2b_idx, hb.zfo, out_b, v3c_idx).ok()?;
+    v3a_fwd
+        .extend_from_slice(&encoders::enc_erc20_transfer(weth_idx, v3a_idx, optimal_input).ok()?);
+
+    let v3c_fwd =
+        encoders::enc_v3_swap_compact(v3a_idx, ha.zfo, optimal_input, v2b_idx, &v3a_fwd).ok()?;
+
+    let commands =
+        encoders::enc_v3_swap_compact(v3c_idx, hc.zfo, out_b, executor_idx, &v3c_fwd).ok()?;
+
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V3-V2-V4 ───────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v3_v2_v4(
+    ha: &V3HopInfo,
+    hb: &V2HopInfo,
+    hc: &V4HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    pool_manager_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let out_a = hop_outputs[0];
+    let out_b = hop_outputs[1];
+    let out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth_address),
+        Some(executor_address),
+        Some(pool_manager_address),
+    );
+    let _pm_idx = at.add(pool_manager_address).ok()?;
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE;
+    let v3a_idx = at.add(ha.pool_address).ok()?;
+    let v2b_idx = at.add(hb.pool_address).ok()?;
+
+    let forward_b_idx = at
+        .add(if hb.zfo {
+            hb.token1_address
+        } else {
+            hb.token0_address
+        })
+        .ok()?;
+
+    let fee_c = u16::try_from(hc.fee).ok()?;
+    let ts_c = i16::try_from(hc.tick_spacing).ok()?;
+    let c0_c_idx = at.add(hc.currency0_address).ok()?;
+    let c1_c_idx = at.add(hc.currency1_address).ok()?;
+
+    let mut v4_inner =
+        encoders::enc_v4_swap_compact(c0_c_idx, c1_c_idx, fee_c, ts_c, zero_idx, hc.zfo, out_b)
+            .ok()?;
+    v4_inner.extend_from_slice(&encoders::enc_v4_take_compact(weth_idx, executor_idx, out_c).ok()?);
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle_delta(forward_b_idx));
+
+    let b_fwd = encoders::enc_v4_unlock(&v4_inner).ok()?;
+
+    let mut a_fwd =
+        encoders::enc_v2_swap_compact(v2b_idx, hb.zfo, out_b, executor_idx, hb.fee, &b_fwd).ok()?;
+    a_fwd.extend_from_slice(&encoders::enc_erc20_transfer(weth_idx, v3a_idx, optimal_input).ok()?);
+
+    let commands =
+        encoders::enc_v3_swap_compact(v3a_idx, ha.zfo, optimal_input, v2b_idx, &a_fwd).ok()?;
+
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V3-V3-V2 ───────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v3_v3_v2(
+    ha: &V3HopInfo,
+    hb: &V3HopInfo,
+    hc: &V2HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let out_a = hop_outputs[0];
+    let _out_b = hop_outputs[1];
+    let out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(Some(weth_address), Some(executor_address), None);
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let v2c_idx = at.add(hc.pool_address).ok()?;
+    let v3a_idx = at.add(ha.pool_address).ok()?;
+
+    let mut v3a_fwd = encoders::enc_v2_swap_direct(v2c_idx, hc.zfo, out_c, executor_idx).ok()?;
+    v3a_fwd
+        .extend_from_slice(&encoders::enc_erc20_transfer(weth_idx, v3a_idx, optimal_input).ok()?);
+
+    let v3b_idx = at.add(hb.pool_address).ok()?;
+    let v3b_fwd =
+        encoders::enc_v3_swap_compact(v3a_idx, ha.zfo, optimal_input, v3b_idx, &v3a_fwd).ok()?;
+
+    let commands = encoders::enc_v3_swap_compact(v3b_idx, hb.zfo, out_a, v2c_idx, &v3b_fwd).ok()?;
+
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V3-V3-V3 ───────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v3_v3_v3(
+    ha: &V3HopInfo,
+    hb: &V3HopInfo,
+    hc: &V3HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let out_a = hop_outputs[0];
+    let out_b = hop_outputs[1];
+    let _out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(Some(weth_address), Some(executor_address), None);
+    let executor_idx = SENTINEL_SELF;
+    let v3a_idx = at.add(ha.pool_address).ok()?;
+    let v3b_idx = at.add(hb.pool_address).ok()?;
+    let v3c_idx = at.add(hc.pool_address).ok()?;
+
+    let v3a_callback: Vec<u8> = Vec::new();
+    let v3b_callback =
+        encoders::enc_v3_swap_compact(v3a_idx, ha.zfo, optimal_input, v3b_idx, &v3a_callback)
+            .ok()?;
+    let v3c_callback =
+        encoders::enc_v3_swap_compact(v3b_idx, hb.zfo, out_a, v3c_idx, &v3b_callback).ok()?;
+
+    let commands =
+        encoders::enc_v3_swap_compact(v3c_idx, hc.zfo, out_b, executor_idx, &v3c_callback).ok()?;
+
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V3-V3-V4 ───────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v3_v3_v4(
+    ha: &V3HopInfo,
+    hb: &V3HopInfo,
+    hc: &V4HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    pool_manager_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let out_a = hop_outputs[0];
+    let _out_b = hop_outputs[1];
+    let _out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth_address),
+        Some(executor_address),
+        Some(pool_manager_address),
+    );
+    let pm_idx = at.add(pool_manager_address).ok()?;
+    let weth_idx = SENTINEL_WETH;
+    let _executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE;
+    let v3a_idx = at.add(ha.pool_address).ok()?;
+    let v3b_idx = at.add(hb.pool_address).ok()?;
+
+    let forward_b_idx = at
+        .add(if hb.zfo {
+            hb.token1_address
+        } else {
+            hb.token0_address
+        })
+        .ok()?;
+
+    let fee_c = u16::try_from(hc.fee).ok()?;
+    let ts_c = i16::try_from(hc.tick_spacing).ok()?;
+    let c0_c_idx = at.add(hc.currency0_address).ok()?;
+    let c1_c_idx = at.add(hc.currency1_address).ok()?;
+
+    let mut v4_inner = encoders::enc_v4_settle();
+    v4_inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
+        c0_c_idx, c1_c_idx, fee_c, ts_c, zero_idx, hc.zfo,
+    ));
+    v4_inner.extend_from_slice(&encoders::enc_v4_take_delta(weth_idx, v3a_idx));
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
+
+    let a_fwd = encoders::enc_v4_unlock(&v4_inner).ok()?;
+
+    let b_fwd =
+        encoders::enc_v3_swap_compact(v3a_idx, ha.zfo, optimal_input, v3b_idx, &a_fwd).ok()?;
+
+    let mut commands = encoders::enc_v4_sync(forward_b_idx);
+    commands.extend_from_slice(
+        &encoders::enc_v3_swap_compact(v3b_idx, hb.zfo, out_a, pm_idx, &b_fwd).ok()?,
+    );
+
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V3-V4-V2 ───────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v3_v4_v2(
+    ha: &V3HopInfo,
+    hb: &V4HopInfo,
+    hc: &V2HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    pool_manager_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let out_a = hop_outputs[0];
+    let _out_b = hop_outputs[1];
+    let out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth_address),
+        Some(executor_address),
+        Some(pool_manager_address),
+    );
+    let pm_idx = at.add(pool_manager_address).ok()?;
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE;
+    let v3a_idx = at.add(ha.pool_address).ok()?;
+    let v2c_idx = at.add(hc.pool_address).ok()?;
+
+    let forward_a_idx = at
+        .add(if ha.zfo {
+            ha.token1_address
+        } else {
+            ha.token0_address
+        })
+        .ok()?;
+    let forward_b_idx = at
+        .add(if hb.zfo {
+            hb.currency1_address
+        } else {
+            hb.currency0_address
+        })
+        .ok()?;
+
+    let fee_b = u16::try_from(hb.fee).ok()?;
+    let ts_b = i16::try_from(hb.tick_spacing).ok()?;
+    let c0_b_idx = at.add(hb.currency0_address).ok()?;
+    let c1_b_idx = at.add(hb.currency1_address).ok()?;
+
+    let mut v4_inner = encoders::enc_v4_settle();
+    v4_inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
+        c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo,
+    ));
+    v4_inner.extend_from_slice(&encoders::enc_v4_take_delta(forward_b_idx, v2c_idx));
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
+
+    let mut a_fwd = encoders::enc_v4_unlock(&v4_inner).ok()?;
+    a_fwd.extend_from_slice(
+        &encoders::enc_v2_swap_direct(v2c_idx, hc.zfo, out_c, executor_idx).ok()?,
+    );
+    a_fwd.extend_from_slice(&encoders::enc_erc20_transfer(weth_idx, v3a_idx, optimal_input).ok()?);
+
+    let mut commands = encoders::enc_v4_sync(forward_a_idx);
+    commands.extend_from_slice(
+        &encoders::enc_v3_swap_compact(v3a_idx, ha.zfo, optimal_input, pm_idx, &a_fwd).ok()?,
+    );
+
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V3-V4-V3 ───────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v3_v4_v3(
+    ha: &V3HopInfo,
+    hb: &V4HopInfo,
+    hc: &V3HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    pool_manager_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let _out_a = hop_outputs[0];
+    let out_b = hop_outputs[1];
+    let _out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth_address),
+        Some(executor_address),
+        Some(pool_manager_address),
+    );
+    let pm_idx = at.add(pool_manager_address).ok()?;
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE;
+    let v3a_idx = at.add(ha.pool_address).ok()?;
+    let v3c_idx = at.add(hc.pool_address).ok()?;
+
+    let forward_a_idx = at
+        .add(if ha.zfo {
+            ha.token1_address
+        } else {
+            ha.token0_address
+        })
+        .ok()?;
+    let forward_b_idx = at
+        .add(if hb.zfo {
+            hb.currency1_address
+        } else {
+            hb.currency0_address
+        })
+        .ok()?;
+
+    let fee_b = u16::try_from(hb.fee).ok()?;
+    let ts_b = i16::try_from(hb.tick_spacing).ok()?;
+    let c0_b_idx = at.add(hb.currency0_address).ok()?;
+    let c1_b_idx = at.add(hb.currency1_address).ok()?;
+
+    let mut v4_inner = encoders::enc_v4_settle();
+    v4_inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
+        c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo,
+    ));
+    v4_inner.extend_from_slice(&encoders::enc_v4_take_delta(forward_b_idx, v3c_idx));
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle_all());
+
+    let mut a_fwd = encoders::enc_erc20_transfer(weth_idx, v3a_idx, optimal_input).ok()?;
+    a_fwd.extend_from_slice(&encoders::enc_v4_unlock(&v4_inner).ok()?);
+
+    let c_fwd =
+        encoders::enc_v3_swap_compact(v3a_idx, ha.zfo, optimal_input, pm_idx, &a_fwd).ok()?;
+
+    let mut commands = encoders::enc_v4_sync(forward_a_idx);
+    commands.extend_from_slice(
+        &encoders::enc_v3_swap_compact(v3c_idx, hc.zfo, out_b, executor_idx, &c_fwd).ok()?,
+    );
+
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V3-V4-V4 ───────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v3_v4_v4(
+    ha: &V3HopInfo,
+    hb: &V4HopInfo,
+    hc: &V4HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    pool_manager_address: Address,
+    weth_address: Address,
+    _opts: EncodeOptions,
+) -> Option<Vec<u8>> {
+    let out_a = hop_outputs[0];
+    let out_b = hop_outputs[1];
+    let out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth_address),
+        Some(executor_address),
+        Some(pool_manager_address),
+    );
+    let _pm_idx = at.add(pool_manager_address).ok()?;
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE;
+    let v3a_idx = at.add(ha.pool_address).ok()?;
+
+    let forward_a_idx = at
+        .add(if ha.zfo {
+            ha.token1_address
+        } else {
+            ha.token0_address
+        })
+        .ok()?;
+
+    let fee_b = u16::try_from(hb.fee).ok()?;
+    let ts_b = i16::try_from(hb.tick_spacing).ok()?;
+    let fee_c = u16::try_from(hc.fee).ok()?;
+    let ts_c = i16::try_from(hc.tick_spacing).ok()?;
+
+    let c0_b_idx = at.add(hb.currency0_address).ok()?;
+    let c1_b_idx = at.add(hb.currency1_address).ok()?;
+    let c0_c_idx = at.add(hc.currency0_address).ok()?;
+    let c1_c_idx = at.add(hc.currency1_address).ok()?;
+
+    let mut v4_inner =
+        encoders::enc_v4_swap_compact(c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo, out_a)
+            .ok()?;
+    v4_inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(c0_c_idx, c1_c_idx, fee_c, ts_c, zero_idx, hc.zfo, out_b)
+            .ok()?,
+    );
+    v4_inner.extend_from_slice(&encoders::enc_v4_take_compact(weth_idx, executor_idx, out_c).ok()?);
+
+    // Settlement: V3a sent forward_a to executor, so the executor holds
+    // forward_a tokens. V4_SETTLE credits any PM delta from prior sync+transfer.
+    let v4_inner = {
+        let mut combined = encoders::enc_v4_settle();
+        combined.extend_from_slice(&v4_inner);
+        combined
+    };
+
+    let mut a_fwd = encoders::enc_v4_unlock(&v4_inner).ok()?;
+    a_fwd.extend_from_slice(&encoders::enc_erc20_transfer(weth_idx, v3a_idx, optimal_input).ok()?);
+
+    let commands =
+        encoders::enc_v3_swap_compact(v3a_idx, ha.zfo, optimal_input, executor_idx, &a_fwd).ok()?;
+
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V4-V2-V2 ───────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v4_v2_v2(
+    ha: &V4HopInfo,
+    hb: &V2HopInfo,
+    hc: &V2HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    pool_manager_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let out_a = hop_outputs[0];
+    let _out_b = hop_outputs[1];
+    let out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth_address),
+        Some(executor_address),
+        Some(pool_manager_address),
+    );
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE;
+
+    let forward_a_idx = at
+        .add(if ha.zfo {
+            ha.currency1_address
+        } else {
+            ha.currency0_address
+        })
+        .ok()?;
+
+    let fee_a = u16::try_from(ha.fee).ok()?;
+    let ts_a = i16::try_from(ha.tick_spacing).ok()?;
+    let c0_a_idx = at.add(ha.currency0_address).ok()?;
+    let c1_a_idx = at.add(ha.currency1_address).ok()?;
+    let v2b_idx = at.add(hb.pool_address).ok()?;
+    let v2c_idx = at.add(hc.pool_address).ok()?;
+
+    let b_cmd = encoders::enc_v2_swap_calc(v2b_idx, hb.zfo, v2c_idx, hb.fee);
+    let c_cmd = encoders::enc_v2_swap_calc(v2c_idx, hc.zfo, executor_idx, hc.fee);
+
+    let mut inner = encoders::enc_v4_swap_compact(
+        c0_a_idx,
+        c1_a_idx,
+        fee_a,
+        ts_a,
+        zero_idx,
+        ha.zfo,
+        optimal_input,
+    )
+    .ok()?;
+    inner.extend_from_slice(&encoders::enc_v4_take_compact(forward_a_idx, v2b_idx, out_a).ok()?);
+    inner.extend_from_slice(&b_cmd);
+    inner.extend_from_slice(&c_cmd);
+    inner.extend_from_slice(&encoders::enc_v4_settle_delta(weth_idx));
+
+    let commands = encoders::enc_v4_unlock(&inner).ok()?;
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V4-V2-V3 ───────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v4_v2_v3(
+    ha: &V4HopInfo,
+    hb: &V2HopInfo,
+    hc: &V3HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    pool_manager_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let out_a = hop_outputs[0];
+    let out_b = hop_outputs[1];
+    let _out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth_address),
+        Some(executor_address),
+        Some(pool_manager_address),
+    );
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE;
+    let v3c_idx = at.add(hc.pool_address).ok()?;
+
+    let forward_a_idx = at
+        .add(if ha.zfo {
+            ha.currency1_address
+        } else {
+            ha.currency0_address
+        })
+        .ok()?;
+    let _forward_b_idx = at
+        .add(if hb.zfo {
+            hb.token1_address
+        } else {
+            hb.token0_address
+        })
+        .ok()?;
+
+    let fee_a = u16::try_from(ha.fee).ok()?;
+    let ts_a = i16::try_from(ha.tick_spacing).ok()?;
+    let c0_a_idx = at.add(ha.currency0_address).ok()?;
+    let c1_a_idx = at.add(ha.currency1_address).ok()?;
+    let v2b_idx = at.add(hb.pool_address).ok()?;
+
+    let mut v4_inner = encoders::enc_v4_swap_compact(
+        c0_a_idx,
+        c1_a_idx,
+        fee_a,
+        ts_a,
+        zero_idx,
+        ha.zfo,
+        optimal_input,
+    )
+    .ok()?;
+    v4_inner.extend_from_slice(&encoders::enc_v4_take_compact(forward_a_idx, v2b_idx, out_a).ok()?);
+    v4_inner.extend_from_slice(&encoders::enc_v2_swap_calc(
+        v2b_idx, hb.zfo, v3c_idx, hb.fee,
+    ));
+    v4_inner.extend_from_slice(&encoders::enc_v4_settle_delta(weth_idx));
+
+    let commands = encoders::enc_v3_swap_compact(
+        v3c_idx,
+        hc.zfo,
+        out_b,
+        executor_idx,
+        &encoders::enc_v4_unlock(&v4_inner).ok()?,
+    )
+    .ok()?;
+
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V4-V2-V4 ───────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v4_v2_v4(
+    ha: &V4HopInfo,
+    hb: &V2HopInfo,
+    hc: &V4HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    pool_manager_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let out_a = hop_outputs[0];
+    let out_b = hop_outputs[1];
+    let _out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth_address),
+        Some(executor_address),
+        Some(pool_manager_address),
+    );
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE;
+
+    let forward_a_idx = at
+        .add(if ha.zfo {
+            ha.currency1_address
+        } else {
+            ha.currency0_address
+        })
+        .ok()?;
+    let forward_b_idx = at
+        .add(if hb.zfo {
+            hb.token1_address
+        } else {
+            hb.token0_address
+        })
+        .ok()?;
+
+    let fee_a = u16::try_from(ha.fee).ok()?;
+    let ts_a = i16::try_from(ha.tick_spacing).ok()?;
+    let fee_c = u16::try_from(hc.fee).ok()?;
+    let ts_c = i16::try_from(hc.tick_spacing).ok()?;
+
+    let c0_a_idx = at.add(ha.currency0_address).ok()?;
+    let c1_a_idx = at.add(ha.currency1_address).ok()?;
+    let c0_c_idx = at.add(hc.currency0_address).ok()?;
+    let c1_c_idx = at.add(hc.currency1_address).ok()?;
+    let v2b_idx = at.add(hb.pool_address).ok()?;
+
+    let mut inner = encoders::enc_v4_swap_compact(
+        c0_a_idx,
+        c1_a_idx,
+        fee_a,
+        ts_a,
+        zero_idx,
+        ha.zfo,
+        optimal_input,
+    )
+    .ok()?;
+    inner.extend_from_slice(&encoders::enc_v4_take_compact(forward_a_idx, v2b_idx, out_a).ok()?);
+    inner.extend_from_slice(&encoders::enc_v2_swap_calc(
+        v2b_idx,
+        hb.zfo,
+        executor_idx,
+        hb.fee,
+    ));
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(c0_c_idx, c1_c_idx, fee_c, ts_c, zero_idx, hc.zfo, out_b)
+            .ok()?,
+    );
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+
+    let commands = encoders::enc_v4_unlock(&inner).ok()?;
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V4-V3-V2 ───────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v4_v3_v2(
+    ha: &V4HopInfo,
+    hb: &V3HopInfo,
+    hc: &V2HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    pool_manager_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let out_a = hop_outputs[0];
+    let _out_b = hop_outputs[1];
+    let out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth_address),
+        Some(executor_address),
+        Some(pool_manager_address),
+    );
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE;
+    let v3b_idx = at.add(hb.pool_address).ok()?;
+
+    let forward_a_idx = at
+        .add(if ha.zfo {
+            ha.currency1_address
+        } else {
+            ha.currency0_address
+        })
+        .ok()?;
+    let _forward_b_idx = at
+        .add(if hb.zfo {
+            hb.token1_address
+        } else {
+            hb.token0_address
+        })
+        .ok()?;
+
+    let fee_a = u16::try_from(ha.fee).ok()?;
+    let ts_a = i16::try_from(ha.tick_spacing).ok()?;
+    let c0_a_idx = at.add(ha.currency0_address).ok()?;
+    let c1_a_idx = at.add(ha.currency1_address).ok()?;
+    let v2c_idx = at.add(hc.pool_address).ok()?;
+
+    let mut b_fwd = encoders::enc_v4_take_compact(forward_a_idx, v3b_idx, out_a).ok()?;
+    b_fwd.extend_from_slice(
+        &encoders::enc_v2_swap_direct(v2c_idx, hc.zfo, out_c, executor_idx).ok()?,
+    );
+
+    let mut inner = encoders::enc_v4_swap_compact(
+        c0_a_idx,
+        c1_a_idx,
+        fee_a,
+        ts_a,
+        zero_idx,
+        ha.zfo,
+        optimal_input,
+    )
+    .ok()?;
+    inner.extend_from_slice(
+        &encoders::enc_v3_swap_compact(v3b_idx, hb.zfo, out_a, v2c_idx, &b_fwd).ok()?,
+    );
+    inner.extend_from_slice(&encoders::enc_v4_settle_delta(weth_idx));
+
+    let commands = encoders::enc_v4_unlock(&inner).ok()?;
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V4-V3-V3 ───────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v4_v3_v3(
+    ha: &V4HopInfo,
+    hb: &V3HopInfo,
+    hc: &V3HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    pool_manager_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let out_a = hop_outputs[0];
+    let out_b = hop_outputs[1];
+    let _out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth_address),
+        Some(executor_address),
+        Some(pool_manager_address),
+    );
+    let pm_idx = at.add(pool_manager_address).ok()?;
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE;
+    let v3b_idx = at.add(hb.pool_address).ok()?;
+    let v3c_idx = at.add(hc.pool_address).ok()?;
+
+    let forward_a_idx = at
+        .add(if ha.zfo {
+            ha.currency1_address
+        } else {
+            ha.currency0_address
+        })
+        .ok()?;
+
+    let b_fwd = encoders::enc_v4_take_compact(forward_a_idx, v3b_idx, out_a).ok()?;
+
+    let fee_a = u16::try_from(ha.fee).ok()?;
+    let ts_a = i16::try_from(ha.tick_spacing).ok()?;
+    let c0_a_idx = at.add(ha.currency0_address).ok()?;
+    let c1_a_idx = at.add(ha.currency1_address).ok()?;
+
+    let inner_v3b = encoders::enc_v3_swap_compact(v3b_idx, hb.zfo, out_a, v3c_idx, &b_fwd).ok()?;
+    let inner_v3c =
+        encoders::enc_v3_swap_compact(v3c_idx, hc.zfo, out_b, executor_idx, &inner_v3b).ok()?;
+
+    let mut inner = encoders::enc_v4_swap_compact(
+        c0_a_idx,
+        c1_a_idx,
+        fee_a,
+        ts_a,
+        zero_idx,
+        ha.zfo,
+        optimal_input,
+    )
+    .ok()?;
+    inner.extend_from_slice(&inner_v3c);
+    inner.extend_from_slice(&encoders::enc_v4_settle_delta(weth_idx));
+
+    let commands = encoders::enc_v4_unlock(&inner).ok()?;
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V4-V3-V4 ───────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v4_v3_v4(
+    ha: &V4HopInfo,
+    hb: &V3HopInfo,
+    hc: &V4HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    pool_manager_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let out_a = hop_outputs[0];
+    let out_b = hop_outputs[1];
+    let _out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth_address),
+        Some(executor_address),
+        Some(pool_manager_address),
+    );
+    let pm_idx = at.add(pool_manager_address).ok()?;
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE;
+    let v3b_idx = at.add(hb.pool_address).ok()?;
+
+    let forward_a_idx = at
+        .add(if ha.zfo {
+            ha.currency1_address
+        } else {
+            ha.currency0_address
+        })
+        .ok()?;
+    let forward_b_idx = at
+        .add(if hb.zfo {
+            hb.token1_address
+        } else {
+            hb.token0_address
+        })
+        .ok()?;
+
+    let b_fwd = encoders::enc_v4_take_compact(forward_a_idx, v3b_idx, out_a).ok()?;
+
+    let fee_a = u16::try_from(ha.fee).ok()?;
+    let ts_a = i16::try_from(ha.tick_spacing).ok()?;
+    let fee_c = u16::try_from(hc.fee).ok()?;
+    let ts_c = i16::try_from(hc.tick_spacing).ok()?;
+
+    let c0_a_idx = at.add(ha.currency0_address).ok()?;
+    let c1_a_idx = at.add(ha.currency1_address).ok()?;
+    let c0_c_idx = at.add(hc.currency0_address).ok()?;
+    let c1_c_idx = at.add(hc.currency1_address).ok()?;
+
+    let mut inner = encoders::enc_v4_swap_compact(
+        c0_a_idx,
+        c1_a_idx,
+        fee_a,
+        ts_a,
+        zero_idx,
+        ha.zfo,
+        optimal_input,
+    )
+    .ok()?;
+    inner.extend_from_slice(&encoders::enc_v4_sync(forward_b_idx));
+    inner.extend_from_slice(
+        &encoders::enc_v3_swap_compact(v3b_idx, hb.zfo, out_a, pm_idx, &b_fwd).ok()?,
+    );
+    inner.extend_from_slice(&encoders::enc_v4_settle());
+    inner.extend_from_slice(
+        &encoders::enc_v4_swap_compact(c0_c_idx, c1_c_idx, fee_c, ts_c, zero_idx, hc.zfo, out_b)
+            .ok()?,
+    );
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+
+    let commands = encoders::enc_v4_unlock(&inner).ok()?;
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V4-V4-V2 ───────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v4_v4_v2(
+    ha: &V4HopInfo,
+    hb: &V4HopInfo,
+    hc: &V2HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    pool_manager_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let _out_a = hop_outputs[0];
+    let out_b = hop_outputs[1];
+    let out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth_address),
+        Some(executor_address),
+        Some(pool_manager_address),
+    );
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE;
+
+    let forward_b_idx = at
+        .add(if hb.zfo {
+            hb.currency1_address
+        } else {
+            hb.currency0_address
+        })
+        .ok()?;
+
+    let fee_a = u16::try_from(ha.fee).ok()?;
+    let ts_a = i16::try_from(ha.tick_spacing).ok()?;
+    let fee_b = u16::try_from(hb.fee).ok()?;
+    let ts_b = i16::try_from(hb.tick_spacing).ok()?;
+
+    // Inline add() in Python execution order (forward_b, P2C, V4a currencies, V4b currencies).
+    let c_cmd =
+        encoders::enc_v2_swap_direct(at.add(hc.pool_address).ok()?, hc.zfo, out_c, executor_idx)
+            .ok()?;
+
+    let mut inner = encoders::enc_v4_swap_compact(
+        at.add(ha.currency0_address).ok()?,
+        at.add(ha.currency1_address).ok()?,
+        fee_a,
+        ts_a,
+        zero_idx,
+        ha.zfo,
+        optimal_input,
+    )
+    .ok()?;
+    inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
+        at.add(hb.currency0_address).ok()?,
+        at.add(hb.currency1_address).ok()?,
+        fee_b,
+        ts_b,
+        zero_idx,
+        hb.zfo,
+    ));
+    inner.extend_from_slice(
+        &encoders::enc_v4_take_compact(forward_b_idx, at.add(hc.pool_address).ok()?, out_b).ok()?,
+    );
+    inner.extend_from_slice(&c_cmd);
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+
+    let commands = encoders::enc_v4_unlock(&inner).ok()?;
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V4-V4-V3 ───────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v4_v4_v3(
+    ha: &V4HopInfo,
+    hb: &V4HopInfo,
+    hc: &V3HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    pool_manager_address: Address,
+    weth_address: Address,
+) -> Option<Vec<u8>> {
+    let _out_a = hop_outputs[0];
+    let out_b = hop_outputs[1];
+    let _out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth_address),
+        Some(executor_address),
+        Some(pool_manager_address),
+    );
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE;
+
+    let forward_b_idx = at
+        .add(if hb.zfo {
+            hb.currency1_address
+        } else {
+            hb.currency0_address
+        })
+        .ok()?;
+    let v3c_idx = at.add(hc.pool_address).ok()?;
+
+    let c_take = encoders::enc_v4_take_compact(forward_b_idx, v3c_idx, out_b).ok()?;
+
+    let fee_a = u16::try_from(ha.fee).ok()?;
+    let ts_a = i16::try_from(ha.tick_spacing).ok()?;
+    let fee_b = u16::try_from(hb.fee).ok()?;
+    let ts_b = i16::try_from(hb.tick_spacing).ok()?;
+
+    let c0_a_idx = at.add(ha.currency0_address).ok()?;
+    let c1_a_idx = at.add(ha.currency1_address).ok()?;
+    let c0_b_idx = at.add(hb.currency0_address).ok()?;
+    let c1_b_idx = at.add(hb.currency1_address).ok()?;
+
+    let mut inner = encoders::enc_v4_swap_compact(
+        c0_a_idx,
+        c1_a_idx,
+        fee_a,
+        ts_a,
+        zero_idx,
+        ha.zfo,
+        optimal_input,
+    )
+    .ok()?;
+    inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
+        c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo,
+    ));
+    inner.extend_from_slice(
+        &encoders::enc_v3_swap_compact(v3c_idx, hc.zfo, out_b, executor_idx, &c_take).ok()?,
+    );
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+
+    let commands = encoders::enc_v4_unlock(&inner).ok()?;
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
+}
+
+// ── V4-V4-V4 ───────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_lines)]
+fn three_hop_v4_v4_v4(
+    ha: &V4HopInfo,
+    hb: &V4HopInfo,
+    hc: &V4HopInfo,
+    optimal_input: u128,
+    hop_outputs: &[u128],
+    executor_address: Address,
+    pool_manager_address: Address,
+    weth_address: Address,
+    opts: EncodeOptions,
+) -> Option<Vec<u8>> {
+    if hop_outputs.len() < 3 {
+        return None;
+    }
+    let out_a = hop_outputs[0];
+    let out_b = hop_outputs[1];
+    let out_c = hop_outputs[2];
+    if hop_outputs.contains(&0) {
+        return None;
+    }
+    if !fits_int128(optimal_input) {
+        return None;
+    }
+    let _ = (out_a, out_b);
+
+    let mut at = AddressTable::with_sentinels(
+        Some(weth_address),
+        Some(executor_address),
+        Some(pool_manager_address),
+    );
+    let weth_idx = SENTINEL_WETH;
+    let executor_idx = SENTINEL_SELF;
+    let zero_idx = SENTINEL_NATIVE;
+
+    // Determine output (profit) currency of the final V4 swap.
+    let output_currency_c = if hc.zfo {
+        hc.currency1_address
+    } else {
+        hc.currency0_address
+    };
+
+    let fee_a = u16::try_from(ha.fee).ok()?;
+    let ts_a = i16::try_from(ha.tick_spacing).ok()?;
+    let fee_b = u16::try_from(hb.fee).ok()?;
+    let ts_b = i16::try_from(hb.tick_spacing).ok()?;
+    let fee_c = u16::try_from(hc.fee).ok()?;
+    let ts_c = i16::try_from(hc.tick_spacing).ok()?;
+
+    let c0_a_idx = at.add(ha.currency0_address).ok()?;
+    let c1_a_idx = at.add(ha.currency1_address).ok()?;
+    let c0_b_idx = at.add(hb.currency0_address).ok()?;
+    let c1_b_idx = at.add(hb.currency1_address).ok()?;
+    let c0_c_idx = at.add(hc.currency0_address).ok()?;
+    let c1_c_idx = at.add(hc.currency1_address).ok()?;
+
+    let mut inner: Vec<u8>;
+
+    if opts.use_v4_batch {
+        let batch = [
+            V4BatchEntry {
+                c0_idx: c0_a_idx,
+                c1_idx: c1_a_idx,
+                fee: fee_a,
+                tick_spacing: ts_a,
+                hooks_idx: zero_idx,
+                zfo: ha.zfo,
+                amount_u96: optimal_input,
+            },
+            V4BatchEntry {
+                c0_idx: c0_b_idx,
+                c1_idx: c1_b_idx,
+                fee: fee_b,
+                tick_spacing: ts_b,
+                hooks_idx: zero_idx,
+                zfo: hb.zfo,
+                amount_u96: 0,
+            },
+            V4BatchEntry {
+                c0_idx: c0_c_idx,
+                c1_idx: c1_c_idx,
+                fee: fee_c,
+                tick_spacing: ts_c,
+                hooks_idx: zero_idx,
+                zfo: hc.zfo,
+                amount_u96: 0,
+            },
+        ];
+        inner = encoders::enc_v4_batch(&batch).ok()?;
+        // For ERC-20 profit, still need explicit take.
+        if output_currency_c != NATIVE_CURRENCY_ADDRESS && output_currency_c != weth_address {
+            let profit_idx = at.add(output_currency_c).ok()?;
+            inner.extend_from_slice(&encoders::enc_v4_take_delta(profit_idx, executor_idx));
+        }
+    } else {
+        inner = encoders::enc_v4_swap_compact(
+            c0_a_idx,
+            c1_a_idx,
+            fee_a,
+            ts_a,
+            zero_idx,
+            ha.zfo,
+            optimal_input,
+        )
+        .ok()?;
+        inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
+            c0_b_idx, c1_b_idx, fee_b, ts_b, zero_idx, hb.zfo,
+        ));
+        inner.extend_from_slice(&encoders::enc_v4_swap_dynamic(
+            c0_c_idx, c1_c_idx, fee_c, ts_c, zero_idx, hc.zfo,
+        ));
+    }
+
+    // Profit capture.
+    if opts.erc6909_profit && output_currency_c == weth_address {
+        let profit_amount = out_c - optimal_input;
+        if profit_amount > 0 {
+            inner.extend_from_slice(
+                &encoders::enc_v4_mint_compact(weth_idx, executor_idx, profit_amount).ok()?,
+            );
+        }
+    } else if !opts.use_v4_batch {
+        if output_currency_c == NATIVE_CURRENCY_ADDRESS {
+            let native_idx = at.add(NATIVE_CURRENCY_ADDRESS).ok()?;
+            inner.extend_from_slice(&encoders::enc_v4_take_delta(native_idx, executor_idx));
+        } else if output_currency_c == weth_address {
+            inner.extend_from_slice(&encoders::enc_v4_take_delta(weth_idx, executor_idx));
+        } else {
+            let profit_idx = at.add(output_currency_c).ok()?;
+            inner.extend_from_slice(&encoders::enc_v4_take_delta(profit_idx, executor_idx));
+        }
+    }
+
+    inner.extend_from_slice(&encoders::enc_v4_settle_all());
+
+    let commands = encoders::enc_v4_unlock(&inner).ok()?;
+    let mut out = encoders::enc_preamble(&at);
+    out.extend_from_slice(&commands);
+    Some(out)
 }
