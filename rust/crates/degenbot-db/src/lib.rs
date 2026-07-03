@@ -35,6 +35,7 @@
 pub mod aave;
 pub mod connection;
 pub mod error;
+pub mod liquidity_updater;
 pub mod migrate;
 pub mod ops;
 pub mod pathfinding;
