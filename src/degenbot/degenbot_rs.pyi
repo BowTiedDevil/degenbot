@@ -675,6 +675,106 @@ def db_fetch_pool_row(
     """
 
 # ------------------------------------------------------------------
+# Pool discovery writers (WR7EA6 — split out of QJSCA5).
+# Thin PyO3 wrappers over `degenbot-db`'s `discovery` substrate
+# (`upsert_v2/v3/v4_pools` + `set_exchange_last_update_block`). The Python
+# `cli/pool_updater_configs.py::update_v2/v3/v4_pools` shells decode the raw
+# `PoolCreated` `LogReceipt`s + do the RPC fee lookup, then build row-input
+# lists + delegate here — the Rust core owns the `erc20_tokens` get-or-create
+# escalate + the polymorphic pool-row insert + the exchange stamp. Raises
+# ``ValueError`` on a DB failure or an unknown `kind` discriminator.
+
+class V2PoolRowInput:
+    """One V2 pool-row to upsert (WR7EA6)."""
+
+    def __init__(
+        self,
+        address: str,
+        token0_address: str,
+        token1_address: str,
+        fee_token0: int,
+        fee_token1: int,
+        stable: bool | None = ...,
+    ) -> None: ...
+
+class V3PoolRowInput:
+    """One V3 pool-row to upsert (WR7EA6)."""
+
+    def __init__(
+        self,
+        address: str,
+        token0_address: str,
+        token1_address: str,
+        fee: int,
+        tick_spacing: int,
+    ) -> None: ...
+
+class V4PoolRowInput:
+    """One V4 pool-row to upsert (WR7EA6)."""
+
+    def __init__(
+        self,
+        pool_hash: str,
+        hooks: str,
+        currency0_address: str,
+        currency1_address: str,
+        fee: int,
+        tick_spacing: int,
+    ) -> None: ...
+
+def db_upsert_v2_pools(
+    database_path: str,
+    chain_id: int,
+    kind: str,
+    exchange_id: int,
+    fee_denominator: int,
+    rows: list[V2PoolRowInput],
+) -> None:
+    """Insert a batch of V2 pool rows (WR7EA6).
+
+    The Rust core get-or-create's the two `erc20_tokens` per row + inserts the
+    polymorphic base `pools` row + the subclass detail row. Raises
+    ``ValueError`` if `kind` is not a known V2 family discriminator.
+    """
+
+def db_upsert_v3_pools(
+    database_path: str,
+    chain_id: int,
+    kind: str,
+    exchange_id: int,
+    fee_denominator: int,
+    rows: list[V3PoolRowInput],
+) -> None:
+    """Insert a batch of V3 pool rows (WR7EA6).
+
+    Same shape as `db_upsert_v2_pools`; subclass detail row carries `tick_spacing`
+    + the fee columns. Raises ``ValueError`` if `kind` is not a V3 family.
+    """
+
+def db_upsert_v4_pools(
+    database_path: str,
+    chain_id: int,
+    pool_manager_address: str,
+    fee_denominator: int,
+    rows: list[V4PoolRowInput],
+) -> None:
+    """Insert a batch of V4 pool rows (WR7EA6).
+
+    The Rust core resolves the `PoolManagerTable` id from
+    `(chain_id, pool_manager_address)`, then per row inserts the `managed_pools`
+    base + `uniswap_v4_pools` detail row. Raises ``ValueError`` if no
+    `PoolManager` row matches.
+    """
+
+def db_set_exchange_last_update_block(
+    database_path: str,
+    chain_id: int,
+    exchange_id: int,
+    block: int,
+) -> None:
+    """Stamp an `ExchangeTable.last_update_block` (WR7EA6)."""
+
+# ------------------------------------------------------------------
 # Thin PyO3 wrappers over `degenbot_executor` (the cmd-executor core).
 # The Python encoder (`examples/eth_backrun_helpers.py::encode_cmd_stream` +
 # `examples/cmd_stream.py`) was deleted in the §4.3 oracle-retirement cutover;
@@ -2384,6 +2484,9 @@ __all__ = [
     "TransactionData",
     "TransactionReceiptData",
     "UniswapArbEngine",
+    "V2PoolRowInput",
+    "V3PoolRowInput",
+    "V4PoolRowInput",
     "VerificationMismatchError",
     "VerificationRpcError",
     "balancer_fixed_point_div_down",
@@ -2430,7 +2533,11 @@ __all__ = [
     "db_compact_database",
     "db_create_new_database",
     "db_fetch_pool_row",
+    "db_set_exchange_last_update_block",
     "db_upgrade_database",
+    "db_upsert_v2_pools",
+    "db_upsert_v3_pools",
+    "db_upsert_v4_pools",
     "decode",
     "decode_return_data",
     "decode_single",
