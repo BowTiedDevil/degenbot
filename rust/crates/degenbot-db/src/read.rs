@@ -72,7 +72,10 @@ impl DegenbotDb {
     /// # Errors
     ///
     /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::Decode`] on a malformed column.
-    pub fn fetch_token_by_id(&self, token_id: i64) -> Result<Option<crate::rows::Erc20TokenRow>, DbError> {
+    pub fn fetch_token_by_id(
+        &self,
+        token_id: i64,
+    ) -> Result<Option<crate::rows::Erc20TokenRow>, DbError> {
         let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT id, chain, address, name, symbol, decimals \
@@ -95,7 +98,10 @@ impl DegenbotDb {
     /// # Errors
     ///
     /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::Decode`] on a malformed column.
-    pub fn fetch_exchange(&self, exchange_id: i64) -> Result<Option<crate::rows::ExchangeRow>, DbError> {
+    pub fn fetch_exchange(
+        &self,
+        exchange_id: i64,
+    ) -> Result<Option<crate::rows::ExchangeRow>, DbError> {
         let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT id, chain_id, name, active, last_update_block, factory, deployer \

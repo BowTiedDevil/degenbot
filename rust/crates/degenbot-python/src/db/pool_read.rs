@@ -358,7 +358,10 @@ pub struct PyLiquidityPositionRow {
 }
 
 impl PyLiquidityPositionRow {
-    pub(crate) fn new(py: Python<'_>, row: &degenbot_db::rows::LiquidityPositionRow) -> PyResult<Self> {
+    pub(crate) fn new(
+        py: Python<'_>,
+        row: &degenbot_db::rows::LiquidityPositionRow,
+    ) -> PyResult<Self> {
         Ok(Self {
             tick: row.tick,
             liquidity_net: u256_to_py(py, &row.liquidity_net)?.unbind(),
@@ -404,7 +407,10 @@ pub struct PyInitializationMapRow {
 }
 
 impl PyInitializationMapRow {
-    pub(crate) fn new(py: Python<'_>, row: &degenbot_db::rows::InitializationMapRow) -> PyResult<Self> {
+    pub(crate) fn new(
+        py: Python<'_>,
+        row: &degenbot_db::rows::InitializationMapRow,
+    ) -> PyResult<Self> {
         Ok(Self {
             word: row.word,
             bitmap: u256_to_py(py, &row.bitmap)?.unbind(),
@@ -455,8 +461,8 @@ pub(crate) fn db_fetch_pool_row(
     let addr = crate::bot::py_bot_io::parse_address_for_call(address)?;
     let row = py
         .detach(|| {
-            let (db, _state) = degenbot_db::DegenbotDb::open(&path)
-                .map_err(|e| crate::db::db_err_to_py(&e))?;
+            let (db, _state) =
+                degenbot_db::DegenbotDb::open(&path).map_err(|e| crate::db::db_err_to_py(&e))?;
             db.fetch_pool_by_address(alloy::primitives::Address::from(addr), chain_id)
                 .map_err(|e| crate::db::db_err_to_py(&e))
         })?

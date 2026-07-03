@@ -109,8 +109,8 @@ pub(crate) fn db_apply_v3_liquidity_updates(
         .map(|e| e.borrow(py).to_event())
         .collect();
     py.detach(|| {
-        let (db, _state) = degenbot_db::DegenbotDb::open_for_writes(&path)
-            .map_err(|e| db_err_to_py(&e))?;
+        let (db, _state) =
+            degenbot_db::DegenbotDb::open_for_writes(&path).map_err(|e| db_err_to_py(&e))?;
         db.apply_v3_liquidity_updates(chain_id, pool_address, &rust_events)
             .map_err(|e| db_err_to_py(&e))
     })
@@ -137,8 +137,8 @@ pub(crate) fn db_apply_v4_liquidity_updates(
         .map(|e| e.borrow(py).to_event())
         .collect();
     py.detach(|| {
-        let (db, _state) = degenbot_db::DegenbotDb::open_for_writes(&path)
-            .map_err(|e| db_err_to_py(&e))?;
+        let (db, _state) =
+            degenbot_db::DegenbotDb::open_for_writes(&path).map_err(|e| db_err_to_py(&e))?;
         db.apply_v4_liquidity_updates(pool_hash_hex, pool_manager_chain, &rust_events)
             .map_err(|e| db_err_to_py(&e))
     })
