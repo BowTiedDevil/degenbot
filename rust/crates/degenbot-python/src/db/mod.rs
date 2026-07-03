@@ -12,6 +12,7 @@
 //! retired in favor of these Rust-backed wrappers.
 
 pub mod aave;
+pub mod liquidity_updater;
 pub mod pool_read;
 pub mod snapshot;
 
@@ -28,6 +29,7 @@ pub use pool_read::{
 };
 pub use snapshot::PyDatabaseSnapshot;
 use degenbot_db::ops::{self, UpgradeOutcome};
+pub use liquidity_updater::PyLiquidityUpdateEvent;
 
 /// `degenbot_rs.db_create_new_database(path: str) -> None`
 ///
@@ -98,6 +100,10 @@ pub fn add_db_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(db_backup_database, m)?)?;
     m.add_function(wrap_pyfunction!(db_compact_database, m)?)?;
     m.add_function(wrap_pyfunction!(db_upgrade_database, m)?)?;
+    m.add_function(wrap_pyfunction!(liquidity_updater::db_apply_v3_liquidity_updates, m)?)?;
+    m.add_function(wrap_pyfunction!(liquidity_updater::db_apply_v4_liquidity_updates, m)?)?;
+    m.add_function(wrap_pyfunction!(pool_read::db_fetch_pool_row, m)?)?;
+    m.add_class::<liquidity_updater::PyLiquidityUpdateEvent>()?;
     m.add_class::<snapshot::PyDatabaseSnapshot>()?;
     m.add_class::<aave::PyDatabasePositionQuery>()?;
     m.add_class::<pool_read::PyLiquidityPoolRow>()?;

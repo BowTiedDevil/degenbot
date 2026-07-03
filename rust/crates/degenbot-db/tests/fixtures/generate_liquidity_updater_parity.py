@@ -89,13 +89,12 @@ def _checkpoint(path: pathlib.Path) -> None:
     conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     conn.close()
 
+
 # Event-topic hashes (must match `cli/pool.py`'s module constants exactly).
 V3_MINT_TOPIC = UNISWAP_V3_MINT_EVENT_HASH
 V3_BURN_TOPIC = UNISWAP_V3_BURN_EVENT_HASH
 # V4 PoolManager.ModifyLiquidity event topic.
-V4_MODIFY_TOPIC = HexBytes(
-    "0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af63baa85f711d5ec"
-)
+V4_MODIFY_TOPIC = HexBytes("0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af63baa85f711d5ec")
 
 CHAIN = 1
 TICK_SPACING = 10
@@ -130,7 +129,9 @@ SEED_INIT_MAPS: list[tuple[int, int]] = [
 ]
 
 
-def _v3_mint_log(block: int, log_idx: int, tick_lower: int, tick_upper: int, amount: int) -> LogReceipt:
+def _v3_mint_log(
+    block: int, log_idx: int, tick_lower: int, tick_upper: int, amount: int
+) -> LogReceipt:
     """Build a V3 Mint log receipt (topics[0]=Mint, topics[2..3]=tick_lower/upper)."""
     return LogReceipt(  # type: ignore[typeddict-item]
         {
@@ -144,17 +145,22 @@ def _v3_mint_log(block: int, log_idx: int, tick_lower: int, tick_upper: int, amo
                 HexBytes(abi_encode(["int24"], [tick_upper])),
             ],
             # Mint data: (address sender, uint128 amount, uint256 amount0, uint256 amount1)
-            "data": HexBytes(abi_encode(
-                ["address", "uint128", "uint256", "uint256"],
-                ["0x" + "1" * 40, amount, 0, 0],
-            )),
+            "data": HexBytes(
+                abi_encode(
+                    ["address", "uint128", "uint256", "uint256"],
+                    ["0x" + "1" * 40, amount, 0, 0],
+                )
+            ),
         }
     )
 
 
-def _v3_burn_log(block: int, log_idx: int, tick_lower: int, tick_upper: int, amount: int) -> LogReceipt:
+def _v3_burn_log(
+    block: int, log_idx: int, tick_lower: int, tick_upper: int, amount: int
+) -> LogReceipt:
     """Build a V3 Burn log receipt (Burn: amount is the unsigned magnitude; the
-    Python path negates it for the liquidity_delta)."""
+    Python path negates it for the liquidity_delta).
+    """
     return LogReceipt(  # type: ignore[typeddict-item]
         {
             "blockNumber": block,
@@ -167,15 +173,19 @@ def _v3_burn_log(block: int, log_idx: int, tick_lower: int, tick_upper: int, amo
                 HexBytes(abi_encode(["int24"], [tick_upper])),
             ],
             # Burn data: (uint128 amount, uint256 amount0, uint256 amount1)
-            "data": HexBytes(abi_encode(
-                ["uint128", "uint256", "uint256"],
-                [amount, 0, 0],
-            )),
+            "data": HexBytes(
+                abi_encode(
+                    ["uint128", "uint256", "uint256"],
+                    [amount, 0, 0],
+                )
+            ),
         }
     )
 
 
-def _v4_modify_log(block: int, log_idx: int, tick_lower: int, tick_upper: int, delta: int) -> LogReceipt:
+def _v4_modify_log(
+    block: int, log_idx: int, tick_lower: int, tick_upper: int, delta: int
+) -> LogReceipt:
     """Build a V4 ModifyLiquidity log receipt (data carries tick_lower/upper/delta)."""
     return LogReceipt(  # type: ignore[typeddict-item]
         {
@@ -188,10 +198,12 @@ def _v4_modify_log(block: int, log_idx: int, tick_lower: int, tick_upper: int, d
                 HexBytes(b"\x00" * 12 + V4_POOL_HASH[2:].encode()),  # poolId
             ],
             # ModifyLiquidity data: (int24 tickLower, int24 tickUpper, int256 liquidityDelta, bytes32 salt)
-            "data": HexBytes(abi_encode(
-                ["int24", "int24", "int256", "bytes32"],
-                [tick_lower, tick_upper, delta, b"\x00" * 32],
-            )),
+            "data": HexBytes(
+                abi_encode(
+                    ["int24", "int24", "int256", "bytes32"],
+                    [tick_lower, tick_upper, delta, b"\x00" * 32],
+                )
+            ),
         }
     )
 
@@ -252,9 +264,7 @@ def _build_v3_db(path: pathlib.Path) -> None:
                 )
             )
         for word, bitmap in SEED_INIT_MAPS:
-            s.add(
-                InitializationMapTable(pool_id=pool.id, word=word, bitmap=bitmap)
-            )
+            s.add(InitializationMapTable(pool_id=pool.id, word=word, bitmap=bitmap))
         s.commit()
     _checkpoint(path)
 
@@ -321,7 +331,10 @@ def _build_v4_db(path: pathlib.Path) -> None:
         for tick, net, gross in SEED_TICKS:
             s.add(
                 ManagedPoolLiquidityPositionTable(
-                    managed_pool_id=pool.managed_pool_id, tick=tick, liquidity_net=net, liquidity_gross=gross
+                    managed_pool_id=pool.managed_pool_id,
+                    tick=tick,
+                    liquidity_net=net,
+                    liquidity_gross=gross,
                 )
             )
         for word, bitmap in SEED_INIT_MAPS:
@@ -336,24 +349,29 @@ def _build_v4_db(path: pathlib.Path) -> None:
 
 def _dump_v3_state(s: Session, pool_id: int) -> dict[str, object]:
     positions = sorted(
-        s.scalars(select(LiquidityPositionTable).where(LiquidityPositionTable.pool_id == pool_id)).all(),
+        s.scalars(
+            select(LiquidityPositionTable).where(LiquidityPositionTable.pool_id == pool_id)
+        ).all(),
         key=lambda r: r.tick,
     )
     init_maps = sorted(
-        s.scalars(select(InitializationMapTable).where(InitializationMapTable.pool_id == pool_id)).all(),
+        s.scalars(
+            select(InitializationMapTable).where(InitializationMapTable.pool_id == pool_id)
+        ).all(),
         key=lambda r: r.word,
     )
     pool = s.scalar(select(UniswapV3PoolTable).where(UniswapV3PoolTable.id == pool_id))
     assert pool is not None
     return {
         "positions": [
-            {"tick": r.tick, "liquidity_net": str(r.liquidity_net), "liquidity_gross": str(r.liquidity_gross)}
+            {
+                "tick": r.tick,
+                "liquidity_net": str(r.liquidity_net),
+                "liquidity_gross": str(r.liquidity_gross),
+            }
             for r in positions
         ],
-        "initialization_maps": [
-            {"word": r.word, "bitmap": str(r.bitmap)}
-            for r in init_maps
-        ],
+        "initialization_maps": [{"word": r.word, "bitmap": str(r.bitmap)} for r in init_maps],
         "liquidity_update_block": pool.liquidity_update_block,
         "liquidity_update_log_index": pool.liquidity_update_log_index,
     }
@@ -382,13 +400,14 @@ def _dump_v4_state(s: Session, managed_pool_id: int) -> dict[str, object]:
     assert pool is not None
     return {
         "positions": [
-            {"tick": r.tick, "liquidity_net": str(r.liquidity_net), "liquidity_gross": str(r.liquidity_gross)}
+            {
+                "tick": r.tick,
+                "liquidity_net": str(r.liquidity_net),
+                "liquidity_gross": str(r.liquidity_gross),
+            }
             for r in positions
         ],
-        "initialization_maps": [
-            {"word": r.word, "bitmap": str(r.bitmap)}
-            for r in init_maps
-        ],
+        "initialization_maps": [{"word": r.word, "bitmap": str(r.bitmap)} for r in init_maps],
         "liquidity_update_block": pool.liquidity_update_block,
         "liquidity_update_log_index": pool.liquidity_update_log_index,
     }
@@ -396,7 +415,8 @@ def _dump_v4_state(s: Session, managed_pool_id: int) -> dict[str, object]:
 
 class _DummyProvider:
     """A minimal provider shim carrying just the chain_id (the V3 apply fn
-    only reads `provider.chain_id`)."""
+    only reads `provider.chain_id`).
+    """
 
     chain_id = CHAIN
 
@@ -425,7 +445,7 @@ def _apply_v3_python_blueprint(db_path: pathlib.Path) -> dict[str, object]:
             pool_address=V3_POOL_ADDRESS,
             liquidity_events=events,
             exchanges_in_scope={exchange},
-            session=s,
+            database_path=str(db_path),
         )
         s.commit()
         return _dump_v3_state(s, pool.id)
@@ -450,7 +470,7 @@ def _apply_v4_python_blueprint(db_path: pathlib.Path) -> dict[str, object]:
             pool_id=HexBytes(V4_POOL_HASH),
             liquidity_events=events,
             pool_manager=manager,
-            session=s,
+            database_path=str(db_path),
         )
         s.commit()
         return _dump_v4_state(s, pool.managed_pool_id)
@@ -478,11 +498,30 @@ def main() -> None:
     v4_expected = _apply_v4_python_blueprint(v4_copy)
 
     (FIXTURE_DIR / "liquidity_updater_v3_expected.json").write_text(
-        json.dumps({"chain_id": CHAIN, "pool_address": V3_POOL_ADDRESS, "tick_spacing": TICK_SPACING, **v3_expected}, indent=2, sort_keys=True)
+        json.dumps(
+            {
+                "chain_id": CHAIN,
+                "pool_address": V3_POOL_ADDRESS,
+                "tick_spacing": TICK_SPACING,
+                **v3_expected,
+            },
+            indent=2,
+            sort_keys=True,
+        )
         + "\n"
     )
     (FIXTURE_DIR / "liquidity_updater_v4_expected.json").write_text(
-        json.dumps({"chain_id": CHAIN, "pool_hash": V4_POOL_HASH, "pool_manager_chain": CHAIN, "tick_spacing": TICK_SPACING, **v4_expected}, indent=2, sort_keys=True)
+        json.dumps(
+            {
+                "chain_id": CHAIN,
+                "pool_hash": V4_POOL_HASH,
+                "pool_manager_chain": CHAIN,
+                "tick_spacing": TICK_SPACING,
+                **v4_expected,
+            },
+            indent=2,
+            sort_keys=True,
+        )
         + "\n"
     )
 
@@ -491,8 +530,12 @@ def main() -> None:
 
     print(f"Built {v3_db.name} ({v3_db.stat().st_size} bytes)")
     print(f"Built {v4_db.name} ({v4_db.stat().st_size} bytes)")
-    print(f"Wrote liquidity_updater_v3_expected.json ({len(v3_expected['positions'])} positions, {len(v3_expected['initialization_maps'])} init-maps, marker=({v3_expected['liquidity_update_block']},{v3_expected['liquidity_update_log_index']}))")  # type: ignore[arg-type]
-    print(f"Wrote liquidity_updater_v4_expected.json ({len(v4_expected['positions'])} positions, {len(v4_expected['initialization_maps'])} init-maps, marker=({v4_expected['liquidity_update_block']},{v4_expected['liquidity_update_log_index']}))")  # type: ignore[arg-type]
+    print(
+        f"Wrote liquidity_updater_v3_expected.json ({len(v3_expected['positions'])} positions, {len(v3_expected['initialization_maps'])} init-maps, marker=({v3_expected['liquidity_update_block']},{v3_expected['liquidity_update_log_index']}))"
+    )  # type: ignore[arg-type]
+    print(
+        f"Wrote liquidity_updater_v4_expected.json ({len(v4_expected['positions'])} positions, {len(v4_expected['initialization_maps'])} init-maps, marker=({v4_expected['liquidity_update_block']},{v4_expected['liquidity_update_log_index']}))"
+    )  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":

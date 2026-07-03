@@ -2102,7 +2102,7 @@ impl PyBotIo {
 /// Parse a 20-byte address from a hex string, returning a borrowed 20-byte array
 /// view for ABI-encoding. Internally uses the core `parse_address` so input
 /// validation matches every other Rust pyclass (e.g. `PyAlloyProvider::get_balance`).
-fn parse_address_for_call(address: &str) -> PyResult<[u8; 20]> {
+pub(crate) fn parse_address_for_call(address: &str) -> PyResult<[u8; 20]> {
     use degenbot_core::address_utils::parse_address;
     parse_address(address)
         .map(alloy::primitives::Address::into_array)
