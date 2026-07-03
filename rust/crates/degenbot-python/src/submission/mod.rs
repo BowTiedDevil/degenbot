@@ -15,10 +15,12 @@
 pub mod dispatcher;
 pub mod params;
 pub mod signer;
+pub mod submit;
 
 pub use dispatcher::PyDispatcher;
 pub use params::PyTxParams;
 pub use signer::PyTxSigner;
+pub use submit::PySubmitCandidate;
 
 use pyo3::prelude::*;
 
@@ -31,8 +33,17 @@ pub fn add_submission_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyDispatcher>()?;
     m.add_class::<PyTxSigner>()?;
     m.add_class::<PyTxParams>()?;
+    m.add_class::<PySubmitCandidate>()?;
     m.add_function(wrap_pyfunction!(
         crate::submission::params::finalize_fees_py,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        crate::submission::submit::dispatch_and_submit_py,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        crate::submission::submit::fetch_fee_history_py,
         m
     )?)?;
     Ok(())

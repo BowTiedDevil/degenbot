@@ -121,7 +121,7 @@ pub fn finalize_fees_py(
 /// This is pure arg extraction (ADR-005 §3 B): no business logic, just
 /// translating the Python dict shape the `web3.eth.create_access_list` RPC
 /// returns into the typed Rust `AccessList`.
-fn parse_access_list(list: &Bound<'_, PyList>) -> PyResult<alloy::eips::eip2930::AccessList> {
+pub(crate) fn parse_access_list(list: &Bound<'_, PyList>) -> PyResult<alloy::eips::eip2930::AccessList> {
     use alloy::eips::eip2930::{AccessList, AccessListItem};
     let mut items = Vec::with_capacity(list.len());
     for entry in list.iter() {
