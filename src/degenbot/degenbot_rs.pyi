@@ -335,6 +335,21 @@ def cl_min_usable_tick(tick_spacing: int) -> int:
 
     """
 
+def cl_get_tick_word_and_bit_position(
+    tick: int, tick_spacing: int
+) -> tuple[int, int]:
+    """Compute the tick word and bit position for a compressed tick.
+
+    Args:
+        tick: The tick value
+        tick_spacing: The tick spacing value
+
+    Returns:
+        A ``(word, bit)`` tuple where ``word`` is the bitmap mapping key
+        and ``bit`` is in ``0..=255``.
+
+    """
+
 def cl_apply_liquidity_mapping_update(
     tick_bitmap: dict[int, dict[str, int]],
     tick_data: dict[int, dict[str, int]],
@@ -605,7 +620,44 @@ def db_upgrade_database(path: str) -> str:
     """
 
 # ------------------------------------------------------------------
-# Command-stream executor seam (feature = "executor").
+# V3/V4 DB-aware liquidity updater seam (feature = "db").
+# ------------------------------------------------------------------
+# Thin PyO3 wrappers over `degenbot-db`'s `apply_v3_liquidity_updates` /
+# `apply_v4_liquidity_updates` (the Rust apply-and-persist core). The Python
+# `cli/pool.py::apply_v3/v4_liquidity_updates` decode the raw `LogReceipt`s
+# (Burn/Mint negation) + delegate the reconstitute→apply-math→persist here.
+# Each call opens its own write handle on `database_path` (SQLite WAL allows
+# the concurrent connection); the driver's session stays open for its reads.
+# Events are pre-decoded ``(block_number, log_index, tick_lower, tick_upper,
+# liquidity_delta)`` tuples — the ABI decode stays in Python per the seam
+# boundary (`degenbot-db` is pure I/O+math, no ABI decode).
+
+def db_apply_v3_liquidity_updates(
+    database_path: str,
+    chain_id: int,
+    pool_address: str,
+    events: list[tuple[int, int, int, int, int]],
+) -> bool:
+    """Apply pre-decoded V3 liquidity events; persist positions/init-maps/marker.
+
+    Returns ``False`` if the pool at ``(chain_id, pool_address)`` isn't found
+    (mirrors the Python early-return); ``True`` after a successful apply.
+    Raises ``ValueError`` on a DB failure.
+    """
+
+
+def db_apply_v4_liquidity_updates(
+    database_path: str,
+    pool_hash: str,
+    pool_manager_chain: int,
+    events: list[tuple[int, int, int, int, int]],
+) -> bool:
+    """Apply pre-decoded V4 liquidity events; persist positions/init-maps/marker.
+
+    Returns ``False`` if the pool at ``(pool_hash, pool_manager_chain)`` isn't
+    found; ``True`` after a successful apply. Raises ``ValueError`` on a DB
+    failure.
+    """
 # ------------------------------------------------------------------
 # Thin PyO3 wrappers over `degenbot_executor` (the cmd-executor core).
 # The Python encoder (`examples/eth_backrun_helpers.py::encode_cmd_stream` +
@@ -2156,6 +2208,7 @@ __all__ = [
     "balancer_weighted_calculate_invariant",
     "balancer_weighted_subtract_swap_fee_amount",
     "cl_add_delta",
+    "cl_get_tick_word_and_bit_position",
     "cl_apply_liquidity_mapping_update",
     "cl_compute_swap_step_v3",
     "cl_compute_swap_step_v4",
@@ -2182,6 +2235,8 @@ __all__ = [
     "db_backup_database",
     "db_compact_database",
     "db_create_new_database",
+    "db_apply_v3_liquidity_updates",
+    "db_apply_v4_liquidity_updates",
     "db_upgrade_database",
     "decode",
     "decode_return_data",

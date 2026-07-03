@@ -463,6 +463,16 @@ pub fn cl_min_usable_tick(tick_spacing: i32) -> i32 {
 
 // ─── LiquidityMapping (tick-bitmap + apply_liquidity_mapping_update) ────
 
+/// Compute the tick word and bit position for a compressed tick.
+///
+/// Returns `(word, bit)` where `word` is the mapping key (`i32`) and `bit`
+/// is in `0..=255` (`u8`). Mirrors `degenbot_cl_math::get_tick_word_and_bit_position`.
+#[pyfunction(signature = (tick, tick_spacing))]
+#[must_use]
+pub fn cl_get_tick_word_and_bit_position(tick: i32, tick_spacing: i32) -> (i32, u8) {
+    liquidity_mapping::get_tick_word_and_bit_position(tick, tick_spacing)
+}
+
 /// Retrieve a field from a Python mapping or pydantic model, by key or attr.
 /// Accepts dicts (`obj[key]`) and attribute-bearing objects (`obj.attr`) so the
 /// seam works whether the values are plain dicts or `BitmapAtWord`/`LiquidityAtTick`
@@ -656,6 +666,7 @@ pub fn add_cl_lib_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(cl_min_usable_tick, m)?)?;
 
     // LiquidityMapping
+    m.add_function(wrap_pyfunction!(cl_get_tick_word_and_bit_position, m)?)?;
     m.add_function(wrap_pyfunction!(cl_apply_liquidity_mapping_update, m)?)?;
 
     Ok(())
