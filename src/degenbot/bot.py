@@ -423,7 +423,7 @@ class Bot:
         # If type resolution fails (e.g. Curve pools lack a factory() method),
         # fall back to the Curve builder which handles its own discovery.
         try:
-            pool_type = _resolve_pool_type_impl(address, chain_id=chain_id, io=io, db=self.db)
+            pool_type = _resolve_pool_type_impl(address, chain_id=chain_id, io=io)
         except DegenbotValueError:
             # Fallback: try Curve builder as last resort
             return self._dispatch_build(
