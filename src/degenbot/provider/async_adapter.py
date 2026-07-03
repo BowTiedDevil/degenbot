@@ -17,6 +17,8 @@ from degenbot.provider.alloy_errors import alloy_revert_error, is_alloy_revert
 from degenbot.provider.subscription import Subscription
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from hexbytes import HexBytes
     from web3.types import BlockData, FilterParams, LogReceipt, TxParams
 
@@ -174,7 +176,7 @@ class _AsyncWeb3Adapter(AsyncSubscriptionSupport):
     async def get_transaction_count(self, address: str, block: int | None = None) -> int:
         return await self._w3.eth.get_transaction_count(address, block)  # ty:ignore[invalid-argument-type]
 
-    async def get_transaction_receipt(self, tx_hash: str) -> dict | None:
+    async def get_transaction_receipt(self, tx_hash: str) -> Mapping[str, Any] | None:
         try:
             return await self._w3.eth.get_transaction_receipt(tx_hash)  # ty:ignore[invalid-argument-type]
         except TransactionNotFound:
@@ -256,7 +258,7 @@ class _AsyncAlloyAdapter:
     async def get_transaction_count(self, address: str, block: int | None = None) -> int:
         return await self._alloy.get_transaction_count(address, block)
 
-    async def get_transaction_receipt(self, tx_hash: str) -> dict | None:
+    async def get_transaction_receipt(self, tx_hash: str) -> Mapping[str, Any] | None:
         """Fetch a transaction receipt by hash (JSON shape, GIL-released).
 
         PAGQCK: routed through the Rust ``AsyncAlloyProvider``
@@ -266,7 +268,7 @@ class _AsyncAlloyAdapter:
         example's ``monitor_pending_transaction`` checks ``is None``.
 
         Returns:
-            The receipt as a plain dict, or ``None`` if the tx is unmined.
+            The receipt as a mapping, or ``None`` if the tx is unmined.
 
         """
         return await self._alloy.get_transaction_receipt(tx_hash)
@@ -587,7 +589,7 @@ class AsyncProviderAdapter:
         """
         return await self._backend.get_transaction_count(address, block)
 
-    async def get_transaction_receipt(self, tx_hash: str) -> dict | None:
+    async def get_transaction_receipt(self, tx_hash: str) -> Mapping[str, Any] | None:
         """Fetch a transaction receipt by hash (PAGQCK dispatch-path routing).
 
         Routes through the Rust ``AsyncAlloyProvider`` when the backend is
@@ -596,7 +598,7 @@ class AsyncProviderAdapter:
         ``monitor_pending_transaction``.
 
         Returns:
-            The receipt as a plain dict, or ``None`` if the tx is unmined.
+            The receipt as a mapping, or ``None`` if the tx is unmined.
 
         """
         return await self._backend.get_transaction_receipt(tx_hash)

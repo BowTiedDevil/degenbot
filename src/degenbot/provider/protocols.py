@@ -12,6 +12,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from eth_typing import BlockIdentifier
     from hexbytes import HexBytes
     from web3.types import BlockData, LogReceipt, TxParams
@@ -191,7 +193,7 @@ class AsyncProviderBackend(Protocol):
         """Return the transaction count for the given address."""
         ...
 
-    async def get_transaction_receipt(self, tx_hash: str) -> dict | None:
+    async def get_transaction_receipt(self, tx_hash: str) -> Mapping[str, Any] | None:
         """Return the receipt for ``tx_hash``, or ``None`` if unmined."""
         ...
 

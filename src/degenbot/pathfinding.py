@@ -6,6 +6,7 @@ import itertools
 import time
 from collections.abc import AsyncIterator, Iterable, Iterator, Sequence
 from dataclasses import dataclass
+from typing import cast
 
 import sqlalchemy
 from eth_typing import ChecksumAddress
@@ -272,15 +273,18 @@ def _prepare_graph_rust(
     # `"sushiswap_v3"` maps to `SushiswapV3PoolTable`, not the family base.
     kind_string_to_class: dict[str, type[LiquidityPoolTable | UniswapV4PoolTable]] = {}
     for pt in pool_types:
-        try:
-            identity = pt.__mapper__.polymorphic_identity
-        except AttributeError:
-            # Base classes without a polymorphic_identity (e.g. the abstract
-            # `UniswapV2PoolTableBase`) — skip; their concrete subclasses
-            # carry the identity.
+        # `__mapper__.polymorphic_identity` is a runtime attribute SQLAlchemy
+        # attaches to declarative classes; ty can't see it statically, so
+        # resolve via `getattr` + skip when absent (base classes without a
+        # polymorphic_identity, e.g. the abstract `UniswapV2PoolTableBase`).
+        mapper = getattr(pt, "__mapper__", None)
+        identity = getattr(mapper, "polymorphic_identity", None) if mapper is not None else None
+        if identity is None:
             continue
         if isinstance(identity, str):
-            kind_string_to_class[identity] = pt
+            kind_string_to_class[identity] = cast(
+                "type[LiquidityPoolTable | UniswapV4PoolTable]", pt
+            )
 
     # Rebuild `pool_id_to_type` from the DB's raw `kind` STRING, falling back
     # to the family-base class if no `pool_types` entry matches the kind (a
@@ -299,7 +303,7 @@ def _prepare_graph_rust(
                 fallback_class = _POOL_KIND_TO_BASE.get(int(kind_u8))
             cls = fallback_class
         if cls is not None:
-            pool_id_to_type[pool_id] = cls
+            pool_id_to_type[pool_id] = cast("type[LiquidityPoolTable | UniswapV4PoolTable]", cls)
 
     logger.debug(
         f"Built graph at +{time.perf_counter() - start:.1f}s: {len(raw['edges'])} edges",
