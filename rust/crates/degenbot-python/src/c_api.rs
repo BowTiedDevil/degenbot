@@ -22,6 +22,7 @@ use pyo3::wrap_pyfunction;
 /// Returns a [`PyErr`] if any individual `add_class`/`add_function`/`add` call
 /// fails (e.g. a name collision). Errors are propagated unchanged — the
 /// `#[pymodule]` caller in `lib.rs` converts them into the module-init failure.
+#[allow(clippy::too_many_lines)]
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Tick math functions (feature = "cl-math")
     #[cfg(feature = "cl-math")]
@@ -53,6 +54,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Pathfinding graph + DFS (feature = "pathfinding")
     #[cfg(feature = "pathfinding")]
     m.add_function(wrap_pyfunction!(crate::pathfinding::find_paths_rust, m)?)?;
+    // The build_path_graph seam choreographs a degenbot-db read + a
+    // degenbot-pathfinding graph build, so it needs BOTH features.
+    #[cfg(all(feature = "pathfinding", feature = "db"))]
+    m.add_function(wrap_pyfunction!(crate::pathfinding::build_path_graph, m)?)?;
     #[cfg(feature = "pathfinding")]
     m.add_class::<crate::pathfinding::PathIterator>()?;
 
