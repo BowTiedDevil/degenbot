@@ -92,8 +92,13 @@ from degenbot.degenbot_rs import (
     AsyncAlloyProvider,
     DynamicFeePoolRejectedError,
     HookedPoolRejectedError,
+    PyDispatcher,
+    PySubmitCandidate,
+    PyTxSigner,
     VerificationMismatchError,
     VerificationRpcError,
+    dispatch_and_submit_py,
+    fetch_fee_history_py,
 )
 from degenbot.logging import logger as bot_logger
 from degenbot.pathfinding import find_paths_async
@@ -505,177 +510,6 @@ def build_simulation_state_overrides(
     return cast("StateOverride", overrides)
 
 
-class PathSuppression:
-    """Track per-path simulation failures and suppress consistently failing paths.
-
-    After a path fails simulation PATH_SUPPRESS_THRESHOLD consecutive times,
-    it is suppressed — excluded from the simulation candidate list. Suppressed
-    paths are retried every PATH_SUPPRESS_RETRY_INTERVAL blocks. If a retry
-    succeeds, the path is permanently un-suppressed.
-    """
-
-    def __init__(self) -> None:
-        # path_id → consecutive failure count
-        self._fail_counts: dict[int, int] = {}
-        # path_id → block number when the path was last retried
-        self._last_retry_block: dict[int, int] = {}
-        # path_id → True if currently suppressed
-        self._suppressed: set[int] = set()
-        # Total paths suppressed (for logging)
-        self._total_suppressed: int = 0
-
-    def record_success(self, path_id: int) -> None:
-        """A path succeeded at simulation — reset its failure counter."""
-        self._fail_counts.pop(path_id, None)
-        if path_id in self._suppressed:
-            self._suppressed.discard(path_id)
-            bot_logger.debug(f"[suppress] path={path_id} un-suppressed after successful sim")
-
-    def record_failure(self, path_id: int) -> None:
-        """A path failed simulation — increment its counter, maybe suppress."""
-        count = self._fail_counts.get(path_id, 0) + 1
-        self._fail_counts[path_id] = count
-
-        if count >= PATH_SUPPRESS_THRESHOLD and path_id not in self._suppressed:
-            self._suppressed.add(path_id)
-            self._total_suppressed += 1
-            bot_logger.info(
-                f"[suppress] path={path_id} SUPPRESSED after {count} consecutive failures "
-                f"(total suppressed: {self._total_suppressed})",
-            )
-
-    def is_suppressed(self, path_id: int, current_block: int) -> bool:
-        """Check if a path is currently suppressed (with retry logic).
-
-        Returns True if the path should be skipped. Returns False if
-        the path is due for a retry — the caller should simulate it.
-        """
-        if path_id not in self._suppressed:
-            return False
-
-        # Check if it's time for a retry
-        last_retry = self._last_retry_block.get(path_id, 0)
-        if current_block - last_retry >= PATH_SUPPRESS_RETRY_INTERVAL:
-            # Allow this attempt — mark the retry block
-            self._last_retry_block[path_id] = current_block
-            bot_logger.debug(f"[suppress] path={path_id} retrying at block {current_block}")
-            return False
-
-        return True
-
-    @property
-    def total_suppressed(self) -> int:
-        return self._total_suppressed
-
-    def discard(self, path_id: int) -> None:
-        """Permanently discard suppression tracking for a de-registered path."""
-        self._fail_counts.pop(path_id, None)
-        self._suppressed.discard(path_id)
-        self._last_retry_block.pop(path_id, None)
-
-
-@dataclasses.dataclass
-class Dispatcher:
-    """Coordination state for the dispatch loop.
-
-    Bundles the seven mutable containers `main()` previously declared as
-    exploded locals and threaded through `consume_result_batches`,
-    `dispatch_profitable_results`, and `monitor_pending_transaction`. The
-    containers are mutable and mutated in place by the methods; the
-    dataclass binding itself is never rebound. `PathSuppression` is composed
-    (and delegated) so all dispatch coordination lives behind one object.
-    """
-
-    pending_nonces: set[int] = dataclasses.field(default_factory=set)
-    pending_pools: set[str] = dataclasses.field(default_factory=set)
-    active_tasks: set[asyncio.Task] = dataclasses.field(default_factory=set)
-    current_block_ref: list[int] = dataclasses.field(default_factory=lambda: [0])
-    block_times: deque[tuple[int, int]] = dataclasses.field(
-        default_factory=lambda: deque(maxlen=60),
-    )
-    block_priority_fees: dict[int, dict[int, int]] = dataclasses.field(default_factory=dict)
-    path_suppression: PathSuppression = dataclasses.field(default_factory=PathSuppression)
-
-    def __post_init__(self) -> None:
-        # `current_block_ref` is a single-element mutable list so monitor tasks
-        # can read the current block by reference across the consumer/monitor
-        # boundary without a lock.
-        if len(self.current_block_ref) == 0:
-            self.current_block_ref.append(0)
-
-    @classmethod
-    def for_block(cls, current_block: int) -> "Dispatcher":
-        """Construct a fresh Dispatcher seeded at `current_block`."""
-        return cls(current_block_ref=[current_block])
-
-    # ── nonce coordination ────────────────────────────────────────
-    def claim_nonce(self, start: int) -> int:
-        """Return the first int >= `start` not already pending, and reserve it."""
-        nonce = next(n for n in itertools.count(start) if n not in self.pending_nonces)
-        self.pending_nonces.add(nonce)
-        return nonce
-
-    def release_nonce(self, nonce: int) -> None:
-        """Release a nonce back to the free pool (tx confirmed or voided)."""
-        self.pending_nonces.discard(nonce)
-
-    # ── pool mutual exclusion ────────────────────────────────────
-    def reserve_pools(self, path_pools: set[str]) -> None:
-        """Mark Rust pool keys as locked by an in-flight tx."""
-        self.pending_pools.update(path_pools)
-
-    def release_pools(self, pools: set[str]) -> None:
-        """Release Rust pool keys when a tx confirms or expires."""
-        self.pending_pools.difference_update(pools)
-
-    def is_path_blocked(self, path_pools: set[str], committed_pools: set[str]) -> bool:
-        """True iff any path pool is already locked (pending) or committed this batch."""
-        return bool(path_pools & (self.pending_pools | committed_pools))
-
-    def release_tx(self, tx: "SubmittedTx") -> None:
-        """Release both the nonce and pools held by a completed/expired tx."""
-        self.release_nonce(tx.nonce)
-        self.release_pools(set(tx.pools))
-
-    # ── task tracking ─────────────────────────────────────────────
-    def track_task(self, task: asyncio.Task) -> None:
-        """Register an in-flight task; auto-discard on completion."""
-        self.active_tasks.add(task)
-        task.add_done_callback(self.active_tasks.discard)
-
-    # ── block / fee recording ─────────────────────────────────────
-    @property
-    def current_block(self) -> int:
-        return self.current_block_ref[0]
-
-    def advance_block(self, block: int) -> None:
-        """Update the current block (read by monitor tasks by reference)."""
-        self.current_block_ref[0] = block
-
-    def record_block_time(self, block: int, timestamp: int) -> None:
-        self.block_times.append((block, timestamp))
-
-    def record_priority_fees(self, block: int, fees: dict[int, int]) -> None:
-        """Record per-block percentile fees, pruning to FEE_HISTORY_WINDOW."""
-        self.block_priority_fees[block] = fees
-        if len(self.block_priority_fees) > FEE_HISTORY_WINDOW:
-            self.block_priority_fees.pop(min(self.block_priority_fees))
-
-    def latest_priority_fees(self) -> dict[int, int]:
-        """Return the most-recently recorded per-block percentile fees."""
-        return self.block_priority_fees[max(self.block_priority_fees)]
-
-    # ── PathSuppression delegation ────────────────────────────────
-    def record_success(self, path_id: int) -> None:
-        self.path_suppression.record_success(path_id)
-
-    def record_failure(self, path_id: int) -> None:
-        self.path_suppression.record_failure(path_id)
-
-    def is_suppressed(self, path_id: int, current_block: int) -> bool:
-        return self.path_suppression.is_suppressed(path_id, current_block)
-
-
 def _hop_display_addr(hop: HopInfo) -> str:
     """Return a short display address for logging."""
     if isinstance(hop, V2HopInfo):
@@ -837,7 +671,7 @@ class BackrunSession:
         self.bot: Bot | None = None
         self.engine_registry: EngineRegistry | None = None
         self.async_w3: AsyncProviderAdapter | None = None
-        self.dispatcher: Dispatcher | None = None
+        self.dispatcher: PyDispatcher | None = None
         self.v3_snapshot: Any = None
         self.v4_snapshot: Any = None
         self.current_block: int = 0
@@ -883,7 +717,7 @@ class BackrunSession:
         self.current_block = latest_block["number"]
 
         # ── Coordination state ──
-        self.dispatcher = Dispatcher.for_block(self.current_block)
+        self.dispatcher = PyDispatcher.for_block(self.current_block)
 
         # ── Snapshots (injected or from the DB via get_snapshots) ──
         if self._injected_snapshots is not None:
@@ -1627,43 +1461,6 @@ def _compute_priority_fee(
     )
 
 
-@dataclasses.dataclass
-class SubmittedTx:
-    tx_hash: HexBytes
-    nonce: int
-    pools: set[str]  # Rust pool keys (V4 pool_id_hex / V2-V3 pool_address)
-    submission_block: int
-
-
-async def monitor_pending_transaction(
-    tx: SubmittedTx,
-    async_w3: AsyncProviderAdapter,
-    dispatcher: Dispatcher,
-) -> None:
-    """Monitor a submitted transaction until it confirms or expires.
-
-    On confirmation: release the nonce and pools.
-    On expiry (N blocks without inclusion): void the nonce and release pools.
-    """
-    while True:
-        await asyncio.sleep(1)
-
-        try:
-            receipt = await async_w3.get_transaction_receipt(tx.tx_hash.to_0x_hex())
-        except TransactionNotFound:
-            receipt = None
-        if receipt is None:
-            blocks_waited = dispatcher.current_block - tx.submission_block
-            if blocks_waited > BLOCKS_BEFORE_NONCE_EXPIRES:
-                dispatcher.release_tx(tx)
-                bot_logger.info(
-                    f"Voided expired nonce {tx.nonce} ({blocks_waited} blocks without inclusion)",
-                )
-                return
-        else:
-            dispatcher.release_tx(tx)
-            bot_logger.info(f"Confirmed tx {tx.tx_hash.to_0x_hex()} nonce={tx.nonce}")
-            return
 
 
 async def dispatch_profitable_results(
@@ -1678,7 +1475,7 @@ async def dispatch_profitable_results(
     base_fee_next: int,
     current_block: int,
     operator_nonce: int,
-    dispatcher: Dispatcher,
+    dispatcher: PyDispatcher,
     dry_run: bool,
 ) -> None:
     """Encode, simulate, and submit profitable results from the Rust engine.
@@ -1703,8 +1500,9 @@ async def dispatch_profitable_results(
     This correctly measures profit in WETH (physical ERC-20), native ETH,
     and ERC-6909 WETH held inside the PoolManager (from V4_MINT_COMPACT).
 
-    Submitted transactions are tracked via monitor_pending_transaction tasks
-    that release nonces and pools on confirmation or expiry.
+    Submitted transactions are tracked by the Rust submit leaf
+    (`dispatch_and_submit_py` spawns Rust monitor tasks that release
+    nonces and pools on confirmation or expiry).
     """
     bot_logger.info(f"[dispatch] entered with {len(results)} results, dry_run={dry_run}")
 
@@ -2574,7 +2372,7 @@ async def dispatch_profitable_results(
     failed_count = len(candidates) - len(succeeded_path_ids)
     if failed_count > 0:
         bot_logger.debug(
-            f"[suppress] {failed_count}/{len(candidates)} candidates failed, {dispatcher.path_suppression.total_suppressed} total suppressed",
+            f"[suppress] {failed_count}/{len(candidates)} candidates failed, {dispatcher.total_suppressed} total suppressed",
         )
     for pid, _inp, _pft, _ho, _ci, _sb in candidates:
         if pid in succeeded_path_ids:
@@ -2628,17 +2426,25 @@ async def dispatch_profitable_results(
             f"net_gwei={net_profit // 10**9}gwei",
         )
 
-    # ── Submit gas-profitable with mutual exclusivity (Slice 4) ────
-    for path_id, gross_profit, net_profit, gas_used, tx_params, path_info in gas_profitable:
-        # ── Slice 4: mutual exclusivity ──
+    # ── Submit gas-profitable via the Rust submit leaf (7UIYJ6) ────
+    # The mutual-excl guard / claim_nonce / access-list re-compute / sign /
+    # eth_sendRawTransaction / reserve_pools / monitor-spawn now happen in
+    # Rust (degenbot-submission dispatch_and_submit). Python builds the
+    # PySubmitCandidate list (priority_fee computed here — S3 stay-Python —
+    # + passed IN), hands the batch + coordination args, then renders the
+    # [dispatch] summary from the SubmitOutcome records.
+    async_alloy = async_w3.as_async_alloy()
+    if async_alloy is None:
+        bot_logger.error("[dispatch] async_w3 is not an Alloy-backed adapter; cannot submit")
+        return
+    signer = PyTxSigner(key=operator_private_key, chain_id=1)
+
+    candidates: list[PySubmitCandidate] = []
+    for path_id, gross_profit, _net_in, gas_used, tx_params, path_info in gas_profitable:
         path_pools = {
             h.pool_id_hex if isinstance(h, V4HopInfo) else h.pool_address for h in path_info.hops
         }
-        if dispatcher.is_path_blocked(path_pools, committed_pools):
-            bot_logger.debug(f"[dispatch] skip path={path_id}: pools claimed after sim")
-            continue
-
-        # Compute final priority fee (re-evaluate with current state)
+        # Compute final priority fee (re-evaluate with current state — S3)
         priority_fee = _compute_priority_fee(
             gross_profit=gross_profit,
             gas_used=gas_used,
@@ -2657,74 +2463,48 @@ async def dispatch_profitable_results(
             f"prio={priority_fee // 10**9}gwei",
         )
 
-        if dry_run:
-            committed_pools.update(path_pools)
-            continue
-
-        # Safety: never submit a real transaction when using code injection
-        # (the injected contract doesn't exist on-chain)
-        if INJECT_EXECUTOR_CODE:
-            bot_logger.warning(
-                f"[dispatch] path={path_id}: skipping submission — INJECT_EXECUTOR_CODE is active",
-            )
-            committed_pools.update(path_pools)
-            continue
-
-        # Submit
-        nonce = dispatcher.claim_nonce(operator_nonce)
-        tx_params["nonce"] = cast("Nonce", nonce)
-        tx_params["maxPriorityFeePerGas"] = cast("Wei", priority_fee)
-        tx_params["maxFeePerGas"] = cast("Wei", int(1.5 * base_fee_next) + priority_fee)
-
-        # Access list was computed during simulation. Re-compute with
-        # updated nonce/fees for accuracy.
-        try:
-            al_result = await async_w3.make_request(
-                "eth_createAccessList",
-                [tx_params, "pending"],
-            )
-            tx_params["accessList"] = al_result["accessList"]
-        except Exception as al_exc:
-            bot_logger.debug(f"[dispatch] access list re-computation failed: {al_exc}")
-
-        try:
-            tx_hash_result = await async_w3.make_request(
-                "eth_sendRawTransaction",
-                [
-                    "0x"
-                    + eth_account.Account.sign_transaction(
-                        transaction_dict=tx_params,
-                        private_key=operator_private_key,
-                    ).raw_transaction.hex()
-                ],
-            )
-            # make_request returns the raw JSON ``result`` — a hex-string tx hash.
-            # Normalize to ``HexBytes`` so ``SubmittedTx.tx_hash`` keeps the
-            # same shape the downstream ``monitor_pending_transaction`` path
-            # (``.to_0x_hex()``) expects.
-            tx_hash = HexBytes(tx_hash_result)
-        except Web3Exception as exc:
-            bot_logger.debug(f"Send failed: {exc}")
-            continue
-
-        bot_logger.info(f"Submitted path {path_id} hash={tx_hash.to_0x_hex()} nonce={nonce}")
-        dispatcher.reserve_pools(path_pools)
-        committed_pools.update(path_pools)
-
-        # Spawn monitor task to release nonce + pools on confirmation/expiry
-        task = asyncio.create_task(
-            monitor_pending_transaction(
-                tx=SubmittedTx(
-                    tx_hash=tx_hash,
-                    nonce=nonce,
-                    pools=path_pools,
-                    submission_block=current_block,
-                ),
-                async_w3=async_w3,
-                dispatcher=dispatcher,
+        candidates.append(
+            PySubmitCandidate(
+                path_id=path_id,
+                gross_profit=gross_profit,
+                net_profit=net_profit,
+                gas_used=gas_used,
+                priority_fee=priority_fee,
+                base_fee_next=base_fee_next,
+                execute_calldata=cast("bytes", tx_params["data"]),
+                executor_address=cast("str", tx_params["to"]),
+                access_list=cast("list[Any]", tx_params.get("accessList")),
+                path_pools=path_pools,
             ),
         )
-        dispatcher.track_task(task)
+
+    records = await dispatch_and_submit_py(
+        candidates=candidates,
+        dispatcher=dispatcher,
+        provider=async_alloy,
+        signer=signer,
+        operator_nonce=operator_nonce,
+        current_block=current_block,
+        dry_run=dry_run,
+        inject_code=INJECT_EXECUTOR_CODE,
+    )
+    for record in records:
+        if record["kind"] == "submitted":
+            bot_logger.info(
+                f"Submitted path {record['path_id']} "
+                f"hash={record['tx_hash']} nonce={record['nonce']}",
+            )
+        elif record["reason"] == "pools_claimed":
+            bot_logger.debug(f"[dispatch] skip path={record['path_id']}: pools claimed after sim")
+        elif record["reason"] == "dry_run":
+            pass  # dry_run skip already logged above
+        elif record["reason"] == "inject_code":
+            bot_logger.warning(
+                f"[dispatch] path={record['path_id']}: skipping submission — "
+                "INJECT_EXECUTOR_CODE is active",
+            )
+        elif record["reason"] == "broadcast_failed":
+            bot_logger.debug(f"Send failed: {record.get('detail', '')}")
 
 
 async def consume_result_batches(
@@ -2733,7 +2513,7 @@ async def consume_result_batches(
     executor_address: str,
     operator_address: str,
     operator_private_key: str,
-    dispatcher: Dispatcher,
+    dispatcher: PyDispatcher,
     dry_run: bool,
     *,
     block_stream: AsyncIterator[dict[str, int]] | None = None,
@@ -2874,7 +2654,7 @@ def _reprime(
 
 async def _apply_block_if_ready(
     fut: asyncio.Task[dict[str, int]],
-    dispatcher: Dispatcher,
+    dispatcher: PyDispatcher,
     async_w3: AsyncProviderAdapter,
 ) -> None:
     """Drive the block clock from a forwarded ``newHeads`` tick if fut resolved.
@@ -2902,32 +2682,24 @@ async def _apply_block_if_ready(
         parent_gas_limit=gas_limit,
     )
 
-    try:
-        # PAGQCK: ``eth_feeHistory`` via ``make_request`` (raw JSON shape —
-        # ``baseFeePerGas`` / ``reward`` arrive as hex strings; decode the
-        # ``reward`` percentiles to ints before ``record_priority_fees``).
-        fee_history = await async_w3.make_request(
-            "eth_feeHistory",
-            [
-                1,
-                hex(block_number),
-                [float(p) for p in FEE_PERCENTILES],
-            ],
+    # 7UIYJ6: ``eth_feeHistory`` + hex-decode + ``record_priority_fees`` now
+    # happen in the Rust submit leaf (``fetch_fee_history_py`` extracts the
+    # AsyncAlloyProvider, calls eth_feeHistory, records into the dispatcher's
+    # ring internally, no-ops on RPC failure — matching the prior
+    # ``except Web3Exception: pass``).
+    async_alloy = async_w3.as_async_alloy()
+    if async_alloy is not None:
+        await fetch_fee_history_py(
+            provider=async_alloy,
+            dispatcher=dispatcher,
+            block_count=1,
+            last_block=block_number,
+            reward_percentiles=[float(p) for p in FEE_PERCENTILES],
         )
-        reward = fee_history.get("reward", [[]])
-        if reward and reward[-1]:
-            # make_request returns hex strings; web3.py decoded them to ints.
-            reward_ints = [int(v, 16) if isinstance(v, str) else int(v) for v in reward[-1]]
-            dispatcher.record_priority_fees(
-                block_number,
-                dict(zip(FEE_PERCENTILES, reward_ints, strict=True)),
-            )
-    except Web3Exception:
-        pass
 
     dispatcher.record_block_time(block_number, block_timestamp)
-    if len(dispatcher.block_times) >= 2:
-        oldest_bn, _oldest_ts = dispatcher.block_times[0]
+    if dispatcher.block_time_count() >= 2:
+        oldest_bn, _oldest_ts = dispatcher.block_times_oldest()
         if block_number != oldest_bn:
             latency = time.time() - block_timestamp
             bot_logger.info(
@@ -2941,7 +2713,7 @@ async def _apply_block_if_ready(
 
 async def _apply_result_if_ready(
     fut: asyncio.Task[dict[str, object]],
-    dispatcher: Dispatcher,
+    dispatcher: PyDispatcher,
     engine_registry: EngineRegistry,
     async_w3: AsyncProviderAdapter,
     executor_address: str,
@@ -2989,7 +2761,7 @@ async def _apply_result_if_ready(
         ))
 
     for path_id in cast("Any", batch["removed"]):
-        dispatcher.path_suppression.discard(int(path_id))
+        dispatcher.discard_path(int(path_id))
 
     if results:
         await dispatch_profitable_results(

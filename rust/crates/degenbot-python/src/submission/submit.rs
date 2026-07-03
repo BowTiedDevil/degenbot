@@ -34,8 +34,8 @@ use crate::submission::dispatcher::PyDispatcher;
 use crate::submission::params::parse_access_list;
 use crate::submission::signer::PyTxSigner;
 use degenbot_submission::{
-    dispatch_and_submit, fetch_fee_history, PoolKey, ReceiptProbe, SubmitCandidate,
-    SubmitOutcome, SubmitRecord, SkipReason,
+    dispatch_and_submit, fetch_fee_history, PoolKey, ReceiptProbe, SkipReason, SubmitCandidate,
+    SubmitOutcome, SubmitRecord,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::types::{PyBool, PyBytes, PyDict, PyList};
@@ -101,9 +101,8 @@ impl PySubmitCandidate {
             .map_err(|e| PyValueError::new_err(format!("Invalid executor address: {e}")))?;
         let calldata = execute_calldata.as_bytes().to_vec();
 
-        let access_list: Option<AlloyAccessList> = access_list
-            .map(|lst| parse_access_list(&lst))
-            .transpose()?;
+        let access_list: Option<AlloyAccessList> =
+            access_list.map(|lst| parse_access_list(&lst)).transpose()?;
 
         let path_pools: HashSet<PoolKey> = match path_pools {
             Some(p) => p
@@ -155,7 +154,8 @@ impl ReceiptProbe for PyReceiptProbe {
     fn receipt_found(
         &self,
         tx_hash: B256,
-    ) -> Pin<Box<dyn Future<Output = degenbot_submission::SubmissionResult<bool>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = degenbot_submission::SubmissionResult<bool>> + Send + '_>>
+    {
         let provider = Arc::clone(&self.provider);
         Box::pin(async move {
             // `get_transaction_receipt` returns `Ok(Some(_))` once mined,
@@ -223,9 +223,7 @@ pub fn dispatch_and_submit_py<'py>(
         let c = item
             .extract::<PyRef<'_, PySubmitCandidate>>()
             .map_err(|_| {
-                PyValueError::new_err(
-                    "candidates must be a list of PySubmitCandidate instances",
-                )
+                PyValueError::new_err("candidates must be a list of PySubmitCandidate instances")
             })?;
         built.push(c.inner.clone());
     }
