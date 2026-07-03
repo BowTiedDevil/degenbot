@@ -26,6 +26,10 @@ suspicious = "warn"
 # pyo3-free under default features by `just check-no-pyo3-in-cores`.
 [dependencies]
 alloy = { version = "^2.0" }
+# CL liquidity-mapping math — `apply_liquidity_mapping_update` drives the V3/V4
+# DB-aware liquidity updater's per-event tick/bitmap mutation (task QJSCA5).
+# Pyo3-free core; verified by `just check-no-pyo3-in-cores`.
+degenbot-cl-math = { path = "../degenbot-cl-math" }
 degenbot-pathfinding = { path = "../degenbot-pathfinding" }
 parking_lot = { version = "^0.12" }
 rusqlite = { version = "^0.31", features = ["bundled", "backup"] }
