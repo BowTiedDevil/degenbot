@@ -10,11 +10,13 @@ session orchestration are shell concerns — rubric §2.1).
 
 import pathlib
 
+from alembic import command
 from alembic.config import Config
 from sqlalchemy import URL, Engine, create_engine, event
 from sqlalchemy.orm import Session, scoped_session, sessionmaker
 
 from degenbot.degenbot_rs import (
+    DatabaseSchemaStale,
     db_backup_database,
     db_compact_database,
     db_create_new_database,
@@ -97,16 +99,38 @@ def compact_sqlite_database(db_path: pathlib.Path) -> None:
 def upgrade_existing_sqlite_database(database_path: pathlib.Path) -> str:
     """Ensure the SQLite database is at the latest schema.
 
-    Delegates to the Rust core (``degenbot_rs.db_upgrade_database``): a no-op
-    if already at the Alembic head, or applies the head DDL + stamp on an empty
-    file. A stale Alembic DB raises ``ValueError`` (run
-    ``alembic upgrade head`` from Python to cross migration revisions).
+    Two-stage upgrade path:
+
+    1. **Rust fast-path** (``degenbot_rs.db_upgrade_database``): a no-op if
+       already at the Alembic head, or applies the head DDL + stamp on an
+       empty file. This handles the common cases without spinning up the
+       Alembic migration runner.
+    2. **Alembic fall-back**: if the Rust core reports the DB is stamped at a
+       *prior* Alembic revision (``AlembicStale`` — e.g. a user upgrading from
+       the published 0.6.0a2 schema at ``e0aaad8ad486``), run
+       ``alembic upgrade head`` from Python to apply the migration scripts.
+       The Rust core never runs Alembic migrations; this shell does.
 
     Returns:
-        The Rust outcome string (e.g. ``"already_at_head"``).
+        The Rust outcome string (``"already_at_head"`` / ``"created_fresh"``)
+        for the fast-path cases, or ``"upgraded_from_stale"`` when the Alembic
+        fall-back ran the migration scripts.
+
+    Note:
+        A ``DatabaseSchemaStale`` from the Rust fast-path is caught here so the
+        Alembic fall-back can run; it does not propagate. An unrecognised schema
+        re-raises as ``ValueError`` from the Rust core call below.
 
     """
-    outcome = db_upgrade_database(str(database_path))
+    try:
+        outcome = db_upgrade_database(str(database_path))
+    except DatabaseSchemaStale:
+        logger.info(
+            f"Database at {database_path} is at a prior Alembic revision; "
+            "running `alembic upgrade head` to apply migration scripts.",
+        )
+        command.upgrade(get_alembic_config(database_path=database_path), "head")
+        outcome = "upgraded_from_stale"
     logger.info(f"Updated existing SQLite database at {database_path} ({outcome}).")
     return outcome
 

@@ -15,18 +15,13 @@
 
 use std::path::Path;
 
-use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
 use crate::conversion::alloy::u256_to_py;
+use crate::db::db_err_to_py;
 use degenbot_db::aave::{AaveCollateralPositionRecord, AaveDebtPositionRecord, AaveUserRecord};
 use degenbot_db::DegenbotDb;
-
-/// Map a [`degenbot_db::DbError`] to a Python `ValueError`.
-fn db_err_to_py(err: &degenbot_db::DbError) -> PyErr {
-    PyValueError::new_err(err.to_string())
-}
 
 /// A read-only Aave V3 position-query handle over a degenbot `SQLite` DB file.
 ///

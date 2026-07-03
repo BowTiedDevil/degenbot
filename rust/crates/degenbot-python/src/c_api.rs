@@ -82,6 +82,17 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "db")]
     crate::db::add_db_module(m)?;
 
+    // Typed database-schema-stale exception (`DbError::AlembicStale` →
+    // `DatabaseSchemaStale`, a `ValueError` subclass). Exposed on the module
+    // so the CLI / Python shells can `from degenbot_rs import
+    // DatabaseSchemaStale` and catch it precisely to print a friendly hint
+    // instead of a traceback. (feature = "db"; defined in `db::mod`.)
+    #[cfg(feature = "db")]
+    m.add(
+        "DatabaseSchemaStale",
+        m.py().get_type::<crate::db::DatabaseSchemaStale>(),
+    )?;
+
     // Command-stream encoding seam (feature = "executor")
     #[cfg(feature = "executor")]
     crate::executor::add_executor_module(m)?;

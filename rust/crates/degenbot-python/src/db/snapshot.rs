@@ -24,13 +24,9 @@ use pyo3::types::{PyDict, PySet, PyString, PyTuple};
 use std::str::FromStr;
 
 use crate::conversion::alloy::u256_to_py;
+use crate::db::db_err_to_py;
 use degenbot_db::snapshot::{LiquidityMap, PoolKey};
 use degenbot_db::{DegenbotDb, ExchangeFamily};
-
-/// Map a [`degenbot_db::DbError`] to a Python `ValueError`.
-fn db_err_to_py(err: &degenbot_db::DbError) -> PyErr {
-    PyValueError::new_err(err.to_string())
-}
 
 /// `degenbot_rs.PyDatabaseSnapshot` — a read-only V3/V4 snapshot handle over a
 /// degenbot `SQLite` DB file. Opens its own connection (WAL, `query_only=on`)
