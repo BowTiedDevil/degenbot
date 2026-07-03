@@ -17,11 +17,10 @@ from json import JSONDecodeError
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from pydantic import HttpUrl, WebsocketUrl
 from ujson import loads as ujson_loads
 from web3 import HTTPProvider, IPCProvider, JSONBaseProvider, LegacyWebSocketProvider, Web3
 
-from degenbot.config import CONFIG_FILE, DegenbotConfig, _init_config
+from degenbot.config import DegenbotConfig, _init_config, resolve_http_rpc_uri
 from degenbot.degenbot_rs import AlloyProvider, AsyncAlloyProvider
 from degenbot.provider.async_adapter import AsyncProviderAdapter
 from degenbot.provider.sync_adapter import ProviderAdapter
@@ -60,49 +59,61 @@ def get_provider_from_config(
     use_alloy: bool | None = None,
     config: DegenbotConfig | None = None,
 ) -> ProviderAdapter:
-    """Build a :class:`ProviderAdapter` for ``chain_id`` from the config's RPC entry.
+    """Build a :class:`ProviderAdapter` for ``chain_id`` from the resolved RPC entry.
 
-    Maps the configured endpoint (HTTP/WS URL or IPC path) to a Web3 or Alloy
-    backend, then **enforces** the connected RPC's ``eth_chainId`` equals
-    ``chain_id`` — raises :class:`ValueError` on mismatch (fail-fast).
+    Resolves the HTTP/IPC endpoint through the standard cascade
+    (:func:`degenbot.config.resolve_http_rpc_uri`): CLI arg > OS env
+    ``DEGENBOT_RPC_HTTP_CHAINID_{cid}`` > caller fallback > config.toml
+    ``rpc[cid]`` > raise. This is the single resolution path shared by the
+    library, the ``degenbot`` click CLI, and the backrun example (see
+    ``docs/migration-guides/rpc-uri-cascade.md``), so a plain ``export`` in the
+    devcontainer takes effect here too.
+
+    Maps the resolved endpoint (HTTP/WS URL or IPC path, detected by scheme) to
+    a Web3 or Alloy backend, then **enforces** the connected RPC's
+    ``eth_chainId`` equals ``chain_id`` — raises :class:`ValueError` on mismatch
+    (fail-fast).
 
     Args:
         chain_id: The chain ID to get a provider for
         optimize: Whether to optimize Web3 (removes middleware, uses fast JSON decoding)
         use_alloy: Force use of AlloyProvider (default: from env var DEGENBOT_USE_ALLOY_PROVIDER)
-        config: Optional config override; loaded from disk if not provided
+        config: Optional config override; loaded from disk if not provided (also
+            passed to the resolver as the config.toml layer)
 
     Returns:
         A ProviderAdapter wrapping either Web3 or AlloyProvider
 
     Raises:
-        ValueError: If no RPC is configured for ``chain_id``, or the connected
-            RPC's chain ID does not match ``chain_id``.
+        ValueError: If no RPC is configured for ``chain_id`` (raised as
+            :class:`RpcNotConfiguredError`, a ``ValueError`` subclass), or the
+            connected RPC's chain ID does not match ``chain_id``.
 
     """
     if use_alloy is None:
         use_alloy = _get_use_alloy_from_env()
     if config is None:
         config = _init_config()
-    match endpoint := config.rpc.get(chain_id):
-        case HttpUrl():
-            if use_alloy:
-                alloy = AlloyProvider(str(endpoint))
-                return ProviderAdapter.from_alloy(alloy)
-            w3 = Web3(HTTPProvider(str(endpoint)))
-        case WebsocketUrl():
-            if use_alloy:
-                alloy = AlloyProvider(str(endpoint))
-                return ProviderAdapter.from_alloy(alloy)
-            w3 = Web3(LegacyWebSocketProvider(str(endpoint)))
-        case Path():
-            if use_alloy:
-                alloy = AlloyProvider(str(endpoint))
-                return ProviderAdapter.from_alloy(alloy)
-            w3 = Web3(IPCProvider(str(endpoint)))
-        case None:
-            msg = f"Chain ID {chain_id} does not have an RPC defined in config file {CONFIG_FILE}"
-            raise ValueError(msg)
+    endpoint = resolve_http_rpc_uri(chain_id, config=config)
+    scheme = endpoint.lower()
+    if scheme.startswith(("http://", "https://")):
+        if use_alloy:
+            alloy = AlloyProvider(endpoint)
+            return ProviderAdapter.from_alloy(alloy)
+        w3 = Web3(HTTPProvider(endpoint))
+    elif scheme.startswith(("ws://", "wss://")):
+        if use_alloy:
+            alloy = AlloyProvider(endpoint)
+            return ProviderAdapter.from_alloy(alloy)
+        w3 = Web3(LegacyWebSocketProvider(endpoint))
+    else:
+        # Anything that isn't an http(s)/ws(s) URI is treated as an IPC socket
+        # path (config.toml ``rpc[cid]`` accepts a ``Path``).
+        ipc_path = Path(endpoint).expanduser().absolute()
+        if use_alloy:
+            alloy = AlloyProvider(str(ipc_path))
+            return ProviderAdapter.from_alloy(alloy)
+        w3 = Web3(IPCProvider(str(ipc_path)))
 
     if w3.eth.chain_id != chain_id:
         msg = (
@@ -126,10 +137,12 @@ async def get_async_provider_from_config(
     chain_id: int,
     config: DegenbotConfig | None = None,
 ) -> AsyncProviderAdapter:
-    """Build an :class:`AsyncProviderAdapter` for ``chain_id`` from the config's RPC entry.
+    """Build an :class:`AsyncProviderAdapter` for ``chain_id`` from the resolved RPC entry.
 
-    Async counterpart of :func:`get_provider_from_config`. Constructs an async
-    Alloy provider from the configured endpoint, then **enforces** the
+    Async counterpart of :func:`get_provider_from_config`. Resolves the
+    HTTP/IPC endpoint through the standard cascade
+    (:func:`degenbot.config.resolve_http_rpc_uri`) — same precedence as the
+    sync factory — constructs an async Alloy provider, then **enforces** the
     connected RPC's ``eth_chainId`` equals ``chain_id`` via an awaited
     ``get_chain_id()`` (async providers cannot read it synchronously) —
     raises :class:`ValueError` on mismatch (fail-fast, ADR-006 D5).
@@ -138,17 +151,15 @@ async def get_async_provider_from_config(
         An AsyncProviderAdapter wrapping a Rust AsyncAlloyProvider.
 
     Raises:
-        ValueError: If no RPC is configured for ``chain_id``, or the connected
-            RPC's chain ID does not match ``chain_id``.
+        ValueError: If no RPC is configured for ``chain_id`` (raised as
+            :class:`RpcNotConfiguredError`, a ``ValueError`` subclass), or the
+            connected RPC's chain ID does not match ``chain_id``.
 
     """
     if config is None:
         config = _init_config()
-    endpoint = config.rpc.get(chain_id)
-    if endpoint is None:
-        msg = f"Chain ID {chain_id} does not have an RPC defined in config file {CONFIG_FILE}"
-        raise ValueError(msg)
-    alloy = await AsyncAlloyProvider.create(str(endpoint))
+    endpoint = resolve_http_rpc_uri(chain_id, config=config)
+    alloy = await AsyncAlloyProvider.create(endpoint)
     adapter = AsyncProviderAdapter.from_alloy(alloy)
     actual = await adapter.get_chain_id()
     if actual != chain_id:

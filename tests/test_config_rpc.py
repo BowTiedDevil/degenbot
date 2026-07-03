@@ -21,7 +21,12 @@ from pathlib import Path
 import pytest
 
 from degenbot import config as config_module
-from degenbot.config import RpcNotConfiguredError, resolve_rpc_uris
+from degenbot.config import (
+    RpcNotConfiguredError,
+    resolve_http_rpc_uri,
+    resolve_rpc_uris,
+    resolve_ws_rpc_uri,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -47,14 +52,14 @@ def _write_config(
 ) -> None:
     """Write a valid config.toml (``DegenbotConfig`` requires ``database`` + ``rpc``)."""
     lines: list[str] = [
-        '[database]',
+        "[database]",
         'path = ":memory:"',
-        '[rpc]',
+        "[rpc]",
     ]
     for cid, uri in (rpc or {}).items():
         lines.append(f'{cid} = "{uri}"')
     if ws:
-        lines.append('[ws]')
+        lines.append("[ws]")
         for cid, uri in ws.items():
             lines.append(f'{cid} = "{uri}"')
     cfg.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -146,7 +151,11 @@ class TestFallbackRank:
         isolated_config_file: Path,
     ) -> None:
         monkeypatch.delenv(_http_env(1), raising=False)
-        _write_config(isolated_config_file, rpc={1: "http://from-config:8545"}, ws={1: "ws://from-config:8546"})
+        _write_config(
+            isolated_config_file,
+            rpc={1: "http://from-config:8545"},
+            ws={1: "ws://from-config:8546"},
+        )
 
         http, ws = resolve_rpc_uris(
             1,
@@ -227,9 +236,7 @@ class TestNotConfigured:
         with pytest.raises(ValueError):
             resolve_rpc_uris(999)
 
-    def test_http_only_still_raises_for_ws(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_http_only_still_raises_for_ws(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Q4=B: each URI resolves independently
         monkeypatch.delenv(_ws_env(999), raising=False)
 
@@ -239,9 +246,7 @@ class TestNotConfigured:
         # the message must say which of http/ws was missing
         assert "ws" in str(exc_info.value).lower()
 
-    def test_ws_only_still_raises_for_http(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_ws_only_still_raises_for_http(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(_http_env(999), raising=False)
 
         with pytest.raises(RpcNotConfiguredError) as exc_info:
@@ -267,3 +272,101 @@ class TestIndependentResolution:
         assert http == "https://from-cli.example"
         # pydantic WebsocketUrl normalizes the empty path to "/"
         assert ws == "ws://from-config:8546/"
+
+
+# ── single-URI resolvers ─────────────────────────────────────────
+
+
+class TestResolveHttpOnly:
+    """``resolve_http_rpc_uri`` walks the same cascade for HTTP alone.
+
+    The provider factory is HTTP-only (pool updater needs ``eth_getLogs``, not a
+    subscription), so a missing/unconfigured WS must not block it. The single-URI
+    resolver shares the precedence list but raises only when *its* URI is
+    unresolved.
+    """
+
+    def test_cli_beats_env_and_config(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_config_file: Path,
+    ) -> None:
+        monkeypatch.setenv(_http_env(1), "https://env.example")
+        _write_config(isolated_config_file, rpc={1: "http://from-config:8545"})
+
+        assert (
+            resolve_http_rpc_uri(1, cli_http="https://from-cli.example")
+            == "https://from-cli.example"
+        )
+
+    def test_env_beats_config(
+        self, monkeypatch: pytest.MonkeyPatch, isolated_config_file: Path
+    ) -> None:
+        _write_config(isolated_config_file, rpc={1: "http://localhost:8545"})
+        monkeypatch.setenv(_http_env(1), "https://env.example")
+
+        assert resolve_http_rpc_uri(1) == "https://env.example"
+
+    def test_config_layer_when_no_higher_source(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_config_file: Path,
+    ) -> None:
+        monkeypatch.delenv(_http_env(1), raising=False)
+        _write_config(isolated_config_file, rpc={1: "http://from-config:8545"})
+
+        assert resolve_http_rpc_uri(1) == "http://from-config:8545/"
+
+    def test_fallback_between_env_and_config(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_config_file: Path,
+    ) -> None:
+        monkeypatch.delenv(_http_env(1), raising=False)
+        _write_config(isolated_config_file, rpc={1: "http://from-config:8545"})
+
+        assert (
+            resolve_http_rpc_uri(1, fallback_http="https://fallback.example")
+            == "https://fallback.example"
+        )
+
+    def test_raises_with_envvar_named_when_no_source(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(_http_env(999), raising=False)
+
+        with pytest.raises(RpcNotConfiguredError) as exc_info:
+            resolve_http_rpc_uri(999)
+
+        assert _http_env(999) in str(exc_info.value)
+
+    def test_accepts_preloaded_config(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_config_file: Path,
+    ) -> None:
+        """A caller-supplied config short-circuits the disk read (factory path)."""
+        monkeypatch.delenv(_http_env(1), raising=False)
+        _write_config(isolated_config_file, rpc={1: "http://from-config:8545"})
+        from degenbot.config import load_config_from_file
+
+        cfg = load_config_from_file(isolated_config_file)
+
+        assert resolve_http_rpc_uri(1, config=cfg) == "http://from-config:8545/"
+
+
+class TestResolveWsOnly:
+    """Symmetric WS-only resolution."""
+
+    def test_ws_from_cli(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(_ws_env(1), "wss://env.example")
+
+        assert resolve_ws_rpc_uri(1, cli_ws="wss://from-cli.example") == "wss://from-cli.example"
+
+    def test_ws_from_config(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        isolated_config_file: Path,
+    ) -> None:
+        monkeypatch.delenv(_ws_env(1), raising=False)
+        _write_config(isolated_config_file, ws={1: "ws://from-config:8546"})
+
+        assert resolve_ws_rpc_uri(1) == "ws://from-config:8546/"

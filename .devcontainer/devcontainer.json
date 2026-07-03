@@ -183,7 +183,17 @@
     "ETHEREUM_ARCHIVE_NODE_HTTP_URI": "http://host.containers.internal:8545/",
     "ETHEREUM_ARCHIVE_NODE_WS_URI": "ws://host.containers.internal:8546/",
     "ETHEREUM_FULL_NODE_HTTP_URI": "http://host.containers.internal:8545/",
-    "ETHEREUM_FULL_NODE_WS_URI": "ws://host.containers.internal:8546/"
+    "ETHEREUM_FULL_NODE_WS_URI": "ws://host.containers.internal:8546/",
+    // Canonical degenbot RPC cascade for chain 1 (Ethereum mainnet). The
+    // library/provider-factory resolver (`resolve_rpc_uris`, see
+    // docs/migration-guides/rpc-uri-cascade.md) is chain-id-discriminated — it
+    // consults `DEGENBOT_RPC_{HTTP,WS}_CHAINID_{cid}` (NOT the test-scoped
+    // ETHEREUM_*_NODE_*_URI pair above) before reading config.toml. Setting
+    // them here reuses the same host anvil endpoint so a plain `uv run degenbot
+    // ...` CLI run resolves to host.containers.internal instead of the
+    // container's own loopback (`rpc[1]=http://localhost:8545` in config.toml).
+    "DEGENBOT_RPC_HTTP_CHAINID_1": "http://host.containers.internal:8545",
+    "DEGENBOT_RPC_WS_CHAINID_1": "ws://host.containers.internal:8546"
   },
   // Extensions auto-installed into the container on first launch. The interpreter
   // is pinned to the container-local venv (UV_PROJECT_ENVIRONMENT above), NOT the
