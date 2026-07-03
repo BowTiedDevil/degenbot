@@ -34,6 +34,7 @@ from degenbot.database.operations import (
     upgrade_existing_sqlite_database,
 )
 from degenbot.degenbot_rs import (
+    DatabaseSchemaStale,
     db_backup_database,
     db_create_new_database,
     db_upgrade_database,
@@ -51,9 +52,7 @@ def _alembic_head(db_path: pathlib.Path) -> str:
     engine = create_engine(f"sqlite:///{db_path}")
     try:
         with engine.connect() as conn:
-            return conn.execute(
-                text("SELECT version_num FROM alembic_version")
-            ).scalar()
+            return conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
     finally:
         engine.dispose()
 
@@ -142,6 +141,126 @@ def test_upgrade_on_empty_file_brings_up_to_head(tmp_path: pathlib.Path):
     outcome = db_upgrade_database(str(db_path))
     assert outcome == "created_fresh"
     assert _alembic_head(db_path) == _alembic_head_expected()
+
+
+def _stamp_at_old_revision(db_path: pathlib.Path, old_revision: str) -> None:
+    """Simulate a real user DB stamped at an older Alembic revision.
+
+    A 0.6.0a2 user ships a DB at ``e0aaad8ad486`` (the dev branch's one
+    migration ``2606a6c7f5ee`` is the only thing newer, and it just adds
+    ``ix_erc20_tokens_chain``). We reproduce that exact state from a fresh
+    head DB by dropping the index + re-stamping the version row.
+    """
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("DROP INDEX IF EXISTS ix_erc20_tokens_chain;"))
+            conn.execute(
+                text("UPDATE alembic_version SET version_num = :rev;"),
+                {"rev": old_revision},
+            )
+    finally:
+        engine.dispose()
+
+
+def test_upgrade_on_stale_alembic_db_runs_migration(tmp_path: pathlib.Path):
+    """A DB stamped at the prior revision is migrated to head by the upgrade shell.
+
+    The Rust core rejects a stale Alembic DB (`AlembicStale`) — the Python
+    shell must catch that and run ``alembic upgrade head`` so published-DB
+    users (e.g. 0.6.0a2 at ``e0aaad8ad486``) can upgrade. This is the user-
+    facing contract of ``degenbot database upgrade``.
+    """
+    db_path = tmp_path / "stale.db"
+    create_new_sqlite_database(db_path)
+    head_revision = _alembic_head_expected()
+    parent_revision = _parent_revision(db_path, head_revision)
+    _stamp_at_old_revision(db_path, parent_revision)
+
+    # sanity: the Rust fast-path alone rejects this DB (typed exception, not a
+    # raw ValueError, and the message points users at `degenbot database upgrade`)
+    with pytest.raises(DatabaseSchemaStale, match=r"degenbot database upgrade"):
+        db_upgrade_database(str(db_path))
+
+    outcome = upgrade_existing_sqlite_database(db_path)
+
+    assert _alembic_head(db_path) == head_revision
+    assert _index_exists(db_path, "ix_erc20_tokens_chain")
+    assert outcome in {"upgraded_from_stale", "already_at_head"}
+
+
+def test_upgrade_on_stale_alembic_db_rust_rejects_first(tmp_path: pathlib.Path):
+    """The Rust core's fast-path is the first attempt; only on rejection does
+    the Python shell fall back to the Alembic migration runner.
+
+    The rejection surfaces as a dedicated ``DatabaseSchemaStale`` exception
+    (subclass of ``ValueError`` so the upgrade shell's broad catch keeps
+    working) carrying the *user-facing* message — it tells the operator to
+    run ``degenbot database upgrade``, not the developer-oriented
+    ``alembic upgrade head``.
+    """
+    db_path = tmp_path / "stale2.db"
+    create_new_sqlite_database(db_path)
+    parent_revision = _parent_revision(db_path, _alembic_head_expected())
+    _stamp_at_old_revision(db_path, parent_revision)
+    with pytest.raises(DatabaseSchemaStale, match=r"degenbot database upgrade") as exc_info:
+        db_upgrade_database(str(db_path))
+    # Still a ValueError so existing broad handlers keep catching it.
+    assert isinstance(exc_info.value, ValueError)
+
+
+def test_cli_group_catches_stale_db_without_traceback():
+    """A stale-DB error surfacing from any subcommand prints a friendly
+    one-line message and exits 1 — no Python traceback.
+
+    The CLI group's ``invoke`` catches ``DatabaseSchemaStale`` so end users
+    see the remediation hint instead of a wall of stack frames.
+    """
+    import click
+    from click.testing import CliRunner
+
+    from degenbot.cli import DegenbotCLI
+
+    # Build a throwaway group with the SAME custom class the real CLI uses,
+    # plus a stub subcommand that raises the stale error directly.
+    @click.group(cls=DegenbotCLI)
+    def grp() -> None:
+        """test group."""
+
+    @grp.command()
+    def boom() -> None:
+        """Raise a stale-DB error to exercise the group's catch."""
+        stale_msg = "The database schema is stale. Run 'degenbot database upgrade'."
+        raise DatabaseSchemaStale(stale_msg)
+
+    result = CliRunner().invoke(grp, ["boom"])
+    assert result.exit_code == 1
+    assert "degenbot database upgrade" in result.output
+    # No traceback leaked to the user.
+    assert "Traceback" not in result.output
+
+
+def _parent_revision(db_path: pathlib.Path, head_revision: str) -> str:
+    script = ScriptDirectory.from_config(
+        config=get_alembic_config(database_path=db_path),
+    )
+    head_script = next(r for r in script.walk_revisions() if r.revision == head_revision)
+    parent = head_script.down_revision
+    assert isinstance(parent, str), "expected a single parent for the head"
+    return parent
+
+
+def _index_exists(db_path: pathlib.Path, index_name: str) -> bool:
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='index' AND name=:n;"),
+                {"n": index_name},
+            ).scalar()
+            return row is not None
+    finally:
+        engine.dispose()
 
 
 def _session_for(db_path: pathlib.Path) -> Session:
