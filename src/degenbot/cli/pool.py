@@ -10,7 +10,6 @@ import tqdm
 from eth_typing.evm import BlockParams, ChecksumAddress
 from hexbytes import HexBytes
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 from tqdm.contrib.logging import logging_redirect_tqdm
 from web3.types import LogReceipt
 
@@ -29,23 +28,14 @@ from degenbot.cli.pool_updater_configs import (
 from degenbot.cli.utils import get_provider_from_config
 from degenbot.database.models.base import ExchangeTable
 from degenbot.database.models.pools import (
-    AerodromeV2PoolTable,
-    AerodromeV3PoolTable,
-    PancakeswapV2PoolTable,
-    PancakeswapV3PoolTable,
     PoolManagerTable,
-    SushiswapV2PoolTable,
-    SushiswapV3PoolTable,
-    SwapbasedV2PoolTable,
-    UniswapV2PoolTable,
-    UniswapV3PoolTable,
-    UniswapV4PoolTable,
 )
 from degenbot.degenbot_rs import (
     LiquidityUpdateEvent,
     db_apply_v3_liquidity_updates,
     db_apply_v4_liquidity_updates,
     db_fetch_pool_row,
+    db_set_exchange_last_update_block,
 )
 from degenbot.logging import logger
 from degenbot.provider import ProviderAdapter
@@ -233,7 +223,6 @@ def apply_v4_liquidity_updates(
 _V2_CONFIGS: dict[str, V2PoolUpdateConfig] = {
     "aerodrome_v2": V2PoolUpdateConfig(
         name="aerodrome_v2",
-        database_type=AerodromeV2PoolTable,
         event_hash=AERODROME_V2_POOLCREATED_EVENT_HASH,
         fee_token0=0,  # Overridden by RPC
         fee_token1=0,  # Overridden by RPC
@@ -245,7 +234,6 @@ _V2_CONFIGS: dict[str, V2PoolUpdateConfig] = {
     ),
     "pancakeswap_v2": V2PoolUpdateConfig(
         name="pancakeswap_v2",
-        database_type=PancakeswapV2PoolTable,
         event_hash=PANCAKESWAP_V2_PAIRCREATED_EVENT_HASH,
         fee_token0=25,
         fee_token1=25,
@@ -253,7 +241,6 @@ _V2_CONFIGS: dict[str, V2PoolUpdateConfig] = {
     ),
     "sushiswap_v2": V2PoolUpdateConfig(
         name="sushiswap_v2",
-        database_type=SushiswapV2PoolTable,
         event_hash=SUSHISWAP_V2_PAIRCREATED_EVENT_HASH,
         fee_token0=3,
         fee_token1=3,
@@ -261,7 +248,6 @@ _V2_CONFIGS: dict[str, V2PoolUpdateConfig] = {
     ),
     "swapbased_v2": V2PoolUpdateConfig(
         name="swapbased_v2",
-        database_type=SwapbasedV2PoolTable,
         event_hash=SWAPBASED_V2_PAIRCREATED_EVENT_HASH,
         fee_token0=3,
         fee_token1=3,
@@ -269,7 +255,6 @@ _V2_CONFIGS: dict[str, V2PoolUpdateConfig] = {
     ),
     "uniswap_v2": V2PoolUpdateConfig(
         name="uniswap_v2",
-        database_type=UniswapV2PoolTable,
         event_hash=UNISWAP_V2_PAIRCREATED_EVENT_HASH,
         fee_token0=3,
         fee_token1=3,
@@ -280,7 +265,6 @@ _V2_CONFIGS: dict[str, V2PoolUpdateConfig] = {
 _V3_CONFIGS: dict[str, V3PoolUpdateConfig] = {
     "aerodrome_v3": V3PoolUpdateConfig(
         name="aerodrome_v3",
-        database_type=AerodromeV3PoolTable,
         event_hash=AERODROME_V3_POOLCREATED_EVENT_HASH,
         fee_denominator=1_000_000,
         rpc_fee_call="getSwapFee(address)",
@@ -288,19 +272,16 @@ _V3_CONFIGS: dict[str, V3PoolUpdateConfig] = {
     ),
     "pancakeswap_v3": V3PoolUpdateConfig(
         name="pancakeswap_v3",
-        database_type=PancakeswapV3PoolTable,
         event_hash=PANCAKESWAP_V3_POOLCREATED_EVENT_HASH,
         fee_denominator=1_000_000,
     ),
     "sushiswap_v3": V3PoolUpdateConfig(
         name="sushiswap_v3",
-        database_type=SushiswapV3PoolTable,
         event_hash=SUSHISWAP_V3_POOLCREATED_EVENT_HASH,
         fee_denominator=1_000_000,
     ),
     "uniswap_v3": V3PoolUpdateConfig(
         name="uniswap_v3",
-        database_type=UniswapV3PoolTable,
         event_hash=UNISWAP_V3_POOLCREATED_EVENT_HASH,
         fee_denominator=1_000_000,
     ),
@@ -309,7 +290,6 @@ _V3_CONFIGS: dict[str, V3PoolUpdateConfig] = {
 _V4_CONFIGS: dict[str, V4PoolUpdateConfig] = {
     "uniswap_v4": V4PoolUpdateConfig(
         name="uniswap_v4",
-        database_type=UniswapV4PoolTable,
         event_hash=UNISWAP_V4_POOLCREATED_EVENT_HASH,
         fee_denominator=1_000_000,
     ),
@@ -321,7 +301,8 @@ def _pool_updater(
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
-    session: Session,
+    *,
+    database_path: str,
 ) -> None:
     """Dispatch to the appropriate parameterized pool updater.
 
@@ -337,7 +318,7 @@ def _pool_updater(
             start_block,
             end_block,
             exchange,
-            session,
+            database_path=database_path,
             config=_V2_CONFIGS[exchange_name],
             get_events_fn=get_events_from_contract,
         )
@@ -347,7 +328,7 @@ def _pool_updater(
             start_block,
             end_block,
             exchange,
-            session,
+            database_path=database_path,
             config=_V3_CONFIGS[exchange_name],
             get_events_fn=get_events_from_contract,
         )
@@ -357,7 +338,7 @@ def _pool_updater(
             start_block,
             end_block,
             exchange,
-            session,
+            database_path=database_path,
             config=_V4_CONFIGS[exchange_name],
             get_events_fn=get_events_from_contract,
         )
@@ -496,7 +477,7 @@ def pool_update(bot: Bot, chunk_size: int, to_block: str) -> None:
                         working_start_block,
                         working_end_block,
                         exchange,
-                        session,
+                        database_path=str(bot.config.database.path),
                     )
 
                 # Fetch and process V3 liquidity events
@@ -560,7 +541,12 @@ def pool_update(bot: Bot, chunk_size: int, to_block: str) -> None:
                 # At this point, all exchanges have been updated and the invariant checks have
                 # passed, so stamp the update block and commit to the DB
                 for exchange in exchanges_to_update:
-                    exchange.last_update_block = working_end_block
+                    db_set_exchange_last_update_block(
+                        database_path=str(bot.config.database.path),
+                        chain_id=exchange.chain_id,
+                        exchange_id=exchange.id,
+                        block=working_end_block,
+                    )
                 exchanges_to_update.clear()
                 session.commit()
 
@@ -660,7 +646,7 @@ def get_v4_liquidity_events(
 
 POOL_UPDATER: dict[
     tuple[ChainId, str],
-    Callable[[ProviderAdapter, int, int, ExchangeTable, Session], None],
+    Callable[..., None],
 ] = {
     (eth_typing.ChainId.BASE, "aerodrome_v2"): _pool_updater,
     (eth_typing.ChainId.BASE, "aerodrome_v3"): _pool_updater,

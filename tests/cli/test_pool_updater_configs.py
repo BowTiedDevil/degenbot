@@ -18,7 +18,6 @@ class TestV2PoolUpdateConfig:
     def test_frozen(self):
         config = V2PoolUpdateConfig(
             name="test_v2",
-            database_type=type("FakeTable", (), {}),
             event_hash=b"\x01",
             fee_token0=3,
             fee_token1=3,
@@ -30,7 +29,6 @@ class TestV2PoolUpdateConfig:
     def test_defaults(self):
         config = V2PoolUpdateConfig(
             name="test_v2",
-            database_type=type("FakeTable", (), {}),
             event_hash=b"\x01",
             fee_token0=3,
             fee_token1=3,
@@ -45,7 +43,6 @@ class TestV2PoolUpdateConfig:
         """V2 config with stable flag and RPC fee call (Aerodrome pattern)."""
         config = V2PoolUpdateConfig(
             name="aerodrome_v2",
-            database_type=type("FakeTable", (), {}),
             event_hash=b"\x01",
             fee_token0=0,
             fee_token1=0,
@@ -66,7 +63,6 @@ class TestV3PoolUpdateConfig:
     def test_frozen(self):
         config = V3PoolUpdateConfig(
             name="test_v3",
-            database_type=type("FakeTable", (), {}),
             event_hash=b"\x01",
             fee_denominator=1_000_000,
         )
@@ -76,7 +72,6 @@ class TestV3PoolUpdateConfig:
     def test_defaults(self):
         config = V3PoolUpdateConfig(
             name="test_v3",
-            database_type=type("FakeTable", (), {}),
             event_hash=b"\x01",
             fee_denominator=1_000_000,
         )
@@ -87,7 +82,6 @@ class TestV3PoolUpdateConfig:
         """V3 config with RPC fee call (Aerodrome V3 pattern)."""
         config = V3PoolUpdateConfig(
             name="aerodrome_v3",
-            database_type=type("FakeTable", (), {}),
             event_hash=b"\x01",
             fee_denominator=1_000_000,
             rpc_fee_call="getSwapFee(address)",
@@ -102,7 +96,6 @@ class TestV4PoolUpdateConfig:
     def test_frozen(self):
         config = V4PoolUpdateConfig(
             name="test_v4",
-            database_type=type("FakeTable", (), {}),
             event_hash=b"\x01",
             fee_denominator=1_000_000,
         )

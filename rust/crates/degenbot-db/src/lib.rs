@@ -34,6 +34,7 @@
 
 pub mod aave;
 pub mod connection;
+pub mod discovery;
 pub mod error;
 pub mod liquidity_updater;
 pub mod migrate;
@@ -49,6 +50,7 @@ pub use aave::{AaveCollateralPositionRecord, AaveDebtPositionRecord, AaveUserRec
 pub use connection::DegenbotDb;
 pub use error::DbError;
 pub use liquidity_updater::{BlockLog, LiquidityUpdateEvent, PoolUpdateState};
+pub use discovery::{V2PoolRowInput, V3PoolRowInput, V4PoolRowInput};
 pub use migrate::SchemaState;
 pub use ops::{
     backup_database, compact_database, create_new_database, upgrade_database, UpgradeOutcome,

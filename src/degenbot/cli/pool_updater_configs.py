@@ -9,25 +9,36 @@ Replaces 14 near-identical updater functions with 3 parameterized functions:
   (pool_hash/currency0/currency1 from topics, fee/tick_spacing/hooks from data)
 
 Each accepts a configuration dataclass that captures the DEX-specific variations
-(database table, event hash, fee values, optional RPC calls).
+(event hash, fee values, optional RPC calls).
+
+WR7EA6 (split out of QJSCA5): the ``erc20_tokens`` get-or-create escalate +
+the polymorphic pool-row insert + the ``ExchangeTable.last_update_block``
+stamp are owned by the Rust core (``db_upsert_v2/v3/v4_pools`` +
+``db_set_exchange_last_update_block`` seams over ``degenbot-db``'s
+``discovery`` substrate). These shells decode the raw ``PoolCreated``
+``LogReceipt``s (topics/data → addresses/fee/tick-spacing) + do the RPC fee
+lookup, then build row-input lists + delegate — the event-scan driver loop +
+RPC event fetch stay Python (``stays-python``).
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
 
 import tqdm
-from eth_typing import ChecksumAddress
 from hexbytes import HexBytes
-from sqlalchemy import select
-from sqlalchemy.orm import Session
 from web3.types import LogReceipt
 
 from degenbot import abi_decode
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.base import ExchangeTable
-from degenbot.database.models.erc20 import Erc20TokenTable
-from degenbot.database.models.pools import PoolManagerTable
+from degenbot.degenbot_rs import (
+    V2PoolRowInput,
+    V3PoolRowInput,
+    V4PoolRowInput,
+    db_upsert_v2_pools,
+    db_upsert_v3_pools,
+    db_upsert_v4_pools,
+)
 from degenbot.provider import ProviderAdapter
 from degenbot.provider.call_helpers import encode_function_calldata, raw_call
 
@@ -44,7 +55,6 @@ class V2PoolUpdateConfig:
     """
 
     name: str
-    database_type: type
     event_hash: bytes
     fee_token0: int
     fee_token1: int
@@ -71,7 +81,6 @@ class V3PoolUpdateConfig:
     """
 
     name: str
-    database_type: type
     event_hash: bytes
     fee_denominator: int
     # If set, call this RPC method to get fee instead of using topics[3]
@@ -91,29 +100,8 @@ class V4PoolUpdateConfig:
     """
 
     name: str
-    database_type: type
     event_hash: bytes
     fee_denominator: int
-
-
-def _get_or_create_token(
-    session: Session,
-    chain_id: int,
-    address: ChecksumAddress,
-) -> Erc20TokenTable:
-    if (
-        token := session.scalar(
-            select(Erc20TokenTable).where(
-                Erc20TokenTable.chain == chain_id,
-                Erc20TokenTable.address == address,
-            ),
-        )
-    ) is None:
-        token = Erc20TokenTable(chain=chain_id, address=address)
-        session.add(token)
-        session.flush()
-
-    return token
 
 
 def update_v2_pools(
@@ -121,12 +109,20 @@ def update_v2_pools(
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
-    session: Session,
     *,
+    database_path: str,
     config: V2PoolUpdateConfig,
     get_events_fn: Callable[..., list[LogReceipt]],
 ) -> None:
-    """Process V2-style pool creation events for a DEX."""
+    """Process V2-style pool creation events for a DEX.
+
+    WR7EA6: the ``erc20_tokens`` get-or-create + the polymorphic pool-row
+    insert are owned by the Rust core (``db_upsert_v2_pools``); this shell
+    decodes the raw ``PoolCreated`` events + does the optional RPC fee
+    lookup, then builds row-input records + delegates. The event-scan
+    driver loop + RPC event fetch stay Python.
+
+    """
     new_pool_events = get_events_fn(
         provider=provider,
         start_block=start_block,
@@ -138,6 +134,7 @@ def update_v2_pools(
     if not new_pool_events:
         return
 
+    rows: list[V2PoolRowInput] = []
     for new_pool_event in tqdm.tqdm(
         new_pool_events,
         desc="Adding new pools",
@@ -153,13 +150,11 @@ def update_v2_pools(
         if config.has_stable_flag:
             (stable,) = abi_decode(["bool"], new_pool_event["topics"][3])
 
-        token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
-        token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
-
         pool_address, _ = abi_decode(
             types=["address", "uint256"],
             data=new_pool_event["data"],
         )
+        pool_address = get_checksum_address(pool_address)
 
         # Determine fee: either from RPC call or constant
         if config.rpc_fee_call is not None:
@@ -179,21 +174,25 @@ def update_v2_pools(
             fee_token0 = config.fee_token0
             fee_token1 = config.fee_token1
 
-        record_kwargs: dict[str, Any] = {
-            "exchange_id": exchange.id,
-            "address": get_checksum_address(pool_address),
-            "chain": provider.chain_id,
-            "token0_id": token0_in_db.id,
-            "token1_id": token1_in_db.id,
-            "fee_token0": fee_token0,
-            "fee_token1": fee_token1,
-            "fee_denominator": config.fee_denominator,
-        }
+        rows.append(
+            V2PoolRowInput(
+                address=pool_address,
+                token0_address=token0,
+                token1_address=token1,
+                fee_token0=fee_token0,
+                fee_token1=fee_token1,
+                stable=stable if config.has_stable_flag else None,
+            ),
+        )
 
-        if config.has_stable_flag:
-            record_kwargs["stable"] = stable
-
-        session.add(config.database_type(**record_kwargs))
+    db_upsert_v2_pools(
+        database_path=database_path,
+        chain_id=exchange.chain_id,
+        kind=exchange.name,
+        exchange_id=exchange.id,
+        fee_denominator=config.fee_denominator,
+        rows=rows,
+    )
 
 
 def update_v3_pools(
@@ -201,12 +200,19 @@ def update_v3_pools(
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
-    session: Session,
     *,
+    database_path: str,
     config: V3PoolUpdateConfig,
     get_events_fn: Callable[..., list[LogReceipt]],
 ) -> None:
-    """Process V3-style pool creation events for a DEX."""
+    """Process V3-style pool creation events for a DEX.
+
+    WR7EA6: the ``erc20_tokens`` get-or-create + the polymorphic pool-row
+    insert are owned by the Rust core (``db_upsert_v3_pools``); this shell
+    decodes the raw ``PoolCreated`` events + does the optional RPC fee
+    override lookup (Aerodrome), then builds row-input records + delegates.
+
+    """
     new_pool_events = get_events_fn(
         provider=provider,
         start_block=start_block,
@@ -218,6 +224,7 @@ def update_v3_pools(
     if not new_pool_events:
         return
 
+    rows: list[V3PoolRowInput] = []
     for new_pool_event in tqdm.tqdm(
         new_pool_events,
         desc="Adding new pools",
@@ -231,13 +238,11 @@ def update_v3_pools(
 
         (fee,) = abi_decode(["uint24"], new_pool_event["topics"][3])
 
-        token0_in_db = _get_or_create_token(session, exchange.chain_id, token0)
-        token1_in_db = _get_or_create_token(session, exchange.chain_id, token1)
-
         tick_spacing, pool_address = abi_decode(
             types=["int24", "address"],
             data=new_pool_event["data"],
         )
+        pool_address = get_checksum_address(pool_address)
 
         # Aerodrome V3: override fee from RPC
         if config.rpc_fee_call is not None:
@@ -251,19 +256,24 @@ def update_v3_pools(
                 return_types=config.rpc_fee_return_types,
             )
 
-        session.add(
-            config.database_type(
-                exchange_id=exchange.id,
-                address=get_checksum_address(pool_address),
-                chain=exchange.chain_id,
-                token0_id=token0_in_db.id,
-                token1_id=token1_in_db.id,
-                fee_token0=fee,
-                fee_token1=fee,
-                fee_denominator=config.fee_denominator,
+        rows.append(
+            V3PoolRowInput(
+                address=pool_address,
+                token0_address=token0,
+                token1_address=token1,
+                fee=fee,
                 tick_spacing=tick_spacing,
             ),
         )
+
+    db_upsert_v3_pools(
+        database_path=database_path,
+        chain_id=exchange.chain_id,
+        kind=exchange.name,
+        exchange_id=exchange.id,
+        fee_denominator=config.fee_denominator,
+        rows=rows,
+    )
 
 
 def update_v4_pools(
@@ -271,17 +281,20 @@ def update_v4_pools(
     start_block: int,
     end_block: int,
     exchange: ExchangeTable,
-    session: Session,
     *,
+    database_path: str,
     config: V4PoolUpdateConfig,
     get_events_fn: Callable[..., list[LogReceipt]],
 ) -> None:
-    """Process V4-style pool creation events for a DEX."""
-    manager_in_db = session.scalar(
-        select(PoolManagerTable).where(PoolManagerTable.address == exchange.factory),
-    )
-    assert manager_in_db is not None
+    """Process V4-style pool creation events for a DEX.
 
+    WR7EA6: the ``PoolManagerTable`` lookup (by ``exchange.factory``) + the
+    ``erc20_tokens`` get-or-create + the ``managed_pools`` / ``uniswap_v4_pools``
+    insert are owned by the Rust core (``db_upsert_v4_pools``); this shell
+    decodes the raw ``PoolCreated`` events, then builds row-input records +
+    delegates.
+
+    """
     new_pool_events = get_events_fn(
         provider=provider,
         start_block=start_block,
@@ -293,6 +306,7 @@ def update_v4_pools(
     if not new_pool_events:
         return
 
+    rows: list[V4PoolRowInput] = []
     for new_pool_event in tqdm.tqdm(
         new_pool_events,
         desc="Adding new pools",
@@ -307,25 +321,27 @@ def update_v4_pools(
         currency0 = get_checksum_address(currency0)
         currency1 = get_checksum_address(currency1)
 
-        currency0_in_db = _get_or_create_token(session, exchange.chain_id, currency0)
-        currency1_in_db = _get_or_create_token(session, exchange.chain_id, currency1)
-
         fee, tick_spacing, hooks = abi_decode(
             ["uint24", "int24", "address"],
             new_pool_event["data"],
         )
         hooks = get_checksum_address(hooks)
 
-        session.add(
-            config.database_type(
-                manager_id=manager_in_db.id,
+        rows.append(
+            V4PoolRowInput(
                 pool_hash=pool_hash,
                 hooks=hooks,
-                currency0_id=currency0_in_db.id,
-                currency1_id=currency1_in_db.id,
-                fee_currency0=fee,
-                fee_currency1=fee,
-                fee_denominator=config.fee_denominator,
+                currency0_address=currency0,
+                currency1_address=currency1,
+                fee=fee,
                 tick_spacing=tick_spacing,
             ),
         )
+
+    db_upsert_v4_pools(
+        database_path=database_path,
+        chain_id=exchange.chain_id,
+        pool_manager_address=get_checksum_address(exchange.factory),
+        fee_denominator=config.fee_denominator,
+        rows=rows,
+    )
