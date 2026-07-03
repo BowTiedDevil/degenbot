@@ -32,4 +32,23 @@ echo ">>> creating container-local venv (UV_PROJECT_ENVIRONMENT) and syncing pro
 cd /workspaces/degenbot
 uv venv --allow-existing "$UV_PROJECT_ENVIRONMENT"
 uv sync
+
+# Self-heal a poisoned editable install. uv's rebuild-on-`uv run` (driven by
+# [tool.uv] cache-keys watching the .rs sources) only fires when the editable
+# install's `.pth` points at the LIVE repo — it keys staleness off that path.
+# A venv snapshotted on another machine (e.g. repo at /home/btd/code/degenbot
+# there but /workspaces/degenbot here) carries a `.pth` whose path is dead in
+# this container, so uv's "is it fresh?" check silently short-circuits and
+# `uv run` loads whatever stale .so sits in the source tree. Detect that drift
+# and force a clean reinstall so the .pth is re-pointed correctly.
+LIVE_SRC="/workspaces/degenbot/src"
+while read -r pth; do
+	if ! grep -qxF "$LIVE_SRC" "$pth"; then
+		echo ">>> editable .pth is stale/mispointed; repairing editable install"
+		echo "    offending: $pth -> $(cat "$pth")"
+		uv sync --reinstall-package degenbot
+		break
+	fi
+done < <(find "$UV_PROJECT_ENVIRONMENT" -name degenbot.pth -type f 2>/dev/null)
+
 just setup-git-hooks 

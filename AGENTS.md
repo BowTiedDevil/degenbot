@@ -51,7 +51,12 @@ Uses `just` (see justfile) and `uv` as the package runner. Key commands:
 - `just test-rust` - Run Rust tests
 - `just lint-rust` - Run Rust linter (clippy)
 
-**Important**: The Rust extension is automatically rebuilt on import by maturin. Do NOT manually rebuild the extension, recreate the virtual environment, or reinstall the package after making Rust code changes. Any `uv run ...` command will trigger a rebuild if needed.
+**Important**: The Rust extension is rebuilt automatically by **uv** (not maturin) whenever you run an `uv run ...` command. There is no import-time rebuild hook: maturin's editable install is a one-time build-and-place, and the `.so` is loaded straight from `src/degenbot/degenbot_rs.abi3.so`. What keeps it fresh is the `[tool.uv] cache-keys` table in `pyproject.toml`, which watches `rust/**/Cargo.toml` and `rust/crates/*/src/**/*.rs`; when any of those is newer than the installed build, uv marks the package "installed, but not fresh" and rebuilds via maturin on the next `uv run` sync.
+
+Prerequisite: the editable install's `.pth` must point at the live repo (`/workspaces/degenbot/src`). The devcontainer guarantees this — `UV_PROJECT_ENVIRONMENT` points at a container-local venv and `post-create.sh` runs `uv sync` to seed the editable install. Do NOT manually rebuild with `cargo build` (it produces an `.rlib`, not the abi3 `.so` uv loads) or recreate the virtual environment after making Rust code changes.
+
+Recovery: if the `.so` ever goes stale (e.g. a venv copied from another machine whose `.pth` points at a dead path), force a clean rebuild:
+`uv sync --reinstall-package degenbot`
 
 ### Combined
 - `just test-all` - Run all tests (Rust + Python)
