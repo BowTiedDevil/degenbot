@@ -1772,7 +1772,10 @@ dependencies = [
  "degenbot-decoders",
  "degenbot-executor",
  "degenbot-rpc",
+ "degenbot-submission",
+ "futures",
  "serde_json",
+ "thiserror",
  "tokio",
 ]
 

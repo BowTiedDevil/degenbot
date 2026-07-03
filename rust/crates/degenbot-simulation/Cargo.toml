@@ -26,6 +26,13 @@ degenbot-abi = { path = "../degenbot-abi" }
 degenbot-rpc = { path = "../degenbot-rpc" }
 degenbot-core = { path = "../degenbot-core" }
 degenbot-decoders = { path = "../degenbot-decoders" }
+degenbot-submission = { path = "../degenbot-submission" }
+thiserror = { version = "^2.0" }
+futures = { version = "^0.3" }
+# `JoinSet` (`rt`) + `Semaphore` (`sync`) for the dispatch_profitable_results
+# fan-out cap (D1). The `macros` feature is dev-test only (the `#[tokio::test]`
+# attribute used by the §4.2 parity tests).
+tokio = { version = "^1.52", features = ["rt", "sync"] }
 
 [dev-dependencies]
 serde_json = { version = "^1.0" }
