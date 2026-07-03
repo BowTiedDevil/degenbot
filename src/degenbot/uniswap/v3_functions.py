@@ -9,11 +9,9 @@ from eth_typing import ChecksumAddress
 from eth_utils.crypto import keccak
 from hexbytes import HexBytes
 
-from degenbot.calculations.evm_math import evm_divide
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.contract.addresses import create2_address
 from degenbot.exceptions import DegenbotValueError
-from degenbot.uniswap.v3_libraries import tick_bitmap
 from degenbot.uniswap.v3_types import Pip
 
 
@@ -116,16 +114,3 @@ def generate_v3_pool_address(
         salt=salt,
         init_code_hash=init_hash,
     )
-
-
-def get_tick_word_and_bit_position(
-    tick: int,
-    tick_spacing: int,
-) -> tuple[int, int]:
-    """Retrieve the word and bit position for the tick, accounting for tick spacing.
-
-    Returns:
-        A tuple of (word_position, bit_position).
-
-    """
-    return tick_bitmap.position(evm_divide(tick, tick_spacing))

@@ -32,7 +32,7 @@ from eth_typing import ChecksumAddress
 
 from degenbot.arbitrage.types import UniswapV3PoolSwapAmounts
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.degenbot_rs import PyLiquidityPool
+from degenbot.degenbot_rs import PyLiquidityPool, cl_get_tick_word_and_bit_position
 from degenbot.erc20 import Erc20Token
 from degenbot.exceptions import DegenbotValueError
 from degenbot.exceptions.pool import (
@@ -47,7 +47,6 @@ from degenbot.types.hop_types import BoundedProductHop, HopType, V3TickRangeInfo
 from degenbot.types.pool_protocols import SimulationResult
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
 from degenbot.uniswap.types import UniswapPoolSwapVector
-from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v3_libraries import (
     MAX_SQRT_RATIO,
     MAX_TICK,
@@ -571,7 +570,7 @@ class UniswapV3Pool(
         # yet have, backfill via the fetcher (mirrors the pre-companion path).
         if self._sparse_liquidity_map and self._tick_data_fetcher is not None:
             for tick in (update.tick_lower, update.tick_upper):
-                word, _ = get_tick_word_and_bit_position(tick, self._tick_spacing)
+                word, _ = cl_get_tick_word_and_bit_position(tick, self._tick_spacing)
                 if word not in self.tick_bitmap:
                     self._apply_fetched_tick_word(word, state_block - 1)
 

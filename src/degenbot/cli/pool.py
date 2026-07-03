@@ -19,7 +19,6 @@ from web3.types import LogReceipt
 
 from degenbot import abi_decode
 from degenbot.bot import Bot
-from degenbot.calculations.concentrated_liquidity import apply_liquidity_mapping_update
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.cli import cli
 from degenbot.cli.pool_updater_configs import (
@@ -53,6 +52,7 @@ from degenbot.database.models.pools import (
     UniswapV4PoolTable,
     UniswapV4PoolTableBase,
 )
+from degenbot.degenbot_rs import cl_apply_liquidity_mapping_update
 from degenbot.logging import logger
 from degenbot.provider import ProviderAdapter
 from degenbot.provider.block_helpers import get_number_for_block_identifier
@@ -115,6 +115,60 @@ UNISWAP_V4_POOLCREATED_EVENT_HASH = HexBytes(
 UNISWAP_V4_MODIFYLIQUIDITY_EVENT_HASH = HexBytes(
     "0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af63baa85f711d5ec",
 )
+
+
+def _apply_liquidity_mapping_via_rust(
+    *,
+    tick_bitmap: dict[int, ConcentratedBitmapAtWord],
+    tick_data: dict[int, ConcentratedLiquidityAtTick],
+    tick_spacing: int,
+    liquidity: int,
+    update_block: int,
+    tick_lower: int,
+    tick_upper: int,
+    liquidity_delta: int,
+) -> tuple[dict[int, ConcentratedBitmapAtWord], dict[int, ConcentratedLiquidityAtTick], int]:
+    """Apply a liquidity-mapping update via the Rust ``cl_apply_liquidity_mapping_update`` seam.
+
+    The retired pure-Python ``apply_liquidity_mapping_update`` mirror is deleted;
+    the seam returns plain dicts whose values are re-wrapped into the pydantic
+    ``ConcentratedBitmapAtWord`` / ``ConcentratedLiquidityAtTick`` models so the
+    downstream ``.bitmap`` / ``.liquidity_net`` / ``.liquidity_gross`` attribute
+    reads in ``apply_v3/v4_liquidity_updates`` are unchanged.
+
+    ``initial_state_block=MAX_UINT256`` is passed to match the prior Python call
+    (the skip-sentinel for the in-range liquidity adjustment, which this CLI
+    updates outside the pool's active-liquidity hot path).
+
+    Returns:
+        ``(tick_bitmap, tick_data, liquidity)`` re-wrapped into the pydantic models.
+
+    """
+    result = cl_apply_liquidity_mapping_update(
+        tick_bitmap,
+        tick_data,
+        tick_spacing,
+        0,  # tick — unused with the MAX_UINT256 in-range skip
+        liquidity,
+        MAX_UINT256,  # initial_state_block — skip the in-range liquidity adjustment
+        update_block,
+        tick_lower,
+        tick_upper,
+        liquidity_delta,
+    )
+    out_bitmap = {
+        int(w): ConcentratedBitmapAtWord(bitmap=w_v["bitmap"], block=w_v["block"])
+        for w, w_v in result["tick_bitmap"].items()
+    }
+    out_data = {
+        int(t): ConcentratedLiquidityAtTick(
+            liquidity_net=t_v["liquidity_net"],
+            liquidity_gross=t_v["liquidity_gross"],
+            block=t_v["block"],
+        )
+        for t, t_v in result["tick_data"].items()
+    }
+    return out_bitmap, out_data, result["liquidity"]
 
 
 def apply_v3_liquidity_updates(
@@ -209,21 +263,18 @@ def apply_v3_liquidity_updates(
         if amount == 0:
             continue
 
-        result = apply_liquidity_mapping_update(
-            tick_bitmap=current_tick_bitmap,
-            tick_data=current_tick_data,
-            tick_spacing=pool_in_db.tick_spacing,
-            tick=0,
-            liquidity=current_liquidity,
-            initial_state_block=MAX_UINT256,  # Skip in-range liquidity adjustment
-            update_block=liquidity_event["blockNumber"],
-            tick_lower=tick_lower,
-            tick_upper=tick_upper,
-            liquidity_delta=amount,
+        current_tick_bitmap, current_tick_data, current_liquidity = (
+            _apply_liquidity_mapping_via_rust(
+                tick_bitmap=current_tick_bitmap,
+                tick_data=current_tick_data,
+                tick_spacing=pool_in_db.tick_spacing,
+                liquidity=current_liquidity,
+                update_block=liquidity_event["blockNumber"],
+                tick_lower=tick_lower,
+                tick_upper=tick_upper,
+                liquidity_delta=amount,
+            )
         )
-        current_tick_bitmap = result.tick_bitmap
-        current_tick_data = result.tick_data
-        current_liquidity = result.liquidity
 
         pool_in_db.liquidity_update_block = liquidity_event["blockNumber"]
         pool_in_db.liquidity_update_log_index = liquidity_event["logIndex"]
@@ -397,21 +448,18 @@ def apply_v4_liquidity_updates(
         if liquidity_delta == 0:
             continue
 
-        result = apply_liquidity_mapping_update(
-            tick_bitmap=current_tick_bitmap,
-            tick_data=current_tick_data,
-            tick_spacing=pool_in_db.tick_spacing,
-            tick=0,
-            liquidity=current_liquidity,
-            initial_state_block=MAX_UINT256,  # Skip in-range liquidity adjustment
-            update_block=liquidity_event["blockNumber"],
-            tick_lower=tick_lower,
-            tick_upper=tick_upper,
-            liquidity_delta=liquidity_delta,
+        current_tick_bitmap, current_tick_data, current_liquidity = (
+            _apply_liquidity_mapping_via_rust(
+                tick_bitmap=current_tick_bitmap,
+                tick_data=current_tick_data,
+                tick_spacing=pool_in_db.tick_spacing,
+                liquidity=current_liquidity,
+                update_block=liquidity_event["blockNumber"],
+                tick_lower=tick_lower,
+                tick_upper=tick_upper,
+                liquidity_delta=liquidity_delta,
+            )
         )
-        current_tick_bitmap = result.tick_bitmap
-        current_tick_data = result.tick_data
-        current_liquidity = result.liquidity
 
         pool_in_db.liquidity_update_block = liquidity_event["blockNumber"]
         pool_in_db.liquidity_update_log_index = liquidity_event["logIndex"]

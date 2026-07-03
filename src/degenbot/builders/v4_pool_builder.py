@@ -19,12 +19,12 @@ from degenbot.builders.v4_builder_base import V4BuilderBase, V4Slot0Data
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
 from degenbot.database.models.pools import PoolManagerTable, UniswapV4PoolTable
+from degenbot.degenbot_rs import cl_get_tick_word_and_bit_position
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
-from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v4_liquidity_pool import ProtocolFee, UniswapV4Pool
 from degenbot.uniswap.v4_types import (
     UniswapV4PoolExternalUpdate,
@@ -281,7 +281,7 @@ class V4PoolBuilder(V4BuilderBase):
                         )
 
             if not db_snapshot_loaded:
-                word, _ = get_tick_word_and_bit_position(
+                word, _ = cl_get_tick_word_and_bit_position(
                     tick=int(slot0_data.tick),
                     tick_spacing=tick_spacing_for_pool,
                 )

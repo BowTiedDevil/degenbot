@@ -16,13 +16,13 @@ from degenbot.builders.tick_data_fetcher import (
 from degenbot.builders.v3_builder_base import V3BuilderBase
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.pools import LiquidityPoolTable, UniswapV3PoolTableBase
+from degenbot.degenbot_rs import cl_get_tick_word_and_bit_position
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError
 from degenbot.logging import logger
 from degenbot.provider.call_helpers import encode_function_calldata
 from degenbot.registry.pool_type import pool_type_registry
 from degenbot.uniswap.concentrated.types import BitmapAtWord, LiquidityAtTick
-from degenbot.uniswap.v3_functions import get_tick_word_and_bit_position
 from degenbot.uniswap.v3_liquidity_pool import UniswapV3Pool
 from degenbot.uniswap.v3_types import (
     UniswapV3PoolExternalUpdate,
@@ -268,7 +268,7 @@ class V3PoolBuilder(V3BuilderBase):
                         )
 
             if not db_snapshot_loaded:
-                word, _ = get_tick_word_and_bit_position(
+                word, _ = cl_get_tick_word_and_bit_position(
                     tick=int(tick),
                     tick_spacing=tick_spacing_for_pool,
                 )
