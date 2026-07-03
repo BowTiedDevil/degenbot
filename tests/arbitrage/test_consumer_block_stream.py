@@ -31,17 +31,51 @@ class _Eth:
         self._nonce = nonce
         self.fee_history_blocks: list[int] = []
 
+    # PAGQCK: the dispatch hot loop now routes ``eth_feeHistory`` via
+    # ``make_request`` (raw JSON shape with hex-string rewards) instead of
+    # ``async_w3.eth.fee_history(block_count=, newest_block=, ...)``. The
+    # fake records the requested ``newest_block`` from the make_request params
+    # (``[block_count, hex(newest_block), percentiles]``) + returns the empty-
+    # reward shape the example expects (no priority-fee recording).
     async def fee_history(self, *, block_count: int, newest_block: int, reward_percentiles):
         self.fee_history_blocks.append(int(newest_block))
         return {"reward": [[]]}  # empty reward → no priority-fee recording
 
-    async def get_transaction_count(self, address: str) -> int:  # noqa: ARG002
+    async def get_transaction_count(self, address: str) -> int:
         return self._nonce
 
 
 class _FakeW3:
+    """Fake ``AsyncProviderAdapter`` for the dispatch-path tests (PAGQCK).
+
+    The dispatch hot loop was routed off raw ``AsyncWeb3`` onto
+    ``AsyncProviderAdapter`` — this fake exposes the SAME flat surface
+    (``get_transaction_count`` / ``make_request`` / ``rpc_url``) the example
+    now drives, instead of the old ``async_w3.eth.<method>`` nesting. The
+    ``make_request`` dispatcher mirrors the raw-RPC shapes the alloy backend
+    returns (hex strings; ``eth_feeHistory`` returns the empty-reward dict).
+    """
+
     def __init__(self) -> None:
-        self.eth = _Eth()
+        self.eth = _Eth()  # drives fee_history/get_transaction_count tracking
+
+    async def get_transaction_count(self, address: str) -> int:
+        return await self.eth.get_transaction_count(address)
+
+    async def make_request(self, method: str, params: list):
+        if method == "eth_feeHistory":
+            # The params list is [block_count, hex(newest_block), percentiles].
+            return await self.eth.fee_history(
+                block_count=int(params[0]),
+                newest_block=int(params[1], 16),
+                reward_percentiles=params[2],
+            )
+        msg = f"_FakeW3.make_request: unhandled method {method!r}"
+        raise NotImplementedError(msg)
+
+    @property
+    def rpc_url(self) -> str:
+        return "http://fake:8545"
 
 
 class _Blocks:

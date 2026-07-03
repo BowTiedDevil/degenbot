@@ -166,8 +166,32 @@ class _FakeEth:
 
 
 class _FakeAsyncW3:
+    """Fake ``AsyncProviderAdapter`` for BackrunSession tests (PAGQCK).
+
+    The dispatch hot loop was routed off raw ``AsyncWeb3`` onto
+    ``AsyncProviderAdapter`` — this fake exposes the SAME flat surface
+    (``get_block`` / ``get_transaction_count`` / ``make_request`` / ``rpc_url``)
+    the example now drives, delegating to the inner ``_FakeEth``.
+    """
+
     def __init__(self) -> None:
         self.eth = _FakeEth()
+
+    async def get_block(self, block_identifier: str):
+        return await self.eth.get_block(block_identifier)
+
+    async def get_transaction_count(self, address: str):
+        return await self.eth.get_transaction_count(address)
+
+    async def make_request(self, method: str, params: list):
+        # The session tests don't drive the four typed dispatch RPCs
+        # (simulate/create_access_list/send_raw_transaction); return an empty
+        # result so any incidental make_request is a benign no-op.
+        return {}
+
+    @property
+    def rpc_url(self) -> str:
+        return "http://fake:8545"
 
 
 def _noop_coro():
