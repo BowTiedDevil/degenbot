@@ -132,6 +132,33 @@ def _build_descriptor_from_db_result(
     return None
 
 
+def _build_descriptor_from_seam_rows(
+    *,
+    pool_kind: str,
+    exchange_factory: str,
+) -> PoolTypeDescriptor | None:
+    """Map Rust-seam rows to a `PoolTypeDescriptor` (QVMWQC).
+
+    The seam version of [`_build_descriptor_from_db_result`]: instead of a
+    hydrated ORM row, takes the two fields the builder reads (`pool.kind` +
+    `pool.exchange.factory`) fetched via `PyBotIo.fetch_pool_row` /
+    `fetch_exchange`.
+
+    Returns:
+        The computed value.
+
+    """
+    descriptor = pool_type_registry.get_descriptor_by_kind(pool_kind)
+    if descriptor is not None:
+        return PoolTypeDescriptor(
+            family=descriptor.family,
+            variant=descriptor.variant,
+            kind=descriptor.kind,
+            factory=get_checksum_address(exchange_factory),
+        )
+    return None
+
+
 def _descriptor_from_probing_result(
     *,
     succeeded_method: str | None,
@@ -442,7 +469,6 @@ def resolve_pool_type(
     *,
     chain_id: ChainId,
     io: PoolIO,
-    db: DatabaseSessionManager,
 ) -> PoolTypeDescriptor:
     """Resolve the pool type for the given address.
 
@@ -460,18 +486,26 @@ def resolve_pool_type(
         DegenbotValueError: If the operation fails.
 
     """
-    # Step 1: DB lookup — the `kind` column is the most direct signal
-    with contextlib.suppress(Exception), db() as session:
-        pool_from_db = session.scalar(
-            select(LiquidityPoolTable).where(
-                LiquidityPoolTable.address == address,
-                LiquidityPoolTable.chain == chain_id,
-            ),
-        )
-        if pool_from_db is not None:
-            descriptor = _build_descriptor_from_db_result(pool_from_db)
-            if descriptor is not None:
-                return descriptor
+    # Step 1: DB lookup — the `kind` column is the most direct signal.
+    # Route through the Rust `PyBotIo` seam (QVMWQC): `fetch_pool_row`
+    # carries `kind` + `exchange_id`; `fetch_exchange` hydrates the factory.
+    # Falls back to skipping when `io` isn't a `PyBotIo` (no `fetch_pool_row`).
+    fetch_pool_row = getattr(io, "fetch_pool_row", None)
+    # Bind via `getattr(..., None)` so the static type checker doesn't flag
+    # the `PoolIO`-protocol access (`PyBotIo` defines them; `PoolIO` does not).
+    fetch_exchange = getattr(io, "fetch_exchange", None) if fetch_pool_row is not None else None
+    if fetch_pool_row is not None and fetch_exchange is not None:
+        with contextlib.suppress(Exception):
+            pool_row = fetch_pool_row(chain_id=chain_id, address=address)
+            if pool_row is not None:
+                exchange_row = fetch_exchange(exchange_id=pool_row.exchange_id)
+                if exchange_row is not None:
+                    descriptor = _build_descriptor_from_seam_rows(
+                        pool_kind=pool_row.kind,
+                        exchange_factory=exchange_row.factory,
+                    )
+                    if descriptor is not None:
+                        return descriptor
 
     # Step 2: Factory address lookup via PoolTypeRegistry
     factory = fetch_factory_from_chain(address, chain_id=chain_id, io=io)

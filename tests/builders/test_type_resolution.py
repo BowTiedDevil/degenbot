@@ -313,18 +313,15 @@ class TestResolvePoolType:
     def test_raises_when_factory_fails_and_no_db_entry(self) -> None:
         provider = FakeSyncProvider()
         io = SyncPoolIO(provider)
-        fake_db = MagicMock()
-        session = MagicMock()
-        session.scalar.return_value = None
-        fake_db.return_value.__enter__ = MagicMock(return_value=session)
-        fake_db.return_value.__exit__ = MagicMock(return_value=False)
-
+        # `io` is a plain `SyncPoolIO` (no `fetch_pool_row`) — the seam's
+        # `getattr(io, "fetch_pool_row", None)` returns None, so the DB step
+        # is skipped (mirrors "no DB entry") + the code falls through to the
+        # factory fetch (which fails here) → raises.
         with pytest.raises(DegenbotValueError, match="Cannot resolve pool type"):
             resolve_pool_type(
                 "0xPool",  # type: ignore[arg-type]
                 chain_id=CHAIN_ID,
                 io=io,
-                db=fake_db,
             )
 
     def test_probes_when_no_db_entry(self) -> None:
@@ -344,19 +341,45 @@ class TestResolvePoolType:
             response=HexBytes(b"\x00" * 32),
         )
         io = SyncPoolIO(provider)
-        fake_db = MagicMock()
-        session = MagicMock()
-        session.scalar.return_value = None
-        fake_db.return_value.__enter__ = MagicMock(return_value=session)
-        fake_db.return_value.__exit__ = MagicMock(return_value=False)
+        # Exercise the seam's skip-branch: attach a `fetch_pool_row` that
+        # returns None ("pool not in DB") — the seam resolves it, finds no row,
+        # + falls through to probing.
+        io.fetch_pool_row = MagicMock(return_value=None)  # type: ignore[attr-defined]
+        io.fetch_exchange = MagicMock()  # type: ignore[attr-defined]
 
         result = resolve_pool_type(
             "0xPool",  # type: ignore[arg-type]
             chain_id=CHAIN_ID,
             io=io,
-            db=fake_db,
         )
         assert result.family == PoolFamily.CONCENTRATED_LIQUIDITY
+        # The seam was actually consulted (not skipped via the missing-method
+        # fallback) — `fetch_pool_row` was called with the address + chain.
+        io.fetch_pool_row.assert_called_once_with(chain_id=CHAIN_ID, address="0xPool")
+
+    def test_resolves_from_db_via_seam(self) -> None:
+        """A DB hit returns through the seam without probing."""
+        provider = FakeSyncProvider()
+        io = SyncPoolIO(provider)
+        factory_address = "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+        pool_row = MagicMock()
+        pool_row.kind = "uniswap_v3"
+        pool_row.exchange_id = 42
+        exchange_row = MagicMock()
+        exchange_row.factory = factory_address
+        io.fetch_pool_row = MagicMock(return_value=pool_row)  # type: ignore[attr-defined]
+        io.fetch_exchange = MagicMock(return_value=exchange_row)  # type: ignore[attr-defined]
+
+        result = resolve_pool_type(
+            "0xPool",  # type: ignore[arg-type]
+            chain_id=CHAIN_ID,
+            io=io,
+        )
+        assert result.family == PoolFamily.CONCENTRATED_LIQUIDITY
+        assert result.factory == factory_address
+        # No factory RPC was issued (the DB seam resolved the descriptor).
+        io.fetch_pool_row.assert_called_once_with(chain_id=CHAIN_ID, address="0xPool")
+        io.fetch_exchange.assert_called_once_with(exchange_id=42)
 
 
 class TestResolvePoolTypeAsync:
