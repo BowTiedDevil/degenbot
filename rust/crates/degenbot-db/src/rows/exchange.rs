@@ -20,7 +20,6 @@ pub struct ExchangeRow {
 
 impl ExchangeRow {
     /// Decode from a `SELECT id, chain_id, name, active, last_update_block, factory, deployer FROM exchanges`.
-    #[allow(dead_code)] // exercised by a future fetch_exchange (spike 4c siblings)
     pub(crate) fn from_row(row: &Row<'_>) -> Result<Self, DbError> {
         Ok(Self {
             id: row.get(0)?,

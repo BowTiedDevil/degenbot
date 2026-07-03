@@ -6,7 +6,6 @@ import contextlib
 from typing import TYPE_CHECKING, Any, cast
 
 from hexbytes import HexBytes
-from sqlalchemy import select
 
 from degenbot.abi_adapter import decode as abi_decode
 from degenbot.builders.request import BuildManagedPoolRequest
@@ -15,10 +14,9 @@ from degenbot.builders.tick_data_fetcher import (
     TickDataTypes,
     make_tick_data_fetcher,
 )
-from degenbot.builders.v4_builder_base import V4BuilderBase, V4Slot0Data
+from degenbot.builders.v4_builder_base import V4BuilderBase, V4DbValues, V4Slot0Data
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.constants import ZERO_ADDRESS as _ZERO_ADDRESS
-from degenbot.database.models.pools import PoolManagerTable, UniswapV4PoolTable
 from degenbot.degenbot_rs import cl_get_tick_word_and_bit_position
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.exceptions.pool import LiquidityPoolError
@@ -124,26 +122,54 @@ class V4PoolBuilder(V4BuilderBase):
             request.state_block if request.state_block is not None else io.get_block_number()
         )
 
-        # Try DB first
+        # Try DB first — route the construction-time read through the Rust
+        # `PyBotIo` seam (QVMWQC). The V4 lookup is two-step: resolve the pool
+        # manager by `(address, chain)` (`state_view` + `id`), then the V4 pool
+        # row by `pool_hash`; the currency relationships hydrate via per-FK
+        # token fetches. Falls back to skipping when no `io` /
+        # `database_path` is configured (mirrors `contextlib.suppress`).
         db_values = None
         pool_id_db: int | None = None
-        with contextlib.suppress(Exception), self._db() as session:
-            pool_manager_in_db = session.scalar(
-                select(PoolManagerTable).where(
-                    PoolManagerTable.address == pool_manager_address,
-                    PoolManagerTable.chain == chain_id,
-                ),
-            )
-            if pool_manager_in_db is not None:
-                pool_from_db = session.scalar(
-                    select(UniswapV4PoolTable).where(
-                        UniswapV4PoolTable.pool_hash == pool_id_bytes.to_0x_hex(),
-                        UniswapV4PoolTable.manager.has(id=pool_manager_in_db.id),
-                    ),
-                )
-                if pool_from_db is not None:
-                    db_values = V4BuilderBase.extract_db_values(pool_from_db)
-                    pool_id_db = pool_from_db.id
+        fetch_pool_manager = getattr(io, "fetch_pool_manager", None) if io is not None else None
+        # All PyBotIo DB-query methods are present together; bind them via
+        # `getattr(..., None)` so the static type checker doesn't flag the
+        # `PoolIO`-protocol access (`PyBotIo` defines them; `PoolIO` does not).
+        fetch_v4_pool_by_pool_hash = (
+            getattr(io, "fetch_v4_pool_by_pool_hash", None)
+            if fetch_pool_manager is not None
+            else None
+        )
+        fetch_token_by_id = (
+            getattr(io, "fetch_token_by_id", None) if fetch_pool_manager is not None else None
+        )
+        if (
+            fetch_pool_manager is not None
+            and fetch_v4_pool_by_pool_hash is not None
+            and fetch_token_by_id is not None
+        ):
+            with contextlib.suppress(Exception):
+                manager_row = fetch_pool_manager(chain_id=chain_id, address=pool_manager_address)
+                if manager_row is not None:
+                    v4_row = fetch_v4_pool_by_pool_hash(pool_hash_hex=pool_id_bytes.to_0x_hex())
+                    if (
+                        v4_row is not None
+                        and v4_row.currency0_id is not None
+                        and v4_row.currency1_id is not None
+                    ):
+                        currency0_row = fetch_token_by_id(token_id=v4_row.currency0_id)
+                        currency1_row = fetch_token_by_id(token_id=v4_row.currency1_id)
+                        if currency0_row is not None and currency1_row is not None:
+                            db_values = V4DbValues(
+                                currency0_address=get_checksum_address(currency0_row.address),
+                                currency1_address=get_checksum_address(currency1_row.address),
+                                hook_address=get_checksum_address(v4_row.hooks),
+                                tick_spacing=v4_row.tick_spacing,
+                                fee=v4_row.fee_token0,
+                                state_view_address=manager_row.state_view,
+                            )
+                            # The V4 tick snapshot is keyed by
+                            # `managed_pool_id`.
+                            pool_id_db = v4_row.managed_pool_id
 
         # Get immutable values
         if db_values is not None:
@@ -268,16 +294,33 @@ class V4PoolBuilder(V4BuilderBase):
         elif request.tick_bitmap is not None or request.tick_data is not None:
             raise DegenbotValueError(message="Provide both tick_bitmap and tick_data, or neither.")
         else:
-            # Try DB snapshot tables first
+            # Try DB snapshot tables first — route the tick-snapshot read
+            # through the Rust `PyBotIo` seam (QVMWQC). The V4 managed tables
+            # are keyed by `managed_pool_id` (= `pool_id_db`); the
+            # liquidity-update block comes from the V4 subclass row.
             db_snapshot_loaded = False
             if pool_id_db is not None:
-                with contextlib.suppress(Exception), self._db() as session:
-                    pool_with_data = session.scalar(
-                        select(UniswapV4PoolTable).where(UniswapV4PoolTable.id == pool_id_db),
-                    )
-                    if pool_with_data is not None:
+                fetch_init_maps = getattr(io, "fetch_managed_initialization_maps", None)
+                fetch_liq_positions = getattr(io, "fetch_managed_liquidity_positions", None)
+                fetch_pool_kind = getattr(io, "fetch_pool_kind", None)
+                if (
+                    fetch_init_maps is not None
+                    and fetch_liq_positions is not None
+                    and fetch_pool_kind is not None
+                ):
+                    with contextlib.suppress(Exception):
+                        init_maps = fetch_init_maps(pool_id_db)
+                        liq_positions = fetch_liq_positions(pool_id_db)
+                        update_block = None
+                        kind_row = fetch_pool_kind(kind="uniswap_v4", pool_id=pool_id_db)
+                        if kind_row is not None:
+                            update_block = kind_row.liquidity_update_block
                         working_tick_bitmap, working_tick_data, db_snapshot_loaded = (
-                            V4BuilderBase.load_tick_snapshot(pool_with_data)
+                            V4BuilderBase.load_tick_snapshot_from_seam_rows(
+                                init_maps=init_maps,
+                                liq_positions=liq_positions,
+                                liquidity_update_block=update_block,
+                            )
                         )
 
             if not db_snapshot_loaded:
