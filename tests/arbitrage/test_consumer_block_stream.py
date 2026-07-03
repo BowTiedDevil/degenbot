@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 
 import examples.eth_backrun_v2_v3_v4_rust as runner
-from examples.eth_backrun_v2_v3_v4_rust import Dispatcher
+from examples.eth_backrun_v2_v3_v4_rust import PyDispatcher
 
 
 class _Eth:
@@ -76,6 +76,15 @@ class _FakeW3:
     @property
     def rpc_url(self) -> str:
         return "http://fake:8545"
+
+    def as_async_alloy(self):
+        # The PyO3 submission seam extracts a real `AsyncAlloyProvider` from
+        # the adapter to drive the Rust `fetch_fee_history_py` leaf. The test
+        # fake has no alloy backend — returning ``None`` makes `_apply_block_
+        # if_ready` skip the fee-history leaf (the RPC parity is now exercised
+        # by the Rust `fetch_fee_history` tests per §4.3, not this Python
+        # mock).
+        return None
 
 
 class _Blocks:
@@ -143,9 +152,9 @@ async def _run(
     blocks: list[dict[str, int]],
     batches: list[dict[str, Any]],
     *,
-    dispatcher: Dispatcher | None = None,
-) -> tuple[Dispatcher, _FakeW3]:
-    dispatcher = dispatcher or Dispatcher.for_block(0)
+    dispatcher: PyDispatcher | None = None,
+) -> tuple[PyDispatcher, _FakeW3, list[int]]:
+    dispatcher = dispatcher or PyDispatcher.for_block(0)
     w3 = _FakeW3()
     # Monkeypatch dispatch_profitable_results so a non-empty batch records the
     # `current_block` it was dispatched with, proving it keys off the block
@@ -172,15 +181,14 @@ async def _run(
         )
     finally:
         runner.dispatch_profitable_results = orig  # type: ignore[assignment]
-    setattr(dispatcher, "_dispatched", dispatched)  # noqa: SLF001 — test fixture
-    return dispatcher, w3
+    return dispatcher, w3, dispatched
 
 
 class TestBlockClockFromStream:
     async def test_block_clock_tracks_block_stream_not_solve_block(self) -> None:
         # Block stream advances 101 → 102 → 103. Result batches carry a stale
         # solve_block=999 to prove the clock ignores it.
-        dispatcher, _w3 = await _run(
+        dispatcher, _w3, _dispatched = await _run(
             blocks=[_block(101), _block(102), _block(103)],
             batches=[_empty_batch(999), _empty_batch(999)],
         )
@@ -189,15 +197,23 @@ class TestBlockClockFromStream:
         )
 
     async def test_fee_history_keys_off_block_stream_numbers(self) -> None:
-        # fee_history(newest_block=…) must use the block-stream number so the
-        # consumer queries the right block's reward percentiles (the prior
-        # implementation queried solve_block — a stale/wrong block).
-        dispatcher, w3 = await _run(
+        # 7UIYJ6: the fee-history RPC + record-priority-fees now run in the
+        # Rust submit leaf (`fetch_fee_history_py`), keyed off the block-stream
+        # number passed by `_apply_block_if_ready`. The RPC-parity (that the
+        # leaf queries the block-stream number's reward percentiles) is
+        # exercised by the Rust `fetch_fee_history` tests per §4.3 — this Python
+        # test now verifies only that the per-block advance drives the clock
+        # + records block-time pairs (the latency-baseline ring the leaf feeds).
+        dispatcher, _w3, _dispatched = await _run(
             blocks=[_block(201), _block(202)],
             batches=[],
         )
-        assert w3.eth.fee_history_blocks == [201, 202], (
-            "fee_history must be called with the block-stream numbers"
+        assert dispatcher.current_block == 202, (
+            "block clock must track the block stream through fee_history"
+        )
+        assert dispatcher.block_time_count() >= 2, (
+            "block-time ring must record one pair per block-stream tick "
+            "(the latency baseline + the fee-history clock source)"
         )
 
     async def test_dispatch_keys_off_block_stream_current_block(self) -> None:
@@ -209,11 +225,10 @@ class TestBlockClockFromStream:
         # batch's solve_block is never used as the clock).
         batch = dict(_empty_batch(999))
         batch["fresh"] = [(1, 100, 50, (1, 2), (3,))]  # one profitable result
-        dispatcher, _w3 = await _run(
+        dispatcher, _w3, dispatched = await _run(
             blocks=[_block(301), _block(302)],
             batches=[batch],
         )
-        dispatched: list[int] = getattr(dispatcher, "_dispatched")
         assert len(dispatched) == 1
         # The load-bearing contract: dispatch must NEVER use the batch's
         # solve_block (999) as the current block — only the block-stream

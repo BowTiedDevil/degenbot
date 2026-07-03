@@ -52,8 +52,9 @@ impl From<SubmissionError> for pyo3::PyErr {
             SubmissionError::Sign(_)
             | SubmissionError::Recovery(_)
             | SubmissionError::Decode(_) => PyValueError::new_err(err.to_string()),
-            SubmissionError::FeeOverflow { .. }
-            | SubmissionError::MonitorProbe(_) => PyRuntimeError::new_err(err.to_string()),
+            SubmissionError::FeeOverflow { .. } | SubmissionError::MonitorProbe(_) => {
+                PyRuntimeError::new_err(err.to_string())
+            }
         }
     }
 }

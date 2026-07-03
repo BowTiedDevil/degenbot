@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal, Self
 from web3 import AsyncWeb3
 from web3.exceptions import TransactionNotFound
 
-from degenbot.degenbot_rs import AlloyProvider
+from degenbot.degenbot_rs import AlloyProvider, AsyncAlloyProvider
 from degenbot.exceptions import SubscriptionNotSupported
 from degenbot.provider.alloy_errors import alloy_revert_error, is_alloy_revert
 from degenbot.provider.subscription import Subscription
@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     from hexbytes import HexBytes
     from web3.types import BlockData, FilterParams, LogReceipt, TxParams
 
-    from degenbot.degenbot_rs import AsyncAlloyProvider
     from degenbot.provider.protocols import AsyncProviderBackend
 
 # ============================================================================
@@ -431,6 +430,22 @@ class AsyncProviderAdapter:
 
         """
         if self._provider_type == "alloy" and isinstance(self._raw_provider, AlloyProvider):
+            return self._raw_provider
+        return None
+
+    def as_async_alloy(self) -> AsyncAlloyProvider | None:
+        """Return the underlying provider as `AsyncAlloyProvider`, or None.
+
+        The submission seam (`dispatch_and_submit_py` / `fetch_fee_history_py`)
+        needs the `AsyncAlloyProvider` PyO3 handle to extract its inner
+        `Arc<AlloyProvider>` for the Rust submit/fee leaves.
+
+        Returns:
+            The underlying `AsyncAlloyProvider`, or None if this is not an
+            alloy-backed adapter.
+
+        """
+        if self._provider_type == "alloy" and isinstance(self._raw_provider, AsyncAlloyProvider):
             return self._raw_provider
         return None
 

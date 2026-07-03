@@ -213,6 +213,21 @@ impl PyDispatcher {
         Ok(fees.clone())
     }
 
+    /// The full per-block priority-fee ring (`{block: {percentile: wei}}`),
+    /// empty when nothing recorded. Read by `_compute_priority_fee` (which
+    /// does `max(ring)` for the latest block's percentiles) — preserves the
+    /// Python `dispatcher.block_priority_fees` attribute shape unchanged.
+    #[getter]
+    fn block_priority_fees(
+        &self,
+    ) -> std::collections::BTreeMap<u64, std::collections::BTreeMap<u64, u128>> {
+        self.inner
+            .lock()
+            .expect("dispatcher mutex poisoned")
+            .block_priority_fees()
+            .clone()
+    }
+
     // ── block-time ring access (the [block:] log latency read) ────
     /// Count of recorded block-time pairs (capped at the ring maxlen).
     fn block_time_count(&self) -> usize {

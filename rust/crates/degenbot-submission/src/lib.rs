@@ -88,4 +88,7 @@ pub use monitor::{
     monitor_pending_transaction, monitor_pending_transaction_default, MonitorOutcome, ReceiptProbe,
     SubmittedTx, BLOCKS_BEFORE_NONCE_EXPIRES, MONITOR_POLL_INTERVAL,
 };
-pub use submit::{dispatch_and_submit, fetch_fee_history, SkipReason, SubmitCandidate, SubmitOutcome, SubmitRecord};
+pub use submit::{
+    dispatch_and_submit, fetch_fee_history, SkipReason, SubmitCandidate, SubmitOutcome,
+    SubmitRecord,
+};

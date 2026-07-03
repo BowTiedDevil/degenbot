@@ -469,6 +469,17 @@ impl Dispatcher {
             .expect("latest_priority_fees called before any record_priority_fees")
     }
 
+    /// Borrow the full per-block priority-fee ring (the
+    /// `block -> {percentile: fee}` map). Used by the `PyO3` seam so the
+    /// Python `_compute_priority_fee` (which reads `max(ring)` for the
+    /// latest block's percentiles) works unchanged — returns an empty
+    /// map when nothing has been recorded yet (matching the Python
+    /// `dispatcher.block_priority_fees` empty-dict behavior — no panic).
+    #[must_use]
+    pub fn block_priority_fees(&self) -> &BTreeMap<u64, BTreeMap<u64, u128>> {
+        &self.block_priority_fees
+    }
+
     // ── PathSuppression delegation ───────────────────────────────────────
 
     /// A path succeeded at simulation — [`PathSuppression::record_success`].
