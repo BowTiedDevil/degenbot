@@ -127,6 +127,8 @@ extend-select = [
     "TRY",      # tryceratops
 ]
 ignore = [
+    "D203",     # incorrect-blank-line-before-class
+    "D213",     # multi-line-summary-second-line
     "COM812",   # trailing-commas
     "N818",     # error-suffix-on-exception-name
     "PLR0904",  # too-many-public-methods
