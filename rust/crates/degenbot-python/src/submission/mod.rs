@@ -12,9 +12,11 @@
 //! runtime + no `block_on` here — signing is pure compute, unlike the price
 //! readers' `eth_call` (which IS async I/O).
 
+pub mod dispatcher;
 pub mod params;
 pub mod signer;
 
+pub use dispatcher::PyDispatcher;
 pub use params::PyTxParams;
 pub use signer::PyTxSigner;
 
@@ -26,6 +28,7 @@ use pyo3::prelude::*;
 ///
 /// Returns `PyErr` if a class/function fails to register on the module.
 pub fn add_submission_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyDispatcher>()?;
     m.add_class::<PyTxSigner>()?;
     m.add_class::<PyTxParams>()?;
     m.add_function(wrap_pyfunction!(
