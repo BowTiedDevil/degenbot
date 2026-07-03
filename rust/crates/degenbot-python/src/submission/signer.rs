@@ -26,6 +26,14 @@ pub struct PyTxSigner {
     signer: TxSigner,
 }
 
+impl PyTxSigner {
+    /// Borrow the held `TxSigner` (for the submit leaf `dispatch_and_submit`
+    /// which signs each candidate inside Rust — no per-tx key crossing).
+    pub(crate) fn signer(&self) -> &TxSigner {
+        &self.signer
+    }
+}
+
 #[pymethods]
 impl PyTxSigner {
     /// Create a new signer holding the operator key.

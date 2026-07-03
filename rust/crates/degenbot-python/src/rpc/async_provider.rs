@@ -33,6 +33,15 @@ pub struct PyAsyncAlloyProvider {
     max_blocks_per_request: u64,
 }
 
+impl PyAsyncAlloyProvider {
+    /// Clone the shared `Arc<AlloyProvider>` (for the submit/fee leaves that
+    /// take the provider by reference — `dispatch_and_submit` /
+    /// `fetch_fee_history` / the `ReceiptProbe` impl).
+    pub(crate) fn provider_arc(&self) -> Arc<AlloyProvider> {
+        Arc::clone(&self.provider)
+    }
+}
+
 #[pymethods]
 impl PyAsyncAlloyProvider {
     /// Create a new async provider from an existing sync provider.

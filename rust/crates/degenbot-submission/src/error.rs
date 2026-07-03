@@ -32,6 +32,13 @@ pub enum SubmissionError {
         base_fee_next: u128,
         priority_fee: u128,
     },
+
+    /// A receipt-probe RPC failure surfaced by the monitor loop (a non-"not-
+    /// found" RPC error from `Provider::get_transaction_receipt`). The Python
+    /// oracle wrapped ONLY `except TransactionNotFound`; other RPC errors
+    /// propagated — this variant is the typed home for that propagation.
+    #[error("monitor receipt-probe RPC failure: {0}")]
+    MonitorProbe(String),
 }
 
 /// Convenience alias used throughout the crate.
@@ -45,7 +52,8 @@ impl From<SubmissionError> for pyo3::PyErr {
             SubmissionError::Sign(_)
             | SubmissionError::Recovery(_)
             | SubmissionError::Decode(_) => PyValueError::new_err(err.to_string()),
-            SubmissionError::FeeOverflow { .. } => PyRuntimeError::new_err(err.to_string()),
+            SubmissionError::FeeOverflow { .. }
+            | SubmissionError::MonitorProbe(_) => PyRuntimeError::new_err(err.to_string()),
         }
     }
 }
