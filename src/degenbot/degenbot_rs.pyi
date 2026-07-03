@@ -335,9 +335,7 @@ def cl_min_usable_tick(tick_spacing: int) -> int:
 
     """
 
-def cl_get_tick_word_and_bit_position(
-    tick: int, tick_spacing: int
-) -> tuple[int, int]:
+def cl_get_tick_word_and_bit_position(tick: int, tick_spacing: int) -> tuple[int, int]:
     """Compute the tick word and bit position for a compressed tick.
 
     Args:
@@ -351,8 +349,8 @@ def cl_get_tick_word_and_bit_position(
     """
 
 def cl_apply_liquidity_mapping_update(
-    tick_bitmap: dict[int, dict[str, int]],
-    tick_data: dict[int, dict[str, int]],
+    tick_bitmap: dict[int, Any],
+    tick_data: dict[int, Any],
     tick_spacing: int,
     tick: int,
     liquidity: int,
@@ -645,7 +643,6 @@ def db_apply_v3_liquidity_updates(
     Raises ``ValueError`` on a DB failure.
     """
 
-
 def db_apply_v4_liquidity_updates(
     database_path: str,
     pool_hash: str,
@@ -658,6 +655,7 @@ def db_apply_v4_liquidity_updates(
     found; ``True`` after a successful apply. Raises ``ValueError`` on a DB
     failure.
     """
+
 # ------------------------------------------------------------------
 # Thin PyO3 wrappers over `degenbot_executor` (the cmd-executor core).
 # The Python encoder (`examples/eth_backrun_helpers.py::encode_cmd_stream` +
@@ -2208,7 +2206,6 @@ __all__ = [
     "balancer_weighted_calculate_invariant",
     "balancer_weighted_subtract_swap_fee_amount",
     "cl_add_delta",
-    "cl_get_tick_word_and_bit_position",
     "cl_apply_liquidity_mapping_update",
     "cl_compute_swap_step_v3",
     "cl_compute_swap_step_v4",
@@ -2219,6 +2216,7 @@ __all__ = [
     "cl_get_next_sqrt_price_from_amount1_rounding_down",
     "cl_get_next_sqrt_price_from_input",
     "cl_get_next_sqrt_price_from_output",
+    "cl_get_tick_word_and_bit_position",
     "cl_least_significant_bit",
     "cl_max_usable_tick",
     "cl_min_usable_tick",
@@ -2232,11 +2230,11 @@ __all__ = [
     "curve_stableswap_get_y_d",
     "curve_stableswap_newton_y",
     "curve_stableswap_reduction_coefficient",
+    "db_apply_v3_liquidity_updates",
+    "db_apply_v4_liquidity_updates",
     "db_backup_database",
     "db_compact_database",
     "db_create_new_database",
-    "db_apply_v3_liquidity_updates",
-    "db_apply_v4_liquidity_updates",
     "db_upgrade_database",
     "decode",
     "decode_return_data",

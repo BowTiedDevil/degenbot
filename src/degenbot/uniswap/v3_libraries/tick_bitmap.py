@@ -7,53 +7,13 @@ import bisect
 from collections.abc import Generator
 from itertools import count
 
-from degenbot.calculations.evm_math import evm_divide
 from degenbot.exceptions.pool import LiquidityMapWordMissing
-from degenbot.types.aliases import BlockNumber
-from degenbot.uniswap.concentrated.types import BitmapAtWord
 from degenbot.uniswap.v3_types import InitializedTickMap, LiquidityMap, Tick
 
 # NOTE: Pydantic validation is applied to certain functions to enforce the built-in integer range
 # guarantees from the Solidity contract. Pydantic's validation will copy mutable arguments when
 # validating, which defeats the in-place mutation performed by certain functions. The
 # `SkipValidation` type is applied so the original dict/list is referenced.
-
-
-def flip_tick(
-    *,
-    tick_bitmap: InitializedTickMap,
-    sparse: bool,
-    tick: Tick,
-    tick_spacing: int,
-    update_block: BlockNumber,
-) -> None:
-    """Flip the initialized state for a given tick from false to true, or vice versa.
-
-    Raises:
-        ValueError: If tick is not a multiple of tick_spacing.
-        LiquidityMapWordMissing: If sparse and the word position is not in the bitmap.
-
-    """
-    if tick % tick_spacing != 0:
-        msg = "Invalid tick or spacing"
-        raise ValueError(msg)
-
-    word_pos, bit_pos = position(evm_divide(tick, tick_spacing))
-
-    if word_pos not in tick_bitmap:
-        if sparse:
-            raise LiquidityMapWordMissing(word_pos)
-        tick_bitmap[word_pos] = BitmapAtWord(
-            bitmap=0,
-            block=update_block,
-        )
-
-    current_bitmap = tick_bitmap[word_pos]
-    new_bitmap = BitmapAtWord(
-        bitmap=current_bitmap.bitmap ^ (1 << bit_pos),
-        block=update_block,
-    )
-    tick_bitmap[word_pos] = new_bitmap
 
 
 def gen_ticks(
