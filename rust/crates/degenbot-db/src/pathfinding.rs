@@ -73,6 +73,13 @@ pub struct PathGraphData {
     pub v4_lookups: HashMap<u64, (Address, String)>,
     /// `pool_id` → `pool_kind` (for path reconstruction).
     pub pool_id_to_kind: HashMap<u64, PoolKind>,
+    /// `pool_id` → the raw `kind` STRING from the DB (e.g. `"uniswap_v3"`,
+    /// `"sushiswap_v4"`) — the single-table-inheritance polymorphic identity.
+    /// Preserved so the `PyO3` seam can reconstruct the exact concrete
+    /// `PathStep.type` class (Python maps `kind_string → pool_type` via
+    /// `pool_type.__mapper__.polymorphic_identity`), avoiding the V2/V3
+    /// collapse that `pool_id_to_kind` performs (AF7OEL strict parity).
+    pub pool_id_to_kind_string: HashMap<u64, String>,
 }
 
 impl DegenbotDb {
@@ -160,6 +167,7 @@ impl DegenbotDb {
                 data.v2v3_addresses
                     .insert(pool_id, decode_address(&address)?);
                 data.pool_id_to_kind.insert(pool_id, pool_kind);
+                data.pool_id_to_kind_string.insert(pool_id, kind.clone());
             }
         }
 
@@ -199,6 +207,8 @@ impl DegenbotDb {
                 data.v4_lookups
                     .insert(pool_id, (decode_address(&manager_address)?, pool_hash));
                 data.pool_id_to_kind.insert(pool_id, PoolKind::V4);
+                data.pool_id_to_kind_string
+                    .insert(pool_id, "uniswap_v4".to_string());
             }
         }
 

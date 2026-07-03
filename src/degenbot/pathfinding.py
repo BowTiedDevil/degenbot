@@ -21,7 +21,7 @@ from degenbot.database.models.pools import (
     UniswapV4PoolTable,
 )
 from degenbot.database.session_manager import DatabaseSessionManager
-from degenbot.degenbot_rs import find_paths_rust
+from degenbot.degenbot_rs import build_path_graph, find_paths_rust
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.logging import logger
 
@@ -33,6 +33,20 @@ type TokenId = int
 _POOL_KIND_V2: int = 0
 _POOL_KIND_V3: int = 1
 _POOL_KIND_V4: int = 2
+
+# The family-base class for each pool-kind u8 (AF7OEL option B — family-only
+# `PathStep.type` parity). The Rust seam returns `pool_id → pool_kind_u8`
+# (V2/V3/V4 family); the concrete subclass (UniswapV2 vs SushiswapV2) is not
+# recoverable from the family alone. Every known consumer of `PathStep.type`
+# uses `issubclass(step.type, {UniswapV2,V3,V4}PoolTableBase)` — family
+# detection — so the family base class is functionally equivalent. Strict
+# concrete-class parity (option A) would require the Rust read to expose the
+# `kind` STRING per pool_id (a follow-on `degenbot-db` task).
+_POOL_KIND_TO_BASE: dict[int, type] = {
+    _POOL_KIND_V2: UniswapV2PoolTableBase,
+    _POOL_KIND_V3: UniswapV3PoolTableBase,
+    _POOL_KIND_V4: UniswapV4PoolTable,
+}
 
 
 @dataclass(slots=True, frozen=True)
@@ -81,6 +95,19 @@ def _get_tokens_with_min_degree(
     chain_id: int,
     pool_types: Sequence[type],
 ) -> set[TokenId]:
+    """Candidate tokens appearing in ≥ `degree` pools (SQLAlchemy oracle path).
+
+    Retained as the §4.2 parity oracle for the `_prepare_graph_sqlalchemy`
+    fallback (used when the bound DB is in-memory `:memory:` — the Rust
+    `build_path_graph` seam opens a separate in-memory connection that can't
+    share SQLAlchemy's in-memory DB). The primary file-backed path runs the
+    fetch in Rust (`degenbot_db::fetch_tokens_with_min_degree` via
+    `build_path_graph`).
+
+    Returns:
+        The set of candidate token IDs.
+
+    """
     token_count_selects: list[sqlalchemy.Select[tuple[TokenId]]] = []
     for pool_type in pool_types:
         if issubclass(pool_type, LiquidityPoolTable):
@@ -146,12 +173,159 @@ def _prepare_graph(
 ) -> _PreparedGraph:
     """Build the flat edge list + address lookup dicts for the Rust DFS.
 
-    This replaces the old NetworkX ``MultiGraph`` construction. The graph is
-    represented as a flat list of ``(token0, token1, pool_id, pool_kind_u8)``
-    tuples passed directly to ``find_paths_rust``. Address resolution (the
-    former N+1 query bottleneck — one query per pool per yielded path) is
-    eliminated by bulk-preloading all pool addresses during this single
-    construction pass.
+    Delegates the bulk DB read + candidate-token edge filter to the Rust core
+    via `build_path_graph` (AF7OEL) for file-backed DBs (production + the
+    file-backed pathfinding fixtures). For in-memory `:memory:` DBs the Rust
+    seam opens a separate connection that can't share SQLAlchemy's in-memory
+    DB, so those fall back to the SQLAlchemy parity oracle
+    (`_prepare_graph_sqlalchemy` — the §4.2 oracle kept until the seam can
+    bind a shared in-memory handle).
+
+    Returns:
+        A ``_PreparedGraph`` with flat edges + address lookup dicts.
+
+    """
+    engine = session.bind
+    db_path = getattr(getattr(engine, "url", None), "database", None) if engine else None
+
+    # In-memory DBs can't be shared with a separate Rust connection — use the
+    # SQLAlchemy parity oracle (§4.2). File-backed DBs take the Rust seam.
+    if not db_path or db_path == ":memory:":
+        return _prepare_graph_sqlalchemy(
+            chain_id=chain_id,
+            pool_types=pool_types,
+            session=session,
+            allowed_intermediate_tokens=allowed_intermediate_tokens,
+        )
+    return _prepare_graph_rust(
+        chain_id=chain_id,
+        pool_types=pool_types,
+        db_path=db_path,
+        allowed_intermediate_tokens=allowed_intermediate_tokens,
+    )
+
+
+def _prepare_graph_rust(
+    *,
+    chain_id: int,
+    pool_types: Sequence[type],
+    db_path: str,
+    allowed_intermediate_tokens: set[TokenId] | None = None,
+) -> _PreparedGraph:
+    """Rust seam path: `build_path_graph` does the bulk read + filter.
+
+    Resolves the `pool_kinds` u8 set from the Python `pool_types` classes,
+    invokes the Rust `build_path_graph` seam (which runs
+    `fetch_tokens_with_min_degree` → `fetch_path_graph_edges` → candidate-
+    token edge filter, all in one GIL-released span), then rebuilds the exact
+    concrete `PathStep.type` class per pool_id from the DB's raw `kind` STRING
+    (AF7OEL strict parity, option A).
+
+    Returns:
+        A ``_PreparedGraph`` with flat edges + address lookup dicts.
+
+    """
+    start = time.perf_counter()
+
+    # Map the Python `pool_types` classes to the Rust `pool_kind` u8 set
+    # (deduped — e.g. UniswapV2PoolTable + SushiswapV2PoolTable → {0}). The
+    # base `LiquidityPoolTable` (the default `pool_types` entry, used for
+    # single-table-inheritance selects that return BOTH V2 + V3 rows) expands
+    # to {V2, V3} — it is neither a V2-base nor V3-base subclass itself, so
+    # `_pool_kind_for_type` would raise on it; expand it explicitly.
+    pool_kinds: set[int] = set()
+    for pt in pool_types:
+        if pt is LiquidityPoolTable or issubclass(pt, LiquidityPoolTable):
+            if issubclass(pt, UniswapV3PoolTableBase):
+                pool_kinds.add(_POOL_KIND_V3)
+            elif issubclass(pt, UniswapV2PoolTableBase):
+                pool_kinds.add(_POOL_KIND_V2)
+            elif pt is LiquidityPoolTable:
+                # The base covers both V2 + V3 (single-table-inheritance).
+                pool_kinds.update({_POOL_KIND_V2, _POOL_KIND_V3})
+            else:
+                # A LiquidityPoolTable subclass that is neither V2 nor V3
+                # base — unknown family; skip (matches the old silent skip).
+                pass
+        if issubclass(pt, UniswapV4PoolTable):
+            pool_kinds.add(_POOL_KIND_V4)
+
+    raw = build_path_graph(
+        database_path=str(db_path),
+        chain_id=chain_id,
+        pool_kinds=pool_kinds,
+        allowed_intermediate_token_ids=allowed_intermediate_tokens,
+    )
+
+    candidate_tokens: set[TokenId] = set(raw["candidate_tokens"])
+    logger.debug(f"Found {len(candidate_tokens)} candidate tokens held by 2 or more pools")
+    if allowed_intermediate_tokens is not None:
+        logger.debug(
+            f"Token whitelist applied: {len(candidate_tokens)} candidate tokens",
+        )
+
+    # Build a `kind_string → concrete_class` registry from the `pool_types`
+    # input, via each class's `__mapper__.polymorphic_identity` (the
+    # single-table-inheritance discriminator the DB stores as the `kind`
+    # column). This rebuilds the exact concrete `PathStep.type` class per
+    # pool_id (AF7OEL strict parity, option A) — e.g. a pool whose `kind` is
+    # `"sushiswap_v3"` maps to `SushiswapV3PoolTable`, not the family base.
+    kind_string_to_class: dict[str, type[LiquidityPoolTable | UniswapV4PoolTable]] = {}
+    for pt in pool_types:
+        try:
+            identity = pt.__mapper__.polymorphic_identity
+        except AttributeError:
+            # Base classes without a polymorphic_identity (e.g. the abstract
+            # `UniswapV2PoolTableBase`) — skip; their concrete subclasses
+            # carry the identity.
+            continue
+        if isinstance(identity, str):
+            kind_string_to_class[identity] = pt
+
+    # Rebuild `pool_id_to_type` from the DB's raw `kind` STRING, falling back
+    # to the family-base class if no `pool_types` entry matches the kind (a
+    # pool whose concrete class wasn't in the `pool_types` input).
+    fallback_class: type | None = None
+    kind_str_map: dict = raw["pool_id_to_kind_string"]
+    kind_u8_map: dict = raw["pool_id_to_kind"]
+    pool_id_to_type: dict[PoolId, type[LiquidityPoolTable | UniswapV4PoolTable]] = {}
+    for pool_id_u8, kind_u8 in kind_u8_map.items():
+        pool_id = int(pool_id_u8)
+        kind_str = kind_str_map.get(pool_id_u8)
+        cls = kind_string_to_class.get(kind_str) if kind_str else None
+        if cls is None:
+            # Lazily cache + reuse the family-base fallback.
+            if fallback_class is None:
+                fallback_class = _POOL_KIND_TO_BASE.get(int(kind_u8))
+            cls = fallback_class
+        if cls is not None:
+            pool_id_to_type[pool_id] = cls
+
+    logger.debug(
+        f"Built graph at +{time.perf_counter() - start:.1f}s: {len(raw['edges'])} edges",
+    )
+
+    return _PreparedGraph(
+        edges=list(raw["edges"]),
+        v2v3_addresses={int(pid): addr for pid, addr in raw["v2v3_addresses"].items()},
+        v4_lookups={int(pid): (mgr, hsh) for pid, (mgr, hsh) in raw["v4_lookups"].items()},
+        pool_id_to_type=pool_id_to_type,
+    )
+
+
+def _prepare_graph_sqlalchemy(
+    *,
+    chain_id: int,
+    pool_types: Sequence[type],
+    session: Session,
+    allowed_intermediate_tokens: set[TokenId] | None = None,
+) -> _PreparedGraph:
+    """SQLAlchemy parity oracle (§4.2) for in-memory `:memory:` DBs.
+
+    The Rust `build_path_graph` seam opens a separate connection that can't
+    share SQLAlchemy's in-memory DB, so `:memory:` DBs keep this Python
+    build path as the parity oracle until the seam can bind a shared
+    in-memory handle. File-backed DBs take `_prepare_graph_rust`.
 
     Returns:
         A ``_PreparedGraph`` with flat edges + address lookup dicts.
