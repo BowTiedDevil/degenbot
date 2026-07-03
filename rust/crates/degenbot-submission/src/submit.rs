@@ -119,7 +119,7 @@ pub enum SkipReason {
 }
 
 /// The per-candidate submit record (ports the loop's submit + skip outcomes).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SubmitRecord {
     /// The tx was broadcast — the resulting `tx_hash` + claimed `nonce`.
     Submitted {
@@ -128,10 +128,7 @@ pub enum SubmitRecord {
         nonce: u64,
     },
     /// The candidate was skipped — the typed reason.
-    Skipped {
-        path_id: u64,
-        reason: SkipReason,
-    },
+    Skipped { path_id: u64, reason: SkipReason },
 }
 
 /// The dispatch+submit outcome — the per-candidate records (ports the loop's
@@ -235,6 +232,15 @@ const GAS_SAFETY_MARGIN: f64 = 1.5;
 /// signer). Per-candidate RPC failures are tolerated as
 /// [`SkipReason::BroadcastFailed`] records (ports the `continue` on
 /// `Web3Exception`).
+///
+/// # Panics
+///
+/// Panics if the `dispatcher` mutex is poisoned (a coordinated task
+/// panicked while holding it — unrecoverable; matches the Python assumption
+/// that the dispatcher state is always readable).
+#[allow(clippy::doc_overindented_list_items)] // the a.-g. sub-steps use a deeper indent
+#[allow(clippy::too_many_arguments)] // the pipeline stages each need a param
+#[allow(clippy::too_many_lines)] // the 10-step pipeline is inherent
 pub async fn dispatch_and_submit(
     mut candidates: Vec<SubmitCandidate>,
     dispatcher: &Arc<Mutex<Dispatcher>>,
@@ -261,9 +267,7 @@ pub async fn dispatch_and_submit(
 
         // 2a. Mutual-exclusivity guard (L2626). Lock briefly — no .await.
         let blocked = {
-            let d = dispatcher
-                .lock()
-                .expect("dispatcher mutex poisoned");
+            let d = dispatcher.lock().expect("dispatcher mutex poisoned");
             d.is_path_blocked(&path_pools, &committed_pools)
         };
         if blocked {
@@ -298,9 +302,7 @@ pub async fn dispatch_and_submit(
 
         // 2d. Claim nonce (L2636). Lock briefly — no .await.
         let nonce = {
-            let mut d = dispatcher
-                .lock()
-                .expect("dispatcher mutex poisoned");
+            let mut d = dispatcher.lock().expect("dispatcher mutex poisoned");
             d.claim_nonce(operator_nonce)
         };
 
@@ -368,9 +370,7 @@ pub async fn dispatch_and_submit(
 
         // 2i. Reserve pools (L2662) + commit to the local set.
         {
-            let mut d = dispatcher
-                .lock()
-                .expect("dispatcher mutex poisoned");
+            let mut d = dispatcher.lock().expect("dispatcher mutex poisoned");
             d.reserve_pools(path_pools.clone());
         }
         committed_pools.extend(path_pools.clone());
@@ -427,6 +427,11 @@ pub async fn dispatch_and_submit(
 /// Never returns `Err` — failures are tolerated (the fee history is
 /// advisory; the previous samples remain valid). Returns `true` if recorded,
 /// `false` if skipped (RPC failure or empty rewards).
+///
+/// # Panics
+///
+/// Panics if the `dispatcher` mutex is poisoned (a coordinated task
+/// panicked while holding it — unrecoverable).
 pub async fn fetch_fee_history(
     provider: &AlloyProvider,
     dispatcher: &Arc<Mutex<Dispatcher>>,
@@ -434,16 +439,15 @@ pub async fn fetch_fee_history(
     last_block: u64,
     reward_percentiles: &[f64],
 ) -> bool {
-    let history = match provider
+    let Ok(history) = provider
         .eth_fee_history(
             block_count,
             alloy::rpc::types::BlockNumberOrTag::Number(last_block),
             reward_percentiles,
         )
         .await
-    {
-        Ok(h) => h,
-        Err(_) => return false,
+    else {
+        return false;
     };
 
     // alloy returns `reward: Option<Vec<Vec<u128>>>` where `reward[i]` is the
@@ -459,7 +463,7 @@ pub async fn fetch_fee_history(
     // Zip the percentile KEYS (the `reward_percentiles` cast to u64 —
     // `FEE_PERCENTILES = [10, 50]` → `[10u64, 50u64]`) with the reward values.
     // Ports `dict(zip(FEE_PERCENTILES, reward_ints))`.
-    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let fees: BTreeMap<u64, u128> = reward_percentiles
         .iter()
         .map(|p| *p as u64)
@@ -494,12 +498,11 @@ fn build_transaction_request(params: &TxParams) -> TransactionRequest {
         nonce: Some(params.nonce),
         chain_id: Some(1), // mainnet — access-list result is chain-id-independent
         access_list: Some(params.access_list.clone()),
-        transaction_type: Some(2u8),   // EIP-1559
+        transaction_type: Some(2u8), // EIP-1559
         blob_versioned_hashes: None,
         max_fee_per_blob_gas: None,
         sidecar: None,
         authorization_list: None,
-        other: alloy::rpc::types::OtherFields::default(),
     }
 }
 
@@ -511,7 +514,7 @@ mod tests {
     use crate::dispatcher::Dispatcher;
     use crate::signer::TxSigner;
     use alloy::primitives::{address, Address, Bytes, B256, U256};
-    use alloy::providers::ProviderBuilder;
+    use alloy::providers::{Provider, ProviderBuilder};
     use alloy::rpc::client::ClientBuilder;
     use alloy::transports::mock::{Asserter, MockTransport};
     use std::sync::Arc;
@@ -531,11 +534,10 @@ mod tests {
     }
 
     fn mock_provider(asserter: &Asserter) -> AlloyProvider {
-        let client = ClientBuilder::default()
-            .transport(MockTransport::new(asserter.clone()), true);
+        let client = ClientBuilder::default().transport(MockTransport::new(asserter.clone()), true);
         let dyn_provider = ProviderBuilder::new().connect_client(client).erased();
         AlloyProvider::from_provider(
-            Arc::new(dyn_provider) as Arc<dyn alloy::providers::Provider<alloy::network::Ethereum>>,
+            Arc::new(dyn_provider) as Arc<dyn alloy::providers::Provider<alloy::network::Ethereum>>
         )
     }
 
@@ -571,7 +573,7 @@ mod tests {
         // (just checks the order via the Skipped records).
         let asserter = Asserter::new();
         let provider = mock_provider(&asserter);
-        let dispatcher = Arc::new(Mutex::new(Dispatcher::new()));
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
         let s = signer();
         let probe: Arc<dyn ReceiptProbe + Send + Sync> = Arc::new(NoopProbe);
 
@@ -597,11 +599,17 @@ mod tests {
         assert_eq!(outcome.records.len(), 2);
         assert_eq!(
             outcome.records[0],
-            SubmitRecord::Skipped { path_id: 2, reason: SkipReason::DryRun }
+            SubmitRecord::Skipped {
+                path_id: 2,
+                reason: SkipReason::DryRun
+            }
         );
         assert_eq!(
             outcome.records[1],
-            SubmitRecord::Skipped { path_id: 1, reason: SkipReason::DryRun }
+            SubmitRecord::Skipped {
+                path_id: 1,
+                reason: SkipReason::DryRun
+            }
         );
     }
 
@@ -613,7 +621,7 @@ mod tests {
         // POOL_A → skipped with PoolsClaimed.
         let asserter = Asserter::new();
         let provider = mock_provider(&asserter);
-        let dispatcher = Arc::new(Mutex::new(Dispatcher::new()));
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
         let s = signer();
         let probe: Arc<dyn ReceiptProbe + Send + Sync> = Arc::new(NoopProbe);
 
@@ -639,7 +647,10 @@ mod tests {
         assert_eq!(outcome.records.len(), 2);
         assert_eq!(
             outcome.records[1],
-            SubmitRecord::Skipped { path_id: 2, reason: SkipReason::PoolsClaimed }
+            SubmitRecord::Skipped {
+                path_id: 2,
+                reason: SkipReason::PoolsClaimed
+            }
         );
     }
 
@@ -648,7 +659,7 @@ mod tests {
         // Pre-reserve POOL_A in the dispatcher → candidate A is blocked.
         let asserter = Asserter::new();
         let provider = mock_provider(&asserter);
-        let dispatcher = Arc::new(Mutex::new(Dispatcher::new()));
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
         dispatcher
             .lock()
             .unwrap()
@@ -673,7 +684,10 @@ mod tests {
         assert_eq!(outcome.records.len(), 1);
         assert_eq!(
             outcome.records[0],
-            SubmitRecord::Skipped { path_id: 1, reason: SkipReason::PoolsClaimed }
+            SubmitRecord::Skipped {
+                path_id: 1,
+                reason: SkipReason::PoolsClaimed
+            }
         );
     }
 
@@ -683,7 +697,7 @@ mod tests {
     async fn submit_skips_on_dry_run_and_commits_pools() {
         let asserter = Asserter::new();
         let provider = mock_provider(&asserter);
-        let dispatcher = Arc::new(Mutex::new(Dispatcher::new()));
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
         let s = signer();
         let probe: Arc<dyn ReceiptProbe + Send + Sync> = Arc::new(NoopProbe);
 
@@ -695,7 +709,7 @@ mod tests {
             probe,
             0,
             100,
-            true,  // dry_run
+            true, // dry_run
             false,
         )
         .await
@@ -709,7 +723,7 @@ mod tests {
     async fn submit_skips_on_inject_code() {
         let asserter = Asserter::new();
         let provider = mock_provider(&asserter);
-        let dispatcher = Arc::new(Mutex::new(Dispatcher::new()));
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
         let s = signer();
         let probe: Arc<dyn ReceiptProbe + Send + Sync> = Arc::new(NoopProbe);
 
@@ -730,7 +744,10 @@ mod tests {
         assert_eq!(outcome.records.len(), 1);
         assert_eq!(
             outcome.records[0],
-            SubmitRecord::Skipped { path_id: 1, reason: SkipReason::InjectCode }
+            SubmitRecord::Skipped {
+                path_id: 1,
+                reason: SkipReason::InjectCode
+            }
         );
     }
 
@@ -746,11 +763,10 @@ mod tests {
         // eth_createAccessList response.
         asserter.push_success(&empty_access_list_response());
         // eth_sendRawTransaction response — a fake tx hash.
-        let fake_hash =
-            B256::from(alloy::primitives::address!("dddddddddddddddddddddddddddddddddddddddd"));
+        let fake_hash = B256::repeat_byte(0xdd);
         asserter.push_success(&tx_hash_response(&format!("{fake_hash:?}")));
         let provider = mock_provider(&asserter);
-        let dispatcher = Arc::new(Mutex::new(Dispatcher::new()));
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
         let s = signer();
         let probe: Arc<dyn ReceiptProbe + Send + Sync> = Arc::new(NoopProbe);
 
@@ -770,7 +786,12 @@ mod tests {
 
         assert_eq!(outcome.submitted_count(), 1);
         assert_eq!(outcome.skipped_count(), 0);
-        let SubmitRecord::Submitted { path_id, tx_hash, nonce } = &outcome.records[0] else {
+        let SubmitRecord::Submitted {
+            path_id,
+            tx_hash,
+            nonce,
+        } = &outcome.records[0]
+        else {
             panic!("expected Submitted, got {:?}", outcome.records[0]);
         };
         assert_eq!(*path_id, 1);
@@ -796,7 +817,7 @@ mod tests {
         asserter.push_success(&empty_access_list_response()); // access-list ok
         asserter.push_failure_msg("eth_sendRawTransaction failed"); // broadcast fails
         let provider = mock_provider(&asserter);
-        let dispatcher = Arc::new(Mutex::new(Dispatcher::new()));
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
         let s = signer();
         let probe: Arc<dyn ReceiptProbe + Send + Sync> = Arc::new(NoopProbe);
 
@@ -818,10 +839,16 @@ mod tests {
         assert_eq!(outcome.submitted_count(), 0);
         assert!(matches!(
             &outcome.records[0],
-            SubmitRecord::Skipped { reason: SkipReason::BroadcastFailed(_), .. }
+            SubmitRecord::Skipped {
+                reason: SkipReason::BroadcastFailed(_),
+                ..
+            }
         ));
         // The pool was NOT reserved (broadcast failed before reserve_pools).
-        assert!(!dispatcher.lock().unwrap().is_pool_pending(&PoolKey::new(POOL_A)));
+        assert!(!dispatcher
+            .lock()
+            .unwrap()
+            .is_pool_pending(&PoolKey::new(POOL_A)));
         // No monitor task spawned.
         assert_eq!(dispatcher.lock().unwrap().active_task_count(), 0);
     }
@@ -831,15 +858,13 @@ mod tests {
         // Two candidates, distinct pools. Both submit. Nonces 42 + 43.
         let asserter = Asserter::new();
         asserter.push_success(&empty_access_list_response());
-        let hash_a =
-            B256::from(alloy::primitives::address!("1111111111111111111111111111111111111111"));
+        let hash_a = B256::repeat_byte(0x11);
         asserter.push_success(&tx_hash_response(&format!("{hash_a:?}")));
         asserter.push_success(&empty_access_list_response());
-        let hash_b =
-            B256::from(alloy::primitives::address!("2222222222222222222222222222222222222222"));
+        let hash_b = B256::repeat_byte(0x22);
         asserter.push_success(&tx_hash_response(&format!("{hash_b:?}")));
         let provider = mock_provider(&asserter);
-        let dispatcher = Arc::new(Mutex::new(Dispatcher::new()));
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
         let s = signer();
         let probe: Arc<dyn ReceiptProbe + Send + Sync> = Arc::new(NoopProbe);
 
@@ -866,7 +891,7 @@ mod tests {
             .iter()
             .filter_map(|r| match r {
                 SubmitRecord::Submitted { nonce, .. } => Some(*nonce),
-                _ => None,
+                SubmitRecord::Skipped { .. } => None,
             })
             .collect();
         assert_eq!(nonces, vec![42, 43]);
@@ -888,13 +913,13 @@ mod tests {
             "reward": [["0x3b9aca00", "0x77359400"]],
         }));
         let provider = mock_provider(&asserter);
-        let dispatcher = Arc::new(Mutex::new(Dispatcher::new()));
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
 
-        let recorded =
-            fetch_fee_history(&provider, &dispatcher, 1, 100, &[10.0, 50.0]).await;
+        let recorded = fetch_fee_history(&provider, &dispatcher, 1, 100, &[10.0, 50.0]).await;
 
         assert!(recorded);
-        let fees = dispatcher.lock().unwrap().latest_priority_fees();
+        let d = dispatcher.lock().unwrap();
+        let fees = d.latest_priority_fees();
         assert_eq!(fees.get(&10), Some(&1_000_000_000u128));
         assert_eq!(fees.get(&50), Some(&2_000_000_000u128));
     }
@@ -906,10 +931,9 @@ mod tests {
         let asserter = Asserter::new();
         asserter.push_failure_msg("eth_feeHistory failed");
         let provider = mock_provider(&asserter);
-        let dispatcher = Arc::new(Mutex::new(Dispatcher::new()));
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::default()));
 
-        let recorded =
-            fetch_fee_history(&provider, &dispatcher, 1, 100, &[10.0, 50.0]).await;
+        let recorded = fetch_fee_history(&provider, &dispatcher, 1, 100, &[10.0, 50.0]).await;
 
         assert!(!recorded);
     }
@@ -925,8 +949,9 @@ mod tests {
         fn receipt_found(
             &self,
             _tx_hash: B256,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = crate::SubmissionResult<bool>> + Send + '_>>
-        {
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = crate::SubmissionResult<bool>> + Send + '_>,
+        > {
             Box::pin(async { Ok(false) })
         }
     }
