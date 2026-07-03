@@ -544,6 +544,12 @@ def solidly_calc_exact_in_stable_camelot(
 # companion `degenbot.utils.solady.libzip` delegates here (sub-step C routing).
 def flz_compress(uncompressed_data: str | bytes) -> HexBytes: ...
 def flz_decompress(compressed_data: bytes | bytearray | str) -> HexBytes: ...
+def build_path_graph(
+    database_path: str,
+    chain_id: int,
+    pool_kinds: set[int],
+    allowed_intermediate_token_ids: set[int] | None = ...,
+) -> dict[str, Any]: ...
 def find_paths_rust(
     edges: list[tuple[int, int, int, int]],
     start_token_id: int,
@@ -2392,6 +2398,7 @@ __all__ = [
     "balancer_weighted_calc_out_given_in",
     "balancer_weighted_calculate_invariant",
     "balancer_weighted_subtract_swap_fee_amount",
+    "build_path_graph",
     "cl_add_delta",
     "cl_apply_liquidity_mapping_update",
     "cl_compute_swap_step_v3",
