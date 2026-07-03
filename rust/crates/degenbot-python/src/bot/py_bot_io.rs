@@ -156,11 +156,7 @@ impl PyBotIo {
     /// `session.scalar(select(...))` / `session.commit()` bodies retire).
     #[new]
     #[pyo3(signature = (provider, db=None, database_path=None))]
-    fn new(
-        provider: Py<PyAny>,
-        db: Option<Py<PyAny>>,
-        database_path: Option<String>,
-    ) -> Self {
+    fn new(provider: Py<PyAny>, db: Option<Py<PyAny>>, database_path: Option<String>) -> Self {
         Self {
             provider,
             db,
@@ -250,8 +246,9 @@ impl PyBotIo {
             return Ok(());
         };
         py.detach(|| {
-            let (db, _state) = degenbot_db::DegenbotDb::open_for_writes(&std::path::PathBuf::from(&path))
-                .map_err(|e| crate::db::db_err_to_py(&e))?;
+            let (db, _state) =
+                degenbot_db::DegenbotDb::open_for_writes(&std::path::PathBuf::from(&path))
+                    .map_err(|e| crate::db::db_err_to_py(&e))?;
             db.update_erc20_token_metadata(chain_id, address, name, symbol, decimals)
                 .map_err(|e| crate::db::db_err_to_py(&e))
         })

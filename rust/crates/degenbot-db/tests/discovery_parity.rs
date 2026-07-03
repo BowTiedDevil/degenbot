@@ -52,7 +52,8 @@ fn upsert_v2_pool_inserts_base_and_subclass_row() {
         fee_token1: 3,
         stable: None,
     }];
-    db.upsert_v2_pools(1, "uniswap_v2", 1, 1_000, &rows).unwrap();
+    db.upsert_v2_pools(1, "uniswap_v2", 1, 1_000, &rows)
+        .unwrap();
 
     let conn = db.lock();
     // base pools row
@@ -95,7 +96,8 @@ fn upsert_v2_aerodrome_includes_stable_column() {
         fee_token1: 0,
         stable: Some(true),
     }];
-    db.upsert_v2_pools(1, "aerodrome_v2", 1, 10_000, &rows).unwrap();
+    db.upsert_v2_pools(1, "aerodrome_v2", 1, 10_000, &rows)
+        .unwrap();
 
     let conn = db.lock();
     let (kind,): (String,) = conn
@@ -103,7 +105,9 @@ fn upsert_v2_aerodrome_includes_stable_column() {
         .unwrap();
     assert_eq!(kind, "aerodrome_v2");
     let (stable,): (bool,) = conn
-        .query_row("SELECT stable FROM aerodrome_v2_pools", [], |r| Ok((r.get(0)?,)))
+        .query_row("SELECT stable FROM aerodrome_v2_pools", [], |r| {
+            Ok((r.get(0)?,))
+        })
         .unwrap();
     assert!(stable);
 }
@@ -118,22 +122,42 @@ fn upsert_v3_pool_inserts_base_and_subclass_row() {
         fee: 500,
         tick_spacing: 10,
     }];
-    db.upsert_v3_pools(1, "uniswap_v3", 1, 1_000_000, &rows).unwrap();
+    db.upsert_v3_pools(1, "uniswap_v3", 1, 1_000_000, &rows)
+        .unwrap();
 
     let conn = db.lock();
     let (kind,): (String,) = conn
         .query_row("SELECT kind FROM pools", [], |r| Ok((r.get(0)?,)))
         .unwrap();
     assert_eq!(kind, "uniswap_v3");
-    let (tick_spacing, fee_token0, fee_token1, fee_denominator, lub, lui): (i64, i64, i64, i64, Option<i64>, Option<i64>) = conn
+    let (tick_spacing, fee_token0, fee_token1, fee_denominator, lub, lui): (
+        i64,
+        i64,
+        i64,
+        i64,
+        Option<i64>,
+        Option<i64>,
+    ) = conn
         .query_row(
             "SELECT tick_spacing, fee_token0, fee_token1, fee_denominator, \
              liquidity_update_block, liquidity_update_log_index FROM uniswap_v3_pools",
             [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            },
         )
         .unwrap();
-    assert_eq!((tick_spacing, fee_token0, fee_token1, fee_denominator), (10, 500, 500, 1_000_000));
+    assert_eq!(
+        (tick_spacing, fee_token0, fee_token1, fee_denominator),
+        (10, 500, 500, 1_000_000)
+    );
     // new pool → no liquidity-update stamps yet
     assert_eq!(lub, None);
     assert_eq!(lui, None);
@@ -151,8 +175,13 @@ fn upsert_v4_pool_uses_managed_pools_base() {
         fee: 3000,
         tick_spacing: 60,
     }];
-    db.upsert_v4_pools(1, "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 1_000_000, &rows)
-        .unwrap();
+    db.upsert_v4_pools(
+        1,
+        "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        1_000_000,
+        &rows,
+    )
+    .unwrap();
 
     let conn = db.lock();
     // managed_pools base row (separate from `pools`)
@@ -164,13 +193,35 @@ fn upsert_v4_pool_uses_managed_pools_base() {
     assert_eq!(kind, "uniswap_v4");
     assert_eq!(manager_id, 1);
     // uniswap_v4_pools detail row
-    let (mpid, ph, hooks, c0, c1, fc0, fc1, fden, ts): (i64, String, String, i64, i64, i64, i64, i64, i64) = conn
+    let (mpid, ph, hooks, c0, c1, fc0, fc1, fden, ts): (
+        i64,
+        String,
+        String,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+    ) = conn
         .query_row(
             "SELECT managed_pool_id, pool_hash, hooks, currency0_id, currency1_id, \
              fee_currency0, fee_currency1, fee_denominator, tick_spacing \
              FROM uniswap_v4_pools",
             [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?)),
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                    r.get(7)?,
+                    r.get(8)?,
+                ))
+            },
         )
         .unwrap();
     let managed_count: i64 = conn
@@ -201,7 +252,12 @@ fn upsert_v4_pools_resolves_manager_by_address() {
     }];
     // wrong manager address → Decode error (mirrors Python `assert manager_in_db is not None`)
     let err = db
-        .upsert_v4_pools(1, "0xcccccccccccccccccccccccccccccccccccccccc", 1_000_000, &rows)
+        .upsert_v4_pools(
+            1,
+            "0xcccccccccccccccccccccccccccccccccccccccc",
+            1_000_000,
+            &rows,
+        )
         .unwrap_err();
     assert!(matches!(err, degenbot_db::DbError::Decode(_)));
 }
@@ -257,7 +313,8 @@ fn upsert_v2_reuses_existing_tokens_across_rows() {
             stable: None,
         },
     ];
-    db.upsert_v2_pools(1, "uniswap_v2", 1, 1_000, &rows).unwrap();
+    db.upsert_v2_pools(1, "uniswap_v2", 1, 1_000, &rows)
+        .unwrap();
     let conn = db.lock();
     let token_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM erc20_tokens", [], |r| r.get(0))

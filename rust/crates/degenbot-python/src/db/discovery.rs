@@ -208,8 +208,8 @@ pub(crate) fn db_upsert_v2_pools(
         .map(|r| r.borrow(py).to_input())
         .collect::<PyResult<_>>()?;
     py.detach(|| {
-        let (db, _state) = degenbot_db::DegenbotDb::open_for_writes(&path)
-            .map_err(|e| db_err_to_py(&e))?;
+        let (db, _state) =
+            degenbot_db::DegenbotDb::open_for_writes(&path).map_err(|e| db_err_to_py(&e))?;
         db.upsert_v2_pools(chain_id, kind, exchange_id, fee_denominator, &rust_rows)
             .map_err(|e| db_err_to_py(&e))
     })
@@ -238,8 +238,8 @@ pub(crate) fn db_upsert_v3_pools(
         .map(|r| r.borrow(py).to_input())
         .collect::<PyResult<_>>()?;
     py.detach(|| {
-        let (db, _state) = degenbot_db::DegenbotDb::open_for_writes(&path)
-            .map_err(|e| db_err_to_py(&e))?;
+        let (db, _state) =
+            degenbot_db::DegenbotDb::open_for_writes(&path).map_err(|e| db_err_to_py(&e))?;
         db.upsert_v3_pools(chain_id, kind, exchange_id, fee_denominator, &rust_rows)
             .map_err(|e| db_err_to_py(&e))
     })
@@ -270,8 +270,8 @@ pub(crate) fn db_upsert_v4_pools(
         .map(|r| r.borrow(py).to_input())
         .collect::<PyResult<_>>()?;
     py.detach(|| {
-        let (db, _state) = degenbot_db::DegenbotDb::open_for_writes(&path)
-            .map_err(|e| db_err_to_py(&e))?;
+        let (db, _state) =
+            degenbot_db::DegenbotDb::open_for_writes(&path).map_err(|e| db_err_to_py(&e))?;
         db.upsert_v4_pools(chain_id, pool_manager_address, fee_denominator, &rust_rows)
             .map_err(|e| db_err_to_py(&e))
     })
@@ -293,8 +293,8 @@ pub(crate) fn db_set_exchange_last_update_block(
 ) -> PyResult<()> {
     let path = PathBuf::from(database_path);
     py.detach(|| {
-        let (db, _state) = degenbot_db::DegenbotDb::open_for_writes(&path)
-            .map_err(|e| db_err_to_py(&e))?;
+        let (db, _state) =
+            degenbot_db::DegenbotDb::open_for_writes(&path).map_err(|e| db_err_to_py(&e))?;
         db.set_exchange_last_update_block(chain_id, exchange_id, block)
             .map_err(|e| db_err_to_py(&e))
     })

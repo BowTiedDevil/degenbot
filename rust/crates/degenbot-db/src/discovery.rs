@@ -153,10 +153,20 @@ impl DegenbotDb {
             // Token escalate first — `get_or_create_erc20_token` locks
             // `self.conn` internally, so it MUST NOT be called while we hold
             // the connection guard (parking_lot is non-reentrant → deadlock).
-            let token0_id =
-                self.get_or_create_erc20_token(chain, &r.token0_address.to_checksum(None), None, None, None)?;
-            let token1_id =
-                self.get_or_create_erc20_token(chain, &r.token1_address.to_checksum(None), None, None, None)?;
+            let token0_id = self.get_or_create_erc20_token(
+                chain,
+                &r.token0_address.to_checksum(None),
+                None,
+                None,
+                None,
+            )?;
+            let token1_id = self.get_or_create_erc20_token(
+                chain,
+                &r.token1_address.to_checksum(None),
+                None,
+                None,
+                None,
+            )?;
             let conn = self.lock();
             conn.execute(
                 "INSERT INTO pools (address, chain, kind, token0_id, token1_id, exchange_id) \
@@ -177,7 +187,13 @@ impl DegenbotDb {
                         "INSERT INTO {sub} (pool_id, fee_token0, fee_token1, fee_denominator, \
                          stable) VALUES (?1, ?2, ?3, ?4, ?5)"
                     ),
-                    params![pool_id, r.fee_token0, r.fee_token1, fee_denominator, r.stable],
+                    params![
+                        pool_id,
+                        r.fee_token0,
+                        r.fee_token1,
+                        fee_denominator,
+                        r.stable
+                    ],
                 )?;
             } else {
                 conn.execute(
@@ -219,10 +235,20 @@ impl DegenbotDb {
         }
         for r in rows {
             // Token escalate first (see `upsert_v2_pools` re-entrancy note).
-            let token0_id =
-                self.get_or_create_erc20_token(chain, &r.token0_address.to_checksum(None), None, None, None)?;
-            let token1_id =
-                self.get_or_create_erc20_token(chain, &r.token1_address.to_checksum(None), None, None, None)?;
+            let token0_id = self.get_or_create_erc20_token(
+                chain,
+                &r.token0_address.to_checksum(None),
+                None,
+                None,
+                None,
+            )?;
+            let token1_id = self.get_or_create_erc20_token(
+                chain,
+                &r.token1_address.to_checksum(None),
+                None,
+                None,
+                None,
+            )?;
             let conn = self.lock();
             conn.execute(
                 "INSERT INTO pools (address, chain, kind, token0_id, token1_id, exchange_id) \
@@ -280,10 +306,20 @@ impl DegenbotDb {
             })?;
         for r in rows {
             // Currency-token escalate first (see `upsert_v2_pools` re-entrancy note).
-            let currency0_id =
-                self.get_or_create_erc20_token(chain, &r.currency0_address.to_checksum(None), None, None, None)?;
-            let currency1_id =
-                self.get_or_create_erc20_token(chain, &r.currency1_address.to_checksum(None), None, None, None)?;
+            let currency0_id = self.get_or_create_erc20_token(
+                chain,
+                &r.currency0_address.to_checksum(None),
+                None,
+                None,
+                None,
+            )?;
+            let currency1_id = self.get_or_create_erc20_token(
+                chain,
+                &r.currency1_address.to_checksum(None),
+                None,
+                None,
+                None,
+            )?;
             let conn = self.lock();
             conn.execute(
                 "INSERT INTO managed_pools (kind, manager_id) VALUES (?1, ?2)",
