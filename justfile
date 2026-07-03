@@ -29,7 +29,7 @@ test-rust:
 
 # Run wrapped Rust Python tests
 test-rust-python:
-    uv run pytest tests/rust --ff -x -q --no-header
+    uv run pytest tests/rust -x -q --no-header
 
 # Run Rust linter (clippy)
 lint-rust:
@@ -82,7 +82,7 @@ compile-test-contracts:
 
 # Run Python tests
 test-python: compile-test-contracts
-    uv run pytest --ff -x -q --no-header
+    uv run pytest -x -q --no-header
 
 # Run only on-chain-oracle parity tests in REPLAY mode (offline, CI-safe, no RPC/secrets).
 # Replay is read-only (asserts against recorded ints), so xdist parallelism is
