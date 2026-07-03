@@ -198,6 +198,12 @@ impl FailBuckets {
     pub fn buckets(&self) -> &BTreeMap<String, u64> {
         &self.0
     }
+
+    /// The underlying bucket→count map, mutable (for the dispatch fan-out to
+    /// merge per-path buckets into the outcome tally).
+    pub fn buckets_mut(&mut self) -> &mut BTreeMap<String, u64> {
+        &mut self.0
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────

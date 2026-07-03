@@ -79,6 +79,14 @@ pub mod dispatch;
 /// WWC4DL encode (YQORTM) + the WWC4DL revert taxonomy (SYI3PG).
 pub mod simulate_one;
 
+/// The `dispatch_profitable_results` fan-out + categorization (D-row). Fans
+/// `simulate_one` out across a tokio `JoinSet` with a `MAX_SIMULATE_CONCURRENT`
+/// semaphore, gathers with exception tolerance, categorizes into gas-
+/// profitable / gas-unprofitable / exception, and integrates the thin-margin
+/// pre-filter (SYI3PG) + `PathSuppression` (M756BN, consumed from
+/// `degenbot-submission`).
+pub mod dispatch_profitable;
+
 // Re-export the most-used types at the crate root for ergonomic access
 // (mirrors how `degenbot_executor` surfaces `WarmupSlots` / `mapping_slot`).
 pub use dispatch::{BlockPriorityFees, SimulatedCall, SimulationResult};
