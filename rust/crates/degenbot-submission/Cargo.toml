@@ -22,6 +22,10 @@ suspicious = "warn"
 [dependencies]
 alloy = { version = "^2.0", features = ["full", "signer-local", "network"] }
 degenbot-core = { path = "../degenbot-core" }
+# `AlloyProvider` (the typed `eth_sendRawTransaction`/`eth_feeHistory`/
+# `eth_createAccessList` surfaces the N6 submit orchestration consumes —
+# ZUZANP typed, no `make_request` escape hatch).
+degenbot-rpc = { path = "../degenbot-rpc" }
 thiserror = { version = "^2.0" }
 # Async runtime for the dispatcher's `active_tasks` `JoinSet` (auto-discards
 # completed tasks) + the by-reference `current_block` `Mutex<u64>` clock read
@@ -35,6 +39,12 @@ tokio = { version = "^1.52", features = ["rt", "sync", "time", "macros"] }
 pyo3 = { version = "^0.29", features = ["abi3-py312", "serde"], optional = true }
 
 [dev-dependencies]
+# `test-utils` gates `AlloyProvider::from_provider` (the mock-transport
+# constructor) so the §4.2 wire-shape tests can drive the submit orchestration
+# without a live RPC. Production builds (the umbrella, the cdylib) never
+# enable this feature.
+degenbot-rpc = { path = "../degenbot-rpc", features = ["test-utils"] }
+serde_json = { version = "^1.0" }
 proptest = "^1.10"
 
 [features]

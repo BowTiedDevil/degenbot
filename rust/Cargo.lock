@@ -1794,8 +1794,10 @@ version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
  "degenbot-core",
+ "degenbot-rpc",
  "proptest",
  "pyo3",
+ "serde_json",
  "thiserror",
  "tokio",
 ]
