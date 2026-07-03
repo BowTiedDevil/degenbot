@@ -634,7 +634,7 @@ def db_apply_v3_liquidity_updates(
     database_path: str,
     chain_id: int,
     pool_address: str,
-    events: list[tuple[int, int, int, int, int]],
+    events: list[LiquidityUpdateEvent],
 ) -> bool:
     """Apply pre-decoded V3 liquidity events; persist positions/init-maps/marker.
 
@@ -645,15 +645,27 @@ def db_apply_v3_liquidity_updates(
 
 def db_apply_v4_liquidity_updates(
     database_path: str,
-    pool_hash: str,
+    pool_hash_hex: str,
     pool_manager_chain: int,
-    events: list[tuple[int, int, int, int, int]],
+    events: list[LiquidityUpdateEvent],
 ) -> bool:
     """Apply pre-decoded V4 liquidity events; persist positions/init-maps/marker.
 
     Returns ``False`` if the pool at ``(pool_hash, pool_manager_chain)`` isn't
     found; ``True`` after a successful apply. Raises ``ValueError`` on a DB
     failure.
+    """
+
+def db_fetch_pool_row(
+    database_path: str,
+    chain_id: int,
+    address: str,
+) -> LiquidityPoolRow | None:
+    """Fetch a `pools` row by ``(chain_id, address)`` (QJSCA5 §4.3).
+
+    The V3 `apply_3_liquidity_updates` shell uses this to read the pool's
+    `exchange_id` for the `exchanges_in_scope` precondition. Raises
+    ``ValueError`` on a DB failure.
     """
 
 # ------------------------------------------------------------------
@@ -1769,6 +1781,24 @@ class InitializationMapRow:
     @property
     def bitmap(self) -> int: ...
 
+class LiquidityUpdateEvent:
+    """A decoded liquidity-update event record (QJSCA5 §4.3).
+
+    The `(block_number, log_index, tick_lower, tick_upper, liquidity_delta)`
+    tuple the Rust apply loop consumes. `liquidity_delta` is the signed delta
+    (V3 Burn negated; V4 Modify decoded signed). Built by the Python apply
+    shells; the Rust core applies + persists.
+    """
+
+    def __init__(
+        self,
+        block_number: int,
+        log_index: int,
+        tick_lower: int,
+        tick_upper: int,
+        liquidity_delta: int,
+    ) -> None: ...
+
 class PyBotIo(PoolIO):
     """PyO3 wrapper (exposed as `PyBotIo` in Python) holding a provider + optional DB.
 
@@ -2334,6 +2364,7 @@ __all__ = [
     "InitializationMapRow",
     "LiquidityPoolRow",
     "LiquidityPositionRow",
+    "LiquidityUpdateEvent",
     "LogData",
     "LogFilter",
     "PoolKindRow",
@@ -2391,6 +2422,7 @@ __all__ = [
     "db_backup_database",
     "db_compact_database",
     "db_create_new_database",
+    "db_fetch_pool_row",
     "db_upgrade_database",
     "decode",
     "decode_return_data",

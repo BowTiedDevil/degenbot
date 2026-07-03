@@ -1,18 +1,15 @@
 """CLI commands for pool state queries."""
 
-import itertools
 from collections import defaultdict
 from collections.abc import Callable
 from typing import cast
 
 import click
 import eth_typing
-import pydantic
 import tqdm
 from eth_typing.evm import BlockParams, ChecksumAddress
 from hexbytes import HexBytes
-from sqlalchemy import delete, select
-from sqlalchemy.dialects.sqlite import insert as sqlite_upsert
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from tqdm.contrib.logging import logging_redirect_tqdm
 from web3.types import LogReceipt
@@ -30,16 +27,10 @@ from degenbot.cli.pool_updater_configs import (
     update_v4_pools,
 )
 from degenbot.cli.utils import get_provider_from_config
-from degenbot.constants import MAX_UINT256
 from degenbot.database.models.base import ExchangeTable
 from degenbot.database.models.pools import (
     AerodromeV2PoolTable,
     AerodromeV3PoolTable,
-    InitializationMapTable,
-    LiquidityPoolTable,
-    LiquidityPositionTable,
-    ManagedPoolInitializationMapTable,
-    ManagedPoolLiquidityPositionTable,
     PancakeswapV2PoolTable,
     PancakeswapV3PoolTable,
     PoolManagerTable,
@@ -48,39 +39,19 @@ from degenbot.database.models.pools import (
     SwapbasedV2PoolTable,
     UniswapV2PoolTable,
     UniswapV3PoolTable,
-    UniswapV3PoolTableBase,
     UniswapV4PoolTable,
-    UniswapV4PoolTableBase,
 )
-from degenbot.degenbot_rs import cl_apply_liquidity_mapping_update
+from degenbot.degenbot_rs import (
+    LiquidityUpdateEvent,
+    db_apply_v3_liquidity_updates,
+    db_apply_v4_liquidity_updates,
+    db_fetch_pool_row,
+)
 from degenbot.logging import logger
 from degenbot.provider import ProviderAdapter
 from degenbot.provider.block_helpers import get_number_for_block_identifier
 from degenbot.provider.log_fetching import fetch_logs_retrying
-from degenbot.types.aliases import ChainId, Tick, Word
-from degenbot.uniswap.concentrated.types import BitmapAtWord as ConcentratedBitmapAtWord
-from degenbot.uniswap.concentrated.types import LiquidityAtTick as ConcentratedLiquidityAtTick
-
-
-class TicksAtWord(pydantic.BaseModel):
-    """TicksAtWord class."""
-
-    bitmap: int
-
-
-class LiquidityAtTick(pydantic.BaseModel):
-    """LiquidityAtTick class."""
-
-    liquidity_net: int
-    liquidity_gross: int
-
-
-class PoolLiquidityMap(pydantic.BaseModel):
-    """PoolLiquidityMap class."""
-
-    tick_bitmap: dict[Word, TicksAtWord]
-    tick_data: dict[Tick, LiquidityAtTick]
-
+from degenbot.types.aliases import ChainId
 
 AERODROME_V2_POOLCREATED_EVENT_HASH = HexBytes(
     "0x2128d88d14c80cb081c1252a5acff7a264671bf199ce226b53788fb26065005e",
@@ -117,66 +88,13 @@ UNISWAP_V4_MODIFYLIQUIDITY_EVENT_HASH = HexBytes(
 )
 
 
-def _apply_liquidity_mapping_via_rust(
-    *,
-    tick_bitmap: dict[int, ConcentratedBitmapAtWord],
-    tick_data: dict[int, ConcentratedLiquidityAtTick],
-    tick_spacing: int,
-    liquidity: int,
-    update_block: int,
-    tick_lower: int,
-    tick_upper: int,
-    liquidity_delta: int,
-) -> tuple[dict[int, ConcentratedBitmapAtWord], dict[int, ConcentratedLiquidityAtTick], int]:
-    """Apply a liquidity-mapping update via the Rust ``cl_apply_liquidity_mapping_update`` seam.
-
-    The retired pure-Python ``apply_liquidity_mapping_update`` mirror is deleted;
-    the seam returns plain dicts whose values are re-wrapped into the pydantic
-    ``ConcentratedBitmapAtWord`` / ``ConcentratedLiquidityAtTick`` models so the
-    downstream ``.bitmap`` / ``.liquidity_net`` / ``.liquidity_gross`` attribute
-    reads in ``apply_v3/v4_liquidity_updates`` are unchanged.
-
-    ``initial_state_block=MAX_UINT256`` is passed to match the prior Python call
-    (the skip-sentinel for the in-range liquidity adjustment, which this CLI
-    updates outside the pool's active-liquidity hot path).
-
-    Returns:
-        ``(tick_bitmap, tick_data, liquidity)`` re-wrapped into the pydantic models.
-
-    """
-    result = cl_apply_liquidity_mapping_update(
-        tick_bitmap,
-        tick_data,
-        tick_spacing,
-        0,  # tick — unused with the MAX_UINT256 in-range skip
-        liquidity,
-        MAX_UINT256,  # initial_state_block — skip the in-range liquidity adjustment
-        update_block,
-        tick_lower,
-        tick_upper,
-        liquidity_delta,
-    )
-    out_bitmap = {
-        int(w): ConcentratedBitmapAtWord(bitmap=w_v["bitmap"], block=w_v["block"])
-        for w, w_v in result["tick_bitmap"].items()
-    }
-    out_data = {
-        int(t): ConcentratedLiquidityAtTick(
-            liquidity_net=t_v["liquidity_net"],
-            liquidity_gross=t_v["liquidity_gross"],
-            block=t_v["block"],
-        )
-        for t, t_v in result["tick_data"].items()
-    }
-    return out_bitmap, out_data, result["liquidity"]
-
-
 def apply_v3_liquidity_updates(
     provider: ProviderAdapter,
     pool_address: ChecksumAddress,
     liquidity_events: list[LogReceipt],
     exchanges_in_scope: set[ExchangeTable],
-    session: Session,
+    *,
+    database_path: str,
 ) -> None:
     """Apply the liquidity updates to the provided pool.
 
@@ -190,61 +108,31 @@ def apply_v3_liquidity_updates(
     A set of assertions guards these invariants, but the function otherwise makes no effort to
     verify the updates or validate the resulting mapping against the chain state.
     Omitting updates will corrupt the liquidity map!
-    """
-    pool_in_db = session.scalar(
-        select(LiquidityPoolTable).where(
-            LiquidityPoolTable.address == pool_address,
-            LiquidityPoolTable.chain == provider.chain_id,
-        ),
-    )
 
-    if (pool_in_db is None) or (pool_in_db.exchange not in exchanges_in_scope):
+    QJSCA5 §4.3: the reconstitute→apply-math→persist pipeline is owned by the
+    Rust core (`db_apply_v3_liquidity_updates`); this shell decodes the raw
+    `LogReceipt`s into `LiquidityUpdateEvent` records + delegates. The
+    `exchanges_in_scope` precondition (a backfill double-apply guard) stays in
+    Python (orchestration) — it reads the pool's `exchange_id` via the
+    `db_fetch_pool_row` seam.
+    """
+    # Precondition: the pool's exchange must be in the in-scope set (backfill
+    # double-apply guard). `db_fetch_pool_row` carries `exchange_id`.
+    in_scope_exchange_ids = {exchange.id for exchange in exchanges_in_scope}
+    pool_row = db_fetch_pool_row(
+        database_path=database_path,
+        chain_id=provider.chain_id,
+        address=pool_address,
+    )
+    if pool_row is None or pool_row.exchange_id not in in_scope_exchange_ids:
         return
 
-    assert isinstance(pool_in_db, UniswapV3PoolTableBase)
-
-    pool_liquidity_map = PoolLiquidityMap.model_construct(
-        tick_bitmap={
-            mapping.word: TicksAtWord.model_construct(
-                bitmap=mapping.bitmap,
-            )
-            for mapping in pool_in_db.initialization_maps
-        },
-        tick_data={
-            position.tick: ConcentratedLiquidityAtTick.model_construct(
-                liquidity_gross=position.liquidity_gross,
-                liquidity_net=position.liquidity_net,
-            )
-            for position in pool_in_db.liquidity_positions
-        },
-    )
-
-    current_tick_bitmap: dict[int, ConcentratedBitmapAtWord] = {
-        k: ConcentratedBitmapAtWord.model_construct(
-            bitmap=v.bitmap,
-        )
-        for k, v in pool_liquidity_map.tick_bitmap.items()
-    }
-    current_tick_data: dict[int, ConcentratedLiquidityAtTick] = {
-        k: ConcentratedLiquidityAtTick.model_construct(
-            liquidity_gross=v.liquidity_gross,
-            liquidity_net=v.liquidity_net,
-        )
-        for k, v in pool_liquidity_map.tick_data.items()
-    }
-    current_liquidity = 0
-
+    # Decode the raw log receipts into the event records the Rust apply loop
+    # consumes. The V3 decode: tick bounds from topics[2..3]; a Burn-aware
+    # signed `liquidity_delta` (Burn negates). amount==0 events are skipped
+    # (the Rust loop would no-op them anyway, but skipping avoids the record).
+    decoded_events: list[LiquidityUpdateEvent] = []
     for liquidity_event in liquidity_events:
-        # Guard against applying a liquidity event that occurred in the past
-        if (
-            pool_in_db.liquidity_update_block is not None
-            and pool_in_db.liquidity_update_log_index is not None
-        ):
-            if liquidity_event["blockNumber"] == pool_in_db.liquidity_update_block:
-                assert liquidity_event["logIndex"] > pool_in_db.liquidity_update_log_index
-            else:
-                assert liquidity_event["blockNumber"] > pool_in_db.liquidity_update_block
-
         (tick_lower,) = abi_decode(["int24"], liquidity_event["topics"][2])
         (tick_upper,) = abi_decode(["int24"], liquidity_event["topics"][3])
 
@@ -263,118 +151,33 @@ def apply_v3_liquidity_updates(
         if amount == 0:
             continue
 
-        current_tick_bitmap, current_tick_data, current_liquidity = (
-            _apply_liquidity_mapping_via_rust(
-                tick_bitmap=current_tick_bitmap,
-                tick_data=current_tick_data,
-                tick_spacing=pool_in_db.tick_spacing,
-                liquidity=current_liquidity,
-                update_block=liquidity_event["blockNumber"],
-                tick_lower=tick_lower,
-                tick_upper=tick_upper,
-                liquidity_delta=amount,
+        decoded_events.append(
+            LiquidityUpdateEvent(
+                liquidity_event["blockNumber"],
+                liquidity_event["logIndex"],
+                tick_lower,
+                tick_upper,
+                amount,
             )
         )
 
-        pool_in_db.liquidity_update_block = liquidity_event["blockNumber"]
-        pool_in_db.liquidity_update_log_index = liquidity_event["logIndex"]
-
-    # After all events have been processed, write the liquidity positions and tick
-    # initialization maps to the DB — adding new, updating existing, and dropping stale entries
-    db_ticks = {position.tick for position in pool_in_db.liquidity_positions}
-    helper_ticks = set(current_tick_data)
-
-    # Drop any positions found in the DB but not the helper
-    if ticks_to_drop := db_ticks - helper_ticks:
-        session.execute(
-            delete(LiquidityPositionTable).where(
-                LiquidityPositionTable.pool_id == pool_in_db.id,
-                LiquidityPositionTable.tick.in_(ticks_to_drop),
-            ),
-        )
-
-    # Upsert remaining ticks
-    if helper_ticks:
-        # Chunk the upserts to stay below SQLite's limit of 32,766 variables
-        # per batch statement. ref: https://www.sqlite.org/limits.html
-        keys_per_row = 4
-        chunk_size = 30_000 // keys_per_row
-
-        for tick_chunk in itertools.batched(helper_ticks, chunk_size):
-            stmt = sqlite_upsert(LiquidityPositionTable).values([
-                {
-                    "pool_id": pool_in_db.id,
-                    "tick": tick,
-                    "liquidity_net": current_tick_data[tick].liquidity_net,
-                    "liquidity_gross": current_tick_data[tick].liquidity_gross,
-                }
-                for tick in tick_chunk
-            ])
-            stmt = stmt.on_conflict_do_update(
-                index_elements=[
-                    LiquidityPositionTable.pool_id,
-                    LiquidityPositionTable.tick,
-                ],
-                set_={
-                    "liquidity_net": stmt.excluded.liquidity_net,
-                    "liquidity_gross": stmt.excluded.liquidity_gross,
-                },
-                where=(LiquidityPositionTable.liquidity_net != stmt.excluded.liquidity_net)
-                | (LiquidityPositionTable.liquidity_gross != stmt.excluded.liquidity_gross),
-            )
-            session.execute(stmt)
-
-    db_words = {map_.word for map_ in pool_in_db.initialization_maps}
-    helper_words = {
-        word
-        for word, map_ in current_tick_bitmap.items()
-        if map_.bitmap != 0  # exclude maps where all ticks are uninitialized
-    }
-
-    # Drop any initialization map found in the DB but not the helper
-    if words_to_drop := db_words - helper_words:
-        session.execute(
-            delete(InitializationMapTable).where(
-                InitializationMapTable.pool_id == pool_in_db.id,
-                InitializationMapTable.word.in_(words_to_drop),
-            ),
-        )
-
-    # Upsert remaining maps
-    if helper_words:
-        # Chunk the upserts to stay below SQLite's limit of 32,766 variables
-        # per batch statement. ref: https://www.sqlite.org/limits.html
-        keys_per_row = 3
-        chunk_size = 30_000 // keys_per_row
-
-        for word_chunk in itertools.batched(helper_words, chunk_size):
-            stmt = sqlite_upsert(InitializationMapTable).values([
-                {
-                    "pool_id": pool_in_db.id,
-                    "word": word,
-                    "bitmap": current_tick_bitmap[word].bitmap,
-                }
-                for word in word_chunk
-                if current_tick_bitmap[word].bitmap != 0
-            ])
-            stmt = stmt.on_conflict_do_update(
-                index_elements=[
-                    InitializationMapTable.pool_id,
-                    InitializationMapTable.word,
-                ],
-                set_={
-                    "bitmap": stmt.excluded.bitmap,
-                },
-                where=InitializationMapTable.bitmap != stmt.excluded.bitmap,
-            )
-            session.execute(stmt)
+    # Delegate the reconstitute→apply→persist→stamp pipeline to the Rust core.
+    # The block/log-index ordering invariant is enforced in Rust (panics on
+    # violation, matching the prior Python `assert`s).
+    db_apply_v3_liquidity_updates(
+        database_path=database_path,
+        chain_id=provider.chain_id,
+        pool_address=pool_address,
+        events=decoded_events,
+    )
 
 
 def apply_v4_liquidity_updates(
     pool_id: HexBytes,
     liquidity_events: list[LogReceipt],
     pool_manager: PoolManagerTable,
-    session: Session,
+    *,
+    database_path: str,
 ) -> None:
     """Apply the liquidity updates to the provided pool.
 
@@ -388,58 +191,15 @@ def apply_v4_liquidity_updates(
     A set of assertions guards these invariants, but the function otherwise makes no effort to
     verify the updates or validate the resulting mapping against the chain state.
     Omitting updates will corrupt the liquidity map!
+
+    QJSCA5 §4.3: the reconstitute→apply-math→persist pipeline is owned by the
+    Rust core (`db_apply_v4_liquidity_updates`); this shell decodes the raw
+    `LogReceipt`s into `LiquidityUpdateEvent` records + delegates. V4 emits a
+    single signed `Modify` event (no Burn/Mint split), so the decode unpacks
+    `(tick_lower, tick_upper, liquidity_delta, _)` straight from the `data` blob.
     """
-    pool_in_db = session.scalar(
-        select(UniswapV4PoolTable).where(
-            UniswapV4PoolTable.pool_hash == pool_id.to_0x_hex(),
-            UniswapV4PoolTable.manager.has(id=pool_manager.id),
-        ),
-    )
-
-    assert isinstance(pool_in_db, UniswapV4PoolTableBase)
-
-    pool_liquidity_map = PoolLiquidityMap.model_construct(
-        tick_bitmap={
-            mapping.word: TicksAtWord.model_construct(
-                bitmap=mapping.bitmap,
-            )
-            for mapping in pool_in_db.initialization_maps
-        },
-        tick_data={
-            position.tick: ConcentratedLiquidityAtTick.model_construct(
-                liquidity_gross=position.liquidity_gross,
-                liquidity_net=position.liquidity_net,
-            )
-            for position in pool_in_db.liquidity_positions
-        },
-    )
-
-    current_tick_bitmap: dict[int, ConcentratedBitmapAtWord] = {
-        k: ConcentratedBitmapAtWord.model_construct(
-            bitmap=v.bitmap,
-        )
-        for k, v in pool_liquidity_map.tick_bitmap.items()
-    }
-    current_tick_data: dict[int, ConcentratedLiquidityAtTick] = {
-        k: ConcentratedLiquidityAtTick.model_construct(
-            liquidity_gross=v.liquidity_gross,
-            liquidity_net=v.liquidity_net,
-        )
-        for k, v in pool_liquidity_map.tick_data.items()
-    }
-    current_liquidity = 0
-
+    decoded_events: list[LiquidityUpdateEvent] = []
     for liquidity_event in liquidity_events:
-        # Guard against applying a liquidity event that occurred in the past
-        if (
-            pool_in_db.liquidity_update_block is not None
-            and pool_in_db.liquidity_update_log_index is not None
-        ):
-            if liquidity_event["blockNumber"] == pool_in_db.liquidity_update_block:
-                assert liquidity_event["logIndex"] > pool_in_db.liquidity_update_log_index
-            else:
-                assert liquidity_event["blockNumber"] > pool_in_db.liquidity_update_block
-
         tick_lower, tick_upper, liquidity_delta, _ = abi_decode(
             types=["int24", "int24", "int256", "bytes32"],
             data=liquidity_event["data"],
@@ -448,117 +208,24 @@ def apply_v4_liquidity_updates(
         if liquidity_delta == 0:
             continue
 
-        current_tick_bitmap, current_tick_data, current_liquidity = (
-            _apply_liquidity_mapping_via_rust(
-                tick_bitmap=current_tick_bitmap,
-                tick_data=current_tick_data,
-                tick_spacing=pool_in_db.tick_spacing,
-                liquidity=current_liquidity,
-                update_block=liquidity_event["blockNumber"],
-                tick_lower=tick_lower,
-                tick_upper=tick_upper,
-                liquidity_delta=liquidity_delta,
+        decoded_events.append(
+            LiquidityUpdateEvent(
+                liquidity_event["blockNumber"],
+                liquidity_event["logIndex"],
+                tick_lower,
+                tick_upper,
+                liquidity_delta,
             )
         )
 
-        pool_in_db.liquidity_update_block = liquidity_event["blockNumber"]
-        pool_in_db.liquidity_update_log_index = liquidity_event["logIndex"]
-
-    # After all events have been processed, write the liquidity positions and tick initialization
-    # maps to the DB, updating and adding positions as necessary and dropping stale entries
-
-    db_ticks = {position.tick for position in pool_in_db.liquidity_positions}
-    helper_ticks = set(current_tick_data)
-
-    # Drop any positions found in the DB but not the helper
-    if ticks_to_drop := db_ticks - helper_ticks:
-        session.execute(
-            delete(ManagedPoolLiquidityPositionTable).where(
-                ManagedPoolLiquidityPositionTable.managed_pool_id == pool_in_db.id,
-                ManagedPoolLiquidityPositionTable.tick.in_(ticks_to_drop),
-            ),
-        )
-
-    # Upsert remaining ticks
-    if helper_ticks:
-        # Chunk the upserts to stay below SQLite's limit of 32,766 variables
-        # per batch statement. ref: https://www.sqlite.org/limits.html
-        keys_per_row = 4
-        chunk_size = 30_000 // keys_per_row
-
-        for tick_chunk in itertools.batched(helper_ticks, chunk_size):
-            stmt = sqlite_upsert(ManagedPoolLiquidityPositionTable).values([
-                {
-                    "managed_pool_id": pool_in_db.id,
-                    "tick": tick,
-                    "liquidity_net": current_tick_data[tick].liquidity_net,
-                    "liquidity_gross": current_tick_data[tick].liquidity_gross,
-                }
-                for tick in tick_chunk
-            ])
-            stmt = stmt.on_conflict_do_update(
-                index_elements=[
-                    ManagedPoolLiquidityPositionTable.managed_pool_id,
-                    ManagedPoolLiquidityPositionTable.tick,
-                ],
-                set_={
-                    "liquidity_net": stmt.excluded.liquidity_net,
-                    "liquidity_gross": stmt.excluded.liquidity_gross,
-                },
-                where=(
-                    ManagedPoolLiquidityPositionTable.liquidity_net != stmt.excluded.liquidity_net
-                )
-                | (
-                    ManagedPoolLiquidityPositionTable.liquidity_gross
-                    != stmt.excluded.liquidity_gross
-                ),
-            )
-            session.execute(stmt)
-
-    db_words = {map_.word for map_ in pool_in_db.initialization_maps}
-    helper_words = {
-        word
-        for word, map_ in current_tick_bitmap.items()
-        if map_.bitmap != 0  # exclude maps where all ticks are uninitialized
-    }
-
-    # Drop any initialization map found in the DB but not the helper
-    if words_to_drop := db_words - helper_words:
-        session.execute(
-            delete(ManagedPoolInitializationMapTable).where(
-                ManagedPoolInitializationMapTable.managed_pool_id == pool_in_db.id,
-                ManagedPoolInitializationMapTable.word.in_(words_to_drop),
-            ),
-        )
-
-    # Upsert remaining maps
-    if helper_words:
-        # Chunk the upserts to stay below SQLite's limit of 32,766 variables
-        # per batch statement. ref: https://www.sqlite.org/limits.html
-        keys_per_row = 3
-        chunk_size = 30_000 // keys_per_row
-
-        for word_chunk in itertools.batched(helper_words, chunk_size):
-            stmt = sqlite_upsert(ManagedPoolInitializationMapTable).values([
-                {
-                    "managed_pool_id": pool_in_db.id,
-                    "word": word,
-                    "bitmap": current_tick_bitmap[word].bitmap,
-                }
-                for word in word_chunk
-                if current_tick_bitmap[word].bitmap != 0
-            ])
-            stmt = stmt.on_conflict_do_update(
-                index_elements=[
-                    ManagedPoolInitializationMapTable.managed_pool_id,
-                    ManagedPoolInitializationMapTable.word,
-                ],
-                set_={
-                    "bitmap": stmt.excluded.bitmap,
-                },
-                where=ManagedPoolInitializationMapTable.bitmap != stmt.excluded.bitmap,
-            )
-            session.execute(stmt)
+    # Delegate the reconstitute→apply→persist→stamp pipeline to the Rust core
+    # (the block/log-index ordering invariant is enforced in Rust).
+    db_apply_v4_liquidity_updates(
+        database_path=database_path,
+        pool_hash_hex=pool_id.to_0x_hex(),
+        pool_manager_chain=pool_manager.chain,
+        events=decoded_events,
+    )
 
 
 # --- Pool updater configurations ---
@@ -856,7 +523,7 @@ def pool_update(bot: Bot, chunk_size: int, to_block: str) -> None:
                             pool_address=pool_address,
                             liquidity_events=liquidity_events,
                             exchanges_in_scope=exchanges_to_update,
-                            session=session,
+                            database_path=str(bot.config.database.path),
                         )
 
                 # Fetch and process V4 liquidity events
@@ -887,7 +554,7 @@ def pool_update(bot: Bot, chunk_size: int, to_block: str) -> None:
                             pool_id=pool_id,
                             liquidity_events=liquidity_events,
                             pool_manager=pool_manager_in_db,
-                            session=session,
+                            database_path=str(bot.config.database.path),
                         )
 
                 # At this point, all exchanges have been updated and the invariant checks have

@@ -435,3 +435,34 @@ impl PyInitializationMapRow {
         self.bitmap.clone_ref(py)
     }
 }
+
+/// `degenbot_rs.db_fetch_pool_row(database_path, chain_id, address) -> LiquidityPoolRow | None`
+///
+/// Module-level pool-row read by `(chain_id, address)` (QJSCA5 §4.3) — the V3
+/// `apply_v3_liquidity_updates` shell uses this to fetch the pool's
+/// `exchange_id` for the `exchanges_in_scope` precondition before delegating
+/// the math+persist to [`super::liquidity_updater::db_apply_v3_liquidity_updates`].
+/// Keeps the scope-check orchestration in Python + the apply core in Rust.
+#[pyfunction]
+pub(crate) fn db_fetch_pool_row(
+    py: Python<'_>,
+    database_path: &str,
+    chain_id: i64,
+    address: &str,
+) -> PyResult<Option<Py<PyLiquidityPoolRow>>> {
+    use std::path::PathBuf;
+    let path = PathBuf::from(database_path);
+    let addr = crate::bot::py_bot_io::parse_address_for_call(address)?;
+    let row = py
+        .detach(|| {
+            let (db, _state) = degenbot_db::DegenbotDb::open(&path)
+                .map_err(|e| crate::db::db_err_to_py(&e))?;
+            db.fetch_pool_by_address(alloy::primitives::Address::from(addr), chain_id)
+                .map_err(|e| crate::db::db_err_to_py(&e))
+        })?
+        .map(PyLiquidityPoolRow::from);
+    match row {
+        Some(r) => Ok(Some(Py::new(py, r)?)),
+        None => Ok(None),
+    }
+}
