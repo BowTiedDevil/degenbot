@@ -71,6 +71,7 @@ pub mod fee;
 pub mod monitor;
 pub mod params;
 pub mod signer;
+pub mod submit;
 
 // ---- Convenience top-level re-exports (mirrors the umbrella convention) ----
 
