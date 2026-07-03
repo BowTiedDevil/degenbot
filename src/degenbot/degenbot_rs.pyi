@@ -1647,6 +1647,26 @@ class PyLiquidityPool:
     def discard_v3_before_block(self, block: int) -> None: ...
     def restore_v3_before_block(self, block: int) -> tuple[int, int, int, int] | None: ...
 
+class Erc20TokenRow:
+    """A typed `erc20_tokens` DB row (QVMWQC).
+
+    Returned by `PyBotIo.fetch_erc20_token`; mirrors the SQLAlchemy
+    `Erc20TokenTable` ORM attributes the builders read.
+    """
+
+    @property
+    def id(self) -> int: ...
+    @property
+    def chain(self) -> int: ...
+    @property
+    def address(self) -> str: ...
+    @property
+    def name(self) -> str | None: ...
+    @property
+    def symbol(self) -> str | None: ...
+    @property
+    def decimals(self) -> int | None: ...
+
 class PyBotIo(PoolIO):
     """PyO3 wrapper (exposed as `PyBotIo` in Python) holding a provider + optional DB.
 
@@ -1662,11 +1682,24 @@ class PyBotIo(PoolIO):
     ``SyncPoolIO``'s kw-call shape aren't broken by the swap.
     """
 
-    def __init__(self, provider: object, db: object | None = None) -> None: ...
+    def __init__(
+        self, provider: object, db: object | None = None, database_path: str | None = None
+    ) -> None: ...
     @property
     def provider(self) -> object: ...
     @property
     def db(self) -> object | None: ...
+    @property
+    def database_path(self) -> str | None: ...
+    def fetch_erc20_token(self, chain_id: int, address: str) -> Erc20TokenRow | None: ...
+    def update_erc20_token_metadata(
+        self,
+        chain_id: int,
+        address: str,
+        name: str | None,
+        symbol: str | None,
+        decimals: int | None,
+    ) -> None: ...
     def get_block_number(self) -> int: ...
     def get_block(self, block_identifier: int | str) -> Web3BlockData | None: ...
     def get_block_timestamp(self, block: int | None = None) -> int: ...
@@ -2179,6 +2212,7 @@ __all__ = [
     "BlockStream",
     "Contract",
     "DynamicFeePoolRejectedError",
+    "Erc20TokenRow",
     "HookedPoolRejectedError",
     "LogData",
     "LogFilter",

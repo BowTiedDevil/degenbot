@@ -6,7 +6,6 @@ import contextlib
 from typing import TYPE_CHECKING, cast
 
 import eth_abi.abi
-import sqlalchemy.exc
 from eth_abi.exceptions import DecodingError
 from web3 import Web3
 from web3.exceptions import Web3Exception
@@ -18,7 +17,6 @@ from degenbot.erc20.erc20 import (
     UNKNOWN_NAME,
     UNKNOWN_SYMBOL,
     Erc20Token,
-    get_token_from_database,
 )
 from degenbot.exceptions.base import DegenbotValueError
 from degenbot.logging import logger
@@ -109,14 +107,16 @@ class Erc20Builder:
                 logger.info(f"• {token.symbol} ({token.name})")
             return token
 
-        # Try DB first
+        # Try DB first — route the construction-time read through the Rust
+        # `PyBotIo.fetch_erc20_token` seam (QVMWQC), which opens a
+        # `degenbot-db` read handle from `io.database_path`. Falls back to
+        # skipping the DB read when no `io`/`database_path` is configured
+        # (mirrors the prior `contextlib.suppress(Exception)` skip).
         token_from_db = None
-        with contextlib.suppress(Exception), self._db() as session:
-            token_from_db = get_token_from_database(
-                token=address,
-                chain_id=chain_id,
-                session=session,
-            )
+        fetch_fn = getattr(io, "fetch_erc20_token", None) if io is not None else None
+        if fetch_fn is not None:
+            with contextlib.suppress(Exception):
+                token_from_db = fetch_fn(chain_id=chain_id, address=address)
 
         name: str | None = None
         symbol: str | None = None
@@ -186,18 +186,28 @@ class Erc20Builder:
             symbol = symbol or fetched_symbol
             decimals = decimals or fetched_decimals
 
-            # Write back to DB if the record exists but was missing data
+            # Write back to DB if the record exists but was missing data.
+            # Route the construction-time write-back through the Rust
+            # `PyBotIo.update_erc20_token_metadata` seam (QVMWQC), which opens
+            # a `degenbot-db` write handle + `UPDATE`s the row, replacing the
+            # SQLAlchemy `session.commit()` dirty-tracking path.
             if (
                 token_from_db is not None
                 and token_from_db.name is None
                 and token_from_db.symbol is None
                 and token_from_db.decimals is None
+                and io is not None
             ):
-                with contextlib.suppress(sqlalchemy.exc.SQLAlchemyError), self._db() as session:
-                    token_from_db.decimals = decimals
-                    token_from_db.name = name
-                    token_from_db.symbol = symbol
-                    session.commit()
+                update_fn = getattr(io, "update_erc20_token_metadata", None)
+                if update_fn is not None:
+                    with contextlib.suppress(Exception):
+                        update_fn(
+                            chain_id=chain_id,
+                            address=address,
+                            name=name,
+                            symbol=symbol,
+                            decimals=decimals,
+                        )
 
         py_token = self._py_bot.register_token(address, name, symbol, decimals, chain_id)
         token = Erc20Token._from_py_token(py_token)  # noqa: SLF001

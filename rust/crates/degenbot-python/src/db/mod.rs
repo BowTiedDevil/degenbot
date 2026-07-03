@@ -78,7 +78,7 @@ fn db_upgrade_database(py: Python<'_>, path: &str) -> PyResult<String> {
 
 /// Map a [`degenbot_db::DbError`] to a Python `ValueError` (the degenbot Python
 /// layer raises `ValueError` for database operation failures).
-fn db_err_to_py(err: &degenbot_db::DbError) -> PyErr {
+pub(crate) fn db_err_to_py(err: &degenbot_db::DbError) -> PyErr {
     PyValueError::new_err(err.to_string())
 }
 

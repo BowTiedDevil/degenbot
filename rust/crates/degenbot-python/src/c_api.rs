@@ -152,6 +152,8 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<crate::bot::token::PyErc20Token>()?;
     #[cfg(feature = "bot")]
     m.add_class::<crate::bot::py_bot_io::PyBotIo>()?;
+    #[cfg(all(feature = "bot", feature = "db"))]
+    m.add_class::<crate::bot::py_bot_io::PyErc20TokenRow>()?;
 
     // DEX identity presets (ADR-005 slice 6) (feature = "bot")
     #[cfg(feature = "bot")]
