@@ -674,6 +674,19 @@ def db_fetch_pool_row(
     ``ValueError`` on a DB failure.
     """
 
+def db_fetch_exchange(
+    database_path: str,
+    exchange_id: int,
+) -> ExchangeRow | None:
+    """Fetch an `exchanges` row by its FK id.
+
+    The `cli/pool.py::pool_update` discovery loop reads `last_update_block`
+    ground-truth here (a fresh connection → fresh WAL snapshot) rather than
+    trusting the long-lived SQLAlchemy session's stale ORM cache, since the
+    stamp is written by the Rust `db_set_exchange_last_update_block` seam on
+    its own connection. Raises ``ValueError`` on a DB failure.
+    """
+
 # ------------------------------------------------------------------
 # Pool discovery writers (WR7EA6 — split out of QJSCA5).
 # Thin PyO3 wrappers over `degenbot-db`'s `discovery` substrate
@@ -2451,6 +2464,20 @@ class DynamicFeePoolRejectedError(ValueError):
     ``build_paths`` classifies by type, not string matching.
     """
 
+class DatabaseSchemaStale(ValueError):
+    """The DB is stamped at a prior Alembic revision.
+
+    Raised by the degenbot-db PyO3 seam (``DbError::AlembicStale``) when a
+    connexion is opened against a DB whose ``alembic_version`` predates the
+    compiled head — e.g. a user upgrading from the published 0.6.0a2 schema
+    (``e0aaad8ad486``) to the dev head (``2606a6c7f5ee``). The Rust core is
+    a reader of Alembic-headed DBs, never a migrator, so it refuses with
+    this typed exception instead. Subclasses ``ValueError`` so the
+    ``database upgrade`` shell's broad catch keeps working; the CLI root
+    group catches it to print a friendly one-line "run ``degenbot database
+    upgrade``" hint instead of a Python traceback.
+    """
+
 __all__ = [
     "MAX_SQRT_RATIO",
     "MAX_TICK",
@@ -2463,6 +2490,7 @@ __all__ = [
     "BlockData",
     "BlockStream",
     "Contract",
+    "DatabaseSchemaStale",
     "DynamicFeePoolRejectedError",
     "Erc20TokenRow",
     "ExchangeRow",
@@ -2532,6 +2560,7 @@ __all__ = [
     "db_backup_database",
     "db_compact_database",
     "db_create_new_database",
+    "db_fetch_exchange",
     "db_fetch_pool_row",
     "db_set_exchange_last_update_block",
     "db_upgrade_database",

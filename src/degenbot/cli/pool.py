@@ -34,6 +34,7 @@ from degenbot.degenbot_rs import (
     LiquidityUpdateEvent,
     db_apply_v3_liquidity_updates,
     db_apply_v4_liquidity_updates,
+    db_fetch_exchange,
     db_fetch_pool_row,
     db_set_exchange_last_update_block,
 )
@@ -445,6 +446,22 @@ def pool_update(bot: Bot, chunk_size: int, to_block: str) -> None:
             exchanges_to_update: set[ExchangeTable] = set()
 
             while True:
+                # Read ``last_update_block`` ground-truth from the Rust core
+                # (a fresh connection per call → a fresh WAL snapshot). The
+                # stamp is written by the ``db_set_exchange_last_update_block``
+                # seam on its **own** connection, which the long-lived
+                # SQLAlchemy session's read snapshot cannot see — trusting the
+                # stale ORM ``exchange.last_update_block`` attribute here would
+                # freeze chunk advancement after the second chunk.
+                fresh_last_update_block: dict[int, int | None] = {}
+                for exchange in active_exchanges:
+                    row = db_fetch_exchange(
+                        database_path=str(bot.config.database.path),
+                        exchange_id=exchange.id,
+                    )
+                    fresh_last_update_block[exchange.id] = (
+                        row.last_update_block if row is not None else None
+                    )
                 # Cap the working end block at the lowest of:
                 # - the safe block for the chain
                 # - the end of the working chunk size
@@ -453,10 +470,10 @@ def pool_update(bot: Bot, chunk_size: int, to_block: str) -> None:
                     [last_block]
                     + [working_start_block + chunk_size - 1]
                     + [
-                        exchange.last_update_block
+                        fresh_last_update_block[exchange.id]
                         for exchange in active_exchanges
-                        if exchange.last_update_block is not None
-                        if exchange.last_update_block > working_start_block
+                        if fresh_last_update_block[exchange.id] is not None
+                        if fresh_last_update_block[exchange.id] > working_start_block
                     ],
                 )
                 assert working_end_block >= working_start_block
@@ -465,8 +482,8 @@ def pool_update(bot: Bot, chunk_size: int, to_block: str) -> None:
                     exchange
                     for exchange in active_exchanges
                     if (
-                        exchange.last_update_block is None
-                        or exchange.last_update_block + 1 == working_start_block
+                        fresh_last_update_block[exchange.id] is None
+                        or fresh_last_update_block[exchange.id] + 1 == working_start_block
                     )
                 }
 

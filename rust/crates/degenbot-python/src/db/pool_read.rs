@@ -442,6 +442,36 @@ impl PyInitializationMapRow {
     }
 }
 
+/// `degenbot_rs.db_fetch_exchange(database_path, exchange_id) -> ExchangeRow | None`
+///
+/// Module-level exchange-row read by FK id. The `cli/pool.py::pool_update`
+/// discovery loop reads `last_update_block` ground-truth here (a fresh
+/// `DegenbotDb::open` per call → a fresh WAL snapshot) rather than trusting
+/// the long-lived `SQLAlchemy` session's stale ORM cache: the stamp is written
+/// by the Rust `db_set_exchange_last_update_block` seam on its own
+/// connection, which the `SQLAlchemy` read snapshot cannot see. Mirrors
+/// [`db_fetch_pool_row`] (same `database_path` + fresh-open pattern).
+#[pyfunction]
+pub(crate) fn db_fetch_exchange(
+    py: Python<'_>,
+    database_path: &str,
+    exchange_id: i64,
+) -> PyResult<Option<Py<PyExchangeRow>>> {
+    use std::path::PathBuf;
+    let path = PathBuf::from(database_path);
+    let row = py
+        .detach(|| {
+            let (db, _state) =
+                degenbot_db::DegenbotDb::open(&path).map_err(|e| crate::db::db_err_to_py(&e))?;
+            db.fetch_exchange(exchange_id).map_err(|e| crate::db::db_err_to_py(&e))
+        })?
+        .map(PyExchangeRow::from);
+    match row {
+        Some(r) => Ok(Some(Py::new(py, r)?)),
+        None => Ok(None),
+    }
+}
+
 /// `degenbot_rs.db_fetch_pool_row(database_path, chain_id, address) -> LiquidityPoolRow | None`
 ///
 /// Module-level pool-row read by `(chain_id, address)` (QJSCA5 §4.3) — the V3

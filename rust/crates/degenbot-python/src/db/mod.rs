@@ -19,6 +19,7 @@ pub mod snapshot;
 
 use std::path::PathBuf;
 
+use pyo3::create_exception;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
@@ -31,6 +32,24 @@ pub use pool_read::{
     PyPoolKindRow, PyPoolManagerRow,
 };
 pub use snapshot::PyDatabaseSnapshot;
+
+// A dedicated exception for the "DB is stamped at a prior Alembic revision"
+// rejection (`DbError::AlembicStale`). It subclasses `ValueError` so existing
+// broad `except ValueError` handlers keep catching it (and the upgrade shell's
+// fall-back below), but gives the CLI a precise type to catch and translate
+// into a friendly one-line message — no Python traceback.
+//
+// The message tells end users to run `degenbot database upgrade` (the
+// user-facing migration command), not the developer-oriented
+// `alembic upgrade head`. Same pattern as the engine's
+// `VerificationMismatchError` / `HookedPoolRejectedError` (typed subclasses of
+// a builtin so callers classify by type, not fragile string matching).
+create_exception!(
+    degenbot_rs,
+    DatabaseSchemaStale,
+    PyValueError,
+    "The database is stamped at a prior Alembic revision; run `degenbot database upgrade`."
+);
 
 /// `degenbot_rs.db_create_new_database(path: str) -> None`
 ///
@@ -84,10 +103,22 @@ fn db_upgrade_database(py: Python<'_>, path: &str) -> PyResult<String> {
     .to_string())
 }
 
-/// Map a [`degenbot_db::DbError`] to a Python `ValueError` (the degenbot Python
-/// layer raises `ValueError` for database operation failures).
+/// Map a [`degenbot_db::DbError`] to a Python exception.
+///
+/// `AlembicStale` becomes a [`DatabaseSchemaStale`] (subclass of `ValueError`)
+/// carrying the user-facing "run `degenbot database upgrade`" message — the
+/// CLI catches it to print a friendly one-liner instead of a traceback. Every
+/// other variant maps to a generic `ValueError` (the degenbot Python layer's
+/// convention for database operation failures).
 pub(crate) fn db_err_to_py(err: &degenbot_db::DbError) -> PyErr {
-    PyValueError::new_err(err.to_string())
+    use degenbot_db::DbError;
+    match err {
+        DbError::AlembicStale { head, expected } => DatabaseSchemaStale::new_err(format!(
+            "The database schema is stale (revision {head}; expected {expected}). \
+             Run `degenbot database upgrade`."
+        )),
+        other => PyValueError::new_err(other.to_string()),
+    }
 }
 
 /// Register the `db` file-op functions on `m` (feature = "db").
@@ -110,6 +141,7 @@ pub fn add_db_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m
     )?)?;
     m.add_function(wrap_pyfunction!(pool_read::db_fetch_pool_row, m)?)?;
+    m.add_function(wrap_pyfunction!(pool_read::db_fetch_exchange, m)?)?;
     discovery::add_discovery_module(m)?;
     m.add_class::<liquidity_updater::PyLiquidityUpdateEvent>()?;
     m.add_class::<snapshot::PyDatabaseSnapshot>()?;
