@@ -133,6 +133,25 @@ def _resolve_one(
     return config_value
 
 
+def _load_config_for_cascade(config: DegenbotConfig | None) -> DegenbotConfig | None:
+    """Return ``config`` as-is, or load it from :data:`CONFIG_FILE` when absent.
+
+    Centralizes the "load config.toml only if it exists" rule so every resolver
+    layer (http-only, ws-only, and the combined pair) reads the file at most
+    once and honors a caller-supplied override (e.g. an injected test config).
+
+    Returns:
+        The caller-supplied config, the config loaded from disk, or ``None``
+        when no config was passed and :data:`CONFIG_FILE` does not exist.
+
+    """
+    if config is not None:
+        return config
+    if CONFIG_FILE.exists():
+        return load_config_from_file(CONFIG_FILE)
+    return None
+
+
 def _config_uri(config: DegenbotConfig | None, kind: str, chain_id: ChainId) -> str | None:
     """Render the URI for ``kind`` ("http"/"ws") from a loaded config, or None.
 
@@ -148,6 +167,99 @@ def _config_uri(config: DegenbotConfig | None, kind: str, chain_id: ChainId) -> 
         return None
     # ``Path`` IPC sockets render via str(); HttpUrl/WebsocketUrl via str().
     return str(entry)
+
+
+def resolve_http_rpc_uri(
+    chain_id: ChainId,
+    /,
+    *,
+    cli_http: str | None = None,
+    fallback_http: str | None = None,
+    config: DegenbotConfig | None = None,
+) -> str:
+    """Resolve the HTTP/IPC RPC URI for ``chain_id`` through the standard cascade.
+
+    Same precedence as :func:`resolve_rpc_uris` for the HTTP URI, but resolves
+    **only** the HTTP/IPC endpoint without requiring a WS endpoint. The provider
+    factory (:func:`degenbot.provider.get_provider_from_config`) uses this so an
+    HTTP-only operation such as the ``degenbot pool update`` CLI is not blocked
+    by a missing/unconfigured WS layer.
+
+    ``cli_http`` is the highest-priority override; the OS env
+    ``DEGENBOT_RPC_HTTP_CHAINID_{chain_id}`` layer (read via :data:`os.environ`,
+    so a plain ``export`` in the devcontainer takes effect and the .env-file
+    dict is NOT consulted) ranks below it; ``fallback_http`` is a caller-supplied
+    lower-priority candidate; config.toml ``rpc[chain_id]``
+    (:func:`load_config_from_file`, only when :data:`CONFIG_FILE` exists) is the
+    final non-raising layer. A caller-supplied ``config`` short-circuits the
+    disk read so the resolver stays cheap when the factory already holds one.
+
+    Returns:
+        The resolved HTTP/IPC URI as a string.
+
+    Raises:
+        RpcNotConfiguredError: if HTTP is unresolved through every layer. The
+            message names the chain-id envvar and the config.toml layer.
+
+    """
+    loaded = _load_config_for_cascade(config)
+    http_env = _env_http_var(chain_id)
+    http = _resolve_one(
+        http_env,
+        cli_http,
+        fallback_http,
+        _config_uri(loaded, "http", chain_id),
+    )
+    if http is None:
+        msg = (
+            f"No HTTP RPC endpoint configured for chain {chain_id}. "
+            f"Set {http_env} in the environment, pass --node-http, supply a "
+            f"fallback, or add an `rpc` chain-id entry to {CONFIG_FILE} "
+            f"(config.toml layer)."
+        )
+        raise RpcNotConfiguredError(msg)
+    return http
+
+
+def resolve_ws_rpc_uri(
+    chain_id: ChainId,
+    /,
+    *,
+    cli_ws: str | None = None,
+    fallback_ws: str | None = None,
+    config: DegenbotConfig | None = None,
+) -> str:
+    """Resolve the WS RPC URI for ``chain_id`` through the standard cascade.
+
+    WS-only counterpart of :func:`resolve_http_rpc_uri`: same precedence list
+    (substituting ``cli_ws`` / the OS env ``DEGENBOT_RPC_WS_CHAINID_{chain_id}``
+    layer / ``fallback_ws`` / config.toml ``ws[chain_id]``), resolving **only**
+    the WS endpoint. A caller-supplied ``config`` short-circuits the disk read.
+
+    Returns:
+        The resolved WS URI as a string.
+
+    Raises:
+        RpcNotConfiguredError: if WS is unresolved through every layer.
+
+    """
+    loaded = _load_config_for_cascade(config)
+    ws_env = _env_ws_var(chain_id)
+    ws = _resolve_one(
+        ws_env,
+        cli_ws,
+        fallback_ws,
+        _config_uri(loaded, "ws", chain_id),
+    )
+    if ws is None:
+        msg = (
+            f"No WS RPC endpoint configured for chain {chain_id}. "
+            f"Set {ws_env} in the environment, pass --node-ws, supply a "
+            f"fallback, or add a `ws` chain-id entry to {CONFIG_FILE} "
+            f"(config.toml layer)."
+        )
+        raise RpcNotConfiguredError(msg)
+    return ws
 
 
 def resolve_rpc_uris(
@@ -180,47 +292,20 @@ def resolve_rpc_uris(
     Returns:
         The resolved ``(http_uri, ws_uri)`` pair as strings.
 
-    Raises:
-        RpcNotConfiguredError: if either URI is unresolved through every
-            layer. http and ws are checked independently, so the message names
-            which one was missing.
-
     """
-    config: DegenbotConfig | None = None
-    if CONFIG_FILE.exists():
-        config = load_config_from_file(CONFIG_FILE)
-
-    http_env = _env_http_var(chain_id)
-    ws_env = _env_ws_var(chain_id)
-
-    http = _resolve_one(
-        http_env,
-        cli_http,
-        fallback_http,
-        _config_uri(config, "http", chain_id),
+    loaded = _load_config_for_cascade(None)
+    http = resolve_http_rpc_uri(
+        chain_id,
+        cli_http=cli_http,
+        fallback_http=fallback_http,
+        config=loaded,
     )
-    if http is None:
-        msg = (
-            f"No HTTP RPC endpoint configured for chain {chain_id}. "
-            f"Set {http_env} in the environment, pass --node-http, supply a "
-            f"fallback, or add an `rpc` chain-id entry to {CONFIG_FILE} "
-            f"(config.toml layer)."
-        )
-        raise RpcNotConfiguredError(msg)
-    ws = _resolve_one(
-        ws_env,
-        cli_ws,
-        fallback_ws,
-        _config_uri(config, "ws", chain_id),
+    ws = resolve_ws_rpc_uri(
+        chain_id,
+        cli_ws=cli_ws,
+        fallback_ws=fallback_ws,
+        config=loaded,
     )
-    if ws is None:
-        msg = (
-            f"No WS RPC endpoint configured for chain {chain_id}. "
-            f"Set {ws_env} in the environment, pass --node-ws, supply a "
-            f"fallback, or add a `ws` chain-id entry to {CONFIG_FILE} "
-            f"(config.toml layer)."
-        )
-        raise RpcNotConfiguredError(msg)
     return http, ws
 
 
