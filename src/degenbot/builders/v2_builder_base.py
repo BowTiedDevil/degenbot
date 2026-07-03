@@ -8,7 +8,6 @@ from fractions import Fraction
 from typing import TYPE_CHECKING
 
 import eth_abi.abi
-from sqlalchemy import select
 
 from degenbot.checksum_cache import get_checksum_address
 from degenbot.database.models.pools import LiquidityPoolTable, UniswapFeeMixin
@@ -126,8 +125,8 @@ class V2BuilderBase:
 
         return deployer, resolved_init_hash
 
+    @staticmethod
     def _fetch_v2_common_data(
-        self,
         pool_address: str,
         *,
         chain_id: ChainId,
@@ -148,20 +147,58 @@ class V2BuilderBase:
         """
         pool_address = get_checksum_address(pool_address)
 
-        # Try DB first
+        # Try DB first — route the construction-time read through the Rust
+        # `PyBotIo` seam (QVMWQC). `fetch_pool_row` returns the scalar + FK-id
+        # columns; the `exchange` / `token0/1` relationships + the V2 subclass
+        # fees hydrate via per-FK fetches, mirroring the prior SQLAlchemy
+        # lazy-load. Falls back to skipping when no `io` / `database_path` is
+        # configured (mirrors `contextlib.suppress`).
         pool_found_in_db = False
-        with contextlib.suppress(Exception), self._db() as session:
-            pool_from_db = session.scalar(
-                select(LiquidityPoolTable).where(
-                    LiquidityPoolTable.address == pool_address,
-                    LiquidityPoolTable.chain == chain_id,
-                ),
-            )
-            if pool_from_db is not None:
-                factory, token0_address, token1_address, fee_token0, fee_token1 = (
-                    V2BuilderBase.extract_db_values(pool_from_db)
-                )
-                pool_found_in_db = True
+        fetch_pool_row = getattr(io, "fetch_pool_row", None) if io is not None else None
+        # All PyBotIo DB-query methods are present together; bind them via
+        # `getattr(..., None)` so the static type checker doesn't flag the
+        # `PoolIO`-protocol access (`PyBotIo` defines them; `PoolIO` does not).
+        fetch_exchange = getattr(io, "fetch_exchange", None) if fetch_pool_row is not None else None
+        fetch_token_by_id = (
+            getattr(io, "fetch_token_by_id", None) if fetch_pool_row is not None else None
+        )
+        fetch_pool_kind = (
+            getattr(io, "fetch_pool_kind", None) if fetch_pool_row is not None else None
+        )
+        if (
+            fetch_pool_row is not None
+            and fetch_exchange is not None
+            and fetch_token_by_id is not None
+            and fetch_pool_kind is not None
+        ):
+            with contextlib.suppress(Exception):
+                pool_row = fetch_pool_row(chain_id=chain_id, address=pool_address)
+                if pool_row is not None:
+                    exchange_row = fetch_exchange(exchange_id=pool_row.exchange_id)
+                    token0_row = fetch_token_by_id(token_id=pool_row.token0_id)
+                    token1_row = fetch_token_by_id(token_id=pool_row.token1_id)
+                    if (
+                        exchange_row is not None
+                        and token0_row is not None
+                        and token1_row is not None
+                    ):
+                        factory = get_checksum_address(exchange_row.factory)
+                        token0_address = get_checksum_address(token0_row.address)
+                        token1_address = get_checksum_address(token1_row.address)
+                        # The V2 subclass row carries the fees
+                        # (UniswapFeeMixin); a fee-bearing subclass has a
+                        # non-zero `fee_denominator`. Pools whose subclass
+                        # lacks fees (or has no subclass row) fall back to
+                        # the 3/1000 default (mirrors the ORM
+                        # `isinstance(UniswapFeeMixin)` branch).
+                        kind_row = fetch_pool_kind(kind=pool_row.kind, pool_id=pool_row.id)
+                        if kind_row is not None and kind_row.fee_denominator:
+                            fee_token0 = Fraction(kind_row.fee_token0, kind_row.fee_denominator)
+                            fee_token1 = Fraction(kind_row.fee_token1, kind_row.fee_denominator)
+                        else:
+                            fee_token0 = Fraction(3, 1000)
+                            fee_token1 = Fraction(3, 1000)
+                        pool_found_in_db = True
 
         # Get factory and token addresses
         if not pool_found_in_db:

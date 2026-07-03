@@ -12,6 +12,7 @@
 //! retired in favor of these Rust-backed wrappers.
 
 pub mod aave;
+pub mod pool_read;
 pub mod snapshot;
 
 use std::path::PathBuf;
@@ -21,8 +22,12 @@ use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
 
 pub use aave::PyDatabasePositionQuery;
-use degenbot_db::ops::{self, UpgradeOutcome};
+pub use pool_read::{
+    PyExchangeRow, PyInitializationMapRow, PyLiquidityPoolRow, PyLiquidityPositionRow,
+    PyPoolKindRow, PyPoolManagerRow,
+};
 pub use snapshot::PyDatabaseSnapshot;
+use degenbot_db::ops::{self, UpgradeOutcome};
 
 /// `degenbot_rs.db_create_new_database(path: str) -> None`
 ///
@@ -95,5 +100,11 @@ pub fn add_db_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(db_upgrade_database, m)?)?;
     m.add_class::<snapshot::PyDatabaseSnapshot>()?;
     m.add_class::<aave::PyDatabasePositionQuery>()?;
+    m.add_class::<pool_read::PyLiquidityPoolRow>()?;
+    m.add_class::<pool_read::PyPoolKindRow>()?;
+    m.add_class::<pool_read::PyExchangeRow>()?;
+    m.add_class::<pool_read::PyLiquidityPositionRow>()?;
+    m.add_class::<pool_read::PyInitializationMapRow>()?;
+    m.add_class::<pool_read::PyPoolManagerRow>()?;
     Ok(())
 }

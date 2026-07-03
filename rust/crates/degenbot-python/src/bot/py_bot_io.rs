@@ -257,6 +257,282 @@ impl PyBotIo {
         })
     }
 
+    /// Fetch a `pools` row by `(chain_id, address)` — the pool builder's
+    /// construction-time read (QVMWQC). Replaces the `SQLAlchemy`
+    /// `session.scalar(select(LiquidityPoolTable).where(...))`. Returns a
+    /// [`PyLiquidityPoolRow`] carrying the scalar + FK-id columns
+    /// (`exchange_id` / `token0_id` / `token1_id` / `kind`); the caller hydrates
+    /// the relationships via [`Self::fetch_pool_kind`] / [`Self::fetch_token_by_id`]
+    /// / [`Self::fetch_exchange`].
+    ///
+    /// `None` when the row is absent or no `database_path` is configured (mirrors
+    /// the prior `contextlib.suppress(Exception)` skip).
+    #[pyo3(signature = (chain_id, address))]
+    #[cfg(feature = "db")]
+    fn fetch_pool_row(
+        &self,
+        py: Python<'_>,
+        chain_id: i64,
+        address: &str,
+    ) -> PyResult<Option<Py<crate::db::PyLiquidityPoolRow>>> {
+        let Some(path) = self.database_path.clone() else {
+            return Ok(None);
+        };
+        let addr = parse_address_for_call(address)?;
+        let row = py
+            .detach(|| {
+                let (db, _state) = degenbot_db::DegenbotDb::open(&std::path::PathBuf::from(&path))
+                    .map_err(|e| crate::db::db_err_to_py(&e))?;
+                db.fetch_pool_by_address(alloy::primitives::Address::from(addr), chain_id)
+                    .map_err(|e| crate::db::db_err_to_py(&e))
+            })?
+            .map(crate::db::PyLiquidityPoolRow::from);
+        match row {
+            Some(r) => Ok(Some(Py::new(py, r)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Fetch the per-DEX subclass row for a pool (QVMWQC). `kind` is the
+    /// `pools.kind` discriminator; `pool_id` the `pools.id`. Returns a
+    /// [`PyPoolKindRow`] (V2 fees / V3 `tick_spacing` + liquidity-update marker /
+    /// V4 pool-hash + hooks + currencies). `None` when absent or no path.
+    #[pyo3(signature = (kind, pool_id))]
+    #[cfg(feature = "db")]
+    fn fetch_pool_kind(
+        &self,
+        py: Python<'_>,
+        kind: &str,
+        pool_id: i64,
+    ) -> PyResult<Option<Py<crate::db::PyPoolKindRow>>> {
+        let Some(path) = self.database_path.clone() else {
+            return Ok(None);
+        };
+        let row = py
+            .detach(|| {
+                let (db, _state) = degenbot_db::DegenbotDb::open(&std::path::PathBuf::from(&path))
+                    .map_err(|e| crate::db::db_err_to_py(&e))?;
+                db.fetch_pool_kind(kind, pool_id)
+                    .map_err(|e| crate::db::db_err_to_py(&e))
+            })?
+            .map(crate::db::PyPoolKindRow::from);
+        match row {
+            Some(r) => Ok(Some(Py::new(py, r)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Fetch an `erc20_tokens` row by its FK id (QVMWQC) — hydrates the
+    /// `pool.token0` / `pool.token1` relationships. `None` when absent or no
+    /// path.
+    #[pyo3(signature = (token_id))]
+    #[cfg(feature = "db")]
+    fn fetch_token_by_id(
+        &self,
+        py: Python<'_>,
+        token_id: i64,
+    ) -> PyResult<Option<Py<PyErc20TokenRow>>> {
+        let Some(path) = self.database_path.clone() else {
+            return Ok(None);
+        };
+        let row = py
+            .detach(|| {
+                let (db, _state) = degenbot_db::DegenbotDb::open(&std::path::PathBuf::from(&path))
+                    .map_err(|e| crate::db::db_err_to_py(&e))?;
+                db.fetch_token_by_id(token_id)
+                    .map_err(|e| crate::db::db_err_to_py(&e))
+            })?
+            .map(PyErc20TokenRow::from);
+        match row {
+            Some(r) => Ok(Some(Py::new(py, r)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Fetch an `exchanges` row by its FK id (QVMWQC) — hydrates the
+    /// `pool.exchange` relationship (`factory` / `deployer`). `None` when absent
+    /// or no path.
+    #[pyo3(signature = (exchange_id))]
+    #[cfg(feature = "db")]
+    fn fetch_exchange(
+        &self,
+        py: Python<'_>,
+        exchange_id: i64,
+    ) -> PyResult<Option<Py<crate::db::PyExchangeRow>>> {
+        let Some(path) = self.database_path.clone() else {
+            return Ok(None);
+        };
+        let row = py
+            .detach(|| {
+                let (db, _state) = degenbot_db::DegenbotDb::open(&std::path::PathBuf::from(&path))
+                    .map_err(|e| crate::db::db_err_to_py(&e))?;
+                db.fetch_exchange(exchange_id)
+                    .map_err(|e| crate::db::db_err_to_py(&e))
+            })?
+            .map(crate::db::PyExchangeRow::from);
+        match row {
+            Some(r) => Ok(Some(Py::new(py, r)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Fetch all V3 `liquidity_positions` for a pool (QVMWQC) — hydrates the
+    /// `pool.liquidity_positions` relationship for the tick snapshot. Empty when
+    /// absent or no path.
+    #[pyo3(signature = (pool_id))]
+    #[cfg(feature = "db")]
+    fn fetch_liquidity_positions(
+        &self,
+        py: Python<'_>,
+        pool_id: i64,
+    ) -> PyResult<Vec<Py<crate::db::PyLiquidityPositionRow>>> {
+        let Some(path) = self.database_path.clone() else {
+            return Ok(Vec::new());
+        };
+        let rows = py.detach(|| {
+            let (db, _state) = degenbot_db::DegenbotDb::open(&std::path::PathBuf::from(&path))
+                .map_err(|e| crate::db::db_err_to_py(&e))?;
+            db.fetch_liquidity_positions(pool_id)
+                .map_err(|e| crate::db::db_err_to_py(&e))
+        })?;
+        rows.into_iter()
+            .map(|r| Py::new(py, crate::db::PyLiquidityPositionRow::new(py, &r)?))
+            .collect()
+    }
+
+    /// Fetch all V3 `initialization_maps` for a pool (QVMWQC) — hydrates the
+    /// `pool.initialization_maps` relationship for the tick snapshot. Empty when
+    /// absent or no path.
+    #[pyo3(signature = (pool_id))]
+    #[cfg(feature = "db")]
+    fn fetch_initialization_maps(
+        &self,
+        py: Python<'_>,
+        pool_id: i64,
+    ) -> PyResult<Vec<Py<crate::db::PyInitializationMapRow>>> {
+        let Some(path) = self.database_path.clone() else {
+            return Ok(Vec::new());
+        };
+        let rows = py.detach(|| {
+            let (db, _state) = degenbot_db::DegenbotDb::open(&std::path::PathBuf::from(&path))
+                .map_err(|e| crate::db::db_err_to_py(&e))?;
+            db.fetch_initialization_map(pool_id)
+                .map_err(|e| crate::db::db_err_to_py(&e))
+        })?;
+        rows.into_iter()
+            .map(|r| Py::new(py, crate::db::PyInitializationMapRow::new(py, &r)?))
+            .collect()
+    }
+
+    /// Fetch a `pool_managers` row by `(chain_id, address)` (QVMWQC) — the V4
+    /// builder resolves its pool manager to obtain the `id` (for the V4 pool join)
+    /// + the `state_view` contract address. `None` when absent or no path.
+    #[pyo3(signature = (chain_id, address))]
+    #[cfg(feature = "db")]
+    fn fetch_pool_manager(
+        &self,
+        py: Python<'_>,
+        chain_id: i64,
+        address: &str,
+    ) -> PyResult<Option<Py<crate::db::PyPoolManagerRow>>> {
+        let Some(path) = self.database_path.clone() else {
+            return Ok(None);
+        };
+        let addr = parse_address_for_call(address)?;
+        let row = py
+            .detach(|| {
+                let (db, _state) = degenbot_db::DegenbotDb::open(&std::path::PathBuf::from(&path))
+                    .map_err(|e| crate::db::db_err_to_py(&e))?;
+                db.fetch_pool_manager(alloy::primitives::Address::from(addr), chain_id)
+                    .map_err(|e| crate::db::db_err_to_py(&e))
+            })?
+            .map(crate::db::PyPoolManagerRow::from);
+        match row {
+            Some(r) => Ok(Some(Py::new(py, r)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Fetch a V4 pool subclass row by its `pool_hash` (0x-prefixed hex)
+    /// (QVMWQC). The V4 builder resolves its pool row by `pool_hash` (the V4
+    /// `bytes32` unique key). Returns a [`PyPoolKindRow`] (variant `"v4"`),
+    /// carrying `managed_pool_id` / `hooks` / `currency0_id` / `currency1_id` /
+    /// fees / `tick_spacing` / liquidity-update marker. `None` when absent or
+    /// no path.
+    #[pyo3(signature = (pool_hash_hex))]
+    #[cfg(feature = "db")]
+    fn fetch_v4_pool_by_pool_hash(
+        &self,
+        py: Python<'_>,
+        pool_hash_hex: &str,
+    ) -> PyResult<Option<Py<crate::db::PyPoolKindRow>>> {
+        let Some(path) = self.database_path.clone() else {
+            return Ok(None);
+        };
+        let hex = pool_hash_hex.to_string();
+        let row = py
+            .detach(|| {
+                let (db, _state) = degenbot_db::DegenbotDb::open(&std::path::PathBuf::from(&path))
+                    .map_err(|e| crate::db::db_err_to_py(&e))?;
+                db.fetch_v4_pool_by_pool_hash(&hex)
+                    .map_err(|e| crate::db::db_err_to_py(&e))
+            })?
+            .map(degenbot_db::rows::PoolKindRow::V4)
+            .map(crate::db::PyPoolKindRow::from);
+        match row {
+            Some(r) => Ok(Some(Py::new(py, r)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Fetch all V4 `managed_pool_liquidity_positions` for a managed pool
+    /// (QVMWQC) — hydrates the V4 `pool.liquidity_positions` relationship for
+    /// the tick snapshot. Empty when absent or no path.
+    #[pyo3(signature = (managed_pool_id))]
+    #[cfg(feature = "db")]
+    fn fetch_managed_liquidity_positions(
+        &self,
+        py: Python<'_>,
+        managed_pool_id: i64,
+    ) -> PyResult<Vec<Py<crate::db::PyLiquidityPositionRow>>> {
+        let Some(path) = self.database_path.clone() else {
+            return Ok(Vec::new());
+        };
+        let rows = py.detach(|| {
+            let (db, _state) = degenbot_db::DegenbotDb::open(&std::path::PathBuf::from(&path))
+                .map_err(|e| crate::db::db_err_to_py(&e))?;
+            db.fetch_managed_liquidity_positions(managed_pool_id)
+                .map_err(|e| crate::db::db_err_to_py(&e))
+        })?;
+        rows.into_iter()
+            .map(|r| Py::new(py, crate::db::PyLiquidityPositionRow::from_managed(py, &r)?))
+            .collect()
+    }
+
+    /// Fetch all V4 `managed_pool_initialization_maps` for a managed pool
+    /// (QVMWQC) — hydrates the V4 `pool.initialization_maps` relationship for
+    /// the tick snapshot. Empty when absent or no path.
+    #[pyo3(signature = (managed_pool_id))]
+    #[cfg(feature = "db")]
+    fn fetch_managed_initialization_maps(
+        &self,
+        py: Python<'_>,
+        managed_pool_id: i64,
+    ) -> PyResult<Vec<Py<crate::db::PyInitializationMapRow>>> {
+        let Some(path) = self.database_path.clone() else {
+            return Ok(Vec::new());
+        };
+        let rows = py.detach(|| {
+            let (db, _state) = degenbot_db::DegenbotDb::open(&std::path::PathBuf::from(&path))
+                .map_err(|e| crate::db::db_err_to_py(&e))?;
+            db.fetch_managed_initialization_map(managed_pool_id)
+                .map_err(|e| crate::db::db_err_to_py(&e))
+        })?;
+        rows.into_iter()
+            .map(|r| Py::new(py, crate::db::PyInitializationMapRow::from_managed(py, &r)?))
+            .collect()
+    }
+
     /// Return the current block number (delegates to `provider.get_block_number()`).
     fn get_block_number(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.call_kw(py, "get_block_number", &[])

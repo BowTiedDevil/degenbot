@@ -62,6 +62,107 @@ impl DegenbotDb {
         }
     }
 
+    /// `SELECT id, chain, address, name, symbol, decimals FROM erc20_tokens WHERE id = ?`.
+    ///
+    /// The FK-id companion to [`Self::fetch_token_by_address`]. QVMWQC: the pool
+    /// builders hydrate `pool.token0` / `pool.token1` ORM relationships by their
+    /// FK id columns (`token0_id` / `token1_id`); this is the single-table read
+    /// that replaces the `SQLAlchemy` lazy-load.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::Decode`] on a malformed column.
+    pub fn fetch_token_by_id(&self, token_id: i64) -> Result<Option<crate::rows::Erc20TokenRow>, DbError> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, chain, address, name, symbol, decimals \
+             FROM erc20_tokens WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query(rusqlite::params![token_id])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(crate::rows::Erc20TokenRow::from_row(row)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// `SELECT id, chain_id, name, active, last_update_block, factory, deployer FROM exchanges WHERE id = ?`.
+    ///
+    /// QVMWQC: the pool builders hydrate the `pool.exchange` ORM relationship by
+    /// its FK id column (`exchange_id`); this read replaces the `SQLAlchemy`
+    /// lazy-load. `factory` / `deployer` are the fields the builders read
+    /// (`exchange.factory`, `exchange.deployer`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::Decode`] on a malformed column.
+    pub fn fetch_exchange(&self, exchange_id: i64) -> Result<Option<crate::rows::ExchangeRow>, DbError> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, chain_id, name, active, last_update_block, factory, deployer \
+             FROM exchanges WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query(rusqlite::params![exchange_id])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(crate::rows::ExchangeRow::from_row(row)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// `SELECT id, address, chain, kind, state_view, exchange_id FROM pool_managers WHERE address = ? AND chain = ?`.
+    ///
+    /// QVMWQC: the V4 builder resolves its `pool_manager` row by `(address,
+    /// chain)` to obtain the `id` (for the V4 pool join) + the `state_view`
+    /// contract address. Replaces the `SQLAlchemy`
+    /// `session.scalar(select(PoolManagerTable).where(...))` read.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::Decode`] on a malformed column.
+    pub fn fetch_pool_manager(
+        &self,
+        address: Address,
+        chain: i64,
+    ) -> Result<Option<crate::rows::PoolManagerRow>, DbError> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, address, chain, kind, state_view, exchange_id \
+             FROM pool_managers WHERE address = ?1 AND chain = ?2",
+        )?;
+        let mut rows = stmt.query(rusqlite::params![address.to_checksum(None), chain])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(crate::rows::PoolManagerRow::from_row(row)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// `SELECT <V4 subclass cols> FROM uniswap_v4_pools WHERE pool_hash = ?`.
+    ///
+    /// QVMWQC: the V4 builder resolves its pool row by the `pool_hash`
+    /// (`bytes32,` 0x-prefixed lowercase-hex unique key). Returns the V4 subclass
+    /// row (`managed_pool_id` / `hooks` / currencies / fees / `tick_spacing` /
+    /// liquidity-update marker) — the same shape as [`Self::fetch_pool_kind`]
+    /// for `kind = "uniswap_v4"`, keyed by `pool_hash` instead of the numeric id.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::Decode`] on a malformed column.
+    pub fn fetch_v4_pool_by_pool_hash(
+        &self,
+        pool_hash_hex: &str,
+    ) -> Result<Option<crate::rows::V4PoolRow>, DbError> {
+        let conn = self.lock();
+        let sql = format!(
+            "SELECT {} FROM uniswap_v4_pools WHERE pool_hash = ?1",
+            crate::rows::pool::V4PoolRow::SELECT_V4
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query(rusqlite::params![pool_hash_hex])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(crate::rows::V4PoolRow::from_row(row)?)),
+            None => Ok(None),
+        }
+    }
+
     /// `SELECT * FROM pools WHERE address=? AND chain=?`.
     ///
     /// # Errors

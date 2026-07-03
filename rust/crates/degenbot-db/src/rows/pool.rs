@@ -193,7 +193,6 @@ pub struct PoolManagerRow {
 
 impl PoolManagerRow {
     /// Decode from `SELECT id, address, chain, kind, state_view, exchange_id FROM pool_managers`.
-    #[allow(dead_code)] // exercised by a future fetch_pool_manager (spike 4c siblings)
     pub(crate) fn from_row(row: &Row<'_>) -> Result<Self, DbError> {
         Ok(Self {
             id: row.get(0)?,
