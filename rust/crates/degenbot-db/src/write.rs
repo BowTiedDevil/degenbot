@@ -329,6 +329,42 @@ impl DegenbotDb {
         Ok(conn.last_insert_rowid())
     }
 
+    /// Update an existing `erc20_tokens` row's metadata (`name` / `symbol` /
+    /// `decimals`) by `(chain, address)`. QVMWQC: the construction-time write-back
+    /// from `Erc20Builder.build` (a token row fetched with `NULL` metadata, then
+    /// populated from RPC + committed) routes through here instead of the `SQLAlchemy`
+    /// `session.commit()` dirty-tracking path.
+    ///
+    /// Mirrors `erc20_builder.py::build`'s write-back block: `token_from_db.decimals
+    /// = decimals; token_from_db.name = name; token_from_db.symbol = symbol;
+    /// session.commit()`. Each `None` field writes `NULL` (matches the ORM
+    /// attribute assignment).
+    ///
+    /// No-op (returns `Ok(())`) when no row matches `(chain, address)` — the
+    /// Python path only reaches the write-back when the row was already fetched,
+    /// so a miss is a benign race (the caller's `contextlib.suppress` would have
+    /// caught the prior fetch).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure.
+    pub fn update_erc20_token_metadata(
+        &self,
+        chain: i64,
+        address: &str,
+        name: Option<&str>,
+        symbol: Option<&str>,
+        decimals: Option<i64>,
+    ) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE erc20_tokens SET name = ?3, symbol = ?4, decimals = ?5 \
+             WHERE chain = ?1 AND address = ?2",
+            params![chain, address, name, symbol, decimals],
+        )?;
+        Ok(())
+    }
+
     /// Get-or-create an `aave_v3_collateral_positions` row by `(user_id,
     /// asset_id)`. Port of `db_positions.py::get_or_create_collateral_position`
     /// (L51–…). On create, inserts `balance='0'`, `last_index=NULL` (the

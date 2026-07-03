@@ -364,7 +364,9 @@ class Bot:
             The computed value.
 
         """
-        io = PyBotIo(provider=self.provider, db=self.db)
+        io = PyBotIo(
+            provider=self.provider, db=self.db, database_path=str(self.config.database.path)
+        )
         return self._erc20_builder.build(address, chain_id=self.chain_id, silent=silent, io=io)
 
     def get_token(self, address: str) -> Erc20Token:
@@ -399,7 +401,9 @@ class Bot:
         """
         address = get_checksum_address(address)
         chain_id = self.chain_id
-        io = PyBotIo(provider=self.provider, db=self.db)
+        io = PyBotIo(
+            provider=self.provider, db=self.db, database_path=str(self.config.database.path)
+        )
 
         request = BuildPoolRequest(
             silent=silent,
@@ -513,7 +517,9 @@ class Bot:
                 assert isinstance(existing, UniswapV4Pool)
             return existing
 
-        io = PyBotIo(provider=self.provider, db=self.db)
+        io = PyBotIo(
+            provider=self.provider, db=self.db, database_path=str(self.config.database.path)
+        )
 
         request = BuildManagedPoolRequest(
             pool_id=pool_id,
@@ -549,7 +555,9 @@ class Bot:
             The computed integer value.
 
         """
-        io = PyBotIo(provider=self.provider, db=self.db)
+        io = PyBotIo(
+            provider=self.provider, db=self.db, database_path=str(self.config.database.path)
+        )
         return self._erc20_builder.get_token_balance(
             token,
             address,
@@ -570,7 +578,9 @@ class Bot:
             The computed integer value.
 
         """
-        io = PyBotIo(provider=self.provider, db=self.db)
+        io = PyBotIo(
+            provider=self.provider, db=self.db, database_path=str(self.config.database.path)
+        )
         return self._erc20_builder.get_token_approval(
             token,
             owner,
@@ -590,7 +600,9 @@ class Bot:
             The computed integer value.
 
         """
-        io = PyBotIo(provider=self.provider, db=self.db)
+        io = PyBotIo(
+            provider=self.provider, db=self.db, database_path=str(self.config.database.path)
+        )
         return self._erc20_builder.get_token_total_supply(
             token,
             block_identifier=block_identifier,
@@ -608,7 +620,9 @@ class Bot:
             The computed integer value.
 
         """
-        io = PyBotIo(provider=self.provider, db=self.db)
+        io = PyBotIo(
+            provider=self.provider, db=self.db, database_path=str(self.config.database.path)
+        )
         return self._erc20_builder.get_ether_balance(
             self.chain_id,
             address,
@@ -688,7 +702,9 @@ class Bot:
             if block_number is not None and not isinstance(block_number, int)
             else block_number
         )
-        io = PyBotIo(provider=self.provider, db=self.db)
+        io = PyBotIo(
+            provider=self.provider, db=self.db, database_path=str(self.config.database.path)
+        )
         return builder.update(pool, block_number=resolved_block_number, io=io)
 
     def _builder_for_pool(
