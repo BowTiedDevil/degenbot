@@ -9,7 +9,7 @@ details.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from eth_typing import BlockIdentifier
@@ -189,6 +189,19 @@ class AsyncProviderBackend(Protocol):
 
     async def get_transaction_count(self, address: str, block: int | None = None) -> int:
         """Return the transaction count for the given address."""
+        ...
+
+    async def get_transaction_receipt(self, tx_hash: str) -> dict | None:
+        """Return the receipt for ``tx_hash``, or ``None`` if unmined."""
+        ...
+
+    async def make_request(self, method: str, params: list) -> Any:  # noqa: ANN401
+        """Raw JSON-RPC passthrough (PAGQCK dispatch-path routing)."""
+        ...
+
+    @property
+    def rpc_url(self) -> str:
+        """The underlying RPC endpoint URL."""
         ...
 
     def is_connected(self) -> bool:

@@ -60,14 +60,11 @@ from eth_backrun_helpers import (
 )
 from eth_typing import ChainId, ChecksumAddress
 from hexbytes import HexBytes
-from web3 import AsyncWeb3, Web3
+from web3 import Web3
 from web3.exceptions import TransactionNotFound, Web3Exception
 from web3.types import (
-    BlockNumber,
-    BlockStateCallV1,
     HexStr,
     Nonce,
-    SimulateV1Payload,
     StateOverride,
     TxParams,
     Wei,
@@ -92,6 +89,7 @@ from degenbot.database.models.pools import (
     UniswapV4PoolTableBase,
 )
 from degenbot.degenbot_rs import (
+    AsyncAlloyProvider,
     DynamicFeePoolRejectedError,
     HookedPoolRejectedError,
     VerificationMismatchError,
@@ -99,6 +97,7 @@ from degenbot.degenbot_rs import (
 )
 from degenbot.logging import logger as bot_logger
 from degenbot.pathfinding import find_paths_async
+from degenbot.provider.async_adapter import AsyncProviderAdapter
 from degenbot.provider.sync_adapter import ProviderAdapter
 from degenbot.uniswap.deployments import EthereumMainnetUniswapV4
 from degenbot.uniswap.trackers import UniswapV3PoolTracker
@@ -821,7 +820,7 @@ class BackrunSession:
         *,
         bot: Bot | None = None,
         engine_registry: EngineRegistry | None = None,
-        async_w3: AsyncWeb3 | None = None,
+        async_w3: AsyncProviderAdapter | None = None,
         snapshots: tuple[Any, Any, Any, Any] | None = None,
         path_builder: Any = None,
         consumer: Any = None,
@@ -837,7 +836,7 @@ class BackrunSession:
         # Resolved in start():
         self.bot: Bot | None = None
         self.engine_registry: EngineRegistry | None = None
-        self.async_w3: AsyncWeb3 | None = None
+        self.async_w3: AsyncProviderAdapter | None = None
         self.dispatcher: Dispatcher | None = None
         self.v3_snapshot: Any = None
         self.v4_snapshot: Any = None
@@ -874,13 +873,13 @@ class BackrunSession:
 
         # ── Build the three actors (injected or from cfg) ──
         self.bot = self._injected_bot or self._build_bot(cfg)
-        self.async_w3 = self._injected_async_w3 or self._build_async_w3(cfg)
+        self.async_w3 = self._injected_async_w3 or await self._build_async_w3(cfg)
         self.engine_registry = self._injected_engine_registry or EngineRegistry(bot=self.bot)
 
         # ── Fetch current block (for the dispatcher + backfill comparison) ──
         # Note: main()'s start-phase base_fee_next/operator_nonce fetches were
         # dead state (recomputed per-batch inside consume_result_batches) — dropped.
-        latest_block = await self.async_w3.eth.get_block("latest")
+        latest_block = await self.async_w3.get_block("latest")
         self.current_block = latest_block["number"]
 
         # ── Coordination state ──
@@ -1036,10 +1035,25 @@ class BackrunSession:
         return Bot(config_obj, provider=ProviderAdapter.from_web3(sync_w3))
 
     @staticmethod
-    def _build_async_w3(cfg: BackrunConfig) -> AsyncWeb3:
-        w3 = AsyncWeb3(web3.AsyncHTTPProvider(cfg.node_http))
-        w3.middleware_onion.clear()
-        return w3
+    async def _build_async_w3(cfg: BackrunConfig) -> AsyncProviderAdapter:
+        """Build the dispatch-path RPC provider (PAGQCK).
+
+        Returns an ``AsyncProviderAdapter`` wrapping a Rust
+        ``AsyncAlloyProvider`` — every dispatch-side ``eth_*`` call the hot
+        loop makes goes through Rust (releasing the GIL), not raw
+        ``AsyncWeb3(AsyncHTTPProvider(...))``. The four typed calls
+        (``eth_simulateV1`` / ``eth_feeHistory`` / ``eth_createAccessList`` /
+        ``eth_sendRawTransaction``) route via ``make_request`` on the alloy
+        backend; the generic ones (``get_block`` / ``get_transaction_count`` /
+        ``eth_call`` / ``get_code`` / ``get_transaction_receipt``) route via
+        the adapter's typed methods.
+
+        Returns:
+            An ``AsyncProviderAdapter`` (alloy backend) for the dispatch path.
+
+        """
+        alloy = await AsyncAlloyProvider.create(cfg.node_http)
+        return AsyncProviderAdapter.from_alloy(async_alloy=alloy)
 
     # ── Async context manager ────────────────────────────────────────
     async def __aenter__(self) -> "BackrunSession":
@@ -1623,7 +1637,7 @@ class SubmittedTx:
 
 async def monitor_pending_transaction(
     tx: SubmittedTx,
-    async_w3: AsyncWeb3,
+    async_w3: AsyncProviderAdapter,
     dispatcher: Dispatcher,
 ) -> None:
     """Monitor a submitted transaction until it confirms or expires.
@@ -1635,8 +1649,10 @@ async def monitor_pending_transaction(
         await asyncio.sleep(1)
 
         try:
-            await async_w3.eth.get_transaction_receipt(tx.tx_hash)
+            receipt = await async_w3.get_transaction_receipt(tx.tx_hash.to_0x_hex())
         except TransactionNotFound:
+            receipt = None
+        if receipt is None:
             blocks_waited = dispatcher.current_block - tx.submission_block
             if blocks_waited > BLOCKS_BEFORE_NONCE_EXPIRES:
                 dispatcher.release_tx(tx)
@@ -1655,7 +1671,7 @@ async def dispatch_profitable_results(
         tuple[int, int, int, tuple[int, ...], tuple[int, ...], int]
     ],  # (path_id, opt_input, profit, hop_outputs, consumed_inputs, solve_block)
     engine_registry: EngineRegistry,
-    async_w3: AsyncWeb3,
+    async_w3: AsyncProviderAdapter,
     executor_address: str,
     operator_address: str,
     operator_private_key: str,
@@ -1694,8 +1710,11 @@ async def dispatch_profitable_results(
 
     # The RPC endpoint string the [sim-diag] diagnostic snapshot needs to fetch
     # on-chain per-hop state (slot0/liquidity) inside diagnostic_inspect_path.
-    # Derived from the injected async_w3 — no new RPC beyond this endpoint.
-    node_rpc_url = str(getattr(getattr(async_w3, "provider", None), "endpoint_uri", ""))
+    # Derived from the AsyncProviderAdapter — no new RPC beyond this endpoint.
+    # (PAGQCK: the dispatch path no longer holds a raw AsyncWeb3, so the
+    # web3-specific ``async_w3.provider.endpoint_uri`` is replaced by the
+    # adapter's ``rpc_url`` — same underlying endpoint, Rust-owned surface.)
+    node_rpc_url = async_w3.rpc_url
 
     # Per-dispatch trace dedup — prevents log spam from debug_traceCall
     _traced_reverts_local: set[tuple[int, str]] = set()
@@ -1704,10 +1723,11 @@ async def dispatch_profitable_results(
     # Per-dump deduplication for JSONL state dumps
     _state_dump_keys: set[tuple[int, int]] = set()
 
-    _executor_contract = async_w3.eth.contract(
-        address=cast("ChecksumAddress", executor_address),
-        abi=EXECUTOR_ABI,
-    )
+    # PAGQCK: the former ``async_w3.eth.contract(address=..., abi=EXECUTOR_ABI)``
+    # binding is dropped — it constructed ``_executor_contract`` but never read
+    # it (dead code; the dispatch loop uses raw calldata + ``make_request``
+    # for executor calls, not the web3.py contract object). The web3.py-only
+    # ``.contract()`` surface has no equivalent on AsyncProviderAdapter.
 
     # Pre-build the balanceOf call for the executor
     weth_balance_calldata = encode_balanceof_calldata(executor_address)
@@ -2006,7 +2026,10 @@ async def dispatch_profitable_results(
         # Compute EIP-2930 access list before simulation so gas_used
         # reflects the savings from pre-warmed storage slots
         try:
-            al_result = await async_w3.eth.create_access_list(tx_params, block_identifier="pending")
+            al_result = await async_w3.make_request(
+                "eth_createAccessList",
+                [tx_params, "pending"],
+            )
         except Exception as al_exc:
             # If AL computation fails (e.g. revert), simulate without it.
             # The simulation itself will reject this path.
@@ -2018,30 +2041,39 @@ async def dispatch_profitable_results(
         try:
             # All override fields (code, balance, nonce, state, stateDiff)
             # go under stateOverrides per the Alloy AccountOverride spec.
-            sim = await async_w3.eth.simulate_v1(
-                payload=SimulateV1Payload(
-                    blockStateCalls=[
-                        BlockStateCallV1(
-                            stateOverrides=build_simulation_state_overrides(
-                                executor_owner=EXECUTOR_OWNER,
-                                inject_code=INJECT_EXECUTOR_CODE,
-                                injected_address=INJECTED_EXECUTOR_ADDRESS
-                                if INJECT_EXECUTOR_CODE
-                                else None,
-                            ),
-                            calls=[
-                                weth_balance_call,  # [0] WETH balance before
-                                eth_balance_call,  # [1] ETH balance before
-                                erc6909_balance_call,  # [2] ERC-6909 WETH balance before
-                                tx_params,  # [3] execute(commands)
-                                weth_balance_call,  # [4] WETH balance after
-                                eth_balance_call,  # [5] ETH balance after
-                                erc6909_balance_call,  # [6] ERC-6909 WETH balance after
-                            ],
+            # PAGQCK: the former ``async_w3.eth.simulate_v1(payload=SimulateV1Payload(...),
+            # block_identifier="pending")`` is routed via ``make_request`` —
+            # the ``SimulateV1Payload``/``BlockStateCallV1`` web3.py dataclasses
+            # serialize to exactly this raw JSON shape (``blockStateCalls`` with
+            # ``stateOverrides`` + ``calls``), and ``make_request`` converts the
+            # ``HexBytes`` call-data values to hex strings via ``python_to_json``.
+            # The typed PyO3 seam (alloy ``SimulatePayload`` conversion) is a
+            # follow-on sibling task — this routes off raw ``AsyncWeb3`` NOW.
+            sim_payload = {
+                "blockStateCalls": [
+                    {
+                        "stateOverrides": build_simulation_state_overrides(
+                            executor_owner=EXECUTOR_OWNER,
+                            inject_code=INJECT_EXECUTOR_CODE,
+                            injected_address=INJECTED_EXECUTOR_ADDRESS
+                            if INJECT_EXECUTOR_CODE
+                            else None,
                         ),
-                    ],
-                ),
-                block_identifier="pending",
+                        "calls": [
+                            weth_balance_call,  # [0] WETH balance before
+                            eth_balance_call,  # [1] ETH balance before
+                            erc6909_balance_call,  # [2] ERC-6909 WETH balance before
+                            tx_params,  # [3] execute(commands)
+                            weth_balance_call,  # [4] WETH balance after
+                            eth_balance_call,  # [5] ETH balance after
+                            erc6909_balance_call,  # [6] ERC-6909 WETH balance after
+                        ],
+                    },
+                ],
+            }
+            sim = await async_w3.make_request(
+                "eth_simulateV1",
+                [sim_payload, "pending"],
             )
         except Web3Exception as e:
             _sim_log(
@@ -2245,14 +2277,22 @@ async def dispatch_profitable_results(
                         hop_amount = amounts_per_hop[hi] if hi < len(amounts_per_hop) else "?"
                         if isinstance(hop, V2HopInfo):
                             pool_addr = hop.pool_address
-                            try:
-                                reserves = await async_w3.eth.call(
-                                    {
-                                        "to": Web3.to_checksum_address(pool_addr),
-                                        "data": web3.Web3.keccak(text="getReserves()")[:4],
-                                    },
-                                    "pending",
+                            try:  # noqa: PLW0717
+                                # PAGQCK: ``eth_call`` via ``make_request`` — the
+                                # raw RPC returns a hex string; decode to bytes
+                                # for the ``[0:32]`` reserve slicing below.
+                                get_reserves_sel = web3.Web3.keccak(text="getReserves()")[:4].hex()
+                                reserves_hex = await async_w3.make_request(
+                                    "eth_call",
+                                    [
+                                        {
+                                            "to": Web3.to_checksum_address(pool_addr),
+                                            "data": "0x" + get_reserves_sel,
+                                        },
+                                        "pending",
+                                    ],
                                 )
+                                reserves = bytes.fromhex(reserves_hex.removeprefix("0x"))
                                 if len(reserves) >= 96:
                                     r0 = int.from_bytes(reserves[0:32], "big")
                                     r1 = int.from_bytes(reserves[32:64], "big")
@@ -2267,11 +2307,13 @@ async def dispatch_profitable_results(
                                 pass
                         elif isinstance(hop, V3HopInfo):
                             pool_addr = hop.pool_address
-                            try:
-                                # Check pool has code at pending
-                                _code = await async_w3.eth.get_code(
-                                    Web3.to_checksum_address(pool_addr),
-                                    "pending",
+                            try:  # noqa: PLW0717
+                                # Check pool has code at pending. PAGQCK:
+                                # ``eth_getCode`` via ``make_request`` (raw hex
+                                # string); normalize the empty/zero cases.
+                                _code = await async_w3.make_request(
+                                    "eth_getCode",
+                                    [Web3.to_checksum_address(pool_addr), "pending"],
                                 )
                                 if (
                                     not _code
@@ -2283,20 +2325,30 @@ async def dispatch_profitable_results(
                                         f"pool={pool_addr} NO CODE at block {current_block}",
                                     )
                                     continue
-                                slot0_data = await async_w3.eth.call(
-                                    {
-                                        "to": Web3.to_checksum_address(pool_addr),
-                                        "data": web3.Web3.keccak(text="slot0()")[:4],
-                                    },
-                                    "pending",
+                                slot0_sel = web3.Web3.keccak(text="slot0()")[:4].hex()
+                                slot0_hex = await async_w3.make_request(
+                                    "eth_call",
+                                    [
+                                        {
+                                            "to": Web3.to_checksum_address(pool_addr),
+                                            "data": "0x" + slot0_sel,
+                                        },
+                                        "pending",
+                                    ],
                                 )
-                                liq_data = await async_w3.eth.call(
-                                    {
-                                        "to": Web3.to_checksum_address(pool_addr),
-                                        "data": web3.Web3.keccak(text="liquidity()")[:4],
-                                    },
-                                    "pending",
+                                liq_sel = web3.Web3.keccak(text="liquidity()")[:4].hex()
+                                liq_hex = await async_w3.make_request(
+                                    "eth_call",
+                                    [
+                                        {
+                                            "to": Web3.to_checksum_address(pool_addr),
+                                            "data": "0x" + liq_sel,
+                                        },
+                                        "pending",
+                                    ],
                                 )
+                                slot0_data = bytes.fromhex(slot0_hex.removeprefix("0x"))
+                                liq_data = bytes.fromhex(liq_hex.removeprefix("0x"))
                                 if len(slot0_data) < 64:
                                     bot_logger.info(
                                         f"[v3-state] path={path_id} hop[{hi}] "
@@ -2627,18 +2679,30 @@ async def dispatch_profitable_results(
         # Access list was computed during simulation. Re-compute with
         # updated nonce/fees for accuracy.
         try:
-            al_result = await async_w3.eth.create_access_list(tx_params, block_identifier="pending")
+            al_result = await async_w3.make_request(
+                "eth_createAccessList",
+                [tx_params, "pending"],
+            )
             tx_params["accessList"] = al_result["accessList"]
         except Exception as al_exc:
             bot_logger.debug(f"[dispatch] access list re-computation failed: {al_exc}")
 
         try:
-            tx_hash = await async_w3.eth.send_raw_transaction(
-                eth_account.Account.sign_transaction(
-                    transaction_dict=tx_params,
-                    private_key=operator_private_key,
-                ).raw_transaction,
+            tx_hash_result = await async_w3.make_request(
+                "eth_sendRawTransaction",
+                [
+                    "0x"
+                    + eth_account.Account.sign_transaction(
+                        transaction_dict=tx_params,
+                        private_key=operator_private_key,
+                    ).raw_transaction.hex()
+                ],
             )
+            # make_request returns the raw JSON ``result`` — a hex-string tx hash.
+            # Normalize to ``HexBytes`` so ``SubmittedTx.tx_hash`` keeps the
+            # same shape the downstream ``monitor_pending_transaction`` path
+            # (``.to_0x_hex()``) expects.
+            tx_hash = HexBytes(tx_hash_result)
         except Web3Exception as exc:
             bot_logger.debug(f"Send failed: {exc}")
             continue
@@ -2665,7 +2729,7 @@ async def dispatch_profitable_results(
 
 async def consume_result_batches(
     engine_registry: EngineRegistry,
-    async_w3: AsyncWeb3,
+    async_w3: AsyncProviderAdapter,
     executor_address: str,
     operator_address: str,
     operator_private_key: str,
@@ -2811,7 +2875,7 @@ def _reprime(
 async def _apply_block_if_ready(
     fut: asyncio.Task[dict[str, int]],
     dispatcher: Dispatcher,
-    async_w3: AsyncWeb3,
+    async_w3: AsyncProviderAdapter,
 ) -> None:
     """Drive the block clock from a forwarded ``newHeads`` tick if fut resolved.
 
@@ -2839,16 +2903,24 @@ async def _apply_block_if_ready(
     )
 
     try:
-        fee_history = await async_w3.eth.fee_history(
-            block_count=1,
-            newest_block=cast("BlockNumber", block_number),
-            reward_percentiles=[float(p) for p in FEE_PERCENTILES],
+        # PAGQCK: ``eth_feeHistory`` via ``make_request`` (raw JSON shape —
+        # ``baseFeePerGas`` / ``reward`` arrive as hex strings; decode the
+        # ``reward`` percentiles to ints before ``record_priority_fees``).
+        fee_history = await async_w3.make_request(
+            "eth_feeHistory",
+            [
+                1,
+                hex(block_number),
+                [float(p) for p in FEE_PERCENTILES],
+            ],
         )
         reward = fee_history.get("reward", [[]])
         if reward and reward[-1]:
+            # make_request returns hex strings; web3.py decoded them to ints.
+            reward_ints = [int(v, 16) if isinstance(v, str) else int(v) for v in reward[-1]]
             dispatcher.record_priority_fees(
                 block_number,
-                dict(zip(FEE_PERCENTILES, reward[-1], strict=True)),
+                dict(zip(FEE_PERCENTILES, reward_ints, strict=True)),
             )
     except Web3Exception:
         pass
@@ -2871,7 +2943,7 @@ async def _apply_result_if_ready(
     fut: asyncio.Task[dict[str, object]],
     dispatcher: Dispatcher,
     engine_registry: EngineRegistry,
-    async_w3: AsyncWeb3,
+    async_w3: AsyncProviderAdapter,
     executor_address: str,
     operator_address: str,
     operator_private_key: str,
@@ -2891,9 +2963,7 @@ async def _apply_result_if_ready(
         return
 
     current_block = dispatcher.current_block
-    operator_nonce = await async_w3.eth.get_transaction_count(
-        cast("ChecksumAddress", operator_address)
-    )
+    operator_nonce = await async_w3.get_transaction_count(cast("ChecksumAddress", operator_address))
     solve_block = int(cast("Any", batch["solve_block"]))  # per-result age metadata, not the clock
 
     results: list[tuple[int, int, int, tuple[int, ...], tuple[int, ...], int]] = []

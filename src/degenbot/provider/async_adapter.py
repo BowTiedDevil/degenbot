@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Literal, Self
 
 from web3 import AsyncWeb3
+from web3.exceptions import TransactionNotFound
 
 from degenbot.degenbot_rs import AlloyProvider
 from degenbot.exceptions import SubscriptionNotSupported
@@ -174,6 +175,19 @@ class _AsyncWeb3Adapter(AsyncSubscriptionSupport):
     async def get_transaction_count(self, address: str, block: int | None = None) -> int:
         return await self._w3.eth.get_transaction_count(address, block)  # ty:ignore[invalid-argument-type]
 
+    async def get_transaction_receipt(self, tx_hash: str) -> dict | None:
+        try:
+            return await self._w3.eth.get_transaction_receipt(tx_hash)  # ty:ignore[invalid-argument-type]
+        except TransactionNotFound:
+            return None
+
+    async def make_request(self, method: str, params: list) -> Any:  # noqa: ANN401
+        return await self._w3.provider.make_request(method, params)
+
+    @property
+    def rpc_url(self) -> str:
+        return str(self._w3.provider)
+
     def is_connected(self) -> bool:  # noqa: PLR6301
         return True
 
@@ -242,6 +256,42 @@ class _AsyncAlloyAdapter:
 
     async def get_transaction_count(self, address: str, block: int | None = None) -> int:
         return await self._alloy.get_transaction_count(address, block)
+
+    async def get_transaction_receipt(self, tx_hash: str) -> dict | None:
+        """Fetch a transaction receipt by hash (JSON shape, GIL-released).
+
+        PAGQCK: routed through the Rust ``AsyncAlloyProvider``
+        (``make_request``-style JSON → Python), replacing
+        ``async_w3.eth.get_transaction_receipt`` in the dispatch hot loop.
+        ``None`` when the tx is unmined (mirrors ``TxReceiptNotFound``); the
+        example's ``monitor_pending_transaction`` checks ``is None``.
+
+        Returns:
+            The receipt as a plain dict, or ``None`` if the tx is unmined.
+
+        """
+        return await self._alloy.get_transaction_receipt(tx_hash)
+
+    async def make_request(self, method: str, params: list) -> Any:  # noqa: ANN401
+        """Raw JSON-RPC passthrough on the Rust ``AsyncAlloyProvider``.
+
+        PAGQCK: the dispatch hot loop's four typed RPC calls
+        (``eth_simulateV1`` / ``eth_feeHistory`` / ``eth_createAccessList`` /
+        ``eth_sendRawTransaction``) route here — Rust-owned, GIL-released,
+        returning JSON shapes the example already handles (hex strings).
+        The alloy typed PyO3 seam is a follow-on sibling task; this routes
+        off raw ``AsyncWeb3`` now while the typed surfaces are surfaced.
+
+        Returns:
+            The raw JSON-RPC ``result`` (Python-native via ``json_to_py``).
+
+        """
+        return await self._alloy.make_request(method, params)
+
+    @property
+    def rpc_url(self) -> str:
+        """The underlying RPC endpoint URL (replaces ``async_w3.provider.endpoint_uri``)."""
+        return self._alloy.rpc_url
 
     def is_connected(self) -> bool:  # noqa: PLR6301
         return True
@@ -521,6 +571,40 @@ class AsyncProviderAdapter:
 
         """
         return await self._backend.get_transaction_count(address, block)
+
+    async def get_transaction_receipt(self, tx_hash: str) -> dict | None:
+        """Fetch a transaction receipt by hash (PAGQCK dispatch-path routing).
+
+        Routes through the Rust ``AsyncAlloyProvider`` when the backend is
+        alloy (GIL-released, JSON shape), replacing
+        ``async_w3.eth.get_transaction_receipt`` in the dispatch hot loop's
+        ``monitor_pending_transaction``.
+
+        Returns:
+            The receipt as a plain dict, or ``None`` if the tx is unmined.
+
+        """
+        return await self._backend.get_transaction_receipt(tx_hash)
+
+    async def make_request(self, method: str, params: list) -> Any:  # noqa: ANN401
+        """Raw JSON-RPC passthrough (PAGQCK dispatch-path routing).
+
+        The dispatch hot loop's four typed RPC calls
+        (``eth_simulateV1`` / ``eth_feeHistory`` / ``eth_createAccessList`` /
+        ``eth_sendRawTransaction``) route here on the alloy backend —
+        Rust-owned, GIL-released, returning JSON shapes the example already
+        handles. Replaces ``async_w3.eth.<method>(...)`` in the dispatch path.
+
+        Returns:
+            The raw JSON-RPC ``result`` (Python-native).
+
+        """
+        return await self._backend.make_request(method, params)
+
+    @property
+    def rpc_url(self) -> str:
+        """The underlying RPC endpoint URL (replaces ``async_w3.provider.endpoint_uri``)."""
+        return self._backend.rpc_url
 
     def is_connected(self) -> bool:
         """Check if the provider is connected.
