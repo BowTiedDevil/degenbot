@@ -48,7 +48,7 @@ use crate::error::DbError;
 use crate::rows::decode::{decode_u256, encode_u256};
 use crate::schema::table::{
     INITIALIZATION_MAPS, LIQUIDITY_POSITIONS, MANAGED_POOLS, MANAGED_POOL_INITIALIZATION_MAPS,
-    MANAGED_POOL_LIQUIDITY_POSITIONS, POOLS, POOL_MANAGERS, UNISWAP_V4_POOLS,
+    MANAGED_POOL_LIQUIDITY_POSITIONS, POOLS, POOL_MANAGERS, UNISWAP_V3_POOLS, UNISWAP_V4_POOLS,
 };
 
 /// The reconstituted liquidity map (tick bitmap + tick data) the apply loop
@@ -124,12 +124,20 @@ impl DegenbotDb {
         pool_address: &str,
     ) -> Result<Option<PoolUpdateState>, DbError> {
         let conn = self.lock();
+        // The V3 pool is polymorphic: `pools` holds the base columns (id,
+        // address, chain, kind, token*_id, exchange_id) + `uniswap_v3_pools`
+        // holds the V3-specific columns (tick_spacing, liquidity_update_block,
+        // liquidity_update_log_index, fee_*). JOIN both — `pools.id` is the
+        // `pool_id` for the positions/init-maps composite key.
         let row: Option<(i64, i32, Option<i64>, Option<i64>)> = conn
             .query_row(
                 &format!(
-                    "SELECT id, tick_spacing, liquidity_update_block, \
-                     liquidity_update_log_index FROM {POOLS} \
-                     WHERE chain = ?1 AND address = ?2 LIMIT 1"
+                    "SELECT {POOLS}.id, {UNISWAP_V3_POOLS}.tick_spacing, \
+                     {UNISWAP_V3_POOLS}.liquidity_update_block, \
+                     {UNISWAP_V3_POOLS}.liquidity_update_log_index \
+                     FROM {POOLS} JOIN {UNISWAP_V3_POOLS} \
+                     ON {UNISWAP_V3_POOLS}.pool_id = {POOLS}.id \
+                     WHERE {POOLS}.chain = ?1 AND {POOLS}.address = ?2 LIMIT 1"
                 ),
                 rusqlite::params![chain_id, pool_address],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
@@ -435,8 +443,8 @@ impl DegenbotDb {
         let conn = self.lock();
         conn.execute(
             &format!(
-                "UPDATE {POOLS} SET liquidity_update_block = ?1, \
-                 liquidity_update_log_index = ?2 WHERE id = ?3"
+                "UPDATE {UNISWAP_V3_POOLS} SET liquidity_update_block = ?1, \
+                 liquidity_update_log_index = ?2 WHERE pool_id = ?3"
             ),
             rusqlite::params![
                 i64::try_from(block).unwrap_or(i64::MAX),

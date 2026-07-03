@@ -1692,6 +1692,7 @@ name = "degenbot-db"
 version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
+ "degenbot-cl-math",
  "degenbot-pathfinding",
  "parking_lot",
  "rusqlite",

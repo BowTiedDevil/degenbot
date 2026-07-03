@@ -48,6 +48,7 @@ pub mod table {
     pub const UNISWAP_V4_POOLS: &str = "uniswap_v4_pools";
     pub const MANAGED_POOL_LIQUIDITY_POSITIONS: &str = "managed_pool_liquidity_positions";
     pub const MANAGED_POOL_INITIALIZATION_MAPS: &str = "managed_pool_initialization_maps";
+    pub const UNISWAP_V3_POOLS: &str = "uniswap_v3_pools";
 
     /// The per-DEX subclass table for a V2/V3 `kind` discriminator.
     ///
