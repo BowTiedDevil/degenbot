@@ -39,7 +39,7 @@ use std::time::Duration;
 
 use rusqlite::{backup, Connection};
 
-use crate::error::DbError;
+pub use crate::error::DbError;
 use crate::migrate::{
     classify_schema, convert_alembic_to_rust_owned as run_cutover_on_conn, SchemaState,
 };
@@ -196,6 +196,10 @@ pub fn inspect_schema_state(path: &Path) -> Result<SchemaState, DbError> {
     conn.execute_batch(ADMIN_PRAGMAS)?;
     classify_schema(&conn)
 }
+
+// Re-export the out-of-place heal (ADR-011) so consumers of `ops` find every
+// admin file operation in one place. The implementation lives in [`crate::heal`].
+pub use crate::heal::{heal_database, HealReport};
 
 /// The opt-in one-way cutover (ADR-010 §1+§2): flip an Alembic-stamped DB
 /// into Rust ownership. Runs [`migrate::convert_alembic_to_rust_owned`] on a
