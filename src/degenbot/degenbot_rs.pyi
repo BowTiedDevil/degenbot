@@ -687,6 +687,13 @@ def db_fetch_exchange(
     its own connection. Raises ``ValueError`` on a DB failure.
     """
 
+def db_fetch_exchange_by_name(
+    database_path: str,
+    chain_id: int,
+    name: str,
+) -> ExchangeRow | None:
+    """Fetch an `exchanges` row by `(chain_id, name)` (the deactivate-CLI resolution)."""
+
 # ------------------------------------------------------------------
 # Pool discovery writers (WR7EA6 — split out of QJSCA5).
 # Thin PyO3 wrappers over `degenbot-db`'s `discovery` substrate
@@ -2587,6 +2594,7 @@ __all__ = [
     "db_compact_database",
     "db_create_new_database",
     "db_fetch_exchange",
+    "db_fetch_exchange_by_name",
     "db_fetch_pool_row",
     "db_set_exchange_active",
     "db_set_exchange_last_update_block",
