@@ -22,6 +22,7 @@ use std::path::PathBuf;
 use pyo3::create_exception;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use pyo3::wrap_pyfunction;
 
 pub use aave::PyDatabasePositionQuery;
@@ -149,6 +150,54 @@ fn db_convert_alembic_to_rust_owned(py: Python<'_>, database_path: &str) -> PyRe
     .to_string())
 }
 
+/// `degenbot_rs.db_heal_database(database_path: str) -> dict`
+///
+/// Out-of-place dump-and-restore "heal" (ADR-011): builds a fresh DB at the
+/// Rust head schema, copies all user rows from the old DB (preserving PKs +
+/// FK integrity, in FK-dependency order), stamps `RustOwned` directly (never
+/// runs Alembic code), then atomically swaps it into place (old DB preserved
+/// as `*.bak` for full recoverability). Never mutates the old DB in place —
+/// a read-only open of the old DB feeds the copy, so the old file is left
+/// byte-identical until the final `rename`.
+///
+/// Returns a dict:
+///   `{"old_state": str, "rows_copied": dict[str, int], "bak_path": str,
+///     "new_state": str, "warnings": list[str]}``
+/// - `old_state` / `new_state`: `schema_state_label` of the `HealReport` fields.
+/// - No-op if old is already `rust_owned` (returns `old_state == new_state ==
+///   "rust_owned"`, empty `rows_copied`, `bak_path == database_path`).
+/// - Refuses `Unrecognized` (foreign file) + any I/O / copy / verification
+///   failure via `db_err_to_py` (`ValueError`).
+///
+/// The GIL is released across the entire read-copy-swap (the
+/// `py.detach(|| ops::heal_database(&path))` call) so a long copy doesn't
+/// freeze Python threads.
+#[pyfunction]
+fn db_heal_database(py: Python<'_>, database_path: &str) -> PyResult<Py<PyDict>> {
+    let path = PathBuf::from(database_path);
+    let report = py
+        .detach(|| ops::heal_database(&path))
+        .map_err(|e| db_err_to_py(&e))?;
+
+    let dict = PyDict::new(py);
+    dict.set_item("old_state", schema_state_label(&report.old_state))?;
+    dict.set_item("new_state", schema_state_label(&report.new_state))?;
+    dict.set_item("bak_path", report.bak_path.to_string_lossy().to_string())?;
+
+    // `rows_copied` sub-dict: sorted keys for deterministic iteration (a
+    // HashMap's order is random; pin a stable order for snapshot tests).
+    let rows_dict = PyDict::new(py);
+    let mut rows: Vec<(String, u64)> = report.rows_copied.into_iter().collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    for (k, v) in rows {
+        rows_dict.set_item(k, v)?;
+    }
+    dict.set_item("rows_copied", rows_dict)?;
+
+    dict.set_item("warnings", report.warnings)?;
+    Ok(dict.unbind())
+}
+
 /// Map a [`degenbot_db::SchemaState`] to its Python label string (the
 /// `db_inspect_schema_state` return value).
 fn schema_state_label(state: &degenbot_db::SchemaState) -> &'static str {
@@ -193,6 +242,7 @@ pub fn add_db_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(db_upgrade_database, m)?)?;
     m.add_function(wrap_pyfunction!(db_inspect_schema_state, m)?)?;
     m.add_function(wrap_pyfunction!(db_convert_alembic_to_rust_owned, m)?)?;
+    m.add_function(wrap_pyfunction!(db_heal_database, m)?)?;
     m.add_function(wrap_pyfunction!(
         liquidity_updater::db_apply_v3_liquidity_updates,
         m
