@@ -317,8 +317,28 @@ impl DegenbotDb {
         symbol: Option<&str>,
         decimals: Option<i64>,
     ) -> Result<i64, DbError> {
-        let conn = self.conn.lock();
-        if let Some(id) = existing_erc20_token(&conn, chain, address)? {
+        let conn = self.lock();
+        Self::get_or_create_erc20_token_on_conn(&conn, chain, address, name, symbol, decimals)
+    }
+
+    /// The single-transaction-bound variant of [`Self::get_or_create_erc20_token`]
+    /// — accepts a borrowed [`rusqlite::Connection`] (a chunk-loop `Transaction`
+    /// derefs to one) so the pool-updater chunk loop can call it on its ONE
+    /// owned connection without re-locking the `Mutex` (avoids the
+    /// `parking_lot` non-reentrant deadlock + retires the per-row lock cycle
+    /// the `discovery::upsert_v*_pools` paths previously needed). CKXCOB 3a.
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn get_or_create_erc20_token_on_conn(
+        conn: &rusqlite::Connection,
+        chain: i64,
+        address: &str,
+        name: Option<&str>,
+        symbol: Option<&str>,
+        decimals: Option<i64>,
+    ) -> Result<i64, DbError> {
+        if let Some(id) = existing_erc20_token(conn, chain, address)? {
             return Ok(id);
         }
         conn.execute(

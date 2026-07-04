@@ -110,6 +110,19 @@ impl DegenbotDb {
         address: &str,
     ) -> Result<Option<i64>, DbError> {
         let conn = self.lock();
+        Self::fetch_pool_manager_id_by_address_on_conn(&conn, chain, address)
+    }
+
+    /// The single-transaction-bound variant of
+    /// [`Self::fetch_pool_manager_id_by_address`] (CKXCOB 3a).
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn fetch_pool_manager_id_by_address_on_conn(
+        conn: &rusqlite::Connection,
+        chain: i64,
+        address: &str,
+    ) -> Result<Option<i64>, DbError> {
         Ok(conn
             .query_row(
                 "SELECT id FROM pool_managers WHERE chain = ?1 AND address = ?2",
@@ -144,6 +157,28 @@ impl DegenbotDb {
         fee_denominator: i64,
         rows: &[V2PoolRowInput],
     ) -> Result<(), DbError> {
+        let conn = self.lock();
+        Self::upsert_v2_pools_on_conn(&conn, chain, kind, exchange_id, fee_denominator, rows)
+    }
+
+    /// The single-transaction-bound variant of [`Self::upsert_v2_pools`]
+    /// (CKXCOB 3a). Accepts a borrowed [`rusqlite::Connection`] (a chunk-loop
+    /// `Transaction` derefs to one) so the pool-updater chunk loop can write a
+    /// batch under ONE connection + ONE transaction. Retires the per-row
+    /// `self.lock()` cycle the `&self` path previously needed (the token
+    /// escalate now uses [`Self::get_or_create_erc20_token_on_conn`] on the
+    /// SAME borrowed conn — no re-lock → no `parking_lot` non-reentrant deadlock).
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn upsert_v2_pools_on_conn(
+        conn: &rusqlite::Connection,
+        chain: i64,
+        kind: &str,
+        exchange_id: i64,
+        fee_denominator: i64,
+        rows: &[V2PoolRowInput],
+    ) -> Result<(), DbError> {
         let sub = table::v2_v3_subclass_table(kind)
             .ok_or_else(|| DbError::Decode(format!("not a V2/V3 kind: {kind:?}")))?;
         if !table::is_v2_kind(kind) {
@@ -151,24 +186,22 @@ impl DegenbotDb {
         }
         let is_aerodrome = kind == "aerodrome_v2";
         for r in rows {
-            // Token escalate first — `get_or_create_erc20_token` locks
-            // `self.conn` internally, so it MUST NOT be called while we hold
-            // the connection guard (parking_lot is non-reentrant → deadlock).
-            let token0_id = self.get_or_create_erc20_token(
+            let token0_id = Self::get_or_create_erc20_token_on_conn(
+                conn,
                 chain,
                 &r.token0_address.to_checksum(None),
                 None,
                 None,
                 None,
             )?;
-            let token1_id = self.get_or_create_erc20_token(
+            let token1_id = Self::get_or_create_erc20_token_on_conn(
+                conn,
                 chain,
                 &r.token1_address.to_checksum(None),
                 None,
                 None,
                 None,
             )?;
-            let conn = self.lock();
             conn.execute(
                 "INSERT INTO pools (address, chain, kind, token0_id, token1_id, exchange_id) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -229,28 +262,45 @@ impl DegenbotDb {
         fee_denominator: i64,
         rows: &[V3PoolRowInput],
     ) -> Result<(), DbError> {
+        let conn = self.lock();
+        Self::upsert_v3_pools_on_conn(&conn, chain, kind, exchange_id, fee_denominator, rows)
+    }
+
+    /// The single-transaction-bound variant of [`Self::upsert_v3_pools`]
+    /// (CKXCOB 3a). See [`Self::upsert_v2_pools_on_conn`].
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn upsert_v3_pools_on_conn(
+        conn: &rusqlite::Connection,
+        chain: i64,
+        kind: &str,
+        exchange_id: i64,
+        fee_denominator: i64,
+        rows: &[V3PoolRowInput],
+    ) -> Result<(), DbError> {
         let sub = table::v2_v3_subclass_table(kind)
             .ok_or_else(|| DbError::Decode(format!("not a V2/V3 kind: {kind:?}")))?;
         if !table::is_v3_kind(kind) {
             return Err(DbError::Decode(format!("not a V3 kind: {kind:?}")));
         }
         for r in rows {
-            // Token escalate first (see `upsert_v2_pools` re-entrancy note).
-            let token0_id = self.get_or_create_erc20_token(
+            let token0_id = Self::get_or_create_erc20_token_on_conn(
+                conn,
                 chain,
                 &r.token0_address.to_checksum(None),
                 None,
                 None,
                 None,
             )?;
-            let token1_id = self.get_or_create_erc20_token(
+            let token1_id = Self::get_or_create_erc20_token_on_conn(
+                conn,
                 chain,
                 &r.token1_address.to_checksum(None),
                 None,
                 None,
                 None,
             )?;
-            let conn = self.lock();
             conn.execute(
                 "INSERT INTO pools (address, chain, kind, token0_id, token1_id, exchange_id) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -298,30 +348,46 @@ impl DegenbotDb {
         fee_denominator: i64,
         rows: &[V4PoolRowInput],
     ) -> Result<(), DbError> {
-        let manager_id = self
-            .fetch_pool_manager_id_by_address(chain, manager_address)?
-            .ok_or_else(|| {
-                DbError::Decode(format!(
-                    "no pool_manager for chain {chain} address {manager_address:?}"
-                ))
-            })?;
+        let conn = self.lock();
+        Self::upsert_v4_pools_on_conn(&conn, chain, manager_address, fee_denominator, rows)
+    }
+
+    /// The single-transaction-bound variant of [`Self::upsert_v4_pools`]
+    /// (CKXCOB 3a). See [`Self::upsert_v2_pools_on_conn`].
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn upsert_v4_pools_on_conn(
+        conn: &rusqlite::Connection,
+        chain: i64,
+        manager_address: &str,
+        fee_denominator: i64,
+        rows: &[V4PoolRowInput],
+    ) -> Result<(), DbError> {
+        let manager_id =
+            Self::fetch_pool_manager_id_by_address_on_conn(conn, chain, manager_address)?
+                .ok_or_else(|| {
+                    DbError::Decode(format!(
+                        "no pool_manager for chain {chain} address {manager_address:?}"
+                    ))
+                })?;
         for r in rows {
-            // Currency-token escalate first (see `upsert_v2_pools` re-entrancy note).
-            let currency0_id = self.get_or_create_erc20_token(
+            let currency0_id = Self::get_or_create_erc20_token_on_conn(
+                conn,
                 chain,
                 &r.currency0_address.to_checksum(None),
                 None,
                 None,
                 None,
             )?;
-            let currency1_id = self.get_or_create_erc20_token(
+            let currency1_id = Self::get_or_create_erc20_token_on_conn(
+                conn,
                 chain,
                 &r.currency1_address.to_checksum(None),
                 None,
                 None,
                 None,
             )?;
-            let conn = self.lock();
             conn.execute(
                 "INSERT INTO managed_pools (kind, manager_id) VALUES (?1, ?2)",
                 params!["uniswap_v4", manager_id],
@@ -361,6 +427,23 @@ impl DegenbotDb {
         block: i64,
     ) -> Result<(), DbError> {
         let conn = self.lock();
+        Self::set_exchange_last_update_block_on_conn(&conn, chain_id, exchange_id, block)
+    }
+
+    /// The single-transaction-bound variant of
+    /// [`Self::set_exchange_last_update_block`] (CKXCOB 3a) — the chunk loop's
+    /// end-of-chunk stamp, callable on the chunk's `Transaction` so the stamp
+    /// commits atomically with the chunk's pool + liquidity writes (the §1
+    /// atomicity invariant's structural fix).
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn set_exchange_last_update_block_on_conn(
+        conn: &rusqlite::Connection,
+        chain_id: i64,
+        exchange_id: i64,
+        block: i64,
+    ) -> Result<(), DbError> {
         conn.execute(
             "UPDATE exchanges SET last_update_block = ?1 \
              WHERE chain_id = ?2 AND id = ?3",
@@ -767,5 +850,131 @@ mod tests {
         // even for the same name.
         let cross_chain = db.fetch_exchange_by_name(8453, "uniswap_v2").unwrap();
         assert!(cross_chain.is_none());
+    }
+
+    // ── CKXCOB 3a: single-transaction chunk atomicity ──────────────────
+    //
+    // The §1 atomicity invariant's structural proof: the `*_on_conn` write
+    // variants run on ONE borrowed `Connection` (the chunk's `Transaction`),
+    // so the pool writes + the `last_update_block` stamp commit together OR
+    // roll back together. This test exercises both outcomes.
+
+    #[test]
+    fn on_conn_writes_commit_atomically_with_the_stamp() {
+        let db = write_db();
+        let factory = address!("0x1F98431c8aD98523631AE4a59f267346ea31F984");
+        let exchange = db.upsert_exchange(1, "uniswap_v3", factory, None).unwrap();
+        assert!(exchange.last_update_block.is_none());
+
+        let pool = V3PoolRowInput {
+            address: address!("0x1111111111111111111111111111111111111111"),
+            token0_address: address!("0x2222222222222222222222222222222222222222"),
+            token1_address: address!("0x3333333333333333333333333333333333333333"),
+            fee: 500,
+            tick_spacing: 10,
+        };
+
+        // ONE transaction wraps the pool write + the stamp.
+        let mut guard = db.lock();
+        let tx = guard.transaction().unwrap();
+        DegenbotDb::upsert_v3_pools_on_conn(
+            &tx,
+            1,
+            "uniswap_v3",
+            exchange.id,
+            1_000_000,
+            &[pool.clone()],
+        )
+        .unwrap();
+        DegenbotDb::set_exchange_last_update_block_on_conn(&tx, 1, exchange.id, 100).unwrap();
+        tx.commit().unwrap();
+        drop(guard);
+
+        // Committed → both the pool row + the stamp landed.
+        let fetched_pool = db.fetch_pool_by_address(pool.address, 1).unwrap();
+        assert!(fetched_pool.is_some(), "pool row committed with the stamp");
+        assert_eq!(fetched_pool.unwrap().exchange_id, exchange.id);
+        let after = db.fetch_exchange(exchange.id).unwrap().unwrap();
+        assert_eq!(
+            after.last_update_block,
+            Some(100),
+            "stamp committed atomically"
+        );
+    }
+
+    #[test]
+    fn on_conn_writes_roll_back_together_when_the_transaction_is_dropped() {
+        let db = write_db();
+        let factory = address!("0x1F98431c8aD98523631AE4a59f267346ea31F984");
+        let exchange = db.upsert_exchange(1, "uniswap_v3", factory, None).unwrap();
+
+        // First chunk: commit a pool + stamp at block 100.
+        let pool1 = V3PoolRowInput {
+            address: address!("0x1111111111111111111111111111111111111111"),
+            token0_address: address!("0x2222222222222222222222222222222222222222"),
+            token1_address: address!("0x3333333333333333333333333333333333333333"),
+            fee: 500,
+            tick_spacing: 10,
+        };
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            DegenbotDb::upsert_v3_pools_on_conn(
+                &tx,
+                1,
+                "uniswap_v3",
+                exchange.id,
+                1_000_000,
+                &[pool1.clone()],
+            )
+            .unwrap();
+            DegenbotDb::set_exchange_last_update_block_on_conn(&tx, 1, exchange.id, 100).unwrap();
+            tx.commit().unwrap();
+        }
+
+        // Second chunk: write a SECOND pool + advance the stamp to 200, then
+        // DROP the transaction (simulating an interrupt / error before commit).
+        let pool2 = V3PoolRowInput {
+            address: address!("0x4444444444444444444444444444444444444444"),
+            token0_address: address!("0x5555555555555555555555555555555555555555"),
+            token1_address: address!("0x6666666666666666666666666666666666666666"),
+            fee: 3000,
+            tick_spacing: 60,
+        };
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            DegenbotDb::upsert_v3_pools_on_conn(
+                &tx,
+                1,
+                "uniswap_v3",
+                exchange.id,
+                1_000_000,
+                &[pool2.clone()],
+            )
+            .unwrap();
+            DegenbotDb::set_exchange_last_update_block_on_conn(&tx, 1, exchange.id, 200).unwrap();
+            // Drop `tx` WITHOUT committing → rollback (the §1 atomicity invariant).
+            drop(tx);
+        }
+
+        // Rolled back → BOTH the second pool AND the stamp advance reverted.
+        assert!(
+            db.fetch_pool_by_address(pool2.address, 1)
+                .unwrap()
+                .is_none(),
+            "rolled-back chunk's pool write must not be durable",
+        );
+        let after = db.fetch_exchange(exchange.id).unwrap().unwrap();
+        assert_eq!(
+            after.last_update_block,
+            Some(100),
+            "rolled-back chunk's stamp advance must not be durable (restart-safe)",
+        );
+        // The first chunk's pool survived.
+        assert!(db
+            .fetch_pool_by_address(pool1.address, 1)
+            .unwrap()
+            .is_some());
     }
 }

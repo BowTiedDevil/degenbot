@@ -124,6 +124,19 @@ impl DegenbotDb {
         pool_address: &str,
     ) -> Result<Option<PoolUpdateState>, DbError> {
         let conn = self.lock();
+        Self::fetch_v3_pool_update_state_on_conn(&conn, chain_id, pool_address)
+    }
+
+    /// The single-transaction-bound variant of [`Self::fetch_v3_pool_update_state`]
+    /// (CKXCOB 3a).
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn fetch_v3_pool_update_state_on_conn(
+        conn: &rusqlite::Connection,
+        chain_id: i64,
+        pool_address: &str,
+    ) -> Result<Option<PoolUpdateState>, DbError> {
         // The V3 pool is polymorphic: `pools` holds the base columns (id,
         // address, chain, kind, token*_id, exchange_id) + `uniswap_v3_pools`
         // holds the V3-specific columns (tick_spacing, liquidity_update_block,
@@ -180,6 +193,19 @@ impl DegenbotDb {
         pool_manager_chain: i64,
     ) -> Result<Option<PoolUpdateState>, DbError> {
         let conn = self.lock();
+        Self::fetch_v4_pool_update_state_on_conn(&conn, pool_hash, pool_manager_chain)
+    }
+
+    /// The single-transaction-bound variant of [`Self::fetch_v4_pool_update_state`]
+    /// (CKXCOB 3a).
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn fetch_v4_pool_update_state_on_conn(
+        conn: &rusqlite::Connection,
+        pool_hash: &str,
+        pool_manager_chain: i64,
+    ) -> Result<Option<PoolUpdateState>, DbError> {
         let row: Option<(i64, i32, Option<i64>, Option<i64>)> = conn
             .query_row(
                 &format!(
@@ -230,6 +256,18 @@ impl DegenbotDb {
     /// a malformed column.
     pub fn fetch_v3_liquidity_map(&self, pool_id: i64) -> Result<LiquidityMap, DbError> {
         let conn = self.lock();
+        Self::fetch_v3_liquidity_map_on_conn(&conn, pool_id)
+    }
+
+    /// The single-transaction-bound variant of [`Self::fetch_v3_liquidity_map`]
+    /// (CKXCOB 3a).
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn fetch_v3_liquidity_map_on_conn(
+        conn: &rusqlite::Connection,
+        pool_id: i64,
+    ) -> Result<LiquidityMap, DbError> {
         let mut tick_bitmap: HashMap<i32, BitmapAtWord> = HashMap::new();
         {
             let mut stmt = conn.prepare(&format!(
@@ -289,6 +327,18 @@ impl DegenbotDb {
     /// a malformed column.
     pub fn fetch_v4_liquidity_map(&self, managed_pool_id: i64) -> Result<LiquidityMap, DbError> {
         let conn = self.lock();
+        Self::fetch_v4_liquidity_map_on_conn(&conn, managed_pool_id)
+    }
+
+    /// The single-transaction-bound variant of [`Self::fetch_v4_liquidity_map`]
+    /// (CKXCOB 3a).
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn fetch_v4_liquidity_map_on_conn(
+        conn: &rusqlite::Connection,
+        managed_pool_id: i64,
+    ) -> Result<LiquidityMap, DbError> {
         let mut tick_bitmap: HashMap<i32, BitmapAtWord> = HashMap::new();
         {
             let mut stmt = conn.prepare(&format!(
@@ -368,10 +418,30 @@ impl DegenbotDb {
         pool_address: &str,
         events: &[LiquidityUpdateEvent],
     ) -> Result<bool, DbError> {
-        let Some(state) = self.fetch_v3_pool_update_state(chain_id, pool_address)? else {
+        let conn = self.lock();
+        Self::apply_v3_liquidity_updates_on_conn(&conn, chain_id, pool_address, events)
+    }
+
+    /// The single-transaction-bound variant of [`Self::apply_v3_liquidity_updates`]
+    /// (CKXCOB 3a) — the chunk loop's per-pool liquidity apply, callable on the
+    /// chunk's `Transaction` so the apply's reads + writes run on the SAME
+    /// connection + commit atomically with the chunk's pool writes + the
+    /// `last_update_block` stamp (the §1 atomicity invariant).
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn apply_v3_liquidity_updates_on_conn(
+        conn: &rusqlite::Connection,
+        chain_id: i64,
+        pool_address: &str,
+        events: &[LiquidityUpdateEvent],
+    ) -> Result<bool, DbError> {
+        let Some(state) = Self::fetch_v3_pool_update_state_on_conn(conn, chain_id, pool_address)?
+        else {
             return Ok(false);
         };
-        let (mut tick_bitmap, mut tick_data) = self.fetch_v3_liquidity_map(state.pool_id)?;
+        let (mut tick_bitmap, mut tick_data) =
+            Self::fetch_v3_liquidity_map_on_conn(conn, state.pool_id)?;
         let pool_id = state.pool_id;
 
         let mut current_liquidity = U128::ZERO;
@@ -383,7 +453,7 @@ impl DegenbotDb {
             events,
         );
 
-        persist_v3(self, pool_id, &tick_bitmap, &tick_data, last_event)?;
+        persist_v3(conn, pool_id, &tick_bitmap, &tick_data, last_event)?;
         Ok(true)
     }
 
@@ -408,10 +478,28 @@ impl DegenbotDb {
         pool_manager_chain: i64,
         events: &[LiquidityUpdateEvent],
     ) -> Result<bool, DbError> {
-        let Some(state) = self.fetch_v4_pool_update_state(pool_hash, pool_manager_chain)? else {
+        let conn = self.lock();
+        Self::apply_v4_liquidity_updates_on_conn(&conn, pool_hash, pool_manager_chain, events)
+    }
+
+    /// The single-transaction-bound variant of [`Self::apply_v4_liquidity_updates`]
+    /// (CKXCOB 3a). See [`Self::apply_v3_liquidity_updates_on_conn`].
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn apply_v4_liquidity_updates_on_conn(
+        conn: &rusqlite::Connection,
+        pool_hash: &str,
+        pool_manager_chain: i64,
+        events: &[LiquidityUpdateEvent],
+    ) -> Result<bool, DbError> {
+        let Some(state) =
+            Self::fetch_v4_pool_update_state_on_conn(conn, pool_hash, pool_manager_chain)?
+        else {
             return Ok(false);
         };
-        let (mut tick_bitmap, mut tick_data) = self.fetch_v4_liquidity_map(state.pool_id)?;
+        let (mut tick_bitmap, mut tick_data) =
+            Self::fetch_v4_liquidity_map_on_conn(conn, state.pool_id)?;
         let pool_id = state.pool_id;
 
         let mut current_liquidity = U128::ZERO;
@@ -423,7 +511,7 @@ impl DegenbotDb {
             events,
         );
 
-        persist_v4(self, pool_id, &tick_bitmap, &tick_data, last_event)?;
+        persist_v4(conn, pool_id, &tick_bitmap, &tick_data, last_event)?;
         Ok(true)
     }
 
@@ -441,6 +529,20 @@ impl DegenbotDb {
         log_index: u64,
     ) -> Result<(), DbError> {
         let conn = self.lock();
+        Self::set_v3_liquidity_update_marker_on_conn(&conn, pool_id, block, log_index)
+    }
+
+    /// The single-transaction-bound variant of
+    /// [`Self::set_v3_liquidity_update_marker`] (CKXCOB 3a).
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn set_v3_liquidity_update_marker_on_conn(
+        conn: &rusqlite::Connection,
+        pool_id: i64,
+        block: u64,
+        log_index: u64,
+    ) -> Result<(), DbError> {
         conn.execute(
             &format!(
                 "UPDATE {UNISWAP_V3_POOLS} SET liquidity_update_block = ?1, \
@@ -468,6 +570,20 @@ impl DegenbotDb {
         log_index: u64,
     ) -> Result<(), DbError> {
         let conn = self.lock();
+        Self::set_v4_liquidity_update_marker_on_conn(&conn, managed_pool_id, block, log_index)
+    }
+
+    /// The single-transaction-bound variant of
+    /// [`Self::set_v4_liquidity_update_marker`] (CKXCOB 3a).
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn set_v4_liquidity_update_marker_on_conn(
+        conn: &rusqlite::Connection,
+        managed_pool_id: i64,
+        block: u64,
+        log_index: u64,
+    ) -> Result<(), DbError> {
         conn.execute(
             &format!(
                 "UPDATE {UNISWAP_V4_POOLS} SET liquidity_update_block = ?1, \
@@ -494,8 +610,22 @@ impl DegenbotDb {
         pool_id: i64,
         live_ticks: &[i32],
     ) -> Result<(), DbError> {
+        let conn = self.lock();
+        Self::delete_stale_v3_positions_on_conn(&conn, pool_id, live_ticks)
+    }
+
+    /// The single-transaction-bound variant of [`Self::delete_stale_v3_positions`]
+    /// (CKXCOB 3a).
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn delete_stale_v3_positions_on_conn(
+        conn: &rusqlite::Connection,
+        pool_id: i64,
+        live_ticks: &[i32],
+    ) -> Result<(), DbError> {
         delete_stale_rows(
-            self,
+            conn,
             &format!(
                 "DELETE FROM {LIQUIDITY_POSITIONS} WHERE pool_id = ?1 AND tick NOT IN ({placeholders})",
                 placeholders = sql_placeholders_for(live_ticks.len())
@@ -516,8 +646,22 @@ impl DegenbotDb {
         pool_id: i64,
         live_words: &[i32],
     ) -> Result<(), DbError> {
+        let conn = self.lock();
+        Self::delete_stale_v3_init_maps_on_conn(&conn, pool_id, live_words)
+    }
+
+    /// The single-transaction-bound variant of [`Self::delete_stale_v3_init_maps`]
+    /// (CKXCOB 3a).
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn delete_stale_v3_init_maps_on_conn(
+        conn: &rusqlite::Connection,
+        pool_id: i64,
+        live_words: &[i32],
+    ) -> Result<(), DbError> {
         delete_stale_rows(
-            self,
+            conn,
             &format!(
                 "DELETE FROM {INITIALIZATION_MAPS} WHERE pool_id = ?1 AND word NOT IN ({placeholders})",
                 placeholders = sql_placeholders_for(live_words.len())
@@ -538,8 +682,22 @@ impl DegenbotDb {
         managed_pool_id: i64,
         live_ticks: &[i32],
     ) -> Result<(), DbError> {
+        let conn = self.lock();
+        Self::delete_stale_v4_positions_on_conn(&conn, managed_pool_id, live_ticks)
+    }
+
+    /// The single-transaction-bound variant of [`Self::delete_stale_v4_positions`]
+    /// (CKXCOB 3a).
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn delete_stale_v4_positions_on_conn(
+        conn: &rusqlite::Connection,
+        managed_pool_id: i64,
+        live_ticks: &[i32],
+    ) -> Result<(), DbError> {
         delete_stale_rows(
-            self,
+            conn,
             &format!(
                 "DELETE FROM {MANAGED_POOL_LIQUIDITY_POSITIONS} WHERE managed_pool_id = ?1 \
                  AND tick NOT IN ({placeholders})",
@@ -561,8 +719,22 @@ impl DegenbotDb {
         managed_pool_id: i64,
         live_words: &[i32],
     ) -> Result<(), DbError> {
+        let conn = self.lock();
+        Self::delete_stale_v4_init_maps_on_conn(&conn, managed_pool_id, live_words)
+    }
+
+    /// The single-transaction-bound variant of [`Self::delete_stale_v4_init_maps`]
+    /// (CKXCOB 3a).
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn delete_stale_v4_init_maps_on_conn(
+        conn: &rusqlite::Connection,
+        managed_pool_id: i64,
+        live_words: &[i32],
+    ) -> Result<(), DbError> {
         delete_stale_rows(
-            self,
+            conn,
             &format!(
                 "DELETE FROM {MANAGED_POOL_INITIALIZATION_MAPS} WHERE managed_pool_id = ?1 \
                  AND word NOT IN ({placeholders})",
@@ -593,10 +765,23 @@ impl DegenbotDb {
         pool_id: i64,
         tick_data: &HashMap<i32, LiquidityAtTick>,
     ) -> Result<(), DbError> {
+        let conn = self.lock();
+        Self::upsert_v3_liquidity_positions_on_conn(&conn, pool_id, tick_data)
+    }
+
+    /// The single-transaction-bound variant of
+    /// [`Self::upsert_v3_liquidity_positions`] (CKXCOB 3a).
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn upsert_v3_liquidity_positions_on_conn(
+        conn: &rusqlite::Connection,
+        pool_id: i64,
+        tick_data: &HashMap<i32, LiquidityAtTick>,
+    ) -> Result<(), DbError> {
         if tick_data.is_empty() {
             return Ok(());
         }
-        let conn = self.lock();
         let chunk_cap = SQLITE_MAX_VARIABLES / POSITION_KEYS_PER_ROW;
         let entries: Vec<(i32, &LiquidityAtTick)> =
             tick_data.iter().map(|(t, v)| (*t, v)).collect();
@@ -661,10 +846,23 @@ impl DegenbotDb {
         managed_pool_id: i64,
         tick_data: &HashMap<i32, LiquidityAtTick>,
     ) -> Result<(), DbError> {
+        let conn = self.lock();
+        Self::upsert_v4_liquidity_positions_on_conn(&conn, managed_pool_id, tick_data)
+    }
+
+    /// The single-transaction-bound variant of
+    /// [`Self::upsert_v4_liquidity_positions`] (CKXCOB 3a).
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn upsert_v4_liquidity_positions_on_conn(
+        conn: &rusqlite::Connection,
+        managed_pool_id: i64,
+        tick_data: &HashMap<i32, LiquidityAtTick>,
+    ) -> Result<(), DbError> {
         if tick_data.is_empty() {
             return Ok(());
         }
-        let conn = self.lock();
         let chunk_cap = SQLITE_MAX_VARIABLES / POSITION_KEYS_PER_ROW;
         let entries: Vec<(i32, &LiquidityAtTick)> =
             tick_data.iter().map(|(t, v)| (*t, v)).collect();
@@ -722,7 +920,21 @@ impl DegenbotDb {
         pool_id: i64,
         tick_bitmap: &HashMap<i32, BitmapAtWord>,
     ) -> Result<(), DbError> {
-        upsert_init_maps_impl(self, pool_id, tick_bitmap, INITIALIZATION_MAPS, "pool_id")
+        let conn = self.lock();
+        Self::upsert_v3_initialization_maps_on_conn(&conn, pool_id, tick_bitmap)
+    }
+
+    /// The single-transaction-bound variant of
+    /// [`Self::upsert_v3_initialization_maps`] (CKXCOB 3a).
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn upsert_v3_initialization_maps_on_conn(
+        conn: &rusqlite::Connection,
+        pool_id: i64,
+        tick_bitmap: &HashMap<i32, BitmapAtWord>,
+    ) -> Result<(), DbError> {
+        upsert_init_maps_impl(conn, pool_id, tick_bitmap, INITIALIZATION_MAPS, "pool_id")
     }
 
     /// Upsert the V4 `managed_pool_initialization_maps` rows for
@@ -737,8 +949,22 @@ impl DegenbotDb {
         managed_pool_id: i64,
         tick_bitmap: &HashMap<i32, BitmapAtWord>,
     ) -> Result<(), DbError> {
+        let conn = self.lock();
+        Self::upsert_v4_initialization_maps_on_conn(&conn, managed_pool_id, tick_bitmap)
+    }
+
+    /// The single-transaction-bound variant of
+    /// [`Self::upsert_v4_initialization_maps`] (CKXCOB 3a).
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn upsert_v4_initialization_maps_on_conn(
+        conn: &rusqlite::Connection,
+        managed_pool_id: i64,
+        tick_bitmap: &HashMap<i32, BitmapAtWord>,
+    ) -> Result<(), DbError> {
         upsert_init_maps_impl(
-            self,
+            conn,
             managed_pool_id,
             tick_bitmap,
             MANAGED_POOL_INITIALIZATION_MAPS,
@@ -817,62 +1043,78 @@ fn apply_event_loop(
 
 /// The V3 persist step: delete stale positions/init-maps, upsert the live
 /// ones, + stamp the pool row's `liquidity_update_block`/`log_index`.
+/// CKXCOB 3a: accepts a borrowed [`rusqlite::Connection`] so the whole
+/// persist step runs on the chunk's single transaction.
 fn persist_v3(
-    db: &DegenbotDb,
+    conn: &rusqlite::Connection,
     pool_id: i64,
     tick_bitmap: &HashMap<i32, BitmapAtWord>,
     tick_data: &HashMap<i32, LiquidityAtTick>,
     last_event: Option<BlockLog>,
 ) -> Result<(), DbError> {
     let live_ticks: Vec<i32> = tick_data.keys().copied().collect();
-    db.delete_stale_v3_positions(pool_id, &live_ticks)?;
-    db.upsert_v3_liquidity_positions(pool_id, tick_data)?;
+    DegenbotDb::delete_stale_v3_positions_on_conn(conn, pool_id, &live_ticks)?;
+    DegenbotDb::upsert_v3_liquidity_positions_on_conn(conn, pool_id, tick_data)?;
 
     let live_words: Vec<i32> = tick_bitmap
         .iter()
         .filter(|(_, bw)| bw.bitmap != U256::ZERO)
         .map(|(w, _)| *w)
         .collect();
-    db.delete_stale_v3_init_maps(pool_id, &live_words)?;
-    db.upsert_v3_initialization_maps(pool_id, tick_bitmap)?;
+    DegenbotDb::delete_stale_v3_init_maps_on_conn(conn, pool_id, &live_words)?;
+    DegenbotDb::upsert_v3_initialization_maps_on_conn(conn, pool_id, tick_bitmap)?;
 
     if let Some(last) = last_event {
-        db.set_v3_liquidity_update_marker(pool_id, last.block, last.log_index)?;
+        DegenbotDb::set_v3_liquidity_update_marker_on_conn(
+            conn,
+            pool_id,
+            last.block,
+            last.log_index,
+        )?;
     }
     Ok(())
 }
 
 /// The V4 persist step (mirror of [`persist_v3`] for the V4 tables +
-/// `uniswap_v4_pools` stamp).
+/// `uniswap_v4_pools` stamp). CKXCOB 3a: accepts a borrowed
+/// [`rusqlite::Connection`].
 fn persist_v4(
-    db: &DegenbotDb,
+    conn: &rusqlite::Connection,
     managed_pool_id: i64,
     tick_bitmap: &HashMap<i32, BitmapAtWord>,
     tick_data: &HashMap<i32, LiquidityAtTick>,
     last_event: Option<BlockLog>,
 ) -> Result<(), DbError> {
     let live_ticks: Vec<i32> = tick_data.keys().copied().collect();
-    db.delete_stale_v4_positions(managed_pool_id, &live_ticks)?;
-    db.upsert_v4_liquidity_positions(managed_pool_id, tick_data)?;
+    DegenbotDb::delete_stale_v4_positions_on_conn(conn, managed_pool_id, &live_ticks)?;
+    DegenbotDb::upsert_v4_liquidity_positions_on_conn(conn, managed_pool_id, tick_data)?;
 
     let live_words: Vec<i32> = tick_bitmap
         .iter()
         .filter(|(_, bw)| bw.bitmap != U256::ZERO)
         .map(|(w, _)| *w)
         .collect();
-    db.delete_stale_v4_init_maps(managed_pool_id, &live_words)?;
-    db.upsert_v4_initialization_maps(managed_pool_id, tick_bitmap)?;
+    DegenbotDb::delete_stale_v4_init_maps_on_conn(conn, managed_pool_id, &live_words)?;
+    DegenbotDb::upsert_v4_initialization_maps_on_conn(conn, managed_pool_id, tick_bitmap)?;
 
     if let Some(last) = last_event {
-        db.set_v4_liquidity_update_marker(managed_pool_id, last.block, last.log_index)?;
+        DegenbotDb::set_v4_liquidity_update_marker_on_conn(
+            conn,
+            managed_pool_id,
+            last.block,
+            last.log_index,
+        )?;
     }
     Ok(())
 }
 
 /// Shared `delete ... WHERE <id_col> = ?1 AND <key_col> NOT IN (live)` executor
 /// for the V3/V4 stale-row deletions. Binds `id_value` then the live keys.
+/// CKXCOB 3a: accepts a borrowed [`rusqlite::Connection`] (the chunk-loop
+/// `Transaction` derefs to one) so stale-row deletion runs on the chunk's
+/// single owned connection — no re-lock.
 fn delete_stale_rows(
-    db: &DegenbotDb,
+    conn: &rusqlite::Connection,
     sql: &str,
     id_value: i64,
     live_keys: &[i32],
@@ -881,7 +1123,6 @@ fn delete_stale_rows(
         // No live keys → delete ALL rows for this pool.
         return Ok(());
     }
-    let conn = db.lock();
     // Chunk the NOT IN list across SQLite's 32,766-var limit.
     let chunk_cap = SQLITE_MAX_VARIABLES.saturating_sub(1);
     for chunk in live_keys.chunks(chunk_cap) {
@@ -900,9 +1141,9 @@ fn delete_stale_rows(
 }
 
 /// Shared `upsert_init_maps` impl — V3/V4 differ only in the table name + the
-/// id column name.
+/// id column name. CKXCOB 3a: accepts a borrowed [`rusqlite::Connection`].
 fn upsert_init_maps_impl(
-    db: &DegenbotDb,
+    conn: &rusqlite::Connection,
     id_value: i64,
     tick_bitmap: &HashMap<i32, BitmapAtWord>,
     table: &str,
@@ -916,7 +1157,6 @@ fn upsert_init_maps_impl(
     if entries.is_empty() {
         return Ok(());
     }
-    let conn = db.lock();
     let chunk_cap = SQLITE_MAX_VARIABLES / INIT_MAP_KEYS_PER_ROW;
     for chunk in entries.chunks(chunk_cap) {
         let placeholders = (0..chunk.len())
