@@ -103,6 +103,65 @@ fn db_upgrade_database(py: Python<'_>, path: &str) -> PyResult<String> {
     .to_string())
 }
 
+/// `degenbot_rs.db_inspect_schema_state(database_path: str) -> str`
+///
+/// The read-only dry-run companion to `db_convert_alembic_to_rust_owned`:
+/// reports the schema state WITHOUT writing. Never refuses (reports even
+/// stale / unrecognized states). Returns one of `"alembic_current"`,
+/// `"alembic_stale"`, `"fresh_standalone"`, `"rust_owned"`, `"unrecognized"`.
+/// Raises `ValueError` only on a genuine `SQLite` open/query failure.
+#[pyfunction]
+fn db_inspect_schema_state(py: Python<'_>, database_path: &str) -> PyResult<String> {
+    let path = PathBuf::from(database_path);
+    let state = py
+        .detach(|| ops::inspect_schema_state(&path))
+        .map_err(|e| db_err_to_py(&e))?;
+    Ok(schema_state_label(&state).to_string())
+}
+
+/// `degenbot_rs.db_convert_alembic_to_rust_owned(database_path: str) -> str`
+///
+/// The opt-in one-way cutover (ADR-010): flip an Alembic-stamped DB into Rust
+/// ownership — `DROP`s `alembic_version`, stamps `_degenbot_db_schema_version`.
+/// Returns `"converted"` (was `AlembicCurrent`) or `"already_rust_owned"` (was
+/// already Rust-owned → idempotent no-op). Raises `DatabaseSchemaStale` for a
+/// stale Alembic DB (run `degenbot database upgrade` first) or `ValueError`
+/// for an unrecognized (foreign) file.
+#[pyfunction]
+fn db_convert_alembic_to_rust_owned(py: Python<'_>, database_path: &str) -> PyResult<String> {
+    let path = PathBuf::from(database_path);
+    // Inspect the PRE-cutover state first (to distinguish a real cutover from
+    // an idempotent no-op on an already-Rust-owned DB). classify_schema reads
+    // without writing.
+    let pre = py
+        .detach(|| ops::inspect_schema_state(&path))
+        .map_err(|e| db_err_to_py(&e))?;
+    // Run the cutover. Refuses AlembicStale / Unrecognized via DbError.
+    py.detach(|| ops::convert_alembic_to_rust_owned(&path))
+        .map_err(|e| db_err_to_py(&e))?;
+    Ok(match pre {
+        degenbot_db::SchemaState::RustOwned { .. } => "already_rust_owned",
+        // FreshStandalone would also re-stamp, but the cutover op is meant for
+        // AlembicCurrent DBs; treat any non-RustOwned pre-state as a real
+        // cutover (the substrate stamps regardless).
+        _ => "converted",
+    }
+    .to_string())
+}
+
+/// Map a [`degenbot_db::SchemaState`] to its Python label string (the
+/// `db_inspect_schema_state` return value).
+fn schema_state_label(state: &degenbot_db::SchemaState) -> &'static str {
+    use degenbot_db::SchemaState;
+    match state {
+        SchemaState::AlembicCurrent => "alembic_current",
+        SchemaState::AlembicStale { .. } => "alembic_stale",
+        SchemaState::FreshStandalone { .. } => "fresh_standalone",
+        SchemaState::RustOwned { .. } => "rust_owned",
+        SchemaState::Unrecognized => "unrecognized",
+    }
+}
+
 /// Map a [`degenbot_db::DbError`] to a Python exception.
 ///
 /// `AlembicStale` becomes a [`DatabaseSchemaStale`] (subclass of `ValueError`)
@@ -132,6 +191,8 @@ pub fn add_db_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(db_backup_database, m)?)?;
     m.add_function(wrap_pyfunction!(db_compact_database, m)?)?;
     m.add_function(wrap_pyfunction!(db_upgrade_database, m)?)?;
+    m.add_function(wrap_pyfunction!(db_inspect_schema_state, m)?)?;
+    m.add_function(wrap_pyfunction!(db_convert_alembic_to_rust_owned, m)?)?;
     m.add_function(wrap_pyfunction!(
         liquidity_updater::db_apply_v3_liquidity_updates,
         m

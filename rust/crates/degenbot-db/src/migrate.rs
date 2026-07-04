@@ -90,6 +90,28 @@ pub struct RustOwnedInfo {
 ///
 /// Returns [`DbError::Sqlite`] on a query/DDL failure.
 pub fn ensure_schema(conn: &Connection) -> Result<SchemaState, DbError> {
+    let state = classify_schema(conn)?;
+    if matches!(state, SchemaState::FreshStandalone { .. }) {
+        apply_fresh_standalone(conn)?;
+    }
+    Ok(state)
+}
+
+/// The pure-predicate half of [`ensure_schema`]: inspect `conn`'s schema and
+/// report the [`SchemaState`] WITHOUT applying any DDL. The
+/// [`SchemaState::FreshStandalone`] arm here reports the *would-be* state
+/// (an empty file) but does NOT create tables — so a read-only inspector (the
+/// `database cutover --dry-run` path, [`crate::ops::inspect_schema_state`]) can
+/// ask "what state is this DB in?" without the DDL side effect.
+///
+/// [`ensure_schema`] delegates here and applies DDL only when the classification
+/// is `FreshStandalone`, preserving its byte-for-byte behavior.
+///
+/// # Errors
+///
+/// Returns [`DbError::Sqlite`] on a query failure (never refuses — returns the
+/// state for ALL cases including `AlembicStale` / `Unrecognized`).
+pub fn classify_schema(conn: &Connection) -> Result<SchemaState, DbError> {
     let has_alembic = table_exists(conn, "alembic_version")?;
 
     if has_alembic {
@@ -146,7 +168,9 @@ pub fn ensure_schema(conn: &Connection) -> Result<SchemaState, DbError> {
                 Ok(SchemaState::Unrecognized)
             }
         } else {
-            apply_fresh_standalone(conn)?;
+            // Empty file: the would-be state is FreshStandalone. classify_schema
+            // does NOT apply the DDL here (the caller — ensure_schema or a
+            // read-only inspector — decides whether to).
             Ok(SchemaState::FreshStandalone {
                 schema_version: RUST_SCHEMA_VERSION,
             })
@@ -441,5 +465,28 @@ mod tests {
                 schema_version: RUST_SCHEMA_VERSION,
             }
         );
+    }
+
+    #[test]
+    fn classify_schema_on_empty_returns_fresh_standalone_without_creating_tables() {
+        // classify_schema is the pure-predicate half of ensure_schema: it must
+        // report the would-be state (FreshStandalone) WITHOUT applying DDL.
+        let conn = Connection::open_in_memory().unwrap();
+        let state = classify_schema(&conn).unwrap();
+        assert_eq!(
+            state,
+            SchemaState::FreshStandalone {
+                schema_version: RUST_SCHEMA_VERSION,
+            }
+        );
+        // no tables were created — the file is still empty.
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 0, "classify_schema must not apply DDL");
     }
 }

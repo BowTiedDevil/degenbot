@@ -19,7 +19,9 @@ from degenbot.degenbot_rs import (
     DatabaseSchemaStale,
     db_backup_database,
     db_compact_database,
+    db_convert_alembic_to_rust_owned,
     db_create_new_database,
+    db_inspect_schema_state,
     db_upgrade_database,
 )
 from degenbot.exceptions.infrastructure import BackupExists
@@ -133,6 +135,45 @@ def upgrade_existing_sqlite_database(database_path: pathlib.Path) -> str:
         outcome = "upgraded_from_stale"
     logger.info(f"Updated existing SQLite database at {database_path} ({outcome}).")
     return outcome
+
+
+def convert_alembic_to_rust_owned(database_path: pathlib.Path) -> str:
+    """Flip an Alembic-stamped DB into Rust ownership (ADR-010 cutover).
+
+    A thin delegating shell over the Rust core
+    (``degenbot_rs.db_convert_alembic_to_rust_owned``): drops
+    ``alembic_version``, stamps ``_degenbot_db_schema_version``. The cutover is
+    one-way and opt-in — nothing on the open path auto-runs it.
+
+    Unlike :func:`upgrade_existing_sqlite_database`, there is NO Alembic
+    fall-back: the cutover REFUSES a stale Alembic DB (the user must run
+    :func:`upgrade_existing_sqlite_database` first to advance the stamp to
+    head). ``DatabaseSchemaStale`` and an unrecognized-schema ``ValueError``
+    propagate to the caller.
+
+    Returns:
+        ``"converted"`` (was AlembicCurrent) or ``"already_rust_owned"``
+        (was already Rust-owned → idempotent no-op).
+
+    """
+    outcome = db_convert_alembic_to_rust_owned(str(database_path))
+    logger.info(f"Database at {database_path}: schema ownership cutover ({outcome}).")
+    return outcome
+
+
+def inspect_schema_state(database_path: pathlib.Path) -> str:
+    """Inspect the schema state WITHOUT writing (ADR-010 dry-run).
+
+    Thin shell over ``degenbot_rs.db_inspect_schema_state`` — the read-only
+    companion to :func:`convert_alembic_to_rust_owned`. Reports the state for
+    all cases (never refuses); only a genuine I/O failure raises.
+
+    Returns:
+        One of ``"alembic_current"`` / ``"alembic_stale"`` /
+        ``"fresh_standalone"`` / ``"rust_owned"`` / ``"unrecognized"``.
+
+    """
+    return db_inspect_schema_state(str(database_path))
 
 
 def get_scoped_sqlite_session(database_path: pathlib.Path) -> scoped_session[Session]:

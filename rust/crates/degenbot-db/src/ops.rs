@@ -40,6 +40,9 @@ use std::time::Duration;
 use rusqlite::{backup, Connection};
 
 use crate::error::DbError;
+use crate::migrate::{
+    classify_schema, convert_alembic_to_rust_owned as run_cutover_on_conn, SchemaState,
+};
 use crate::schema::{ALEMBIC_HEAD, SCHEMA_HEAD};
 
 /// The per-connection PRAGMAs the admin ops assert up front: WAL (file-persistent)
@@ -174,6 +177,46 @@ pub fn upgrade_database(path: &Path) -> Result<UpgradeOutcome, DbError> {
             Ok(UpgradeOutcome::CreatedFresh)
         }
     }
+}
+
+/// Inspect `path`'s schema state WITHOUT writing (ADR-010 §2). The read-only
+/// dry-run companion to [`upgrade_database`] / [`convert_alembic_to_rust_owned`]:
+/// runs [`classify_schema`] (pure predicates, NO DDL — even the
+/// `FreshStandalone` arm reports the would-be state without applying tables)
+/// and returns the [`SchemaState`] for ALL cases, including `AlembicStale` /
+/// `Unrecognized` (it never refuses — the `database cutover --dry-run` command
+/// reports the state to the user rather than raising).
+///
+/// # Errors
+///
+/// [`DbError::Sqlite`] on an open / query failure. Never refuses on schema
+/// disposition.
+pub fn inspect_schema_state(path: &Path) -> Result<SchemaState, DbError> {
+    let conn = open_raw(path)?;
+    conn.execute_batch(ADMIN_PRAGMAS)?;
+    classify_schema(&conn)
+}
+
+/// The opt-in one-way cutover (ADR-010 §1+§2): flip an Alembic-stamped DB
+/// into Rust ownership. Runs [`migrate::convert_alembic_to_rust_owned`] on a
+/// raw admin connection (verifies `alembic_version.version_num == ALEMBIC_HEAD`,
+/// `DROP`s `alembic_version`, stamps `_degenbot_db_schema_version`), then
+/// reads the resulting state back via [`classify_schema`] (→ `RustOwned`).
+///
+/// Refuses [`SchemaState::AlembicStale`] (run [`upgrade_database`] first →
+/// `Err(DbError::AlembicStale)`) and [`SchemaState::Unrecognized`] (foreign
+/// file → `Err(DbError::UnrecognizedSchema)`). Already-`RustOwned` (and
+/// `FreshStandalone`) DBs are an idempotent re-stamp no-op.
+///
+/// # Errors
+///
+/// See [`DbError::AlembicStale`] / [`DbError::UnrecognizedSchema`] /
+/// [`DbError::Sqlite`].
+pub fn convert_alembic_to_rust_owned(path: &Path) -> Result<SchemaState, DbError> {
+    let conn = open_raw(path)?;
+    conn.execute_batch(ADMIN_PRAGMAS)?;
+    run_cutover_on_conn(&conn)?;
+    classify_schema(&conn)
 }
 
 /// Open a writable raw [`Connection`] to `path` (`:memory:` supported), with no
@@ -365,5 +408,93 @@ mod tests {
             err,
             DbError::IntegrityCheckFailed(_) | DbError::Sqlite(_)
         ));
+    }
+
+    // ── inspect_schema_state + convert_alembic_to_rust_owned (ADR-010 §2) ──
+
+    #[test]
+    fn inspect_on_alembic_current_returns_alembic_current() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("current.db");
+        create_new_database(&db_path).unwrap(); // stamps ALEMBIC_HEAD
+        let state = inspect_schema_state(&db_path).unwrap();
+        assert_eq!(state, SchemaState::AlembicCurrent);
+    }
+
+    #[test]
+    fn inspect_on_stale_alembic_returns_stale_not_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("stale.db");
+        {
+            let c = Connection::open(&db_path).unwrap();
+            c.execute_batch(
+                "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL);\n\
+                 INSERT INTO alembic_version (version_num) VALUES ('deadbeefdead');",
+            )
+            .unwrap();
+        }
+        // inspect never refuses — it reports the stale state.
+        let state = inspect_schema_state(&db_path).unwrap();
+        match state {
+            SchemaState::AlembicStale { head, expected } => {
+                assert_eq!(head, "deadbeefdead");
+                assert_eq!(expected, ALEMBIC_HEAD);
+            }
+            other => panic!("expected AlembicStale, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inspect_on_foreign_file_returns_unrecognized_not_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("foreign.db");
+        {
+            let c = Connection::open(&db_path).unwrap();
+            c.execute_batch("CREATE TABLE other (x INTEGER);").unwrap();
+        }
+        let state = inspect_schema_state(&db_path).unwrap();
+        assert_eq!(state, SchemaState::Unrecognized);
+    }
+
+    #[test]
+    fn convert_alembic_current_to_rust_owned_returns_rust_owned() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("cutover.db");
+        create_new_database(&db_path).unwrap(); // full schema + ALEMBIC_HEAD stamp
+        assert_eq!(
+            inspect_schema_state(&db_path).unwrap(),
+            SchemaState::AlembicCurrent
+        );
+
+        let state = convert_alembic_to_rust_owned(&db_path).unwrap();
+        assert_eq!(
+            state,
+            SchemaState::RustOwned {
+                schema_version: crate::schema::RUST_SCHEMA_VERSION,
+            }
+        );
+
+        // alembic_version is GONE; the Rust stamp table is stamped; re-open → RustOwned.
+        let probe = Connection::open(&db_path).unwrap();
+        assert!(!table_exists(&probe, "alembic_version").unwrap());
+        let (_db, reopen) = DegenbotDb::open(&db_path).unwrap();
+        assert_eq!(reopen, state);
+    }
+
+    #[test]
+    fn convert_idempotent_on_rust_owned() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("already.db");
+        create_new_database(&db_path).unwrap();
+        convert_alembic_to_rust_owned(&db_path).unwrap(); // first cutover
+
+        // second cutover is an idempotent no-op → still RustOwned.
+        let state = convert_alembic_to_rust_owned(&db_path).unwrap();
+        assert_eq!(
+            state,
+            SchemaState::RustOwned {
+                schema_version: crate::schema::RUST_SCHEMA_VERSION,
+            }
+        );
     }
 }
