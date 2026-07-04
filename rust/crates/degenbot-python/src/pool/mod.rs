@@ -321,7 +321,7 @@ mod tests {
     }
 
     /// `update_report_to_dict` produces the six-key report dict the `.pyi`
-    /// contract promises (the run_pool_update return shape).
+    /// contract promises (the `run_pool_update` return shape).
     #[test]
     fn update_report_dict_shape() {
         Python::attach(|py| {

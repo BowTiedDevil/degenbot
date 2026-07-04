@@ -883,7 +883,7 @@ mod tests {
             "uniswap_v3",
             exchange.id,
             1_000_000,
-            &[pool.clone()],
+            std::slice::from_ref(&pool),
         )
         .unwrap();
         DegenbotDb::set_exchange_last_update_block_on_conn(&tx, 1, exchange.id, 100).unwrap();
@@ -925,7 +925,7 @@ mod tests {
                 "uniswap_v3",
                 exchange.id,
                 1_000_000,
-                &[pool1.clone()],
+                std::slice::from_ref(&pool1),
             )
             .unwrap();
             DegenbotDb::set_exchange_last_update_block_on_conn(&tx, 1, exchange.id, 100).unwrap();
@@ -950,7 +950,7 @@ mod tests {
                 "uniswap_v3",
                 exchange.id,
                 1_000_000,
-                &[pool2.clone()],
+                std::slice::from_ref(&pool2),
             )
             .unwrap();
             DegenbotDb::set_exchange_last_update_block_on_conn(&tx, 1, exchange.id, 200).unwrap();
