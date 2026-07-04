@@ -425,4 +425,92 @@ impl DegenbotDb {
         })?;
         Ok(rows.collect::<Result<Vec<_>, rusqlite::Error>>()?)
     }
+
+    /// `SELECT id, chain_id, name, active, last_update_block, factory, deployer
+    /// FROM exchanges WHERE chain_id = ? AND active = 1 ORDER BY id`.
+    ///
+    /// The pool-updater chunk loop's run-start discovery read (the Rust-owned
+    /// replacement for the Python `active_exchanges` query in
+    /// `src/degenbot/cli/pool.py`). Returns every active exchange row for a
+    /// chain, ordered by `id` for deterministic dispatch order. The
+    /// chunk-loop crate (`degenbot-pool-updater`) joins these rows with the
+    /// static event-config map (family, event-topic, fee denominator) to build
+    /// typed `ExchangeSpec`s via its `load_active_exchange_specs` — the join
+    /// lives there, not here, because the family/event-topic resolution is a
+    /// chunk-loop concern (the DB crate owns the row; the chunk-loop crate
+    /// owns the resolved spec).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::Decode`]
+    /// on a malformed column.
+    pub fn fetch_active_exchanges_by_chain(
+        &self,
+        chain_id: i64,
+    ) -> Result<Vec<crate::rows::ExchangeRow>, DbError> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, chain_id, name, active, last_update_block, factory, deployer \
+             FROM exchanges WHERE chain_id = ?1 AND active = 1 ORDER BY id",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![chain_id], |row| {
+            crate::rows::ExchangeRow::from_row(row).map_err(rusqlite::Error::from)
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, rusqlite::Error>>()?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::migrate::SchemaState;
+    use alloy::primitives::address;
+
+    /// A fresh in-memory **write-capable** DB (mirrors the `discovery` test
+    /// helper — `set_exchange_active`/`upsert_exchange` need the writable
+    /// handle).
+    fn write_db() -> DegenbotDb {
+        let (db, state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+        assert!(matches!(state, SchemaState::FreshStandalone { .. }));
+        db
+    }
+
+    #[test]
+    fn fetch_active_exchanges_by_chain_returns_only_active_rows_for_chain() {
+        let db = write_db();
+        let v2_factory = address!("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f");
+        let v3_factory = address!("0x1F98431c8aD98523631AE4a59f267346ea31F984");
+
+        let v2 = db
+            .upsert_exchange(1, "uniswap_v2", v2_factory, None)
+            .unwrap();
+        let v3 = db
+            .upsert_exchange(1, "uniswap_v3", v3_factory, None)
+            .unwrap();
+        // A second-chain exchange — must NOT appear in the chain=1 result.
+        let _other = db
+            .upsert_exchange(8453, "uniswap_v3", v3_factory, None)
+            .unwrap();
+
+        // Initially both chain-1 exchanges are inactive → empty.
+        let empty = db.fetch_active_exchanges_by_chain(1).unwrap();
+        assert!(empty.is_empty(), "no exchanges are active yet");
+
+        // Activate only the V3 one.
+        db.set_exchange_active(v3.id, true).unwrap();
+
+        let only_v3 = db.fetch_active_exchanges_by_chain(1).unwrap();
+        assert_eq!(only_v3.len(), 1);
+        assert_eq!(only_v3[0].id, v3.id);
+        assert_eq!(only_v3[0].name, "uniswap_v3");
+        assert_eq!(only_v3[0].factory, v3_factory);
+        assert!(only_v3[0].active);
+
+        // Activate the V2 one too — result ordered by id (V2 inserted first).
+        db.set_exchange_active(v2.id, true).unwrap();
+        let both = db.fetch_active_exchanges_by_chain(1).unwrap();
+        assert_eq!(both.len(), 2);
+        assert_eq!(both[0].id, v2.id, "ordered by id — v2 first");
+        assert_eq!(both[1].id, v3.id);
+    }
 }
