@@ -39,6 +39,7 @@ use rusqlite::{params, OptionalExtension};
 
 use crate::connection::DegenbotDb;
 use crate::error::DbError;
+use crate::rows::{ExchangeRow, PoolManagerRow};
 use crate::schema::table;
 
 // ── row-input structs (the PyO3 seam extracts Python args into these) ──────
@@ -366,5 +367,384 @@ impl DegenbotDb {
             params![block, chain_id, exchange_id],
         )?;
         Ok(())
+    }
+
+    /// Resolve an `exchanges` row by `(chain_id, name)`, inserting a new
+    /// `active = false`, `last_update_block = NULL` row if none exists. This is
+    /// the substrate the `exchange activate/deactivate` CLI delegates to for
+    /// the get-or-create step (the Python `cli/exchange.py` trajectory:
+    /// `session.scalar(select(ExchangeTable).where(chain_id, name))` →
+    /// `session.add(ExchangeTable(active=True, factory=...))`).
+    ///
+    /// # Active flag is NOT touched here
+    ///
+    /// If a row already exists, it is returned **unchanged** — flipping
+    /// `active` is a separate concern owned by [`Self::set_exchange_active`].
+    /// The insert path stamps `active = false` (the CLI flips it true for
+    /// activate; the row is the get-or-create substrate, not the
+    /// activate/deactivate primitive).
+    ///
+    /// # No unique index → explicit SELECT-then-INSERT dedup
+    ///
+    /// `exchanges` has NO unique index on `(chain_id, name)` (see
+    /// [`crate::schema_head`]), and this epic MUST NOT add one (a new index
+    /// would force a new Alembic migration = out of scope per ADR-010). So this
+    /// uses the explicit `SELECT … WHERE chain_id, name` → `INSERT` dedup the
+    /// Python code uses, NOT `INSERT … ON CONFLICT(chain_id, name)`. The
+    /// inherent SELECT-then-INSERT race matches the Python trajectory's own
+    /// race; the CLI holds the connection mutex via [`Self::lock`] so a
+    /// single-process caller is race-free.
+    ///
+    /// # Address storage
+    ///
+    /// `factory` is always stored EIP-55-checksummed
+    /// (`Address::to_checksum(None)`); `deployer` is likewise checksummed when
+    /// `Some`, `NULL` when `None`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::Decode`] if
+    /// the inserted/selected row fails to decode (the `factory`/`deployer`
+    /// checksum round-trip is round-trip-safe by construction).
+    pub fn upsert_exchange(
+        &self,
+        chain_id: i64,
+        name: &str,
+        factory: Address,
+        deployer: Option<Address>,
+    ) -> Result<ExchangeRow, DbError> {
+        let conn = self.lock();
+        // 1. resolve by (chain_id, name) — the Python `session.scalar(select(
+        //    ExchangeTable).where(chain_id, name))` read.
+        let existing = conn
+            .query_row(
+                "SELECT id, chain_id, name, active, last_update_block, factory, deployer \
+                 FROM exchanges WHERE chain_id = ?1 AND name = ?2",
+                params![chain_id, name],
+                |row| ExchangeRow::from_row(row).map_err(rusqlite::Error::from),
+            )
+            .optional()?;
+        if let Some(row) = existing {
+            // Found → return UNCHANGED. Do NOT touch `active`.
+            return Ok(row);
+        }
+        // 2. absent → INSERT with active=false, last_update_block=NULL,
+        //    factory/deployer checksummed. RETURNING avoids a re-SELECT round
+        //    trip + mirrors the fetch read's column order for `from_row`.
+        let mut stmt = conn.prepare(
+            "INSERT INTO exchanges (chain_id, name, active, last_update_block, factory, deployer) \
+             VALUES (?1, ?2, 0, NULL, ?3, ?4) \
+             RETURNING id, chain_id, name, active, last_update_block, factory, deployer",
+        )?;
+        let mut rows = stmt.query(params![
+            chain_id,
+            name,
+            factory.to_checksum(None),
+            deployer.map(|a| a.to_checksum(None)),
+        ])?;
+        let row = rows
+            .next()?
+            .ok_or_else(|| DbError::Sqlite(rusqlite::Error::QueryReturnedNoRows))?;
+        ExchangeRow::from_row(row)
+    }
+
+    /// Flip an `exchanges` row's `active` flag. The activate/deactivate
+    /// primitive the `exchange activate` / `exchange deactivate` CLI commands
+    /// delegate to (the Python trajectory's `exchange.active = True/False;
+    /// session.commit()`).
+    ///
+    /// # Not-found
+    ///
+    /// If no row matches `id`, `rows_affected() == 0` and this returns
+    /// [`DbError::MissingRow`] — the crate's dedicated not-found variant (the
+    /// existing `MissingRow(String)` carries the missing key in its message).
+    /// The CLI maps this to the user-facing "no entry" message the Python
+    /// commands print.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::MissingRow`]
+    /// when no `exchanges` row matches `exchange_id`.
+    pub fn set_exchange_active(&self, exchange_id: i64, active: bool) -> Result<(), DbError> {
+        let conn = self.lock();
+        let n = conn.execute(
+            "UPDATE exchanges SET active = ?1 WHERE id = ?2",
+            params![active, exchange_id],
+        )?;
+        if n == 0 {
+            return Err(DbError::MissingRow(format!(
+                "exchange id {exchange_id} not found"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Upsert a `pool_managers` row by `(address, chain)`. The
+    /// get-or-create substrate for the V4 manager row the `exchange activate
+    /// uniswap_v4` CLI creates (the Python trajectory: `session.add(
+    /// PoolManagerTable(address, chain, kind, exchange_id, state_view))`).
+    ///
+    /// # Unique index → `ON CONFLICT` upsert
+    ///
+    /// Unlike `exchanges`, `pool_managers` HAS the `ix_pool_manager_address_chain`
+    /// unique index on `(address, chain)` (see [`crate::schema_head`]), so this
+    /// uses `INSERT … ON CONFLICT(address, chain) DO UPDATE SET
+    /// kind=excluded.kind, state_view=excluded.state_view,
+    /// exchange_id=excluded.exchange_id RETURNING …` — idempotent: re-calling
+    /// with a changed `state_view` (or `kind`/`exchange_id`) updates the row in
+    /// place (same `id`), re-calling identical leaves it unchanged.
+    ///
+    /// # Address storage
+    ///
+    /// `address` is stored EIP-55-checksummed; `state_view` likewise when
+    /// `Some`, `NULL` when `None`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::Decode`] if
+    /// the returned row fails to decode.
+    pub fn upsert_pool_manager(
+        &self,
+        address: Address,
+        chain: i64,
+        kind: &str,
+        state_view: Option<Address>,
+        exchange_id: i64,
+    ) -> Result<PoolManagerRow, DbError> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "INSERT INTO pool_managers (address, chain, kind, state_view, exchange_id) \
+             VALUES (?1, ?2, ?3, ?4, ?5) \
+             ON CONFLICT(address, chain) DO UPDATE SET \
+               kind = excluded.kind, \
+               state_view = excluded.state_view, \
+               exchange_id = excluded.exchange_id \
+             RETURNING id, address, chain, kind, state_view, exchange_id",
+        )?;
+        let mut rows = stmt.query(params![
+            address.to_checksum(None),
+            chain,
+            kind,
+            state_view.map(|a| a.to_checksum(None)),
+            exchange_id,
+        ])?;
+        let row = rows
+            .next()?
+            .ok_or_else(|| DbError::Sqlite(rusqlite::Error::QueryReturnedNoRows))?;
+        PoolManagerRow::from_row(row)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::migrate::SchemaState;
+    use alloy::primitives::address;
+
+    /// A fresh in-memory **write-capable** DB (the writer methods require the
+    /// `open_in_memory_for_writes` handle — `query_only=on` on the read handle
+    /// would refuse the `INSERT`/`UPDATE`).
+    fn write_db() -> DegenbotDb {
+        let (db, state) = DegenbotDb::open_in_memory_for_writes().unwrap();
+        assert!(matches!(state, SchemaState::FreshStandalone { .. }));
+        db
+    }
+
+    // ── upsert_exchange ──────────────────────────────────────────────────
+
+    #[test]
+    fn upsert_exchange_inserts_new_row_active_false_block_null() {
+        let db = write_db();
+        let factory = address!("0x1F98431c8aD98523631AE4a59f267346ea31F984");
+        let deployer = address!("0x02276A281287Fd86c88DD4a0B5F62Fde4Be243C6");
+
+        let row = db
+            .upsert_exchange(8453, "uniswap_v3", factory, Some(deployer))
+            .unwrap();
+
+        assert_eq!(row.chain_id, 8453);
+        assert_eq!(row.name, "uniswap_v3");
+        assert!(!row.active, "new exchange must be inserted active=false");
+        assert_eq!(row.last_update_block, None);
+        assert_eq!(row.factory, factory);
+        assert_eq!(row.deployer, Some(deployer));
+    }
+
+    #[test]
+    fn upsert_exchange_returns_same_row_unchanged_on_second_call_no_new_insert() {
+        let db = write_db();
+        let factory = address!("0x1F98431c8aD98523631AE4a59f267346ea31F984");
+        let deployer = address!("0x02276A281287Fd86c88DD4a0B5F62Fde4Be243C6");
+        let name = "uniswap_v3";
+
+        let first = db
+            .upsert_exchange(8453, name, factory, Some(deployer))
+            .unwrap();
+        // Second call with the SAME (chain_id, name) — even with different
+        // factory/deployer args — must return the SAME row, no new insert.
+        let second = db
+            .upsert_exchange(
+                8453,
+                name,
+                address!("0x0000000000000000000000000000000000000001"),
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(first.id, second.id, "second call must return same id");
+        assert_eq!(
+            second.factory, factory,
+            "existing factory must be unchanged"
+        );
+        assert_eq!(
+            second.deployer,
+            Some(deployer),
+            "existing deployer unchanged"
+        );
+        assert_eq!(second.active, first.active);
+        // exactly one row in exchanges.
+        let conn = db.lock();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM exchanges", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn upsert_exchange_factory_round_trips_and_deploys_none_when_none() {
+        let db = write_db();
+        let factory = address!("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f");
+        let row = db.upsert_exchange(1, "uniswap_v2", factory, None).unwrap();
+        assert_eq!(row.factory, factory);
+        assert_eq!(row.deployer, None);
+        // verify EIP-55 checksum was stored (uppercase-mixed, not all-lowercase).
+        let conn = db.lock();
+        let stored: String = conn
+            .query_row(
+                "SELECT factory FROM exchanges WHERE id = ?1",
+                params![row.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, factory.to_checksum(None));
+    }
+
+    // ── set_exchange_active ──────────────────────────────────────────────
+
+    #[test]
+    fn set_exchange_active_flips_false_to_true_and_back() {
+        let db = write_db();
+        let factory = address!("0x1F98431c8aD98523631AE4a59f267346ea31F984");
+        let row = db
+            .upsert_exchange(8453, "uniswap_v3", factory, None)
+            .unwrap();
+        assert!(!row.active, "upsert starts inactive");
+
+        db.set_exchange_active(row.id, true).unwrap();
+        let after = db.fetch_exchange(row.id).unwrap().unwrap();
+        assert!(after.active);
+        assert_eq!(after.id, row.id);
+
+        db.set_exchange_active(row.id, false).unwrap();
+        let after = db.fetch_exchange(row.id).unwrap().unwrap();
+        assert!(!after.active);
+    }
+
+    #[test]
+    fn set_exchange_active_missing_row_returns_not_found_error() {
+        let db = write_db();
+        let err = db.set_exchange_active(9999, true).unwrap_err();
+        assert!(
+            matches!(err, DbError::MissingRow(ref m) if m.contains("9999")),
+            "expected MissingRow for nonexistent id, got {err:?}"
+        );
+    }
+
+    // ── upsert_pool_manager ──────────────────────────────────────────────
+
+    #[test]
+    fn upsert_pool_manager_inserts_new_row() {
+        let db = write_db();
+        let exchange = db
+            .upsert_exchange(
+                8453,
+                "uniswap_v4",
+                address!("0x00000000000444F6DC9C6A8FD8aB7C0B84D6Bf27"),
+                None,
+            )
+            .unwrap();
+        let manager = address!("0x00000000000444F6DC9C6A6Fc78Fa31c6a7C8e1d");
+        let state_view = address!("0x49aab6879414105c7D7C09d2Cb01414e2e9dE828");
+
+        let row = db
+            .upsert_pool_manager(manager, 8453, "uniswap_v4", Some(state_view), exchange.id)
+            .unwrap();
+
+        assert_eq!(row.address, manager);
+        assert_eq!(row.chain, 8453);
+        assert_eq!(row.kind, "uniswap_v4");
+        assert_eq!(row.state_view, Some(state_view));
+        assert_eq!(row.exchange_id, exchange.id);
+    }
+
+    #[test]
+    fn upsert_pool_manager_updates_state_view_in_place_same_id() {
+        let db = write_db();
+        let exchange = db
+            .upsert_exchange(
+                8453,
+                "uniswap_v4",
+                address!("0x00000000000444F6DC9C6A8FD8aB7C0B84D6Bf27"),
+                None,
+            )
+            .unwrap();
+        let manager = address!("0x00000000000444F6DC9C6A6Fc78Fa31c6a7C8e1d");
+        let sv1 = address!("0x0000000000000000000000000000000000000001");
+        let sv2 = address!("0x0000000000000000000000000000000000000002");
+
+        let first = db
+            .upsert_pool_manager(manager, 8453, "uniswap_v4", Some(sv1), exchange.id)
+            .unwrap();
+        let second = db
+            .upsert_pool_manager(manager, 8453, "uniswap_v4", Some(sv2), exchange.id)
+            .unwrap();
+
+        assert_eq!(first.id, second.id, "upsert must keep same id");
+        assert_eq!(second.state_view, Some(sv2), "state_view updated in place");
+
+        // exactly one row in pool_managers for this (address, chain).
+        let conn = db.lock();
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pool_managers WHERE address = ?1 AND chain = ?2",
+                params![manager.to_checksum(None), 8453],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn upsert_pool_manager_identical_recall_is_unchanged() {
+        let db = write_db();
+        let exchange = db
+            .upsert_exchange(
+                1,
+                "uniswap_v4",
+                address!("0x00000000000444F6DC9C6A8FD8aB7C0B84D6Bf27"),
+                None,
+            )
+            .unwrap();
+        let manager = address!("0x00000000000444F6DC9C6A6Fc78Fa31c6a7C8e1d");
+        let state_view = address!("0x49aab6879414105c7D7C09d2Cb01414e2e9dE828");
+
+        let first = db
+            .upsert_pool_manager(manager, 1, "uniswap_v4", Some(state_view), exchange.id)
+            .unwrap();
+        let second = db
+            .upsert_pool_manager(manager, 1, "uniswap_v4", Some(state_view), exchange.id)
+            .unwrap();
+
+        assert_eq!(first, second, "identical recall must be a no-op");
     }
 }

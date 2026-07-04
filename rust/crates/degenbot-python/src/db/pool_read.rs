@@ -463,7 +463,8 @@ pub(crate) fn db_fetch_exchange(
         .detach(|| {
             let (db, _state) =
                 degenbot_db::DegenbotDb::open(&path).map_err(|e| crate::db::db_err_to_py(&e))?;
-            db.fetch_exchange(exchange_id).map_err(|e| crate::db::db_err_to_py(&e))
+            db.fetch_exchange(exchange_id)
+                .map_err(|e| crate::db::db_err_to_py(&e))
         })?
         .map(PyExchangeRow::from);
     match row {
