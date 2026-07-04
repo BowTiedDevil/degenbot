@@ -208,6 +208,21 @@ impl DegenbotDb {
         chain: i64,
     ) -> Result<Option<LiquidityPoolRow>, DbError> {
         let conn = self.lock();
+        Self::fetch_pool_by_address_on_conn(&conn, address, chain)
+    }
+
+    /// The single-transaction-bound variant of [`Self::fetch_pool_by_address`]
+    /// (CKXCOB 3a) — the chunk loop's per-pool in-scope lookup (read the pool
+    /// row to resolve its `exchange_id` for the in-scope filter, on the chunk's
+    /// single owned connection so the read + the apply share one transaction).
+    /// # Errors
+    ///
+    /// Same error conditions as the `&self` wrapper variant (CKXCOB 3a).
+    pub fn fetch_pool_by_address_on_conn(
+        conn: &rusqlite::Connection,
+        address: Address,
+        chain: i64,
+    ) -> Result<Option<LiquidityPoolRow>, DbError> {
         let mut stmt = conn.prepare(
             "SELECT id, address, chain, kind, token0_id, token1_id, exchange_id \
              FROM pools WHERE address = ?1 AND chain = ?2",
