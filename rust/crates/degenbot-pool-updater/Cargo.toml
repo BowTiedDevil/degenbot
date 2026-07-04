@@ -26,6 +26,8 @@ degenbot-decoders = { path = "../degenbot-decoders" }
 degenbot-core = { path = "../degenbot-core" }
 degenbot-rpc = { path = "../degenbot-rpc" }
 tokio = { version = "^1.52", features = ["rt-multi-thread", "macros", "sync"] }
+thiserror = { version = "^2.0" }
+rusqlite = { version = "^0.31" }
 
 [features]
 default = []
