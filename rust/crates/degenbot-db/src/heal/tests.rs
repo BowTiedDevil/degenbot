@@ -31,8 +31,8 @@ fn has_table(conn: &Connection, name: &str) -> bool {
 }
 
 /// Populate a head-schema DB with a small, FK-consistent dataset spanning the
-/// core parent→child graph: erc20_tokens → exchanges → pools → v2 subclass +
-/// liquidity_positions. Returns the inserted counts per table.
+/// core parent→child graph: `erc20_tokens` → `exchanges` → `pools` → `v2` subclass +
+/// `liquidity_positions`. Returns the inserted counts per table.
 fn populate_head_dataset(conn: &Connection) {
     // erc20_tokens (parent of pools). The UNIQUE index is (address, chain).
     for (id, addr) in [
@@ -128,7 +128,7 @@ fn assert_row_counts(conn: &Connection, expected: &[(&str, i64)]) {
 }
 
 /// Build the YWN7Z6 stale fixture in Rust: a head-schema DB stamped one revision
-/// below ALEMBIC_HEAD (head minus the `ix_erc20_tokens_chain` index).
+/// below `ALEMBIC_HEAD` (head minus the `ix_erc20_tokens_chain` index).
 fn build_stale_fixture(path: &std::path::Path) {
     create_new_database(path).unwrap();
     let conn = Connection::open(path).unwrap();
