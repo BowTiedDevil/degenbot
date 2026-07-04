@@ -36,6 +36,7 @@ pub mod aave;
 pub mod connection;
 pub mod discovery;
 pub mod error;
+pub mod heal;
 pub mod liquidity_updater;
 pub mod migrate;
 pub mod ops;
@@ -56,6 +57,7 @@ pub use ops::{
     backup_database, compact_database, convert_alembic_to_rust_owned, create_new_database,
     inspect_schema_state, upgrade_database, UpgradeOutcome,
 };
+pub use heal::{heal_database, HealReport};
 pub use pathfinding::{PathEdge, PathGraphData};
 pub use read::ExchangeFamily;
 pub use rows::{

@@ -9,6 +9,12 @@ pub enum DbError {
     #[error("sqlite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
 
+    /// A filesystem I/O error from a file-level admin operation (rename, remove,
+    /// sidecar cleanup) — distinct from [`DbError::Sqlite`] (a connection/query
+    /// failure). Used by the out-of-place heal (ADR-011) for the atomic-swap step.
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
+
     /// A typed-row decode failure (e.g. a malformed `VARCHAR(78)` big-int, an
     /// address that fails EIP-55 checksum, an unrecognized `kind` discriminator).
     #[error("decode error: {0}")]
@@ -43,6 +49,19 @@ pub enum DbError {
     /// the verbatim `SQLite` message.
     #[error("sqlite integrity check failed: {0}")]
     IntegrityCheckFailed(String),
+
+    /// The post-copy row-count verification (ADR-011 step 7) found a mismatch —
+    /// the heal refused the swap and left the live DB untouched. `old_count`
+    /// is the source row count; `new_count` is the freshly-copied count.
+    #[error("heal verification failed for table {table:?}: old={old_count} new={new_count}")]
+    HealVerificationFailed {
+        /// The table whose row count mismatched.
+        table: String,
+        /// Row count on the source (old, read-only).
+        old_count: i64,
+        /// Row count on the freshly-copied new DB.
+        new_count: i64,
+    },
 }
 
 /// Convert a [`DbError`] into a [`rusqlite::Error`] so row-decode closures
