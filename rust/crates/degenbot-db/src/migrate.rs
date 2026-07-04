@@ -48,10 +48,31 @@ pub enum SchemaState {
         /// The Rust-owned schema version written to [`SCHEMA_VERSION_TABLE`].
         schema_version: u32,
     },
+    /// A Rust-owned DB (post-cutover, or a re-opened `FreshStandalone`) —
+    /// tables present, no `alembic_version`, and [`SCHEMA_VERSION_TABLE`]
+    /// stamped. The Rust core may write schema here through future Rust-owned
+    /// migrations. `FreshStandalone` is the one-shot "I just created this"
+    /// report; `RustOwned` is the steady state for any Rust-owned DB
+    /// thereafter (ADR-010 §2).
+    RustOwned {
+        /// The value stamped in [`SCHEMA_VERSION_TABLE`].
+        schema_version: u32,
+    },
     /// `alembic_version` is absent but the file already holds tables — a foreign
     /// `SQLite` file passed by mistake. [`ensure_schema`] refuses; [`crate::connection::DegenbotDb::open`]
     /// maps this to [`crate::error::DbError::UnrecognizedSchema`].
     Unrecognized,
+}
+
+/// The result of [`convert_alembic_to_rust_owned`] — the DB is now Rust-owned
+/// at [`RUST_SCHEMA_VERSION`]. A struct (vs. a bare `u32`) so future fields
+/// (e.g. an "`alembic_revision_at_cutover`" audit stamp) can land without
+/// breaking the signature — matching the crate's struct-return idiom (see
+/// [`crate::rows::ExchangeRow`] / [`crate::rows::PoolManagerRow`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RustOwnedInfo {
+    /// The value now stamped in [`SCHEMA_VERSION_TABLE`].
+    pub schema_version: u32,
 }
 
 /// Inspect `conn`'s schema and bring a fresh-standalone DB up to the embedded
@@ -86,18 +107,91 @@ pub fn ensure_schema(conn: &Connection) -> Result<SchemaState, DbError> {
             })
         }
     } else {
-        // No Alembic history. Is the file empty (fresh standalone) or does it
-        // already hold unrecognized tables (a foreign SQLite file)?
+        // No Alembic history. Is the file empty (fresh standalone), a Rust-owned
+        // DB (tables present + the private stamp table), or a foreign SQLite file?
+        //
+        // The private [`SCHEMA_VERSION_TABLE`] is filtered from the content-table
+        // count (ADR-010 §2: "it is filtered, like `sqlite_%`") so a Rust-owned
+        // DB whose only tables are the content tables + the stamp is not
+        // miscounted.
         let table_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
-            [],
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' \
+             AND name NOT LIKE 'sqlite_%' AND name <> ?1",
+            rusqlite::params![SCHEMA_VERSION_TABLE],
             |row| row.get(0),
         )?;
         if table_count > 0 {
-            Ok(SchemaState::Unrecognized)
+            // Tables present, no Alembic. Is this a Rust-owned DB (post-cutover
+            // or a re-opened FreshStandalone)? The stamp table is the tell.
+            if table_exists(conn, SCHEMA_VERSION_TABLE)? {
+                // Read the stamped version. A present stamp table with no row is
+                // a corrupt cutover → refuse as Unrecognized.
+                let row_exists: i64 = conn.query_row(
+                    &format!("SELECT COUNT(*) FROM {SCHEMA_VERSION_TABLE}"),
+                    [],
+                    |row| row.get(0),
+                )?;
+                if row_exists == 0 {
+                    return Ok(SchemaState::Unrecognized);
+                }
+                let v: i64 = conn.query_row(
+                    &format!("SELECT schema_version FROM {SCHEMA_VERSION_TABLE}"),
+                    [],
+                    |row| row.get(0),
+                )?;
+                Ok(SchemaState::RustOwned {
+                    schema_version: u32::try_from(v).unwrap_or(0),
+                })
+            } else {
+                Ok(SchemaState::Unrecognized)
+            }
         } else {
             apply_fresh_standalone(conn)?;
             Ok(SchemaState::FreshStandalone {
+                schema_version: RUST_SCHEMA_VERSION,
+            })
+        }
+    }
+}
+
+/// The opt-in cutover operation (ADR-010 §2): flip an `AlembicCurrent` DB
+/// into Rust ownership. Verifies `alembic_version.version_num ==
+/// ALEMBIC_HEAD`, drops the `alembic_version` table, and stamps
+/// [`SCHEMA_VERSION_TABLE`] with [`RUST_SCHEMA_VERSION`]. Refuses
+/// [`SchemaState::AlembicStale`] (upgrade via Alembic first) and
+/// [`SchemaState::Unrecognized`] (foreign file).
+///
+/// This is the ONE operation that writes schema to an otherwise-Alembic DB,
+/// and only because the DB is LEAVING Alembic ownership. Already-Rust-owned
+/// (and a fresh standalone) DB is an idempotent re-stamp — `ensure_schema`
+/// returns [`SchemaState::RustOwned`] / [`SchemaState::FreshStandalone`], and
+/// we just re-stamp the version table (a `DELETE + INSERT` no-op).
+///
+/// # Errors
+///
+/// Returns [`DbError::AlembicStale`] for a stale Alembic DB,
+/// [`DbError::UnrecognizedSchema`] for a foreign file, or [`DbError::Sqlite`]
+/// on a query/DDL failure.
+pub fn convert_alembic_to_rust_owned(conn: &Connection) -> Result<RustOwnedInfo, DbError> {
+    let state = ensure_schema(conn)?;
+    match state {
+        SchemaState::AlembicCurrent => {
+            // Drop the Alembic stamp table + stamp the Rust-owned version table.
+            conn.execute_batch("DROP TABLE IF EXISTS alembic_version;")?;
+            stamp_rust_schema_version(conn)?;
+            Ok(RustOwnedInfo {
+                schema_version: RUST_SCHEMA_VERSION,
+            })
+        }
+        SchemaState::AlembicStale { head, expected } => {
+            Err(DbError::AlembicStale { head, expected })
+        }
+        SchemaState::Unrecognized => Err(DbError::UnrecognizedSchema),
+        // Idempotent re-stamp: the DB is already Rust-owned (or freshly
+        // standalone) — reassert the stamp table (DELETE + INSERT no-op).
+        SchemaState::RustOwned { .. } | SchemaState::FreshStandalone { .. } => {
+            stamp_rust_schema_version(conn)?;
+            Ok(RustOwnedInfo {
                 schema_version: RUST_SCHEMA_VERSION,
             })
         }
@@ -118,6 +212,16 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool, DbError> {
 /// table (fresh-standalone path only).
 fn apply_fresh_standalone(conn: &Connection) -> Result<(), DbError> {
     conn.execute_batch(SCHEMA_HEAD)?;
+    stamp_rust_schema_version(conn)?;
+    Ok(())
+}
+
+/// Create (if absent) and stamp the private Rust-owned schema-version table
+/// with [`RUST_SCHEMA_VERSION`] (`CREATE TABLE IF NOT EXISTS` + `DELETE` +
+/// `INSERT`). Idempotent — safe to re-assert on an already-stamped DB. Shared
+/// by [`apply_fresh_standalone`] (fresh-standalone first open) and
+/// [`convert_alembic_to_rust_owned`] (the cutover op).
+fn stamp_rust_schema_version(conn: &Connection) -> Result<(), DbError> {
     conn.execute_batch(&format!(
         "CREATE TABLE IF NOT EXISTS {SCHEMA_VERSION_TABLE} (schema_version INTEGER NOT NULL);\n\
          DELETE FROM {SCHEMA_VERSION_TABLE};"
@@ -214,5 +318,128 @@ mod tests {
             .unwrap();
         let state = ensure_schema(&conn).unwrap();
         assert_eq!(state, SchemaState::Unrecognized);
+    }
+
+    // ── RustOwned + the cutover (ADR-010 §2) ──────────────────────────────
+
+    #[test]
+    fn rustowned_on_reopen_after_fresh_standalone() {
+        // apply_fresh_standalone applies DDL + stamps the version table.
+        let conn = Connection::open_in_memory().unwrap();
+        let first = ensure_schema(&conn).unwrap();
+        assert_eq!(
+            first,
+            SchemaState::FreshStandalone {
+                schema_version: RUST_SCHEMA_VERSION,
+            }
+        );
+
+        // re-open the SAME conn — tables now present, no alembic, stamp table
+        // stamped → RustOwned (the re-open bug the cutover closes).
+        let second = ensure_schema(&conn).unwrap();
+        assert_eq!(
+            second,
+            SchemaState::RustOwned {
+                schema_version: RUST_SCHEMA_VERSION,
+            }
+        );
+    }
+
+    #[test]
+    fn convert_alembic_current_to_rust_owned() {
+        // Start from a Rust-owned DB (apply DDL + stamp), then flip it back to
+        // an AlembicCurrent-shaped DB: drop the Rust stamp table, create +
+        // stamp alembic_version at the head.
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap(); // FreshStandalone applies the full schema
+        conn.execute_batch(&format!(
+            "DROP TABLE {SCHEMA_VERSION_TABLE};\n\
+             CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL);\n\
+             INSERT INTO alembic_version (version_num) VALUES ('{ALEMBIC_HEAD}');"
+        ))
+        .unwrap();
+        assert_eq!(ensure_schema(&conn).unwrap(), SchemaState::AlembicCurrent);
+
+        // Cutover.
+        let info = convert_alembic_to_rust_owned(&conn).unwrap();
+        assert_eq!(
+            info,
+            RustOwnedInfo {
+                schema_version: RUST_SCHEMA_VERSION
+            }
+        );
+
+        // alembic_version is GONE, the Rust stamp table is stamped.
+        assert!(!table_exists(&conn, "alembic_version").unwrap());
+        assert!(table_exists(&conn, SCHEMA_VERSION_TABLE).unwrap());
+        let v: i64 = conn
+            .query_row(
+                &format!("SELECT schema_version FROM {SCHEMA_VERSION_TABLE}"),
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(v, i64::from(RUST_SCHEMA_VERSION));
+
+        // re-open → RustOwned.
+        assert_eq!(
+            ensure_schema(&conn).unwrap(),
+            SchemaState::RustOwned {
+                schema_version: RUST_SCHEMA_VERSION,
+            }
+        );
+    }
+
+    #[test]
+    fn convert_refuses_alembic_stale() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL);\n\
+             INSERT INTO alembic_version (version_num) VALUES ('deadbeefdead');",
+        )
+        .unwrap();
+        match convert_alembic_to_rust_owned(&conn) {
+            Err(DbError::AlembicStale { head, expected }) => {
+                assert_eq!(head, "deadbeefdead");
+                assert_eq!(expected, ALEMBIC_HEAD);
+            }
+            other => panic!("expected AlembicStale, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn convert_refuses_unrecognized() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE other_table (x INTEGER);")
+            .unwrap();
+        match convert_alembic_to_rust_owned(&conn) {
+            Err(DbError::UnrecognizedSchema) => {}
+            other => panic!("expected UnrecognizedSchema, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn convert_idempotent_on_rustowned() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap(); // FreshStandalone → tables + stamp
+        assert!(matches!(
+            ensure_schema(&conn).unwrap(),
+            SchemaState::RustOwned { .. }
+        ));
+
+        // Convert an already-Rust-owned DB → succeeds, re-stamps, still RustOwned.
+        let info = convert_alembic_to_rust_owned(&conn).unwrap();
+        assert_eq!(
+            info,
+            RustOwnedInfo {
+                schema_version: RUST_SCHEMA_VERSION
+            }
+        );
+        assert_eq!(
+            ensure_schema(&conn).unwrap(),
+            SchemaState::RustOwned {
+                schema_version: RUST_SCHEMA_VERSION,
+            }
+        );
     }
 }
