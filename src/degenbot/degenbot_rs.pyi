@@ -623,6 +623,46 @@ def db_upgrade_database(path: str) -> str:
 
     """
 
+def db_inspect_schema_state(database_path: str) -> str:
+    """Inspect the schema state WITHOUT writing.
+
+    The read-only dry-run companion to
+    :func:`db_convert_alembic_to_rust_owned`. Never refuses (reports even
+    stale / unrecognized states). Returns one of ``"alembic_current"``,
+    ``"alembic_stale"``, ``"fresh_standalone"``, ``"rust_owned"``,
+    ``"unrecognized"``.
+
+    Args:
+        database_path: Database path
+
+    Returns:
+        The schema-state label.
+
+    Raises:
+        ValueError: On an open / query failure.
+
+    """
+
+def db_convert_alembic_to_rust_owned(database_path: str) -> str:
+    """Perform the opt-in one-way cutover (ADR-010).
+
+    Flip an Alembic-stamped DB into Rust ownership — drops
+    ``alembic_version``, stamps ``_degenbot_db_schema_version``.
+
+    Args:
+        database_path: Database path
+
+    Returns:
+        ``"converted"`` (was AlembicCurrent) or ``"already_rust_owned"``
+        (was already Rust-owned → idempotent no-op).
+
+    Raises:
+        DatabaseSchemaStale: For a stale Alembic DB (run
+            ``degenbot database upgrade`` first).
+        ValueError: For an unrecognized (foreign) file or I/O failure.
+
+    """
+
 # ------------------------------------------------------------------
 # V3/V4 DB-aware liquidity updater seam (feature = "db").
 # ------------------------------------------------------------------
@@ -2592,10 +2632,12 @@ __all__ = [
     "db_apply_v4_liquidity_updates",
     "db_backup_database",
     "db_compact_database",
+    "db_convert_alembic_to_rust_owned",
     "db_create_new_database",
     "db_fetch_exchange",
     "db_fetch_exchange_by_name",
     "db_fetch_pool_row",
+    "db_inspect_schema_state",
     "db_set_exchange_active",
     "db_set_exchange_last_update_block",
     "db_upgrade_database",

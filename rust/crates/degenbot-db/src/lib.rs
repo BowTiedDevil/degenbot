@@ -53,7 +53,8 @@ pub use error::DbError;
 pub use liquidity_updater::{BlockLog, LiquidityUpdateEvent, PoolUpdateState};
 pub use migrate::SchemaState;
 pub use ops::{
-    backup_database, compact_database, create_new_database, upgrade_database, UpgradeOutcome,
+    backup_database, compact_database, convert_alembic_to_rust_owned, create_new_database,
+    inspect_schema_state, upgrade_database, UpgradeOutcome,
 };
 pub use pathfinding::{PathEdge, PathGraphData};
 pub use read::ExchangeFamily;
