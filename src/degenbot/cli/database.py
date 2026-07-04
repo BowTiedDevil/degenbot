@@ -154,23 +154,19 @@ def database_cutover(bot: Bot, *, dry_run: bool, force: bool) -> None:
             )
         elif state == "rust_owned":
             click.echo(
-                f"Schema state: {state}. "
-                "Already Rust-owned — cutover is a no-op.",
+                f"Schema state: {state}. Already Rust-owned — cutover is a no-op.",
             )
         elif state == "alembic_stale":
             click.echo(
-                f"Schema state: {state}. "
-                "Schema is stale — run `degenbot database upgrade` first.",
+                f"Schema state: {state}. Schema is stale — run `degenbot database upgrade` first.",
             )
         elif state == "fresh_standalone":
             click.echo(
-                f"Schema state: {state}. "
-                "No Alembic history — nothing to cutover.",
+                f"Schema state: {state}. No Alembic history — nothing to cutover.",
             )
         else:  # "unrecognized"
             click.echo(
-                f"Schema state: {state}. "
-                "Unrecognized database (foreign file).",
+                f"Schema state: {state}. Unrecognized database (foreign file).",
             )
         return
 
@@ -267,8 +263,7 @@ def database_heal(bot: Bot, *, dry_run: bool, force: bool) -> None:
             )
         elif state == "rust_owned":
             click.echo(
-                f"Schema state: {state}. "
-                "Already Rust-owned — heal is a no-op.",
+                f"Schema state: {state}. Already Rust-owned — heal is a no-op.",
             )
         elif state == "alembic_stale":
             click.echo(
@@ -284,8 +279,7 @@ def database_heal(bot: Bot, *, dry_run: bool, force: bool) -> None:
             )
         else:  # "unrecognized"
             click.echo(
-                f"Schema state: {state}. "
-                "Unrecognized database (foreign file) — heal would refuse.",
+                f"Schema state: {state}. Unrecognized database (foreign file) — heal would refuse.",
             )
         return
 

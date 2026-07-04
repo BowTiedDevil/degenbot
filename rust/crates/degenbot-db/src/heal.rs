@@ -178,7 +178,8 @@ pub fn heal_database(old_path: &Path) -> Result<HealReport, DbError> {
                 return Err(DbError::Sqlite(e));
             }
         };
-        new_conn.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=NORMAL;")
+        new_conn
+            .execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=NORMAL;")
             .map_err(|e| {
                 cleanup_temp(&tmp_path);
                 DbError::Sqlite(e)
@@ -460,9 +461,21 @@ fn copy_table(
     }
 
     let quoted_table = quote_ident(table);
-    let select_list = select_cols.iter().map(|c| quote_ident(c)).collect::<Vec<_>>().join(", ");
-    let insert_list = insert_cols.iter().map(|c| quote_ident(c)).collect::<Vec<_>>().join(", ");
-    let placeholders = insert_cols.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let select_list = select_cols
+        .iter()
+        .map(|c| quote_ident(c))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let insert_list = insert_cols
+        .iter()
+        .map(|c| quote_ident(c))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let placeholders = insert_cols
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(", ");
 
     // Read all rows from `old` into owned `Value`s, then insert into `new` in
     // one transaction. (A single cross-connection INSERT...SELECT isn't
@@ -471,8 +484,7 @@ fn copy_table(
     // are dropped before the transaction opens.)
     let mut batch: Vec<Vec<Value>> = Vec::new();
     {
-        let mut select_stmt =
-            old.prepare(&format!("SELECT {select_list} FROM {quoted_table}"))?;
+        let mut select_stmt = old.prepare(&format!("SELECT {select_list} FROM {quoted_table}"))?;
         let mut rows = select_stmt.query([])?;
         while let Some(row) = rows.next()? {
             let mut values: Vec<Value> = Vec::with_capacity(select_cols.len());
@@ -496,11 +508,9 @@ fn copy_table(
     }
     tx.commit()?;
 
-    let count: i64 = new.query_row(
-        &format!("SELECT COUNT(*) FROM {quoted_table}"),
-        [],
-        |r| r.get(0),
-    )?;
+    let count: i64 = new.query_row(&format!("SELECT COUNT(*) FROM {quoted_table}"), [], |r| {
+        r.get(0)
+    })?;
     Ok(u64::try_from(count).unwrap_or(0))
 }
 
@@ -519,9 +529,11 @@ fn reset_sqlite_sequence(new_conn: &Connection, tables: &[String]) -> Result<(),
     }
     for table in tables {
         let max_id: Option<i64> = new_conn
-            .query_row(&format!("SELECT MAX(id) FROM {}", quote_ident(table)), [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                &format!("SELECT MAX(id) FROM {}", quote_ident(table)),
+                [],
+                |r| r.get(0),
+            )
             .ok()
             .flatten();
         if let Some(max_id) = max_id {
@@ -548,10 +560,7 @@ fn verify_row_counts(old_path: &Path, tmp_path: &Path) -> Result<(), DbError> {
         .query_map([], |r| r.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
     for table in &tables {
-        let q = format!(
-            "SELECT COUNT(*) FROM {}",
-            quote_ident(table)
-        );
+        let q = format!("SELECT COUNT(*) FROM {}", quote_ident(table));
         let old_n: i64 = old.query_row(&q, [], |r| r.get(0))?;
         let new_n: i64 = new.query_row(&q, [], |r| r.get(0))?;
         if old_n != new_n {
@@ -577,10 +586,7 @@ struct ColumnInfo {
     pk: i64,
 }
 
-fn pragma_table_info(
-    conn: &Connection,
-    table: &str,
-) -> Result<Vec<ColumnInfo>, rusqlite::Error> {
+fn pragma_table_info(conn: &Connection, table: &str) -> Result<Vec<ColumnInfo>, rusqlite::Error> {
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", quote_ident(table)))?;
     let rows = stmt.query_map([], |r| {
         Ok(ColumnInfo {
