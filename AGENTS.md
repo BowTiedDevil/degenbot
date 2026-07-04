@@ -80,6 +80,21 @@ Run hooks on demand with `uv run prek run` / `uv run prek run --all-files`. For 
 ## Architecture & Domain Knowledge
 **Start with the [Architectural Vision](#architectural-vision) above** — it states the long-term goal and the canonical references for the three-layer architecture. This section is the index into the remaining focused docs; read the relevant one before naming, editing, or extending a module.
 - **[`CONTEXT-MAP.md`](CONTEXT-MAP.md)** — ubiquitous-language index + per-module `CONTEXT.md` pointers. Read the relevant module context before naming variables, classes, or docstrings.
-- **[ADR records](docs/adr/)** — ADR-001 I/O-free pools, ADR-002 pool-type registry singleton, ADR-003 Bot as state owner, ADR-004 CL tickmap typed boundary, ADR-005 Polars-inspired three-layer FFI, ADR-006 per-chain bot orchestrator, ADR-007 pool unregister seam, ADR-008 block state machine, ADR-009 single-source-of-truth versioning
+- **[ADR records](docs/adr/)** — ADR-001 I/O-free pools, ADR-002 pool-type registry singleton, ADR-003 Bot as state owner, ADR-004 CL tickmap typed boundary, ADR-005 Polars-inspired three-layer FFI, ADR-006 per-chain bot orchestrator, ADR-007 pool unregister seam, ADR-008 block state machine, ADR-009 single-source-of-truth versioning, ADR-010 Alembic retention + Rust schema cutover
 - **[`docs/architecture/`](docs/architecture/)** — long-form architecture
+
+### Schema ownership & Alembic retention (see [ADR-010](docs/adr/ADR-010-alembic-retention-and-rust-schema-cutover.md))
+
+The database schema is **Alembic-owned during the 0.6.x point releases** and becomes **Rust-owned** in a 0.7 release. The cutover mechanism (`degenbot database cutover` + the `ensure_schema` `RustOwned` branch) is built and opt-in during 0.6.x so `pip` users can upgrade a stale database through the final Alembic revision and then cutover at a time of their choosing. Dropping the Alembic dependency and deleting the migration scripts is gated to 0.7 (ergo task `JFFQV2`).
+
+**Forbidden-until-0.7 kill list.** No change before the 0.7 retirement task may delete or stub any of:
+
+- `src/degenbot/migrations/` (the Alembic migration scripts);
+- the `alembic` and `sqlalchemy` entries in `pyproject.toml`;
+- `DatabaseSessionManager` and the SQLAlchemy `src/degenbot/database/models/` package;
+- the `ALEMBIC_HEAD` constant in `rust/crates/degenbot-db/src/schema.rs`;
+- the `alembic_version`-reading branch of `rust/crates/degenbot-db/src/migrate.rs::ensure_schema`;
+- the `PRAGMA query_only=on` setting on the `AlembicCurrent` path in `DegenbotDb::open`.
+
+**An import falling out of use is not permission to delete it.** If a 0.6.x task makes an Alembic/SQLAlchemy symbol unused, leave it in place and note the orphaned symbol in the task completion summary; removal is the 0.7 retirement task's exclusive responsibility.
 - **[`docs/migration-guides/`](docs/migration-guides/)** — completed refactors and the rubric for evaluating a Python module against the three-layer architecture
