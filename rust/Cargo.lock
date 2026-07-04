@@ -1742,6 +1742,7 @@ dependencies = [
  "degenbot-decoders",
  "degenbot-rpc",
  "rusqlite",
+ "tempfile",
  "thiserror",
  "tokio",
 ]
