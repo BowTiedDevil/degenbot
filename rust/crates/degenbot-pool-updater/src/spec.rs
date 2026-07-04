@@ -112,6 +112,12 @@ pub struct ExchangeSpec {
     /// `aerodrome_v3` (`getSwapFee(address)→uint24`) — their fees come from
     /// an on-chain call per pool rather than a constant or the event.
     pub rpc_fee_call: Option<RpcFeeCall>,
+    /// The persisted `exchanges.last_update_block` (the chunk loop's
+    /// restart cursor — `None` if no chunk has advanced this exchange yet).
+    /// CKXCOB 3c: the chunk loop's laggard-computation + the
+    /// `working_start_block` derivation read this; a restarted run resumes
+    /// exactly where the last committed chunk left off (restart-invariant).
+    pub last_update_block: Option<i64>,
 }
 
 /// The RPC fee-override call an Aerodrome exchange requires (the Rust
@@ -251,6 +257,7 @@ fn build_spec(row: ExchangeRow) -> Option<ExchangeSpec> {
         fee_denominator: cfg.fee_denominator,
         v2_fee_token: cfg.v2_fee_token,
         rpc_fee_call: cfg.rpc_fee_call,
+        last_update_block: row.last_update_block,
     })
 }
 

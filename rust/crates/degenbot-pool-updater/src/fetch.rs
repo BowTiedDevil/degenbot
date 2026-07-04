@@ -30,6 +30,8 @@ use degenbot_decoders::v3_mint_burn_decoder::{decode_v3_burn_log, decode_v3_mint
 use degenbot_decoders::v4_modify_liquidity_decoder::decode_v4_modify_liquidity_log;
 use degenbot_rpc::provider::LogFetcher;
 
+use crate::spec::ExchangeSpec;
+
 /// The Uniswap family a pool-creation event belongs to — drives the topic0
 /// filter + the decode leaf the fetcher dispatches to.
 ///
@@ -119,6 +121,37 @@ pub async fn fetch_pool_created_logs(
     Ok(logs
         .iter()
         .filter_map(|log| decode_pool_created_log(log, family))
+        .collect())
+}
+
+/// Spec-aware `PoolCreated`/`Initialize` fetch (CKXCOB 3c): like
+/// [`fetch_pool_created_logs`] but resolved from an [`ExchangeSpec`] — uses
+/// `spec.event_topic` (NOT `spec.family.topic0()`) so Aerodrome V3 (which
+/// shares the V3 decode structure but has its own
+/// [`AERODROME_V3_POOL_CREATED_TOPIC`]) fetches the correct topic. The chunk
+/// loop (`run_pool_update`) calls this per in-scope exchange.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`](degenbot_core::errors::ProviderError) on RPC
+/// failure or an invalid block range.
+pub async fn fetch_pool_created_logs_for_spec(
+    fetcher: &LogFetcher,
+    from_block: u64,
+    to_block: u64,
+    spec: &ExchangeSpec,
+) -> ProviderResult<Vec<DecodedPoolCreated>> {
+    let logs = fetch_logs(
+        fetcher,
+        from_block,
+        to_block,
+        Some(spec.factory),
+        spec.event_topic,
+    )
+    .await?;
+    Ok(logs
+        .iter()
+        .filter_map(|log| decode_pool_created_log(log, spec.family))
         .collect())
 }
 
