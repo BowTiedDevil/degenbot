@@ -663,6 +663,70 @@ def db_convert_alembic_to_rust_owned(database_path: str) -> str:
 
     """
 
+def run_pool_update(
+    database_path: str,
+    chain_id: int,
+    to_block: int | None,
+    chunk_size: int,
+    rpc_url: str,
+    progress_callback: Callable[..., None],
+    cancel_handle: CancelHandle,
+) -> dict[str, Any]:
+    """Drive the Rust-owned pool-updater chunk loop (epic 2SFL6I).
+
+    Advance every active exchange's ``last_update_block`` to ``to_block`` (or
+    the chain tip if ``None``). Each chunk: RPC-fetch pool creations +
+    V3/V4 liquidity, decode, write under ONE ``Transaction`` (atomicity),
+    stamp ``last_update_block`` LAST (restart-invariance). The GIL is released
+    across the whole run; only ``progress_callback`` re-acquires it briefly,
+    once per chunk.
+
+    Args:
+        database_path: The writeable ``DegenbotDb`` path (already migrated
+            to the Rust-owned schema).
+        chain_id: The chain to advance.
+        to_block: ``int`` to advance to a specific block; ``None`` to
+            advance to the chain tip (``eth_blockNumber``).
+        chunk_size: Blocks per chunk.
+        rpc_url: The HTTP RPC endpoint.
+        progress_callback: A callable invoked with a per-chunk ``dict``
+            ``{chain_id, chunk_start, chunk_end, pools_written,
+            liquidity_apply_count, committed}`` once per chunk boundary.
+        cancel_handle: A ``CancelHandle`` constructed up front; a SIGINT
+            handler calls ``cancel_handle.cancel()`` to stop at the next
+            chunk boundary.
+
+    Returns:
+        ``dict {chain_id, from_block, to_block, chunks_committed,
+        total_pools_written, total_liquidity_applies}``.
+
+    Raises:
+        ValueError: For a DB or RPC failure (in-flight chunk rolled back).
+        RuntimeError: If cancelled (committed chunks stay durable).
+
+    Note:
+        Must NOT be called from within an existing tokio runtime. The CLI
+        runs this from a worker thread with no ambient runtime.
+
+    """
+
+class CancelHandle:
+    """Cooperative cancel flag for ``run_pool_update``.
+
+    Construct up front; pass to ``run_pool_update``; a ``signal.SIGINT``
+    handler (installed by the CLI driver) calls ``.cancel()`` to stop the
+    run at the next chunk boundary. The loop polls the flag between chunks
+    (NOT mid-chunk) so a cancel never breaks chunk atomicity.
+    """
+
+    def __init__(self) -> None: ...
+    def cancel(self) -> None:
+        """Request cancellation (honored at the next chunk boundary)."""
+    def is_cancelled(self) -> bool:
+        """Whether cancellation was requested."""
+    def reset(self) -> None:
+        """Reset the flag to ``False`` (reuse the handle)."""
+
 def db_heal_database(database_path: str) -> dict[str, Any]:
     """Out-of-place dump-and-restore heal (ADR-011).
 
@@ -2588,6 +2652,7 @@ __all__ = [
     "AsyncContract",
     "BlockData",
     "BlockStream",
+    "CancelHandle",
     "Contract",
     "DatabaseSchemaStale",
     "DynamicFeePoolRejectedError",
@@ -2691,6 +2756,7 @@ __all__ = [
     "nested_mapping_slot",
     "pack_config",
     "pack_expected_balance",
+    "run_pool_update",
     "to_checksum_address",
     "v4_input_is_native",
     "v4_output_is_native",

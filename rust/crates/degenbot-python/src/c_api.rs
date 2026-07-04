@@ -82,6 +82,12 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "db")]
     crate::db::add_db_module(m)?;
 
+    // Pool-updater chunk-loop seam (feature = "pool") — `run_pool_update`
+    // + `CancelHandle`. Gates `db` + `rpc` (the chunk loop reads the DB + RPCs
+    // log fetches). Task QZHNZQ; epic 2SFL6I.
+    #[cfg(feature = "pool")]
+    crate::pool::add_pool_module(m)?;
+
     // Typed database-schema-stale exception (`DbError::AlembicStale` →
     // `DatabaseSchemaStale`, a `ValueError` subclass). Exposed on the module
     // so the CLI / Python shells can `from degenbot_rs import
