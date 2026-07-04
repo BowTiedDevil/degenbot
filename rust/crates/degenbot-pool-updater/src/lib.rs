@@ -30,8 +30,9 @@ pub mod fetch;
 pub mod spec;
 
 pub use fetch::{
-    decode_pool_created_log, decode_v3_liquidity_log, decode_v4_liquidity_log,
-    fetch_pool_created_logs, fetch_v3_liquidity_logs, fetch_v4_liquidity_logs, DecodedPoolCreated,
-    PoolFamily,
+    decode_pool_created_log, decode_v3_liquidity_log, decode_v3_liquidity_log_with_pool,
+    decode_v4_liquidity_log, decode_v4_liquidity_log_with_pool, fetch_pool_created_logs,
+    fetch_v3_liquidity_logs, fetch_v3_liquidity_logs_grouped, fetch_v4_liquidity_logs,
+    fetch_v4_liquidity_logs_grouped, DecodedPoolCreated, PoolFamily,
 };
 pub use spec::{load_active_exchange_specs, ExchangeSpec, RpcFeeCall};
