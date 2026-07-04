@@ -151,6 +151,7 @@ class TestFallbackRank:
         isolated_config_file: Path,
     ) -> None:
         monkeypatch.delenv(_http_env(1), raising=False)
+        monkeypatch.delenv(_ws_env(1), raising=False)
         _write_config(
             isolated_config_file,
             rpc={1: "http://from-config:8545"},
