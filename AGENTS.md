@@ -80,7 +80,7 @@ Run hooks on demand with `uv run prek run` / `uv run prek run --all-files`. For 
 ## Architecture & Domain Knowledge
 **Start with the [Architectural Vision](#architectural-vision) above** — it states the long-term goal and the canonical references for the three-layer architecture. This section is the index into the remaining focused docs; read the relevant one before naming, editing, or extending a module.
 - **[`CONTEXT-MAP.md`](CONTEXT-MAP.md)** — ubiquitous-language index + per-module `CONTEXT.md` pointers. Read the relevant module context before naming variables, classes, or docstrings.
-- **[ADR records](docs/adr/)** — ADR-001 I/O-free pools, ADR-002 pool-type registry singleton, ADR-003 Bot as state owner, ADR-004 CL tickmap typed boundary, ADR-005 Polars-inspired three-layer FFI, ADR-006 per-chain bot orchestrator, ADR-007 pool unregister seam, ADR-008 block state machine, ADR-009 single-source-of-truth versioning, ADR-010 Alembic retention + Rust schema cutover
+- **[ADR records](docs/adr/)** — ADR-001 I/O-free pools, ADR-002 pool-type registry singleton, ADR-003 Bot as state owner, ADR-004 CL tickmap typed boundary, ADR-005 Polars-inspired three-layer FFI, ADR-006 per-chain bot orchestrator, ADR-007 pool unregister seam, ADR-008 block state machine, ADR-009 single-source-of-truth versioning, ADR-010 Alembic retention + Rust schema cutover, ADR-011 Auto-healed Alembic retirement (dump-and-restore cutover)
 - **[`docs/architecture/`](docs/architecture/)** — long-form architecture
 
 ### Schema ownership & Alembic retention (see [ADR-010](docs/adr/ADR-010-alembic-retention-and-rust-schema-cutover.md))
@@ -89,7 +89,7 @@ The database schema is **Alembic-owned during the 0.6.x point releases** and bec
 
 **Forbidden-until-0.7 kill list.** No change before the 0.7 retirement task may delete or stub any of:
 
-- `src/degenbot/migrations/` (the Alembic migration scripts);
+- `src/degenbot/migrations/` (the Alembic migration scripts) — deletion is gated on the `heal` operation shipping and being proven (epic `TGIP5N`, tasks T2-T5; see ADR-011) **and** the 0.7.0 release decision (T6 / `OXKANZ`), not just on the 0.7.0 version bump;
 - the `alembic` and `sqlalchemy` entries in `pyproject.toml`;
 - `DatabaseSessionManager` and the SQLAlchemy `src/degenbot/database/models/` package;
 - the `ALEMBIC_HEAD` constant in `rust/crates/degenbot-db/src/schema.rs`;
