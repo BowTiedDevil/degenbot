@@ -31,3 +31,8 @@ rusqlite = { version = "^0.31" }
 
 [features]
 default = []
+
+[dev-dependencies]
+alloy = { version = "^2.0" }
+degenbot-rpc = { path = "../degenbot-rpc" }
+tempfile = { version = "^3.0" }

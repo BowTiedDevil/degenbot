@@ -887,7 +887,7 @@ mod tests {
                 0,
             )
         };
-        let logs = vec![
+        let logs = [
             make_mint(100, 1),
             make_burn(0, 2), // zero → skipped
             make_burn(50, 3),
