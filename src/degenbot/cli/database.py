@@ -12,6 +12,7 @@ from degenbot.database.operations import (
     convert_alembic_to_rust_owned,
     create_new_sqlite_database,
     get_alembic_config,
+    heal_database,
     inspect_schema_state,
     upgrade_existing_sqlite_database,
 )
@@ -215,3 +216,121 @@ def database_cutover(bot: Bot, *, dry_run: bool, force: bool) -> None:
         click.echo(
             "The database is already Rust-owned; cutover was a no-op.",
         )
+
+
+@database.command("heal")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Report the schema state + what heal would do; write nothing.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Skip the confirmation prompt and run the heal.",
+)
+@click.pass_obj
+def database_heal(bot: Bot, *, dry_run: bool, force: bool) -> None:
+    """Rebuild an Alembic-stamped DB into Rust ownership via dump-and-restore (ADR-011).
+
+    An out-of-place heal: builds a fresh DB at the Rust head schema, copies
+    all user rows (preserving PKs + FK integrity, in FK-dependency order),
+    stamps RustOwned directly (never runs Alembic code), then atomically
+    swaps it into place. The old DB is preserved as ``*.bak`` for full
+    recoverability. Never mutates the old DB in place.
+
+    Unlike ``database cutover``, heal ACCEPTS a stale Alembic DB (the
+    out-of-place rebuild handles divergent schemas via an auto-derived column
+    mapping) — so it is the rugpull-proof retirement path: any old DB can be
+    brought to Rust ownership without a working Alembic migration chain.
+    A foreign (unrecognized) SQLite file is refused.
+
+    Use ``--dry-run`` first to inspect the current schema state without
+    writing.
+
+    Raises:
+        Abort: See function documentation.
+        SystemExit: On a foreign (unrecognized) file when forcing, or on a
+            post-copy verification failure.
+
+    """
+    database_path = bot.config.database.path
+    state = inspect_schema_state(database_path=database_path)
+
+    if dry_run:
+        if state == "alembic_current":
+            click.echo(
+                f"Schema state: {state}. "
+                "Would heal: rebuild at the Rust head schema, copy all rows, "
+                "drop alembic_version, stamp _degenbot_db_schema_version, "
+                "atomic-swap with a *.bak backup.",
+            )
+        elif state == "rust_owned":
+            click.echo(
+                f"Schema state: {state}. "
+                "Already Rust-owned — heal is a no-op.",
+            )
+        elif state == "alembic_stale":
+            click.echo(
+                f"Schema state: {state}. "
+                "Schema is stale — heal can proceed (out-of-place rebuild "
+                "handles stale schemas) but consider `degenbot database "
+                "upgrade` first for a strictly in-place path.",
+            )
+        elif state == "fresh_standalone":
+            click.echo(
+                f"Schema state: {state}. "
+                "Empty file — heal produces a fresh RustOwned DB (0 rows copied).",
+            )
+        else:  # "unrecognized"
+            click.echo(
+                f"Schema state: {state}. "
+                "Unrecognized database (foreign file) — heal would refuse.",
+            )
+        return
+
+    if state == "unrecognized":
+        click.echo(
+            "The database is unrecognized (a foreign SQLite file); heal refused.",
+        )
+        raise SystemExit(1)
+
+    # state is alembic_current / alembic_stale / fresh_standalone / rust_owned.
+    # (heal ACCEPTS stale — unlike cutover, which refuses it; the out-of-place
+    # rebuild is schema-agnostic via the auto-derived column mapping.)
+    if not force and not click.confirm(
+        f"The database at {database_path} will be rebuilt out-of-place: a fresh "
+        "Rust-schema DB is created, all user rows are copied across, and the "
+        "result is atomically swapped into place (the old DB is preserved as "
+        "*.bak). Proceed?",
+        default=False,
+    ):
+        raise click.Abort
+
+    try:
+        report = heal_database(database_path=database_path)
+    except ValueError as exc:
+        # The Rust core refuses an unrecognized (foreign) file, an I/O failure,
+        # or a post-copy row-count verification failure as `ValueError` (via
+        # the PyO3 seam's `db_err_to_py`). A verification failure is very rare
+        # (only a hypothetical copy bug or a concurrent writer mid-heal); the
+        # live DB is untouched in all error cases.
+        click.echo(f"Heal failed: {exc}")
+        raise SystemExit(1) from None
+
+    if report["old_state"] == "rust_owned":
+        click.echo(
+            f"Database at {database_path} is already Rust-owned; heal is a "
+            "no-op (no copy, no .bak).",
+        )
+        return
+
+    total_rows = sum(report["rows_copied"].values())
+    n_tables = len(report["rows_copied"])
+    click.echo(
+        f"Healed database at {database_path}: {total_rows} rows across "
+        f"{n_tables} tables copied; old DB preserved at {report['bak_path']}; "
+        f"new state: {report['new_state']}.",
+    )
+    if report["warnings"]:
+        click.echo("Warnings: " + "; ".join(report["warnings"]))

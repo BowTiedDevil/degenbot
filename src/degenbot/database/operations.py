@@ -9,6 +9,7 @@ session orchestration are shell concerns — rubric §2.1).
 """
 
 import pathlib
+from typing import Any
 
 from alembic import command
 from alembic.config import Config
@@ -21,6 +22,7 @@ from degenbot.degenbot_rs import (
     db_compact_database,
     db_convert_alembic_to_rust_owned,
     db_create_new_database,
+    db_heal_database,
     db_inspect_schema_state,
     db_upgrade_database,
 )
@@ -174,6 +176,30 @@ def inspect_schema_state(database_path: pathlib.Path) -> str:
 
     """
     return db_inspect_schema_state(str(database_path))
+
+
+def heal_database(database_path: pathlib.Path) -> dict[str, Any]:
+    """Out-of-place dump-and-restore heal (ADR-011).
+
+    Thin shell over ``degenbot_rs.db_heal_database``: rebuilds the DB at the
+    Rust head schema, copies all user rows preserving PKs + FK integrity,
+    stamps RustOwned, atomic-swaps with a ``*.bak`` backup. Never mutates
+    the old DB in place. No Alembic dependency (the column mapping is
+    auto-derived in Rust).
+
+    Unlike :func:`convert_alembic_to_rust_owned`, heal ACCEPTS a stale Alembic
+    DB (the out-of-place rebuild handles divergent schemas via the
+    auto-derived column mapping). An unrecognized (foreign) DB is refused
+    (raises ``ValueError`` from the Rust core).
+
+    Returns:
+        The heal report dict: ``{old_state, rows_copied, bak_path,
+        new_state, warnings}``. No-op if old is already ``rust_owned``.
+
+    """
+    report = db_heal_database(str(database_path))
+    logger.info(f"Database at {database_path}: heal ({report['new_state']}).")
+    return report
 
 
 def get_scoped_sqlite_session(database_path: pathlib.Path) -> scoped_session[Session]:
