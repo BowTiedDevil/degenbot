@@ -21,7 +21,7 @@ file are gone.
 from __future__ import annotations
 
 import signal
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import click
 import tqdm
@@ -42,7 +42,9 @@ if TYPE_CHECKING:
 # tip via `eth_blockNumber` itself (no Python-side RPC round-trip). A tag with
 # an offset (`latest:-64`, `safe:128`) is resolved in Python to a concrete
 # block number (the Rust core takes `Option<u64>`, not a tag string).
-_BLOCK_TAGS: frozenset[str] = frozenset(
+_BlockTag = Literal["latest", "earliest", "pending", "safe", "finalized"]
+
+_BLOCK_TAGS: frozenset[_BlockTag] = frozenset(
     {"latest", "earliest", "pending", "safe", "finalized"},
 )
 
@@ -210,7 +212,7 @@ def _resolve_to_block(to_block: str, *, chain_id: int, bot: Bot) -> int | None:
     # takes `Option<u64>`, not a tag string).
     provider = get_provider_from_config(chain_id=chain_id, config=bot.config)
     resolved = get_number_for_block_identifier(
-        identifier=block_tag,  # type: ignore[arg-type]
+        identifier=cast("_BlockTag", block_tag),
         provider=provider,
     )
     return int(resolved) + block_offset
