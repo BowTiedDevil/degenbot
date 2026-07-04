@@ -841,7 +841,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_chunk_writes_on_conn_rolls_back_on_injected_duplicate_failure() {
+    fn apply_chunk_writes_on_conn_is_idempotent_on_duplicate_pool() {
         let db = write_db();
         let factory = Address::from([0x1f; 20]);
         let exchange = db.upsert_exchange(1, "uniswap_v3", factory, None).unwrap();
@@ -888,28 +888,35 @@ mod tests {
             tx.commit().unwrap();
         }
 
-        // Second chunk: write the SAME pool (duplicate) → UNIQUE violation →
-        // the inner fn returns Err → tx drops → rollback. The stamp advance to
-        // 200 must NOT be durable (§1 atomicity + restart-invariant).
+        // Second chunk: write the SAME pool (duplicate). With the idempotent
+        // upsert (ON CONFLICT DO NOTHING), the duplicate pools INSERT is a
+        // no-op (NOT a UNIQUE violation), so the chunk commits cleanly + the
+        // stamp advances to 200. The pool count stays at 1 (no duplicate row,
+        // no orphaned subclass). This is the runtime-resilience fix for the
+        // pre-existing desync (pools committed by the old broken code with a
+        // stale stamp) + the re-emitted-PoolCreated-event case.
         let err = {
             let mut guard = db.lock();
             let tx = guard.transaction().unwrap();
             let result = apply_chunk_writes_on_conn(&tx, 1, &specs, 200, &inputs_dup);
-            // The duplicate insert must surface as an error (UNIQUE constraint).
-            assert!(result.is_err(), "duplicate pool insert must error");
-            // Drop tx without commit → rollback (the inner fn's `?` already returned).
-            drop(tx);
+            // The duplicate insert is now a no-op (idempotent upsert), NOT an
+            // error — the chunk commits cleanly.
+            assert!(
+                result.is_ok(),
+                "duplicate pool insert must be a no-op (idempotent upsert); got: {result:?}"
+            );
+            tx.commit().unwrap();
             result.err()
         };
 
-        // (a) The stamp stayed at 100 (the 200 advance rolled back).
+        // (a) The stamp advanced to 200 (the chunk committed).
         let after = db.fetch_exchange(exchange.id).unwrap().unwrap();
         assert_eq!(
             after.last_update_block,
-            Some(100),
-            "rolled-back chunk's stamp advance must not be durable (restart-safe)",
+            Some(200),
+            "idempotent re-run chunk committed + advanced the stamp",
         );
-        // (b) The pool is still the single committed row (not re-inserted).
+        // (b) The pool is still a single row (no duplicate, no orphan).
         let _ = err;
         assert!(db.fetch_pool_by_address(pool.address, 1).unwrap().is_some());
         // (c) The error propagated (the caller would surface it).
