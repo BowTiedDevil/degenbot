@@ -51,13 +51,13 @@ pub use aave::{AaveCollateralPositionRecord, AaveDebtPositionRecord, AaveUserRec
 pub use connection::DegenbotDb;
 pub use discovery::{V2PoolRowInput, V3PoolRowInput, V4PoolRowInput};
 pub use error::DbError;
+pub use heal::{heal_database, HealReport};
 pub use liquidity_updater::{BlockLog, LiquidityUpdateEvent, PoolUpdateState};
 pub use migrate::SchemaState;
 pub use ops::{
     backup_database, compact_database, convert_alembic_to_rust_owned, create_new_database,
     inspect_schema_state, upgrade_database, UpgradeOutcome,
 };
-pub use heal::{heal_database, HealReport};
 pub use pathfinding::{PathEdge, PathGraphData};
 pub use read::ExchangeFamily;
 pub use rows::{

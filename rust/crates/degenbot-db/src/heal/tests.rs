@@ -13,8 +13,10 @@ use crate::schema::{ALEMBIC_HEAD, RUST_SCHEMA_VERSION};
 
 /// Count rows in `table` on `conn`.
 fn count(conn: &Connection, table: &str) -> i64 {
-    conn.query_row(&format!("SELECT COUNT(*) FROM \"{table}\""), [], |r| r.get(0))
-        .unwrap()
+    conn.query_row(&format!("SELECT COUNT(*) FROM \"{table}\""), [], |r| {
+        r.get(0)
+    })
+    .unwrap()
 }
 
 /// `true` if a table named `name` exists in `conn`'s `sqlite_master`.
@@ -130,7 +132,8 @@ fn assert_row_counts(conn: &Connection, expected: &[(&str, i64)]) {
 fn build_stale_fixture(path: &std::path::Path) {
     create_new_database(path).unwrap();
     let conn = Connection::open(path).unwrap();
-    conn.execute("DROP INDEX ix_erc20_tokens_chain", []).unwrap();
+    conn.execute("DROP INDEX ix_erc20_tokens_chain", [])
+        .unwrap();
     conn.execute("UPDATE alembic_version SET version_num='e0aaad8ad486'", [])
         .unwrap();
 }
@@ -262,7 +265,8 @@ fn unrecognized_refusal() {
     let db_path = dir.path().join("foreign.db");
     {
         let conn = Connection::open(&db_path).unwrap();
-        conn.execute_batch("CREATE TABLE other (x INTEGER);").unwrap();
+        conn.execute_batch("CREATE TABLE other (x INTEGER);")
+            .unwrap();
     }
 
     let err = heal_database(&db_path).unwrap_err();
@@ -375,7 +379,10 @@ fn heal_failure_leaves_live_db_untouched_and_cleans_temp() {
         .unwrap();
     }
     // Pre-heal: old has 2 rows.
-    assert_eq!(count(&Connection::open(&db_path).unwrap(), "erc20_tokens"), 2);
+    assert_eq!(
+        count(&Connection::open(&db_path).unwrap(), "erc20_tokens"),
+        2
+    );
 
     let err = heal_database(&db_path).unwrap_err();
     // The copy fails mid-table (UNIQUE violation) → `copy_table` propagates the
@@ -451,9 +458,15 @@ fn fk_order_parents_before_children() {
 
     // Core parents must precede their children.
     let pos = |name: &str| order.iter().position(|t| t == name).unwrap();
-    assert!(pos("erc20_tokens") < pos("pools"), "erc20_tokens before pools");
+    assert!(
+        pos("erc20_tokens") < pos("pools"),
+        "erc20_tokens before pools"
+    );
     assert!(pos("exchanges") < pos("pools"), "exchanges before pools");
-    assert!(pos("pools") < pos("uniswap_v2_pools"), "pools before v2 subclass");
+    assert!(
+        pos("pools") < pos("uniswap_v2_pools"),
+        "pools before v2 subclass"
+    );
     assert!(pos("pools") < pos("liquidity_positions"));
     assert!(pos("managed_pools") < pos("uniswap_v4_pools"));
     assert!(pos("aave_v3_markets") < pos("aave_v3_users"));
