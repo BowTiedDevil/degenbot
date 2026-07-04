@@ -37,7 +37,10 @@ from degenbot.degenbot_rs import (
     DatabaseSchemaStale,
     db_backup_database,
     db_create_new_database,
+    db_fetch_exchange_by_name,
+    db_heal_database,
     db_upgrade_database,
+    db_upsert_exchange,
 )
 
 
@@ -141,6 +144,79 @@ def test_upgrade_on_empty_file_brings_up_to_head(tmp_path: pathlib.Path):
     outcome = db_upgrade_database(str(db_path))
     assert outcome == "created_fresh"
     assert _alembic_head(db_path) == _alembic_head_expected()
+
+
+def test_heal_round_trips_through_seam(tmp_path: pathlib.Path):
+    """`db_heal_database` (ADR-011) round-trips through the PyO3 seam.
+
+    Build a head-stamped Alembic DB, write an exchange row via the Rust write
+    seam, heal it, then assert the healed (live) DB is `rust_owned`, the `*.bak`
+    backup exists + holds the old data, the report's `rows_copied["exchanges"]`
+    is 1, and the exchange row STILL reads back on the healed DB (data survives
+    the out-of-place dump-and-restore). The GIL is released across the copy
+    (`py.detach`); this test proves the Python-visible return shape (dict with
+    `old_state` / `new_state` / `rows_copied` / `bak_path` / `warnings`).
+    """
+    db_path = tmp_path / "heal.db"
+    db_path_str = str(db_path)
+    db_create_new_database(db_path_str)
+
+    # Write an exchange row via the Rust write seam (the cutover end-to-end
+    # test's step-3 round-trip worker).
+    factory = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"  # Uniswap V2 mainnet
+    row = db_upsert_exchange(
+        database_path=db_path_str,
+        chain_id=1,
+        name="uniswap_v2",
+        factory=factory,
+        deployer=None,
+    )
+    assert row.id is not None
+
+    # Heal: out-of-place dump-and-restore. Returns the HealReport as a dict.
+    report = db_heal_database(db_path_str)
+
+    # The report's shape + the cutover-equivalent outcome.
+    assert set(report.keys()) == {
+        "old_state",
+        "rows_copied",
+        "bak_path",
+        "new_state",
+        "warnings",
+    }
+    assert report["old_state"] == "alembic_current"
+    assert report["new_state"] == "rust_owned"
+    assert report["rows_copied"]["exchanges"] == 1
+    assert report["warnings"] == []
+
+    # The .bak exists on disk + holds the OLD (Alembic-owned) data.
+    bak_path = pathlib.Path(report["bak_path"])
+    assert bak_path.exists()
+    assert _alembic_head(bak_path) == _alembic_head_expected()
+
+    # The healed (live) DB is now Rust-owned + the exchange row survives.
+    # (Alembic ownership gone; the Rust stamp table is present.)
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as conn:
+            tables = {
+                r[0]
+                for r in conn.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table'")
+                )
+            }
+        assert "alembic_version" not in tables
+        assert "_degenbot_db_schema_version" in tables
+    finally:
+        engine.dispose()
+
+    fetched = db_fetch_exchange_by_name(
+        database_path=db_path_str,
+        chain_id=1,
+        name="uniswap_v2",
+    )
+    assert fetched is not None
+    assert fetched.id == row.id
 
 
 def _stamp_at_old_revision(db_path: pathlib.Path, old_revision: str) -> None:

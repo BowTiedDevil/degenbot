@@ -663,6 +663,32 @@ def db_convert_alembic_to_rust_owned(database_path: str) -> str:
 
     """
 
+def db_heal_database(database_path: str) -> dict[str, Any]:
+    """Out-of-place dump-and-restore heal (ADR-011).
+
+    Rebuild the DB at the Rust head schema, copy user rows preserving PKs +
+    FK integrity (in FK-dependency order), stamp RustOwned directly (never
+    runs Alembic code), then atomically swap with a ``*.bak`` backup. Never
+    mutates the old DB in place — a read-only open feeds the copy, so the
+    old file is left byte-identical until the final ``rename``.
+
+    Args:
+        database_path: Database path
+
+    Returns:
+        ``{"old_state": str, "rows_copied": dict[str, int],
+        "bak_path": str, "new_state": str, "warnings": list[str]}``.
+        No-op if old is already ``rust_owned`` (returns
+        ``old_state == new_state == "rust_owned"``, empty ``rows_copied``,
+        ``bak_path == database_path``).
+
+    Raises:
+        ValueError: For an unrecognized (foreign) file, an I/O failure, or a
+            post-copy row-count verification failure (live DB untouched in
+            both cases).
+
+    """
+
 # ------------------------------------------------------------------
 # V3/V4 DB-aware liquidity updater seam (feature = "db").
 # ------------------------------------------------------------------
@@ -2637,6 +2663,7 @@ __all__ = [
     "db_fetch_exchange",
     "db_fetch_exchange_by_name",
     "db_fetch_pool_row",
+    "db_heal_database",
     "db_inspect_schema_state",
     "db_set_exchange_active",
     "db_set_exchange_last_update_block",
