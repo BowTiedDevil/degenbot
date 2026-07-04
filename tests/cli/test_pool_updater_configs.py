@@ -4,7 +4,6 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from degenbot.cli.pool import _V2_CONFIGS, _V3_CONFIGS, _V4_CONFIGS, POOL_UPDATER, _pool_updater
 from degenbot.cli.pool_updater_configs import (
     V2PoolUpdateConfig,
     V3PoolUpdateConfig,
@@ -101,33 +100,3 @@ class TestV4PoolUpdateConfig:
         )
         with pytest.raises(FrozenInstanceError):
             config.name = "other"
-
-
-class TestPoolUpdaterDispatch:
-    """Tests for the pool.py config registration and dispatch."""
-
-    def test_all_v2_configs_present(self):
-        """All V2 DEX names are in the V2 configs dict."""
-        expected = {"aerodrome_v2", "pancakeswap_v2", "sushiswap_v2", "swapbased_v2", "uniswap_v2"}
-        assert set(_V2_CONFIGS.keys()) == expected
-
-    def test_all_v3_configs_present(self):
-        """All V3 DEX names are in the V3 configs dict."""
-        expected = {"aerodrome_v3", "pancakeswap_v3", "sushiswap_v3", "uniswap_v3"}
-        assert set(_V3_CONFIGS.keys()) == expected
-
-    def test_all_v4_configs_present(self):
-        """All V4 DEX names are in the V4 configs dict."""
-        expected = {"uniswap_v4"}
-        assert set(_V4_CONFIGS.keys()) == expected
-
-    def test_pool_updater_dict_uses_single_function(self):
-        """POOL_UPDATER entries all use the same dispatch function."""
-        functions = set(POOL_UPDATER.values())
-        assert functions == {_pool_updater}
-
-    def test_pool_updater_covers_all_chains(self):
-        """POOL_UPDATER has entries for both Base and Ethereum."""
-        chains = {chain_id for chain_id, _ in POOL_UPDATER}
-        # BASE = 8453, ETH (mainnet) = 1
-        assert len(chains) == 2

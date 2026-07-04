@@ -30,7 +30,7 @@ from sqlalchemy import select
 from web3.types import LogReceipt
 
 from degenbot.checksum_cache import get_checksum_address
-from degenbot.cli.pool import (
+from degenbot.cli.pool_updater_configs import (
     UNISWAP_V3_BURN_EVENT_HASH,
     UNISWAP_V3_MINT_EVENT_HASH,
     apply_v3_liquidity_updates,
