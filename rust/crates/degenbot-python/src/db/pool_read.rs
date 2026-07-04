@@ -473,7 +473,35 @@ pub(crate) fn db_fetch_exchange(
     }
 }
 
-/// `degenbot_rs.db_fetch_pool_row(database_path, chain_id, address) -> LiquidityPoolRow | None`
+/// `degenbot_rs.db_fetch_exchange_by_name(database_path, chain_id, name)
+/// -> ExchangeRow | None`
+///
+/// The by-name companion to [`db_fetch_exchange`] — the `(chain_id, name)`
+/// lookup the `cli/exchange.py` `deactivate` commands use to resolve the row
+/// to flip `active=False` on. Same fresh-open read path (`DegenbotDb::open` →
+/// a fresh WAL snapshot). Raises ``ValueError`` on a DB failure.
+#[pyfunction]
+pub(crate) fn db_fetch_exchange_by_name(
+    py: Python<'_>,
+    database_path: &str,
+    chain_id: i64,
+    name: &str,
+) -> PyResult<Option<Py<PyExchangeRow>>> {
+    use std::path::PathBuf;
+    let path = PathBuf::from(database_path);
+    let row = py
+        .detach(|| {
+            let (db, _state) =
+                degenbot_db::DegenbotDb::open(&path).map_err(|e| crate::db::db_err_to_py(&e))?;
+            db.fetch_exchange_by_name(chain_id, name)
+                .map_err(|e| crate::db::db_err_to_py(&e))
+        })?
+        .map(PyExchangeRow::from);
+    match row {
+        Some(r) => Ok(Some(Py::new(py, r)?)),
+        None => Ok(None),
+    }
+}
 ///
 /// Module-level pool-row read by `(chain_id, address)` (QJSCA5 §4.3) — the V3
 /// `apply_v3_liquidity_updates` shell uses this to fetch the pool's

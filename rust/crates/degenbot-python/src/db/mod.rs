@@ -142,6 +142,7 @@ pub fn add_db_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     )?)?;
     m.add_function(wrap_pyfunction!(pool_read::db_fetch_pool_row, m)?)?;
     m.add_function(wrap_pyfunction!(pool_read::db_fetch_exchange, m)?)?;
+    m.add_function(wrap_pyfunction!(pool_read::db_fetch_exchange_by_name, m)?)?;
     discovery::add_discovery_module(m)?;
     m.add_class::<liquidity_updater::PyLiquidityUpdateEvent>()?;
     m.add_class::<snapshot::PyDatabaseSnapshot>()?;

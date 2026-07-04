@@ -747,4 +747,25 @@ mod tests {
 
         assert_eq!(first, second, "identical recall must be a no-op");
     }
+
+    // ── fetch_exchange_by_name (the read-by-name companion) ───────────────
+
+    #[test]
+    fn fetch_exchange_by_name_returns_inserted_row_and_none_when_missing() {
+        let db = write_db();
+        let factory = address!("0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f");
+        let inserted = db.upsert_exchange(1, "uniswap_v2", factory, None).unwrap();
+
+        let fetched = db.fetch_exchange_by_name(1, "uniswap_v2").unwrap();
+        assert_eq!(fetched, Some(inserted));
+
+        // a missing name returns None.
+        let missing = db.fetch_exchange_by_name(1, "uniswap_v3").unwrap();
+        assert!(missing.is_none());
+
+        // the lookup is scoped by chain_id — a different chain returns None
+        // even for the same name.
+        let cross_chain = db.fetch_exchange_by_name(8453, "uniswap_v2").unwrap();
+        assert!(cross_chain.is_none());
+    }
 }

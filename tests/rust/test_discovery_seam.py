@@ -44,6 +44,7 @@ from degenbot.database.models.pools import (
 from degenbot.database.operations import create_new_sqlite_database, get_scoped_sqlite_session
 from degenbot.degenbot_rs import (
     db_fetch_exchange,
+    db_fetch_exchange_by_name,
     db_set_exchange_active,
     db_set_exchange_last_update_block,
     db_upsert_exchange,
@@ -609,3 +610,47 @@ def test_db_upsert_pool_manager_round_trips_and_is_idempotent(
     )
     assert third.id == first.id
     assert third.state_view == other_state_view
+
+
+def test_db_fetch_exchange_by_name_returns_row_and_none_when_missing(
+    tmp_path: pathlib.Path,
+) -> None:
+    """`db_upsert_exchange` then `db_fetch_exchange_by_name` returns the row;
+    a missing name returns None; the lookup is scoped by chain_id."""
+    db_path = tmp_path / "exchange_by_name.db"
+    create_new_sqlite_database(db_path)
+    db_path.chmod(0o644)
+
+    inserted = db_upsert_exchange(
+        database_path=str(db_path),
+        chain_id=CHAIN,
+        name="uniswap_v2",
+        factory=FACTORY,
+        deployer=None,
+    )
+
+    fetched = db_fetch_exchange_by_name(
+        database_path=str(db_path),
+        chain_id=CHAIN,
+        name="uniswap_v2",
+    )
+    assert fetched is not None
+    assert fetched.id == inserted.id
+    assert fetched.active is False
+    assert fetched.factory == FACTORY
+
+    # missing name → None
+    missing = db_fetch_exchange_by_name(
+        database_path=str(db_path),
+        chain_id=CHAIN,
+        name="uniswap_v3",
+    )
+    assert missing is None
+
+    # scoped by chain_id — a different chain returns None even for the same name.
+    cross_chain = db_fetch_exchange_by_name(
+        database_path=str(db_path),
+        chain_id=8453,
+        name="uniswap_v2",
+    )
+    assert cross_chain is None

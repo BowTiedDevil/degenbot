@@ -114,6 +114,34 @@ impl DegenbotDb {
         }
     }
 
+    /// `SELECT id, chain_id, name, active, last_update_block, factory, deployer FROM exchanges WHERE chain_id = ? AND name = ?`.
+    ///
+    /// The by-name companion to [`Self::fetch_exchange`] (the `(chain_id,
+    /// name)` lookup the `cli/exchange.py` `activate`/`deactivate` commands
+    /// use). The exchange CLI shells now resolve by name + then flip `active`
+    /// via [`crate::discovery::DegenbotDb::set_exchange_active`]; this read is
+    /// the deactivate-command resolution step.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure or [`DbError::Decode`] on a malformed column.
+    pub fn fetch_exchange_by_name(
+        &self,
+        chain_id: i64,
+        name: &str,
+    ) -> Result<Option<crate::rows::ExchangeRow>, DbError> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, chain_id, name, active, last_update_block, factory, deployer \
+             FROM exchanges WHERE chain_id = ?1 AND name = ?2",
+        )?;
+        let mut rows = stmt.query(rusqlite::params![chain_id, name])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(crate::rows::ExchangeRow::from_row(row)?)),
+            None => Ok(None),
+        }
+    }
+
     /// `SELECT id, address, chain, kind, state_view, exchange_id FROM pool_managers WHERE address = ? AND chain = ?`.
     ///
     /// QVMWQC: the V4 builder resolves its `pool_manager` row by `(address,
