@@ -115,6 +115,20 @@ pub const AERODROME_V2_POOL_CREATED_TOPIC: B256 = B256::new([
     0x64, 0x67, 0x1b, 0xf1, 0x99, 0xce, 0x22, 0x6b, 0x53, 0x78, 0x8f, 0xb2, 0x60, 0x65, 0x00, 0x5e,
 ]);
 
+/// Keccak256 of Aerodrome V3's `PoolCreated` event signature — a distinct
+/// topic0 from the canonical Uniswap V3 sig ([`V3_POOL_CREATED_TOPIC`]),
+/// though structurally decoded the same way (token0/token1/fee in
+/// topics[1..=3], `tickSpacing`/`pool_address` in non-indexed data, per the
+/// Python `update_v3_pools` updater that handles both `uniswap_v3` and
+/// `aerodrome_v3`). See `src/degenbot/cli/pool.py`'s
+/// `AERODROME_V3_POOLCREATED_EVENT_HASH`. The decode leaf that accepts this
+/// topic is deferred to task `CKXCOB` (the chunk loop) — the constant is
+/// surfaced here so `ExchangeSpec.event_topic` can carry it faithfully.
+pub const AERODROME_V3_POOL_CREATED_TOPIC: B256 = B256::new([
+    0xab, 0x0d, 0x57, 0xf0, 0xdf, 0x53, 0x7b, 0xb2, 0x5e, 0x80, 0x24, 0x5e, 0xf7, 0x74, 0x8f, 0xa6,
+    0x23, 0x53, 0x80, 0x8c, 0x54, 0xd6, 0xe5, 0x28, 0xa9, 0xdd, 0x20, 0x88, 0x7a, 0xed, 0x9a, 0xc2,
+]);
+
 /// Keccak256 of `PoolCreated(address,address,uint24,int24,address)` — the
 /// Uniswap V3 family sig (`PancakeSwap V3` + `SushiSwap V3` share it).
 pub const V3_POOL_CREATED_TOPIC: B256 = B256::new([
