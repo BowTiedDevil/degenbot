@@ -16,10 +16,13 @@
 
 use std::path::PathBuf;
 
+use alloy::primitives::Address;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use crate::address_utils::parse_address;
 use crate::db::db_err_to_py;
+use crate::db::pool_read::{PyExchangeRow, PyPoolManagerRow};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Python row-input pyclasses (the arg-extraction boundary)
@@ -300,6 +303,108 @@ pub(crate) fn db_set_exchange_last_update_block(
     })
 }
 
+/// `degenbot_rs.db_upsert_exchange(database_path, chain_id, name, factory,
+/// deployer) -> ExchangeRow`
+///
+/// Resolve an `exchanges` row by `(chain_id, name)`, inserting a new
+/// `active=False`, `last_update_block=None` row if none exists (the substrate
+/// the `exchange activate/deactivate` CLI delegates to for the get-or-create
+/// step). If a row already exists it is returned UNCHANGED — `active` is NOT
+/// touched here (flipping active is a separate concern, see
+/// [`db_set_exchange_active`]). `exchanges` has no unique index on
+/// `(chain_id, name)` so this uses the explicit SELECT-then-INSERT dedup the
+/// Python `cli/exchange.py` trajectory uses (no Alembic migration forced). The
+/// `factory` / `deployer` are stored EIP-55-checksummed. Raises `ValueError`
+/// on a parse or DB failure.
+#[pyfunction]
+pub(crate) fn db_upsert_exchange(
+    py: Python<'_>,
+    database_path: &str,
+    chain_id: i64,
+    name: &str,
+    factory: &str,
+    deployer: Option<&str>,
+) -> PyResult<Py<PyExchangeRow>> {
+    let path = PathBuf::from(database_path);
+    let factory = Address::parse_checksummed(factory, None)
+        .map_err(|e| PyValueError::new_err(format!("bad factory address: {e}")))?;
+    let deployer = deployer
+        .map(|d| {
+            Address::parse_checksummed(d, None)
+                .map_err(|e| PyValueError::new_err(format!("bad deployer address: {e}")))
+        })
+        .transpose()?;
+    let row = py.detach(|| {
+        let (db, _state) =
+            degenbot_db::DegenbotDb::open_for_writes(&path).map_err(|e| db_err_to_py(&e))?;
+        db.upsert_exchange(chain_id, name, factory, deployer)
+            .map_err(|e| db_err_to_py(&e))
+    })?;
+    Py::new(py, PyExchangeRow::from(row))
+}
+
+/// `degenbot_rs.db_set_exchange_active(database_path, exchange_id, active)
+/// -> None`
+///
+/// Flip an `exchanges` row's `active` flag by id — the activate/deactivate
+/// primitive the `exchange activate` / `exchange deactivate` CLI commands
+/// delegate to (the Python trajectory's `exchange.active = True/False;
+/// session.commit()`). Raises `ValueError` (a not-found error surfaced from
+/// [`degenbot_db::DbError::MissingRow`]) if no row matches `exchange_id`.
+#[pyfunction]
+pub(crate) fn db_set_exchange_active(
+    py: Python<'_>,
+    database_path: &str,
+    exchange_id: i64,
+    active: bool,
+) -> PyResult<()> {
+    let path = PathBuf::from(database_path);
+    py.detach(|| {
+        let (db, _state) =
+            degenbot_db::DegenbotDb::open_for_writes(&path).map_err(|e| db_err_to_py(&e))?;
+        db.set_exchange_active(exchange_id, active)
+            .map_err(|e| db_err_to_py(&e))
+    })
+}
+
+/// `degenbot_rs.db_upsert_pool_manager(database_path, address, chain, kind,
+/// state_view, exchange_id) -> PoolManagerRow`
+///
+/// Upsert a `pool_managers` row by `(address, chain)` (the get-or-create
+/// substrate for the V4 manager row the `exchange activate uniswap_v4` CLI
+/// creates). `pool_managers` HAS the unique index on `(address, chain)` so this
+/// uses `INSERT … ON CONFLICT … RETURNING` — idempotent: re-calling with a
+/// changed `state_view` updates the row in place (same id), re-calling
+/// identical leaves it unchanged. `address` / `state_view` are stored
+/// EIP-55-checksummed. Raises `ValueError` on a parse or DB failure.
+#[pyfunction]
+pub(crate) fn db_upsert_pool_manager(
+    py: Python<'_>,
+    database_path: &str,
+    address: &str,
+    chain: i64,
+    kind: &str,
+    state_view: Option<&str>,
+    exchange_id: i64,
+) -> PyResult<Py<PyPoolManagerRow>> {
+    let path = PathBuf::from(database_path);
+    let address = Address::parse_checksummed(address, None)
+        .map_err(|e| PyValueError::new_err(format!("bad pool manager address: {e}")))?;
+    let state_view = state_view
+        .map(|sv| {
+            Address::parse_checksummed(sv, None)
+                .map_err(|e| PyValueError::new_err(format!("bad state_view address: {e}")))
+        })
+        .transpose()?;
+    let row = py.detach(|| {
+        let (db, _state) =
+            degenbot_db::DegenbotDb::open_for_writes(&path).map_err(|e| db_err_to_py(&e))?;
+        db.upsert_pool_manager(address, chain, kind, state_view, exchange_id)
+            .map_err(|e| db_err_to_py(&e))
+    })?;
+    Py::new(py, PyPoolManagerRow::from(row))
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Module registration
 // ═══════════════════════════════════════════════════════════════════════════
@@ -314,6 +419,9 @@ pub fn add_discovery_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(db_upsert_v3_pools, m)?)?;
     m.add_function(wrap_pyfunction!(db_upsert_v4_pools, m)?)?;
     m.add_function(wrap_pyfunction!(db_set_exchange_last_update_block, m)?)?;
+    m.add_function(wrap_pyfunction!(db_upsert_exchange, m)?)?;
+    m.add_function(wrap_pyfunction!(db_set_exchange_active, m)?)?;
+    m.add_function(wrap_pyfunction!(db_upsert_pool_manager, m)?)?;
     m.add_class::<PyV2PoolRowInput>()?;
     m.add_class::<PyV3PoolRowInput>()?;
     m.add_class::<PyV4PoolRowInput>()?;

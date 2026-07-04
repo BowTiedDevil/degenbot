@@ -42,7 +42,13 @@ from degenbot.database.models.pools import (
     UniswapV4PoolTable,
 )
 from degenbot.database.operations import create_new_sqlite_database, get_scoped_sqlite_session
-from degenbot.degenbot_rs import db_set_exchange_last_update_block
+from degenbot.degenbot_rs import (
+    db_fetch_exchange,
+    db_set_exchange_active,
+    db_set_exchange_last_update_block,
+    db_upsert_exchange,
+    db_upsert_pool_manager,
+)
 
 if TYPE_CHECKING:
     import pathlib
@@ -438,3 +444,168 @@ def test_set_exchange_last_update_block_seam(seeded_db: pathlib.Path) -> None:
         ex = s.scalar(select(ExchangeTable).where(ExchangeTable.id == exchange_id))
         assert ex.last_update_block == 99_999
     _dispose(session)
+
+
+# ---------------------------------------------------------------------
+# Exchange write substrate (NWU4KH — split out of HYUYTN).
+# Round-trips the three PyO3 seams over a fresh Alembic-stamped DB:
+# `db_upsert_exchange` → `ExchangeRow` (`active=False`); `db_set_exchange_active`
+# flips active + `db_fetch_exchange` reads it back; `db_upsert_pool_manager`
+# round-trips + is idempotent.
+
+FACTORY: ChecksumAddress = get_checksum_address("0x" + "f" * 40)
+DEPLOYER: ChecksumAddress = get_checksum_address("0x" + "d" * 40)
+POOL_MANAGER: ChecksumAddress = get_checksum_address("0x" + "b" * 40)
+STATE_VIEW: ChecksumAddress = get_checksum_address("0x" + "e" * 40)
+
+
+def test_db_upsert_exchange_inserts_active_false_and_is_idempotent(
+    tmp_path: pathlib.Path,
+) -> None:
+    """`db_upsert_exchange` inserts a new row with `active=False`,
+    `last_update_block=None`, factory/deployer round-tripping; the second call
+    returns the SAME id (no new insert) with factory/deployer unchanged."""
+    db_path = tmp_path / "exchange.db"
+    create_new_sqlite_database(db_path)
+    db_path.chmod(0o644)
+
+    row = db_upsert_exchange(
+        database_path=str(db_path),
+        chain_id=CHAIN,
+        name="uniswap_v3",
+        factory=FACTORY,
+        deployer=DEPLOYER,
+    )
+    assert row.chain_id == CHAIN
+    assert row.name == "uniswap_v3"
+    assert row.active is False
+    assert row.last_update_block is None
+    assert row.factory == FACTORY
+    assert row.deployer == DEPLOYER
+
+    first_id = row.id
+
+    # second call — even with different factory/deployer args — must return the
+    # SAME id, factory/deployer UNCHANGED (no new insert; `active` not touched).
+    row2 = db_upsert_exchange(
+        database_path=str(db_path),
+        chain_id=CHAIN,
+        name="uniswap_v3",
+        factory=get_checksum_address("0x" + "0" * 40),
+        deployer=None,
+    )
+    assert row2.id == first_id
+    assert row2.factory == FACTORY
+    assert row2.deployer == DEPLOYER
+    assert row2.active is False
+
+
+def test_db_set_exchange_active_flips_and_db_fetch_exchange_reads_back(
+    tmp_path: pathlib.Path,
+) -> None:
+    """`db_set_exchange_active` flips active false→true→false; `db_fetch_exchange`
+    reads the flipped state back (a fresh connection → fresh WAL snapshot)."""
+    db_path = tmp_path / "exchange_active.db"
+    create_new_sqlite_database(db_path)
+    db_path.chmod(0o644)
+
+    row = db_upsert_exchange(
+        database_path=str(db_path),
+        chain_id=CHAIN,
+        name="uniswap_v2",
+        factory=FACTORY,
+        deployer=None,
+    )
+    assert row.active is False
+
+    db_set_exchange_active(
+        database_path=str(db_path),
+        exchange_id=row.id,
+        active=True,
+    )
+    fetched = db_fetch_exchange(database_path=str(db_path), exchange_id=row.id)
+    assert fetched is not None
+    assert fetched.active is True
+
+    db_set_exchange_active(
+        database_path=str(db_path),
+        exchange_id=row.id,
+        active=False,
+    )
+    fetched = db_fetch_exchange(database_path=str(db_path), exchange_id=row.id)
+    assert fetched is not None
+    assert fetched.active is False
+
+
+def test_db_set_exchange_active_missing_id_raises_value_error(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A nonexistent `exchange_id` surfaces the `DbError::MissingRow` as a
+    `ValueError`."""
+    db_path = tmp_path / "exchange_missing.db"
+    create_new_sqlite_database(db_path)
+    db_path.chmod(0o644)
+
+    with pytest.raises(ValueError, match="9999"):
+        db_set_exchange_active(
+            database_path=str(db_path),
+            exchange_id=9999,
+            active=True,
+        )
+
+
+def test_db_upsert_pool_manager_round_trips_and_is_idempotent(
+    tmp_path: pathlib.Path,
+) -> None:
+    """`db_upsert_pool_manager` inserts, updates `state_view` in place (same id),
+    and is a no-op on identical recall."""
+    db_path = tmp_path / "pool_manager.db"
+    create_new_sqlite_database(db_path)
+    db_path.chmod(0o644)
+
+    exchange = db_upsert_exchange(
+        database_path=str(db_path),
+        chain_id=CHAIN,
+        name="uniswap_v4",
+        factory=POOL_MANAGER,
+        deployer=None,
+    )
+
+    first = db_upsert_pool_manager(
+        database_path=str(db_path),
+        address=POOL_MANAGER,
+        chain=CHAIN,
+        kind="uniswap_v4",
+        state_view=STATE_VIEW,
+        exchange_id=exchange.id,
+    )
+    assert first.address == POOL_MANAGER
+    assert first.chain == CHAIN
+    assert first.kind == "uniswap_v4"
+    assert first.state_view == STATE_VIEW
+    assert first.exchange_id == exchange.id
+
+    # re-call with a changed state_view — same id, state_view updated.
+    other_state_view: ChecksumAddress = get_checksum_address("0x" + "a" * 40)
+    second = db_upsert_pool_manager(
+        database_path=str(db_path),
+        address=POOL_MANAGER,
+        chain=CHAIN,
+        kind="uniswap_v4",
+        state_view=other_state_view,
+        exchange_id=exchange.id,
+    )
+    assert second.id == first.id
+    assert second.state_view == other_state_view
+
+    # identical recall — unchanged.
+    third = db_upsert_pool_manager(
+        database_path=str(db_path),
+        address=POOL_MANAGER,
+        chain=CHAIN,
+        kind="uniswap_v4",
+        state_view=other_state_view,
+        exchange_id=exchange.id,
+    )
+    assert third.id == first.id
+    assert third.state_view == other_state_view
