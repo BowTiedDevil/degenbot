@@ -1845,6 +1845,7 @@ dependencies = [
  "degenbot-decoders",
  "degenbot-executor",
  "degenbot-pathfinding",
+ "degenbot-pool-updater",
  "degenbot-price",
  "degenbot-rpc",
  "degenbot-solidly-math",

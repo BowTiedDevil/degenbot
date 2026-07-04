@@ -41,6 +41,8 @@ pub mod db;
 pub mod executor;
 #[cfg(feature = "pathfinding")]
 pub mod pathfinding;
+#[cfg(feature = "pool")]
+pub mod pool;
 pub mod prelude;
 #[cfg(feature = "price")]
 pub mod price;
