@@ -14,6 +14,8 @@
 //! they can be unit-tested WITHOUT a live RPC node (the fetchers themselves
 //! need one — round-trip tests for them are integration-only).
 
+use std::collections::HashMap;
+
 use alloy::primitives::{Address, B256, I256};
 use alloy::rpc::types::Log;
 use degenbot_core::errors::ProviderResult;
@@ -243,6 +245,186 @@ pub async fn fetch_v4_liquidity_logs(
     )
     .await?;
     Ok(logs.iter().filter_map(decode_v4_liquidity_log).collect())
+}
+
+// ── pool-address-preserving variants (CKXCOB 3b) ─────────────────────────
+//
+// Task 1's `fetch_v3/v4_liquidity_logs` flatten away the per-pool grouping
+// the chunk loop needs: V3 Mint/Burn events are emitted by individual pool
+// contracts (the log emitter = the pool address) + V4 `ModifyLiquidity`
+// events carry the `PoolId` in topic1 (all emitted by the singleton
+// `PoolManager`). `main`'s liquidity path groups by pool + per-pool calls
+// `apply_v*_liquidity_updates(..., pool_address, events)` with an in-scope
+// filter (V3: the pool's `exchange_id` must be in `exchanges_to_update`;
+// V4: per-PoolManager is already per-exchange-scoped). The variants below
+// preserve the pool discriminator so 3c's chunk loop can do the same.
+
+/// Like [`decode_v3_liquidity_log`] but preserves the emitting pool address
+/// (V3 Mint/Burn events are emitted BY the pool contract — the log emitter
+/// IS the pool address the apply step needs). Pure (no RPC). CKXCOB 3b.
+///
+/// `main`'s `get_v3_liquidity_events` returns a `{pool_address: [events]}`
+/// dict — this decode is the building block for that grouping.
+#[must_use]
+pub fn decode_v3_liquidity_log_with_pool(log: &Log) -> Option<(Address, LiquidityUpdateEvent)> {
+    // Decode once (avoid the original `decode_v3_liquidity_log`'s double
+    // `decode_v3_burn_log` — it re-decodes to decide the sign). Capture
+    // `pool_address` from the leaf (it set it from `log.address()`).
+    let (pool_address, tick_lower, tick_upper, magnitude, is_burn) =
+        if let Some(mint) = decode_v3_mint_log(log) {
+            (
+                mint.pool_address,
+                mint.tick_lower,
+                mint.tick_upper,
+                mint.amount,
+                false,
+            )
+        } else if let Some(burn) = decode_v3_burn_log(log) {
+            (
+                burn.pool_address,
+                burn.tick_lower,
+                burn.tick_upper,
+                burn.amount,
+                true,
+            )
+        } else {
+            return None;
+        };
+    if magnitude == 0 {
+        return None; // ignore zero-amount events
+    }
+    let block_number = log.block_number?;
+    let log_index = log.log_index?;
+    let signed_magnitude = I256::try_from(magnitude).ok()?;
+    let liquidity_delta = if is_burn {
+        -signed_magnitude
+    } else {
+        signed_magnitude
+    };
+    Some((
+        pool_address,
+        LiquidityUpdateEvent {
+            block_number,
+            log_index,
+            tick_lower,
+            tick_upper,
+            liquidity_delta,
+        },
+    ))
+}
+
+/// Fetch V3 `Mint`/`Burn` liquidity events across a block range + group them
+/// by emitting pool address (the chunk loop's whole-chain V3 liquidity scan —
+/// `main`'s `get_v3_liquidity_events(w3, start, end)` returns the same
+/// `{pool_address: [events]}` shape). The chunk loop then per-pool calls
+/// `apply_v3_liquidity_updates_on_conn(&tx, chain_id, pool_address, events)`
+/// after the in-scope filter (look up the pool's `exchange_id` via
+/// `fetch_pool_by_address_on_conn` + skip if not in `exchanges_to_update`).
+///
+/// `pool_address = Some(addr)` scopes to a single pool (the targeted backfill);
+/// `None` = whole-chain scan (the default — V3 events can't be efficiently
+/// RPC-filtered to in-scope exchanges, per `main`'s comment). Events within
+/// each pool preserve `(block, log_index)` order (the apply guard requires
+/// in-order delivery — `LogFetcher::fetch_logs_chunked` already sorts).
+///
+/// # Errors
+///
+/// Returns [`ProviderError`](degenbot_core::errors::ProviderError) on RPC
+/// failure or an invalid block range.
+pub async fn fetch_v3_liquidity_logs_grouped(
+    fetcher: &LogFetcher,
+    from_block: u64,
+    to_block: u64,
+    pool_address: Option<Address>,
+) -> ProviderResult<HashMap<Address, Vec<LiquidityUpdateEvent>>> {
+    let mint_topic = degenbot_decoders::v3_mint_burn_decoder::V3_MINT_TOPIC;
+    let burn_topic = degenbot_decoders::v3_mint_burn_decoder::V3_BURN_TOPIC;
+    let logs = fetch_logs_with_topics(
+        fetcher,
+        from_block,
+        to_block,
+        pool_address.map(|a| vec![a]),
+        Some(vec![mint_topic, burn_topic]),
+    )
+    .await?;
+    let mut grouped: HashMap<Address, Vec<LiquidityUpdateEvent>> = HashMap::new();
+    for log in &logs {
+        if let Some((addr, event)) = decode_v3_liquidity_log_with_pool(log) {
+            grouped.entry(addr).or_default().push(event);
+        }
+    }
+    Ok(grouped)
+}
+
+/// Like [`decode_v4_liquidity_log`] but preserves the V4 `PoolId` (topic1 of
+/// the `ModifyLiquidity` event) as a `0x`-prefixed 66-char hex string (the
+/// `pool_hash` form `apply_v4_liquidity_updates(pool_hash, ...)` + the
+/// `uniswap_v4_pools.pool_hash` column expect). Pure (no RPC). CKXCOB 3b.
+///
+/// `main`'s `get_v4_liquidity_events` returns a `{pool_id: [events]}` dict —
+/// this decode is the building block for that grouping.
+#[must_use]
+pub fn decode_v4_liquidity_log_with_pool(log: &Log) -> Option<(String, LiquidityUpdateEvent)> {
+    let event = decode_v4_modify_liquidity_log(log)?;
+    if event.liquidity_delta.is_zero() {
+        return None;
+    }
+    let block_number = log.block_number?;
+    let log_index = log.log_index?;
+    // `PoolId` is `[u8; 32]`; widen to `B256` for the `0x`-hex `Display`
+    // (matches the Python `HexBytes(pool_id).to_0x_hex()` + the DB column form).
+    let pool_hash = B256::from(event.pool_id).to_string();
+    Some((
+        pool_hash,
+        LiquidityUpdateEvent {
+            block_number,
+            log_index,
+            tick_lower: event.tick_lower,
+            tick_upper: event.tick_upper,
+            liquidity_delta: event.liquidity_delta,
+        },
+    ))
+}
+
+/// Fetch V4 `ModifyLiquidity` events across a block range + group them by
+/// `pool_hash` (the chunk loop's V4 liquidity scan — `main`'s
+/// `get_v4_liquidity_events(w3, start, end, address=pool_manager_address)`
+/// returns the same `{pool_id: [events]}` shape). The chunk loop then per-pool
+/// calls `apply_v4_liquidity_updates_on_conn(&tx, &pool_hash, chain, events)`.
+///
+/// `pool_manager_address = Some(addr)` scopes to a single `PoolManager` (one
+/// exchange's V4 activity — the per-exchange chunk path); `None` = all V4
+/// activity across all `PoolManager`s (the cross-exchange backfill — the caller
+/// post-filters by manager). Events within each pool preserve `(block,
+/// log_index)` order.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`](degenbot_core::errors::ProviderError) on RPC
+/// failure or an invalid block range.
+pub async fn fetch_v4_liquidity_logs_grouped(
+    fetcher: &LogFetcher,
+    from_block: u64,
+    to_block: u64,
+    pool_manager_address: Option<Address>,
+) -> ProviderResult<HashMap<String, Vec<LiquidityUpdateEvent>>> {
+    let modify_liquidity_topic =
+        degenbot_decoders::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC;
+    let logs = fetch_logs_with_topics(
+        fetcher,
+        from_block,
+        to_block,
+        pool_manager_address.map(|a| vec![a]),
+        Some(vec![modify_liquidity_topic]),
+    )
+    .await?;
+    let mut grouped: HashMap<String, Vec<LiquidityUpdateEvent>> = HashMap::new();
+    for log in &logs {
+        if let Some((pool_hash, event)) = decode_v4_liquidity_log_with_pool(log) {
+            grouped.entry(pool_hash).or_default().push(event);
+        }
+    }
+    Ok(grouped)
 }
 
 // ── internal fetch helpers ───────────────────────────────────────────────
@@ -695,5 +877,137 @@ mod tests {
     #[test]
     fn u256_compile_check() {
         let _ = U256::ZERO;
+    }
+
+    // ── CKXCOB 3b: pool-address-preserving decode ────────────────────────
+
+    #[test]
+    fn decode_v3_liquidity_log_with_pool_preserves_emitter() {
+        let pool = Address::from([0xaa; 20]);
+        let owner = Address::from([0xcc; 20]);
+        let tick_lower = -60;
+        let tick_upper = 60;
+        let amount = 1_000_000u128;
+
+        let mut data = Vec::with_capacity(128);
+        let mut sender_word = [0u8; 32];
+        sender_word[12..32].copy_from_slice(Address::from([0xbb; 20]).as_slice());
+        data.extend_from_slice(&sender_word);
+        data.extend_from_slice(&uint128_word(amount));
+        data.extend_from_slice(&[0u8; 32]);
+        data.extend_from_slice(&[0u8; 32]);
+
+        let log = make_log(
+            pool,
+            vec![
+                degenbot_decoders::v3_mint_burn_decoder::V3_MINT_TOPIC,
+                owner.into_word(),
+                int24_word(tick_lower),
+                int24_word(tick_upper),
+            ],
+            data,
+            1234,
+            7,
+        );
+        let (addr, event) = decode_v3_liquidity_log_with_pool(&log).unwrap();
+        assert_eq!(addr, pool, "pool address preserved (the emitter)");
+        assert_eq!(event.block_number, 1234);
+        assert_eq!(event.tick_lower, tick_lower);
+        assert_eq!(event.tick_upper, tick_upper);
+        assert!(event.liquidity_delta.is_positive());
+    }
+
+    #[test]
+    fn decode_v3_liquidity_log_with_pool_burn_is_negative_and_addressed() {
+        let pool = Address::from([0xee; 20]);
+        let owner = Address::from([0xcc; 20]);
+        let amount = 42_000u128;
+
+        let mut data = Vec::with_capacity(96);
+        data.extend_from_slice(&uint128_word(amount));
+        data.extend_from_slice(&[0u8; 32]);
+        data.extend_from_slice(&[0u8; 32]);
+
+        let log = make_log(
+            pool,
+            vec![
+                degenbot_decoders::v3_mint_burn_decoder::V3_BURN_TOPIC,
+                owner.into_word(),
+                int24_word(-10),
+                int24_word(10),
+            ],
+            data,
+            99,
+            3,
+        );
+        let (addr, event) = decode_v3_liquidity_log_with_pool(&log).unwrap();
+        assert_eq!(addr, pool, "burn preserves its emitter too");
+        assert!(event.liquidity_delta.is_negative());
+    }
+
+    #[test]
+    fn decode_v4_liquidity_log_with_pool_preserves_pool_hash_hex() {
+        let pool_manager = Address::from([0xfc; 20]);
+        let pool_id = B256::repeat_byte(0x42);
+        let sender = Address::from([0xdd; 20]);
+        let tick_lower = -100;
+        let tick_upper = 100;
+        let delta = I256::try_from(500_000i64).unwrap();
+
+        let mut data = Vec::with_capacity(128);
+        data.extend_from_slice(&int24_word(tick_lower).0);
+        data.extend_from_slice(&int24_word(tick_upper).0);
+        data.extend_from_slice(&delta.to_be_bytes::<32>());
+        data.extend_from_slice(&[0u8; 32]); // salt
+
+        let log = make_log(
+            pool_manager,
+            vec![
+                degenbot_decoders::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC,
+                pool_id,
+                sender.into_word(),
+            ],
+            data,
+            99,
+            3,
+        );
+        let (pool_hash, event) = decode_v4_liquidity_log_with_pool(&log).unwrap();
+        // `pool_hash` must be the 0x-prefixed hex of the bytes32 pool_id.
+        assert_eq!(pool_hash, pool_id.to_string());
+        assert_eq!(event.tick_lower, tick_lower);
+        assert_eq!(event.tick_upper, tick_upper);
+        assert_eq!(event.liquidity_delta, delta);
+    }
+
+    #[test]
+    fn decode_with_pool_skips_zero_amount_v3_and_zero_delta_v4() {
+        // V3 zero-amount mint → None.
+        let empty_mint = make_log(
+            Address::from([0xaa; 20]),
+            vec![
+                degenbot_decoders::v3_mint_burn_decoder::V3_MINT_TOPIC,
+                Address::ZERO.into_word(),
+                int24_word(0),
+                int24_word(60),
+            ],
+            vec![0u8; 128],
+            1,
+            0,
+        );
+        assert!(decode_v3_liquidity_log_with_pool(&empty_mint).is_none());
+
+        // V4 zero-delta → None.
+        let empty_v4 = make_log(
+            Address::ZERO,
+            vec![
+                degenbot_decoders::v4_modify_liquidity_decoder::V4_MODIFY_LIQUIDITY_TOPIC,
+                B256::ZERO,
+                Address::ZERO.into_word(),
+            ],
+            vec![0u8; 128],
+            2,
+            0,
+        );
+        assert!(decode_v4_liquidity_log_with_pool(&empty_v4).is_none());
     }
 }
