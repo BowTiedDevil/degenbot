@@ -204,7 +204,8 @@ impl DegenbotDb {
             )?;
             conn.execute(
                 "INSERT INTO pools (address, chain, kind, token0_id, token1_id, exchange_id) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+                 ON CONFLICT(address, chain) DO NOTHING",
                 params![
                     r.address.to_checksum(None),
                     chain,
@@ -214,6 +215,13 @@ impl DegenbotDb {
                     exchange_id,
                 ],
             )?;
+            // ON CONFLICT DO NOTHING: if the pool already existed (a re-run
+            // of an already-committed-but-unstamped chunk — the pre-epic
+            // desync, or a re-emitted PoolCreated event), the pools row was
+            // NOT inserted + the subclass row must be skipped too.
+            if conn.changes() == 0 {
+                continue;
+            }
             let pool_id = conn.last_insert_rowid();
             if is_aerodrome {
                 conn.execute(
@@ -303,7 +311,8 @@ impl DegenbotDb {
             )?;
             conn.execute(
                 "INSERT INTO pools (address, chain, kind, token0_id, token1_id, exchange_id) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+                 ON CONFLICT(address, chain) DO NOTHING",
                 params![
                     r.address.to_checksum(None),
                     chain,
@@ -313,11 +322,15 @@ impl DegenbotDb {
                     exchange_id,
                 ],
             )?;
+            // ON CONFLICT DO NOTHING: skip the subclass row if the pool
+            // already existed (idempotent re-run — see upsert_v2_pools_on_conn).
+            if conn.changes() == 0 {
+                continue;
+            }
             let pool_id = conn.last_insert_rowid();
             conn.execute(
                 &format!(
-                    "INSERT INTO {sub} (pool_id, tick_spacing, fee_token0, fee_token1, \
-                     fee_denominator) VALUES (?1, ?2, ?3, ?4, ?5)"
+                    "INSERT INTO {sub} (pool_id, tick_spacing, fee_token0, fee_token1, \n                     fee_denominator) VALUES (?1, ?2, ?3, ?4, ?5)"
                 ),
                 params![pool_id, r.tick_spacing, r.fee, r.fee, fee_denominator],
             )?;
