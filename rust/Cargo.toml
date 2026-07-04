@@ -45,6 +45,7 @@ members = [
     "crates/degenbot-uniswap",
     "crates/degenbot-pathfinding",
     "crates/degenbot-db",
+    "crates/degenbot-pool-updater",
     "crates/degenbot-executor",
     "crates/degenbot-python",
     "crates/degenbot",

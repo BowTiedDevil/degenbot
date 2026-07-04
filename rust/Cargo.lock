@@ -1733,6 +1733,18 @@ name = "degenbot-pathfinding"
 version = "0.6.0-alpha.3"
 
 [[package]]
+name = "degenbot-pool-updater"
+version = "0.6.0-alpha.3"
+dependencies = [
+ "alloy",
+ "degenbot-core",
+ "degenbot-db",
+ "degenbot-decoders",
+ "degenbot-rpc",
+ "tokio",
+]
+
+[[package]]
 name = "degenbot-price"
 version = "0.6.0-alpha.3"
 dependencies = [
