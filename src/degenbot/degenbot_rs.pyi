@@ -787,6 +787,32 @@ def db_set_exchange_last_update_block(
 ) -> None:
     """Stamp an `ExchangeTable.last_update_block` (WR7EA6)."""
 
+def db_upsert_exchange(
+    database_path: str,
+    chain_id: int,
+    name: str,
+    factory: str,
+    deployer: str | None,
+) -> ExchangeRow:
+    """Resolve an `exchanges` row by `(chain_id, name)`, inserting `active=False` if absent."""
+
+def db_set_exchange_active(
+    database_path: str,
+    exchange_id: int,
+    active: bool,
+) -> None:
+    """Flip an `exchanges` row's `active` flag by id (activate/deactivate primitive)."""
+
+def db_upsert_pool_manager(
+    database_path: str,
+    address: str,
+    chain: int,
+    kind: str,
+    state_view: str | None,
+    exchange_id: int,
+) -> PoolManagerRow:
+    """Upsert a `pool_managers` row by `(address, chain)` (V4 manager get-or-create)."""
+
 # ------------------------------------------------------------------
 # Thin PyO3 wrappers over `degenbot_executor` (the cmd-executor core).
 # The Python encoder (`examples/eth_backrun_helpers.py::encode_cmd_stream` +
@@ -2562,8 +2588,11 @@ __all__ = [
     "db_create_new_database",
     "db_fetch_exchange",
     "db_fetch_pool_row",
+    "db_set_exchange_active",
     "db_set_exchange_last_update_block",
     "db_upgrade_database",
+    "db_upsert_exchange",
+    "db_upsert_pool_manager",
     "db_upsert_v2_pools",
     "db_upsert_v3_pools",
     "db_upsert_v4_pools",
