@@ -32,7 +32,23 @@ fn fixture_expected() -> Expected {
 }
 
 fn open_db() -> DegenbotDb {
-    let (db, state) = DegenbotDb::open(&fixture_db_path()).expect("open aave_parity.db fixture");
+    let path = fixture_db_path();
+    // Fail loudly if the fixture is missing. Without this, `Connection::open`
+    // silently creates an EMPTY file, `ensure_schema` classifies it as
+    // `FreshStandalone`, runs `apply_fresh_standalone` (CREATE INDEX ...), and
+    // parallel test threads then race the freshly-created file — producing a
+    // confusing cascade of `DatabaseBusy` / `RustOwned { schema_version: 1 }` /
+    // `index … already exists` panics instead of a clear "fixture absent"
+    // message. The fixture is a committed binary (see .gitignore exception); if
+    // it is absent, your checkout is stale — regenerate with
+    //   `uv run python rust/crates/degenbot-db/tests/fixtures/generate_aave_parity.py`
+    assert!(
+        path.exists(),
+        "aave_parity.db fixture is missing at {}; regenerate it with the
+         `generate_aave_parity.py` script (see header comment).",
+        path.display(),
+    );
+    let (db, state) = DegenbotDb::open(&path).expect("open aave_parity.db fixture");
     assert!(
         matches!(state, SchemaState::AlembicCurrent),
         "fixture DB should be AlembicCurrent, got {state:?}"
