@@ -1436,6 +1436,324 @@ impl DegenbotDb {
             transfer_index,
         )
     }
+
+    // ── RYKCC4: GHO / stkAAVE / Rewards apply fns ──────────────────────────
+
+    /// Apply a GHO `DiscountPercentUpdated` event: set the user's
+    /// `gho_discount` column (an `INTEGER` percentage; the Python path stores
+    /// the raw uint256 but the Aave protocol caps discount at 100% so `i64` is
+    /// the correct Rust type). Port of
+    /// `event_handlers._process_discount_percent_updated_event` (L1167).
+    ///
+    /// `user_id` is pre-resolved by the orchestrator/parser (the Python calls
+    /// `get_or_create_user` upstream; the apply fn takes the resolved id — the
+    /// CXRGX4 precedent).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure, or
+    /// [`DbError::MissingRow`] if no user matches `user_id`.
+    pub fn apply_gho_discount_percent_updated_on_conn(
+        conn: &rusqlite::Connection,
+        user_id: i64,
+        new_discount_percent: i64,
+    ) -> Result<(), DbError> {
+        let updated = conn.execute(
+            "UPDATE aave_v3_users SET gho_discount = ?1 WHERE id = ?2",
+            params![new_discount_percent, user_id],
+        )?;
+        if updated == 0 {
+            return Err(DbError::MissingRow(format!(
+                "aave_v3_users id={user_id} (DiscountPercentUpdated apply target)"
+            )));
+        }
+        Ok(())
+    }
+
+    /// `&self` wrapper for [`Self::apply_gho_discount_percent_updated_on_conn`].
+    ///
+    /// # Errors
+    ///
+    /// Same as the `_on_conn` variant.
+    pub fn apply_gho_discount_percent_updated(
+        &self,
+        user_id: i64,
+        new_discount_percent: i64,
+    ) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        Self::apply_gho_discount_percent_updated_on_conn(&conn, user_id, new_discount_percent)
+    }
+
+    /// Apply a GHO `DiscountRateStrategyUpdated` event: set the GHO token's
+    /// `v_gho_discount_rate_strategy` column (a checksummed address or
+    /// `NULL`). Port of
+    /// `event_handlers._process_discount_rate_strategy_updated_event` (L752).
+    ///
+    /// `gho_token_id` is the `aave_gho_tokens.id` (NOT the erc20 token id —
+    /// the GHO token row is chain-unique, identified by its primary key).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure, or
+    /// [`DbError::MissingRow`] if no `aave_gho_tokens` row matches
+    /// `gho_token_id`.
+    pub fn apply_gho_discount_rate_strategy_updated_on_conn(
+        conn: &rusqlite::Connection,
+        gho_token_id: i64,
+        new_strategy: Option<&str>,
+    ) -> Result<(), DbError> {
+        let updated = conn.execute(
+            "UPDATE aave_gho_tokens SET v_gho_discount_rate_strategy = ?1 WHERE id = ?2",
+            params![new_strategy, gho_token_id],
+        )?;
+        if updated == 0 {
+            return Err(DbError::MissingRow(format!(
+                "aave_gho_tokens id={gho_token_id} (DiscountRateStrategyUpdated apply target)"
+            )));
+        }
+        Ok(())
+    }
+
+    /// `&self` wrapper for [`Self::apply_gho_discount_rate_strategy_updated_on_conn`].
+    ///
+    /// # Errors
+    ///
+    /// Same as the `_on_conn` variant.
+    pub fn apply_gho_discount_rate_strategy_updated(
+        &self,
+        gho_token_id: i64,
+        new_strategy: Option<&str>,
+    ) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        Self::apply_gho_discount_rate_strategy_updated_on_conn(&conn, gho_token_id, new_strategy)
+    }
+
+    /// Apply a GHO `DiscountTokenUpdated` event: set the GHO token's
+    /// `v_gho_discount_token` column (a checksummed address or `NULL`). Port
+    /// of `event_handlers._process_discount_token_updated_event` (L717).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure, or
+    /// [`DbError::MissingRow`] if no `aave_gho_tokens` row matches
+    /// `gho_token_id`.
+    pub fn apply_gho_discount_token_updated_on_conn(
+        conn: &rusqlite::Connection,
+        gho_token_id: i64,
+        new_discount_token: Option<&str>,
+    ) -> Result<(), DbError> {
+        let updated = conn.execute(
+            "UPDATE aave_gho_tokens SET v_gho_discount_token = ?1 WHERE id = ?2",
+            params![new_discount_token, gho_token_id],
+        )?;
+        if updated == 0 {
+            return Err(DbError::MissingRow(format!(
+                "aave_gho_tokens id={gho_token_id} (DiscountTokenUpdated apply target)"
+            )));
+        }
+        Ok(())
+    }
+
+    /// `&self` wrapper for [`Self::apply_gho_discount_token_updated_on_conn`].
+    ///
+    /// # Errors
+    ///
+    /// Same as the `_on_conn` variant.
+    pub fn apply_gho_discount_token_updated(
+        &self,
+        gho_token_id: i64,
+        new_discount_token: Option<&str>,
+    ) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        Self::apply_gho_discount_token_updated_on_conn(&conn, gho_token_id, new_discount_token)
+    }
+
+    /// Apply a stkAAVE `Staked` event: increment the user's `stk_aave_balance`
+    /// by `amount`. Port of `stkaave.process_stk_aave_transfer_event` (the
+    /// `to_user` path; the Python `Transfer(from=0, to=X)` arm).
+    ///
+    /// The stored `stk_aave_balance` is a decimal `VARCHAR(78)` (matches the
+    /// Python `Mapped[int | None]` which `SQLAlchemy` stores as a string under
+    /// `SQLite`). The apply reads the current value (`NULL` is treated as 0 —
+    /// matches the Python `get_or_init_stk_aave_balance` which would RPC-fetch
+    /// when `None`; the orchestrator is responsible for ensuring the balance
+    /// is non-NULL before this call, but the apply fn is defensive + treats
+    /// `NULL` as 0).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure, or
+    /// [`DbError::MissingRow`] if no user matches `user_id`, or
+    /// [`DbError::Decode`] if the persisted `stk_aave_balance` string is
+    /// malformed.
+    pub fn apply_stk_aave_staked_on_conn(
+        conn: &rusqlite::Connection,
+        user_id: i64,
+        amount: alloy::primitives::U256,
+    ) -> Result<(), DbError> {
+        let current: Option<Option<String>> = conn
+            .query_row(
+                "SELECT stk_aave_balance FROM aave_v3_users WHERE id = ?1",
+                [user_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?;
+        let Some(current_str) = current else {
+            return Err(DbError::MissingRow(format!(
+                "aave_v3_users id={user_id} (StkAaveStaked apply target)"
+            )));
+        };
+        let current_balance = current_str
+            .as_deref()
+            .map(parse_decimal_u256)
+            .transpose()?
+            .unwrap_or(alloy::primitives::U256::ZERO);
+        let new_balance = current_balance.checked_add(amount).ok_or_else(|| {
+            DbError::Decode(format!(
+                "stk_aave_balance overflow on Staked: {current_balance} + {amount}"
+            ))
+        })?;
+        let updated = conn.execute(
+            "UPDATE aave_v3_users SET stk_aave_balance = ?1 WHERE id = ?2",
+            params![new_balance.to_string(), user_id],
+        )?;
+        if updated == 0 {
+            return Err(DbError::MissingRow(format!(
+                "aave_v3_users id={user_id} (StkAaveStaked apply target — row vanished mid-tx)"
+            )));
+        }
+        Ok(())
+    }
+
+    /// `&self` wrapper for [`Self::apply_stk_aave_staked_on_conn`].
+    ///
+    /// # Errors
+    ///
+    /// Same as the `_on_conn` variant.
+    pub fn apply_stk_aave_staked(
+        &self,
+        user_id: i64,
+        amount: alloy::primitives::U256,
+    ) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        Self::apply_stk_aave_staked_on_conn(&conn, user_id, amount)
+    }
+
+    /// Apply a stkAAVE `Redeem` event: decrement the user's `stk_aave_balance`
+    /// by `amount`. Port of `stkaave.process_stk_aave_transfer_event` (the
+    /// `from_user` path; the Python `Transfer(from=X, to=0)` arm). The Python
+    /// asserts `stk_aave_balance >= 0` before applying — the Rust apply
+    /// returns [`DbError::Decode`] if the burn would underflow (amount >
+    /// current balance), mirroring the Python's `assert from_user.stk_aave_balance >= 0`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure, [`DbError::MissingRow`]
+    /// if no user matches `user_id`, [`DbError::Decode`] if the persisted
+    /// string is malformed or the burn would underflow the balance.
+    pub fn apply_stk_aave_redeem_on_conn(
+        conn: &rusqlite::Connection,
+        user_id: i64,
+        amount: alloy::primitives::U256,
+    ) -> Result<(), DbError> {
+        let current: Option<Option<String>> = conn
+            .query_row(
+                "SELECT stk_aave_balance FROM aave_v3_users WHERE id = ?1",
+                [user_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?;
+        let Some(current_str) = current else {
+            return Err(DbError::MissingRow(format!(
+                "aave_v3_users id={user_id} (StkAaveRedeem apply target)"
+            )));
+        };
+        let current_balance = current_str
+            .as_deref()
+            .map(parse_decimal_u256)
+            .transpose()?
+            .unwrap_or(alloy::primitives::U256::ZERO);
+        // Mirror the Python `assert from_user.stk_aave_balance >= 0` —
+        // since `amount` is unsigned, an underflow here means the user's
+        // balance would go negative, which is a protocol violation.
+        let new_balance = current_balance.checked_sub(amount).ok_or_else(|| {
+            DbError::Decode(
+                format!(
+                    "stk_aave_balance underflow on Redeem: {current_balance} - {amount} (user_id={user_id})"
+                ),
+            )
+        })?;
+        let updated = conn.execute(
+            "UPDATE aave_v3_users SET stk_aave_balance = ?1 WHERE id = ?2",
+            params![new_balance.to_string(), user_id],
+        )?;
+        if updated == 0 {
+            return Err(DbError::MissingRow(format!(
+                "aave_v3_users id={user_id} (StkAaveRedeem apply target — row vanished mid-tx)"
+            )));
+        }
+        Ok(())
+    }
+
+    /// `&self` wrapper for [`Self::apply_stk_aave_redeem_on_conn`].
+    ///
+    /// # Errors
+    ///
+    /// Same as the `_on_conn` variant.
+    pub fn apply_stk_aave_redeem(
+        &self,
+        user_id: i64,
+        amount: alloy::primitives::U256,
+    ) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        Self::apply_stk_aave_redeem_on_conn(&conn, user_id, amount)
+    }
+
+    /// Apply a `RewardsController` `RewardsClaimed` event. **No-op** —
+    /// investigation (RYKCC4, 2026-07-04) confirmed the Python `event_handlers.py`
+    /// defines `AaveV3RewardsControllerEvent.REWARDS_CLAIMED` in
+    /// `src/degenbot/aave/events.py` but has NO handler for it: rewards claims
+    /// surface only via the stkAAVE token's `Transfer` events (see
+    /// `transaction_processor.py:249` — "This handles cases where stkAAVE
+    /// transfers (e.g., rewards claims) occur"). The DB has no rewards table.
+    /// The variant exists in `AaveChunkEvent` so the parser can route the
+    /// event through the chunk pipeline (for operation-classification + log
+    /// accounting), but the apply dispatch records the count + writes nothing.
+    ///
+    /// # Errors
+    ///
+    /// Never errors — the no-op always returns `Ok(())`.
+    pub fn apply_rewards_claimed_on_conn(
+        _conn: &rusqlite::Connection,
+        _user_id: i64,
+        _reward_token_id: i64,
+        _claimer_id: i64,
+        _claimed_amount: alloy::primitives::U256,
+    ) -> Result<(), DbError> {
+        Ok(())
+    }
+
+    /// `&self` wrapper for [`Self::apply_rewards_claimed_on_conn`].
+    ///
+    /// # Errors
+    ///
+    /// Same as the `_on_conn` variant (never errors).
+    pub fn apply_rewards_claimed(
+        &self,
+        user_id: i64,
+        reward_token_id: i64,
+        claimer_id: i64,
+        claimed_amount: alloy::primitives::U256,
+    ) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        Self::apply_rewards_claimed_on_conn(
+            &conn,
+            user_id,
+            reward_token_id,
+            claimer_id,
+            claimed_amount,
+        )
+    }
 }
 
 /// Which position table a `ScaledToken` event applies to (mirrors the

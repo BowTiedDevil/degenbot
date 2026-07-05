@@ -164,6 +164,67 @@ pub enum AaveChunkEvent {
         scaled_amount: alloy::primitives::U256,
         transfer_index: alloy::primitives::U256,
     },
+    // ── RYKCC4 (SPECIALAPPLY): GHO + stkAAVE + Rewards events ─────────────
+    /// GHO `DiscountPercentUpdated(user, oldPercent, newPercent)` — sets the
+    /// user's `gho_discount` (an `i64` percentage; the Aave protocol caps at
+    /// 100%). Port of `event_handlers._process_discount_percent_updated_event`.
+    GhoDiscountPercentUpdated {
+        /// Pre-resolved `aave_v3_users.id` (the orchestrator called
+        /// `get_or_create_user_on_conn`).
+        user_id: i64,
+        /// The new discount percent.
+        new_discount_percent: i64,
+    },
+    /// GHO `DiscountRateStrategyUpdated(oldStrategy, newStrategy)` — sets the
+    /// chain-unique GHO token row's `v_gho_discount_rate_strategy`. Port of
+    /// `event_handlers._process_discount_rate_strategy_updated_event`.
+    GhoDiscountRateStrategyUpdated {
+        /// Pre-resolved `aave_gho_tokens.id` (chain-unique).
+        gho_token_id: i64,
+        /// The checksummed address of the new discount rate strategy contract,
+        /// or `None` to clear it.
+        new_strategy: Option<String>,
+    },
+    /// GHO `DiscountTokenUpdated(oldToken, newToken)` — sets the GHO token
+    /// row's `v_gho_discount_token`. Port of
+    /// `event_handlers._process_discount_token_updated_event`.
+    GhoDiscountTokenUpdated {
+        gho_token_id: i64,
+        new_discount_token: Option<String>,
+    },
+    /// stkAAVE `Staked(staker, amount, totalRewards)` — increments the user's
+    /// `stk_aave_balance` by `amount`. Port of
+    /// `stkaave.process_stk_aave_transfer_event` (the `Transfer(from=0,
+    /// to=X)` arm — the Staked event coincides with a mint Transfer).
+    StkAaveStaked {
+        /// Pre-resolved `aave_v3_users.id` (the staker).
+        user_id: i64,
+        /// The staked amount (the `amount` field; `totalRewards` is a
+        /// diagnostics-only field + is NOT applied to any balance).
+        amount: alloy::primitives::U256,
+    },
+    /// stkAAVE `Redeem(redeemer, staker, amount)` — decrements the redeemer's
+    /// `stk_aave_balance` by `amount`. Port of
+    /// `stkaave.process_stk_aave_transfer_event` (the `Transfer(from=X,
+    /// to=0)` arm — the Redeem event coincides with a burn Transfer).
+    StkAaveRedeem {
+        /// Pre-resolved `aave_v3_users.id` (the redeemer).
+        user_id: i64,
+        /// The redeemed amount.
+        amount: alloy::primitives::U256,
+    },
+    /// `RewardsController` `RewardsClaimed(user, reward, to, claimer,
+    /// claimedAmount)` — **no-op apply**. Investigation (RYKCC4) confirmed the
+    /// Python declares the event in `events.py` but has NO handler: rewards
+    /// claims surface only via the stkAAVE token's `Transfer` events
+    /// (`transaction_processor.py:249`). The DB has no rewards table. The
+    /// variant exists for parser routing/event-accounting only.
+    RewardsClaimed {
+        user_id: i64,
+        reward_token_id: i64,
+        claimer_id: i64,
+        claimed_amount: alloy::primitives::U256,
+    },
 }
 
 /// Per-event-type apply counts for a chunk (mirrors `ChunkWriteReport`).
@@ -184,6 +245,15 @@ pub struct AaveChunkWriteReport {
     pub scaled_token_mint: usize,
     pub scaled_token_burn: usize,
     pub scaled_token_transfer: usize,
+    /// RYKCC4 (SPECIALAPPLY) — the GHO + stkAAVE + Rewards events.
+    pub gho_discount_percent_updated: usize,
+    pub gho_discount_rate_strategy_updated: usize,
+    pub gho_discount_token_updated: usize,
+    pub stk_aave_staked: usize,
+    pub stk_aave_redeem: usize,
+    /// RYKCC4 no-op variant — the count is tracked for accounting even though
+    /// the apply writes nothing.
+    pub rewards_claimed: usize,
     /// The `chunk_end_block` stamped onto `aave_v3_markets.last_update_block`
     /// as the LAST write in the transaction. `None` if `events` was empty (no
     /// stamp written — mirrors the precedent's "no events ⇒ no stamp" guard
@@ -396,6 +466,62 @@ pub fn apply_aave_chunk_writes_on_conn(
                     *transfer_index,
                 )?;
                 report.scaled_token_transfer += 1;
+            }
+            AaveChunkEvent::GhoDiscountPercentUpdated {
+                user_id,
+                new_discount_percent,
+            } => {
+                DegenbotDb::apply_gho_discount_percent_updated_on_conn(
+                    conn,
+                    *user_id,
+                    *new_discount_percent,
+                )?;
+                report.gho_discount_percent_updated += 1;
+            }
+            AaveChunkEvent::GhoDiscountRateStrategyUpdated {
+                gho_token_id,
+                new_strategy,
+            } => {
+                DegenbotDb::apply_gho_discount_rate_strategy_updated_on_conn(
+                    conn,
+                    *gho_token_id,
+                    new_strategy.as_deref(),
+                )?;
+                report.gho_discount_rate_strategy_updated += 1;
+            }
+            AaveChunkEvent::GhoDiscountTokenUpdated {
+                gho_token_id,
+                new_discount_token,
+            } => {
+                DegenbotDb::apply_gho_discount_token_updated_on_conn(
+                    conn,
+                    *gho_token_id,
+                    new_discount_token.as_deref(),
+                )?;
+                report.gho_discount_token_updated += 1;
+            }
+            AaveChunkEvent::StkAaveStaked { user_id, amount } => {
+                DegenbotDb::apply_stk_aave_staked_on_conn(conn, *user_id, *amount)?;
+                report.stk_aave_staked += 1;
+            }
+            AaveChunkEvent::StkAaveRedeem { user_id, amount } => {
+                DegenbotDb::apply_stk_aave_redeem_on_conn(conn, *user_id, *amount)?;
+                report.stk_aave_redeem += 1;
+            }
+            AaveChunkEvent::RewardsClaimed {
+                user_id,
+                reward_token_id,
+                claimer_id,
+                claimed_amount,
+            } => {
+                DegenbotDb::apply_rewards_claimed_on_conn(
+                    conn,
+                    *user_id,
+                    *reward_token_id,
+                    *claimer_id,
+                    *claimed_amount,
+                )?;
+                report.rewards_claimed += 1;
             }
         }
     }
@@ -1240,5 +1366,299 @@ mod tests {
         // (c) The collateral position's balance is still '0' (no mint landed).
         let (balance, _) = position_state(&db, 1);
         assert_eq!(balance, "0", "rolled-back chunk's mint must not be durable");
+    }
+
+    // ── RYKCC4 (SPECIALAPPLY): GHO + stkAAVE + Rewards apply fns ──────────
+
+    /// Seed a bare `aave_v3_users` row at `user_id` (in market 1) with the
+    /// CXRGX4 seeding defaults (`e_mode=0`, `gho_discount=0`, `stk_aave_balance=NULL`).
+    /// Lighter than `seed_collateral_position_with_balance` (no erc20/asset
+    /// parents) — the GHO/stkAAVE tests don't need them.
+    fn seed_aave_v3_user(db: &DegenbotDb, user_id: i64) {
+        let conn = db.lock();
+        // `fresh_db` already inserted the market FK parent (id=1).
+        conn.execute(
+            "INSERT INTO aave_v3_users \
+                (id, market_id, address, e_mode, gho_discount, stk_aave_balance, \
+                 isolation_mode_collateral_asset_id, isolation_mode_debt) \
+             VALUES (?1, 1, ?2, 0, 0, NULL, NULL, '0')",
+            params![user_id, format!("0xuser{user_id}")],
+        )
+        .unwrap();
+    }
+
+    /// Seed a GHO token row (chain-unique) at `gho_token_id` with the given
+    /// discount strategy + token attributes. The `token_id` + `v_token_id`
+    /// FK parents are seeded as erc20 rows.
+    fn seed_gho_token_row(
+        db: &DegenbotDb,
+        gho_token_id: i64,
+        strategy: Option<&str>,
+        discount_token: Option<&str>,
+    ) {
+        let conn = db.lock();
+        for id in [10, 11] {
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (?1, 1, ?2)",
+                params![id, format!("0xgho_par{id}")],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO aave_gho_tokens (id, token_id, v_token_id, \
+                v_gho_discount_rate_strategy, v_gho_discount_token) \
+             VALUES (?1, 10, 11, ?2, ?3)",
+            params![gho_token_id, strategy, discount_token],
+        )
+        .unwrap();
+    }
+
+    /// Read a GHO token row's (strategy, `discount_token`) back.
+    fn gho_token_state(db: &DegenbotDb, gho_token_id: i64) -> (Option<String>, Option<String>) {
+        let conn = db.lock();
+        conn.query_row(
+            "SELECT v_gho_discount_rate_strategy, v_gho_discount_token \
+             FROM aave_gho_tokens WHERE id = ?1",
+            [gho_token_id],
+            |r| {
+                Ok((
+                    r.get::<_, Option<String>>(0)?,
+                    r.get::<_, Option<String>>(1)?,
+                ))
+            },
+        )
+        .unwrap()
+    }
+
+    /// Read a user's (`gho_discount`, `stk_aave_balance`) back.
+    fn user_gho_stk_state(db: &DegenbotDb, user_id: i64) -> (i64, Option<String>) {
+        let conn = db.lock();
+        conn.query_row(
+            "SELECT gho_discount, stk_aave_balance FROM aave_v3_users WHERE id = ?1",
+            [user_id],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?)),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn apply_aave_chunk_writes_on_conn_dispatches_gho_discount_percent_updated() {
+        let db = fresh_db();
+        seed_aave_v3_user(&db, 1);
+
+        let events = vec![AaveChunkEvent::GhoDiscountPercentUpdated {
+            user_id: 1,
+            new_discount_percent: 42,
+        }];
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 1_000).unwrap();
+            assert_eq!(report.gho_discount_percent_updated, 1);
+            tx.commit().unwrap();
+        }
+
+        let (discount, _) = user_gho_stk_state(&db, 1);
+        assert_eq!(discount, 42, "gho_discount set to the new percent");
+        assert_eq!(market_stamp(&db), Some(1_000));
+    }
+
+    #[test]
+    fn apply_aave_chunk_writes_on_conn_dispatches_gho_discount_rate_strategy_updated() {
+        let db = fresh_db();
+        seed_gho_token_row(&db, 1, Some("0xold_strategy"), None);
+
+        let events = vec![AaveChunkEvent::GhoDiscountRateStrategyUpdated {
+            gho_token_id: 1,
+            new_strategy: Some("0xnew_strategy".to_string()),
+        }];
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 1_000).unwrap();
+            assert_eq!(report.gho_discount_rate_strategy_updated, 1);
+            tx.commit().unwrap();
+        }
+
+        let (strategy, _) = gho_token_state(&db, 1);
+        assert_eq!(strategy.as_deref(), Some("0xnew_strategy"));
+    }
+
+    #[test]
+    fn apply_aave_chunk_writes_on_conn_dispatches_gho_discount_token_updated() {
+        let db = fresh_db();
+        seed_gho_token_row(&db, 1, None, Some("0xold_token"));
+
+        // Clear the discount token (None).
+        let events = vec![AaveChunkEvent::GhoDiscountTokenUpdated {
+            gho_token_id: 1,
+            new_discount_token: None,
+        }];
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 1_000).unwrap();
+            assert_eq!(report.gho_discount_token_updated, 1);
+            tx.commit().unwrap();
+        }
+
+        let (_, discount_token) = gho_token_state(&db, 1);
+        assert_eq!(discount_token, None, "discount token cleared to NULL");
+    }
+
+    #[test]
+    fn apply_aave_chunk_writes_on_conn_dispatches_stk_aave_staked() {
+        let db = fresh_db();
+        seed_aave_v3_user(&db, 1);
+        // Pre-set stk_aave_balance = NULL (the CXRGX4 default).
+
+        let amount = alloy::primitives::U256::from(1_000u64);
+        let events = vec![AaveChunkEvent::StkAaveStaked { user_id: 1, amount }];
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 1_000).unwrap();
+            assert_eq!(report.stk_aave_staked, 1);
+            tx.commit().unwrap();
+        }
+
+        let (_, stk_balance) = user_gho_stk_state(&db, 1);
+        assert_eq!(
+            stk_balance.as_deref(),
+            Some("1000"),
+            "NULL balance treated as 0, then += amount (1000)"
+        );
+    }
+
+    #[test]
+    fn apply_aave_chunk_writes_on_conn_dispatches_stk_aave_redeem() {
+        let db = fresh_db();
+        seed_aave_v3_user(&db, 1);
+        // Pre-set stk_aave_balance = 5000.
+        {
+            let conn = db.lock();
+            conn.execute(
+                "UPDATE aave_v3_users SET stk_aave_balance = '5000' WHERE id = 1",
+                [],
+            )
+            .unwrap();
+        }
+
+        let events = vec![AaveChunkEvent::StkAaveRedeem {
+            user_id: 1,
+            amount: alloy::primitives::U256::from(3_000u64),
+        }];
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 1_000).unwrap();
+            assert_eq!(report.stk_aave_redeem, 1);
+            tx.commit().unwrap();
+        }
+
+        let (_, stk_balance) = user_gho_stk_state(&db, 1);
+        assert_eq!(stk_balance.as_deref(), Some("2000"), "5000 - 3000 = 2000");
+    }
+
+    #[test]
+    fn apply_aave_chunk_writes_on_conn_stk_aave_redeem_underflow_errors() {
+        let db = fresh_db();
+        seed_aave_v3_user(&db, 1);
+        // stk_aave_balance = 100; Redeem 200 → underflow → error.
+        {
+            let conn = db.lock();
+            conn.execute(
+                "UPDATE aave_v3_users SET stk_aave_balance = '100' WHERE id = 1",
+                [],
+            )
+            .unwrap();
+        }
+
+        let events = vec![AaveChunkEvent::StkAaveRedeem {
+            user_id: 1,
+            amount: alloy::primitives::U256::from(200u64),
+        }];
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            let result = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 1_000);
+            assert!(
+                result.is_err(),
+                "redeem underflow must error (Python asserts >=0)"
+            );
+        }
+
+        let (_, stk_balance) = user_gho_stk_state(&db, 1);
+        assert_eq!(
+            stk_balance.as_deref(),
+            Some("100"),
+            "balance untouched on error"
+        );
+        assert_eq!(market_stamp(&db), None, "stamp untouched on rollback");
+    }
+
+    #[test]
+    fn apply_aave_chunk_writes_on_conn_dispatches_rewards_claimed_noop() {
+        let db = fresh_db();
+        seed_aave_v3_user(&db, 1);
+
+        // The no-op RewardsClaimed variant — the apply dispatch records the
+        // count but writes nothing.
+        let events = vec![AaveChunkEvent::RewardsClaimed {
+            user_id: 1,
+            reward_token_id: 99,
+            claimer_id: 1,
+            claimed_amount: alloy::primitives::U256::from(1_000u64),
+        }];
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 7_777).unwrap();
+            assert_eq!(report.rewards_claimed, 1, "counter incremented");
+            tx.commit().unwrap();
+        }
+
+        // Stamp advances (the no-op still counts as a processed event in the chunk).
+        assert_eq!(market_stamp(&db), Some(7_777));
+    }
+
+    #[test]
+    fn apply_aave_chunk_writes_on_conn_rolls_back_gho_on_missing_user() {
+        // A GhoDiscountPercentUpdated targeting a non-existent user_id →
+        // MissingRow → whole-chunk revert. Paired with a valid StkAaveStaked
+        // to verify the rollback is all-or-nothing.
+        let db = fresh_db();
+        seed_aave_v3_user(&db, 1);
+        // Pre-set stk_aave_balance = NULL.
+
+        let events = vec![
+            AaveChunkEvent::StkAaveStaked {
+                user_id: 1,
+                amount: alloy::primitives::U256::from(500u64),
+            },
+            AaveChunkEvent::GhoDiscountPercentUpdated {
+                user_id: 999, // no such row → MissingRow
+                new_discount_percent: 50,
+            },
+        ];
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            let result = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 9_000);
+            assert!(result.is_err(), "missing-user chunk must fail");
+        }
+
+        // (a) The stamp stayed at the seed value (None).
+        assert_eq!(
+            market_stamp(&db),
+            None,
+            "rolled-back chunk's stamp must not land"
+        );
+        // (b) The StkAaveStaked write did NOT land.
+        let (_, stk_balance) = user_gho_stk_state(&db, 1);
+        assert_eq!(
+            stk_balance, None,
+            "rolled-back chunk's stk_aave write must not be durable"
+        );
     }
 }
