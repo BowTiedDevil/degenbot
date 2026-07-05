@@ -31,6 +31,7 @@
 //! - [`revert`] — revert-data taxonomy (`classify_revert`): bytes → stable
 //!   label for the `[sim]` summary + engine revert tallies.
 
+pub mod aave_event_decoder;
 pub mod pool_created_decoder;
 pub mod revert;
 pub mod v2_sync_decoder;
