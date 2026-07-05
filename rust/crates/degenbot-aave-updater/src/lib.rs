@@ -47,6 +47,11 @@
 //! No `pyo3` (enforced by `just check-no-pyo3-in-cores`). The `PyO3` seam will
 //! live in `degenbot-python`.
 
+pub mod processors;
 mod run;
 
+pub use processors::{
+    ProcessorError, RayDivMode, RoundingStrategy, ScaledTokenBurnResult, ScaledTokenEventData,
+    ScaledTokenMintResult, ScaledTokenProcessor,
+};
 pub use run::{apply_aave_chunk_writes_on_conn, AaveChunkEvent, AaveChunkWriteReport};

@@ -122,6 +122,48 @@ pub enum AaveChunkEvent {
         /// The checksummed oracle address (`None` when the event's address is zero).
         price_source: Option<String>,
     },
+    /// `ScaledTokenMint(from, to, value)` — aToken/vToken Mint event (5Z3QQ2 —
+    /// SCALEAPPLY). Carries the PRE-COMPUTED signed `balance_delta` (the
+    /// orchestrator/parser ran [`ScaledTokenProcessor::process_collateral_mint`]
+    /// / [`ScaledTokenProcessor::process_debt_mint`] BEFORE constructing this
+    /// variant — mirrors CXRGX4 design decision #1: the apply core is pure
+    /// substrate, no processor calls). The apply dispatch just forwards the
+    /// delta to [`DegenbotDb::apply_scaled_token_mint_on_conn`].
+    ScaledTokenMint {
+        /// Which position table (collateral for aToken / debt for vToken).
+        position: degenbot_db::ScaledTokenPosition,
+        /// The pre-resolved position row id (the orchestrator called
+        /// `get_or_create_collateral_position_on_conn` /
+        /// `get_or_create_debt_position_on_conn`).
+        position_id: i64,
+        /// The pre-computed signed delta (positive for true mint, negative
+        /// for the interest-exceeds-value edge case).
+        balance_delta: alloy::primitives::I256,
+        /// The event's index (the apply fn reconciles `last_index` to it via
+        /// max-with-prev).
+        new_index: alloy::primitives::U256,
+    },
+    /// `ScaledTokenBurn(from, to, value)` — aToken/vToken Burn event (5Z3QQ2).
+    /// Carries the PRE-COMPUTED signed `balance_delta` (always negative — the
+    /// processor's `process_collateral_burn` / `process_debt_burn` returned
+    /// it).
+    ScaledTokenBurn {
+        position: degenbot_db::ScaledTokenPosition,
+        position_id: i64,
+        balance_delta: alloy::primitives::I256,
+        new_index: alloy::primitives::U256,
+    },
+    /// `BalanceTransfer(from, to, value)` — aToken transfer between users
+    /// (5Z3QQ2). Carries the resolved `from_position_id` + `to_position_id`
+    /// (both collateral — `BalanceTransfer` is aToken-only) + the scaled
+    /// amount + the transfer's index. The apply fn debits `from`, credits
+    /// `to`, + reconciles both positions' `last_index`.
+    ScaledTokenTransfer {
+        from_position_id: i64,
+        to_position_id: i64,
+        scaled_amount: alloy::primitives::U256,
+        transfer_index: alloy::primitives::U256,
+    },
 }
 
 /// Per-event-type apply counts for a chunk (mirrors `ChunkWriteReport`).
@@ -138,6 +180,10 @@ pub struct AaveChunkWriteReport {
     /// UR7QNL — the two direct-write Pool events.
     pub reserve_data_updated: usize,
     pub reserve_initialized: usize,
+    /// 5Z3QQ2 — the three `ScaledToken` (aToken/vToken) events.
+    pub scaled_token_mint: usize,
+    pub scaled_token_burn: usize,
+    pub scaled_token_transfer: usize,
     /// The `chunk_end_block` stamped onto `aave_v3_markets.last_update_block`
     /// as the LAST write in the transaction. `None` if `events` was empty (no
     /// stamp written — mirrors the precedent's "no events ⇒ no stamp" guard
@@ -305,6 +351,51 @@ pub fn apply_aave_chunk_writes_on_conn(
                     price_source.as_deref(),
                 )?;
                 report.reserve_initialized += 1;
+            }
+            AaveChunkEvent::ScaledTokenMint {
+                position,
+                position_id,
+                balance_delta,
+                new_index,
+            } => {
+                DegenbotDb::apply_scaled_token_mint_on_conn(
+                    conn,
+                    *position,
+                    *position_id,
+                    *balance_delta,
+                    *new_index,
+                )?;
+                report.scaled_token_mint += 1;
+            }
+            AaveChunkEvent::ScaledTokenBurn {
+                position,
+                position_id,
+                balance_delta,
+                new_index,
+            } => {
+                DegenbotDb::apply_scaled_token_burn_on_conn(
+                    conn,
+                    *position,
+                    *position_id,
+                    *balance_delta,
+                    *new_index,
+                )?;
+                report.scaled_token_burn += 1;
+            }
+            AaveChunkEvent::ScaledTokenTransfer {
+                from_position_id,
+                to_position_id,
+                scaled_amount,
+                transfer_index,
+            } => {
+                DegenbotDb::apply_scaled_token_transfer_on_conn(
+                    conn,
+                    *from_position_id,
+                    *to_position_id,
+                    *scaled_amount,
+                    *transfer_index,
+                )?;
+                report.scaled_token_transfer += 1;
             }
         }
     }
@@ -860,5 +951,294 @@ mod tests {
                 .unwrap();
             assert_eq!(n, 0, "rolled-back chunk's writes must not be durable");
         }
+    }
+
+    // ── 5Z3QQ2: ScaledToken (aToken/vToken) apply fns ────────────────────
+
+    use alloy::primitives::{I256, U256};
+    use degenbot_db::ScaledTokenPosition;
+    use degenbot_evm_math::RAY;
+
+    /// Seed a collateral position row (balance='0', `last_index=NULL`) + the
+    /// FK parents it needs (market, `erc20_tokens`, asset, user). Returns the
+    /// position id (always 1 in the test fixture seeding).
+    fn seed_collateral_position_with_balance(
+        db: &DegenbotDb,
+        position_id: i64,
+        balance_str: &str,
+        last_index: Option<&str>,
+    ) {
+        let conn = db.lock();
+        // erc20 parents (underlying + aToken + vToken).
+        for id in 1..=3 {
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (?1, 1, ?2)",
+                params![id, format!("0xtok{id}")],
+            )
+            .unwrap();
+        }
+        // Asset (at pk=1) with liquidity_index=borrow_index=RAY.
+        conn.execute(
+            "INSERT INTO aave_v3_assets \
+                (id, market_id, underlying_asset_id, a_token_id, a_token_revision, \
+                 v_token_id, v_token_revision, price_source, \
+                 liquidity_index, liquidity_rate, borrow_index, borrow_rate) \
+             VALUES (1, 1, 1, 2, 1, 3, 1, NULL, ?1, '0', ?1, '0')",
+            params![RAY.to_string()],
+        )
+        .unwrap();
+        // User (at pk=1).
+        conn.execute(
+            "INSERT INTO aave_v3_users \
+                (id, market_id, address, e_mode, gho_discount, stk_aave_balance, \
+                 isolation_mode_collateral_asset_id, isolation_mode_debt) \
+             VALUES (1, 1, '0xuser1', 0, 0, NULL, NULL, '0')",
+            [],
+        )
+        .unwrap();
+        // Collateral position.
+        conn.execute(
+            "INSERT INTO aave_v3_collateral_positions (id, user_id, asset_id, balance, last_index) \
+             VALUES (?1, 1, 1, ?2, ?3)",
+            params![position_id, balance_str, last_index],
+        )
+        .unwrap();
+    }
+
+    /// Read a position's (balance, `last_index`) back as strings.
+    fn position_state(db: &DegenbotDb, position_id: i64) -> (String, Option<String>) {
+        let conn = db.lock();
+        conn.query_row(
+            "SELECT balance, last_index FROM aave_v3_collateral_positions WHERE id = ?1",
+            [position_id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn apply_aave_chunk_writes_on_conn_dispatches_scaled_token_mint() {
+        let db = fresh_db();
+        seed_collateral_position_with_balance(&db, 1, "0", None);
+
+        // A pre-computed mint delta of +3 RAY (the processor returned this).
+        let events = vec![AaveChunkEvent::ScaledTokenMint {
+            position: ScaledTokenPosition::Collateral,
+            position_id: 1,
+            balance_delta: I256::try_from(U256::from(3u8) * RAY).unwrap(),
+            new_index: RAY,
+        }];
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 9_000).unwrap();
+            assert_eq!(report.scaled_token_mint, 1);
+            tx.commit().unwrap();
+        }
+
+        let (balance, last_index) = position_state(&db, 1);
+        assert_eq!(
+            balance,
+            (U256::from(3u8) * RAY).to_string(),
+            "balance += delta"
+        );
+        assert_eq!(
+            last_index,
+            Some(RAY.to_string()),
+            "last_index set to event index (was NULL → first event)"
+        );
+        assert_eq!(market_stamp(&db), Some(9_000));
+    }
+
+    #[test]
+    fn apply_aave_chunk_writes_on_conn_dispatches_scaled_token_burn() {
+        let db = fresh_db();
+        // Pre-credit with 5 RAY + last_index=RAY, so a burn of -3 RAY leaves 2 RAY.
+        seed_collateral_position_with_balance(
+            &db,
+            1,
+            &(U256::from(5u8) * RAY).to_string(),
+            Some(&RAY.to_string()),
+        );
+
+        let events = vec![AaveChunkEvent::ScaledTokenBurn {
+            position: ScaledTokenPosition::Collateral,
+            position_id: 1,
+            balance_delta: -I256::try_from(U256::from(3u8) * RAY).unwrap(),
+            new_index: RAY,
+        }];
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 10_000).unwrap();
+            assert_eq!(report.scaled_token_burn, 1);
+            tx.commit().unwrap();
+        }
+
+        let (balance, _last_index) = position_state(&db, 1);
+        assert_eq!(
+            balance,
+            (U256::from(2u8) * RAY).to_string(),
+            "balance after burn = 5 - 3 = 2 RAY"
+        );
+    }
+
+    #[test]
+    fn apply_aave_chunk_writes_on_conn_dispatches_scaled_token_transfer() {
+        let db = fresh_db();
+        // Seed two collateral positions: from (id=1, balance=5 RAY) + to (id=2, balance=0).
+        seed_collateral_position_with_balance(
+            &db,
+            1,
+            &(U256::from(5u8) * RAY).to_string(),
+            Some(&RAY.to_string()),
+        );
+        // The recipient also needs a position row; reuse the same seeding helper
+        // but on a distinct position id (its user can be the same for the test).
+        {
+            let conn = db.lock();
+            // The recipient needs a distinct user (the (user_id, asset_id)
+            // unique key would otherwise fire).
+            conn.execute(
+                "INSERT INTO aave_v3_users \
+                    (id, market_id, address, e_mode, gho_discount, stk_aave_balance, \
+                     isolation_mode_collateral_asset_id, isolation_mode_debt) \
+                 VALUES (2, 1, '0xuser2', 0, 0, NULL, NULL, '0')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO aave_v3_collateral_positions (id, user_id, asset_id, balance, last_index) \
+                 VALUES (2, 2, 1, '0', NULL)",
+                [],
+            )
+            .unwrap();
+        }
+
+        let events = vec![AaveChunkEvent::ScaledTokenTransfer {
+            from_position_id: 1,
+            to_position_id: 2,
+            scaled_amount: U256::from(2u8) * RAY,
+            transfer_index: RAY,
+        }];
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 11_000).unwrap();
+            assert_eq!(report.scaled_token_transfer, 1);
+            tx.commit().unwrap();
+        }
+
+        let (from_balance, _) = position_state(&db, 1);
+        let (to_balance, to_last_index) = position_state(&db, 2);
+        assert_eq!(
+            from_balance,
+            (U256::from(3u8) * RAY).to_string(),
+            "sender balance after transfer = 5 - 2 = 3 RAY"
+        );
+        assert_eq!(
+            to_balance,
+            (U256::from(2u8) * RAY).to_string(),
+            "recipient balance after transfer = 0 + 2 = 2 RAY"
+        );
+        assert_eq!(
+            to_last_index,
+            Some(RAY.to_string()),
+            "recipient last_index set to the transfer's index"
+        );
+    }
+
+    #[test]
+    fn apply_aave_chunk_writes_on_conn_last_index_max_with_prev() {
+        // An incoming event with a LOWER index than the position's current
+        // last_index must NOT clobber it (the max-with-prev guard).
+        let db = fresh_db();
+        // Pre-set last_index=3*RAY; the event's new_index (RAY) is lower.
+        seed_collateral_position_with_balance(
+            &db,
+            1,
+            "0",
+            Some(&(U256::from(3u8) * RAY).to_string()),
+        );
+
+        let events = vec![AaveChunkEvent::ScaledTokenMint {
+            position: ScaledTokenPosition::Collateral,
+            position_id: 1,
+            balance_delta: I256::try_from(RAY).unwrap(),
+            new_index: RAY, // LOWER than the position's existing 3*RAY.
+        }];
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            apply_aave_chunk_writes_on_conn(&tx, 1, &events, 12_000).unwrap();
+            tx.commit().unwrap();
+        }
+
+        let (_, last_index) = position_state(&db, 1);
+        assert_eq!(
+            last_index,
+            Some((U256::from(3u8) * RAY).to_string()),
+            "lower-index event must NOT clobber the higher existing last_index"
+        );
+    }
+
+    #[test]
+    fn apply_aave_chunk_writes_on_conn_rolls_back_scaled_token_on_missing_position() {
+        // A ScaledTokenMint targeting a non-existent position_id → MissingRow
+        // → whole-chunk revert. We pair it with a valid asset row-creating
+        // ReserveInitialized event to verify the rollback is all-or-nothing.
+        let db = fresh_db();
+        seed_collateral_position_with_balance(&db, 1, "0", None);
+
+        // (a) valid ReserveInitialized (creates an asset row at underlying=999)
+        //     + (b) invalid ScaledTokenMint on position_id=999.
+        let events = vec![
+            AaveChunkEvent::ReserveInitialized {
+                market_id: 1,
+                underlying_asset_id: 999,
+                a_token_id: 2,
+                a_token_revision: 1,
+                v_token_id: 3,
+                v_token_revision: 1,
+                price_source: None,
+            },
+            AaveChunkEvent::ScaledTokenMint {
+                position: ScaledTokenPosition::Collateral,
+                position_id: 999, // no such row → MissingRow
+                balance_delta: I256::try_from(RAY).unwrap(),
+                new_index: RAY,
+            },
+        ];
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            let result = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 13_000);
+            assert!(result.is_err(), "missing-position chunk must fail");
+            // Don't commit — the dropped tx rolls back.
+        }
+
+        // (a) The stamp stayed at the seed value (None).
+        assert_eq!(
+            market_stamp(&db),
+            None,
+            "rolled-back chunk's stamp must not land"
+        );
+        // (b) The ReserveInitialized-written asset row did NOT land.
+        let n: i64 = {
+            let conn = db.lock();
+            conn.query_row(
+                "SELECT COUNT(*) FROM aave_v3_assets WHERE underlying_asset_id = 999",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            n, 0,
+            "rolled-back chunk's asset-row creation must not be durable"
+        );
+        // (c) The collateral position's balance is still '0' (no mint landed).
+        let (balance, _) = position_state(&db, 1);
+        assert_eq!(balance, "0", "rolled-back chunk's mint must not be durable");
     }
 }
