@@ -48,6 +48,7 @@
 //! live in `degenbot-python`.
 
 pub mod aave_fetch;
+pub mod config_dispatch;
 pub mod gho_processor;
 pub mod operations;
 pub mod operations_parser;
