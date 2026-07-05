@@ -1612,6 +1612,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "degenbot-aave-updater"
+version = "0.6.0-alpha.3"
+dependencies = [
+ "alloy",
+ "degenbot-db",
+ "rusqlite",
+]
+
+[[package]]
 name = "degenbot-abi"
 version = "0.6.0-alpha.3"
 dependencies = [
