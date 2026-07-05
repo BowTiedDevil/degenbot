@@ -1754,6 +1754,250 @@ impl DegenbotDb {
             claimed_amount,
         )
     }
+
+    // ── HQF5NQ-A substrate lookups (the parser's address→id resolution) ──
+    //
+    // Four lookups the parser needs (each verified non-existent via
+    // `grep "pub fn get_or_create\|pub fn lookup" write.rs` before being
+    // added — Finding 2 of HQF5NQ's BLOCKED-FOR-SPLIT-DECISION). Each mirrors
+    // the Python `operations_parser.py::_get_*` helpers in shape — `&Connection`
+    // for the chunk-tx §3.4 invariant (one `Transaction` per chunk).
+
+    /// Get-or-create an `aave_gho_tokens` row by `(chain_id, token_address)`.
+    /// Port of the GHO-token resolution the parser + apply glue uses to
+    /// resolve the `gho_token_id` parameter the GHO apply fns take (RYKCC4
+    /// flag #6 follow-up; the apply fns `apply_gho_discount_rate_strategy_updated_on_conn`
+    /// / `apply_gho_discount_token_updated_on_conn` require a pre-resolved
+    /// `gho_token_id`).
+    ///
+    /// On create, inserts a bare row (`token_id` resolved via
+    /// [`Self::get_or_create_erc20_token_on_conn`]; `v_token_id` left `NULL`; the
+    /// `v_gho_discount_rate_strategy` / `v_gho_discount_token` columns are
+    /// filled later by their apply fns). On an existing row, returns the
+    /// `id` (no UPSERT — the columns are managed by the GHO-config apply
+    /// fns).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure.
+    pub fn get_or_create_gho_token_on_conn(
+        conn: &rusqlite::Connection,
+        chain_id: i64,
+        token_address: &str,
+    ) -> Result<i64, DbError> {
+        if let Some(id) = existing_gho_token(conn, chain_id, token_address)? {
+            return Ok(id);
+        }
+        // Resolve the erc20_tokens row id (the FK) — the caller passes the
+        // address; we look up / insert the token-row first.
+        let token_id = Self::get_or_create_erc20_token_on_conn(
+            conn,
+            chain_id,
+            token_address,
+            None,
+            None,
+            None,
+        )?;
+        conn.execute(
+            "INSERT INTO aave_gho_tokens (token_id) VALUES (?1)",
+            params![token_id],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// The `&self` wrapper for [`Self::get_or_create_gho_token_on_conn`].
+    /// # Errors
+    ///
+    /// Same error conditions as the `_on_conn` variant.
+    pub fn get_or_create_gho_token(
+        &self,
+        chain_id: i64,
+        token_address: &str,
+    ) -> Result<i64, DbError> {
+        let conn = self.conn.lock();
+        Self::get_or_create_gho_token_on_conn(&conn, chain_id, token_address)
+    }
+
+    /// Resolve the asset-row id for an emitter token address (the
+    /// `_get_asset_by_token_type` port). Mirrors the Python `_get_token_type` +
+    /// `_get_asset_by_token` JOIN — the parser classifies each decoded
+    /// `Mint/Burn/BalanceTransfer` event by the contract that emitted it: aToken →
+    /// [`ScaledTokenEventType`][crate::operations::ScaledTokenEventType] collateral, vToken → debt.
+    /// The `token_type` discriminates which column to JOIN against
+    /// (`a_token_id` / `v_token_id`); returns `None` if the address isn't a
+    /// known market asset (the caller decides — for plain ERC20 `Transfer`
+    /// events this is the GHO-discount-token branch).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure.
+    pub fn lookup_asset_id_by_token_address_on_conn(
+        conn: &rusqlite::Connection,
+        market_id: i64,
+        token_address: &str,
+        token_type: &str,
+    ) -> Result<Option<i64>, DbError> {
+        // The two-column JOIN: aave_v3_assets.{a_token_id,v_token_id} JOIN
+        // erc20_tokens.address. The `token_type` selects the column.
+        let column = match token_type {
+            "a_token" => "a_token_id",
+            "v_token" => "v_token_id",
+            _ => {
+                return Err(DbError::Decode(format!(
+                    "unexpected TokenType '{token_type}' (expected 'a_token' or 'v_token')"
+                )));
+            }
+        };
+        let sql = format!(
+            "SELECT a.id FROM aave_v3_assets a
+             JOIN erc20_tokens t ON t.id = a.{column}
+             WHERE a.market_id = ?1 AND t.address = ?2"
+        );
+        Ok(conn
+            .query_row(&sql, rusqlite::params![market_id, token_address], |r| {
+                r.get::<_, i64>(0)
+            })
+            .optional()?)
+    }
+
+    /// Resolve the emitter token's full row (id + the partner token addresses
+    /// and revisions). The parser uses the partner addresses to validate the
+    /// contract-emitter match the Python does in each `_create_*_operation`
+    /// (e.g. `ev.event["address"] != expected_a_token`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure.
+    pub fn lookup_asset_by_token_address_on_conn(
+        conn: &rusqlite::Connection,
+        market_id: i64,
+        token_address: &str,
+        token_type: &str,
+    ) -> Result<Option<AssetRow>, DbError> {
+        let column = match token_type {
+            "a_token" => "a_token_id",
+            "v_token" => "v_token_id",
+            _ => {
+                return Err(DbError::Decode(format!(
+                    "unexpected TokenType '{token_type}' (expected 'a_token' or 'v_token')"
+                )));
+            }
+        };
+        let sql = format!(
+            "SELECT
+                a.id,
+                a.a_token_revision,
+                a.v_token_revision,
+                t_underlying.address AS underlying,
+                t_a.address AS a_token,
+                t_v.address AS v_token
+             FROM aave_v3_assets a
+             JOIN erc20_tokens t_underlying ON t_underlying.id = a.underlying_asset_id
+             JOIN erc20_tokens t_a ON t_a.id = a.a_token_id
+             JOIN erc20_tokens t_v ON t_v.id = a.v_token_id
+             WHERE a.market_id = ?1 AND a.{column} IN (
+                 SELECT id FROM erc20_tokens WHERE address = ?2
+             )"
+        );
+        // NB: rusqlite's prepared-statement approach — the column is formatted
+        // into the SQL string (it's an internal constant, not user input) and
+        // the bind params cover only the WHERE-clause values.
+        let mut stmt = conn.prepare(&sql)?;
+        let row = stmt
+            .query_row(rusqlite::params![market_id, token_address], |r| {
+                Ok(AssetRow {
+                    id: r.get(0)?,
+                    a_token_revision: r
+                        .get::<_, Option<i64>>(1)?
+                        .map_or(0, |v| u32::try_from(v).unwrap_or(0)),
+                    v_token_revision: r
+                        .get::<_, Option<i64>>(2)?
+                        .map_or(0, |v| u32::try_from(v).unwrap_or(0)),
+                    underlying_token_address: r.get::<_, String>(3)?,
+                    a_token_address: r.get::<_, String>(4)?,
+                    v_token_address: r.get::<_, String>(5)?,
+                })
+            })
+            .optional()?;
+        Ok(row)
+    }
+
+    /// Resolve the Pool contract revision (the `_get_pool_revision` port).
+    /// DP4: read once per tx at parse-start; mid-tx `PoolUpdated` config
+    /// events are the orchestrator's concern.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure.
+    pub fn lookup_pool_revision_on_conn(
+        conn: &rusqlite::Connection,
+        market_id: i64,
+        contract_name: &str,
+    ) -> Result<Option<u32>, DbError> {
+        // `revision` is NULL-able; the row may also be missing. `.optional()` on
+        // the `QueryResult` converts a no-row case to `Ok(None)`; `.flatten()`
+        // then collapses the NULL column.
+        let rev: Option<Option<i64>> = conn
+            .query_row(
+                "SELECT revision FROM aave_v3_contracts WHERE market_id = ?1 AND name = ?2",
+                params![market_id, contract_name],
+                |r| r.get::<_, Option<i64>>(0),
+            )
+            .optional()?;
+        Ok(rev.flatten().map(|v| u32::try_from(v).unwrap_or(0)))
+    }
+
+    /// Resolve the collateral (aToken) or debt (vToken) position-row id by
+    /// `(user_id, asset_id, position_type)`. Mirrors the parser's need to
+    /// look up the `BalanceTransfer` recipient's collateral position for the
+    /// `DEFICIT_COVERAGE` triplet. `position_type` is `'collateral'` or `'debt'`
+    /// (the parser / dispatch glue selects the table).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure.
+    pub fn lookup_position_by_user_asset_on_conn(
+        conn: &rusqlite::Connection,
+        user_id: i64,
+        asset_id: i64,
+        position_type: &str,
+    ) -> Result<Option<i64>, DbError> {
+        let (table, fk) = match position_type {
+            "collateral" => ("aave_v3_collateral_positions", "asset_id"),
+            "debt" => ("aave_v3_debt_positions", "asset_id"),
+            _ => {
+                return Err(DbError::Decode(format!(
+                    "unexpected position_type '{position_type}' (expected 'collateral' or 'debt')"
+                )));
+            }
+        };
+        let sql = format!("SELECT id FROM {table} WHERE user_id = ?1 AND {fk} = ?2");
+        Ok(conn
+            .query_row(&sql, rusqlite::params![user_id, asset_id], |r| {
+                r.get::<_, i64>(0)
+            })
+            .optional()?)
+    }
+}
+
+/// The asset-row view the parser uses (aToken-vToken-Underlying triplet +
+/// revisions). Returned by [`DegenbotDb::lookup_asset_by_token_address_on_conn`].
+/// Owned (no lifetime) — small enough to clone.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::module_name_repetitions)]
+pub struct AssetRow {
+    /// `aave_v3_assets.id`.
+    pub id: i64,
+    /// The aToken's revision (drives [`ScaledTokenProcessor::collateral`]).
+    pub a_token_revision: u32,
+    /// The vToken's revision (drives [`ScaledTokenProcessor::debt`]).
+    pub v_token_revision: u32,
+    /// The underlying-token address (HexBytes-free lowercase hex string).
+    pub underlying_token_address: String,
+    /// The aToken address (lowercase hex string).
+    pub a_token_address: String,
+    /// The vToken address (lowercase hex string).
+    pub v_token_address: String,
 }
 
 /// Which position table a `ScaledToken` event applies to (mirrors the
@@ -2010,6 +2254,26 @@ fn existing_user(
         .query_row(
             "SELECT id FROM aave_v3_users WHERE market_id = ?1 AND address = ?2",
             params![market_id, address],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
+/// Look up an `aave_gho_tokens.id` by the underlying GHO token's `(chain, address)`
+/// — joins through `erc20_tokens` (the `aave_gho_tokens` table is keyed by
+/// `token_id`, not by address).
+#[allow(clippy::missing_errors_doc)]
+fn existing_gho_token(
+    conn: &rusqlite::Connection,
+    chain_id: i64,
+    token_address: &str,
+) -> Result<Option<i64>, DbError> {
+    Ok(conn
+        .query_row(
+            "SELECT g.id FROM aave_gho_tokens g
+             JOIN erc20_tokens t ON t.id = g.token_id
+             WHERE t.chain = ?1 AND t.address = ?2",
+            params![chain_id, token_address],
             |r| r.get(0),
         )
         .optional()?)

@@ -22,6 +22,7 @@ suspicious = "warn"
 [dependencies]
 alloy = { version = "^2.0" }
 degenbot-db = { path = "../degenbot-db" }
+degenbot-decoders = { path = "../degenbot-decoders" }
 degenbot-evm-math = { path = "../degenbot-evm-math" }
 rusqlite = { version = "^0.31" }
 thiserror = { version = "^1.0" }
