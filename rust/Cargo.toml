@@ -46,6 +46,7 @@ members = [
     "crates/degenbot-pathfinding",
     "crates/degenbot-db",
     "crates/degenbot-pool-updater",
+    "crates/degenbot-aave-updater",
     "crates/degenbot-executor",
     "crates/degenbot-python",
     "crates/degenbot",
