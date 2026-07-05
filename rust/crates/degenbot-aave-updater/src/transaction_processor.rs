@@ -169,22 +169,17 @@ fn dispatch_operation(
         // The Operation carries the scaled events; pass them through as
         // zero-delta mints/burns so the position's `last_index` advances.
         OperationType::InterestAccrual => dispatch_interest_accrual(op, market_id, conn, events),
-        OperationType::Liquidation | OperationType::GhoLiquidation => Err(ProcessTxError::Deferred(
-            "liquidation apply (collateral_burn vs collateral_transfer split + debt_burn dispatch) — C2"
-                .into(),
+        OperationType::Liquidation => dispatch_liquidation(op, market_id, conn, events),
+        OperationType::GhoLiquidation => Err(ProcessTxError::Deferred(
+            "GHO liquidation apply (needs UnifiedGhoProcessor + GHO-discount machinery) — C3".into(),
         )),
         OperationType::GhoBorrow | OperationType::GhoRepay | OperationType::GhoFlashLoan => {
             Err(ProcessTxError::Deferred(
-                "GHO apply (the GHO-discount-lookup machinery + the GhoDebtMint/Burn apply) — C2 / RYKCC4"
-                    .into(),
+                "GHO Borrow/Repay/FlashLoan (needs UnifiedGhoProcessor (RYKCC4) + GHO-discount machinery with RPC dep) — C3".into(),
             ))
         }
-        OperationType::DeficitCoverage => Err(ProcessTxError::Deferred(
-            "deficit-coverage paired-event apply (BalanceTransfer + Burn atomic) — C2".into(),
-        )),
-        OperationType::MintToTreasury => Err(ProcessTxError::Deferred(
-            "mint-to-treasury v8 ray_div(amountMinted, liquidity_index) branch — C2".into(),
-        )),
+        OperationType::DeficitCoverage => dispatch_deficit_coverage(op, market_id, conn, events),
+        OperationType::MintToTreasury => dispatch_mint_to_treasury(op, market_id, conn, events),
         OperationType::StkAaveTransfer => {
             // Pre-processed by the orchestrator (the stkAAVE transfers run
             // BEFORE GHO operations for the discount computation); no apply
@@ -216,12 +211,15 @@ fn dispatch_standard(
             op.operation_type
         ))
     })?;
-    let raw_amount = extract_pool_amount_word0(pool_event);
     // Sort scaled_events by logIndex (mirror of `_process_operation`).
     let mut scaled: Vec<&ScaledTokenEvent> = op.scaled_events.iter().collect();
     scaled.sort_by_key(|e| e.log_index);
     for ev in &scaled {
-        let chunk_event = build_scaled_event_chunk_event(ev, op, raw_amount, market_id, conn)?;
+        // Use the per-event-type raw-amount extractor (the standard path
+        // resolves to word 0; the liquidation path, handled in
+        // `dispatch_liquidation`, resolves per event type).
+        let ev_raw = extract_raw_amount_for_event(pool_event, ev, op);
+        let chunk_event = build_scaled_event_chunk_event(ev, op, ev_raw, market_id, conn)?;
         events.push(chunk_event);
     }
     Ok(())
@@ -239,6 +237,48 @@ fn extract_pool_amount_word0(pool_event: &Log) -> U256 {
     let mut buf = [0u8; 32];
     buf.copy_from_slice(&data[0..32]);
     U256::from_be_bytes::<32>(buf)
+}
+
+/// Extract data word 1 (bytes 32..64) from a Pool event's `data` field. This
+/// is the `liquidatedCollateralAmount` for `LiquidationCall` (the collateral-
+/// extraction path of `RawAmountExtractor::extract_liquidation_collateral`).
+fn extract_pool_amount_word1(pool_event: &Log) -> U256 {
+    let data = pool_event.data().data.as_ref();
+    if data.len() < 64 {
+        return U256::ZERO;
+    }
+    let mut buf = [0u8; 32];
+    buf.copy_from_slice(&data[32..64]);
+    U256::from_be_bytes::<32>(buf)
+}
+
+/// The per-event-type raw-amount extractor for an Operation (mirrors
+/// `EnrichmentContext::extract_pool_amount`). For standard operations
+/// (Supply/Withdraw/Borrow/Repay), the `raw_amount` is data word 0. For
+/// `LiquidationCall`, the `raw_amount` depends on the scaled event's type:
+/// debt burn/transfer → word 0 (`debtToCover`); collateral burn/transfer →
+/// word 1 (`liquidatedCollateralAmount`). This is the
+/// `extract_liquidation_debt` / `extract_liquidation_collateral` special
+/// path.
+#[allow(clippy::match_same_arms)] // the debt-burn + fallback arms both return word0 (the LiquidationCall word0 = debtToCover)
+fn extract_raw_amount_for_event(pool_event: &Log, ev: &ScaledTokenEvent, op: &Operation) -> U256 {
+    let is_liquidation = op.operation_type == OperationType::Liquidation
+        || op.operation_type == OperationType::GhoLiquidation;
+    if is_liquidation {
+        match ev.event_type {
+            ScaledTokenEventType::DebtBurn
+            | ScaledTokenEventType::DebtTransfer
+            | ScaledTokenEventType::Erc20DebtTransfer => extract_pool_amount_word0(pool_event),
+            ScaledTokenEventType::CollateralBurn
+            | ScaledTokenEventType::CollateralTransfer
+            | ScaledTokenEventType::Erc20CollateralTransfer => {
+                extract_pool_amount_word1(pool_event)
+            }
+            _ => extract_pool_amount_word0(pool_event),
+        }
+    } else {
+        extract_pool_amount_word0(pool_event)
+    }
 }
 
 /// Build an [`AaveChunkEvent`] from a single scaled-token event. Mirrors the
@@ -348,7 +388,11 @@ fn build_scaled_event_chunk_event(
                     new_index: result.new_index,
                 })
             } else {
-                // Standard mint path.
+                // Standard mint path. Dispatch to the correct processor
+                // method based on token_type — aToken uses
+                // `process_collateral_mint`, vToken uses `process_debt_mint`.
+                // (A previous `.or_else` fallback called the wrong method for
+                // vToken events — fixed per C2 review.)
                 let scaled_amount = ray_div(raw_amount, index, strategy_mode.mint.into())?;
                 let event_data = ScaledTokenEventData {
                     value: ev.amount,
@@ -356,9 +400,11 @@ fn build_scaled_event_chunk_event(
                     index,
                     scaled_amount: Some(scaled_amount),
                 };
-                let result = processor
-                    .process_collateral_mint(&event_data)
-                    .or_else(|_| processor.process_debt_mint(&event_data))?;
+                let result = if token_type == "v_token" {
+                    processor.process_debt_mint(&event_data)
+                } else {
+                    processor.process_collateral_mint(&event_data)
+                }?;
                 let position_id = resolve_position_id(
                     conn,
                     market_id,
@@ -378,6 +424,10 @@ fn build_scaled_event_chunk_event(
         ScaledTokenEventType::CollateralBurn
         | ScaledTokenEventType::DebtBurn
         | ScaledTokenEventType::GhoDebtBurn => {
+            // For a vToken DebtBurn, dispatch to `process_debt_burn` (not
+            // `process_collateral_burn` — the branch logic + ZERO-delta edge
+            // differ). The `scaled_delta` arg stays `None` (the enriched
+            // `scaled_amount` is on `event_data`).
             let scaled_amount = ray_div(raw_amount, index, strategy_mode.burn.into())?;
             let event_data = ScaledTokenEventData {
                 value: ev.amount,
@@ -385,7 +435,11 @@ fn build_scaled_event_chunk_event(
                 index,
                 scaled_amount: Some(scaled_amount),
             };
-            let result = processor.process_collateral_burn(&event_data, None)?;
+            let result = if token_type == "v_token" {
+                processor.process_debt_burn(&event_data, None)
+            } else {
+                processor.process_collateral_burn(&event_data, None)
+            }?;
             let position_id = resolve_position_id(
                 conn,
                 market_id,
@@ -519,6 +573,159 @@ fn dispatch_interest_accrual(
         )?;
         events.push(AaveChunkEvent::ScaledTokenMint {
             position,
+            position_id,
+            balance_delta: result.balance_delta,
+            new_index: result.new_index,
+        });
+    }
+    Ok(())
+}
+
+/// Dispatch the standard (non-GHO) `LiquidationCall` apply. Mirrors the
+/// `_process_operation` dispatch for `OperationType::Liquidation` — the
+/// `extract_pool_amount` special-liquidation path: debt burn/transfer → word 0
+/// (`debtToCover`); collateral burn/transfer → word 1
+/// (`liquidatedCollateralAmount`). The `COMBINED_BURN/SEPARATE_BURNS` pattern
+/// detection is B's concern (the Operation already carries the matched
+/// scaled events in `op.scaled_events`); C2 applies each via
+/// [`build_scaled_event_chunk_event`] with the per-event-type `raw_amount`.
+///
+/// **The bad-debt "set balance to 0" override is deferred to C3** —
+/// `UnifiedGhoProcessor` (RYKCC4 scope, not ported in SCALEAPPLY) is the
+/// prerequisite for the bad-debt detection + the GHO liquidation. The
+/// standard delta-based apply here is correct for non-bad-debt liquidations;
+/// for bad-debt (where the contract burns the ENTIRE remaining debt), the
+/// delta-based approach may be off by 1 wei (the `debtToCover` vs actual
+/// debt discrepancy) — C3's `set-balanced-to-0` override removes the roundoff.
+#[allow(clippy::too_many_lines)]
+fn dispatch_liquidation(
+    op: &Operation,
+    market_id: i64,
+    conn: &Connection,
+    events: &mut Vec<AaveChunkEvent>,
+) -> Result<(), ProcessTxError> {
+    let pool_event = op.pool_event.ok_or_else(|| {
+        ProcessTxError::Deferred(format!(
+            "liquidation op {:?} has no pool_event (LiquidationCall missing)",
+            op.operation_type
+        ))
+    })?;
+    let mut scaled: Vec<&ScaledTokenEvent> = op.scaled_events.iter().collect();
+    scaled.sort_by_key(|e| e.log_index);
+    for ev in &scaled {
+        // The per-event-type raw-amount extractor resolves debt burn/transfer
+        // → word 0, collateral burn/transfer → word 1.
+        let ev_raw = extract_raw_amount_for_event(pool_event, ev, op);
+        let chunk_event = build_scaled_event_chunk_event(ev, op, ev_raw, market_id, conn)?;
+        events.push(chunk_event);
+    }
+    Ok(())
+}
+
+/// Dispatch the `DeficitCoverage` paired-event apply (Umbrella protocol).
+/// Mirrors `_process_deficit_coverage_operation` — process transfer events
+/// first (credit the user's collateral position), then burn events (debit,
+/// including accrued interest). The burn's `scaled_amount` is computed
+/// directly from the burn's `amount` + `index` (skip enrichment validation
+/// — the deficit-coverage burn includes interest accrued between the
+/// transfer + the burn within the same tx).
+#[allow(clippy::too_many_lines)]
+fn dispatch_deficit_coverage(
+    op: &Operation,
+    market_id: i64,
+    conn: &Connection,
+    events: &mut Vec<AaveChunkEvent>,
+) -> Result<(), ProcessTxError> {
+    let mut scaled: Vec<&ScaledTokenEvent> = op.scaled_events.iter().collect();
+    scaled.sort_by_key(|e| e.log_index);
+    // Two-pass: transfers first (credit), then burns (debit).
+    for ev in &scaled {
+        if matches!(
+            ev.event_type,
+            ScaledTokenEventType::CollateralTransfer
+                | ScaledTokenEventType::Erc20CollateralTransfer
+        ) {
+            // The transfer's `amount` IS the scaled value (no enrichment).
+            let chunk_event = build_scaled_event_chunk_event(ev, op, ev.amount, market_id, conn)?;
+            events.push(chunk_event);
+        }
+    }
+    for ev in &scaled {
+        if matches!(ev.event_type, ScaledTokenEventType::CollateralBurn) {
+            // The deficit-coverage burn: compute `scaled_amount` directly from
+            // the burn's `amount` (the raw value) + `index` (the collateral-burn strategy). Skip
+            // enrichment validation (the burn includes interest accrued between
+            // the transfer + the burn — mirrors `_process_deficit_coverage_burn`).
+            let chunk_event = build_scaled_event_chunk_event(ev, op, ev.amount, market_id, conn)?;
+            events.push(chunk_event);
+        }
+    }
+    Ok(())
+}
+
+/// Dispatch the `MintToTreasury` operation. Mirrors
+/// `_calculate_mint_to_treasury_scaled_amount` — the
+/// `PoolMath::underlying_to_scaled_collateral` revision split:
+/// - rev >= 9: `ray_div_ceil(amountMinted, liquidity_index)` (reverse of `ray_mul_floor`).
+/// - rev <= 8: `ray_div(amountMinted, liquidity_index, HALF_UP)` (reverse of `ray_mul` half-up).
+///   The `amountMinted` field is on `op.minted_to_treasury_amount` (A's DP3 field).
+#[allow(clippy::too_many_lines)]
+fn dispatch_mint_to_treasury(
+    op: &Operation,
+    market_id: i64,
+    conn: &Connection,
+    events: &mut Vec<AaveChunkEvent>,
+) -> Result<(), ProcessTxError> {
+    let minted_amount = op.minted_to_treasury_amount.ok_or_else(|| {
+        ProcessTxError::Deferred(
+            "MintToTreasury op has no `minted_to_treasury_amount` (DP3 field)".into(),
+        )
+    })?;
+    let mut scaled: Vec<&ScaledTokenEvent> = op.scaled_events.iter().collect();
+    scaled.sort_by_key(|e| e.log_index);
+    for ev in &scaled {
+        let token_addr_str = addr_to_hex(ev.token_address);
+        let asset = DegenbotDb::lookup_asset_by_token_address_on_conn(
+            conn,
+            market_id,
+            &token_addr_str,
+            "a_token",
+        )?
+        .ok_or_else(|| {
+            ProcessTxError::Substrate(degenbot_db::DbError::Decode(format!(
+                "no aToken asset for {token_addr_str} in market {market_id}"
+            )))
+        })?;
+        let index = ev.index.unwrap_or_default();
+        let balance_increase = ev.balance_increase.unwrap_or_default();
+        // The revision split: rev >= 9 → CEIL, rev <= 8 → HALF_UP.
+        let scaled_amount = if op.pool_revision >= 9 {
+            degenbot_evm_math::ray_div_ceil(minted_amount, index)?
+        } else {
+            ray_div(
+                minted_amount,
+                index,
+                Some(degenbot_evm_math::RayRounding::HalfUp),
+            )?
+        };
+        let processor = ScaledTokenProcessor::collateral(asset.a_token_revision);
+        let event_data = ScaledTokenEventData {
+            value: ev.amount,
+            balance_increase,
+            index,
+            scaled_amount: Some(scaled_amount),
+        };
+        let result = processor.process_collateral_mint(&event_data)?;
+        let position_id = resolve_position_id(
+            conn,
+            market_id,
+            ScaledTokenPosition::Collateral,
+            ev.user_address,
+            asset.id,
+            &asset.underlying_token_address,
+        )?;
+        events.push(AaveChunkEvent::ScaledTokenMint {
+            position: ScaledTokenPosition::Collateral,
             position_id,
             balance_delta: result.balance_delta,
             new_index: result.new_index,
@@ -695,5 +902,65 @@ mod tests {
     #[ignore = "HQF5NQ-C2: end-to-end synthetic-tx fixture (byte-exact log shapes)"]
     fn process_transaction_supply_writes_collateral_position() {
         let _db = fresh_db_with_asset();
+    }
+
+    /// `extract_pool_amount_word1` reads data word 1 (bytes 32..64) — the
+    /// `liquidatedCollateralAmount` for `LiquidationCall`. This is the
+    /// collateral-extraction path of `RawAmountExtractor::extract_liquidation_
+    /// collateral`.
+    #[test]
+    fn extract_pool_amount_word1_reads_data_word_1() {
+        use degenbot_decoders::aave_event_decoder::LIQUIDATION_CALL_TOPIC;
+        // LiquidationCall data = [debtToCover=1000, liquidatedCollateralAmount=500, liquidator, receiveAToken].
+        let debt_to_cover = U256::from(1_000u64);
+        let liquidated_collateral = U256::from(500u64);
+        let mut data = vec![0u8; 128];
+        debt_to_cover
+            .to_be_bytes::<32>()
+            .iter()
+            .enumerate()
+            .for_each(|(i, b)| {
+                data[i] = *b;
+            });
+        liquidated_collateral
+            .to_be_bytes::<32>()
+            .iter()
+            .enumerate()
+            .for_each(|(i, b)| {
+                data[32 + i] = *b;
+            });
+        let log = make_log(
+            0,
+            Address::from([0xAA; 20]),
+            vec![
+                LIQUIDATION_CALL_TOPIC,
+                B256::left_padding_from(Address::from([0x01; 20]).as_slice()),
+                B256::left_padding_from(Address::from([0x02; 20]).as_slice()),
+                B256::left_padding_from(Address::from([0x03; 20]).as_slice()),
+            ],
+            Bytes::from(data),
+        );
+        assert_eq!(extract_pool_amount_word0(&log), U256::from(1_000u64));
+        assert_eq!(extract_pool_amount_word1(&log), U256::from(500u64));
+    }
+
+    /// `OperationType::MintToTreasury` scaled-amount calculation — the
+    /// `PoolMath::underlying_to_scaled_collateral` revision split. This is
+    /// the §4.2-zero-drift surface for the `MintToTreasury` path: rev >= 9 →
+    /// CEIL, rev <= 8 → `HALF_UP`. Mirrors `calculator.py` +
+    /// `pool_math.py::underlying_to_scaled_collateral`.
+    #[test]
+    fn mint_to_treasury_scaled_amount_revision_split() {
+        use degenbot_evm_math::RAY;
+        // amountMinted = 1000 (underlying), liquidity_index = 3 RAY.
+        // rev 9+: ray_div_ceil(1000, 3*RAY) — 1000/3 rounds up.
+        let minted = U256::from(1_000u64);
+        let index = U256::from(3u64) * RAY;
+        let v9 = degenbot_evm_math::ray_div_ceil(minted, index).unwrap();
+        let v8 = ray_div(minted, index, Some(degenbot_evm_math::RayRounding::HalfUp)).unwrap();
+        // 1000/3 = 333.33... → ceil = 334, half_up = 333.
+        assert_eq!(v9, U256::from(334u64));
+        assert_eq!(v8, U256::from(333u64));
+        assert_ne!(v9, v8, "the rev-9 CEIL vs rev-8 HALF_UP split must differ");
     }
 }
