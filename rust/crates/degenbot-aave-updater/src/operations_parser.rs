@@ -1684,21 +1684,7 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
         Ok(row.and_then(|a| parse_address(&a.v_token_address)))
     }
 
-    // ── the liquidation engine (HQF5NQ-B — replaces A's stub) ────────────
-
-    /// **Marker — B (HQF5NQ-B) replaced this stub.** The dispatcher in
-    /// `create_operation_from_pool_event` now calls
-    /// `create_liquidation_operation` directly (the real impl + the
-    /// `_collect_debt_burns` `SINGLE/COMBINED_BURN/SEPARATE_BURNS` detection +
-    /// the `_analyze_liquidation_scenarios` / `_analyze_user_liquidation_count`
-    /// pre-analysis dicts). Kept as a private no-op so `git blame` on the
-    /// original-stub line preserves the decommissioning context; delete once
-    /// HQF5NQ-C's apply dispatch is wired (the §4.2 cross-check (U5YIBG)
-    /// no longer references the old stub).
-    #[allow(clippy::unused_self, dead_code)] // marker — git-blame context only
-    fn create_liquidation_stub_replaced_by_b(&self) {
-        let _ = self;
-    }
+    // ── the liquidation engine (HQF5NQ-B) ────────────────────────────────
 
     // ── the liquidation engine fns (HQF5NQ-B) ──────────────────────────
 
@@ -2312,14 +2298,14 @@ fn is_erc20_transfer_log(log: &Log) -> bool {
 
 /// Read the `logIndex` of a `Log` as a `u64` (`0` if absent — every RPC-fetched
 /// receipt has one).
-fn log_idx_value(log: &Log) -> u64 {
+pub(crate) fn log_idx_value(log: &Log) -> u64 {
     log.log_index.map_or(0, |i| i)
 }
 
 /// Convert an alloy `Address` to the canonical lowercase hex string the
 /// `erc20_tokens.address` VARCHAR(42) column stores (mirror of the
 /// Python's `get_checksum_address` lowercase-storage convention).
-fn addr_to_hex(addr: Address) -> String {
+pub(crate) fn addr_to_hex(addr: Address) -> String {
     // NB: alloy's Address::to_checksumtle produces lowercase without the 0x
     // prefix on `to_string`; the SQLite column stores `0x...` lowercase.
     format!("0x{}", alloy::hex::encode(addr.as_slice()))
@@ -2327,7 +2313,7 @@ fn addr_to_hex(addr: Address) -> String {
 
 /// Parse a hex string (with or without `0x` prefix) to an alloy `Address`.
 /// Returns `None` on malformed input.
-fn parse_address(s: &str) -> Option<Address> {
+pub(crate) fn parse_address(s: &str) -> Option<Address> {
     let trimmed = s.strip_prefix("0x").unwrap_or(s);
     if trimmed.len() != 40 {
         return None;
