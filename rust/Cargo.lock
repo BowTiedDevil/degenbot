@@ -1617,6 +1617,7 @@ version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
  "degenbot-db",
+ "degenbot-decoders",
  "degenbot-evm-math",
  "rusqlite",
  "thiserror 1.0.69",
