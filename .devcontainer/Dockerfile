@@ -6,6 +6,7 @@ RUN dnf install -y \
         gcc gcc-c++ make pkgconf-pkg-config \
         uv python3 python3-devel python3-pip \
         rust rust-src cargo rustfmt clippy \
+        gh \
         golang \
         nodejs24 \
         sqlite \
