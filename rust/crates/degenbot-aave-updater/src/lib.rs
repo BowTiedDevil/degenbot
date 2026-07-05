@@ -47,6 +47,7 @@
 //! No `pyo3` (enforced by `just check-no-pyo3-in-cores`). The `PyO3` seam will
 //! live in `degenbot-python`.
 
+pub mod aave_fetch;
 pub mod gho_processor;
 pub mod operations;
 pub mod operations_parser;
