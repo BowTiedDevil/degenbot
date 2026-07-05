@@ -239,6 +239,79 @@ pub enum AaveChunkEvent {
         /// max-with-prev).
         new_index: alloy::primitives::U256,
     },
+    // ── 6SWY4R-2b: the 6 missing-variant config events ───────────────────
+    /// `Upgraded(implementation)` — emitted by an aToken or vToken proxy. The
+    /// dispatch resolves which asset (by `a_token`/`v_token` address match) +
+    /// RPCs `ATOKEN_REVISION()`/`DEBT_TOKEN_REVISION()` on the new
+    /// implementation. Port of `_process_scaled_token_upgrade_event`
+    /// (event_handlers.py:848-940). When the upgraded token is the GHO vToken
+    /// and the new revision ≥ `GHO_DISCOUNT_DEPRECATION_REVISION` (4), the
+    /// `deprecated_gho_token_id` is `Some(gho_token.id)`: the apply fn then
+    /// clears `v_gho_discount_token` and `v_gho_discount_rate_strategy`, and
+    /// bulk-resets all users' `gho_discount` to 0 (the GHO-discount-deprecation
+    /// side effect — the riskiest piece).
+    Upgraded {
+        /// `aave_v3_assets.id` (the asset whose aToken/vToken was upgraded).
+        asset_id: i64,
+        /// The market the asset belongs to (for the bulk user reset scope).
+        market_id: i64,
+        /// `true` → update `a_token_revision`; `false` → `v_token_revision`.
+        is_a_token: bool,
+        /// The RPC-resolved new revision.
+        new_revision: i64,
+        /// `Some(gho_token_id)` when the GHO discount deprecation fires
+        /// (vToken upgraded to rev ≥ 4 + it's the GHO vToken); `None` otherwise.
+        deprecated_gho_token_id: Option<i64>,
+    },
+    /// `PoolUpdated`/`PoolConfiguratorUpdated(old, new)` — RPC
+    /// `POOL_REVISION()`/`CONFIGURATOR_REVISION()` on the new address → update
+    /// the `aave_v3_contracts` row's `revision` (LOOKED UP BY NAME: "POOL"/
+    /// `POOL_CONFIGURATOR`). Port of `_update_contract_revision`
+    /// (event_handlers.py:944-974). **§4.2 parity:** the Python updates ONLY
+    /// `revision` — NOT `address` (the proxy address is stable; the `new_address`
+    /// is used only for the RPC call). The apply mirrors this exactly.
+    ContractRevisionUpdated {
+        /// The market owning the contract row.
+        market_id: i64,
+        /// `"POOL"` or `"POOL_CONFIGURATOR"` (the contract-row name).
+        contract_name: String,
+        /// The RPC-resolved new revision.
+        new_revision: i64,
+    },
+    /// `PoolDataProviderUpdated(old, new)` — INSERT the `POOL_DATA_PROVIDER`
+    /// contract row when `old == ZERO_ADDRESS`, else UPDATE the existing row's
+    /// `address` (looked up by the old address). Port of
+    /// `_process_pool_data_provider_updated_event` (event_handlers.py:1017-1046).
+    /// Pure decode — no RPC. `old_address` is `None` when the event's old is
+    /// the zero address (the INSERT path).
+    PoolDataProviderUpdated {
+        /// The market owning the contract row.
+        market_id: i64,
+        /// `None` when `old` is the zero address (INSERT path); else the
+        /// checksummed old address (UPDATE-by-old-address path).
+        old_address: Option<String>,
+        /// The checksummed new address.
+        new_address: String,
+    },
+    /// `AddressSet(id, old, new)` + `ProxyCreated(id, proxy, impl)` (the
+    /// id-filtered ones) — INSERT a contract row.
+    /// `AddressSet` (event_handlers.py:1048-1078): the `id` is ASCII-decoded
+    /// from the bytes32 topic + null-stripped → the `name`; `old` is asserted
+    /// == zero (the dispatch returns Err otherwise). `revision` is `None`.
+    /// `ProxyCreated` (event_handlers.py:977-1008): the `id` is matched
+    /// against the right-padded ASCII bytes32 `b"POOL"`/`b"POOL_CONFIGURATOR"`
+    /// (NOT `keccak256` — §4.2 finding); the match resolves the `name` + the
+    /// revision-function (`POOL_REVISION`/`CONFIGURATOR_REVISION`). The
+    /// dispatch RPCs the revision on the implementation address; `revision`
+    /// is `Some`.
+    ContractInserted {
+        market_id: i64,
+        name: String,
+        address: String,
+        /// `Some(rev)` for `ProxyCreated` (RPC-fetched); `None` for `AddressSet`
+        /// (no revision RPC — the Python doesn't fetch one).
+        revision: Option<i64>,
+    },
 }
 
 /// Per-event-type apply counts for a chunk (mirrors `ChunkWriteReport`).
@@ -270,6 +343,11 @@ pub struct AaveChunkWriteReport {
     pub rewards_claimed: usize,
     /// The bad-debt liquidation reset count (C3 — `DebtPositionReset`).
     pub debt_position_reset: usize,
+    /// 6SWY4R-2b — the 6 missing-variant config events.
+    pub upgraded: usize,
+    pub contract_revision_updated: usize,
+    pub pool_data_provider_updated: usize,
+    pub contract_inserted: usize,
     /// The `chunk_end_block` stamped onto `aave_v3_markets.last_update_block`
     /// as the LAST write in the transaction. `None` if `events` was empty (no
     /// stamp written — mirrors the precedent's "no events ⇒ no stamp" guard
@@ -545,6 +623,64 @@ pub fn apply_aave_chunk_writes_on_conn(
             } => {
                 DegenbotDb::reset_debt_position_to_zero_on_conn(conn, *position_id, *new_index)?;
                 report.debt_position_reset += 1;
+            }
+            // ── 6SWY4R-2b: the 6 missing-variant config events ─────────
+            AaveChunkEvent::Upgraded {
+                asset_id,
+                market_id: _,
+                is_a_token,
+                new_revision,
+                deprecated_gho_token_id,
+            } => {
+                DegenbotDb::apply_upgraded_on_conn(
+                    conn,
+                    *asset_id,
+                    *is_a_token,
+                    *new_revision,
+                    *deprecated_gho_token_id,
+                )?;
+                report.upgraded += 1;
+            }
+            AaveChunkEvent::ContractRevisionUpdated {
+                market_id: ev_market_id,
+                contract_name,
+                new_revision,
+            } => {
+                DegenbotDb::apply_contract_revision_updated_on_conn(
+                    conn,
+                    *ev_market_id,
+                    contract_name,
+                    *new_revision,
+                )?;
+                report.contract_revision_updated += 1;
+            }
+            AaveChunkEvent::PoolDataProviderUpdated {
+                market_id: ev_market_id,
+                old_address,
+                new_address,
+            } => {
+                DegenbotDb::apply_pool_data_provider_updated_on_conn(
+                    conn,
+                    *ev_market_id,
+                    old_address.as_deref(),
+                    new_address,
+                )?;
+                report.pool_data_provider_updated += 1;
+            }
+            AaveChunkEvent::ContractInserted {
+                market_id: ev_market_id,
+                name,
+                address,
+                revision,
+            } => {
+                DegenbotDb::apply_contract_inserted_on_conn(
+                    conn,
+                    *ev_market_id,
+                    name,
+                    address,
+                    *revision,
+                )?;
+                report.contract_inserted += 1;
             }
         }
     }
@@ -1683,5 +1819,275 @@ mod tests {
             stk_balance, None,
             "rolled-back chunk's stk_aave write must not be durable"
         );
+    }
+
+    // ── 6SWY4R-2b: the 6 missing-variant event apply tests ────────────────
+
+    #[test]
+    fn apply_upgraded_on_conn_updates_a_token_revision() {
+        let db = fresh_db();
+        seed_asset_row(&db, 1);
+        DegenbotDb::apply_upgraded_on_conn(&db.lock(), 1, true, 3, None).unwrap();
+        let rev: i64 = db
+            .lock()
+            .query_row(
+                "SELECT a_token_revision FROM aave_v3_assets WHERE id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rev, 3);
+        // v_token_revision is unchanged.
+        let vrev: i64 = db
+            .lock()
+            .query_row(
+                "SELECT v_token_revision FROM aave_v3_assets WHERE id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(vrev, 1, "v_token_revision untouched by an aToken upgrade");
+    }
+
+    #[test]
+    fn apply_upgraded_on_conn_updates_v_token_revision() {
+        let db = fresh_db();
+        seed_asset_row(&db, 1);
+        DegenbotDb::apply_upgraded_on_conn(&db.lock(), 1, false, 2, None).unwrap();
+        let rev: i64 = db
+            .lock()
+            .query_row(
+                "SELECT v_token_revision FROM aave_v3_assets WHERE id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rev, 2);
+    }
+
+    #[test]
+    fn apply_upgraded_on_conn_missing_asset_errors() {
+        let db = fresh_db();
+        let err = DegenbotDb::apply_upgraded_on_conn(&db.lock(), 9999, true, 3, None).unwrap_err();
+        assert!(matches!(err, degenbot_db::DbError::MissingRow(_)));
+    }
+
+    #[test]
+    fn apply_upgraded_on_conn_gho_deprecation_clears_config_and_resets_users() {
+        // The riskiest piece: the chunk-wide bulk UPDATE.
+        let db = fresh_db();
+        seed_asset_row(&db, 1);
+        seed_gho_token_row(&db, 50, Some("0xold_strat"), Some("0xold_tok"));
+        // Two users with non-zero GHO discount (one zero-discount user to
+        // verify the WHERE clause skips them).
+        seed_aave_v3_user(&db, 100);
+        {
+            let conn = db.lock();
+            conn.execute(
+                "UPDATE aave_v3_users SET gho_discount = 15 WHERE id = 100",
+                [],
+            )
+            .unwrap();
+        }
+        seed_aave_v3_user(&db, 101);
+        {
+            let conn = db.lock();
+            conn.execute(
+                "UPDATE aave_v3_users SET gho_discount = 30 WHERE id = 101",
+                [],
+            )
+            .unwrap();
+        }
+        // A zero-discount user (the bulk UPDATE must not touch it).
+        seed_aave_v3_user(&db, 102);
+
+        // Fire the deprecation (asset 1 is the GHO vToken's asset).
+        DegenbotDb::apply_upgraded_on_conn(&db.lock(), 1, false, 4, Some(50)).unwrap();
+
+        // The GHO token's discount config is cleared.
+        let (strat, tok) = gho_token_state(&db, 50);
+        assert_eq!(strat, None, "v_gho_discount_rate_strategy cleared");
+        assert_eq!(tok, None, "v_gho_discount_token cleared");
+        // The non-zero users are reset to 0.
+        assert_eq!(user_gho_stk_state(&db, 100).0, 0, "user 100 reset");
+        assert_eq!(user_gho_stk_state(&db, 101).0, 0, "user 101 reset");
+        // The already-zero user is untouched (gho_discount still 0).
+        assert_eq!(user_gho_stk_state(&db, 102).0, 0, "user 102 untouched");
+    }
+
+    #[test]
+    fn apply_upgraded_on_conn_no_deprecation_leaves_users_alone() {
+        let db = fresh_db();
+        seed_asset_row(&db, 1);
+        seed_aave_v3_user(&db, 100);
+        {
+            let conn = db.lock();
+            conn.execute(
+                "UPDATE aave_v3_users SET gho_discount = 15 WHERE id = 100",
+                [],
+            )
+            .unwrap();
+        }
+        // deprecated_gho_token_id = None → no bulk reset.
+        DegenbotDb::apply_upgraded_on_conn(&db.lock(), 1, false, 2, None).unwrap();
+        assert_eq!(
+            user_gho_stk_state(&db, 100).0,
+            15,
+            "user discount untouched"
+        );
+    }
+
+    #[test]
+    fn apply_upgraded_on_conn_deprecation_missing_gho_token_errors() {
+        let db = fresh_db();
+        seed_asset_row(&db, 1);
+        let err =
+            DegenbotDb::apply_upgraded_on_conn(&db.lock(), 1, false, 4, Some(9999)).unwrap_err();
+        assert!(matches!(err, degenbot_db::DbError::MissingRow(_)));
+    }
+
+    #[test]
+    fn apply_contract_revision_updated_on_conn_sets_pool_revision() {
+        let db = fresh_db();
+        // Seed a POOL contract row.
+        {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO aave_v3_contracts (id, market_id, name, address, revision) \
+                 VALUES (1, 1, 'POOL', '0xpool', 1)",
+                [],
+            )
+            .unwrap();
+        }
+        DegenbotDb::apply_contract_revision_updated_on_conn(&db.lock(), 1, "POOL", 2).unwrap();
+        let (rev, addr): (i64, String) = db
+            .lock()
+            .query_row(
+                "SELECT revision, address FROM aave_v3_contracts WHERE market_id = 1 AND name = 'POOL'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(rev, 2);
+        // §4.2 parity: the address is NOT updated.
+        assert_eq!(
+            addr, "0xpool",
+            "address untouched (Python updates revision only)"
+        );
+    }
+
+    #[test]
+    fn apply_contract_revision_updated_on_conn_missing_contract_errors() {
+        let db = fresh_db();
+        let err = DegenbotDb::apply_contract_revision_updated_on_conn(&db.lock(), 1, "POOL", 2)
+            .unwrap_err();
+        assert!(matches!(err, degenbot_db::DbError::MissingRow(_)));
+    }
+
+    #[test]
+    fn apply_pool_data_provider_updated_on_conn_inserts_when_old_is_zero() {
+        let db = fresh_db();
+        DegenbotDb::apply_pool_data_provider_updated_on_conn(&db.lock(), 1, None, "0xnew_pdp")
+            .unwrap();
+        let (name, addr, rev): (String, String, Option<i64>) = db
+            .lock()
+            .query_row(
+                "SELECT name, address, revision FROM aave_v3_contracts \
+                 WHERE market_id = 1 AND address = '0xnew_pdp'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "POOL_DATA_PROVIDER");
+        assert_eq!(addr, "0xnew_pdp");
+        assert_eq!(rev, None, "no revision on the INSERT path");
+    }
+
+    #[test]
+    fn apply_pool_data_provider_updated_on_conn_updates_by_old_address() {
+        let db = fresh_db();
+        // Seed the existing POOL_DATA_PROVIDER row.
+        {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO aave_v3_contracts (id, market_id, name, address, revision) \
+                 VALUES (1, 1, 'POOL_DATA_PROVIDER', '0xold_pdp', NULL)",
+                [],
+            )
+            .unwrap();
+        }
+        DegenbotDb::apply_pool_data_provider_updated_on_conn(
+            &db.lock(),
+            1,
+            Some("0xold_pdp"),
+            "0xnew_pdp",
+        )
+        .unwrap();
+        let addr: String = db
+            .lock()
+            .query_row(
+                "SELECT address FROM aave_v3_contracts WHERE id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(addr, "0xnew_pdp");
+    }
+
+    #[test]
+    fn apply_pool_data_provider_updated_on_conn_update_path_missing_errors() {
+        let db = fresh_db();
+        let err = DegenbotDb::apply_pool_data_provider_updated_on_conn(
+            &db.lock(),
+            1,
+            Some("0xnonexistent"),
+            "0xnew_pdp",
+        )
+        .unwrap_err();
+        assert!(matches!(err, degenbot_db::DbError::MissingRow(_)));
+    }
+
+    #[test]
+    fn apply_contract_inserted_on_conn_inserts_address_set_row() {
+        let db = fresh_db();
+        // An AddressSet event: name from the ASCII id, no revision.
+        DegenbotDb::apply_contract_inserted_on_conn(
+            &db.lock(),
+            1,
+            "SOME_CONTRACT",
+            "0xnew_addr",
+            None,
+        )
+        .unwrap();
+        let (name, rev): (String, Option<i64>) = db
+            .lock()
+            .query_row(
+                "SELECT name, revision FROM aave_v3_contracts \
+                 WHERE market_id = 1 AND address = '0xnew_addr'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "SOME_CONTRACT");
+        assert_eq!(rev, None);
+    }
+
+    #[test]
+    fn apply_contract_inserted_on_conn_inserts_proxy_created_row_with_revision() {
+        let db = fresh_db();
+        // A ProxyCreated event: name = POOL/POOL_CONFIGURATOR, with revision.
+        DegenbotDb::apply_contract_inserted_on_conn(&db.lock(), 1, "POOL", "0xproxy", Some(2))
+            .unwrap();
+        let (name, rev): (String, Option<i64>) = db
+            .lock()
+            .query_row(
+                "SELECT name, revision FROM aave_v3_contracts \
+                 WHERE market_id = 1 AND address = '0xproxy'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "POOL");
+        assert_eq!(rev, Some(2));
     }
 }

@@ -1231,6 +1231,191 @@ impl DegenbotDb {
         Ok(conn.last_insert_rowid())
     }
 
+    // ── 6SWY4R-2b: the 6 missing-variant config-event apply fns ──────────
+
+    /// Apply an `Upgraded` event: set the aToken or vToken revision on the
+    /// `aave_v3_assets` row + conditionally fire the GHO-discount-deprecation
+    /// side effect. Port of `_process_scaled_token_upgrade_event`
+    /// (event_handlers.py:848-940).
+    ///
+    /// When `is_a_token` is `true`, updates `a_token_revision`; otherwise
+    /// `v_token_revision`. When `deprecated_gho_token_id` is `Some(id)`, also
+    /// clears `aave_gho_tokens.v_gho_discount_token`/
+    /// `v_gho_discount_rate_strategy` + bulk-resets all users' `gho_discount`
+    /// to 0 in the asset's market (the protocol deprecated the discount).
+    ///
+    /// # §4.2 parity
+    ///
+    /// The Python's `_process_scaled_token_upgrade_event` updates the
+    /// attribute on the `SQLAlchemy` record + (on deprecation) sets
+    /// `gho_asset.v_gho_discount_token = None`,
+    /// `v_gho_discount_rate_strategy = None`, + iterates every
+    /// `AaveV3User` in the market with `gho_discount != 0` → `0`. The bulk
+    /// `UPDATE ... WHERE market_id = ? AND gho_discount != 0` is the SQL
+    /// equivalent (the Python's loop bodies a per-row
+    /// `session.commit()`-tracked update).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure, or
+    /// [`DbError::MissingRow`] if the `aave_v3_assets` row + the `aave_gho_tokens`
+    /// row (on deprecation) don't match the given ids.
+    #[allow(clippy::missing_errors_doc)]
+    pub fn apply_upgraded_on_conn(
+        conn: &rusqlite::Connection,
+        asset_id: i64,
+        is_a_token: bool,
+        new_revision: i64,
+        deprecated_gho_token_id: Option<i64>,
+    ) -> Result<(), DbError> {
+        let column = if is_a_token {
+            "a_token_revision"
+        } else {
+            "v_token_revision"
+        };
+        let sql = format!("UPDATE aave_v3_assets SET {column} = ?1 WHERE id = ?2");
+        let updated = conn.execute(&sql, params![new_revision, asset_id])?;
+        if updated == 0 {
+            return Err(DbError::MissingRow(format!(
+                "aave_v3_assets id={asset_id} (Upgraded apply target)"
+            )));
+        }
+        if let Some(gho_id) = deprecated_gho_token_id {
+            // Clear the GHO discount config.
+            let cleared = conn.execute(
+                "UPDATE aave_gho_tokens \
+                 SET v_gho_discount_token = NULL, v_gho_discount_rate_strategy = NULL \
+                 WHERE id = ?1",
+                params![gho_id],
+            )?;
+            if cleared == 0 {
+                return Err(DbError::MissingRow(format!(
+                    "aave_gho_tokens id={gho_id} (Upgraded GHO-deprecation clear target)"
+                )));
+            }
+            // Bulk-reset all non-zero GHO discounts on the asset's market.
+            let _bulk = conn.execute(
+                "UPDATE aave_v3_users SET gho_discount = 0 \
+                 WHERE market_id = (SELECT market_id FROM aave_v3_assets WHERE id = ?1) \
+                 AND gho_discount != 0",
+                params![asset_id],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Apply a `PoolUpdated`/`PoolConfiguratorUpdated` event: set the
+    /// `aave_v3_contracts` row's `revision` (looked up by `market_id` +
+    /// `contract_name`). Port of `_update_contract_revision`
+    /// (event_handlers.py:944-974).
+    ///
+    /// # §4.2 parity
+    ///
+    /// The Python updates ONLY `revision` — NOT `address` (the proxy address is
+    /// stable; the `new_address` is used only for the `*_REVISION()` RPC call).
+    /// The apply mirrors this exactly (no `address` param). The Python
+    /// `assert contract is not None`; this returns `MissingRow` if no row
+    /// matches (a non-fatal `Err` the transaction rolls back).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure, or
+    /// [`DbError::MissingRow`] if no `aave_v3_contracts` row matches
+    /// `(market_id, contract_name)`.
+    #[allow(clippy::missing_errors_doc)]
+    pub fn apply_contract_revision_updated_on_conn(
+        conn: &rusqlite::Connection,
+        market_id: i64,
+        contract_name: &str,
+        new_revision: i64,
+    ) -> Result<(), DbError> {
+        let updated = conn.execute(
+            "UPDATE aave_v3_contracts SET revision = ?1 \
+             WHERE market_id = ?2 AND name = ?3",
+            params![new_revision, market_id, contract_name],
+        )?;
+        if updated == 0 {
+            return Err(DbError::MissingRow(format!(
+                "aave_v3_contracts (market_id={market_id}, name='{contract_name}') \
+                 (ContractRevisionUpdated apply target)"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Apply a `PoolDataProviderUpdated(old, new)` event: INSERT the
+    /// `POOL_DATA_PROVIDER` contract row when `old_address` is `None` (the event's
+    /// `old` is zero), else UPDATE the existing row's `address` (looked up by
+    /// the old address). Port of `_process_pool_data_provider_updated_event`
+    /// (event_handlers.py:1017-1046). Pure substrate — no RPC.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure, or
+    /// [`DbError::MissingRow`] if the UPDATE path finds no row matching
+    /// `old_address` (the Python `assert pool_data_provider is not None`).
+    #[allow(clippy::missing_errors_doc)]
+    pub fn apply_pool_data_provider_updated_on_conn(
+        conn: &rusqlite::Connection,
+        market_id: i64,
+        old_address: Option<&str>,
+        new_address: &str,
+    ) -> Result<(), DbError> {
+        match old_address {
+            None => {
+                // The INSERT path (old == ZERO_ADDRESS).
+                conn.execute(
+                    "INSERT INTO aave_v3_contracts (market_id, name, address, revision) \
+                     VALUES (?1, 'POOL_DATA_PROVIDER', ?2, NULL)",
+                    params![market_id, new_address],
+                )?;
+            }
+            Some(old) => {
+                // The UPDATE-by-old-address path.
+                let updated = conn.execute(
+                    "UPDATE aave_v3_contracts SET address = ?1 WHERE address = ?2",
+                    params![new_address, old],
+                )?;
+                if updated == 0 {
+                    return Err(DbError::MissingRow(format!(
+                        "aave_v3_contracts address='{old}' \
+                         (PoolDataProviderUpdated UPDATE path target)"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply an `AddressSet`/`ProxyCreated` event: INSERT a contract row.
+    /// Port of `_process_address_set_event` (event_handlers.py:1048-1078) +
+    /// `_process_proxy_creation_event` (event_handlers.py:977-1008). For
+    /// `AddressSet`, `revision` is `None`; for `ProxyCreated`, `revision` is
+    /// the RPC-fetched `POOL_REVISION()`/`CONFIGURATOR_REVISION()`. A plain
+    /// INSERT — the Python's `session.add(AaveV3Contract(...))` /
+    /// `market.contracts.append(...)` (no upsert; a duplicate would hit the
+    /// UNIQUE constraint + rollback the transaction).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure (incl. a UNIQUE
+    /// constraint violation).
+    #[allow(clippy::missing_errors_doc)]
+    pub fn apply_contract_inserted_on_conn(
+        conn: &rusqlite::Connection,
+        market_id: i64,
+        name: &str,
+        address: &str,
+        revision: Option<i64>,
+    ) -> Result<(), DbError> {
+        conn.execute(
+            "INSERT INTO aave_v3_contracts (market_id, name, address, revision) \
+             VALUES (?1, ?2, ?3, ?4)",
+            params![market_id, name, address, revision],
+        )?;
+        Ok(())
+    }
+
     // ── ScaledToken position-state mutations (5Z3QQ2 — SCALEAPPLY) ────────
     //
     // The aToken/vToken `Mint`/`Burn`/`BalanceTransfer` events drive the

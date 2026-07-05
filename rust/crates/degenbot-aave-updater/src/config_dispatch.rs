@@ -400,33 +400,42 @@ pub async fn resolve_reserve_initialized(
     block_number: u64,
     conn: &Connection,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
-    // 1. get_or_create the 3 erc20 token rows (underlying / aToken / vToken).
+    // 1. get_or_create the 3 erc20 token rows (underlying / aToken / vToken),
+    //    RPC-fetching the name/symbol/decimals from the chain (the
+    //    standalone-Rust-core constraint — Rust owns the loop, no PyO3 FFI for
+    //    metadata). Port of `erc20_utils._fetch_erc20_token_metadata`.
     let underlying_str = checksum(&decoded.asset);
+    let (name, symbol, decimals) =
+        fetch_erc20_metadata(provider, &decoded.asset, block_number).await;
     let underlying_asset_id = DegenbotDb::get_or_create_erc20_token_on_conn(
         conn,
         chain_id,
         &underlying_str,
-        None,
-        None,
-        None,
+        name.as_deref(),
+        symbol.as_deref(),
+        decimals,
     )?;
     let a_token_str = checksum(&decoded.a_token);
+    let (name, symbol, decimals) =
+        fetch_erc20_metadata(provider, &decoded.a_token, block_number).await;
     let a_token_id = DegenbotDb::get_or_create_erc20_token_on_conn(
         conn,
         chain_id,
         &a_token_str,
-        None,
-        None,
-        None,
+        name.as_deref(),
+        symbol.as_deref(),
+        decimals,
     )?;
     let v_token_str = checksum(&decoded.variable_debt_token);
+    let (name, symbol, decimals) =
+        fetch_erc20_metadata(provider, &decoded.variable_debt_token, block_number).await;
     let v_token_id = DegenbotDb::get_or_create_erc20_token_on_conn(
         conn,
         chain_id,
         &v_token_str,
-        None,
-        None,
-        None,
+        name.as_deref(),
+        symbol.as_deref(),
+        decimals,
     )?;
 
     // 2. EIP-1967: resolve the aToken + vToken implementation addresses.
@@ -572,9 +581,6 @@ pub async fn dispatch_config_events(
     gho_asset: Option<&AaveGhoAsset>,
     block_number: u64,
 ) -> Result<Vec<AaveChunkEvent>, ConfigDispatchError> {
-    // The GHO token id (chain-unique) — pre-resolved by the orchestrator;
-    // the discount events need it.
-    let gho_token_id = gho_asset.map(|g| g.id);
     let mut events = Vec::new();
     for log in tx_logs {
         let Some(decoded) = decode_aave_log(log) else {
@@ -588,7 +594,7 @@ pub async fn dispatch_config_events(
             conn,
             pool_address,
             oracle_address,
-            gho_token_id,
+            gho_asset,
             block_number,
         )
         .await?
@@ -612,9 +618,10 @@ async fn dispatch_single_config_event(
     conn: &Connection,
     pool_address: Address,
     oracle_address: Option<Address>,
-    gho_token_id: Option<i64>,
+    gho_asset: Option<&AaveGhoAsset>,
     block_number: u64,
 ) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
+    let gho_token_id = gho_asset.map(|g| g.id);
     let ev =
         match decoded {
             // ── the 8 sync handlers (no RPC) ──
@@ -688,32 +695,127 @@ async fn dispatch_single_config_event(
                     .await?,
                 )
             }
-            // Operation events — C3's `process_transaction` handles these (the
-            // parser assigns them to Operations). The 6 missing-variant events
-            // (-2b's scope: Upgraded/PoolUpdated/PoolConfiguratorUpdated/
-            // PoolDataProviderUpdated/AddressSet/ProxyCreated) are also skipped
-            // here — -2b will replace with real variants.
-            DecodedAaveEvent::Erc20Transfer(_)
-            | DecodedAaveEvent::ScaledTokenMint(_)
-            | DecodedAaveEvent::ScaledTokenBurn(_)
-            | DecodedAaveEvent::ScaledTokenBalanceTransfer(_)
-            | DecodedAaveEvent::Supply(_)
-            | DecodedAaveEvent::Borrow(_)
-            | DecodedAaveEvent::Repay(_)
-            | DecodedAaveEvent::Withdraw(_)
-            | DecodedAaveEvent::LiquidationCall(_)
-            | DecodedAaveEvent::MintedToTreasury(_)
-            | DecodedAaveEvent::DeficitCreated(_)
-            | DecodedAaveEvent::Staked(_)
-            | DecodedAaveEvent::Redeem(_)
-            | DecodedAaveEvent::RewardsClaimed(_)
-            | DecodedAaveEvent::Upgraded(_)
-            | DecodedAaveEvent::PoolUpdated(_)
-            | DecodedAaveEvent::PoolConfiguratorUpdated(_)
-            | DecodedAaveEvent::PoolDataProviderUpdated(_)
-            | DecodedAaveEvent::AddressSet(_)
-            | DecodedAaveEvent::ProxyCreated(_) => None,
+            // ── 6SWY4R-2b: the 6 missing-variant config events ──────────────────
+            // Delegated to `resolve_missing_variant_event` to keep this fn under
+            // the 100-line `clippy::too_many_lines` limit.
+            //
+            // Operation events (Supply/Borrow/Mint/Burn/Transfer/...) + the
+            // 6 missing-variant events both fall through to the `_` arm. The
+            // `resolve_missing_variant_event` fn matches on the 6 missing-variant
+            // variants; for operation events it returns `Ok(None)`.
+            _ => {
+                resolve_missing_variant_event(
+                    decoded,
+                    provider,
+                    market_id,
+                    gho_asset,
+                    block_number,
+                    conn,
+                )
+                .await?
+            }
         };
+    Ok(ev)
+}
+
+/// Resolve the 6 missing-variant config events (6SWY4R-2b). Extracted from
+/// [`dispatch_single_config_event`] to keep that fn under the 100-line
+/// `clippy::too_many_lines` limit. Returns `Ok(None)` for non-missing-variant
+/// events (operation events) + for `ProxyCreated` when the `id` doesn't match
+/// `POOL`/`POOL_CONFIGURATOR`.
+///
+/// # Events
+///
+/// - `Upgraded` — RPC `ATOKEN_REVISION()`/`DEBT_TOKEN_REVISION()` + the
+///   GHO-discount-deprecation side effect.
+/// - `PoolUpdated`/`PoolConfiguratorUpdated` — RPC `*_REVISION()` on the new
+///   address → `ContractRevisionUpdated` (revision ONLY — §4.2 parity).
+/// - `PoolDataProviderUpdated` — pure-decode (INSERT when old==zero, else
+///   UPDATE-by-old-address).
+/// - `AddressSet` — assert old==zero; ASCII-decode the bits32 id.
+/// - `ProxyCreated` — match the id against the right-padded ASCII `b"POOL"`/
+///   `b"POOL_CONFIGURATOR"`; RPC the revision on the impl address.
+async fn resolve_missing_variant_event(
+    decoded: &DecodedAaveEvent,
+    provider: &AlloyProvider,
+    market_id: i64,
+    gho_asset: Option<&AaveGhoAsset>,
+    block_number: u64,
+    conn: &Connection,
+) -> Result<Option<AaveChunkEvent>, ConfigDispatchError> {
+    let ev = match decoded {
+        DecodedAaveEvent::Upgraded(ev) => {
+            Some(resolve_upgraded(provider, ev, market_id, gho_asset, block_number, conn).await?)
+        }
+        DecodedAaveEvent::PoolUpdated(ev) => Some(
+            resolve_contract_revision_updated(
+                provider,
+                ev.new_address,
+                "POOL",
+                "POOL_REVISION()",
+                market_id,
+                block_number,
+            )
+            .await?,
+        ),
+        DecodedAaveEvent::PoolConfiguratorUpdated(ev) => Some(
+            resolve_contract_revision_updated(
+                provider,
+                ev.new_address,
+                "POOL_CONFIGURATOR",
+                "CONFIGURATOR_REVISION()",
+                market_id,
+                block_number,
+            )
+            .await?,
+        ),
+        DecodedAaveEvent::PoolDataProviderUpdated(ev) => {
+            Some(AaveChunkEvent::PoolDataProviderUpdated {
+                market_id,
+                old_address: (ev.old_address != Address::ZERO).then(|| checksum(&ev.old_address)),
+                new_address: checksum(&ev.new_address),
+            })
+        }
+        DecodedAaveEvent::AddressSet(ev) => {
+            if ev.old_address != Address::ZERO {
+                return Err(ConfigDispatchError::DecodeShape(format!(
+                    "AddressSet: expected old_address == zero, got {}",
+                    checksum(&ev.old_address)
+                )));
+            }
+            let name = strip_trailing_nulls_from_ascii(&ev.id);
+            Some(AaveChunkEvent::ContractInserted {
+                market_id,
+                name,
+                address: checksum(&ev.new_address),
+                revision: None,
+            })
+        }
+        DecodedAaveEvent::ProxyCreated(ev) => {
+            if let Some(resolved) = match_proxy_id(
+                &ev.id,
+                &ev.proxy_address,
+                &ev.implementation_address,
+                provider,
+                block_number,
+            )
+            .await?
+            {
+                Some(AaveChunkEvent::ContractInserted {
+                    market_id,
+                    name: resolved.name,
+                    address: resolved.address,
+                    revision: Some(resolved.revision),
+                })
+            } else {
+                None
+            }
+        }
+        // Non-missing-variant events (operation events + the 10 already-handled
+        // config events — unreachable from `dispatch_single_config_event`'s `_`
+        // arm for the 10, reachable for the operation events).
+        _ => None,
+    };
     Ok(ev)
 }
 
@@ -817,6 +919,278 @@ fn topic_to_address(topic: alloy::primitives::B256) -> Address {
 /// digits).
 fn discount_to_i64(v: U256) -> i64 {
     v.to::<u64>().try_into().unwrap_or(i64::MAX)
+}
+
+// ── 6SWY4R-2b: the 6 missing-variant event resolvers ─────────────────────
+
+/// The right-padded ASCII bytes32 id `b"POOL"` (4 bytes + 28 zeros). The
+/// Python's `eth_abi.abi.encode(["bytes32"], [b"POOL"])` — §4.2 finding:
+/// NOT `keccak256("POOL")`, the protocol emits the right-padded ASCII string.
+const POOL_PROXY_ID: [u8; 32] = {
+    let mut id = [0u8; 32];
+    id[0] = b'P';
+    id[1] = b'O';
+    id[2] = b'O';
+    id[3] = b'L';
+    id
+};
+/// The right-padded ASCII bytes32 id `b"POOL_CONFIGURATOR"` (17 bytes + 15
+/// zeros).
+const POOL_CONFIGURATOR_PROXY_ID: [u8; 32] = {
+    let mut id = [0u8; 32];
+    let name = b"POOL_CONFIGURATOR";
+    let mut i = 0;
+    while i < name.len() {
+        id[i] = name[i];
+        i += 1;
+    }
+    id
+};
+
+/// The result of matching a `ProxyCreated` event's id against the two known
+/// proxy ids — the resolved contract name + address (the proxy address) + the
+/// RPC-fetched revision.
+struct ProxyCreationResolution {
+    name: String,
+    address: String,
+    revision: i64,
+}
+
+/// Resolve an `Upgraded` event (the riskiest piece — 6SWY4R-2b). Port of
+/// `_process_scaled_token_upgrade_event` (event_handlers.py:848-940).
+///
+/// 1. The event's `proxy_address` (the emitter) is matched against existing
+///    `aave_v3_assets.a_token` first, then `v_token` (the Python's
+///    `get_asset_by_token_type` sequence). If neither matches, returns `Err`
+///    ("Unreachable code path" — the Python raises `ValueError`).
+/// 2. The new implementation's revision is RPC'd (`ATOKEN_REVISION()` for
+///    aToken / `DEBT_TOKEN_REVISION()` for vToken) at `block_number`.
+/// 3. For a vToken upgrade, the GHO-discount-deprecation fires when the
+///    upgraded vToken IS the GHO vToken (`gho_asset.v_token_address` matches)
+///    and the new revision ≥ `GHO_DISCOUNT_DEPRECATION_REVISION` (4). It clears
+///    `v_gho_discount_token`/`v_gho_discount_rate_strategy` and bulk-resets
+///    all users' `gho_discount` to 0 (the apply fn does the writes).
+async fn resolve_upgraded(
+    provider: &AlloyProvider,
+    decoded: &degenbot_decoders::aave_event_decoder::UpgradedEvent,
+    market_id: i64,
+    gho_asset: Option<&AaveGhoAsset>,
+    block_number: u64,
+    conn: &Connection,
+) -> Result<AaveChunkEvent, ConfigDispatchError> {
+    let proxy_str = checksum(&decoded.proxy_address);
+    // 1. asset lookup: a_token first, then v_token.
+    let a_asset =
+        DegenbotDb::lookup_asset_by_token_address_on_conn(conn, market_id, &proxy_str, "a_token")?;
+    let (asset_id, is_a_token) = if let Some(row) = a_asset {
+        (row.id, true)
+    } else {
+        let v_asset = DegenbotDb::lookup_asset_by_token_address_on_conn(
+            conn, market_id, &proxy_str, "v_token",
+        )?;
+        let Some(row) = v_asset else {
+            return Err(ConfigDispatchError::DecodeShape(format!(
+                "Upgraded: proxy {proxy_str} is neither a known aToken nor vToken \
+                 (Python: 'Unreachable code path')"
+            )));
+        };
+        (row.id, false)
+    };
+    // 2. RPC the revision on the new implementation.
+    let rev_fn = if is_a_token {
+        "ATOKEN_REVISION()"
+    } else {
+        "DEBT_TOKEN_REVISION()"
+    };
+    let new_revision =
+        read_uint256_return(provider, &decoded.implementation, rev_fn, block_number).await?;
+    let new_revision_i64 = discount_to_i64(new_revision);
+    // 3. GHO-discount-deprecation (vToken only).
+    let deprecated_gho_token_id = if is_a_token {
+        None
+    } else {
+        let matches_gho_vtoken = gho_asset
+            .and_then(|g| g.v_token_address.as_deref())
+            .is_some_and(|addr| addr == proxy_str);
+        if matches_gho_vtoken
+            && u32::try_from(new_revision_i64).is_ok_and(|r| r >= GHO_DISCOUNT_DEPRECATION_REVISION)
+        {
+            gho_asset.map(|g| g.id)
+        } else {
+            None
+        }
+    };
+    Ok(AaveChunkEvent::Upgraded {
+        asset_id,
+        market_id,
+        is_a_token,
+        new_revision: new_revision_i64,
+        deprecated_gho_token_id,
+    })
+}
+
+/// Resolve a `PoolUpdated`/`PoolConfiguratorUpdated` event: RPC the revision fn
+/// on the new address + emit `ContractRevisionUpdated`. Port of
+/// `_update_contract_revision` (event_handlers.py:944-974). The `contract_name`
+/// is "POOL"/"POOL_CONFIGURATOR"; the `revision_fn` is
+/// "POOL_REVISION()"/"CONFIGURATOR_REVISION()".
+async fn resolve_contract_revision_updated(
+    provider: &AlloyProvider,
+    new_address: Address,
+    contract_name: &str,
+    revision_fn: &str,
+    market_id: i64,
+    block_number: u64,
+) -> Result<AaveChunkEvent, ConfigDispatchError> {
+    let revision = read_uint256_return(provider, &new_address, revision_fn, block_number).await?;
+    Ok(AaveChunkEvent::ContractRevisionUpdated {
+        market_id,
+        contract_name: contract_name.to_string(),
+        new_revision: discount_to_i64(revision),
+    })
+}
+
+/// Match a `ProxyCreated` event's `id` against the two known proxy ids (the
+/// right-padded ASCII `b"POOL"`/`b"POOL_CONFIGURATOR"`). On a match, RPC the
+/// revision fn on the implementation address + return the resolved
+/// `ProxyCreationResolution` (the contract name + the proxy address + the
+/// revision). On no match → `Ok(None)` (the Python returns early when the id
+/// doesn't match the expected proxy_id).
+async fn match_proxy_id(
+    id: &alloy::primitives::B256,
+    proxy_address: &Address,
+    implementation_address: &Address,
+    provider: &AlloyProvider,
+    block_number: u64,
+) -> Result<Option<ProxyCreationResolution>, ConfigDispatchError> {
+    let (name, rev_fn) = if id.as_slice() == POOL_PROXY_ID {
+        ("POOL", "POOL_REVISION()")
+    } else if id.as_slice() == POOL_CONFIGURATOR_PROXY_ID {
+        ("POOL_CONFIGURATOR", "CONFIGURATOR_REVISION()")
+    } else {
+        return Ok(None);
+    };
+    let revision =
+        read_uint256_return(provider, implementation_address, rev_fn, block_number).await?;
+    Ok(Some(ProxyCreationResolution {
+        name: name.to_string(),
+        address: checksum(proxy_address),
+        revision: discount_to_i64(revision),
+    }))
+}
+
+/// ASCII-decode a bytes32 + strip the trailing NUL bytes. Port of the Python's
+/// `contract_id_bytes.decode("ascii").strip("\\x00")` (the `AddressSet` event's
+/// `id` topic). The bytes2 is left-aligned ASCII (the protocol writes the
+/// contract name into the bytes32 + right-pads with zeros).
+fn strip_trailing_nulls_from_ascii(id: &alloy::primitives::B256) -> String {
+    let bytes = id.as_slice();
+    let end = bytes.iter().rposition(|&b| b != 0).map_or(0, |p| p + 1);
+    String::from_utf8_lossy(&bytes[..end]).into_owned()
+}
+
+// ── ERC20 metadata fetch (name/symbol/decimals) — the dynamic-string ABI decode ──
+
+/// RPC-fetch an ERC20 token's `name()`/`symbol()` (a `string` return — the
+/// dynamic ABI: 32-byte offset + 32-byte length + data padded to 32-byte
+/// multiples). Falls back to the bytes32-decode + null-strip (older tokens —
+/// some USDT-style tokens return bytes32 instead of a dynamic string). Attempts
+/// the lowercase selector first, then the uppercase fallback. Port of
+/// `erc20_utils._try_fetch_token_string` (erc20_utils.py:23-58).
+///
+/// Returns `None` when all fetch attempts fail (the Python's
+/// `contextlib.suppress(Exception)` catches every error).
+/// RPC-fetch the full ERC20 metadata tuple `(name, symbol, decimals)` for a
+/// token. Port of `erc20_utils._fetch_erc20_token_metadata` (erc20_utils.py:85+).
+/// Each field is `None` when its fetch attempts fail (the Python's
+/// `contextlib.suppress(Exception)` per-field tolerance).
+async fn fetch_erc20_metadata(
+    provider: &AlloyProvider,
+    token: &Address,
+    block_number: u64,
+) -> (Option<String>, Option<String>, Option<i64>) {
+    let name = fetch_erc20_string_metadata(provider, token, "name()", "NAME()", block_number).await;
+    let symbol =
+        fetch_erc20_string_metadata(provider, token, "symbol()", "SYMBOL()", block_number).await;
+    let decimals = fetch_erc20_decimals(provider, token, block_number).await;
+    (name, symbol, decimals)
+}
+
+async fn fetch_erc20_string_metadata(
+    provider: &AlloyProvider,
+    token: &Address,
+    lower_func: &str,
+    upper_func: &str,
+    block_number: u64,
+) -> Option<String> {
+    for func in [lower_func, upper_func] {
+        let calldata = encode_no_arg_call(func);
+        let ret = provider
+            .eth_call(token, calldata, Some(block_number))
+            .await
+            .ok()?;
+        if let Some(s) = decode_dynamic_string(&ret) {
+            return Some(s);
+        }
+        // Fallback: bytes32 decode (older tokens). Take the first 32 bytes +
+        // strip the trailing NULs.
+        if ret.len() >= 32 {
+            let s = String::from_utf8_lossy(&ret[..32])
+                .trim_end_matches('\0')
+                .to_string();
+            if !s.is_empty() {
+                return Some(s);
+            }
+        }
+    }
+    None
+}
+
+/// Decode an ABI dynamic `string` return: the first word is the offset to the
+/// length + data (always 0x20 — the data begins at byte 32); the second word
+/// is the byte length; the data follows, right-padded to a 32-byte multiple.
+/// Mirrors `eth_abi.abi.decode(["string"], data)`. Returns `None` when the
+/// return is malformed (too short / the offset isn't 0x20 / the length
+/// overruns the return).
+fn decode_dynamic_string(ret: &[u8]) -> Option<String> {
+    if ret.len() < 64 {
+        return None;
+    }
+    let offset = U256::from_be_slice(&ret[..32]);
+    if offset != U256::from(0x20u32) {
+        return None;
+    }
+    let length = U256::from_be_slice(&ret[32..64]).to::<usize>();
+    if 64 + length > ret.len() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&ret[64..64 + length]).into_owned();
+    // The Python's `str(value)` preserves the bytes; the bytes32 fallback does
+    // the null-strip. For the dynamic-string path, the length is exact — no
+    // trailing NULs to strip.
+    Some(s)
+}
+
+/// RPC-fetch an ERC20 token's `decimals()` (a `uint256` return). Attempts the
+/// lowercase selector first, then the uppercase fallback. Port of
+/// `erc20_utils._try_fetch_token_uint256` (erc20_utils.py:61-84). Returns
+/// `None` when all fetch attempts fail.
+async fn fetch_erc20_decimals(
+    provider: &AlloyProvider,
+    token: &Address,
+    block_number: u64,
+) -> Option<i64> {
+    for func in ["decimals()", "DECIMALS()"] {
+        let calldata = encode_no_arg_call(func);
+        let ret = provider
+            .eth_call(token, calldata, Some(block_number))
+            .await
+            .ok()?;
+        if let Some(v) = word0_to_u256(&ret) {
+            return Some(v.to::<u64>().cast_signed());
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -1254,5 +1628,83 @@ mod tests {
             .all(|r| *r >= GHO_DISCOUNT_DEPRECATION_REVISION);
         assert!(supported, "V1/V2/V3 support discount");
         assert!(deprecated, "V4+ deprecates");
+    }
+
+    // ── 6SWY4R-2b: the 6 missing-variant pure-decode tests ──────────────
+
+    #[test]
+    fn strip_trailing_nulls_from_ascii_decodes_pool() {
+        // The AddressSet `id` = right-padded ASCII bytes32 (§4.2 finding: NOT
+        // keccak256). The Python: `contract_id_bytes.decode("ascii").strip("\0")`.
+        let mut id = [0u8; 32];
+        id[..4].copy_from_slice(b"POOL");
+        assert_eq!(strip_trailing_nulls_from_ascii(&B256::from(id)), "POOL");
+    }
+
+    #[test]
+    fn strip_trailing_nulls_from_ascii_decodes_long_string() {
+        let mut id = [0u8; 32];
+        id[..17].copy_from_slice(b"POOL_CONFIGURATOR");
+        assert_eq!(
+            strip_trailing_nulls_from_ascii(&B256::from(id)),
+            "POOL_CONFIGURATOR"
+        );
+    }
+
+    #[test]
+    fn strip_trailing_nulls_from_ascii_all_zeros_yields_empty() {
+        assert_eq!(strip_trailing_nulls_from_ascii(&B256::ZERO), "");
+    }
+
+    #[test]
+    fn proxy_id_consts_are_right_padded_ascii_not_keccak() {
+        // §4.2 finding: the Python's
+        // `eth_abi.abi.encode(["bytes32"], [b"POOL"])` is right-padded ASCII,
+        // NOT `keccak256("POOL")`. Pin this so a future refactor doesn't
+        // accidentally switch to keccak256 (which would break the proxy-id
+        // match for the Aave PoolAddressesProvider).
+        assert_eq!(&POOL_PROXY_ID[..4], b"POOL");
+        assert!(POOL_PROXY_ID[4..].iter().all(|&b| b == 0));
+        assert_eq!(&POOL_CONFIGURATOR_PROXY_ID[..17], b"POOL_CONFIGURATOR");
+        assert!(POOL_CONFIGURATOR_PROXY_ID[17..].iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn decode_dynamic_string_decodes_name() {
+        // ABI dynamic string: 32-byte offset (0x20) + 32-byte length + data
+        // padded to a 32-byte multiple.
+        let mut ret = vec![0u8; 96];
+        // offset = 0x20 at [0..32].
+        ret[31] = 0x20;
+        // length = 4 at [32..64].
+        ret[63] = 4;
+        // data = "DAI" at [64..68] (the length is 4 → "DAI\0"? no, length=4 →
+        // 4 bytes; use "DAI\0" → but we want a printable. Use "WETH" = 4 bytes).
+        ret[64..68].copy_from_slice(b"WETH");
+        assert_eq!(decode_dynamic_string(&ret), Some("WETH".to_string()));
+    }
+
+    #[test]
+    fn decode_dynamic_string_returns_none_for_short_return() {
+        // A bytes32-only return (older tokens) is too short for the dynamic
+        // string decode → None (the bytes32 fallback handles it).
+        assert_eq!(decode_dynamic_string(&[0u8; 32]), None);
+    }
+
+    #[test]
+    fn decode_dynamic_string_returns_none_for_non_0x20_offset() {
+        let mut ret = vec![0u8; 96];
+        ret[31] = 0x40; // offset ≠ 0x20 → malformed.
+        ret[63] = 4;
+        ret[64..68].copy_from_slice(b"WETH");
+        assert_eq!(decode_dynamic_string(&ret), None);
+    }
+
+    #[test]
+    fn decode_dynamic_string_returns_none_for_length_overrun() {
+        let mut ret = vec![0u8; 96];
+        ret[31] = 0x20;
+        ret[63] = 0xff; // length overruns the return.
+        assert_eq!(decode_dynamic_string(&ret), None);
     }
 }
