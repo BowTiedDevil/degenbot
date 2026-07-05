@@ -117,7 +117,7 @@ test-all: test-rust test-python
 
 # Lint Markdown files
 lint-markdown:
-    npx --yes markdownlint-cli2 "**/*.md" "!node_modules/**" "!.opencode/node_modules/**" "!.venv/**"
+    npx --yes markdownlint-cli2 --fix "**/*.md" "!node_modules/**" "!.opencode/node_modules/**" "!.venv/**"
 
 # Enforce the context-map maintenance contract (docs/agents/context-map-maintenance.md).
 # Banned: brace dialect {Foo}, status-prose markers, references to the deleted

@@ -67,7 +67,7 @@ jobs:
           node-version: 22
 
       - name: Lint Markdown
-        run: npx --yes markdownlint-cli2 "**/*.md" "!node_modules/**" "!.opencode/node_modules/**" "!.venv/**"
+        run: npx markdownlint-cli2 --fix "**/*.md" "!node_modules/**" "!.opencode/node_modules/**" "!.venv/**"
 
   rust-check:
     name: Rust Lint
