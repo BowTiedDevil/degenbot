@@ -251,6 +251,46 @@ pub fn add_db_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
         liquidity_updater::db_apply_v4_liquidity_updates,
         m
     )?)?;
+    // Aave V3 writer seam (Sub-step B of AZGJUN/RQXEKH) — mirror the
+    // liquidity_updater registration. 14 pyfunctions: 7 `get_or_create_*` + 7
+    // `apply_*` + `decode_reserve_configuration_bitmap`.
+    m.add_function(wrap_pyfunction!(aave::db_get_or_create_e_mode_category, m)?)?;
+    m.add_function(wrap_pyfunction!(aave::db_get_or_create_asset_config, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        aave::db_get_or_create_user_collateral_config,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(aave::db_get_or_create_user, m)?)?;
+    m.add_function(wrap_pyfunction!(aave::db_get_or_create_erc20_token, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        aave::db_get_or_create_collateral_position,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(aave::db_get_or_create_debt_position, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        aave::db_apply_collateral_configuration_changed,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(aave::db_apply_e_mode_category_added, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        aave::db_apply_emode_asset_category_changed,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        aave::db_apply_asset_collateral_in_emode_changed,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        aave::db_apply_reserve_used_as_collateral,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(aave::db_apply_user_e_mode_set, m)?)?;
+    m.add_function(wrap_pyfunction!(aave::db_apply_price_oracle_updated, m)?)?;
+    m.add_function(wrap_pyfunction!(aave::db_apply_asset_source_updated, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        aave::db_decode_reserve_configuration_bitmap,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(pool_read::db_fetch_pool_row, m)?)?;
     m.add_function(wrap_pyfunction!(pool_read::db_fetch_exchange, m)?)?;
     m.add_function(wrap_pyfunction!(pool_read::db_fetch_exchange_by_name, m)?)?;
