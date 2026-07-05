@@ -1922,6 +1922,59 @@ impl DegenbotDb {
         Ok(row)
     }
 
+    /// Resolve the asset row by the underlying-token address (mirror of the
+    /// Python `_get_a_token_for_asset` + `_get_v_token_for_asset` JOINs — both
+    /// Python helpers run the same SELECT against `aave_v3_assets JOIN
+    /// erc20_tokens ON underlying_asset_id` and project only the aToken or
+    /// vToken address. This Rust substrate returns the full `AssetRow` so the
+    /// caller can read `.a_token_address` or `.v_token_address` as needed).
+    ///
+    /// Used by `_create_liquidation_operation` (passing the `LiquidationCall`'s
+    /// `collateralAsset` topic index 1 as `underlying_address` for the aToken
+    /// sibling lookup, and `debtAsset` topic index 2 for the vToken sibling).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure.
+    pub fn lookup_asset_by_underlying_address_on_conn(
+        conn: &rusqlite::Connection,
+        market_id: i64,
+        underlying_address: &str,
+    ) -> Result<Option<AssetRow>, DbError> {
+        let mut stmt = conn.prepare(
+            "SELECT
+                a.id,
+                a.a_token_revision,
+                a.v_token_revision,
+                t_underlying.address AS underlying,
+                t_a.address AS a_token,
+                t_v.address AS v_token
+             FROM aave_v3_assets a
+             JOIN erc20_tokens t_underlying ON t_underlying.id = a.underlying_asset_id
+             JOIN erc20_tokens t_a ON t_a.id = a.a_token_id
+             JOIN erc20_tokens t_v ON t_v.id = a.v_token_id
+             WHERE a.market_id = ?1 AND t_underlying.address = ?2",
+        )?;
+        let row = stmt
+            .query_row(rusqlite::params![market_id, underlying_address], |r| {
+                Ok(AssetRow {
+                    id: r.get(0)?,
+                    a_token_revision: r
+                        .get::<_, Option<i64>>(1)?
+                        .map_or(0, |v| u32::try_from(v).unwrap_or(0)),
+                    v_token_revision: r
+                        .get::<_, Option<i64>>(2)?
+                        .map_or(0, |v| u32::try_from(v).unwrap_or(0)),
+                    underlying_token_address: r.get::<_, String>(3)?,
+                    a_token_address: r.get::<_, String>(4)?,
+                    v_token_address: r.get::<_, String>(5)?,
+                })
+            })
+            .optional()?;
+        stmt.finalize()?;
+        Ok(row)
+    }
+
     /// Resolve the Pool contract revision (the `_get_pool_revision` port).
     /// DP4: read once per tx at parse-start; mid-tx `PoolUpdated` config
     /// events are the orchestrator's concern.
