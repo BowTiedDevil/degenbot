@@ -466,11 +466,17 @@ impl DegenbotDb {
         Ok(out)
     }
 
-    /// The GHO-token row for `market_id` (the `aave_gho_tokens` table) with the
+    /// The GHO-token row for `chain_id` (the `aave_gho_tokens` table) with the
     /// underlying GHO token + vToken addresses resolved via the `erc20_tokens`
-    /// FK joins. Mirrors the Python `get_gho_asset(market)` shape. Returns
-    /// `None` when the market has no GHO token (a non-GHO market, e.g.
-    /// the zkSync or Polygon instances without GHO).
+    /// FK joins. Mirrors the Python `get_gho_asset(market)` shape (which loads
+    /// all `AaveGhoToken` rows + filters by `gho.token.chain == market.chain_id` —
+    /// the table is tiny, ~1 row per chain, so the JOIN-through-chain filter is
+    /// the Rust equivalent). Returns `None` when the chain has no GHO token
+    /// (a non-GHO market, e.g. the zkSync or Polygon instances without GHO).
+    ///
+    /// NB: `aave_gho_tokens` has NO `market_id` column — the linkage to a market
+    /// is via `chain` (the `erc20_tokens.chain` FK on the underlying GHO token).
+    /// The caller resolves `chain_id` from `fetch_aave_market_row(market_id)`.
     ///
     /// The resolved `gho_token_address` + `v_token_address` are what the
     /// orchestrator passes to `process_transaction` as `gho_token_address` /
@@ -480,18 +486,30 @@ impl DegenbotDb {
     /// # Errors
     ///
     /// Returns [`DbError`] on a `SQLite` query failure.
-    pub fn fetch_aave_gho_asset(&self, market_id: i64) -> Result<Option<AaveGhoAsset>, DbError> {
-        let conn = self.lock();
+    pub fn fetch_aave_gho_asset(&self, chain_id: i64) -> Result<Option<AaveGhoAsset>, DbError> {
+        Self::fetch_aave_gho_asset_on_conn(&self.lock(), chain_id)
+    }
+
+    /// The `&Connection`-bound variant (for the chunk-loop's single
+    /// `Transaction` — §3.4 atomicity).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] on a `SQLite` query failure.
+    pub fn fetch_aave_gho_asset_on_conn(
+        conn: &rusqlite::Connection,
+        chain_id: i64,
+    ) -> Result<Option<AaveGhoAsset>, DbError> {
         let mut stmt = conn.prepare(
             "SELECT g.id, g.token_id, g.v_token_id, \
                     g.v_gho_discount_rate_strategy, g.v_gho_discount_token, \
                     et_gho.address, et_v.address \
              FROM aave_gho_tokens g \
-             LEFT JOIN erc20_tokens et_gho ON et_gho.id = g.token_id \
+             JOIN erc20_tokens et_gho ON et_gho.id = g.token_id \
              LEFT JOIN erc20_tokens et_v ON et_v.id = g.v_token_id \
-             WHERE g.id = ?1",
+             WHERE et_gho.chain = ?1",
         )?;
-        let mut rows = stmt.query(params![market_id])?;
+        let mut rows = stmt.query(params![chain_id])?;
         match rows.next()? {
             Some(row) => {
                 let id: i64 = row.get(0)?;
@@ -549,6 +567,36 @@ impl DegenbotDb {
             out.push(row?);
         }
         Ok(out)
+    }
+
+    /// Read a user's `gho_discount` by `(market_id, address)` — the path #1
+    /// lookup for the discount pre-pass (`build_discount_snapshot` in
+    /// `degenbot-aave-updater::config_dispatch`). Returns `None` when the user
+    /// doesn't exist (the path #2 RPC trigger — mirrors the Python
+    /// `gho_users.get(user_address)` returning `None`). Pure read (does NOT
+    /// create a user — `get_or_create_user_on_conn` is the dispatch path's
+    /// responsibility). The `_on_conn` bound serves the chunk-loop's single
+    /// `Transaction` (§3.4 atomicity).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] on a `SQLite` query failure.
+    pub fn fetch_user_gho_discount_by_address_on_conn(
+        conn: &rusqlite::Connection,
+        market_id: i64,
+        address: &str,
+    ) -> Result<Option<i64>, DbError> {
+        let res = conn.query_row(
+            "SELECT gho_discount FROM aave_v3_users \
+             WHERE market_id = ?1 AND address = ?2 LIMIT 1",
+            params![market_id, address],
+            |r| r.get::<_, i64>(0),
+        );
+        match res {
+            Ok(d) => Ok(Some(d)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
     }
 }
 
@@ -711,7 +759,7 @@ mod tests {
     #[test]
     fn fetch_aave_gho_asset_missing_returns_none() {
         let db = db_with_market_and_assets();
-        // market 2 has no GHO token row → None (a non-GHO market).
+        // chain 2 has no GHO token → None (a non-GHO market).
         assert!(db.fetch_aave_gho_asset(2).unwrap().is_none());
     }
 
