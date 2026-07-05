@@ -225,6 +225,20 @@ pub enum AaveChunkEvent {
         claimer_id: i64,
         claimed_amount: alloy::primitives::U256,
     },
+    /// The bad-debt liquidation reset (C3 — `DEFICIT_CREATED` path). The
+    /// contract burns the ENTIRE remaining debt (not just `debtToCover`) when
+    /// a `DeficitCreated` event accompanies a `LiquidationCall` — the
+    /// protocol writes off the bad debt. Sets the debt position's `balance` to
+    /// 0 + advances `last_index` (max-with-prev). Mirrors the Python's
+    /// `debt_position.balance = 0` + the `last_index` guard in
+    /// `_process_debt_burn_with_match`'s bad-debt arm.
+    DebtPositionReset {
+        /// The debt position row id (`aave_v3_debt_positions.id`).
+        position_id: i64,
+        /// The event's index (the apply fn reconciles `last_index` to it via
+        /// max-with-prev).
+        new_index: alloy::primitives::U256,
+    },
 }
 
 /// Per-event-type apply counts for a chunk (mirrors `ChunkWriteReport`).
@@ -254,6 +268,8 @@ pub struct AaveChunkWriteReport {
     /// RYKCC4 no-op variant — the count is tracked for accounting even though
     /// the apply writes nothing.
     pub rewards_claimed: usize,
+    /// The bad-debt liquidation reset count (C3 — `DebtPositionReset`).
+    pub debt_position_reset: usize,
     /// The `chunk_end_block` stamped onto `aave_v3_markets.last_update_block`
     /// as the LAST write in the transaction. `None` if `events` was empty (no
     /// stamp written — mirrors the precedent's "no events ⇒ no stamp" guard
@@ -522,6 +538,13 @@ pub fn apply_aave_chunk_writes_on_conn(
                     *claimed_amount,
                 )?;
                 report.rewards_claimed += 1;
+            }
+            AaveChunkEvent::DebtPositionReset {
+                position_id,
+                new_index,
+            } => {
+                DegenbotDb::reset_debt_position_to_zero_on_conn(conn, *position_id, *new_index)?;
+                report.debt_position_reset += 1;
             }
         }
     }

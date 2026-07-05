@@ -67,4 +67,6 @@ pub use rows::{
 };
 pub use schema::ALEMBIC_HEAD;
 pub use snapshot::{BitmapAtWord, LiquidityAtTick, LiquidityMap, PoolKey};
-pub use write::{decode_reserve_configuration_bitmap, ReserveConfiguration, ScaledTokenPosition};
+pub use write::{
+    decode_reserve_configuration_bitmap, AssetRow, ReserveConfiguration, ScaledTokenPosition,
+};

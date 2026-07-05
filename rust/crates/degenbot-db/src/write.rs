@@ -2031,6 +2031,95 @@ impl DegenbotDb {
             })
             .optional()?)
     }
+
+    /// Read a position's current `balance` + `last_index`. Used by the GHO
+    /// apply dispatch (C3 — `UnifiedGhoProcessor::accrue_debt_on_action` +
+    /// `get_discounted_balance` need the position's prev balance/index to
+    /// compute the discount-scaled amount). Mirrors the Python's read of
+    /// `debt_position.balance` / `.last_index` on the ORM-tracked position.
+    ///
+    /// Returns `(balance, None)` for a position whose `last_index` is NULL
+    /// (a fresh position). Returns [`DbError::MissingRow`] if the position id
+    /// has no row.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::MissingRow`] if no position matches `position_id`,
+    /// or [`DbError::Decode`] on a malformed persisted balance string.
+    pub fn lookup_position_balance_index_on_conn(
+        conn: &rusqlite::Connection,
+        position: ScaledTokenPosition,
+        position_id: i64,
+    ) -> Result<(alloy::primitives::U256, Option<alloy::primitives::U256>), DbError> {
+        let sql = match position.table() {
+            "aave_v3_collateral_positions" => {
+                "SELECT balance, last_index FROM aave_v3_collateral_positions WHERE id = ?1"
+            }
+            "aave_v3_debt_positions" => {
+                "SELECT balance, last_index FROM aave_v3_debt_positions WHERE id = ?1"
+            }
+            _ => unreachable!("bad table"),
+        };
+        let row: (String, Option<String>) = conn
+            .query_row(sql, rusqlite::params![position_id], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    DbError::MissingRow(format!("{} id={position_id}", position.table()))
+                }
+                e => DbError::Sqlite(e),
+            })?;
+        let balance = parse_decimal_u256(&row.0)?;
+        let last_index = row.1.as_deref().and_then(|s| parse_decimal_u256(s).ok());
+        Ok((balance, last_index))
+    }
+
+    /// Reset a debt position's balance to 0 + advance `last_index` (the
+    /// bad-debt liquidation path — C3). Mirrors the Python's
+    /// `debt_position.balance = 0` + `if index > current_index: last_index =
+    /// index` guard in `_process_debt_burn_with_match`'s bad-debt arm. The
+    /// contract burns the ENTIRE remaining debt when a `DeficitCreated`
+    /// accompanies a `LiquidationCall`; the delta-based apply may be off by 1
+    /// wei, so this reset is the faithful path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::MissingRow`] if `position_id` has no row, or
+    /// [`DbError::Sqlite`] on an UPDATE failure.
+    pub fn reset_debt_position_to_zero_on_conn(
+        conn: &rusqlite::Connection,
+        position_id: i64,
+        new_index: alloy::primitives::U256,
+    ) -> Result<(), DbError> {
+        // Read the current last_index (max-with-prev reconciliation — mirrors
+        // the Python's `if scaled_event.index > current_index` guard).
+        let current_index: Option<String> = conn
+            .query_row(
+                "SELECT last_index FROM aave_v3_debt_positions WHERE id = ?1",
+                rusqlite::params![position_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => DbError::MissingRow(format!(
+                    "aave_v3_debt_positions id={position_id} (reset target)"
+                )),
+                e => DbError::Sqlite(e),
+            })?;
+        let current_index_u256 = current_index
+            .as_deref()
+            .and_then(|s| parse_decimal_u256(s).ok());
+        let new_last_index = match current_index_u256 {
+            Some(cur) if new_index > cur => Some(new_index),
+            Some(_) => current_index_u256, // keep the prior higher index
+            None => Some(new_index),       // first event: set it
+        };
+        conn.execute(
+            "UPDATE aave_v3_debt_positions SET balance = ?1, last_index = ?2 WHERE id = ?3",
+            rusqlite::params!["0", new_last_index.map(|i| i.to_string()), position_id],
+        )?;
+        Ok(())
+    }
 }
 
 /// The asset-row view the parser uses (aToken-vToken-Underlying triplet +
@@ -3013,5 +3102,113 @@ mod tests {
             )
             .unwrap();
         assert_eq!(ps.as_deref(), Some("0xsource"));
+    }
+
+    // ── the GHO-discount substrate fns (C3) ────────────────────────────
+
+    /// Seed a debt position with a non-zero balance + `last_index`.
+    fn seed_debt_position_with_balance(
+        db: &DegenbotDb,
+        balance: &str,
+        last_index: Option<&str>,
+    ) -> i64 {
+        let user = seed_user(db, "0xdebtor");
+        let asset = seed_asset(db);
+        let conn = db.conn.lock();
+        conn.execute(
+            "INSERT INTO aave_v3_debt_positions \
+                (user_id, asset_id, balance, last_index) VALUES (?1, ?2, ?3, ?4)",
+            params![user, asset, balance, last_index],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn lookup_position_balance_index_reads_debt_position() {
+        let db = write_db_with_market();
+        let pid = seed_debt_position_with_balance(&db, "1000", Some("123"));
+        let conn = db.conn.lock();
+        let (balance, last_index) = DegenbotDb::lookup_position_balance_index_on_conn(
+            &conn,
+            ScaledTokenPosition::Debt,
+            pid,
+        )
+        .unwrap();
+        assert_eq!(balance, alloy::primitives::U256::from(1_000u64));
+        assert_eq!(last_index, Some(alloy::primitives::U256::from(123u64)));
+    }
+
+    #[test]
+    fn lookup_position_balance_index_missing_row_returns_err() {
+        let db = write_db_with_market();
+        let conn = db.conn.lock();
+        let err = DegenbotDb::lookup_position_balance_index_on_conn(
+            &conn,
+            ScaledTokenPosition::Debt,
+            9999,
+        )
+        .unwrap_err();
+        assert!(matches!(err, DbError::MissingRow(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn reset_debt_position_sets_balance_to_zero_and_advances_index() {
+        let db = write_db_with_market();
+        // balance=5000, last_index=100. New index=200 > 100 → advances.
+        let pid = seed_debt_position_with_balance(&db, "5000", Some("100"));
+        let conn = db.conn.lock();
+        DegenbotDb::reset_debt_position_to_zero_on_conn(
+            &conn,
+            pid,
+            alloy::primitives::U256::from(200u64),
+        )
+        .unwrap();
+        let (balance, last_index) = DegenbotDb::lookup_position_balance_index_on_conn(
+            &conn,
+            ScaledTokenPosition::Debt,
+            pid,
+        )
+        .unwrap();
+        assert_eq!(balance, alloy::primitives::U256::ZERO, "balance reset to 0");
+        assert_eq!(last_index, Some(alloy::primitives::U256::from(200u64)));
+    }
+
+    #[test]
+    fn reset_debt_position_keeps_higher_index_when_new_is_lower() {
+        let db = write_db_with_market();
+        // balance=5000, last_index=500. New index=200 < 500 → keep 500.
+        let pid = seed_debt_position_with_balance(&db, "5000", Some("500"));
+        let conn = db.conn.lock();
+        DegenbotDb::reset_debt_position_to_zero_on_conn(
+            &conn,
+            pid,
+            alloy::primitives::U256::from(200u64),
+        )
+        .unwrap();
+        let (_, last_index) = DegenbotDb::lookup_position_balance_index_on_conn(
+            &conn,
+            ScaledTokenPosition::Debt,
+            pid,
+        )
+        .unwrap();
+        assert_eq!(
+            last_index,
+            Some(alloy::primitives::U256::from(500u64)),
+            "max-with-prev keeps 500"
+        );
+    }
+
+    #[test]
+    fn reset_debt_position_missing_row_returns_err() {
+        let db = write_db_with_market();
+        let conn = db.conn.lock();
+        let err = DegenbotDb::reset_debt_position_to_zero_on_conn(
+            &conn,
+            9999,
+            alloy::primitives::U256::from(200u64),
+        )
+        .unwrap_err();
+        assert!(matches!(err, DbError::MissingRow(_)), "got {err:?}");
     }
 }
