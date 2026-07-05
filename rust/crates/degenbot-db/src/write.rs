@@ -1230,6 +1230,351 @@ impl DegenbotDb {
         )?;
         Ok(conn.last_insert_rowid())
     }
+
+    // ── ScaledToken position-state mutations (5Z3QQ2 — SCALEAPPLY) ────────
+    //
+    // The aToken/vToken `Mint`/`Burn`/`BalanceTransfer` events drive the
+    // `balance` + `last_index` columns on `aave_v3_collateral_positions` /
+    // `aave_v3_debt_positions`. These apply fns are the pure substrate: they
+    // take a PRE-COMPUTED signed `balance_delta` (the revision-aware
+    // `process_mint_event`/`process_burn_event` math in
+    // `degenbot-aave-updater::processors` computed it from the event's
+    // `value`/`balance_increase`/`index`/`scaled_amount` + the token
+    // revision's rounding strategy) + the new index, then mutate the row.
+    //
+    // The `last_index` reconciliation mirrors the Python
+    // `token_processor._process_scaled_token_operation` L91/L109/L131/L148:
+    // `position.last_index = max(position.last_index or 0, new_index)` — only
+    // advance last_index when the event's index is strictly greater (so
+    // out-of-log-order events don't clobber a later event's index).
+
+    /// Apply a `ScaledToken` `Mint` event's pre-computed `balance_delta` +
+    /// `new_index` to a collateral or debt position. Port of
+    /// `token_processor._process_scaled_token_operation`'s
+    /// `CollateralMintEvent`/`DebtMintEvent` arm (the `position.balance +=
+    /// mint_result.balance_delta` + the `last_index` reconciliation).
+    ///
+    /// `balance_delta` is signed: positive for a true mint (deposit/borrow),
+    /// negative for the interest-exceeds-withdrawal edge case (the Python
+    /// `process_mint_event` returns a negative delta when `balance_increase >
+    /// value`, treating the Mint as an effective burn). The apply fn is the
+    /// same shape as [`Self::apply_scaled_token_burn_on_conn`] — the only
+    /// difference is the caller's semantic (mint vs burn); the math (read
+    /// balance, add delta, write back, conditionally advance `last_index`) is
+    /// identical.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure, or
+    /// [`DbError::Decode`] if the persisted `balance`/`last_index` string is
+    /// malformed, or [`DbError::MissingRow`] if no position matches
+    /// `position_id`.
+    pub fn apply_scaled_token_mint_on_conn(
+        conn: &rusqlite::Connection,
+        position: ScaledTokenPosition,
+        position_id: i64,
+        balance_delta: alloy::primitives::I256,
+        new_index: alloy::primitives::U256,
+    ) -> Result<(), DbError> {
+        apply_scaled_token_balance_delta_on_conn(
+            conn,
+            position,
+            position_id,
+            balance_delta,
+            new_index,
+        )
+    }
+
+    /// Apply a `ScaledToken` `Burn` event's pre-computed `balance_delta` +
+    /// `new_index` to a collateral or debt position. Port of
+    /// `token_processor._process_scaled_token_operation`'s
+    /// `CollateralBurnEvent`/`DebtBurnEvent` arm. `balance_delta` is negative
+    /// (a burn decrements the scaled balance); the apply math is shared with
+    /// [`Self::apply_scaled_token_mint_on_conn`] (both are signed deltas).
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::apply_scaled_token_mint_on_conn`].
+    pub fn apply_scaled_token_burn_on_conn(
+        conn: &rusqlite::Connection,
+        position: ScaledTokenPosition,
+        position_id: i64,
+        balance_delta: alloy::primitives::I256,
+        new_index: alloy::primitives::U256,
+    ) -> Result<(), DbError> {
+        apply_scaled_token_balance_delta_on_conn(
+            conn,
+            position,
+            position_id,
+            balance_delta,
+            new_index,
+        )
+    }
+
+    /// Apply a `ScaledToken` `BalanceTransfer` event: debit `from_position_id`'s
+    /// balance by `scaled_amount`, credit `to_position_id` by the same, +
+    /// advance both positions' `last_index` to `transfer_index` (the transfer
+    /// carries its own index; both positions reconcile to it). Port of
+    /// `transfers._process_collateral_transfer` (the sender's `last_index =
+    /// max(prev, transfer_index)` + the recipient's `last_index =
+    /// transfer_index` unconditional set).
+    ///
+    /// `BalanceTransfer` is aToken-only (collateral positions); there's no
+    /// vToken `BalanceTransfer` in Aave V3 (debt transfers are ERC20 Transfer +
+    /// paired Burn, not `BalanceTransfer`). So both positions are collateral.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure (either position's
+    /// SELECT/UPDATE), or [`DbError::MissingRow`] if either position id has no
+    /// row, or [`DbError::Decode`] on a malformed persisted balance string.
+    pub fn apply_scaled_token_transfer_on_conn(
+        conn: &rusqlite::Connection,
+        from_position_id: i64,
+        to_position_id: i64,
+        scaled_amount: alloy::primitives::U256,
+        transfer_index: alloy::primitives::U256,
+    ) -> Result<(), DbError> {
+        // Debit the sender (negative delta). On existing positions, the
+        // Python mutates `sender_position.balance -= scaled_amount` then
+        // `sender_position.last_index = max(prev, transfer_index)`.
+        apply_scaled_token_balance_delta_on_conn(
+            conn,
+            ScaledTokenPosition::Collateral,
+            from_position_id,
+            -alloy::primitives::I256::try_from(scaled_amount)
+                .unwrap_or(alloy::primitives::I256::MIN),
+            transfer_index,
+        )?;
+        // Credit the recipient (positive delta). The Python sets
+        // `recipient_position.last_index = transfer_index` UNCONDITIONALLY
+        // (not max-with-prev) — the recipient's index becomes the transfer's
+        // index. Reuse the shared helper which does max-with-prev; the
+        // difference is benign because a fresh recipient position's
+        // `last_index` is NULL (treated as 0), so max(0, transfer_index) =
+        // transfer_index matches the unconditional set. For an existing
+        // recipient (a re-transfer into a non-empty position), max-with-prev
+        // is SAFER (avoids clobbering a higher index from a prior transfer);
+        // the Python's unconditional set is a latent bug only visible if a
+        // prior transfer into the same recipient had a higher index, which
+        // can't happen within a single chunk's monotonic block order.
+        apply_scaled_token_balance_delta_on_conn(
+            conn,
+            ScaledTokenPosition::Collateral,
+            to_position_id,
+            alloy::primitives::I256::try_from(scaled_amount)
+                .unwrap_or(alloy::primitives::I256::MAX),
+            transfer_index,
+        )?;
+        Ok(())
+    }
+
+    // ── `&self` wrappers (2QPBUJ path: thin lock-and-delegate) ─────────────
+
+    /// `&self` wrapper for [`Self::apply_scaled_token_mint_on_conn`].
+    ///
+    /// # Errors
+    ///
+    /// Same as the `_on_conn` variant.
+    pub fn apply_scaled_token_mint(
+        &self,
+        position: ScaledTokenPosition,
+        position_id: i64,
+        balance_delta: alloy::primitives::I256,
+        new_index: alloy::primitives::U256,
+    ) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        Self::apply_scaled_token_mint_on_conn(
+            &conn,
+            position,
+            position_id,
+            balance_delta,
+            new_index,
+        )
+    }
+
+    /// `&self` wrapper for [`Self::apply_scaled_token_burn_on_conn`].
+    ///
+    /// # Errors
+    ///
+    /// Same as the `_on_conn` variant.
+    pub fn apply_scaled_token_burn(
+        &self,
+        position: ScaledTokenPosition,
+        position_id: i64,
+        balance_delta: alloy::primitives::I256,
+        new_index: alloy::primitives::U256,
+    ) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        Self::apply_scaled_token_burn_on_conn(
+            &conn,
+            position,
+            position_id,
+            balance_delta,
+            new_index,
+        )
+    }
+
+    /// `&self` wrapper for [`Self::apply_scaled_token_transfer_on_conn`].
+    ///
+    /// # Errors
+    ///
+    /// Same as the `_on_conn` variant.
+    pub fn apply_scaled_token_transfer(
+        &self,
+        from_position_id: i64,
+        to_position_id: i64,
+        scaled_amount: alloy::primitives::U256,
+        transfer_index: alloy::primitives::U256,
+    ) -> Result<(), DbError> {
+        let conn = self.conn.lock();
+        Self::apply_scaled_token_transfer_on_conn(
+            &conn,
+            from_position_id,
+            to_position_id,
+            scaled_amount,
+            transfer_index,
+        )
+    }
+}
+
+/// Which position table a `ScaledToken` event applies to (mirrors the
+/// `CollateralMintEvent`/`DebtMintEvent` dispatch in the Python `_process_
+/// scaled_token_operation`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScaledTokenPosition {
+    /// `aave_v3_collateral_positions` (aToken Mint/Burn/BalanceTransfer).
+    Collateral,
+    /// `aave_v3_debt_positions` (vToken Mint/Burn).
+    Debt,
+}
+
+impl ScaledTokenPosition {
+    /// The literal table name (compile-time-dispatched; no injection surface).
+    #[must_use]
+    pub const fn table(self) -> &'static str {
+        match self {
+            Self::Collateral => "aave_v3_collateral_positions",
+            Self::Debt => "aave_v3_debt_positions",
+        }
+    }
+
+    /// The literal `balance`/`last_index` column pair (identical across both
+    /// tables — `(balance VARCHAR(78) NOT NULL, last_index VARCHAR(78))`).
+    #[must_use]
+    pub const fn balance_col(self) -> &'static str {
+        "balance"
+    }
+
+    #[must_use]
+    pub const fn last_index_col(self) -> &'static str {
+        "last_index"
+    }
+}
+
+/// The shared `mint`/`burn` apply body (both are signed deltas). Reads the
+/// position's current `balance` + `last_index`, adds the signed
+/// `balance_delta`, conditionally advances `last_index`, writes both back.
+///
+/// # `last_index` reconciliation
+///
+/// Advances `last_index` to `new_index` ONLY when `new_index >
+/// COALESCE(current_last_index, 0)` — mirrors the Python
+/// `if mint_result.new_index > (position.last_index or 0) { position.last_index
+/// = mint_result.new_index }`. The max-with-prev guard prevents an out-of-log-
+/// order event from clobbering a newer event's index.
+///
+/// # Errors
+///
+/// Returns [`DbError::MissingRow`] if no position matches `position_id`.
+fn apply_scaled_token_balance_delta_on_conn(
+    conn: &rusqlite::Connection,
+    position: ScaledTokenPosition,
+    position_id: i64,
+    balance_delta: alloy::primitives::I256,
+    new_index: alloy::primitives::U256,
+) -> Result<(), DbError> {
+    let table = position.table();
+    let sql = match table {
+        "aave_v3_collateral_positions" => {
+            "SELECT balance, last_index FROM aave_v3_collateral_positions WHERE id = ?1"
+        }
+        "aave_v3_debt_positions" => {
+            "SELECT balance, last_index FROM aave_v3_debt_positions WHERE id = ?1"
+        }
+        _ => unreachable!("ScaledTokenPosition: bad table {table:?}"),
+    };
+    let row: Option<(Option<String>, Option<String>)> = conn
+        .query_row(sql, params![position_id], |r| {
+            Ok((
+                r.get::<_, Option<String>>(0)?,
+                r.get::<_, Option<String>>(1)?,
+            ))
+        })
+        .optional()?;
+    let Some((balance_str, last_index_str)) = row else {
+        return Err(DbError::MissingRow(format!(
+            "{table} id={position_id} (ScaledToken apply target)"
+        )));
+    };
+    let current_balance =
+        parse_decimal_u256(&balance_str.ok_or_else(|| {
+            DbError::Decode(format!("{table} id={position_id}: balance is NULL"))
+        })?)?;
+    let current_index = match last_index_str {
+        Some(s) => Some(parse_decimal_u256(&s)?),
+        None => None,
+    };
+    // Compute new balance (I256 arithmetic — delta may be negative).
+    let current_balance_i =
+        alloy::primitives::I256::try_from(current_balance).unwrap_or(alloy::primitives::I256::MAX);
+    let new_balance_i = current_balance_i + balance_delta;
+    if new_balance_i < alloy::primitives::I256::ZERO {
+        return Err(DbError::Decode(format!(
+            "{table} id={position_id}: balance would go negative (current={current_balance}, delta={balance_delta})"
+        )));
+    }
+    let new_balance: alloy::primitives::U256 = new_balance_i.try_into().map_err(|_| {
+        DbError::Decode(format!(
+            "{table} id={position_id}: new balance overflows U256 (={new_balance_i})"
+        ))
+    })?;
+    // last_index reconciliation — max-with-prev (mirrors the Python guard).
+    let new_last_index = match current_index {
+        Some(cur) if new_index > cur => Some(new_index),
+        Some(_) => current_index, // keep the prior higher index
+        None => Some(new_index),  // first event: set it
+    };
+    let update_sql = match table {
+        "aave_v3_collateral_positions" => {
+            "UPDATE aave_v3_collateral_positions SET balance = ?1, last_index = ?2 WHERE id = ?3"
+        }
+        "aave_v3_debt_positions" => {
+            "UPDATE aave_v3_debt_positions SET balance = ?1, last_index = ?2 WHERE id = ?3"
+        }
+        _ => unreachable!(),
+    };
+    conn.execute(
+        update_sql,
+        params![
+            new_balance.to_string(),
+            new_last_index.map(|i| i.to_string()),
+            position_id,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Parse a decimal-`VARCHAR` `U256` value. Mirrors the Python `int(s)` parse
+/// of an `AaveV3*Position.balance` attribute read back from the DB.
+///
+/// # Errors
+///
+/// Returns [`DbError::Decode`] if the string is not a valid decimal
+/// `U256`.
+fn parse_decimal_u256(s: &str) -> Result<alloy::primitives::U256, DbError> {
+    alloy::primitives::U256::from_str_radix(s, 10)
+        .map_err(|e| DbError::Decode(format!("bad decimal U256 {s:?}: {e}")))
 }
 
 /// The shared `get_or_create_position` body for collateral + debt (the Python
