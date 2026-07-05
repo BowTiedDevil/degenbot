@@ -1616,9 +1616,11 @@ name = "degenbot-aave-updater"
 version = "0.6.0-alpha.3"
 dependencies = [
  "alloy",
+ "degenbot-core",
  "degenbot-db",
  "degenbot-decoders",
  "degenbot-evm-math",
+ "degenbot-rpc",
  "rusqlite",
  "thiserror 1.0.69",
 ]

@@ -47,7 +47,9 @@ pub mod schema;
 pub mod snapshot;
 pub mod write;
 
-pub use aave::{AaveCollateralPositionRecord, AaveDebtPositionRecord, AaveUserRecord};
+pub use aave::{
+    AaveCollateralPositionRecord, AaveDebtPositionRecord, AaveGhoAsset, AaveUserRecord,
+};
 pub use connection::DegenbotDb;
 pub use discovery::{V2PoolRowInput, V3PoolRowInput, V4PoolRowInput};
 pub use error::DbError;
