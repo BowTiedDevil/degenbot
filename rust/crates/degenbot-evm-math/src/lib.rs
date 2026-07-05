@@ -25,6 +25,12 @@ pub use wad_ray_math::{
     WAD, WAD_RAY_RATIO,
 };
 
+pub mod percentage_math;
+pub use percentage_math::{
+    percent_div, percent_div_ceil, percent_mul, percent_mul_ceil, percent_mul_floor, PercentError,
+    HALF_PERCENTAGE_FACTOR, PERCENTAGE_FACTOR,
+};
+
 /// EIP-1559 base-fee maximum change denominator (`BASE_FEE_MAX_CHANGE_DENOMINATOR`).
 ///
 /// Per [EIP-1559], the base fee may change by at most `1/8` per block.
