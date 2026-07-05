@@ -38,6 +38,7 @@
 //! branch are **deferred** — flagged `Err(Deferred)` so the orchestrator can
 //! split them into C2 sub-tasks without rushing the edge-branch verification.
 
+use crate::gho_processor::{GhoProcessorError, UnifiedGhoProcessor};
 use crate::operations::{Operation, OperationType, ScaledTokenEvent, ScaledTokenEventType};
 use crate::operations_parser::{addr_to_hex, log_idx_value, TransactionOperationsParser};
 use crate::processors::{
@@ -49,6 +50,7 @@ use alloy::rpc::types::Log;
 use degenbot_db::{DegenbotDb, ScaledTokenPosition};
 use degenbot_evm_math::ray_div;
 use rusqlite::Connection;
+use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 /// Errors from `process_transaction`.
@@ -64,6 +66,10 @@ pub enum ProcessTxError {
     /// A `ScaledTokenProcessor` failure (ray-math overflow / delta overflow).
     #[error("processor error: {0}")]
     Processor(#[from] ProcessorError),
+    /// A `UnifiedGhoProcessor` failure (ray-math / percentage-math overflow /
+    /// delta overflow). C3 (CYPYEL).
+    #[error("GHO processor error: {0}")]
+    GhoProcessor(#[from] GhoProcessorError),
     /// A ray-math failure from the enrichment's `ray_div`.
     #[error("ray-math error: {0}")]
     RayMath(#[from] degenbot_evm_math::WadRayError),
@@ -89,12 +95,20 @@ pub enum ProcessTxError {
 ///
 /// Returns [`ProcessTxError`] on any parse / substrate / processor / ray-math
 /// failure, OR [`ProcessTxError::Deferred`] for the not-yet-ported paths
-/// (liquidation apply / GHO discount machinery / `DeficitCoverage` /
-/// `MintToTreasury`).
+/// (the GHO bad-debt override pending the orchestrator's confirm on the
+/// `DEFICIT_CREATED` vs `user_liquidation_count` mechanism — flagged).
+///
+/// `discounts` is the orchestrator-pre-fetched GHO discount snapshot (DP2 —
+/// the `raw_call` for users-not-in-DB discounts is the driver-shell's
+/// concern, NOT C3's). Keyed by user address → the discount percent (basis
+/// points, `10_000 == 100.00%`) in effect at the tx's start. C3's
+/// [`GhoDiscountContext`] resolves the EFFECTIVE discount per event (adjusting
+/// for in-tx `DISCOUNT_PERCENT_UPDATED` events).
 #[allow(
     clippy::too_many_arguments,
     clippy::missing_errors_doc,
-    clippy::similar_names
+    clippy::similar_names,
+    clippy::implicit_hasher
 )]
 pub fn process_transaction(
     market_id: i64,
@@ -106,6 +120,7 @@ pub fn process_transaction(
     conn: &Connection,
     tx_logs: &[&Log],
     tx_hash: [u8; 32],
+    discounts: &HashMap<Address, U256>,
 ) -> Result<Vec<AaveChunkEvent>, ProcessTxError> {
     let parser = TransactionOperationsParser::new(
         market_id,
@@ -118,6 +133,12 @@ pub fn process_transaction(
     )?;
     let parsed = parser.parse(tx_logs, tx_hash)?;
 
+    // Build the GHO-discount context once per tx (the
+    // `discount_updates_by_log_index` map + the `bad_debt_users` set). Mirrors
+    // `_process_transaction`'s pre-pass (the DISCOUNT_PERCENT_UPDATED scan) +
+    // `_is_bad_debt_liquidation`'s DEFICIT_CREATED scan.
+    let gho_ctx = GhoDiscountContext::new(tx_logs, discounts, gho_vtoken_address);
+
     // Sort the parsed operations by pool_event logIndex (or minimum
     // scaled_event log_index for the no-pool-event operations — INTEREST_
     // ACCRUAL / MintToTreasury). Mirrors the Python `_get_operation_sort_key`.
@@ -126,7 +147,14 @@ pub fn process_transaction(
 
     let mut events: Vec<AaveChunkEvent> = Vec::new();
     for op in &sorted_ops {
-        dispatch_operation(op, market_id, conn, &mut events)?;
+        dispatch_operation(
+            op,
+            market_id,
+            conn,
+            gho_vtoken_address,
+            &gho_ctx,
+            &mut events,
+        )?;
     }
     Ok(events)
 }
@@ -151,10 +179,13 @@ fn operation_sort_key(op: &Operation) -> u64 {
 
 /// Dispatch a single Operation's scaled-token events → [`AaveChunkEvent`]
 /// variants. Mirrors `_process_operation`'s per-event-type dispatch loop.
+#[allow(clippy::too_many_arguments, clippy::similar_names)]
 fn dispatch_operation(
     op: &Operation,
     market_id: i64,
     conn: &Connection,
+    gho_vtoken_address: Option<Address>,
+    gho_ctx: &GhoDiscountContext,
     events: &mut Vec<AaveChunkEvent>,
 ) -> Result<(), ProcessTxError> {
     match op.operation_type {
@@ -169,14 +200,14 @@ fn dispatch_operation(
         // The Operation carries the scaled events; pass them through as
         // zero-delta mints/burns so the position's `last_index` advances.
         OperationType::InterestAccrual => dispatch_interest_accrual(op, market_id, conn, events),
-        OperationType::Liquidation => dispatch_liquidation(op, market_id, conn, events),
-        OperationType::GhoLiquidation => Err(ProcessTxError::Deferred(
-            "GHO liquidation apply (needs UnifiedGhoProcessor + GHO-discount machinery) — C3".into(),
-        )),
+        OperationType::Liquidation => {
+            dispatch_liquidation(op, market_id, conn, gho_vtoken_address, gho_ctx, events)
+        }
+        OperationType::GhoLiquidation => {
+            dispatch_gho_liquidation(op, market_id, conn, gho_vtoken_address, gho_ctx, events)
+        }
         OperationType::GhoBorrow | OperationType::GhoRepay | OperationType::GhoFlashLoan => {
-            Err(ProcessTxError::Deferred(
-                "GHO Borrow/Repay/FlashLoan (needs UnifiedGhoProcessor (RYKCC4) + GHO-discount machinery with RPC dep) — C3".into(),
-            ))
+            dispatch_gho_standard(op, market_id, conn, gho_vtoken_address, gho_ctx, events)
         }
         OperationType::DeficitCoverage => dispatch_deficit_coverage(op, market_id, conn, events),
         OperationType::MintToTreasury => dispatch_mint_to_treasury(op, market_id, conn, events),
@@ -581,27 +612,415 @@ fn dispatch_interest_accrual(
     Ok(())
 }
 
-/// Dispatch the standard (non-GHO) `LiquidationCall` apply. Mirrors the
-/// `_process_operation` dispatch for `OperationType::Liquidation` — the
-/// `extract_pool_amount` special-liquidation path: debt burn/transfer → word 0
-/// (`debtToCover`); collateral burn/transfer → word 1
-/// (`liquidatedCollateralAmount`). The `COMBINED_BURN/SEPARATE_BURNS` pattern
-/// detection is B's concern (the Operation already carries the matched
-/// scaled events in `op.scaled_events`); C2 applies each via
-/// [`build_scaled_event_chunk_event`] with the per-event-type `raw_amount`.
+// ── the GHO-discount-lookup machinery (C3 — ports
+//    `transaction_processor._process_transaction` L73-192 + `_is_bad_debt_liquidation`) ─
+
+/// The per-tx GHO-discount context. Computed once at the top of
+/// [`process_transaction`] (mirrors the Python `_process_transaction`'s pre-pass):
+/// - scans `tx_logs` for `DISCOUNT_PERCENT_UPDATED` events → builds the
+///   `updates_by_log_index` map (per-user, sorted by log index).
+/// - scans `tx_logs` for `DEFICIT_CREATED` events → builds the `bad_debt_users`
+///   set (the bad-debt-liquidation signal — `_is_bad_debt_liquidation`).
+/// - holds the orchestrator-pre-fetched `discounts` snapshot (DP2 — the
+///   `raw_call` for users-not-in-DB is the driver-shell's concern).
 ///
-/// **The bad-debt "set balance to 0" override is deferred to C3** —
-/// `UnifiedGhoProcessor` (RYKCC4 scope, not ported in SCALEAPPLY) is the
-/// prerequisite for the bad-debt detection + the GHO liquidation. The
-/// standard delta-based apply here is correct for non-bad-debt liquidations;
-/// for bad-debt (where the contract burns the ENTIRE remaining debt), the
-/// delta-based approach may be off by 1 wei (the `debtToCover` vs actual
-/// debt discrepancy) — C3's `set-balanced-to-0` override removes the roundoff.
-#[allow(clippy::too_many_lines)]
+/// The `effective_discount(user, log_index, vtoken_rev)` resolves the discount
+/// in effect at a given log index (the `get_effective_discount_at_log_index`
+/// fn — the most-recent `DISCOUNT_PERCENT_UPDATED` before `log_index`, else the
+/// snapshot default). For revisions without discount support (V4+), returns 0.
+///
+/// # The bad-debt mechanism (DP3 — FLAGGED to the orchestrator)
+///
+/// The task body (scope 4 / DP3) says the bad-debt override checks
+/// `user_liquidation_count == 1` (B's SINGLE pattern) + needs an A-type
+/// `Operation` amend to carry the flag. **The Python oracle (`_is_bad_debt_
+/// liquidation`, `token_processor.py:714`) actually checks for a
+/// `DEFICIT_CREATED` event for the user in `tx_logs` — it does NOT consult
+/// `user_liquidation_count`.** C3 implements the `DEFICIT_CREATED`-faithful
+/// path (the §4.2 parity target); NO A-type amend. The orchestrator has been
+/// flagged; if they redirect to `user_liquidation_count`, the change is small
+/// + isolated.
+#[derive(Debug)]
+pub struct GhoDiscountContext<'a> {
+    /// `(user, log_index, old_discount)` — from `DISCOUNT_PERCENT_UPDATED`
+    /// events, per-user, sorted ascending by log index. Mirrors
+    /// `tx_context.discount_updates_by_log_index`.
+    updates_by_log_index: HashMap<Address, Vec<(u64, U256)>>,
+    /// The orchestrator-pre-fetched GHO discount snapshot (DP2). Keyed by user
+    /// address → the discount percent (basis points) in effect at the tx's
+    /// start. Users not in the map default to 0 (no discount).
+    discounts: &'a HashMap<Address, U256>,
+    /// Users with a `DEFICIT_CREATED` event in this tx (the bad-debt set —
+    /// `_is_bad_debt_liquidation`).
+    bad_debt_users: HashSet<Address>,
+    /// The GHO vToken address (the `is_gho` discriminator). `None` when the
+    /// market has no GHO asset.
+    gho_vtoken_address: Option<Address>,
+}
+
+impl<'a> GhoDiscountContext<'a> {
+    /// Construct the context by scanning `tx_logs` once. Mirrors the Python
+    /// `_process_transaction` pre-pass (the `DISCOUNT_PERCENT_UPDATED` scan) +
+    /// `_is_bad_debt_liquidation`'s `DEFICIT_CREATED` scan.
+    #[must_use]
+    pub fn new(
+        tx_logs: &[&Log],
+        discounts: &'a HashMap<Address, U256>,
+        gho_vtoken_address: Option<Address>,
+    ) -> Self {
+        use degenbot_decoders::aave_event_decoder::{
+            DEFICIT_CREATED_TOPIC, DISCOUNT_PERCENT_UPDATED_TOPIC,
+        };
+        let mut updates_by_log_index: HashMap<Address, Vec<(u64, U256)>> = HashMap::new();
+        let mut bad_debt_users: HashSet<Address> = HashSet::new();
+        for log in tx_logs {
+            let topics = log.topics();
+            if topics.is_empty() {
+                continue;
+            }
+            if topics[0] == DISCOUNT_PERCENT_UPDATED_TOPIC && topics.len() >= 2 {
+                // DiscountPercentUpdated(user indexed, oldDiscountPercent).
+                // topics[1] = the user; data word 0 = the OLD discount.
+                let user = topic_to_address(topics[1]);
+                let old_discount = extract_pool_amount_word0(log);
+                updates_by_log_index
+                    .entry(user)
+                    .or_default()
+                    .push((log.log_index.unwrap_or(0), old_discount));
+            } else if topics[0] == DEFICIT_CREATED_TOPIC && topics.len() >= 2 {
+                // DeficitCreated(user indexed, debtAsset indexed, amount).
+                // topics[1] = the user whose debt is written off.
+                let user = topic_to_address(topics[1]);
+                bad_debt_users.insert(user);
+            }
+        }
+        // Sort each user's updates ascending by log index (mirrors the
+        // Python `tx_context.discount_updates_by_log_index[user].sort(...)`).
+        for v in updates_by_log_index.values_mut() {
+            v.sort_by_key(|(idx, _)| *idx);
+        }
+        Self {
+            updates_by_log_index,
+            discounts,
+            bad_debt_users,
+            gho_vtoken_address,
+        }
+    }
+
+    /// `true` if the GHO discount mechanism is active at `vtoken_rev` (V1/V2/V3).
+    /// V4+ deprecated the discount → the effective discount is always 0.
+    #[must_use]
+    fn discount_supported(vtoken_rev: u32) -> bool {
+        crate::gho_processor::gho_discount_strategy(vtoken_rev).supports_discount
+    }
+
+    /// Resolve the discount percent in effect at `log_index` for `user` on a
+    /// GHO vToken at `vtoken_rev`. Mirrors `tx_context.user_discounts.get(...)`
+    /// + `get_effective_discount_at_log_index`. Returns 0 for V4+ (no discount).
+    #[must_use]
+    pub fn effective_discount(&self, user: Address, log_index: u64, vtoken_rev: u32) -> U256 {
+        if !Self::discount_supported(vtoken_rev) {
+            return U256::ZERO;
+        }
+        let default = self.discounts.get(&user).copied().unwrap_or(U256::ZERO);
+        self.get_effective_discount_at_log_index(user, log_index, default)
+    }
+
+    /// The most-recent `DISCOUNT_PERCENT_UPDATED` before `log_index`, else the
+    /// `default`. Mirrors `TransactionContext::get_effective_discount_at_log_index`.
+    #[must_use]
+    fn get_effective_discount_at_log_index(
+        &self,
+        user: Address,
+        log_index: u64,
+        default_discount: U256,
+    ) -> U256 {
+        let Some(updates) = self.updates_by_log_index.get(&user) else {
+            return default_discount;
+        };
+        let mut effective = default_discount;
+        for &(update_log_index, old_discount) in updates {
+            if update_log_index < log_index {
+                effective = old_discount;
+            } else {
+                break;
+            }
+        }
+        effective
+    }
+
+    /// `true` if `user` has a `DEFICIT_CREATED` event in this tx (the bad-debt
+    /// signal). Mirrors `_is_bad_debt_liquidation`.
+    #[must_use]
+    pub fn is_bad_debt(&self, user: Address) -> bool {
+        self.bad_debt_users.contains(&user)
+    }
+
+    /// `true` if `token_address` is the GHO vToken. Mirrors
+    /// `tx_context.is_gho_vtoken`.
+    #[must_use]
+    pub fn is_gho_vtoken(&self, token_address: Address) -> bool {
+        self.gho_vtoken_address
+            .is_some_and(|addr| addr == token_address)
+    }
+}
+
+/// Extract a 20-byte `Address` from a 32-byte topic (right-aligned — the
+/// Solidity `address` is left-padded to 32 bytes in an indexed topic).
+fn topic_to_address(topic: alloy::primitives::B256) -> Address {
+    let bytes = topic.0;
+    Address::from_slice(&bytes[12..])
+}
+
+/// Dispatch the GHO Borrow/Repay/FlashLoan operations. Mirrors the GHO branch
+/// of `_process_debt_mint_with_match` / `_process_debt_burn_with_match`. Each
+/// GHO scaled event is routed through the [`UnifiedGhoProcessor`] (NOT the
+/// standard `ScaledTokenProcessor::debt_*` — the GHO processor carries the
+/// discount surface + the V4-ROUNDING divergence). The `actual_repay_amount`
+/// is threaded through from a paired `Repay` pool event for `GhoRepay` (the
+/// 1-wei rounding-error avoidance param).
+#[allow(
+    clippy::too_many_arguments,
+    clippy::similar_names,
+    clippy::too_many_lines
+)]
+fn dispatch_gho_standard(
+    op: &Operation,
+    market_id: i64,
+    conn: &Connection,
+    gho_vtoken_address: Option<Address>,
+    gho_ctx: &GhoDiscountContext,
+    events: &mut Vec<AaveChunkEvent>,
+) -> Result<(), ProcessTxError> {
+    let pool_event = op.pool_event;
+    let mut scaled: Vec<&ScaledTokenEvent> = op.scaled_events.iter().collect();
+    scaled.sort_by_key(|e| e.log_index);
+    for ev in &scaled {
+        // Only GHO vToken events route through the GHO processor. Non-GHO
+        // events (e.g. a paired collateral aToken event in a FlashLoan) fall
+        // back to the standard builder.
+        let is_gho = gho_vtoken_address.is_some_and(|addr| addr == ev.token_address)
+            || matches!(
+                ev.event_type,
+                ScaledTokenEventType::GhoDebtMint
+                    | ScaledTokenEventType::GhoDebtBurn
+                    | ScaledTokenEventType::GhoDebtTransfer
+            );
+        if !is_gho {
+            // A non-GHO scaled event within a GHO operation (e.g. the
+            // collateral leg of a GHO FlashLoan) → standard builder.
+            let raw = pool_event.map_or(ev.amount, extract_pool_amount_word0);
+            let chunk_event = build_scaled_event_chunk_event(ev, op, raw, market_id, conn)?;
+            events.push(chunk_event);
+            continue;
+        }
+        let chunk_event = build_gho_chunk_event(ev, op, pool_event, gho_ctx, market_id, conn)?;
+        events.push(chunk_event);
+    }
+    Ok(())
+}
+
+/// Dispatch the GHO `LiquidationCall`. Mirrors the GHO branch of
+/// `_process_debt_burn_with_match` (the bad-debt override) + the GHO branch of
+/// `_process_debt_mint_with_match` (the `COMBINED_BURN` Mint-skip for the
+/// aggregated-burn pattern). The collateral leg goes through the standard
+/// builder (aToken); the GHO debt leg goes through [`UnifiedGhoProcessor`].
+#[allow(
+    clippy::too_many_arguments,
+    clippy::similar_names,
+    clippy::too_many_lines
+)]
+fn dispatch_gho_liquidation(
+    op: &Operation,
+    market_id: i64,
+    conn: &Connection,
+    gho_vtoken_address: Option<Address>,
+    gho_ctx: &GhoDiscountContext,
+    events: &mut Vec<AaveChunkEvent>,
+) -> Result<(), ProcessTxError> {
+    let pool_event = op.pool_event.ok_or_else(|| {
+        ProcessTxError::Deferred(format!(
+            "GHO liquidation op {:?} has no pool_event (LiquidationCall missing)",
+            op.operation_type
+        ))
+    })?;
+    let mut scaled: Vec<&ScaledTokenEvent> = op.scaled_events.iter().collect();
+    scaled.sort_by_key(|e| e.log_index);
+    for ev in &scaled {
+        let is_gho = gho_vtoken_address.is_some_and(|addr| addr == ev.token_address)
+            || matches!(
+                ev.event_type,
+                ScaledTokenEventType::GhoDebtMint
+                    | ScaledTokenEventType::GhoDebtBurn
+                    | ScaledTokenEventType::GhoDebtTransfer
+            );
+        if is_gho {
+            // The bad-debt check (DP3 — FLAGGED to the orchestrator): the
+            // Python oracle checks for a `DEFICIT_CREATED` event for the user
+            // in this tx. If present, the contract burns the ENTIRE remaining
+            // GHO debt (not just `debtToCover`) → set the position balance to
+            // 0 + advance `last_index`. The §4.2 delta-based apply may be off
+            // by 1 wei on the bad-debt path.
+            if gho_ctx.is_bad_debt(ev.user_address) {
+                let asset = lookup_gho_debt_asset(ev, market_id, conn)?;
+                let position_id = resolve_position_id(
+                    conn,
+                    market_id,
+                    ScaledTokenPosition::Debt,
+                    ev.user_address,
+                    asset.id,
+                    &asset.underlying_token_address,
+                )?;
+                events.push(AaveChunkEvent::DebtPositionReset {
+                    position_id,
+                    new_index: ev.index.unwrap_or_default(),
+                });
+                continue;
+            }
+            let chunk_event =
+                build_gho_chunk_event(ev, op, Some(pool_event), gho_ctx, market_id, conn)?;
+            events.push(chunk_event);
+        } else {
+            // The collateral leg → standard builder (aToken burn/transfer).
+            let ev_raw = extract_raw_amount_for_event(pool_event, ev, op);
+            let chunk_event = build_scaled_event_chunk_event(ev, op, ev_raw, market_id, conn)?;
+            events.push(chunk_event);
+        }
+    }
+    Ok(())
+}
+
+/// Build a GHO debt `AaveChunkEvent` from a single GHO scaled-token event via
+/// the [`UnifiedGhoProcessor`]. Mirrors the GHO branch of
+/// `_process_debt_mint_with_match` / `_process_debt_burn_with_match`. Resolves
+/// the effective discount + threads the `actual_repay_amount` (for `GhoRepay`).
+#[allow(
+    clippy::too_many_arguments,
+    clippy::similar_names,
+    clippy::too_many_lines
+)]
+fn build_gho_chunk_event(
+    ev: &ScaledTokenEvent,
+    op: &Operation,
+    pool_event: Option<&Log>,
+    gho_ctx: &GhoDiscountContext,
+    market_id: i64,
+    conn: &Connection,
+) -> Result<AaveChunkEvent, ProcessTxError> {
+    let asset = lookup_gho_debt_asset(ev, market_id, conn)?;
+    let processor = UnifiedGhoProcessor::new(asset.v_token_revision);
+    let balance_increase = ev.balance_increase.unwrap_or_default();
+    let index = ev.index.unwrap_or_default();
+    // The enricher's `scaled_amount` — `ray_div(raw_amount, index, strategy)`.
+    // The strategy is the per-revision GHO mint/burn rounding.
+    let raw_amount = pool_event.map_or(ev.amount, extract_pool_amount_word0);
+    let strat = crate::gho_processor::gho_strategy(asset.v_token_revision);
+    let scaled_amount = if ev.amount >= balance_increase {
+        Some(ray_div(raw_amount, index, strat.mint.into())?)
+    } else {
+        Some(ray_div(raw_amount, index, strat.burn.into())?)
+    };
+    let event_data = ScaledTokenEventData {
+        value: ev.amount,
+        balance_increase,
+        index,
+        scaled_amount,
+    };
+    // For GhoRepay, thread the actual repay amount from the paired Repay pool
+    // event (the 1-wei rounding-error avoidance param).
+    let actual_repay_amount = if op.operation_type == OperationType::GhoRepay {
+        pool_event.map(extract_pool_amount_word0)
+    } else {
+        None
+    };
+    let position_id = resolve_position_id(
+        conn,
+        market_id,
+        ScaledTokenPosition::Debt,
+        ev.user_address,
+        asset.id,
+        &asset.underlying_token_address,
+    )?;
+    // Read the position's actual prev balance + last_index — the GHO
+    // processor's `accrue_debt_on_action` + `get_discounted_balance` NEED
+    // them to compute the discount-scaled amount (the standard
+    // `ScaledTokenProcessor` does not — GHO is the exception). Mirrors the
+    // Python's read of `debt_position.balance` / `.last_index`.
+    let (prev_balance, prev_index_opt) = DegenbotDb::lookup_position_balance_index_on_conn(
+        conn,
+        ScaledTokenPosition::Debt,
+        position_id,
+    )?;
+    let prev_index = prev_index_opt.unwrap_or(index);
+    let effective_discount =
+        gho_ctx.effective_discount(ev.user_address, ev.log_index, asset.v_token_revision);
+    match ev.event_type {
+        ScaledTokenEventType::GhoDebtMint => {
+            let result = processor.process_gho_debt_mint(
+                &event_data,
+                prev_balance,
+                prev_index,
+                effective_discount,
+                actual_repay_amount,
+            )?;
+            Ok(AaveChunkEvent::ScaledTokenMint {
+                position: ScaledTokenPosition::Debt,
+                position_id,
+                balance_delta: result.balance_delta,
+                new_index: result.new_index,
+            })
+        }
+        ScaledTokenEventType::GhoDebtBurn | ScaledTokenEventType::GhoDebtTransfer => {
+            let result = processor.process_gho_debt_burn(
+                &event_data,
+                prev_balance,
+                prev_index,
+                effective_discount,
+            )?;
+            Ok(AaveChunkEvent::ScaledTokenBurn {
+                position: ScaledTokenPosition::Debt,
+                position_id,
+                balance_delta: result.balance_delta,
+                new_index: result.new_index,
+            })
+        }
+        _ => Err(ProcessTxError::Deferred(format!(
+            "GHO event_type {:?} not a GHO debt event — C3",
+            ev.event_type
+        ))),
+    }
+}
+
+/// Look up the GHO debt asset for a scaled event's emitter (the vToken).
+/// Returns the [`AssetRow`] (id + revisions + underlying address).
+fn lookup_gho_debt_asset(
+    ev: &ScaledTokenEvent,
+    market_id: i64,
+    conn: &Connection,
+) -> Result<degenbot_db::AssetRow, ProcessTxError> {
+    let token_addr_str = addr_to_hex(ev.token_address);
+    DegenbotDb::lookup_asset_by_token_address_on_conn(conn, market_id, &token_addr_str, "v_token")?
+        .ok_or_else(|| {
+            ProcessTxError::Substrate(degenbot_db::DbError::Decode(format!(
+                "no GHO vToken asset for token {token_addr_str} in market {market_id}"
+            )))
+        })
+}
+
+/// Dispatch the non-GHO `LiquidationCall`. Mirrors the non-GHO branch of
+/// `_process_debt_burn_with_match` — checks the bad-debt override FIRST
+/// (DP3 — FLAGGED to the orchestrator: the Python oracle checks for a
+/// `DEFICIT_CREATED` event for the user in this tx; `user_liquidation_count`
+/// is NOT consulted). If bad-debt, the contract burns the ENTIRE remaining
+/// debt → set the position balance to 0 + advance `last_index`. Else, the
+/// per-event-type raw-amount extractor (debt → word 0, collateral → word 1).
+#[allow(clippy::too_many_arguments, clippy::similar_names)]
 fn dispatch_liquidation(
     op: &Operation,
     market_id: i64,
     conn: &Connection,
+    gho_vtoken_address: Option<Address>,
+    gho_ctx: &GhoDiscountContext,
     events: &mut Vec<AaveChunkEvent>,
 ) -> Result<(), ProcessTxError> {
     let pool_event = op.pool_event.ok_or_else(|| {
@@ -613,6 +1032,47 @@ fn dispatch_liquidation(
     let mut scaled: Vec<&ScaledTokenEvent> = op.scaled_events.iter().collect();
     scaled.sort_by_key(|e| e.log_index);
     for ev in &scaled {
+        // The bad-debt check applies only to debt events (the collateral leg
+        // is unaffected — bad-debt writes off the DEBT, not the collateral).
+        let is_debt = matches!(
+            ev.event_type,
+            ScaledTokenEventType::DebtBurn
+                | ScaledTokenEventType::DebtTransfer
+                | ScaledTokenEventType::Erc20DebtTransfer
+        );
+        if is_debt
+            && gho_ctx.is_bad_debt(ev.user_address)
+            // Only when this is NOT the GHO vToken (the GHO path handles its
+            // own bad-debt in `dispatch_gho_liquidation`). The `is_gho` guard
+            // avoids double-applying the reset if a GHO debt event reaches here.
+            && gho_vtoken_address.is_none_or(|a| a != ev.token_address)
+        {
+            let token_addr_str = addr_to_hex(ev.token_address);
+            let asset = DegenbotDb::lookup_asset_by_token_address_on_conn(
+                conn,
+                market_id,
+                &token_addr_str,
+                "v_token",
+            )?
+            .ok_or_else(|| {
+                ProcessTxError::Substrate(degenbot_db::DbError::Decode(format!(
+                    "no vToken asset for token {token_addr_str} in market {market_id}"
+                )))
+            })?;
+            let position_id = resolve_position_id(
+                conn,
+                market_id,
+                ScaledTokenPosition::Debt,
+                ev.user_address,
+                asset.id,
+                &asset.underlying_token_address,
+            )?;
+            events.push(AaveChunkEvent::DebtPositionReset {
+                position_id,
+                new_index: ev.index.unwrap_or_default(),
+            });
+            continue;
+        }
         // The per-event-type raw-amount extractor resolves debt burn/transfer
         // → word 0, collateral burn/transfer → word 1.
         let ev_raw = extract_raw_amount_for_event(pool_event, ev, op);
@@ -962,5 +1422,130 @@ mod tests {
         assert_eq!(v9, U256::from(334u64));
         assert_eq!(v8, U256::from(333u64));
         assert_ne!(v9, v8, "the rev-9 CEIL vs rev-8 HALF_UP split must differ");
+    }
+
+    // ── GhoDiscountContext (C3) ────────────────────────────────────────
+
+    /// Build a synthetic `DISCOUNT_PERCENT_UPDATED` log.
+    fn make_discount_updated_log(idx: u64, user: Address, old_discount: u64) -> Log {
+        use degenbot_decoders::aave_event_decoder::DISCOUNT_PERCENT_UPDATED_TOPIC;
+        let mut data = vec![0u8; 32];
+        let val = U256::from(old_discount);
+        val.to_be_bytes::<32>()
+            .iter()
+            .enumerate()
+            .for_each(|(i, b)| {
+                data[i] = *b;
+            });
+        let mut user_topic = [0u8; 32];
+        user_topic[12..].copy_from_slice(user.as_slice());
+        make_log(
+            idx,
+            Address::ZERO,
+            vec![DISCOUNT_PERCENT_UPDATED_TOPIC, B256::from(user_topic)],
+            Bytes::from(data),
+        )
+    }
+
+    /// Build a synthetic `DEFICIT_CREATED` log for a user.
+    fn make_deficit_created_log(idx: u64, user: Address) -> Log {
+        let mut user_topic = [0u8; 32];
+        user_topic[12..].copy_from_slice(user.as_slice());
+        let mut data = vec![0u8; 32];
+        U256::from(1_000u64)
+            .to_be_bytes::<32>()
+            .iter()
+            .enumerate()
+            .for_each(|(i, b)| {
+                data[i] = *b;
+            });
+        make_log(
+            idx,
+            Address::ZERO,
+            vec![
+                degenbot_decoders::aave_event_decoder::DEFICIT_CREATED_TOPIC,
+                B256::from(user_topic),
+            ],
+            Bytes::from(data),
+        )
+    }
+
+    #[test]
+    fn gho_discount_context_no_discount_events_returns_default() {
+        let discounts = HashMap::new();
+        let user = Address::from([0x42; 20]);
+        let logs: Vec<&Log> = Vec::new();
+        let ctx = GhoDiscountContext::new(&logs, &discounts, None);
+        // V1 (discount supported): default is 0 (no entry in discounts map).
+        assert_eq!(ctx.effective_discount(user, 0, 1), U256::ZERO);
+        // V4 (no discount support): always 0.
+        assert_eq!(ctx.effective_discount(user, 0, 4), U256::ZERO);
+        assert!(!ctx.is_bad_debt(user));
+        assert!(!ctx.is_gho_vtoken(Address::ZERO));
+    }
+
+    #[test]
+    fn gho_discount_context_snapshot_discount_used_for_v2() {
+        // V2 (discount supported): a user in the `discounts` snapshot → uses it.
+        let mut discounts = HashMap::new();
+        let user = Address::from([0x42; 20]);
+        discounts.insert(user, U256::from(3_000u64)); // 30% discount
+        let logs: Vec<&Log> = Vec::new();
+        let ctx = GhoDiscountContext::new(&logs, &discounts, Some(Address::ZERO));
+        assert_eq!(ctx.effective_discount(user, 50, 2), U256::from(3_000u64));
+    }
+
+    #[test]
+    fn gho_discount_context_resolves_effective_at_log_index() {
+        // Two DISCOUNT_PERCENT_UPDATED events → the effective discount at a given
+        // log index is the OLD value of the most-recent update BEFORE it.
+        let user = Address::from([0x42; 20]);
+        let log1 = make_discount_updated_log(10, user, 1_000); // old was 1000
+        let log2 = make_discount_updated_log(30, user, 2_000); // old was 2000
+        let log_refs: Vec<&Log> = vec![&log1, &log2];
+        let mut discounts = HashMap::new();
+        discounts.insert(user, U256::from(5_000u64)); // snapshot default
+        let ctx = GhoDiscountContext::new(&log_refs, &discounts, None);
+        // Before log1 (idx=10): default (5000).
+        assert_eq!(ctx.effective_discount(user, 5, 2), U256::from(5_000u64));
+        // After log1 but before log2 (idx 20): the OLD value of log1 = 1000.
+        assert_eq!(ctx.effective_discount(user, 20, 2), U256::from(1_000u64));
+        // After log2 (idx 40): the OLD value of log2 = 2000.
+        assert_eq!(ctx.effective_discount(user, 40, 2), U256::from(2_000u64));
+        // V4+ → always 0 regardless of the updates.
+        assert_eq!(ctx.effective_discount(user, 40, 4), U256::ZERO);
+    }
+
+    #[test]
+    fn gho_discount_context_detects_bad_debt_users() {
+        let user = Address::from([0x42; 20]);
+        let other = Address::from([0x99; 20]);
+        let deficit_log = make_deficit_created_log(5, user);
+        let other_deficit = make_deficit_created_log(7, other);
+        let logs: Vec<&Log> = vec![&deficit_log, &other_deficit];
+        let discounts = HashMap::new();
+        let ctx = GhoDiscountContext::new(&logs, &discounts, None);
+        assert!(
+            ctx.is_bad_debt(user),
+            "user with DEFICIT_CREATED is bad debt"
+        );
+        assert!(
+            ctx.is_bad_debt(other),
+            "other user with DEFICIT_CREATED is bad debt"
+        );
+        assert!(
+            !ctx.is_bad_debt(Address::from([0x11; 20])),
+            "user without DEFICIT_CREATED is not bad debt"
+        );
+    }
+
+    #[test]
+    fn gho_discount_context_is_gho_vtoken_match() {
+        let gho_vtoken = Address::from([0xAB; 20]);
+        let discounts = HashMap::new();
+        let logs: Vec<&Log> = Vec::new();
+        let ctx = GhoDiscountContext::new(&logs, &discounts, Some(gho_vtoken));
+        assert!(ctx.is_gho_vtoken(gho_vtoken));
+        assert!(!ctx.is_gho_vtoken(Address::from([0xCD; 20])));
     }
 }
