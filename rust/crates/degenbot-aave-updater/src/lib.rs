@@ -51,9 +51,11 @@ pub mod operations;
 pub mod operations_parser;
 pub mod processors;
 mod run;
+pub mod transaction_processor;
 
 pub use processors::{
     ProcessorError, RayDivMode, RoundingStrategy, ScaledTokenBurnResult, ScaledTokenEventData,
     ScaledTokenMintResult, ScaledTokenProcessor,
 };
 pub use run::{apply_aave_chunk_writes_on_conn, AaveChunkEvent, AaveChunkWriteReport};
+pub use transaction_processor::{process_transaction, ProcessTxError};
