@@ -4,6 +4,8 @@
 
 use alloy::primitives::U256;
 use degenbot_db::DegenbotDb;
+#[cfg(test)]
+use rusqlite::params;
 use rusqlite::Connection;
 
 /// One pre-decoded Aave V3 event for the chunk apply loop.
@@ -27,6 +29,8 @@ use rusqlite::Connection;
 /// | [`UserEModeSet`]                     | [`apply_user_e_mode_set_on_conn`]                  |
 /// | [`PriceOracleUpdated`]               | [`apply_price_oracle_updated_on_conn`]             |
 /// | [`AssetSourceUpdated`]               | [`apply_asset_source_updated_on_conn`]             |
+/// | [`ReserveDataUpdated`]               | [`apply_reserve_data_updated_on_conn`]             |
+/// | [`ReserveInitialized`]              | [`apply_reserve_initialized_on_conn`]              |
 ///
 /// [`apply_collateral_configuration_changed_on_conn`]: DegenbotDb::apply_collateral_configuration_changed_on_conn
 /// [`apply_e_mode_category_added_on_conn`]: DegenbotDb::apply_e_mode_category_added_on_conn
@@ -36,6 +40,8 @@ use rusqlite::Connection;
 /// [`apply_user_e_mode_set_on_conn`]: DegenbotDb::apply_user_e_mode_set_on_conn
 /// [`apply_price_oracle_updated_on_conn`]: DegenbotDb::apply_price_oracle_updated_on_conn
 /// [`apply_asset_source_updated_on_conn`]: DegenbotDb::apply_asset_source_updated_on_conn
+/// [`apply_reserve_data_updated_on_conn`]: DegenbotDb::apply_reserve_data_updated_on_conn
+/// [`apply_reserve_initialized_on_conn`]: DegenbotDb::apply_reserve_initialized_on_conn
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AaveChunkEvent {
     /// `CollateralConfigurationChanged(asset, config_bitmap)` — decode the
@@ -84,6 +90,38 @@ pub enum AaveChunkEvent {
         asset_id: i64,
         source_address: String,
     },
+    /// `ReserveDataUpdated(reserve, liquidityRate, stableBorrowRate,
+    /// variableBorrowRate, liquidityIndex, variableBorrowIndex)` — update the
+    /// `aave_v3_assets` row's indices/rates (UR7QNL — one of the only two Pool
+    /// events that write DB rows directly). `stableBorrowRate` is deprecated on
+    /// Aave V3 + dropped (mirrors the Python handler). Stored raw (27-decimal
+    /// ray as decimal `VARCHAR(78)`); no ray-math in the apply path.
+    ReserveDataUpdated {
+        asset_id: i64,
+        liquidity_rate: U256,
+        variable_borrow_rate: U256,
+        liquidity_index: U256,
+        variable_borrow_index: U256,
+        block_number: u64,
+    },
+    /// `ReserveInitialized(asset, aToken, stableDebtToken, variableDebtToken,
+    /// interestRateStrategyAddress)` — seed the `aave_v3_assets` row (UR7QNL —
+    /// the other direct Pool-event DB writer). The orchestrator (6SWY4R)
+    /// pre-resolves the erc20 token ids + the `ATOKEN_REVISION()` /
+    /// `DEBT_TOKEN_REVISION()` (via the EIP-1967 implementation slot) + the
+    /// `getSourceOfAsset` `price_source`; this enum carries the resolved
+    /// fields (mirrors CXRGX4 design decision #1 — the apply core is pure
+    /// substrate, no RPC, no address→id resolution).
+    ReserveInitialized {
+        market_id: i64,
+        underlying_asset_id: i64,
+        a_token_id: i64,
+        a_token_revision: i64,
+        v_token_id: i64,
+        v_token_revision: i64,
+        /// The checksummed oracle address (`None` when the event's address is zero).
+        price_source: Option<String>,
+    },
 }
 
 /// Per-event-type apply counts for a chunk (mirrors `ChunkWriteReport`).
@@ -97,6 +135,9 @@ pub struct AaveChunkWriteReport {
     pub user_e_mode_set: usize,
     pub price_oracle_updated: usize,
     pub asset_source_updated: usize,
+    /// UR7QNL — the two direct-write Pool events.
+    pub reserve_data_updated: usize,
+    pub reserve_initialized: usize,
     /// The `chunk_end_block` stamped onto `aave_v3_markets.last_update_block`
     /// as the LAST write in the transaction. `None` if `events` was empty (no
     /// stamp written — mirrors the precedent's "no events ⇒ no stamp" guard
@@ -224,6 +265,46 @@ pub fn apply_aave_chunk_writes_on_conn(
             } => {
                 DegenbotDb::apply_asset_source_updated_on_conn(conn, *asset_id, source_address)?;
                 report.asset_source_updated += 1;
+            }
+            AaveChunkEvent::ReserveDataUpdated {
+                asset_id,
+                liquidity_rate,
+                variable_borrow_rate,
+                liquidity_index,
+                variable_borrow_index,
+                block_number,
+            } => {
+                DegenbotDb::apply_reserve_data_updated_on_conn(
+                    conn,
+                    *asset_id,
+                    *liquidity_rate,
+                    *variable_borrow_rate,
+                    *liquidity_index,
+                    *variable_borrow_index,
+                    *block_number,
+                )?;
+                report.reserve_data_updated += 1;
+            }
+            AaveChunkEvent::ReserveInitialized {
+                market_id: ev_market_id,
+                underlying_asset_id,
+                a_token_id,
+                a_token_revision,
+                v_token_id,
+                v_token_revision,
+                price_source,
+            } => {
+                DegenbotDb::apply_reserve_initialized_on_conn(
+                    conn,
+                    *ev_market_id,
+                    *underlying_asset_id,
+                    *a_token_id,
+                    *a_token_revision,
+                    *v_token_id,
+                    *v_token_revision,
+                    price_source.as_deref(),
+                )?;
+                report.reserve_initialized += 1;
             }
         }
     }
@@ -487,5 +568,297 @@ mod tests {
         };
         assert_eq!(e_mode, 2);
         assert_eq!(market_stamp(&db), Some(1_000));
+    }
+
+    // ── UR7QNL: the two direct-write Pool events ────────────────────────────
+
+    /// Seed the erc20 parents (underlying + aToken + vToken) + return the
+    /// seeded asset's id. Mirrors the CXRGX4 `fresh_db` seeding shape.
+    fn seed_asset_row(db: &DegenbotDb, asset_pk: i64) {
+        let conn = db.lock();
+        for id in 1..=3 {
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (?1, 1, ?2)",
+                params![id, format!("0xtok{id}")],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO aave_v3_assets \
+                (id, market_id, underlying_asset_id, a_token_id, a_token_revision, \
+                 v_token_id, v_token_revision, price_source, \
+                 liquidity_index, liquidity_rate, borrow_index, borrow_rate) \
+             VALUES (?1, 1, 1, 2, 1, 3, 1, '0xoracle', '0', '0', '1', '0')",
+            params![asset_pk],
+        )
+        .unwrap();
+    }
+
+    /// Read the asset row's index/rate columns back (independent read path).
+    fn asset_indices_rates(
+        db: &DegenbotDb,
+        asset_id: i64,
+    ) -> (String, String, String, String, Option<i64>) {
+        let conn = db.lock();
+        conn.query_row(
+            "SELECT liquidity_rate, borrow_rate, liquidity_index, borrow_index, \
+             last_update_block FROM aave_v3_assets WHERE id = ?1",
+            [asset_id],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, Option<i64>>(4)?,
+                ))
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn apply_aave_chunk_writes_on_conn_dispatches_reserve_data_updated() {
+        let db = fresh_db();
+        seed_asset_row(&db, 1);
+
+        // A ReserveDataUpdated event with non-zero indices/rates (ray-scale
+        // values, stored raw as decimal VARCHAR — no ray-math in the apply).
+        let events = vec![AaveChunkEvent::ReserveDataUpdated {
+            asset_id: 1,
+            liquidity_rate: U256::from(1_000_000_000u64), // 0.001 in ray
+            variable_borrow_rate: U256::from(2_000_000_000u64), // 0.002 in ray
+            liquidity_index: U256::from(1_000_000_007u64), // ~1.0 (ray)
+            variable_borrow_index: U256::from(1_000_000_009u64), // ~1.0 (ray)
+            block_number: 1_234,
+        }];
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 2_000).unwrap();
+            assert_eq!(report.reserve_data_updated, 1);
+            tx.commit().unwrap();
+        }
+
+        let (lr, br, li, bi, lub) = asset_indices_rates(&db, 1);
+        assert_eq!(lr, "1000000000", "liquidity_rate stored raw");
+        assert_eq!(
+            br, "2000000000",
+            "borrow_rate = variable borrow rate (stable dropped)"
+        );
+        assert_eq!(li, "1000000007", "liquidity_index stored raw");
+        assert_eq!(bi, "1000000009", "borrow_index = variable borrow index");
+        assert_eq!(lub, Some(1_234), "last_update_block stamped from the event");
+        assert_eq!(market_stamp(&db), Some(2_000), "chunk-end stamp advanced");
+    }
+
+    #[test]
+    fn apply_aave_chunk_writes_on_conn_dispatches_reserve_initialized_create() {
+        let db = fresh_db();
+        // Pre-seed ONLY the erc20 token parents (the orchestrator resolves
+        // these before constructing the event). The asset row itself should
+        // NOT exist — ReserveInitialized creates it.
+        {
+            let conn = db.lock();
+            for id in 1..=3 {
+                conn.execute(
+                    "INSERT INTO erc20_tokens (id, chain, address) VALUES (?1, 1, ?2)",
+                    params![id, format!("0xtok{id}")],
+                )
+                .unwrap();
+            }
+        }
+
+        let events = vec![AaveChunkEvent::ReserveInitialized {
+            market_id: 1,
+            underlying_asset_id: 1,
+            a_token_id: 2,
+            a_token_revision: 8,
+            v_token_id: 3,
+            v_token_revision: 4,
+            price_source: Some("0xoracle".to_string()),
+        }];
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 5_000).unwrap();
+            assert_eq!(report.reserve_initialized, 1);
+            tx.commit().unwrap();
+        }
+
+        // The asset row was created with the seeded fields + the zero
+        // index/rate defaults (mirrors the Python AaveV3Asset constructor).
+        let (lr, br, li, bi, lub) = asset_indices_rates(&db, 1);
+        assert_eq!(lr, "0", "create-path zero default for liquidity_rate");
+        assert_eq!(br, "0", "create-path zero default for borrow_rate");
+        assert_eq!(li, "0", "create-path zero default for liquidity_index");
+        assert_eq!(bi, "0", "create-path zero default for borrow_index");
+        assert_eq!(
+            lub, None,
+            "create-path leaves last_update_block NULL (RDU owns it)"
+        );
+        assert_eq!(market_stamp(&db), Some(5_000));
+    }
+
+    #[test]
+    fn apply_aave_chunk_writes_on_conn_dispatches_reserve_initialized_update_existing() {
+        // A reserve can be re-initialized across a Pool revision upgrade: the
+        // get-or-create path must UPDATE the a/v token ids + revisions +
+        // price_source on the existing row WITHOUT touching the indices/rates
+        // (those are owned by ReserveDataUpdated).
+        let db = fresh_db();
+        seed_asset_row(&db, 1); // existing asset with non-zero indices
+
+        let events = vec![AaveChunkEvent::ReserveInitialized {
+            market_id: 1,
+            underlying_asset_id: 1, // matches the seeded row's natural key
+            a_token_id: 22,         // new aToken id (revision upgrade)
+            a_token_revision: 9,
+            v_token_id: 33,
+            v_token_revision: 5,
+            price_source: Some("0xneworacle".to_string()),
+        }];
+        // Seed the new aToken + vToken erc20 rows the UPDATE references
+        // (FK `a_token_id`/`v_token_id` → `erc20_tokens.id`).
+        {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (22, 1, '0xa22')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO erc20_tokens (id, chain, address) VALUES (33, 1, '0xv33')",
+                [],
+            )
+            .unwrap();
+        }
+        {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            let report = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 6_000).unwrap();
+            assert_eq!(report.reserve_initialized, 1);
+            tx.commit().unwrap();
+        }
+
+        // The a/v token ids + revisions + price_source were updated; the
+        // indices/rates were left alone (the seeded asset had '0'/'0'/'1'/'0').
+        let conn = db.lock();
+        let (a_token_id, a_token_rev, v_token_id, v_token_rev, price_source): (
+            i64,
+            i64,
+            i64,
+            i64,
+            String,
+        ) = conn
+            .query_row(
+                "SELECT a_token_id, a_token_revision, v_token_id, v_token_revision, \
+                 COALESCE(price_source, '') FROM aave_v3_assets WHERE id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .unwrap();
+        assert_eq!(a_token_id, 22);
+        assert_eq!(a_token_rev, 9);
+        assert_eq!(v_token_id, 33);
+        assert_eq!(v_token_rev, 5);
+        assert_eq!(price_source, "0xneworacle");
+        // Indices untouched by the ReserveInitialized UPDATE path (owned by RDU).
+        let li: String = conn
+            .query_row(
+                "SELECT liquidity_index FROM aave_v3_assets WHERE id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(li, "0", "index left alone on re-init (RDU owns it)");
+    }
+
+    // ── §3.4 atomicity: a Pool-event variant rolls back with the stamp ───────
+
+    #[test]
+    fn apply_aave_chunk_writes_on_conn_rolls_back_reserve_data_updated_on_missing_asset() {
+        // ReserveDataUpdated targets an asset_id that has NO row → the UPDATE
+        // affects zero rows → Err(MissingRow) → the caller drops the tx →
+        // rollback. Asserts the stamp does NOT advance + no stray write landed.
+        // This is the Pool-event counterpart to the CXRGX4 FK-violation
+        // rollback test (the apply fns are idempotent get-or-create, so the
+        // deterministic injected failure is the MissingRow path here).
+        let db = fresh_db();
+        // Pre-seed the market stamp at 100 (the prior chunk's committed stamp).
+        // Do NOT seed any asset row — asset_id=999 is missing.
+        {
+            let conn = db.lock();
+            conn.execute(
+                "UPDATE aave_v3_markets SET last_update_block = 100 WHERE id = 1",
+                [],
+            )
+            .unwrap();
+        }
+
+        let events = vec![
+            // First event: a no-op-state-change but row-creating event that
+            // would land if the chunk committed (proves the whole chunk rolled
+            // back, not just the failing event).
+            AaveChunkEvent::ReserveInitialized {
+                market_id: 1,
+                underlying_asset_id: 1,
+                a_token_id: 2,
+                a_token_revision: 1,
+                v_token_id: 3,
+                v_token_revision: 1,
+                price_source: None,
+            },
+            // Second event: FAILS — ReserveDataUpdated on the missing asset_id 999.
+            AaveChunkEvent::ReserveDataUpdated {
+                asset_id: 999,
+                liquidity_rate: U256::ZERO,
+                variable_borrow_rate: U256::ZERO,
+                liquidity_index: U256::ZERO,
+                variable_borrow_index: U256::ZERO,
+                block_number: 200,
+            },
+        ];
+        // The erc20 parents for the ReserveInitialized event must exist for
+        // the first event to succeed (proving the failure is the second event's).
+        {
+            let conn = db.lock();
+            for id in 1..=3 {
+                conn.execute(
+                    "INSERT INTO erc20_tokens (id, chain, address) VALUES (?1, 1, ?2)",
+                    params![id, format!("0xtok{id}")],
+                )
+                .unwrap();
+            }
+        }
+
+        let err = {
+            let mut guard = db.lock();
+            let tx = guard.transaction().unwrap();
+            let result = apply_aave_chunk_writes_on_conn(&tx, 1, &events, 200);
+            assert!(result.is_err(), "the MissingRow must surface as Err");
+            drop(tx); // ← rollback.
+            result.err()
+        };
+        let _ = err;
+
+        // (a) The stamp stayed at 100 (the 200 advance rolled back).
+        assert_eq!(
+            market_stamp(&db),
+            Some(100),
+            "rolled-back chunk's stamp advance must not be durable (restart-safe)",
+        );
+        // (b) The ReserveInitialized-written asset row did NOT land (whole-chunk revert).
+        {
+            let conn = db.lock();
+            let n: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM aave_v3_assets WHERE underlying_asset_id = 1",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, 0, "rolled-back chunk's writes must not be durable");
+        }
     }
 }
