@@ -47,12 +47,17 @@
 //! No `pyo3` (enforced by `just check-no-pyo3-in-cores`). The `PyO3` seam will
 //! live in `degenbot-python`.
 
+pub mod gho_processor;
 pub mod operations;
 pub mod operations_parser;
 pub mod processors;
 mod run;
 pub mod transaction_processor;
 
+pub use gho_processor::{
+    GhoProcessorError, GhoScaledTokenBurnResult, GhoScaledTokenMintResult, GhoUserOperation,
+    UnifiedGhoProcessor,
+};
 pub use processors::{
     ProcessorError, RayDivMode, RoundingStrategy, ScaledTokenBurnResult, ScaledTokenEventData,
     ScaledTokenMintResult, ScaledTokenProcessor,
