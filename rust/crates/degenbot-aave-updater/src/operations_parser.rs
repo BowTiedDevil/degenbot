@@ -76,7 +76,7 @@ use degenbot_decoders::aave_event_decoder::{
 };
 use degenbot_evm_math::RayRounding;
 use rusqlite::OptionalExtension;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 // ── the parser struct ─────────────────────────────────────────────────────
 
@@ -136,11 +136,6 @@ pub enum ParseError {
     /// market has no aToken for the reserve the Supply event named).
     #[error("substrate lookup failed: {0}")]
     Substrate(String),
-    /// A liquidation event reached the parser; A's stub builder doesn't handle
-    /// it (B owns the liquidation engine). This error is a sentinel — B will
-    /// replace the stub builder with the real impl, removing this variant.
-    #[error("liquidation event reached A's stub builder — B owns this; conn-block may indicate a parser-misuse scenario ({0})")]
-    LiquidationStub(String),
     /// An RPC-style `ray_div` math error from the `MintToTreasury` v8 branch
     /// (DP3).
     #[error("ray-div math error: {0}")]
@@ -676,9 +671,17 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
         } else if topic == aave_event_decoder::REPAY_TOPIC {
             self.create_repay_operation(operation_id, pool_event, scaled_events, assigned_indices)
         } else if topic == aave_event_decoder::LIQUIDATION_CALL_TOPIC {
-            // STUB — B owns the liquidation engine. Return an Unknown op so
-            // parse() doesn't crash; B will replace this builder.
-            Ok(self.create_liquidation_stub(operation_id, pool_event))
+            // HQF5NQ-B: the real liquidation engine (the
+            // SINGLE/COMBINED_BURN/SEPARATE_BURNS pattern detection + the
+            // `_analyze_liquidation_scenarios` / `_analyze_user_liquidation_
+            // count` pre-analysis dicts over `all_events`).
+            self.create_liquidation_operation(
+                operation_id,
+                pool_event,
+                scaled_events,
+                all_events,
+                assigned_indices,
+            )
         } else if topic == aave_event_decoder::DEFICIT_CREATED_TOPIC {
             Ok(self.create_deficit_operation(operation_id, pool_event))
         } else {
@@ -686,12 +689,6 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
                 "unexpected pool-event topic {topic}"
             )))
         }
-        // NB: `all_events` is the LiquidationCall's stub-impl param — B needs
-        // it for the multi-liquidation pre-analysis (`_analyze_liquidation_scenarios`).
-        // Silence the unused-variable warn.
-        .inspect(|_op| {
-            let _ = (all_events,);
-        })
     }
 
     // ── the 9 standard builders ─────────────────────────────────────────
@@ -1662,57 +1659,466 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
         Vec::new()
     }
 
-    /// Mirrors `_get_a_token_for_asset`. Returns the aToken address for an
-    /// underlying asset (None if the underlying isn't a market asset).
-    /// Tries `v_token` classification for the underlying-token-address-lookup
-    /// in the case of mismatched references.
+    /// Mirrors Python `_get_a_token_for_asset`. Resolves the aToken address
+    /// for an underlying asset (None if not a market asset). Uses the
+    /// [`DegenbotDb::lookup_asset_by_underlying_address_on_conn`] substrate
+    /// (the §3 surface — no ad-hoc SQL JOINs in the parser).
     fn get_a_token_for_asset(&self, underlying: Address) -> Result<Option<Address>, ParseError> {
-        // Lookup asset by underlying_token_address (a level deeper than
-        // the substrate lookup_asset_by_token_address_on_conn provides — we
-        // re-query).
-        let row = self
-            .conn
-            .query_row(
-                "SELECT a.a_token_revision, t.address
-                 FROM aave_v3_assets a
-                 JOIN erc20_tokens t ON t.id = a.underlying_asset_id
-                 WHERE a.market_id = ?1 AND t.address = ?2",
-                rusqlite::params![self.market_id, addr_to_hex(underlying)],
-                |r| Ok((r.get::<_, Option<i64>>(0)?, r.get::<_, String>(1)?)),
-            )
-            .optional()
-            .map_err(|e| ParseError::Substrate(e.to_string()))?;
-        Ok(row.and_then(|(_, addr)| parse_address(&addr)))
+        let row = DegenbotDb::lookup_asset_by_underlying_address_on_conn(
+            self.conn,
+            self.market_id,
+            &addr_to_hex(underlying),
+        )?;
+        Ok(row.and_then(|a| parse_address(&a.a_token_address)))
     }
 
-    // ── the liquidation stub (B owns the real impl) ─────────────────────
+    /// Mirrors Python `_get_v_token_for_asset`. Resolves the vToken address
+    /// for an underlying debt asset (None if not a market asset). Required by
+    /// `_create_liquidation_operation`'s `SEPARATE_BURNS` pattern detection.
+    fn get_v_token_for_asset(&self, underlying: Address) -> Result<Option<Address>, ParseError> {
+        let row = DegenbotDb::lookup_asset_by_underlying_address_on_conn(
+            self.conn,
+            self.market_id,
+            &addr_to_hex(underlying),
+        )?;
+        Ok(row.and_then(|a| parse_address(&a.v_token_address)))
+    }
 
-    /// STUB — HQF5NQ-B replaces with the real `_create_liquidation_operation`
-    /// + `_collect_debt_burns` + `_analyze_liquidation_scenarios`. A's stub
-    ///   returns an Unknown op so `parse()` doesn't crash on a liquidation tx
-    ///   (B's `process_transaction` will fail-fast in production via
-    ///   `ParseError::LiquidationStub` until B lands).
-    fn create_liquidation_stub(
+    // ── the liquidation engine (HQF5NQ-B — replaces A's stub) ────────────
+
+    /// **Marker — B (HQF5NQ-B) replaced this stub.** The dispatcher in
+    /// `create_operation_from_pool_event` now calls
+    /// `create_liquidation_operation` directly (the real impl + the
+    /// `_collect_debt_burns` `SINGLE/COMBINED_BURN/SEPARATE_BURNS` detection +
+    /// the `_analyze_liquidation_scenarios` / `_analyze_user_liquidation_count`
+    /// pre-analysis dicts). Kept as a private no-op so `git blame` on the
+    /// original-stub line preserves the decommissioning context; delete once
+    /// HQF5NQ-C's apply dispatch is wired (the §4.2 cross-check (U5YIBG)
+    /// no longer references the old stub).
+    #[allow(clippy::unused_self, dead_code)] // marker — git-blame context only
+    fn create_liquidation_stub_replaced_by_b(&self) {
+        let _ = self;
+    }
+
+    // ── the liquidation engine fns (HQF5NQ-B) ──────────────────────────
+
+    /// Mirrors Python `_analyze_liquidation_scenarios` — pre-analyze
+    /// liquidations to detect multi-liquidation scenarios. Returns a mapping
+    /// of `(user, debt_v_token_address)` → `liquidation_count`. This allows
+    /// proper disambiguation when the same user is liquidated multiple times
+    /// with the same debt asset in one transaction.
+    ///
+    /// §4.2-parity note: the Python reads `decode_address(ev["topics"][3])`
+    /// (user) + `decode_address(ev["topics"][2])` (`debt_asset`) per
+    /// `LiquidationCall` event → resolves `debt_asset` → vToken via
+    /// `_get_v_token_for_asset`; we mirror the same per-event vToken resolution.
+    #[allow(clippy::missing_panics_doc)] // assert on missing vToken substrate
+    fn analyze_liquidation_scenarios(
+        &self,
+        all_events: &[&Log],
+    ) -> Result<HashMap<(Address, Address), usize>, ParseError> {
+        let mut counts: HashMap<(Address, Address), usize> = HashMap::new();
+        for ev in all_events {
+            let topics = ev.topics();
+            if topics.first() != Some(&aave_event_decoder::LIQUIDATION_CALL_TOPIC) {
+                continue;
+            }
+            if topics.len() < 4 {
+                continue;
+            }
+            let user = Address::from_word(topics[3]);
+            let debt_asset = Address::from_word(topics[2]);
+            let v_token_address = self.get_v_token_for_asset(debt_asset)?.ok_or_else(|| {
+                ParseError::Substrate(format!(
+                    "no vToken for debt_asset {debt_asset} in market {}",
+                    self.market_id
+                ))
+            })?;
+            *counts.entry((user, v_token_address)).or_insert(0) += 1;
+        }
+        Ok(counts)
+    }
+
+    /// Mirrors Python `_analyze_user_liquidation_count` — count total
+    /// liquidations per user (not per user+asset pair). Returns `user` →
+    /// `total_liquidations`.
+    ///
+    /// When a user has exactly 1 liquidation, ALL debt burns for that user
+    /// belong to that single liquidation. This handles bad-debt liquidations
+    /// where the protocol burns multiple debt positions via `_burnBadDebt()`.
+    /// When a user has multiple liquidations, use asset-specific matching to
+    /// disambiguate which burns belong to which liquidation.
+    fn analyze_user_liquidation_count(all_events: &[&Log]) -> HashMap<Address, usize> {
+        let mut counts: HashMap<Address, usize> = HashMap::new();
+        for ev in all_events {
+            let topics = ev.topics();
+            if topics.first() != Some(&aave_event_decoder::LIQUIDATION_CALL_TOPIC) {
+                continue;
+            }
+            if topics.len() < 4 {
+                continue;
+            }
+            let user = Address::from_word(topics[3]);
+            *counts.entry(user).or_insert(0) += 1;
+        }
+        counts
+    }
+
+    /// Mirrors Python `_collect_debt_burns` — the §4.2-critical
+    /// `SINGLE/COMBINED_BURN/SEPARATE_BURNS` pattern-detection debt-burn
+    /// collector.
+    ///
+    /// Collection strategy (port-EXACT):
+    /// - Single liquidation per user: collect ALL debt burns (no asset filter)
+    ///   → handles bad-debt liquidations where `_burnBadDebt()` burns all debt positions.
+    /// - Multiple liquidations per user: use asset filter + sequential matching
+    ///   to disambiguate which burns belong to which liquidation.
+    ///   - **`SEPARATE_BURNS`** (`liquidation_count_for_asset == total_burn_count`):
+    ///     burn `i` belongs to liquidation `i`; return the burn at
+    ///     `liquidation_position`.
+    ///   - **`COMBINED_BURN`** (`liquidation_count_for_asset > total_burn_count` +
+    ///     `liquidation_position == 0`): all burns go to the first liquidation.
+    ///
+    /// # §4.2-parity note (the `assigned_indices.add(ev.index)` quirk)
+    ///
+    /// The Python also calls `assigned_indices.add(ev.index)` to store the
+    /// Burn event's `index` field (a ray-scale u256 liquidity-index value) in
+    /// `assigned_indices`. This storage is **dead-code** — every
+    /// `in assigned_indices` query is `ev.event["logIndex"] in assigned_indices`
+    /// (small-int logIndex), never `ev.index`. The `add(ev.index)` stores
+    /// ray-scale values that are never matched; we omit the assignment (a u64
+    /// set can't hold ray values anyway) but preserve the assertions
+    /// `assert ev.index is not None; assert ev.index > 0` (the runtime panic on
+    /// ill-formed events) as `debug_assert!`. Output parity verified: the
+    /// `assigned_indices` state never affects the parsed Operation output.
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)] // mirror's intrinsic shape
+    fn collect_debt_burns<'b>(
+        user: Address,
+        debt_v_token_address: Option<Address>,
+        scaled_events: &'b [ScaledTokenEvent<'a>],
+        assigned_indices: &mut HashSet<u64>,
+        liquidation_analysis: &HashMap<(Address, Address), usize>,
+        user_liquidation_count: usize,
+        liquidation_position: usize,
+    ) -> Vec<&'b ScaledTokenEvent<'a>>
+    where
+        'a: 'b,
+    {
+        let mut burns: Vec<&ScaledTokenEvent<'a>> = Vec::new();
+        if user_liquidation_count == 1 {
+            // Single liquidation per user: collect ALL debt burns (no asset filter).
+            let mut candidate_burns: Vec<&ScaledTokenEvent<'a>> = scaled_events
+                .iter()
+                .filter(|ev| {
+                    !assigned_indices.contains(&ev.log_index)
+                        && ev.user_address == user
+                        && (ev.event_type == ScaledTokenEventType::DebtBurn
+                            || ev.event_type == ScaledTokenEventType::GhoDebtBurn)
+                })
+                .collect();
+            candidate_burns.sort_by_key(|e| e.log_index);
+            for ev in candidate_burns {
+                burns.push(ev);
+                assigned_indices.insert(ev.log_index);
+                let idx = ev.index.unwrap_or(U256::ZERO);
+                debug_assert!(
+                    !idx.is_zero(),
+                    "DebtBurn index must be > 0 (parity: assert ev.index > 0)"
+                );
+                // NB: the Python's `assigned_indices.add(ev.index)` here is
+                // dead-code (no later `in assigned_indices` query hits the
+                // ray-scale `index` field); omitted (u64 set can't hold it).
+            }
+        } else {
+            let debt_v =
+                debt_v_token_address.expect("multi-liquidation requires debt_v_token_address");
+            let liquidation_count_for_asset = liquidation_analysis
+                .get(&(user, debt_v))
+                .copied()
+                .unwrap_or(1);
+            let is_multi_liquidation = liquidation_count_for_asset > 1;
+            // Get ALL burns for this (user, debt_asset) to determine pattern.
+            // Don't filter by assigned_indices yet — we need total count for
+            // pattern detection (parity: Python lines 1580-1586).
+            let mut all_burns_for_asset: Vec<&ScaledTokenEvent<'a>> = scaled_events
+                .iter()
+                .filter(|ev| {
+                    ev.user_address == user
+                        && (ev.event_type == ScaledTokenEventType::DebtBurn
+                            || ev.event_type == ScaledTokenEventType::GhoDebtBurn)
+                        && ev.token_address == debt_v
+                })
+                .collect();
+            all_burns_for_asset.sort_by_key(|e| e.log_index);
+            // Now get only unassigned burns for assignment.
+            let candidate_burns: Vec<&ScaledTokenEvent<'a>> = all_burns_for_asset
+                .iter()
+                .copied()
+                .filter(|ev| !assigned_indices.contains(&ev.log_index))
+                .collect();
+            // Determine pattern: COMBINED_BURN vs SEPARATE_BURNS.
+            let total_burn_count = all_burns_for_asset.len();
+            if is_multi_liquidation && !candidate_burns.is_empty() {
+                debug_assert!(
+                    liquidation_count_for_asset >= total_burn_count,
+                    "parity: assert liquidation_count_for_asset >= total_burn_count"
+                );
+                if liquidation_count_for_asset == total_burn_count {
+                    // SEPARATE_BURNS pattern: each liquidation gets exactly one burn.
+                    debug_assert!(
+                        liquidation_position < total_burn_count,
+                        "parity: assert liquidation_position < total_burn_count"
+                    );
+                    let target_burn = all_burns_for_asset[liquidation_position];
+                    debug_assert!(
+                        !assigned_indices.contains(&target_burn.log_index),
+                        "SEPARATE_BURNS target burn already assigned"
+                    );
+                    burns.push(target_burn);
+                    assigned_indices.insert(target_burn.log_index);
+                    let idx = target_burn.index.unwrap_or(U256::ZERO);
+                    debug_assert!(!idx.is_zero());
+                } else if liquidation_position == 0 {
+                    // COMBINED_BURN pattern: more liquidations than burns.
+                    // All burns go to the first liquidation.
+                    for ev in candidate_burns {
+                        burns.push(ev);
+                        assigned_indices.insert(ev.log_index);
+                        let idx = ev.index.unwrap_or(U256::ZERO);
+                        debug_assert!(!idx.is_zero());
+                    }
+                }
+            } else {
+                // Single liquidation or no burns: collect all available burns.
+                for ev in candidate_burns {
+                    burns.push(ev);
+                    assigned_indices.insert(ev.log_index);
+                    let idx = ev.index.unwrap_or(U256::ZERO);
+                    debug_assert!(!idx.is_zero());
+                }
+            }
+        }
+        burns
+    }
+
+    /// Mirrors Python `_collect_collateral_events` — collect collateral
+    /// events (burns and transfers) for the liquidation. During liquidations
+    /// a borrower may have BOTH collateral burned AND multiple transfers.
+    /// Collateral may be burned OR transferred to treasury (`BalanceTransfer`).
+    ///
+    /// Returns `(collateral_burn, collateral_transfers)`.
+    fn collect_collateral_events<'b>(
+        user: Address,
+        collateral_a_token_address: Option<Address>,
+        scaled_events: &'b [ScaledTokenEvent<'a>],
+        assigned_indices: &HashSet<u64>,
+    ) -> (
+        Option<&'b ScaledTokenEvent<'a>>,
+        Vec<&'b ScaledTokenEvent<'a>>,
+    )
+    where
+        'a: 'b,
+    {
+        let mut collateral_transfers: Vec<&ScaledTokenEvent<'a>> = Vec::new();
+        let mut collateral_burn: Option<&ScaledTokenEvent<'a>> = None;
+        for ev in scaled_events {
+            if assigned_indices.contains(&ev.log_index) {
+                continue;
+            }
+            // Match collateral events only if they belong to this liquidation's
+            // collateral asset (parity: prevents incorrect matching when a user
+            // is liquidated multiple times with different collateral assets).
+            if let Some(expected) = collateral_a_token_address {
+                if ev.token_address != expected {
+                    continue;
+                }
+            }
+            if ev.event_type == ScaledTokenEventType::CollateralBurn && ev.user_address == user {
+                collateral_burn = Some(ev);
+            } else if (ev.event_type == ScaledTokenEventType::CollateralTransfer
+                || ev.event_type == ScaledTokenEventType::Erc20CollateralTransfer)
+                && ev.user_address == user
+            {
+                collateral_transfers.push(ev);
+            }
+        }
+        (collateral_burn, collateral_transfers)
+    }
+
+    /// Mirrors Python `_create_liquidation_operation` — the gnarly ~160-LoC
+    /// fn that builds an `Operation { operation_type: Liquidation, ... }` (or
+    /// `GhoLiquidation` if the debt asset is GHO). Coordinates:
+    /// - `analyze_liquidation_scenarios` + `analyze_user_liquidation_count` (the
+    ///   pre-analysis dicts over `all_events`).
+    /// - `collect_debt_burns` (the `SINGLE/COMBINED_BURN/SEPARATE_BURNS` detection).
+    /// - `collect_collateral_events` (the `collateral_burn` vs `collateral_transfers` split).
+    /// - the `debt_mint` net-debt-increase branch (accrued interest > repayment).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParseError::Substrate`] if either the aToken or vToken sibling
+    /// lookup fails (parity: `assert debt_v_token_address is not None`).
+    #[allow(clippy::too_many_lines)] // mirror of Python's 5-nested-branch fn — intrinsic
+    fn create_liquidation_operation(
         &self,
         operation_id: u32,
         liquidation_event: &'a Log,
-    ) -> Operation<'a> {
-        // The stub is **non-fatal during parse()** (so A's unit tests can
-        // exercise non-liquidation operations on tx:s that incidentally
-        // contain a LiquidationCall). The principle: A's scope is the
-        // 9 standard builders; B's scope is the liquidation engine.
-        Operation {
+        scaled_events: &[ScaledTokenEvent<'a>],
+        all_events: &[&'a Log],
+        assigned_indices: &mut HashSet<u64>,
+    ) -> Result<Operation<'a>, ParseError> {
+        let topics = liquidation_event.topics();
+        let collateral_asset = Address::from_word(topics[1]);
+        let debt_asset = Address::from_word(topics[2]);
+        let user = Address::from_word(topics[3]);
+        // Extract debtToCover from LiquidationCall event data (word 0).
+        let data = liquidation_event.data().data.as_ref();
+        let mut buf = [0u8; 32];
+        if data.len() >= 32 {
+            buf.copy_from_slice(&data[0..32]);
+        }
+        let debt_to_cover = U256::from_be_bytes::<32>(buf);
+        let is_gho = self.gho_token_address == Some(debt_asset);
+        let collateral_a_token_address = self.get_a_token_for_asset(collateral_asset)?;
+        let debt_v_token_address = self.get_v_token_for_asset(debt_asset)?.ok_or_else(|| {
+            ParseError::Substrate(format!(
+                "no vToken for debt_asset {debt_asset} in market {}",
+                self.market_id
+            ))
+        })?;
+        // Pre-analyze liquidations to detect multi-liquidation scenarios.
+        let liquidation_analysis = self.analyze_liquidation_scenarios(all_events)?;
+        let user_liquidation_analysis = Self::analyze_user_liquidation_count(all_events);
+        let user_liquidation_count = user_liquidation_analysis.get(&user).copied().unwrap_or(1);
+        // Calculate this liquidation's position among all liquidations for
+        // this (user, debt_asset) — sequential matching; burn[i] belongs to
+        // liquidation[i]. Count LiquidationCall events before this one with
+        // the same (user, debt_asset).
+        let this_log_index = log_idx_value(liquidation_event);
+        let mut liquidation_position = 0usize;
+        for ev in all_events {
+            if ev.topics().first() != Some(&aave_event_decoder::LIQUIDATION_CALL_TOPIC) {
+                continue;
+            }
+            if ev.topics().len() < 4 {
+                continue;
+            }
+            if Address::from_word(ev.topics()[3]) != user {
+                continue;
+            }
+            if Address::from_word(ev.topics()[2]) != debt_asset {
+                continue;
+            }
+            if log_idx_value(ev) < this_log_index {
+                liquidation_position += 1;
+            }
+        }
+        // Collect debt burns (SINGLE/COMBINED_BURN/SEPARATE_BURNS detection).
+        let debt_burns = Self::collect_debt_burns(
+            user,
+            Some(debt_v_token_address),
+            scaled_events,
+            assigned_indices,
+            &liquidation_analysis,
+            user_liquidation_count,
+            liquidation_position,
+        );
+        // Collect collateral events (burns + transfers).
+        let (collateral_burn, collateral_transfers) = Self::collect_collateral_events(
+            user,
+            collateral_a_token_address,
+            scaled_events,
+            assigned_indices,
+        );
+        // A liquidation requires at least one collateral event.
+        if collateral_burn.is_none() && collateral_transfers.is_empty() {
+            return Err(ParseError::NoMatch(format!(
+                "Expected at least 1 collateral event (burn or transfer) for liquidation. \
+                 User: {user}, scaled_events log indices: {}",
+                scaled_events
+                    .iter()
+                    .map(|e| e.log_index.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+        // Find debt mint events that represent net debt increase during
+        // liquidation (when accrued interest > debt repayment:
+        // balance_increase > amount).
+        let mut debt_mint: Option<&ScaledTokenEvent<'a>> = None;
+        for scaled_event in scaled_events {
+            if assigned_indices.contains(&scaled_event.log_index) {
+                continue;
+            }
+            if scaled_event.user_address != user {
+                continue;
+            }
+            if is_gho && scaled_event.event_type != ScaledTokenEventType::GhoDebtMint {
+                continue;
+            }
+            if !is_gho && scaled_event.event_type != ScaledTokenEventType::DebtMint {
+                continue;
+            }
+            // Match debt mint events only if they belong to this liquidation's
+            // debt asset (parity: assert event_token_address == debt_v_token_address).
+            if scaled_event.token_address != debt_v_token_address {
+                continue;
+            }
+            let bal_inc = scaled_event.balance_increase.unwrap_or(U256::ZERO);
+            debug_assert!(
+                bal_inc > scaled_event.amount,
+                "parity: balance_increase > amount for net-debt-increase mint"
+            );
+            debt_mint = Some(scaled_event);
+            break;
+        }
+        // Assemble scaled_token_events + balance_transfer_events.
+        let mut scaled_token_events: Vec<ScaledTokenEvent<'a>> = Vec::new();
+        let mut balance_transfer_events: Vec<&'a Log> = Vec::new();
+        // Note: debt_burns may be empty for flash loan liquidations or when
+        // interest > repayment; debt_mint is set when interest > repayment;
+        // collateral_burn may be None when collateral is transferred to treasury.
+        if let Some(burn) = collateral_burn {
+            scaled_token_events.push(clone_scaled_event(burn));
+        }
+        // Add all debt burns (primary and secondary).
+        for burn in &debt_burns {
+            scaled_token_events.push(clone_scaled_event(burn));
+        }
+        if let Some(mint) = debt_mint {
+            scaled_token_events.push(clone_scaled_event(mint));
+        }
+        if !collateral_transfers.is_empty() {
+            // Add all collateral transfers to scaled_token_events. Both
+            // ERC20 Transfers (index=0) and BalanceTransfer events (index>0)
+            // are collateral events that should be validated together.
+            for transfer in &collateral_transfers {
+                scaled_token_events.push(clone_scaled_event(transfer));
+                // Track BalanceTransfer events separately so ERC20 Transfers
+                // can use them for proper scaling during processing.
+                let idx = transfer.index.unwrap_or(U256::ZERO);
+                if !idx.is_zero() {
+                    balance_transfer_events.push(transfer.log);
+                }
+            }
+        }
+        let op_type = if is_gho {
+            OperationType::GhoLiquidation
+        } else {
+            OperationType::Liquidation
+        };
+        Ok(Operation {
             operation_id,
-            operation_type: OperationType::Liquidation, // labeled, awaiting B's match.
+            operation_type: op_type,
             pool_revision: self.pool_revision,
             pool_event: Some(liquidation_event),
-            scaled_events: Vec::new(),
+            scaled_events: scaled_token_events,
             transfer_events: Vec::new(),
-            balance_transfer_events: Vec::new(),
+            balance_transfer_events,
             minted_to_treasury_amount: None,
-            debt_to_cover: None,
-            validation_errors: vec!["A-stub: liquidation engine pending (HQF5NQ-B)".to_string()],
-        }
+            debt_to_cover: Some(debt_to_cover),
+            validation_errors: Vec::new(),
+        })
     }
 
     // ── the validators (`_validate_operation` + per-op) ───────────────────
@@ -2167,6 +2573,7 @@ fn is_part_of_mint(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::operations::{LiquidationGroup, LiquidationPattern};
 
     #[test]
     fn amounts_match_exact_below_threshold() {
@@ -2271,5 +2678,378 @@ mod tests {
             log_index: Some(idx),
             removed: false,
         }
+    }
+
+    // ── HQF5NQ-B liquidation engine tests (§4.2 zero-drift surface) ─────
+    //
+    // The static pattern-detection fns (`analyze_user_liquidation_count`,
+    // `collect_debt_burns`, `collect_collateral_events`) are the §4.2-drift
+    // critical bit — covered here. The full `create_liquidation_operation`
+    // builder needs an in-memory DB substrate (the `get_a_token_for_asset` /
+    // `get_v_token_for_asset` sibling lookups); an integration-test fixture
+    // is HQF5NQ-C's concern (the apply dispatch glue + the §4.2 cross-check
+    // (U5YIBG) is the consumer).
+
+    /// Construct a LiquidationCall-shape Log for tests: 4 topics
+    /// (`LIQUIDATION_CALL_TOPIC`, `collateralAsset`, `debtAsset`, `user`) + a 4-word
+    /// data payload whose first word is `debt_to_cover`.
+    fn liquidation_call_log(
+        idx: u64,
+        collateral: Address,
+        debt: Address,
+        user: Address,
+        debt_to_cover: U256,
+    ) -> Log {
+        use alloy::primitives::{Bytes, Log as AlloyLog, B256};
+        let topics = vec![
+            aave_event_decoder::LIQUIDATION_CALL_TOPIC,
+            B256::left_padding_from(collateral.as_slice()),
+            B256::left_padding_from(debt.as_slice()),
+            B256::left_padding_from(user.as_slice()),
+        ];
+        let mut data = vec![0u8; 128];
+        debt_to_cover
+            .to_be_bytes::<32>()
+            .iter()
+            .enumerate()
+            .for_each(|(i, b)| {
+                data[32 + i] = *b;
+            });
+        let inner = AlloyLog::new_unchecked(Address::ZERO, topics, Bytes::from(data));
+        Log {
+            inner,
+            block_hash: None,
+            block_number: None,
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: Some(idx),
+            removed: false,
+        }
+    }
+
+    /// Construct a minimal `ScaledTokenEvent` for the liquidation tests. The
+    /// `token_address` discriminator (= `debt_v_token` / `collateral_a_token`)
+    /// drives the asset-specific filtering.
+    fn scaled_event(
+        log_idx: u64,
+        event_type: ScaledTokenEventType,
+        user: Address,
+        token_address: Address,
+        amount: U256,
+        index: Option<U256>,
+    ) -> ScaledTokenEvent<'static> {
+        // The Log field isn't read by the static collectors (`collect_debt_burns`/
+        // `collect_collateral_events`); pass a synthetic placeholder for the lifetime.
+        let log = Box::leak(Box::new(test_log(
+            log_idx,
+            &aave_event_decoder::SUPPLY_TOPIC,
+            &[],
+        )));
+        ScaledTokenEvent {
+            log,
+            decoded: ScaledTokenEventData::Burn {
+                from: user,
+                target: Address::ZERO,
+                value: amount,
+                balance_increase: U256::ZERO,
+                index: index.unwrap_or(U256::from(1_000_000_000u64)),
+            },
+            event_type,
+            token_address,
+            user_address: user,
+            caller_address: None,
+            from_address: Some(user),
+            target_address: Some(Address::ZERO),
+            amount,
+            balance_increase: Some(U256::ZERO),
+            index,
+            log_index: log_idx,
+        }
+    }
+
+    /// `SINGLE` pattern: one `LiquidationCall` → one debt Burn for the same user.
+    /// `collect_debt_burns` with `user_liquidation_count == 1` collects ALL
+    /// debt burns for the user (no asset filter) — handles bad-debt
+    /// multi-asset burns from `_burnBadDebt()`.
+    #[test]
+    fn collect_debt_burns_single_user_one_burn() {
+        let user = Address::from([0xA0; 20]);
+        let v_token = Address::from([0xB0; 20]);
+        let burn = scaled_event(
+            10,
+            ScaledTokenEventType::DebtBurn,
+            user,
+            v_token,
+            U256::from(1_000),
+            Some(U256::from(1_000_000_000u64)),
+        );
+        let events = vec![burn];
+        let mut assigned = HashSet::new();
+        let analysis = HashMap::new();
+        let burns = TransactionOperationsParser::collect_debt_burns(
+            user,
+            Some(v_token),
+            &events,
+            &mut assigned,
+            &analysis,
+            1,
+            0,
+        );
+        assert_eq!(burns.len(), 1);
+        assert_eq!(burns[0].log_index, 10);
+        assert!(assigned.contains(&10));
+    }
+
+    /// `COMBINED_BURN` pattern: N liquidations share 1 burn — when
+    /// `liquidation_count_for_asset > total_burn_count` + `liquidation_position == 0`,
+    /// all burns go to the first liquidation.
+    #[test]
+    fn collect_debt_burns_combined_burn_pattern() {
+        let user = Address::from([0xA0; 20]);
+        let v_token = Address::from([0xB0; 20]);
+        // 1 burn covering 2 liquidations (the COMBINED_BURN case).
+        let combined_burn = scaled_event(
+            100,
+            ScaledTokenEventType::DebtBurn,
+            user,
+            v_token,
+            U256::from(2_000),
+            Some(U256::from(1_000_000_000u64)),
+        );
+        // An unrelated burn on a different vToken — must NOT be collected
+        // (asset-specific filter for multi-liquidation users).
+        let other_vtoken = Address::from([0xC0; 20]);
+        let other_burn = scaled_event(
+            200,
+            ScaledTokenEventType::DebtBurn,
+            user,
+            other_vtoken,
+            U256::from(999),
+            Some(U256::from(1_000_000_000u64)),
+        );
+        let events = vec![combined_burn, other_burn];
+        let mut assigned = HashSet::new();
+        let mut analysis = HashMap::new();
+        analysis.insert((user, v_token), 2usize); // 2 liquidations for this asset
+                                                  // First liquidation (position 0): collects the single burn.
+        let burns0 = TransactionOperationsParser::collect_debt_burns(
+            user,
+            Some(v_token),
+            &events,
+            &mut assigned,
+            &analysis,
+            2,
+            0,
+        );
+        assert_eq!(
+            burns0.len(),
+            1,
+            "COMBINED_BURN: first liquidation gets the burn"
+        );
+        assert_eq!(burns0[0].log_index, 100);
+        // Second liquidation (position 1): no burns left (combined burn goes to position 0).
+        let burns1 = TransactionOperationsParser::collect_debt_burns(
+            user,
+            Some(v_token),
+            &events,
+            &mut assigned,
+            &analysis,
+            2,
+            1,
+        );
+        assert!(
+            burns1.is_empty(),
+            "second liquidation gets no burn (already taken)"
+        );
+        // Unrelated-vToken burn must NEVER have been touched.
+        assert!(!assigned.contains(&200));
+    }
+
+    /// `SEPARATE_BURNS` pattern: N liquidations → N burns, one per liquidation.
+    /// `liquidation_count_for_asset == total_burn_count`; burn[i] belongs to
+    /// liquidation[i] (sequential matching via `liquidation_position`).
+    #[test]
+    fn collect_debt_burns_separate_burns_pattern() {
+        let user = Address::from([0xA0; 20]);
+        let v_token = Address::from([0xB0; 20]);
+        let b0 = scaled_event(
+            10,
+            ScaledTokenEventType::DebtBurn,
+            user,
+            v_token,
+            U256::from(1000),
+            Some(U256::from(1_000_000_000u64)),
+        );
+        let b1 = scaled_event(
+            20,
+            ScaledTokenEventType::DebtBurn,
+            user,
+            v_token,
+            U256::from(2000),
+            Some(U256::from(1_000_000_000u64)),
+        );
+        let events = vec![b0, b1];
+        let mut assigned = HashSet::new();
+        let mut analysis = HashMap::new();
+        analysis.insert((user, v_token), 2usize);
+        // Position 0 → first burn (log_index 10).
+        let burns0 = TransactionOperationsParser::collect_debt_burns(
+            user,
+            Some(v_token),
+            &events,
+            &mut assigned,
+            &analysis,
+            2,
+            0,
+        );
+        assert_eq!(burns0.len(), 1);
+        assert_eq!(burns0[0].log_index, 10);
+        // Position 1 → second burn (log_index 20).
+        let burns1 = TransactionOperationsParser::collect_debt_burns(
+            user,
+            Some(v_token),
+            &events,
+            &mut assigned,
+            &analysis,
+            2,
+            1,
+        );
+        assert_eq!(burns1.len(), 1);
+        assert_eq!(burns1[0].log_index, 20);
+    }
+
+    /// `analyze_user_liquidation_count`: counts `LiquidationCall` events per
+    /// user (not per asset-pair). When `user_liquidation_count == 1`, ALL
+    /// debt burns for that user are collected (no asset filter — bad-debt
+    /// `_burnBadDebt()` across multiple debt positions).
+    #[test]
+    fn analyze_user_liquidation_count_counts_per_user() {
+        let user_a = Address::from([0xA0; 20]);
+        let user_b = Address::from([0xB0; 20]);
+        let debt_weth = Address::from([0xC0; 20]);
+        let debt_dai = Address::from([0xD0; 20]);
+        let collateral = Address::from([0xE0; 20]);
+        // User A: 2 liquidations (multi-asset pair).
+        let a1 = liquidation_call_log(10, collateral, debt_weth, user_a, U256::from(1000));
+        let a2 = liquidation_call_log(20, collateral, debt_dai, user_a, U256::from(2000));
+        // User B: 1 liquidation (single, bad-debt path).
+        let b1 = liquidation_call_log(30, collateral, debt_weth, user_b, U256::from(500));
+        let events: Vec<&Log> = vec![&a1, &a2, &b1];
+        let counts = TransactionOperationsParser::analyze_user_liquidation_count(&events);
+        assert_eq!(counts.get(&user_a), Some(&2));
+        assert_eq!(counts.get(&user_b), Some(&1));
+    }
+
+    /// `collect_collateral_events`: the `collateral_burn` vs `collateral_transfers`
+    /// split. When collateral is moved to the liquidator (not burned), the
+    /// burn is `None` + `collateral_transfers` is non-empty.
+    #[test]
+    fn collect_collateral_events_burn_vs_transfers_split() {
+        let user = Address::from([0xA0; 20]);
+        let a_token = Address::from([0xB0; 20]);
+        let other_atoken = Address::from([0xC0; 20]);
+        // The burn for this liquidation's aToken.
+        let burn = scaled_event(
+            10,
+            ScaledTokenEventType::CollateralBurn,
+            user,
+            a_token,
+            U256::from(500),
+            None,
+        );
+        // The transfer (collateral moved to liquidator) — must be returned.
+        let transfer = scaled_event(
+            11,
+            ScaledTokenEventType::Erc20CollateralTransfer,
+            user,
+            a_token,
+            U256::from(500),
+            None,
+        );
+        // A burn on a different aToken (user multi-liquidated) — must NOT be collected.
+        let other_burn = scaled_event(
+            12,
+            ScaledTokenEventType::CollateralBurn,
+            user,
+            other_atoken,
+            U256::from(999),
+            None,
+        );
+        let events = vec![burn, transfer, other_burn];
+        let assigned = HashSet::new();
+        let (cb, ct) = TransactionOperationsParser::collect_collateral_events(
+            user,
+            Some(a_token),
+            &events,
+            &assigned,
+        );
+        assert!(
+            cb.is_some(),
+            "collateral_burn found for this liquidation's aToken"
+        );
+        assert_eq!(cb.unwrap().log_index, 10);
+        assert_eq!(
+            ct.len(),
+            1,
+            "collateral_transfers contains only the matching aToken transfer"
+        );
+        assert_eq!(ct[0].log_index, 11);
+    }
+
+    /// `collect_collateral_events`: when no events match (collateral was fully
+    /// transferred, no burn), the split is `(None, [...])`. The Python's caller
+    /// asserts at least one event exists; tested variant separately.
+    #[test]
+    fn collect_collateral_events_no_burn_only_transfers() {
+        let user = Address::from([0xA0; 20]);
+        let a_token = Address::from([0xB0; 20]);
+        let transfer = scaled_event(
+            11,
+            ScaledTokenEventType::CollateralTransfer,
+            user,
+            a_token,
+            U256::from(500),
+            Some(U256::from(1_000_000_000u64)),
+        );
+        let events = vec![transfer];
+        let assigned = HashSet::new();
+        let (cb, ct) = TransactionOperationsParser::collect_collateral_events(
+            user,
+            Some(a_token),
+            &events,
+            &assigned,
+        );
+        assert!(cb.is_none(), "no burn — collateral moved via transfer");
+        assert_eq!(ct.len(), 1);
+    }
+
+    /// `LiquidationGroup::detect_pattern` (mirror of `pattern_types.py`) —
+    /// the §4.2-critical pattern classifier.
+    #[test]
+    fn liquidation_group_detect_pattern() {
+        // SINGLE: 1 liquidation, 1 burn.
+        let mut single = LiquidationGroup::default();
+        single.liquidations.push((0, U256::from(100), 0));
+        single.burn_events.push((1, U256::from(100)));
+        assert_eq!(single.detect_pattern(), LiquidationPattern::Single);
+
+        // COMBINED_BURN: 3 liquidations, 1 burn.
+        let combined = LiquidationGroup {
+            liquidations: vec![
+                (0, U256::from(100), 0),
+                (1, U256::from(200), 10),
+                (2, U256::from(300), 20),
+            ],
+            burn_events: vec![(5, U256::from(600))],
+        };
+        assert_eq!(combined.detect_pattern(), LiquidationPattern::CombinedBurn);
+
+        // SEPARATE_BURNS: 3 liquidations, 3 burns.
+        let separate = LiquidationGroup {
+            liquidations: vec![(0, U256::from(100), 0), (1, U256::from(200), 10)],
+            burn_events: vec![(5, U256::from(100)), (6, U256::from(200))],
+        };
+        assert_eq!(separate.detect_pattern(), LiquidationPattern::SeparateBurns);
     }
 }
