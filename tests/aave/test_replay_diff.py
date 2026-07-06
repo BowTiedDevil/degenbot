@@ -304,10 +304,14 @@ def test_drive_one_block_smoke(tmp_path: Path) -> None:
     """
     out = tmp_path / "drive"
     out.mkdir()
-    # BLOCK_AFTER_PROXY_CREATED is the cand driver's from; +4 keeps the
-    # post-bootstrap range tiny (so the smoke is fast) while still exercising
-    # the full Rust writer path (cand stamp lands at to_block).
-    to_block = ard.BLOCK_AFTER_PROXY_CREATED + 4
+    # REF_FROM_BLOCK is the cand driver's from (the Rust drives the same
+    # full range as ref now — O4BOST cold-boot). +70 lands just past the
+    # bootstrap ProxyCreated events (16291127/16291130/16291136) so BOTH
+    # writers bootstrap POOL/POOL_CONFIGURATOR/PRICE_ORACLE/POOL_DATA_PROVIDER
+    # naturally → a GREEN baseline (the cold-boot fetch's 2000-block window
+    # catches the ProxyCreated even for a tiny T, so a T *before* the first
+    # ProxyCreated would diverge: Rust bootstraps, Python doesn't).
+    to_block = ard.REF_FROM_BLOCK + 70
     summary = ard.drive(to_block=to_block, out_dir=str(out), quiet=True)
     assert summary["cand_ok"] is True, summary
     assert summary["ref_ok"] is True, summary
@@ -331,7 +335,7 @@ def test_bisect_smoke_on_seeded_divergence(tmp_path: Path) -> None:
     """
     out = tmp_path / "bisect"
     out.mkdir()
-    to_block = ard.BLOCK_AFTER_PROXY_CREATED + 4
+    to_block = ard.REF_FROM_BLOCK + 70
     summary = ard.drive(to_block=to_block, out_dir=str(out), quiet=True)
     assert summary["cand_ok"] is True, summary
     base = ard.compare_dbs(summary["ref_db"], summary["cand_db"], limit=5)

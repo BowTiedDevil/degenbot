@@ -47,17 +47,14 @@ AAVE_V3_DEPLOY_BLOCK = 16_291_070  # pool address provider deployed block; ref d
 #: ref.db (Python oracle) drives the FULL range from the deploy — its Phase-1
 #: self-bootstraps POOL/POOL_CONFIGURATOR via ProxyCreated.
 REF_FROM_BLOCK = AAVE_V3_DEPLOY_BLOCK + 1  # 16291071
-#: cand.db (Rust) drives POST-bootstrap — the Rust's ``build_fetch_spec``
-#: hard-requires POOL/POOL_CONFIGURATOR pre-seeded (run.rs:1060, once before the
-#: loop). The harness pre-seeds them from RPC-fetched ProxyCreated + sets cand's
-#: stamp to ``BOOTSTRAP_END_BLOCK``, so cand drives ``[BLOCK_AFTER_PROXY_CREATED, TO]``
-#: + never re-sees the ProxyCreated events → no duplicate-row divergence.
-#:
-#: The ProxyCreated bootstrap events land at blocks 16291127 / 16291130 / 16291136
-#: (confirmed by RPC probe — NOT at the 16291071 address-provider deploy; the
-#: first ~56 blocks are event-free). BOOTSTRAP_END_BLOCK = 16291136.
-BOOTSTRAP_END_BLOCK = 16_291_136
-BLOCK_AFTER_PROXY_CREATED = BOOTSTRAP_END_BLOCK + 1  # 16291137 — cand's from
+#: Both ref + cand drive the FULL ``[REF_FROM_BLOCK, to_block]`` range. The
+#: Rust self-bootstraps POOL/POOL_CONFIGURATOR via the ``ProxyCreated`` events
+#: (O4BOST landed — the cold-boot gap closed); the harness's cand.db is a
+#: cold seed (market + POOL_ADDRESS_PROVIDER + GHO only). The ProxyCreated
+#: bootstrap events land at blocks 16291127 / 16291130 / 16291136 (confirmed
+#: by RPC probe — NOT at the 16291071 address-provider deploy; the first ~56
+#: blocks are event-free). The chunk-loop re-encounter of the ProxyCreated
+#: events is handled idempotently in-core (no duplicate-row divergence).
 DEFAULT_CHUNK_SIZE = 10_000
 DEFAULT_MAX_BISECT_RANGE = 50_000
 
@@ -439,13 +436,8 @@ def _run_python_writer(
 
     The market row (seeded by ``_seed_market_db``) must already exist. The
     Python does NOT advance ``last_update_block`` (it's Rust-owned now —
-    commands.py:432); the caller bumps the stamp separately when resuming.
-    Used BOTH for the ref.db full-range drive AND for cand.db's bootstrap pass
-    (driving the Python on ``[REF_FROM_BLOCK, BOOTSTRAP_END_BLOCK]`` creates the
-    SAME contract rows the ref.db bootstrap produces → no bootstrap-contract
-    divergence + no fake duplicate). Mirrors the production ``aave activate``
-    bootstrap's contract-discovery (the Rust core itself CANNOT cold-boot a
-    fresh market — ``build_fetch_spec`` errors on a missing POOL row).
+    commands.py:432). Used ONLY for the ref.db full-range drive (the cand.db
+    cold-boot is now Rust-owned via O4BOST — no Python pre-bootstrap on cand).
     """
     from sqlalchemy import select
     from web3 import Web3
@@ -476,19 +468,6 @@ def _run_python_writer(
     finally:
         session.close()
         engine.dispose()
-
-
-def _bump_stamp(db_path: str, stamp: int) -> None:
-    """Set the market row's ``last_update_block`` (the Rust's resume-from-stamp)."""
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute(
-            "UPDATE aave_v3_markets SET last_update_block = ? WHERE 1",
-            (stamp,),
-        )
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def _read_stamp(db_path: str) -> int | None:
@@ -571,14 +550,13 @@ def drive(
 
     - ref.db (Python ``update_aave_market``) drives the FULL ``[REF_FROM_BLOCK, to_block]``
       range — its Phase-1 self-bootstraps POOL/POOL_CONFIGURATOR via ProxyCreated.
-    - cand.db (Rust ``run_aave_update``) drives ``[BLOCK_AFTER_PROXY_CREATED, to_block]``
-      POST-bootstrap — the Rust's ``build_fetch_spec`` requires POOL/POOL_CONFIGURATOR
-      pre-seeded, so the harness ``_bootstrap_rust_contracts`` seeds them from
-      RPC-fetched ProxyCreated + sets cand's stamp to ``BOOTSTRAP_END_BLOCK``.
+    - cand.db (Rust ``run_aave_update``) drives ``[REF_FROM_BLOCK, to_block]`` —
+      the Rust self-bootstraps POOL/POOL_CONFIGURATOR via the ``ProxyCreated``
+      events (O4BOST — the cold-boot gap closed; the harness's cand.db is a
+      cold seed: market + POOL_ADDRESS_PROVIDER + GHO only). No Python
+      pre-bootstrap. The chunk-loop re-encounter of the ProxyCreated events
+      is handled idempotently in-core (no duplicate-row divergence).
 
-    Both writers process IDENTICAL event streams after ``BOOTSTRAP_END_BLOCK``
-    (no duplicate-row divergence; the bootstrap range ``[16291071, 16291136]`` is
-    construction-only — just ProxyCreated contract-row inserts, no user math).
     Returns a one-line JSON-serializable summary.
     """
     rpc = rpc_url or os.environ.get(RPC_ENVVAR)
@@ -592,14 +570,14 @@ def drive(
     if not quiet:
         print(
             f"[*] out_dir={out_dir} rpc={rpc} "
-            f"ref=[{REF_FROM_BLOCK},{to_block}] cand=[{BLOCK_AFTER_PROXY_CREATED},{to_block}]",
+            f"ref=[{REF_FROM_BLOCK},{to_block}] cand=[{REF_FROM_BLOCK},{to_block}]",
             file=sys.stderr,
         )
 
     summary: dict[str, Any] = {
         "mode": "drive",
         "ref_from": REF_FROM_BLOCK,
-        "cand_from": BLOCK_AFTER_PROXY_CREATED,
+        "cand_from": REF_FROM_BLOCK,
         "to": to_block,
         "out_dir": out_dir,
         "cand_db": cand_path,
@@ -632,15 +610,13 @@ def drive(
                 market_name=market_name,
                 last_update_block=REF_FROM_BLOCK - 1,
             )
-            # Bootstrap cand.db with the SAME Python pass the ref.db bootstrap
-            # runs (ProxyCreated / PriceOracleUpdated / PoolDataProviderUpdated →
-            # identical contract rows → no bootstrap-contract divergence).
-            _run_python_writer(
-                cand_path, REF_FROM_BLOCK, BOOTSTRAP_END_BLOCK, rpc, market_name=market_name
-            )
-            # The Python doesn't stamp (Rust-owned); bump to BOOTSTRAP_END_BLOCK
-            # so the Rust resumes from BLOCK_AFTER_PROXY_CREATED.
-            _bump_stamp(cand_path, BOOTSTRAP_END_BLOCK)
+            # The Rust self-bootstraps POOL/POOL_CONFIGURATOR via ProxyCreated
+            # from the seeded POOL_ADDRESS_PROVIDER (O4BOST landed) — no
+            # Python bootstrap pass on cand.db. The cand stamp stays at the
+            # seed (REF_FROM_BLOCK - 1 = 16291070); the Rust drives
+            # [16291071, to_block] (covering the bootstrap range as the
+            # first chunk). This was previously a Python-bootstrap workaround
+            # for the cold-boot gap O4BOST closed.
             cancel = CancelHandle()
             cb: Callable[..., None] = progress_callback or (lambda _progress=None, **_kw: None)
             report: dict[str, Any] = {}
@@ -702,7 +678,7 @@ def bisect(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     max_blocks: int = 1,
 ) -> dict[str, Any]:
-    """Narrow the EARLIEST divergence in ``[BLOCK_AFTER_PROXY_CREATED, to_block]``.
+    """Narrow the EARLIEST divergence in ``[REF_FROM_BLOCK, to_block]``.
 
     Binary-searches on ``hi``: ``drive(to=mid)`` is a FRESH from-seed drive (so
     the GREEN prefix re-applies idempotently — no snapshot-resume needed for
@@ -738,14 +714,14 @@ def bisect(
                 {
                     "mode": "bisect",
                     "result": "GREEN",
-                    "range": [BLOCK_AFTER_PROXY_CREATED, to_block],
+                    "range": [REF_FROM_BLOCK, to_block],
                 },
                 default=_json_default,
             )
         )
-        return {"result": "GREEN", "range": [BLOCK_AFTER_PROXY_CREATED, to_block]}
+        return {"result": "GREEN", "range": [REF_FROM_BLOCK, to_block]}
 
-    lo, hi = BLOCK_AFTER_PROXY_CREATED, to_block
+    lo, hi = REF_FROM_BLOCK, to_block
     while hi - lo + 1 > max_blocks:
         mid = (lo + hi) // 2
         sm = drive_at(mid)
