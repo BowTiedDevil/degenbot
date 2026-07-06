@@ -82,9 +82,15 @@ def _make_log(
     data: str,
     block: int,
     log_index: int,
+    tx_hash: str | None = None,
 ) -> dict[str, Any]:
-    """Build a canned alloy/web3-shaped `eth_getLogs` entry."""
-    tx_hash = "0x" + (b"tx" + b"\x00" * 30).hex()
+    """Build a canned alloy/web3-shaped `eth_getLogs` entry.
+
+    `tx_hash` defaults to a fixed value (the single-tx-group fixture shape);
+    pass a distinct hash per tx group for multi-tx-within-chunk fixtures
+    (the fetch spec groups logs by `transactionHash`).
+    """
+    tx_hash = tx_hash or "0x" + (b"tx" + b"\x00" * 30).hex()
     block_hash = "0x" + (b"bk" + b"\x00" * 30).hex()
     return {
         "address": address,
@@ -546,6 +552,7 @@ def make_upgraded_log(
     new_implementation: str,
     block: int = FIXTURE_BLOCK,
     log_index: int = 0,
+    tx_hash: str | None = None,
 ) -> dict[str, Any]:
     """Build a canned `eth_getLogs` entry for an Upgraded event.
 
@@ -558,6 +565,7 @@ def make_upgraded_log(
         data="0x",
         block=block,
         log_index=log_index,
+        tx_hash=tx_hash,
     )
 
 
@@ -639,6 +647,255 @@ def make_asset_source_updated_log(
         block=block,
         log_index=log_index,
     )
+
+
+# ── GHO ops-parser fixtures (YTRUEW — the multi-tx-within-chunk flag #1 proof) ─
+# The Pool `Borrow` / `Repay` events + the variableDebtToken `Mint` / `Burn`
+# (scaled-token) events + the plain ERC20 `Transfer` companion the ops parser
+# asserts (the Borrow requires a Transfer from ZERO_ADDRESS to the borrower on
+# the borrowed token, matching the debt-mint amount). Each builder takes a
+# `tx_hash` so a fixture can place several tx groups in ONE chunk.
+#
+# Topic0 hashes (keccak256 of the canonical Aave V3 / ERC20 event signatures).
+BORROW_TOPIC = "0xb3d084820fb1a9decffb176436bd02558d15fac9b0ddfed8c465bc7359d7dce0"
+REPAY_TOPIC = "0xa534c8dbe71f871f9f3530e97a74601fea17b426cae02e1c5aee42c96c784051"
+MINT_TOPIC = "0x458f5fa412d0f69b08dd84872b0215675cc67bc1d5b6fd93300a1c3878b86196"
+BURN_TOPIC = "0x4cf25bc1d991c17529c25213d3cc0cda295eeaad5f13f361969b12ea48015f90"
+ERC20_TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+
+def make_borrow_log(
+    *,
+    reserve: str,
+    on_behalf_of: str,
+    amount: int,
+    user: str | None = None,
+    interest_rate_mode: int = 2,
+    borrow_rate: int = 0,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+    tx_hash: str | None = None,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for a Pool `Borrow` event.
+
+    `Borrow(address indexed reserve, address user, address indexed onBehalfOf,
+    uint256 amount, uint8 interestRateMode, uint256 borrowRate,
+    uint16 indexed referralCode)` — emitted by the Pool. topics: [sig, reserve,
+    user, onBehalfOf]; data: abi.encode(user, amount, mode, rate) (4 words).
+    Both paths read reserve=topic1, onBehalfOf=topic3, amount=data word 1.
+    """
+    user = user or on_behalf_of
+    words = [
+        _pad_address(user)[2:],
+        _u256(amount)[2:],
+        interest_rate_mode.to_bytes(32, "big").hex(),  # uint8 in 32 bytes
+        borrow_rate.to_bytes(32, "big").hex(),
+    ]
+    return _make_log(
+        address=POOL_ADDRESS.lower(),
+        topics=[
+            BORROW_TOPIC,
+            _pad_address(reserve),
+            _pad_address(user),
+            _pad_address(on_behalf_of),
+        ],
+        data="0x" + "".join(words),
+        block=block,
+        log_index=log_index,
+        tx_hash=tx_hash,
+    )
+
+
+def make_repay_log(
+    *,
+    reserve: str,
+    user: str,
+    amount: int,
+    repayer: str | None = None,
+    use_a_tokens: bool = False,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+    tx_hash: str | None = None,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for a Pool `Repay` event.
+
+    `Repay(address indexed reserve, address indexed user, address indexed
+    repayer, uint256 amount, bool useATokens)` — emitted by the Pool. topics:
+    [sig, reserve, user, repayer]; data: abi.encode(amount, useATokens) (2 words).
+    Both paths read reserve=topic1, user=topic2, amount=data word 0.
+    """
+    repayer = repayer or user
+    data = _u256(amount)[2:] + (1 if use_a_tokens else 0).to_bytes(32, "big").hex()
+    return _make_log(
+        address=POOL_ADDRESS.lower(),
+        topics=[REPAY_TOPIC, _pad_address(reserve), _pad_address(user), _pad_address(repayer)],
+        data="0x" + data,
+        block=block,
+        log_index=log_index,
+        tx_hash=tx_hash,
+    )
+
+
+def make_scaled_token_mint_log(
+    *,
+    token_address: str,
+    on_behalf_of: str,
+    value: int,
+    balance_increase: int = 0,
+    index: int,
+    caller: str = ZERO_ADDRESS,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+    tx_hash: str | None = None,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for a variableDebtToken `Mint` event.
+
+    `Mint(address indexed caller, address indexed onBehalfOf, uint256 value,
+    uint256 balanceIncrease, uint256 index)` — emitted by the vToken. topics:
+    [sig, caller, onBehalfOf]; data: abi.encode(value, balanceIncrease, index).
+    """
+    words = [_u256(value)[2:], _u256(balance_increase)[2:], _u256(index)[2:]]
+    return _make_log(
+        address=token_address.lower(),
+        topics=[MINT_TOPIC, _pad_address(caller), _pad_address(on_behalf_of)],
+        data="0x" + "".join(words),
+        block=block,
+        log_index=log_index,
+        tx_hash=tx_hash,
+    )
+
+
+def make_scaled_token_burn_log(
+    *,
+    token_address: str,
+    from_address: str,
+    value: int,
+    balance_increase: int = 0,
+    index: int,
+    target: str = ZERO_ADDRESS,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+    tx_hash: str | None = None,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for a variableDebtToken `Burn` event.
+
+    `Burn(address indexed from, address indexed target, uint256 value,
+    uint256 balanceIncrease, uint256 index)` — emitted by the vToken. topics:
+    [sig, from, target]; data: abi.encode(value, balanceIncrease, index).
+    """
+    words = [_u256(value)[2:], _u256(balance_increase)[2:], _u256(index)[2:]]
+    return _make_log(
+        address=token_address.lower(),
+        topics=[BURN_TOPIC, _pad_address(from_address), _pad_address(target)],
+        data="0x" + "".join(words),
+        block=block,
+        log_index=log_index,
+        tx_hash=tx_hash,
+    )
+
+
+def make_erc20_transfer_log(
+    *,
+    token_address: str,
+    from_address: str,
+    to_address: str,
+    value: int,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+    tx_hash: str | None = None,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for a plain ERC20 `Transfer` event.
+
+    `Transfer(address indexed from, address indexed to, uint256 value)` —
+    emitted by any ERC20. topics: [sig, from, to]; data: abi.encode(value).
+    The ops parser asserts a Borrow has a matching Transfer from ZERO_ADDRESS
+    to the borrower (the minted-underlying companion).
+    """
+    return _make_log(
+        address=token_address.lower(),
+        topics=[ERC20_TRANSFER_TOPIC, _pad_address(from_address), _pad_address(to_address)],
+        data=_u256(value),
+        block=block,
+        log_index=log_index,
+        tx_hash=tx_hash,
+    )
+
+
+def seed_gho_asset(
+    session: Session,
+    *,
+    market_id: int = 1,
+    chain_id: int = 1,
+    v_token_revision: int = 3,
+    gho_discount_percent: int = 1000,
+) -> None:
+    """Seed the GHO debt asset + a pre-seeded user with a GHO discount.
+
+    seed the GHO underlying asset row
+    (aave_v3_assets) with `underlying_asset_id` = the GHO token erc20 (id 1),
+    `v_token_id` = the GHO vToken erc20 (id 5), + `v_token_revision` as given
+    (the pre-upgrade rev the discount pre-pass reads at chunk-start). The
+    companion ERC20 `Transfer` (the Borrow's minted-debt companion the ops
+    parser asserts) is emitted by the GHO vToken itself — both paths classify it
+    as a debt transfer (the Rust matches by from/target/amount; the Python
+    asserts `event_type ∈ {DEBT_*, ERC20_DEBT_*, GHO_DEBT_*}`).
+
+    `gho_discount_percent` seeds the user's `aave_v3_users.gho_discount` (the
+    path #1 DB-cache the discount pre-pass reads). Non-zero so the
+    discount-active (pre-upgrade) vs deprecated (post-upgrade) divergence the
+    fixture exercises is observable.
+    """
+    from degenbot.checksum_cache import get_checksum_address
+
+    # A phantom GHO aToken erc20 (id 6) — the GHO asset's a_token_id. Kept
+    # distinct from the GHO token (id 1, the underlying) so the GHO token is
+    # NOT fetched as an aToken. The companion Transfer is emitted by the GHO
+    # vToken (a debt token) so both paths classify it as a debt transfer.
+    session.execute(
+        text("INSERT INTO erc20_tokens (id, chain, address) VALUES (6, :c, :a)"),
+        {"c": chain_id, "a": get_checksum_address("0x" + "56" * 20)},
+    )
+    seed_gho_vtoken(session, chain_id=chain_id)
+    # The GHO underlying asset (id 2). a_token_id = phantom GHO aToken (id 6);
+    # v_token_id = the GHO vToken erc20 (id 5) + the pre-upgrade rev.
+    session.execute(
+        text(
+            "INSERT INTO aave_v3_assets (id, market_id, underlying_asset_id, "
+            "a_token_id, a_token_revision, v_token_id, v_token_revision, "
+            "e_mode_category_id, price_source, last_update_block, "
+            "liquidity_index, liquidity_rate, borrow_index, borrow_rate) "
+            "VALUES (2, :market, 1, 6, 1, 5, :rev, NULL, NULL, NULL, 0, 0, 0, 0)"
+        ),
+        {"market": market_id, "rev": v_token_revision},
+    )
+    # The pre-seeded user with a GHO discount (path #1 DB-cache).
+    session.execute(
+        text(
+            "INSERT INTO aave_v3_users (id, market_id, address, e_mode, "
+            "gho_discount, stk_aave_balance, isolation_mode_collateral_asset_id, "
+            "isolation_mode_debt) "
+            "VALUES (1, :market, :addr, 0, :disc, NULL, NULL, '0')"
+        ),
+        {
+            "market": market_id,
+            "addr": get_checksum_address(USER_ADDRESS),
+            "disc": gho_discount_percent,
+        },
+    )
+    session.flush()
+
+
+def dump_debt_position_rows(session: Session) -> list[dict[str, Any]]:
+    """Dump `aave_v3_debt_positions` rows as comparable dicts (the GHO debt
+    balance + last_index the ops parser writes — the byte-IDENTITY target for
+    the flag #1 fixture)."""
+    rows = session.execute(
+        text(
+            "SELECT id, user_id, asset_id, balance, last_index "
+            "FROM aave_v3_debt_positions ORDER BY id"
+        )
+    ).all()
+    return [dict(row._mapping) for row in rows]
 
 
 @dataclass
