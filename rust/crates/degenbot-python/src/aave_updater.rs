@@ -35,7 +35,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use degenbot_aave_updater::{
-    run_aave_update as core_run_aave_update, AaveChunkProgress, AaveUpdateReport, ProgressSink,
+    run_aave_update as core_run_aave_update, verify::verify_touched_positions_on_conn,
+    AaveChunkProgress, AaveUpdateReport, ProgressSink,
     RunError,
 };
 
@@ -93,6 +94,16 @@ fn aave_progress_report_to_dict(py: Python<'_>, p: &AaveChunkProgress) -> PyResu
     dict.set_item("chunk_end", p.chunk_end)?;
     dict.set_item("events_applied", p.events_applied)?;
     dict.set_item("committed", p.committed)?;
+    // The touched-user address list — checksummed (`to_checksum`), one entry
+    // per touched user in the chunk. Drives the JGQHBX drive harness's per-
+    // chunk value-correctness gate: the harness passes this list as the
+    // `touched_users` filter to `verify_touched_positions_on_chain`.
+    let touched: Vec<String> = p
+        .touched_user_addresses
+        .iter()
+        .map(|a| format!("{a:?}"))
+        .collect();
+    dict.set_item("touched_user_addresses", touched)?;
     Ok(dict.unbind())
 }
 
@@ -212,6 +223,145 @@ fn run_err_to_py(err: RunError) -> PyErr {
     }
 }
 
+/// `degenbot_rs.verify_touched_positions_on_chain(database_path, rpc_url,
+/// market_id, chain_id, block_number, touched_users=None) -> list[dict]`
+///
+/// Minimal-slice Rust port of Python's
+/// `verification.py::verify_scaled_token_positions` (collateral + debt
+/// dimensions only).
+///
+/// Loads `aave_v3_collateral_positions` + `aave_v3_debt_positions` from
+/// `database_path` (filtered by `touched_users` when given) joined to the
+/// user address + the aToken/vToken erc20 token address, then for each
+/// position (skipping `DEAD_ADDRESS` / `ZERO_ADDRESS` users, mirroring the
+/// Python) RPC `scaledBalanceOf(user)` + `getPreviousIndex(user)` on the
+/// aToken / vToken at `block_number` + asserts equality with the DB `balance`
+/// + `last_index`.
+///
+/// Returns a list of divergence dicts (empty = GREEN). Each dict has:
+/// `kind`, `position_id`, `user_address`, `token_address`, `block_number`,
+/// `field`, `expected`, `actual` — the same shape the JGQHBX drive harness's
+/// compare divergences emit, so it's bisect-able.
+///
+/// Per-position `eth_call`s — acceptable for the touched-users-per-chunk case
+/// (small set). Multicall3 batching for the market-wide verify is the natural
+/// extension (BE474R-full, post-HLYWI6).
+///
+/// The GIL is released across the whole call (`py.detach`); the orchestrator
+/// owns its tokio runtime + `AlloyProvider` internally. Zero SQL writes.
+///
+/// # Args
+///
+/// - `database_path` — the `DegenbotDb` path (opened read-only).
+/// - `rpc_url` — the HTTP RPC endpoint.
+/// - `market_id` — the `aave_v3_markets.id` to verify.
+/// - `chain_id` — reserved for parity with `run_aave_update`; not used in
+///   the verify path (the writer-state already filtered to `market_id`).
+/// - `block_number` — the block to verify against (`chunk_end` in the
+///   per-chunk gate).
+/// - `touched_users` — `None` (default) verifies ALL positions;
+///   `["0x...", ...]` verifies only those users (the JGQHBX drive harness's
+///   per-chunk path passes the `touched_user_addresses` from
+///   `run_aave_update`'s progress dict for efficiency).
+#[pyfunction]
+#[pyo3(signature = (database_path, rpc_url, market_id, chain_id, block_number, touched_users=None))]
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
+fn verify_touched_positions_on_chain(
+    py: Python<'_>,
+    database_path: &str,
+    rpc_url: &str,
+    market_id: i64,
+    #[allow(unused_variables)] chain_id: i64,
+    block_number: u64,
+    touched_users: Option<Vec<String>>,
+) -> PyResult<Vec<Py<PyDict>>> {
+    use degenbot_db::DegenbotDb;
+    use degenbot_rpc::provider::AlloyProvider;
+
+    let path = PathBuf::from(database_path);
+    // Parse the optional touched_users filter into Addresses.
+    let touched: Option<Vec<alloy::primitives::Address>> = touched_users
+        .map(|addrs| addrs.iter().filter_map(|s| s.parse().ok()).collect());
+
+    let divergences = py
+        .detach(move || {
+            use tokio::runtime::Handle;
+
+            // Lock the DB handle for a read-only connection (verify uses no
+            // SQL writes; the lock guarantees no concurrent mutator inside
+            // the same `DegenbotDb` handle — the JGQHBX drive harness calls
+            // from a SEPARATE connection from `run_aave_update`'s writer).
+            let db = DegenbotDb::open(&path)?.0;
+            let conn = db.lock();
+            let touched_ref = touched.as_deref();
+            // Runtime strategy: if invoked from inside an existing tokio
+            // runtime (e.g. the JGQHBX drive harness's `progress_callback`
+            // running on `run_aave_update`'s worker thread — its runtime
+            // context is set + it's multi-thread), use `block_in_place` +
+            // `handle.block_on` (avoids the "creating runtime within runtime"
+            // panic). Otherwise build our own multi-thread runtime.
+            //
+            // The `AlloyProvider` is constructed inside the chosen runtime's
+            // context to avoid its internals' runtime-handle binding.
+            match Handle::try_current() {
+                Ok(handle) => {
+                    let provider = handle.block_on(AlloyProvider::new(rpc_url, 5))?;
+                    let fut = verify_touched_positions_on_conn(
+                        &conn,
+                        &provider,
+                        market_id,
+                        block_number,
+                        touched_ref,
+                    );
+                    Ok(tokio::task::block_in_place(|| handle.block_on(fut))?)
+                }
+                Err(_) => {
+                    let rt = tokio::runtime::Builder::new_multi_thread()
+                        .enable_all()
+                        .build()?;
+                    let provider = rt.block_on(AlloyProvider::new(rpc_url, 5))?;
+                    let fut = verify_touched_positions_on_conn(
+                        &conn,
+                        &provider,
+                        market_id,
+                        block_number,
+                        touched_ref,
+                    );
+                    Ok(rt.block_on(fut)?)
+                }
+            }
+        })
+        .map_err(run_err_to_py)?;
+
+    // Build the divergence dicts.
+    let mut out: Vec<Py<PyDict>> = Vec::with_capacity(divergences.len());
+    for d in divergences {
+        let dict = PyDict::new(py);
+        dict.set_item(
+            "kind",
+            match d.kind {
+                degenbot_aave_updater::verify::PositionKind::Collateral => "collateral",
+                degenbot_aave_updater::verify::PositionKind::Debt => "debt",
+            },
+        )?;
+        dict.set_item("position_id", d.position_id)?;
+        dict.set_item("user_address", format!("{:?}", d.user_address))?;
+        dict.set_item("token_address", format!("{:?}", d.token_address))?;
+        dict.set_item("block_number", d.block_number)?;
+        dict.set_item(
+            "field",
+            match d.field {
+                degenbot_aave_updater::verify::DivergenceField::Balance => "balance",
+                degenbot_aave_updater::verify::DivergenceField::LastIndex => "last_index",
+            },
+        )?;
+        dict.set_item("expected", format!("{}", d.expected))?;
+        dict.set_item("actual", format!("{}", d.actual))?;
+        out.push(dict.unbind());
+    }
+    Ok(out)
+}
+
 /// Register the aave-updater seam on `m` (feature = "aave-updater"). Mirrors
 /// `pool::add_pool_module`. `CancelHandle` is registered separately by
 /// `cancel::register_cancel` (shared).
@@ -222,6 +372,7 @@ fn run_err_to_py(err: RunError) -> PyErr {
 /// propagated unchanged to the `#[pymodule]` caller.
 pub fn add_aave_updater_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_aave_update, m)?)?;
+    m.add_function(wrap_pyfunction!(verify_touched_positions_on_chain, m)?)?;
     Ok(())
 }
 
@@ -300,6 +451,7 @@ mod tests {
                 chunk_end: 19,
                 events_applied: 5,
                 committed: true,
+                touched_user_addresses: Vec::new(),
             });
             sink.report_chunk(&AaveChunkProgress {
                 chain_id: 1,
@@ -308,6 +460,7 @@ mod tests {
                 chunk_end: 29,
                 events_applied: 0,
                 committed: false,
+                touched_user_addresses: Vec::new(),
             });
 
             assert_eq!(seen.len(), 2, "callback should have fired once per chunk");

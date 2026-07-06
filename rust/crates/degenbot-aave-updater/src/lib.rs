@@ -55,6 +55,7 @@ pub mod operations_parser;
 pub mod processors;
 mod run;
 pub mod transaction_processor;
+pub mod verify;
 
 pub use gho_processor::{
     GhoProcessorError, GhoScaledTokenBurnResult, GhoScaledTokenMintResult, GhoUserOperation,

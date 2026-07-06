@@ -36,7 +36,12 @@ from sqlalchemy.orm import Session
 
 from degenbot.aave.deployments import EthereumMainnetAaveV3
 from degenbot.database.models import Base  # noqa: F401  (registers models on Base.metadata)
-from degenbot.degenbot_rs import CancelHandle, db_upgrade_database, run_aave_update
+from degenbot.degenbot_rs import (
+    CancelHandle,
+    db_upgrade_database,
+    run_aave_update,
+    verify_touched_positions_on_chain,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -545,6 +550,7 @@ def drive(
     market_name: str = "ethereum-aave-v3",
     quiet: bool = False,
     progress_callback: Callable[..., None] | None = None,
+    verify_chunks: bool = False,
 ) -> dict[str, Any]:
     """Replay mainnet blocks through both writers.
 
@@ -556,6 +562,17 @@ def drive(
       cold seed: market + POOL_ADDRESS_PROVIDER + GHO only). No Python
       pre-bootstrap. The chunk-loop re-encounter of the ProxyCreated events
       is handled idempotently in-core (no duplicate-row divergence).
+
+    Args:
+      verify_chunks: when ``True``, after each Rust chunk commits, call
+        ``verify_touched_positions_on_chain`` against cand.db at the chunk-end
+        block (filtered to the chunk's ``touched_user_addresses``). Mismatches
+        are surfaced in ``summary["cand_verify_divergences"]`` (named:
+        position_id / user_address / token_address / expected-vs-actual balance
+        or last_index at block_number) — the SAME shape as the harness's
+        ``compare_dbs`` divergences so they're bisect-able. Mirrors Python's
+        ``verify_scaled_token_positions`` (verification.py:152) — the minimal
+        BE474R slice (collateral + debt scaled-token positions).
 
     Returns a one-line JSON-serializable summary.
     """
@@ -624,6 +641,39 @@ def drive(
             # for the cold-boot gap O4BOST closed.
             cancel = CancelHandle()
             cb: Callable[..., None] = progress_callback or (lambda _progress=None, **_kw: None)
+            # When verify_chunks, override `cb` to wrap the user's
+            # progress_callback (if any) and run the per-chunk value-
+            # correctness gate after each commit. Mirrors Python's
+            # `verify_scaled_token_positions` (verification.py:152) at the
+            # chunk_end block, filtered to the chunk's touched users.
+            verify_divs: list[dict[str, Any]] = []
+            if verify_chunks:
+                user_cb = cb
+
+                def _verify_cb(progress: Any, **_kw: Any) -> None:
+                    user_cb(progress=progress, **_kw)
+                    if not progress.get("committed", False):
+                        return
+                    chunk_end = int(progress["chunk_end"])
+                    touched = list(progress.get("touched_user_addresses", []))
+                    # `None` for `touched_users` → verify ALL nonzero
+                    # positions at the chunk-end block — the surface-
+                    # 44JTVN-before-crash path (the touched-filter misses
+                    # divergences introduced in EARLIER chunks whose
+                    # position-row was never touched in THIS chunk — e.g.
+                    # position 534 at chunk 11's commit, before chunk 12
+                    # crashes).
+                    divs = verify_touched_positions_on_chain(
+                        database_path=cand_path,
+                        rpc_url=rpc,
+                        market_id=market_id,
+                        chain_id=1,
+                        block_number=chunk_end,
+                        touched_users=None,
+                    )
+                    verify_divs.extend(divs)
+
+                cb = _verify_cb
             report: dict[str, Any] = {}
             err: BaseException | None = None
 
@@ -650,6 +700,7 @@ def drive(
                 raise err
             summary["cand_ok"] = True
             summary["cand_report"] = report
+            summary["cand_verify_divergences"] = verify_divs
             # read back the market stamp
             eng = create_engine(f"sqlite:///{cand_path}")
             try:
@@ -845,6 +896,7 @@ def _cli_drive(args: argparse.Namespace) -> int:
         rust_only=args.rust_only,
         python_only=args.python_only,
         quiet=args.quiet,
+        verify_chunks=args.verify_chunks,
     )
     return 0
 
@@ -879,6 +931,11 @@ def build_parser() -> argparse.ArgumentParser:
     pd.add_argument("--rust-only", action="store_true")
     pd.add_argument("--python-only", action="store_true")
     pd.add_argument("--quiet", action="store_true")
+    pd.add_argument(
+        "--verify-chunks",
+        action="store_true",
+        help="Run the per-chunk value-correctness verify gate after each chunk commits.",
+    )
     pd.set_defaults(func=_cli_drive)
 
     pb = sub.add_parser("bisect", help="narrow the earliest divergence")
