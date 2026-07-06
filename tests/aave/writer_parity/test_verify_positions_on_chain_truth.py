@@ -40,8 +40,11 @@ from degenbot.degenbot_rs import (
 )
 from tests.aave.writer_parity.harness import (
     FIXTURE_BLOCK,
+    LIQUIDATION_CALL_TOPIC,
     make_erc20_transfer_log,
+    make_liquidation_call_log,
     make_reserve_initialized_log,
+    make_scaled_token_burn_log,
     make_scaled_token_mint_log,
     make_supply_log,
     mock_rpc_server,
@@ -292,3 +295,238 @@ def test_verify_touched_positions_on_chain_catches_corrupted_balance(
             assert divergences == [], (
                 f"expected no divergences on GREEN arm; got: {divergences}"
             )
+
+
+# ─┐
+# │ EIWEPM — LiquidationCall double-debit (shared writer-spec MATH bug).    │
+# │                                                                        │
+# │ Class: inside `collect_collateral_events` (ops_parser.rs:1906-1941),   │
+# │ the LiquidationCall op's `scaled_events` ends up containing BOTH the   │
+# │ `CollateralBurn` (collateral_burn) AND its paired ERC20               │
+# │ `Transfer user→0x0` (the burn-side pair, added to                    │
+# │ `collateral_transfers` unfiltered because `_is_part_of_burn` lives     │
+# │ only on the standalone Transfer path at line 1471).                    │
+# │ `dispatch_liquidation` then applies both with no                    │
+# │ `override_transfer_with_paired_bt` (unlike `dispatch_balance_transfer`)│
+# │  → the user's collateral balance is debited TWICE by the Burn's delta.│
+# │                                                                        │
+# │ Fixture (mirrors the p1198 mainnet tx shape — block 16588404):         │
+# │   1. SENDER supplies WETH → Mint + Transfer-from-zero pair (single    │
+# │      credit, the canonical Supply path applies Mint alone).             │
+# │   2. LiquidationCall (receiveAToken=true) liquidates SENDER's WETH.    │
+# │      aWETH emits: ERC20 Transfer SENDER→0x0 (the burn-side pair) +      │
+# │      Burn event (value, balanceIncrease=0, index).                   │
+# │                                                                        │
+# │ RED (pre-fix): DB balance = supply_scaled − 2 × burn_scaled (over-   │
+# │   debited) ≠ on-chain truth (supply_scaled − burn_scaled).             │
+# │ GREEN (post-fix): DB balance = supply_scaled − burn_scaled == on-chain │
+# │   truth — the burn-side Transfer-to-0x0 is filtered out by            │
+# │   `is_part_of_burn` INSIDE `collect_collateral_events`.               │
+# ─┘
+
+# The burn-side fixture amounts: index = 2*RAY (scaled ≠ underlying), so   │
+# The burn-side fixture amounts: index = 2*RAY (scaled ≠ underlying), so  │
+# the divergence is the Burn's SCALED delta (NOT an even-multiples identity │
+# that could mask the bug). Burn one-third of the supply so the pre-fix     │
+# double-debit does not underflow the supply (the crash-gate would mask the │
+# divergence by rolling back the chunk).                                  │
+# Burn event's `value` field = the UNDERLYING collateral burned. The ERC20   │
+# burn-side Transfer's `value` field = the aToken SCALED amount moved (the │
+# aToken's `scaledBalanceOf` — Burn.value is underlying, Transfer.value is │
+# scaled, per Aave V3 protocol; the index ≠ RAY makes them differ).
+_LIQ_INDEX = _INDEX  # 2*RAY — same discriminator as the Supply fixture
+_LIQ_BURN_UNDERLYING = _SUPPLY_UNDERLYING // 3  # one-third of supply burned
+# ray_div(LIQ_BURN_UNDERLYING, _INDEX, HALF_UP) — the scaled-balance delta │
+# the Burn event debits (computed with the same rounding the Rust uses).   │
+_LIQ_BURN_SCALED = (_LIQ_BURN_UNDERLYING * _RAY + _INDEX // 2) // _INDEX
+# Post-liquidation on-chain truth (single-debit Burn; the ERC20 burn-side   │
+# Transfer is OBSERVED-only — NOT applied as a separate scaledelta):       │
+_LIQ_ON_CHAIN_SCALED_BALANCE = _AMOUNT - _LIQ_BURN_SCALED
+_LIQ_ON_CHAIN_LAST_INDEX = _LIQ_INDEX
+_DAI = "0x" + "da" * 20
+_A_DAI = "0x" + "33" * 20
+_V_DAI = "0x" + "44" * 20
+_LIQUIDATOR = "0x" + "f1" * 20
+_TX_LIQ = "0x" + b"s2".rjust(32, b"\x00").hex()
+
+
+def _liq_eth_call_responses() -> dict[str, str]:
+    """Scaled-balance + last-index MockRpc responses for the SENDER position
+    AFTER the LiquidationCall inlcurs the burn-side single-debit (the on-chain
+    truth the post-fix writer must match)."""
+    from tests.aave.writer_parity.harness import (
+        ATOKEN_REVISION_SELECTOR,
+        DEBT_TOKEN_REVISION_SELECTOR,
+        GET_SOURCE_OF_ASSET_SELECTOR,
+    )
+    a_rev = 1
+    v_rev = 1
+    price_source = "0x" + "ab" * 20
+    return {
+        ATOKEN_REVISION_SELECTOR: "0x" + a_rev.to_bytes(32, "big").hex(),
+        DEBT_TOKEN_REVISION_SELECTOR: "0x" + v_rev.to_bytes(32, "big").hex(),
+        GET_SOURCE_OF_ASSET_SELECTOR: "0x" + "00" * 12 + price_source[2:],
+        SCALED_BALANCE_OF_SELECTOR: _u256_hex(_LIQ_ON_CHAIN_SCALED_BALANCE),
+        GET_PREVIOUS_INDEX_SELECTOR: _u256_hex(_LIQ_ON_CHAIN_LAST_INDEX),
+    }
+
+
+def _build_liquidation_burn_side_chunk_logs() -> list[dict[str, object]]:
+    """A chunk at FIXTURE_BLOCK that places the p1198-class burn-side-pair
+    LiquidationCall pattern: SENDER supplies WETH → LiquidationCall liquidates
+    SENDER's WETH collateral + aWETH emits the paired Burn + Transfer-to-0x0.
+
+    NOTE: no user→user Transfer nor BalanceTransfer (this isolates the burn-side
+    bug class — the dominant p1198 drift — without confounding it with the BT-pair
+    double-apply path tracked separately under p424). No debt-side events either
+    (the parser allows empty debt_burns for flash-loan liquidations).
+    """
+    li = 0
+    logs: list[dict[str, object]] = []
+
+    # Asset setup: WETH + DAI reserves initialized (vToken for DAI needed for
+    # the Liquidation parser's debt_v_token_address resolve).
+    logs.append(
+        make_reserve_initialized_log(
+            asset=_WETH, a_token=_A_WETH, v_token=_V_WETH, log_index=li
+        )
+    )
+    li += 1
+    logs.append(
+        make_reserve_initialized_log(
+            asset=_DAI, a_token=_A_DAI, v_token=_V_DAI, log_index=li
+        )
+    )
+    li += 1
+
+    # tx 1: SENDER supplies WETH — Pool Supply + aWETH Mint + mint-from-zero
+    # companion Transfer (the canonical Supply path — only the Mint is applied).
+    logs.append(
+        make_supply_log(
+            reserve=_WETH,
+            on_behalf_of=_SENDER,
+            user=_SENDER,
+            amount=_SUPPLY_UNDERLYING,
+            log_index=li,
+            tx_hash=_TX_SUPPLY,
+        )
+    )
+    li += 1
+    logs.append(
+        make_scaled_token_mint_log(
+            token_address=_A_WETH,
+            on_behalf_of=_SENDER,
+            value=_SUPPLY_UNDERLYING,
+            balance_increase=0,
+            index=_INDEX,
+            log_index=li,
+            tx_hash=_TX_SUPPLY,
+        )
+    )
+    li += 1
+    logs.append(
+        make_erc20_transfer_log(
+            token_address=_A_WETH,
+            from_address="0x" + "00" * 20,
+            to_address=_SENDER,
+            value=_SUPPLY_UNDERLYING,
+            log_index=li,
+            tx_hash=_TX_SUPPLY,
+        )
+    )
+    li += 1
+
+    # tx 2: LiquidationCall liquidates SENDER's WETH collateral. The aToken
+    # emits the Burn + the paired ERC20 Transfer-to-0x0 (the burn-side pair —
+    # `value` == Burn.value since balanceIncrease=0).
+    logs.append(
+        make_liquidation_call_log(
+            collateral_asset=_WETH,
+            debt_asset=_DAI,
+            user=_SENDER,
+            debt_to_cover=_LIQ_BURN_UNDERLYING,  # exact value not used for the collateral-side math
+            liquidated_collateral_amount=_LIQ_BURN_UNDERLYING,
+            liquidator=_LIQUIDATOR,
+            receive_a_token=True,
+            log_index=li,
+            tx_hash=_TX_LIQ,
+        )
+    )
+    li += 1
+    # The burn-side companion ERC20 Transfer SENDER→0x0 (the bug class —
+    # applied ALONGSIDE the Burn event by dispatch_liquidation pre-fix). The
+    # aToken's ERC20 Transfer carries the SCALED balance moved (the aToken
+    # stores scaledBalanceOf, NOT underlying) — distinct from the Burn's value
+    # (the underlying amount) which makes the double-debit visible when
+    # index ≠ RAY.
+    logs.append(
+        make_erc20_transfer_log(
+            token_address=_A_WETH,
+            from_address=_SENDER,
+            to_address="0x" + "00" * 20,
+            value=_LIQ_BURN_SCALED,
+            log_index=li,
+            tx_hash=_TX_LIQ,
+        )
+    )
+    li += 1
+    # The CollateralBurn event itself (the canonical single-debit action).
+    logs.append(
+        make_scaled_token_burn_log(
+            token_address=_A_WETH,
+            from_address=_SENDER,
+            value=_LIQ_BURN_UNDERLYING,
+            balance_increase=0,
+            index=_LIQ_INDEX,
+            log_index=li,
+            tx_hash=_TX_LIQ,
+        )
+    )
+    return logs
+
+
+def test_liquidation_burn_side_pair_single_debit(
+    tmp_path: Path,
+) -> None:
+    """RED pre-fix: `collect_collateral_events` includes the burn-side pair
+    ERC20 Transfer-to-0x0 in `op.scaled_events`; `dispatch_liquidation` applies
+    both → the SENDER's balance is debited twice by the Burn delta → diverges
+    from on-chain truth (the ScaledBalanceOf = supply_scaled − burn_scaled).
+
+    GREEN post-fix: `collect_collateral_events` calls `is_part_of_burn` to
+    filter the paired ERC20 Transfer-to-0x0 out of `collateral_transfers` →
+    `dispatch_liquidation` applies only the Burn event → single-debit ==
+    on-chain truth → VV5OTV gate reports no divergence.
+    """
+    logs = _build_liquidation_burn_side_chunk_logs()
+    with (
+        seeded_db(tmp_path, name="rust", with_price_oracle=True) as (rust_path, _rust_session),
+        mock_rpc_server(
+            logs=logs,
+            block_number=FIXTURE_BLOCK,
+            eth_call_responses=_liq_eth_call_responses(),
+        ) as rpc_url,
+    ):
+        report_dict = _drive_rust(rust_path, rpc_url)
+        assert report_dict["chunks_committed"] == 1, (
+            f"fixture setup failed: rust writer didn't commit its chunk; "
+            f"report={report_dict}"
+        )
+
+        # The verify gate fires for ALL nonzero positions (verify-all mode).
+        divergences = verify_touched_positions_on_chain(
+            database_path=str(rust_path),
+            rpc_url=rpc_url,
+            market_id=1,
+            chain_id=1,
+            block_number=FIXTURE_BLOCK,
+            touched_users=None,
+        )
+
+        # GREEN: zero divergences (DB balance == on-chain truth).
+        bal_divs = [d for d in divergences if d["field"] == "balance"]
+        assert bal_divs == [], (
+            f"expected no balance divergences (dispatch_liquidation should "
+            f"single-debit the burn event and skip the burn-side pair "
+            f"Transfer-to-0x0); got: {bal_divs}"
+        )

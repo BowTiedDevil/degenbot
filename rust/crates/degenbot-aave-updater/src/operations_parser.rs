@@ -1903,11 +1903,35 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
     /// Collateral may be burned OR transferred to treasury (`BalanceTransfer`).
     ///
     /// Returns `(collateral_burn, collateral_transfers)`.
+    ///
+    /// # EIWEPM bug class — the burn-side / mint-side pair ERC20 Transfer
+    ///
+    /// By Aave V3 protocol, the aToken emits the `Burn` event AND the paired
+    /// ERC20 `Transfer user→0x0` (the burn-side companion) as ONE operational
+    /// action (the same for `Mint` + `Transfer 0x0→user`). Pre-fix this fn
+    /// pushed the burn-side ERC20 Transfer into `collateral_transfers`
+    /// unfiltered (no `is_part_of_burn` / `is_part_of_mint` call — those filters
+    /// lived only on the standalone Transfer path at line 1471/1476). The
+    /// Liquidation op ended up with BOTH the `CollateralBurn` AND its paired
+    /// ERC20 `Transfer user→0x0` in `op.scaled_events`. `dispatch_liquidation`
+    /// then applied both with no `override_transfer_with_paired_bt` (the
+    /// Liquidation path's intentional no-op for that override) → the user's
+    /// collateral balance was debited TWICE by the Burn delta (the p1198-class
+    /// 4.33× divergence — root-caused + math-verified on mainnet).
+    ///
+    /// Fix (per the orchestrator's directive): wire the already-ported
+    /// `is_part_of_burn` (line 2522) + `is_part_of_mint` (line 2548) filters
+    /// INTO this fn — match the standalone Transfer path's exact semantics
+    /// (same `user_address` + `token_address` matching, no value heuristic).
+    /// Mark the filtered events into `assigned_indices` so the standalone
+    /// Step-4e `create_transfer_operations` skips them (it would re-apply the
+    /// filter from `scaled_events` and skip — but pre-marking is the safest
+    /// mirror of the standalone pattern's `local_assigned` write-back).
     fn collect_collateral_events<'b>(
         user: Address,
         collateral_a_token_address: Option<Address>,
         scaled_events: &'b [ScaledTokenEvent<'a>],
-        assigned_indices: &HashSet<u64>,
+        assigned_indices: &mut HashSet<u64>,
     ) -> (
         Option<&'b ScaledTokenEvent<'a>>,
         Vec<&'b ScaledTokenEvent<'a>>,
@@ -1935,6 +1959,23 @@ ScaledTokenEventType::Erc20DebtTransfer, "burn") => ScaledTokenEventType::DebtBu
                 || ev.event_type == ScaledTokenEventType::Erc20CollateralTransfer)
                 && ev.user_address == user
             {
+                // EIWEPM: skip the burn-side pair ERC20 Transfer to ZERO (the
+                // Burn event itself is the sole operational debit), and the
+                // mint-side pair ERC20 Transfer from ZERO (the Mint event is
+                // the sole operational credit). Mirrors the standalone Transfer
+                // path's `is_part_of_burn` / `is_part_of_mint` filter exact
+                // semantics (user-address + token-address match — no value
+                // heuristic; the reference's matching contract).
+                if ev.target_address == Some(Address::ZERO)
+                    && is_part_of_burn(ev, scaled_events, assigned_indices)
+                {
+                    continue;
+                }
+                if ev.from_address == Some(Address::ZERO)
+                    && is_part_of_mint(ev, scaled_events, assigned_indices)
+                {
+                    continue;
+                }
                 collateral_transfers.push(ev);
             }
         }
@@ -2768,6 +2809,45 @@ mod tests {
         }
     }
 
+    /// Variant of `scaled_event` for a Transfer whose `target_address` is NOT
+    /// the ZERO address — i.e. a collateral movement to a liquidator (not the
+    /// burn-side pair ERC20 Transfer-to-ZERO). Used by `collect_collateral_events`
+    /// tests to assert the EIWEPM filter distinguishes the two cases.
+    fn transfer_to_event(
+        log_idx: u64,
+        event_type: ScaledTokenEventType,
+        from: Address,
+        target: Address,
+        token_address: Address,
+        amount: U256,
+    ) -> ScaledTokenEvent<'static> {
+        let log = Box::leak(Box::new(test_log(
+            log_idx,
+            &aave_event_decoder::SUPPLY_TOPIC,
+            &[],
+        )));
+        ScaledTokenEvent {
+            log,
+            decoded: ScaledTokenEventData::Burn {
+                from,
+                target,
+                value: amount,
+                balance_increase: U256::ZERO,
+                index: U256::from(1_000_000_000u64),
+            },
+            event_type,
+            token_address,
+            user_address: from,
+            caller_address: None,
+            from_address: Some(from),
+            target_address: Some(target),
+            amount,
+            balance_increase: Some(U256::ZERO),
+            index: Some(U256::from(1_000_000_000u64)),
+            log_index: log_idx,
+        }
+    }
+
     /// `SINGLE` pattern: one `LiquidationCall` → one debt Burn for the same user.
     /// `collect_debt_burns` with `user_liquidation_count == 1` collects ALL
     /// debt burns for the user (no asset filter) — handles bad-debt
@@ -2949,6 +3029,7 @@ mod tests {
         let user = Address::from([0xA0; 20]);
         let a_token = Address::from([0xB0; 20]);
         let other_atoken = Address::from([0xC0; 20]);
+        let liquidator = Address::from([0xD0; 20]);
         // The burn for this liquidation's aToken.
         let burn = scaled_event(
             10,
@@ -2958,14 +3039,14 @@ mod tests {
             U256::from(500),
             None,
         );
-        // The transfer (collateral moved to liquidator) — must be returned.
-        let transfer = scaled_event(
+        // The transfer to a non-ZERO liquidator (NOT the burn-side pair) — must be returned.
+        let transfer = transfer_to_event(
             11,
             ScaledTokenEventType::Erc20CollateralTransfer,
             user,
+            liquidator,
             a_token,
             U256::from(500),
-            None,
         );
         // A burn on a different aToken (user multi-liquidated) — must NOT be collected.
         let other_burn = scaled_event(
@@ -2977,12 +3058,12 @@ mod tests {
             None,
         );
         let events = vec![burn, transfer, other_burn];
-        let assigned = HashSet::new();
+        let mut assigned = HashSet::new();
         let (cb, ct) = TransactionOperationsParser::collect_collateral_events(
             user,
             Some(a_token),
             &events,
-            &assigned,
+            &mut assigned,
         );
         assert!(
             cb.is_some(),
@@ -2992,9 +3073,58 @@ mod tests {
         assert_eq!(
             ct.len(),
             1,
-            "collateral_transfers contains only the matching aToken transfer"
+            "collateral_transfers contains only the matching aToken transfer to liquidator"
         );
         assert_eq!(ct[0].log_index, 11);
+    }
+
+    /// `collect_collateral_events` EIWEPM filter (per the orchestrator's
+    /// fix directive): a burn-side pair ERC20 Transfer-to-ZERO (the Burn
+    /// event's operational companion) MUST be excluded from
+    /// `collateral_transfers` so the Liquidation path doesn't double-debit
+    /// the user (the p1198-class 4.33× divergence root cause).
+    #[test]
+    fn collect_collateral_events_filters_burn_side_pair_transfer_to_zero() {
+        let user = Address::from([0xA0; 20]);
+        let a_token = Address::from([0xB0; 20]);
+        // The CollateralBurn event.
+        let burn = scaled_event(
+            10,
+            ScaledTokenEventType::CollateralBurn,
+            user,
+            a_token,
+            U256::from(500),
+            None,
+        );
+        // The paired ERC20 Transfer user→0x0 (burn-side companion — same user +
+        // token, value matches). MUST be filtered by `is_part_of_burn`.
+        let pair_transfer = scaled_event(
+            11,
+            ScaledTokenEventType::Erc20CollateralTransfer,
+            user,
+            a_token,
+            U256::from(500),
+            None,
+        );
+        let events = vec![burn, pair_transfer];
+        let mut assigned = HashSet::new();
+        let (cb, ct) = TransactionOperationsParser::collect_collateral_events(
+            user,
+            Some(a_token),
+            &events,
+            &mut assigned,
+        );
+        assert!(cb.is_some(), "burn collected");
+        assert_eq!(cb.unwrap().log_index, 10);
+        assert_eq!(
+            ct.len(),
+            0,
+            "burn-side pair Transfer-to-ZERO filtered (EIWEPM fix)"
+        );
+        assert!(
+            assigned.contains(&11),
+            "filtered pair-transfer marked assigned so it isn't re-collected by standalone Step-4e"
+        );
     }
 
     /// `collect_collateral_events`: when no events match (collateral was fully
@@ -3013,12 +3143,12 @@ mod tests {
             Some(U256::from(1_000_000_000u64)),
         );
         let events = vec![transfer];
-        let assigned = HashSet::new();
+        let mut assigned = HashSet::new();
         let (cb, ct) = TransactionOperationsParser::collect_collateral_events(
             user,
             Some(a_token),
             &events,
-            &assigned,
+            &mut assigned,
         );
         assert!(cb.is_none(), "no burn — collateral moved via transfer");
         assert_eq!(ct.len(), 1);
