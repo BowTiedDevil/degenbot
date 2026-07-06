@@ -680,11 +680,53 @@ def make_asset_source_updated_log(
 # `tx_hash` so a fixture can place several tx groups in ONE chunk.
 #
 # Topic0 hashes (keccak256 of the canonical Aave V3 / ERC20 event signatures).
+SUPPLY_TOPIC = "0x2b627736bca15cd5381dcf80b0bf11fd197d01a037c52b927a881a10fb73ba61"
 BORROW_TOPIC = "0xb3d084820fb1a9decffb176436bd02558d15fac9b0ddfed8c465bc7359d7dce0"
 REPAY_TOPIC = "0xa534c8dbe71f871f9f3530e97a74601fea17b426cae02e1c5aee42c96c784051"
 MINT_TOPIC = "0x458f5fa412d0f69b08dd84872b0215675cc67bc1d5b6fd93300a1c3878b86196"
 BURN_TOPIC = "0x4cf25bc1d991c17529c25213d3cc0cda295eeaad5f13f361969b12ea48015f90"
 ERC20_TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+
+def make_supply_log(
+    *,
+    reserve: str,
+    on_behalf_of: str,
+    amount: int,
+    user: str | None = None,
+    referral_code: int = 0,
+    block: int = FIXTURE_BLOCK,
+    log_index: int = 0,
+    tx_hash: str | None = None,
+) -> dict[str, Any]:
+    """Build a canned `eth_getLogs` entry for a Pool `Supply` event.
+
+    Real Aave V3 Supply signature (verified on mainnet, block 16496817):
+        Supply(address indexed reserve, address user,
+               address indexed onBehalfOf, uint256 amount,
+               uint16 indexed referralCode)
+    3 indexed params → 4 topics: [sig, reserve(topic1), onBehalfOf(topic2),
+    referralCode(topic3)]. Non-indexed data: abi.encode(user, amount) = 2 words.
+
+    `user` defaults to `on_behalf_of` (the common self-supply case) but should
+    be set DISTINCT from `on_behalf_of` + `referral_code ≠ 0` in tests that
+    exercise the topic-indexing decode path (the 7UFMZX bug class).
+    """
+    user = user or on_behalf_of
+    words = [_pad_address(user)[2:], _u256(amount)[2:]]
+    return _make_log(
+        address=POOL_ADDRESS.lower(),
+        topics=[
+            SUPPLY_TOPIC,
+            _pad_address(reserve),
+            _pad_address(on_behalf_of),  # topic[2] = onBehalfOf (indexed)
+            _u256(referral_code),  # topic[3] = referralCode (indexed uint16)
+        ],
+        data="0x" + "".join(words),
+        block=block,
+        log_index=log_index,
+        tx_hash=tx_hash,
+    )
 
 
 def make_borrow_log(
