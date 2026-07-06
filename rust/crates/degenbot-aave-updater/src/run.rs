@@ -363,33 +363,32 @@ pub struct AaveChunkWriteReport {
     pub stamped_block: Option<u64>,
 }
 
-/// Apply a chunk's worth of pre-decoded Aave V3 events under the caller's
-/// `Transaction` (borrowed as a `&Connection`), then stamp
-/// `aave_v3_markets.last_update_block = chunk_end_block` as the LAST write.
+/// Dispatch each pre-decoded Aave V3 event to its `DegenbotDb::apply_*_on_conn`
+/// writer under the caller's `Transaction` (borrowed as a `&Connection`),
+/// accumulating a per-type count. Does NOT stamp `last_update_block` — the
+/// caller owns the stamp (per-tx apply in [`process_chunk_on_conn`], or the
+/// batched [`apply_aave_chunk_writes_on_conn`]).
+///
+/// GJQGKN: extracted from `apply_aave_chunk_writes_on_conn` so the per-tx
+/// apply loop can write each tx's events to `conn` BEFORE the next tx's
+/// dispatch/parse reads — fixing the two staleness surfaces (the prior tx's
+/// `Upgraded` revision + scaled-token balances are visible via
+/// read-your-own-writes within the `SQLite` txn, matching Python's per-tx ORM
+/// apply). The `ScaledTokenProcessor` is stateless (its balances come from
+/// `process_transaction`'s `conn` lookups), so per-tx apply is the only seam.
 ///
 /// Pure, synchronous, transactional. NONE of: RPC, ABI decode, `pyo3`,
-/// `database_path`, `open_for_writes`. The caller owns the `Connection` +
-/// its `Transaction`'s commit/rollback — every write goes through here on the
-/// single connection, + the commit is the single point of durability.
-///
-/// # The §3.4 atomicity invariant
-///
-/// All `apply_*` calls + the `last_update_block` stamp go through `_on_conn`
-/// fns on this one connection. Any `?` early-return (a `UNIQUE` violation, a
-/// constraint failure, ...) leaves the caller's `Transaction` uncommitted →
-/// it drops → the whole chunk reverts → the stamp does NOT advance → a
-/// restart re-processes the chunk clean (restart-invariant).
+/// `database_path`, `open_for_writes`.
 ///
 /// # Errors
 ///
-/// Returns [`degenbot_db::DbError`] on any apply/lookup failure — the caller
-/// drops the `Transaction` (rollback) on `Err`.
+/// Returns [`degenbot_db::DbError`] on any apply failure — the caller drops
+/// the `Transaction` (rollback) on `Err`.
 #[allow(clippy::missing_errors_doc, clippy::too_many_lines)]
-pub fn apply_aave_chunk_writes_on_conn(
+pub fn apply_chunk_events_on_conn(
     conn: &Connection,
-    market_id: i64,
+    _market_id: i64,
     events: &[AaveChunkEvent],
-    chunk_end_block: u64,
 ) -> Result<AaveChunkWriteReport, degenbot_db::DbError> {
     let mut report = AaveChunkWriteReport::default();
 
@@ -694,6 +693,38 @@ pub fn apply_aave_chunk_writes_on_conn(
         }
     }
 
+    Ok(report)
+}
+
+/// Apply a chunk's worth of pre-decoded Aave V3 events under the caller's
+/// `Transaction` (borrowed as a `&Connection`), then stamp
+/// `aave_v3_markets.last_update_block = chunk_end_block` as the LAST write.
+///
+/// Thin wrapper over [`apply_chunk_events_on_conn`] (the per-event dispatch)
+/// that then stamps the block. Kept as the public batched-apply entrypoint so
+/// that the existing §3.4 atomicity tests stay GREEN.
+///
+/// # The §3.4 atomicity invariant
+///
+/// All `apply_*` calls + the `last_update_block` stamp go through `_on_conn`
+/// fns on this one connection. Any `?` early-return (a `UNIQUE` violation, a
+/// constraint failure, ...) leaves the caller's `Transaction` uncommitted →
+/// it drops → the whole chunk reverts → the stamp does NOT advance → a
+/// restart re-processes the chunk clean (restart-invariant).
+///
+/// # Errors
+///
+/// Returns [`degenbot_db::DbError`] on any apply/lookup failure — the caller
+/// drops the `Transaction` (rollback) on `Err`.
+#[allow(clippy::missing_errors_doc)]
+pub fn apply_aave_chunk_writes_on_conn(
+    conn: &Connection,
+    market_id: i64,
+    events: &[AaveChunkEvent],
+    chunk_end_block: u64,
+) -> Result<AaveChunkWriteReport, degenbot_db::DbError> {
+    let mut report = apply_chunk_events_on_conn(conn, market_id, events)?;
+
     // Stamp `last_update_block` as the LAST write (§3.4 restart-invariant:
     // on rollback the stamp does NOT advance, so a restart re-processes the
     // chunk clean).
@@ -915,12 +946,16 @@ fn build_fetch_spec(
 /// 1. `fetch_aave_chunk_logs` returns the raw `Vec<Log>` sorted by
 ///    `(block_number, log_index)`.
 /// 2. `group_logs_by_tx` returns the per-tx groups (mirrors `_build_transaction_contexts`).
-/// 3. Open ONE `Transaction`. For each tx group, build the discount snapshot
-///    (RPC + the DB-cache path), dispatch the config events (RPC for revisions
-///    and metadata plus the substrate lookups), and run `process_transaction`
-///    (C3's operations parser, sync, substrate lookups). Collect all events.
-/// 4. `apply_aave_chunk_writes_on_conn(&tx, market_id, &events, chunk_end)`
-///    commits (or drops, rolling back). The stamp is the LAST write in the tx.
+/// 3. Open ONE `Transaction`. For each tx group, re-resolve the GHO vToken
+///    revision (GJQGKN per-tx, sees prior txs' `Upgraded` writes), build the
+///    discount snapshot (RPC + the DB-cache path), dispatch the config events
+///    (RPC for revisions and metadata plus the substrate lookups), apply THAT
+///    tx's config events to `conn` (so the ops parser sees them), run
+///    `process_transaction` (C3's operations parser, sync, substrate lookups),
+///    and apply THAT tx's op events to `conn` (so tx N+1 sees them).
+/// 4. Stamp `last_update_block = chunk_end` as the LAST write (end-of-chunk).
+///    The caller's `Transaction` commits (or drops, rolling back). The stamp
+///    is the LAST write.
 ///
 /// # The §3.4 atomicity invariant (LOAD-BEARING)
 ///
@@ -1113,10 +1148,14 @@ pub fn run_aave_update(
 }
 
 /// The per-chunk processing core (the Transaction-borrowed, RPC-interspersed
-/// body). Runs the discount pre-pass + the config-event dispatch + C3's
-/// `process_transaction` per tx group → collects `AaveChunkEvent`s → calls
-/// [`apply_aave_chunk_writes_on_conn`]. Held inside the caller's
-/// `Transaction`; on `Err` the caller drops the tx (rollback).
+/// body). Per tx group: re-resolve the GHO vToken revision, run the discount
+/// pre-pass + the config-event dispatch + C3's `process_transaction`, then
+/// apply THAT tx's events to `conn` via [`apply_chunk_events_on_conn`] BEFORE
+/// the next tx's reads (GJQGKN per-tx apply — fixes the config-revision +
+/// ops-balance staleness surfaces; matches Python's per-tx ORM session apply).
+/// The `last_update_block` stamp is the LAST write (end-of-chunk). Held
+/// inside the caller's `Transaction`; on `Err` the caller drops the tx
+/// (rollback).
 ///
 /// Extracted from [`run_aave_update`] to keep the loop fn readable + to
 /// localize the `await_holding_lock` allow (the `&Transaction` borrow across
@@ -1139,25 +1178,40 @@ async fn process_chunk_on_conn(
     tx_groups: &[TxGroup<'_>],
     chunk_end: u64,
 ) -> Result<ChunkCoreReport, RunError> {
-    // Resolve the GHO vToken's revision at chunk-start (the discount pre-pass's
-    // `vtoken_revision`). §4.2-parity flag: the in-chunk `Upgraded` write is
-    // deferred to Apply, so this is the chunk-start value for ALL txs in the
-    // chunk.
-    let vtoken_revision: Option<u32> = match (gho_vtoken_address, gho_asset) {
-        (Some(addr_str), Some(_)) => {
-            DegenbotDb::lookup_asset_by_token_address_on_conn(conn, market_id, addr_str, "v_token")?
-                .map(|row| row.v_token_revision)
-        }
-        _ => None,
-    };
-
-    let mut all_events: Vec<AaveChunkEvent> = Vec::new();
+    // GJQGKN: per-tx apply within `conn`. Two staleness surfaces fixed —
+    //   (1) config: `vtoken_revision` is now re-resolved per-tx from `conn`
+    //       (read-your-own-writes sees the prior tx's `Upgraded` write),
+    //       instead of the chunk-start snapshot that masked an in-chunk bump.
+    //   (2) ops balances: each tx's events are applied to `conn` BEFORE the
+    //       next tx's `build_discount_snapshot` / `dispatch_config_events` /
+    //       `process_transaction` read — so tx N+1 sees tx N's writes (the
+    //       `ScaledTokenProcessor` is stateless; its balances come from `conn`
+    //       lookups, so per-tx apply is the only seam that matches Python's
+    //       per-tx ORM session apply).
+    // The stamp advance stays LAST (end-of-chunk), preserving the §3.4
+    // restart-invariant (on rollback the stamp does NOT advance + the whole
+    // chunk reverts).
+    let mut events_applied_total: usize = 0;
 
     for group in tx_groups {
         let block_number = group.block_number;
         let tx_hashes_refs: Vec<&Log> = group.logs.clone();
 
-        // (a) The discount pre-pass (RPC + the DB-cache path).
+        // (a) Re-resolve the GHO vToken's revision from `conn` for THIS tx —
+        //     sees the prior tx's in-chunk `Upgraded` write via
+        //     read-your-own-writes (surface #1).
+        let vtoken_revision: Option<u32> = match (gho_vtoken_address, gho_asset) {
+            (Some(addr_str), Some(_)) => {
+                DegenbotDb::lookup_asset_by_token_address_on_conn(
+                    conn, market_id, addr_str, "v_token",
+                )?
+                .map(|row| row.v_token_revision)
+            }
+            _ => None,
+        };
+
+        // (b) The discount pre-pass (RPC + the DB-cache path) — reads `conn`
+        //     (sees prior txs' writes).
         let discounts = build_discount_snapshot(
             provider,
             &tx_hashes_refs,
@@ -1169,7 +1223,7 @@ async fn process_chunk_on_conn(
         )
         .await?;
 
-        // (b) The config-event dispatch (RPC + substrate lookups).
+        // (c) The config-event dispatch (RPC + substrate lookups).
         let config_events = dispatch_config_events(
             provider,
             &tx_hashes_refs,
@@ -1182,9 +1236,16 @@ async fn process_chunk_on_conn(
             block_number,
         )
         .await?;
-        all_events.extend(config_events);
 
-        // (c) C3's operations parser (sync, substrate lookups).
+        // (d) Apply THIS tx's config events to `conn` BEFORE the ops parser
+        //     runs — so `process_transaction` sees the tx's own config writes
+        //     (e.g. a `ReserveInitialized` creating the asset the ops parser
+        //     then operates on), matching Python's intra-tx apply order.
+        apply_chunk_events_on_conn(conn, market_id, &config_events)?;
+        events_applied_total += config_events.len();
+
+        // (e) C3's operations parser (sync, substrate lookups) — reads `conn`
+        //     (sees this tx's config writes + prior txs' writes).
         let op_events = process_transaction(
             market_id,
             chain_id,
@@ -1197,14 +1258,20 @@ async fn process_chunk_on_conn(
             group.tx_hash,
             &discounts,
         )?;
-        all_events.extend(op_events);
+
+        // (f) Apply THIS tx's op events to `conn` — so tx N+1 sees them via
+        //     read-your-own-writes (surface #2: the `Upgraded` revision bump +
+        //     scaled-token balance deltas land before the next tx's reads).
+        apply_chunk_events_on_conn(conn, market_id, &op_events)?;
+        events_applied_total += op_events.len();
     }
 
-    // (d) Apply ALL events under the ONE Transaction (the last write is the
-    //     stamp advance).
-    let write_report = apply_aave_chunk_writes_on_conn(conn, market_id, &all_events, chunk_end)?;
-    let events_applied_total = all_events.len();
-    let _ = write_report; // accounting (the report could be surfaced via ProgressSink).
+    // (g) Stamp `last_update_block` as the LAST write (end-of-chunk). The
+    //     per-tx applies above are durable only when the caller's
+    //     `Transaction` commits; on rollback the whole chunk (events + stamp)
+    //     reverts (§3.4 restart-invariant).
+    let chunk_end_i64 = i64::try_from(chunk_end).unwrap_or(i64::MAX);
+    DegenbotDb::set_market_last_update_block_on_conn(conn, market_id, chunk_end_i64)?;
 
     Ok(ChunkCoreReport {
         events_applied: events_applied_total,
