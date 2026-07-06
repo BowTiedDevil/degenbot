@@ -407,12 +407,14 @@ pub async fn resolve_collateral_configuration(
 /// substrate `get_or_create_erc20_token_on_conn` takes metadata as a caller
 /// param, so this is consistent with the existing contract — the gap is
 /// isolated to this fn's token resolution).
+#[allow(clippy::too_many_arguments)] // mirrors the Python event arg list 1:1
 pub async fn resolve_reserve_initialized(
     provider: &AlloyProvider,
     decoded: &degenbot_decoders::aave_event_decoder::ReserveInitializedEvent,
     market_id: i64,
     chain_id: i64,
     oracle_address: Address,
+    gho_asset: Option<&AaveGhoAsset>,
     block_number: u64,
     conn: &Connection,
 ) -> Result<AaveChunkEvent, ConfigDispatchError> {
@@ -485,6 +487,14 @@ pub async fn resolve_reserve_initialized(
         v_token_id,
         v_token_revision: discount_to_i64(v_token_revision),
         price_source,
+        // 5. GHO-vToken-FK link (2QGL6G / divergence #8): mirror the Python's
+        //    `if asset_address == gho_asset.token.address: gho_token_entry
+        //    .v_token_id = v_token.id` (event_handlers.py:689-698). The FK is
+        //    the precondition for the ULDUAC emitter guard (which compares
+        //    against `gho_asset.v_token_address`, resolved via the FK).
+        gho_link_token_id: gho_asset
+            .filter(|g| g.gho_token_address.as_deref() == Some(underlying_str.as_str()))
+            .map(|g| g.id),
     })
 }
 
@@ -706,6 +716,7 @@ async fn dispatch_single_config_event(
                         market_id,
                         chain_id,
                         oracle,
+                        gho_asset,
                         block_number,
                         conn,
                     )

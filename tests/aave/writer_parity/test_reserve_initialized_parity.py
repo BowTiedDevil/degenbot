@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
 from sqlalchemy import select, text
 
 from degenbot.cli.aave.commands import update_aave_market
@@ -44,6 +45,7 @@ from tests.aave.writer_parity.harness import (
     FIXTURE_BLOCK,
     GET_SOURCE_OF_ASSET_SELECTOR,
     GHO_TOKEN_ADDRESS,
+    dump_gho_token_rows,
     make_reserve_initialized_log,
     mock_rpc_server,
     seeded_db,
@@ -160,3 +162,95 @@ def test_reserve_initialized_regular_reserve_rust_matches_python_oracle(
     assert rust_asset["a_token_revision"] == a_rev
     assert rust_asset["v_token_revision"] == v_rev
     assert rust_asset["price_source"] is not None
+
+
+@pytest.mark.parametrize("gho_link", [True, False], ids=["gho-asset", "regular"])
+def test_reserve_initialized_gho_vtoken_fk_link_rust_matches_python_oracle(
+    tmp_path: Path,
+    gho_link: bool,  # noqa: FBT001 (pytest parametrize fixture, not an API arg)
+) -> None:
+    """Both paths set `aave_gho_tokens.v_token_id` identically (2QGL6G).
+
+    When the ReserveInitialized event's underlying IS the GHO token, the
+    Python's `_process_reserve_initialized_event` (event_handlers.py:689-698)
+    links `aave_gho_tokens.v_token_id` to the new vToken's erc20 id; the
+    Rust (after the 2QGL6G fix) mirrors it. The `gho_link=False` variant
+    re-asserts a regular reserve leaves the FK NULL (the divergence-free
+    slice). The asset/aToken/vToken erc20 rows + the `aave_v3_assets` row
+    are also asserted byte-identical.
+    """
+    if gho_link:
+        asset_addr = GHO_TOKEN_ADDRESS  # 0x55…55 — matches the seeded GHO token
+    else:
+        asset_addr = "0x" + "ee" * 20  # a regular reserve
+        assert asset_addr != GHO_TOKEN_ADDRESS
+    a_token_addr = "0x" + "bb" * 20
+    v_token_addr = "0x" + "cc" * 20
+
+    fixture_log = make_reserve_initialized_log(
+        asset=asset_addr, a_token=a_token_addr, v_token=v_token_addr
+    )
+    a_rev, v_rev, price_source = 1, 2, "0x" + "d0" * 20
+    eth_calls = {
+        ATOKEN_REVISION_SELECTOR: "0x" + a_rev.to_bytes(32, "big").hex(),
+        DEBT_TOKEN_REVISION_SELECTOR: "0x" + v_rev.to_bytes(32, "big").hex(),
+        GET_SOURCE_OF_ASSET_SELECTOR: "0x" + "00" * 12 + price_source[2:],
+    }
+
+    with (
+        seeded_db(tmp_path, name="rust", with_price_oracle=True) as (rust_path, rust_session),
+        seeded_db(tmp_path, name="py", with_price_oracle=True) as (_py_path, py_session),
+        mock_rpc_server(
+            logs=[fixture_log],
+            block_number=FIXTURE_BLOCK,
+            eth_call_responses=eth_calls,
+        ) as rpc_url,
+    ):
+        provider = ProviderAdapter.from_alloy(AlloyProvider(rpc_url, 0))
+        py_market = _load_market(py_session)
+        handle = CancelHandle()
+        run_aave_update(
+            database_path=str(rust_path),
+            chain_id=1,
+            market_id=1,
+            to_block=FIXTURE_BLOCK,
+            chunk_size=100,
+            rpc_url=rpc_url,
+            progress_callback=lambda _progress: None,
+            cancel_handle=handle,
+        )
+        update_aave_market(
+            provider=provider,
+            start_block=BOOTSTRAP_BLOCK + 1,
+            end_block=FIXTURE_BLOCK,
+            market=py_market,
+            session=py_session,
+            verify_block=False,
+            verify_chunk=False,
+            show_progress=False,
+        )
+        py_session.commit()
+        rust_asset_tokens = _dump_asset_and_tokens(rust_session)
+        py_asset_tokens = _dump_asset_and_tokens(py_session)
+        rust_gho = dump_gho_token_rows(rust_session)
+        py_gho = dump_gho_token_rows(py_session)
+
+    assert rust_asset_tokens == py_asset_tokens, (
+        f"ReserveInitialized (gho_link={gho_link}) asset/token divergence:\n"
+        f"  Rust:   {rust_asset_tokens}\n  Python: {py_asset_tokens}"
+    )
+    assert rust_gho == py_gho, (
+        f"ReserveInitialized (gho_link={gho_link}) aave_gho_tokens divergence:\n"
+        f"  Rust:   {rust_gho}\n  Python: {py_gho}"
+    )
+    if gho_link:
+        # The FK must be linked to the new vToken's erc20 id (the 2QGL6G fix).
+        [row] = rust_gho
+        assert row["v_token_id"] is not None, (
+            "GHO-asset path: aave_gho_tokens.v_token_id should be linked"
+        )
+    else:
+        [row] = rust_gho
+        assert row["v_token_id"] is None, (
+            "Regular-reserve path: aave_gho_tokens.v_token_id must stay NULL"
+        )

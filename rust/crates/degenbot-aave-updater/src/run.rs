@@ -121,6 +121,13 @@ pub enum AaveChunkEvent {
         v_token_revision: i64,
         /// The checksummed oracle address (`None` when the event's address is zero).
         price_source: Option<String>,
+        /// When the new asset's underlying IS the GHO token, the Python's
+        /// `_process_reserve_initialized_event` links the GHO token row to the
+        /// new vToken: `aave_gho_tokens.v_token_id = v_token.id` (the FK the
+        /// ULDUAC emitter guard resolves via `gho_asset.v_token_address`).
+        /// `Some(gho_token_row_id)` when the link should fire; `None` for a
+        /// regular reserve (2QGL6G / divergence #8).
+        gho_link_token_id: Option<i64>,
     },
     /// `ScaledTokenMint(from, to, value)` — aToken/vToken Mint event (5Z3QQ2 —
     /// SCALEAPPLY). Carries the PRE-COMPUTED signed `balance_delta` (the
@@ -503,6 +510,7 @@ pub fn apply_aave_chunk_writes_on_conn(
                 v_token_id,
                 v_token_revision,
                 price_source,
+                gho_link_token_id,
             } => {
                 DegenbotDb::apply_reserve_initialized_on_conn(
                     conn,
@@ -513,6 +521,7 @@ pub fn apply_aave_chunk_writes_on_conn(
                     *v_token_id,
                     *v_token_revision,
                     price_source.as_deref(),
+                    *gho_link_token_id,
                 )?;
                 report.reserve_initialized += 1;
             }
@@ -1567,6 +1576,7 @@ mod tests {
             v_token_id: 3,
             v_token_revision: 4,
             price_source: Some("0xoracle".to_string()),
+            gho_link_token_id: None,
         }];
         {
             let mut guard = db.lock();
@@ -1607,6 +1617,7 @@ mod tests {
             v_token_id: 33,
             v_token_revision: 5,
             price_source: Some("0xneworacle".to_string()),
+            gho_link_token_id: None,
         }];
         // Seed the new aToken + vToken erc20 rows the UPDATE references
         // (FK `a_token_id`/`v_token_id` → `erc20_tokens.id`).
@@ -1698,6 +1709,7 @@ mod tests {
                 v_token_id: 3,
                 v_token_revision: 1,
                 price_source: None,
+                gho_link_token_id: None,
             },
             // Second event: FAILS — ReserveDataUpdated on the missing asset_id 999.
             AaveChunkEvent::ReserveDataUpdated {
@@ -2000,6 +2012,7 @@ mod tests {
                 v_token_id: 3,
                 v_token_revision: 1,
                 price_source: None,
+                gho_link_token_id: None,
             },
             AaveChunkEvent::ScaledTokenMint {
                 position: ScaledTokenPosition::Collateral,
