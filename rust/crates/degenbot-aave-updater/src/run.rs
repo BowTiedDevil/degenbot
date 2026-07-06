@@ -711,13 +711,33 @@ pub fn apply_chunk_events_on_conn(
                 address,
                 revision,
             } => {
-                DegenbotDb::apply_contract_inserted_on_conn(
-                    conn,
-                    *ev_market_id,
-                    name,
-                    address,
-                    *revision,
-                )?;
+                // O4BOST: for the bootstrap contracts (`POOL`/
+                // `POOL_CONFIGURATOR`) use the IDEMPOTENT variant so the chunk
+                // loop's re-encounter of the bootstrap `ProxyCreated` events
+                // (the bootstrap pass already applied them over
+                // `[from_block, from_block + BOOTSTRAP_WINDOW]`, which overlaps
+                // the chunk loop's first chunk) does NOT insert a duplicate
+                // row. Other `ContractInserted` names (`POOL_DATA_PROVIDER`,
+                // `PRICE_ORACLE`, `AddressSet`-decoded names) keep the
+                // unconditional INSERT — parity with the Python which
+                // unconditional-appends them.
+                if name == "POOL" || name == "POOL_CONFIGURATOR" {
+                    DegenbotDb::apply_contract_inserted_if_absent_on_conn(
+                        conn,
+                        *ev_market_id,
+                        name,
+                        address,
+                        *revision,
+                    )?;
+                } else {
+                    DegenbotDb::apply_contract_inserted_on_conn(
+                        conn,
+                        *ev_market_id,
+                        name,
+                        address,
+                        *revision,
+                    )?;
+                }
                 report.contract_inserted += 1;
             }
         }
@@ -780,13 +800,25 @@ use degenbot_rpc::provider::{AlloyProvider, LogFetcher};
 
 use crate::aave_fetch::{fetch_aave_chunk_logs, AaveFetchSpec};
 use crate::config_dispatch::{
-    build_discount_snapshot, dispatch_config_events, ConfigDispatchError,
+    build_discount_snapshot, dispatch_config_events, match_proxy_id, ConfigDispatchError,
+    ProxyCreationResolution,
 };
 use crate::transaction_processor::{process_transaction, ProcessTxError};
 
 /// The max RPC retries for the owned runtime's `AlloyProvider` (mirrors
 /// `degenbot-pool-updater`'s `RPC_MAX_RETRIES`).
 const RPC_MAX_RETRIES: u32 = 5;
+
+/// The cold-boot bootstrap window (O4BOST). When `aave_v3_contracts` lacks the
+/// `POOL`/`POOL_CONFIGURATOR` rows that `build_fetch_spec` requires, the
+/// bootstrap pass fetches `ProxyCreated` events from the `POOL_ADDRESS_PROVIDER`
+/// over `[from_block, from_block + BOOTSTRAP_WINDOW]` + applies them
+/// idempotently. Mainnet lands the bootstrap `ProxyCreated` events at
+/// `from_block + 57/+60/+66` (blocks 16291127/16291130/16291136 — `from_block`
+/// is the deploy + 1 = 16291071); the 2 000-block window gives ample margin.
+/// Non-mainnet markets with a longer deploy→`ProxyCreated` gap may need a
+/// larger window (a `BootstrapFailed` error surfaces the miss).
+const BOOTSTRAP_WINDOW: u64 = 2_000;
 
 /// A per-chunk progress snapshot reported to [`ProgressSink`] at each chunk
 /// boundary (after a successful commit OR a rollback). Mirrors
@@ -858,6 +890,11 @@ pub enum RunError {
     MarketNotFound(i64),
     #[error("market {0} has no last_update_block — bootstrap the stamp before the loop")]
     NotBootstrapped(i64),
+    #[error(
+        "market {0} cold-boot bootstrap failed — POOL/POOL_CONFIGURATOR remain \
+         missing after the ProxyCreated fetch over the bootstrap window"
+    )]
+    BootstrapFailed(i64),
 }
 
 /// One transaction's grouped logs. Sorted by `(block_number, first log_index)`
@@ -904,6 +941,104 @@ fn group_logs_by_tx(logs: &[Log]) -> Vec<TxGroup<'_>> {
         .into_iter()
         .map(|k| groups.remove(&k).expect("present in order"))
         .collect()
+}
+
+/// Cold-boot the `POOL`/`POOL_CONFIGURATOR` contract rows (O4BOST). On a fresh
+/// market, `activate` seeds only the `POOL_ADDRESS_PROVIDER`; `build_fetch_spec`
+/// hard-errors without `POOL`/`POOL_CONFIGURATOR`. This pass fetches the
+/// `ProxyCreated` events from the `POOL_ADDRESS_PROVIDER` address over the
+/// bootstrap window `[from_block, from_block + BOOTSTRAP_WINDOW]`, decodes each
+/// via [`match_proxy_id`] (which RPCs the `POOL_REVISION()`/`CONFIGURATOR_REVISION()`
+/// on the implementation address), and applies the resolved rows via
+/// [`DegenbotDb::apply_contract_inserted_if_absent_on_conn`] (idempotent — so the
+/// chunk loop's later re-encounter of the same `ProxyCreated` events is a
+/// no-op). No-op on a warm boot (both rows already present). Mirrors the Python
+/// `update_aave_market` Phase-1 bootstrap (commands.py:1010-1062).
+///
+/// # Errors
+///
+/// Returns [`RunError::NotBootstrapped`] if the `POOL_ADDRESS_PROVIDER` row is
+/// missing (the caller must seed it via `activate`), or [`RunError::BootstrapFailed`]
+/// if `POOL`/`POOL_CONFIGURATOR` remain missing after the fetch (e.g. the
+/// bootstrap window was too small for a non-mainnet market).
+async fn bootstrap_pool_contracts(
+    db: &DegenbotDb,
+    provider: &AlloyProvider,
+    fetcher: &LogFetcher,
+    market_id: i64,
+    from_block: u64,
+) -> Result<(), RunError> {
+    // 1. Read the current contracts; skip if both bootstrap rows are present.
+    let contracts = db.fetch_aave_contracts(market_id)?;
+    let has_pool = contracts.iter().any(|c| c.name == "POOL");
+    let has_configurator = contracts.iter().any(|c| c.name == "POOL_CONFIGURATOR");
+    if has_pool && has_configurator {
+        return Ok(()); // warm boot — nothing to do.
+    }
+    let address_provider = contracts
+        .iter()
+        .find(|c| c.name == "POOL_ADDRESS_PROVIDER")
+        .ok_or(RunError::NotBootstrapped(market_id))?;
+    let ap_address = address_provider.address;
+
+    // 2. Fetch the PoolAddressProvider's events over the bootstrap window
+    //    (async, no DB lock held across the `.await`). The fetch unions all
+    //    address-provider topics; we filter to `ProxyCreated` below.
+    let boot_end = from_block.saturating_add(BOOTSTRAP_WINDOW);
+    let logs =
+        crate::aave_fetch::fetch_address_provider_logs(fetcher, from_block, boot_end, ap_address)
+            .await?;
+
+    // 3. Decode + resolve each `ProxyCreated` (async RPC for the revision).
+    //    `match_proxy_id` returns `None` for non-POOL/non-POOL_CONFIGURATOR ids
+    //    (e.g. the `POOL_DATA_PROVIDER` proxy id) — those are skipped (the chunk
+    //    loop's `PoolDataProviderUpdated`/`AddressSet` arms handle them).
+    let mut resolutions: Vec<ProxyCreationResolution> = Vec::new();
+    for log in &logs {
+        let Some(degenbot_decoders::aave_event_decoder::DecodedAaveEvent::ProxyCreated(ev)) =
+            degenbot_decoders::aave_event_decoder::decode_aave_log(log)
+        else {
+            continue;
+        };
+        if let Some(resolved) = match_proxy_id(
+            &ev.id,
+            &ev.proxy_address,
+            &ev.implementation_address,
+            provider,
+            from_block,
+        )
+        .await?
+        {
+            resolutions.push(resolved);
+        }
+    }
+
+    // 4. Apply the resolved rows idempotently in ONE transaction (so a partial
+    //    bootstrap either commits all or none).
+    if !resolutions.is_empty() {
+        let mut guard = db.lock();
+        let tx = guard.transaction().map_err(DbError::from)?;
+        for r in &resolutions {
+            DegenbotDb::apply_contract_inserted_if_absent_on_conn(
+                &tx,
+                market_id,
+                &r.name,
+                &r.address,
+                Some(r.revision),
+            )?;
+        }
+        tx.commit().map_err(DbError::from)?;
+    }
+
+    // 5. Re-verify: if either bootstrap row is STILL missing, the window was
+    //    too small (or the market isn't mainnet-shaped) → surface the miss.
+    let contracts2 = db.fetch_aave_contracts(market_id)?;
+    let have_pool = contracts2.iter().any(|c| c.name == "POOL");
+    let have_cfg = contracts2.iter().any(|c| c.name == "POOL_CONFIGURATOR");
+    if !have_pool || !have_cfg {
+        return Err(RunError::BootstrapFailed(market_id));
+    }
+    Ok(())
 }
 
 /// Resolve the [`AaveFetchSpec`] for `market_id`: the `POOL`/
@@ -1056,13 +1191,6 @@ pub fn run_aave_update(
         .last_update_block
         .ok_or(RunError::NotBootstrapped(market_id))?;
 
-    // Build the fetch spec + the GHO asset (chain-unique).
-    let (spec, gho_asset) = build_fetch_spec(&db, market_id, chain_id)?;
-    let pool_address = spec.pool_address;
-    let oracle_address = spec.oracle_address;
-    let gho_token_address = gho_asset.as_ref().and_then(|g| g.gho_token_address.clone());
-    let gho_vtoken_address = gho_asset.as_ref().and_then(|g| g.v_token_address.clone());
-
     // Owned tokio runtime (D2). The fetches + the per-tx RPC run on it; the DB
     // writes are synchronous. MUST NOT be called from within an existing runtime.
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -1089,6 +1217,25 @@ pub fn run_aave_update(
             ..Default::default()
         });
     }
+
+    // Cold-boot bootstrap (O4BOST). On a fresh market `activate` seeds only
+    // `POOL_ADDRESS_PROVIDER`; `build_fetch_spec` below hard-errors if `POOL`/
+    // `POOL_CONFIGURATOR` are missing. The bootstrap pass fetches the
+    // `ProxyCreated` events from the `POOL_ADDRESS_PROVIDER` over the bootstrap
+    // window + applies them idempotently (so the chunk loop's later
+    // re-encounter of the same events is a no-op). No-op on a warm boot (both
+    // rows already present). Mirrors the Python `update_aave_market` Phase-1
+    // bootstrap (commands.py:1010-1062 + `_process_proxy_creation_event`).
+    rt.block_on(bootstrap_pool_contracts(
+        &db, &provider, &fetcher, market_id, from_block,
+    ))?;
+
+    // Build the fetch spec + the GHO asset (chain-unique).
+    let (spec, gho_asset) = build_fetch_spec(&db, market_id, chain_id)?;
+    let pool_address = spec.pool_address;
+    let oracle_address = spec.oracle_address;
+    let gho_token_address = gho_asset.as_ref().and_then(|g| g.gho_token_address.clone());
+    let gho_vtoken_address = gho_asset.as_ref().and_then(|g| g.v_token_address.clone());
 
     let mut report = AaveUpdateReport {
         chain_id,
@@ -1231,12 +1378,10 @@ async fn process_chunk_on_conn(
         //     sees the prior tx's in-chunk `Upgraded` write via
         //     read-your-own-writes (surface #1).
         let vtoken_revision: Option<u32> = match (gho_vtoken_address, gho_asset) {
-            (Some(addr_str), Some(_)) => {
-                DegenbotDb::lookup_asset_by_token_address_on_conn(
-                    conn, market_id, addr_str, "v_token",
-                )?
-                .map(|row| row.v_token_revision)
-            }
+            (Some(addr_str), Some(_)) => DegenbotDb::lookup_asset_by_token_address_on_conn(
+                conn, market_id, addr_str, "v_token",
+            )?
+            .map(|row| row.v_token_revision),
             _ => None,
         };
 
@@ -2452,9 +2597,17 @@ mod tests {
 
         // Neither leg is mutated on error (the whole chunk rolls back).
         let (_, from_balance) = user_gho_stk_state(&db, 1);
-        assert_eq!(from_balance.as_deref(), Some("100"), "balance untouched on error");
+        assert_eq!(
+            from_balance.as_deref(),
+            Some("100"),
+            "balance untouched on error"
+        );
         let (_, to_balance) = user_gho_stk_state(&db, 2);
-        assert_eq!(to_balance.as_deref(), None, "recipient balance untouched on error");
+        assert_eq!(
+            to_balance.as_deref(),
+            None,
+            "recipient balance untouched on error"
+        );
         assert_eq!(market_stamp(&db), None, "stamp untouched on rollback");
     }
 
@@ -2791,6 +2944,140 @@ mod tests {
             .unwrap();
         assert_eq!(name, "POOL");
         assert_eq!(rev, Some(2));
+    }
+
+    // ── O4BOST: the idempotent `apply_contract_inserted_if_absent_on_conn`
+    //    (the cold-bootstrap idempotency substrate).
+
+    #[test]
+    fn apply_contract_inserted_if_absent_on_conn_cold_inserts_and_returns_true() {
+        let db = fresh_db();
+        let inserted = DegenbotDb::apply_contract_inserted_if_absent_on_conn(
+            &db.lock(),
+            1,
+            "POOL",
+            "0xproxy",
+            Some(2),
+        )
+        .unwrap();
+        assert!(inserted, "cold insert returns true");
+        let (name, addr, rev): (String, String, Option<i64>) = db
+            .lock()
+            .query_row(
+                "SELECT name, address, revision FROM aave_v3_contracts \
+                 WHERE market_id = 1 AND name = 'POOL'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "POOL");
+        assert_eq!(addr, "0xproxy");
+        assert_eq!(rev, Some(2));
+    }
+
+    #[test]
+    fn apply_contract_inserted_if_absent_on_conn_warm_same_key_is_noop_returns_false() {
+        let db = fresh_db();
+        // Pre-seed the row (the bootstrap pass already applied it).
+        {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO aave_v3_contracts (id, market_id, name, address, revision) \
+                 VALUES (1, 1, 'POOL', '0xproxy', 2)",
+                [],
+            )
+            .unwrap();
+        }
+        let inserted = DegenbotDb::apply_contract_inserted_if_absent_on_conn(
+            &db.lock(),
+            1,
+            "POOL",
+            "0xproxy",
+            Some(99), // a later revision — must NOT overwrite the canonical row.
+        )
+        .unwrap();
+        assert!(!inserted, "warm same-key is a no-op (returns false)");
+        // Count unchanged + revision is the canonical (Phase-1 wins).
+        let (count, rev): (i64, i64) = db
+            .lock()
+            .query_row(
+                "SELECT COUNT(*), revision FROM aave_v3_contracts \
+                 WHERE market_id = 1 AND name = 'POOL' AND address = '0xproxy'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "no duplicate row");
+        assert_eq!(rev, 2, "Phase-1 wins — revision untouched");
+    }
+
+    #[test]
+    fn apply_contract_inserted_if_absent_on_conn_different_address_inserts_second_row() {
+        // The idempotency key is (market_id, name, address) — NOT
+        // (market_id, name). A ProxyCreated with a DIFFERENT address
+        // (e.g. a re-deploy) inserts a second row.
+        let db = fresh_db();
+        DegenbotDb::apply_contract_inserted_if_absent_on_conn(
+            &db.lock(),
+            1,
+            "POOL",
+            "0xproxy_v1",
+            Some(1),
+        )
+        .unwrap();
+        let inserted = DegenbotDb::apply_contract_inserted_if_absent_on_conn(
+            &db.lock(),
+            1,
+            "POOL",
+            "0xproxy_v2",
+            Some(2),
+        )
+        .unwrap();
+        assert!(inserted, "different address → inserts (returns true)");
+        let count: i64 = db
+            .lock()
+            .query_row(
+                "SELECT COUNT(*) FROM aave_v3_contracts \
+                 WHERE market_id = 1 AND name = 'POOL'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2, "two rows for two distinct addresses");
+    }
+
+    #[test]
+    fn apply_contract_inserted_if_absent_on_conn_different_revision_same_key_is_noop() {
+        // Same (market_id, name, address) but a different revision → no-op
+        // (the canonical row's revision stays as Phase-1 wrote it).
+        let db = fresh_db();
+        DegenbotDb::apply_contract_inserted_if_absent_on_conn(
+            &db.lock(),
+            1,
+            "POOL_CONFIGURATOR",
+            "0xcfg",
+            Some(1),
+        )
+        .unwrap();
+        let inserted = DegenbotDb::apply_contract_inserted_if_absent_on_conn(
+            &db.lock(),
+            1,
+            "POOL_CONFIGURATOR",
+            "0xcfg",
+            Some(5),
+        )
+        .unwrap();
+        assert!(!inserted, "same key → no-op");
+        let rev: i64 = db
+            .lock()
+            .query_row(
+                "SELECT revision FROM aave_v3_contracts \
+                 WHERE market_id = 1 AND name = 'POOL_CONFIGURATOR' AND address = '0xcfg'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rev, 1, "Phase-1 revision wins");
     }
 
     // ── 6SWY4R-3: the `group_logs_by_tx` unit tests (the loop's pure

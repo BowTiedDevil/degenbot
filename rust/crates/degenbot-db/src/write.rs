@@ -1432,6 +1432,59 @@ impl DegenbotDb {
         Ok(())
     }
 
+    /// Idempotent variant of [`Self::apply_contract_inserted_on_conn`]: INSERT
+    /// the contract row ONLY if no row with the same `(market_id, name,
+    /// address)` already exists. Returns `true` if a row was inserted, `false`
+    /// if a matching row pre-existed (no-op). A pre-existing row's `revision`
+    /// is NOT overwritten (the "Phase-1 wins" semantics — the row from the first
+    /// `ProxyCreated` event is canonical, mirroring the Python
+    /// `_process_proxy_creation_event` which appends unconditionally but is fed
+    /// each `ProxyCreated` exactly once).
+    ///
+    /// # Why this exists (O4BOST cold-boot)
+    ///
+    /// The Rust `run_aave_update` bootstrap pass fetches `ProxyCreated` events
+    /// over `[from_block, from_block + BOOTSTRAP_WINDOW]` + applies them BEFORE
+    /// `build_fetch_spec`. The chunk loop then re-processes `[from_block,
+    /// to_block]` (overlapping the bootstrap window) + the chunk dispatcher's
+    /// `ContractInserted` arm re-encounters the same `ProxyCreated(POOL)` /
+    /// `ProxyCreated(POOL_CONFIGURATOR)` events. Without idempotency, the
+    /// re-encounter would insert a duplicate row. The chunk arm routes ONLY
+    /// `name ∈ {"POOL", "POOL_CONFIGURATOR"}` through this idempotent variant;
+    /// all other `ContractInserted` names (`POOL_DATA_PROVIDER`, `PRICE_ORACLE`,
+    /// `AddressSet`-decoded names) keep the unconditional
+    /// [`Self::apply_contract_inserted_on_conn`] (parity with the Python which
+    /// also unconditional-appends them).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`] on a query failure.
+    pub fn apply_contract_inserted_if_absent_on_conn(
+        conn: &rusqlite::Connection,
+        market_id: i64,
+        name: &str,
+        address: &str,
+        revision: Option<i64>,
+    ) -> Result<bool, DbError> {
+        let existing: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM aave_v3_contracts \
+                 WHERE market_id = ?1 AND name = ?2 AND address = ?3",
+                params![market_id, name, address],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if existing.is_some() {
+            return Ok(false);
+        }
+        conn.execute(
+            "INSERT INTO aave_v3_contracts (market_id, name, address, revision) \
+             VALUES (?1, ?2, ?3, ?4)",
+            params![market_id, name, address, revision],
+        )?;
+        Ok(true)
+    }
+
     // ── ScaledToken position-state mutations (5Z3QQ2 — SCALEAPPLY) ────────
     //
     // The aToken/vToken `Mint`/`Burn`/`BalanceTransfer` events drive the
